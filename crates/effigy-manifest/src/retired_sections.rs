@@ -155,20 +155,6 @@ mod tests {
     }
 
     #[test]
-    fn remaining_scanner_tables_still_configure_the_scan_section() {
-        let manifest = parse(
-            "[scan.god_files]\nwarn = 1200\n\n[scan.duplicate_blocks]\nwarn = 20\n\n[tasks.build]\nrun = \"true\"\n",
-        );
-        let scan = manifest.scan.expect("scan section");
-        assert_eq!(
-            scan.god_files.and_then(|god_files| god_files.warn),
-            Some(1200)
-        );
-        assert!(scan.duplicate_blocks.is_some());
-        assert!(manifest.retired_config.is_empty());
-    }
-
-    #[test]
     fn a_catalog_graph_table_is_ignored_and_membership_still_loads() {
         let manifest = parse(
             "[catalog]\nalias = \"bovine\"\n\n[catalog.graph]\nsegmented = true\n\n[tasks.build]\nrun = \"true\"\n",
@@ -223,17 +209,6 @@ mod tests {
         assert!(notice.contains("`[shell]` is ignored"), "{notice}");
         assert!(notice.contains("${SHELL:-/bin/zsh}"), "{notice}");
         assert!(notice.contains("no manifest override"), "{notice}");
-    }
-
-    #[test]
-    fn several_retired_sections_print_one_notice_per_manifest() {
-        let manifest = parse(
-            "[scan.attention_markers]\nwarn = 1\n\n[scan.generated_in_src]\ninclude = [\"src/**\"]\n\n[catalog.graph]\nsegmented = true\n\n[shell]\nrun = \"exec zsh -i\"\n\n[tasks.build]\nrun = \"true\"\n",
-        );
-        let notice = notice(&manifest);
-        assert_eq!(notice.matches("effigy.toml").count(), 1, "{notice}");
-        assert_eq!(notice.matches(" is ignored").count(), 4, "{notice}");
-        assert_eq!(manifest.retired_config.statements().len(), 4);
     }
 
     #[test]

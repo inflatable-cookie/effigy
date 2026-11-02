@@ -1452,11 +1452,15 @@ one `CanonicalOutput` shared across child generations and supervisor messages. T
 existing custody sanitizer records style data and feeds the existing two-pass
 redactor in merged observed arrival order. Child EOF resets terminal framing;
 only supervisor completion finishes the shared redactor. CR is removed from
-CRLF before redaction. Complete UTF-8 text is appended and synced before any
-live/tail fanout. A failed append poisons capture; no unwritten output is
-acknowledged. A partial failed append can leave an unacknowledged plain suffix.
-Effigy readers never expose that suffix. Host and managed journal writers
-publish a durable committed extent after syncing data. A synced pending record
+CRLF before redaction. A pump drain commits at most one bounded 64 KiB window
+per stream instead of one durable append per read (effigy#558): a full pipe
+keeps its per-turn read bound and its exact released-byte order, and no commit
+exceeds the styled window a pane matches. Complete UTF-8 text is appended and
+synced before any live/tail fanout. A failed append poisons capture; no
+unwritten output is acknowledged. A partial failed append can leave an
+unacknowledged plain suffix. Effigy readers never expose that suffix. Host and
+managed journal writers publish a durable committed extent after syncing data.
+A synced pending record
 retains the prior extent until publication completes; a failed or interrupted
 append bounds reads to that prior extent and refuses a host restart for explicit
 operator recovery. Effigy reads use the existing nonblocking kernel file-lock
@@ -1534,7 +1538,11 @@ as bounded style data. Redaction clears style on masked ranges. A bounded
 private `.styled-tap` sidecar publishes a window of typed, already-redacted
 spans only after successful plain append. It is optional presentation data,
 not a log checkpoint: it grants no durability acknowledgement, changes no
-canonical offsets and never replays an untrusted prefix. A pane uses styles
+canonical offsets and never replays an untrusted prefix. Its publication keeps
+the atomic stage-and-rename visibility boundary but pays no fsync barriers
+(effigy#558): the sidecar costs as much as the durable commit it follows when
+a chatty producer rewrites its window per commit, and a lost or torn window
+only renders plain text, which is the designed fallback. A pane uses styles
 only where identity, byte offset and text exactly match its canonical read;
 missing, stale or expired style data renders plain. TUI typed ingest renders
 those spans directly, without ANSI interpretation or a second redactor.

@@ -183,14 +183,10 @@ fn command_descriptors_cover_current_top_level_help_routes() {
             descriptor_for_topic(*expected_topic).is_some(),
             "missing descriptor for {command} help topic {expected_topic:?}"
         );
-    }
-}
-
-#[test]
-fn command_descriptors_cover_task_style_builtin_help_routes() {
-    for (command, expected_topic) in CURRENT_TOP_LEVEL_HELP_ROUTES {
+        // Every top-level name that resolves through the static lookup must
+        // agree with the parsed route.
         if let Some(topic) = help_topic_for_command(command) {
-            assert_eq!(topic, *expected_topic);
+            assert_eq!(topic, *expected_topic, "{command} lookup drifted");
         }
     }
 }

@@ -332,6 +332,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- A whole-suite test census and assurance contract (task effigy#555):
+  `docs/knowledge/test-assurance.md` states what the suite promises, the six
+  proof tiers, the conditional families and their selector routes, and the
+  rules a pruning wave must follow; `scripts/test-inventory.py` (proved by the
+  new `test:inventory` selector) reconciles every collected nextest ID against
+  a static source scan, attributing macro-generated and `include!`-spliced
+  cases and naming every non-collected declaration's gate.
+
 - The Acow ordinary-Compose consumer qualification packet
   (`docs/qualification/acow-ordinary-compose-5f466914/`, task effigy#540):
   two separately GO-armed proof routes for the frozen ordinary candidate
@@ -1448,6 +1456,21 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Name environment recovery commands with the CLI's `container <NAME> <verb>`
   argument order so actual sentinel admission accepts them.
+
+- A capture pump drain commits at most one bounded 64 KiB window per stream
+  instead of one durable append per pipe read. A chatty producer's full pipe
+  paid the append-and-provenance dance (and the styled-tap window rewrite) up
+  to sixteen times per drain, so the canonical full-pipe capture fixture
+  could exceed its committed-extent observation bound under shared I/O load
+  and fail intermittently (effigy#558, effigy#548). Arrival order, redaction,
+  the per-turn read bound, prompt stop and capture identity are unchanged;
+  the burst the fixture observes now commits in about a sixth of the time.
+
+- The `.styled-tap` sidecar publishes its style window through the atomic
+  stage-and-rename boundary without fsync barriers. The sidecar is optional
+  presentation data that grants no durability acknowledgement; a lost or torn
+  window renders plain text, the designed fallback, and the canonical log is
+  unaffected.
 
 - A managed run whose owning client dies while its environment is still being
   brought up no longer leaks the environment behind a `cleanup complete`

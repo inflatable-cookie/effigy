@@ -36,15 +36,11 @@ mod tests {
     use super::render_git_command_failure;
 
     #[test]
-    fn render_git_command_failure_without_stderr() {
+    fn render_git_command_failure_names_stderr_only_when_present() {
         assert_eq!(
             render_git_command_failure(&["status", "--short"], b""),
             "git status --short failed"
         );
-    }
-
-    #[test]
-    fn render_git_command_failure_with_stderr() {
         assert_eq!(
             render_git_command_failure(&["fetch", "origin"], b" fatal: no remote \n"),
             "git fetch origin failed: fatal: no remote"

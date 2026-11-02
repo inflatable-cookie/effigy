@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use serde_json::Value;
 use std::fs;
 use std::process::Command;
 
@@ -10,13 +9,15 @@ use super::support::{
 
 #[derive(Deserialize)]
 struct ReleasedSurfaceBaseline {
+    // The committed fixture keeps its retired gates fields; serde ignores the
+    // unread keys. The dedicated gates probe was removed with effigy#556:
+    // `command_behavior_tests::cli_release_gates_json_mode_reports_timed_success`
+    // carries the same contract with strictly stronger assertions.
     help_contains: Vec<String>,
     release_status_schema: String,
     release_plan_schema: String,
-    release_gates_schema: String,
     test_plan_schema: String,
     smoke_success_text: String,
-    release_gates_configured_count: u64,
     release_source_cases: Vec<ReleaseSourceCase>,
 }
 
@@ -55,7 +56,7 @@ build = "printf build-ok"
     .expect("write catalog fixture");
 }
 
-fn write_release_cargo_fixture(root: &std::path::Path, with_gates: bool) {
+fn write_release_cargo_fixture(root: &std::path::Path) {
     fs::create_dir_all(root.join("src")).expect("mkdir src");
     fs::write(
         root.join("Cargo.toml"),
@@ -69,12 +70,11 @@ fn write_release_cargo_fixture(root: &std::path::Path, with_gates: bool) {
     )
     .expect("write changelog");
 
-    let manifest = if with_gates {
-        "[release]\nversion-file = \"Cargo.toml\"\nchangelog = \"CHANGELOG.md\"\ntag-format = \"v{version}\"\n[release.gates]\nformat = \"printf format-ok\"\nsmoke = \"printf smoke-ok >&2\"\n"
-    } else {
-        "[release]\nversion-file = \"Cargo.toml\"\nchangelog = \"CHANGELOG.md\"\ntag-format = \"v{version}\"\n"
-    };
-    fs::write(root.join("effigy.toml"), manifest).expect("write effigy manifest");
+    fs::write(
+        root.join("effigy.toml"),
+        "[release]\nversion-file = \"Cargo.toml\"\nchangelog = \"CHANGELOG.md\"\ntag-format = \"v{version}\"\n",
+    )
+    .expect("write effigy manifest");
 }
 
 fn write_release_node_fixture(root: &std::path::Path) {
@@ -180,7 +180,7 @@ fn v0_2_13_release_status_supports_known_version_sources() {
     for case in &baseline.release_source_cases {
         let root = temp_workspace(&format!("released-surface-v0-2-13-{}", case.name));
         match case.name.as_str() {
-            "cargo" => write_release_cargo_fixture_no_gates(&root),
+            "cargo" => write_release_cargo_fixture(&root),
             "node" => write_release_node_fixture(&root),
             "python" => write_release_python_fixture(&root),
             "version-file" => write_release_version_file_fixture(&root),
@@ -205,8 +205,12 @@ fn v0_2_13_release_status_supports_known_version_sources() {
         assert_eq!(status_json["result"]["next_version"], case.next_version);
         assert_eq!(status_json["result"]["tag"], case.tag);
 
-        // v0.15 retired `release simulate` in favour of `release --plan`, which
-        // resolves the same versions, tags and version sources.
+        // The per-source simulate refusal moved out of this loop: repeating
+        // the identical retired-command probe once per version source added
+        // four process starts with no distinct detection.
+        // `command_behavior_tests::cli_release_plan_replaces_the_retired_simulate_command`
+        // carries the refusal contract (fails, says "retired", names
+        // `effigy release --plan`).
         let plan = run_json_cli_command(&root, &["release", "--plan"]);
         assert!(
             plan.status.success(),
@@ -224,45 +228,7 @@ fn v0_2_13_release_status_supports_known_version_sources() {
             case.next_version
         );
         assert_eq!(plan_json["result"]["identities"][0]["tag"], case.tag);
-
-        let retired = run_cli_command(&root, &["release", "simulate"]);
-        let retired_output = format!(
-            "{}{}",
-            String::from_utf8_lossy(&retired.stdout),
-            String::from_utf8_lossy(&retired.stderr)
-        );
-        assert!(!retired.status.success(), "got: {retired_output}");
-        assert!(
-            retired_output.contains("effigy release --plan"),
-            "the retirement names the replacement: {retired_output}"
-        );
     }
-}
-
-fn write_release_cargo_fixture_no_gates(root: &std::path::Path) {
-    write_release_cargo_fixture(root, false);
-}
-
-#[test]
-fn v0_2_13_release_gates_keep_json_contract_and_fail_fast_behavior() {
-    let baseline = load_baseline();
-    let root = temp_workspace("released-surface-v0-2-13-gates");
-    write_release_cargo_fixture(&root, true);
-
-    let output = run_json_cli_command(&root, &["release", "gates"]);
-    assert!(output.status.success(), "{output:?}");
-    let parsed = parse_stdout_json(&output);
-    assert_eq!(parsed["result"]["schema"], baseline.release_gates_schema);
-    assert_eq!(parsed["result"]["passed"], true);
-    assert_eq!(
-        parsed["result"]["configured_gate_count"],
-        baseline.release_gates_configured_count
-    );
-    assert_eq!(
-        parsed["result"]["executed_gate_count"],
-        baseline.release_gates_configured_count
-    );
-    assert_eq!(parsed["result"]["stopped_early"], false);
 }
 
 #[test]
@@ -302,21 +268,8 @@ fn v0_2_13_repo_owned_smoke_task_runs_against_the_binary() {
     );
 }
 
-fn parse_result(json: &Value) -> &Value {
-    json.get("result").expect("result")
-}
-
-#[test]
-fn v0_2_13_release_status_surface_keeps_machine_contract_shape() {
-    let baseline = load_baseline();
-    let root = temp_workspace("released-surface-v0-2-13-status-contract");
-    write_release_cargo_fixture_no_gates(&root);
-
-    let output = run_json_cli_command(&root, &["release", "status"]);
-    assert!(output.status.success(), "{output:?}");
-    let parsed = parse_stdout_json(&output);
-    let result = parse_result(&parsed);
-    assert_eq!(result["schema"], baseline.release_status_schema);
-    assert_eq!(result["ready"], true);
-    assert!(result["blockers"].as_array().is_some());
-}
+// `v0_2_13_release_status_surface_keeps_machine_contract_shape` was removed
+// with effigy#556: its cargo status probe repeated
+// `command_behavior_tests::cli_release_status_json_mode_reports_ready_release_candidate`
+// with weaker assertions. That survivor also carries this test's one distinct
+// claim, that a ready status payload still publishes a `blockers` array.

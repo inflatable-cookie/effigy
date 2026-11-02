@@ -120,52 +120,46 @@ mod tests {
     }
 
     #[test]
-    fn bundle_help_keeps_common_option_rows() {
-        let rows = option_rows(HelpTopic::Bundle);
-        assert!(rows.iter().any(|row| row
+    fn bundle_tasks_and_release_help_keep_their_option_rows() {
+        let bundle_rows = option_rows(HelpTopic::Bundle);
+        assert!(bundle_rows.iter().any(|row| row
             == &[
                 "--repo <PATH>".to_owned(),
                 "Override target repository path".to_owned()
             ]));
-        assert!(rows.iter().any(|row| row
+        assert!(bundle_rows.iter().any(|row| row
             == &[
                 "--json".to_owned(),
                 "Render machine-readable bundle payloads".to_owned()
             ]));
-        assert!(rows
+        assert!(bundle_rows
             .iter()
             .any(|row| row == &["-h, --help".to_owned(), "Print command help".to_owned()]));
-    }
 
-    #[test]
-    fn tasks_help_keeps_status_and_common_option_rows() {
-        let rows = option_rows(HelpTopic::Tasks);
-        assert!(rows.iter().any(|row| row
+        let tasks_rows = option_rows(HelpTopic::Tasks);
+        assert!(tasks_rows.iter().any(|row| row
             == &[
                 "status --all".to_owned(),
                 "Show every declared task's state, plus live runs of tasks no longer declared"
                     .to_owned()
             ]));
-        assert!(rows.iter().any(|row| row
+        assert!(tasks_rows.iter().any(|row| row
             == &[
                 "--json".to_owned(),
                 "Render machine-readable task catalog payload".to_owned()
             ]));
-        assert!(rows
+        assert!(tasks_rows
             .iter()
             .any(|row| row == &["-h, --help".to_owned(), "Print command help".to_owned()]));
-    }
 
-    #[test]
-    fn release_help_keeps_plan_and_run_rows() {
-        let rows = option_rows(HelpTopic::Release);
-        assert!(rows.iter().any(|row| row
+        let release_rows = option_rows(HelpTopic::Release);
+        assert!(release_rows.iter().any(|row| row
             == &[
                 "--plan".to_owned(),
                 "Preview the release pipeline with no mutation".to_owned()
             ]));
-        assert!(rows.iter().any(|row| row[0] == "--to <STAGE>"));
-        assert!(rows
+        assert!(release_rows.iter().any(|row| row[0] == "--to <STAGE>"));
+        assert!(release_rows
             .iter()
             .any(|row| row == &["-h, --help".to_owned(), "Print command help".to_owned()]));
     }

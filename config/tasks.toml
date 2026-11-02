@@ -2059,3 +2059,11 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 # integrity and sweep-before-create ordering, all through deterministic fake
 # runners with no Colima, VM or scratch qualification state touched.
 "test:qualification:entry-sweep" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "python3 tests/scripts/qualification-entry-sweep.py {args}", timeout_ms = 600000 }] }
+
+# ---- Whole-suite census (effigy#555) -----------------------------------------
+# Proves scripts/test-inventory.py's reconciliation logic on embedded controls:
+# duplicate-ID detection, missing attribution, macro-generated attribution, and
+# the ignored / feature-gated / platform-gated / target-gated distinctions.
+# Pure Python, no Cargo, never runs a test body. The census route itself is
+# documented in docs/knowledge/test-assurance.md.
+"test:inventory" = { durable = true, visibility = "internal", group = "Maintenance", description = "Prove the test-suite census helper's reconciliation logic.", run = [{ run = "python3 scripts/test-inventory.py self-test", timeout_ms = 120000 }] }

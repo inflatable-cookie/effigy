@@ -38,6 +38,12 @@ pub(crate) const KIND: &str = "kernel:process";
 /// leader and stops the anchor. The margin bounds those; it is never a second
 /// grace and it never replaces observing the group (effigy#357).
 pub const STOP_MARGIN: Duration = Duration::from_secs(30);
+/// One drain commits at most this many observed bytes per stream before it
+/// sinks them, instead of one durable commit per read. The styled window is
+/// bounded to 64 KiB of text (styled_tap's own clamp), so a commit never
+/// exceeds the window a pane matches exactly, and a full pipe no longer pays
+/// the append-and-provenance dance sixteen times per drain (effigy#558).
+const DRAIN_COMMIT_BOUND: usize = 64 * 1024;
 /// The descriptor slot a spawn hands its optional one-shot reader to (K12).
 /// It sits above the capability reader (9) and cleanup pin (10) slots, so a
 /// caller can hand one short-lived payload to its own child without either
@@ -1693,6 +1699,15 @@ impl ProcessCore {
             };
             let mut buf = [0u8; 8192];
             let mut eof = false;
+            // One durable commit per bounded window instead of one per read:
+            // a full pipe used to pay the whole append-and-provenance dance
+            // (and the styled-tap republish) up to sixteen times per drain,
+            // which made a capture burst slower than its observer's bound
+            // under shared I/O load (effigy#558). The drain keeps the per-turn
+            // read bound and the exact released-byte order; only the commit
+            // granularity is bounded to one styled window, so every commit
+            // still fits the style projection a pane matches exactly.
+            let mut batch = Vec::new();
             // Bound each turn even if a child writes continuously.
             for _ in 0..16 {
                 // SAFETY: live nonblocking fd and writable initialized stack buffer.
@@ -1710,6 +1725,12 @@ impl ProcessCore {
                         error.kind(),
                         io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
                     ) {
+                        // Reads before the failed one were observed: commit
+                        // them first, exactly as the per-read path did.
+                        if !batch.is_empty() {
+                            self.sink(index, &batch, false);
+                            batch.clear();
+                        }
                         self.capture = CaptureState::Truncated("capture read failed".into());
                         if let Some(output) = &self.canonical_output {
                             output.fail();
@@ -1723,9 +1744,13 @@ impl ProcessCore {
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .push(&buf[..count as usize], false);
-                    self.sink(index, &bytes, false);
+                    batch.extend_from_slice(&bytes);
                 } else {
-                    self.sink(index, &buf[..count as usize], false);
+                    batch.extend_from_slice(&buf[..count as usize]);
+                }
+                if batch.len() >= DRAIN_COMMIT_BOUND {
+                    self.sink(index, &batch, false);
+                    batch.clear();
                 }
             }
             if eof {
@@ -1734,8 +1759,11 @@ impl ProcessCore {
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .push(&[], true);
-                    self.sink(index, &bytes, false);
+                    batch.extend_from_slice(&bytes);
                 }
+            }
+            if !batch.is_empty() {
+                self.sink(index, &batch, false);
             }
             if !eof {
                 if index == 0 {

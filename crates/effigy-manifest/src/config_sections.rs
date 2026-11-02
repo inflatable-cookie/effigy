@@ -80,15 +80,12 @@ mod tests {
     }
 
     #[test]
-    fn js_package_manager_binary_names_are_stable() {
+    fn js_package_manager_mappings_are_stable() {
         assert_eq!(ManifestJsPackageManager::Bun.binary_name(), Some("bun"));
         assert_eq!(ManifestJsPackageManager::Pnpm.binary_name(), Some("pnpm"));
         assert_eq!(ManifestJsPackageManager::Npm.binary_name(), Some("npm"));
         assert_eq!(ManifestJsPackageManager::Direct.binary_name(), None);
-    }
 
-    #[test]
-    fn js_package_manager_vitest_commands_are_stable() {
         assert_eq!(
             ManifestJsPackageManager::Bun.vitest_command(),
             ("bun x vitest run", "bun")
@@ -105,10 +102,7 @@ mod tests {
             ManifestJsPackageManager::Direct.vitest_command(),
             ("vitest run", "direct")
         );
-    }
 
-    #[test]
-    fn js_package_manager_install_commands_are_stable() {
         assert_eq!(
             ManifestJsPackageManager::Bun.install_command(),
             Some("bun install")
