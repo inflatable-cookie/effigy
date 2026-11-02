@@ -207,9 +207,7 @@ fn recording_refused_outcome(
 fn proven_up_stop_exit(observed: &Observed<effigy_kernel::custody::Exit>) -> Result<i32, String> {
     match observed {
         Observed::Verified(exit, _) => Ok(exit.code),
-        Observed::Absent(proof) => Err(format!(
-            "the stopped `up` process left no readable exit: {proof:?}"
-        )),
+        Observed::Absent(_) => Err("the stopped `up` process left no readable exit".to_owned()),
         Observed::Unknown(reason) => Err(format!(
             "the stopped `up` process's exit could not be observed: {reason}"
         )),
@@ -765,19 +763,17 @@ mod tests {
                 discharges += 1;
                 Ok(())
             },
-            NotReady::Failed(
-                "environment intent: run must settle before more effects".to_owned(),
-            ),
+            NotReady::Failed("environment intent: run must settle before more effects".to_owned()),
             &Ok(0),
         );
         assert_eq!(discharges, 1, "the stop is discharged exactly once");
-        match outcome {
-            NotReady::Failed(reason) => assert!(
-                reason.contains("run must settle before more effects"),
-                "{reason}"
-            ),
-            other => panic!("expected Failed, got {other:?}"),
-        }
+        let NotReady::Failed(reason) = outcome else {
+            panic!("expected the journal refusal to fail the bring-up");
+        };
+        assert!(
+            reason.contains("run must settle before more effects"),
+            "{reason}"
+        );
     }
 
     /// An owned recording refusal with a stopped up keeps the original stop
@@ -795,10 +791,10 @@ mod tests {
             &Err(NotReady::Stopped(StopCause::OwnerLost)),
         );
         assert_eq!(discharges, 1);
-        match outcome {
-            NotReady::Stopped(StopCause::OwnerLost) => {}
-            other => panic!("expected Stopped(OwnerLost), got {other:?}"),
-        }
+        assert!(
+            matches!(outcome, NotReady::Stopped(StopCause::OwnerLost)),
+            "expected the stopped up's original OwnerLost cause"
+        );
     }
 
     /// A borrowed environment owes no stop: a recording refusal propagates
@@ -816,10 +812,10 @@ mod tests {
             &Ok(0),
         );
         assert_eq!(discharges, 0, "a borrowed environment is never stopped");
-        match outcome {
-            NotReady::Failed(reason) => assert_eq!(reason, "environment receipt: refused"),
-            other => panic!("expected Failed, got {other:?}"),
-        }
+        let NotReady::Failed(reason) = outcome else {
+            panic!("expected the recording failure to propagate untouched");
+        };
+        assert_eq!(reason, "environment receipt: refused");
     }
 
     /// A discharge that cannot prove the stop surfaces the journal refusal
@@ -832,13 +828,11 @@ mod tests {
             NotReady::Failed("environment intent: run must settle".to_owned()),
             &Ok(0),
         );
-        match outcome {
-            NotReady::Failed(reason) => {
-                assert!(reason.contains("run must settle"), "{reason}");
-                assert!(reason.contains("was not brought down"), "{reason}");
-            }
-            other => panic!("expected Failed, got {other:?}"),
-        }
+        let NotReady::Failed(reason) = outcome else {
+            panic!("expected a failed discharge to fail the bring-up");
+        };
+        assert!(reason.contains("run must settle"), "{reason}");
+        assert!(reason.contains("was not brought down"), "{reason}");
     }
 
     /// An up-stop observation that cannot prove the transition ended refuses
@@ -854,10 +848,9 @@ mod tests {
         ));
         let exit = proven.expect("proven exit");
         assert_eq!(exit, 143);
-        let unobserved =
-            proven_up_stop_exit(&Observed::Unknown(
-                effigy_kernel::observe::UnknownReason::Injected,
-            ));
+        let unobserved = proven_up_stop_exit(&Observed::Unknown(
+            effigy_kernel::observe::UnknownReason::Injected,
+        ));
         let reason = unobserved.expect_err("an unknown observation refuses");
         assert!(reason.contains("could not be observed"), "{reason}");
         let absent = proven_up_stop_exit(&Observed::Absent(

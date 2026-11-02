@@ -179,13 +179,7 @@ pub(super) fn wait_for_path_exists(path: &Path, timeout: Duration, label: &str) 
 /// process's environment, so an ambient-sensitive fixture strips the
 /// families for its own duration instead of passing them to Effigy.
 pub(super) fn strip_ambient_agent_environment() -> EnvGuard {
-    const FAMILIES: [&str; 5] = [
-        "CARGO_",
-        "NEXTEST_",
-        "CLAUDE_CODE_",
-        "PI_",
-        "PASEO_",
-    ];
+    const FAMILIES: [&str; 5] = ["CARGO_", "NEXTEST_", "CLAUDE_CODE_", "PI_", "PASEO_"];
     const EXACT: [&str; 8] = [
         "AI_AGENT",
         "CLAUDECODE",
