@@ -245,14 +245,14 @@ mod tests {
         }
     }
 
+    /// The runtime-resolution summary section appears only when the report
+    /// carries runtime diagnostics or root warnings — never for a plain root
+    /// trace alone.
     #[test]
-    fn root_resolution_summary_stays_hidden_for_plain_root_trace_only() {
+    fn root_resolution_summary_visibility_follows_runtime_details() {
         let report = stub_report(vec!["resolved from current working directory"], vec![]);
         assert!(!report_has_runtime_resolution_details(&report));
-    }
 
-    #[test]
-    fn root_resolution_summary_shows_for_runtime_diagnostics() {
         let report = stub_report(
             vec![
                 "resolved from current working directory",
@@ -261,10 +261,7 @@ mod tests {
             vec![],
         );
         assert!(report_has_runtime_resolution_details(&report));
-    }
 
-    #[test]
-    fn root_resolution_summary_shows_for_warnings() {
         let report = stub_report(
             vec!["resolved from current working directory"],
             vec!["warning"],

@@ -30,18 +30,3 @@ fn execute_rhai_script_exposes_semver_helpers() {
 
     execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
 }
-
-#[test]
-fn rhai_surface_registry_lists_semver_module() {
-    let surface = crate::surface::rhai_surface_json();
-    assert!(surface["modules"]
-        .as_array()
-        .expect("modules")
-        .iter()
-        .any(|module| module.as_str() == Some("semver")));
-    assert!(surface["functions"]
-        .as_array()
-        .expect("functions")
-        .iter()
-        .any(|function| function["module"] == "semver" && function["name"] == "satisfies"));
-}

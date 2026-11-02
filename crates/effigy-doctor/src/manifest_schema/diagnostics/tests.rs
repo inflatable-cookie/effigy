@@ -20,8 +20,11 @@ impl FindingSink for TestSink {
     }
 }
 
+/// The three schema-diagnostic message contracts: a non-table root document,
+/// an unsupported key and an unsupported value each name the manifest path and
+/// carry their stable remediation.
 #[test]
-fn unsupported_manifest_root_finding_message_is_stable() {
+fn unsupported_schema_finding_messages_are_stable() {
     let mut sink = TestSink::default();
     let mut context = SchemaContext::new(Path::new("/tmp/effigy.toml"), &mut sink);
 
@@ -36,10 +39,7 @@ fn unsupported_manifest_root_finding_message_is_stable() {
         "/tmp/effigy.toml root document must be a TOML table"
     );
     assert_eq!(finding.remediation, remediation::SCHEMA_TABLE_ROOT_REQUIRED);
-}
 
-#[test]
-fn unsupported_key_finding_message_is_stable() {
     let mut sink = TestSink::default();
     let mut context = SchemaContext::new(Path::new("/tmp/effigy.toml"), &mut sink);
 
@@ -57,10 +57,7 @@ fn unsupported_key_finding_message_is_stable() {
         finding.remediation,
         remediation::SCHEMA_REMOVE_UNSUPPORTED_KEYS
     );
-}
 
-#[test]
-fn unsupported_value_finding_message_is_stable() {
     let mut sink = TestSink::default();
     let mut context = SchemaContext::new(Path::new("/tmp/effigy.toml"), &mut sink);
 

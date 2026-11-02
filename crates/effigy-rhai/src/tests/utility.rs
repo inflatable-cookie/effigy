@@ -21,23 +21,6 @@ fn execute_rhai_script_exposes_fs_sha256_and_file_size_helpers() {
 }
 
 #[test]
-fn execute_rhai_script_can_stream_process_output() {
-    let root = temp_root("stream-process");
-    let context = ScriptContext {
-        cwd: root.clone(),
-        repo_root: root,
-        task_name: "demo".to_owned(),
-        stop_requested: install_stop_requested_flag().expect("stop flag"),
-    };
-    let script = r#"
-            let streamed = process::stream("sh", ["-lc", "printf stream-ok"]);
-            if !streamed["success"] { throw("stream"); }
-        "#;
-
-    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
-}
-
-#[test]
 fn execute_rhai_script_can_tee_process_output_and_capture() {
     let root = temp_root("tee-process");
     let context = ScriptContext {
@@ -68,6 +51,10 @@ fn execute_rhai_script_process_helpers_accept_cwd_and_env_options() {
         stop_requested: install_stop_requested_flag().expect("stop flag"),
     };
     let script = r#"
+            // A plain call with no options object uses the same execution path.
+            let plain = process::stream("sh", ["-lc", "printf stream-ok"]);
+            if !plain["success"] { throw("plain stream"); }
+
             let buffered = process::run(
                 "cat",
                 [],
@@ -120,7 +107,7 @@ fn execute_rhai_script_exposes_low_level_string_and_file_helpers() {
     fs::write(root.join("replace.txt"), "host=example.test\nmode=dev\n").expect("replace");
     fs::write(
         root.join("app.env"),
-        "# comment\nHOST=example.test\nexport MODE=dev\n",
+        "# comment\nHOST=example.test\nexport MODE=dev\nPORT=5432\n",
     )
     .expect("env file");
     let context = ScriptContext {
@@ -136,6 +123,10 @@ fn execute_rhai_script_exposes_low_level_string_and_file_helpers() {
             if str::replace("alpha beta", "beta", "gamma") != "alpha gamma" { throw("replace"); }
             if path::parent("nested/copied.txt") != "nested" { throw("path parent"); }
             if path::parent("source.txt") != "" { throw("path parent empty"); }
+            if path::join("a", "b") != "a/b" { throw("path join"); }
+
+            let parsed = json::parse("{\"ok\":true}");
+            if parsed["ok"] != true { throw("json parse"); }
 
             let inline = str::split_lines("one\ntwo\n");
             if inline.len() != 2 || inline[0] != "one" || inline[1] != "two" { throw("split"); }
@@ -156,6 +147,10 @@ fn execute_rhai_script_exposes_low_level_string_and_file_helpers() {
 
             if !fs::replace_in_file("replace.txt", "example.test", "local.test") { throw("replace in file"); }
             if fs::replace_in_file("replace.txt", "missing", "value") { throw("replace absent"); }
+
+            let env_map = fs::env_file_map("app.env");
+            if env_map["HOST"] != "example.test" || env_map["MODE"] != "dev" { throw("env map"); }
+            if str::parse_int(env_map["PORT"]) != 5432 { throw("parse int"); }
 
             if fs::env_file_get("app.env", "HOST") != "example.test" { throw("env get host"); }
             if fs::env_file_get("app.env", "MISSING") != "" { throw("env get missing"); }
@@ -188,7 +183,7 @@ fn execute_rhai_script_exposes_low_level_string_and_file_helpers() {
     );
     assert_eq!(
         fs::read_to_string(context.cwd.join("app.env")).expect("read env file"),
-        "# comment\nHOST=local.test\nAPP_NAME=\"Cumberland Local\"\n"
+        "# comment\nHOST=local.test\nPORT=5432\nAPP_NAME=\"Cumberland Local\"\n"
     );
 }
 
@@ -213,9 +208,11 @@ fn execute_rhai_script_exposes_shell_quote_string_helper() {
     execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
 }
 
+/// Both random helpers: a fresh RSA key pair and non-repeating base64 in one
+/// engine run (key generation is the expensive part).
 #[test]
-fn execute_rhai_script_exposes_generate_jwt_env_keys_helper() {
-    let root = temp_root("generate-jwt-env-keys");
+fn execute_rhai_script_exposes_random_helpers() {
+    let root = temp_root("random-helpers");
     let context = ScriptContext {
         cwd: root.clone(),
         repo_root: root,
@@ -228,21 +225,7 @@ fn execute_rhai_script_exposes_generate_jwt_env_keys_helper() {
             let public_key = str::trim(jwt["public_key"]);
             if private_key == "" { throw("missing private_key"); }
             if public_key == "" { throw("missing public_key"); }
-        "#;
 
-    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
-}
-
-#[test]
-fn execute_rhai_script_exposes_generate_random_base64_helper() {
-    let root = temp_root("generate-random-base64");
-    let context = ScriptContext {
-        cwd: root.clone(),
-        repo_root: root,
-        task_name: "demo".to_owned(),
-        stop_requested: install_stop_requested_flag().expect("stop flag"),
-    };
-    let script = r#"
             let secret = random::base64(32);
             if str::trim(secret) == "" { throw("missing random secret"); }
             if random::base64(32) == secret { throw("random secret repeated"); }
@@ -317,21 +300,27 @@ fn execute_rhai_script_allows_explicit_effigy_binary_paths() {
     .expect("explicit binary path should be allowed");
 }
 
+/// One loopback server serves all three `http::` helper forms in sequence:
+/// `request` (success envelope), `download` (file write) and `capture`
+/// (failure status captured to a file).
 #[test]
-fn execute_rhai_script_can_make_http_requests() {
+fn execute_rhai_script_http_helpers_request_download_and_capture() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
+    let responses: Vec<&[u8]> = vec![
+        b"HTTP/1.1 201 Created\r\nContent-Type: text/plain\r\nContent-Length: 7\r\n\r\ncreated",
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\nseed-env",
+        b"HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nforced boom",
+    ];
     let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept");
-        let mut buffer = [0; 1024];
-        let _ = stream.read(&mut buffer).expect("read request");
-        stream
-            .write_all(
-                b"HTTP/1.1 201 Created\r\nContent-Type: text/plain\r\nContent-Length: 7\r\n\r\ncreated",
-            )
-            .expect("write response");
+        for response in responses {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buffer = [0; 1024];
+            let _ = stream.read(&mut buffer).expect("read request");
+            stream.write_all(response).expect("write response");
+        }
     });
-    let root = temp_root("http-request");
+    let root = temp_root("http-helpers");
     let context = ScriptContext {
         cwd: root.clone(),
         repo_root: root,
@@ -341,44 +330,21 @@ fn execute_rhai_script_can_make_http_requests() {
     let script = format!(
         r#"
             let response = http::request("POST", "http://{addr}/smoke", #{{ body: "ping" }});
-            if response["status"] != 201 {{ throw("status"); }}
-            if response["body"] != "created" {{ throw("body"); }}
-            if response["success"] != true {{ throw("success"); }}
-        "#
-    );
+            if response["status"] != 201 {{ throw("request status"); }}
+            if response["body"] != "created" {{ throw("request body"); }}
+            if response["success"] != true {{ throw("request success"); }}
 
-    execute_rhai_script(&context, &script, &[], &callbacks()).expect("execute");
-    server.join().expect("server");
-}
+            let download = http::download("http://{addr}/file", "downloads/template.env");
+            if download["status"] != 200 {{ throw("download status"); }}
+            if download["success"] != true {{ throw("download success"); }}
+            if download["size"] != 8 {{ throw("download size"); }}
+            if path::file_name(download["path"].to_string()) != "template.env" {{ throw("download path"); }}
 
-#[test]
-fn execute_rhai_script_can_download_http_responses_to_a_file() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept");
-        let mut buffer = [0; 1024];
-        let _ = stream.read(&mut buffer).expect("read request");
-        stream
-            .write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\nseed-env",
-            )
-            .expect("write response");
-    });
-    let root = temp_root("http-download");
-    let context = ScriptContext {
-        cwd: root.clone(),
-        repo_root: root,
-        task_name: "demo".to_owned(),
-        stop_requested: install_stop_requested_flag().expect("stop flag"),
-    };
-    let script = format!(
-        r#"
-            let response = http::download("http://{addr}/file", "downloads/template.env");
-            if response["status"] != 200 {{ throw("status"); }}
-            if response["success"] != true {{ throw("success"); }}
-            if response["size"] != 8 {{ throw("size"); }}
-            if path::file_name(response["path"].to_string()) != "template.env" {{ throw("path"); }}
+            let captured = http::capture("POST", "http://{addr}/smoke", "tmp/response.txt", #{{}});
+            if captured["status"] != 500 {{ throw("capture status"); }}
+            if captured["success"] != false {{ throw("capture success"); }}
+            if captured["body"] != "forced boom" {{ throw("capture body"); }}
+            if fs::read_file("tmp/response.txt") != "forced boom" {{ throw("capture file"); }}
         "#
     );
 
@@ -442,29 +408,6 @@ fn execute_rhai_script_can_create_temp_files_and_list_recursive_files() {
 }
 
 #[test]
-fn execute_rhai_script_can_return_env_file_maps_and_parse_ints() {
-    let root = temp_root("env-map-parse-int");
-    fs::write(
-        root.join("app.env"),
-        "DATABASE_URL=postgres://local\nPORT=5432\n",
-    )
-    .expect("env");
-    let context = ScriptContext {
-        cwd: root.clone(),
-        repo_root: root,
-        task_name: "demo".to_owned(),
-        stop_requested: install_stop_requested_flag().expect("stop flag"),
-    };
-    let script = r#"
-            let env_map = fs::env_file_map("app.env");
-            if env_map["DATABASE_URL"] != "postgres://local" { throw("database url"); }
-            if str::parse_int(env_map["PORT"]) != 5432 { throw("port"); }
-        "#;
-
-    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
-}
-
-#[test]
 fn execute_rhai_script_can_search_files_without_rg() {
     let root = temp_root("search-files");
     let routes = root.join("routes");
@@ -489,27 +432,6 @@ fn execute_rhai_script_can_search_files_without_rg() {
             let matches = search::files("routes", "StatusCode::BAD_REQUEST", #{ glob: "*.rs", literal: true });
             if matches["count"] != 1 { throw("count"); }
             if matches["matches"][0]["line"] != 1 { throw("line"); }
-        "#;
-
-    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
-}
-
-#[test]
-fn execute_rhai_script_can_match_replace_and_escape_regex() {
-    let root = temp_root("regex-surface");
-    let context = ScriptContext {
-        cwd: root.clone(),
-        repo_root: root,
-        task_name: "demo".to_owned(),
-        stop_requested: install_stop_requested_flag().expect("stop flag"),
-    };
-    let script = r#"
-            if !regex::is_match("^src/runner/.+\\.rs$", "src/runner/demo.rs") { throw("match"); }
-            if regex::is_match("^src/runner/.+\\.rs$", "docs/demo.md") { throw("negative"); }
-            let replaced = regex::replace("[0-9]+", "version-123", "456");
-            if replaced != "version-456" { throw("replace"); }
-            let escaped = regex::escape("a+b");
-            if escaped != "a\\+b" { throw("escape"); }
         "#;
 
     execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
@@ -566,6 +488,9 @@ fn regex_surface_catalog_matches_live_host_argument_order() {
 
             if !regex::is_match("^v[0-9]+$", "v12") { throw("is_match pattern-first"); }
             if regex::is_match("v12", "^v[0-9]+$") { throw("is_match value-first must not match"); }
+            if !regex::is_match("^src/runner/.+\\.rs$", "src/runner/demo.rs") { throw("is_match dot pattern"); }
+            if regex::is_match("^src/runner/.+\\.rs$", "docs/demo.md") { throw("is_match negative"); }
+            if regex::escape("a+b") != "a\\+b" { throw("escape"); }
 
             let captures = regex::captures("(?<n>[0-9]+)", "id-9");
             if !captures["matched"] || captures["named"]["n"] != "9" { throw("captures pattern-first"); }
@@ -686,56 +611,6 @@ fn execute_rhai_script_can_parse_urls_and_mysql_dsns() {
         "#;
 
     execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
-}
-
-#[test]
-fn execute_rhai_script_can_capture_http_status_and_body_to_file() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept");
-        let mut buffer = [0; 1024];
-        let _ = stream.read(&mut buffer).expect("read request");
-        stream
-            .write_all(
-                b"HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nforced boom",
-            )
-            .expect("write response");
-    });
-    let root = temp_root("http-capture");
-    let context = ScriptContext {
-        cwd: root.clone(),
-        repo_root: root,
-        task_name: "demo".to_owned(),
-        stop_requested: install_stop_requested_flag().expect("stop flag"),
-    };
-    let script = format!(
-        r#"
-            let response = http::capture("POST", "http://{addr}/smoke", "tmp/response.txt", #{{}});
-            if response["status"] != 500 {{ throw("status"); }}
-            if response["success"] != false {{ throw("success"); }}
-            if response["body"] != "forced boom" {{ throw("body"); }}
-            if fs::read_file("tmp/response.txt") != "forced boom" {{ throw("file"); }}
-        "#
-    );
-
-    execute_rhai_script(&context, &script, &[], &callbacks()).expect("execute");
-    server.join().expect("server");
-}
-
-fn staged_payload_leftovers(root: &Path) -> Vec<PathBuf> {
-    let mut leftovers = Vec::new();
-    for entry in walkdir::WalkDir::new(root) {
-        let entry = entry.expect("walk staged payloads");
-        if entry
-            .file_name()
-            .to_string_lossy()
-            .contains(".effigy-publish-")
-        {
-            leftovers.push(entry.path().to_path_buf());
-        }
-    }
-    leftovers
 }
 
 #[test]

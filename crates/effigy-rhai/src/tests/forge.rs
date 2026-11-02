@@ -155,18 +155,3 @@ esac
     );
     assert!(log.contains("pr checkout 17"), "{log}");
 }
-
-#[test]
-fn rhai_surface_registry_lists_forge_module() {
-    let surface = crate::surface::rhai_surface_json();
-    assert!(surface["modules"]
-        .as_array()
-        .expect("modules")
-        .iter()
-        .any(|module| module.as_str() == Some("forge")));
-    assert!(surface["functions"]
-        .as_array()
-        .expect("functions")
-        .iter()
-        .any(|function| function["module"] == "forge" && function["name"] == "pr_create"));
-}

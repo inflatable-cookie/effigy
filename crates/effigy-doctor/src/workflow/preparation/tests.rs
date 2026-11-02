@@ -11,13 +11,17 @@ fn empty_manifest_snapshot() -> ManifestSnapshot {
     }
 }
 
+/// The three fix branches of `prepare_manifest_snapshot_with`: with fix
+/// disabled it collects exactly once and never applies fixes; with fix enabled
+/// it collects twice and applies fixes once between the collects; and a
+/// recollect failure bubbles up instead of being swallowed.
 #[test]
-fn prepare_manifest_snapshot_collects_once_when_fix_is_disabled() {
-    let mut state = DoctorState::new();
+fn prepare_manifest_snapshot_collect_recollect_and_apply_follow_the_fix_flag() {
     let resolved_root = Path::new("/tmp/doctor-workspace");
+
+    let mut state = DoctorState::new();
     let mut collect_count = 0usize;
     let mut apply_count = 0usize;
-
     let manifest = prepare_manifest_snapshot_with(
         resolved_root,
         false,
@@ -31,19 +35,13 @@ fn prepare_manifest_snapshot_collects_once_when_fix_is_disabled() {
         },
     )
     .expect("fix disabled branch");
-
     assert_eq!(collect_count, 1);
     assert_eq!(apply_count, 0);
     assert!(!manifest.parse_ok_any);
-}
 
-#[test]
-fn prepare_manifest_snapshot_recollects_once_when_fix_is_enabled() {
     let mut state = DoctorState::new();
-    let resolved_root = Path::new("/tmp/doctor-workspace");
     let mut collect_count = 0usize;
     let mut apply_count = 0usize;
-
     let manifest = prepare_manifest_snapshot_with(
         resolved_root,
         true,
@@ -65,18 +63,12 @@ fn prepare_manifest_snapshot_recollects_once_when_fix_is_enabled() {
         },
     )
     .expect("fix enabled branch");
-
     assert_eq!(collect_count, 2);
     assert_eq!(apply_count, 1);
     assert!(manifest.parse_ok_any);
-}
 
-#[test]
-fn prepare_manifest_snapshot_propagates_recollect_error_when_fix_is_enabled() {
     let mut state = DoctorState::new();
-    let resolved_root = Path::new("/tmp/doctor-workspace");
     let mut collect_count = 0usize;
-
     let result = prepare_manifest_snapshot_with(
         resolved_root,
         true,
@@ -92,7 +84,6 @@ fn prepare_manifest_snapshot_propagates_recollect_error_when_fix_is_enabled() {
         },
         |_, _, _| {},
     );
-
     let err = match result {
         Err(err) => err,
         Ok(_) => panic!("recollect error should bubble up"),

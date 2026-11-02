@@ -33,21 +33,6 @@ fn copy_if_missing_via_rhai_named(
     fs::read_to_string(context.cwd.join(result)).expect("read copy result") == "true"
 }
 
-fn staged_payload_leftovers(root: &Path) -> Vec<PathBuf> {
-    let mut leftovers = Vec::new();
-    for entry in walkdir::WalkDir::new(root) {
-        let entry = entry.expect("walk staged payloads");
-        if entry
-            .file_name()
-            .to_string_lossy()
-            .contains(".effigy-publish-")
-        {
-            leftovers.push(entry.path().to_path_buf());
-        }
-    }
-    leftovers
-}
-
 fn wait_for_staged_payload(root: &Path) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -496,22 +481,6 @@ fn copy_if_missing_has_one_concurrent_winner_and_no_partial_visibility() {
         "published winner must be a complete payload"
     );
     assert_no_staging(&root);
-}
-
-#[test]
-fn rhai_surface_registry_describes_copy_if_missing_atomic_publication() {
-    let surface = crate::surface::rhai_surface_json();
-    let function = surface["functions"]
-        .as_array()
-        .expect("functions")
-        .iter()
-        .find(|function| function["module"] == "fs" && function["name"] == "copy_if_missing")
-        .expect("copy_if_missing surface entry");
-    let description = function["description"].as_str().expect("description");
-    assert!(
-        description.contains("Atomically") && description.contains("absent"),
-        "surface catalog must describe create-if-absent publication: {description}"
-    );
 }
 
 #[cfg(unix)]

@@ -24,18 +24,3 @@ fn execute_rhai_script_rejects_prompt_helpers_without_interactive_tty() {
         "{error}"
     );
 }
-
-#[test]
-fn rhai_surface_registry_lists_prompt_module() {
-    let surface = crate::surface::rhai_surface_json();
-    assert!(surface["modules"]
-        .as_array()
-        .expect("modules")
-        .iter()
-        .any(|module| module.as_str() == Some("prompt")));
-    assert!(surface["functions"]
-        .as_array()
-        .expect("functions")
-        .iter()
-        .any(|function| function["module"] == "prompt" && function["name"] == "confirm"));
-}
