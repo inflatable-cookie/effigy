@@ -93,6 +93,65 @@ distinguish success from foreign removal or substitution, it remains Unknown.
 The protocol must specify directory and journal sync semantics on each
 supported platform before enabling cleanup there.
 
+## Proposed kernel handoff and binding for review
+
+The current checkout backup uses a pipe-only `MemoryGuard`; its Register frame
+carries an effect receipt but cannot transfer an open file description. The
+current `SpawnGate` sees a process receipt before `go`, but the process core is
+installed only after that callback. Neither interface by itself transfers the
+interpolation file descriptor, lock, parent descriptor and cleanup phase into
+custody. A new implementation must not interpret either acknowledgement as
+proof of that handoff.
+
+One candidate is a versioned Unix-domain control channel for the checkout
+backup, established during verified helper startup, with `SCM_RIGHTS` transfer
+of the exact locked file and verified directory descriptors. A registration
+frame names the run ID, owner fence, process effect sequence, process receipt
+(including nonce and generation-qualified leader and anchor), invocation ID,
+file and directory identities, original name, and a unique request number.
+The helper checks both descriptors, access modes, file type and ownership,
+lock assumptions, identities, allowed single-component names and its existing
+run/fence identity before acknowledging that exact request. Descriptor count,
+truncation, extra ancillary messages, peer identity, malformed frames and old
+helper versions all fail closed. No `go` may be sent unless the durable binding
+and the exact helper's receipt are both verified, and the actual live owner has
+moved into the corresponding process core. A failed or response-lost transfer
+retains the same pending owner and descriptors; a retry reconciles the request
+number and actual helper state, never sends a new file as a replacement. A
+helper incapable of this protocol refuses before the child can execute.
+
+The proposed versioned binding is a kernel-owned effect record, not a generic
+adapter receipt: it associates one invocation ID and attempt ID with the Run
+ID/fence and the exact process effect sequence, recorded group receipt and
+anchor, the verified parent and file stat identities, original name, optional
+quarantine name, and cleanup phase. File and directory stat matches are
+necessary checks, not closure authority. The schema must reject unknown
+versions, duplicate or conflicting bindings, missing identity fields, unsafe
+components and any binding that does not refer to its own process effect. An
+older helper must refuse the versioned record rather than ignore its binding.
+No secret values, file bytes or file descriptors are serialized.
+
+Persist and sync the binding and file before registering custody and opening
+the spawn barrier. Cleanup starts only from the kernel's verified closure for
+that exact process effect: acquire the directory lock, persist and sync intent
+including the chosen quarantine name, and finish that transaction before
+filesystem operations. Still holding the directory lock, perform no-replace
+rename, check the moved inode and unlink only a match; sync the directory
+before recording and syncing completion in a separate transaction. The Run and helper retain the exact live owner across an
+Unknown or lost reply. After owner death the helper reconciles the durable
+binding and actual entries under the same lock. If it cannot establish both
+identity and closure, or if an unlink succeeded but its completion cannot be
+proven, the result is Unknown and the evidence remains for later review. No
+missing name, free file lock, absent process or reused PID is a completion
+receipt. Unbound and legacy files remain notice-only.
+
+This candidate requires independent review of descriptor-channel authentication,
+helper-version compatibility, journal schema, sync ordering, owner-death and
+lost-response transitions, and resource ownership before any production use.
+It does not yet identify a macOS directory-entry durability guarantee or grant
+permission to enable recovery there. The implementation must prove each state
+transition and refuse any route where the exact owner cannot be transferred.
+
 ## Platform durability evidence still needed
 
 Linux documents that syncing the file alone does not sync its directory entry:
