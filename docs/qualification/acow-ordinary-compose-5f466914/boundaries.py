@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Committed refusal-boundary battery for the Acow ordinary-Compose packet.
 
-Queue task effigy#540. This is the only file the installed-Effigy selector
-`test:qualification:acow` executes. It runs the packet's fail-closed
+Queue task effigy#540 (amended by effigy#543: the battery proves the
+selected-current-head consumer qualification and the approved bundle
+source-identity transition). This is the only file the installed-Effigy
+selector `test:qualification:acow` executes. It runs the packet's fail-closed
 boundaries against fake backends and disposable fixture metadata under
 /Volumes/Builds/scratch/effigy/540/ — no real runtime call, no consumer
 stack, no vault read, no warm-up, no build/install, no native probe ever
@@ -20,22 +22,40 @@ import common  # noqa: E402
 import primary  # noqa: E402
 import warmup  # noqa: E402
 from common import (  # noqa: E402
-    BUNDLE_LOCK_COMMIT, CANDIDATE_BINARY_SHA256, CANDIDATE_VERSION_MARKER,
+    BUNDLE_DECLARATION, BUNDLE_PRE_DIGEST, BUNDLE_PRE_REVISION,
+    BUNDLE_TARGET_DIGEST, BUNDLE_TARGET_REVISION_PREFIX,
+    CANDIDATE_BINARY_SHA256, CANDIDATE_VERSION_MARKER,
     EXPECTED_PRIMARY_COUNTS, GO_PRIMARY_TOKENS, GO_WARMUP_TOKENS,
-    QUEUE_SHAPE_TOTAL_LEN, Refused, assert_no_scoped_containers,
-    assert_no_warmup_scope, assert_packet_dir, capture_inventory,
-    container_state, ensure_owned_dir, exact_ps_ids, judge_teardown_inventory,
-    label_length_only, parse_network_rows, parse_volume_names,
-    queue_shape_components, read_owner_marker, require_mariadb_unchanged,
-    scoped_container_map, session_identity, validate_attach_record,
-    verify_539_receipt, verify_bundle_lock, verify_consumer_pins,
-    verify_go_receipt, verify_installed_identity, verify_packet_bundle,
-    volume_mount_identity, write_owner_marker,
+    MANIFEST_INCLUDES, QUEUE_SHAPE_TOTAL_LEN, RELEVANT_INPUT_BLOBS, Refused,
+    assert_no_scoped_containers, assert_no_warmup_scope, assert_packet_dir,
+    capture_inventory, classify_bundle_state, container_state,
+    ensure_owned_dir, exact_ps_ids, judge_teardown_inventory,
+    label_length_only, parse_bundle_pin, parse_manifest_includes,
+    parse_network_rows, parse_volume_names, queue_shape_components,
+    read_owner_marker, require_mariadb_unchanged, scoped_container_map,
+    session_identity, validate_attach_record, verify_539_receipt,
+    verify_bundle_transition_after, verify_bundle_transition_before,
+    verify_consumer_pins, verify_go_receipt, verify_installed_identity,
+    verify_packet_bundle, volume_mount_identity, write_owner_marker,
 )
 from primary import compare_counts, observation_plan  # noqa: E402
 
 PASS = []
 FAIL = []
+
+
+class FakeConsole:
+    """A console sink that keeps nothing (boundary tests only)."""
+
+    def write(self, data):
+        pass
+
+    def flush(self):
+        pass
+
+    def close(self):
+        pass
+
 
 
 def check(name, fn):
@@ -724,37 +744,211 @@ def t_dir_guard(tmp):
     expect_refused(lambda: assert_packet_dir(tmp), 'packet directory')
 
 
-# --- bundle lock ------------------------------------------------------------
+# --- bundle source-identity transition -------------------------------------
 
-def t_bundle_lock(tmp):
-    def ok():
-        return {'source': {'source_type': 'git',
-                           'source_path': common.BUNDLE_SOURCE,
-                           'version_hint': BUNDLE_LOCK_COMMIT, 'stale': True}}
-
-    rec = verify_bundle_lock(ok)
-    assert rec['lock'] == BUNDLE_LOCK_COMMIT
-
-    def moved():
-        return {'source': {'source_type': 'git', 'source_path': common.BUNDLE_SOURCE,
-                           'version_hint': 'f' * 40, 'stale': True}}
-
-    expect_refused(lambda: verify_bundle_lock(moved), 're-pin')
-
-    def other_url():
-        return {'source': {'source_type': 'git', 'source_path': 'git@example.com:x.git',
-                           'version_hint': BUNDLE_LOCK_COMMIT, 'stale': False}}
-
-    expect_refused(lambda: verify_bundle_lock(other_url), 'source identity')
-
-    def no_stale():
-        return {'source': {'source_type': 'git', 'source_path': common.BUNDLE_SOURCE,
-                           'version_hint': BUNDLE_LOCK_COMMIT}}
-
-    expect_refused(lambda: verify_bundle_lock(no_stale), 'stale flag')
+TARGET_FULL = BUNDLE_TARGET_REVISION_PREFIX + 'c' * 33
 
 
-# --- consumer pins (fake git backend) ---------------------------------------
+def bundle_pin(revision=BUNDLE_PRE_REVISION, digest=BUNDLE_PRE_DIGEST,
+               declaration=None, version=None,
+               object_='cache/sources/aaaaaaaaacfwlxw6dli6apgpfy/'
+                       '1e6ed65d77d6364eeaed5a745ba5c4985ae2b700dd85d7cf7f027bdf294a33fc'):
+    pin = {'declaration': declaration if declaration is not None else BUNDLE_DECLARATION,
+           'object': object_, 'version': version if version is not None else digest}
+    if revision is not None:
+        pin['revision'] = revision
+    return pin
+
+
+def inspect_result(hint, stale=True, source_type='git', source_path=None):
+    return {'ok': True, 'schema': 'effigy.bundle.inspect.v1',
+            'source': {'source_type': source_type,
+                       'source_path': source_path or common.BUNDLE_SOURCE,
+                       'version_hint': hint, 'stale': stale}}
+
+
+def lock_file(tmp, name, pin):
+    return tmpfile(tmp, name, json.dumps(
+        {'version': 1, 'sources': {'bundle': pin}}) + '\n')
+
+
+def t_bundle_pre_pending(tmp):
+    p = lock_file(tmp, 'lock.json', bundle_pin())
+    state = verify_bundle_transition_before(
+        lambda: inspect_result(BUNDLE_PRE_REVISION, stale=True), p)
+    assert state['mode'] == 'approved-transition-pending'
+    assert state['revision'] == BUNDLE_PRE_REVISION
+    assert state['digest'] == BUNDLE_PRE_DIGEST
+    assert state['stale'] is True  # the approved transition ahead is exactly this staleness
+
+
+def t_bundle_pre_at_target(tmp):
+    p = lock_file(tmp, 'lock.json', bundle_pin(revision=TARGET_FULL, digest=BUNDLE_TARGET_DIGEST))
+    state = verify_bundle_transition_before(
+        lambda: inspect_result(TARGET_FULL, stale=False), p)
+    assert state['mode'] == 'already-at-approved-target'
+
+
+def t_bundle_pre_moved(tmp):
+    p = lock_file(tmp, 'lock.json', bundle_pin(revision='f' * 40))
+    expect_refused(lambda: verify_bundle_transition_before(
+        lambda: inspect_result('f' * 40), p), 're-pin')
+
+
+def t_bundle_pre_digest_drift(tmp):
+    p = lock_file(tmp, 'lock.json', bundle_pin(digest='sha256:' + 'd' * 64))
+    expect_refused(lambda: verify_bundle_transition_before(
+        lambda: inspect_result(BUNDLE_PRE_REVISION), p), 're-pin')
+
+
+def t_bundle_hint_pin_disagreement(tmp):
+    p = lock_file(tmp, 'lock.json', bundle_pin())
+    expect_refused(lambda: verify_bundle_transition_before(
+        lambda: inspect_result('e' * 40), p), 'disagrees')
+
+
+def t_bundle_untyped_identities(tmp):
+    # A named ref is not a typed revision and can never match the locked pin.
+    p = lock_file(tmp, 'lock.json', bundle_pin())
+    expect_refused(lambda: verify_bundle_transition_before(
+        lambda: inspect_result('main'), p), 'disagrees')
+    # An untyped revision inside the lock refuses at parse time.
+    p2 = lock_file(tmp, 'lock2.json', bundle_pin(revision='release-2'))
+    expect_refused(lambda: parse_bundle_pin(p2), '40-hex')
+    # A digest-shaped version_hint is not silently interchangeable with a
+    # revision: the hint must equal the pin's own typed identity.
+    p3 = lock_file(tmp, 'lock3.json', bundle_pin())
+    expect_refused(lambda: verify_bundle_transition_before(
+        lambda: inspect_result(BUNDLE_PRE_DIGEST), p3), 'disagrees')
+
+
+def t_bundle_post_ok(tmp):
+    p = lock_file(tmp, 'lock.json', bundle_pin(revision=TARGET_FULL, digest=BUNDLE_TARGET_DIGEST))
+    state = verify_bundle_transition_after(
+        lambda: inspect_result(TARGET_FULL, stale=False), p)
+    assert state['revision'] == TARGET_FULL  # full resolved revision, preserved for the receipt
+    assert state['digest'] == BUNDLE_TARGET_DIGEST
+    assert state['mode'] == 'already-at-approved-target'
+
+
+def t_bundle_post_noop(tmp):
+    # already settled at the approved target before the window: the no-op
+    # sync reaches the same approved target and passes
+    p = lock_file(tmp, 'lock.json', bundle_pin(revision=TARGET_FULL, digest=BUNDLE_TARGET_DIGEST))
+    before = verify_bundle_transition_before(lambda: inspect_result(TARGET_FULL, stale=False), p)
+    after = verify_bundle_transition_after(lambda: inspect_result(TARGET_FULL, stale=False), p)
+    assert before['mode'] == after['mode'] == 'already-at-approved-target'
+
+
+def t_bundle_post_unapproved_newer(tmp):
+    p = lock_file(tmp, 'lock.json', bundle_pin(revision=TARGET_FULL, digest='sha256:' + '9' * 64))
+    expect_refused(lambda: verify_bundle_transition_after(
+        lambda: inspect_result(TARGET_FULL, stale=False), p), 're-pin')
+
+
+def t_bundle_post_missing_revision(tmp):
+    # a digest-only post-state is not the approved target: a missing identity
+    # can never become a pass
+    p = lock_file(tmp, 'lock.json', bundle_pin(revision=None, digest=BUNDLE_TARGET_DIGEST))
+    expect_refused(lambda: verify_bundle_transition_after(
+        lambda: inspect_result(BUNDLE_TARGET_DIGEST, stale=False), p), 'unapproved identity')
+
+
+def t_bundle_post_missing_digest(tmp):
+    p = lock_file(tmp, 'lock.json', bundle_pin(version='not-a-digest'))
+    expect_refused(lambda: parse_bundle_pin(p), 'digest missing or untyped')
+
+
+def t_bundle_post_stale(tmp):
+    p = lock_file(tmp, 'lock.json', bundle_pin(revision=TARGET_FULL, digest=BUNDLE_TARGET_DIGEST))
+    expect_refused(lambda: verify_bundle_transition_after(
+        lambda: inspect_result(TARGET_FULL, stale=True), p), 'stale')
+
+
+def t_bundle_post_source_origin(tmp):
+    p = lock_file(tmp, 'lock.json', bundle_pin(revision=TARGET_FULL, digest=BUNDLE_TARGET_DIGEST))
+    expect_refused(lambda: verify_bundle_transition_after(
+        lambda: inspect_result(TARGET_FULL, stale=False,
+                               source_path='git@example.com:other.git'), p),
+        'source identity')
+    p2 = lock_file(tmp, 'lock2.json', bundle_pin(
+        revision=TARGET_FULL, digest=BUNDLE_TARGET_DIGEST,
+        declaration={'type': 'git', 'url': 'git@example.com:other.git', 'ref': None}))
+    expect_refused(lambda: verify_bundle_transition_after(
+        lambda: inspect_result(TARGET_FULL, stale=False), p2), 'declaration')
+
+
+def t_worktree_lock_before(tmp):
+    lock = tmp / common.BUNDLE_LOCK_REL
+    assert warmup.worktree_lock_before(tmp) == {'mode': 'absent', 'path': str(lock)}
+    lock.parent.mkdir(parents=True)
+    lock.write_text('{}')
+    expect_refused(lambda: warmup.worktree_lock_before(tmp), 'unexpectedly exists')
+    lock.unlink()
+    lock.symlink_to('missing')
+    expect_refused(lambda: warmup.worktree_lock_before(tmp), 'unexpectedly exists')
+
+
+def t_bundle_lock_malformed(tmp):
+    expect_refused(lambda: parse_bundle_pin(tmpfile(tmp, 'bad.json', '{nope')), 'JSON')
+    expect_refused(lambda: parse_bundle_pin(
+        tmpfile(tmp, 'v2.json', json.dumps({'version': 2, 'sources': {}}))), 'version')
+    expect_refused(lambda: parse_bundle_pin(
+        tmpfile(tmp, 'nobundle.json', json.dumps({'version': 1, 'sources': {}}))),
+        'no bundle source pin')
+    expect_refused(lambda: parse_bundle_pin(tmpfile(
+        tmp, 'escape.json',
+        json.dumps({'version': 1, 'sources': {'bundle': bundle_pin(object_='cache/sources/../evil')}}))),
+        'escapes')
+    for index, value in enumerate((None, 42)):
+        pin = bundle_pin()
+        pin['object'] = value
+        expect_refused(lambda: parse_bundle_pin(lock_file(tmp, 'bad-object-%s.json' % index, pin)), 'object')
+    expect_refused(lambda: parse_bundle_pin(tmp / 'missing-lock.json'), 'missing')
+
+
+def t_bundle_source_identity(tmp):
+    expect_refused(lambda: classify_bundle_state(
+        inspect_result(BUNDLE_PRE_REVISION, source_path='git@example.com:x.git'),
+        bundle_pin()), 'source identity')
+    expect_refused(lambda: classify_bundle_state(
+        inspect_result(BUNDLE_PRE_REVISION, source_type='path'), bundle_pin()),
+        'source identity')
+    expect_refused(lambda: classify_bundle_state({'ok': False}, bundle_pin()),
+                   'did not succeed')
+    expect_refused(lambda: classify_bundle_state(
+        {'ok': True, 'source': {'source_type': 'git',
+                                'source_path': common.BUNDLE_SOURCE,
+                                'version_hint': BUNDLE_PRE_REVISION}},
+        bundle_pin()), 'stale flag')
+
+
+def t_manifest_include_parser(tmp):
+    assert parse_manifest_includes(
+        '[manifest]\nminimum_effigy_version = "0.13.0"\ninclude = [\n%s,\n]\n'
+        % ',\n'.join('  "%s"' % p for p in MANIFEST_INCLUDES)) == MANIFEST_INCLUDES
+    reordered = list(reversed(MANIFEST_INCLUDES))
+    assert parse_manifest_includes(
+        '[manifest]\ninclude = [%s]\n'
+        % ', '.join('"%s"' % p for p in reordered)) == reordered
+    expect_refused(lambda: parse_manifest_includes('[bundle]\nbase = 1\n'), 'section')
+    expect_refused(lambda: parse_manifest_includes('[manifest]\nother = 1\n'), 'include array')
+    expect_refused(lambda: parse_manifest_includes(
+        '[manifest]\ninclude = [ # note\n "infra/x.toml"]\n'), 'unreadable')
+    expect_refused(lambda: parse_manifest_includes('[manifest]\ninclude = [""]\n'), 'unreadable')
+
+
+# --- consumer pins: selected current head (fake git backend) ----------------
+
+FAKE_HEAD = '4' * 40
+FAKE_TREE = '5' * 40
+
+
+def manifest_toml_text(includes=None):
+    inc = MANIFEST_INCLUDES if includes is None else includes
+    return '[manifest]\nminimum_effigy_version = "0.13.0"\ninclude = [\n%s,\n]\n' \
+        % ',\n'.join('  "%s"' % p for p in inc)
+
 
 def git_fake(responses):
     def git_fn(args):
@@ -766,51 +960,151 @@ def git_fake(responses):
     return git_fn
 
 
-def pins_responses(tree=None, blobs=None, status='', ancestor=0):
-    tree = tree or common.ACOW_PIN_TREE
+def pins_responses(selected=None, tree=None, blobs=None, status='', ancestor=0,
+                   anchor_tree=None, head_rc=0, show=None, show_rc=0):
+    selected = selected or FAKE_HEAD
+    tree = tree or FAKE_TREE
     responses = {
         'rev-parse ' + common.ACOW_PIN_COMMIT + '^{' + 'commit}':
             (0, common.ACOW_PIN_COMMIT + '\n'),
-        'rev-parse ' + common.ACOW_PIN_COMMIT + '^{' + 'tree}': (0, tree + '\n'),
-        'status --porcelain=v1': (0, status),
+        'rev-parse ' + common.ACOW_PIN_COMMIT + '^{' + 'tree}':
+            (0, (anchor_tree or common.ACOW_PIN_TREE) + '\n'),
+        'rev-parse HEAD': (head_rc, '' if head_rc else selected + '\n'),
+        'rev-parse HEAD^{' + 'tree}': (0, tree + '\n'),
         'merge-base --is-ancestor %s HEAD' % common.ACOW_PIN_COMMIT: (ancestor, ''),
+        'status --porcelain=v1': (0, status),
+        'show HEAD:effigy.toml':
+            (show_rc, '' if show_rc else (show if show is not None else manifest_toml_text())),
     }
-    for rel, blob in (blobs or common.PINNED_INPUT_BLOBS).items():
-        responses['rev-parse %s:%s' % (common.ACOW_PIN_COMMIT, rel)] = (0, blob + '\n')
+    for rel, blob in (blobs if blobs is not None else RELEVANT_INPUT_BLOBS).items():
+        responses['rev-parse HEAD:%s' % rel] = (0, blob + '\n')
     return responses
 
 
-def t_pins_valid(tmp):
-    rec = verify_consumer_pins(git_fake(pins_responses()),
-                               primary_path=tmp / 'fake-primary')
+def t_pins_valid_current_head(tmp):
+    rec = verify_consumer_pins(git_fake(pins_responses()), primary_path=tmp / 'fake-primary')
+    assert rec['selected_commit'] == FAKE_HEAD
+    assert rec['selected_commit'] != common.ACOW_PIN_COMMIT  # the CURRENT head, not the anchor
+    assert rec['pin_commit'] == common.ACOW_PIN_COMMIT
     assert rec['pin_tree'] == common.ACOW_PIN_TREE
+    assert sorted(rec['relevant_input_blobs']) == sorted(RELEVANT_INPUT_BLOBS)
+    assert rec['manifest_includes'] == MANIFEST_INCLUDES
+    assert rec['primary_clean'] is True
 
 
-def t_pins_tree_drift(tmp):
-    r = pins_responses(tree='e' * 40)
-    expect_refused(lambda: verify_consumer_pins(git_fake(r), primary_path=tmp / 'p'),
-                   'tree drifted')
+def t_pins_worktree_add_uses_selected_head(tmp):
+    worktree = tmp / 'wt'
+    record = {'packet_sha256': 'a' * 64,
+              'consumer_pins': {'selected_commit': FAKE_HEAD, 'selected_tree': FAKE_TREE}}
+    calls = []
+
+    def run_git(args, timeout=120, cwd=None):
+        calls.append((tuple(args), cwd))
+        if args[:3] == ['worktree', 'add', '--detach']:
+            assert args[3] == str(worktree)
+            assert args[4] == FAKE_HEAD, 'worktree add must use the SELECTED current head'
+            worktree.mkdir(parents=True)
+            class R:
+                returncode = 0
+                stdout = ''
+                stderr = ''
+            return R()
+        if args == ['rev-parse', 'HEAD']:
+            assert cwd == str(worktree)
+            class R:
+                returncode = 0
+                stdout = FAKE_HEAD + '\n'
+                stderr = ''
+            return R()
+        raise AssertionError('unexpected git effect: %r' % (args,))
+
+    state = {}
+    fake_read = git_fake(pins_responses())
+    def reader(args, **kwargs):
+        rc, out, err = fake_read(args)
+        return type('Result', (), {'returncode': rc, 'stdout': out, 'stderr': err})()
+    original = warmup.primary_git_runner
+    warmup.primary_git_runner = lambda: reader
+    try:
+        wt, ident = warmup.create_warmup_worktree(
+            record, {'path': str(worktree)}, FakeConsole(), state, run_git=run_git)
+    finally:
+        warmup.primary_git_runner = original
+    assert calls[0][0][-1] == FAKE_HEAD  # the SAME selected head in worktree add
+    assert record['activation']['worktree_head'] == FAKE_HEAD  # and in the receipt identities
+    assert record['consumer_pins_reverified']['selected_commit'] == FAKE_HEAD
+    marker = json.loads((worktree / common.WORKTREE_MARKER).read_text())
+    assert marker['selected_commit'] == FAKE_HEAD
+
+
+def t_pins_worktree_add_refuses_moved_head(tmp):
+    record = {'packet_sha256': 'a' * 64,
+              'consumer_pins': {'selected_commit': '6' * 40, 'selected_tree': FAKE_TREE}}
+
+    def run_git(args, timeout=120, cwd=None):
+        raise AssertionError('no effect may happen on a moved head')
+
+    expect_refused(lambda: warmup.create_warmup_worktree(
+        record, {'path': str(tmp / 'wt2')}, FakeConsole(), {},
+        run_git=run_git, git_fn=git_fake(pins_responses())),
+        'moved between preflight')
+
+
+def t_pins_head_unreadable(tmp):
+    expect_refused(lambda: verify_consumer_pins(
+        git_fake(pins_responses(head_rc=1)), primary_path=tmp / 'p'), 'head unreadable')
+
+
+def t_pins_anchor_tree_drift(tmp):
+    expect_refused(lambda: verify_consumer_pins(
+        git_fake(pins_responses(anchor_tree='e' * 40)), primary_path=tmp / 'p'),
+        'anchor tree drifted')
 
 
 def t_pins_dirty(tmp):
-    r = pins_responses(status=' M apps/x\n')
-    expect_refused(lambda: verify_consumer_pins(git_fake(r), primary_path=tmp / 'p'),
-                   'dirty')
+    expect_refused(lambda: verify_consumer_pins(
+        git_fake(pins_responses(status=' M apps/x\n')), primary_path=tmp / 'p'), 'dirty')
 
 
 def t_pins_not_ancestor(tmp):
-    r = pins_responses(ancestor=1)
-    expect_refused(lambda: verify_consumer_pins(git_fake(r), primary_path=tmp / 'p'),
-                   'no longer contains')
+    expect_refused(lambda: verify_consumer_pins(
+        git_fake(pins_responses(ancestor=1)), primary_path=tmp / 'p'), 'replaced')
 
 
-def t_pins_blob_drift(tmp):
-    blobs = dict(common.PINNED_INPUT_BLOBS)
-    first = sorted(blobs)[0]
-    blobs[first] = 'd' * 40
-    r = pins_responses(blobs=blobs)
-    expect_refused(lambda: verify_consumer_pins(git_fake(r), primary_path=tmp / 'p'),
-                   'blob drifted')
+def t_pins_relevant_input_drift(tmp):
+    blobs = dict(RELEVANT_INPUT_BLOBS)
+    blobs['infra/tasks.toml'] = 'd' * 40
+    expect_refused(lambda: verify_consumer_pins(
+        git_fake(pins_responses(blobs=blobs)), primary_path=tmp / 'p'),
+        'infra/tasks.toml')
+    expect_refused(lambda: verify_consumer_pins(
+        git_fake(pins_responses(blobs=blobs)), primary_path=tmp / 'p'),
+        'expected')
+
+
+def t_pins_relevant_input_missing(tmp):
+    r = pins_responses()
+    r['rev-parse HEAD:infra/bootstrap.toml'] = (1, '')
+    expect_refused(lambda: verify_consumer_pins(
+        git_fake(r), primary_path=tmp / 'p'), 'missing at the selected head')
+
+
+def t_pins_new_include_shape(tmp):
+    r = pins_responses(show=manifest_toml_text(MANIFEST_INCLUDES + ['infra/extra.toml']))
+    expect_refused(lambda: verify_consumer_pins(
+        git_fake(r), primary_path=tmp / 'p'), 'reviewed re-pin')
+
+
+def t_pins_include_reordered(tmp):
+    # include order is significant (later includes can override earlier ones)
+    r = pins_responses(show=manifest_toml_text(list(reversed(MANIFEST_INCLUDES))))
+    expect_refused(lambda: verify_consumer_pins(
+        git_fake(r), primary_path=tmp / 'p'), 'reviewed re-pin')
+
+
+def t_pins_include_unreadable(tmp):
+    expect_refused(lambda: verify_consumer_pins(
+        git_fake(pins_responses(show_rc=1)), primary_path=tmp / 'p'), 'unreadable')
 
 
 def t_pins_linked_worktree(tmp):

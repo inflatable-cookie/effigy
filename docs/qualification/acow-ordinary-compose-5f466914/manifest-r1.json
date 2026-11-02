@@ -2,6 +2,11 @@
   "schema": "effigy.qualification.acow-ordinary-compose.r1",
   "task": "effigy#540",
   "status": "prepared-not-executed",
+  "amended_by": {
+    "task": "effigy#543",
+    "date": "2026-11-02",
+    "summary": "qualifies the selected current clean head with the twelve-blob relevant-input closure and models bundle sync as the approved 61dc5aa8 -> 808adad\u2026/28c92040 transition; Acow owner cb0e6df4 message0fcb8b20"
+  },
   "routes": {
     "warmup": "python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/warmup.py",
     "primary_data": "python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/primary.py",
@@ -27,22 +32,55 @@
   },
   "consumer_inputs": {
     "primary_checkout": "/Users/tom/Dev/projects/acowtancy",
-    "pin_commit": "b7f004d74a47f702f4dc3ef5c96390f0bdbf3c0b",
-    "pin_tree": "88df708155e60deb8c8179cffd3c307a3baf5e01",
+    "selection_policy": "the clean primary main HEAD at execution is the qualified checkout (the selected head); the anchor pin below is the reviewed lineage floor, not the executed checkout; tools/docs-only drift with unchanged relevant inputs passes without a new packet review",
+    "anchor_pin_commit": "b7f004d74a47f702f4dc3ef5c96390f0bdbf3c0b",
+    "anchor_pin_tree": "88df708155e60deb8c8179cffd3c307a3baf5e01",
+    "manifest_file": "effigy.toml",
+    "manifest_includes": [
+      "infra/workspace.toml",
+      "infra/tasks.toml",
+      "infra/deploy.toml",
+      "infra/secrets.toml",
+      "infra/bootstrap.toml",
+      "state/acowtancy.state.toml"
+    ],
     "attach_task": "infra/tasks.toml:16",
     "attach_session_derivation": "wt-<sanitized-basename>-<sha256(canonical worktree path)[:8]>; compose project acowtancy-dev-<session>",
     "bundle_source": "git@github.com:inflatable-cookie/underlay-effigy-bundle.git",
-    "bundle_lock_commit": "61dc5aa8405698ea757f0ff5c481cb6d7cb92314",
-    "pinned_input_blobs": {
-      "infra/tasks.toml": "ee9c7f26b516db2fbe03baabb01a5b24944bd42b",
-      "infra/workspace.toml": "df59e9722612053be479bdf77e62cee1ac82a5ab",
+    "relevant_input_blobs": {
       "effigy.toml": "80ccc592c5a3794b9e0038657120f4ad8a5bdb0d",
+      "infra/workspace.toml": "df59e9722612053be479bdf77e62cee1ac82a5ab",
+      "infra/tasks.toml": "ee9c7f26b516db2fbe03baabb01a5b24944bd42b",
+      "infra/deploy.toml": "ffe934ee5773af4e85b022bf3613f0077df6b2d2",
+      "infra/secrets.toml": "3d6517c616715676ff11289a343a6ae9f67afeda",
+      "infra/bootstrap.toml": "e4cf85b2ddee38e63f46a9d373951a93768bf195",
+      "state/acowtancy.state.toml": "e5a6338f0801b3ca05cb6db173f07662e0d34e02",
       "scripts/tasks/worktree-container-attach.ts": "b9ed0416a26064edc22efd5433e2d7dba8884259",
       "state/schema/202608221002__baseline_auth.sql": "65ab9b783d31eaf438be2577be201929a669aa68",
       "state/schema/202608221003__baseline_learning.sql": "1f41b794afe1543a5064d4c7e85d3dcdbf9d9249",
       "state/schema/202608221010__baseline_engagement.sql": "ed887393a015b8b1fd8f93a8393a9031742d0afb",
       "state/schema/202608221011__baseline_billing.sql": "f0eae506b32555d71289807be6f9bf845c48c8b0"
-    }
+    },
+    "bundle_transition": {
+      "declaration": {
+        "type": "git",
+        "url": "git@github.com:inflatable-cookie/underlay-effigy-bundle.git",
+        "ref": null
+      },
+      "pre_state": {
+        "revision": "61dc5aa8405698ea757f0ff5c481cb6d7cb92314",
+        "digest": "sha256:e088a69e937fe03d044dac0aa95297c6e0d4ee5c14cef6a244fd6bf6daacc38e",
+        "source": "primary checkout .effigy/sources.lock.json, read-only"
+      },
+      "approved_target": {
+        "revision_prefix": "808adad",
+        "digest": "sha256:28c920404c34cc46d223b061b694903634b592f99a9f10f06f4f9f8f0058975d",
+        "digest_source": "cached known-version inventory, canonical source key fc8e886a610c4555b9b5700cb2c6af9c21348f684b8127572f1af6d2d973e215",
+        "note": "the revision is approved to the owner's short form only; the route records the full resolved revision in the activation receipt and a reviewed re-pin can tighten the prefix once known; revision and digest kinds are never equated"
+      },
+      "observed": "2026-11-02: effigy bundle inspect at the primary reports locked revision 61dc5aa8, available digest 28c92040, stale; Acow owner cb0e6df4 message0fcb8b20 approves the old->new transition"
+    },
+    "history": "anchor b7f004d74 -> 759e29ca07762ae7a79aa0b80c97ba57bd15b396 (PR1075, tools/ only) -> ee037b045c33923337e3da0d2dc7c653f2e699e0 (PR1076 merge, tools/ only) -> e0307d3c1c0bcee97c305f4f60caf3ee69966cbb (PR1077 merge, tools/ only); all twelve relevant inputs carry identical blobs at the anchor and at each observed head (verified 2026-11-02)"
   },
   "protected_state": {
     "shared_mariadb_container": "c47a64b6fc1fe688e3ce503a27704fb978580c22bd4d8c2f7083e509ceb0e6d9",
@@ -93,9 +131,9 @@
     "learning.outcome": "state/schema/202608221003__baseline_learning.sql:150"
   },
   "helpers": {
-    "common.py": "01b7bb71f0e25a93996c553b3e5992006b2e072d1ab50ad5b542db64f374492d",
-    "warmup.py": "31e4893cc71f41fec94f8fa4e94a26a9bdaf54fc077f9f7556e662be4ed25ddc",
+    "common.py": "8335692286c9c60c3248d0af3b5678fd4acb6ded9dbfbd07e601cd54e6dd0bce",
+    "warmup.py": "6a10cab14d8d246030ed69c807deed1ed062517378f46a5aef4f72da25e0c6d4",
     "primary.py": "c4758de476109b25edfd02b387ea31003605499e54d3327751b7a1eae92f6325",
-    "boundaries.py": "7a07541eed6c2da75f906f7b567ae8235d212b89618f0490a201bf3f88b66a7d"
+    "boundaries.py": "eadf3c248bbed6c25898d9d35ab0fdc689f4761df1a8dd6cee6c08b3010538c1"
   }
 }

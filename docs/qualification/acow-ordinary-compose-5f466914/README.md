@@ -2,10 +2,13 @@
 
 Evidence packet for the Acow ordinary-Compose consumer qualification (the
 Underlay bundle cohort: acowtancy and siblings), prepared as Queue task
-effigy#540. This directory is the source-immutable proof head: Queue's proof
-route executes exactly the packet, manifest and helpers committed here
-against the separately frozen candidate — not the newest main and not a
-rebuild.
+effigy#540 and amended by effigy#543 (2026-11-02, Acow owner `cb0e6df4`
+message `0fcb8b20`): the routes qualify the CURRENT clean consumer checkout
+when the relevant inputs are unchanged, and model `bundle sync` as the
+approved source-identity transition. This directory is the source-immutable
+proof head: Queue's proof route executes exactly the packet, manifest and
+helpers committed here against the separately frozen candidate — not the
+newest main and not a rebuild.
 
 Status: **prepared, not executed.** No warm-up window has run, no
 primary-data observation has run, nothing is installed, and no consumer data
@@ -19,7 +22,7 @@ execution, installation and consumer data access remain separately GO-bound.
 | --- | --- | --- | --- |
 | Worktree warm-up | `python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/warmup.py` | `acow-warmup-go.txt` + green #539 receipt + Supervisor/Acow/Tom GO chain | The rebuilt candidate on a disposable linked worktree at the exact Queue-QA path length (137 chars), the attach + plain `container up --detach` sequence, the nerdctl/mounts label budget, scoped health, and exact teardown that preserves ALL volumes |
 | Primary-data counts | `python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/primary.py` | `acow-primary-go.txt` (its own GO; warm-up GO never arms it) | Primary-data survival: counts-only observation of eight qualified tables through the existing postgres container against the owner baseline |
-| Boundary battery | installed-Effigy selector `test:qualification:acow` → `boundaries.py` | Always runnable; fake backends only | The packet's own fail-closed refusals (62 committed checks) |
+| Boundary battery | installed-Effigy selector `test:qualification:acow` → `boundaries.py` | Always runnable; fake backends only | The packet's own fail-closed refusals (85 committed checks) |
 
 Full route contracts, acceptance criteria, the GO token contracts, the
 refusal inventory and the evidence contract are in `packet-r1.md`; the
@@ -34,14 +37,25 @@ engine, expected counts with tracked-source citations) are in
   subject as the #537 Colima packet). The binary is not committed and is not
   installed by this task; activation requires the exact installed version
   and binary SHA in the GO receipt.
-- Consumer main pin `b7f004d74a47f702f4dc3ef5c96390f0bdbf3c0b` (tree
-  `88df7081…`) with eight pinned input blob hashes, including
-  `infra/tasks.toml:16` (`worktree:container:attach`) and the
-  attach script (`scripts/tasks/worktree-container-attach.ts`, task-795
-  pointer + hash-verified local-dev copy authority). Bundle lock
-  `61dc5aa8405698ea757f0ff5c481cb6d7cb92314` (underlay-effigy-bundle), read
-  via `effigy bundle inspect --json`; a moved lock refuses and needs a
-  reviewed re-pin.
+- Consumer checkout `/Users/tom/Dev/projects/acowtancy`: the routes select
+  the clean primary main HEAD at execution (the selected head) and verify
+  twelve relevant tracked inputs by blob hash AT that head — the root
+  manifest, its six declared `[manifest] include` files, the attach script,
+  and the four schema baselines. The reviewed anchor pin `b7f004d74…`
+  (tree `88df7081…`) stays as the lineage floor (resolvable, tree intact,
+  ancestor of the selected head); tools/docs-only drift with unchanged
+  relevant inputs passes without a new packet review; an altered relevant
+  input refuses with the exact path/identity and a changed include list
+  needs a reviewed re-pin.
+- Bundle sync is an explicit approved source-identity transition: locked
+  pre-state revision `61dc5aa8…` / digest `e088a69e…` (exact, read-only
+  from the primary's source lock), approved target digest `28c92040…`
+  (exact, from the cached known-version inventory) with revision approved
+  to the owner short form `808adad` (the route records the full resolved
+  revision in the activation receipt; a reviewed re-pin can tighten the
+  prefix). Only the approved old->new transition or an already-settled
+  target passes; after sync the exact expected source/content state is
+  required before attach/up.
 
 ## Prepared-but-blocked facts
 
