@@ -889,6 +889,10 @@ def t_bundle_lock_malformed(tmp):
         tmp, 'escape.json',
         json.dumps({'version': 1, 'sources': {'bundle': bundle_pin(object_='cache/sources/../evil')}}))),
         'escapes')
+    for index, value in enumerate((None, 42)):
+        pin = bundle_pin()
+        pin['object'] = value
+        expect_refused(lambda: parse_bundle_pin(lock_file(tmp, 'bad-object-%s.json' % index, pin)), 'object')
     expect_refused(lambda: parse_bundle_pin(tmp / 'missing-lock.json'), 'missing')
 
 
@@ -1004,9 +1008,17 @@ def t_pins_worktree_add_uses_selected_head(tmp):
         raise AssertionError('unexpected git effect: %r' % (args,))
 
     state = {}
-    wt, ident = warmup.create_warmup_worktree(
-        record, {'path': str(worktree)}, FakeConsole(), state,
-        run_git=run_git, git_fn=git_fake(pins_responses()))
+    fake_read = git_fake(pins_responses())
+    def reader(args, **kwargs):
+        rc, out, err = fake_read(args)
+        return type('Result', (), {'returncode': rc, 'stdout': out, 'stderr': err})()
+    original = warmup.primary_git_runner
+    warmup.primary_git_runner = lambda: reader
+    try:
+        wt, ident = warmup.create_warmup_worktree(
+            record, {'path': str(worktree)}, FakeConsole(), state, run_git=run_git)
+    finally:
+        warmup.primary_git_runner = original
     assert calls[0][0][-1] == FAKE_HEAD  # the SAME selected head in worktree add
     assert record['activation']['worktree_head'] == FAKE_HEAD  # and in the receipt identities
     assert record['consumer_pins_reverified']['selected_commit'] == FAKE_HEAD

@@ -220,8 +220,8 @@ def preconditions(console):
 def primary_git_runner():
     """Read-only git runner against the pinned Acow primary checkout."""
     def run_git(args, timeout=120, cwd=None):
-        return run_quiet(['/usr/bin/git', '-C', '/Users/tom/Dev/projects/acowtancy', *args],
-                         env=git_args(), timeout=timeout, cwd=cwd)
+        return run_quiet(['/usr/bin/git', '-C', cwd or str(ACOW_PRIMARY), *args],
+                         env=git_args(), timeout=timeout)
     return run_git
 
 
@@ -239,8 +239,12 @@ def create_warmup_worktree(record, shape, console, state, run_git=None, git_fn=N
     if run_git is None:
         run_git = primary_git_runner()
     selected = record['consumer_pins']['selected_commit']
-    reverified = verify_consumer_pins(
-        git_fn if git_fn is not None else primary_git_runner())
+    if git_fn is None:
+        reader = primary_git_runner()
+        def git_fn(args):
+            result = reader(args)
+            return result.returncode, result.stdout, result.stderr
+    reverified = verify_consumer_pins(git_fn)
     if reverified['selected_commit'] != selected \
             or reverified['selected_tree'] != record['consumer_pins']['selected_tree']:
         raise Refused('selected consumer head moved between preflight and the first effect')
@@ -288,13 +292,16 @@ def activate(record, runner, shape, console, state):
     # name exactly the approved target state (typed revision + digest) with
     # no residual staleness; any unexpected post-sync source-origin, revision
     # or content drift refuses BEFORE attach/up.
+    lock_path = worktree / BUNDLE_LOCK_REL
+    if os.path.lexists(lock_path):
+        raise Refused('disposable worktree bundle lock unexpectedly exists before sync')
+    lock_before = {'mode': 'absent', 'path': str(lock_path)}
     run(['bundle', 'sync'])
     lock_after = verify_bundle_transition_after(
         bundle_inspect_reader(run), worktree / BUNDLE_LOCK_REL)
     record['activation']['steps'].append({
         'step': 'bundle sync',
-        'lock_before': {key: record['bundle_lock'][key]
-                        for key in ('mode', 'revision', 'digest', 'stale')},
+        'lock_before': lock_before,
         'lock_after': {key: lock_after[key]
                        for key in ('mode', 'revision', 'digest', 'stale')},
     })

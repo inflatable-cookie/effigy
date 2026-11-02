@@ -797,7 +797,7 @@ def parse_bundle_pin(lock_path):
         raise Refused('bundle lock declaration is not a typed git source: %s' % p)
     object_path = bundle.get('object')
     parts = Path(object_path).parts if isinstance(object_path, str) else ()
-    if not object_path.startswith('cache/sources') or '..' in parts \
+    if not isinstance(object_path, str) or not object_path.startswith('cache/sources') or '..' in parts \
             or Path(object_path).is_absolute() \
             or not all(part not in ('.', '..') for part in parts):
         raise Refused('bundle lock object escapes the source cache: %s' % p)

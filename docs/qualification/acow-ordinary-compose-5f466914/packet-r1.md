@@ -20,7 +20,9 @@ later proof-only task at this packet's merged commit, requiring task
 effigy#539 to be green first, the exact installed candidate identity, and
 separate operator/consumer GOs.
 
-## Artifacts manifest SHA-256: `6f98242f8a8baf06dc18c93d55d33ff0daffadf2c54cb86a0eaaba1718ee84d5`
+The primary lock is a preflight authority check. The disposable worktree must have no lock before sync; its receipt records that absence, and the exact approved target is required after sync before attach.
+
+## Artifacts manifest SHA-256: `220093a970e81e84a06a4c2729d9f3289879fe0e2b428e35f00b8e7e30f155c5`
 
 The manifest pins the four committed helpers, the frozen candidate identity,
 the relevant-input closure with its selection policy, the reviewed anchor
