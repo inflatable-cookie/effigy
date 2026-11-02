@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use super::parse_env_schema;
-use crate::ast::{EnvType, EnvValueExpr, TemplatePart};
+use crate::ast::{EntryAnnotations, EnvType, EnvValueExpr, TemplatePart};
 
 fn parse(content: &str) -> crate::ast::EnvSchema {
     parse_env_schema(content, Path::new("test.env.schema")).unwrap()
@@ -33,22 +33,21 @@ fn parse_empty_value() {
     assert!(schema.entries[0].value.is_none());
 }
 
+/// Matching single and double quotes are stripped from literal values; the
+/// interior content is kept verbatim.
 #[test]
-fn parse_quoted_value() {
-    let schema = parse("NAME=\"hello world\"");
-    assert_eq!(
-        schema.entries[0].value,
-        Some(EnvValueExpr::Literal("hello world".to_owned()))
-    );
-}
-
-#[test]
-fn parse_single_quoted_value() {
-    let schema = parse("NAME='hello world'");
-    assert_eq!(
-        schema.entries[0].value,
-        Some(EnvValueExpr::Literal("hello world".to_owned()))
-    );
+fn quoted_literals_strip_matching_double_and_single_quotes() {
+    for (raw, expected) in [
+        ("NAME=\"hello world\"", "hello world"),
+        ("NAME='hello world'", "hello world"),
+    ] {
+        let schema = parse(raw);
+        assert_eq!(
+            schema.entries[0].value,
+            Some(EnvValueExpr::Literal(expected.to_owned())),
+            "{raw}"
+        );
+    }
 }
 
 #[test]
@@ -67,153 +66,182 @@ fn parse_blank_lines_and_comments_ignored() {
     assert_eq!(schema.entries.len(), 2);
 }
 
-#[test]
-fn parse_annotation_required() {
-    let content = "# @required\nPORT=3000";
-    let schema = parse(content);
-    assert_eq!(schema.entries[0].annotations.required, Some(true));
+/// What a comment block must produce, compared across all `EntryAnnotations`
+/// fields so stray or leaked annotations fail the case.
+#[derive(Default)]
+struct ExpectedAnnotations<'a> {
+    env_type: Option<EnvType>,
+    required: Option<bool>,
+    sensitive: bool,
+    description: Option<&'a str>,
+    pattern: Option<&'a str>,
 }
 
-#[test]
-fn parse_annotation_optional() {
-    let content = "# @optional\nPORT=3000";
-    let schema = parse(content);
-    assert_eq!(schema.entries[0].annotations.required, Some(false));
-}
-
-#[test]
-fn parse_annotation_sensitive() {
-    let content = "# @sensitive\nSECRET=hunter2";
-    let schema = parse(content);
-    assert!(schema.entries[0].annotations.sensitive);
-}
-
-#[test]
-fn parse_annotation_type_port() {
-    let content = "# @type=port\nPORT=3000";
-    let schema = parse(content);
-    assert_eq!(schema.entries[0].annotations.env_type, Some(EnvType::Port));
-}
-
-#[test]
-fn parse_annotation_type_url() {
-    let content = "# @type=url\nAPI_URL=https://example.com";
-    let schema = parse(content);
-    assert_eq!(schema.entries[0].annotations.env_type, Some(EnvType::Url));
-}
-
-#[test]
-fn parse_annotation_type_enum() {
-    let content = "# @type=enum(dev,staging,prod)\nENV=dev";
-    let schema = parse(content);
+fn assert_annotations(actual: &EntryAnnotations, expected: &ExpectedAnnotations, name: &str) {
+    assert_eq!(actual.env_type, expected.env_type, "{name}: env_type");
+    assert_eq!(actual.required, expected.required, "{name}: required");
+    assert_eq!(actual.sensitive, expected.sensitive, "{name}: sensitive");
     assert_eq!(
-        schema.entries[0].annotations.env_type,
-        Some(EnvType::Enum(vec![
-            "dev".to_owned(),
-            "staging".to_owned(),
-            "prod".to_owned()
-        ]))
+        actual.description.as_deref(),
+        expected.description,
+        "{name}: description"
+    );
+    assert_eq!(
+        actual.pattern.as_deref(),
+        expected.pattern,
+        "{name}: pattern"
     );
 }
 
-#[test]
-fn parse_annotation_type_string() {
-    let content = "# @type=string\nNAME=hello";
-    let schema = parse(content);
-    assert_eq!(
-        schema.entries[0].annotations.env_type,
-        Some(EnvType::String {
-            min_len: None,
-            max_len: None
-        })
-    );
+fn expect_annotations(
+    env_type: Option<EnvType>,
+    required: Option<bool>,
+) -> ExpectedAnnotations<'static> {
+    ExpectedAnnotations {
+        env_type,
+        required,
+        ..Default::default()
+    }
 }
 
+/// Each annotation (and annotation combination) parses into its entry field,
+/// compared across every `EntryAnnotations` field.
 #[test]
-fn parse_annotation_type_string_with_constraints_and_pattern() {
-    let content = "# @type=string @min=3 @max=8 @pattern=^[a-z]+$\nNAME=hello";
-    let schema = parse(content);
-    assert_eq!(
-        schema.entries[0].annotations.env_type,
-        Some(EnvType::String {
-            min_len: Some(3),
-            max_len: Some(8)
-        })
-    );
-    assert_eq!(
-        schema.entries[0].annotations.pattern.as_deref(),
-        Some("^[a-z]+$")
-    );
+fn annotations_parse_into_entry_fields() {
+    let cases: [(&str, &str, ExpectedAnnotations); 11] = [
+        (
+            "required",
+            "# @required\nPORT=3000",
+            expect_annotations(None, Some(true)),
+        ),
+        (
+            "optional",
+            "# @optional\nPORT=3000",
+            expect_annotations(None, Some(false)),
+        ),
+        (
+            "sensitive",
+            "# @sensitive\nSECRET=hunter2",
+            ExpectedAnnotations {
+                sensitive: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "type-port",
+            "# @type=port\nPORT=3000",
+            expect_annotations(Some(EnvType::Port), None),
+        ),
+        (
+            "type-url",
+            "# @type=url\nAPI_URL=https://example.com",
+            expect_annotations(Some(EnvType::Url), None),
+        ),
+        (
+            "type-enum",
+            "# @type=enum(dev,staging,prod)\nENV=dev",
+            expect_annotations(
+                Some(EnvType::Enum(vec![
+                    "dev".to_owned(),
+                    "staging".to_owned(),
+                    "prod".to_owned(),
+                ])),
+                None,
+            ),
+        ),
+        (
+            "type-string",
+            "# @type=string\nNAME=hello",
+            expect_annotations(
+                Some(EnvType::String {
+                    min_len: None,
+                    max_len: None,
+                }),
+                None,
+            ),
+        ),
+        (
+            "string-constraints-and-pattern",
+            "# @type=string @min=3 @max=8 @pattern=^[a-z]+$\nNAME=hello",
+            ExpectedAnnotations {
+                env_type: Some(EnvType::String {
+                    min_len: Some(3),
+                    max_len: Some(8),
+                }),
+                pattern: Some("^[a-z]+$"),
+                ..Default::default()
+            },
+        ),
+        (
+            "min-before-type",
+            "# @min=2 @max=5 @type=string\nNAME=hello",
+            expect_annotations(
+                Some(EnvType::String {
+                    min_len: Some(2),
+                    max_len: Some(5),
+                }),
+                None,
+            ),
+        ),
+        (
+            "combined",
+            "# @type=port @required @sensitive\nDB_PORT=5432",
+            ExpectedAnnotations {
+                env_type: Some(EnvType::Port),
+                required: Some(true),
+                sensitive: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "description",
+            "# The server port\n# @type=port @required\nPORT=3000",
+            ExpectedAnnotations {
+                description: Some("The server port"),
+                env_type: Some(EnvType::Port),
+                required: Some(true),
+                ..Default::default()
+            },
+        ),
+    ];
+
+    for (name, content, expected) in cases {
+        let schema = parse(content);
+        assert_eq!(schema.entries.len(), 1, "{name}");
+        assert_annotations(&schema.entries[0].annotations, &expected, name);
+    }
 }
 
+/// Exec values accept both quote styles and keep the command verbatim.
 #[test]
-fn parse_annotation_min_before_type_string() {
-    let content = "# @min=2 @max=5 @type=string\nNAME=hello";
-    let schema = parse(content);
-    assert_eq!(
-        schema.entries[0].annotations.env_type,
-        Some(EnvType::String {
-            min_len: Some(2),
-            max_len: Some(5)
-        })
-    );
+fn exec_values_parse_under_both_quote_styles() {
+    for (raw, expected) in [
+        (
+            "SECRET=exec('op read \"op://vault/item\"')",
+            "op read \"op://vault/item\"",
+        ),
+        ("SECRET=exec(\"echo hello\")", "echo hello"),
+    ] {
+        let schema = parse(raw);
+        assert_eq!(
+            schema.entries[0].value,
+            Some(EnvValueExpr::Exec(expected.to_owned())),
+            "{raw}"
+        );
+    }
 }
 
+/// Env references and templates parse to their AST, and a single-variable
+/// template stays a template rather than collapsing to a literal.
 #[test]
-fn parse_combined_annotations() {
-    let content = "# @type=port @required @sensitive\nDB_PORT=5432";
-    let schema = parse(content);
-    let ann = &schema.entries[0].annotations;
-    assert_eq!(ann.env_type, Some(EnvType::Port));
-    assert_eq!(ann.required, Some(true));
-    assert!(ann.sensitive);
-}
-
-#[test]
-fn parse_annotation_with_description() {
-    let content = "# The server port\n# @type=port @required\nPORT=3000";
-    let schema = parse(content);
-    assert_eq!(
-        schema.entries[0].annotations.description,
-        Some("The server port".to_owned())
-    );
-    assert_eq!(schema.entries[0].annotations.env_type, Some(EnvType::Port));
-}
-
-#[test]
-fn parse_exec_value() {
-    let content = "SECRET=exec('op read \"op://vault/item\"')";
-    let schema = parse(content);
-    assert_eq!(
-        schema.entries[0].value,
-        Some(EnvValueExpr::Exec("op read \"op://vault/item\"".to_owned()))
-    );
-}
-
-#[test]
-fn parse_exec_double_quoted() {
-    let content = "SECRET=exec(\"echo hello\")";
-    let schema = parse(content);
-    assert_eq!(
-        schema.entries[0].value,
-        Some(EnvValueExpr::Exec("echo hello".to_owned()))
-    );
-}
-
-#[test]
-fn parse_env_ref() {
-    let content = "BASE_URL=env('API_HOST')";
-    let schema = parse(content);
+fn env_ref_and_template_values_parse_into_their_ast() {
+    let schema = parse("BASE_URL=env('API_HOST')");
     assert_eq!(
         schema.entries[0].value,
         Some(EnvValueExpr::EnvRef("API_HOST".to_owned()))
     );
-}
 
-#[test]
-fn parse_template_value() {
-    let content = "API_URL=https://${HOST}:${PORT}/api";
-    let schema = parse(content);
+    let schema = parse("API_URL=https://${HOST}:${PORT}/api");
     assert_eq!(
         schema.entries[0].value,
         Some(EnvValueExpr::Template(vec![
@@ -224,12 +252,8 @@ fn parse_template_value() {
             TemplatePart::Literal("/api".to_owned()),
         ]))
     );
-}
 
-#[test]
-fn parse_template_single_var() {
-    let content = "ALIAS=${OTHER_VAR}";
-    let schema = parse(content);
+    let schema = parse("ALIAS=${OTHER_VAR}");
     assert_eq!(
         schema.entries[0].value,
         Some(EnvValueExpr::Template(vec![TemplatePart::VarRef(
@@ -318,16 +342,11 @@ fn malformed_schema_sources_are_refused_with_their_reason() {
     }
 }
 
+/// Empty and comment-only sources both parse to an empty schema.
 #[test]
-fn parse_empty_schema() {
-    let schema = parse("");
-    assert!(schema.entries.is_empty());
-}
-
-#[test]
-fn parse_comments_only() {
-    let schema = parse("# just a comment\n# nothing else");
-    assert!(schema.entries.is_empty());
+fn empty_and_comment_only_schemas_have_no_entries() {
+    assert!(parse("").entries.is_empty());
+    assert!(parse("# just a comment\n# nothing else").entries.is_empty());
 }
 
 #[test]

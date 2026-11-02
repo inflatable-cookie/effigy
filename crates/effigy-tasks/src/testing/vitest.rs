@@ -484,11 +484,15 @@ fn is_ident_byte(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{configured_test_dir, find_test_object, strip_js_comments};
+    use super::{configured_test_dir, detect_vitest, find_test_object, strip_js_comments};
 
+    /// What `configured_test_dir` must accept and refuse, one source per row.
     #[test]
-    fn configured_test_dir_reads_define_config_object() {
-        let source = r#"
+    fn configured_test_dir_reads_and_rejects_declared_dirs() {
+        let cases: [(&str, &str, Option<&str>); 8] = [
+            (
+                "define-config",
+                r#"
 import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
@@ -497,110 +501,151 @@ export default defineConfig({
     include: ["**/*.test.ts"],
   },
 });
-"#;
-        assert_eq!(configured_test_dir(source).as_deref(), Some("./src"));
-    }
-
-    #[test]
-    fn configured_test_dir_ignores_dot_root() {
-        assert_eq!(
-            configured_test_dir("export default { test: { dir: '.' } }"),
-            None
-        );
-    }
-
-    #[test]
-    fn configured_test_dir_rejects_template_interpolation() {
-        assert_eq!(
-            configured_test_dir("export default { test: { dir: `${root}/src` } }"),
-            None
-        );
-    }
-
-    #[test]
-    fn find_test_object_skips_latest_identifier() {
-        let source = "const latest = 1;\nexport default { test: { dir: 'src' } }\n";
-        let object = find_test_object(source).expect("test object");
-        assert!(object.contains("dir: 'src'"));
-    }
-
-    #[test]
-    fn configured_test_dir_ignores_commented_out_dir() {
-        let source = r#"
+"#,
+                Some("./src"),
+            ),
+            ("dot-root", "export default { test: { dir: '.' } }", None),
+            (
+                "template-interpolation",
+                "export default { test: { dir: `${root}/src` } }",
+                None,
+            ),
+            (
+                "commented-out-only",
+                r#"
 export default {
   test: {
     // dir: 'old',
     include: ['**/*.test.ts'],
   },
 };
-"#;
-        assert_eq!(configured_test_dir(source), None);
-    }
-
-    #[test]
-    fn configured_test_dir_uses_active_dir_not_commented_one() {
-        let source = r#"
+"#,
+                None,
+            ),
+            (
+                "active-over-commented",
+                r#"
 export default {
   test: {
     // dir: 'old',
     dir: 'src',
   },
 };
-"#;
-        assert_eq!(configured_test_dir(source).as_deref(), Some("src"));
+"#,
+                Some("src"),
+            ),
+            (
+                "quoted-property-keys",
+                r#"export default { "test": { "dir": "src" } };"#,
+                Some("src"),
+            ),
+            (
+                "regex-with-slashes",
+                r#"const matcher = /\/\//; export default { test: { dir: 'src' } };"#,
+                Some("src"),
+            ),
+            (
+                "after-division",
+                "const ratio = a / b;\nexport default { test: { dir: 'src' } };\n",
+                Some("src"),
+            ),
+        ];
+
+        for (name, source, expected) in cases {
+            assert_eq!(configured_test_dir(source).as_deref(), expected, "{name}");
+        }
     }
 
+    /// What `find_test_object` locates and what it must ignore: comments,
+    /// strings and lookalike identifiers never count as a `test` block.
     #[test]
-    fn find_test_object_ignores_commented_out_test_block() {
-        let source = strip_js_comments("// test: { dir: 'src' }\nexport default { plugins: [] }\n");
-        assert_eq!(find_test_object(&source), None);
-    }
+    fn find_test_object_locates_and_ignores_test_blocks() {
+        let object =
+            find_test_object("const latest = 1;\nexport default { test: { dir: 'src' } }\n")
+                .expect("test object after the lookalike identifier");
+        assert!(object.contains("dir: 'src'"));
 
-    #[test]
-    fn find_test_object_ignores_block_commented_test_block() {
-        let source =
-            strip_js_comments("/* test: { dir: 'src' } */\nexport default { plugins: [] }\n");
-        assert_eq!(find_test_object(&source), None);
-    }
+        for (name, source) in [
+            (
+                "line-comment",
+                strip_js_comments("// test: { dir: 'src' }\nexport default { plugins: [] }\n"),
+            ),
+            (
+                "block-comment",
+                strip_js_comments("/* test: { dir: 'src' } */\nexport default { plugins: [] }\n"),
+            ),
+            (
+                "string-embedded",
+                r#"export default { define: { "test: { dir: 'src' }": true } }"#.to_owned(),
+            ),
+            (
+                "comment-after-regex",
+                strip_js_comments(
+                    r#"const matcher = /\/\//; // test: { dir: 'src' }
+export default { plugins: [] };
+"#,
+                ),
+            ),
+        ] {
+            assert_eq!(find_test_object(&source), None, "{name}");
+        }
 
-    #[test]
-    fn find_test_object_ignores_string_embedded_test_block() {
-        let source = r#"export default { define: { "test: { dir: 'src' }": true } }"#;
-        assert_eq!(find_test_object(source), None);
-    }
-
-    #[test]
-    fn configured_test_dir_reads_quoted_property_keys() {
-        let source = r#"export default { "test": { "dir": "src" } };"#;
-        assert_eq!(configured_test_dir(source).as_deref(), Some("src"));
-    }
-
-    #[test]
-    fn find_test_object_reads_quoted_test_key() {
-        let source = r#"export default { 'test': { dir: 'src' } };"#;
-        let object = find_test_object(source).expect("test object");
+        let object =
+            find_test_object(r#"export default { 'test': { dir: 'src' } };"#).expect("quoted key");
         assert!(object.contains("dir: 'src'"));
     }
 
+    /// Package-owned intent (a dependency or a config file) activates the
+    /// suite; an installed binary alone must not.
     #[test]
-    fn configured_test_dir_keeps_dir_after_regex_with_slashes() {
-        let source = r#"const matcher = /\/\//; export default { test: { dir: 'src' } };"#;
-        assert_eq!(configured_test_dir(source).as_deref(), Some("src"));
-    }
+    fn detect_vitest_requires_package_intent_not_just_an_installed_binary() {
+        let root = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-vitest-intent-{}",
+            std::process::id()
+        ))
+        .expect("fixture directory");
 
-    #[test]
-    fn find_test_object_ignores_comment_after_regex_with_slashes() {
-        let source = strip_js_comments(
-            r#"const matcher = /\/\//; // test: { dir: 'src' }
-export default { plugins: [] };
-"#,
+        // A devDependency is intent, even without a config file.
+        std::fs::write(
+            root.join("package.json"),
+            r#"{ "devDependencies": { "vitest": "^1.0.0" } }"#,
+        )
+        .expect("write package.json");
+        let (plan, candidate) = detect_vitest(&root);
+        assert!(plan.is_some(), "dependency evidence must activate");
+        assert!(candidate.available);
+
+        // A config file is intent too, even without a dependency.
+        std::fs::write(
+            root.join("vitest.config.ts"),
+            "export default { test: { dir: 'src' } }\n",
+        )
+        .expect("write vitest.config.ts");
+        std::fs::write(root.join("package.json"), r#"{ "name": "x" }"#)
+            .expect("write package.json");
+        let (plan, candidate) = detect_vitest(&root);
+        assert!(plan.is_some(), "config evidence must activate");
+        assert!(candidate.available);
+        assert!(
+            candidate.reason.contains("found `vitest.config.ts`"),
+            "{}",
+            candidate.reason
         );
-        assert_eq!(find_test_object(&source), None);
-    }
 
-    #[test]
-    fn configured_test_dir_still_reads_dir_after_division() {
-        let source = "const ratio = a / b;\nexport default { test: { dir: 'src' } };\n";
-        assert_eq!(configured_test_dir(source).as_deref(), Some("src"));
+        // An installed binary without package-owned intent stays refused.
+        std::fs::remove_file(root.join("vitest.config.ts")).expect("remove config");
+        std::fs::create_dir_all(root.join("node_modules/.bin")).expect("mkdir node_modules");
+        std::fs::write(root.join("node_modules/.bin/vitest"), "#!/bin/sh\n")
+            .expect("write fake vitest binary");
+        let (plan, candidate) = detect_vitest(&root);
+        assert!(plan.is_none(), "an installed binary alone is not intent");
+        assert!(!candidate.available);
+        assert!(
+            candidate
+                .reason
+                .contains("no package-owned vitest declaration or config"),
+            "{}",
+            candidate.reason
+        );
     }
 }
