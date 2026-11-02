@@ -39,6 +39,16 @@ enum DeferredExecutionPlan {
     Completed(String),
 }
 
+/// The two texts a locally dispatched deferral carries: the rendered execution
+/// text the child shell runs, and the raw semantic command — the template with
+/// its `{request}`/`{args}`/`{repo}` tokens — that host-only preferences such
+/// as the composer vendor bin PATH prepend key on. They differ wherever a
+/// runtime wrapper prefixes the semantic command.
+struct DeferredLocalCommand<'a> {
+    rendered: &'a str,
+    semantic: &'a str,
+}
+
 pub(in crate::runner) fn run_deferred_request(
     task: &TaskInvocation,
     runtime_args: &TaskRuntimeArgs,
@@ -100,7 +110,11 @@ fn run_deferred_request_on_host(
         deferral,
         cause,
         current_depth,
-        command,
+        // On the host branch the semantic command is the execution text.
+        &DeferredLocalCommand {
+            rendered: command,
+            semantic: command,
+        },
         &deferral.working_dir,
     )
 }
@@ -111,7 +125,7 @@ fn run_deferred_request_locally(
     deferral: &DeferredCommand,
     cause: &RunnerError,
     current_depth: u8,
-    command: &str,
+    command: &DeferredLocalCommand<'_>,
     working_dir: &Path,
 ) -> Result<String, RunnerError> {
     let shell = std::env::var("SHELL")
@@ -126,35 +140,44 @@ fn run_deferred_request_locally(
     let mut process = ProcessCommand::new(&shell);
     process
         .arg(shell_arg)
-        .arg(command)
+        .arg(command.rendered)
         .current_dir(working_dir)
         .env(DEFER_DEPTH_ENV, (current_depth + 1).to_string());
-    if let Some(path_override) = preferred_local_deferral_path(command) {
+    if let Some(path_override) = preferred_local_deferral_path(command.semantic) {
         process.env("PATH", path_override);
     }
     with_local_node_bin_path(&mut process, working_dir);
     let status = process
         .status()
         .map_err(|error| RunnerError::TaskCommandLaunch {
-            command: command.to_owned(),
+            command: command.rendered.to_owned(),
             error,
         })?;
 
     if status.success() {
         if runtime_args.verbose_root {
-            return Ok(render_deferral_trace(task, deferral, command, cause));
+            return Ok(render_deferral_trace(
+                task,
+                deferral,
+                command.rendered,
+                cause,
+            ));
         }
         return Ok(String::new());
     }
 
     Err(RunnerError::TaskCommandFailure {
-        command: command.to_owned(),
+        command: command.rendered.to_owned(),
         code: status.code(),
         stdout: String::new(),
         stderr: String::new(),
     })
 }
 
+/// Keys on the deferral's raw semantic command, never on the rendered
+/// execution text, which may carry the color/runtime wrapper prefix.
+/// Otherwise a handoff-local container branch could never see a
+/// `composer global exec` prefix.
 fn preferred_local_deferral_path(command: &str) -> Option<String> {
     let trimmed = command.trim_start();
     if !trimmed.starts_with("composer global exec ") {
@@ -241,7 +264,10 @@ fn run_deferred_request_with_binding(
                     deferral,
                     cause,
                     current_depth,
-                    &rendered_command,
+                    &DeferredLocalCommand {
+                        rendered: &rendered_command,
+                        semantic: &command,
+                    },
                     &local_working_dir,
                 )?;
                 return Ok(DeferredExecutionPlan::Completed(output));
