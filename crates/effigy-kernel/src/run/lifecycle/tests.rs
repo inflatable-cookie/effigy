@@ -2772,3 +2772,67 @@ fn prelaunch_interpolation_caller_drop_keeps_exact_descriptors_and_env_gate() {
         "helper teardown is not file-cleanup evidence"
     );
 }
+
+#[test]
+fn prelaunch_pending_obligation_is_atomic_and_legacy_unreadable() {
+    let home = effigy_test_support::short_tempdir("ia-").unwrap();
+    let cx = super::super::tests::context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let owner = ResourceId::environment(layered_checkout(), "atomic-prelaunch-file").unwrap();
+    let mut fake = super::super::tests::Fake::new(home.path());
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &super::super::tests::inv(owner),
+        super::super::tests::opts(1),
+        &super::super::tests::cleanup(&cx),
+        &mut fake,
+    )
+    .unwrap();
+    let directory = home.path().join("interpolation");
+    let file = retained_fixture_file(&directory);
+    crate::fault::arm_point(
+        crate::fault::Point::IntendAfter,
+        crate::fault::Fault::Enospc,
+    );
+    let result = run.retain_prelaunch_interpolation(file);
+    assert!(
+        crate::fault::fired(),
+        "the post-commit fault must actually cross"
+    );
+    crate::fault::arm(None);
+    assert!(
+        result.is_err(),
+        "the caller lost the committed publication result"
+    );
+    let effect = run
+        .effects()
+        .unwrap()
+        .into_iter()
+        .find(|effect| {
+            effect.spec.payload.get("interpolation_prelaunch_v1")
+                == Some(&serde_json::Value::Bool(true))
+        })
+        .unwrap();
+    assert_eq!(
+        effect.state,
+        crate::run::EffectState::Applied,
+        "a committed file obligation cannot appear as a receipt-less intended process"
+    );
+    assert_eq!(
+        effect
+            .receipt
+            .as_ref()
+            .and_then(|receipt| receipt.get("interpolation_pending_v1")),
+        Some(&serde_json::Value::Bool(true))
+    );
+    assert_eq!(
+        crate::custody::settle_effect(&effect, None, &super::super::tests::cleanup(&cx), || false)
+            .0,
+        crate::run::EffectState::Residue,
+        "a process reader cannot infer barrier non-release from a missing receipt"
+    );
+    run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake)
+        .unwrap_or_else(|(error, _)| panic!("exact never-forked owner can clean: {error}"));
+    assert!(!directory.join("compose-fixture.env").exists());
+}

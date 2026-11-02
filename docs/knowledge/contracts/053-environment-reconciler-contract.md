@@ -84,7 +84,10 @@ obligation.
 
 
 An already created interpolation file first enters an exact Run-owned prelaunch
-slot with a durable, non-executable pending custody obligation. After helper-image
+slot with a durable, non-executable pending custody obligation. Its intent and
+unreadable pending receipt commit atomically, including across a lost post-commit
+result; old process readers cannot see a receipt-less row and infer non-execution.
+After helper-image
 checks and before any fork, the private SCM_RIGHTS channel gives the checkout
 backup hold-only descriptions; caller drop retains that exact file and Env gate.
 A real registered process receipt, synced binding and verified exact-object

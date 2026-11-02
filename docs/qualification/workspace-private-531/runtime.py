@@ -381,7 +381,7 @@ targets = ["containers"]
                   '--cargo-metadata', self.cargo_metadata, '--no-fail-fast', '--retries', '0', '--no-tests', 'fail']
         run(runner + ['--run-ignored', 'only', '-E', 'test(custody::tests::discard_old_sentinel_refuses_before_child_exec)'],
             cwd=Path(self.cell['source_root']), env=env, timeout=min(600, self.end - time.monotonic()))
-        run(runner + ['-E', 'test(run::lifecycle::tests::retained_interpolation_) | test(run::lifecycle::tests::prelaunch_interpolation_) | test(run::lifecycle::tests::reserved_env_admission_) | test(custody_signal_and_owner_kill_matrix) | test(custody_both_owner_and_sentinel_die) | test(custody_deleted_checkout_lease_survives_owner_kill) | test(custody::tests::fault_matrix_registration_spawn_and_socket_kill_enospc)'],
+        run(runner + ['-E', 'test(run::lifecycle::tests::retained_interpolation_) | test(run::lifecycle::tests::prelaunch_) | test(run::lifecycle::tests::reserved_env_admission_) | test(custody_signal_and_owner_kill_matrix) | test(custody_both_owner_and_sentinel_die) | test(custody_deleted_checkout_lease_survives_owner_kill) | test(custody::tests::fault_matrix_registration_spawn_and_socket_kill_enospc)'],
             cwd=Path(self.cell['source_root']), env=env, timeout=min(600, self.end - time.monotonic()))
         for mode in ('private-qualification', 'private-qualification-descendant', 'private-qualification-foreign',
                      'private-qualification-uninitialized', 'private-qualification-expired', 'private-qualification-old'):

@@ -2075,22 +2075,45 @@ impl<'a> Run<'a> {
         ));
         // Even an ambiguous intent write must not drop the exact descriptions.
         self.prelaunch_interpolations.push(slot.clone());
-        let ticket = self.intend_inner(EffectSpec {
+        let spec = EffectSpec {
             target: self.owner.clone(),
             kind: crate::custody::KIND.into(),
             payload: serde_json::json!({"interpolation_prelaunch_v1": true}),
             settlement: Settlement::Release(Value::Null),
             required: false,
-        })?;
-        slot.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .sequence = Some(ticket.sequence());
-        // Deliberately not a process receipt. Old readers refuse this envelope;
-        // recovery without the exact live slot must preserve its obligation.
-        self.applied(
-            &ticket,
-            serde_json::json!({"interpolation_pending_v1": true}),
-        )?;
+        };
+        let published = (|| {
+            self.can_effect()?;
+            crate::fault_point!(IntendBefore)?;
+            // Commit the explicit pending envelope with its intent. An old
+            // process reader must never observe a committed receipt-less row
+            // and infer that its barrier could not have opened.
+            let sequence = self.store.transaction(
+                &self.cx.child(std::time::Duration::from_secs(30)),
+                |txn| {
+                    journal::check_fence(txn.conn(), &self.owner)?;
+                    let sequence = journal::insert_effect(txn, self.id, &spec)?;
+                    journal::write_effect(
+                        txn,
+                        self.id,
+                        sequence,
+                        EffectState::Applied,
+                        Some(&serde_json::json!({"interpolation_pending_v1": true})),
+                        None,
+                    )?;
+                    Ok::<_, RunError>(sequence)
+                },
+            )?;
+            slot.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .sequence = Some(sequence);
+            crate::fault_point!(IntendAfter)?;
+            Ok::<_, RunError>(())
+        })();
+        if published.is_err() {
+            self.poisoned = true;
+        }
+        published?;
         Ok(slot)
     }
     pub(crate) fn complete_prelaunch_interpolation(

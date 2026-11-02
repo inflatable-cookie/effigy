@@ -260,6 +260,8 @@ The exact file enters a Run-owned slot before fallible qualification checks.
 A durable `kernel:process` obligation has an explicit
 `interpolation_prelaunch_v1` purpose and an unreadable-to-old-process-readers
 `interpolation_pending_v1` envelope; this is **not** a process receipt or GO.
+Intent and envelope commit atomically. A lost post-commit result cannot expose a
+receipt-less row that an old reader could misclassify as an unopened barrier.
 The extra obligation records an already created file, including on an early
 image/deadline refusal. It cannot authenticate a preparation child.
 
