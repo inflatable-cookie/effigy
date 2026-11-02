@@ -332,6 +332,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- A whole-suite test census and assurance contract (task effigy#555):
+  `docs/knowledge/test-assurance.md` states what the suite promises, the six
+  proof tiers, the conditional families and their selector routes, and the
+  rules a pruning wave must follow; `scripts/test-inventory.py` (proved by the
+  new `test:inventory` selector) reconciles every collected nextest ID against
+  a static source scan, attributing macro-generated and `include!`-spliced
+  cases and naming every non-collected declaration's gate.
+
 - The Acow ordinary-Compose consumer qualification packet
   (`docs/qualification/acow-ordinary-compose-5f466914/`, task effigy#540):
   two separately GO-armed proof routes for the frozen ordinary candidate
