@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Acow ordinary-Compose worktree warm-up route — PREPARED, NOT EXECUTED.
 
-Queue task effigy#540 packet route. The exact future proof selector, run once
+Queue task effigy#540 packet route (amended by effigy#543: the disposable
+worktree materializes at the SELECTED current clean consumer head, and the
+bundle sync is verified as the Acow-owner-approved source-identity transition
+before attach/up). The exact future proof selector, run once
 from the reviewed task head only after the full GO chain recorded in
 packet-r1.md:
 
@@ -34,16 +37,17 @@ from shutil import which
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (  # noqa: E402
-    ACOW_PIN_COMMIT, ACOW_PRIMARY, ATTACH_RECORD_REL, COLIMA_BIN,
+    ACOW_PRIMARY, ATTACH_RECORD_REL, BUNDLE_LOCK_REL, COLIMA_BIN,
     COLIMA_PROFILE, COPIED_VAULT_REL, DIR, GO_WARMUP_TOKENS, MOUNTS_LABEL,
     MOUNTS_LABEL_BUDGET, SCRATCH, SHARED_MARIADB_VOLUME, WARMUP_PARENT,
-    BUNDLE_LOCK_COMMIT, NEVER_TOUCH_VOLUMES, ConsoleLog, Refused,
+    NEVER_TOUCH_VOLUMES, ConsoleLog, Refused,
     assert_no_scoped_containers, assert_no_warmup_scope, assert_packet_dir,
     capture_inventory, container_state, ensure_owned_dir, expect_absent,
     git_args, judge_teardown_inventory, label_length_only,
     queue_shape_components, read_owner_marker, require_mariadb_unchanged,
     run_quiet, scoped_container_map, session_identity, validate_attach_record,
-    verify_539_receipt, verify_bundle_lock, verify_consumer_pins,
+    verify_539_receipt, verify_bundle_transition_after,
+    verify_bundle_transition_before, verify_consumer_pins,
     verify_go_receipt, verify_installed_identity, verify_packet_bundle,
     volume_mount_identity, write_owner_marker, write_receipt,
 )
@@ -112,7 +116,13 @@ def bundle_inspect_reader(run):
             raise Refused('bundle inspect produced invalid JSON') from None
         if obj.get('ok') is not True or obj.get('error') is not None:
             raise Refused('bundle inspect did not succeed')
-        return obj.get('result') or {}
+        result = obj.get('result')
+        if not isinstance(result, dict):
+            # Some installed builds return the inner inspect value directly.
+            result = obj if isinstance(obj.get('source'), dict) else None
+        if not isinstance(result, dict):
+            raise Refused('bundle inspect result block missing')
+        return result
     return inspect_fn
 
 
@@ -169,7 +179,9 @@ def preconditions(console):
         return r.returncode, r.stdout, r.stderr
 
     pins = verify_consumer_pins(git_fn)
-    lock = verify_bundle_lock(bundle_inspect_reader(preflight_effigy_reader(console)))
+    lock = verify_bundle_transition_before(
+        bundle_inspect_reader(preflight_effigy_reader(console)),
+        ACOW_PRIMARY / BUNDLE_LOCK_REL)
     shape = queue_shape_components(WARMUP_PARENT, packet_sha)
     ensure_owned_dir(WARMUP_PARENT)
     expect_absent(shape['path'])
@@ -205,6 +217,60 @@ def preconditions(console):
     return record, runner, shape
 
 
+def primary_git_runner():
+    """Read-only git runner against the pinned Acow primary checkout."""
+    def run_git(args, timeout=120, cwd=None):
+        return run_quiet(['/usr/bin/git', '-C', '/Users/tom/Dev/projects/acowtancy', *args],
+                         env=git_args(), timeout=timeout, cwd=cwd)
+    return run_git
+
+
+def create_warmup_worktree(record, shape, console, state, run_git=None, git_fn=None):
+    """Effect 1: the disposable linked worktree at the SELECTED current head.
+
+    The selected consumer head is re-verified immediately before this first
+    effect and the exact same commit is used for the worktree add, the
+    ownership marker and the recorded receipt identities; a silently
+    substituted checkout (the old anchor pin, a stale worktree, a moved head)
+    refuses. `run_git` is the injectable effect runner and `git_fn` the
+    injectable read-only pin verifier (tests pass fakes; the route uses the
+    real primary runners for both).
+    """
+    if run_git is None:
+        run_git = primary_git_runner()
+    selected = record['consumer_pins']['selected_commit']
+    reverified = verify_consumer_pins(
+        git_fn if git_fn is not None else primary_git_runner())
+    if reverified['selected_commit'] != selected \
+            or reverified['selected_tree'] != record['consumer_pins']['selected_tree']:
+        raise Refused('selected consumer head moved between preflight and the first effect')
+    record['consumer_pins_reverified'] = {
+        'selected_commit': reverified['selected_commit'],
+        'selected_tree': reverified['selected_tree'],
+    }
+    worktree = Path(shape['path'])
+    ident = session_identity(worktree)
+    state['project'] = ident['project']
+    r = run_git(['worktree', 'add', '--detach', str(worktree), selected])
+    console.write('\n$ git worktree add --detach %s %s\n[exit %d]\n'
+                  % (worktree, selected[:12], r.returncode))
+    if r.returncode:
+        raise Refused('disposable worktree creation failed (exit %d)' % r.returncode)
+    state['worktree'] = worktree
+    marker = {
+        'task': 'effigy#540', 'route': 'warmup', 'kind': 'disposable-linked-worktree',
+        'packet_sha256': record['packet_sha256'], 'selected_commit': selected,
+        'root': str(worktree), 'session_expectation': ident['session_id'],
+    }
+    write_owner_marker(worktree, marker)
+    head = run_git(['rev-parse', 'HEAD'], cwd=str(worktree))
+    if head.returncode or head.stdout.strip() != selected:
+        raise Refused('worktree head does not match the selected consumer commit')
+    record['activation'] = {'worktree': str(worktree), 'worktree_head': selected,
+                            'session': ident, 'project': ident['project'], 'steps': []}
+    return worktree, ident
+
+
 def activate(record, runner, shape, console, state):
     """The exact owner-approved sequence under the verified GO chain.
 
@@ -214,42 +280,24 @@ def activate(record, runner, shape, console, state):
     effigy_path = which('effigy')
     if not effigy_path:
         raise Refused('no effigy on PATH at activation')
-    worktree = Path(shape['path'])
-    ident = session_identity(worktree)
+    worktree, ident = create_warmup_worktree(record, shape, console, state)
     project = ident['project']
-    state['project'] = project
-
-    # Effect 1: disposable linked worktree at the Queue-QA-shaped path.
-    r = run_quiet(['/usr/bin/git', '-C', '/Users/tom/Dev/projects/acowtancy',
-                   'worktree', 'add', '--detach', str(worktree), ACOW_PIN_COMMIT],
-                  env=git_args(), timeout=120)
-    console.write('\n$ git worktree add --detach %s %s\n[exit %d]\n'
-                  % (worktree, ACOW_PIN_COMMIT[:12], r.returncode))
-    if r.returncode:
-        raise Refused('disposable worktree creation failed (exit %d)' % r.returncode)
-    state['worktree'] = worktree
-    marker = {
-        'task': 'effigy#540', 'route': 'warmup', 'kind': 'disposable-linked-worktree',
-        'packet_sha256': record['packet_sha256'], 'pin_commit': ACOW_PIN_COMMIT,
-        'root': str(worktree), 'session_expectation': ident['session_id'],
-    }
-    write_owner_marker(worktree, marker)
-    head = run_quiet(['/usr/bin/git', '-C', str(worktree), 'rev-parse', 'HEAD'],
-                     env=git_args(), timeout=30)
-    if head.returncode or head.stdout.strip() != ACOW_PIN_COMMIT:
-        raise Refused('worktree head does not match the pinned commit')
-
-    record['activation'] = {'worktree': str(worktree), 'session': ident,
-                            'project': project, 'steps': []}
     run = make_effigy_runner(worktree, console, effigy_path)
 
-    # Exact sequence step 1: effigy bundle sync; the lock must still name the
-    # pinned revision afterwards (a moved lock needs a reviewed re-pin).
+    # Exact sequence step 1: effigy bundle sync; afterwards the lock must
+    # name exactly the approved target state (typed revision + digest) with
+    # no residual staleness; any unexpected post-sync source-origin, revision
+    # or content drift refuses BEFORE attach/up.
     run(['bundle', 'sync'])
-    lock = verify_bundle_lock(bundle_inspect_reader(run))
-    if lock['lock'] != BUNDLE_LOCK_COMMIT:
-        raise Refused('bundle lock moved during the window; re-pin required')
-    record['activation']['steps'].append({'step': 'bundle sync', 'lock': lock['lock']})
+    lock_after = verify_bundle_transition_after(
+        bundle_inspect_reader(run), worktree / BUNDLE_LOCK_REL)
+    record['activation']['steps'].append({
+        'step': 'bundle sync',
+        'lock_before': {key: record['bundle_lock'][key]
+                        for key in ('mode', 'revision', 'digest', 'stale')},
+        'lock_after': {key: lock_after[key]
+                       for key in ('mode', 'revision', 'digest', 'stale')},
+    })
 
     # Exact sequence step 2: effigy worktree:container:attach (#795 authority).
     attach_out = run(['worktree:container:attach'])
@@ -305,7 +353,8 @@ def teardown(record, runner, worktree, project, console, failure=None):
     """
     marker = {
         'task': 'effigy#540', 'route': 'warmup', 'kind': 'disposable-linked-worktree',
-        'packet_sha256': record['packet_sha256'], 'pin_commit': ACOW_PIN_COMMIT,
+        'packet_sha256': record['packet_sha256'],
+        'selected_commit': record['activation']['worktree_head'],
         'root': str(worktree),
         'session_expectation': record['activation']['session']['session_id'],
     }

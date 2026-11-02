@@ -1,5 +1,5 @@
 """Shared fail-closed machinery for the Acow ordinary-Compose consumer
-qualification packet (Queue task effigy#540).
+qualification packet (Queue task effigy#540, amended by effigy#543).
 
 This is a preparation-only packet: nothing in this module creates a worktree,
 starts a container, installs anything or touches consumer data. The two armed
@@ -8,10 +8,15 @@ own operator-copied GO receipts before any effect, and refuse closed on any
 missing or mismatched input. Evidence is written 0600 under
 /Volumes/Builds/scratch/effigy/540/ only.
 
-Every verifier here is written so the committed boundary tests
-(`boundaries.py`, the installed-Effigy selector `test:qualification:acow`)
-can drive it against disposable fixture metadata and fake backends without
-any native call.
+The #543 amendment qualifies the CURRENT clean consumer checkout instead of a
+frozen historical one: the routes select the primary main HEAD at execution
+(the "selected head"), verify the relevant-input closure at that head, and
+model `bundle sync` as the Acow-owner-approved source-identity transition
+(locked 61dc5aa8…/e088a69e… -> approved 808adad…/28c92040…) instead of
+demanding the historical lock both before and after sync. Every verifier here
+is written so the committed boundary tests (`boundaries.py`, the
+installed-Effigy selector `test:qualification:acow`) can drive it against
+disposable fixture metadata and fake backends without any native call.
 """
 import hashlib
 import json
@@ -33,27 +38,73 @@ CANDIDATE_COMMIT = '5f4669141d8dabd91b7fbfef28d2bce21bc42ba2'
 CANDIDATE_BINARY_SHA256 = 'cb564fa64f15d080eb2b047454b55103e3e5857de2252de8be05a31a95eb00b1'
 CANDIDATE_VERSION_MARKER = '5f46691'
 
-# Pinned consumer inputs (read-only; the packet never edits Acow or the
-# bundle repository). Full commit hash of Acow main as pinned by the brief.
+# Consumer inputs (read-only; the packet never edits Acow or the bundle
+# repository). ACOW_PIN_COMMIT/TREE are the REVIEWED LINEAGE ANCHOR frozen by
+# the effigy#540 packet, not the executed checkout: the routes select the
+# clean primary main HEAD at execution and verify the relevant-input closure
+# at that selected head (effigy#543 amendment; Acow owner cb0e6df4
+# message0fcb8b20, 2026-11-02, accepts tools-only clean-head drift).
 ACOW_PRIMARY = Path('/Users/tom/Dev/projects/acowtancy')
 ACOW_PIN_COMMIT = 'b7f004d74a47f702f4dc3ef5c96390f0bdbf3c0b'
 ACOW_PIN_TREE = '88df708155e60deb8c8179cffd3c307a3baf5e01'
 BUNDLE_SOURCE = 'git@github.com:inflatable-cookie/underlay-effigy-bundle.git'
-BUNDLE_LOCK_COMMIT = '61dc5aa8405698ea757f0ff5c481cb6d7cb92314'
-ATTACH_TASK = 'infra/tasks.toml:16'  # "worktree:container:attach" line at the pin
+ATTACH_TASK = 'infra/tasks.toml:16'  # "worktree:container:attach" line
 
-# Tracked nonsecret input files pinned by blob hash at ACOW_PIN_COMMIT
-# (verified with `git rev-parse <commit>:<path>`; no working-tree reads).
-PINNED_INPUT_BLOBS = {
-    'infra/tasks.toml': 'ee9c7f26b516db2fbe03baabb01a5b24944bd42b',
-    'infra/workspace.toml': 'df59e9722612053be479bdf77e62cee1ac82a5ab',
+# The manifest files whose composed content the stack actually loads
+# (`[manifest] include` in effigy.toml). A declared include set other than
+# this exact reviewed list is a new relevant shape and requires a reviewed
+# re-pin; order is significant because later includes can override earlier
+# ones.
+MANIFEST_INCLUDES = [
+    'infra/workspace.toml',
+    'infra/tasks.toml',
+    'infra/deploy.toml',
+    'infra/secrets.toml',
+    'infra/bootstrap.toml',
+    'state/acowtancy.state.toml',
+]
+
+# Relevant tracked nonsecret inputs, pinned by blob hash and verified at the
+# SELECTED head with `git rev-parse HEAD:<path>` (no working-tree reads):
+# the root manifest itself, its six declared includes, the attach task's
+# script, and the four schema baselines the primary-data counts cite. All
+# twelve carry identical blobs at the anchor pin and at the current head
+# (ee037b045..., verified 2026-11-02); whole-repository tools/docs-only drift
+# with these unchanged passes without a new packet review.
+RELEVANT_INPUT_BLOBS = {
     'effigy.toml': '80ccc592c5a3794b9e0038657120f4ad8a5bdb0d',
+    'infra/workspace.toml': 'df59e9722612053be479bdf77e62cee1ac82a5ab',
+    'infra/tasks.toml': 'ee9c7f26b516db2fbe03baabb01a5b24944bd42b',
+    'infra/deploy.toml': 'ffe934ee5773af4e85b022bf3613f0077df6b2d2',
+    'infra/secrets.toml': '3d6517c616715676ff11289a343a6ae9f67afeda',
+    'infra/bootstrap.toml': 'e4cf85b2ddee38e63f46a9d373951a93768bf195',
+    'state/acowtancy.state.toml': 'e5a6338f0801b3ca05cb6db173f07662e0d34e02',
     'scripts/tasks/worktree-container-attach.ts': 'b9ed0416a26064edc22efd5433e2d7dba8884259',
     'state/schema/202608221002__baseline_auth.sql': '65ab9b783d31eaf438be2577be201929a669aa68',
     'state/schema/202608221003__baseline_learning.sql': '1f41b794afe1543a5064d4c7e85d3dcdbf9d9249',
     'state/schema/202608221010__baseline_engagement.sql': 'ed887393a015b8b1fd8f93a8393a9031742d0afb',
     'state/schema/202608221011__baseline_billing.sql': 'f0eae506b32555d71289807be6f9bf845c48c8b0',
 }
+
+# Bundle synchronization as an explicit source-identity transition
+# (effigy#543). The LOCKED PRE-STATE is fully resolved from the primary
+# checkout's .effigy/sources.lock.json (read-only). The APPROVED TARGET is
+# resolved from read-only cached metadata plus Acow's approved facts: the
+# content digest is exact (sha256 over the canonical source key
+# fc8e886a610c4555b9b5700cb2c6af9c21348f684b8127572f1af6d2d973e215 in
+# ~/.effigy/cache/sources-known.json), while the git revision is only known
+# as the owner-approved short form 808adad; the route records the full
+# resolved revision in the activation receipt instead of inventing suffixes.
+# The two kinds are never interchangeable: a revision is a 40-hex git commit,
+# a digest is a 64-hex sha256 content id (version_hint is typed, never a
+# generic hash).
+BUNDLE_LOCK_REL = '.effigy/sources.lock.json'
+BUNDLE_DECLARATION = {'type': 'git', 'url': BUNDLE_SOURCE, 'ref': None}
+BUNDLE_PRE_REVISION = '61dc5aa8405698ea757f0ff5c481cb6d7cb92314'
+BUNDLE_PRE_DIGEST = 'sha256:e088a69e937fe03d044dac0aa95297c6e0d4ee5c14cef6a244fd6bf6daacc38e'
+BUNDLE_TARGET_REVISION_PREFIX = '808adad'
+BUNDLE_TARGET_DIGEST = 'sha256:28c920404c34cc46d223b061b694903634b592f99a9f10f06f4f9f8f0058975d'
+BUNDLE_LOCK_MAX_BYTES = 1024 * 1024
 
 # Qualified schema/table names for the primary-data counts observation,
 # resolved from the pinned tracked sources (never invented). Citation is
@@ -100,6 +151,7 @@ WARMUP_PARENT = '/Volumes/Builds/scratch/effigy/w'  # exactly QUEUE_SHAPE_PARENT
 
 HEX64 = re.compile(r'[0-9a-f]{64}')
 HEX40 = re.compile(r'[0-9a-f]{40}')
+HEXDIGITS = set('0123456789abcdef')
 UUID_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 
 # Exact, case-sensitive token contracts for the operator-copied GO receipts.
@@ -609,57 +661,228 @@ def judge_teardown_inventory(live, baseline, project, protected_identity, mount_
     return sorted(added_volumes)
 
 
+def parse_manifest_includes(text):
+    """The `[manifest] include` list from the root manifest, or refuse.
+
+    A tiny fail-closed reader (no TOML dependency on the route's python3):
+    the reviewed file has one plain array of quoted strings under
+    `[manifest]`; comments, an unreadable array or a missing section refuse
+    instead of guessing a shape.
+    """
+    section = re.search(r'^\[manifest\][ \t]*$(.*?)(?=^\[|\Z)', text, re.S | re.M)
+    if not section:
+        raise Refused('manifest [manifest] section missing from effigy.toml')
+    body = section.group(1)
+    array = re.search(r'^include[ \t]*=[ \t]*\[(.*?)\]', body, re.S | re.M)
+    if not array or '#' in array.group(1):
+        raise Refused('manifest include array unreadable in effigy.toml')
+    items = re.findall(r'"([^"]*)"', array.group(1))
+    if not items or any(not item for item in items):
+        raise Refused('manifest include array unreadable in effigy.toml')
+    return items
+
+
 def verify_consumer_pins(git_fn, primary_path=ACOW_PRIMARY):
-    """Pinned Acow main + bundle inputs, all read-only, or refuse.
+    """Select and verify the CURRENT clean consumer head, or refuse.
 
     `git_fn(args)` runs /usr/bin/git with the scrubbed environment against
-    the primary checkout. The pin commit's tree and every pinned input blob
-    are content identity, so the check stays valid when consumer main moves
-    on; the primary checkout must still be clean and contain the pin.
+    the primary checkout; every call is read-only (rev-parse, show,
+    merge-base, status). The selected head is whatever the primary main HEAD
+    is at execution: the reviewed anchor pin (commit+tree) proves lineage
+    integrity, the anchor must still be an ancestor of the selected head,
+    and every relevant input is verified by blob hash AT the selected head.
+    That makes whole-repository tools/docs-only drift with unchanged relevant
+    inputs pass, while an altered relevant input refuses with the exact
+    changed path/identity and a changed declared include shape (a new
+    relevant input whose content was never reviewed) requires a reviewed
+    re-pin. Dirty, unreadable or replaced heads refuse closed.
     """
     if (Path(primary_path) / '.git').is_file():
         raise Refused('pinned Acow path is a linked worktree, not the primary checkout')
     rc, out, _ = git_fn(['rev-parse', ACOW_PIN_COMMIT + '^{commit}'])
     if rc or out.strip() != ACOW_PIN_COMMIT:
-        raise Refused('pinned Acow commit object missing or drifted')
+        raise Refused('approved anchor commit object missing or drifted')
     rc, out, _ = git_fn(['rev-parse', ACOW_PIN_COMMIT + '^{tree}'])
     if rc or out.strip() != ACOW_PIN_TREE:
-        raise Refused('pinned Acow tree drifted')
+        raise Refused('approved anchor tree drifted')
+    rc, out, _ = git_fn(['rev-parse', 'HEAD'])
+    head = out.strip()
+    if rc or not HEX40.fullmatch(head):
+        raise Refused('primary checkout head unreadable')
+    selected_commit = head
+    rc, out, _ = git_fn(['rev-parse', 'HEAD^{tree}'])
+    if rc or not HEX40.fullmatch(out.strip()):
+        raise Refused('selected head tree unreadable')
+    selected_tree = out.strip()
+    rc, _, _ = git_fn(['merge-base', '--is-ancestor', ACOW_PIN_COMMIT, 'HEAD'])
+    if rc != 0:
+        raise Refused('primary checkout head replaced: the approved anchor pin '
+                      'is no longer an ancestor')
     blobs = {}
-    for rel, want in sorted(PINNED_INPUT_BLOBS.items()):
-        rc, out, _ = git_fn(['rev-parse', '%s:%s' % (ACOW_PIN_COMMIT, rel)])
-        if rc or out.strip() != want:
-            raise Refused('pinned input blob drifted: ' + rel)
-        blobs[rel] = want
+    for rel, want in sorted(RELEVANT_INPUT_BLOBS.items()):
+        rc, out, _ = git_fn(['rev-parse', 'HEAD:%s' % rel])
+        if rc:
+            raise Refused('relevant input missing at the selected head: ' + rel)
+        got = out.strip()
+        if got != want:
+            raise Refused('relevant input changed at the selected head: %s '
+                          '(expected %s, found %s)' % (rel, want, got))
+        blobs[rel] = got
+    rc, out, _ = git_fn(['show', 'HEAD:effigy.toml'])
+    if rc:
+        raise Refused('manifest effigy.toml unreadable at the selected head')
+    includes = parse_manifest_includes(out)
+    if includes != MANIFEST_INCLUDES:
+        raise Refused('new relevant input shape; reviewed re-pin required: '
+                      'manifest include list at the selected head %r differs '
+                      'from the reviewed closure %r' % (includes, MANIFEST_INCLUDES))
     rc, out, _ = git_fn(['status', '--porcelain=v1'])
     if rc:
         raise Refused('primary checkout status unreadable')
     if out.strip():
         raise Refused('primary checkout is dirty')
-    rc, _, _ = git_fn(['merge-base', '--is-ancestor', ACOW_PIN_COMMIT, 'HEAD'])
-    if rc != 0:
-        raise Refused('primary checkout head no longer contains the pinned commit')
     return {'pin_commit': ACOW_PIN_COMMIT, 'pin_tree': ACOW_PIN_TREE,
-            'pinned_input_blobs': blobs, 'primary_clean': True}
+            'selected_commit': selected_commit, 'selected_tree': selected_tree,
+            'relevant_input_blobs': blobs, 'manifest_includes': list(includes),
+            'primary_clean': True}
 
 
-def verify_bundle_lock(inspect_fn):
-    """Bundle lock must still name the pinned revision, or refuse.
+def _typed_digest(value):
+    """Normalize to a typed sha256 content digest, or None."""
+    if not isinstance(value, str):
+        return None
+    body = value[7:] if value.startswith('sha256:') else value
+    if len(body) == 64 and set(body) <= HEXDIGITS:
+        return 'sha256:' + body
+    return None
 
-    `inspect_fn()` returns the parsed `effigy bundle inspect --json` result
-    (read-only; inspection never fetches or writes). A moved lock needs the
-    explicit reviewed re-pin the brief requires for changed inputs.
+
+def _typed_revision(value):
+    """A typed git revision (40-hex commit id), or None."""
+    if isinstance(value, str) and HEX40.fullmatch(value):
+        return value
+    return None
+
+
+def parse_bundle_pin(lock_path):
+    """Parse and type-check one bundle pin from a sources.lock.json, or refuse.
+
+    Read-only bundle identity metadata: regular file, never a symlink, size
+    capped, JSON lock version 1, the `bundle` source pin present, its
+    declaration a typed git source, its object inside cache/sources, its
+    content digest a typed sha256 and its revision (git sources) present and
+    a 40-hex commit. Missing or unverifiable identity refuses; it can never
+    become a pass.
     """
-    result = inspect_fn()
-    source = (result or {}).get('source') or {}
+    p = Path(lock_path)
+    if p.is_symlink() or not p.is_file():
+        raise Refused('bundle lock file missing or not a regular file: %s' % p)
+    data = p.read_bytes()
+    if len(data) > BUNDLE_LOCK_MAX_BYTES:
+        raise Refused('bundle lock exceeds the lock size cap: %s' % p)
+    try:
+        obj = json.loads(data.decode('utf-8'))
+    except (ValueError, UnicodeDecodeError):
+        raise Refused('bundle lock is not valid JSON: %s' % p) from None
+    if not isinstance(obj, dict) or obj.get('version') != 1:
+        raise Refused('unsupported bundle lock version: %s' % p)
+    sources = obj.get('sources')
+    bundle = sources.get('bundle') if isinstance(sources, dict) else None
+    if not isinstance(bundle, dict):
+        raise Refused('bundle lock has no bundle source pin: %s' % p)
+    declaration = bundle.get('declaration')
+    if not isinstance(declaration, dict) or declaration.get('type') != 'git' \
+            or not isinstance(declaration.get('url'), str) or not declaration.get('url') \
+            or not all(key in declaration for key in ('type', 'url', 'ref')):
+        raise Refused('bundle lock declaration is not a typed git source: %s' % p)
+    object_path = bundle.get('object')
+    parts = Path(object_path).parts if isinstance(object_path, str) else ()
+    if not object_path.startswith('cache/sources') or '..' in parts \
+            or Path(object_path).is_absolute() \
+            or not all(part not in ('.', '..') for part in parts):
+        raise Refused('bundle lock object escapes the source cache: %s' % p)
+    digest = _typed_digest(bundle.get('version'))
+    if digest is None:
+        raise Refused('bundle lock content digest missing or untyped: %s' % p)
+    raw_revision = bundle.get('revision')
+    revision = _typed_revision(raw_revision)
+    if raw_revision is not None and revision is None:
+        raise Refused('bundle lock revision is not a 40-hex git commit: %s' % p)
+    return {'declaration': declaration, 'object': object_path,
+            'digest': digest, 'revision': revision}
+
+
+def classify_bundle_state(inspect_result, pin):
+    """Classify one observed bundle state against the approved transition.
+
+    `inspect_result` is the parsed inner `effigy bundle inspect --json`
+    result (read-only; inspection never fetches or writes); `pin` comes from
+    parse_bundle_pin on the same checkout's sources.lock.json. Returns the
+    typed state record, or refuses: source identity or declaration drift,
+    hint/pin disagreement, or any identity outside the approved pre-state
+    (locked 61dc5aa8…/e088a69e…, transition pending) and approved target
+    (revision 808adad… + digest 28c92040…, already settled). Revision and
+    digest kinds are never equated or interchanged.
+    """
+    if not isinstance(inspect_result, dict) or inspect_result.get('ok') is not True:
+        raise Refused('bundle inspect did not succeed')
+    source = inspect_result.get('source')
+    if not isinstance(source, dict):
+        raise Refused('bundle inspect source block missing')
     if source.get('source_type') != 'git' or source.get('source_path') != BUNDLE_SOURCE:
         raise Refused('bundle source identity changed')
-    if source.get('version_hint') != BUNDLE_LOCK_COMMIT:
-        raise Refused('bundle lock moved off the pinned revision; re-pin required')
-    if not isinstance(source.get('stale'), bool):
+    stale = source.get('stale')
+    if not isinstance(stale, bool):
         raise Refused('bundle inspect stale flag missing')
-    return {'source': source.get('source_path'), 'lock': source.get('version_hint'),
-            'stale': source.get('stale')}
+    if pin['declaration'] != BUNDLE_DECLARATION:
+        raise Refused('bundle source declaration changed; reviewed re-pin required')
+    hint = source.get('version_hint')
+    if pin['revision'] is not None:
+        if hint != pin['revision']:
+            raise Refused('bundle inspect version_hint disagrees with the locked '
+                          'revision (typed identities must match)')
+    elif hint != pin['digest']:
+        raise Refused('bundle inspect version_hint disagrees with the locked '
+                      'content digest (typed identities must match)')
+    if pin['revision'] == BUNDLE_PRE_REVISION and pin['digest'] == BUNDLE_PRE_DIGEST:
+        mode = 'approved-transition-pending'
+    elif pin['digest'] == BUNDLE_TARGET_DIGEST and pin['revision'] is not None \
+            and pin['revision'].startswith(BUNDLE_TARGET_REVISION_PREFIX):
+        mode = 'already-at-approved-target'
+    else:
+        raise Refused('bundle lock is at an unapproved identity (locked %s/%s); '
+                      'explicit reviewed re-pin required'
+                      % (pin['revision'] or 'no-revision', pin['digest']))
+    return {'mode': mode, 'source': BUNDLE_SOURCE, 'revision': pin['revision'],
+            'digest': pin['digest'], 'stale': stale}
+
+
+def verify_bundle_transition_before(inspect_fn, lock_path):
+    """The allowed locked pre-state (or approved target) before any effect.
+
+    The packet permits exactly two pre-states: the approved old->new
+    transition still pending at the locked old identity, and the checkout
+    already settled at the approved target (a later no-op sync). Anything
+    else refuses and needs the explicit reviewed re-pin.
+    """
+    return classify_bundle_state(inspect_fn(), parse_bundle_pin(lock_path))
+
+
+def verify_bundle_transition_after(inspect_fn, lock_path):
+    """After bundle sync: exactly the approved target, settled, or refuse.
+
+    Any unexpected post-sync source-origin, revision or content drift refuses
+    here, BEFORE attach/up; a missing revision or digest refuses; a still
+    stale lock refuses (sync did not settle the approved state).
+    """
+    state = classify_bundle_state(inspect_fn(), parse_bundle_pin(lock_path))
+    if state['mode'] != 'already-at-approved-target':
+        raise Refused('bundle sync did not settle the approved target state '
+                      '(locked %s/%s); refusing before attach/up'
+                      % (state['revision'] or 'no-revision', state['digest']))
+    if state['stale']:
+        raise Refused('bundle lock still reports stale after sync; refusing before attach/up')
+    return state
 
 
 def expect_absent(path):
