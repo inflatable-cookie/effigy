@@ -851,6 +851,153 @@ fn managed_host_listener_republishes_its_route_when_the_port_answers_again() {
     assert_success(down);
 }
 
+/// The main milestone QA run (f099a12f, effigy#554) failed the republication
+/// proof here: one route-table read inside its withdrawal wait returned
+/// `Unknown` — the store refused the query under concurrent writers, a refusal
+/// the store itself describes as "nothing is broken, and retrying once it
+/// answers is safe" — and the proof's single-shot `.expect("published
+/// routes")` treated that unknown as a test failure. This regression holds the
+/// endpoint store's read seam refused for a bounded window while a route wait
+/// runs, and requires the wait to keep polling through it: unknown must never
+/// settle a wait as absence or readiness; only a readable observation decides.
+#[cfg(unix)]
+#[test]
+fn an_endpoint_store_unknown_never_settles_a_route_wait() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = effigy_test_support::Fixture::new("g554-").expect("fixture root");
+    let domain = "unknown-window.host.test";
+    let routes_path = root.path().join("routes.json");
+    save_private_routes(
+        root.path(),
+        &[(domain, "127.0.0.1:65530".parse().expect("route target"), true)],
+    );
+    let state_directory = root.path().join(".effigy/state");
+    let trusted = fs::metadata(&state_directory)
+        .expect("endpoint store state directory")
+        .permissions();
+
+    // A reader must trust the state directory, so a widened mode refuses every
+    // read for the window. The refusal is the same `Unknown` family the
+    // milestone run panicked on: an observation the store could not make,
+    // never an absence.
+    fs::set_permissions(&state_directory, fs::Permissions::from_mode(0o750))
+        .expect("refuse the store's reads for the window");
+    let refused = RouteTable::load(&routes_path)
+        .expect_err("a widened state directory refuses reads")
+        .to_string();
+    assert!(
+        refused.contains("observation unknown"),
+        "the refused read is unknown, never absence: {refused}"
+    );
+
+    // The withdrawal wait drawn from the republication proof polls through the
+    // refused window. Halfway through, the store becomes readable with the
+    // route removed, so a surviving wait ends by observing the real absence.
+    let remover = {
+        let routes_path = routes_path.clone();
+        let state_directory = state_directory.clone();
+        let trusted = trusted.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(300));
+            fs::set_permissions(&state_directory, trusted).expect("restore the trusted mode");
+            RouteTable::new()
+                .save(&routes_path)
+                .expect("withdraw the fixture route");
+        })
+    };
+    let withdrawal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let published = RouteTable::load(&routes_path)
+                .expect("published routes")
+                .lookup(domain)
+                .is_some();
+            if !published {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the route never withdrew: state={:?}",
+                routes_path
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
+    }));
+    remover.join().expect("route remover");
+    if let Err(payload) = withdrawal {
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+            .unwrap_or_else(|| "<unlisted panic>".to_owned());
+        panic!(
+            "a route wait must survive a store unknown and keep polling: {message}"
+        );
+    }
+
+    // The republication twin: readiness is also only ever a readable
+    // observation. The wait polls through a second refused window and ends on
+    // the successor target the store names once it answers again.
+    fs::set_permissions(&state_directory, fs::Permissions::from_mode(0o750))
+        .expect("refuse the store's reads again");
+    let republisher = {
+        let routes_path = routes_path.clone();
+        let state_directory = state_directory.clone();
+        let trusted = trusted.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(300));
+            fs::set_permissions(&state_directory, trusted).expect("restore the trusted mode");
+            let mut table = RouteTable::new();
+            table.upsert(Route {
+                domain: domain.to_owned(),
+                target: Some("127.0.0.1:65531".to_owned()),
+                dns_ip: None,
+                tcp_port: None,
+                tcp_target: None,
+                source: RouteSource::Manual,
+                project: routes_path.display().to_string(),
+                managed_listener: None,
+                tls: true,
+                registered: Utc::now(),
+            });
+            table.save(&routes_path).expect("republish the route");
+        })
+    };
+    let republication = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let republished = RouteTable::load(&routes_path)
+                .expect("published routes")
+                .lookup(domain)
+                .cloned();
+            if republished
+                .as_ref()
+                .is_some_and(|route| route.target.as_deref() == Some("127.0.0.1:65531"))
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the route never republished: state={:?}",
+                routes_path
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
+    }));
+    republisher.join().expect("route republisher");
+    if let Err(payload) = republication {
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+            .unwrap_or_else(|| "<unlisted panic>".to_owned());
+        panic!(
+            "a republication wait must survive a store unknown and keep polling: {message}"
+        );
+    }
+}
+
 /// A republication that fails while the port keeps answering is retried by the
 /// next liveness probe: the child is healthy, so the route has to come back
 /// without another outage. A private root this supervisor refuses is a brief
