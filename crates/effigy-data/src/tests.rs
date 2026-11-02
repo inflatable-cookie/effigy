@@ -4,13 +4,6 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn data_target_ref_preserves_name() {
-        let target = DataTargetRef::from("legacy_mysql");
-
-        assert_eq!(target.as_str(), "legacy_mysql");
-    }
-
-    #[test]
     fn resolved_target_keeps_service_and_database_identity() {
         let target = ResolvedDataTarget::new("legacy_mysql", "legacy")
             .service("mysql")
@@ -122,24 +115,24 @@ mod tests {
     }
 
     #[test]
-    fn database_kind_accepts_current_catalog_names() {
-        assert_eq!(
-            DatabaseServiceKind::from_catalog("postgres"),
-            Some(DatabaseServiceKind::Postgres)
-        );
-        assert_eq!(
-            DatabaseServiceKind::from_catalog("mariadb"),
-            Some(DatabaseServiceKind::MariaDb)
-        );
-        assert_eq!(
-            DatabaseServiceKind::from_catalog("mysql"),
-            Some(DatabaseServiceKind::MariaDb)
-        );
-        assert_eq!(DatabaseServiceKind::from_catalog("redis"), None);
-    }
-
-    #[test]
-    fn database_kind_exposes_client_and_dump_tool_names() {
+    fn database_kind_maps_catalog_names_and_tools() {
+        for (name, catalog, expected) in [
+            ("postgres", "postgres", Some(DatabaseServiceKind::Postgres)),
+            (
+                "source-qualified-postgres",
+                "source/postgres",
+                Some(DatabaseServiceKind::Postgres),
+            ),
+            ("mariadb", "mariadb", Some(DatabaseServiceKind::MariaDb)),
+            ("mysql", "mysql", Some(DatabaseServiceKind::MariaDb)),
+            ("redis", "redis", None),
+        ] {
+            assert_eq!(
+                DatabaseServiceKind::from_catalog(catalog),
+                expected,
+                "{name}"
+            );
+        }
         assert_eq!(DatabaseServiceKind::Postgres.client_name(), "psql");
         assert_eq!(DatabaseServiceKind::Postgres.dump_tool_name(), "pg_dump");
         assert_eq!(DatabaseServiceKind::MariaDb.client_name(), "mysql");
@@ -147,22 +140,36 @@ mod tests {
     }
 
     #[test]
-    fn seed_source_classifies_local_and_oci_paths() {
-        let local = DataSeedSource::from_raw_path(PathBuf::from("backups/site.sql"));
-        let oci = DataSeedSource::from_raw_path(PathBuf::from(
+    fn seed_and_dump_paths_classify_local_and_oci() {
+        let local_seed = DataSeedSource::from_raw_path(PathBuf::from("backups/site.sql"));
+        let oci_seed = DataSeedSource::from_raw_path(PathBuf::from(
             "oci://ghcr.io/acme/uat-content:2026-05-06",
         ));
-
         assert_eq!(
-            local,
+            local_seed,
             DataSeedSource::Local(PathBuf::from("backups/site.sql"))
         );
         assert_eq!(
-            oci,
+            oci_seed,
             DataSeedSource::Oci("oci://ghcr.io/acme/uat-content:2026-05-06".to_owned())
         );
-        assert!(!local.is_oci());
-        assert!(oci.is_oci());
+        assert!(!local_seed.is_oci());
+        assert!(oci_seed.is_oci());
+
+        let local_dump = DataDumpDestination::from_raw_path(PathBuf::from("backups/site.sql"));
+        let oci_dump = DataDumpDestination::from_raw_path(PathBuf::from(
+            "oci://ghcr.io/acme/uat-content:2026-05-06",
+        ));
+        assert_eq!(
+            local_dump,
+            DataDumpDestination::Local(PathBuf::from("backups/site.sql"))
+        );
+        assert_eq!(
+            oci_dump,
+            DataDumpDestination::Oci("oci://ghcr.io/acme/uat-content:2026-05-06".to_owned())
+        );
+        assert!(!local_dump.is_oci());
+        assert!(oci_dump.is_oci());
     }
 
     #[test]
@@ -216,35 +223,6 @@ mod tests {
             normalize_dump_destination_path(cwd, PathBuf::from("~user/dump.sql"), Some(home)),
             PathBuf::from("/repo/~user/dump.sql")
         );
-    }
-
-    #[test]
-    fn detects_oci_artifact_ref_paths() {
-        assert!(is_oci_artifact_ref_path(std::path::Path::new(
-            "oci://ghcr.io/acme/uat-content:2026-05-06"
-        )));
-        assert!(!is_oci_artifact_ref_path(std::path::Path::new(
-            "backups/site.sql"
-        )));
-    }
-
-    #[test]
-    fn dump_destination_classifies_local_and_oci_paths() {
-        let local = DataDumpDestination::from_raw_path(PathBuf::from("backups/site.sql"));
-        let oci = DataDumpDestination::from_raw_path(PathBuf::from(
-            "oci://ghcr.io/acme/uat-content:2026-05-06",
-        ));
-
-        assert_eq!(
-            local,
-            DataDumpDestination::Local(PathBuf::from("backups/site.sql"))
-        );
-        assert_eq!(
-            oci,
-            DataDumpDestination::Oci("oci://ghcr.io/acme/uat-content:2026-05-06".to_owned())
-        );
-        assert!(!local.is_oci());
-        assert!(oci.is_oci());
     }
 
     #[test]
@@ -441,28 +419,50 @@ mod tests {
     }
 
     #[test]
-    fn renders_postgres_dump_command() {
-        let plan =
-            database_dump_command("postgres", DatabaseServiceKind::Postgres, "secret", "app");
-
-        assert_eq!(plan.service, "postgres");
-        assert_eq!(
-            plan.argv,
-            vec![
-                "pg_dump",
-                "-U",
+    fn renders_dump_commands_for_postgres_and_mariadb() {
+        for (name, service, kind, database, expected_argv, expected_env) in [
+            (
                 "postgres",
-                "-d",
+                "postgres",
+                DatabaseServiceKind::Postgres,
                 "app",
-                "--no-owner",
-                "--no-privileges",
-            ]
-        );
-        assert_eq!(
-            plan.credential_env,
-            BTreeMap::from([("PGPASSWORD".to_owned(), "secret".to_owned())])
-        );
-        assert!(!plan.argv.iter().any(|arg| arg.contains("secret")));
+                vec![
+                    "pg_dump",
+                    "-U",
+                    "postgres",
+                    "-d",
+                    "app",
+                    "--no-owner",
+                    "--no-privileges",
+                ],
+                BTreeMap::from([("PGPASSWORD".to_owned(), "secret".to_owned())]),
+            ),
+            (
+                "mariadb",
+                "mysql",
+                DatabaseServiceKind::MariaDb,
+                "legacy",
+                vec![
+                    "mysqldump",
+                    "-uroot",
+                    "--single-transaction",
+                    "--skip-comments",
+                    "--routines",
+                    "--triggers",
+                    "legacy",
+                ],
+                BTreeMap::from([("MYSQL_PWD".to_owned(), "secret".to_owned())]),
+            ),
+        ] {
+            let plan = database_dump_command(service, kind, "secret", database);
+            assert_eq!(plan.service, service, "{name}");
+            assert_eq!(plan.argv, expected_argv, "{name}");
+            assert_eq!(plan.credential_env, expected_env, "{name}");
+            assert!(
+                !plan.argv.iter().any(|arg| arg.contains("secret")),
+                "{name}"
+            );
+        }
     }
 
     #[test]
@@ -562,30 +562,23 @@ mod tests {
                 database: "missing".to_owned(),
             })
         );
-    }
 
-    #[test]
-    fn renders_mariadb_dump_command() {
-        let plan = database_dump_command("mysql", DatabaseServiceKind::MariaDb, "secret", "legacy");
-
-        assert_eq!(plan.service, "mysql");
+        let primary = vec![
+            DatabaseService::new("postgres_a", DatabaseServiceKind::Postgres)
+                .primary_database("shared"),
+            DatabaseService::new("postgres_b", DatabaseServiceKind::Postgres)
+                .primary_database("shared"),
+        ];
         assert_eq!(
-            plan.argv,
-            vec![
-                "mysqldump",
-                "-uroot",
-                "--single-transaction",
-                "--skip-comments",
-                "--routines",
-                "--triggers",
-                "legacy",
-            ]
+            select_database_service(&primary, None, "shared"),
+            Err(DatabaseServiceSelectionError::AmbiguousPrimaryDatabase {
+                database: "shared".to_owned(),
+                services: vec![
+                    "postgres_a (postgres)".to_owned(),
+                    "postgres_b (postgres)".to_owned(),
+                ],
+            })
         );
-        assert_eq!(
-            plan.credential_env,
-            BTreeMap::from([("MYSQL_PWD".to_owned(), "secret".to_owned())])
-        );
-        assert!(!plan.argv.iter().any(|arg| arg.contains("secret")));
     }
 
     #[test]

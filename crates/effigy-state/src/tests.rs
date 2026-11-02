@@ -299,9 +299,11 @@ depends_on = ["structure"]
 }
 
 #[test]
-fn plan_lineage_refuses_depends_on_a_later_layer() {
-    let manifest = StateStackManifest::parse_toml(
-        r#"
+fn plan_lineage_refuses_invalid_depends_on() {
+    for (name, body, expected) in [
+        (
+            "later-layer",
+            r#"
 schema = "effigy.state-stack.v1"
 name = "order-later"
 environment = "dev"
@@ -321,21 +323,11 @@ source = "./roles.sql"
 apply_mode = "sql"
 environment_policy = "all"
 "#,
-    )
-    .expect("parse");
-    let error = manifest
-        .plan_lineage()
-        .expect_err("later depends_on must fail closed");
-    assert_eq!(
-        error.to_string(),
-        "state stack layer 0 `users` depends on `roles` which is not an earlier layer"
-    );
-}
-
-#[test]
-fn plan_lineage_refuses_self_depends_on() {
-    let manifest = StateStackManifest::parse_toml(
-        r#"
+            "state stack layer 0 `users` depends on `roles` which is not an earlier layer",
+        ),
+        (
+            "self",
+            r#"
 schema = "effigy.state-stack.v1"
 name = "order-self"
 environment = "dev"
@@ -348,21 +340,11 @@ apply_mode = "sql"
 environment_policy = "all"
 depends_on = ["seed"]
 "#,
-    )
-    .expect("parse");
-    let error = manifest
-        .plan_lineage()
-        .expect_err("self depends_on must fail closed");
-    assert_eq!(
-        error.to_string(),
-        "state stack layer 0 `seed` depends on `seed` which is not an earlier layer"
-    );
-}
-
-#[test]
-fn plan_lineage_still_names_an_unknown_depends_on() {
-    let manifest = StateStackManifest::parse_toml(
-        r#"
+            "state stack layer 0 `seed` depends on `seed` which is not an earlier layer",
+        ),
+        (
+            "unknown",
+            r#"
 schema = "effigy.state-stack.v1"
 name = "order-unknown"
 environment = "dev"
@@ -375,15 +357,175 @@ apply_mode = "sql"
 environment_policy = "all"
 depends_on = ["missing"]
 "#,
-    )
-    .expect("parse");
-    let error = manifest
-        .plan_lineage()
-        .expect_err("unknown depends_on must fail closed");
-    assert_eq!(
-        error.to_string(),
-        "state stack layer 0 `seed` depends on unknown layer `missing`"
-    );
+            "state stack layer 0 `seed` depends on unknown layer `missing`",
+        ),
+    ] {
+        let manifest = StateStackManifest::parse_toml(body).expect(name);
+        let error = manifest.plan_lineage().expect_err(name);
+        assert_eq!(error.to_string(), expected, "{name}");
+    }
+}
+
+#[test]
+fn plan_lineage_refuses_invalid_stack_shape_and_policy() {
+    for (name, body, expected) in [
+        (
+            "unsupported-schema",
+            r#"
+schema = "effigy.state-stack.v0"
+name = "shape"
+environment = "dev"
+
+[[layers]]
+key = "structure"
+role = "structure"
+source = "migrate"
+apply_mode = "task"
+environment_policy = "all"
+"#,
+            "unsupported state stack schema `effigy.state-stack.v0`",
+        ),
+        (
+            "empty-name",
+            r#"
+schema = "effigy.state-stack.v1"
+name = "  "
+environment = "dev"
+
+[[layers]]
+key = "structure"
+role = "structure"
+source = "migrate"
+apply_mode = "task"
+environment_policy = "all"
+"#,
+            "state stack name is empty",
+        ),
+        (
+            "no-layers",
+            r#"
+schema = "effigy.state-stack.v1"
+name = "empty"
+environment = "dev"
+layers = []
+"#,
+            "state stack has no layers",
+        ),
+        (
+            "empty-key",
+            r#"
+schema = "effigy.state-stack.v1"
+name = "shape"
+environment = "dev"
+
+[[layers]]
+key = "  "
+role = "structure"
+source = "migrate"
+apply_mode = "task"
+environment_policy = "all"
+"#,
+            "state stack layer 0 has an empty key",
+        ),
+        (
+            "duplicate-key",
+            r#"
+schema = "effigy.state-stack.v1"
+name = "shape"
+environment = "dev"
+
+[[layers]]
+key = "structure"
+role = "structure"
+source = "migrate"
+apply_mode = "task"
+environment_policy = "all"
+
+[[layers]]
+key = "structure"
+role = "structure"
+source = "migrate"
+apply_mode = "task"
+environment_policy = "all"
+"#,
+            "state stack layer 1 duplicates key `structure`",
+        ),
+        (
+            "out-of-order-role",
+            r#"
+schema = "effigy.state-stack.v1"
+name = "shape"
+environment = "dev"
+
+[[layers]]
+key = "seed"
+role = "baseline-seed"
+source = "./seed.sql"
+apply_mode = "sql"
+environment_policy = "all"
+
+[[layers]]
+key = "structure"
+role = "structure"
+source = "migrate"
+apply_mode = "task"
+environment_policy = "all"
+"#,
+            "state stack layer 1 `structure` has out-of-order role `Structure`",
+        ),
+        (
+            "dev-only-on-uat",
+            r#"
+schema = "effigy.state-stack.v1"
+name = "shape"
+environment = "uat"
+
+[[layers]]
+key = "users"
+role = "dev-overlay"
+source = "seed-users"
+apply_mode = "task"
+environment_policy = "dev-only"
+"#,
+            "state stack layer 0 `users` policy `DevOnly` does not apply to `Uat`",
+        ),
+        (
+            "capture-only-on-structure",
+            r#"
+schema = "effigy.state-stack.v1"
+name = "shape"
+environment = "uat"
+
+[[layers]]
+key = "structure"
+role = "structure"
+source = "migrate"
+apply_mode = "task"
+environment_policy = "capture-only"
+"#,
+            "state stack layer 0 `structure` policy `CaptureOnly` does not apply to `Uat`",
+        ),
+        (
+            "deferred-executable-base-apply",
+            r#"
+schema = "effigy.state-stack.v1"
+name = "shape"
+environment = "dev"
+
+[[layers]]
+key = "apply"
+role = "base-apply"
+source = "./seed.sql"
+apply_mode = "sql"
+environment_policy = "all"
+"#,
+            "state stack layer 0 `apply` uses deferred executable role `BaseApply`",
+        ),
+    ] {
+        let manifest = StateStackManifest::parse_toml(body).expect(name);
+        let error = manifest.plan_lineage().expect_err(name);
+        assert_eq!(error.to_string(), expected, "{name}");
+    }
 }
 
 #[test]
