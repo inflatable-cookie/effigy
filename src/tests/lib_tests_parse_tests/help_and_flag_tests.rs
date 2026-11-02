@@ -302,55 +302,45 @@ fn parse_graph_is_retired_even_with_help() {
     }
 }
 #[test]
-fn parse_catalog_help_reports_removed_command() {
-    let error = parse_command(vec!["catalog".to_owned(), "--help".to_owned()])
-        .expect_err("removed catalog command should fail");
-    assert!(error.to_string().contains("`effigy catalog` was removed"));
-}
-
-#[test]
 fn parse_catalogue_help_alias_falls_back_to_task_routing() {
-    let catalogue = parse_command(vec!["catalogue".to_owned(), "--help".to_owned()])
-        .expect("catalogue token should route as a task selector");
-
-    assert_eq!(
-        catalogue,
-        Command::Task(TaskInvocation {
-            name: "catalogue".to_owned(),
-            args: vec![
-                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
-                "--help".to_owned()
-            ],
-        })
-    );
+    // Retired command words whose help is now task-owned keep `--help` in
+    // the task args instead of rendering a help panel.
+    for word in ["catalogue", "migrate"] {
+        let cmd = parse_command(vec![word.to_owned(), "--help".to_owned()])
+            .expect("retired word should route as a task selector");
+        assert_eq!(
+            cmd,
+            Command::Task(TaskInvocation {
+                name: word.to_owned(),
+                args: vec![
+                    effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
+                    "--help".to_owned()
+                ],
+            }),
+            "`effigy {word} --help` must stay a task selector"
+        );
+    }
 }
 #[test]
-fn parse_retired_system_help_names_the_container_replacement() {
-    let error = parse_command(vec!["system".to_owned(), "--help".to_owned()])
-        .expect_err("retired command should refuse");
-    let message = error.to_string();
-    assert!(message.contains("`effigy system` is retired in v0.15"));
-    assert!(message.contains("effigy help container"));
-    assert!(message.contains("CHANGELOG.md"));
-}
-#[test]
-fn parse_migrate_help_is_scoped() {
-    let cmd = parse_command(vec!["migrate".to_owned(), "--help".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Task(TaskInvocation {
-            name: "migrate".to_owned(),
-            args: vec![
-                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
-                "--help".to_owned()
-            ],
-        })
+fn parse_migrate_tasks_word_is_retired_with_guidance() {
+    let error = parse_command(vec!["tasks".to_owned(), "migrate".to_owned()])
+        .expect_err("tasks migrate is retired");
+    assert!(
+        error
+            .to_string()
+            .contains("`effigy tasks migrate` is retired"),
+        "{error}"
     );
 }
 
 #[test]
 fn parse_bare_help_renders_general_help() {
+    // No argv at all, the `help` word, its own --help, and the global
+    // --help all render the general panel.
+    assert_eq!(
+        parse_command(Vec::<String>::new()).expect("parse should succeed"),
+        Command::Help(HelpTopic::General)
+    );
     assert_eq!(parse(&["help"]), Command::Help(HelpTopic::General));
     assert_eq!(
         parse(&["help", "--help"]),
