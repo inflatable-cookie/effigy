@@ -20,7 +20,7 @@ use effigy_containers::{
     HostProcessEnvFacts,
 };
 use effigy_kernel::ctx::{CleanupContext, EffectClass, EffectContext, OpenReason, Placement};
-use effigy_kernel::gate::GateState;
+use effigy_kernel::gate::{Gate, GateState};
 use effigy_kernel::id::{CheckoutId, ResolvedInvocation, ResourceId, RunId};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::Invocation;
@@ -1640,6 +1640,33 @@ fn describe_withdrawn_route(route: &effigy_gateway::routes::Route) -> String {
     }
 }
 
+/// The predecessor's flock outlives its journal closure: a supervisor drops
+/// its gate guard only after settle has journaled the run closed, so a window
+/// exists where the journal already shows closure while the gate is still
+/// held. A replace that starts its successor in that window is refused while
+/// its predecessor drains, which reads as a workload that never starts
+/// (effigy#567). The replace waits for the gate itself, bounded by the stop's
+/// own pickup budget; a gate still held at the deadline reports `false`, and
+/// the successor's refusal then names the real holder.
+pub(super) fn wait_for_predecessor_gate(
+    root: &effigy_kernel::root::StateRoot,
+    resource: &ResourceId,
+    deadline: Instant,
+) -> bool {
+    let observe = observe();
+    loop {
+        match Gate::probe(&observe, root, resource) {
+            Observed::Verified(GateState::Free, _) => return true,
+            Observed::Absent(_) => return true,
+            _ => {}
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 /// Stops the open run of one host-process resource, if any.
 fn stop_resource_run(
     repo_root: &Path,
@@ -1723,6 +1750,14 @@ fn stop_resource_run(
         }
     }
     // A supervisor that stopped itself recorded the exact StopReport.
+    // Before reading it, wait for its gate flock to drain: the journal's
+    // closure precedes the supervisor's own guard drop, and the caller's
+    // successor admission reads this gate next (effigy#567).
+    wait_for_predecessor_gate(
+        state_root,
+        resource,
+        Instant::now() + stop_pickup(shutdown_grace(policy, name)),
+    );
     if let Some(report) = read_stop_report(repo_root, policy, name, run_id) {
         return Ok(Some(HostProcessStop {
             name: name.to_owned(),

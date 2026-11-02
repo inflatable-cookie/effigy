@@ -2986,6 +2986,88 @@ mod tests {
             .all(|value| matches!(value, EnvValue::Secret(_))));
     }
 
+    /// The replace step waits for the predecessor's gate flock, not just its
+    /// journal closure: the supervisor drops its guard after settle journals
+    /// the run closed, and a successor admitted in that window is refused by
+    /// the still-held gate (effigy#567). The wait reports a drained gate
+    /// immediately, a held gate as held until the flock drops, and free again
+    /// once it does.
+    #[test]
+    fn a_replace_waits_for_the_predecessor_gate_flock_to_drain() {
+        use effigy_kernel::ctx::{CancelToken, Deadline, EffectClass, OperationContext, Placement};
+        use effigy_kernel::gate::{Gate, Wait};
+        use effigy_kernel::id::{CheckoutId, CheckoutKind};
+        use effigy_kernel::root::StateRoot;
+
+        let home = effigy_test_support::Fixture::short_home("hp-gate-").expect("fixture home");
+        let checkout = home.path().join("checkout");
+        std::fs::create_dir(&checkout).expect("checkout directory");
+        let context = OperationContext::new(
+            Deadline::Open(effigy_kernel::ctx::OpenReason::DevServer),
+            CancelToken::default(),
+            effigy_kernel::ctx::Limits {
+                capture_tail: 64 * 1024,
+                log_rotate: 1 << 20,
+                log_keep: 3,
+                line_max: 64 * 1024,
+                queue_bytes: 1 << 20,
+                probe_concurrency: 1,
+            },
+            EffectClass::Mutate,
+            Placement::Host,
+        )
+        .effects()
+        .expect("mutate context");
+        let root = StateRoot::checkout_effects(
+            &context,
+            home.path(),
+            &effigy_kernel::location::CheckoutLocation {
+                root: effigy_core::worktree_scope::checkout_root(&checkout),
+            },
+        )
+        .expect("state root");
+        let checkout_id = CheckoutId::new(CheckoutKind::Filesystem, [7; 16]);
+        let resource =
+            effigy_kernel::id::ResourceId::host_process(checkout_id, "web", "effigy", "app")
+                .expect("host process resource");
+
+        // A gate nobody holds reports free without waiting.
+        assert!(kernel_run::wait_for_predecessor_gate(
+            &root,
+            &resource,
+            Instant::now()
+        ));
+
+        // A held gate stays held for exactly as long as its flock does.
+        let guard = Gate::acquire(
+            &context,
+            &root,
+            std::slice::from_ref(&resource),
+            Wait::FailFast,
+        )
+        .expect("hold the gate");
+        assert!(!kernel_run::wait_for_predecessor_gate(
+            &root,
+            &resource,
+            Instant::now() + Duration::from_millis(120)
+        ));
+
+        // Once the predecessor releases its flock, the wait returns.
+        let (released, done) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            drop(guard);
+            let _ = released.send(());
+        });
+        assert!(kernel_run::wait_for_predecessor_gate(
+            &root,
+            &resource,
+            Instant::now() + Duration::from_secs(10)
+        ));
+        done.recv_timeout(Duration::from_secs(1))
+            .expect("the releasing thread finished");
+    }
+
     use super::*;
     use effigy_containers::{HostProcessRestart, HostProcessSignal};
     use nix::sys::signal::kill;

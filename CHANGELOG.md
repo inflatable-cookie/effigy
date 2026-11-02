@@ -1461,6 +1461,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- A host-process restart no longer refuses while its predecessor drains. A
+  supervisor releases its gate flock only after settle has journaled the run
+  closed, so a replace that started its successor on the journal's closure
+  alone could be refused by the still-held gate and report a workload that
+  never started. The replace now waits for the gate itself within the stop's
+  own pickup budget before its successor's admission reads it (effigy#567).
+
 - Restore the `COMPOSER_HOME/vendor/bin` PATH preference for `composer global
   exec …` deferrals on the handoff-local container branch. Dispatching the
   rendered runtime command there (color wrapper, runtime env) meant the raw
