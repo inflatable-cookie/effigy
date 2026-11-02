@@ -1,0 +1,114 @@
+# Test assurance and suite census
+
+Status: active. Owner: this file. Route: `effigy test:inventory` proves the census helper; `effigy qa:docs` guards this document.
+
+This file states what the Rust test suite promises, how the whole suite is
+counted reproducibly, and the rules a pruning wave must follow when it removes
+or consolidates cases. It records current test/proof truth; audit dispositions
+and wave status live in Queue artifacts, not here.
+
+## What the suite promises
+
+The default workspace suite is `oxide nextest run --workspace` (built-in
+`effigy test`, `effigy test --plan`) plus doc tests through
+`sh scripts/oxide-selector.sh test --workspace --doc` in the CI mirrors. On a
+collected snapshot at `f317d443` it collects 6317 cases across 86 test
+binaries (6286 runnable, 31 ignored helpers and proofs). Collection is exact:
+`scripts/test-inventory.py` reconciles every collected ID against the source
+scan — 6227 direct declarations, 90 attributed to their generating macro
+invocations, 0 unattributed — and every non-collected declaration is explained
+by a named gate (fault-injection, workspace-serving-fixture,
+endpoint-store-faults, required-features targets, platform gates). The suite
+runs on one host per invocation: platform-paired declarations compile one
+variant per target OS, so a Linux runner collects the Linux sides of the 442
+paired families instead of the macOS sides.
+
+Passing a test does not establish its value. The census counts; only the
+per-family audit decides what survives.
+
+## Proof tiers
+
+Every case belongs to exactly one tier. Cost and review expectations follow the
+tier, not the count.
+
+- **T1 unit** — in-process function behavior with synthetic inputs (parsers,
+  planners, resolvers). Cheap; consolidation is bounded by distinct
+  input→claim pairs, never by wrapping cases in loops.
+- **T2 contract** — exact CLI text, JSON envelope shapes and error-message
+  contracts (`*_contract_*`, `json_contract_tests`). These name the stable
+  surface agents and scripts parse; a rewording that breaks one is a product
+  change, not a test fix.
+- **T3 integration, in-process** — engines, pipelines and kernel seams driven
+  through fake runtimes and stores without spawning processes.
+- **T4 subprocess fixtures** — tests that spawn the real CLI binary or child
+  processes (`cli_output_tests`, `run_control_cli`, `gateway_operator`,
+  doctor-timeout trees). Each case pays process starts; the audit must show a
+  case detects something no in-process case can before keeping that cost.
+- **T5 native and release proofs** — real listeners, containers, custody
+  capability, operator migration, performance baselines. Selected `#[ignore]`
+  and run by named `proof:`/`test:` selectors with `--run-ignored only`.
+  Expensive is not a deletion reason; these carry the security, custody,
+  identity and native obligations.
+- **T6 external validation** — Python, Rhai and shell routes in
+  `config/tasks.toml` (render sentinels, consumer packets, release checks,
+  mktemp/feedback/cargo-route guards). They check what Rust tests cannot see:
+  generated fixtures, packaged artifacts, repository hygiene.
+
+## Conditional families and their routes
+
+- `fault-injection` (245 declarations plus the `custody`/`probe` required-
+  features targets) runs through `effigy test:fault-injection` and the kernel
+  selectors, never in the default suite.
+- `endpoint-store-faults` gateway tests run through the `test:gateway:*`
+  selectors.
+- `workspace-serving-fixture` gates the detached serving proofs (31
+  declarations, several named `deferred to #531` uncovered flows).
+- Ignored cases are helpers spawned by their parents or named proofs with
+  `--run-ignored only` selectors; the reason is the route that runs them.
+- Platform gates (`target_os`) pair declarations across macOS and Linux; both
+  sides are kept unless the product dropped the platform behavior.
+- Doc tests (a static census counts 25 doc-comment fences across six lib
+  targets) run in `qa:ci:fast`'s `test --workspace --doc`; that run is the
+  real collection, the fence count is triage.
+- T6 routes are enumerated by `test-inventory.py census` from
+  `config/tasks.toml` (56 payload scripts at `f317d443`).
+
+## Reproducible census
+
+```
+effigy test:inventory            # proves the helper's reconciliation logic
+sh scripts/oxide-selector.sh nextest list --workspace --message-format json
+python3 scripts/test-inventory.py census --out <scratch-dir> \
+    --nextest-list <collected-list.json>
+```
+
+`scripts/test-inventory.py` (standard library only) runs `cargo metadata`,
+scans every workspace target's module tree for declared tests with their cfg
+gates, and reconciles the two. Classes: `collected`, `macro-generated`
+(attributed to the invocation site), `gated-out`, `target-gated`,
+`platform-pair`, `unattributed` (must be zero), `duplicate_ids` (must be
+zero). It never runs a test body. The census is measurement, not semantic
+certification; the private audit ledger (Queue artifact) holds per-family
+dispositions with exact heads.
+
+## Rules a pruning wave must follow
+
+1. A retained case names its production boundary (file/symbol) and the claim
+   that, if broken, a consumer would feel.
+2. A removed or consolidated case names the surviving equivalent check plus
+   the code path it still exercises, evidenced by source/call-path inspection;
+   for risk-bearing cases (custody, secrets, identity, refusal, native) by a
+   controlled mutation or failing control of the survivor.
+3. Distinct failure modes stay distinct: no loop-wrapping, assertion-
+   weakening, renaming, skipping or moving essential checks out of default QA;
+   no timeout inflation.
+4. Fixture-self-tests (helpers proving their own machinery) are legitimate but
+   must not stand in for the product claim they enable.
+5. Duplicate expensive T4 startups that add no independent detection are prime
+   consolidation targets; a unique T5 proof is valuable even when expensive.
+6. Changed-code validation runs through Effigy selectors; whole-suite QA stays
+   with the milestone (`project.qa.run`), not the task.
+
+See [fixture ownership](test-fixture-hygiene.md) for process-group rules and
+[cargo routes](cargo-routes.md) for the Oxide routing rule every selector
+follows.
