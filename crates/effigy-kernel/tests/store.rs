@@ -327,6 +327,11 @@ fn store_file_before_its_schema_commits_reads_absent_not_corrupt() {
         reader(&store_home),
         Observed::Unknown(UnknownReason::StoreUnreadable(_))
     ));
+    // The unreadable journal is this test's own fixture data: no kernel
+    // helper was ever launched under it, and cleanup must never read it as
+    // proof that no helper exists. Remove what this test made unreadable so
+    // the owned fixture settles on the journal's absence (effigy#550).
+    std::fs::remove_file(&path).unwrap();
 }
 
 #[test]
@@ -421,6 +426,12 @@ fn store_symlinked_or_foreign_db_is_untrusted() {
         Observed::Unknown(UnknownReason::Untrusted(_))
     ));
     assert_eq!(std::fs::read(&target).unwrap(), b"");
+    // The untrusted journal is this test's own fixture data, not a HOME that
+    // launched kernel helpers. `remove_file` unlinks the symlink without
+    // following it, so the owned fixture settles on the journal's absence
+    // instead of waiting out a store it must never read (effigy#550).
+    std::fs::remove_file(root.path().join(DB_NAME)).unwrap();
+    std::fs::remove_file(&target).unwrap();
 }
 
 #[test]

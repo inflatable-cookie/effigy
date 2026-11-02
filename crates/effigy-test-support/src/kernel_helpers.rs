@@ -7,9 +7,21 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// How long a dropped fixture waits for its recorded kernel helpers to close
+/// before naming the last observation and leaving the tree in place.
+const HELPER_WAIT: Duration = Duration::from_secs(30);
+
 /// A killed fixture client can leave its kernel sentinel finishing settlement.
 /// Wait for those recorded generations to stop writing before deleting HOME.
 pub fn wait_kernel_helpers(home: &Path) -> io::Result<()> {
+    wait_kernel_helpers_within(home, HELPER_WAIT)
+}
+
+/// [`wait_kernel_helpers`] with an explicit budget. Cleanup always keeps the
+/// default; a shorter budget exists for the observation's own negative
+/// controls, which prove within a suite-sized wait that an unreadable journal
+/// is never accepted as settled.
+pub fn wait_kernel_helpers_within(home: &Path, budget: Duration) -> io::Result<()> {
     use effigy_kernel::{ctx::*, ident, root::StateRoot};
     match fs::symlink_metadata(home.join(".effigy/state/kernel.db")) {
         Ok(_) => (),
@@ -17,7 +29,7 @@ pub fn wait_kernel_helpers(home: &Path) -> io::Result<()> {
         Err(error) => return Err(error),
     }
     let operation = OperationContext::new(
-        Deadline::At(Instant::now() + Duration::from_secs(30)),
+        Deadline::At(Instant::now() + budget),
         CancelToken::default(),
         Limits {
             capture_tail: 1024,

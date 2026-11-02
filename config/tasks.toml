@@ -886,8 +886,8 @@
 # Same supervisor front-end family as :unit and :faults, routed through
 # Oxide on 2026-10-23.
 "test:supervisor:shared" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-tui --lib --no-fail-fast -E 'test(multiprocess::)' --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 1200000 },
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_private --no-fail-fast -E 'test(managed_matrix_death_)' --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 3600000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-tui --lib -E 'test(multiprocess::)' --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 1200000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_private -E 'test(managed_matrix_death_)' --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 3600000 },
 ] }
 
 # The supervisor SIGKILLed at every kernel journal crossing it makes, each
@@ -2052,3 +2052,10 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 "test:workspace:private-qualification:production-refusal" = { visibility = "internal", group = "Maintenance", description = "Check ordinary production workspace refusal with no qualification feature, before all external-I/O doubles.", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --features workspace-serving-fixture --test workspace_client -E 'test(host::container_up::production)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 
 "lint:workspace:private-qualification:kernel-fixture" = { visibility = "internal", group = "Maintenance", description = "Compile and lint only the changed native qualification helper protocol fixture.", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-kernel --features fault-injection,workspace-private-qualification --bin kernel-custody-fixture -- -D warnings", timeout_ms = 900000 }] }
+
+# Fake-only proof (effigy#542) that the ordinary-Compose Colima qualification
+# launcher enforces its complete read-only entry sweep: exact network/volume
+# identity baselines, fixture-ancestor mount and symlink safety, GO/manifest
+# integrity and sweep-before-create ordering, all through deterministic fake
+# runners with no Colima, VM or scratch qualification state touched.
+"test:qualification:entry-sweep" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "python3 tests/scripts/qualification-entry-sweep.py {args}", timeout_ms = 600000 }] }

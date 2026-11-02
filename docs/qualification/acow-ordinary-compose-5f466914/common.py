@@ -1,5 +1,5 @@
 """Shared fail-closed machinery for the Acow ordinary-Compose consumer
-qualification packet (Queue task effigy#540).
+qualification packet (Queue task effigy#540, amended by effigy#543).
 
 This is a preparation-only packet: nothing in this module creates a worktree,
 starts a container, installs anything or touches consumer data. The two armed
@@ -8,10 +8,29 @@ own operator-copied GO receipts before any effect, and refuse closed on any
 missing or mismatched input. Evidence is written 0600 under
 /Volumes/Builds/scratch/effigy/540/ only.
 
-Every verifier here is written so the committed boundary tests
-(`boundaries.py`, the installed-Effigy selector `test:qualification:acow`)
-can drive it against disposable fixture metadata and fake backends without
-any native call.
+The #543 amendment qualifies the CURRENT clean consumer checkout instead of a
+frozen historical one: the routes select the primary main HEAD at execution
+(the "selected head"), verify the relevant-input closure at that head, and
+model `bundle sync` as the Acow-owner-approved source-identity transition
+(locked 61dc5aa8…/e088a69e… -> approved 808adad…/28c92040…) instead of
+demanding the historical lock both before and after sync. Every verifier here
+is written so the committed boundary tests (`boundaries.py`, the
+installed-Effigy selector `test:qualification:acow`) can drive it against
+disposable fixture metadata and fake backends without any native call.
+
+The #545 amendment binds the warm-up prerequisite to the ACTUAL r18
+ordinary-Compose qualification: Queue task effigy#544's settled proof-only
+receipt (the exact commit, selector and input hashes; a settled passed
+execution with exit 0; and the retained reviewer's acceptance of that same
+execution), replacing the impossible green-#539 requirement — #539 is
+superseded with zero execution and can never supply legitimate
+qualification. The #553 amendment corrects the accepted-review surface to
+what Queue actually exposes for that proof-only completion: the accepted
+retained-reviewer callback (`task.resolution.review`, equal to the reviewer
+run's own completion) with the released finished reviewer run and
+`resolution.reviewerAgentId` binding — a proof-only completion has no
+per-subject verdict records (`resolution.reviews` is empty), so the
+reviews-entry shape this verifier demanded before never existed for it.
 """
 import hashlib
 import json
@@ -33,27 +52,73 @@ CANDIDATE_COMMIT = '5f4669141d8dabd91b7fbfef28d2bce21bc42ba2'
 CANDIDATE_BINARY_SHA256 = 'cb564fa64f15d080eb2b047454b55103e3e5857de2252de8be05a31a95eb00b1'
 CANDIDATE_VERSION_MARKER = '5f46691'
 
-# Pinned consumer inputs (read-only; the packet never edits Acow or the
-# bundle repository). Full commit hash of Acow main as pinned by the brief.
+# Consumer inputs (read-only; the packet never edits Acow or the bundle
+# repository). ACOW_PIN_COMMIT/TREE are the REVIEWED LINEAGE ANCHOR frozen by
+# the effigy#540 packet, not the executed checkout: the routes select the
+# clean primary main HEAD at execution and verify the relevant-input closure
+# at that selected head (effigy#543 amendment; Acow owner cb0e6df4
+# message0fcb8b20, 2026-11-02, accepts tools-only clean-head drift).
 ACOW_PRIMARY = Path('/Users/tom/Dev/projects/acowtancy')
 ACOW_PIN_COMMIT = 'b7f004d74a47f702f4dc3ef5c96390f0bdbf3c0b'
 ACOW_PIN_TREE = '88df708155e60deb8c8179cffd3c307a3baf5e01'
 BUNDLE_SOURCE = 'git@github.com:inflatable-cookie/underlay-effigy-bundle.git'
-BUNDLE_LOCK_COMMIT = '61dc5aa8405698ea757f0ff5c481cb6d7cb92314'
-ATTACH_TASK = 'infra/tasks.toml:16'  # "worktree:container:attach" line at the pin
+ATTACH_TASK = 'infra/tasks.toml:16'  # "worktree:container:attach" line
 
-# Tracked nonsecret input files pinned by blob hash at ACOW_PIN_COMMIT
-# (verified with `git rev-parse <commit>:<path>`; no working-tree reads).
-PINNED_INPUT_BLOBS = {
-    'infra/tasks.toml': 'ee9c7f26b516db2fbe03baabb01a5b24944bd42b',
-    'infra/workspace.toml': 'df59e9722612053be479bdf77e62cee1ac82a5ab',
+# The manifest files whose composed content the stack actually loads
+# (`[manifest] include` in effigy.toml). A declared include set other than
+# this exact reviewed list is a new relevant shape and requires a reviewed
+# re-pin; order is significant because later includes can override earlier
+# ones.
+MANIFEST_INCLUDES = [
+    'infra/workspace.toml',
+    'infra/tasks.toml',
+    'infra/deploy.toml',
+    'infra/secrets.toml',
+    'infra/bootstrap.toml',
+    'state/acowtancy.state.toml',
+]
+
+# Relevant tracked nonsecret inputs, pinned by blob hash and verified at the
+# SELECTED head with `git rev-parse HEAD:<path>` (no working-tree reads):
+# the root manifest itself, its six declared includes, the attach task's
+# script, and the four schema baselines the primary-data counts cite. All
+# twelve carry identical blobs at the anchor pin and at the current head
+# (ee037b045..., verified 2026-11-02); whole-repository tools/docs-only drift
+# with these unchanged passes without a new packet review.
+RELEVANT_INPUT_BLOBS = {
     'effigy.toml': '80ccc592c5a3794b9e0038657120f4ad8a5bdb0d',
+    'infra/workspace.toml': 'df59e9722612053be479bdf77e62cee1ac82a5ab',
+    'infra/tasks.toml': 'ee9c7f26b516db2fbe03baabb01a5b24944bd42b',
+    'infra/deploy.toml': 'ffe934ee5773af4e85b022bf3613f0077df6b2d2',
+    'infra/secrets.toml': '3d6517c616715676ff11289a343a6ae9f67afeda',
+    'infra/bootstrap.toml': 'e4cf85b2ddee38e63f46a9d373951a93768bf195',
+    'state/acowtancy.state.toml': 'e5a6338f0801b3ca05cb6db173f07662e0d34e02',
     'scripts/tasks/worktree-container-attach.ts': 'b9ed0416a26064edc22efd5433e2d7dba8884259',
     'state/schema/202608221002__baseline_auth.sql': '65ab9b783d31eaf438be2577be201929a669aa68',
     'state/schema/202608221003__baseline_learning.sql': '1f41b794afe1543a5064d4c7e85d3dcdbf9d9249',
     'state/schema/202608221010__baseline_engagement.sql': 'ed887393a015b8b1fd8f93a8393a9031742d0afb',
     'state/schema/202608221011__baseline_billing.sql': 'f0eae506b32555d71289807be6f9bf845c48c8b0',
 }
+
+# Bundle synchronization as an explicit source-identity transition
+# (effigy#543). The LOCKED PRE-STATE is fully resolved from the primary
+# checkout's .effigy/sources.lock.json (read-only). The APPROVED TARGET is
+# resolved from read-only cached metadata plus Acow's approved facts: the
+# content digest is exact (sha256 over the canonical source key
+# fc8e886a610c4555b9b5700cb2c6af9c21348f684b8127572f1af6d2d973e215 in
+# ~/.effigy/cache/sources-known.json), while the git revision is only known
+# as the owner-approved short form 808adad; the route records the full
+# resolved revision in the activation receipt instead of inventing suffixes.
+# The two kinds are never interchangeable: a revision is a 40-hex git commit,
+# a digest is a 64-hex sha256 content id (version_hint is typed, never a
+# generic hash).
+BUNDLE_LOCK_REL = '.effigy/sources.lock.json'
+BUNDLE_DECLARATION = {'type': 'git', 'url': BUNDLE_SOURCE, 'ref': None}
+BUNDLE_PRE_REVISION = '61dc5aa8405698ea757f0ff5c481cb6d7cb92314'
+BUNDLE_PRE_DIGEST = 'sha256:e088a69e937fe03d044dac0aa95297c6e0d4ee5c14cef6a244fd6bf6daacc38e'
+BUNDLE_TARGET_REVISION_PREFIX = '808adad'
+BUNDLE_TARGET_DIGEST = 'sha256:28c920404c34cc46d223b061b694903634b592f99a9f10f06f4f9f8f0058975d'
+BUNDLE_LOCK_MAX_BYTES = 1024 * 1024
 
 # Qualified schema/table names for the primary-data counts observation,
 # resolved from the pinned tracked sources (never invented). Citation is
@@ -100,7 +165,30 @@ WARMUP_PARENT = '/Volumes/Builds/scratch/effigy/w'  # exactly QUEUE_SHAPE_PARENT
 
 HEX64 = re.compile(r'[0-9a-f]{64}')
 HEX40 = re.compile(r'[0-9a-f]{40}')
+HEXDIGITS = set('0123456789abcdef')
 UUID_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
+
+# The ACTUAL consumer-execution prerequisite (effigy#545): Queue task
+# effigy#544's proof-only qualification of this candidate on the r18
+# ordinary-Compose packet. Pinned from the genuine queue.detail surface
+# (task.proofOnly / task.proofExecution, read 2026-11-02); the third input
+# hash IS the frozen candidate binary. The superseded #539 prerequisite
+# (all three authenticated refusedBeforeSelector receipts preserved, zero
+# execution) is retained as history only and can never arm a route.
+PROOF_TASK_REFERENCE = 'effigy#544'
+PROOF_TASK_ID = 'a648d634-82cf-4b3c-8903-a009eb427c12'
+PROOF_COMMIT = '0ed7e8394866187f24490e2ca0a473882f1b75d4'
+PROOF_SELECTOR = ('python3 -I -B '
+                  'docs/qualification/ordinary-compose-colima-5f466914/launch.py')
+PROOF_INPUTS = (
+    'sha256:545566ddd6f48bc14f2f16f1df0db68a4c16476293b0c54cbe58e46331d8e286',
+    'sha256:944419d4517f2b1935e6870989408990cf84412264e999a9771644627f2c1291',
+    'sha256:' + CANDIDATE_BINARY_SHA256,
+)
+PREREQUISITE_SCHEMA = 'effigy.qualification.acow-ordinary-compose.prerequisite-544.v1'
+PREREQUISITE_MAX_BYTES = 65536
+if not (HEX40.fullmatch(PROOF_COMMIT) and UUID_RE.fullmatch(PROOF_TASK_ID) and HEX64.fullmatch(PROOF_INPUTS[2][7:])):
+    raise RuntimeError('pinned #544 prerequisite identity is malformed')
 
 # Exact, case-sensitive token contracts for the operator-copied GO receipts.
 # These are machine checks, not a substitute for the authorizations named in
@@ -111,7 +199,8 @@ GO_WARMUP_TOKENS = GO_COMMON_TOKENS + (
 )
 GO_PRIMARY_TOKENS = GO_COMMON_TOKENS + ('Tom', 'primary-data')
 RESERVATION_RE = re.compile(r'reservation ([A-Za-z0-9._:-]{4,128})')
-RECEIPT539_RE = re.compile(r'539 receipt ([0-9a-f]{64})')
+RECEIPT544_RE = re.compile(r'544 receipt ([0-9a-f]{64})')
+RECEIPT539_STALE_RE = re.compile(r'\b539 receipt\b')
 VERSION_LINE_RE = re.compile(r'^version (.+)$', re.MULTILINE)
 BINARY_LINE_RE = re.compile(r'^binary ([^\s]+)$', re.MULTILINE)
 
@@ -161,8 +250,10 @@ def read_exclusive_file(path, max_bytes=8192):
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_nlink != 1 \
-                or st.st_mode & 0o077 or st.st_size > max_bytes:
+                or st.st_mode & 0o077:
             raise Refused('receipt file mode/owner/type invalid: %s' % p)
+        if st.st_size > max_bytes:
+            raise Refused('receipt file exceeds %d bytes: %s' % (max_bytes, p))
         data = os.read(fd, max_bytes + 1)
         if len(data) > max_bytes:
             raise Refused('receipt file exceeds %d bytes: %s' % (max_bytes, p))
@@ -200,7 +291,7 @@ def verify_go_receipt(path, packet_sha, required_tokens, route, scratch_dir=SCRA
 
     Exact checks: hygiene (read_exclusive_file), `packet <sha>` equality, the
     route token set, an Acow `reservation <id>`, and per-route structured
-    lines (`version `, `binary `, `539 receipt `). Returns a record for the
+    lines (`version `, `binary `, `544 receipt `). Returns a record for the
     invocation receipt. `scratch_dir` pins the exact parent directory; tests
     pass a disposable fixture root, routes use the evidence root.
     """
@@ -226,10 +317,13 @@ def verify_go_receipt(path, packet_sha, required_tokens, route, scratch_dir=SCRA
         'reservation_id': reservation.group(1),
     }
     if route == 'warmup':
-        r539 = RECEIPT539_RE.search(text)
-        if not r539:
-            raise Refused('GO receipt lacks the 539 receipt line: %s' % path)
-        record['receipt539_sha256'] = r539.group(1)
+        if RECEIPT539_STALE_RE.search(text):
+            raise Refused('GO receipt still carries the stale superseded #539 '
+                          'prerequisite token: %s' % path)
+        r544 = RECEIPT544_RE.search(text)
+        if not r544:
+            raise Refused('GO receipt lacks the 544 receipt line: %s' % path)
+        record['receipt544_sha256'] = r544.group(1)
         version = VERSION_LINE_RE.search(text)
         if not version:
             raise Refused('GO receipt lacks the installed version line: %s' % path)
@@ -241,35 +335,265 @@ def verify_go_receipt(path, packet_sha, required_tokens, route, scratch_dir=SCRA
     return record
 
 
-def verify_539_receipt(path, quoted_sha):
-    """Verify the green task-effigy#539 prerequisite receipt, or refuse.
+def _receipt_object(value, what):
+    if not isinstance(value, dict):
+        raise Refused('%s is not a JSON object' % what)
+    return value
 
-    Machine contract recorded in packet-r1.md: JSON object with task
-    "effigy#539", status "green", a 40-hex head and a non-empty selectors
-    list. Its file SHA-256 must equal the SHA the GO receipt quotes.
+
+def _receipt_text(value, what):
+    if not isinstance(value, str) or not value:
+        raise Refused('%s missing or not a nonempty string' % what)
+    return value
+
+
+def verify_544_proof_receipt(path, quoted_sha):
+    """Verify the accepted effigy#544 r18 prerequisite receipt, or refuse.
+
+    The receipt is a faithfully serialized extraction of the exact Queue
+    records the planner copies after qualification (contract in packet-r1.md;
+    transport only — a file alone grants no authority):
+
+    - queue.detail(taskId=a648d634-…) → task.proofOnly, task.proofExecution,
+      the task.proofExecutions entry named by
+      task.proofOnlyResult.executionRunId, task.proofOnlyResult,
+      task.resolution.review (the accepted callback), task.resolution.reviews
+      (empty — no per-subject verdict records), task.resolution.reviewerAgentId,
+      and the queue.detail.runs reviewer run named by
+      task.proofOnlyResult.reviewerRunId;
+    - queue.outcome(taskId=a648d634-…) → {taskId, reference, outcome, reason,
+      pr, review} (the durable terminal record).
+
+    Machine contract: the exact task (reference AND id), the pinned r18
+    proof binding (commit, selector, all three input hashes — the binary
+    input IS the frozen candidate), a genuine settled `passed` execution with
+    exit 0 that is neither historical nor refused-before-selector, the
+    proof-only result binding that SAME execution run and a distinct
+    retained reviewer run, the accepted retained-reviewer callback
+    (`resolution.review`, a faithful Queue completion record) `ready_to_merge`
+    at the same commit and equal to the reviewer run's own completion, the
+    matching released finished reviewer run (`role` `reviewer`, `status`
+    `finished`, `released`, not active) whose agent is
+    `resolution.reviewerAgentId`, `resolution.reviews` empty (a proof-only
+    completion has no per-subject verdict records), and the durable `done`
+    outcome with its `ready_to_merge` review.
+    Proof-only never publishes: the legitimate NO-PR shape is pr null with
+    the durable publication ids null, and that all-null pair is never itself
+    a link — the link is the retained run-id pair (execution.runId ==
+    result.executionRunId, resolution.review.runId == reviewerRun.id ==
+    result.reviewerRunId) plus the agent binding (reviewerRun.agentId ==
+    resolution.reviewerAgentId) and the callback/completion equality. The
+    retained callback record is a faithful Queue completion record and
+    carries no publication fields at all; any non-null durable publication
+    id is invented surrogate evidence and refuses.
+    Its file SHA-256 must equal the SHA the GO receipt quotes; any missing,
+    malformed, ambiguous or mismatching provenance refuses.
     """
-    data = read_exclusive_file(path, max_bytes=65536)
+    data = read_exclusive_file(path, max_bytes=PREREQUISITE_MAX_BYTES)
     if hashlib.sha256(data).hexdigest() != quoted_sha:
-        raise Refused('539 receipt hash differs from the GO-quoted SHA')
+        raise Refused('544 proof receipt hash differs from the GO-quoted SHA')
     try:
         obj = json.loads(data.decode('utf-8'))
     except (ValueError, UnicodeDecodeError):
-        raise Refused('539 receipt is not valid JSON') from None
-    if not isinstance(obj, dict):
-        raise Refused('539 receipt is not a JSON object')
-    if obj.get('task') != 'effigy#539':
-        raise Refused('539 receipt does not name task effigy#539')
-    if obj.get('status') != 'green':
-        raise Refused('539 receipt is not green')
-    head = obj.get('head')
-    if not isinstance(head, str) or not HEX40.fullmatch(head):
-        raise Refused('539 receipt head is not a 40-hex commit')
-    selectors = obj.get('selectors')
-    if not isinstance(selectors, list) or not selectors or \
-            not all(isinstance(s, str) and s for s in selectors):
-        raise Refused('539 receipt selectors missing or malformed')
-    return {'path': str(path), 'task': obj['task'], 'status': obj['status'],
-            'head': head, 'selectors': selectors, 'sha256': quoted_sha}
+        raise Refused('544 proof receipt is not valid JSON') from None
+    _receipt_object(obj, '544 proof receipt')
+    if set(obj) != {'schema', 'task', 'proofOnly', 'proofExecution',
+                    'execution', 'result', 'resolution', 'reviewerRun',
+                    'outcome'}:
+        raise Refused('544 proof receipt top-level shape is not the reviewed '
+                      'prerequisite contract')
+    if obj['schema'] != PREREQUISITE_SCHEMA:
+        raise Refused('544 proof receipt schema mismatch: ' + str(obj['schema']))
+
+    task = _receipt_object(obj['task'], 'receipt task block')
+    if set(task) != {'reference', 'id'}:
+        raise Refused('receipt task block is not the reviewed extraction')
+    if task['reference'] != PROOF_TASK_REFERENCE:
+        raise Refused('receipt does not name the actual prerequisite task %s'
+                      % PROOF_TASK_REFERENCE)
+    if task['id'] != PROOF_TASK_ID:
+        raise Refused('receipt task id is not %s' % PROOF_TASK_ID)
+
+    proof_only = _receipt_object(obj['proofOnly'], 'receipt proofOnly block')
+    if set(proof_only) != {'commit'} or not isinstance(proof_only['commit'], str) \
+            or proof_only['commit'] != PROOF_COMMIT:
+        raise Refused('receipt proofOnly commit is not the pinned r18 merge %s'
+                      % PROOF_COMMIT)
+
+    proof_execution = _receipt_object(obj['proofExecution'],
+                                      'receipt proofExecution block')
+    if set(proof_execution) != {'selector', 'inputs', 'role'}:
+        raise Refused('receipt proofExecution block is not the reviewed extraction')
+    if proof_execution['selector'] != PROOF_SELECTOR:
+        raise Refused('receipt proof selector is not the pinned r18 selector')
+    if proof_execution['inputs'] != list(PROOF_INPUTS):
+        raise Refused('receipt proof inputs differ from the pinned r18 input hashes')
+    if proof_execution['role'] != 'author':
+        raise Refused('receipt proof execution is not the author-side proof')
+
+    execution = _receipt_object(obj['execution'], 'receipt execution record')
+    if set(execution) - {'runId', 'agentId', 'workspaceId', 'profile',
+                         'operationId', 'selector', 'inputs', 'repository',
+                         'prNumber', 'branch', 'head', 'briefVersion',
+                         'briefDigest', 'authorizedBy', 'activatedAt',
+                         'settledAt', 'status', 'refusedBeforeSelector',
+                         'historical', 'exitCode', 'evidence'}:
+        raise Refused('execution record is not a faithful Queue proofExecutions record')
+    run_id = _receipt_text(execution.get('runId'), 'execution runId')
+    if not UUID_RE.fullmatch(run_id):
+        raise Refused('execution runId is not a canonical Queue run id')
+    if execution.get('historical') is True:
+        raise Refused('proof execution is historical evidence, never a pass')
+    if execution.get('refusedBeforeSelector') is True:
+        raise Refused('proof execution was refused before its selector')
+    if execution.get('status') != 'passed':
+        raise Refused('proof execution is not a settled pass (status %r)'
+                      % (execution.get('status'),))
+    if not isinstance(execution.get('exitCode'), int) \
+            or isinstance(execution.get('exitCode'), bool) \
+            or execution['exitCode'] != 0:
+        raise Refused('proof execution exit code is not 0')
+    _receipt_text(execution.get('activatedAt'), 'execution activatedAt')
+    settled_at = _receipt_text(execution.get('settledAt'), 'execution settledAt')
+    if execution.get('head') != PROOF_COMMIT:
+        raise Refused('proof execution ran at a different head than the pinned r18 commit')
+    if execution.get('selector') != PROOF_SELECTOR:
+        raise Refused('proof execution selector differs from the pinned r18 selector')
+    if execution.get('inputs') != list(PROOF_INPUTS):
+        raise Refused('proof execution inputs differ from the pinned r18 input hashes')
+    if not isinstance(execution.get('evidence'), str):
+        raise Refused('execution evidence missing or not a string')
+
+    result = _receipt_object(obj['result'], 'receipt proofOnlyResult block')
+    if set(result) != {'status', 'commit', 'selector', 'executionRunId',
+                       'reviewerRunId', 'evidence'}:
+        raise Refused('result block is not a faithful Queue proofOnlyResult')
+    if result['status'] != 'passed':
+        raise Refused('proof-only result is not passed')
+    if result['commit'] != PROOF_COMMIT:
+        raise Refused('proof-only result commit differs from the pinned r18 commit')
+    if result['selector'] != PROOF_SELECTOR:
+        raise Refused('proof-only result selector differs from the pinned r18 selector')
+    if result['executionRunId'] != run_id:
+        raise Refused('proof-only result binds a different execution run '
+                      'than the receipt record')
+    reviewer_run = result['reviewerRunId']
+    if not isinstance(reviewer_run, str) or not UUID_RE.fullmatch(reviewer_run):
+        raise Refused('proof-only result reviewer run id is not a canonical Queue run id')
+    if reviewer_run == run_id:
+        raise Refused('proof-only result names the execution run as its own reviewer')
+    if not isinstance(result['evidence'], str) or not result['evidence']:
+        raise Refused('proof-only result evidence missing or empty')
+
+    resolution = _receipt_object(obj['resolution'], 'receipt resolution block')
+    if set(resolution) != {'review', 'reviews', 'reviewerAgentId'}:
+        raise Refused('resolution block is not a faithful queue.detail resolution '
+                      'extraction')
+    if resolution['reviews'] != []:
+        raise Refused('prerequisite task carries per-subject verdict review records; '
+                      'the accepted proof-only callback is the review surface')
+    reviewer_agent = _receipt_text(resolution.get('reviewerAgentId'),
+                                   'resolution reviewerAgentId')
+    if not UUID_RE.fullmatch(reviewer_agent):
+        raise Refused('resolution reviewerAgentId is not a canonical agent id')
+
+    review = _receipt_object(resolution['review'], 'receipt accepted review callback')
+    if set(review) != {'eventId', 'taskId', 'runId', 'status', 'summary',
+                       'headline', 'head', 'reviewText'}:
+        raise Refused('accepted review callback is not a faithful Queue '
+                      'completion record')
+    event_id = _receipt_text(review.get('eventId'), 'review eventId')
+    if not HEX64.fullmatch(event_id):
+        raise Refused('review eventId is not a canonical Queue event id')
+    if review.get('taskId') != PROOF_TASK_ID:
+        raise Refused('accepted review callback names a different task')
+    if review.get('runId') != reviewer_run:
+        raise Refused('accepted review callback is not the retained reviewer run '
+                      'named by the result')
+    if review.get('head') != PROOF_COMMIT:
+        raise Refused('accepted review callback judged a different head than the '
+                      'pinned r18 commit')
+    if review.get('status') != 'ready_to_merge':
+        raise Refused('accepted review callback has not accepted the execution '
+                      '(status %r)' % (review.get('status'),))
+    for callback_field in ('summary', 'headline', 'reviewText'):
+        _receipt_text(review.get(callback_field), 'review ' + callback_field)
+
+    reviewer_record = _receipt_object(obj['reviewerRun'], 'receipt reviewerRun block')
+    if set(reviewer_record) != {'id', 'taskId', 'role', 'agentId', 'head', 'status',
+                                'active', 'released', 'createdAt', 'completion'}:
+        raise Refused('reviewerRun block is not a faithful Queue reviewer run record')
+    if reviewer_record['id'] != reviewer_run:
+        raise Refused('reviewerRun block is not the retained reviewer run named '
+                      'by the result')
+    if reviewer_record['taskId'] != PROOF_TASK_ID:
+        raise Refused('reviewer run names a different task')
+    if reviewer_record['role'] != 'reviewer':
+        raise Refused('reviewer run is not a reviewer run (role %r)'
+                      % (reviewer_record['role'],))
+    if reviewer_record['agentId'] != reviewer_agent:
+        raise Refused('reviewer run agent is not the retained reviewer agent '
+                      'named by the resolution')
+    if reviewer_record['head'] != PROOF_COMMIT:
+        raise Refused('reviewer run judged a different head than the pinned r18 '
+                      'commit')
+    if reviewer_record['status'] != 'finished':
+        raise Refused('reviewer run is not the settled retained run (status %r)'
+                      % (reviewer_record['status'],))
+    if reviewer_record['active'] is not False or reviewer_record['released'] is not True:
+        raise Refused('reviewer run is not the released retained run')
+    _receipt_text(reviewer_record.get('createdAt'), 'reviewer run createdAt')
+    completion = _receipt_object(reviewer_record['completion'],
+                                 'reviewer run completion record')
+    if completion != review:
+        raise Refused('accepted review callback differs from the reviewer run '
+                      'completion record')
+
+    outcome = _receipt_object(obj['outcome'], 'receipt outcome block')
+    if set(outcome) != {'taskId', 'reference', 'outcome', 'reason', 'pr', 'review'}:
+        raise Refused('outcome block is not the reviewed queue.outcome extraction')
+    if outcome['taskId'] != PROOF_TASK_ID:
+        raise Refused('outcome block names a different task')
+    if outcome['reference'] != PROOF_TASK_REFERENCE:
+        raise Refused('outcome block names a different task reference')
+    if outcome['outcome'] != 'done':
+        raise Refused('prerequisite task has no durable done outcome (outcome %r)'
+                      % (outcome['outcome'],))
+    if outcome['pr'] is not None:
+        raise Refused('outcome block carries a PR; the r18 proof-only task has none')
+    _receipt_text(outcome['reason'], 'outcome reason')
+    outcome_review = _receipt_object(outcome['review'], 'outcome review block')
+    if set(outcome_review) != {'status', 'summary', 'commentId', 'reviewId'}:
+        raise Refused('outcome review block is not the durable outcome projection')
+    if outcome_review['status'] != 'ready_to_merge':
+        raise Refused('durable outcome review is not ready_to_merge')
+    # Proof-only never publishes (Queue server/report.ts reportSchema omits
+    # reviewId/reviewCommentId; server/resolution.ts proof-only
+    # advanceReviewerResult records proofOnlyResult with
+    # executionRunId/reviewerRunId and never publishes;
+    # server/review-verdicts.ts reviewRecordFor emits resolution.reviews
+    # records only for completions with per-subject verdicts, so this
+    # proof-only completion has none and its callback record carries no
+    # publication fields at all; server/store.ts outcome projects missing
+    # publication ids as null). The all-null durable pair is the legitimate
+    # NO-PR transport shape and is never itself a link; the link is the
+    # retained run-id pair, agent binding and completion equality checked
+    # above. Any non-null durable publication id is invented surrogate
+    # evidence.
+    if outcome_review.get('reviewId') is not None \
+            or outcome_review.get('commentId') is not None:
+        raise Refused('durable outcome carries invented publication evidence; '
+                      'proof-only never publishes a PR review or comment')
+
+    return {'path': str(path), 'schema': obj['schema'],
+            'task': task['reference'], 'task_id': task['id'],
+            'commit': PROOF_COMMIT, 'selector': PROOF_SELECTOR,
+            'inputs': list(PROOF_INPUTS),
+            'execution_run_id': run_id, 'reviewer_run_id': reviewer_run,
+            'reviewer_agent_id': reviewer_agent,
+            'review_event_id': event_id,
+            'review_status': review['status'], 'outcome': outcome['outcome'],
+            'settled_at': settled_at, 'sha256': quoted_sha}
 
 
 def verify_installed_identity(which_fn, version_fn, binary_path, hash_fn,
@@ -609,57 +933,228 @@ def judge_teardown_inventory(live, baseline, project, protected_identity, mount_
     return sorted(added_volumes)
 
 
+def parse_manifest_includes(text):
+    """The `[manifest] include` list from the root manifest, or refuse.
+
+    A tiny fail-closed reader (no TOML dependency on the route's python3):
+    the reviewed file has one plain array of quoted strings under
+    `[manifest]`; comments, an unreadable array or a missing section refuse
+    instead of guessing a shape.
+    """
+    section = re.search(r'^\[manifest\][ \t]*$(.*?)(?=^\[|\Z)', text, re.S | re.M)
+    if not section:
+        raise Refused('manifest [manifest] section missing from effigy.toml')
+    body = section.group(1)
+    array = re.search(r'^include[ \t]*=[ \t]*\[(.*?)\]', body, re.S | re.M)
+    if not array or '#' in array.group(1):
+        raise Refused('manifest include array unreadable in effigy.toml')
+    items = re.findall(r'"([^"]*)"', array.group(1))
+    if not items or any(not item for item in items):
+        raise Refused('manifest include array unreadable in effigy.toml')
+    return items
+
+
 def verify_consumer_pins(git_fn, primary_path=ACOW_PRIMARY):
-    """Pinned Acow main + bundle inputs, all read-only, or refuse.
+    """Select and verify the CURRENT clean consumer head, or refuse.
 
     `git_fn(args)` runs /usr/bin/git with the scrubbed environment against
-    the primary checkout. The pin commit's tree and every pinned input blob
-    are content identity, so the check stays valid when consumer main moves
-    on; the primary checkout must still be clean and contain the pin.
+    the primary checkout; every call is read-only (rev-parse, show,
+    merge-base, status). The selected head is whatever the primary main HEAD
+    is at execution: the reviewed anchor pin (commit+tree) proves lineage
+    integrity, the anchor must still be an ancestor of the selected head,
+    and every relevant input is verified by blob hash AT the selected head.
+    That makes whole-repository tools/docs-only drift with unchanged relevant
+    inputs pass, while an altered relevant input refuses with the exact
+    changed path/identity and a changed declared include shape (a new
+    relevant input whose content was never reviewed) requires a reviewed
+    re-pin. Dirty, unreadable or replaced heads refuse closed.
     """
     if (Path(primary_path) / '.git').is_file():
         raise Refused('pinned Acow path is a linked worktree, not the primary checkout')
     rc, out, _ = git_fn(['rev-parse', ACOW_PIN_COMMIT + '^{commit}'])
     if rc or out.strip() != ACOW_PIN_COMMIT:
-        raise Refused('pinned Acow commit object missing or drifted')
+        raise Refused('approved anchor commit object missing or drifted')
     rc, out, _ = git_fn(['rev-parse', ACOW_PIN_COMMIT + '^{tree}'])
     if rc or out.strip() != ACOW_PIN_TREE:
-        raise Refused('pinned Acow tree drifted')
+        raise Refused('approved anchor tree drifted')
+    rc, out, _ = git_fn(['rev-parse', 'HEAD'])
+    head = out.strip()
+    if rc or not HEX40.fullmatch(head):
+        raise Refused('primary checkout head unreadable')
+    selected_commit = head
+    rc, out, _ = git_fn(['rev-parse', 'HEAD^{tree}'])
+    if rc or not HEX40.fullmatch(out.strip()):
+        raise Refused('selected head tree unreadable')
+    selected_tree = out.strip()
+    rc, _, _ = git_fn(['merge-base', '--is-ancestor', ACOW_PIN_COMMIT, 'HEAD'])
+    if rc != 0:
+        raise Refused('primary checkout head replaced: the approved anchor pin '
+                      'is no longer an ancestor')
     blobs = {}
-    for rel, want in sorted(PINNED_INPUT_BLOBS.items()):
-        rc, out, _ = git_fn(['rev-parse', '%s:%s' % (ACOW_PIN_COMMIT, rel)])
-        if rc or out.strip() != want:
-            raise Refused('pinned input blob drifted: ' + rel)
-        blobs[rel] = want
+    for rel, want in sorted(RELEVANT_INPUT_BLOBS.items()):
+        rc, out, _ = git_fn(['rev-parse', 'HEAD:%s' % rel])
+        if rc:
+            raise Refused('relevant input missing at the selected head: ' + rel)
+        got = out.strip()
+        if got != want:
+            raise Refused('relevant input changed at the selected head: %s '
+                          '(expected %s, found %s)' % (rel, want, got))
+        blobs[rel] = got
+    rc, out, _ = git_fn(['show', 'HEAD:effigy.toml'])
+    if rc:
+        raise Refused('manifest effigy.toml unreadable at the selected head')
+    includes = parse_manifest_includes(out)
+    if includes != MANIFEST_INCLUDES:
+        raise Refused('new relevant input shape; reviewed re-pin required: '
+                      'manifest include list at the selected head %r differs '
+                      'from the reviewed closure %r' % (includes, MANIFEST_INCLUDES))
     rc, out, _ = git_fn(['status', '--porcelain=v1'])
     if rc:
         raise Refused('primary checkout status unreadable')
     if out.strip():
         raise Refused('primary checkout is dirty')
-    rc, _, _ = git_fn(['merge-base', '--is-ancestor', ACOW_PIN_COMMIT, 'HEAD'])
-    if rc != 0:
-        raise Refused('primary checkout head no longer contains the pinned commit')
     return {'pin_commit': ACOW_PIN_COMMIT, 'pin_tree': ACOW_PIN_TREE,
-            'pinned_input_blobs': blobs, 'primary_clean': True}
+            'selected_commit': selected_commit, 'selected_tree': selected_tree,
+            'relevant_input_blobs': blobs, 'manifest_includes': list(includes),
+            'primary_clean': True}
 
 
-def verify_bundle_lock(inspect_fn):
-    """Bundle lock must still name the pinned revision, or refuse.
+def _typed_digest(value):
+    """Normalize to a typed sha256 content digest, or None."""
+    if not isinstance(value, str):
+        return None
+    body = value[7:] if value.startswith('sha256:') else value
+    if len(body) == 64 and set(body) <= HEXDIGITS:
+        return 'sha256:' + body
+    return None
 
-    `inspect_fn()` returns the parsed `effigy bundle inspect --json` result
-    (read-only; inspection never fetches or writes). A moved lock needs the
-    explicit reviewed re-pin the brief requires for changed inputs.
+
+def _typed_revision(value):
+    """A typed git revision (40-hex commit id), or None."""
+    if isinstance(value, str) and HEX40.fullmatch(value):
+        return value
+    return None
+
+
+def parse_bundle_pin(lock_path):
+    """Parse and type-check one bundle pin from a sources.lock.json, or refuse.
+
+    Read-only bundle identity metadata: regular file, never a symlink, size
+    capped, JSON lock version 1, the `bundle` source pin present, its
+    declaration a typed git source, its object inside cache/sources, its
+    content digest a typed sha256 and its revision (git sources) present and
+    a 40-hex commit. Missing or unverifiable identity refuses; it can never
+    become a pass.
     """
-    result = inspect_fn()
-    source = (result or {}).get('source') or {}
+    p = Path(lock_path)
+    if p.is_symlink() or not p.is_file():
+        raise Refused('bundle lock file missing or not a regular file: %s' % p)
+    data = p.read_bytes()
+    if len(data) > BUNDLE_LOCK_MAX_BYTES:
+        raise Refused('bundle lock exceeds the lock size cap: %s' % p)
+    try:
+        obj = json.loads(data.decode('utf-8'))
+    except (ValueError, UnicodeDecodeError):
+        raise Refused('bundle lock is not valid JSON: %s' % p) from None
+    if not isinstance(obj, dict) or obj.get('version') != 1:
+        raise Refused('unsupported bundle lock version: %s' % p)
+    sources = obj.get('sources')
+    bundle = sources.get('bundle') if isinstance(sources, dict) else None
+    if not isinstance(bundle, dict):
+        raise Refused('bundle lock has no bundle source pin: %s' % p)
+    declaration = bundle.get('declaration')
+    if not isinstance(declaration, dict) or declaration.get('type') != 'git' \
+            or not isinstance(declaration.get('url'), str) or not declaration.get('url') \
+            or not all(key in declaration for key in ('type', 'url', 'ref')):
+        raise Refused('bundle lock declaration is not a typed git source: %s' % p)
+    object_path = bundle.get('object')
+    parts = Path(object_path).parts if isinstance(object_path, str) else ()
+    if not isinstance(object_path, str) or not object_path.startswith('cache/sources') or '..' in parts \
+            or Path(object_path).is_absolute() \
+            or not all(part not in ('.', '..') for part in parts):
+        raise Refused('bundle lock object escapes the source cache: %s' % p)
+    digest = _typed_digest(bundle.get('version'))
+    if digest is None:
+        raise Refused('bundle lock content digest missing or untyped: %s' % p)
+    raw_revision = bundle.get('revision')
+    revision = _typed_revision(raw_revision)
+    if raw_revision is not None and revision is None:
+        raise Refused('bundle lock revision is not a 40-hex git commit: %s' % p)
+    return {'declaration': declaration, 'object': object_path,
+            'digest': digest, 'revision': revision}
+
+
+def classify_bundle_state(inspect_result, pin):
+    """Classify one observed bundle state against the approved transition.
+
+    `inspect_result` is the parsed inner `effigy bundle inspect --json`
+    result (read-only; inspection never fetches or writes); `pin` comes from
+    parse_bundle_pin on the same checkout's sources.lock.json. Returns the
+    typed state record, or refuses: source identity or declaration drift,
+    hint/pin disagreement, or any identity outside the approved pre-state
+    (locked 61dc5aa8…/e088a69e…, transition pending) and approved target
+    (revision 808adad… + digest 28c92040…, already settled). Revision and
+    digest kinds are never equated or interchanged.
+    """
+    if not isinstance(inspect_result, dict) or inspect_result.get('ok') is not True:
+        raise Refused('bundle inspect did not succeed')
+    source = inspect_result.get('source')
+    if not isinstance(source, dict):
+        raise Refused('bundle inspect source block missing')
     if source.get('source_type') != 'git' or source.get('source_path') != BUNDLE_SOURCE:
         raise Refused('bundle source identity changed')
-    if source.get('version_hint') != BUNDLE_LOCK_COMMIT:
-        raise Refused('bundle lock moved off the pinned revision; re-pin required')
-    if not isinstance(source.get('stale'), bool):
+    stale = source.get('stale')
+    if not isinstance(stale, bool):
         raise Refused('bundle inspect stale flag missing')
-    return {'source': source.get('source_path'), 'lock': source.get('version_hint'),
-            'stale': source.get('stale')}
+    if pin['declaration'] != BUNDLE_DECLARATION:
+        raise Refused('bundle source declaration changed; reviewed re-pin required')
+    hint = source.get('version_hint')
+    if pin['revision'] is not None:
+        if hint != pin['revision']:
+            raise Refused('bundle inspect version_hint disagrees with the locked '
+                          'revision (typed identities must match)')
+    elif hint != pin['digest']:
+        raise Refused('bundle inspect version_hint disagrees with the locked '
+                      'content digest (typed identities must match)')
+    if pin['revision'] == BUNDLE_PRE_REVISION and pin['digest'] == BUNDLE_PRE_DIGEST:
+        mode = 'approved-transition-pending'
+    elif pin['digest'] == BUNDLE_TARGET_DIGEST and pin['revision'] is not None \
+            and pin['revision'].startswith(BUNDLE_TARGET_REVISION_PREFIX):
+        mode = 'already-at-approved-target'
+    else:
+        raise Refused('bundle lock is at an unapproved identity (locked %s/%s); '
+                      'explicit reviewed re-pin required'
+                      % (pin['revision'] or 'no-revision', pin['digest']))
+    return {'mode': mode, 'source': BUNDLE_SOURCE, 'revision': pin['revision'],
+            'digest': pin['digest'], 'stale': stale}
+
+
+def verify_bundle_transition_before(inspect_fn, lock_path):
+    """The allowed locked pre-state (or approved target) before any effect.
+
+    The packet permits exactly two pre-states: the approved old->new
+    transition still pending at the locked old identity, and the checkout
+    already settled at the approved target (a later no-op sync). Anything
+    else refuses and needs the explicit reviewed re-pin.
+    """
+    return classify_bundle_state(inspect_fn(), parse_bundle_pin(lock_path))
+
+
+def verify_bundle_transition_after(inspect_fn, lock_path):
+    """After bundle sync: exactly the approved target, settled, or refuse.
+
+    Any unexpected post-sync source-origin, revision or content drift refuses
+    here, BEFORE attach/up; a missing revision or digest refuses; a still
+    stale lock refuses (sync did not settle the approved state).
+    """
+    state = classify_bundle_state(inspect_fn(), parse_bundle_pin(lock_path))
+    if state['mode'] != 'already-at-approved-target':
+        raise Refused('bundle sync did not settle the approved target state '
+                      '(locked %s/%s); refusing before attach/up'
+                      % (state['revision'] or 'no-revision', state['digest']))
+    if state['stale']:
+        raise Refused('bundle lock still reports stale after sync; refusing before attach/up')
+    return state
 
 
 def expect_absent(path):

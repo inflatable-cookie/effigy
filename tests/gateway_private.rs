@@ -3590,6 +3590,9 @@ printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
 if [ -n "${FAKE_DYNAMIC_PROOF-}" ] && [ -f "$FAKE_DYNAMIC_PROOF" ]; then
   FAKE_OWNED_CONTAINER=$(cat "$FAKE_DYNAMIC_PROOF")
 fi
+# The environment view's own reads prefix the backend's global `--context`
+# before the subcommand; a fixture dispatches on what follows it.
+if [ "${1-}" = --context ]; then shift 2; fi
 if [ "${1-}" = ps ]; then
   [ -f "${FAKE_OWNED_ACTIVE-}" ] || exit 0
   python3 - "$FAKE_OWNED_CONTAINER" <<'PYOWNED'
@@ -3617,10 +3620,14 @@ elif [ "${1-}" = exec ]; then
   [ "${1-}" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ] || exit 96
 elif [ "${1-}" = compose ]; then
   shift
+  # The detached bring-up pins the project directory to the rendered Compose
+  # directory, so a value-taking long option is two tokens; a bare `--*` shift
+  # would strand its value here and never reach the `up` case.
   while [ "$#" -gt 0 ]; do
     case "$1" in
       -p) project=$2; shift 2 ;;
       -f) shift 2 ;;
+      --project-directory|--env-file|--profile) shift 2 ;;
       --*) shift ;;
       *) break ;;
     esac
@@ -3996,13 +4003,34 @@ fn fixture_environment_command(checkout: &Path, cleanup: &ManagedContainerCleanu
         .env("FAKE_DOCKER_LOG", &cleanup.docker_log);
     // `oxide` injects its own `CARGO_PROFILE_OXIDE_*` profile settings, and
     // nextest injects `NEXTEST_*` runner settings (such as the thread count),
-    // into the test process. Effigy's argv classifier reads a short inherited
-    // value as a secret when it appears in an argument (the watch-mode respawn
-    // proof refuses its own listener, and the bound-elsewhere proof refuses its
-    // listener on `NEXTEST_TEST_THREADS`), so a fixture never passes them to Effigy.
+    // into the test process. Coding-agent and queue harnesses inject their own
+    // ambient values (`AI_AGENT=pi`, `NORTHSTAR_BASE_BRANCH=main`, session
+    // paths and tokens). Effigy's classifier reads a short inherited value as
+    // a secret when it appears in an argument (the watch-mode respawn proof
+    // refuses its own listener, and the bound-elsewhere proof refuses its
+    // listener on `NEXTEST_TEST_THREADS`), and output redaction replaces the
+    // same values inside a child's captured output, where the proofs read
+    // published domains and recorded pids. A fixture never passes them to
+    // Effigy.
     for (key, _) in std::env::vars_os() {
         if key.to_str().is_some_and(|name| {
-            name.starts_with("CARGO_PROFILE_OXIDE_") || name.starts_with("NEXTEST_")
+            name.starts_with("CARGO_")
+                || name.starts_with("NEXTEST_")
+                || name.starts_with("CLAUDE_CODE_")
+                || name.starts_with("PI_")
+                || name.starts_with("PASEO_")
+                || name.starts_with("NORTHSTAR_")
+                || matches!(
+                    name,
+                    "AI_AGENT"
+                        | "CLAUDECODE"
+                        | "CLAUDE_AGENT_SDK_VERSION"
+                        | "CLICOLOR"
+                        | "CLICOLOR_FORCE"
+                        | "FORCE_COLOR"
+                        | "LS_COLORS"
+                        | "LSCOLORS"
+                )
         }) {
             command.env_remove(key);
         }
@@ -4185,6 +4213,73 @@ fn wait_for_path_exists(path: &Path, timeout: Duration, label: &str) {
     let deadline = Instant::now() + timeout;
     while !path.exists() {
         assert!(Instant::now() < deadline, "timed out waiting for {label}");
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// At most the last `max` bytes of a fixture log, rounded to a UTF-8
+/// boundary. Evidence stays bounded without flooding the runner's capture.
+fn bounded_tail(path: &Path, max: usize) -> String {
+    match fs::read(path) {
+        Ok(bytes) => {
+            let text = String::from_utf8_lossy(&bytes);
+            let mut start = text.len().saturating_sub(max);
+            while !text.is_char_boundary(start) {
+                start += 1;
+            }
+            let mut tail = text[start..].to_owned();
+            if start > 0 {
+                tail.insert_str(0, "…");
+            }
+            tail
+        }
+        Err(error) => format!("<unreadable: {error}>"),
+    }
+}
+
+/// The nested-effigy proof's pid wait. A timeout must carry the evidence the
+/// main milestone run lacked (f099a12f, effigy#554): the host-process
+/// supervisor's own log, the fixture sweep ledger's recorded generations, the
+/// control directory's state and the bring-up adapter log. All of it is
+/// fixture-owned and bounded, so the failure names what the nested run
+/// actually did instead of reporting an assumed cause from the timeout.
+fn wait_for_nested_app_pid(
+    pid_file: &Path,
+    fixture_root: &Path,
+    control: &Path,
+    host_process_log: &Path,
+    docker_log: &Path,
+    timeout: Duration,
+) {
+    let deadline = Instant::now() + timeout;
+    while !pid_file.exists() {
+        if Instant::now() >= deadline {
+            let control_inventory = if control.is_dir() {
+                let mut names: Vec<String> = fs::read_dir(control)
+                    .expect("control directory")
+                    .filter_map(|entry| entry.ok())
+                    .map(|entry| {
+                        let path = entry.path();
+                        format!(
+                            "{} ({} bytes)",
+                            path.file_name().unwrap_or_default().to_string_lossy(),
+                            entry.metadata().map(|meta| meta.len()).unwrap_or(0)
+                        )
+                    })
+                    .collect();
+                names.sort();
+                names.join(", ")
+            } else {
+                "<absent>".to_owned()
+            };
+            panic!(
+                "timed out waiting for the nested task's app ({}); host-process log={}\nsweep ledger={}\ncontrol directory: {control_inventory}\nbring-up adapter log={}",
+                pid_file.display(),
+                bounded_tail(host_process_log, 8_000),
+                bounded_tail(&fixture_root.join("sweep-ledger.json"), 4_000),
+                bounded_tail(docker_log, 2_000),
+            );
+        }
         thread::sleep(Duration::from_millis(25));
     }
 }
@@ -7205,7 +7300,14 @@ fn nested_effigy_host_process_stops_with_closure_verified() {
         "`container web up --detach` failed: {up_text}\nlog={}",
         fs::read_to_string(&log_path).unwrap_or_default()
     );
-    wait_for_path_exists(&pid_file, Duration::from_secs(60), "the nested task's app");
+    wait_for_nested_app_pid(
+        &pid_file,
+        fixture.path(),
+        &control,
+        &log_path,
+        &docker_log,
+        Duration::from_secs(60),
+    );
     let app_pid: i32 = fs::read_to_string(&pid_file)
         .expect("the app records its pid")
         .trim()
@@ -7242,6 +7344,75 @@ fn nested_effigy_host_process_stops_with_closure_verified() {
     assert!(
         nix::sys::signal::kill(nix::unistd::Pid::from_raw(app_pid), None).is_err(),
         "the nested task's app is gone after the stop"
+    );
+}
+
+/// The nested proof's pid wait is its own negative control: when the nested
+/// task's app never appears, the timeout must name the child and owner
+/// evidence the milestone run lacked (effigy#554) — the host-process
+/// supervisor's log, the sweep ledger's recorded generations, the control
+/// directory and the bring-up adapter log — never a bare assumed cause.
+#[test]
+fn nested_app_pid_timeout_carries_child_owner_and_error_evidence() {
+    let fixture = effigy_test_support::Fixture::new("g554-").expect("fixture root");
+    let control = fixture.path().join("control");
+    fs::create_dir(&control).expect("control directory");
+    let app = control.join("app.py");
+    fs::write(&app, "import os, signal\n").expect("fixture app");
+    let pid_file = control.join("app-pid");
+    let log = fixture.path().join("api.log");
+    let suffix = "[effigy host-process] started `api` (pid 50645)\n\
+         [effigy host-process] `api` exited (code 1)\n";
+    let padding = if suffix.len() % 2 == 0 { "x" } else { "" };
+    let long_log = format!("{}{padding}{suffix}", "é".repeat(4_001));
+    assert!(!long_log.is_char_boundary(long_log.len() - 8_000));
+    fs::write(&log, long_log).expect("fixture host-process log");
+    let ledger = fixture.path().join("sweep-ledger.json");
+    fs::write(
+        &ledger,
+        r#"{"generations":[{"pid":50645,"boot":"fixture-boot"}]}"#,
+    )
+    .expect("fixture sweep ledger");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    fs::write(&docker_log, "ps\ncompose up -d\n").expect("fixture adapter log");
+
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wait_for_nested_app_pid(
+            &pid_file,
+            fixture.path(),
+            &control,
+            &log,
+            &docker_log,
+            Duration::from_secs(1),
+        );
+    }));
+    let Err(payload) = outcome else {
+        panic!("a missing nested app must fail its pid wait");
+    };
+    let message = payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+        .unwrap_or_default();
+    assert!(
+        message.contains("timed out waiting for the nested task's app"),
+        "the timeout names its wait: {message}"
+    );
+    assert!(
+        message.contains("`api` exited (code 1)"),
+        "the timeout carries the host-process supervisor's own record: {message}"
+    );
+    assert!(
+        message.contains("50645"),
+        "the timeout carries the recorded child identity: {message}"
+    );
+    assert!(
+        message.contains("app-pid") && message.contains("app.py"),
+        "the timeout carries the control directory's state: {message}"
+    );
+    assert!(
+        message.contains("compose up -d"),
+        "the timeout carries the bring-up adapter log: {message}"
     );
 }
 
@@ -7514,6 +7685,9 @@ fn write_slow_health_fake_docker(path: &Path) {
         r#"#!/bin/sh
 set -eu
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+# The environment view's own reads prefix the backend's global `--context`
+# before the subcommand; a fixture dispatches on what follows it.
+if [ "${1-}" = --context ]; then shift 2; fi
 if [ "${1-}" = ps ]; then
   [ -f "${FAKE_OWNED_ACTIVE-}" ] || exit 0
   python3 - "$FAKE_OWNED_CONTAINER" <<'PYOWNED'
@@ -7545,9 +7719,13 @@ elif [ "${1-}" = exec ]; then
   [ "${1-}" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ] || exit 96
 elif [ "${1-}" = compose ]; then
   shift
+  # The detached bring-up pins the project directory to the rendered Compose
+  # directory, so a value-taking long option is two tokens; a bare `--*` shift
+  # would strand its value here and never reach the `up` case.
   while [ "$#" -gt 0 ]; do
     case "$1" in
       -f|-p) shift 2 ;;
+      --project-directory|--env-file|--profile) shift 2 ;;
       --*) shift ;;
       *) break ;;
     esac
@@ -7720,6 +7898,9 @@ fn write_switch_fake_docker(path: &Path) {
         r#"#!/bin/sh
 set -eu
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+# The environment view's own reads prefix the backend's global `--context`
+# before the subcommand; a fixture dispatches on what follows it.
+if [ "${1-}" = --context ]; then shift 2; fi
 state="$FAKE_OWNED_STATE"
 project_from_filters() {
   requested=""
@@ -7776,10 +7957,14 @@ elif [ "${1-}" = cp ] && [ -n "${FAKE_GUEST_ADAPTER:-}" ]; then
 elif [ "${1-}" = compose ]; then
   shift
   project=""
+  # The detached bring-up pins the project directory to the rendered Compose
+  # directory, so a value-taking long option is two tokens; a bare `--*` shift
+  # would strand its value here and never reach the `up` case.
   while [ "$#" -gt 1 ]; do
     case "$1" in
       -f) shift 2 ;;
       -p) project="$2"; shift 2 ;;
+      --project-directory|--env-file|--profile) shift 2 ;;
       --*) shift ;;
       *) break ;;
     esac

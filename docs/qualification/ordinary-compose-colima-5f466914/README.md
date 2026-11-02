@@ -1,15 +1,17 @@
-# Ordinary-Compose on Colima — qualification evidence (candidate 5f466914, r17)
+# Ordinary-Compose on Colima — qualification evidence (candidate 5f466914, r18)
 
 Evidence packet for the deferred ordinary-Compose Colima qualification and the
-Acow consumer step behind already-merged #524/#535, prepared as Queue task
-effigy#537. This directory is the source-immutable proof head: Queue's proof
-route executes exactly the packet, manifest and helpers committed here against
-the separately frozen candidate — not the newest main and not a rebuild.
+Acow consumer step behind already-merged #524/#535, prepared as Queue tasks
+effigy#537 (committed r17 packet) and effigy#542 (self-enforcing r18 packet).
+This directory is the source-immutable proof head: Queue's proof route executes
+exactly the packet, manifest and helpers committed here against the separately
+frozen candidate — not the newest main and not a rebuild.
 
 Status: **prepared, not executed.** The synthetic Colima cell has never run
-for this packet; the entry read-only sweep was incomplete (guest I/O error,
-disclosed in the packet). Native execution, any installation, and consumer
-proof all remain unproved and unauthorized.
+for this packet; no fixture or native resource was ever created. The r18
+launcher performs the complete read-only entry sweep itself before any fixture
+can be created. Native execution, any installation, and consumer proof all
+remain unproved and unauthorized.
 
 ## Proof route
 
@@ -33,20 +35,27 @@ reviewer owns the proof task and judges the actual receipt.
   `candidate-src-5f466914/target/debug/effigy`, SHA-256
   `cb564fa64f15d080eb2b047454b55103e3e5857de2252de8be05a31a95eb00b1`. The
   binary is not committed and must not be installed.
-- Committed packet `colima-qualification-5f466914-r17.md`, SHA-256
-  `a9c83d12e693ba318fc45cb12a55b09da68eacdd27369c066eb1abe9baa0e7c9`.
-- Committed artifact manifest `r17-artifacts.json`, SHA-256
-  `94bf2d85e9727124d4356b8d0d5ef4d4b8f081af8b8912fff410472faacec898`; it pins
+- Committed packet `colima-qualification-5f466914-r18.md`, SHA-256
+  `545566ddd6f48bc14f2f16f1df0db68a4c16476293b0c54cbe58e46331d8e286`. The
+  prior committed r17 revision (SHA-256
+  `a9c83d12e693ba318fc45cb12a55b09da68eacdd27369c066eb1abe9baa0e7c9`) remains
+  immutable history and is not executed.
+- Committed artifact manifest `r18-artifacts.json`, SHA-256
+  `944419d4517f2b1935e6870989408990cf84412264e999a9771644627f2c1291`; it pins
   the frozen binary, the 15-container baseline IDs (scratch
   `r3-baseline-container-ids.txt`, SHA-256
   `d89c846cdb44c0d9669f4db50eb57347d2b322aee26b4b03c7fbd2e000663f10`) and the
   six committed helpers:
-  - `launch.py` `cedcd5f2c2da52d2fe7313cd08f10017cca3623166e212256e62f3c90779e12e`
-  - `common.py` `098570fce46c59735bdc953812d589da5fb1c447546c8cd49e62a0ee19b1dda2`
-  - `prepare.py` `b122bb8f58e7954bc8a2f0c204d888c4ea5fbe9e6433163aa96326ad143514cd`
-  - `preflight.py` `ee427a1edb62cff07dd4b645e55d1fba27484fe0cc87196b1a0f6064e7b2e957`
-  - `runtime.py` `5723eceab4210e7fa02ba803e363561869f4abc6d3128f04648c4a5772ccc642`
+  - `launch.py` `9bbf549e41475697347321d6de496a6a42fe416006ec63b7cc465513bd0c42b4`
+  - `common.py` `5e7883525f6304d0a4db90b565ef95c6c5e01fb00bdb10d58425d6e94a4f04c4`
+  - `prepare.py` `62883a92d16ec31c82586295c4d8b85447043818fe3a3752e55c0c2e9acd5ab8`
+  - `preflight.py` `06d3acb21e0a0b8f54acdb24c5f033ce7263e1cb3a8e65a7c38143ab35e40878`
+  - `runtime.py` `43d2884f3adf45dd82277ece37051efe0d8bb25ea5d112bd5b9033531b29b695`
   - `source_estimate.py` `0d2e57308104ed76b1932092760626da89c8e6441fa055784a971e86e0801b52`
+
+The r17 helper hashes (launch `cedcd5f2...`, common `098570fc...`, prepare
+`b122bb8f...`, preflight `ee427a1e...`, runtime `5723ecea...`, estimate
+`0d2e5730...`) stay pinned by the retained r17 manifest as reviewed history.
 
 Provenance: the starting r17 artifacts were prepared in scratch
 (`/Volumes/Builds/scratch/effigy/524/colima-qualification-5f466914-r17.md`
@@ -54,7 +63,30 @@ SHA-256 `34c0c9288b1d174e346460b78839524c00882646abba21ed8da5dac0f074046d`,
 `r17-artifacts.json` SHA-256
 `e710d83ef655e3e67a4f0b42167aa941f6ded05e498de1558096051c8b37b612`). Those
 scratch bytes are provenance for the starting artifact and are not executed;
-the committed files above are the packet intended for the authorized execution.
+the committed r18 files above are the packet intended for the authorized
+execution.
+
+## Entry sweep the launcher enforces (task effigy#542)
+
+The r17 route demanded a manual pre-selector sweep the packet did not itself
+enforce; three executor admissions refused before the selector and none
+created anything. The r18 launcher runs the complete read-only admission sweep
+itself — via `common.entry_sweep`, invoked by `launch.py` before `prepare.py`
+can make its first `mkdir` or write, and again inside `prepare.py` before the
+same first write — covering: bundle/GO identities, the profile and image pins,
+the exact 15-container baseline, absence of every synthetic container, network
+and fixture root, the complete 36-network and 255-volume identity baselines
+(canonical digests `6e8fe0fe...` and `7168fb1f...` pinned from the immutable
+2026-11-02 recovery receipt `5d05e690...` and its inventory `33239d95...`,
+never from live state), the protected shared MariaDB container/volume and Acow
+dev volume identities, bounded fixture-ancestor mount/symlink safety before
+creation (and again before deletion), and prior-evidence absence. `runtime.py`
+re-asserts both baseline digests immediately before `compose up`. Drifted,
+same-count-replaced, malformed, duplicate, truncated or timed-out inventories
+refuse with zero fixture writes and zero backend mutation. The executor's
+manual duties are exactly: verify the actual scoped GO evidence and current
+Acow reservation, prepare the faithful required private input under that GO,
+and run the single selector once.
 
 ## Guard change (queue planner a6994b17)
 
@@ -69,17 +101,18 @@ byte-for-byte from the reviewed r17 helpers.
 
 ## Required GO provenance
 
-Native execution needs, in order: the complete read-only predicate sweep
-(currently incomplete after the Colima guest I/O error), a fresh Supervisor GO
-whose exact text names this packet's SHA copied verbatim to
-`/Volumes/Builds/scratch/effigy/524/r17-go.txt` (mode 0600), Acow's confirmed
+Native execution needs, in order: the launcher's complete read-only entry
+sweep (now self-enforcing — see above), a fresh Supervisor GO whose exact text
+names the r18 packet's SHA copied verbatim to
+`/Volumes/Builds/scratch/effigy/524/r18-go.txt` (mode 0600), Acow's confirmed
 current exclusive quiet window with a start courtesy, and Tom's explicit
 live-environment exact-packet GO. Planner approval is not a GO; no automatic
-action happens on a missing authorization.
+action happens on a missing authorization. A GO naming any other packet
+revision (including the r17 hash) refuses with no native effect.
 
 The copied receipt must also satisfy the helpers' exact, case-sensitive text
 checks: `launch.py` requires `packet ` followed immediately by the lowercase
-64-hex packet SHA-256; `verify_go` requires the packet SHA and the literal
+64-hex r18 packet SHA-256; `verify_go` requires that SHA and the literal
 strings `GO` and `Supervisor` in the receipt. These tokens are machine
 checks, not a substitute for the required authorizations and provenance above.
 A differently worded receipt can fail the one permitted proof execution.

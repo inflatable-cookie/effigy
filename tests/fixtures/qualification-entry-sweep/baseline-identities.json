@@ -1,0 +1,1079 @@
+{
+ "containers": [
+  "05ea0c9d56396bb36a4b4ec195db06428feae35c2713e64d2671e11d21a6b476",
+  "1340d341f15d95b4ffe28550c575750603aaee8fb00aad9d26a3527e0713617e",
+  "45b0961d323e84d89505b3a901944dfb3e262c02586f966c57250754c58f610a",
+  "50c0e0da7a7808570e738926bb4c6d94287323b6b0a8f890090e54acfe0553f8",
+  "573f86325f536c13c81353c7920c4148d22e523100e2e1a1f86d7f091805ab79",
+  "5e238d85ac71ea09bbc4b49820c30d15922ae442d983ba5cf5dbeb3ca7b31a9a",
+  "6ffc2c666502d5ef68c037d1135a530ecfdadcf89f8ede2fbb89b1e62576fb56",
+  "7ee166b7ec9e9448559f058bd486c5f6f513c2980f7051ccd491d1801a5ab4d5",
+  "86318c4133061ef6740858aefcece19153f8d7592d79fc1e55ab4b8aee53bb78",
+  "b40eb3dc146a6c5b97ff464115d0d4d896aaf992d3cb36bada4f80330fcf4055",
+  "c47a64b6fc1fe688e3ce503a27704fb978580c22bd4d8c2f7083e509ceb0e6d9",
+  "dcd9eabbf3f2283662a971c88867bfcd464a1538d3702480c96a11d03471d922",
+  "e33ad75c593543f71dbd8e4fc8e4aa736cf9f06507f5ec76dac730f3b408676a",
+  "eef6ab335142fd45b82d5e41f2cafcb34900ca6ab27caab31ee567e1056ef015",
+  "fa97b3dbfd375f905db8d498a96abb997fd1163bf02c9281c9e97a6feb0bd707"
+ ],
+ "networks": {
+  "acowtancy-decodelabs_default": "96061b89142ee2e56fa91ccd47f36d2e68ec18a0ddc53b8564a906c355fbeef6",
+  "acowtancy-dev-wt-5eafadda6e16_default": "db0a0d640a6a37b0dd63dce09e070b8882fe9d586cd6de00c8e92bc39ba087de",
+  "acowtancy-dev-wt-69963a45835c_default": "393ba86432abab021befb124cd9dc78e93e51402a01050a8b192a5d57bf6018b",
+  "acowtancy-dev-wt-88bf16d0c992_default": "7fd00a5df4ce2dc807b2e9160f30833d5aa1aaed9c5d09d5bd496695d25e262a",
+  "acowtancy-dev-wt-bovine-deck-preview-fd4b9a3b-runner-1b1f74c7-wt-4677bfcb81da_default": "cd0868ca88a239c80d5a53cabb3ea8cfd706a531507aa4df93a7d8a82f9e427d",
+  "acowtancy-dev-wt-c5f4cc828fbe_default": "01779eba8a74279aa61104e1d6cfb09120b59b34a8c56d1e1bdef162846259d0",
+  "acowtancy-dev-wt-cd131d26ca5a_default": "add12dc56ae3731510664ec30816a94db0c408355aaf80331a327acdd7b63f27",
+  "acowtancy-dev-wt-e03693ea6090_default": "3ee7737bcb5e27bede09062c4757a19e829e33de179f59dc67a6cf730ad2a737",
+  "acowtancy-dev-wt-integrated-main-ede01380-proof3-b43b371e-wt-c4be38f002f2_default": "659d14dcea5c79bc4abb68d3ddfc8065f6710abaf1288aa6afcabd6de79766ef",
+  "acowtancy-dev-wt-ns-69c4bf93-26c9-4186-8558-4b8d07d36a3d-79b9d1af-wt-ec393236aa0f_default": "41f9d318c859b78ba8c453fa3ea778d85c499321c4806d6a097aa9690b7799f6",
+  "bridge": "17f29b073143d8cd97b5bbe492bdeffec1c5fee55cc1fe2112c8b9335f8b6121",
+  "cbs-decodelabs_default": "05b450cad5620f298e0f6cb02710ce0654eed28a2aa05992a18c21e06254044d",
+  "compli-me-dev_default": "b0acc0a28f9d405c9d9eb45d8a7f5dc7ada9773eec1cb48b47465bb4725b24ea",
+  "compose_default": "cd32c76f42f9cb566d1dd61e772efa4a3d2d7c51dfeb4fb8cbd992c03603d873",
+  "contact-patch-decodelabs_default": "7c7c40c39556863f77419a81a95873bd7a7f3c43af5a877e374e9ad53f2d96d8",
+  "contact-patch-dev_default": "1b34514ad83017e30882d8a598fb638c065bb262c9a09782d21e24d16ab911e5",
+  "effigy-shared-mariadb-0721de3e_default": "bfdff20f4d649b2e4b010d31e40f6f94c201cf0870d68aa82ad012ccd09bc6d8",
+  "effigy-shared-mariadb-319a0c12_default": "e240ba05638e6e645d609142e292bd05edd72a7235ca6c19c1e84545a54e6c43",
+  "effigy-shared-mariadb-47035c71_default": "57a861e6059122a0d285f63bad9e2ff2aa0906cdcaf72117ba74244cd826ce7e",
+  "effigy-shared-mariadb-4b5760c0_default": "78a092c183f5a36eb4e139da6591892a87c3009113939cf3295378e0337b3ca0",
+  "effigy-shared-mariadb-5ca6dd40_default": "ac93ccf3337e581217a605e0b2f27db5a398a372efabe2057c5fb4366d9b8742",
+  "effigy-shared-mariadb-685ba33f_default": "11478fd21ceddf1498475d085e20bfdb3eb91705d7274e79e4fccbadb450bf00",
+  "effigy-shared-mariadb-e9c2f295_default": "3c7530f1b6fbd80c4e51efc17cd412fe9eaf162451e11ad4d2640fbce8e10650",
+  "effigy-shared-mariadb-f2513c3c_default": "b01fe9acb479fb40f96fb48b6213080de78db598eabd56d18da7a1fdc154b586",
+  "effigy-shared-mariadb-f5fe2507_default": "e2d07ba00d5dd7765b09d14b804103445bb8c56e66aa62077d003eaf8a893729",
+  "effigy-shared-memcached-849e44e1_default": "a287ab1b5c251e4150326c128157bea702eb6aef50b708a8d7efd14009ca65be",
+  "effigy-shared-memcached-a60435dc_default": "29779666ab803ce9cef6eb55c37a8f0d9395dceccf05552cb13c647160a6c8ce",
+  "effigy-shared-memcached-b75fa0a2_default": "872f6bda9eac62e92af33e954a620e9def7372971e346bfc2b7afb4c1f7cdcd0",
+  "host": "builtin:host",
+  "jal-accounts-decodelabs_default": "347e1d99a05fef2bbbf5b917624a544de42fd51023b11d1eb2d96021bf9ec32b",
+  "loophole-composer-dev_default": "34d22a3c7907204750428a2830b0399922b0fbea87c1dbf69c8a1ef1a7bce216",
+  "none": "builtin:none",
+  "nsa153revviewdfgvze_default": "977ec7c6ec7f0e6964a5f3244b7d4c7a28e2ad279264279fea7ab9e88d6e0e44",
+  "songsprout-dev_default": "b8fe66f7a5116d06245385e9b01a2028844703c739458fac0fbb7c5361e05729",
+  "soundcheck-linux-arm_default": "18745d3d8dfea4066dbfc7b6a020dbeb81b0b8b7670e88557e1f91516bda5f43",
+  "underlay-reference-dev_default": "19acd3d08f4b77fddd0f7534c1ccccea6b397fd316f1cbe37b2c5e314ab4f3c1"
+ },
+ "volumes": {
+  "00a2e767b364b6df98d8812a08998dd6a3b25bf5534bf6b02ca3fe909ea3b933": [
+   "/var/lib/nerdctl/1935db59/volumes/default/00a2e767b364b6df98d8812a08998dd6a3b25bf5534bf6b02ca3fe909ea3b933/_data",
+   "64769:3933592:0:0:700:directory"
+  ],
+  "04d98ed56b07fd1787b9ce442edb78f75489f5538d83c4038525535ac79b40b8": [
+   "/var/lib/nerdctl/1935db59/volumes/default/04d98ed56b07fd1787b9ce442edb78f75489f5538d83c4038525535ac79b40b8/_data",
+   "64769:2664128:0:0:700:directory"
+  ],
+  "0621e588736992b1f631b291f5f73d31f2fccd8ebe0b072a71aea9345b620be3": [
+   "/var/lib/nerdctl/1935db59/volumes/default/0621e588736992b1f631b291f5f73d31f2fccd8ebe0b072a71aea9345b620be3/_data",
+   "64769:3933808:0:0:700:directory"
+  ],
+  "117e03edebad21009075a39d1cb451b9c993e1223d2baa990cc05a0cc6585d78": [
+   "/var/lib/nerdctl/1935db59/volumes/default/117e03edebad21009075a39d1cb451b9c993e1223d2baa990cc05a0cc6585d78/_data",
+   "64769:5016032:0:0:700:directory"
+  ],
+  "151b6f73d3ab0ed98012a2959db0c0d5827b8fb988ca5bcbf1b416ecc001de3c": [
+   "/var/lib/nerdctl/1935db59/volumes/default/151b6f73d3ab0ed98012a2959db0c0d5827b8fb988ca5bcbf1b416ecc001de3c/_data",
+   "64769:3685933:0:0:700:directory"
+  ],
+  "196ced686b44e605d742ae05aef5cd03081d6b54a3074bd0d169bbd26f686439": [
+   "/var/lib/nerdctl/1935db59/volumes/default/196ced686b44e605d742ae05aef5cd03081d6b54a3074bd0d169bbd26f686439/_data",
+   "64769:3933961:0:0:700:directory"
+  ],
+  "1dce5ef6aad05a5e36723c98f0914d03fd9026aa64bdbbc7d3c25e7f717ae341": [
+   "/var/lib/nerdctl/1935db59/volumes/default/1dce5ef6aad05a5e36723c98f0914d03fd9026aa64bdbbc7d3c25e7f717ae341/_data",
+   "64769:2668124:0:0:700:directory"
+  ],
+  "1e10d81ae9ac68bce16daf85b8522eabf0e5a29f18922eee94027303d7d37fe9": [
+   "/var/lib/nerdctl/1935db59/volumes/default/1e10d81ae9ac68bce16daf85b8522eabf0e5a29f18922eee94027303d7d37fe9/_data",
+   "64769:2668157:0:0:700:directory"
+  ],
+  "1f2669eb905054d14cc3d5352aa32bf1c879c58dfb3defb8df7a9723c1b97f54": [
+   "/var/lib/nerdctl/1935db59/volumes/default/1f2669eb905054d14cc3d5352aa32bf1c879c58dfb3defb8df7a9723c1b97f54/_data",
+   "64769:3686029:0:0:700:directory"
+  ],
+  "22b9ea0cc13e4994876d2fad25c7fd30df185c30cf1aa0694fc3b0bf06c7e975": [
+   "/var/lib/nerdctl/1935db59/volumes/default/22b9ea0cc13e4994876d2fad25c7fd30df185c30cf1aa0694fc3b0bf06c7e975/_data",
+   "64769:3935720:0:0:700:directory"
+  ],
+  "279f4fd30157e7088711f9cb90ff685ff5aa72f98615401d5785eccfa949d36c": [
+   "/var/lib/nerdctl/1935db59/volumes/default/279f4fd30157e7088711f9cb90ff685ff5aa72f98615401d5785eccfa949d36c/_data",
+   "64769:3935743:999:999:755:directory"
+  ],
+  "2ae2543519cb2c921c358764569b8f201de1a42e063ead9f7c5e426e3ffcf628": [
+   "/var/lib/nerdctl/1935db59/volumes/default/2ae2543519cb2c921c358764569b8f201de1a42e063ead9f7c5e426e3ffcf628/_data",
+   "64769:2665089:0:0:700:directory"
+  ],
+  "2f2191c2880e4acb0d6a2aeba16dde855f52b8bb1b3e548f72cefa63e9de6d8e": [
+   "/var/lib/nerdctl/1935db59/volumes/default/2f2191c2880e4acb0d6a2aeba16dde855f52b8bb1b3e548f72cefa63e9de6d8e/_data",
+   "64769:3933970:0:0:700:directory"
+  ],
+  "342b6d5ee33f02b7b7ffbc74121ad28e61c3c0d10b21f5216c660518e3245165": [
+   "/var/lib/nerdctl/1935db59/volumes/default/342b6d5ee33f02b7b7ffbc74121ad28e61c3c0d10b21f5216c660518e3245165/_data",
+   "64769:3934359:0:0:700:directory"
+  ],
+  "3d3c7ef8799ddfd928d3259ccb46190d1e8827541cbad1c8b3ebf1aff797ac12": [
+   "/var/lib/nerdctl/1935db59/volumes/default/3d3c7ef8799ddfd928d3259ccb46190d1e8827541cbad1c8b3ebf1aff797ac12/_data",
+   "64769:2668181:0:0:700:directory"
+  ],
+  "3df13e80a58a0e6c8fbd26fbb8302d3aa158f32045602e055754a4b537c92f97": [
+   "/var/lib/nerdctl/1935db59/volumes/default/3df13e80a58a0e6c8fbd26fbb8302d3aa158f32045602e055754a4b537c92f97/_data",
+   "64769:3935789:0:0:700:directory"
+  ],
+  "3e98578f8921a06e18254b34e167f9f944f368674765aac2d789a9b0f752a6b2": [
+   "/var/lib/nerdctl/1935db59/volumes/default/3e98578f8921a06e18254b34e167f9f944f368674765aac2d789a9b0f752a6b2/_data",
+   "64769:2664213:0:0:700:directory"
+  ],
+  "3f442d5f3d8a76908a45a9366e8ba8bc7a7f52d9b5ffa2203427aba8ee7edf44": [
+   "/var/lib/nerdctl/1935db59/volumes/default/3f442d5f3d8a76908a45a9366e8ba8bc7a7f52d9b5ffa2203427aba8ee7edf44/_data",
+   "64769:3936117:0:0:700:directory"
+  ],
+  "4320dd42c0ee462d667a5abfc3fac9296932f67239139182dca69b8465cd8dc7": [
+   "/var/lib/nerdctl/1935db59/volumes/default/4320dd42c0ee462d667a5abfc3fac9296932f67239139182dca69b8465cd8dc7/_data",
+   "64769:3936097:0:0:700:directory"
+  ],
+  "480e77d29983cd4ed76a3dd666b85d0925314d82b5864dfc55713cd586898abc": [
+   "/var/lib/nerdctl/1935db59/volumes/default/480e77d29983cd4ed76a3dd666b85d0925314d82b5864dfc55713cd586898abc/_data",
+   "64769:3933941:0:0:700:directory"
+  ],
+  "4840d4b1c01b43844fb352f79a3ac3937aacee96973de8c44c4576348409b5e1": [
+   "/var/lib/nerdctl/1935db59/volumes/default/4840d4b1c01b43844fb352f79a3ac3937aacee96973de8c44c4576348409b5e1/_data",
+   "64769:2668100:0:0:700:directory"
+  ],
+  "49b7137737eccba5b41091e1f994b9ca3b77624dfa282849dd14688be539e841": [
+   "/var/lib/nerdctl/1935db59/volumes/default/49b7137737eccba5b41091e1f994b9ca3b77624dfa282849dd14688be539e841/_data",
+   "64769:3687474:0:0:700:directory"
+  ],
+  "4d9ad6de09931f8968f405f0c90389752b92a691edce420b8fd390e771e7c64f": [
+   "/var/lib/nerdctl/1935db59/volumes/default/4d9ad6de09931f8968f405f0c90389752b92a691edce420b8fd390e771e7c64f/_data",
+   "64769:3935378:0:0:700:directory"
+  ],
+  "516d121a26f31d59be39588de2730d441b6e95101bdeb79a0e534ce498411076": [
+   "/var/lib/nerdctl/1935db59/volumes/default/516d121a26f31d59be39588de2730d441b6e95101bdeb79a0e534ce498411076/_data",
+   "64769:3936592:0:0:700:directory"
+  ],
+  "5354f2c7d71e3a30c3826c6e890d6f8ee758c32357ae51922bfb8e7e0aaac8f3": [
+   "/var/lib/nerdctl/1935db59/volumes/default/5354f2c7d71e3a30c3826c6e890d6f8ee758c32357ae51922bfb8e7e0aaac8f3/_data",
+   "64769:3935404:0:0:700:directory"
+  ],
+  "54e36b027a0a73841c41861054a3ba9adf0d3eee707f4d071e06d2923b84c177": [
+   "/var/lib/nerdctl/1935db59/volumes/default/54e36b027a0a73841c41861054a3ba9adf0d3eee707f4d071e06d2923b84c177/_data",
+   "64769:3937699:0:0:700:directory"
+  ],
+  "5c063c434b394bb4a36ea23ee3c2f45589810eb0c2b3ff4b11c15ca31f974d34": [
+   "/var/lib/nerdctl/1935db59/volumes/default/5c063c434b394bb4a36ea23ee3c2f45589810eb0c2b3ff4b11c15ca31f974d34/_data",
+   "64769:3936061:0:0:700:directory"
+  ],
+  "5dfec0982966c34c5008810289bce0bb190ec8cea3e826726d8fa63cc590bb17": [
+   "/var/lib/nerdctl/1935db59/volumes/default/5dfec0982966c34c5008810289bce0bb190ec8cea3e826726d8fa63cc590bb17/_data",
+   "64769:5016048:0:0:700:directory"
+  ],
+  "5ebbf8b1cf2e960ebb0424a7a8f536b53093c106af67bae41645a0c40c105b82": [
+   "/var/lib/nerdctl/1935db59/volumes/default/5ebbf8b1cf2e960ebb0424a7a8f536b53093c106af67bae41645a0c40c105b82/_data",
+   "64769:3933889:0:0:700:directory"
+  ],
+  "61ccabb12c366b74a03150152a7087422a5be0a415a3cabb53e21bfcd84e549d": [
+   "/var/lib/nerdctl/1935db59/volumes/default/61ccabb12c366b74a03150152a7087422a5be0a415a3cabb53e21bfcd84e549d/_data",
+   "64769:3935684:0:0:700:directory"
+  ],
+  "6beebb08ef3f8c338005a6a41b9d2b829f1c08f8a94c829122eb36bf2acdb8a1": [
+   "/var/lib/nerdctl/1935db59/volumes/default/6beebb08ef3f8c338005a6a41b9d2b829f1c08f8a94c829122eb36bf2acdb8a1/_data",
+   "64769:5242986:0:0:700:directory"
+  ],
+  "6d038b7187102921a8126fbec45419bfa5935f6cfcd1790bc3cb5191da3f4803": [
+   "/var/lib/nerdctl/1935db59/volumes/default/6d038b7187102921a8126fbec45419bfa5935f6cfcd1790bc3cb5191da3f4803/_data",
+   "64769:2664105:0:0:700:directory"
+  ],
+  "6da4dee47c5b9b4508bc386de498e60b07c8cdd88092fea1c967b0afded43bd9": [
+   "/var/lib/nerdctl/1935db59/volumes/default/6da4dee47c5b9b4508bc386de498e60b07c8cdd88092fea1c967b0afded43bd9/_data",
+   "64769:3933641:0:0:700:directory"
+  ],
+  "70a6aefcbec0e2414709a67fa215b692fff63d213d03399b2a85e3059c682e3e": [
+   "/var/lib/nerdctl/1935db59/volumes/default/70a6aefcbec0e2414709a67fa215b692fff63d213d03399b2a85e3059c682e3e/_data",
+   "64769:3407963:0:0:700:directory"
+  ],
+  "7202a11cd35a70c825d31242729d7ee485034a270b97bb31f6d07ea817c6a2ce": [
+   "/var/lib/nerdctl/1935db59/volumes/default/7202a11cd35a70c825d31242729d7ee485034a270b97bb31f6d07ea817c6a2ce/_data",
+   "64769:2664248:0:0:700:directory"
+  ],
+  "75186a412a7240755879fa94f59cbb3e8d5fa9b519592de4063ed6677aad31fe": [
+   "/var/lib/nerdctl/1935db59/volumes/default/75186a412a7240755879fa94f59cbb3e8d5fa9b519592de4063ed6677aad31fe/_data",
+   "64769:3933815:0:0:700:directory"
+  ],
+  "75ad9c1c5cf27d78edc486efbc03c8ab4fb19bb4068212a069459517166d168b": [
+   "/var/lib/nerdctl/1935db59/volumes/default/75ad9c1c5cf27d78edc486efbc03c8ab4fb19bb4068212a069459517166d168b/_data",
+   "64769:2668136:0:0:700:directory"
+  ],
+  "76ac0d7cb7ef87d92738e8210b43dcb095b03e42d7d103fbf455b5a39bcd9a40": [
+   "/var/lib/nerdctl/1935db59/volumes/default/76ac0d7cb7ef87d92738e8210b43dcb095b03e42d7d103fbf455b5a39bcd9a40/_data",
+   "64769:2627029:0:0:700:directory"
+  ],
+  "77091eb7a1de1b397534002244f53185fb84c836c9584a37693b2adc38810634": [
+   "/var/lib/nerdctl/1935db59/volumes/default/77091eb7a1de1b397534002244f53185fb84c836c9584a37693b2adc38810634/_data",
+   "64769:2627099:0:0:700:directory"
+  ],
+  "7a5939673a6370c393e28785b9b6c4b3ca89bac3f3a423a6be8eb4ddc04a4795": [
+   "/var/lib/nerdctl/1935db59/volumes/default/7a5939673a6370c393e28785b9b6c4b3ca89bac3f3a423a6be8eb4ddc04a4795/_data",
+   "64769:2109531:0:0:700:directory"
+  ],
+  "7cfc3ef67be1236d4106465d7a1dc2f19a9145aeda341f7d4926bfc5214e36ee": [
+   "/var/lib/nerdctl/1935db59/volumes/default/7cfc3ef67be1236d4106465d7a1dc2f19a9145aeda341f7d4926bfc5214e36ee/_data",
+   "64769:2627173:0:0:700:directory"
+  ],
+  "83335e33f6986459a93fcd980486a10adb948793194999bb0320a546ab71c8f2": [
+   "/var/lib/nerdctl/1935db59/volumes/default/83335e33f6986459a93fcd980486a10adb948793194999bb0320a546ab71c8f2/_data",
+   "64769:1870395:0:0:700:directory"
+  ],
+  "84a0152499636fd791d6b4ba0651d88604eb975d34ed0d4adb562529a7701ceb": [
+   "/var/lib/nerdctl/1935db59/volumes/default/84a0152499636fd791d6b4ba0651d88604eb975d34ed0d4adb562529a7701ceb/_data",
+   "64769:2393449:0:0:700:directory"
+  ],
+  "85459646c97d0396b1a3c9144f3d06e822892cedb032fcac9f8f14bdfefcf738": [
+   "/var/lib/nerdctl/1935db59/volumes/default/85459646c97d0396b1a3c9144f3d06e822892cedb032fcac9f8f14bdfefcf738/_data",
+   "64769:3934098:0:0:700:directory"
+  ],
+  "893a77164b2e7bc522a8cb78b440d2231f9a53d565f1f178091c7b343aa9851b": [
+   "/var/lib/nerdctl/1935db59/volumes/default/893a77164b2e7bc522a8cb78b440d2231f9a53d565f1f178091c7b343aa9851b/_data",
+   "64769:2628305:0:0:700:directory"
+  ],
+  "8aff56437c15ab4579d8799533a5b1dc996d4e6f2e1af75fd245fd022c0d3c27": [
+   "/var/lib/nerdctl/1935db59/volumes/default/8aff56437c15ab4579d8799533a5b1dc996d4e6f2e1af75fd245fd022c0d3c27/_data",
+   "64769:2621562:0:0:700:directory"
+  ],
+  "8b636e86fdc0b2dca9efe1f48b22f8cdb1a5b84eadc492153a9cf9e314fcbd13": [
+   "/var/lib/nerdctl/1935db59/volumes/default/8b636e86fdc0b2dca9efe1f48b22f8cdb1a5b84eadc492153a9cf9e314fcbd13/_data",
+   "64769:3936128:0:0:700:directory"
+  ],
+  "8e2e47c3c88dd57da6844dd8037b0a281babc1b1cb014771c0372b8493cc424f": [
+   "/var/lib/nerdctl/1935db59/volumes/default/8e2e47c3c88dd57da6844dd8037b0a281babc1b1cb014771c0372b8493cc424f/_data",
+   "64769:3686082:0:0:700:directory"
+  ],
+  "8ea17cf58ce5ef05523e327f50bec56d1959e6f101dd9c3badd8fc29166043f8": [
+   "/var/lib/nerdctl/1935db59/volumes/default/8ea17cf58ce5ef05523e327f50bec56d1959e6f101dd9c3badd8fc29166043f8/_data",
+   "64769:2622649:0:0:700:directory"
+  ],
+  "9053bfa28a85a7d40d1aaee95175109237837ab4237a441685c2ddb8d6f1bae6": [
+   "/var/lib/nerdctl/1935db59/volumes/default/9053bfa28a85a7d40d1aaee95175109237837ab4237a441685c2ddb8d6f1bae6/_data",
+   "64769:2668147:0:0:700:directory"
+  ],
+  "9497c35d15da6d56c7db1f2c7971bd27ea5f293c0cb80e702f0fc6fc8777be3d": [
+   "/var/lib/nerdctl/1935db59/volumes/default/9497c35d15da6d56c7db1f2c7971bd27ea5f293c0cb80e702f0fc6fc8777be3d/_data",
+   "64769:3934032:999:999:755:directory"
+  ],
+  "96fac9969cc1f4bbd270ecd61af63513e9e01c95f635ffbf70ebbaa0bc454aaa": [
+   "/var/lib/nerdctl/1935db59/volumes/default/96fac9969cc1f4bbd270ecd61af63513e9e01c95f635ffbf70ebbaa0bc454aaa/_data",
+   "64769:3407924:0:0:700:directory"
+  ],
+  "99bbfdb6122afe5d87c80c99f6957ed14a1f63a9c1a7ed004f6957f8c6247a03": [
+   "/var/lib/nerdctl/1935db59/volumes/default/99bbfdb6122afe5d87c80c99f6957ed14a1f63a9c1a7ed004f6957f8c6247a03/_data",
+   "64769:2625601:0:0:700:directory"
+  ],
+  "9e4d0699eccae2459061205e9be05a750e49e23bfa96033b98777c6aa1867667": [
+   "/var/lib/nerdctl/1935db59/volumes/default/9e4d0699eccae2459061205e9be05a750e49e23bfa96033b98777c6aa1867667/_data",
+   "64769:3934082:0:0:700:directory"
+  ],
+  "a-dev-wt-a73ea0078271-app-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/a-dev-wt-a73ea0078271-app-data/_data",
+   "64769:3936209:999:1000:755:directory"
+  ],
+  "a0b5ba8103dedfcca66ec72072ddccfdb09eb79a913b5a6ef46cf41813c888d9": [
+   "/var/lib/nerdctl/1935db59/volumes/default/a0b5ba8103dedfcca66ec72072ddccfdb09eb79a913b5a6ef46cf41813c888d9/_data",
+   "64769:2668118:0:0:700:directory"
+  ],
+  "a3749e1bc150cfb5ecb5cb51990c5e0e16558c6ed9ba0c927adcdff20d8af498": [
+   "/var/lib/nerdctl/1935db59/volumes/default/a3749e1bc150cfb5ecb5cb51990c5e0e16558c6ed9ba0c927adcdff20d8af498/_data",
+   "64769:2623389:0:0:700:directory"
+  ],
+  "a5126c641a41abe48f43f99a3d20d4c729f0611d9a47c0b260482320a076631e": [
+   "/var/lib/nerdctl/1935db59/volumes/default/a5126c641a41abe48f43f99a3d20d4c729f0611d9a47c0b260482320a076631e/_data",
+   "64769:3936605:0:0:700:directory"
+  ],
+  "acowtancy-dev-dbgate-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-dbgate-data/_data",
+   "64769:1835015:0:0:700:directory"
+  ],
+  "acowtancy-dev-minio-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-minio-data/_data",
+   "64769:1835018:0:0:700:directory"
+  ],
+  "acowtancy-dev-mysql-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-mysql-data/_data",
+   "64769:3934554:999:999:755:directory"
+  ],
+  "acowtancy-dev-postgres-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-postgres-data/_data",
+   "64769:1835021:70:70:700:directory"
+  ],
+  "acowtancy-dev-silo-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-silo-data/_data",
+   "64769:3934136:0:0:700:directory"
+  ],
+  "acowtancy-dev-workspace-cargo-git": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-workspace-cargo-git/_data",
+   "64769:3934226:0:0:700:directory"
+  ],
+  "acowtancy-dev-workspace-cargo-registry": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-workspace-cargo-registry/_data",
+   "64769:3935434:0:0:700:directory"
+  ],
+  "acowtancy-dev-workspace-workspace-root-acowtancy-apps-bovine-desktop-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-workspace-workspace-root-acowtancy-apps-bovine-desktop-node-modules/_data",
+   "64769:3934455:0:0:700:directory"
+  ],
+  "acowtancy-dev-workspace-workspace-root-acowtancy-apps-cream-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-workspace-workspace-root-acowtancy-apps-cream-node-modules/_data",
+   "64769:3934280:0:0:700:directory"
+  ],
+  "acowtancy-dev-workspace-workspace-root-acowtancy-apps-dairy-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-workspace-workspace-root-acowtancy-apps-dairy-node-modules/_data",
+   "64769:3935348:0:0:700:directory"
+  ],
+  "acowtancy-dev-workspace-workspace-root-acowtancy-apps-farmyard-target": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-workspace-workspace-root-acowtancy-apps-farmyard-target/_data",
+   "64769:3934120:0:0:700:directory"
+  ],
+  "acowtancy-dev-workspace-workspace-root-acowtancy-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-workspace-workspace-root-acowtancy-node-modules/_data",
+   "64769:3935357:0:0:700:directory"
+  ],
+  "acowtancy-dev-workspace-workspace-root-acowtancy-packages-cattle-grid-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-workspace-workspace-root-acowtancy-packages-cattle-grid-node-modules/_data",
+   "64769:3935427:0:0:700:directory"
+  ],
+  "acowtancy-dev-workspace-workspace-root-acowtancy-packages-froyo-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-workspace-workspace-root-acowtancy-packages-froyo-node-modules/_data",
+   "64769:3935424:0:0:700:directory"
+  ],
+  "acowtancy-dev-workspace-workspace-root-acowtancy-platform-silo-target": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-workspace-workspace-root-acowtancy-platform-silo-target/_data",
+   "64769:3935431:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-21f3d2e29f05-dbgate-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-21f3d2e29f05-dbgate-data/_data",
+   "64769:2622061:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-21f3d2e29f05-minio-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-21f3d2e29f05-minio-data/_data",
+   "64769:2622085:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-21f3d2e29f05-mysql-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-21f3d2e29f05-mysql-data/_data",
+   "64769:2622058:999:999:755:directory"
+  ],
+  "acowtancy-dev-wt-21f3d2e29f05-postgres-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-21f3d2e29f05-postgres-data/_data",
+   "64769:2622035:70:70:700:directory"
+  ],
+  "acowtancy-dev-wt-21f3d2e29f05-workspace-cargo-git": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-21f3d2e29f05-workspace-cargo-git/_data",
+   "64769:2622064:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-21f3d2e29f05-workspace-cargo-registry": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-21f3d2e29f05-workspace-cargo-registry/_data",
+   "64769:2621455:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-2ac58dd5ba20-dbgate-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-2ac58dd5ba20-dbgate-data/_data",
+   "64769:3934058:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-2ac58dd5ba20-mysql-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-2ac58dd5ba20-mysql-data/_data",
+   "64769:3934001:999:999:755:directory"
+  ],
+  "acowtancy-dev-wt-2ac58dd5ba20-postgres-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-2ac58dd5ba20-postgres-data/_data",
+   "64769:3934010:70:70:700:directory"
+  ],
+  "acowtancy-dev-wt-2ac58dd5ba20-silo-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-2ac58dd5ba20-silo-data/_data",
+   "64769:3934007:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-2ac58dd5ba20-workspace-cargo-git": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-2ac58dd5ba20-workspace-cargo-git/_data",
+   "64769:3934014:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-2ac58dd5ba20-workspace-cargo-registry": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-2ac58dd5ba20-workspace-cargo-registry/_data",
+   "64769:3934061:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-2ac58dd5ba20-workspace-workspace-root-acowtancy-apps-bovine-desktop-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-2ac58dd5ba20-workspace-workspace-root-acowtancy-apps-bovine-desktop-node-modules/_data",
+   "64769:3933981:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-2ac58dd5ba20-workspace-workspace-root-acowtancy-apps-cream-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-2ac58dd5ba20-workspace-workspace-root-acowtancy-apps-cream-node-modules/_data",
+   "64769:3934027:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-2ac58dd5ba20-workspace-workspace-root-acowtancy-apps-dairy-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-2ac58dd5ba20-workspace-workspace-root-acowtancy-apps-dairy-node-modules/_data",
+   "64769:3933989:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-2ac58dd5ba20-workspace-workspace-root-acowtancy-apps-farmyard-target": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-2ac58dd5ba20-workspace-workspace-root-acowtancy-apps-farmyard-target/_data",
+   "64769:3934064:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-2ac58dd5ba20-workspace-workspace-root-acowtancy-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-2ac58dd5ba20-workspace-workspace-root-acowtancy-node-modules/_data",
+   "64769:3933998:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-2ac58dd5ba20-workspace-workspace-root-acowtancy-packages-cattle-grid-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-2ac58dd5ba20-workspace-workspace-root-acowtancy-packages-cattle-grid-node-modules/_data",
+   "64769:3934048:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-2ac58dd5ba20-workspace-workspace-root-acowtancy-packages-froyo-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-2ac58dd5ba20-workspace-workspace-root-acowtancy-packages-froyo-node-modules/_data",
+   "64769:3933978:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-2ac58dd5ba20-workspace-workspace-root-acowtancy-platform-silo-target": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-2ac58dd5ba20-workspace-workspace-root-acowtancy-platform-silo-target/_data",
+   "64769:3934020:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-4a51397cb133-dbgate-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-4a51397cb133-dbgate-data/_data",
+   "64769:3407878:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-4a51397cb133-postgres-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-4a51397cb133-postgres-data/_data",
+   "64769:3407881:70:70:700:directory"
+  ],
+  "acowtancy-dev-wt-4a51397cb133-silo-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-4a51397cb133-silo-data/_data",
+   "64769:3407885:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-75ac19643d11-dbgate-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-75ac19643d11-dbgate-data/_data",
+   "64769:2109440:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-75ac19643d11-minio-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-75ac19643d11-minio-data/_data",
+   "64769:2109421:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-75ac19643d11-mysql-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-75ac19643d11-mysql-data/_data",
+   "64769:2109431:999:999:755:directory"
+  ],
+  "acowtancy-dev-wt-75ac19643d11-postgres-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-75ac19643d11-postgres-data/_data",
+   "64769:2109424:70:70:700:directory"
+  ],
+  "acowtancy-dev-wt-75ac19643d11-workspace-cargo-git": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-75ac19643d11-workspace-cargo-git/_data",
+   "64769:2109428:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-75ac19643d11-workspace-cargo-registry": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-75ac19643d11-workspace-cargo-registry/_data",
+   "64769:2109448:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-a05d4dd833ca-dbgate-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-a05d4dd833ca-dbgate-data/_data",
+   "64769:2664058:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-a05d4dd833ca-mysql-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-a05d4dd833ca-mysql-data/_data",
+   "64769:3933667:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-a05d4dd833ca-postgres-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-a05d4dd833ca-postgres-data/_data",
+   "64769:2664062:70:70:700:directory"
+  ],
+  "acowtancy-dev-wt-a05d4dd833ca-silo-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-a05d4dd833ca-silo-data/_data",
+   "64769:2664065:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-a05d4dd833ca-workspace-cargo-git": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-a05d4dd833ca-workspace-cargo-git/_data",
+   "64769:3933614:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-a05d4dd833ca-workspace-cargo-registry": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-a05d4dd833ca-workspace-cargo-registry/_data",
+   "64769:3933660:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-a05d4dd833ca-workspace-workspace-root-acowtancy-apps-bovine-desktop-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-a05d4dd833ca-workspace-workspace-root-acowtancy-apps-bovine-desktop-node-modules/_data",
+   "64769:3933564:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-a05d4dd833ca-workspace-workspace-root-acowtancy-apps-cream-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-a05d4dd833ca-workspace-workspace-root-acowtancy-apps-cream-node-modules/_data",
+   "64769:3932473:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-a05d4dd833ca-workspace-workspace-root-acowtancy-apps-dairy-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-a05d4dd833ca-workspace-workspace-root-acowtancy-apps-dairy-node-modules/_data",
+   "64769:3933620:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-a05d4dd833ca-workspace-workspace-root-acowtancy-apps-farmyard-target": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-a05d4dd833ca-workspace-workspace-root-acowtancy-apps-farmyard-target/_data",
+   "64769:3933585:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-a05d4dd833ca-workspace-workspace-root-acowtancy-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-a05d4dd833ca-workspace-workspace-root-acowtancy-node-modules/_data",
+   "64769:3933579:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-a05d4dd833ca-workspace-workspace-root-acowtancy-packages-cattle-grid-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-a05d4dd833ca-workspace-workspace-root-acowtancy-packages-cattle-grid-node-modules/_data",
+   "64769:3933642:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-a05d4dd833ca-workspace-workspace-root-acowtancy-packages-froyo-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-a05d4dd833ca-workspace-workspace-root-acowtancy-packages-froyo-node-modules/_data",
+   "64769:3933671:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-a05d4dd833ca-workspace-workspace-root-acowtancy-platform-silo-target": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-a05d4dd833ca-workspace-workspace-root-acowtancy-platform-silo-target/_data",
+   "64769:3933608:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-ff3bc52a6b82-dbgate-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-ff3bc52a6b82-dbgate-data/_data",
+   "64769:3732295:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-ff3bc52a6b82-postgres-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-ff3bc52a6b82-postgres-data/_data",
+   "64769:3732310:70:70:700:directory"
+  ],
+  "acowtancy-dev-wt-ff3bc52a6b82-silo-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-ff3bc52a6b82-silo-data/_data",
+   "64769:3732292:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-ff3bc52a6b82-workspace-cargo-git": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-ff3bc52a6b82-workspace-cargo-git/_data",
+   "64769:3732289:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-ff3bc52a6b82-workspace-cargo-registry": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-ff3bc52a6b82-workspace-cargo-registry/_data",
+   "64769:3732283:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-ff3bc52a6b82-workspace-workspace-root-acowtancy-apps-bovine-desktop-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-ff3bc52a6b82-workspace-workspace-root-acowtancy-apps-bovine-desktop-node-modules/_data",
+   "64769:3732271:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-ff3bc52a6b82-workspace-workspace-root-acowtancy-apps-cream-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-ff3bc52a6b82-workspace-workspace-root-acowtancy-apps-cream-node-modules/_data",
+   "64769:3732259:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-ff3bc52a6b82-workspace-workspace-root-acowtancy-apps-dairy-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-ff3bc52a6b82-workspace-workspace-root-acowtancy-apps-dairy-node-modules/_data",
+   "64769:3732256:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-ff3bc52a6b82-workspace-workspace-root-acowtancy-apps-farmyard-target": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-ff3bc52a6b82-workspace-workspace-root-acowtancy-apps-farmyard-target/_data",
+   "64769:3732301:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-ff3bc52a6b82-workspace-workspace-root-acowtancy-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-ff3bc52a6b82-workspace-workspace-root-acowtancy-node-modules/_data",
+   "64769:3732298:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-ff3bc52a6b82-workspace-workspace-root-acowtancy-packages-cattle-grid-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-ff3bc52a6b82-workspace-workspace-root-acowtancy-packages-cattle-grid-node-modules/_data",
+   "64769:3732244:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-ff3bc52a6b82-workspace-workspace-root-acowtancy-packages-froyo-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-ff3bc52a6b82-workspace-workspace-root-acowtancy-packages-froyo-node-modules/_data",
+   "64769:3732313:0:0:700:directory"
+  ],
+  "acowtancy-dev-wt-ff3bc52a6b82-workspace-workspace-root-acowtancy-platform-silo-target": [
+   "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-ff3bc52a6b82-workspace-workspace-root-acowtancy-platform-silo-target/_data",
+   "64769:3732238:0:0:700:directory"
+  ],
+  "ae627c6ff9d30a914b0ed226e27771630da36e090b10aa22ac1124ba7b3f3796": [
+   "/var/lib/nerdctl/1935db59/volumes/default/ae627c6ff9d30a914b0ed226e27771630da36e090b10aa22ac1124ba7b3f3796/_data",
+   "64769:3933626:0:0:700:directory"
+  ],
+  "b-dev-wt-c461a827f3dd-app-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/b-dev-wt-c461a827f3dd-app-data/_data",
+   "64769:3936607:999:1000:755:directory"
+  ],
+  "b0bd121c0bf081a402f978aa332d72d128d76814ff29c9ab4f053838a663d4e7": [
+   "/var/lib/nerdctl/1935db59/volumes/default/b0bd121c0bf081a402f978aa332d72d128d76814ff29c9ab4f053838a663d4e7/_data",
+   "64769:4194479:0:0:700:directory"
+  ],
+  "b217ad953f2e14c1590401248d5d024cdb8e536311f7297ba117a1ae2910ac28": [
+   "/var/lib/nerdctl/1935db59/volumes/default/b217ad953f2e14c1590401248d5d024cdb8e536311f7297ba117a1ae2910ac28/_data",
+   "64769:2394392:0:0:700:directory"
+  ],
+  "b8fe7262370dfbe2c173bede28d23db7a6d0233d6058f2cf9aaacf821859404d": [
+   "/var/lib/nerdctl/1935db59/volumes/default/b8fe7262370dfbe2c173bede28d23db7a6d0233d6058f2cf9aaacf821859404d/_data",
+   "64769:3935800:0:0:700:directory"
+  ],
+  "ba3ae8e8707fa2d2f85a81f8b2c627e6c261d1a5e3028999e74f8c8632b540be": [
+   "/var/lib/nerdctl/1935db59/volumes/default/ba3ae8e8707fa2d2f85a81f8b2c627e6c261d1a5e3028999e74f8c8632b540be/_data",
+   "64769:3935774:0:0:700:directory"
+  ],
+  "ba5fada31de35fbd256c22dea91fe75d749ba83493de39c9d59e88679b075036": [
+   "/var/lib/nerdctl/1935db59/volumes/default/ba5fada31de35fbd256c22dea91fe75d749ba83493de39c9d59e88679b075036/_data",
+   "64769:2622632:0:0:700:directory"
+  ],
+  "bb1c9aa026b1d3c0b316e0823938c0886b597c5ff494cca2f6bf58eb8aa4c215": [
+   "/var/lib/nerdctl/1935db59/volumes/default/bb1c9aa026b1d3c0b316e0823938c0886b597c5ff494cca2f6bf58eb8aa4c215/_data",
+   "64769:2621552:0:0:700:directory"
+  ],
+  "c-dev-wt-80ae7d993659-app-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/c-dev-wt-80ae7d993659-app-data/_data",
+   "64769:3936612:999:1000:755:directory"
+  ],
+  "c27931499ea4ebe353cdf951a61add5396aede54a94b3b296da90815ffa35e36": [
+   "/var/lib/nerdctl/1935db59/volumes/default/c27931499ea4ebe353cdf951a61add5396aede54a94b3b296da90815ffa35e36/_data",
+   "64769:3933861:0:0:700:directory"
+  ],
+  "c4probe77ecc300-app-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/c4probe77ecc300-app-data/_data",
+   "64769:3932404:0:0:700:directory"
+  ],
+  "c7a7c03f6ec37525fc7ef9ff99afcf9c4d957a31de6136af21105ad02ed36b57": [
+   "/var/lib/nerdctl/1935db59/volumes/default/c7a7c03f6ec37525fc7ef9ff99afcf9c4d957a31de6136af21105ad02ed36b57/_data",
+   "64769:2664141:0:0:700:directory"
+  ],
+  "c98f2ed978cd7db7b9e64d7d7f8d76222950f86a58cd82414f652daa45d85736": [
+   "/var/lib/nerdctl/1935db59/volumes/default/c98f2ed978cd7db7b9e64d7d7f8d76222950f86a58cd82414f652daa45d85736/_data",
+   "64769:5016051:0:0:700:directory"
+  ],
+  "cbs-calculator-decodelabs-library-app-pnpm-store": [
+   "/var/lib/nerdctl/1935db59/volumes/default/cbs-calculator-decodelabs-library-app-pnpm-store/_data",
+   "64769:4718604:0:0:700:directory"
+  ],
+  "cbs-calculator-decodelabs-library-app-workspace-root-cbs-calculator-vendor": [
+   "/var/lib/nerdctl/1935db59/volumes/default/cbs-calculator-decodelabs-library-app-workspace-root-cbs-calculator-vendor/_data",
+   "64769:4718609:0:0:700:directory"
+  ],
+  "cbs-decodelabs-app-pnpm-store": [
+   "/var/lib/nerdctl/1935db59/volumes/default/cbs-decodelabs-app-pnpm-store/_data",
+   "64769:1048678:0:0:700:directory"
+  ],
+  "cbs-decodelabs-app-var-www-cbs-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/cbs-decodelabs-app-var-www-cbs-node-modules/_data",
+   "64769:1048715:0:0:700:directory"
+  ],
+  "cbs-decodelabs-app-var-www-cbs-vendor": [
+   "/var/lib/nerdctl/1935db59/volumes/default/cbs-decodelabs-app-var-www-cbs-vendor/_data",
+   "64769:1048690:0:0:700:directory"
+  ],
+  "cbs-decodelabs-mysql-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/cbs-decodelabs-mysql-data/_data",
+   "64769:1048712:999:999:755:directory"
+  ],
+  "cbs-decodelabs-redis-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/cbs-decodelabs-redis-data/_data",
+   "64769:1048709:999:1000:755:directory"
+  ],
+  "cdab1041870f227d55a100a82c9bcca44fdf701c7bc068c8dc56495ce6b3b627": [
+   "/var/lib/nerdctl/1935db59/volumes/default/cdab1041870f227d55a100a82c9bcca44fdf701c7bc068c8dc56495ce6b3b627/_data",
+   "64769:3685941:0:0:700:directory"
+  ],
+  "d06cadb136206ebba498e62236046d9759d990f705ff8da8bcc4911ea21861c8": [
+   "/var/lib/nerdctl/1935db59/volumes/default/d06cadb136206ebba498e62236046d9759d990f705ff8da8bcc4911ea21861c8/_data",
+   "64769:2664137:0:0:700:directory"
+  ],
+  "d3441368f51a7f378b92d178624f52e0128bdcc5bcf80e3c1b6a191fb49dd93d": [
+   "/var/lib/nerdctl/1935db59/volumes/default/d3441368f51a7f378b92d178624f52e0128bdcc5bcf80e3c1b6a191fb49dd93d/_data",
+   "64769:3936885:0:0:700:directory"
+  ],
+  "d70061e493ce01652fcdc5903e5b6a78e27ee1f3d431e7bf6418f79dbc348b99": [
+   "/var/lib/nerdctl/1935db59/volumes/default/d70061e493ce01652fcdc5903e5b6a78e27ee1f3d431e7bf6418f79dbc348b99/_data",
+   "64769:2668167:0:0:700:directory"
+  ],
+  "d78171e02b39834f83167996d65f06f11fd3e771405f554e88f5d84a92873d33": [
+   "/var/lib/nerdctl/1935db59/volumes/default/d78171e02b39834f83167996d65f06f11fd3e771405f554e88f5d84a92873d33/_data",
+   "64769:3685930:0:0:700:directory"
+  ],
+  "e5ec134de41c04ca5db1a51494289cf1d27eabc7a0866e1d2c7cad33a4ee38d1": [
+   "/var/lib/nerdctl/1935db59/volumes/default/e5ec134de41c04ca5db1a51494289cf1d27eabc7a0866e1d2c7cad33a4ee38d1/_data",
+   "64769:2664123:0:0:700:directory"
+  ],
+  "e825bd9ca566a9830fa128a1375ba6c34e5eff63e1de7e3b2777421ff3906715": [
+   "/var/lib/nerdctl/1935db59/volumes/default/e825bd9ca566a9830fa128a1375ba6c34e5eff63e1de7e3b2777421ff3906715/_data",
+   "64769:3934090:0:0:700:directory"
+  ],
+  "ea3f94edc4e037802265937d7bff1a8a3633924b1ba0d87d96a497904c8783a1": [
+   "/var/lib/nerdctl/1935db59/volumes/default/ea3f94edc4e037802265937d7bff1a8a3633924b1ba0d87d96a497904c8783a1/_data",
+   "64769:2668233:0:0:700:directory"
+  ],
+  "effigy-shared-composer-home": [
+   "/var/lib/nerdctl/1935db59/volumes/default/effigy-shared-composer-home/_data",
+   "64769:1048684:0:0:700:directory"
+  ],
+  "effigy-shared-mariadb-0721de3e-legacy_mysql-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/effigy-shared-mariadb-0721de3e-legacy_mysql-data/_data",
+   "64769:1638197:999:999:755:directory"
+  ],
+  "effigy-shared-mariadb-0721de3e-mysql-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/effigy-shared-mariadb-0721de3e-mysql-data/_data",
+   "64769:3932411:999:999:755:directory"
+  ],
+  "efi-iso-929cd8baf57d3eb2": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efi-iso-929cd8baf57d3eb2/_data",
+   "64769:1048672:0:0:700:directory"
+  ],
+  "efi-iso-c55501e436348c6e": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efi-iso-c55501e436348c6e/_data",
+   "64769:1048695:0:0:700:directory"
+  ],
+  "efi-mask-39976a2b81905df7": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efi-mask-39976a2b81905df7/_data",
+   "64769:3732247:0:0:700:directory"
+  ],
+  "efi-mask-5dd4779acc23af88": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efi-mask-5dd4779acc23af88/_data",
+   "64769:3732277:0:0:700:directory"
+  ],
+  "efv-0f545a55f892c95a": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-0f545a55f892c95a/_data",
+   "64769:3933582:0:0:700:directory"
+  ],
+  "efv-1029daa139d9c35c": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-1029daa139d9c35c/_data",
+   "64769:3934388:501:20:700:directory"
+  ],
+  "efv-1215cb9999a6e361": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-1215cb9999a6e361/_data",
+   "64769:3933863:501:20:700:directory"
+  ],
+  "efv-121e7eeb6e186c8a": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-121e7eeb6e186c8a/_data",
+   "64769:3933611:0:0:700:directory"
+  ],
+  "efv-1539d692af044f00": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-1539d692af044f00/_data",
+   "64769:3933856:501:20:700:directory"
+  ],
+  "efv-182d0ff1e51b2d49": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-182d0ff1e51b2d49/_data",
+   "64769:3933955:501:20:700:directory"
+  ],
+  "efv-186cf00a94d06c14": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-186cf00a94d06c14/_data",
+   "64769:3933886:501:20:700:directory"
+  ],
+  "efv-1d8848bb529e1084": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-1d8848bb529e1084/_data",
+   "64769:3154033:501:20:700:directory"
+  ],
+  "efv-1e62e62694e2c5c6": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-1e62e62694e2c5c6/_data",
+   "64769:3933677:0:0:700:directory"
+  ],
+  "efv-1eae91beef18dcd1": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-1eae91beef18dcd1/_data",
+   "64769:3933650:0:0:700:directory"
+  ],
+  "efv-25a785ce6e0ebc28": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-25a785ce6e0ebc28/_data",
+   "64769:3732280:0:0:700:directory"
+  ],
+  "efv-25b6d8875d6a9dc9": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-25b6d8875d6a9dc9/_data",
+   "64769:3933605:0:0:700:directory"
+  ],
+  "efv-25dff627e40f1003": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-25dff627e40f1003/_data",
+   "64769:3935396:501:20:700:directory"
+  ],
+  "efv-2d196084073cedbe": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-2d196084073cedbe/_data",
+   "64769:3732241:0:0:700:directory"
+  ],
+  "efv-3190a744f84adb95": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-3190a744f84adb95/_data",
+   "64769:3732316:0:0:700:directory"
+  ],
+  "efv-3442985c961bf89b": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-3442985c961bf89b/_data",
+   "64769:3732253:0:0:700:directory"
+  ],
+  "efv-344ea7837a3d2571": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-344ea7837a3d2571/_data",
+   "64769:3732262:0:0:700:directory"
+  ],
+  "efv-3a0232548bb009d9": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-3a0232548bb009d9/_data",
+   "64769:3933680:0:0:700:directory"
+  ],
+  "efv-3ccaccd61fd385c7": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-3ccaccd61fd385c7/_data",
+   "64769:3732286:0:0:700:directory"
+  ],
+  "efv-3ee11c1fb54de065": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-3ee11c1fb54de065/_data",
+   "64769:3933576:0:0:700:directory"
+  ],
+  "efv-41a16fa4b58f9775": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-41a16fa4b58f9775/_data",
+   "64769:2624099:501:20:700:directory"
+  ],
+  "efv-421cb4823802d8be": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-421cb4823802d8be/_data",
+   "64769:3934609:501:20:700:directory"
+  ],
+  "efv-43552f9c4b63f78e": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-43552f9c4b63f78e/_data",
+   "64769:3732307:0:0:700:directory"
+  ],
+  "efv-46ee324a31c9f389": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-46ee324a31c9f389/_data",
+   "64769:3933617:0:0:700:directory"
+  ],
+  "efv-47b7dcdf3e505ef0": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-47b7dcdf3e505ef0/_data",
+   "64769:1048700:501:20:700:directory"
+  ],
+  "efv-51bb06807c269fec": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-51bb06807c269fec/_data",
+   "64769:3154045:501:20:700:directory"
+  ],
+  "efv-5342febc2b24a70e": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-5342febc2b24a70e/_data",
+   "64769:3933631:0:0:700:directory"
+  ],
+  "efv-5536fd0f77ac01ca": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-5536fd0f77ac01ca/_data",
+   "64769:3933602:0:0:700:directory"
+  ],
+  "efv-5607fc393dac8e06": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-5607fc393dac8e06/_data",
+   "64769:3933657:0:0:700:directory"
+  ],
+  "efv-57208d8825202769": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-57208d8825202769/_data",
+   "64769:3732250:0:0:700:directory"
+  ],
+  "efv-5e76c72068f6b926": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-5e76c72068f6b926/_data",
+   "64769:1048703:501:20:700:directory"
+  ],
+  "efv-60514cf860b43361": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-60514cf860b43361/_data",
+   "64769:3935421:501:20:700:directory"
+  ],
+  "efv-64adc79fa37fbbae": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-64adc79fa37fbbae/_data",
+   "64769:3933598:0:0:700:directory"
+  ],
+  "efv-65f529e1f0f1cf40": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-65f529e1f0f1cf40/_data",
+   "64769:3934143:501:20:700:directory"
+  ],
+  "efv-66802d5aee888e8d": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-66802d5aee888e8d/_data",
+   "64769:3933881:501:20:700:directory"
+  ],
+  "efv-671fbd00e3b66dd8": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-671fbd00e3b66dd8/_data",
+   "64769:3933634:0:0:700:directory"
+  ],
+  "efv-6bb205a650aac04c": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-6bb205a650aac04c/_data",
+   "64769:3935689:501:20:700:directory"
+  ],
+  "efv-6cb0ccd383f9d353": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-6cb0ccd383f9d353/_data",
+   "64769:3935685:501:20:700:directory"
+  ],
+  "efv-7222044e7ed8e392": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-7222044e7ed8e392/_data",
+   "64769:3732265:0:0:700:directory"
+  ],
+  "efv-738964a969f03224": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-738964a969f03224/_data",
+   "64769:3933589:0:0:700:directory"
+  ],
+  "efv-7dcfd6cd01f2a71a": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-7dcfd6cd01f2a71a/_data",
+   "64769:3933654:0:0:700:directory"
+  ],
+  "efv-7fcbdd92b058b188": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-7fcbdd92b058b188/_data",
+   "64769:3933647:0:0:700:directory"
+  ],
+  "efv-82511dcc819fa9da": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-82511dcc819fa9da/_data",
+   "64769:4718596:501:20:700:directory"
+  ],
+  "efv-8492ccdcc814071d": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-8492ccdcc814071d/_data",
+   "64769:2624086:501:20:700:directory"
+  ],
+  "efv-8a803933235f1c0c": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-8a803933235f1c0c/_data",
+   "64769:1048666:501:20:755:directory"
+  ],
+  "efv-8bd9f41d7a1ff802": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-8bd9f41d7a1ff802/_data",
+   "64769:3933810:501:20:700:directory"
+  ],
+  "efv-9ee8410ad8a03c58": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-9ee8410ad8a03c58/_data",
+   "64769:3933663:0:0:700:directory"
+  ],
+  "efv-a0928432a13f0fdc": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-a0928432a13f0fdc/_data",
+   "64769:1048687:501:20:700:directory"
+  ],
+  "efv-a1a8eb71a44dcc6c": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-a1a8eb71a44dcc6c/_data",
+   "64769:3934568:501:20:700:directory"
+  ],
+  "efv-a28b85ce84b42a6c": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-a28b85ce84b42a6c/_data",
+   "64769:3935692:501:20:700:directory"
+  ],
+  "efv-a8af5bc145002aef": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-a8af5bc145002aef/_data",
+   "64769:3934454:501:20:700:directory"
+  ],
+  "efv-acac8f584290a935": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-acac8f584290a935/_data",
+   "64769:3732274:0:0:700:directory"
+  ],
+  "efv-b7c500fbfcee84dc": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-b7c500fbfcee84dc/_data",
+   "64769:2624081:501:20:700:directory"
+  ],
+  "efv-be088b6a1e07aaf8": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-be088b6a1e07aaf8/_data",
+   "64769:3934157:501:20:700:directory"
+  ],
+  "efv-be8959504de1ef30": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-be8959504de1ef30/_data",
+   "64769:3933928:501:20:700:directory"
+  ],
+  "efv-bf867c4f0d722f3d": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-bf867c4f0d722f3d/_data",
+   "64769:3732304:0:0:700:directory"
+  ],
+  "efv-bff67725980196c7": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-bff67725980196c7/_data",
+   "64769:3933570:0:0:700:directory"
+  ],
+  "efv-c2fbb13a5ccd448b": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-c2fbb13a5ccd448b/_data",
+   "64769:3935381:501:20:700:directory"
+  ],
+  "efv-c3221311030126e7": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-c3221311030126e7/_data",
+   "64769:3933866:501:20:700:directory"
+  ],
+  "efv-c84826a8b00084d2": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-c84826a8b00084d2/_data",
+   "64769:3933853:501:20:700:directory"
+  ],
+  "efv-c8b582804d404a25": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-c8b582804d404a25/_data",
+   "64769:3934376:501:20:700:directory"
+  ],
+  "efv-c9eb8b59948e5880": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-c9eb8b59948e5880/_data",
+   "64769:3933840:501:20:700:directory"
+  ],
+  "efv-cc9ac3c7ab8284ca": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-cc9ac3c7ab8284ca/_data",
+   "64769:1048706:501:20:700:directory"
+  ],
+  "efv-cfe871ae7bb9e798": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-cfe871ae7bb9e798/_data",
+   "64769:3933595:0:0:700:directory"
+  ],
+  "efv-d13253f99bcf019f": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-d13253f99bcf019f/_data",
+   "64769:3732268:0:0:700:directory"
+  ],
+  "efv-d2ab3d1334a039f8": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-d2ab3d1334a039f8/_data",
+   "64769:3933837:501:20:700:directory"
+  ],
+  "efv-d8258b2ebe252ca0": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-d8258b2ebe252ca0/_data",
+   "64769:3934598:501:20:700:directory"
+  ],
+  "efv-d87d0a6b24b40475": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-d87d0a6b24b40475/_data",
+   "64769:3154042:501:20:700:directory"
+  ],
+  "efv-df465e9007fa13d8": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-df465e9007fa13d8/_data",
+   "64769:3934050:501:20:700:directory"
+  ],
+  "efv-e361585b6ed4b0ed": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-e361585b6ed4b0ed/_data",
+   "64769:3933834:501:20:700:directory"
+  ],
+  "efv-ec8d7ced32fcc9dc": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-ec8d7ced32fcc9dc/_data",
+   "64769:3935360:501:20:700:directory"
+  ],
+  "efv-ecf072c8b9d74f46": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-ecf072c8b9d74f46/_data",
+   "64769:3933573:0:0:700:directory"
+  ],
+  "efv-ed6e760201a947e3": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-ed6e760201a947e3/_data",
+   "64769:4718599:501:20:700:directory"
+  ],
+  "efv-f7bd2d24ccc3d9ba": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-f7bd2d24ccc3d9ba/_data",
+   "64769:3933913:501:20:700:directory"
+  ],
+  "efv-f8519add242c5971": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-f8519add242c5971/_data",
+   "64769:3934109:501:20:700:directory"
+  ],
+  "efv-fb18b70e1d63615a": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-fb18b70e1d63615a/_data",
+   "64769:1048681:501:20:700:directory"
+  ],
+  "efv-fc7f3abbcb7857d8": [
+   "/var/lib/nerdctl/1935db59/volumes/default/efv-fc7f3abbcb7857d8/_data",
+   "64769:3936154:999:1000:755:directory"
+  ],
+  "f1d7cb548c759d3789cf8b4efdb15e33bf6a3d46d96a279fd91559665dfc27a8": [
+   "/var/lib/nerdctl/1935db59/volumes/default/f1d7cb548c759d3789cf8b4efdb15e33bf6a3d46d96a279fd91559665dfc27a8/_data",
+   "64769:2668112:0:0:700:directory"
+  ],
+  "inventors-decodelabs-app-pnpm-store": [
+   "/var/lib/nerdctl/1935db59/volumes/default/inventors-decodelabs-app-pnpm-store/_data",
+   "64769:2624096:0:0:700:directory"
+  ],
+  "inventors-decodelabs-app-var-www-inventors-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/inventors-decodelabs-app-var-www-inventors-node-modules/_data",
+   "64769:2624119:0:0:700:directory"
+  ],
+  "inventors-decodelabs-app-var-www-inventors-vendor": [
+   "/var/lib/nerdctl/1935db59/volumes/default/inventors-decodelabs-app-var-www-inventors-vendor/_data",
+   "64769:2624102:0:0:700:directory"
+  ],
+  "inventors-decodelabs-mysql-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/inventors-decodelabs-mysql-data/_data",
+   "64769:2624109:999:999:755:directory"
+  ],
+  "inventors-decodelabs-redis-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/inventors-decodelabs-redis-data/_data",
+   "64769:2624112:999:1000:755:directory"
+  ],
+  "jal-accounts-decodelabs-app-pnpm-store": [
+   "/var/lib/nerdctl/1935db59/volumes/default/jal-accounts-decodelabs-app-pnpm-store/_data",
+   "64769:3154051:0:0:700:directory"
+  ],
+  "jal-accounts-decodelabs-app-var-www-jal-accounts-node-modules": [
+   "/var/lib/nerdctl/1935db59/volumes/default/jal-accounts-decodelabs-app-var-www-jal-accounts-node-modules/_data",
+   "64769:3154048:0:0:700:directory"
+  ],
+  "jal-accounts-decodelabs-app-var-www-jal-accounts-vendor": [
+   "/var/lib/nerdctl/1935db59/volumes/default/jal-accounts-decodelabs-app-var-www-jal-accounts-vendor/_data",
+   "64769:3154036:0:0:700:directory"
+  ],
+  "jal-accounts-decodelabs-mysql-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/jal-accounts-decodelabs-mysql-data/_data",
+   "64769:3154054:999:999:755:directory"
+  ],
+  "jal-accounts-decodelabs-redis-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/jal-accounts-decodelabs-redis-data/_data",
+   "64769:3154039:999:1000:755:directory"
+  ],
+  "underlay-reference-dev-dbgate-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/underlay-reference-dev-dbgate-data/_data",
+   "64769:2622182:0:0:700:directory"
+  ],
+  "underlay-reference-dev-postgres-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/underlay-reference-dev-postgres-data/_data",
+   "64769:2622198:0:0:700:directory"
+  ],
+  "underlay-reference-dev-silo-data": [
+   "/var/lib/nerdctl/1935db59/volumes/default/underlay-reference-dev-silo-data/_data",
+   "64769:2622219:0:0:700:directory"
+  ]
+ }
+}

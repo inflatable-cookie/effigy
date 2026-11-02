@@ -7,8 +7,8 @@ use effigy_containers::{
         owned_service_listing_args, runtime_backend_is_running, selected_backend_label,
         OwnershipContext,
     },
-    load_container_exec_working_dir, load_container_policy, validate_compose_backend_runtime,
-    validate_container_policy, ContainerAction, EffectiveContainerPolicy,
+    load_container_exec_working_dir, load_container_policy, validate_container_policy,
+    ContainerAction, EffectiveContainerPolicy,
 };
 use effigy_exec::CwdMapper;
 
@@ -31,7 +31,9 @@ pub(super) fn resolve_container_shell_session(
 ) -> Result<(EffectiveContainerPolicy, String, Option<PathBuf>), RunnerError> {
     let policy = load_container_policy(repo_root, name)?;
     validate_container_policy(repo_root, &policy)?;
-    validate_compose_backend_runtime(repo_root, &policy)?;
+    // A shell session attaches to an already-running stack whose mounts were
+    // admitted when it was created; the session applies nothing, so the
+    // apply-time backend preflight has no effect to admit here.
     if !runtime_backend_is_running(&policy, repo_root)? {
         return Err(RunnerError::task_invocation(format!(
             "{} runtime is not available for container `{}`",
@@ -65,7 +67,6 @@ pub(super) fn resolve_container_shell_session_bounded(
 ) -> Result<BoundedShellSession, RunnerError> {
     let policy = load_container_policy(repo_root, name)?;
     validate_container_policy(repo_root, &policy)?;
-    validate_compose_backend_runtime(repo_root, &policy)?;
     if !runtime_backend_is_running_bounded(repo_root, &policy, budget)? {
         return Err(RunnerError::task_invocation(format!(
             "{} runtime is not available for container `{}`",

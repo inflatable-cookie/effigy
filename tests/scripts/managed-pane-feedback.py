@@ -77,11 +77,28 @@ run = ["printf 'child-before\\\\n'; sleep 2; printf 'child-after\\\\n'"]
             assert child.poll() is None, (child.returncode, bytes(output[-5000:]), logs)
         assert pane and b"finished" in pane, (bytes(output[-5000:]), pane, logs)
         assert b"EFFIGY" not in pane and b"\x1b" not in pane, pane
-        assert b"\r" not in pane.replace(b"\r\n", b""), pane
+        # Pane logs are plain LF files: Pane mode writes `Started:`/`Finished:`
+        # lines with `\n` (crates/effigy-ui/src/steps.rs), never PTY CRLF/ANSI.
+        # Any CR here is contamination, not a line ending.
+        assert b"\r" not in pane, pane
         assert pane.count(b"Started: running nested; waiting for step `1` to exit;") == 1, pane
         assert pane.count(b" finished") == 2, pane
-        assert b"child-before\r\n" in pane and b"child-after\r\n" in pane, pane
-        assert any(b"adjacent-before\r\n" in log.read_bytes() and b"adjacent-after\r\n" in log.read_bytes() and b"\x1b[31mVite error\x1b[0m" in log.read_bytes() for log in logs)
+        assert b"child-before\n" in pane and b"child-after\n" in pane, pane
+        assert pane.index(b"child-before\n") < pane.index(b"child-after\n"), pane
+        def adjacent_ordered(log):
+            data = log.read_bytes()
+            return (
+                b"adjacent-before\n" in data
+                and b"adjacent-after\n" in data
+                and data.index(b"adjacent-before\n") < data.index(b"adjacent-after\n")
+                # The canonical host log carries writer-sanitized plain text
+                # (product-guardrails: managed producer colour behind custody):
+                # the child's red line arrives as plain `Vite error`, never as
+                # escapes. The PTY half of this fixture still proves rich output.
+                and b"Vite error" in data
+                and b"\x1b" not in data
+            )
+        assert any(adjacent_ordered(log) for log in logs)
     finally:
         if child.poll() is None:
             child.send_signal(signal.SIGTERM)

@@ -8,6 +8,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Redact a managed listener's quoted child output on every surface again:
+  progress lines, detached text refusals and JSON withheld-route envelopes
+  replace the values of secret-shaped `key=value` words with `<redacted>`
+  (keeping the key), even when the value is a credential Effigy never
+  classified, and the bounded tail stays bounded across long and truncated
+  values. Capture-time redaction of classified secrets is unchanged.
+
 - Add retained interpolation handoff to the existing kernel backup, binding the
   exact file descriptions to the Run and process before execution. Caller drop
   and Unknown preserve custody; helper loss preserves crash residue. Direct
@@ -806,6 +813,55 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- The Acow ordinary-Compose consumer qualification packet's warm-up
+  prerequisite is now the ACTUAL r18 ordinary-Compose proof receipt
+  (`docs/qualification/acow-ordinary-compose-5f466914/`, task effigy#545,
+  amending effigy#540/#543): Queue task effigy#544's settled proof-only
+  qualification, bound by a versioned receipt contract
+  (`prerequisite-544.v1`) fed from the genuine `queue.detail`/`queue.outcome`
+  proof surfaces — the exact task reference and id, the pinned proof commit
+  `0ed7e839…`, the exact r18 selector and all three input hashes (packet,
+  manifest, and the frozen candidate binary itself), a settled `passed`
+  execution with exit 0 that is neither historical nor
+  refused-before-selector, the `proofOnlyResult` binding that same execution
+  run and a distinct retained reviewer run, the retained review
+  `ready_to_merge` at the same commit, and the durable `done` outcome with
+  its `ready_to_merge` review. The receipt file's SHA is quoted by the exact
+  warm-up GO (`544 receipt <sha256>`); the extraction is transport only and
+  a file alone grants no authority. The superseded effigy#539 green receipt
+  (zero execution; three authenticated `refusedBeforeSelector` receipts
+  retained as history) is no longer a prerequisite: the old bare contract is
+  proven insufficient by a committed failing-first control, a fresh GO
+  carrying a `539 receipt` line refuses, and the boundary battery (now 132
+  checks) covers old-#539, source-only, no-execution, refused, historical,
+  failed, pending, missing-reviewer, run/head/selector/input/candidate
+  mismatch, tampered, truncated and oversize receipts. GO token contracts,
+  route separation, installed-identity, bundle-transition, protected-volume
+  and teardown semantics are unchanged.
+
+- The Acow ordinary-Compose consumer qualification packet now qualifies the
+  CURRENT clean consumer checkout instead of a frozen historical pin
+  (`docs/qualification/acow-ordinary-compose-5f466914/`, task effigy#543,
+  amending effigy#540 under the Acow owner's 2026-11-02 ruling). The routes
+  select the clean primary main HEAD at execution, verify a twelve-file
+  relevant-input closure by blob hash at that selected head — adding the
+  four previously unpinned `[manifest] include` files the stack actually
+  loads — and materialize the disposable warm-up worktree exactly at the
+  recorded selected head, re-verified before the first effect and carried
+  into the receipts. Tools/docs-only drift with unchanged relevant inputs
+  passes without a new packet review; an altered relevant input refuses with
+  the exact path/identity and a changed include list requires a reviewed
+  re-pin. `bundle sync` is now an explicit approved source-identity
+  transition — locked `61dc5aa8…`/`e088a69e…` to approved
+  `808adad…`/`28c92040…` — permitted as the old->new move or an
+  already-settled no-op, with the exact post-sync source/content state
+  required before attach/up and before/after identities preserved in the
+  receipt; revision and digest identity kinds stay typed and never
+  interchangeable. The committed fake-backend refusal battery
+  (`effigy test:qualification:acow`) proves every new boundary, and every
+  effigy#540 GO/binary/#539/protected-resource/teardown/primary-data
+  separation boundary is preserved.
+
 - **The one workspace Compose apply is an explicit boundary.** The owner still
   resolves the frozen command, and the guarded Env run now lends the apply the
   real `Run`, its child effect and the activation's one absolute deadline
@@ -1379,11 +1435,70 @@ During v0.x, MINOR bumps may include breaking changes.
 - The baseline `minio` catalog fragment. `effigy service list` no longer offers
   it and a manifest that names it is refused; use `silo`.
 
+- Correct the Acow ordinary-Compose consumer prerequisite verifier to link a
+  genuine accepted Queue proof-only result through its retained run ids
+  (`task.proofOnlyResult.executionRunId`/`reviewerRunId` against the settled
+  execution and the retained review) instead of requiring a nonexistent
+  GitHub review/comment publication id. The legitimate NO-PR transport shape
+  (pr null, both publication ids null) now passes on the run-id linkage,
+  and any non-null publication id refuses as invented surrogate evidence
+  (effigy#552).
+
 ### Fixed
 
 - Name environment recovery commands with the CLI's `container <NAME> <verb>`
   argument order so actual sentinel admission accepts them.
 
+
+- A managed run whose owning client dies while its environment is still being
+  brought up no longer leaks the environment behind a `cleanup complete`
+  report. The run journals its environment-stop obligation once `up` ends, so
+  the settle walks it in reverse order (K4); when the journal refuses the
+  obligation because the run is already settling (the window a client's death
+  opens), an owned environment's stop is discharged before the run ends and a
+  borrowed environment's failure propagates. The `up` transition is also
+  stopped and recorded when the stop is noticed, so no gate-holding child
+  outlives the poll.
+
+- Bind the Acow ordinary-Compose consumer qualification's prerequisite
+  receipt to the accepted proof-only reviewer callback Queue actually
+  exposes: the accepted retained-reviewer callback
+  (`task.resolution.review`, a faithful Queue completion record equal to the
+  reviewer run's own completion) with the released finished reviewer run
+  (`role` `reviewer`, `status` `finished`, `released`, not active) whose
+  agent equals `resolution.reviewerAgentId`, and `resolution.reviews` empty
+  (`server/review-verdicts.ts` `reviewRecordFor` emits per-subject verdict
+  records only for completions that carry verdicts, so the reviews-entry
+  shape required before never existed for the effigy#544 proof-only task).
+  Per-subject verdict records, callback/completion disagreement, and any
+  invented durable publication id still refuse (effigy#553).
+
+- Record pre-exec closure on a retained process core when a spawn is refused
+  after retaining its core and before custody transfer (a refusing workload gate, a lost
+  interpolation registration or a lost identity re-proof). The refused child
+  never execs and its pre-exec group is killed and reaped at the refusal, so
+  the settle reads release instead of contradicting live-custody evidence that
+  reported cleanup residue for work that never ran: a v2 admission refusal
+  settled its durable record with cleanup `incomplete`.
+
+- The Colima nerdctl mounts-budget preflight no longer refuses before commands
+  that never apply Compose. The admission guard is apply-time: activation and
+  `up`, pull-production, workspace artifact builds, runtime activation prep and
+  workspace sessions still refuse before their apply, while `container status`,
+  `container logs`, data list, cache list, cache prune, data export and import
+  and attach-only exec and shell sessions read or attach to an
+  already-running stack whose mounts were admitted when it was created, so a
+  query or session can no longer fail on a budget its operation would never
+  consume (effigy#546).
+- The mounts-budget estimate now models an option-less primary-service `tmpfs`
+  list as writable tmpfs rows with an empty source beside the merged volume
+  mounts, counting their bytes against the same guarded budget. Effigy's own
+  php-fpm catalog renders a `/run/effigy/secrets` tmpfs on the primary service,
+  and the previous refusal of the whole `tmpfs` field made every such stack
+  inadmissible on the Colima nerdctl fallback before seed, data, status or any
+  up could run. A `tmpfs` mapping form or an option-carrying entry
+  (`/path:size=…`) still refuses as an unmodelled serialization, with paths
+  omitted (effigy#546).
 - A plain `effigy container up` is the ordinary Compose invocation again for a
   container a legacy bundle declares as its default system/workspace, so a
   consumer whose export writes `[systems.<s>] container`,

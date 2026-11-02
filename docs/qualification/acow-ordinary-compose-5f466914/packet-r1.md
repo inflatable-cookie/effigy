@@ -1,9 +1,26 @@
 # Acow ordinary-Compose consumer qualification packet (candidate 5f466914, r1)
 
-Queue task effigy#540, lane v015-qualification. This packet prepares — and
-does not execute — the consumer qualification of the rebuilt ordinary-Compose
-candidate on the Acow cohort (Underlay consumer; acowtancy and siblings).
-Scenario authority: Acow owner `cb0e6df4-3a97-4c4e-bd81-34857e1a9b9c` message
+Queue task effigy#540, lane v015-qualification; amended by Queue task
+effigy#543 (2026-11-02, Acow owner `cb0e6df4` message `0fcb8b20`): the packet
+qualifies the CURRENT clean consumer checkout when the relevant inputs are
+unchanged, and models `bundle sync` as the approved source-identity
+transition instead of demanding the historical lock on both sides; further
+amended by Queue task effigy#545 (2026-11-02): the warm-up prerequisite is
+the ACTUAL effigy#544 r18 ordinary-Compose proof receipt — exact
+commit/selector/input hashes, a settled passed exit-0 execution, and the
+retained reviewer's acceptance of that same execution — replacing the
+superseded green-#539 requirement (zero execution; #539 history retained as
+historical only); further amended by Queue task effigy#553 (2026-11-02): the
+accepted review surface of that prerequisite is what Queue actually exposes
+for the #544 proof-only completion — the accepted retained-reviewer callback
+(`task.resolution.review`, equal to the reviewer run's own completion) with
+the released finished reviewer run and `resolution.reviewerAgentId` binding,
+since a proof-only completion has no per-subject verdict records
+(`resolution.reviews` is empty). This
+packet prepares — and does not execute — the consumer qualification of the
+rebuilt ordinary-Compose candidate on the Acow cohort (Underlay consumer;
+acowtancy and siblings). Scenario authority: Acow owner
+`cb0e6df4-3a97-4c4e-bd81-34857e1a9b9c` message
 `ed11a591-6e6a-4e88-8101-b925091e12ad` (source/fixture-only packet
 preparation). Execution authority is separate and listed below under "GO
 provenance"; planner approval is not a GO.
@@ -11,41 +28,80 @@ provenance"; planner approval is not a GO.
 **Status: PREPARED, NOT EXECUTED.** No warm-up window has run. No
 primary-data observation has run. No installation, no native effect, and no
 consumer data access has happened for this packet. Actual execution is a
-later proof-only task at this packet's merged commit, requiring task
-effigy#539 to be green first, the exact installed candidate identity, and
-separate operator/consumer GOs.
+later proof-only task at this packet's merged commit, requiring the accepted
+effigy#544 r18 ordinary-Compose proof receipt first, the exact installed
+candidate identity, and separate operator/consumer GOs.
 
-## Artifacts manifest SHA-256: `1ee937b7ec438a216bae8fd15d7f17abed44a3ec75160bd099c9a13f3e3da826`
+The primary lock is a preflight authority check. The disposable worktree must have no lock before sync; its receipt records that absence, and the exact approved target is required after sync before attach.
+
+## Artifacts manifest SHA-256: `2f6c8a860f4ac5bab88612eca1de5b908652db3e2057c0183d85658194f7b4b6`
 
 The manifest pins the four committed helpers, the frozen candidate identity,
-the consumer input pins, the protected-state identities, the engine
-identities, the fixture shape rule and the expected primary-data counts with
-their tracked-source citations. This directory is the source-immutable proof
-head: Queue's proof route executes exactly the packet, manifest and helpers
-committed here — not the newest main and not a rebuild.
+the relevant-input closure with its selection policy, the reviewed anchor
+pin, the approved bundle transition, the protected-state identities, the
+engine identities, the fixture shape rule and the expected primary-data
+counts with their tracked-source citations. This directory is the
+source-immutable proof head: Queue's proof route executes exactly the
+packet, manifest and helpers committed here — not the newest main and not a
+rebuild.
 
-## Frozen subject and consumer input pins
+## Frozen subject and consumer inputs
 
 - Frozen ordinary candidate source commit
   `5f4669141d8dabd91b7fbfef28d2bce21bc42ba2`; candidate binary SHA-256
   `cb564fa64f15d080eb2b047454b55103e3e5857de2252de8be05a31a95eb00b1`
   (identical subject to the reviewed #537 Colima packet). The binary is not
   committed and is not installed by this task.
-- Consumer (Acow) main pin: `b7f004d74a47f702f4dc3ef5c96390f0bdbf3c0b`
-  (tree `88df708155e60deb8c8179cffd3c307a3baf5e01`), read-only at
-  `/Users/tom/Dev/projects/acowtancy`; the worktree the warm-up creates
-  materializes exactly this pin, detached. The primary checkout itself may
-  have moved on; content identity is verified through the pin commit's tree
-  and eight pinned input blob hashes (`infra/tasks.toml` — the
-  `worktree:container:attach` task at line 16 — `infra/workspace.toml`,
-  `effigy.toml`, `scripts/tasks/worktree-container-attach.ts`, and the four
-  schema baselines cited for the counts below).
-- Bundle pin: `git@github.com:inflatable-cookie/underlay-effigy-bundle.git`
-  locked at `61dc5aa8405698ea757f0ff5c481cb6d7cb92314` (the lock observed at
-  preparation via `effigy bundle inspect --json`, read-only). A moved lock at
-  activation refuses; it needs an explicit reviewed re-pin, like any changed
-  Acow/bundle input. A packet for 5f466914 is not final qualification of
-  later main.
+- Consumer (Acow) checkout: read-only at `/Users/tom/Dev/projects/acowtancy`.
+  The routes SELECT the clean primary main HEAD at execution (the "selected
+  head") and materialize the disposable warm-up worktree exactly at that
+  recorded commit — never at the historical anchor and never at a silently
+  substituted checkout; the selected head is re-verified immediately before
+  the first effect and carried into the receipts. The reviewed anchor pin
+  `b7f004d74a47f702f4dc3ef5c96390f0bdbf3c0b` (tree `88df7081…`) stays as the
+  lineage floor: it must still resolve, its tree must still match, and it
+  must remain an ancestor of the selected head. Whole-repository
+  tools/docs-only drift with unchanged relevant inputs passes without a new
+  packet review (observed history: the anchor moved to
+  `759e29ca0…` through PR1075 and to `ee037b045…` through PR1076, both
+  tools/-only, all twelve relevant inputs identical throughout, verified
+  2026-11-02).
+- Relevant inputs: twelve tracked nonsecret files pinned by blob hash and
+  verified AT the selected head — the root `effigy.toml`, its six declared
+  `[manifest] include` files (`infra/workspace.toml`, `infra/tasks.toml`,
+  `infra/deploy.toml`, `infra/secrets.toml`, `infra/bootstrap.toml`,
+  `state/acowtancy.state.toml`; the transitive tracked includes the stack
+  configuration actually loads), the attach task's script
+  (`scripts/tasks/worktree-container-attach.ts`, task-795 pointer plus
+  hash-verified local-dev ciphertext-copy authority), and the four schema
+  baselines cited for the primary-data counts. An altered relevant input
+  refuses with the exact changed path and both identities; a declared
+  include list other than the reviewed list (order included) is a new
+  relevant input shape that requires an explicit reviewed re-pin. A dirty,
+  unreadable or replaced primary head refuses closed.
+- Bundle transition: source
+  `git@github.com:inflatable-cookie/underlay-effigy-bundle.git` declared as
+  `{type: git, url, ref: null}`. The LOCKED PRE-STATE is exact — revision
+  `61dc5aa8405698ea757f0ff5c481cb6d7cb92314` with content digest
+  `sha256:e088a69e937fe03d044dac0aa95297c6e0d4ee5c14cef6a244fd6bf6daacc38e`
+  (read from the primary checkout's `.effigy/sources.lock.json`, read-only).
+  The APPROVED TARGET is content-exact — digest
+  `sha256:28c920404c34cc46d223b061b694903634b592f99a9f10f06f4f9f8f0058975d`
+  (resolved from the cached known-version inventory under the canonical
+  source key `fc8e886a…`, observed as `available digest 28c92040` by
+  `effigy bundle inspect`, 2026-11-02) — with the git revision known to the
+  owner-approved short form `808adad` (full 40-hex revision unresolvable
+  without a fetch, which this preparation never does; the route records the
+  full resolved revision in the activation receipt, and a reviewed re-pin can
+  tighten the prefix once known). Revision and digest kinds are never
+  equated or interchanged. The packet permits exactly the approved
+  old->new transition and an already-settled target; after the window's
+  `bundle sync` it requires that exact expected source/content state, with
+  no residual staleness, BEFORE attach/up. Any other pre-state, an unexpected
+  post-sync source-origin, revision or content drift, or a missing identity
+  refuses; it needs the explicit reviewed re-pin any changed Acow/bundle
+  input needs. A packet for 5f466914 is not final qualification of later
+  main.
 
 Vault files, ciphertext, env values, credentials and database row values are
 never read by this packet. Acow and bundle repositories are never edited.
@@ -68,13 +124,62 @@ fixture metadata only. Passing those controls is not consumer qualification.
 
 ## GO provenance (per route, in order)
 
-1. Task effigy#539 green: a receipt file copied to
-   `/Volumes/Builds/scratch/effigy/540/539-green-receipt.json` (mode 0600)
-   whose SHA-256 the GO receipt quotes on a `539 receipt <sha256>` line.
-   Machine contract: JSON object with `"task": "effigy#539"`,
-   `"status": "green"`, a 40-hex `"head"`, and a non-empty `"selectors"`
-   list. Absent, malformed, non-green or hash-drifted receipts refuse the
-   warm-up route before any effect.
+1. The accepted effigy#544 r18 proof receipt: a faithfully serialized
+   extraction of the exact Queue records, copied by the planner to
+   `/Volumes/Builds/scratch/effigy/540/544-proof-receipt.json` (mode 0600)
+   after qualification settles, whose SHA-256 the GO receipt quotes on a
+   `544 receipt <sha256>` line. Machine contract (schema
+   `effigy.qualification.acow-ordinary-compose.prerequisite-544.v1`): the
+   exact task (`effigy#544` / `a648d634-82cf-4b3c-8903-a009eb427c12`); the
+   pinned proof binding (`proofOnly.commit` `0ed7e839…`, the exact r18
+   selector `python3 -I -B
+   docs/qualification/ordinary-compose-colima-5f466914/launch.py`, and all
+   three input hashes — r18 packet `545566dd…`, r18 artifacts manifest
+   `944419d4…`, the frozen candidate binary `cb564fa6…` itself); a settled
+   `passed` execution record with exit 0 that is neither historical nor
+   refused-before-selector; the `proofOnlyResult` binding that same
+   execution run and a distinct retained reviewer run; the accepted
+   retained-reviewer callback (`task.resolution.review`, a faithful Queue
+   completion record) `ready_to_merge` at the same commit and equal to the
+   reviewer run's own completion; the matching released finished reviewer
+   run (the `queue.detail.runs` entry: `role` `reviewer`, `status`
+   `finished`, `released` true, not active) whose agent equals
+   `resolution.reviewerAgentId` and whose head equals the proof commit;
+   `resolution.reviews` empty (a proof-only completion has no per-subject
+   verdict records); and the durable `done` outcome with its
+   `ready_to_merge` review and pr null. Proof-only never publishes: the
+   retained callback record carries no publication fields at all, the
+   durable publication ids are null, and neither null pair is ever itself a
+   link — the linkage is the retained run-id pair
+   (`execution.runId` == `proofOnlyResult.executionRunId`,
+   `resolution.review.runId` == `reviewerRun.id` ==
+   `proofOnlyResult.reviewerRunId`) plus the agent binding
+   (`reviewerRun.agentId` == `resolution.reviewerAgentId`) and the
+   callback/completion equality. Any non-null durable publication id is
+   invented surrogate evidence and refuses. Supported Queue sources:
+   `server/report.ts` `reportSchema` omits
+   `reviewId`/`reviewCommentId`; `server/resolution.ts` proof-only
+   `advanceReviewerResult` records `proofOnlyResult` with
+   `executionRunId`/`reviewerRunId` and never publishes;
+   `server/review-verdicts.ts` `reviewRecordFor` emits `resolution.reviews`
+   records only for completions with per-subject verdicts (this proof-only
+   completion has none, so `resolution.reviews` is empty and its callback
+   record carries no publication fields); `server/store.ts` outcome projects
+   missing publication ids as null. Records copied: `queue.detail(taskId)` →
+   `task.proofOnly`, `task.proofExecution`, the `task.proofExecutions` entry
+   named by `proofOnlyResult.executionRunId`, `proofOnlyResult` itself,
+   `task.resolution.review` (the accepted callback), `task.resolution.reviews`
+   (empty), `task.resolution.reviewerAgentId`, and the `queue.detail.runs`
+   reviewer run named by `proofOnlyResult.reviewerRunId`;
+   `queue.outcome(taskId)` → `{taskId, reference, outcome, reason, pr,
+   review}`. The extraction is
+   transport only — a file alone grants no authority; the internal linkage
+   is validated, no cryptographic identity is invented. Absent, malformed,
+   ambiguous, mismatching or hash-drifted receipts refuse the warm-up route
+   before any effect. The superseded effigy#539 green receipt (zero
+   execution; its three authenticated `refusedBeforeSelector` receipts are
+   retained as history) is not a prerequisite, and a fresh GO carrying a
+   `539 receipt` line refuses.
 2. A fresh Supervisor GO naming this packet's SHA, copied verbatim to
    `/Volumes/Builds/scratch/effigy/540/acow-warmup-go.txt` (mode 0600) for
    the warm-up route, or to `/Volumes/Builds/scratch/effigy/540/acow-primary-go.txt`
@@ -91,12 +196,14 @@ fixture metadata only. Passing those controls is not consumer qualification.
    are machine checks, not a substitute for the required authorizations and
    provenance; a differently worded receipt fails the one permitted execution.
 
-Preconditions verified machine-readably before any effect: green #539
-receipt; exact installed identity (PATH `effigy --version` equal to the
+Preconditions verified machine-readably before any effect: accepted #544
+r18 proof receipt; exact installed identity (PATH `effigy --version` equal to the
 GO-quoted line, carrying the `5f46691` source marker, and the GO-named
-binary hashing exactly to `cb564fa6…`); clean pinned Acow main with intact
-pin/tree/blob content; bundle lock on the pinned revision (warm-up route,
-read-only `bundle inspect` against the pinned Acow primary and again after
+binary hashing exactly to `cb564fa6…`); clean selected Acow main with the
+approved anchor intact and every relevant input unchanged at the selected
+head; bundle lock at an approved pre-state (locked old identity with the
+approved transition pending, or already settled at the approved target;
+read-only `bundle inspect` plus the primary's source lock, and again after
 the window's `bundle sync`); Queue unpaused and QA fence null (GO tokens);
 no other Colima activity (engine inventory canonical, shared MariaDB
 running, no `acowtancy-dev-wt-*` scope network already present); fresh
@@ -116,10 +223,16 @@ if the derived path exists, the parent is not a private owned directory, or
 the length computation cannot hit the shape exactly.
 
 Exact owner-approved sequence, in the worktree, under the installed
-candidate:
+candidate (the worktree materializes detached at the recorded SELECTED
+current head, re-verified immediately before this first effect):
 
-1. `effigy bundle sync` — then the bundle lock must still name
-   `61dc5aa8…`; a moved lock refuses (re-pin required).
+1. `effigy bundle sync` — then the worktree's lock must name exactly the
+   approved target state (typed revision `808adad…` plus the exact content
+   digest `28c92040…`, stale flag settled); any unexpected post-sync
+   source-origin, revision or content drift refuses BEFORE attach/up
+   (re-pin required). An already-settled pre-state syncs as a no-op to the
+   same approved target and passes. Before and after identities are
+   preserved in the activation receipt.
 2. `effigy worktree:container:attach` (Acow `infra/tasks.toml:16`; existing
    task-795 pointer plus hash-verified local-dev ciphertext-copy authority
    only). The route verifies the written fresh-session record against the
@@ -163,8 +276,9 @@ checkout's own stack. Owner-run window:
 3. `effigy dev:down` (owner) and no remaining runs. The selector never
    starts or stops the stack and never runs `dev:down` itself.
 
-Expected owner baseline (qualified names resolved from the pinned tracked
-sources at `b7f004d74…`; never invented):
+Expected owner baseline (qualified names resolved from the tracked
+schema sources, whose blobs are verified at the selected head before the
+route connects; never invented):
 
 | Qualified table | Expected count | Tracked source citation (at the pin) |
 | --- | --- | --- |
@@ -196,11 +310,27 @@ Default/missing GO receipt; GO at the wrong scratch path or with bad file
 hygiene (mode/owner/symlink); GO naming a different packet SHA; GO missing
 any required token, reservation line, or route marker; route cross-arming
 (a warm-up GO under the primary route or vice versa); absent, malformed,
-non-green or hash-drifted #539 receipt; installed identity drift (version
-line, source marker, binary hash, symlinked binary); moved Acow pin tree or
-input blob; dirty primary checkout; pin no longer an ancestor of primary
-HEAD; moved bundle lock; wrong fixture parent length or foreign parent;
-existing fixture path; ambiguous engine inventory or malformed identities;
+ambiguous, mismatching or hash-drifted #544 proof receipt — wrong task or
+task id, commit/selector/input/candidate drift, missing, failed, pending,
+historical or refused-before-selector execution, nonzero exit, missing
+reviewer run or accepted callback, execution/reviewer-run/callback
+event/task/head/status/role/agent mismatch, per-subject verdict records
+present, callback/completion disagreement, invented publication evidence on
+the durable review (any non-null reviewId/commentId; proof-only never
+publishes),
+contradictory outcome, tampered,
+truncated or oversize data — or a stale #539 token in the GO; installed identity drift (version
+line, source marker, binary hash, symlinked binary); anchor pin or anchor
+tree drift; relevant input changed, missing or unreadable at the selected
+head (exact path/identity in the refusal); declared include list other than
+the reviewed closure (new relevant shape; reviewed re-pin); dirty, unreadable
+or replaced primary head; selected head moved between preflight and the
+first effect; bundle lock at an unapproved identity, an untyped revision or
+digest, a changed declaration/source, or a hint that disagrees with the
+locked pin; unexpected post-sync source-origin, revision or content drift;
+post-sync lock missing the revision or digest, or still stale; existing
+fixture path; wrong fixture parent length or foreign parent; ambiguous
+engine inventory or malformed identities;
 missing or non-running shared MariaDB; missing shared MariaDB volume;
 already-active warm-up scope; primary stack down, ambiguous postgres, or
 postgres not mounting the primary data volume; non-numeric count output;
@@ -213,7 +343,8 @@ missing or mismatched at teardown.
 Receipts, invocation records and console logs are 0600 files under
 `/Volumes/Builds/scratch/effigy/540/`, created exclusively (no retries,
 evidence immutable). Every receipt carries: the task and route; packet and
-manifest SHAs; GO receipt SHA and reservation id; #539 receipt SHA; the
+manifest SHAs; GO receipt SHA and reservation id; #544 proof receipt SHA
+(task, commit, execution and reviewer run ids); the
 candidate and input pins; exact owned identities (fixture path, session,
 scoped project, container IDs); statuses; count results only; and a cleanup
 inventory with preserved volumes. Row values, vault/ciphertext/env content,
@@ -225,6 +356,12 @@ scratch root and removes it before exiting.
 
 This task delivers packet source and fixture verification only. Installation
 is not part of it. A changed product candidate or Acow/bundle input needs an
-explicit reviewed re-pin. Exactly one retained Queue reviewer owns the PR;
-no extra review or native-reader agents or workspaces. Hosted CI is not a
-task gate.
+explicit reviewed re-pin — including a relevant input drift, a declared
+include-list change, or a bundle lock outside the approved transition; a
+reviewed re-pin can also tighten the approved bundle revision prefix to a
+full 40-hex commit once that identity is known. Exactly one retained Queue
+reviewer owns the PR; no extra review or native-reader agents or workspaces.
+Hosted CI is not a task gate. Future proof-only activation binds this
+reviewed packet commit and hashes, the actual selected-input receipt at the
+selected current head, and the actual before/after bundle identities, with
+separate exact install/consumer GOs.
