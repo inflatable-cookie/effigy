@@ -464,6 +464,16 @@ detached while waiting for an `Active` event it never emitted. A withheld
 supervisor is stopped, so a retry cannot publish after the partial-exposure
 report; an explicit restart or a later `up` retries that listener.
 
+A supervisor that fails to start is an activation failure in its own right,
+whether or not any declared process carries a listener (effigy#559). The
+bring-up refuses in attached and detached modes alike and names the process
+and its cause; it never reports success while a declared workload's
+supervisor never started, and a plain workload's start failure is never
+demoted to a warning only the detached supervisor's own output would carry.
+A withheld or failed listener keeps the partial-exposure semantics above;
+this sentence covers the start seam those reports already name for
+listener-bearing environments.
+
 A listener that a later activation does not start is never taken on trust
 either: it is reconciled against its own published generation and route first,
 so a healthy generation this activation never touched stays exposed and is

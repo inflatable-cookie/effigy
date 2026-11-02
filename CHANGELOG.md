@@ -8,6 +8,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Fail a container activation whose declared host process cannot start, in
+  attached and detached modes alike, instead of demoting a plain (non-listener)
+  workload's start failure to a warning only the detached supervisor's own
+  output carries. An environment never reports success while its declared
+  workload never started: the refusal names the process and its cause
+  (effigy#559).
+
 - Redact a managed listener's quoted child output on every surface again:
   progress lines, detached text refusals and JSON withheld-route envelopes
   replace the values of secret-shaped `key=value` words with `<redacted>`

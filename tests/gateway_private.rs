@@ -7184,14 +7184,22 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
 /// SIGTERM, takes three seconds to finish before it exits. That drain is longer
 /// than the outer supervisor's escalation is comfortable with, so the stop has
 /// to observe the whole closure rather than cut the workload short or call the
-/// evidence inconsistent.
+/// evidence inconsistent. The pid and the drain mark publish by rename, so a
+/// waiter never sees an empty file in the window between creation and the
+/// write reaching the filesystem (effigy#559: a loaded runner polled the
+/// file's existence inside that window and read an empty pid).
 const NESTED_EFFIGY_APP: &str = r#"
 import os, signal, sys, time
 pid_file, drained = sys.argv[1], sys.argv[2]
-open(pid_file, "w").write(str(os.getpid()))
+staged = pid_file + ".staged"
+with open(staged, "w") as handle:
+    handle.write(str(os.getpid()))
+os.replace(staged, pid_file)
 def stop(*_):
     time.sleep(3)
-    open(drained, "w").write("drained\n")
+    with open(drained + ".staged", "w") as handle:
+        handle.write("drained\n")
+    os.replace(drained + ".staged", drained)
     sys.exit(0)
 signal.signal(signal.SIGTERM, stop)
 while True:
@@ -7417,6 +7425,135 @@ fn nested_app_pid_timeout_carries_child_owner_and_error_evidence() {
     assert!(
         message.contains("compose up -d"),
         "the timeout carries the bring-up adapter log: {message}"
+    );
+}
+
+/// A declared host process whose supervisor cannot start is a failed
+/// activation, never a silent one. A detached `up` refuses and names the
+/// process and its cause; it never reports an environment whose declared
+/// workload never started (effigy#559: the milestone QA runs saw exactly the
+/// silent shape - `up` success, no supervisor log, no workload, a blind
+/// 60-second timeout - because a plain host process's start failure was
+/// demoted to a warning on the detached supervisor's own output). The control
+/// holds the process's own admission gate, so the supervisor child refuses
+/// deterministically before its run begins.
+#[test]
+fn plain_host_process_start_refusal_fails_a_detached_activation() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    private_directory(&home);
+    let foreign_ca = fixture.path().join("foreign-ca");
+    private_directory(&foreign_ca);
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, _https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+
+    let checkout = fixture.path().join("checkout");
+    fs::create_dir(&checkout).expect("refusal checkout");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n",
+    )
+    .expect("write fixture compose file");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Refusal Fixture"]);
+    git(
+        &checkout,
+        &["config", "user.email", "refusal-fixture@example.invalid"],
+    );
+    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+    let manifest = format!(
+        "[containers]\ndefault = \"web\"\n\n[containers.web]\ndriver = \"colima\"\nprofile = {profile}\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n[[containers.web.host_processes]]\nname = \"api\"\nrun = \"exec sleep 1000\"\nrestart = \"never\"\n\n",
+        profile = toml_quote("fixture"),
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("write the refusal manifest");
+
+    // The same identity work the fixture CLI performs before every run, so
+    // the gate this test holds names the resource the supervisor child will
+    // try to admit under.
+    effigy_core::worktree_scope::prepare_checkout_token(&checkout).expect("fixture identity");
+    let policy = effigy_containers::load_container_policy(&checkout, Some("web"))
+        .expect("declared container policy");
+    let checkout_id = effigy_containers::environment::EnvRef::for_policy(&policy)
+        .expect("environment reference")
+        .checkout;
+    let resource =
+        effigy_kernel::id::ResourceId::host_process(checkout_id, "web", "fixture", "api")
+            .expect("host process resource");
+    let context = effigy_kernel::ctx::OperationContext::new(
+        effigy_kernel::ctx::Deadline::Open(effigy_kernel::ctx::OpenReason::DevServer),
+        effigy_kernel::ctx::CancelToken::default(),
+        effigy_kernel::ctx::Limits {
+            capture_tail: 64 * 1024,
+            log_rotate: 1 << 20,
+            log_keep: 3,
+            line_max: 64 * 1024,
+            queue_bytes: 1 << 20,
+            probe_concurrency: 1,
+        },
+        effigy_kernel::ctx::EffectClass::Mutate,
+        effigy_kernel::ctx::Placement::Host,
+    )
+    .effects()
+    .expect("mutate context");
+    let root = effigy_kernel::root::StateRoot::checkout_effects(
+        &context,
+        &home,
+        &effigy_kernel::location::CheckoutLocation {
+            root: effigy_core::worktree_scope::checkout_root(&checkout),
+        },
+    )
+    .expect("checkout state root");
+    let _gate = effigy_kernel::gate::Gate::acquire(
+        &context,
+        &root,
+        std::slice::from_ref(&resource),
+        effigy_kernel::gate::Wait::FailFast,
+    )
+    .expect("hold the host process admission gate");
+
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
+
+    let up = run_container_cli(&checkout, &cleanup, &["up", "--detach"]);
+    let up_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&up.stdout),
+        String::from_utf8_lossy(&up.stderr)
+    );
+    assert!(
+        !up.status.success(),
+        "a refused host-process start must fail the detached activation: {up_text}"
+    );
+    assert!(
+        up_text.contains("api"),
+        "the refusal names the host process: {up_text}"
+    );
+    assert!(
+        up_text.contains("held"),
+        "the refusal names the held admission gate as its cause: {up_text}"
     );
 }
 
