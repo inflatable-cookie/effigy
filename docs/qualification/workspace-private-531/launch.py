@@ -8,7 +8,7 @@ import shlex
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (PACKET, SCRATCH, artifact, digest, exclusive, load, require, run,
-                    source_head, validate_go, validate_inputs)
+                    open_qualification_root, qualification_path, source_head, validate_go, validate_inputs)
 
 
 def main():
@@ -65,13 +65,18 @@ def main():
         # Runtime emits only a bounded receipt path, never raw native output.
         returned = json.loads(result.stdout) if result.stdout else {}
         receipt_path = returned.get('receipt') if result.returncode == 0 else returned.get('failed_receipt')
-        require(receipt_path and Path(receipt_path).is_absolute() and Path(receipt_path).is_relative_to(SCRATCH),
+        expected = qualification_path(cell['qualification_root']) / ('complete.json' if result.returncode == 0 else 'failed.json')
+        require(receipt_path and Path(receipt_path) == expected,
                 'runtime returned no bounded receipt; native result remains unverified')
         if cell['driver'] == 'ssh':
             receipt_hash = run(['/usr/bin/ssh', '-o', 'BatchMode=yes', cell['ssh_alias'],
                                 'sha256sum -- ' + shlex.quote(receipt_path)]).stdout.decode().split()[0]
         else:
-            receipt_hash = digest(receipt_path)
+            _, fd = open_qualification_root(cell['qualification_root'])
+            try:
+                receipt_hash = digest(expected.name, dir_fd=fd)
+            finally:
+                os.close(fd)
         receipt = {'backend': cell['backend'], 'exit_code': result.returncode, 'receipt': receipt_path,
                    'receipt_sha256': receipt_hash,
                    'host': cell.get('ssh_alias', 'local'),

@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 
 BACKENDS = ('colima', 'desktop', 'linux')
@@ -17,9 +18,10 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
-def digest(path):
+def digest(path, *, dir_fd=None):
     h = hashlib.sha256()
-    with open(path, 'rb') as source:
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    with os.fdopen(fd, 'rb') as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b''):
             h.update(chunk)
     return h.hexdigest()
@@ -36,8 +38,9 @@ def artifact(item):
     return path
 
 
-def exclusive(path, value):
-    with open(path, 'x', encoding='utf-8') as out:
+def exclusive(path, value, *, dir_fd=None):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
+    with os.fdopen(fd, 'w', encoding='utf-8') as out:
         json.dump(value, out, sort_keys=True)
         out.write('\n')
         out.flush()
@@ -59,12 +62,56 @@ def source_head(root):
     return head
 
 
+def qualification_path(binding):
+    require(isinstance(binding, dict) and set(binding) == {'path', 'device', 'inode', 'uid'},
+            'qualification root must pin path, device, inode and owner')
+    raw = binding['path']
+    require(isinstance(raw, str), 'qualification root path required')
+    path = Path(raw)
+    require(path.is_absolute() and str(path) == raw and '..' not in path.parts
+            and path.is_relative_to(SCRATCH) and path != SCRATCH,
+            'qualification root must be an exact absolute child of removable scratch')
+    require(all(type(binding[key]) is int and binding[key] >= 0 for key in ('device', 'inode', 'uid')),
+            'actual qualification root identity required')
+    return path
+
+
+def verify_qualification_root(binding, fd):
+    path = qualification_path(binding)
+    try:
+        require(SCRATCH.resolve(strict=True) == SCRATCH and path.resolve(strict=True) == path,
+                'qualification root aliases are prohibited')
+        held, visible = os.fstat(fd), path.lstat()
+        expected = (binding['device'], binding['inode'], binding['uid'])
+        require(all((value.st_dev, value.st_ino, value.st_uid) == expected
+                    and stat.S_ISDIR(value.st_mode) and stat.S_IMODE(value.st_mode) == 0o700
+                    for value in (held, visible)) and held.st_uid == os.geteuid(),
+                'qualification root ownership or identity changed')
+    except OSError as error:
+        raise RuntimeError('qualification root unavailable') from error
+
+
+def open_qualification_root(binding):
+    path = qualification_path(binding)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as error:
+        raise RuntimeError('qualification root unavailable') from error
+    try:
+        verify_qualification_root(binding, fd)
+        return path, fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def validate_inputs(value, head):
     require(value['schema'] == 'effigy.workspace-private-proof.v1', 'unknown input schema')
     require(value['source_head'] == head, 'candidate is not the immutable proof head')
     require(tuple(cell['backend'] for cell in value['backends']) == BACKENDS,
             'all three native backends are required, in order')
     for cell in value['backends']:
+        qualification_path(cell.get('qualification_root'))
         require(cell['source_head'] == head, 'backend candidate source differs')
         require(cell['old_source_head'] != head and re.fullmatch(r'[0-9a-f]{40}', cell['old_source_head']),
                 'genuine old source identity required')

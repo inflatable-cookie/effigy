@@ -46,13 +46,25 @@ Each backend's input pins:
 - the resident runtime image **ID**, engine executable bytes and exact
   Colima profile / Docker context; complete container, network and volume
   baseline inventories; an explicit bounded native budget;
+- an exclusively prepared empty `qualification_root`, pinning its canonical
+  absolute path, device, inode and uid. It must be a private `0700` directory
+  owned by the native executor, strictly below removable scratch. Missing pins,
+  aliases, changed identities and already used/nonempty roots refuse;
 - Linux's actual SSH alias, prepositioned reviewed driver directory, and exact
   input/GO-index paths on its native Linux host. Linux executes the candidate
   there against its local engine. A macOS candidate talking to remote Docker
   cannot substitute for native Linux custody.
 
-Each fixture gives its commands a separate private `TMPDIR` inside that same
-fresh removable-scratch directory. The checkout is separate from that temp
+The prepared root is the window's exact base, not an allocation in global
+scratch. Its descriptor stays held until completion; initial layout and receipts
+are created relative to it, with visible identity rechecked before native
+commands. The immutable input hash and native GO cover that root binding.
+Replacement is retained/refused, never silently rebound or repaired. Global
+input-hash/backend one-shot markers remain outside the shared root, so moving
+or deleting a fixture does not erase its replay claim.
+
+Each fixture gives its commands a separate private `TMPDIR` inside the prepared
+root. The checkout is separate from that temp
 subdirectory, preserving the existing Colima known-temp-path refusal without a
 skip variable. Actual VM sharing/mount identity must still pass the real native
 probes. Qualification preparation uses only the existing read-only backend
@@ -68,6 +80,10 @@ scoped native GO must cover that isolated vault/key/credential creation too. Mis
 pulls, builds, downloads, installs, starts/stops a VM, changes shared workflows,
 or changes tracked source. Source archive / build preparation, any native
 builder use and Linux placement require their own scoped authorization.
+
+The [dedicated Colima setup request](colima-setup.md) shares only the pinned
+qualification root and keeps control files outside it. Its runtime recipe is
+unbuilt and unarmed; it does not claim the producer image supplies Python.
 
 Preparation uses the existing Effigy build surfaces:
 `build:workspace:private-qualification` builds the uninstalled candidate/utility;
@@ -136,7 +152,7 @@ window; the real product's operation/cleanup deadlines remain enforced.
 
 ## Cells and effects per backend
 
-`runtime.py` creates one fresh `531-native-<backend>.*` scratch directory. The
+`runtime.py` claims the backend's exact prepared root, which must be empty. The
 utility calls the real checkout-token producer. The fixture uses an ephemeral
 Compose identity, a single resident-image primary, and a bind of its own new
 checkout. It never links another checkout or uses a sibling path. The sequence

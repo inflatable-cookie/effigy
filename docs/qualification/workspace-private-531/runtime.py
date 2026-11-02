@@ -21,6 +21,7 @@ import tempfile
 import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (PACKET, SCRATCH, artifact, digest, exclusive, load, require, run,
+                    open_qualification_root, qualification_path, verify_qualification_root,
                     validate_go, validate_inputs)
 
 
@@ -28,13 +29,9 @@ class Window:
     def __init__(self, cell, inputs_hash, go):
         self.cell = cell
         self.end = time.monotonic() + cell['budget_seconds']
-        require(SCRATCH.is_dir() and not SCRATCH.is_symlink(), 'removable scratch unavailable')
-        self.base = Path(tempfile.mkdtemp(prefix='531-native-' + cell['backend'] + '.', dir=SCRATCH))
+        self.base = qualification_path(cell['qualification_root'])
         self.root = self.base / 'checkout'
-        self.root.mkdir(mode=0o700)
         self.events = []
-        exclusive(self.base / 'window.json', {'backend': cell['backend'], 'inputs_sha256': inputs_hash,
-                                             'source_head': cell['source_head'], 'go': go['decision_id']})
         self.candidate = artifact(cell['candidate'])
         self.production = artifact(cell['production'])
         self.utility = artifact(cell['utility'])
@@ -69,14 +66,11 @@ class Window:
         # test/fault/credential variables are admitted into candidate processes.
         self.env = {key: os.environ[key] for key in ('HOME', 'USER', 'LOGNAME', 'PATH', 'LANG', 'OXIDE_POOL') if key in os.environ}
         self.temp = self.base / 'tmp'
-        self.temp.mkdir(mode=0o700)
         self.env.update(TMPDIR=str(self.temp), EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE='local')
         # The frozen candidate must discover its real produced guest artifact.
         # This pointer uses the existing product config, never a fake receipt.
         # It is prepared only inside this fixture's private state home.
         self.home = self.base / 'home'
-        (self.home / '.effigy').mkdir(parents=True, mode=0o700)
-        (self.home / '.effigy/source.toml').write_text('repo_root = ' + json.dumps(cell['source_root']) + '\n')
         self.env['HOME'] = str(self.home)
         if cell['engine_kind'] == 'docker':
             self.engine = [str(artifact(cell['engine_binary'])), '--context', cell['engine_identity']]
@@ -89,14 +83,45 @@ class Window:
         resolved = shutil.which(tool, path=self.env.get('PATH'))
         require(resolved and digest(resolved) == cell['engine_binary']['sha256'], 'candidate PATH selects another engine executable')
         self.container = None
+        self.base, self.root_fd = open_qualification_root(cell['qualification_root'])
+        try:
+            require(not os.listdir(self.root_fd), 'qualification root is already used or contains foreign files')
+            for name in ('checkout', 'tmp', 'home', 'home/.effigy'):
+                os.mkdir(name, mode=0o700, dir_fd=self.root_fd)
+            fd = os.open('home/.effigy/source.toml', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                         0o600, dir_fd=self.root_fd)
+            with os.fdopen(fd, 'w') as out:
+                out.write('repo_root = ' + json.dumps(cell['source_root']) + '\n')
+            exclusive('window.json', {'backend': cell['backend'], 'inputs_sha256': inputs_hash,
+                      'source_head': cell['source_head'], 'go': go['decision_id'],
+                      'qualification_root': cell['qualification_root']}, dir_fd=self.root_fd)
+            self.verify_root()
+        except BaseException:
+            self.close()
+            raise
+
+    def verify_root(self):
+        verify_qualification_root(self.cell['qualification_root'], self.root_fd)
+
+    def close(self):
+        if self.root_fd is not None:
+            os.close(self.root_fd)
+            self.root_fd = None
 
     def command(self, args, *, check=True, data=None, cwd=None):
+        self.verify_root()
         remaining = self.end - time.monotonic()
         require(remaining > 0, 'native window deadline expired')
         return run(args, cwd=cwd or self.root, env=self.env, timeout=min(60, remaining), check=check, data=data)
 
     def engine_command(self, *args, **kwargs):
         return self.command(self.engine + list(args), **kwargs)
+
+    def spawn(self, args):
+        self.verify_root()
+        require(time.monotonic() < self.end, 'native window deadline expired')
+        return subprocess.Popen(args, cwd=self.root, env=self.env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def inventory(self):
         containers = self.engine_command('ps', '-a', '--no-trunc', '--format', '{{.ID}}').stdout.decode().splitlines()
@@ -117,6 +142,7 @@ class Window:
         return {'containers': sorted(containers), 'networks': networks, 'volumes': sorted(volumes)}
 
     def db(self):
+        self.verify_root()
         return sqlite3.connect('file:' + str(self.root / '.effigy/state/kernel.db') + '?mode=ro', uri=True)
 
     def rows(self, sql, args=()):
@@ -143,9 +169,10 @@ class Window:
         raise RuntimeError('native predicate unresolved: ' + label)
 
     def record(self, cell, **facts):
+        self.verify_root()
         self.events.append(dict(cell=cell, **facts))
         # Append-only, fsynced individual receipts; no protected bytes.
-        exclusive(self.base / ('cell-%02d.json' % len(self.events)), self.events[-1])
+        exclusive('cell-%02d.json' % len(self.events), self.events[-1], dir_fd=self.root_fd)
 
     def prepare(self):
         image = json.loads(self.engine_command('image', 'inspect', self.cell['runtime_image']).stdout)
@@ -251,8 +278,7 @@ targets = ["containers"]
         require(wrong.returncode != 0, 'wrong TLS pin accepted')
         self.record('native-identity-and-tls', boot_id=self.document['vm_boot_id'], wrong_pin_refused=True)
         started = time.monotonic()
-        child = subprocess.Popen(self.guest_argv('531-stream', '531-stream'), cwd=self.root, env=self.env,
-                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        child = self.spawn(self.guest_argv('531-stream', '531-stream'))
         poll = selectors.DefaultSelector()
         for stream, name in ((child.stdout, 'stdout'), (child.stderr, 'stderr')):
             os.set_blocking(stream.fileno(), False)
@@ -317,9 +343,8 @@ targets = ["containers"]
 
     def guest_client(self, task, client, receipt):
         script = 'import os; from pathlib import Path; p=os.getpid(); Path(' + repr(receipt) + ').write_text(str(p)+" "+Path("/proc/self/stat").read_text().split()[21]); os.execv(' + repr(self.document['binary_path']) + ',["effigy",' + repr(task) + '])'
-        return subprocess.Popen(self.engine + ['exec', '-i', '-w', '/workspace', '-e', 'EFFIGY_WORKSPACE_CLIENT_ID=' + client,
-                                self.container, 'python3', '-c', script], cwd=self.root, env=self.env,
-                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return self.spawn(self.engine + ['exec', '-i', '-w', '/workspace', '-e', 'EFFIGY_WORKSPACE_CLIENT_ID=' + client,
+                                        self.container, 'python3', '-c', script])
 
     def guest_signal(self, receipt, number):
         code = 'from pathlib import Path; import os; p,b=Path(' + repr(receipt) + ').read_text().split(); assert Path("/proc/"+p+"/stat").read_text().split()[21]==b; os.kill(int(p),' + str(number) + ')'
@@ -379,12 +404,15 @@ targets = ["containers"]
         runner = [self.nextest, 'nextest', 'run', '--config-file', self.nextest_config,
                   '--user-config-file', 'none', '--binaries-metadata', self.binaries_metadata,
                   '--cargo-metadata', self.cargo_metadata, '--no-fail-fast', '--retries', '0', '--no-tests', 'fail']
+        self.verify_root()
         run(runner + ['--run-ignored', 'only', '-E', 'test(custody::tests::discard_old_sentinel_refuses_before_child_exec)'],
             cwd=Path(self.cell['source_root']), env=env, timeout=min(600, self.end - time.monotonic()))
+        self.verify_root()
         run(runner + ['-E', 'test(run::lifecycle::tests::retained_interpolation_) | test(run::lifecycle::tests::prelaunch_) | test(run::lifecycle::tests::reserved_env_admission_) | test(custody_signal_and_owner_kill_matrix) | test(custody_both_owner_and_sentinel_die) | test(custody_deleted_checkout_lease_survives_owner_kill) | test(custody::tests::fault_matrix_registration_spawn_and_socket_kill_enospc)'],
             cwd=Path(self.cell['source_root']), env=env, timeout=min(600, self.end - time.monotonic()))
         for mode in ('private-qualification', 'private-qualification-descendant', 'private-qualification-foreign',
                      'private-qualification-uninitialized', 'private-qualification-expired', 'private-qualification-old'):
+            self.verify_root()
             home = Path(tempfile.mkdtemp(prefix='kernel-', dir=self.base))
             run([self.kernel_fixture, mode, home], cwd=self.root, env=env, timeout=min(60, self.end - time.monotonic()))
         self.record('kernel-custody', actual_helpers=True, old_source=self.cell['old_source_head'],
@@ -441,7 +469,7 @@ targets = ["containers"]
         # Fixture trees remain as evidence. Removal requires a separately
         # validated exact manifest and operator disposition; no rmtree here.
         self.record('baseline-and-cleanup', inventory=self.cell['baseline'], fixture_retained=True)
-        exclusive(self.base / 'complete.json', {'cells': self.events, 'native': True, 'production_enabled': False})
+        exclusive('complete.json', {'cells': self.events, 'native': True, 'production_enabled': False}, dir_fd=self.root_fd)
         print(json.dumps({'receipt': str(self.base / 'complete.json')}))
 
 
@@ -460,6 +488,7 @@ def main():
     require((sys.platform == 'linux') == (cell['backend'] == 'linux'), 'wrong native operating system')
     # Backend replay is refused even if someone directly invokes this module.
     # A failed/unknown attempt consumes this exact input's one-shot claim too.
+    require(SCRATCH.resolve(strict=True) == SCRATCH, 'removable scratch aliases are prohibited')
     exclusive(SCRATCH / ('531-' + args.sha256 + '-' + args.backend + '.started.json'),
               {'source_head': value['source_head'], 'inputs_sha256': args.sha256,
                'go_index_sha256': args.go_sha256, 'backend': args.backend})
@@ -469,10 +498,12 @@ def main():
     except BaseException as error:
         # Preserve prior receipts and exact resources. The error type conveys
         # failure without retaining protected backend or credential diagnostics.
-        exclusive(window.base / 'failed.json', {'error_type': type(error).__name__,
-                                               'cells_completed': len(window.events), 'native_pass': False})
+        exclusive('failed.json', {'error_type': type(error).__name__,
+                                 'cells_completed': len(window.events), 'native_pass': False}, dir_fd=window.root_fd)
         print(json.dumps({'failed_receipt': str(window.base / 'failed.json')}), flush=True)
         sys.exit(1)
+    finally:
+        window.close()
 
 
 if __name__ == '__main__':

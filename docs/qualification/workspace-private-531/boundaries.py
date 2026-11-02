@@ -3,6 +3,7 @@
 import ast
 import copy
 import datetime
+import json
 import os
 from pathlib import Path
 import sys
@@ -11,7 +12,7 @@ import unittest
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (BACKENDS, PACKET, SCRATCH, artifact, digest, exclusive, validate_go,
-                    validate_inputs)
+                    open_qualification_root, qualification_path, validate_inputs)
 
 HEAD = '1' * 40
 
@@ -25,6 +26,8 @@ def inputs():
             production_receipt=dict(source_head=HEAD, features=[], sha256='b' * 64),
             candidate=dict(sha256='a' * 64), production=dict(sha256='b' * 64), old_binary=dict(sha256='c' * 64),
             runtime_image='sha256:' + 'd' * 64, budget_seconds=600,
+            qualification_root=dict(path=str(SCRATCH / ('531-unarmed-' + backend)),
+                                    device=0, inode=0, uid=os.geteuid()),
             driver='ssh' if backend == 'linux' else 'local', engine_identity=backend,
             engine_kind='colima' if backend == 'colima' else 'docker'))
     return dict(schema='effigy.workspace-private-proof.v1', source_head=HEAD, backends=cells)
@@ -52,7 +55,7 @@ class Boundaries(unittest.TestCase):
         import selectors
         import subprocess
         import time
-        with tempfile.TemporaryDirectory(prefix='531-stream-probe-', dir=SCRATCH) as directory:
+        with tempfile.TemporaryDirectory(prefix='531-stream-probe-', dir=os.environ['TMPDIR']) as directory:
             root = Path(directory)
             child = subprocess.Popen([sys.executable, '-I', '-B', str(PACKET / 'probe.py'), 'stream'],
                                      cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -116,7 +119,7 @@ class Boundaries(unittest.TestCase):
                 validate_go(value, 'f' * 64, cell, HEAD)
 
     def test_artifact_hash_symlink_and_one_shot_receipt_boundaries(self):
-        with tempfile.TemporaryDirectory(prefix='531-packet-', dir=SCRATCH) as directory:
+        with tempfile.TemporaryDirectory(prefix='531-packet-', dir=os.environ['TMPDIR']) as directory:
             root = Path(directory)
             file = root / 'candidate'
             file.write_bytes(b'fixture-only')
@@ -136,6 +139,146 @@ class Boundaries(unittest.TestCase):
                 exclusive(receipt, {'state': 'replayed'})
             self.assertIn('started', receipt.read_text())
 
+    def test_window_uses_only_the_pinned_private_root(self):
+        import runtime
+        with tempfile.TemporaryDirectory(prefix='531-root-', dir=os.environ['TMPDIR']) as directory:
+            parent = Path(directory)
+            root = parent / 'qualification'
+            root.mkdir(mode=0o700)
+            identity = root.stat()
+            cell = inputs()['backends'][1]
+            cell['qualification_root'] = dict(path=str(root), device=identity.st_dev,
+                                             inode=identity.st_ino, uid=identity.st_uid)
+            file = parent / 'fixture-only'
+            file.write_bytes(b'unarmed unit fixture; never executed')
+            item = dict(path=str(file), sha256=digest(file))
+            for name in ('candidate', 'production', 'utility', 'kernel_fixture', 'old_binary',
+                         'kernel_tests', 'custody_tests', 'nextest_binary', 'nextest_config',
+                         'guest_producer_receipt', 'guest_active_version', 'engine_binary'):
+                cell[name] = item.copy()
+            metadata = parent / 'binaries.json'
+            metadata.write_text(json.dumps({'binary-path': str(file)}))
+            cell['binaries_metadata'] = dict(path=str(metadata), sha256=digest(metadata))
+            cell['cargo_metadata'] = item.copy()
+            source = parent / 'source'
+            guest = source / '.effigy/linux-release/artifacts/fixture'
+            guest.parent.mkdir(parents=True)
+            guest.write_bytes(b'not an ELF or qualification input')
+            cell.update(source_root=str(source), guest_artifact=dict(path=str(guest), sha256=digest(guest)),
+                        docker_config=str(parent), colima_home=str(parent))
+            window = None
+            # Artifact plumbing is doubled; filesystem ownership/allocation is real.
+            # The old global allocator stays inside this test's owned fixture too.
+            with patch.object(runtime, 'SCRATCH', parent), \
+                 patch.object(runtime.shutil, 'which', return_value=str(file)), \
+                 patch('subprocess.run', side_effect=AssertionError('native call in root test')), \
+                 patch('subprocess.Popen', side_effect=AssertionError('native spawn in root test')):
+                try:
+                    window = runtime.Window(cell, 'f' * 64, go(cell))
+                    self.assertEqual(window.base, root)
+                    self.assertEqual(window.temp.parent, root)
+                    self.assertEqual(window.home.parent, root)
+                    self.assertEqual(window.root.parent, root)
+                    self.assertFalse(os.get_inheritable(window.root_fd))
+                    self.assertEqual(json.loads((root / 'window.json').read_text())['qualification_root'],
+                                     cell['qualification_root'])
+                    window.record('unit-only')
+                    self.assertTrue((root / 'cell-01.json').is_file())
+                    window.close()
+                    with self.assertRaisesRegex(RuntimeError, 'already used'):
+                        runtime.Window(cell, 'e' * 64, go(cell))
+                    # A different input hash does not authorize reusing this directory.
+                    window.base, window.root_fd = open_qualification_root(cell['qualification_root'])
+                    moved = parent / 'retained-root'
+                    root.rename(moved)
+                    foreign = parent / 'foreign'
+                    foreign.mkdir(mode=0o700)
+                    root.symlink_to(foreign, target_is_directory=True)
+                    with self.assertRaises(RuntimeError):
+                        window.command(['/must-not-run'])
+                    with self.assertRaises(RuntimeError):
+                        window.spawn(['/must-not-run'])
+                    with self.assertRaises(RuntimeError):
+                        window.db()
+                    # Failure evidence stays on the held original directory, never the alias.
+                    exclusive('retained.json', {'unit-only': True}, dir_fd=window.root_fd)
+                    self.assertTrue((moved / 'retained.json').is_file())
+                    self.assertEqual(list(foreign.iterdir()), [])
+                finally:
+                    if window is not None and hasattr(window, 'close'):
+                        window.close()
+
+    def test_root_identity_owner_permissions_and_alias_refusals(self):
+        with tempfile.TemporaryDirectory(prefix='531-root-pins-', dir=os.environ['TMPDIR']) as directory:
+            parent = Path(directory)
+            root = parent / 'root'
+            root.mkdir(mode=0o700)
+            value = root.stat()
+            binding = dict(path=str(root), device=value.st_dev, inode=value.st_ino, uid=value.st_uid)
+            path, fd = open_qualification_root(binding)
+            try:
+                self.assertEqual(path, root)
+                self.assertEqual(os.fstat(fd).st_ino, value.st_ino)
+            finally:
+                os.close(fd)
+            for key in ('device', 'inode', 'uid'):
+                changed = dict(binding, **{key: binding[key] + 1})
+                with self.subTest(key=key), self.assertRaises(RuntimeError):
+                    open_qualification_root(changed)
+            other = parent / 'other'
+            other.mkdir(mode=0o700)
+            with self.assertRaises(RuntimeError):
+                open_qualification_root(dict(binding, path=str(other)))
+            with patch('os.geteuid', return_value=value.st_uid + 1), self.assertRaises(RuntimeError):
+                open_qualification_root(binding)
+            root.chmod(0o755)
+            with self.assertRaises(RuntimeError):
+                open_qualification_root(binding)
+            root.chmod(0o700)
+            link = parent / 'link'
+            link.symlink_to(root, target_is_directory=True)
+            with self.assertRaises(RuntimeError):
+                open_qualification_root(dict(binding, path=str(link)))
+            alias = parent / 'alias'
+            alias.symlink_to(parent, target_is_directory=True)
+            with self.assertRaises(RuntimeError):
+                open_qualification_root(dict(binding, path=str(alias / 'root')))
+            root.rename(parent / 'old')
+            root.mkdir(mode=0o700)
+            with self.assertRaises(RuntimeError):
+                open_qualification_root(binding)
+            self.assertEqual(list(root.iterdir()), [])
+
+    def test_root_shape_never_defaults_to_global_or_foreign_scratch(self):
+        valid = inputs()['backends'][0]['qualification_root']
+        for bad in (None, {}, dict(valid, path=str(SCRATCH)), dict(valid, path='/tmp/foreign'),
+                    dict(valid, path='relative'), dict(valid, path=str(SCRATCH) + '/x/../root'),
+                    dict(valid, path=valid['path'] + '/'), dict(valid, inode=True),
+                    dict(valid, uid=-1), dict(valid, inode='unobserved')):
+            with self.subTest(binding=bad), self.assertRaises(RuntimeError):
+                qualification_path(bad)
+        value = inputs()
+        del value['backends'][0]['qualification_root']
+        with self.assertRaises(RuntimeError):
+            validate_inputs(value, HEAD)
+
+    def test_changed_root_changes_input_hash_and_requires_a_new_go(self):
+        import launch
+        with tempfile.TemporaryDirectory(prefix='531-root-hash-', dir=os.environ['TMPDIR']) as directory:
+            file = Path(directory) / 'inputs.json'
+            value = inputs()
+            file.write_text(json.dumps(value))
+            approved = digest(file)
+            value['backends'][0]['qualification_root']['inode'] += 1
+            file.write_text(json.dumps(value))
+            self.assertNotEqual(approved, digest(file))
+            with patch.object(sys, 'argv', ['launch.py', '--inputs', str(file), '--sha256', approved,
+                              '--go-bindings', str(Path(directory) / 'not-created'), '--go-sha256', 'e' * 64]), \
+                 patch.object(launch, 'source_head', return_value=HEAD), \
+                 patch.object(launch, 'run', side_effect=AssertionError('native call for changed root')):
+                with self.assertRaisesRegex(RuntimeError, 'input hash mismatch'):
+                    launch.main()
+
     def test_every_backend_go_is_checked_before_window_creation(self):
         import launch
         value = inputs()
@@ -149,6 +292,26 @@ class Boundaries(unittest.TestCase):
              patch.object(Path, 'mkdir', side_effect=AssertionError('effect before all native GOs')):
             with self.assertRaisesRegex(RuntimeError, 'Desktop GO absent'):
                 launch.main()
+
+    def test_launcher_refuses_a_receipt_outside_the_bound_root(self):
+        import launch
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory(prefix='531-receipt-root-', dir=os.environ['TMPDIR']) as directory:
+            value = inputs()
+            value['evidence'] = str(Path(directory) / 'aggregate')
+            result = SimpleNamespace(returncode=0, stderr=b'',
+                                     stdout=json.dumps({'receipt': str(Path(directory) / 'foreign.json')}).encode())
+            with patch.object(sys, 'argv', ['launch.py', '--inputs', str(Path(directory) / 'input.json'),
+                              '--sha256', 'f' * 64, '--go-bindings', str(Path(directory) / 'go.json'), '--go-sha256', 'e' * 64]), \
+                 patch.object(launch, 'source_head', return_value=HEAD), \
+                 patch.object(launch, 'digest', side_effect=['f' * 64, 'e' * 64]), \
+                 patch.object(launch, 'load', side_effect=[value, {name: {'path': name} for name in BACKENDS}]
+                              + [go(cell) for cell in value['backends']]), \
+                 patch.object(launch, 'artifact', side_effect=[Path(name) for name in BACKENDS]), \
+                 patch.object(launch, 'run', return_value=result) as native:
+                with self.assertRaisesRegex(RuntimeError, 'no bounded receipt'):
+                    launch.main()
+                self.assertEqual(native.call_count, 1)
 
 
 if __name__ == '__main__':

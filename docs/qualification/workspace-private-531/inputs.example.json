@@ -95,6 +95,12 @@
       "nextest_config": {
         "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/colima-nextest_config",
         "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "qualification_root": {
+        "path": "/Volumes/Builds/scratch/effigy/531-colima-qualification",
+        "device": "RECORD_ACTUAL_DEVICE",
+        "inode": "RECORD_ACTUAL_INODE",
+        "uid": "RECORD_ACTUAL_OWNER_UID"
       }
     },
     {
@@ -189,6 +195,12 @@
       "nextest_config": {
         "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/desktop-nextest_config",
         "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "qualification_root": {
+        "path": "/Volumes/Builds/scratch/effigy/531-desktop-qualification",
+        "device": "RECORD_ACTUAL_DEVICE",
+        "inode": "RECORD_ACTUAL_INODE",
+        "uid": "RECORD_ACTUAL_OWNER_UID"
       }
     },
     {
@@ -289,6 +301,12 @@
       "nextest_config": {
         "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/linux-nextest_config",
         "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "qualification_root": {
+        "path": "/Volumes/Builds/scratch/effigy/531-linux-qualification",
+        "device": "RECORD_ACTUAL_DEVICE",
+        "inode": "RECORD_ACTUAL_INODE",
+        "uid": "RECORD_ACTUAL_OWNER_UID"
       }
     }
   ]
