@@ -79,19 +79,9 @@ fn cli_version_json_mode_emits_machine_readable_payload() {
     );
 }
 
-#[test]
-fn cli_general_help_mentions_json_flags() {
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--help")
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("run effigy");
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    assert!(stdout.contains("--json"));
-    assert!(stdout.contains("--version"));
-}
+// `cli_general_help_mentions_json_flags` was consolidated into
+// `cli_general_help_renders_the_six_operator_groups` (effigy#556): both ran
+// plain `--help` and asserted content facts of the same single output panel.
 
 #[test]
 fn cli_json_envelope_flag_is_rejected_after_removal() {
@@ -121,50 +111,48 @@ fn cli_json_raw_flag_is_rejected_after_removal() {
     assert!(stderr.contains("unknown argument: --json-raw"));
 }
 
+/// One general-help JSON contract, both argv routes.
+///
+/// `--json --help` and `--json help` previously had one test each asserting
+/// identical fact sets (effigy#556 consolidation). The equality assertion is
+/// strictly stronger than the two separate fact checks: either route
+/// drifting from the shared envelope now fails by name.
 #[test]
-fn cli_help_global_json_mode_emits_machine_readable_payload() {
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+fn cli_general_help_json_envelope_is_identical_across_the_flag_and_command_routes() {
+    let via_flag = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")
         .arg("--help")
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
-    assert_eq!(parsed["schema"], "effigy.command.v1");
-    assert_eq!(parsed["ok"], true);
-    assert_eq!(parsed["command"]["kind"], "help");
-    assert_eq!(parsed["command"]["name"], "general");
-    assert_eq!(parsed["result"]["schema"], "effigy.help.v1");
-    assert_eq!(parsed["result"]["topic"], "general");
-    assert!(parsed["result"]["text"]
-        .as_str()
-        .is_some_and(|text| text.contains("Commands")));
-}
-
-#[test]
-fn cli_help_command_json_mode_emits_machine_readable_payload() {
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+    let via_command = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")
         .arg("help")
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
 
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
-    assert_eq!(parsed["schema"], "effigy.command.v1");
-    assert_eq!(parsed["ok"], true);
-    assert_eq!(parsed["command"]["kind"], "help");
-    assert_eq!(parsed["command"]["name"], "general");
-    assert_eq!(parsed["result"]["schema"], "effigy.help.v1");
-    assert_eq!(parsed["result"]["topic"], "general");
-    assert!(parsed["result"]["text"]
-        .as_str()
-        .is_some_and(|text| text.contains("Commands")));
+    assert!(via_flag.status.success(), "{via_flag:?}");
+    assert!(via_command.status.success(), "{via_command:?}");
+    let flag_stdout = String::from_utf8(via_flag.stdout).expect("utf8 stdout");
+    let command_stdout = String::from_utf8(via_command.stdout).expect("utf8 stdout");
+    let flag_parsed: Value = serde_json::from_str(&flag_stdout).expect("json parse");
+    let command_parsed: Value = serde_json::from_str(&command_stdout).expect("json parse");
+    for parsed in [&flag_parsed, &command_parsed] {
+        assert_eq!(parsed["schema"], "effigy.command.v1");
+        assert_eq!(parsed["ok"], true);
+        assert_eq!(parsed["command"]["kind"], "help");
+        assert_eq!(parsed["command"]["name"], "general");
+        assert_eq!(parsed["result"]["schema"], "effigy.help.v1");
+        assert_eq!(parsed["result"]["topic"], "general");
+        assert!(parsed["result"]["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("Commands")));
+    }
+    assert_eq!(
+        flag_parsed, command_parsed,
+        "the flag and command routes must emit the same general help envelope"
+    );
 }
 
 #[test]
@@ -680,6 +668,11 @@ fn cli_general_help_renders_the_six_operator_groups() {
         assert!(stdout.contains(title), "missing {title}: {stdout}");
     }
     assert!(stdout.contains("effigy help <group>"), "got: {stdout}");
+    // The same panel must mention the two global flags (the removed
+    // `cli_general_help_mentions_json_flags` probe's whole claim, effigy#556:
+    // one spawn, one panel, every fact kept).
+    assert!(stdout.contains("--json"), "got: {stdout}");
+    assert!(stdout.contains("--version"), "got: {stdout}");
 }
 
 #[test]

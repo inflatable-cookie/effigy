@@ -1462,6 +1462,9 @@ fn cli_release_status_json_mode_reports_ready_release_candidate() {
     assert_eq!(parsed["result"]["suggested_bump"], "patch");
     assert_eq!(parsed["result"]["next_version"], "0.2.5");
     assert_eq!(parsed["result"]["tag"], "release-0.2.5");
+    // A ready status still publishes the blockers array (the removed released
+    // -surface machine-contract probe's one distinct claim, effigy#556).
+    assert!(parsed["result"]["blockers"].as_array().is_some());
 }
 
 #[test]
