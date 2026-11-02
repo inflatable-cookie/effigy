@@ -663,7 +663,7 @@ fn listener_output_tail(log_path: &Path) -> Option<String> {
     if text.chars().any(|ch| ch.is_control() && ch != '\n') {
         return None;
     }
-    listener_child_block(text).map(|tail| effigy_ui::human::redact(&tail))
+    listener_child_block(&effigy_ui::human::redact(text))
 }
 
 fn listener_child_block(text: &str) -> Option<String> {
@@ -4733,6 +4733,18 @@ while True:
             !tail.contains("hunter2") && !tail.contains("abcd1234"),
             "the tail never prints a credential value, classified or not: {tail}"
         );
+    }
+
+    #[test]
+    fn listener_tail_redacts_before_truncating_long_values() {
+        for length in [315, 4000] {
+            let value = "secretcanary".repeat(length / 12 + 1);
+            let value = &value[..length];
+            let text = format!("vite error\nEFFIGY_TOKEN={value}\nclean line\n");
+            let tail = listener_child_block(&effigy_ui::human::redact(&text)).unwrap();
+            assert!(tail.contains("EFFIGY_TOKEN=<redacted>"), "{tail}");
+            assert!(!tail.contains("secretcanary"), "{tail}");
+        }
     }
 
     #[test]
