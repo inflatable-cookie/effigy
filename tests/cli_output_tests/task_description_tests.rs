@@ -149,13 +149,9 @@ fn cli_task_help_omits_the_description_line_when_undeclared() {
     );
 }
 
-#[test]
-fn cli_task_arguments_after_double_dash_still_reach_the_task() {
-    let root = write_description_workspace("task-description-passthrough");
-    let stdout = stdout_of(run_effigy(&root, &["demo:hello", "--", "--help"]));
-
-    assert!(
-        stdout.contains("ran:--help"),
-        "`--` keeps the flag for the task: {stdout}"
-    );
-}
+// `cli_task_arguments_after_double_dash_still_reach_the_task` was removed with
+// effigy#556: its single claim (post-`--` args reach the task) is carried by
+// `wave4_papercuts_tests::cli_task_args_after_delimiter_are_forwarded_instead_of_dropped`
+// (forwarding plus delimiter suppression) and
+// `wave1_papercuts_tests::cli_task_passthrough_after_delimiter_does_not_switch_repo`
+// (flag-like args stay with the task and never switch the repo).
