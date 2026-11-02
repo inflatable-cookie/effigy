@@ -24,7 +24,13 @@ receipt (the exact commit, selector and input hashes; a settled passed
 execution with exit 0; and the retained reviewer's acceptance of that same
 execution), replacing the impossible green-#539 requirement — #539 is
 superseded with zero execution and can never supply legitimate
-qualification.
+qualification. The #553 amendment corrects the accepted-review surface to
+what Queue actually exposes for that proof-only completion: the accepted
+retained-reviewer callback (`task.resolution.review`, equal to the reviewer
+run's own completion) with the released finished reviewer run and
+`resolution.reviewerAgentId` binding — a proof-only completion has no
+per-subject verdict records (`resolution.reviews` is empty), so the
+reviews-entry shape this verifier demanded before never existed for it.
 """
 import hashlib
 import json
@@ -350,8 +356,10 @@ def verify_544_proof_receipt(path, quoted_sha):
 
     - queue.detail(taskId=a648d634-…) → task.proofOnly, task.proofExecution,
       the task.proofExecutions entry named by
-      task.proofOnlyResult.executionRunId, task.proofOnlyResult, and the
-      task.resolution.reviews entry named by
+      task.proofOnlyResult.executionRunId, task.proofOnlyResult,
+      task.resolution.review (the accepted callback), task.resolution.reviews
+      (empty — no per-subject verdict records), task.resolution.reviewerAgentId,
+      and the queue.detail.runs reviewer run named by
       task.proofOnlyResult.reviewerRunId;
     - queue.outcome(taskId=a648d634-…) → {taskId, reference, outcome, reason,
       pr, review} (the durable terminal record).
@@ -361,14 +369,23 @@ def verify_544_proof_receipt(path, quoted_sha):
     input IS the frozen candidate), a genuine settled `passed` execution with
     exit 0 that is neither historical nor refused-before-selector, the
     proof-only result binding that SAME execution run and a distinct
-    retained reviewer run, the retained review `ready_to_merge` at the same
-    commit, and the durable `done` outcome with its `ready_to_merge` review.
+    retained reviewer run, the accepted retained-reviewer callback
+    (`resolution.review`, a faithful Queue completion record) `ready_to_merge`
+    at the same commit and equal to the reviewer run's own completion, the
+    matching released finished reviewer run (`role` `reviewer`, `status`
+    `finished`, `released`, not active) whose agent is
+    `resolution.reviewerAgentId`, `resolution.reviews` empty (a proof-only
+    completion has no per-subject verdict records), and the durable `done`
+    outcome with its `ready_to_merge` review.
     Proof-only never publishes: the legitimate NO-PR shape is pr null with
-    both retained and durable publication ids null, and that all-null pair
-    is never itself a link — the link is the retained run-id pair
-    (execution.runId == result.executionRunId,
-    review.runId == result.reviewerRunId). Any non-null publication id is
-    invented surrogate evidence and refuses.
+    the durable publication ids null, and that all-null pair is never itself
+    a link — the link is the retained run-id pair (execution.runId ==
+    result.executionRunId, resolution.review.runId == reviewerRun.id ==
+    result.reviewerRunId) plus the agent binding (reviewerRun.agentId ==
+    resolution.reviewerAgentId) and the callback/completion equality. The
+    retained callback record is a faithful Queue completion record and
+    carries no publication fields at all; any non-null durable publication
+    id is invented surrogate evidence and refuses.
     Its file SHA-256 must equal the SHA the GO receipt quotes; any missing,
     malformed, ambiguous or mismatching provenance refuses.
     """
@@ -381,7 +398,8 @@ def verify_544_proof_receipt(path, quoted_sha):
         raise Refused('544 proof receipt is not valid JSON') from None
     _receipt_object(obj, '544 proof receipt')
     if set(obj) != {'schema', 'task', 'proofOnly', 'proofExecution',
-                    'execution', 'result', 'review', 'outcome'}:
+                    'execution', 'result', 'resolution', 'reviewerRun',
+                    'outcome'}:
         raise Refused('544 proof receipt top-level shape is not the reviewed '
                       'prerequisite contract')
     if obj['schema'] != PREREQUISITE_SCHEMA:
@@ -467,19 +485,69 @@ def verify_544_proof_receipt(path, quoted_sha):
     if not isinstance(result['evidence'], str) or not result['evidence']:
         raise Refused('proof-only result evidence missing or empty')
 
-    review = _receipt_object(obj['review'], 'receipt review record')
-    if set(review) - {'runId', 'agentId', 'head', 'status', 'reviewId',
-                      'reviewCommentId', 'at', 'verdicts'} \
-            or review.get('verdicts') not in (None, []):
-        raise Refused('review record is not a faithful retained Queue review')
+    resolution = _receipt_object(obj['resolution'], 'receipt resolution block')
+    if set(resolution) != {'review', 'reviews', 'reviewerAgentId'}:
+        raise Refused('resolution block is not a faithful queue.detail resolution '
+                      'extraction')
+    if resolution['reviews'] != []:
+        raise Refused('prerequisite task carries per-subject verdict review records; '
+                      'the accepted proof-only callback is the review surface')
+    reviewer_agent = _receipt_text(resolution.get('reviewerAgentId'),
+                                   'resolution reviewerAgentId')
+    if not UUID_RE.fullmatch(reviewer_agent):
+        raise Refused('resolution reviewerAgentId is not a canonical agent id')
+
+    review = _receipt_object(resolution['review'], 'receipt accepted review callback')
+    if set(review) != {'eventId', 'taskId', 'runId', 'status', 'summary',
+                       'headline', 'head', 'reviewText'}:
+        raise Refused('accepted review callback is not a faithful Queue '
+                      'completion record')
+    event_id = _receipt_text(review.get('eventId'), 'review eventId')
+    if not HEX64.fullmatch(event_id):
+        raise Refused('review eventId is not a canonical Queue event id')
+    if review.get('taskId') != PROOF_TASK_ID:
+        raise Refused('accepted review callback names a different task')
     if review.get('runId') != reviewer_run:
-        raise Refused('review record is not the retained reviewer run named by the result')
+        raise Refused('accepted review callback is not the retained reviewer run '
+                      'named by the result')
     if review.get('head') != PROOF_COMMIT:
-        raise Refused('retained review judged a different head than the pinned r18 commit')
+        raise Refused('accepted review callback judged a different head than the '
+                      'pinned r18 commit')
     if review.get('status') != 'ready_to_merge':
-        raise Refused('retained review has not accepted the execution (status %r)'
-                      % (review.get('status'),))
-    _receipt_text(review.get('at'), 'review at')
+        raise Refused('accepted review callback has not accepted the execution '
+                      '(status %r)' % (review.get('status'),))
+    for callback_field in ('summary', 'headline', 'reviewText'):
+        _receipt_text(review.get(callback_field), 'review ' + callback_field)
+
+    reviewer_record = _receipt_object(obj['reviewerRun'], 'receipt reviewerRun block')
+    if set(reviewer_record) != {'id', 'taskId', 'role', 'agentId', 'head', 'status',
+                                'active', 'released', 'createdAt', 'completion'}:
+        raise Refused('reviewerRun block is not a faithful Queue reviewer run record')
+    if reviewer_record['id'] != reviewer_run:
+        raise Refused('reviewerRun block is not the retained reviewer run named '
+                      'by the result')
+    if reviewer_record['taskId'] != PROOF_TASK_ID:
+        raise Refused('reviewer run names a different task')
+    if reviewer_record['role'] != 'reviewer':
+        raise Refused('reviewer run is not a reviewer run (role %r)'
+                      % (reviewer_record['role'],))
+    if reviewer_record['agentId'] != reviewer_agent:
+        raise Refused('reviewer run agent is not the retained reviewer agent '
+                      'named by the resolution')
+    if reviewer_record['head'] != PROOF_COMMIT:
+        raise Refused('reviewer run judged a different head than the pinned r18 '
+                      'commit')
+    if reviewer_record['status'] != 'finished':
+        raise Refused('reviewer run is not the settled retained run (status %r)'
+                      % (reviewer_record['status'],))
+    if reviewer_record['active'] is not False or reviewer_record['released'] is not True:
+        raise Refused('reviewer run is not the released retained run')
+    _receipt_text(reviewer_record.get('createdAt'), 'reviewer run createdAt')
+    completion = _receipt_object(reviewer_record['completion'],
+                                 'reviewer run completion record')
+    if completion != review:
+        raise Refused('accepted review callback differs from the reviewer run '
+                      'completion record')
 
     outcome = _receipt_object(obj['outcome'], 'receipt outcome block')
     if set(outcome) != {'taskId', 'reference', 'outcome', 'reason', 'pr', 'review'}:
@@ -503,15 +571,15 @@ def verify_544_proof_receipt(path, quoted_sha):
     # reviewId/reviewCommentId; server/resolution.ts proof-only
     # advanceReviewerResult records proofOnlyResult with
     # executionRunId/reviewerRunId and never publishes;
-    # server/review-verdicts.ts reviewRecordFor defaults both publication ids
-    # to null; server/store.ts outcome projects missing publication ids as
-    # null). The all-null pair is the legitimate NO-PR transport shape and is
-    # never itself a link; the link is the retained run-id pair checked above.
-    # Any non-null publication id is invented surrogate evidence.
-    if review.get('reviewId') is not None \
-            or review.get('reviewCommentId') is not None:
-        raise Refused('retained review carries invented publication evidence; '
-                      'proof-only never publishes a PR review or comment')
+    # server/review-verdicts.ts reviewRecordFor emits resolution.reviews
+    # records only for completions with per-subject verdicts, so this
+    # proof-only completion has none and its callback record carries no
+    # publication fields at all; server/store.ts outcome projects missing
+    # publication ids as null). The all-null durable pair is the legitimate
+    # NO-PR transport shape and is never itself a link; the link is the
+    # retained run-id pair, agent binding and completion equality checked
+    # above. Any non-null durable publication id is invented surrogate
+    # evidence.
     if outcome_review.get('reviewId') is not None \
             or outcome_review.get('commentId') is not None:
         raise Refused('durable outcome carries invented publication evidence; '
@@ -522,6 +590,8 @@ def verify_544_proof_receipt(path, quoted_sha):
             'commit': PROOF_COMMIT, 'selector': PROOF_SELECTOR,
             'inputs': list(PROOF_INPUTS),
             'execution_run_id': run_id, 'reviewer_run_id': reviewer_run,
+            'reviewer_agent_id': reviewer_agent,
+            'review_event_id': event_id,
             'review_status': review['status'], 'outcome': outcome['outcome'],
             'settled_at': settled_at, 'sha256': quoted_sha}
 

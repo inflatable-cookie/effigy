@@ -5,7 +5,12 @@ Queue task effigy#540 (amended by effigy#543: the battery proves the
 selected-current-head consumer qualification and the approved bundle
 source-identity transition; amended by effigy#545: the prerequisite is the
 actual effigy#544 r18 proof receipt, and the old bare green-#539 receipt is
-proven not to be the real prerequisite). This is the only file the installed-Effigy
+proven not to be the real prerequisite; amended by effigy#553: the accepted
+prerequisite review surface is the proof-only reviewer callback
+(resolution.review, equal to the reviewer run's own completion) with the
+released finished reviewer run and resolution.reviewerAgentId binding, since
+a proof-only completion has no per-subject verdict records and the old
+reviews-entry-with-`at` shape never existed for it). This is the only file the installed-Effigy
 selector `test:qualification:acow` executes. It runs the packet's fail-closed
 boundaries against fake backends and disposable fixture metadata under
 /Volumes/Builds/scratch/effigy/540/ — no real runtime call, no consumer
@@ -284,6 +289,9 @@ def t_primary_go_valid(tmp):
 EXEC_RUN_ID = 'aaaaaaaa-0000-4c11-8e22-333333333333'
 REVIEWER_RUN_ID = 'bbbbbbbb-0000-4d22-8f33-444444444444'
 PROOF_AGENT_ID = 'cccccccc-0000-4e33-8044-555555555555'
+REVIEWER_AGENT_ID = 'd1e2f3a4-0000-4b55-9c66-7d8e9f0a1b2c'
+REVIEW_EVENT_ID = ('4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b'
+                   '0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f')
 
 
 def r544_execution_record(**over):
@@ -315,10 +323,52 @@ def r544_execution_record(**over):
     return rec
 
 
+def r544_review_callback(**over):
+    """The accepted retained-reviewer callback (task.resolution.review, equal
+    to the reviewer run's own completion): a faithful Queue completion record
+    with no per-subject verdict records (resolution.reviews is empty for this
+    proof-only task; reviewRecordFor emits verdict records only for
+    completions that carry per-subject verdicts)."""
+    rec = {
+        'eventId': REVIEW_EVENT_ID,
+        'taskId': PROOF_TASK_ID,
+        'runId': REVIEWER_RUN_ID,
+        'status': 'ready_to_merge',
+        'summary': 'Retained-reviewer verdict on the proof-only r18 receipt: '
+                   'ready_to_merge.',
+        'headline': 'Retained reviewer: the r18 receipt is accepted.',
+        'head': PROOF_COMMIT,
+        'reviewText': 'Judged only the settled executor receipt; no PR review '
+                      'or comment published.',
+    }
+    rec.update(over)
+    return rec
+
+
+def r544_reviewer_run(callback=None, **over):
+    """The matching released finished retained reviewer run (the
+    queue.detail.runs entry named by proofOnlyResult.reviewerRunId)."""
+    rec = {
+        'id': REVIEWER_RUN_ID,
+        'taskId': PROOF_TASK_ID,
+        'role': 'reviewer',
+        'agentId': REVIEWER_AGENT_ID,
+        'head': PROOF_COMMIT,
+        'status': 'finished',
+        'active': False,
+        'released': True,
+        'createdAt': '2026-11-02T13:02:34.185Z',
+        'completion': r544_review_callback() if callback is None else callback,
+    }
+    rec.update(over)
+    return rec
+
+
 def r544_fixture(**over):
     """The exact-Queue-shaped prerequisite receipt (all checks pass)."""
     execution = over.pop('execution', r544_execution_record())
     exec_run_id = (execution or {}).get('runId') or EXEC_RUN_ID
+    callback = r544_review_callback()
     obj = {
         'schema': PREREQUISITE_SCHEMA,
         'task': {'reference': PROOF_TASK_REFERENCE, 'id': PROOF_TASK_ID},
@@ -336,20 +386,22 @@ def r544_fixture(**over):
                         'Reviewer verdict ready_to_merge.'
                         % (PROOF_SELECTOR, PROOF_COMMIT, exec_run_id),
         },
-        'review': {
-            'runId': REVIEWER_RUN_ID,
-            'agentId': PROOF_AGENT_ID,
-            'head': PROOF_COMMIT,
-            'status': 'ready_to_merge',
-            # Proof-only never publishes: Queue reportSchema omits both
-            # publication ids, advanceReviewerResult records only
-            # executionRunId/reviewerRunId, reviewRecordFor defaults both to
-            # null and the store outcome projects missing ids as null.
-            'reviewId': None,
-            'reviewCommentId': None,
-            'at': '2026-11-02T13:00:00.000Z',
-            'verdicts': [],
+        # The actual accepted-review surface for this proof-only completion:
+        # the accepted callback (task.resolution.review), NO per-subject
+        # verdict records (resolution.reviews empty), and the retained
+        # reviewer agent binding (resolution.reviewerAgentId) — plus the
+        # matching released finished reviewer run whose completion IS the
+        # accepted callback. Proof-only never publishes: the callback record
+        # carries no publication fields at all, and the durable outcome's
+        # publication ids are null. The linkage is the retained run-id pair,
+        # the agent binding and the completion equality — never a publication
+        # id and never the null pair.
+        'resolution': {
+            'review': callback,
+            'reviews': [],
+            'reviewerAgentId': REVIEWER_AGENT_ID,
         },
+        'reviewerRun': r544_reviewer_run(callback),
         'outcome': {
             'taskId': PROOF_TASK_ID,
             'reference': PROOF_TASK_REFERENCE,
@@ -360,8 +412,9 @@ def r544_fixture(**over):
             'pr': None,
             # NO-PR transport: both durable publication ids are null. The
             # linkage is the retained run-id pair (execution.runId ==
-            # result.executionRunId, review.runId == result.reviewerRunId),
-            # never this null pair and never an invented publication id.
+            # result.executionRunId, resolution.review.runId ==
+            # reviewerRun.id == result.reviewerRunId), never this null pair
+            # and never an invented publication id.
             'review': {'status': 'ready_to_merge',
                        'summary': 'accepted the r18 receipt',
                        'commentId': None, 'reviewId': None},
@@ -678,47 +731,257 @@ def t_544_result_empty_evidence(tmp):
     expect_refused(lambda: verify_544_proof_receipt(p, sha(text)), 'evidence missing')
 
 
-def t_544_missing_reviewer(tmp):
+def t_544_missing_resolution(tmp):
+    # Failing-first control for this task: the ACTUAL no-per-subject-verdict
+    # proof-only shape (accepted callback + released finished reviewer run +
+    # resolution binding, resolution.reviews empty) was refused by the old
+    # verifier, which demanded a task.resolution.reviews entry with an `at`
+    # timestamp — a shape Queue never emits for a proof-only completion
+    # (reviewRecordFor emits verdict records only for completions with
+    # per-subject verdicts). It is accepted after the adapter fix.
     fixture = r544_fixture()
-    del fixture['review']
+    del fixture['resolution']
     text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
     p = tmpfile(tmp, '544-proof-receipt.json', text)
     expect_refused(lambda: verify_544_proof_receipt(p, sha(text)), 'top-level shape')
 
 
-def t_544_review_of_other_run(tmp):
+def t_544_missing_reviewer_run(tmp):
     fixture = r544_fixture()
-    fixture['review'] = dict(fixture['review'],
-                             runId='dddddddd-0000-4f44-8155-666666666666')
+    del fixture['reviewerRun']
+    text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+    p = tmpfile(tmp, '544-proof-receipt.json', text)
+    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)), 'top-level shape')
+
+
+def t_544_resolution_unknown_field(tmp):
+    fixture = r544_fixture()
+    fixture['resolution'] = dict(fixture['resolution'], surprise='x')
+    text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+    p = tmpfile(tmp, '544-proof-receipt.json', text)
+    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)), 'resolution block')
+
+
+def t_544_reviews_with_verdict_records(tmp):
+    # Per-subject verdict records are a different review surface and never
+    # exist for this proof-only completion; a receipt claiming them refuses.
+    fixture = r544_fixture()
+    fixture['resolution'] = dict(fixture['resolution'], reviews=[{
+        'runId': REVIEWER_RUN_ID, 'agentId': REVIEWER_AGENT_ID,
+        'head': PROOF_COMMIT, 'status': 'ready_to_merge',
+        'reviewId': None, 'reviewCommentId': None,
+        'at': '2026-11-02T13:00:00.000Z', 'verdicts': [{'id': 'subject'}],
+    }])
+    text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+    p = tmpfile(tmp, '544-proof-receipt.json', text)
+    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
+                   'per-subject verdict review records')
+
+
+def t_544_reviewer_agent_missing_or_malformed(tmp):
+    for i, value in enumerate(('', 'not-a-uuid')):
+        fixture = r544_fixture()
+        fixture['resolution'] = dict(fixture['resolution'], reviewerAgentId=value)
+        text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+        p = tmpfile(tmp, '544-agent-%d.json' % i, text)
+        expect_refused(lambda p=p, text=text: verify_544_proof_receipt(p, sha(text)),
+                       'reviewerAgentId')
+
+
+def t_544_callback_of_other_run(tmp):
+    fixture = r544_fixture()
+    fixture['resolution']['review'] = dict(
+        fixture['resolution']['review'],
+        runId='dddddddd-0000-4f44-8155-666666666666')
     text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
     p = tmpfile(tmp, '544-proof-receipt.json', text)
     expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
                    'not the retained reviewer run')
 
 
-def t_544_review_head_mismatch(tmp):
+def t_544_callback_head_mismatch(tmp):
     fixture = r544_fixture()
-    fixture['review'] = dict(fixture['review'], head='f' * 40)
+    fixture['resolution']['review'] = dict(fixture['resolution']['review'],
+                                           head='f' * 40)
     text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
     p = tmpfile(tmp, '544-proof-receipt.json', text)
     expect_refused(lambda: verify_544_proof_receipt(p, sha(text)), 'different head')
 
 
-def t_544_review_changes_required(tmp):
+def t_544_callback_changes_required(tmp):
     fixture = r544_fixture()
-    fixture['review'] = dict(fixture['review'], status='changes_required')
+    fixture['resolution']['review'] = dict(fixture['resolution']['review'],
+                                           status='changes_required')
     text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
     p = tmpfile(tmp, '544-proof-receipt.json', text)
-    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)), 'not accepted')
+    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)), 'has not accepted')
 
 
-def t_544_review_with_verdicts(tmp):
+def t_544_callback_task_mismatch(tmp):
     fixture = r544_fixture()
-    fixture['review'] = dict(fixture['review'], verdicts=[{'id': 'x'}])
+    fixture['resolution']['review'] = dict(fixture['resolution']['review'],
+                                           taskId='e' * 32)
     text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
     p = tmpfile(tmp, '544-proof-receipt.json', text)
     expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
-                   'faithful retained Queue review')
+                   'callback names a different task')
+
+
+def t_544_callback_event_missing_or_empty(tmp):
+    def drop_event(callback):
+        callback.pop('eventId')
+        return callback
+
+    def empty_event(callback):
+        callback['eventId'] = ''
+        return callback
+
+    for i, (mutate, fragment) in enumerate((
+            (drop_event, 'faithful Queue completion record'),
+            (empty_event, 'eventId'))):
+        callback = mutate(r544_review_callback())
+        fixture = r544_fixture()
+        fixture['resolution']['review'] = callback
+        fixture['reviewerRun'] = r544_reviewer_run(callback)
+        text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+        p = tmpfile(tmp, '544-event-%d.json' % i, text)
+        expect_refused(lambda p=p, text=text, fragment=fragment:
+                       verify_544_proof_receipt(p, sha(text)), fragment)
+
+
+def t_544_callback_event_not_canonical(tmp):
+    callback = r544_review_callback(eventId='zzzz-not-hex')
+    fixture = r544_fixture()
+    fixture['resolution']['review'] = callback
+    fixture['reviewerRun'] = r544_reviewer_run(callback)
+    text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+    p = tmpfile(tmp, '544-proof-receipt.json', text)
+    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
+                   'canonical Queue event id')
+
+
+def t_544_callback_text_missing(tmp):
+    for i, field in enumerate(('summary', 'headline', 'reviewText')):
+        callback = r544_review_callback()
+        callback.pop(field)
+        fixture = r544_fixture()
+        fixture['resolution']['review'] = callback
+        fixture['reviewerRun'] = r544_reviewer_run(callback)
+        text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+        p = tmpfile(tmp, '544-text-%d.json' % i, text)
+        expect_refused(lambda p=p, text=text:
+                       verify_544_proof_receipt(p, sha(text)),
+                       'faithful Queue completion record')
+    for i, field in enumerate(('summary', 'headline', 'reviewText')):
+        # An empty field passes the shape check and refuses on the value.
+        callback = r544_review_callback(**{field: ''})
+        fixture = r544_fixture()
+        fixture['resolution']['review'] = callback
+        fixture['reviewerRun'] = r544_reviewer_run(callback)
+        text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+        p = tmpfile(tmp, '544-text-empty-%d.json' % i, text)
+        expect_refused(lambda p=p, text=text, field=field:
+                       verify_544_proof_receipt(p, sha(text)), 'review ' + field)
+
+
+def t_544_callback_unknown_field_is_invented_publication(tmp):
+    # The retained callback record is a faithful Queue completion record: it
+    # carries no publication fields at all, so invented reviewId/reviewCommentId
+    # values refuse on shape.
+    fixture = r544_fixture()
+    fixture['resolution']['review'].update(reviewId=123, reviewCommentId=456)
+    text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+    p = tmpfile(tmp, '544-proof-receipt.json', text)
+    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
+                   'faithful Queue completion record')
+
+
+def t_544_reviewer_run_wrong_role(tmp):
+    for i, role in enumerate(('author', 'revision', 'executor')):
+        fixture = r544_fixture()
+        fixture['reviewerRun'] = dict(fixture['reviewerRun'], role=role)
+        text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+        p = tmpfile(tmp, '544-role-%d.json' % i, text)
+        expect_refused(lambda p=p, text=text: verify_544_proof_receipt(p, sha(text)),
+                       'not a reviewer run')
+
+
+def t_544_reviewer_run_agent_mismatch(tmp):
+    fixture = r544_fixture()
+    fixture['reviewerRun'] = dict(fixture['reviewerRun'],
+                                  agentId='d1e2f3a4-0000-4b55-9c66-7d8e9f0a1b2d')
+    text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+    p = tmpfile(tmp, '544-proof-receipt.json', text)
+    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
+                   'not the retained reviewer agent')
+
+
+def t_544_reviewer_run_other_id(tmp):
+    fixture = r544_fixture()
+    fixture['reviewerRun'] = dict(fixture['reviewerRun'],
+                                  id='dddddddd-0000-4f44-8155-666666666666')
+    text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+    p = tmpfile(tmp, '544-proof-receipt.json', text)
+    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
+                   'reviewerRun block is not the retained reviewer run')
+
+
+def t_544_reviewer_run_task_mismatch(tmp):
+    fixture = r544_fixture()
+    fixture['reviewerRun'] = dict(fixture['reviewerRun'], taskId='e' * 32)
+    text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+    p = tmpfile(tmp, '544-proof-receipt.json', text)
+    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
+                   'reviewer run names a different task')
+
+
+def t_544_reviewer_run_head_mismatch(tmp):
+    fixture = r544_fixture()
+    fixture['reviewerRun'] = dict(fixture['reviewerRun'], head='f' * 40)
+    text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+    p = tmpfile(tmp, '544-proof-receipt.json', text)
+    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)), 'different head')
+
+
+def t_544_reviewer_run_not_finished(tmp):
+    for i, status in enumerate(('running', 'superseded', 'intent')):
+        fixture = r544_fixture()
+        fixture['reviewerRun'] = dict(fixture['reviewerRun'], status=status)
+        text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+        p = tmpfile(tmp, '544-runstatus-%d.json' % i, text)
+        expect_refused(lambda p=p, text=text: verify_544_proof_receipt(p, sha(text)),
+                       'settled retained run')
+
+
+def t_544_reviewer_run_not_released(tmp):
+    for i, over in enumerate(({'released': False}, {'active': True})):
+        fixture = r544_fixture()
+        fixture['reviewerRun'] = dict(fixture['reviewerRun'], **over)
+        text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+        p = tmpfile(tmp, '544-released-%d.json' % i, text)
+        expect_refused(lambda p=p, text=text: verify_544_proof_receipt(p, sha(text)),
+                       'released retained run')
+
+
+def t_544_completion_differs_from_callback(tmp):
+    # The accepted callback must equal the reviewer run's own completion; a
+    # receipt whose two copies disagree is not a faithful extraction.
+    fixture = r544_fixture()
+    fixture['reviewerRun']['completion'] = dict(fixture['reviewerRun']['completion'],
+                                                eventId='aa' * 32)
+    text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+    p = tmpfile(tmp, '544-proof-receipt.json', text)
+    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
+                   'differs from the reviewer run completion')
+
+
+def t_544_reviewer_run_unknown_field(tmp):
+    fixture = r544_fixture()
+    fixture['reviewerRun'] = dict(fixture['reviewerRun'], surprise='x')
+    text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+    p = tmpfile(tmp, '544-proof-receipt.json', text)
+    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
+                   'faithful Queue reviewer run record')
 
 
 def t_544_outcome_not_done(tmp):
@@ -782,10 +1045,10 @@ def t_544_proof_only_no_publication_link_via_run_ids(tmp):
 
 def t_544_outcome_review_ids_linked(tmp):
     # Invented publication ids are surrogate evidence and refuse: proof-only
-    # never publishes, so any non-null reviewId/commentId (retained or
-    # durable, even when mutually consistent) is unsupported.
+    # never publishes, so any non-null durable reviewId/commentId (even when
+    # mutually consistent) is unsupported, and the retained callback carries
+    # no publication fields at all.
     fixture = r544_fixture()
-    fixture['review'].update(reviewId=123, reviewCommentId=456)
     fixture['outcome']['review'].update(reviewId=123, commentId=456)
     text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
     p = tmpfile(tmp, '544-proof-receipt.json', text)
@@ -794,12 +1057,11 @@ def t_544_outcome_review_ids_linked(tmp):
 
 
 def t_544_outcome_review_ids_mismatch(tmp):
-    # Any non-null publication id refuses, whether mismatched across the
-    # retained/durable blocks or present on only one side.
-    for key, retained_key in (('reviewId', 'reviewId'),
-                              ('commentId', 'reviewCommentId')):
+    # Any non-null durable publication id refuses, whether mismatched across
+    # the two fields or present on only one of them; the retained callback's
+    # publication fields refuse on shape (t_544_callback_unknown_field).
+    for key, other in (('reviewId', 'commentId'), ('commentId', 'reviewId')):
         fixture = r544_fixture()
-        fixture['review'].update(reviewId=123, reviewCommentId=456)
         fixture['outcome']['review'].update(reviewId=123, commentId=456)
         fixture['outcome']['review'][key] = 999
         text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
@@ -807,16 +1069,10 @@ def t_544_outcome_review_ids_mismatch(tmp):
         expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
                        'invented publication')
         fixture2 = r544_fixture()
-        fixture2['review'][retained_key] = 123
+        fixture2['outcome']['review'][key] = 123
         text2 = json.dumps(fixture2, indent=2, sort_keys=True) + '\n'
-        p2 = tmpfile(tmp, key + '-retained-only.json', text2)
+        p2 = tmpfile(tmp, key + '-outcome-only.json', text2)
         expect_refused(lambda: verify_544_proof_receipt(p2, sha(text2)),
-                       'invented publication')
-        fixture3 = r544_fixture()
-        fixture3['outcome']['review'][key] = 123
-        text3 = json.dumps(fixture3, indent=2, sort_keys=True) + '\n'
-        p3 = tmpfile(tmp, key + '-outcome-only.json', text3)
-        expect_refused(lambda: verify_544_proof_receipt(p3, sha(text3)),
                        'invented publication')
 
 
@@ -855,6 +1111,8 @@ def t_544_valid(tmp):
     assert rec['inputs'] == list(PROOF_INPUTS)
     assert rec['execution_run_id'] == EXEC_RUN_ID
     assert rec['reviewer_run_id'] == REVIEWER_RUN_ID
+    assert rec['reviewer_agent_id'] == REVIEWER_AGENT_ID
+    assert rec['review_event_id'] == REVIEW_EVENT_ID
     assert rec['review_status'] == 'ready_to_merge' and rec['outcome'] == 'done'
     assert rec['sha256'] == sha(r544_text())
 
