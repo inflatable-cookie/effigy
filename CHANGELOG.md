@@ -1461,6 +1461,25 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Start a declared host-process workload whose run string names a path that
+  embeds a runner identity again. Since the host output provenance boundary,
+  a plain (non-listener) spawn specification classified every non-allowlisted
+  ambient value as secret, and the kernel's spawn preflight then refused any
+  workload whose argv contained such a value: a queue-owned runner embeds
+  its task and run identifiers in the workspace path the workload's own
+  command names, so every such spawn refused, the supervisor settled the
+  workload as a failed exit, the activation still reported success, and the
+  only evidence sat in `host-processes/<container>/<name>.log` where the
+  activation's own diagnostics did not read it (QA 434a16f6, QA05c6ed7f;
+  effigy#567). Classification now names its consumer: the canonical output's
+  redaction set keeps every unproven value classified, while the spawn
+  specification delivers unproven values to the child and never refuses the
+  author's own argv. Schema-proven secrets stay classified for both and keep
+  the kernel's argv refusal, and no redaction rule changed. The nested-effigy
+  proof's timeout evidence now reads the plain log shape the supervisor
+  writes for a listener-less environment, plus every host-process log the
+  fixture holds and its own process rows.
+
 - A capture pump drain commits at most one bounded 64 KiB window per stream
   instead of one durable append per pipe read. A chatty producer's full pipe
   paid the append-and-provenance dance (and the styled-tap window rewrite) up
