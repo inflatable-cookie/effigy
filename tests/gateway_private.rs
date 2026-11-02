@@ -7837,7 +7837,8 @@ fn plain_host_workload_refused_before_exec_fails_up_then_a_clean_up_starts() {
         host_log()
     );
     assert!(
-        !down_text.contains("contradicts itself") && !down_text.contains("group closure unverified"),
+        !down_text.contains("contradicts itself")
+            && !down_text.contains("group closure unverified"),
         "the owned stop reports verified closure: {down_text}"
     );
     assert!(
