@@ -36,7 +36,7 @@ reviewer owns the proof task and judges the actual receipt.
   `cb564fa64f15d080eb2b047454b55103e3e5857de2252de8be05a31a95eb00b1`. The
   binary is not committed and must not be installed.
 - Committed packet `colima-qualification-5f466914-r18.md`, SHA-256
-  `bf654bfcbee2fc9ebe706a945ef354f96fbd5360a5dd81f3986ccce8fe1e8c0e`. The
+  `545566ddd6f48bc14f2f16f1df0db68a4c16476293b0c54cbe58e46331d8e286`. The
   prior committed r17 revision (SHA-256
   `a9c83d12e693ba318fc45cb12a55b09da68eacdd27369c066eb1abe9baa0e7c9`) remains
   immutable history and is not executed.
