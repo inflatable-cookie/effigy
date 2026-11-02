@@ -166,6 +166,40 @@ print("EFFIGY_TOKEN=" + "s3cr3tvalue" * 2000, flush=True)
 time.sleep(120)
 "#;
 
+// Fully captured values straddling the 320-byte suffix boundary.
+const BOUNDARY_315_REFUSING: &str = r#"
+import http.server, os
+print("EFFIGY_TOKEN=" + "canary" * 52 + "xyz", flush=True)
+host, port = os.environ["EFFIGY_MANAGED_HOST_LISTENER_BIND"].rsplit(":", 1)
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(500)
+        self.end_headers()
+    def log_message(self, *args): pass
+http.server.HTTPServer((host, int(port)), Handler).serve_forever()
+"#;
+const BOUNDARY_400_REFUSING: &str = r#"
+import http.server, os
+print("EFFIGY_TOKEN=" + "canary" * 66 + "wxyz", flush=True)
+host, port = os.environ["EFFIGY_MANAGED_HOST_LISTENER_BIND"].rsplit(":", 1)
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(500)
+        self.end_headers()
+    def log_message(self, *args): pass
+http.server.HTTPServer((host, int(port)), Handler).serve_forever()
+"#;
+const BOUNDARY_315_CLOSED: &str = r#"
+import time
+print("EFFIGY_TOKEN=" + "canary" * 52 + "xyz", flush=True)
+time.sleep(120)
+"#;
+const BOUNDARY_400_CLOSED: &str = r#"
+import time
+print("EFFIGY_TOKEN=" + "canary" * 66 + "wxyz", flush=True)
+time.sleep(120)
+"#;
+
 const CONTAINER_DOMAIN: &str = "app.exposure.test";
 const FRONT_DOMAIN: &str = "front.exposure.test";
 const API_DOMAIN: &str = "api.exposure.test";
@@ -589,26 +623,28 @@ fn one_listener(child: &'static str) -> [FixtureListener; 1] {
 /// The child-output tail a failure text or progress line carries, bounded and
 /// with the secret-shaped value replaced.
 fn assert_bounded_redacted_tail(where_: &str, text: &str) {
-    // Failure text has a dedicated tail line as well as diagnostic context;
-    // progress carries its tail inline. Measure the actual tail on each front.
-    let tail = text
-        .lines()
-        .find_map(|line| line.strip_prefix("  last child output: "))
-        .or_else(|| text.split_once("last child output: ").map(|(_, tail)| tail))
-        .unwrap_or_else(|| panic!("{where_} names the child's output tail: {text}"));
+    let mut segments = text.split("last child output: ");
+    segments.next();
+    let tails: Vec<_> = segments.collect();
     assert!(
-        tail.len() <= TAIL_BOUND_BYTES,
-        "{where_} bounds the tail to {TAIL_BOUND_BYTES} bytes, got {}: {tail}",
-        tail.len()
+        !tails.is_empty(),
+        "{where_} names the child's output tail: {text}"
     );
-    assert!(
-        tail.contains("DB_PASSWORD=<redacted>") || tail.contains("EFFIGY_TOKEN=<redacted>"),
-        "{where_} keeps the secret-shaped key and redacts its value: {tail}"
-    );
-    assert!(
-        !tail.contains("hunter2") && !tail.contains("abcd1234"),
-        "{where_} never prints the secret value: {tail}"
-    );
+    for tail in tails {
+        let tail = tail.split("; its generation was settled").next().unwrap();
+        assert!(
+            tail.len() <= TAIL_BOUND_BYTES,
+            "{where_} bounds each tail: {tail}"
+        );
+        assert!(
+            tail.contains("DB_PASSWORD=<redacted>") || tail.contains("EFFIGY_TOKEN=<redacted>"),
+            "{where_} redacts each tail: {tail}"
+        );
+        assert!(
+            !tail.contains("hunter2") && !tail.contains("abcd1234"),
+            "{where_} never prints a secret: {tail}"
+        );
+    }
 }
 
 /// The brief's core case, through the real command: one ready container
@@ -1238,6 +1274,46 @@ fn detached_up_never_prints_a_secret_whose_marker_left_the_window() {
         );
     }
     fixture.down();
+}
+
+#[test]
+fn detached_up_redacts_fully_captured_boundary_values_on_all_surfaces() {
+    for (refusing, closed) in [
+        (BOUNDARY_315_REFUSING, BOUNDARY_315_CLOSED),
+        (BOUNDARY_400_REFUSING, BOUNDARY_400_CLOSED),
+    ] {
+        for json in [false, true] {
+            let fixture = ExposureFixture::new("boundary-secret", &one_listener(refusing), 30);
+            let error = fixture.up(json).expect_err("listener refuses readiness");
+            let output = if json {
+                error.json_error_details().expect("JSON details").to_owned()
+            } else {
+                error.to_string()
+            };
+            assert!(output.contains("EFFIGY_TOKEN=<redacted>"), "{output}");
+            assert!(!output.contains("canary"), "{output}");
+            fixture.down();
+        }
+        let fixture = ExposureFixture::new(
+            "boundary-progress",
+            &one_listener(closed),
+            LISTENER_OBSERVATION_BUDGET_SECS,
+        );
+        let _ = take_listener_progress();
+        let _ = fixture.up(false).expect_err("listener never binds");
+        let progress = take_listener_progress();
+        assert!(!progress.is_empty());
+        assert!(progress
+            .iter()
+            .any(|line| line.contains("EFFIGY_TOKEN=<redacted>")));
+        for line in progress {
+            assert!(!line.contains("canary"), "{line}");
+            if line.contains("last child output: ") {
+                assert!(line.contains("EFFIGY_TOKEN=<redacted>"), "{line}");
+            }
+        }
+        fixture.down();
+    }
 }
 
 /// A dependent whose dependency is withheld withholds its own route, and the
