@@ -6,12 +6,11 @@
 //! qualified private invocation, and a proof substitutes a fake backend there
 //! so the publication sequence itself is exercised against a real owner.
 //!
-//! The qualified invocation is not available yet. A same-Env apply needs the
-//! Env run to own kernel custody, and the workspace activation admits that run
-//! through `Run::begin_claimed_recoverable`, which refuses an activation that
-//! would carry a sentinel. Until resident Env custody lands, `qualified`
-//! performs no process work and reports the outcome unsettled, so no caller can
-//! mistake it for an executed apply.
+//! The qualified invocation is not available yet. Recoverable workspace Env
+//! admission can retain kernel custody, but this production caller does not yet
+//! supply a custody plan or a qualified Discard capability. Until that
+//! integration is qualified, `qualified` performs no process work and reports
+//! the outcome unsettled, so no caller can mistake it for an executed apply.
 
 use std::ffi::{OsStr, OsString};
 use std::path::Path;

@@ -1896,6 +1896,134 @@ fn retained_fixture_file(
 }
 
 #[test]
+fn reserved_env_admission_failure_returns_the_exact_partial_custodian() {
+    let home = effigy_test_support::short_tempdir("rf-").unwrap();
+    let cx = super::super::tests::context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let owner = ResourceId::environment(layered_checkout(), "reserved-failure").unwrap();
+    let reservation = crate::workspace_session::WorkspaceActivationReservation::reserve(
+        &cx,
+        &root,
+        &owner,
+        Wait::FailFast,
+    )
+    .unwrap();
+    let mut options = super::super::tests::opts(1);
+    options.custody = Some(LifecyclePlan {
+        executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+            .unwrap(),
+        placement: crate::supervise::Placement::Detached,
+    });
+    let mut fake = super::super::tests::Fake::new(home.path());
+    let helper_log = home.path().join("helpers.jsonl");
+    crate::fault::set_helper_log(Some(helper_log.clone()));
+    crate::fault::arm_point(
+        crate::fault::Point::WorkspaceSentinelAfterSpawn,
+        crate::fault::Fault::Enospc,
+    );
+    let result = Run::begin_claimed_recoverable(
+        &cx,
+        &root,
+        &super::super::tests::inv(owner.clone()),
+        options,
+        || Ok(super::super::tests::cleanup(&cx)),
+        &mut fake,
+        reservation.claim().unwrap(),
+    );
+    let fired = crate::fault::fired();
+    crate::fault::arm(None);
+    crate::fault::set_helper_log(None);
+    let (_, custody) = result.expect_err("partial startup must fail admission");
+    let custody = custody.expect("admitted Env owner must be returned");
+    let run_id = custody.run.id();
+    let partial = custody.run.partial_sentinel.as_ref().unwrap().child_id();
+    assert_eq!(run_id, super::super::tests::id(1));
+    assert!(fired && custody.run.guard.covers(&owner));
+    let (_, mut retained) = custody
+        .settle(&super::super::tests::cleanup(&cx), &mut fake)
+        .expect_err("unknown startup is not successful settlement");
+    assert_eq!(retained.run.id(), run_id);
+    assert_eq!(
+        retained.run.partial_sentinel.as_ref().unwrap().child_id(),
+        partial
+    );
+    assert!(retained.run.guard.covers(&owner));
+    // Fixture teardown by exact child, not evidence of production settlement.
+    retained
+        .run
+        .close_partial_workspace_sentinel(&super::super::tests::cleanup(&cx))
+        .unwrap();
+    for line in std::fs::read_to_string(helper_log).unwrap().lines() {
+        let child: ProcessIdentity = serde_json::from_str(line).unwrap();
+        assert_eq!(child.pid, partial);
+        reap_test_child(&child);
+    }
+    drop(retained);
+}
+
+#[test]
+fn reserved_env_admission_retains_interpolation_under_its_own_custody() {
+    let home = effigy_test_support::short_tempdir("rc-").unwrap();
+    let cx = super::super::tests::context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let owner = ResourceId::environment(layered_checkout(), "reserved-interpolation").unwrap();
+    let reservation = crate::workspace_session::WorkspaceActivationReservation::reserve(
+        &cx,
+        &root,
+        &owner,
+        Wait::FailFast,
+    )
+    .unwrap();
+    let mut options = super::super::tests::opts(1);
+    options.custody = Some(LifecyclePlan {
+        executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+            .unwrap(),
+        placement: crate::supervise::Placement::Detached,
+    });
+    let mut fake = super::super::tests::Fake::new(home.path());
+    let mut run = Run::begin_claimed_recoverable(
+        &cx,
+        &root,
+        &super::super::tests::inv(owner.clone()),
+        options,
+        || Ok(super::super::tests::cleanup(&cx)),
+        &mut fake,
+        reservation.claim().unwrap(),
+    )
+    .unwrap_or_else(|(error, _)| panic!("reserved custody admission: {error}"));
+    let backup = run.checkout_backup_identity().unwrap();
+    let sentinel = run.sentinel.as_ref().unwrap().identity.clone();
+    let directory = home.path().join("interpolation");
+    let process = crate::custody::Custody::spawn_interpolated(
+        &mut run,
+        crate::custody::ProcessSpec {
+            argv: vec!["/bin/sleep".into(), "30".into()],
+            env: std::collections::BTreeMap::new(),
+            cwd: home.path().into(),
+            grace: Duration::from_millis(10),
+            lifetime: crate::custody::Lifetime::Finite(Duration::from_secs(30)),
+            terminal: crate::custody::Terminal::None,
+            label: "reserved retained fixture".into(),
+        },
+        &cx,
+        retained_fixture_file(&directory),
+    )
+    .unwrap();
+    drop(process);
+    assert!(directory.join("compose-fixture.env").exists());
+    assert!(matches!(
+        Gate::probe(&cx.operation().observe().unwrap(), &root, &owner),
+        Observed::Verified(crate::gate::GateState::Held(_), _)
+    ));
+    run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake)
+        .unwrap_or_else(|(error, _)| panic!("reserved settlement: {error}"));
+    reap_test_child(&backup);
+    reap_test_child(&sentinel);
+    assert!(!directory.join("compose-fixture.env").exists());
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+}
+
+#[test]
 fn retained_interpolation_crosses_the_helper_and_cleans_only_after_group_closure() {
     let home = effigy_test_support::short_tempdir("if-").unwrap();
     let cx = super::super::tests::context();

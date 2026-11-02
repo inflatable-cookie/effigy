@@ -26,17 +26,24 @@ sequence is exercised against the real owner — journal, gate order, binding,
 gated re-observation, commit, selector switch and recovery — while the process
 custody of the apply is not claimed.
 
-The qualified invocation is still refused. A same-Env private apply needs the
-Env run to own kernel custody (`Custody::spawn_auxiliary` refuses a run without
-a sentinel), and the workspace activation admits that run through
-`Run::begin_claimed_recoverable`, which refuses an activation that would carry
-one (`crates/effigy-kernel/src/run/mod.rs`, "recoverable claimed admission
-requires an environment activation without a sentinel"). Resident Env custody,
-its sentinel placement and its owner-death/old-reader recovery are the deferred
-S1 item from #512; `Terminal::Discard`, the other way to keep backend bytes out
-of retained logs, is refused until helper identities carry a verified image
-(`crates/effigy-kernel/src/custody.rs`). Until those land, no workspace apply
-starts a backend and every deferred proof that needs one states that by name.
+The qualified invocation is still refused. Recoverable Env admission now accepts
+an explicit custody plan and starts it through the recoverable workspace
+sentinel path. A startup failure returns the exact cleanup-only owner, including
+any partial sentinel and checkout backup, rather than settling or dropping it
+behind the reservation caller. The kernel controls
+`reserved_env_admission_retains_interpolation_under_its_own_custody` and
+`reserved_env_admission_failure_returns_the_exact_partial_custodian` cover
+reserved admission, exact descriptor custody through handle drop, verified
+closure cleanup, and retained ownership on partial startup. They use real
+kernel helpers in disposable fixtures; they do not qualify a native backend,
+Discard, or a full workspace session.
+
+The production activation does not yet supply that custody plan or execute a
+private apply. Its qualification-only integration, helper image observation,
+and recovery composition remain required. `Terminal::Discard` is still refused
+until helper identities carry a verified image
+(`crates/effigy-kernel/src/custody.rs`). No normal CLI, config or environment
+switch enables private execution.
 
 Q-010 storage follows contract [052](052-runtime-kernel-contract.md) §3.1,
 §7 and §11, approved by planner and Tom (2026-10-22: "Approve"). Environment

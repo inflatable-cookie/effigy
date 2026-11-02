@@ -1501,7 +1501,9 @@ impl<'a> Run<'a> {
     }
 
     /// Preserve an already-admitted workspace Env owner when subsequent setup
-    /// fails. A failure before an owner is constructed returns no run.
+    /// fails, including partial sentinel startup. A failure before an owner is
+    /// constructed returns no run. Custody uses the recoverable workspace
+    /// startup path; it does not qualify Discard or private backend execution.
     #[allow(clippy::too_many_arguments)]
     pub fn begin_claimed_recoverable(
         cx: &EffectContext,
@@ -1515,9 +1517,13 @@ impl<'a> Run<'a> {
         if !matches!(
             claim,
             crate::workspace_session::ActivationClaim::Environment(_)
-        ) || opts.custody.is_some()
-        {
-            return Err((RunError::refused("recoverable claimed admission requires an environment activation without a sentinel"), None));
+        ) {
+            return Err((
+                RunError::refused(
+                    "recoverable claimed admission requires an environment activation",
+                ),
+                None,
+            ));
         }
         let mut retained = None;
         Self::begin_under(
@@ -1822,6 +1828,16 @@ impl<'a> Run<'a> {
             }
         }
         if let Some(plan) = opts.custody {
+            // Recoverable Env admission must not drop a partial helper or
+            // settle behind its caller's reservation. Return the exact owner,
+            // including any partial sentinel and checkout backup, on failure.
+            if let Some(retained) = retained.as_mut() {
+                if let Err(error) = run.enable_workspace_custody(&plan) {
+                    **retained = Some(Box::new(run));
+                    return Err(error);
+                }
+                return Ok(run);
+            }
             let registration = crate::supervise::spawn_sentinel(&run, root, &plan, &opts.next);
             match registration.and_then(|registration| run.register_lifecycle(registration, &plan))
             {
