@@ -363,6 +363,12 @@ def verify_544_proof_receipt(path, quoted_sha):
     proof-only result binding that SAME execution run and a distinct
     retained reviewer run, the retained review `ready_to_merge` at the same
     commit, and the durable `done` outcome with its `ready_to_merge` review.
+    Proof-only never publishes: the legitimate NO-PR shape is pr null with
+    both retained and durable publication ids null, and that all-null pair
+    is never itself a link — the link is the retained run-id pair
+    (execution.runId == result.executionRunId,
+    review.runId == result.reviewerRunId). Any non-null publication id is
+    invented surrogate evidence and refuses.
     Its file SHA-256 must equal the SHA the GO receipt quotes; any missing,
     malformed, ambiguous or mismatching provenance refuses.
     """
@@ -493,12 +499,23 @@ def verify_544_proof_receipt(path, quoted_sha):
         raise Refused('outcome review block is not the durable outcome projection')
     if outcome_review['status'] != 'ready_to_merge':
         raise Refused('durable outcome review is not ready_to_merge')
-    if outcome_review['reviewId'] is None and outcome_review['commentId'] is None:
-        raise Refused('durable outcome review has no identifier linking retained review')
-    for outcome_key, review_key in (('reviewId', 'reviewId'),
-                                    ('commentId', 'reviewCommentId')):
-        if review_key not in review or outcome_review[outcome_key] != review[review_key]:
-            raise Refused('durable outcome review %s differs from retained review' % outcome_key)
+    # Proof-only never publishes (Queue server/report.ts reportSchema omits
+    # reviewId/reviewCommentId; server/resolution.ts proof-only
+    # advanceReviewerResult records proofOnlyResult with
+    # executionRunId/reviewerRunId and never publishes;
+    # server/review-verdicts.ts reviewRecordFor defaults both publication ids
+    # to null; server/store.ts outcome projects missing publication ids as
+    # null). The all-null pair is the legitimate NO-PR transport shape and is
+    # never itself a link; the link is the retained run-id pair checked above.
+    # Any non-null publication id is invented surrogate evidence.
+    if review.get('reviewId') is not None \
+            or review.get('reviewCommentId') is not None:
+        raise Refused('retained review carries invented publication evidence; '
+                      'proof-only never publishes a PR review or comment')
+    if outcome_review.get('reviewId') is not None \
+            or outcome_review.get('commentId') is not None:
+        raise Refused('durable outcome carries invented publication evidence; '
+                      'proof-only never publishes a PR review or comment')
 
     return {'path': str(path), 'schema': obj['schema'],
             'task': task['reference'], 'task_id': task['id'],

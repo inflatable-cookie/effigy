@@ -28,7 +28,7 @@
       "input_notes": "r18 packet; r18 artifacts manifest; the frozen candidate binary itself"
     },
     "required_records": "queue.detail(taskId) -> task.proofOnly, task.proofExecution, the task.proofExecutions entry named by task.proofOnlyResult.executionRunId, task.proofOnlyResult, and the task.resolution.reviews entry named by task.proofOnlyResult.reviewerRunId; queue.outcome(taskId) -> {taskId, reference, outcome, reason, pr, review}",
-    "acceptance": "settled passed execution with exit 0 that is neither historical nor refused-before-selector; proofOnlyResult binds that execution run and a distinct retained reviewer run; retained review ready_to_merge at the same commit; durable outcome done with review ready_to_merge",
+    "acceptance": "settled passed execution with exit 0 that is neither historical nor refused-before-selector; proofOnlyResult binds that execution run and a distinct retained reviewer run; retained review ready_to_merge at the same commit; durable outcome done with review ready_to_merge and pr null; proof-only never publishes so both retained and durable publication ids are null and the linkage is the retained run-id pair, never a publication id",
     "binding": "the receipt file's SHA-256 is quoted by the exact warm-up GO receipt on its `544 receipt <sha256>` line; the extraction is transport only - a file alone grants no authority, and the operator GO, Acow reservation and consumer GO stay separate evidence",
     "superseded": "effigy#539 (all three authenticated refusedBeforeSelector receipts preserved, zero execution) is historical and can never supply qualification; a fresh GO carrying a `539 receipt` line refuses"
   },
@@ -156,9 +156,9 @@
     "learning.outcome": "state/schema/202608221003__baseline_learning.sql:150"
   },
   "helpers": {
-    "common.py": "93a2a1f05c14143eed601bf5c10a06d3e602c5dd9b5de73c1c001ee80e64e4d4",
+    "common.py": "58e2ca78e07fd062eaea96b1caec5a2d3cfb0b5131ecd535996e7e0aba845e5e",
     "warmup.py": "5bb7486a70ff538bee2da533261366ab30b4a69c056051165f5f14fe437b163b",
     "primary.py": "c4758de476109b25edfd02b387ea31003605499e54d3327751b7a1eae92f6325",
-    "boundaries.py": "5b0cca88969f7b3a2dc733f4764705eb1952fdbee2d68226dc8b10ed770b6c7d"
+    "boundaries.py": "5d333371d242635526e53b327994e2fd47aa417e586253b7ef3efa366218953c"
   }
 }

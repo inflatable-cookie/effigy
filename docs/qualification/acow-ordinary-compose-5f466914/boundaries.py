@@ -341,7 +341,11 @@ def r544_fixture(**over):
             'agentId': PROOF_AGENT_ID,
             'head': PROOF_COMMIT,
             'status': 'ready_to_merge',
-            'reviewId': 123,
+            # Proof-only never publishes: Queue reportSchema omits both
+            # publication ids, advanceReviewerResult records only
+            # executionRunId/reviewerRunId, reviewRecordFor defaults both to
+            # null and the store outcome projects missing ids as null.
+            'reviewId': None,
             'reviewCommentId': None,
             'at': '2026-11-02T13:00:00.000Z',
             'verdicts': [],
@@ -354,9 +358,13 @@ def r544_fixture(**over):
                       'accepted by retained reviewer %s'
                       % (PROOF_COMMIT, exec_run_id, REVIEWER_RUN_ID),
             'pr': None,
+            # NO-PR transport: both durable publication ids are null. The
+            # linkage is the retained run-id pair (execution.runId ==
+            # result.executionRunId, review.runId == result.reviewerRunId),
+            # never this null pair and never an invented publication id.
             'review': {'status': 'ready_to_merge',
                        'summary': 'accepted the r18 receipt',
-                       'commentId': None, 'reviewId': 123},
+                       'commentId': None, 'reviewId': None},
         },
     }
     obj.update(over)
@@ -750,16 +758,44 @@ def t_544_outcome_review_not_accepted(tmp):
                    'durable outcome review')
 
 
+def t_544_proof_only_no_publication_link_via_run_ids(tmp):
+    # Failing-first control for this task: the Queue-native NO-PR
+    # accepted-result shape (pr null, both retained and durable publication
+    # ids null, execution/reviewer run ids correctly linked) was refused by
+    # the old verifier (`durable outcome review has no identifier linking
+    # retained review`) and is accepted after the fix. The linkage is the
+    # retained run-id pair, never the null pair and never a publication id.
+    p = tmpfile(tmp, '544-proof-receipt.json', r544_text())
+    rec = verify_544_proof_receipt(p, sha(r544_text()))
+    assert rec['execution_run_id'] == EXEC_RUN_ID
+    assert rec['reviewer_run_id'] == REVIEWER_RUN_ID
+    # The null pair alone is not a link: the same null shape with a wrong
+    # reviewer run still refuses on the retained run-id binding.
+    fixture = r544_fixture()
+    fixture['result'] = dict(fixture['result'],
+                             reviewerRunId='dddddddd-0000-4f44-8155-666666666666')
+    text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+    p2 = tmpfile(tmp, '544-proof-null-unlinked.json', text)
+    expect_refused(lambda: verify_544_proof_receipt(p2, sha(text)),
+                   'not the retained reviewer run')
+
+
 def t_544_outcome_review_ids_linked(tmp):
+    # Invented publication ids are surrogate evidence and refuse: proof-only
+    # never publishes, so any non-null reviewId/commentId (retained or
+    # durable, even when mutually consistent) is unsupported.
     fixture = r544_fixture()
     fixture['review'].update(reviewId=123, reviewCommentId=456)
     fixture['outcome']['review'].update(reviewId=123, commentId=456)
     text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
     p = tmpfile(tmp, '544-proof-receipt.json', text)
-    verify_544_proof_receipt(p, sha(text))
+    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
+                   'invented publication')
 
 
 def t_544_outcome_review_ids_mismatch(tmp):
+    # Any non-null publication id refuses, whether mismatched across the
+    # retained/durable blocks or present on only one side.
     for key, retained_key in (('reviewId', 'reviewId'),
                               ('commentId', 'reviewCommentId')):
         fixture = r544_fixture()
@@ -769,27 +805,37 @@ def t_544_outcome_review_ids_mismatch(tmp):
         text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
         p = tmpfile(tmp, key + '-mismatch.json', text)
         expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
-                       'differs from retained review')
-        del fixture['review'][retained_key]
-        fixture['outcome']['review'][key] = None
-        text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
-        p = tmpfile(tmp, key + '-missing.json', text)
-        expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
-                       'differs from retained review')
+                       'invented publication')
+        fixture2 = r544_fixture()
+        fixture2['review'][retained_key] = 123
+        text2 = json.dumps(fixture2, indent=2, sort_keys=True) + '\n'
+        p2 = tmpfile(tmp, key + '-retained-only.json', text2)
+        expect_refused(lambda: verify_544_proof_receipt(p2, sha(text2)),
+                       'invented publication')
+        fixture3 = r544_fixture()
+        fixture3['outcome']['review'][key] = 123
+        text3 = json.dumps(fixture3, indent=2, sort_keys=True) + '\n'
+        p3 = tmpfile(tmp, key + '-outcome-only.json', text3)
+        expect_refused(lambda: verify_544_proof_receipt(p3, sha(text3)),
+                       'invented publication')
 
 
 def t_544_outcome_review_requires_link(tmp):
+    # The all-null publication pair is the legitimate NO-PR transport shape:
+    # it passes when the retained run-id pair links, and the link is checked
+    # through executionRunId/reviewerRunId, not through publication ids.
+    p = tmpfile(tmp, 'all-null.json', r544_text())
+    rec = verify_544_proof_receipt(p, sha(r544_text()))
+    assert rec['execution_run_id'] == EXEC_RUN_ID
+    assert rec['reviewer_run_id'] == REVIEWER_RUN_ID
+    # An invented publication id on either side refuses even when the run
+    # ids link correctly.
     fixture = r544_fixture()
-    fixture['review']['reviewId'] = None
-    fixture['outcome']['review']['reviewId'] = None
-    text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
-    p = tmpfile(tmp, 'all-null.json', text)
-    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)), 'no identifier')
     fixture['outcome']['review']['reviewId'] = 123
     text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
-    p = tmpfile(tmp, 'retained-null.json', text)
-    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
-                   'differs from retained review')
+    p2 = tmpfile(tmp, 'retained-null.json', text)
+    expect_refused(lambda: verify_544_proof_receipt(p2, sha(text)),
+                   'invented publication')
 
 
 def t_544_outcome_wrong_shape(tmp):

@@ -27,7 +27,7 @@ execution, installation and consumer data access remain separately GO-bound.
 | --- | --- | --- | --- |
 | Worktree warm-up | `python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/warmup.py` | `acow-warmup-go.txt` + accepted #544 r18 proof receipt + Supervisor/Acow/Tom GO chain | The rebuilt candidate on a disposable linked worktree at the exact Queue-QA path length (137 chars), the attach + plain `container up --detach` sequence, the nerdctl/mounts label budget, scoped health, and exact teardown that preserves ALL volumes |
 | Primary-data counts | `python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/primary.py` | `acow-primary-go.txt` (its own GO; warm-up GO never arms it) | Primary-data survival: counts-only observation of eight qualified tables through the existing postgres container against the owner baseline |
-| Boundary battery | installed-Effigy selector `test:qualification:acow` → `boundaries.py` | Always runnable; fake backends only | The packet's own fail-closed refusals (132 committed checks) |
+| Boundary battery | installed-Effigy selector `test:qualification:acow` → `boundaries.py` | Always runnable; fake backends only | The packet's own fail-closed refusals (133 committed checks) |
 
 Full route contracts, acceptance criteria, the GO token contracts, the
 refusal inventory and the evidence contract are in `packet-r1.md`; the
