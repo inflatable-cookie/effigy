@@ -985,12 +985,16 @@ def reconcile(decls, targets_meta, list_data, macros=None):
     feats_map = {(t["package"], t["binary"]): set(t["features_on"])
                  for t in targets_meta}
     dup_ids = []
-    seen = set()
+    groups = {}
     for d in decls:
         key = (d["package"], d["binary"], d["id"])
-        if key in seen:
+        groups.setdefault(key, []).append(d)
+    for key, group in groups.items():
+        # Known excluded variants cannot collide in this collection context.
+        # Unknown gates remain possible collisions and must be reported.
+        possible = [d for d in group if not d["gated_out"]]
+        if len(possible) > 1:
             dup_ids.append(key)
-        seen.add(key)
 
     matched = 0
     matched_ids = set()
@@ -1441,6 +1445,8 @@ fn integration_case() {}
 #[test]
 fn integration_feature_case() {}
 ''')
+        with open(os.path.join(tests_dir, "gated_target.rs"), "w") as f:
+            f.write("#[test]\nfn target_case() {}\n")
         pkg = {
             "name": "demo", "id": "demo",
             "features": {"default": [], "extra": ["dep:helper"]},
@@ -1525,8 +1531,17 @@ fn integration_feature_case() {}
             },
         }
         # inject a duplicate declaration to prove duplicate detection
-        decls_dup = decls + [dict(decls[0])]
+        active = next(d for d in decls if d["id"] == "m1::plain_collected")
+        excluded = dict(active, gated_out={"reason": "cfg(not(test))"})
+        paired = reconcile(decls + [excluded], targets_meta, list_data, macros)
+        if paired["duplicate_ids"]:
+            failures.append(f"excluded variant flagged as duplicate: {paired['duplicate_ids']}")
+        decls_dup = decls + [dict(active)]
         report = reconcile(decls_dup, targets_meta, list_data, macros)
+        target = [r for r in report["rows"] if r["id"] == "target_case"]
+        if len(target) != 1 or target[0]["class"] != "target-gated" or \
+                "fault-x" not in target[0]["why"]:
+            failures.append(f"target required-features control failed: {target}")
         nd_by_id = {x["id"]: x for x in report["no_declaration"]}
         gen = nd_by_id.get("m1::generated_plain")
         if gen is None or gen.get("class") != "macro-generated" or \
