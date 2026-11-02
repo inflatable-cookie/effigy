@@ -286,6 +286,44 @@ mod tests {
         assert!(text.contains(check_id::DEPENDENCY_LINK_HEALTH));
         assert_eq!(json["sections"][0]["severity"], "info");
         assert_eq!(json["findings"][0]["evidence"], finding.evidence);
+
+        // An error-severity drift finding must render the same evidence and
+        // remediation on both the text and JSON doctor surfaces.
+        let report = fixture_report(
+            ObservedState::Conflict,
+            vec![DriftReason {
+                code: "bun-saved-link-manifest-churn".to_owned(),
+                severity: DependencyHealthSeverity::Error,
+                message: "package.json contains a saved link specifier".to_owned(),
+                evidence: vec!["/consumer/package.json".to_owned()],
+                remediation: Some("restore package.json and re-link without --save".to_owned()),
+                package: Some("@scope/core".to_owned()),
+            }],
+        );
+        let findings = dependency_health_findings(Path::new("/consumer"), &report);
+        let expected_evidence = findings[0].evidence.clone();
+        let expected_remediation = findings[0].remediation.clone();
+        let mut state = DoctorState::new();
+        for finding in findings {
+            state.add_finding(finding);
+        }
+        let summary = state.summarize();
+        let doctor_report =
+            state.into_report("/consumer".to_owned(), summary, Vec::new(), Vec::new());
+
+        let text = crate::render::render_text(&doctor_report, true).expect("render doctor text");
+        let rendered = crate::render::render_json(&doctor_report).expect("render doctor json");
+        let json: serde_json::Value = serde_json::from_str(&rendered).expect("doctor json");
+
+        assert!(text.contains(&expected_evidence));
+        assert!(text.contains(&expected_remediation));
+        assert_eq!(
+            json["findings"][0]["check_id"],
+            check_id::DEPENDENCY_LINK_HEALTH
+        );
+        assert_eq!(json["findings"][0]["severity"], "error");
+        assert_eq!(json["findings"][0]["evidence"], expected_evidence);
+        assert_eq!(json["findings"][0]["remediation"], expected_remediation);
     }
 
     #[test]
@@ -359,45 +397,6 @@ mod tests {
 
         assert_eq!(findings[0].severity, DoctorSeverity::Warning);
         assert_eq!(findings[0].remediation, "run link again");
-    }
-
-    #[test]
-    fn doctor_text_and_json_render_the_same_dependency_health_contract() {
-        let dependency_report = fixture_report(
-            ObservedState::Conflict,
-            vec![DriftReason {
-                code: "bun-saved-link-manifest-churn".to_owned(),
-                severity: DependencyHealthSeverity::Error,
-                message: "package.json contains a saved link specifier".to_owned(),
-                evidence: vec!["/consumer/package.json".to_owned()],
-                remediation: Some("restore package.json and re-link without --save".to_owned()),
-                package: Some("@scope/core".to_owned()),
-            }],
-        );
-        let findings = dependency_health_findings(Path::new("/consumer"), &dependency_report);
-        let expected_evidence = findings[0].evidence.clone();
-        let expected_remediation = findings[0].remediation.clone();
-        let mut state = DoctorState::new();
-        for finding in findings {
-            state.add_finding(finding);
-        }
-        let summary = state.summarize();
-        let doctor_report =
-            state.into_report("/consumer".to_owned(), summary, Vec::new(), Vec::new());
-
-        let text = crate::render::render_text(&doctor_report, true).expect("render doctor text");
-        let rendered = crate::render::render_json(&doctor_report).expect("render doctor json");
-        let json: serde_json::Value = serde_json::from_str(&rendered).expect("doctor json");
-
-        assert!(text.contains(&expected_evidence));
-        assert!(text.contains(&expected_remediation));
-        assert_eq!(
-            json["findings"][0]["check_id"],
-            check_id::DEPENDENCY_LINK_HEALTH
-        );
-        assert_eq!(json["findings"][0]["severity"], "error");
-        assert_eq!(json["findings"][0]["evidence"], expected_evidence);
-        assert_eq!(json["findings"][0]["remediation"], expected_remediation);
     }
 
     fn fixture_report(state: ObservedState, drift: Vec<DriftReason>) -> DependencyStatusReport {

@@ -35,19 +35,3 @@ fn removed_scan_functions_are_absent_from_the_registered_runtime() {
         );
     }
 }
-
-#[test]
-fn kept_scan_functions_stay_exposed() {
-    let (_root, context) = scan_retirement_context("scan-retirement-kept");
-
-    for (script, feature) in [
-        ("scan::god_files(#{ threshold: 900 })", "scan.god_files"),
-        ("scan::duplicate_blocks(#{})", "scan.duplicate_blocks"),
-    ] {
-        let script = format!(
-            "let result = {script}; if result[\"feature\"] != \"{feature}\" {{ throw(\"wrong feature\"); }}"
-        );
-        execute_rhai_script(&context, &script, &[], &callbacks())
-            .expect("kept scan function should still report its feature");
-    }
-}

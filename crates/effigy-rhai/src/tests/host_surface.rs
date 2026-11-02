@@ -61,6 +61,8 @@ fn execute_rhai_script_exposes_task_effigy_and_container_helpers() {
             if gateway["feature"] != "gateway.status" { throw("gateway"); }
             let scan = scan::god_files(#{ threshold: 900 });
             if scan["feature"] != "scan.god_files" { throw("scan"); }
+            let blocks = scan::duplicate_blocks(#{});
+            if blocks["feature"] != "scan.duplicate_blocks" { throw("scan blocks"); }
             let config = config::effective();
             if config["feature"] != "config.effective" { throw("config effective"); }
             let raw = config::raw();

@@ -60,29 +60,10 @@ fn execute_rhai_script_exposes_declared_rhai_secrets() {
     assert_eq!(fs::read_to_string(marker).expect("marker"), "tok_secret");
 }
 
-#[test]
-fn execute_rhai_script_exposes_dedicated_secrets_module() {
-    let root = temp_root("rhai-secrets-module-present");
-    write_rhai_secret_manifest(&root, r#"targets = ["rhai"]"#);
-    write_test_vault(&root, "vault-passphrase", &[("api_token", "tok_secret")]);
-    let _env = ScopedTestEnv::set_many(&[(
-        "EFFIGY_TEST_SECRETS_PASSPHRASE",
-        "vault-passphrase".to_owned(),
-    )]);
-    let marker = root.join("secret.out");
-    let script = format!(
-        r#"
-            if !secrets::has("api_token") {{ throw("missing"); }}
-            let token = secrets::get("api_token");
-            fs::write_file("{}", token);
-        "#,
-        marker.display()
-    );
-
-    execute_rhai_script(&script_context(&root), &script, &[], &callbacks()).expect("execute");
-
-    assert_eq!(fs::read_to_string(marker).expect("marker"), "tok_secret");
-}
+// `execute_rhai_script_exposes_dedicated_secrets_module` was a byte-identical
+// twin of the test below (same manifest, vault, script and assertions, only a
+// different fixture directory name) and was pruned on 2026-11-03; the survivor
+// is `execute_rhai_script_exposes_declared_rhai_secrets`.
 
 #[test]
 fn execute_rhai_script_can_store_declared_rhai_secret() {
@@ -340,13 +321,16 @@ fn execute_rhai_script_skips_unrelated_required_secrets_when_script_is_secret_fr
     assert_eq!(fs::read_to_string(marker).expect("marker"), "ran");
 }
 
+/// The secrets gate consults the script scanner before running: a comment
+/// mention of the module and a foreign `mysecrets` import must both leave the
+/// script secret-free, so no required-secret preflight blocks the run.
 #[test]
-fn execute_rhai_script_ignores_comment_mentions_of_secrets_module() {
+fn execute_rhai_script_ignores_non_code_and_foreign_module_secret_mentions() {
     let root = temp_root("rhai-secret-comment-mention");
     let marker = root.join("ran.out");
     write_rhai_secret_manifest(&root, r#"targets = ["rhai"]"#);
     write_test_vault(&root, "vault-passphrase", &[]);
-    let script = format!(
+    let commented = format!(
         r#"
             // later: secrets::get("api_token")
             /* secrets::has("api_token") */
@@ -355,19 +339,15 @@ fn execute_rhai_script_ignores_comment_mentions_of_secrets_module() {
         marker.display()
     );
 
-    execute_rhai_script(&script_context(&root), &script, &[], &callbacks()).expect("execute");
+    execute_rhai_script(&script_context(&root), &commented, &[], &callbacks()).expect("execute");
+    assert_eq!(fs::read_to_string(&marker).expect("marker"), "ran");
 
-    assert_eq!(fs::read_to_string(marker).expect("marker"), "ran");
-}
-
-#[test]
-fn execute_rhai_script_ignores_longer_identifiers_that_contain_secrets() {
-    let root = temp_root("rhai-secret-mysecrets-module");
-    let marker = root.join("ran.out");
-    write_rhai_secret_manifest(&root, r#"targets = ["rhai"]"#);
-    write_test_vault(&root, "vault-passphrase", &[]);
-    fs::write(root.join("mysecrets.rhai"), "fn status() { () }\n").expect("write mysecrets module");
-    let script = format!(
+    fs::write(
+        root.join("mysecrets.rhai"),
+        "fn status() { () }\n",
+    )
+    .expect("write mysecrets module");
+    let foreign = format!(
         r#"
             import "mysecrets.rhai" as mysecrets;
             mysecrets::status();
@@ -376,8 +356,7 @@ fn execute_rhai_script_ignores_longer_identifiers_that_contain_secrets() {
         marker.display()
     );
 
-    execute_rhai_script(&script_context(&root), &script, &[], &callbacks()).expect("execute");
-
+    execute_rhai_script(&script_context(&root), &foreign, &[], &callbacks()).expect("execute");
     assert_eq!(fs::read_to_string(marker).expect("marker"), "ran");
 }
 

@@ -1,16 +1,15 @@
 use super::{summarize_health_task_json_failure, summarize_health_task_json_success};
 
+/// Both success fallbacks keep the raw payload readable: unparsable JSON and
+/// unknown-schema envelopes each surface the payload verbatim.
 #[test]
-fn success_summary_falls_back_to_raw_payload_when_json_is_invalid() {
+fn success_summary_falls_back_to_the_raw_payload() {
     let summary = summarize_health_task_json_success("not-json-payload");
     assert_eq!(
         summary,
         "health task executed successfully: not-json-payload"
     );
-}
 
-#[test]
-fn success_summary_falls_back_to_raw_payload_when_schema_is_unknown() {
     let summary = summarize_health_task_json_success(r#"{"schema":"other.v1","stdout":"healthy"}"#);
     assert_eq!(
         summary,
@@ -18,14 +17,13 @@ fn success_summary_falls_back_to_raw_payload_when_schema_is_unknown() {
     );
 }
 
+/// Both failure fallbacks keep the raw payload readable: unparsable JSON and
+/// unknown-schema envelopes each surface the payload verbatim.
 #[test]
-fn failure_summary_falls_back_to_raw_payload_when_json_is_invalid() {
+fn failure_summary_falls_back_to_the_raw_payload() {
     let summary = summarize_health_task_json_failure("not-json-payload");
     assert_eq!(summary, "health task execution failed: not-json-payload");
-}
 
-#[test]
-fn failure_summary_falls_back_to_raw_payload_when_schema_is_unknown() {
     let summary = summarize_health_task_json_failure(r#"{"schema":"other.v1","stderr":"bad"}"#);
     assert_eq!(
         summary,

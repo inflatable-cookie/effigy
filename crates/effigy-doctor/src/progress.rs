@@ -198,8 +198,10 @@ mod tests {
         }
     }
 
+    /// Each finished scan outcome ends with exactly one final line naming the
+    /// check and its outcome: clear, failed-with-findings, or stopped.
     #[test]
-    fn a_clear_check_ends_with_one_success_line() {
+    fn a_finished_scan_ends_with_one_line_for_its_outcome() {
         let ((), lines) = steps::capture_lines(|| {
             let mut reporter = DoctorProgressReporter::new(false).expect("reporter");
             reporter.start_scan(GOD_FILES);
@@ -207,10 +209,7 @@ mod tests {
             reporter.finish();
         });
         assert_eq!(lines, vec!["✓ god files: no problems found".to_owned()]);
-    }
 
-    #[test]
-    fn a_failed_check_ends_with_one_failure_line_that_points_at_findings() {
         let ((), lines) = steps::capture_lines(|| {
             let mut reporter = DoctorProgressReporter::new(false).expect("reporter");
             reporter.start_scan(DUPLICATE_BLOCKS);
@@ -220,10 +219,7 @@ mod tests {
             lines,
             vec!["✗ duplicate blocks: 2 errors, see the findings below".to_owned()]
         );
-    }
 
-    #[test]
-    fn a_stopped_check_ends_with_its_reason() {
         let ((), lines) = steps::capture_lines(|| {
             let mut reporter = DoctorProgressReporter::new(false).expect("reporter");
             reporter.start_scan(HEALTH_TASK);

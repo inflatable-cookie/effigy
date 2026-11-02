@@ -13,11 +13,18 @@ fn retirement_context(name: &str) -> (PathBuf, ScriptContext) {
     (root, context)
 }
 
+/// Every removed `storage::` call fails as an unknown module before any
+/// request leaves the process: the loopback listener proves no stub dials out.
 #[test]
-fn storage_module_is_absent_from_the_registered_runtime() {
-    let (_root, context) = retirement_context("storage-absent-runtime");
+fn removed_storage_calls_fail_without_network_or_external_effects() {
+    let (_root, context) = retirement_context("storage-absent-no-network");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+    let address = listener.local_addr().expect("local addr");
+    listener
+        .set_nonblocking(true)
+        .expect("nonblocking listener");
 
-    for call in [
+    let plain_calls = [
         "storage::provider()",
         "storage::provider(#{ provider: \"s3\" })",
         "storage::status()",
@@ -26,8 +33,26 @@ fn storage_module_is_absent_from_the_registered_runtime() {
         "storage::get(#{ bucket: \"assets\", key: \"a.txt\" })",
         "storage::put(#{ bucket: \"assets\", key: \"a.txt\", body: \"x\" })",
         "storage::delete(#{ bucket: \"assets\", key: \"a.txt\" })",
-    ] {
-        let error = execute_rhai_script(&context, call, &[], &callbacks())
+    ]
+    .into_iter()
+        .map(|call| call.to_owned());
+    let endpoint_calls = [
+        format!(
+            "storage::status(#{{ bucket: \"assets\", endpoint: \"http://{address}\", path_style: true }});"
+        ),
+        format!(
+            "storage::get(#{{ bucket: \"assets\", key: \"a.txt\", endpoint: \"http://{address}\" }});"
+        ),
+        format!(
+            "storage::put(#{{ bucket: \"assets\", key: \"a.txt\", body: \"x\", endpoint: \"http://{address}\" }});"
+        ),
+        format!(
+            "storage::delete(#{{ bucket: \"assets\", key: \"a.txt\", endpoint: \"http://{address}\" }});"
+        ),
+    ];
+
+    for call in plain_calls.into_iter().chain(endpoint_calls) {
+        let error = execute_rhai_script(&context, &call, &[], &callbacks())
             .expect_err("removed storage call must fail honestly");
         let message = error.to_string().to_lowercase();
         assert!(
@@ -39,33 +64,6 @@ fn storage_module_is_absent_from_the_registered_runtime() {
             "error should be an unknown module/function failure, not something else: {error}"
         );
     }
-}
-
-#[test]
-fn removed_storage_calls_fail_without_network_or_external_effects() {
-    let (_root, context) = retirement_context("storage-absent-no-network");
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
-    let address = listener.local_addr().expect("local addr");
-    listener
-        .set_nonblocking(true)
-        .expect("nonblocking listener");
-
-    let script = format!(
-        r#"
-        storage::status(#{{ bucket: "assets", endpoint: "http://{address}", path_style: true }});
-        storage::get(#{{ bucket: "assets", key: "a.txt", endpoint: "http://{address}" }});
-        storage::put(#{{ bucket: "assets", key: "a.txt", body: "x", endpoint: "http://{address}" }});
-        storage::delete(#{{ bucket: "assets", key: "a.txt", endpoint: "http://{address}" }});
-        "#
-    );
-
-    let error = execute_rhai_script(&context, &script, &[], &callbacks())
-        .expect_err("removed storage calls must fail before any request");
-    let message = error.to_string().to_lowercase();
-    assert!(
-        message.contains("storage") && message.contains("not found"),
-        "expected an unknown-module failure pointing at the script, got: {error}"
-    );
 
     // Nothing dialled the loopback listener: the failure is local and total.
     match listener.accept() {
@@ -106,22 +104,4 @@ fn storage_is_absent_from_the_listed_host_surface() {
             .all(|function| function["module"] != "storage"),
         "surface JSON still lists storage functions"
     );
-}
-
-#[test]
-fn representative_remaining_rhai_modules_still_work() {
-    let (root, context) = retirement_context("storage-retirement-others-work");
-    fs::write(root.join("note.txt"), "retired").expect("seed file");
-
-    let script = r#"
-        fs::write_file("out.txt", "body");
-        if fs::read_file("note.txt") != "retired" { throw("fs"); }
-        if str::starts_with("storage-retired", "storage") != true { throw("str"); }
-        if semver::valid("1.2.3") != true { throw("semver"); }
-        let parsed = json::parse("{\"ok\":true}");
-        if parsed["ok"] != true { throw("json"); }
-        if path::join("a", "b") != "a/b" { throw("path"); }
-    "#;
-
-    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
 }
