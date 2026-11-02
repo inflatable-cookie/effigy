@@ -1305,15 +1305,15 @@ impl Custody {
                         .as_ref(),
                 )?;
 
-                pending.transfer();
-                crate::fault_point!(SpawnBeforeGo)?;
-                pending.go()?;
                 Ok(())
             })();
             if let Err(error) = admitted {
                 lock(&core).record_pre_exec_closure();
                 return Err(error);
             }
+            pending.transfer();
+            crate::fault_point!(SpawnBeforeGo)?;
+            pending.go()?;
             crate::fault_point!(SpawnAfterGo)?;
             pending.executed(cx.operation())?;
             Ok(OwnedProcess { core, ticket })
