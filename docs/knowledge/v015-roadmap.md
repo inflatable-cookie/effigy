@@ -2,7 +2,7 @@
 
 Current direction: Q-011–Q-017 in [questions.md](questions.md), the runtime
 contracts, and the dated release direction in
-[release.md](contracts/release.md#v015-level-1-qualification-order-2026-11-02).
+[release.md](contracts/release.md#v015-level-1-qualification-order--2026-11-02).
 Queue owns live task status, lane order and proof receipts. This page states
 durable release gates; it does not qualify a source head or authorize native
 windows, installation, production enablement or publication.
