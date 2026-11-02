@@ -100,11 +100,7 @@ pub(in crate::runner) fn bring_up(
     // stops the environment before it releases the attachment, which the
     // kernel releases only once nothing else of the run is open.
     let up = run_up(run, plan, ansi_front, stop, progress);
-    let receipt = match &up {
-        Ok(code) => serde_json::json!({ "up": code }),
-        Err(NotReady::Failed(reason)) => serde_json::json!({ "up_failed": reason }),
-        Err(NotReady::Stopped(_)) => serde_json::json!({ "up_stopped": true }),
-    };
+    let receipt = bring_up_receipt(&up);
     // The obligation is recorded after the up, so the reverse-order settle
     // (K4) stops the environment before it releases the attachment, which the
     // kernel releases only once nothing else of the run is open.
@@ -138,25 +134,86 @@ pub(in crate::runner) fn bring_up(
         // The journal refuses effects once the run is settling, which is the
         // one window an owning client's death can open between `up` beginning
         // and the obligation being recorded. The settle never walks an
-        // unrecorded obligation, so an owned environment's stop is discharged
-        // here rather than leaked behind a `cleanup complete` report; the up
-        // child was already stopped, so the down meets no live gate hold. A
-        // borrowed environment owes no stop, so its failure just propagates.
-        if plan.borrowed {
-            return Err(error);
-        }
-        let recorded = match &error {
-            NotReady::Failed(reason) => reason.clone(),
-            NotReady::Stopped(_) => "the bring-up ended with its run".to_owned(),
-        };
-        settlement::discharge_environment(&effect)
-            .map_err(|release| NotReady::Failed(format!("{recorded}; {release}")))?;
+        // unrecorded obligation, so the outcome is decided by
+        // [`recording_refused_outcome`]: the owned stop discharges exactly
+        // once and the bring-up ends with the refusal named, a borrowed
+        // environment's failure propagates untouched, and a stopped up keeps
+        // its original cause.
+        return Err(recording_refused_outcome(
+            plan.borrowed,
+            || settlement::discharge_environment(&effect),
+            error,
+            &up,
+        ));
     }
     up?;
     if let Some(service) = &plan.exec_probe {
         exec_ready(run, plan, service, stop)?;
     }
     Ok(())
+}
+
+/// The receipt the bring-up journals for its `up` transition: the exit code
+/// when the transition completed, its failure reason when it failed, and the
+/// stopped mark when the run's own stop ended it.
+fn bring_up_receipt(up: &Result<i32, NotReady>) -> serde_json::Value {
+    match up {
+        Ok(code) => serde_json::json!({ "up": code }),
+        Err(NotReady::Failed(reason)) => serde_json::json!({ "up_failed": reason }),
+        Err(NotReady::Stopped(_)) => serde_json::json!({ "up_stopped": true }),
+    }
+}
+
+/// The bring-up's outcome once its obligation could not be recorded: an owned
+/// environment's stop is discharged exactly once and the bring-up ends with
+/// the journal refusal named, while a stopped up keeps its original cause; a
+/// borrowed environment owes no stop, so its recording failure propagates
+/// untouched and nothing is discharged.
+fn recording_refused_outcome(
+    borrowed: bool,
+    discharge: impl FnOnce() -> Result<(), String>,
+    recording: NotReady,
+    up: &Result<i32, NotReady>,
+) -> NotReady {
+    if borrowed {
+        return recording;
+    }
+    match discharge() {
+        Ok(()) => {
+            if let Err(NotReady::Stopped(cause)) = up {
+                return NotReady::Stopped(cause.clone());
+            }
+            match recording {
+                NotReady::Failed(reason) => NotReady::Failed(reason),
+                NotReady::Stopped(_) => {
+                    NotReady::Failed("the bring-up ended with its run".to_owned())
+                }
+            }
+        }
+        Err(release) => {
+            let reason = match &recording {
+                NotReady::Failed(reason) => reason.clone(),
+                NotReady::Stopped(_) => "the bring-up ended with its run".to_owned(),
+            };
+            NotReady::Failed(format!("{reason}; {release}"))
+        }
+    }
+}
+
+/// The exit code of an up transition whose stop is proven complete. An
+/// observation that cannot prove the transition ended refuses instead, so a
+/// live child is never hidden behind a stop report (the run names what it
+/// could not verify rather than claiming the transition is over).
+fn proven_up_stop_exit(observed: &Observed<effigy_kernel::custody::Exit>) -> Result<i32, String> {
+    match observed {
+        Observed::Verified(exit, _) => Ok(exit.code),
+        Observed::Absent(proof) => Err(format!(
+            "the stopped `up` process left no readable exit: {proof:?}"
+        )),
+        Observed::Unknown(reason) => Err(format!(
+            "the stopped `up` process's exit could not be observed: {reason}"
+        )),
+    }
 }
 
 /// `health_wait` after the workloads start: the routes they serve can answer
@@ -320,14 +377,19 @@ fn run_up(
             // obligation discharge a stop during bring-up needs, must meet no
             // live hold.
             let report = process.stop(&task_engine::cleanup_context(Duration::from_secs(30)));
-            if let Observed::Verified(exit, _) = report.leader {
-                let _ = process.complete(
-                    &mut *run
-                        .run_mut()
-                        .map_err(|error| NotReady::Failed(error.to_string()))?,
-                    exit,
-                );
-            }
+            // A stop that cannot prove the transition ended cannot hide a
+            // live child behind this poll: the bring-up names the unproven
+            // stop instead of reporting the stop cause as if the child were
+            // gone. The obligation recording that follows still runs, so the
+            // settle (or the discharge) owes the environment its stop either
+            // way.
+            let exit = proven_up_stop_exit(&report.leader).map_err(NotReady::Failed)?;
+            let _ = process.complete(
+                &mut *run
+                    .run_mut()
+                    .map_err(|error| NotReady::Failed(error.to_string()))?,
+                effigy_kernel::custody::Exit { code: exit },
+            );
             return Err(NotReady::Stopped(cause));
         }
         if Instant::now() >= next_progress_read {
@@ -675,5 +737,133 @@ mod tests {
             panic!("a spent budget fails");
         };
         assert!(reason.contains("503"), "{reason}");
+    }
+
+    /// The bring-up's journalled receipt names what its `up` transition did:
+    /// the exit, the failure, or the stop (effigy#547).
+    #[test]
+    fn the_up_receipt_records_the_transition_outcome() {
+        assert_eq!(bring_up_receipt(&Ok(7)), serde_json::json!({ "up": 7 }));
+        assert_eq!(
+            bring_up_receipt(&Err(NotReady::Failed("compose refused".to_owned()))),
+            serde_json::json!({ "up_failed": "compose refused" })
+        );
+        assert_eq!(
+            bring_up_receipt(&Err(NotReady::Stopped(StopCause::OwnerLost))),
+            serde_json::json!({ "up_stopped": true })
+        );
+    }
+
+    /// An owned recording refusal discharges the stop exactly once and ends
+    /// the bring-up with the journal refusal named (effigy#547).
+    #[test]
+    fn owned_recording_refusal_discharges_once_and_fails_the_bring_up() {
+        let mut discharges = 0;
+        let outcome = recording_refused_outcome(
+            false,
+            || {
+                discharges += 1;
+                Ok(())
+            },
+            NotReady::Failed(
+                "environment intent: run must settle before more effects".to_owned(),
+            ),
+            &Ok(0),
+        );
+        assert_eq!(discharges, 1, "the stop is discharged exactly once");
+        match outcome {
+            NotReady::Failed(reason) => assert!(
+                reason.contains("run must settle before more effects"),
+                "{reason}"
+            ),
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    /// An owned recording refusal with a stopped up keeps the original stop
+    /// cause instead of a generic failure (effigy#547).
+    #[test]
+    fn owned_recording_refusal_keeps_the_stopped_up_cause() {
+        let mut discharges = 0;
+        let outcome = recording_refused_outcome(
+            false,
+            || {
+                discharges += 1;
+                Ok(())
+            },
+            NotReady::Failed("environment intent: refused".to_owned()),
+            &Err(NotReady::Stopped(StopCause::OwnerLost)),
+        );
+        assert_eq!(discharges, 1);
+        match outcome {
+            NotReady::Stopped(StopCause::OwnerLost) => {}
+            other => panic!("expected Stopped(OwnerLost), got {other:?}"),
+        }
+    }
+
+    /// A borrowed environment owes no stop: a recording refusal propagates
+    /// untouched and nothing is discharged (effigy#547).
+    #[test]
+    fn borrowed_recording_refusal_propagates_without_discharging() {
+        let mut discharges = 0;
+        let outcome = recording_refused_outcome(
+            true,
+            || {
+                discharges += 1;
+                Ok(())
+            },
+            NotReady::Failed("environment receipt: refused".to_owned()),
+            &Ok(0),
+        );
+        assert_eq!(discharges, 0, "a borrowed environment is never stopped");
+        match outcome {
+            NotReady::Failed(reason) => assert_eq!(reason, "environment receipt: refused"),
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    /// A discharge that cannot prove the stop surfaces the journal refusal
+    /// and the release failure together (effigy#547).
+    #[test]
+    fn owned_failed_discharge_names_the_refusal_and_the_release() {
+        let outcome = recording_refused_outcome(
+            false,
+            || Err("`stack` was not brought down: refused".to_owned()),
+            NotReady::Failed("environment intent: run must settle".to_owned()),
+            &Ok(0),
+        );
+        match outcome {
+            NotReady::Failed(reason) => {
+                assert!(reason.contains("run must settle"), "{reason}");
+                assert!(reason.contains("was not brought down"), "{reason}");
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    /// An up-stop observation that cannot prove the transition ended refuses
+    /// instead of reporting the stop cause: a live child is never hidden
+    /// behind a stop report (effigy#547).
+    #[test]
+    fn an_unproven_up_stop_refuses_instead_of_reporting_the_stop() {
+        let evidence = effigy_kernel::observe::Evidence::new("fixture".to_owned(), None)
+            .expect("fixed evidence");
+        let proven = proven_up_stop_exit(&Observed::Verified(
+            effigy_kernel::custody::Exit { code: 143 },
+            evidence.clone(),
+        ));
+        let exit = proven.expect("proven exit");
+        assert_eq!(exit, 143);
+        let unobserved =
+            proven_up_stop_exit(&Observed::Unknown(
+                effigy_kernel::observe::UnknownReason::Injected,
+            ));
+        let reason = unobserved.expect_err("an unknown observation refuses");
+        assert!(reason.contains("could not be observed"), "{reason}");
+        let absent = proven_up_stop_exit(&Observed::Absent(
+            effigy_kernel::observe::AbsenceProof::NoGateInode,
+        ));
+        let reason = absent.expect_err("an absent exit refuses");
+        assert!(reason.contains("no readable exit"), "{reason}");
     }
 }

@@ -125,13 +125,19 @@ process whose argv mentions it (the substring `pi` is inside `api`, the digit
 the same values inside a child's captured output, where the proofs read
 published domains and recorded pids.
 `tests/gateway_private.rs::fixture_environment_command` and the managed-matrix
-case command remove the families (`CARGO_PROFILE_OXIDE_*`, `NEXTEST_*`,
+case command remove the families (the whole `CARGO_*` family - the
+fixture binary's path is itself under the cargo target directory, so
+`CARGO_TARGET_DIR` and nextest's `CARGO_BIN_EXE_*` collide with any argv
+that names the binary - plus `NEXTEST_*`,
 `CLAUDE_CODE_*`, `PI_*`, `PASEO_*`, `NORTHSTAR_*`, `AI_AGENT`, `CLAUDECODE`,
 `CLAUDE_AGENT_SDK_VERSION`, `CLICOLOR`, `CLICOLOR_FORCE`, `FORCE_COLOR`,
 `LS_COLORS`, `LSCOLORS`) before any fixture `effigy` invocation, and every
-daemon, supervisor and workload child inherits the stripped environment. A
-new ambient variable of this class is added to the strip list, not worked
-around in a proof.
+daemon, supervisor and workload child inherits the stripped environment.
+In-process runner fixtures share the test process's own environment, so an
+ambient-sensitive one strips the same families for its duration through
+`contract_test_support::strip_ambient_agent_environment`. A new ambient
+variable of this class is added to the strip list, not worked around in a
+proof.
 
 The disposable Docker command adapters model the production Compose
 invocation, including the detached bring-up's `--project-directory

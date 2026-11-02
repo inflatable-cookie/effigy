@@ -401,6 +401,10 @@ fn wait_for_file(root: &std::path::Path, name: &str) {
 #[test]
 fn managed_headless_plain_environment_shows_host_processes_and_its_workload() {
     let _guard = lock_test();
+    // This fixture runs in-process and spawns real host processes, so the
+    // test shell's ambient agent/harness values never reach Effigy's child
+    // classifier (a short ambient value refuses any argv that mentions it).
+    let _ambient = crate::contract_test_support::strip_ambient_agent_environment();
     let root = temp_workspace("managed-headless-plain-environment");
     // Owning a container environment resolves its gateway and volume state
     // under the Effigy home, so this session gets a private one.
