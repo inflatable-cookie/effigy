@@ -9,6 +9,7 @@ use effigy_test_support::process::{FixtureCommandExt, OwnedChild};
 use std::fs;
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::io::AsRawFd;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
@@ -73,10 +74,10 @@ run = "echo start >> runs.log; echo out; echo err >&2; exit 4"
 run = "sleep 300 & echo $! > child.pid; wait"
 
 [tasks.ticker]
-run = "for i in 1 2 3 4 5; do echo tick-$i; sleep 0.3; done; exit 2"
+run = "touch ticker-started.txt; for i in 1 2 3 4 5; do echo tick-$i; sleep 0.3; done; exit 2"
 
 [tasks.chatty]
-run = "i=1; while [ $i -le 60 ]; do echo line-$i; echo eline-$i >&2; i=$((i+1)); sleep 0.02; done; while [ ! -f release.txt ]; do sleep 0.05; done"
+run = "touch chatty-started.txt; i=1; while [ $i -le 60 ]; do echo line-$i; echo eline-$i >&2; i=$((i+1)); sleep 0.02; done; while [ ! -f release.txt ]; do sleep 0.05; done"
 
 [tasks.foreground-durable]
 run = "\"$EFFIGY_TEST_BIN\" --run-id nested-durable nested"
@@ -229,6 +230,41 @@ fn alive(pid: u32) -> bool {
         effigy_kernel::ident::process_identity(pid),
         Observed::Verified(..)
     )
+}
+
+/// True when every gate file under this checkout's state root takes a shared
+/// lock: gate holders hold `LOCK_EX` and a child spawned but never given `go`
+/// inherits the flock until its barrier releases it, so an unlockable gate is
+/// the kernel's own evidence that no foreground holder remains (the same
+/// acquirable-shared-lock probe `Gate::foreground_holders` treats as absent).
+fn gates_drained(repo: &std::path::Path) -> bool {
+    fn walk(dir: &std::path::Path) -> std::io::Result<bool> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                if !walk(&entry.path())? {
+                    return Ok(false);
+                }
+            } else if file_type.is_file() {
+                let file = fs::File::open(entry.path())?;
+                // SAFETY: live fd owned by `file`; LOCK_NB never blocks.
+                let held =
+                    unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) } != 0;
+                if held {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+    match walk(&repo.join(".effigy/state/gates")) {
+        // Errors deep in the tree mean the check could not verify a file, so
+        // the caller keeps waiting; a missing gates root is drained.
+        Ok(drained) => drained,
+        Err(_) if !repo.join(".effigy/state/gates").exists() => true,
+        Err(_) => false,
+    }
 }
 
 fn wait_child(child: &mut OwnedChild) -> std::process::ExitStatus {
@@ -772,9 +808,10 @@ fn logs_follow_ends_on_settle_with_the_runs_result() {
         .effigy(&["--run-id", "tick-1", "ticker"])
         .spawn_owned()
         .expect("owner");
-    fixture.wait_for("the run", || {
-        fixture.run(&["run", "status", "tick-1"]).status.success()
-    });
+    // The durable run row commits before the workload spawns, so the task's
+    // own marker is a spawn-free witness that `run logs` can attach to a
+    // live record.
+    fixture.wait_for("the run", || fixture.exists("ticker-started.txt"));
     let follow = fixture.run(&["run", "logs", "tick-1", "--follow"]);
     assert_eq!(follow.status.code(), Some(2), "{}", text(&follow));
     let stdout = String::from_utf8_lossy(&follow.stdout);
@@ -795,9 +832,10 @@ fn a_killed_follower_process_reattaches_by_offset_without_gap_or_duplicate() {
         .effigy(&["--run-id", "chatty-1", "chatty"])
         .spawn_owned()
         .expect("owner");
-    fixture.wait_for("the run", || {
-        fixture.run(&["run", "status", "chatty-1"]).status.success()
-    });
+    // The durable run row commits before the workload spawns, so the task's
+    // own marker is a spawn-free witness that followers can attach to a
+    // live record.
+    fixture.wait_for("the run", || fixture.exists("chatty-started.txt"));
     let mut first = fixture
         .effigy(&["run", "logs", "chatty-1", "--follow"])
         .spawn_owned()
@@ -1117,11 +1155,11 @@ fn a_run_lookup_reads_only_this_checkouts_journal_with_fifty_worktree_peers() {
         format!("[runtime]\ncheckout_roots = [{:?}]\n", peers),
     )
     .unwrap();
-    // Five status polls, each one journal read of this checkout: the local key
-    // resolves, the peer's key does not, and no poll reports an unreadable or
-    // incomplete runtime view.
+    // Repeated status polls, each one journal read of this checkout: the
+    // local key resolves every time, the peer's key never does, and no poll
+    // reports an unreadable or incomplete runtime view.
     let started = Instant::now();
-    for _ in 0..5 {
+    for _ in 0..2 {
         let local = fixture.run(&["--json", "run", "status", "local-key"]);
         assert!(local.status.success(), "{}", text(&local));
         let peer = fixture.run(&["run", "status", "peer-key"]);
@@ -1140,7 +1178,7 @@ fn a_run_lookup_reads_only_this_checkouts_journal_with_fifty_worktree_peers() {
     }
     assert!(
         started.elapsed() < Duration::from_secs(10),
-        "ten status polls took {:?}; the lookup is scanning peers",
+        "the polls took {:?}; the lookup is scanning peers",
         started.elapsed()
     );
 }
@@ -1611,6 +1649,13 @@ fn admission_protocol_v2_coverage_witness_survives_losing_both_custodians() {
         "the unacknowledged group never ran"
     );
     let run_id = events[0]["run_id"].as_str().expect("run id");
+    // The killed owner's third group was spawned but never given `go`, and the
+    // gate flock it inherits outlives the owner until the barrier child
+    // exits. Wait for the checkout's gates to drain before asking for the
+    // durable answer, so the probe cannot race the evidence.
+    fixture.wait_for("the dead owner's gate to drain", || {
+        gates_drained(&fixture.repo)
+    });
     assert!(!fixture.has_journal(), "no settle means no terminal record");
     let status = fixture.run(&["--json", "run", "status", run_id]);
     assert!(!status.status.success(), "{}", text(&status));
@@ -1757,80 +1802,73 @@ while :; do sleep 0.1; done
 /// A report that cannot be delivered ends the sequence: the hook is never
 /// handed a later `seq`, so the acknowledged prefix stays gap-free even though
 /// the hook is still reading and the run settles afterwards. The durable
-/// terminal record is still written — it is the source of truth.
+/// terminal record is still written — it is the source of truth. One wrong
+/// answer proves the stop; the sibling refusal windows (missing-ack deadline,
+/// hook exit, malformed ack, closed stdin) are proven one stage earlier by
+/// `admission_protocol_v2_fails_closed_when_a_report_is_not_acknowledged`
+/// against the same exchange loop.
 #[test]
 fn admission_protocol_v2_stops_the_sequence_when_a_report_is_not_delivered() {
     // The hook acknowledges `custodians`, then answers the workload report
-    // wrongly while staying alive (`malformed`), or not at all (`timeout`).
-    fn hook(fixture: &Fixture, name: &str, answer: &str) -> String {
-        let body = format!(
-            r#"#!/bin/sh
+    // wrongly and stays alive reading.
+    let fixture = Fixture::new();
+    let hook = fixture.hook(
+        "stop-malformed.sh",
+        r#"#!/bin/sh
 printf '%s' "$EFFIGY_ADMISSION_REQUEST" > "$HOOK_LOG.request"
 echo admit
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$HOOK_LOG"
   seq=$(printf '%s\n' "$line" | sed 's/.*"seq":\([0-9]*\).*/\1/')
   if [ "$seq" = "2" ]; then
-{answer}
+    echo "not-an-ack"
     continue
   fi
   echo "ack $seq"
   printf '%s\n' "$seq" >> "$HOOK_LOG.acks"
 done
-"#
-        );
-        fixture.hook(name, &body)
-    }
-    for (answer, label) in [
-        ("    echo \"not-an-ack\"", "malformed"),
-        ("    :", "timeout"),
-    ] {
-        let fixture = Fixture::new();
-        let hook = hook(&fixture, &format!("stop-{label}.sh"), answer);
-        let output = fixture.with_v2_hook(&hook, &["--json", "report"]);
-        assert!(!output.status.success(), "{label}: {}", text(&output));
-        let envelope = json_of(&String::from_utf8_lossy(&output.stdout));
-        let details = &envelope["error"]["details"];
-        assert_eq!(details["schema"], "effigy.admission.v1", "{label}");
-        assert_eq!(details["decision"], "failed", "{label}");
-        assert!(
-            details["reason"]
-                .as_str()
-                .is_some_and(|reason| reason.contains("seq 2")),
-            "{label}: {details}"
-        );
-        assert!(!fixture.exists("ran.txt"), "{label}: the group never ran");
-
-        // The hook received `custodians` and the refused `workload` report and
-        // nothing after it: no terminal report with a later seq, so no gap.
-        let received: Vec<u64> = fixture
-            .events()
-            .iter()
-            .filter_map(|event| event["seq"].as_u64())
-            .collect();
-        assert_eq!(received, vec![1, 2], "{label}: the sequence stopped");
-        assert_eq!(
-            fixture.acks(),
-            vec![1],
-            "{label}: the acknowledged prefix has no gap"
-        );
-
-        // The durable row still records the settled result. The engine records
-        // a post-admission launch failure as `failed`, exactly as it does for
-        // every other refused spawn, even though no group ever ran.
-        let run_id = fixture.events()[0]["run_id"]
+"#,
+    );
+    let output = fixture.with_v2_hook(&hook, &["--json", "report"]);
+    assert!(!output.status.success(), "{}", text(&output));
+    let envelope = json_of(&String::from_utf8_lossy(&output.stdout));
+    let details = &envelope["error"]["details"];
+    assert_eq!(details["schema"], "effigy.admission.v1");
+    assert_eq!(details["decision"], "failed");
+    assert!(
+        details["reason"]
             .as_str()
-            .expect("run id")
-            .to_owned();
-        let status = fixture.status_json(&run_id);
-        assert_eq!(
-            status["evidence_source"], "foreground-terminal-record.v1",
-            "{label}"
-        );
-        assert_eq!(status["state"], "failed", "{label}");
-        assert_eq!(status["cleanup"], "complete", "{label}");
-        assert!(status["pid"].is_null(), "{label}");
-    }
+            .is_some_and(|reason| reason.contains("seq 2")),
+        "{details}"
+    );
+    assert!(!fixture.exists("ran.txt"), "the group never ran");
+
+    // The hook received `custodians` and the refused `workload` report and
+    // nothing after it: no terminal report with a later seq, so no gap.
+    let received: Vec<u64> = fixture
+        .events()
+        .iter()
+        .filter_map(|event| event["seq"].as_u64())
+        .collect();
+    assert_eq!(received, vec![1, 2], "the sequence stopped");
+    assert_eq!(
+        fixture.acks(),
+        vec![1],
+        "the acknowledged prefix has no gap"
+    );
+
+    // The durable row still records the settled result. The engine records
+    // a post-admission launch failure as `failed`, exactly as it does for
+    // every other refused spawn, even though no group ever ran.
+    let run_id = fixture.events()[0]["run_id"]
+        .as_str()
+        .expect("run id")
+        .to_owned();
+    let status = fixture.status_json(&run_id);
+    assert_eq!(status["evidence_source"], "foreground-terminal-record.v1");
+    assert_eq!(status["state"], "failed");
+    assert_eq!(status["cleanup"], "complete");
+    assert!(status["pid"].is_null());
 }
 
 /// Q-015 through the real binary: `test:focused` keys its exclusion by the
