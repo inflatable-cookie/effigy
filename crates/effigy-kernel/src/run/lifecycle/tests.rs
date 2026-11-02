@@ -926,6 +926,52 @@ fn layered_workspace_sentinel_dead_owner_recovery() {
 }
 
 #[test]
+fn checkout_backup_retains_the_exact_environment_gate_description() {
+    let home = effigy_test_support::short_tempdir("eg-").unwrap();
+    let cx = super::super::tests::context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let owner = ResourceId::environment(layered_checkout(), "backup-gate").unwrap();
+    let mut fake = super::super::tests::Fake::new(home.path());
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &super::super::tests::inv(owner.clone()),
+        super::super::tests::opts(1),
+        &super::super::tests::cleanup(&cx),
+        &mut fake,
+    )
+    .unwrap();
+    run.enable_custody(&LifecyclePlan {
+        executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+            .unwrap(),
+        placement: crate::supervise::Placement::Detached,
+    })
+    .unwrap();
+    let backup = run.checkout_backup_identity().expect("qualified backup");
+    let sentinel = run.sentinel.as_ref().unwrap().identity.clone();
+    // Close only the caller's gate descriptions. The helper must already own
+    // duplicates of these very descriptions, not a newly opened gate inode.
+    let empty = Gate::acquire(&cx, &root, &[], Wait::FailFast).unwrap();
+    let original = std::mem::replace(&mut run.guard, empty);
+    drop(original);
+    let held = Gate::probe(&cx.operation().observe().unwrap(), &root, &owner);
+    // Reacquire the caller's guard only after closing the backup normally;
+    // record the observation before teardown so a failing control leaks nothing.
+    run.close_checkout_custody_recoverable(&super::super::tests::cleanup(&cx))
+        .unwrap();
+    run.guard = Gate::acquire(&cx, &root, &[owner], Wait::FailFast).unwrap();
+    let result = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    assert!(result.is_ok(), "fixture settlement: {result:?}");
+    reap_test_child(&backup);
+    reap_test_child(&sentinel);
+    drop(home);
+    assert!(
+        matches!(held, Observed::Verified(crate::gate::GateState::Held(_), _)),
+        "the acknowledged backup must retain the environment gate: {held:?}"
+    );
+}
+
+#[test]
 fn register_refuses_a_backup_that_has_exited_and_sends_no_frame() {
     let home = effigy_test_support::short_tempdir("ld-").unwrap();
     let cx = super::super::tests::context();

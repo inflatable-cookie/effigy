@@ -46,10 +46,14 @@ impl Run<'_> {
         let Some(sentinel) = &self.sentinel else {
             return Ok(());
         };
+        // Share the Run's actual exclusion descriptions as well as the
+        // checkout lease. A pathname reopened by the helper would be a different
+        // flock owner; explicit unlock on caller drop would release both copies.
+        let owner_gates = self.guard.share_custody()?;
         match MemoryGuard::start_recoverable(
             &sentinel.executable,
             &mut custody.lease.guard,
-            &[],
+            &owner_gates,
             &self.cx,
             self.id,
             self.owner.clone(),

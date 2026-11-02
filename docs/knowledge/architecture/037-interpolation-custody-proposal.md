@@ -97,9 +97,11 @@ supported platform before enabling cleanup there.
 
 The current checkout backup uses a pipe-only `MemoryGuard`; its Register frame
 carries an effect receipt but cannot transfer an open file description. The
-current `SpawnGate` sees a process receipt before `go`, but the process core is
-installed only after that callback. Neither interface by itself transfers the
-interpolation file descriptor, lock, parent descriptor and cleanup phase into
+current `SpawnGate` sees a process receipt before `go`, and the process core is
+installed before that callback. This live core installation is necessary for
+retained ownership but does not transfer interpolation descriptors. Neither
+interface by itself transfers the interpolation file descriptor, lock, parent
+descriptor and cleanup phase into
 custody. A new implementation must not interpret either acknowledgement as
 proof of that handoff.
 
@@ -120,13 +122,13 @@ retains the same pending owner and descriptors; a retry reconciles the request
 number and actual helper state, never sends a new file as a replacement. A
 helper incapable of this protocol refuses before the child can execute.
 
-Tom's 2026-11-02 ruling selects an extension of the existing checkout backup
-for retry: it must retain the exact descriptors and gate across Unknown and
+The Queue planner's 2026-11-02 answer on Tom's behalf selects an extension of
+the existing checkout backup for retry: it must retain the exact descriptors and gate across Unknown and
 provide an authenticated retry channel. The current pipe-only backup cannot
 do this: after its owner pipe closes it runs one settlement pass, then drops
-its gates and exits even when that pass left residue. It currently receives
-the checkout lease, not the Env Run's own gate. The implementation must
-retain both relevant gate custody and the exact file and directory descriptions
+its gates and exits even when that pass left residue. It now receives
+the checkout lease and duplicates of the Env Run's own gate descriptions.
+The descriptor handoff must retain both relevant gate custody and the exact file and directory descriptions
 before acknowledging the handoff, and retain that same custody if the reply
 is lost. An ordinary Env `finish` also discards the recoverable Run on error;
 the retained path must keep or transfer that owner instead. This ruling does

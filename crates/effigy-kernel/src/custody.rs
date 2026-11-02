@@ -1131,18 +1131,6 @@ impl Custody {
             crate::fault_point!(AnchorRecord)?;
             // The memory backup retains the receipt before go.
             run.ack_process(&ticket)?;
-            // The caller's gate runs while the child is still behind the
-            // barrier and before this process retains its core, so a refusal is
-            // settled from the recorded receipt: the child never execed and
-            // `Blocked::drop` leaves no live member of its group.
-            if let Some(gate) = gate {
-                gate.before_go(&receipt)?;
-            }
-            // The barrier has not opened yet: re-prove the exact leader and
-            // anchor under the same ownership before `go`, so a death or a
-            // replacement in the register/gate window cannot reach exec.
-            retained_leader(&receipt)?;
-            qualify_anchor(&receipt, anchor.as_ref())?;
             let (stdout, stderr, terminal) = pending.take_streams();
             let stdin = pending.take_input();
             let logs = if matches!(spec.terminal, Terminal::Discard) {
@@ -1208,6 +1196,24 @@ impl Custody {
                 capture_eof_sent: false,
             }));
             run.retain_process(ticket.sequence(), core.clone());
+            // Install live custody before the caller's handoff. A refusal leaves
+            // this exact core in the Run; Blocked still owns the closed barrier
+            // and reaps the pre-exec group. Neither receipt publication nor a
+            // handoff acknowledgement can leave a runnable, unowned child.
+            if let Some(gate) = gate {
+                gate.before_go(&receipt)?;
+            }
+            // Re-prove both incarnations after the potentially slow handoff,
+            // immediately before transferring the barrier to live custody.
+            retained_leader(&receipt)?;
+            qualify_anchor(
+                &receipt,
+                core.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .anchor
+                    .as_ref(),
+            )?;
+
             pending.transfer();
             crate::fault_point!(SpawnBeforeGo)?;
             pending.go()?;

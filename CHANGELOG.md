@@ -8,6 +8,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Keep the Env Run's exact exclusion gates in checkout backup custody before
+  acknowledging process registration; install live process custody before a
+  caller's final spawn handoff.
+
 - Preserve the interpolation file lock while a transferred file description is
   still held; preparing custody leaves cleanup refused without group closure.
 
