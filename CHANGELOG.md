@@ -1449,7 +1449,6 @@ During v0.x, MINOR bumps may include breaking changes.
 - Name environment recovery commands with the CLI's `container <NAME> <verb>`
   argument order so actual sentinel admission accepts them.
 
-
 - A managed run whose owning client dies while its environment is still being
   brought up no longer leaks the environment behind a `cleanup complete`
   report. The run journals its environment-stop obligation once `up` ends, so
