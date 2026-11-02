@@ -589,12 +589,14 @@ fn one_listener(child: &'static str) -> [FixtureListener; 1] {
 /// The child-output tail a failure text or progress line carries, bounded and
 /// with the secret-shaped value replaced.
 fn assert_bounded_redacted_tail(where_: &str, text: &str) {
-    // Failure text has a dedicated tail line as well as diagnostic context;
-    // progress carries its tail inline. Measure the actual tail on each front.
+    // The reader emits a contiguous multi-line suffix of the child's own last
+    // block, so the tail spans several lines on every front. A failure text can
+    // name it once per evidence layer — the wait's diagnostic embeds one and
+    // the report adds its own — so measure the last named segment: each layer's
+    // tail is the bounded, redacted one, and the segment after it is prose.
     let tail = text
-        .lines()
-        .find_map(|line| line.strip_prefix("  last child output: "))
-        .or_else(|| text.split_once("last child output: ").map(|(_, tail)| tail))
+        .rsplit_once("last child output: ")
+        .map(|(_, tail)| tail)
         .unwrap_or_else(|| panic!("{where_} names the child's output tail: {text}"));
     assert!(
         tail.len() <= TAIL_BOUND_BYTES,

@@ -600,8 +600,9 @@ fn wait_for_listener_activation(
 
 /// Bytes of a child's log this wait reads before bounding the tail it names.
 const LISTENER_OUTPUT_TAIL_READ_BYTES: u64 = 8 * 1024;
-/// Maximum UTF-8 bytes retained from already-redacted child output. Readers
-/// select a contiguous suffix and never apply another redactor.
+/// Maximum UTF-8 bytes retained from capture-redacted child output before the
+/// secret-shaped value pass. Readers select a contiguous suffix of one child
+/// block and never interpret ANSI or join text across supervisor messages.
 const LISTENER_OUTPUT_TAIL_BYTES: usize = 320;
 /// Characters of a listener's failure detail a report keeps.
 pub(super) const MAX_LISTENER_FAILURE_DETAIL_BYTES: usize = 900;
@@ -615,8 +616,11 @@ pub(super) const MAX_LISTENER_FAILURE_DETAIL_BYTES: usize = 900;
 /// nothing.
 ///
 /// Read only an identity-proven canonical file. Excerpts are a contiguous
-/// bounded suffix of one child block; no ANSI interpreter or second redactor
-/// transforms persisted bytes or joins text across supervisor messages.
+/// bounded suffix of one child block; no ANSI interpreter transforms persisted
+/// bytes or joins text across supervisor messages. Capture already redacted
+/// the log's classified secret values; the tail then replaces values of
+/// secret-shaped `key=value` words too, because a child can print a
+/// credential Effigy never classified (effigy#548).
 fn listener_output_tail(log_path: &Path) -> Option<String> {
     use std::io::{Read as _, Seek, SeekFrom};
     use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
@@ -659,7 +663,7 @@ fn listener_output_tail(log_path: &Path) -> Option<String> {
     if text.chars().any(|ch| ch.is_control() && ch != '\n') {
         return None;
     }
-    listener_child_block(text)
+    listener_child_block(text).map(|tail| effigy_ui::human::redact(&tail))
 }
 
 fn listener_child_block(text: &str) -> Option<String> {
@@ -3582,9 +3586,151 @@ os.execv('/bin/sleep', ['sleep', '60'])
         assert!(rows[0].listener.is_none(), "{rows:?}");
     }
 
-    /// Real custody cutover, then the bundled direct inode/offset follower.
-    /// Only the follower's pre-cutover stat snapshot is mocked: its new file
-    /// open, fstat, decoder, gap and payload handling run against the real log.
+    /// Test-only transcription of the bundled Underlay profile follower's
+    /// import contract: `external/bundles/underlay` gitlink `1d79637c`,
+    /// `scripts/dev/profile_env.py` (`LOG_RESTART_MARKER`, `_file_identity`,
+    /// `host_process_log`, `follow_log`), copied verbatim. The bundle's own
+    /// suite (`scripts/dev/profile_env_test.py`, run by the Effigy selector
+    /// `test:managed:output:underlay`) proves the algorithm against the bundle
+    /// source; this transcription keeps Effigy's cutover proof hermetic, so it
+    /// runs against a real custody cutover without requiring the submodule
+    /// checkout (effigy#548). Update it only with the bundle's follower.
+    const FOLLOWER_SCAFFOLD: &str = r#"
+from __future__ import annotations
+
+import codecs
+import os
+import sys
+import time
+from pathlib import Path
+
+LOG_RESTART_MARKER = "\u2026 log restarted \u2026\n"
+
+
+def _file_identity(stat_result) -> tuple:
+    return (stat_result.st_dev, stat_result.st_ino)
+
+
+def host_process_log(repo: Path, container: str, process: str) -> Path | None:
+    root = repo / ".effigy" / "runtime" / "host-processes" / container
+    logs = sorted(root.glob(f"**/{process}.log"), key=lambda path: path.stat().st_mtime)
+    return logs[-1] if logs else None
+
+
+def follow_log(repo: Path, container: str, process: str, out=sys.stdout, sleep=time.sleep, forever=True) -> None:
+    """Stream one host process's output from the moment the tab opens.
+
+    The opened file's ``(st_dev, st_ino)`` identity is tracked alongside the
+    byte offset, and new bytes are read from the same opened descriptor
+    whose identity was checked, so a path replacement (Effigy quarantines
+    the old untrusted log under a new inode before a sanitized generation
+    starts) never mixes pre- and post-cutover bytes.  A descriptor that
+    races a cutover already announced this poll is stale, never read: the
+    next poll reads the observed file under the single emitted marker.
+    On an identity change
+    or an observed shrink the offset resets to zero and exactly one
+    ``\u2026 log restarted \u2026`` gap line is emitted before the new bytes.
+
+    Limit: an in-place truncate followed by a fast append that regrows past
+    the saved offset, all under the same inode between two polls, is
+    indistinguishable by size/inode alone and is not treated as a restart.
+    That variant needs an explicit generation/cutover signal; Effigy
+    quarantines under a new inode, so the identity rule covers it.
+
+    Only complete UTF-8 sequences are decoded across polls: a trailing
+    partial code point is held for the next read instead of emitting a
+    replacement character.  Truly invalid bytes still decode with the
+    existing ``replace`` behavior.  The incremental decoder buffers at most
+    the bytes of one incomplete sequence, so pending state stays bounded.
+    """
+    log = host_process_log(repo, container, process)
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    identity = None
+    offset = 0
+    if log:
+        try:
+            identity = _file_identity(log.stat())
+            offset = log.stat().st_size
+        except OSError:
+            identity = None
+            offset = 0
+    else:
+        print(f"[dev] waiting for `{process}` to start...", file=out, flush=True)
+    while True:
+        log = host_process_log(repo, container, process) or log
+        if log and log.exists():
+            try:
+                path_stat = log.stat()
+            except OSError:
+                path_stat = None
+            if path_stat is not None:
+                path_identity = _file_identity(path_stat)
+                announced = False
+                previous = identity
+                if identity is None:
+                    identity = path_identity
+                elif path_identity != identity or path_stat.st_size < offset:
+                    identity = path_identity
+                    offset = 0
+                    decoder.reset()
+                    out.write(LOG_RESTART_MARKER)
+                    out.flush()
+                    announced = True
+                try:
+                    handle = log.open("rb")
+                except OSError:
+                    pass
+                else:
+                    with handle:
+                        try:
+                            live_stat = os.fstat(handle.fileno())
+                        except OSError:
+                            live_stat = None
+                        if live_stat is not None:
+                            live_identity = _file_identity(live_stat)
+                            skip_read = False
+                            if live_identity != identity:
+                                if announced and live_identity == previous:
+                                    # The open raced a path cutover that this
+                                    # poll already announced: the descriptor
+                                    # is the pre-cutover generation. Never
+                                    # emit it; the next poll reads the file
+                                    # the path now shows, with this poll's
+                                    # single marker covering the gap.
+                                    skip_read = True
+                                else:
+                                    identity = live_identity
+                                    offset = 0
+                                    decoder.reset()
+                                    if not announced:
+                                        out.write(LOG_RESTART_MARKER)
+                                        out.flush()
+                                        announced = True
+                            elif live_stat.st_size < offset:
+                                offset = 0
+                                decoder.reset()
+                                if not announced:
+                                    out.write(LOG_RESTART_MARKER)
+                                    out.flush()
+                                    announced = True
+                            if not skip_read and live_stat.st_size > offset:
+                                handle.seek(offset)
+                                chunk = handle.read(live_stat.st_size - offset)
+                                offset += len(chunk)
+                                text = decoder.decode(chunk, final=False)
+                                if text:
+                                    out.write(text)
+                                    out.flush()
+        if not forever:
+            return
+        sleep(0.25)
+"#;
+
+    /// Real custody cutover, then the bundled direct inode/offset follower's
+    /// contract, transcribed test-only so the proof needs no submodule
+    /// checkout. Only the follower's pre-cutover stat snapshot is mocked: its
+    /// new file open, fstat, decoder, gap and payload handling run against the
+    /// real log.
     #[test]
     fn canonical_cutover_and_bundled_underlay_follower_use_the_same_new_inode() {
         use std::os::unix::fs::MetadataExt as _;
@@ -3674,13 +3820,14 @@ with patch.object(profile_env,'host_process_log',return_value=log), patch.object
     profile_env.follow_log(log.parent,'web','app',out=out,forever=False)
 print(json.dumps(out.getvalue()))
 "#;
+        let scaffold = fixture.checkout.join(".effigy/follower-scaffold");
+        fs::create_dir_all(&scaffold).unwrap();
+        fs::write(scaffold.join("profile_env.py"), FOLLOWER_SCAFFOLD).unwrap();
         let output = std::process::Command::new("python3")
             .env("PYTHONDONTWRITEBYTECODE", "1")
             .arg("-c")
             .arg(script)
-            .arg(
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("external/bundles/underlay/scripts/dev"),
-            )
+            .arg(&scaffold)
             .arg(&path)
             .arg(
                 serde_json::json!({"device":old.dev(),"inode":old.ino(),"length":old.len()})
@@ -4511,23 +4658,80 @@ while True:
 
     /// A value longer than the read window loses its `key=` marker to the
     /// window edge, so the line it sits on is dropped whole rather than printed
-    /// with part of the secret (effigy#455).
+    /// with part of the secret (effigy#455). The canonical reader proves this
+    /// against a real custody capture, not a plain file.
     #[test]
     fn listener_output_tail_never_prints_a_value_whose_marker_was_cut() {
-        let dir = tempfile::tempdir().expect("fixture dir");
-        let log = dir.path().join("app.log");
-        fs::write(
-            &log,
-            format!(
-                "vite: internal server error\nDB_PASSWORD={}\n",
-                "s3cr3tvalue".repeat(2_000)
+        let fixture = fixture();
+        let value = "s3cr3tvalue".repeat(2_000);
+        let child = host_process(
+            "app",
+            &format!(
+                r#"printf 'vite: internal server error\nDB_PASSWORD=%s\nclean line\n' '{value}'"#
             ),
-        )
-        .expect("write the fixture log");
-        let tail = listener_output_tail(&log).unwrap_or_default();
+            HostProcessRestart::Never,
+        );
+        let policy = policy(&fixture.checkout, vec![child]);
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+            .expect("canonical producer starts");
+        wait_until("canonical producer closes", || {
+            super::kernel_run::host_process_status(&fixture.checkout, &policy)
+                .first()
+                .is_some_and(|state| state.state == "closed")
+        });
+        let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("app.log");
+        let tail = listener_output_tail(&log)
+            .unwrap_or_else(|| panic!("the canonical tail is readable: {}", log.display()));
         assert!(
-            !tail.contains("s3cr3tvalue"),
-            "a value whose marker is outside the window is never printed: {tail}"
+            tail.contains("clean line"),
+            "the window's last complete lines still read: {tail}"
+        );
+        assert!(
+            !tail.contains("s3cr3tvalue") && !tail.contains("DB_PASSWORD="),
+            "a line whose `key=` marker is outside the window is dropped whole: {tail}"
+        );
+    }
+
+    /// A child can print a credential-shaped `key=value` Effigy never
+    /// classified, so the tail replaces its value even though capture had no
+    /// secret to redact (effigy#548). A value capture did classify keeps its
+    /// replacement: the tail surface names the key with one redacted value.
+    #[test]
+    fn listener_output_tail_redacts_a_secret_shaped_value_capture_did_not_classify() {
+        let fixture = fixture();
+        fs::write(
+            fixture.checkout.join(".env.schema"),
+            "# @sensitive\nDB_PASSWORD=\n",
+        )
+        .unwrap();
+        let mut child = host_process(
+            "app",
+            r#"printf 'vite: internal server error\nDB_PASSWORD=%s\nEFFIGY_TOKEN=abcd1234\n' "$DB_PASSWORD""#,
+            HostProcessRestart::Never,
+        );
+        child.env = vec![("DB_PASSWORD".into(), "hunter2".into())];
+        let policy = policy(&fixture.checkout, vec![child]);
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+            .expect("canonical producer starts");
+        wait_until("canonical producer closes", || {
+            super::kernel_run::host_process_status(&fixture.checkout, &policy)
+                .first()
+                .is_some_and(|state| state.state == "closed")
+        });
+        let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("app.log");
+        let tail = listener_output_tail(&log)
+            .unwrap_or_else(|| panic!("the canonical tail is readable: {}", log.display()));
+        assert!(
+            tail.contains("vite: internal server error"),
+            "the tail is the child's own output: {tail}"
+        );
+        assert!(
+            tail.contains("DB_PASSWORD=<redacted>") && tail.contains("EFFIGY_TOKEN=<redacted>"),
+            "the tail keeps the secret-shaped keys and redacts their values: {tail}"
+        );
+        assert!(
+            !tail.contains("hunter2") && !tail.contains("abcd1234"),
+            "the tail never prints a credential value, classified or not: {tail}"
         );
     }
 
@@ -4578,8 +4782,10 @@ while True:
             tail.contains("vite: internal server error"),
             "the tail is the child's own last output: {tail}"
         );
+        // Capture replaced the classified value with `[REDACTED]` in the log;
+        // the tail surface names the key with the human redactor's one marker.
         assert!(
-            tail.contains("DB_PASSWORD=[REDACTED]")
+            tail.contains("DB_PASSWORD=<redacted>")
                 && !tail.contains("hunter2")
                 && !tail.contains("supervisor-only line"),
             "the tail is redacted and names only the child's output: {tail}"
