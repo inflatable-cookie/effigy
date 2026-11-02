@@ -12,6 +12,11 @@
       "task": "effigy#545",
       "date": "2026-11-02",
       "summary": "binds the warm-up prerequisite to the actual r18 ordinary-Compose proof receipt (Queue task effigy#544): the exact commit/selector/input-hash pinning, a settled passed exit-0 execution, and the retained reviewer's acceptance of that same execution; the superseded effigy#539 green-receipt prerequisite (zero execution, three authenticated refusedBeforeSelector receipts preserved) is retained as history only"
+    },
+    {
+      "task": "effigy#553",
+      "date": "2026-11-02",
+      "summary": "binds the accepted prerequisite review surface to what Queue actually exposes for the #544 proof-only completion: the accepted retained-reviewer callback (task.resolution.review, equal to the reviewer run's own completion) with the released finished reviewer run and resolution.reviewerAgentId binding; a proof-only completion has no per-subject verdict records (resolution.reviews empty), so the reviews-entry shape demanded before never existed for it"
     }
   ],
   "prerequisite": {
@@ -27,8 +32,8 @@
       ],
       "input_notes": "r18 packet; r18 artifacts manifest; the frozen candidate binary itself"
     },
-    "required_records": "queue.detail(taskId) -> task.proofOnly, task.proofExecution, the task.proofExecutions entry named by task.proofOnlyResult.executionRunId, task.proofOnlyResult, and the task.resolution.reviews entry named by task.proofOnlyResult.reviewerRunId; queue.outcome(taskId) -> {taskId, reference, outcome, reason, pr, review}",
-    "acceptance": "settled passed execution with exit 0 that is neither historical nor refused-before-selector; proofOnlyResult binds that execution run and a distinct retained reviewer run; retained review ready_to_merge at the same commit; durable outcome done with review ready_to_merge and pr null; proof-only never publishes so both retained and durable publication ids are null and the linkage is the retained run-id pair, never a publication id",
+    "required_records": "queue.detail(taskId) -> task.proofOnly, task.proofExecution, the task.proofExecutions entry named by task.proofOnlyResult.executionRunId, task.proofOnlyResult, task.resolution.review (the accepted callback), task.resolution.reviews (empty - no per-subject verdict records), task.resolution.reviewerAgentId, and the queue.detail.runs reviewer run named by task.proofOnlyResult.reviewerRunId; queue.outcome(taskId) -> {taskId, reference, outcome, reason, pr, review}",
+    "acceptance": "settled passed execution with exit 0 that is neither historical nor refused-before-selector; proofOnlyResult binds that execution run and a distinct retained reviewer run; the accepted retained-reviewer callback (resolution.review, a faithful Queue completion record) ready_to_merge at the same commit and equal to the reviewer run's own completion; the matching released finished reviewer run (role reviewer, status finished, released, not active) whose agent is resolution.reviewerAgentId; resolution.reviews empty (a proof-only completion has no per-subject verdict records); durable outcome done with review ready_to_merge and pr null; proof-only never publishes so the callback record carries no publication fields at all and the durable publication ids are null, and the linkage is the retained run-id pair plus the agent binding and the completion equality, never a publication id",
     "binding": "the receipt file's SHA-256 is quoted by the exact warm-up GO receipt on its `544 receipt <sha256>` line; the extraction is transport only - a file alone grants no authority, and the operator GO, Acow reservation and consumer GO stay separate evidence",
     "superseded": "effigy#539 (all three authenticated refusedBeforeSelector receipts preserved, zero execution) is historical and can never supply qualification; a fresh GO carrying a `539 receipt` line refuses"
   },
@@ -156,9 +161,9 @@
     "learning.outcome": "state/schema/202608221003__baseline_learning.sql:150"
   },
   "helpers": {
-    "common.py": "58e2ca78e07fd062eaea96b1caec5a2d3cfb0b5131ecd535996e7e0aba845e5e",
+    "common.py": "127b7a6060eb37acb6a446716f32e47c4e554bccd762ebba9505ad9b922b28b3",
     "warmup.py": "5bb7486a70ff538bee2da533261366ab30b4a69c056051165f5f14fe437b163b",
     "primary.py": "c4758de476109b25edfd02b387ea31003605499e54d3327751b7a1eae92f6325",
-    "boundaries.py": "5d333371d242635526e53b327994e2fd47aa417e586253b7ef3efa366218953c"
+    "boundaries.py": "f738ee6eaf8bf0407cd542473f4d71c0ee8c211413c6280600d4bffa3ecdb205"
   }
 }

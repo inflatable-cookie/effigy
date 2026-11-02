@@ -1446,6 +1446,19 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Bind the Acow ordinary-Compose consumer qualification's prerequisite
+  receipt to the accepted proof-only reviewer callback Queue actually
+  exposes: the accepted retained-reviewer callback
+  (`task.resolution.review`, a faithful Queue completion record equal to the
+  reviewer run's own completion) with the released finished reviewer run
+  (`role` `reviewer`, `status` `finished`, `released`, not active) whose
+  agent equals `resolution.reviewerAgentId`, and `resolution.reviews` empty
+  (`server/review-verdicts.ts` `reviewRecordFor` emits per-subject verdict
+  records only for completions that carry verdicts, so the reviews-entry
+  shape required before never existed for the effigy#544 proof-only task).
+  Per-subject verdict records, callback/completion disagreement, and any
+  invented durable publication id still refuse (effigy#553).
+
 - Record pre-exec closure on a retained process core when a spawn is refused
   after retaining its core and before custody transfer (a refusing workload gate, a lost
   interpolation registration or a lost identity re-proof). The refused child
