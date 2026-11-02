@@ -886,8 +886,8 @@
 # Same supervisor front-end family as :unit and :faults, routed through
 # Oxide on 2026-10-23.
 "test:supervisor:shared" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-tui --lib --no-fail-fast -E 'test(multiprocess::)' --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 1200000 },
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_private --no-fail-fast -E 'test(managed_matrix_death_)' --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 3600000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-tui --lib -E 'test(multiprocess::)' --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 1200000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_private -E 'test(managed_matrix_death_)' --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 3600000 },
 ] }
 
 # The supervisor SIGKILLed at every kernel journal crossing it makes, each
