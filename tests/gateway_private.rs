@@ -7187,7 +7187,8 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
 /// evidence inconsistent. The pid and the drain mark publish by rename, so a
 /// waiter never sees an empty file in the window between creation and the
 /// write reaching the filesystem (effigy#559: a loaded runner polled the
-/// file's existence inside that window and read an empty pid).
+/// file's existence inside that window and read an empty pid). The QA
+/// failure had no pid file; this hardening does not explain that failure.
 const NESTED_EFFIGY_APP: &str = r#"
 import os, signal, sys, time
 pid_file, drained = sys.argv[1], sys.argv[2]
@@ -7428,17 +7429,20 @@ fn nested_app_pid_timeout_carries_child_owner_and_error_evidence() {
     );
 }
 
-/// A declared host process whose supervisor cannot start is a failed
-/// activation, never a silent one. A detached `up` refuses and names the
-/// process and its cause; it never reports an environment whose declared
-/// workload never started (effigy#559: the milestone QA runs saw exactly the
-/// silent shape - `up` success, no supervisor log, no workload, a blind
-/// 60-second timeout - because a plain host process's start failure was
-/// demoted to a warning on the detached supervisor's own output). The control
-/// holds the process's own admission gate, so the supervisor child refuses
-/// deterministically before its run begins.
+/// A refused supervisor start must fail both activation modes and name its
+/// cause. The gate reproduces a refusal deterministically; it does not claim
+/// to identify the trigger behind the missing QA workload.
 #[test]
 fn plain_host_process_start_refusal_fails_a_detached_activation() {
+    check_plain_host_process_start_refusal(true);
+}
+
+#[test]
+fn plain_host_process_start_refusal_cleans_up_attached_activation() {
+    check_plain_host_process_start_refusal(false);
+}
+
+fn check_plain_host_process_start_refusal(detached: bool) {
     let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let docker_dir = std::env::split_paths(&effects.env_path)
@@ -7537,7 +7541,12 @@ fn plain_host_process_start_refusal_fails_a_detached_activation() {
         docker_log: docker_log.clone(),
     };
 
-    let up = run_container_cli(&checkout, &cleanup, &["up", "--detach"]);
+    let args: &[&str] = if detached {
+        &["up", "--detach"]
+    } else {
+        &["up"]
+    };
+    let up = run_container_cli(&checkout, &cleanup, args);
     let up_text = format!(
         "{}{}",
         String::from_utf8_lossy(&up.stdout),
@@ -7548,13 +7557,20 @@ fn plain_host_process_start_refusal_fails_a_detached_activation() {
         "a refused host-process start must fail the detached activation: {up_text}"
     );
     assert!(
-        up_text.contains("api"),
+        up_text.contains("host process `api`"),
         "the refusal names the host process: {up_text}"
     );
     assert!(
         up_text.contains("held"),
         "the refusal names the held admission gate as its cause: {up_text}"
     );
+    if !detached {
+        let log = fs::read_to_string(&docker_log).expect("docker fixture log");
+        assert!(
+            log.lines().any(|line| line.contains(" down")),
+            "attached activation tears down compose: {log}"
+        );
+    }
 }
 
 /// A hung child - alive, port never opens - must not hold a bring-up: `down`
