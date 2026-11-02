@@ -712,6 +712,54 @@ impl KernelActivation<'_> {
     }
 }
 
+/// The launch barrier of a plain host workload, read from its supervisor's
+/// event pipe.
+///
+/// A plain workload declares no readiness of its own, so nothing in the
+/// activation used to wait for its first generation: the later detach read
+/// the pipe only for `Active`, and a run the kernel refused before its first
+/// exec — an ambient value classified secret whose bytes occur in the run
+/// string, for example — never reaches `Active`. It settled failed behind
+/// the bring-up's back, the pipe closed, and the closed-run swallow reported
+/// the workload as success (effigy#574). The supervisor now reports such a
+/// launch on this same pipe before it settles, and this barrier reads the
+/// pipe until the launch is decided: `Active` proves the workload launched
+/// and an ordinary later exit never reaches this barrier, a launch failure
+/// or refusal fails the activation with the supervisor's own diagnostic, and
+/// a settle or a lost supervisor before any launch fails it the same way. A
+/// listener's refusal keeps #455's per-route withheld record.
+fn await_plain_launch(
+    client: &mut effigy_kernel::supervise::SupervisorClient,
+    process: &str,
+    cx: &EffectContext,
+) -> Result<(), RunnerError> {
+    loop {
+        match client.event(cx.operation()) {
+            Ok(effigy_kernel::supervise::Event::Active) => return Ok(()),
+            Ok(effigy_kernel::supervise::Event::Engine(bytes)) => {
+                if let Ok(super::HostProcessEvent::LaunchFailed { detail, .. }) =
+                    serde_json::from_slice(&bytes)
+                {
+                    return Err(RunnerError::task_invocation(format!(
+                        "host process `{process}` did not start its workload: {detail}"
+                    )));
+                }
+            }
+            Ok(effigy_kernel::supervise::Event::Closed { workload, .. }) => {
+                return Err(RunnerError::task_invocation(format!(
+                    "host process `{process}` settled without starting its workload ({workload})"
+                )));
+            }
+            Ok(_) => {}
+            Err(error) => {
+                return Err(RunnerError::task_invocation(format!(
+                    "host process `{process}` was lost before its workload started: {error}"
+                )));
+            }
+        }
+    }
+}
+
 impl super::HostActivation for KernelActivation<'_> {
     fn listener(&self, process: &EffectiveHostProcess) -> Option<EffectiveManagedHostListener> {
         resolved_host_process_listener(process, self.listener_binds)
@@ -770,6 +818,9 @@ impl super::HostActivation for KernelActivation<'_> {
         let resource = host_process_resource(self.policy, &process.name)?;
         let env = resolved_host_process_environment(process, self.facts)?;
         let listener = self.listener(process);
+        // Read before the spec moves the listener: only a plain workload's
+        // launch is decided on the event pipe (effigy#574).
+        let plain = listener.is_none();
         let log_file = self
             .dir
             .join(format!("{}.log", super::sanitize(&process.name)));
@@ -847,7 +898,7 @@ impl super::HostActivation for KernelActivation<'_> {
                 ))
             })
         };
-        let client = match self.gate {
+        let mut client = match self.gate {
             ReplaceGate::Unheld => replace()?,
             ReplaceGate::HeldForReplace => super::super::environment::holding_environment(
                 self.policy,
@@ -855,6 +906,12 @@ impl super::HostActivation for KernelActivation<'_> {
                 replace,
             )?,
         };
+        // A plain workload's launch is decided on the owning client's event
+        // pipe; carry its refusal out of the supervisor instead of reporting
+        // a workload that can only settle failed (effigy#574).
+        if plain {
+            await_plain_launch(&mut client, &process.name, cx)?;
+        }
         self.started.push((process.name.clone(), client));
         Ok(())
     }
