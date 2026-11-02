@@ -8,6 +8,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Check interpolation file identity before moving a cleanup candidate; leave a mismatched entry in place.
+
 - Refuse secret-bearing VM Compose direct-child launches until retained kernel custody is available.
 
 - Serialize Compose interpolation file creation, sweep and removal with a cooperative directory lock.

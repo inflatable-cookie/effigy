@@ -310,10 +310,11 @@ Effigy ownership:
   never started; removal first
   moves the name to a quarantine name by a no-replace rename (`renameatx_np`
   with `RENAME_EXCL` on macOS, `renameat2` with `RENAME_NOREPLACE` on Linux) and
-  unlinks only the inode it created. An occupied quarantine name is refused with
-  nothing moved. A platform without a no-replace rename refuses removal before
-  anything moves, with no replacing fallback. A name that another inode took is
-  restored without overwrite and reported as unknown; a name already gone, or a
+  unlinks only the inode it created. Before rename, it checks the original
+  name under the directory lock and leaves a mismatched entry in place. An
+  occupied quarantine name is refused with nothing moved. A platform without a no-replace rename refuses removal before
+  anything moves, with no replacing fallback. A foreign entry moved after the
+  initial check is restored without overwrite and reported as unknown; a name already gone, or a
   quarantine that vanishes after the move, is never reported as confirmed
   removal. A failed write whose removal also fails returns the write error with
   the cleanup state named as unknown

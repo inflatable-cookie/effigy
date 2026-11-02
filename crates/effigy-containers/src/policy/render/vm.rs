@@ -614,6 +614,23 @@ fn remove_owned_tracked(
         return Err(io::Error::other("injected removal failure"));
     }
     if matches!(phase, RemovalPhase::Original) {
+        match fstatat(directory, name, AtFlags::AT_SYMLINK_NOFOLLOW) {
+            Ok(found) if same_object(&found, expected) => {}
+            Ok(_) => {
+                *phase = RemovalPhase::Unknown;
+                return Err(invalid(
+                    "a Compose interpolation name no longer names its owner; the entry is left in place".into(),
+                ));
+            }
+            Err(Errno::ENOENT) => {
+                *phase = RemovalPhase::Unknown;
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "a Compose interpolation file was already gone; its removal is not confirmed",
+                ));
+            }
+            Err(error) => return Err(error.into()),
+        }
         let quarantine = quarantine_name()?;
         match move_without_replace(directory, name, &quarantine) {
             Ok(()) => *phase = RemovalPhase::Quarantine(quarantine),
@@ -1060,6 +1077,27 @@ mod tests {
             "CRASH=quarantine\n",
             "an interrupted removal's quarantine name is preserved too"
         );
+    }
+
+    #[test]
+    fn a_foreign_original_is_refused_before_any_rename() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let replacement = compose_dir(home.path()).join("replacement");
+        fs::write(&replacement, "FOREIGN=kept\n").expect("replacement");
+        fs::rename(&replacement, &path).expect("replace original");
+        let mut file = invocation.interpolation.expect("owner");
+        FAIL_AFTER_RENAME.with(|armed| armed.set(true));
+        let result = file.remove();
+        let rename_was_reached = FAIL_AFTER_RENAME.with(|armed| !armed.replace(false));
+        assert!(result.is_err());
+        assert!(!rename_was_reached, "foreign entry must not be moved");
+        assert_eq!(
+            fs::read_to_string(&path).expect("foreign file"),
+            "FOREIGN=kept\n"
+        );
+        assert_eq!(entries(home.path()).len(), 1);
     }
 
     #[test]
