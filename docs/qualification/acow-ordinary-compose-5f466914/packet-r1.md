@@ -28,7 +28,7 @@ candidate identity, and separate operator/consumer GOs.
 
 The primary lock is a preflight authority check. The disposable worktree must have no lock before sync; its receipt records that absence, and the exact approved target is required after sync before attach.
 
-## Artifacts manifest SHA-256: `ebbca8c236172e58f7b8889a253e41b30e27dce0279b278d18c91826b39d8734`
+## Artifacts manifest SHA-256: `57dcd430ef1cc92b0976a88cec614fbe8deb520d141af30d7de2798f6596ff05`
 
 The manifest pins the four committed helpers, the frozen candidate identity,
 the relevant-input closure with its selection policy, the reviewed anchor
@@ -134,8 +134,21 @@ fixture metadata only. Passing those controls is not consumer qualification.
    refused-before-selector; the `proofOnlyResult` binding that same
    execution run and a distinct retained reviewer run; the retained review
    `ready_to_merge` at the same commit; and the durable `done` outcome with
-   its `ready_to_merge` review, with matching review and comment IDs and at
-   least one non-null ID. Records copied: `queue.detail(taskId)` →
+   its `ready_to_merge` review and pr null. Proof-only never publishes, so
+   both the retained and the durable publication ids are null
+   (`reviewId`/`reviewCommentId` null, `reviewId`/`commentId` null); that
+   all-null pair is the legitimate NO-PR transport shape and is never
+   itself a link — the linkage is the retained run-id pair
+   (`execution.runId` == `proofOnlyResult.executionRunId`,
+   `review.runId` == `proofOnlyResult.reviewerRunId`). Any non-null
+   publication id is invented surrogate evidence and refuses. Supported
+   Queue sources: `server/report.ts` `reportSchema` omits
+   `reviewId`/`reviewCommentId`; `server/resolution.ts` proof-only
+   `advanceReviewerResult` records `proofOnlyResult` with
+   `executionRunId`/`reviewerRunId` and never publishes;
+   `server/review-verdicts.ts` `reviewRecordFor` defaults both publication
+   ids to null; `server/store.ts` outcome projects missing publication ids
+   as null. Records copied: `queue.detail(taskId)` →
    `task.proofOnly`, `task.proofExecution`, the `task.proofExecutions` entry
    named by `proofOnlyResult.executionRunId`, `proofOnlyResult` itself, and
    the `task.resolution.reviews` entry named by
@@ -281,7 +294,10 @@ any required token, reservation line, or route marker; route cross-arming
 ambiguous, mismatching or hash-drifted #544 proof receipt — wrong task or
 task id, commit/selector/input/candidate drift, missing, failed, pending,
 historical or refused-before-selector execution, nonzero exit, missing
-reviewer, execution/reviewer-run/head/selector/input mismatch, tampered,
+reviewer, execution/reviewer-run/head/selector/input mismatch, invented
+publication evidence on either the retained or the durable review (any
+non-null reviewId/reviewCommentId/commentId; proof-only never publishes),
+contradictory outcome, tampered,
 truncated or oversize data — or a stale #539 token in the GO; installed identity drift (version
 line, source marker, binary hash, symlinked binary); anchor pin or anchor
 tree drift; relevant input changed, missing or unreadable at the selected

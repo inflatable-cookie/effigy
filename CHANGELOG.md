@@ -1428,6 +1428,15 @@ During v0.x, MINOR bumps may include breaking changes.
 - The baseline `minio` catalog fragment. `effigy service list` no longer offers
   it and a manifest that names it is refused; use `silo`.
 
+- Correct the Acow ordinary-Compose consumer prerequisite verifier to link a
+  genuine accepted Queue proof-only result through its retained run ids
+  (`task.proofOnlyResult.executionRunId`/`reviewerRunId` against the settled
+  execution and the retained review) instead of requiring a nonexistent
+  GitHub review/comment publication id. The legitimate NO-PR transport shape
+  (pr null, both publication ids null) now passes on the run-id linkage,
+  and any non-null publication id refuses as invented surrogate evidence
+  (effigy#552).
+
 ### Fixed
 
 - The Colima nerdctl mounts-budget preflight no longer refuses before commands
