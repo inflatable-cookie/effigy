@@ -111,6 +111,32 @@ impl ComposeInvocation {
         }
     }
 
+    /// Qualification-only adaptation; the exact prepared file is moved into
+    /// the same Env Run. Ordinary `spawn_retained` continues to refuse Discard.
+    #[cfg(feature = "workspace-private-qualification")]
+    pub fn spawn_workspace_discard_qualification(
+        mut self,
+        run: &mut effigy_kernel::run::Run<'_>,
+        mut spec: effigy_kernel::custody::ProcessSpec,
+        cx: &effigy_kernel::ctx::EffectContext,
+    ) -> Result<effigy_kernel::custody::OwnedProcess, effigy_kernel::custody::SpawnError> {
+        let program = spec.argv.first().cloned().ok_or_else(|| {
+            effigy_kernel::custody::SpawnError::Refused("missing Compose program".into())
+        })?;
+        spec.argv = std::iter::once(program).chain(self.args).collect();
+        let file = self
+            .interpolation
+            .take()
+            .map(InterpolationFile::into_retained)
+            .transpose()
+            .map_err(|_| {
+                effigy_kernel::custody::SpawnError::Refused(
+                    "interpolation custody unavailable".into(),
+                )
+            })?;
+        effigy_kernel::custody::Custody::spawn_workspace_discard_qualification(run, spec, cx, file)
+    }
+
     /// Direct-child callers cannot safely transfer this owner into group custody.
     /// Refuse before spawn until they can admit a retained kernel Run.
     pub fn require_retained_custody_for_interpolation(&self) -> io::Result<()> {

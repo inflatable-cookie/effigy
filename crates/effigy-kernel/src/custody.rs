@@ -199,7 +199,15 @@ enum StoredProcessRecord {
         interpolation_v1: ProcessRecord,
         binding: Value,
     },
+    InterpolatedDiscard {
+        interpolation_v1: DiscardRecord,
+        binding: Value,
+    },
     Legacy(ProcessRecord),
+}
+#[derive(Debug, Serialize, Deserialize)]
+struct DiscardRecord {
+    discard_v1: ProcessRecord,
 }
 impl StoredProcessRecord {
     fn into_record(self) -> ProcessRecord {
@@ -208,6 +216,9 @@ impl StoredProcessRecord {
             Self::Interpolated {
                 interpolation_v1, ..
             } => interpolation_v1,
+            Self::InterpolatedDiscard {
+                interpolation_v1, ..
+            } => interpolation_v1.discard_v1,
             Self::Legacy(record) => record,
         }
     }
@@ -668,6 +679,12 @@ trait ProcessOwner {
             "interpolation requires a durable checkout Run",
         ))
     }
+    #[cfg(feature = "workspace-private-qualification")]
+    fn verify_qualification_images(&mut self) -> Result<(), RunError> {
+        Err(RunError::refused(
+            "qualification requires a checkout Env Run",
+        ))
+    }
     fn anchor_image(&self) -> Result<crate::supervise::anchor::Image, RunError>;
     fn capture_log(
         &self,
@@ -678,6 +695,11 @@ trait ProcessOwner {
     fn retain_process(&mut self, sequence: i64, core: Arc<Mutex<ProcessCore>>);
 }
 impl ProcessOwner for Run<'_> {
+    #[cfg(feature = "workspace-private-qualification")]
+    fn verify_qualification_images(&mut self) -> Result<(), RunError> {
+        self.qualify_workspace_discard_images().map(|_| ())
+    }
+
     fn closure_pin(&self) -> Result<Option<crate::closure::ClosurePin>, RunError> {
         self.checkout_closure_pin()
     }
@@ -1044,6 +1066,35 @@ impl Custody {
             Some(output),
         )
     }
+    /// Explicit test-only qualification entry. Ordinary spawn still refuses
+    /// Discard, even in this build. All helpers must match the entry snapshot;
+    /// file custody and process ownership use the normal retained machinery.
+    #[cfg(feature = "workspace-private-qualification")]
+    pub fn spawn_workspace_discard_qualification(
+        run: &mut Run<'_>,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+        file: Option<crate::interpolation::RetainedInterpolation>,
+    ) -> Result<OwnedProcess, SpawnError> {
+        if !matches!(spec.terminal, Terminal::Discard) {
+            return Err(SpawnError::Refused("qualification requires Discard".into()));
+        }
+        let image = run.qualify_workspace_discard_images()?;
+        Self::spawn_inner_retained(
+            run,
+            spec,
+            cx,
+            None,
+            crate::ctx::Capability::AdapterEffect,
+            true,
+            None,
+            None,
+            None,
+            file,
+            Some(image),
+        )
+    }
+
     /// Spawn only after the same checkout backup holds the exact prepared file
     /// descriptions and their synced process binding. Drop never unlinks it.
     pub fn spawn_interpolated(
@@ -1063,6 +1114,7 @@ impl Custody {
             None,
             None,
             Some(file),
+            None,
         )
     }
     // Every parameter is a distinct spawn knob the public entry points set;
@@ -1090,6 +1142,7 @@ impl Custody {
             handoff,
             canonical_output,
             None,
+            None,
         )
     }
     // Every parameter is a distinct spawn knob the public entry points set;
@@ -1106,11 +1159,12 @@ impl Custody {
         handoff: Option<OwnedFd>,
         canonical_output: Option<CanonicalOutput>,
         interpolation: Option<crate::interpolation::RetainedInterpolation>,
+        qualification: Option<&crate::supervise::image_identity::CreatorImage>,
     ) -> Result<OwnedProcess, SpawnError> {
         // A discard receipt needs every recovery helper to understand the
         // disposition before this owner records an intent or forks. Existing
         // helper identities do not yet carry a verified image capability.
-        if matches!(spec.terminal, Terminal::Discard) {
+        if matches!(spec.terminal, Terminal::Discard) && qualification.is_none() {
             return Err(SpawnError::Refused(
                 "workspace discard helper capability unavailable".into(),
             ));
@@ -1188,6 +1242,13 @@ impl Custody {
             // cannot positively prove. The child is still behind its barrier,
             // so a refusal is a pre-exec reaping, not an unknown workload.
             qualify_anchor(&receipt, anchor.as_ref())?;
+            if let Some(image) = qualification {
+                image.verify_process(
+                    anchor.as_ref().ok_or_else(|| {
+                        SpawnError::Refused("qualification anchor missing".into())
+                    })?,
+                )?;
+            }
             let record = ProcessRecord {
                 process: receipt.clone(),
                 anchor: anchor.clone(),
@@ -1298,6 +1359,18 @@ impl Custody {
 
             pending.transfer();
             crate::fault_point!(SpawnBeforeGo)?;
+            #[cfg(feature = "workspace-private-qualification")]
+            if let Some(image) = qualification {
+                cx.operation()
+                    .check("workspace qualification go")
+                    .map_err(RunError::from)?;
+                run.verify_qualification_images()?;
+                let anchor = lock(&core)
+                    .anchor
+                    .clone()
+                    .ok_or_else(|| SpawnError::Refused("qualification anchor missing".into()))?;
+                image.verify_process(&anchor)?;
+            }
             pending.go()?;
             crate::fault_point!(SpawnAfterGo)?;
             pending.executed(cx.operation())?;
@@ -1410,6 +1483,26 @@ impl OwnedProcess {
             &self.ticket,
             crate::outcome::RequiredObligation::ProcessExit(exit.code),
         )
+    }
+
+    /// Qualification apply may advance only after a fresh group-closure
+    /// observation. Leader exit alone leaves delayed descendants unresolved.
+    /// This opens no cleanup window and retains the original descriptors.
+    #[cfg(feature = "workspace-private-qualification")]
+    pub fn qualification_group_closure(&self, cx: &OperationContext) -> Observed<Closure> {
+        if cx.check("workspace qualification group closure").is_err() {
+            return Observed::Unknown(unknown("workspace qualification deadline or cancellation"));
+        }
+        let core = lock(&self.core);
+        let result = anchor::closed(
+            &core.receipt,
+            core.anchor.as_ref(),
+            core.exit.map(|_| &core.receipt.identity),
+        );
+        if cx.check("workspace qualification group closure").is_err() {
+            return Observed::Unknown(unknown("workspace qualification deadline or cancellation"));
+        }
+        result
     }
 
     pub fn complete(&self, run: &mut Run<'_>, exit: Exit) -> Result<(), RunError> {
@@ -1884,7 +1977,10 @@ pub(crate) fn settle_effect(
         .as_ref()
         .map(|v| serde_json::from_value::<StoredProcessRecord>(v.clone()))
     {
-        Some(Ok(StoredProcessRecord::Interpolated { .. })) if live.is_none() => {
+        Some(Ok(
+            StoredProcessRecord::Interpolated { .. }
+            | StoredProcessRecord::InterpolatedDiscard { .. },
+        )) if live.is_none() => {
             return (EffectState::Residue, Some("retained interpolation requires its live descriptor owner; crash residue is Unknown".into()));
         }
         Some(Ok(r)) => r.into_record(),

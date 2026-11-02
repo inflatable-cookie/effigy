@@ -1,6 +1,6 @@
-//! Unwired executable observations for future workspace helper qualification.
+//! Executable observations for the compile-time private qualification route.
 //!
-//! These are not a receipt or a capability. On macOS, `proc_pidpath` and
+//! These observations do not authorize production Discard. On macOS, `proc_pidpath` and
 //! metadata observe a path and vnode, not the child's mapped image. Replacement
 //! between observations and exec, including an ABA replacement, is outside the
 //! accepted accidental-skew model. Unknown observations must refuse.
@@ -35,7 +35,7 @@ impl ImageIdentity {
 }
 
 /// Holds the creator's observed executable open throughout qualification.
-struct CreatorImage {
+pub(crate) struct CreatorImage {
     file: File,
     launch_path: PathBuf,
     identity: ImageIdentity,
@@ -63,7 +63,7 @@ impl CreatorImage {
         Ok(&self.launch_path)
     }
 
-    fn verify_process(&self, expected: &ProcessIdentity) -> io::Result<()> {
+    pub(crate) fn verify_process(&self, expected: &ProcessIdentity) -> io::Result<()> {
         // Check both our retained descriptor and the path again around the
         // child observation. These checks cannot close a path replacement
         // race or prove which image macOS mapped at exec.
@@ -150,6 +150,39 @@ impl TestCreatorImage {
             identity,
         }))
     }
+}
+
+/// Capture once at executable entry, before it can be replaced beside a live
+/// owner. Failure is sticky; a later pathname cannot seed a new birth snapshot.
+#[cfg(feature = "workspace-private-qualification")]
+static CREATOR: std::sync::OnceLock<Result<CreatorImage, String>> = std::sync::OnceLock::new();
+
+#[cfg(feature = "workspace-private-qualification")]
+pub(super) fn initialize() -> io::Result<()> {
+    CREATOR
+        .get_or_init(|| {
+            let image = CreatorImage::capture().map_err(|error| error.to_string())?;
+            let identity = ident::process_identity(std::process::id())
+                .verified()
+                .cloned()
+                .ok_or("creator identity unavailable")?;
+            image
+                .verify_process(&identity)
+                .map_err(|error| error.to_string())?;
+            Ok(image)
+        })
+        .as_ref()
+        .map(|_| ())
+        .map_err(|error| io::Error::other(error.clone()))
+}
+
+#[cfg(feature = "workspace-private-qualification")]
+pub(crate) fn creator() -> io::Result<&'static CreatorImage> {
+    CREATOR
+        .get()
+        .ok_or_else(|| io::Error::other("qualification image was not captured at entry"))?
+        .as_ref()
+        .map_err(|error| io::Error::other(error.clone()))
 }
 
 #[cfg(test)]

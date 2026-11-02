@@ -1,4 +1,9 @@
 fn main() {
+    #[cfg(feature = "workspace-private-qualification")]
+    if effigy_kernel::supervise::initialize_private_qualification_image().is_err() {
+        eprintln!("workspace qualification creator image unavailable");
+        std::process::exit(1);
+    }
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
     #[cfg(target_os = "macos")]
     if raw_args

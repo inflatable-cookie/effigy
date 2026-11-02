@@ -71,3 +71,83 @@ pub(in crate::runner) fn qualified(
     )
     .map_err(|_| BackendError::Uncertain("workspace private apply outcome unavailable".into()))
 }
+
+/// Test-only candidate requiring review before native activation. The ordinary strategy above is always
+/// refused. This entry borrows the actual activation owner and deadline and
+/// moves the exact Compose interpolation file into its retained kernel custody.
+#[cfg(feature = "workspace-private-qualification")]
+pub(in crate::runner) fn qualification_only(
+    run: &mut Run<'_>,
+    effect: &EffectContext,
+    command: &PrivateApplyCommand<'_>,
+) -> Result<(), BackendError> {
+    use effigy_kernel::custody::{EnvValue, Lifetime, ProcessSpec, SecretValue, Terminal};
+    use effigy_kernel::observe::Observed;
+    use std::os::unix::ffi::OsStrExt;
+    use std::time::Duration;
+    let unavailable =
+        || BackendError::Uncertain("workspace private apply outcome unavailable".into());
+    let bounded = effect.child_until(command.until);
+    bounded
+        .operation()
+        .check("private workspace qualification")
+        .map_err(|_| unavailable())?;
+    let remaining = command
+        .until
+        .checked_duration_since(Instant::now())
+        .ok_or_else(unavailable)?;
+    let program = command.program.to_str().ok_or_else(unavailable)?;
+    let program = effigy_containers::compose::resolve_host_cli_program(program);
+    if !Path::new(&program).is_absolute() {
+        return Err(unavailable());
+    }
+    let mut env = std::env::vars_os()
+        .map(|(key, value)| (key, EnvValue::Plain(value)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for (key, value) in command.env {
+        let value = if value.is_empty() {
+            EnvValue::Plain(value.clone())
+        } else {
+            EnvValue::Secret(
+                SecretValue::new(value.as_bytes().to_vec()).map_err(|_| unavailable())?,
+            )
+        };
+        env.insert(key.into(), value);
+    }
+    let invocation = effigy_containers::policy::render::compose_invocation_args(
+        command.program,
+        command.args,
+        command.env,
+    )
+    .map_err(|_| unavailable())?;
+    let mut process = invocation
+        .spawn_workspace_discard_qualification(
+            run,
+            ProcessSpec {
+                argv: vec![program],
+                cwd: command.workdir.into(),
+                env,
+                grace: Duration::from_secs(2),
+                lifetime: Lifetime::Finite(remaining),
+                terminal: Terminal::Discard,
+                label: command.label.into(),
+            },
+            &bounded,
+        )
+        .map_err(|_| unavailable())?;
+    let exit = match process.wait(bounded.operation()) {
+        Observed::Verified(exit, _) => exit,
+        _ => return Err(unavailable()),
+    };
+    if !matches!(
+        process.qualification_group_closure(bounded.operation()),
+        Observed::Verified(..) | Observed::Absent(_)
+    ) {
+        return Err(unavailable());
+    }
+    process.complete(run, exit).map_err(|_| unavailable())?;
+    if exit.code != 0 {
+        return Err(unavailable());
+    }
+    Ok(())
+}

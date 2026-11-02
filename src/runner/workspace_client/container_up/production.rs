@@ -66,7 +66,21 @@ pub(super) fn activate_with(
         wait: effigy_kernel::gate::Wait::FailFast,
         acknowledge: Vec::new(),
         next: serving_host::recovery_invocation()?,
-        custody: None,
+        custody: {
+            #[cfg(feature = "workspace-private-qualification")]
+            {
+                Some(effigy_kernel::supervise::LifecyclePlan {
+                    executable: effigy_kernel::supervise::Executable::current().map_err(|_| {
+                        RunError::unavailable("qualification executable unavailable")
+                    })?,
+                    placement: effigy_kernel::supervise::Placement::Detached,
+                })
+            }
+            #[cfg(not(feature = "workspace-private-qualification"))]
+            {
+                None
+            }
+        },
     };
     let prepared_effects = WorkspacePreparedEffects::prepare(planned.plan.policy().clone())
         .map_err(|_| {

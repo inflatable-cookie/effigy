@@ -3543,3 +3543,79 @@ fn custody_keyed_successor_services_escalation_during_predecessor_recovery() {
             .unwrap();
     }
 }
+
+#[cfg(feature = "workspace-private-qualification")]
+#[test]
+fn qualification_discard_uses_real_same_image_reserved_env_custody() {
+    let home = home();
+    let output = Command::new(fixture())
+        .arg("private-qualification")
+        .arg(home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "qualification fixture: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    let mut directories = vec![home.path().join(".effigy")];
+    while let Some(directory) = directories.pop() {
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let entry = entry.unwrap();
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                directories.push(entry.path());
+            } else if kind.is_file() {
+                let bytes = std::fs::read(entry.path()).unwrap();
+                assert!(
+                    !bytes
+                        .windows(b"private-qualification-secret".len())
+                        .any(|window| window == b"private-qualification-secret"),
+                    "no private output in retained state: {}",
+                    entry.path().display()
+                );
+            }
+        }
+    }
+}
+
+#[cfg(feature = "workspace-private-qualification")]
+#[test]
+fn qualification_discard_refuses_foreign_images_missing_birth_and_expired_context() {
+    for mode in [
+        "private-qualification-foreign",
+        "private-qualification-uninitialized",
+        "private-qualification-expired",
+    ] {
+        let home = home();
+        let output = Command::new(fixture())
+            .arg(mode)
+            .arg(home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stdout.is_empty());
+    }
+}
+
+#[cfg(feature = "workspace-private-qualification")]
+#[test]
+fn qualification_discard_does_not_confuse_leader_exit_with_group_closure() {
+    let home = home();
+    let output = Command::new(fixture())
+        .arg("private-qualification-descendant")
+        .arg(home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "descendant control: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+}

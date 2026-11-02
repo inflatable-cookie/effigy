@@ -92,6 +92,36 @@ impl Run<'_> {
         }
         Ok(())
     }
+    #[cfg(feature = "workspace-private-qualification")]
+    pub(crate) fn qualify_workspace_discard_images(
+        &mut self,
+    ) -> Result<&'static crate::supervise::image_identity::CreatorImage, RunError> {
+        self.can_effect()?;
+        self.require_environment_gate()?;
+        self.inspect_workspace_lifecycle()?;
+        self.verify_custody()?;
+        self.cx.operation().check("workspace helper images")?;
+        let image = crate::supervise::image_identity::creator()?;
+        let sentinel = self
+            .sentinel
+            .as_ref()
+            .ok_or_else(|| RunError::refused("workspace sentinel missing"))?;
+        image.verify_process(&sentinel.identity)?;
+        let backup = self
+            .checkout_custody
+            .as_mut()
+            .and_then(|custody| custody.backup.as_mut())
+            .ok_or_else(|| RunError::refused("workspace checkout backup missing"))?;
+        backup.verify_retained()?;
+        let identity = backup
+            .identity
+            .as_ref()
+            .ok_or_else(|| RunError::refused("workspace backup identity missing"))?;
+        image.verify_process(identity)?;
+        self.cx.operation().check("workspace helper images")?;
+        Ok(image)
+    }
+
     pub(crate) fn retain_checkout_interpolation(
         &mut self,
         ticket: &EffectTicket,

@@ -38,12 +38,33 @@ closure cleanup, and retained ownership on partial startup. They use real
 kernel helpers in disposable fixtures; they do not qualify a native backend,
 Discard, or a full workspace session.
 
-The production activation does not yet supply that custody plan or execute a
-private apply. Its qualification-only integration, helper image observation,
-and recovery composition remain required. `Terminal::Discard` is still refused
-until helper identities carry a verified image
-(`crates/effigy-kernel/src/custody.rs`). No normal CLI, config or environment
-switch enables private execution.
+The default production activation does not supply that custody plan or execute a
+private apply. The separate `workspace-private-qualification` compile-time
+feature supplies a custody plan to the guarded activation and selects the
+explicit `private_apply::qualification_only` strategy. No installed CLI,
+configuration or environment toggle enables it. The preparation-output gate
+still refuses, including in this candidate, until private preparation is wired;
+the complete CLI session is not yet executable through this feature.
+
+The qualification spawn requires the creator image captured at process entry,
+the exact live detached Env sentinel, checkout backup and anchor, and the
+original activation deadline. The image observations retain the documented
+macOS accidental-skew limit: path/vnode observations cannot prove a mapped
+image against an adversarial ABA replacement. Missing entry capture, foreign
+images, expired budgets and ordinary Discard calls refuse before a process
+intent. Helpers and anchors are re-observed before GO. Leader exit does not
+qualify apply success without a separate fresh group-closure observation. The
+exact interpolation descriptors remain on the Env owner until its verified
+settlement, including on unknown results and caller-handle drop.
+
+An interpolation-bound Discard receipt has an explicit combined envelope. The
+new decoder accepts it; legacy readers cannot interpret it as an ordinary
+process, and recovery without the live descriptor owner preserves residue.
+`test:workspace:private-qualification:kernel` exercises source/fixture custody
+only. Native backend, full CLI session, genuine old-binary and consumer
+qualification, retained-review acceptance and the final production GO remain
+separate requirements. Ordinary private backend invocation and Discard remain
+refused.
 
 Q-010 storage follows contract [052](052-runtime-kernel-contract.md) §3.1,
 §7 and §11, approved by planner and Tom (2026-10-22: "Approve"). Environment
@@ -88,7 +109,7 @@ fails without saying so.
 | Observe status/context | Partly in place, proof deferred. The channel carries `ObserveQuery`/`ObserveBody` under `ObserveContext` and `run::status` returns `Observed<RunStatus>`; v2 context verification binds the exact session generation. The production-route exact-status/context proof needs the same apply capability as the production E2E, so it stays with #531; unproved adapters refuse by name (052 §8.6). |
 | Level 1 coverage and missing adapters | Recorded and implemented as policy. Tom's 2026-11-01 ruling in 052 §8.6, `workspace_client/coverage_policy.rs` and `tests/workspace_client_coverage_policy.rs`: Level 1 forwards; every other guest request refuses with a stable unsupported diagnostic. |
 | Level 2 PTY work | Not conflated. 052 §8.6/§8.11 keep attach, reconnect, terminal input and real PTY as Level 2; nothing in #533 claims them. |
-| #529 helper custody | Not this task's owner and untouched. `Terminal::Discard` stays refused pending verified helper-image capability (`supervise/image_identity.rs` is still unwired). |
+| #529 helper custody | Its landed identity/ACK and anchor checks are preserved. Ordinary `Terminal::Discard` remains refused; the compile-time qualification candidate and its current limits are described above. |
 | #526 interpolation cleanup | Not this task's owner and untouched. Interpolation files are already per-invocation with a lock and a sweep (`policy/render/vm.rs`); #533 neither changes nor claims them. |
 | Discard refused | Unchanged. `run_private_detached_command`, `support/workspace_private.rs` and `Terminal::Discard` all still refuse; no Discard route was enabled. |
 | Production workspace apply | Refused by name, as the section above records. No backend process starts. |

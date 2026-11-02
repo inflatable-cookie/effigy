@@ -7,6 +7,7 @@ publish = false
 description = "Container policy contracts for Effigy"
 
 [features]
+workspace-private-qualification = ["effigy-kernel/workspace-private-qualification"]
 test-support = ["dep:tempfile"]
 # Engine proofs at kernel crossings; absent from ordinary builds.
 fault-injection = ["effigy-kernel/fault-injection"]
