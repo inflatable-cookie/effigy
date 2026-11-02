@@ -1,5 +1,10 @@
 //! Actual CLI -> detached production orchestration, with only external engine
 //! and guest I/O doubled. This never qualifies a native backend.
+//!
+//! Two routing proofs share this fixture: an ordinary Compose invocation of the
+//! shape a legacy bundle export declares applies once through the inert
+//! backend, and the explicit system/workspace selection that asks for the
+//! guarded workspace activation still refuses before any effect.
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -14,25 +19,9 @@ struct BackendFixture {
     path: std::ffi::OsString,
 }
 
-impl BackendFixture {
-    fn new() -> Self {
-        use std::os::unix::fs::PermissionsExt;
-        let fixture =
-            effigy_test_support::Fixture::new("container-production-fake").expect("fixture");
-        let project = fixture.path().join("project");
-        let home = fixture.path().join("home");
-        let bin = fixture.path().join("bin");
-        for directory in [&project.join(".git"), &home, &bin] {
-            std::fs::create_dir_all(directory).expect("fixture directory");
-        }
-        std::fs::write(
-            project.join(".git/config"),
-            "[effigy]\n runtimeScope = ephemeral\n",
-        )
-        .expect("scoped fixture checkout");
-        std::fs::write(
-            project.join("effigy.toml"),
-            r#"
+/// A workspace declaration that names its own container: the explicit
+/// workspace shape the guarded activation is requested for.
+const WORKSPACE_DECLARATION: &str = r#"
 [containers]
 default = "web"
 [containers.web]
@@ -49,9 +38,56 @@ working_dir = "/workspace"
 user = "dev"
 home = "/home/dev"
 mounts = ["./prepared:/workspace/prepared:ro"]
-"#,
+"#;
+
+/// The exact declaration a legacy bundle export writes (the bundles/workspace-app
+/// `export.toml`, and the shape the Acowtancy manifest composes): the system
+/// selects its container at the system level, keeps
+/// `working_dir`/`user`/`home`/`mounts` there, and leaves the
+/// `workspaces.<name>` table empty, while `[containers].default` names the same
+/// container. The bundle also ships the workspace service and its
+/// `isolated_dirs` from the catalog; that belongs to the manifest fixtures, not
+/// to this routing proof.
+const LEGACY_BUNDLE_EXPORT: &str = r#"
+[containers]
+default = "stack"
+[containers.stack]
+compose_file = "compose.yml"
+primary_service = "app"
+profile = "default"
+startup = "detached"
+[systems]
+default = "dev"
+[systems.dev]
+container = "stack"
+default_workspace = "app"
+working_dir = "/workspace-root/acowtancy"
+user = "dev"
+home = "/home/dev"
+mounts = []
+[systems.dev.workspaces.app]
+"#;
+
+impl BackendFixture {
+    fn new() -> Self {
+        Self::with_manifest("container-production-fake", WORKSPACE_DECLARATION)
+    }
+
+    fn with_manifest(label: &str, manifest: &str) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = effigy_test_support::Fixture::new(label).expect("fixture");
+        let project = fixture.path().join("project");
+        let home = fixture.path().join("home");
+        let bin = fixture.path().join("bin");
+        for directory in [&project.join(".git"), &home, &bin] {
+            std::fs::create_dir_all(directory).expect("fixture directory");
+        }
+        std::fs::write(
+            project.join(".git/config"),
+            "[effigy]\n runtimeScope = ephemeral\n",
         )
-        .expect("manifest");
+        .expect("scoped fixture checkout");
+        std::fs::write(project.join("effigy.toml"), manifest).expect("manifest");
         std::fs::write(
             project.join("compose.yml"),
             "services:\n  app:\n    image: example:one\n",
@@ -141,6 +177,23 @@ mounts = ["./prepared:/workspace/prepared:ro"]
             .env("EFFIGY_COMPOSE_BACKEND", "docker")
             .env("DOCKER_CONTEXT", "default")
             .env("EFFIGY_WORKSPACE_ACTIVATION_FAKE", &self.config);
+        command
+    }
+
+    /// The ordinary Compose invocation's environment. The pinned guest
+    /// artifact is produced by the separate Linux artifact task, so the
+    /// handoff skip hook keeps this proof to routing and one apply.
+    fn compose_command(&self) -> Command {
+        let mut command = self.command();
+        command.env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1");
+        command
+    }
+
+    /// The explicit system/workspace selection (`--system <NAME>`): the
+    /// invocation that asks for the guarded workspace activation.
+    fn workspace_command(&self) -> Command {
+        let mut command = self.command();
+        command.args(["container", "up", "--system", "dev"]);
         command
     }
 
@@ -336,6 +389,178 @@ fn snapshot(root: &std::path::Path) -> std::collections::BTreeMap<PathBuf, Vec<u
     files
 }
 
+/// The legacy bundle export shape is an ordinary Compose invocation: nothing
+/// in it asks for the guarded workspace activation, so plain `container up`
+/// prepares and applies the stack through the ordinary reconciler exactly
+/// once instead of refusing on the private-preparation capability (effigy#535).
+#[test]
+fn legacy_bundle_default_workspace_plain_up_applies_once_through_ordinary_compose() {
+    let fixture = BackendFixture::with_manifest("container-export-shape", LEGACY_BUNDLE_EXPORT);
+    let output = fixture
+        .compose_command()
+        .args(["container", "up", "--detach", "--json"])
+        .output()
+        .expect("actual CLI");
+    let diagnostics = format!(
+        "{}{}\nengine calls:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+        fixture.calls()
+    );
+    assert!(output.status.success(), "{diagnostics}");
+    assert!(
+        !diagnostics.contains("workspace private preparation"),
+        "an ordinary Compose invocation must not name the private workspace cut: {diagnostics}"
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("container JSON report");
+    assert_eq!(report["ok"], true, "{diagnostics}");
+    assert!(
+        fixture.fixture.path().join("applied").exists(),
+        "the ordinary path applies the stack through the inert backend"
+    );
+    assert_eq!(
+        fixture
+            .calls()
+            .lines()
+            .filter(|line| line.contains("\"up\""))
+            .count(),
+        1,
+        "exactly one ordinary Compose apply: {diagnostics}"
+    );
+}
+
+/// A hybrid environment keeps the ordinary path too: the workspace another
+/// container declares does not classify this container, and the explicit
+/// system selection that would request the guarded activation still refuses.
+#[test]
+fn hybrid_container_plain_up_stays_ordinary_while_explicit_workspace_refuses() {
+    let fixture = BackendFixture::with_manifest(
+        "container-export-shape-hybrid",
+        &format!("{LEGACY_BUNDLE_EXPORT}\n[containers.hybrid]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nprofile = \"default\"\nworking_dir = \"/tmp\"\n"),
+    );
+    let output = fixture
+        .compose_command()
+        .args(["container", "hybrid", "up", "--detach", "--json"])
+        .output()
+        .expect("actual CLI");
+    let diagnostics = format!(
+        "{}{}\nengine calls:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+        fixture.calls()
+    );
+    assert!(output.status.success(), "{diagnostics}");
+    assert_eq!(
+        fixture
+            .calls()
+            .lines()
+            .filter(|line| line.contains("\"up\""))
+            .count(),
+        1,
+        "exactly one ordinary Compose apply: {diagnostics}"
+    );
+    let before_calls = fixture.calls();
+    let refusal = fixture
+        .workspace_command()
+        .args(["--detach", "--json"])
+        .output()
+        .expect("actual CLI");
+    assert!(!refusal.status.success());
+    let public = format!(
+        "{}{}",
+        String::from_utf8_lossy(&refusal.stdout),
+        String::from_utf8_lossy(&refusal.stderr)
+    );
+    assert!(
+        public.contains("workspace private preparation output is unavailable"),
+        "{public}"
+    );
+    assert_eq!(
+        fixture.calls(),
+        before_calls,
+        "no backend call for the refusal"
+    );
+}
+
+/// A malformed declaration keeps the actionable manifest error on the ordinary
+/// invocation; only the explicit workspace request crosses the guarded
+/// prevalidation and its redacted refusal.
+#[test]
+fn malformed_workspace_declaration_keeps_ordinary_error_and_workspace_refusal() {
+    let fixture = BackendFixture::with_manifest(
+        "container-export-shape-malformed",
+        r#"
+[containers]
+default = "stack"
+[containers.stack]
+compose_file = "compose.yml"
+primary_service = "app"
+profile = "default"
+[systems]
+default = "dev"
+[systems.dev]
+container = "stack"
+default_workspace = "app"
+working_dir = "/workspace-root/acowtancy"
+user = "dev"
+home = "/home/dev"
+[systems.dev.workspaces.app]
+working_dir = "/app"
+[systems.dev.workspaces.other]
+working_dir = "/other"
+"#,
+    );
+    let output = fixture
+        .compose_command()
+        .args(["container", "up", "--detach", "--json"])
+        .output()
+        .expect("actual CLI");
+    assert!(
+        !output.status.success(),
+        "conflicting workspaces must refuse"
+    );
+    let public = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        public.contains("conflicting operator workspaces"),
+        "the ordinary invocation keeps the actionable declaration error: {public}"
+    );
+    assert!(
+        !public.contains("workspace private preparation"),
+        "{public}"
+    );
+    assert!(!fixture.fixture.path().join("applied").exists());
+    assert_eq!(
+        fixture
+            .calls()
+            .lines()
+            .filter(|line| line.contains("\"up\""))
+            .count(),
+        0
+    );
+    let refusal = fixture
+        .workspace_command()
+        .args(["--detach", "--json"])
+        .output()
+        .expect("actual CLI");
+    assert!(!refusal.status.success());
+    let refusal_public = format!(
+        "{}{}",
+        String::from_utf8_lossy(&refusal.stdout),
+        String::from_utf8_lossy(&refusal.stderr)
+    );
+    assert!(
+        refusal_public.contains("workspace private preparation output is unavailable")
+            || refusal_public.contains("workspace checkout/backend prevalidation unavailable"),
+        "{refusal_public}"
+    );
+    assert!(!fixture.fixture.path().join("applied").exists());
+}
+
 #[test]
 fn actual_cli_fake_backend_refuses_before_workspace_effects() {
     let fixture = BackendFixture::new();
@@ -343,8 +568,8 @@ fn actual_cli_fake_backend_refuses_before_workspace_effects() {
     let before_home = snapshot(&fixture.home);
     let before_calls = fixture.calls();
     let output = fixture
-        .command()
-        .args(["container", "up", "--detach", "--json"])
+        .workspace_command()
+        .args(["--detach", "--json"])
         .output()
         .expect("actual CLI");
     assert!(!output.status.success());
@@ -386,8 +611,8 @@ fn assert_fault_refused_before_effects(flags: &[&str]) {
     let home_before = snapshot(&fixture.home);
     let calls_before = fixture.calls();
     let output = fixture
-        .command()
-        .args(["container", "up", "--detach", "--json"])
+        .workspace_command()
+        .args(["--detach", "--json"])
         .output()
         .expect("actual CLI");
     assert!(!output.status.success());
@@ -449,8 +674,8 @@ fn actual_selected_handoff_failure_retains_owner_until_fresh_cleanup_recovery() 
     )
     .expect("fault input");
     let output = fixture
-        .command()
-        .args(["container", "up", "--detach", "--json"])
+        .workspace_command()
+        .args(["--detach", "--json"])
         .output()
         .expect("actual CLI");
     assert!(
@@ -539,8 +764,8 @@ fn guarded_effect_failure_retains_exact_gate_free_custody(case: &str) {
     )
     .expect("fault");
     let output = fixture
-        .command()
-        .args(["container", "up", "--detach", "--json"])
+        .workspace_command()
+        .args(["--detach", "--json"])
         .output()
         .expect("actual CLI");
     assert!(
@@ -707,8 +932,8 @@ fn actual_binding_staging_and_liveness_errors_are_private_at_all_diagnostic_sink
         )
         .expect("fault");
         let output = fixture
-            .command()
-            .args(["container", "up", "--detach", "--json"])
+            .workspace_command()
+            .args(["--detach", "--json"])
             .output()
             .expect("actual CLI");
         assert!(!output.status.success(), "{case}: no Serving");
@@ -761,8 +986,8 @@ fn actual_binding_staging_and_liveness_errors_are_private_at_all_diagnostic_sink
 fn actual_cli_refuses_unqualified_private_preparation_before_any_prepare_or_apply() {
     let fixture = BackendFixture::new();
     let output = fixture
-        .command()
-        .args(["container", "up", "--detach", "--json"])
+        .workspace_command()
+        .args(["--detach", "--json"])
         .output()
         .expect("actual CLI");
     assert!(!output.status.success());

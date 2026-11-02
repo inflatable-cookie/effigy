@@ -138,9 +138,18 @@ const MAX_CAUSE_BYTES: usize = 1200;
 
 /// `retention` is persistent for an explicit `container up` and held for a
 /// task's ensure; `holders` are runs the activation attaches (§5.9).
+///
+/// `selection` is the invocation's intent (`super::UpSelection`): only an
+/// explicit system/workspace selection asks for the guarded workspace
+/// activation, so an ordinary Compose invocation of a container a legacy bundle
+/// declares as its default workspace keeps the ordinary reconciler.
+// The selection joins the carried modes, retention and holders at this private
+// entry; one parameter struct used by three callers buys nothing here.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn run_container_up(
     repo_root: &Path,
     name: Option<&str>,
+    selection: super::UpSelection,
     attach: bool,
     detach: bool,
     output_json: bool,
@@ -154,6 +163,7 @@ pub(super) fn run_container_up(
     let result = run_container_up_inner(
         repo_root,
         name,
+        selection,
         (attach, detach),
         output_json,
         (retention, holders),
@@ -297,14 +307,25 @@ enum AttachedComposeEnd {
 fn run_container_up_inner(
     repo_root: &Path,
     name: Option<&str>,
+    selection: super::UpSelection,
     (attach, detach): (bool, bool),
     output_json: bool,
     (retention, holders): (Retention, &[RunId]),
     operation: &mut DetachedOperationState,
 ) -> Result<String, RunnerError> {
     reject_conflicting_container_up_modes(attach, detach)?;
-    let workspace_prevalidation =
-        crate::runner::workspace_client::container_up::prevalidate_cli(repo_root, name)?;
+    // The guarded workspace activation is the explicit system/workspace
+    // selection's route only (effigy#535). A legacy bundle declares its default
+    // system's workspace on the same container an ordinary `container up`
+    // names, and that invocation has always prepared and applied the stack
+    // through the ordinary reconciler. Classification therefore follows the
+    // invocation, never the declaration a source refresh may add.
+    let workspace_selected = selection.requests_workspace_activation();
+    let workspace_prevalidation = if workspace_selected {
+        crate::runner::workspace_client::container_up::prevalidate_cli(repo_root, name)?
+    } else {
+        None
+    };
     if workspace_prevalidation.is_some()
         && (attach || retention != Retention::Persistent || !holders.is_empty())
     {
@@ -318,14 +339,19 @@ fn run_container_up_inner(
     // or catalog source is behind refreshes it first and this run continues on
     // the newly selected bytes. Guests keep the pins they were handed.
     prepare_sources_for_container_up(repo_root)?;
-    // Source refresh may have changed mode. Recheck before policy preparation,
-    // mount creation, secrets, handover or the ordinary reconciler can run.
+    // Source refresh may have changed mode. An explicit workspace selection is
+    // rechecked before policy preparation, mount creation, secrets, handover or
+    // the ordinary reconciler can run; the ordinary invocation is not promoted
+    // by a refreshed declaration.
     let workspace_prevalidation = match workspace_prevalidation {
         Some(checked) => {
             checked.before_policy_preparation(repo_root, name)?;
             Some(checked)
         }
-        None => crate::runner::workspace_client::container_up::prevalidate_cli(repo_root, name)?,
+        None if workspace_selected => {
+            crate::runner::workspace_client::container_up::prevalidate_cli(repo_root, name)?
+        }
+        None => None,
     };
 
     if workspace_prevalidation.is_some() {
