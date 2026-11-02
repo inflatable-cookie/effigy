@@ -53,7 +53,11 @@ selected proof VM**, explicitly included in the GO; no sudo or other VM access.
 If that authority is not approved, this proposal cannot run the reviewed packet.
 
 Generate one ephemeral Ed25519 key pair with a bounded `ssh-keygen -t ed25519`
-client, into a new private host control directory below approved scratch. Never
+client, into exclusively created canonical host-only `0700` control root
+`/Volumes/Builds/scratch/effigy/531-linux-control`. Keep its key, known-hosts,
+config/owner receipts and inspection logs **outside the shared placement root**;
+refuse any foreign/unreceipted control root. Never mount or transfer this control
+root into the VM. Never
 print/commit the private key or load it into an existing agent. Place only its
 public key through authenticated Parallels execution in the new account's file,
 with `restrict` (no forwarding/PTY/user rc) and an absolute `expiry-time` of at
@@ -77,8 +81,9 @@ bounded authentication check may confirm uid/architecture; it is not qualificati
 ## Narrow removable placement
 
 Propose one exclusively created host-owned `0700` removable root
-`/Volumes/Builds/scratch/effigy/531-linux-stage2`, with separate owned control,
-source, artifacts and **empty** qualification children. Freeze device/inode/uid
+`/Volumes/Builds/scratch/effigy/531-linux-stage2`, with separate owned
+source, artifacts and **empty** qualification children. It contains no host
+credentials, private keys or host control files. Freeze device/inode/uid
 pins and share metadata before effects. Do not share home, Vault, all Builds,
 parent scratch or siblings. No symlinks, copied substitute on the guest system
 disk, global automatic share, or adoption of an existing foreign root.
