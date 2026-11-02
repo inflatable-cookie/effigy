@@ -57,6 +57,10 @@ pub(crate) mod coverage_policy;
 pub(crate) mod guest_probe;
 pub(crate) mod host_dispatch;
 pub(crate) mod identity;
+// Tom's 2026-11-01 Level 1 ruling: forwarded commands are non-interactive. This
+// module owns their capture/exit seam, their named Level 2 refusals and the
+// session's Level 1 stream endpoint.
+pub(crate) mod noninteractive_stream;
 pub(crate) mod serving;
 pub(crate) mod serving_facts;
 // #485's workspace terminal owner: the session/run-bound `Terminal` the merged
@@ -485,6 +489,11 @@ pub(crate) enum GuestOperation {
 pub(crate) fn classify(cmd: &Command) -> GuestOperation {
     use effigy_cli::{ContainerSubcommand, RunsAction};
 
+    // A command whose only shape is an interactive terminal refuses here,
+    // before any connection is opened or any run is admitted (052 §8.11).
+    if let Some(message) = noninteractive_stream::interactive_command_refusal(cmd) {
+        return GuestOperation::Refused(message.to_owned());
+    }
     if let Some(message) = coverage_policy::unsupported(cmd) {
         return GuestOperation::Refused(message.to_owned());
     }
@@ -1749,9 +1758,37 @@ pub(crate) fn dispatch_in(
             ask_host(published, guest, opener, body, wants_json, cwd)
         }
         GuestOperation::Invoke { selector, target } => {
+            let relative = checkout_relative(&published.document.paths, cwd)?;
+            // A forwarded task is a foreground command: it streams its own
+            // stdout, stderr and terminal status on this connection through the
+            // Level 1 seam. The verified context and this process's own run
+            // facts are the values `ask_host` would derive, built here so the
+            // forwarding module needs no private helper of this file. Every
+            // other selector keeps the request/answer path, whose scope is the
+            // Level 1 command policy's decision.
+            if matches!(selector, Selector::Task(_)) {
+                let live = live_guest_run(published, RunningBinary::observe()?);
+                let verified = published
+                    .document
+                    .verify(&mut ObservedGuest(published.observation.clone()), &live)
+                    .map_err(context_refusal_error)?;
+                return noninteractive_stream::forward(
+                    published,
+                    guest,
+                    opener,
+                    noninteractive_stream::ForwardedTask {
+                        verified,
+                        live,
+                        cwd: &relative,
+                        selector,
+                        args: args.to_vec(),
+                    },
+                    wants_json,
+                );
+            }
             let body = RequestBody::Invoke(InvocationBody {
                 selector,
-                cwd: checkout_relative(&published.document.paths, cwd)?,
+                cwd: relative,
                 target,
                 args: args.to_vec(),
                 output: if wants_json {

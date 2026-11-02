@@ -201,7 +201,7 @@ pub(super) fn fmt_runner_error(
         RunnerError::RunAdmission { message, .. } => f.write_str(message),
         RunnerError::AdmissionRefused { detail, .. }
         | RunnerError::RunControl { detail, .. } => f.write_str(detail),
-        RunnerError::RunSettled { code } => write!(f, "the run settled with exit {code}"),
+        RunnerError::RunSettled { code } | RunnerError::RunSettledJson { code, .. } => write!(f, "the run settled with exit {code}"),
         RunnerError::RunKeyExists { run } => write!(f, "the `--run-id` key names run {run}"),
         RunnerError::CommandJsonFailure { .. } => {
             write!(f, "command failed (json output available)")
