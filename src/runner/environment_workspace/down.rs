@@ -45,7 +45,10 @@ pub(in crate::runner) fn retire_selected_session(
                 "another live or unresolved run holds the workspace",
             ));
         }
-        other => return Err(failure(format!("down coordination unavailable: {other:?}"))),
+        Observed::Unknown(reason) => {
+            return Err(failure(format!("down coordination unavailable: {reason}")))
+        }
+        Observed::Absent(_) => return Err(failure("down coordination has no verified journal")),
     };
     let request = || -> Result<RequestId, RunnerError> {
         let mut bytes = [0; 16];
@@ -83,11 +86,12 @@ pub(in crate::runner) fn retire_selected_session(
                 break;
             }
             Observed::Verified(_, _) => {}
-            other => {
+            Observed::Unknown(reason) => {
                 return Err(failure(format!(
-                    "workspace child closure unavailable: {other:?}"
+                    "workspace child closure unavailable: {reason}"
                 )))
             }
+            Observed::Absent(_) => return Err(failure("workspace child closure is not verified")),
         }
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -105,10 +109,13 @@ pub(in crate::runner) fn retire_selected_session(
                 return Err(failure("selected session closed with unresolved cleanup"));
             }
             Observed::Verified(_, _) => {}
-            other => {
+            Observed::Unknown(reason) => {
                 return Err(failure(format!(
-                    "workspace session closure unavailable: {other:?}"
+                    "workspace session closure unavailable: {reason}"
                 )))
+            }
+            Observed::Absent(_) => {
+                return Err(failure("workspace session closure is not verified"))
             }
         }
         std::thread::sleep(Duration::from_millis(20));
