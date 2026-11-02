@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ONE authorized #524 r17 qualification runtime cell; never execute without exact packet GO."""
+"""ONE authorized #524 r18 qualification runtime cell; never execute without exact packet GO."""
 import argparse
 import hashlib
 import json
@@ -14,11 +14,13 @@ import time
 from collections import Counter
 os.umask(0o077)
 sys.path.insert(0,str(Path(__file__).resolve().parent))
-from common import scrubbed_env, snapshot, validate_deletable, safe_delete, verify_bundle, verify_go, verify_environment, exact_ps_ids
+from common import (NETWORK_BASELINE_SHA256, VOLUME_BASELINE_SHA256, canonical_digest, exact_ps_ids,
+                    network_snapshot, scrubbed_env, snapshot, validate_deletable, safe_delete,
+                    verify_bundle, verify_go, verify_environment, verify_historical_baseline, volume_snapshot)
 
 BASE=Path('/Volumes/Builds/scratch/effigy/524')
 DIR=Path(__file__).resolve().parent
-PACKET=DIR/'colima-qualification-5f466914-r17.md'
+PACKET=DIR/'colima-qualification-5f466914-r18.md'
 PROJECT='effigy524-synthetic-lvfjv9'
 UNDER=Path('/Users/tom/.effigy-scratch/524-qual-20261101-lvfx')
 OVER=Path('/Users/tom/.effigy-scratch/524-qual-20261101-mixx')
@@ -38,53 +40,10 @@ def ids():
     return exact_ps_ids(run(nerd('ps','-a','--no-trunc','--format','{{.ID}}')).stdout)
 def project_ids(project):
     return exact_ps_ids(run(nerd('ps','-a','--no-trunc','--filter','label=com.docker.compose.project='+project,'--format','{{.ID}}')).stdout)
-def names(kind):
-    return sorted(x for x in run(nerd(kind,'ls','--format','{{.Name}}')).stdout.splitlines() if x)
-def network_snapshot():
-    lines=run(nerd('network','ls','--format','{{.Name}}\t{{.ID}}')).stdout.splitlines()
-    listed={}
-    for line in lines:
-        cols=line.split('\t')
-        if len(cols)!=2 or not re.fullmatch(r'[A-Za-z0-9_.-]+',cols[0]) or cols[0] in listed:
-            raise RuntimeError('network list row ambiguous')
-        name,ident=cols
-        if name in ('host','none'):
-            if ident: raise RuntimeError('builtin network unexpectedly has identity')
-        elif not re.fullmatch(r'[0-9a-f]{12}',ident):
-            raise RuntimeError('network list ID not canonical')
-        listed[name]=ident
-    if not {'host','none'} <= set(listed): raise RuntimeError('expected builtin network missing')
-    inspectable=sorted(set(listed)-{'host','none'})
-    raw=json.loads(run(nerd('network','inspect',*inspectable),timeout=45).stdout) if inspectable else []
-    result={'host':'builtin:host','none':'builtin:none'}
-    seen=set()
-    for row in raw:
-        name=row.get('Name'); ident=row.get('Id',row.get('ID'))
-        if name not in inspectable or name in seen or not isinstance(ident,str) or not re.fullmatch(r'[0-9a-f]{64}',ident) or not ident.startswith(listed[name]):
-            raise RuntimeError('network list/inspect identity mismatch')
-        seen.add(name); result[name]=ident
-    if seen!=set(inspectable): raise RuntimeError('network inspect incomplete')
-    if len(seen)!=len({result[n] for n in seen}): raise RuntimeError('duplicate network identity')
-    return result
-def volume_snapshot():
-    vs=names('volume')
-    if len(vs)!=len(set(vs)) or any(not re.fullmatch(r'[A-Za-z0-9_.-]+',v) for v in vs):
-        raise RuntimeError('volume name set ambiguous')
-    if not vs: return {}
-    raw=json.loads(run(nerd('volume','inspect',*vs),timeout=45).stdout)
-    rows={}
-    for item in raw:
-        name=item.get('Name'); path=item.get('Mountpoint')
-        if name not in vs or name in rows or not isinstance(path,str) or not path.startswith('/var/lib/nerdctl/') or '..' in Path(path).parts or not re.fullmatch(r'/[A-Za-z0-9_./-]+',path):
-            raise RuntimeError('volume backing identity unavailable')
-        rows[name]=path
-    if set(rows)!=set(vs): raise RuntimeError('volume inspect incomplete')
-    ordered=sorted(rows)
-    values=run(['/opt/homebrew/bin/colima','ssh','-p','effigy','--','sudo','-n','stat','--format=%d:%i:%u:%g:%a:%F','--',*[rows[n] for n in ordered]],timeout=45).stdout.splitlines()
-    if len(values)!=len(ordered) or any(not re.fullmatch(r'[0-9]+:[0-9]+:[0-9]+:[0-9]+:[0-7]+:directory',x) for x in values):
-        raise RuntimeError('volume backing device/inode/owner/mode unavailable')
-    if len({':'.join(x.split(':')[:2]) for x in values})!=len(values): raise RuntimeError('duplicate volume backing identity')
-    return {name:[rows[name],value] for name,value in zip(ordered,values)}
+# Full network/volume identity snapshots and the canonical digest moved to
+# common.py (task effigy#542) so the launcher's entry sweep shares their exact
+# parsing without importing this executable main block.
+snapshot_hash=canonical_digest
 def store_evidence(name,data):
     path=BASE/name
     fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,'O_NOFOLLOW',0),0o600)
@@ -159,8 +118,6 @@ def mount_label_structure(raw):
 def structure_from_rows(rows):
     if type(rows) is not list:return {'status':'not-array','rows':[]}
     return {'status':'ok','row_count':len(rows),'rows':[record_structure(row) for row in rows]}
-def snapshot_hash(value):
-    return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 def mounts_match(mounts):
     expected=[f'/workspace-root/synthetic/{i:02d} '+('false' if i==9 else 'true') for i in range(1,22)]
     return len(mounts)==21 and Counter(mounts)==Counter(expected)
@@ -175,7 +132,7 @@ def owned(root,kind):
     st=os.lstat(root)
     if not stat.S_ISDIR(st.st_mode) or st.st_uid!=os.getuid() or st.st_mode&0o077:
         raise RuntimeError('unsafe fixture root')
-    m=json.loads((root/'.effigy-524-r17-owner.json').read_text())
+    m=json.loads((root/'.effigy-524-r18-owner.json').read_text())
     if m.get('root')!=str(root) or m.get('kind')!=kind or m.get('head')!='5f4669141d8dabd91b7fbfef28d2bce21bc42ba2':
         raise RuntimeError('fixture ownership marker mismatch')
 
@@ -186,18 +143,28 @@ args=parser.parse_args()
 bundle=verify_bundle(args.packet_sha)
 go_sha=verify_go(args.go_receipt,args.packet_sha)
 environment=verify_environment()
-out=BASE/'r17-runtime-receipt.json'
-if out.exists() or (BASE/'r17-runtime-up.log').exists() or any(os.path.lexists(BASE/name) for name in ('r17-structure-only.json',)): raise RuntimeError('runtime cell already attempted or evidence exists; no retry')
+out=BASE/'r18-runtime-receipt.json'
+if out.exists() or (BASE/'r18-runtime-up.log').exists() or any(os.path.lexists(BASE/name) for name in ('r18-structure-only.json',)): raise RuntimeError('runtime cell already attempted or evidence exists; no retry')
 if sha(BASE/'r3-baseline-container-ids.txt')!=EXPECTED_BASELINE_SHA: raise RuntimeError('baseline receipt changed')
 baseline=exact_ps_ids((BASE/'r3-baseline-container-ids.txt').read_text())
 if len(baseline)!=15 or ids()!=baseline: raise RuntimeError('15-container baseline drift')
 owned(UNDER,'under'); owned(OVER,'over')
-prep=json.loads((BASE/'r17-preparation-receipt.json').read_text())
-proof=json.loads((BASE/'r17-preflight-receipt.json').read_text())
-if prep['bundle']!=bundle or proof['bundle']!=bundle or prep['go_receipt_sha256']!=go_sha or proof['go_receipt_sha256']!=go_sha or prep['environment']!=environment or proof['environment']!=environment or {x['case'] for x in proof['cases']}!={'under','over'}: raise RuntimeError('missing or mismatched preflight cells')
-if sha(BASE/'r17-preparation-receipt.json')!=proof['preparation_receipt_sha256']: raise RuntimeError('preparation receipt changed')
+prep=json.loads((BASE/'r18-preparation-receipt.json').read_text())
+proof=json.loads((BASE/'r18-preflight-receipt.json').read_text())
+prep_sweep=prep.get('entry_sweep') if isinstance(prep,dict) else None
+if (not isinstance(prep_sweep,dict)
+    or prep_sweep.get('environment')!=environment
+    or prep_sweep.get('historical_baseline')!=verify_historical_baseline()
+    or prep_sweep.get('resource_baseline',{}).get('network_identity_sha256')!=NETWORK_BASELINE_SHA256
+    or prep_sweep.get('resource_baseline',{}).get('volume_identity_sha256')!=VOLUME_BASELINE_SHA256
+    or prep_sweep.get('fixture_roots_absent')!={'fixture_roots_absent':True}
+    or prep_sweep.get('fixture_ancestors_safe')!={'fixture_ancestors_safe':True,'mount_tables_parsed':True}
+    or prep_sweep.get('prior_artifacts_absent')!={'prior_artifacts_absent':True}):
+    raise RuntimeError('missing or mismatched preparation entry sweep')
+if prep['bundle']!=bundle or proof['bundle']!=bundle or prep['go_receipt_sha256']!=go_sha or proof['go_receipt_sha256']!=go_sha or proof['environment']!=environment or {x['case'] for x in proof['cases']}!={'under','over'}: raise RuntimeError('missing or mismatched preflight cells')
+if sha(BASE/'r18-preparation-receipt.json')!=proof['preparation_receipt_sha256']: raise RuntimeError('preparation receipt changed')
 for x in proof['cases']:
-    if sha(BASE/('r17-'+x['case']+'-preflight.log'))!=x['output_sha256']: raise RuntimeError('preflight receipt mismatch')
+    if sha(BASE/('r18-'+x['case']+'-preflight.log'))!=x['output_sha256']: raise RuntimeError('preflight receipt mismatch')
 under=next(x for x in prep['cases'] if x['kind']=='under')
 over=next(x for x in prep['cases'] if x['kind']=='over')
 if under['root']!=str(UNDER) or under['project']!=PROJECT or under['estimate']['estimated_bytes']!=3630 or under['estimate']['mount_count']!=21:
@@ -220,6 +187,10 @@ if present.returncode: raise RuntimeError('fixture path not shared with guest')
 if project_ids(PROJECT): raise RuntimeError('project already has containers')
 net_before=network_snapshot(); vol_before=volume_snapshot()
 if PROJECT+'_default' in net_before: raise RuntimeError('project network already exists')
+# Entry-baseline chain: the launcher's sweep pinned these exact identities
+# before any fixture creation; the mutation boundary re-asserts them before up.
+if canonical_digest(net_before)!=NETWORK_BASELINE_SHA256 or canonical_digest(vol_before)!=VOLUME_BASELINE_SHA256:
+    raise RuntimeError('network/volume identities differ from the pinned r18 entry baseline')
 compose=[]
 for x in under['compose']: compose += ['-f',x['path']]
 cmd=nerd('compose',*compose,'-p',PROJECT,'up','--no-build','--pull','never','--no-recreate','-d')
@@ -231,7 +202,7 @@ if verify_bundle(args.packet_sha)!=bundle or verify_go(args.go_receipt,args.pack
 if volume_snapshot()!=vol_before or network_snapshot()!=net_before or ids()!=baseline or project_ids(PROJECT):
     raise RuntimeError('pre-exec resource identity drift')
 outcome={'supervisor_disposition':'quiet window by Acow confirmation (no stack/reservation), no other actor assumed; observation scope = Colima effigy guest root namespace via SSH + engine view; no claim that no other process holds our roots; consequences analysed: none destructive to third parties','command':cmd,'bundle':bundle,'go_receipt_sha256':go_sha,'go_authenticity':'operator must verify source; file is not cryptographic authorization','profile':'effigy','colima_version':'0.10.3','nerdctl_version':'2.3.1','image_reference':IMAGE,'image_id':IMAGE_ID,'architecture':'arm64','network_ids_before':sorted(net_before.values()),'network_identity_before_sha256':snapshot_hash(net_before),'volume_identity_before_sha256':snapshot_hash(vol_before),'started_at_epoch':time.time(),'baseline_count':15,'baseline_sha256':EXPECTED_BASELINE_SHA,'result':'started','container_id':None}
-with (BASE/'r17-runtime-up.log').open('xb') as log:
+with (BASE/'r18-runtime-up.log').open('xb') as log:
     p=subprocess.Popen(cmd,stdout=log,stderr=subprocess.STDOUT,start_new_session=True,env=scrubbed_env(with_home=True))
     outcome['owned_pid']=p.pid
     outcome['owned_pgid']=os.getpgid(p.pid)
@@ -296,7 +267,7 @@ if raw_label is None or type(row_objects) is not list or diagnostic['label'].get
 evidence_persisted=False
 try:
     data=(json.dumps(diagnostic,indent=2,sort_keys=True)+'\n').encode()
-    outcome['diagnostic_evidence_sha256']={'r17-structure-only.json':store_evidence('r17-structure-only.json',data)}
+    outcome['diagnostic_evidence_sha256']={'r18-structure-only.json':store_evidence('r18-structure-only.json',data)}
     evidence_persisted=True
 except (OSError,RuntimeError,TypeError,ValueError,OverflowError,RecursionError):
     outcome['diagnostic_persistence']='failed; cleanup still required'

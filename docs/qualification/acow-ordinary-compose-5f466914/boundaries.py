@@ -878,6 +878,17 @@ def t_bundle_post_source_origin(tmp):
         lambda: inspect_result(TARGET_FULL, stale=False), p2), 'declaration')
 
 
+def t_worktree_lock_before(tmp):
+    lock = tmp / common.BUNDLE_LOCK_REL
+    assert warmup.worktree_lock_before(tmp) == {'mode': 'absent', 'path': str(lock)}
+    lock.parent.mkdir(parents=True)
+    lock.write_text('{}')
+    expect_refused(lambda: warmup.worktree_lock_before(tmp), 'unexpectedly exists')
+    lock.unlink()
+    lock.symlink_to('missing')
+    expect_refused(lambda: warmup.worktree_lock_before(tmp), 'unexpectedly exists')
+
+
 def t_bundle_lock_malformed(tmp):
     expect_refused(lambda: parse_bundle_pin(tmpfile(tmp, 'bad.json', '{nope')), 'JSON')
     expect_refused(lambda: parse_bundle_pin(

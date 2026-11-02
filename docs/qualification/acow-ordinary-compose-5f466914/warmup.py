@@ -275,6 +275,14 @@ def create_warmup_worktree(record, shape, console, state, run_git=None, git_fn=N
     return worktree, ident
 
 
+def worktree_lock_before(worktree):
+    """Record the fresh worktree's actual lock state before sync."""
+    lock_path = worktree / BUNDLE_LOCK_REL
+    if os.path.lexists(lock_path):
+        raise Refused('disposable worktree bundle lock unexpectedly exists before sync')
+    return {'mode': 'absent', 'path': str(lock_path)}
+
+
 def activate(record, runner, shape, console, state):
     """The exact owner-approved sequence under the verified GO chain.
 
@@ -292,10 +300,7 @@ def activate(record, runner, shape, console, state):
     # name exactly the approved target state (typed revision + digest) with
     # no residual staleness; any unexpected post-sync source-origin, revision
     # or content drift refuses BEFORE attach/up.
-    lock_path = worktree / BUNDLE_LOCK_REL
-    if os.path.lexists(lock_path):
-        raise Refused('disposable worktree bundle lock unexpectedly exists before sync')
-    lock_before = {'mode': 'absent', 'path': str(lock_path)}
+    lock_before = worktree_lock_before(worktree)
     run(['bundle', 'sync'])
     lock_after = verify_bundle_transition_after(
         bundle_inspect_reader(run), worktree / BUNDLE_LOCK_REL)
