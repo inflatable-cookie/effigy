@@ -1404,6 +1404,16 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- A managed run whose owning client dies while its environment is still being
+  brought up no longer leaks the environment behind a `cleanup complete`
+  report. The run journals its environment-stop obligation once `up` ends, so
+  the settle walks it in reverse order (K4); when the journal refuses the
+  obligation because the run is already settling (the window a client's death
+  opens), an owned environment's stop is discharged before the run ends and a
+  borrowed environment's failure propagates. The `up` transition is also
+  stopped and recorded when the stop is noticed, so no gate-holding child
+  outlives the poll.
+
 - A plain `effigy container up` is the ordinary Compose invocation again for a
   container a legacy bundle declares as its default system/workspace, so a
   consumer whose export writes `[systems.<s>] container`,

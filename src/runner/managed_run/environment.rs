@@ -100,35 +100,58 @@ pub(in crate::runner) fn bring_up(
     // stops the environment before it releases the attachment, which the
     // kernel releases only once nothing else of the run is open.
     let up = run_up(run, plan, ansi_front, stop, progress);
-    let ticket = {
-        let mut kernel = run
-            .run_mut()
-            .map_err(|error| NotReady::Failed(error.to_string()))?;
-        let target = kernel.fence().clone();
-        kernel
-            .intend(EffectSpec {
-                target,
-                kind: settlement::ENVIRONMENT.to_owned(),
-                payload: serde_json::to_value(&effect)
-                    .map_err(|error| NotReady::Failed(error.to_string()))?,
-                settlement: if plan.borrowed {
-                    Settlement::Retain
-                } else {
-                    Settlement::Release(serde_json::Value::Null)
-                },
-                required: false,
-            })
-            .map_err(|error| NotReady::Failed(format!("environment intent: {error}")))?
-    };
     let receipt = match &up {
         Ok(code) => serde_json::json!({ "up": code }),
         Err(NotReady::Failed(reason)) => serde_json::json!({ "up_failed": reason }),
         Err(NotReady::Stopped(_)) => serde_json::json!({ "up_stopped": true }),
     };
-    run.run_mut()
-        .map_err(|error| NotReady::Failed(error.to_string()))?
-        .applied(&ticket, receipt)
-        .map_err(|error| NotReady::Failed(format!("environment receipt: {error}")))?;
+    // The obligation is recorded after the up, so the reverse-order settle
+    // (K4) stops the environment before it releases the attachment, which the
+    // kernel releases only once nothing else of the run is open.
+    let recorded = (|| -> Result<(), NotReady> {
+        let ticket = {
+            let mut kernel = run
+                .run_mut()
+                .map_err(|error| NotReady::Failed(error.to_string()))?;
+            let target = kernel.fence().clone();
+            kernel
+                .intend(EffectSpec {
+                    target,
+                    kind: settlement::ENVIRONMENT.to_owned(),
+                    payload: serde_json::to_value(&effect)
+                        .map_err(|error| NotReady::Failed(error.to_string()))?,
+                    settlement: if plan.borrowed {
+                        Settlement::Retain
+                    } else {
+                        Settlement::Release(serde_json::Value::Null)
+                    },
+                    required: false,
+                })
+                .map_err(|error| NotReady::Failed(format!("environment intent: {error}")))?
+        };
+        run.run_mut()
+            .map_err(|error| NotReady::Failed(error.to_string()))?
+            .applied(&ticket, receipt)
+            .map_err(|error| NotReady::Failed(format!("environment receipt: {error}")))
+    })();
+    if let Err(error) = recorded {
+        // The journal refuses effects once the run is settling, which is the
+        // one window an owning client's death can open between `up` beginning
+        // and the obligation being recorded. The settle never walks an
+        // unrecorded obligation, so an owned environment's stop is discharged
+        // here rather than leaked behind a `cleanup complete` report; the up
+        // child was already stopped, so the down meets no live gate hold. A
+        // borrowed environment owes no stop, so its failure just propagates.
+        if plan.borrowed {
+            return Err(error);
+        }
+        let recorded = match &error {
+            NotReady::Failed(reason) => reason.clone(),
+            NotReady::Stopped(_) => "the bring-up ended with its run".to_owned(),
+        };
+        settlement::discharge_environment(&effect)
+            .map_err(|release| NotReady::Failed(format!("{recorded}; {release}")))?;
+    }
     up?;
     if let Some(service) = &plan.exec_probe {
         exec_ready(run, plan, service, stop)?;
@@ -291,6 +314,20 @@ fn run_up(
         run.verify_admission()
             .map_err(|error| NotReady::Failed(error.to_string()))?;
         if let Some(cause) = stop(run) {
+            // The bring-up ends with its run. Stop the `up` transition now and
+            // record its exit, so no gate-holding child of this run outlives
+            // the poll that noticed the stop: the run's own settle, or the
+            // obligation discharge a stop during bring-up needs, must meet no
+            // live hold.
+            let report = process.stop(&task_engine::cleanup_context(Duration::from_secs(30)));
+            if let Observed::Verified(exit, _) = report.leader {
+                let _ = process.complete(
+                    &mut *run
+                        .run_mut()
+                        .map_err(|error| NotReady::Failed(error.to_string()))?,
+                    exit,
+                );
+            }
             return Err(NotReady::Stopped(cause));
         }
         if Instant::now() >= next_progress_read {

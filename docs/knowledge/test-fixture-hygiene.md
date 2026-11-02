@@ -105,6 +105,32 @@ record, so a member captured before the stop would otherwise be lost. The interr
 (`managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent`)
 runs that path through the real adapterless fixture.
 
+## The fixture CLI environment
+
+A fixture's `effigy` CLI processes never inherit the ambient coding-agent and
+queue-harness environment. Those values (`AI_AGENT=pi`, `NORTHSTAR_BASE_BRANCH`,
+`CLICOLOR=1`, session paths and tokens) carry no provenance, so Effigy's child
+environment classifier marks them secret; a short one then refuses every host
+process whose argv mentions it (the substring `pi` is inside `api`, the digit
+`1` is inside almost any hashed binary path), and output redaction rewrites
+the same values inside a child's captured output, where the proofs read
+published domains and recorded pids.
+`tests/gateway_private.rs::fixture_environment_command` and the managed-matrix
+case command remove the families (`CARGO_PROFILE_OXIDE_*`, `NEXTEST_*`,
+`CLAUDE_CODE_*`, `PI_*`, `PASEO_*`, `NORTHSTAR_*`, `AI_AGENT`, `CLAUDECODE`,
+`CLAUDE_AGENT_SDK_VERSION`, `CLICOLOR`, `CLICOLOR_FORCE`, `FORCE_COLOR`,
+`LS_COLORS`, `LSCOLORS`) before any fixture `effigy` invocation, and every
+daemon, supervisor and workload child inherits the stripped environment. A
+new ambient variable of this class is added to the strip list, not worked
+around in a proof.
+
+The disposable Docker command adapters model the production Compose
+invocation, including the detached bring-up's `--project-directory
+<render-dir>` pin: a value-taking long option is two tokens. An adapter whose
+argument parser strands a flag's value silently no-ops its `up`/`down`
+branches, which shows up as an activation that reports the primary service
+not running after a seemingly successful bring-up.
+
 ## Placement
 
 Fixtures live in the run's temporary directory: with `[scratch]` configured
