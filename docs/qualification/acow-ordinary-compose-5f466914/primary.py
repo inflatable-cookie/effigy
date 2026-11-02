@@ -104,8 +104,8 @@ def observe_counts(runner, pg_id, console):
     plans = observation_plan(pg_id)
     observed = {}
     for table, args in plans.items():
-        if args[:3] != ['exec', pg_id, 'psql'] or tuple(args[3:10]) != PSQL_ALLOWLIST \
-                or args[10] != 'SELECT count(*) FROM %s' % table or len(args) != 11:
+        if args[:3] != ['exec', pg_id, 'psql'] or tuple(args[3:-1]) != PSQL_ALLOWLIST \
+                or args[-1] != 'SELECT count(*) FROM %s' % table or len(args) != 4 + len(PSQL_ALLOWLIST):
             raise Refused('observation plan drifted for ' + table)
         console.write('\n$ nerdctl exec <pg> psql -Atc "SELECT count(*) FROM %s"\n'
                       % table)

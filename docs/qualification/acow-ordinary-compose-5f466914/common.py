@@ -697,6 +697,10 @@ class ConsoleLog:
             data = data.encode('utf-8', 'replace')
         os.write(self.fd, data)
 
+    def flush(self):
+        # os.write is unbuffered; there is no userspace buffer to flush.
+        pass
+
     def close(self):
         os.close(self.fd)
 

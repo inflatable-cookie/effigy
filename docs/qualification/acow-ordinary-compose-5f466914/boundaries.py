@@ -657,6 +657,34 @@ def t_observation_plan(tmp):
         assert 'password' not in ' '.join(args).lower()
 
 
+def t_observe_counts_and_console(tmp):
+    from types import SimpleNamespace
+    original_run = primary.run_quiet
+    original_writer = common.receipt_writer
+    calls = []
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stderr='', stdout='5\n')
+    def fake_writer(name):
+        path = tmp / name
+        return path, os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    primary.run_quiet = fake_run
+    common.receipt_writer = fake_writer
+    try:
+        log = common.ConsoleLog('console')
+        try:
+            observed = primary.observe_counts(None, 'a' * 64, log)
+            log.flush()
+        finally:
+            log.close()
+        assert observed == {table: 5 for table in EXPECTED_PRIMARY_COUNTS}
+        assert len(calls) == len(EXPECTED_PRIMARY_COUNTS)
+        assert '[exit 0]' in (tmp / 'console').read_text()
+    finally:
+        primary.run_quiet = original_run
+        common.receipt_writer = original_writer
+
+
 def t_compare_counts(tmp):
     observed = {t: EXPECTED_PRIMARY_COUNTS[t][0] for t in EXPECTED_PRIMARY_COUNTS}
     assert compare_counts(observed) == {}

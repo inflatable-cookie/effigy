@@ -15,7 +15,7 @@ later proof-only task at this packet's merged commit, requiring task
 effigy#539 to be green first, the exact installed candidate identity, and
 separate operator/consumer GOs.
 
-## Artifacts manifest SHA-256: `7d3644b4d87e347d1535465487a965dd9519741ca4e9a70285b6d0fe101fab4e`
+## Artifacts manifest SHA-256: `1ee937b7ec438a216bae8fd15d7f17abed44a3ec75160bd099c9a13f3e3da826`
 
 The manifest pins the four committed helpers, the frozen candidate identity,
 the consumer input pins, the protected-state identities, the engine
