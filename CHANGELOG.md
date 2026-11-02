@@ -1430,6 +1430,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Record pre-exec closure on a retained process core when a spawn is refused
+  between its receipt and its `go` (a refusing workload gate, a lost
+  interpolation registration or a lost identity re-proof). The refused child
+  never execs and its pre-exec group is killed and reaped at the refusal, so
+  the settle reads release instead of contradicting live-custody evidence that
+  reported cleanup residue for work that never ran: a v2 admission refusal
+  settled its durable record with cleanup `incomplete`.
+
 - A plain `effigy container up` is the ordinary Compose invocation again for a
   container a legacy bundle declares as its default system/workspace, so a
   consumer whose export writes `[systems.<s>] container`,

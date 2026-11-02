@@ -2200,6 +2200,64 @@ fn foreground_custody_completes_without_database_or_logs() {
     }
 }
 
+/// A gate refusal between the retained receipt and `go` must settle release,
+/// not residue. #534 retains the live core before the gate runs, so the
+/// refusal leaves a core whose pre-exec group `Blocked`'s drop has already
+/// killed and reaped; the core carries that closure and the settle re-proves
+/// group closure, reads release, and the run cleans up complete. Without the
+/// record the settle asks live-custody questions about a dead group and
+/// reports cleanup residue for a workload that never ran (effigy#549).
+#[test]
+fn a_gate_refusal_settles_the_never_execd_spawn_as_released() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    struct Refuse;
+    impl SpawnGate for Refuse {
+        fn before_go(&mut self, _: &ProcessReceipt) -> Result<(), SpawnError> {
+            Err(SpawnError::Refused("the sequence stopped here".into()))
+        }
+    }
+    let mut gate = Refuse;
+    let refused = Custody::spawn_foreground_gated(
+        &mut run,
+        spec(home.path(), "touch refused-exec"),
+        &cx,
+        &mut gate,
+        None,
+    );
+    let error = refused.expect_err("the gate refuses this spawn");
+    assert!(
+        error.to_string().contains("the sequence stopped here"),
+        "{error}"
+    );
+    assert!(
+        !home.path().join("refused-exec").exists(),
+        "a refused spawn never execs"
+    );
+    run.interrupt(WorkloadOutcome::NotStarted).unwrap();
+    let outcome = run
+        .settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+        .unwrap();
+    assert_eq!(
+        outcome.cleanup(),
+        CleanupOutcome::Complete,
+        "{:?}",
+        outcome.unresolved()
+    );
+    assert!(
+        outcome.unresolved().is_empty(),
+        "a refused spawn leaves no residue"
+    );
+    let effects = outcome.report().unwrap()["effects"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(effects.len(), 1, "one refused process effect: {effects:?}");
+    assert_eq!(effects[0]["disposition"], "Released", "{effects:?}");
+}
+
 /// A sibling checkout journal written throughout is not an obstacle: the
 /// foreground read is one plain WAL read, and the run starts in bounded time
 /// without busy-waiting (K1).

@@ -1272,33 +1272,48 @@ impl Custody {
                 capture_eof_sent: false,
             }));
             run.retain_process(ticket.sequence(), core.clone());
-            {
-                let mut retained = lock(&core);
-                if let Some(file) = retained.interpolation.as_mut() {
-                    run.retain_interpolation(&ticket, file)?;
+            // A refusal inside this window leaves the retained core for a child
+            // that never execed. `Blocked`'s drop (below) closes the barrier,
+            // takes the pre-exec group and reaps its leader, so the core must
+            // carry that closure: without it the settle asks live-custody
+            // questions about a group that no longer exists and settles the
+            // recorded receipt as residue instead of release (effigy#549).
+            // Past `go` the workload may be running; ordinary live custody
+            // applies there.
+            let admitted = (|| {
+                {
+                    let mut retained = lock(&core);
+                    if let Some(file) = retained.interpolation.as_mut() {
+                        run.retain_interpolation(&ticket, file)?;
+                    }
                 }
-            }
-            // Install live custody before the caller's handoff. A refusal leaves
-            // this exact core in the Run; Blocked still owns the closed barrier
-            // and reaps the pre-exec group. Neither receipt publication nor a
-            // handoff acknowledgement can leave a runnable, unowned child.
-            if let Some(gate) = gate {
-                gate.before_go(&receipt)?;
-            }
-            // Re-prove both incarnations after the potentially slow handoff,
-            // immediately before transferring the barrier to live custody.
-            retained_leader(&receipt)?;
-            qualify_anchor(
-                &receipt,
-                core.lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .anchor
-                    .as_ref(),
-            )?;
+                // Install live custody before the caller's handoff. A refusal leaves
+                // this exact core in the Run; Blocked still owns the closed barrier
+                // and reaps the pre-exec group. Neither receipt publication nor a
+                // handoff acknowledgement can leave a runnable, unowned child.
+                if let Some(gate) = gate {
+                    gate.before_go(&receipt)?;
+                }
+                // Re-prove both incarnations after the potentially slow handoff,
+                // immediately before transferring the barrier to live custody.
+                retained_leader(&receipt)?;
+                qualify_anchor(
+                    &receipt,
+                    core.lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .anchor
+                        .as_ref(),
+                )?;
 
-            pending.transfer();
-            crate::fault_point!(SpawnBeforeGo)?;
-            pending.go()?;
+                pending.transfer();
+                crate::fault_point!(SpawnBeforeGo)?;
+                pending.go()?;
+                Ok(())
+            })();
+            if let Err(error) = admitted {
+                lock(&core).record_pre_exec_closure();
+                return Err(error);
+            }
             crate::fault_point!(SpawnAfterGo)?;
             pending.executed(cx.operation())?;
             Ok(OwnedProcess { core, ticket })
@@ -1620,6 +1635,20 @@ impl ProcessCore {
             Ok(None) => Observed::Unknown(UnknownReason::Inconsistent("leader running".into())),
             Err(e) => Observed::Unknown(unknown(e)),
         }
+    }
+    /// Records what a refused spawn's `Blocked` drop did: the child never
+    /// execed, the barrier never opened, and the drop SIGKILLed the pre-exec
+    /// group and reaped its leader. The exit status is the signal the refusal
+    /// sent (`reap`'s own convention); group closure is never claimed here —
+    /// the settle still re-proves it against the live group, so a survivor
+    /// remains residue. Without this record the settle reads live-custody
+    /// evidence about a group that no longer exists and settles an effect
+    /// whose receipt recorded a real spawn as unresolved residue (effigy#549).
+    fn record_pre_exec_closure(&mut self) {
+        self.exit = Some(Exit {
+            code: 128 + libc::SIGKILL,
+        });
+        self.reaped = true;
     }
     fn write_stdin(&self, mut bytes: &[u8], deadline: Instant) -> io::Result<()> {
         let Some(stdin) = &self.stdin else {
