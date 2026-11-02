@@ -31,8 +31,22 @@ fn parse_service_pack_is_retired_with_an_actionable_error() {
 }
 
 #[test]
-fn parse_catalog_cache_clear_reports_explicit_membership_migration() {
-    let error = parse_command(vec![
+fn parse_removed_catalog_commands_refuse_and_catalogue_stays_a_selector() {
+    for args in [
+        vec!["catalog", "list"],
+        vec!["catalog", "--help"],
+        vec!["catalog", "cache", "clear", "--repo", "/tmp/demo", "--json"],
+    ] {
+        let args = args.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let error = parse_command(args.clone()).expect_err("catalog is a removed built-in command");
+        let message = error.to_string();
+        assert!(
+            message.contains("`effigy catalog` was removed"),
+            "{args:?}: {message}"
+        );
+    }
+    // The membership migration wording names what replaced cache discovery.
+    let cache_clear = parse_command(vec![
         "catalog".to_owned(),
         "cache".to_owned(),
         "clear".to_owned(),
@@ -41,24 +55,12 @@ fn parse_catalog_cache_clear_reports_explicit_membership_migration() {
         "--json".to_owned(),
     ])
     .expect_err("removed catalog command should fail");
-    let rendered = error.to_string();
-    assert!(
-        rendered.contains("`effigy catalog` was removed"),
-        "{rendered}"
-    );
-    assert!(rendered.contains("declare members"), "{rendered}");
-}
+    assert!(cache_clear.to_string().contains("declare members"));
 
-#[test]
-fn parse_removed_catalog_command_and_catalogue_task_fallback_are_distinct() {
-    let catalog_error = parse_command(vec!["catalog".to_owned(), "list".to_owned()])
-        .expect_err("catalog is a removed built-in command");
+    // The `catalogue` spelling stays a task selector, so a catalogue-named
+    // task keeps working while the removed built-in refuses.
     let catalogue = parse_command(vec!["catalogue".to_owned(), "list".to_owned()])
         .expect("catalogue token should route as a task selector");
-
-    assert!(catalog_error
-        .to_string()
-        .contains("`effigy catalog` was removed"));
     assert_eq!(
         catalogue,
         Command::Task(crate::tests::prelude::TaskInvocation {
@@ -83,24 +85,48 @@ fn parse_container_eject_is_retired_with_an_actionable_error() {
 }
 
 #[test]
-fn parse_container_migrate_is_supported() {
-    for args in [
-        vec!["container", "migrate", "linux-release", "--json"],
-        vec!["container", "linux-release", "migrate", "--json"],
-    ] {
-        let cmd = parse_command(args.into_iter().map(str::to_owned).collect::<Vec<_>>())
-            .expect("parse should succeed");
+fn parse_container_action_first_and_named_forms_parse_identically() {
+    // `container migrate`/`container render` accept the action-first and
+    // name-first spellings for the same parsed command; extra positionals
+    // after render's name are refused.
+    let cases: &[(&[&str], ContainerSubcommand)] = &[
+        (
+            &["container", "migrate", "linux-release", "--json"],
+            ContainerSubcommand::Migrate {
+                name: Some("linux-release".to_owned()),
+            },
+        ),
+        (
+            &["container", "linux-release", "migrate", "--json"],
+            ContainerSubcommand::Migrate {
+                name: Some("linux-release".to_owned()),
+            },
+        ),
+        (
+            &["container", "render", "web", "--json"],
+            ContainerSubcommand::Render {
+                name: Some("web".into()),
+            },
+        ),
+        (
+            &["container", "web", "render", "--json"],
+            ContainerSubcommand::Render {
+                name: Some("web".into()),
+            },
+        ),
+    ];
+    for (args, subcommand) in cases {
         assert_eq!(
-            cmd,
+            parse_command(args.iter().map(|arg| (*arg).to_owned())).expect("parse should succeed"),
             Command::Container(ContainerArgs {
-                subcommand: ContainerSubcommand::Migrate {
-                    name: Some("linux-release".to_owned()),
-                },
+                subcommand: subcommand.clone(),
                 repo_override: None,
                 output_json: true,
-            })
+            }),
+            "{args:?}"
         );
     }
+    assert!(parse_command(["container", "render", "web", "other"].map(str::to_owned)).is_err());
 }
 
 #[test]
@@ -112,6 +138,9 @@ fn parse_system_names_the_container_replacement_for_each_subcommand() {
         ("logs", "effigy container logs"),
         ("repair", "effigy container profile repair"),
         ("reset-runtime", "effigy container profile reset-runtime"),
+        // An unknown subcommand stays inside the retirement refusal and
+        // names the whole lifecycle family rather than an unknown argument.
+        ("foo", "effigy container up|down|status|logs"),
     ] {
         let error = parse_command(vec!["system".to_owned(), subcommand.to_owned()])
             .expect_err("retired command should refuse");
@@ -121,20 +150,20 @@ fn parse_system_names_the_container_replacement_for_each_subcommand() {
             "{subcommand}: {message}"
         );
         assert!(message.contains(replacement), "{subcommand}: {message}");
+        assert!(message.contains("CHANGELOG.md"), "{subcommand}: {message}");
     }
-}
 
-#[test]
-fn parse_unknown_system_subcommand_still_names_the_container_replacement() {
-    let error = parse_command(vec!["system".to_owned(), "foo".to_owned()])
+    // A flag spelling keeps the bare command name (`effigy system`, not
+    // `effigy system --help`) and points at the container help panel.
+    let error = parse_command(vec!["system".to_owned(), "--help".to_owned()])
         .expect_err("retired command should refuse");
     let message = error.to_string();
     assert!(
-        message.contains("`effigy system foo` is retired in v0.15"),
+        message.contains("`effigy system` is retired in v0.15"),
         "{message}"
     );
-    assert!(message.contains("effigy container up|down|status|logs"));
-    assert!(message.contains("CHANGELOG.md"));
+    assert!(message.contains("effigy help container"), "{message}");
+    assert!(message.contains("CHANGELOG.md"), "{message}");
 }
 
 #[test]
@@ -152,26 +181,6 @@ fn parse_named_container_data_seed_is_rejected() {
     assert!(err
         .to_string()
         .contains("`effigy container web data seed` is not supported"));
-}
-
-#[test]
-fn parse_container_render_supports_action_first_and_named_forms() {
-    for args in [
-        vec!["container", "render", "web", "--json"],
-        vec!["container", "web", "render", "--json"],
-    ] {
-        assert_eq!(
-            parse_command(args.into_iter().map(str::to_owned)).unwrap(),
-            Command::Container(ContainerArgs {
-                subcommand: ContainerSubcommand::Render {
-                    name: Some("web".into())
-                },
-                repo_override: None,
-                output_json: true,
-            })
-        );
-    }
-    assert!(parse_command(["container", "render", "web", "other"].map(str::to_owned)).is_err());
 }
 
 #[test]
@@ -880,6 +889,68 @@ fn container_argv_parses() {
                     follow: true,
                 },
                 repo_override: None,
+                output_json: false,
+            }),
+        ),
+        (
+            &[
+                "container",
+                "up",
+                "--repo",
+                "/tmp/repo",
+                "--detach",
+                "--json",
+            ],
+            Command::Container(ContainerArgs {
+                subcommand: ContainerSubcommand::Up {
+                    name: None,
+                    system: None,
+                    attach: false,
+                    detach: true,
+                },
+                repo_override: Some(PathBuf::from("/tmp/repo")),
+                output_json: true,
+            }),
+        ),
+        (
+            &[
+                "container",
+                "web",
+                "logs",
+                "--service",
+                "db",
+                "--follow",
+                "--json",
+            ],
+            Command::Container(ContainerArgs {
+                subcommand: ContainerSubcommand::Logs {
+                    name: Some("web".to_owned()),
+                    system: None,
+                    service: Some("db".to_owned()),
+                    follow: true,
+                },
+                repo_override: None,
+                output_json: true,
+            }),
+        ),
+        (
+            &[
+                "container",
+                "web",
+                "shell",
+                "--repo",
+                "/tmp/repo",
+                "--command",
+                "php artisan tinker",
+            ],
+            Command::Container(ContainerArgs {
+                subcommand: ContainerSubcommand::Shell {
+                    name: Some("web".to_owned()),
+                    service: None,
+                    command: Some("php artisan tinker".to_owned()),
+                    bounded: None,
+                },
+                repo_override: Some(PathBuf::from("/tmp/repo")),
                 output_json: false,
             }),
         ),
