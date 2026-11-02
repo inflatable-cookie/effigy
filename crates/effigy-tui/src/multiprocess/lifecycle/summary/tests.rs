@@ -6,32 +6,32 @@ use crate::multiprocess::{SessionEntry, SessionEntryState};
 use effigy_ui::theme::Theme;
 
 /// A text record from a supervisor that keeps no typed state is read
-/// honestly: only `exit=0` is a pass, a signal is a stop the session ended,
-/// and an entry the supervisor never tracked never started.
+/// honestly: only `exit=0` is a pass, a signal a stop sends is a stop the
+/// session ended, a crash signal is the process's own failure, an entry the
+/// supervisor never tracked never started, and anything else is a failure.
 #[test]
 fn a_text_record_projects_every_supervised_entry_honestly() {
+    let stopped = |detail: &str| SessionEntryState::Stopped {
+        detail: detail.to_owned(),
+    };
+    let failed = |detail: &str| SessionEntryState::Failed {
+        detail: detail.to_owned(),
+    };
     let cases = [
         ("exit=0", SessionEntryState::Passed),
-        (
-            "exit=7",
-            SessionEntryState::Failed {
-                detail: "exit=7".to_owned(),
-            },
-        ),
-        (
-            "signal=15",
-            SessionEntryState::Stopped {
-                detail: "signal=15".to_owned(),
-            },
-        ),
+        ("exit=7", failed("exit=7")),
+        // Only a signal a stop sends says the session ended the entry.
+        ("signal=15", stopped("signal=15")),
+        ("signal=1", stopped("signal=1")),
+        ("signal=2", stopped("signal=2")),
+        ("signal=9", stopped("signal=9")),
+        // A crash is the process's own failure, and never a pass either.
+        ("signal=6", failed("signal=6")),
+        ("signal=11", failed("signal=11")),
+        ("signal=7", failed("signal=7")),
         ("not-tracked", SessionEntryState::NotStarted),
         ("not started", SessionEntryState::NotStarted),
-        (
-            "unknown exit",
-            SessionEntryState::Failed {
-                detail: "unknown exit".to_owned(),
-            },
-        ),
+        ("unknown exit", failed("unknown exit")),
     ];
 
     for (record, expected) in cases {
@@ -39,29 +39,6 @@ fn a_text_record_projects_every_supervised_entry_honestly() {
             SessionEntryState::from_record(record),
             expected,
             "record {record}"
-        );
-    }
-}
-
-#[test]
-fn only_a_stops_own_signal_is_a_stop() {
-    for record in ["signal=1", "signal=2", "signal=9", "signal=15"] {
-        assert_eq!(
-            SessionEntryState::from_record(record),
-            SessionEntryState::Stopped {
-                detail: record.to_owned()
-            },
-            "a stop's own signal is a cancellation: {record}"
-        );
-    }
-    // A crash is the process's own failure, and never a pass either.
-    for record in ["signal=6", "signal=11", "signal=7"] {
-        assert_eq!(
-            SessionEntryState::from_record(record),
-            SessionEntryState::Failed {
-                detail: record.to_owned()
-            },
-            "a crash signal is a failure: {record}"
         );
     }
 }

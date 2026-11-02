@@ -79,6 +79,7 @@ fn parse_scan_request_refuses_retired_scanner_flags() {
         ("--warning-marker", Some("TODO"), "rg -n '<pattern>'"),
         ("--high-marker", Some("FIXME"), "rg -n '<pattern>'"),
         ("--critical-marker", Some("BUG"), "rg -n '<pattern>'"),
+        ("--graph-context", None, "--graph-context"),
     ] {
         let mut args = vec!["god-files".to_owned(), flag.to_owned()];
         if let Some(value) = value {
@@ -89,18 +90,4 @@ fn parse_scan_request_refuses_retired_scanner_flags() {
         assert!(message.contains("removed in v0.15"), "{message}");
         assert!(message.contains(expected), "{message}");
     }
-}
-
-#[test]
-fn parse_scan_request_refuses_the_retired_graph_context_flag() {
-    let task = TaskInvocation {
-        name: "scan".to_owned(),
-        args: Vec::new(),
-    };
-    let error = parse_scan_request(
-        &task,
-        &["god-files".to_owned(), "--graph-context".to_owned()],
-    )
-    .expect_err("retired flag should fail");
-    assert!(error.to_string().contains("--graph-context"), "{error}");
 }

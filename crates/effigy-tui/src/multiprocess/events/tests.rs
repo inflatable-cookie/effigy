@@ -36,16 +36,19 @@ fn shell_key_input_maps_control_keys() {
     assert_eq!(shell_key_input(&key), Some("\u{1b}[D".to_owned()));
 }
 
+/// Draining gives a hung-up reader a bounded grace window, but once the
+/// budget has elapsed the first seen event ends it: an idle drain keeps
+/// waiting, one event stops.
 #[test]
-fn draining_allows_first_event_even_after_budget_elapsed() {
+fn draining_stops_only_after_an_event_once_the_budget_elapsed() {
     let started_at = Instant::now() - Duration::from_millis(20);
 
-    assert!(!should_stop_draining(started_at, 0));
-}
-
-#[test]
-fn draining_stops_after_first_event_once_budget_elapsed() {
-    let started_at = Instant::now() - Duration::from_millis(20);
-
-    assert!(should_stop_draining(started_at, 1));
+    assert!(
+        !should_stop_draining(started_at, 0),
+        "an idle drain keeps waiting past the budget"
+    );
+    assert!(
+        should_stop_draining(started_at, 1),
+        "the first event after the budget stops the drain"
+    );
 }
