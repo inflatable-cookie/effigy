@@ -340,11 +340,19 @@ Effigy ownership:
 - Tom’s ruling for #534: every secret-bearing VM Compose invocation moves to a
   retained kernel Run; if it cannot be admitted, refuse before spawn. Resident
   Env custody and production Discard remain refused until separately qualified.
+- the live owner can prepare duplicates of its exact locked file and directory
+  descriptions, original name and current original/quarantine phase for a
+  custody handoff. Preparation disables drop cleanup and refuses ordinary
+  removal; a free lock does not authorize removal. The file lock follows the
+  open file description until its last duplicate closes, rather than being
+  explicitly unlocked when the original owner drops. A failed preparation
+  retains the original owner and leaves its entry for review
 - limits of this slice: explicit removal borrows the file owner, retaining its
   descriptor and lock after failure, and drop does not retry a failed removal.
   The live owner retains its quarantine name across a failed cleanup and can
   retry that exact phase. The phase is not durable: there is no durable attempt
-  or group binding and no caller-drop Unknown lifecycle.
+  or group binding, no production helper handoff, and no caller-drop Unknown
+  lifecycle under a Run.
   Discard stays refused. These belong to the retained-lifecycle follow-up, #534,
   which depends on #532 and #533
 - a value both readers can take literally stays unquoted, and anything

@@ -11,7 +11,10 @@ mod publication;
 pub(crate) use publication::{checkout, recorded_backend, state_home};
 pub use publication::{prepare, publish_shared_render, reset, verify};
 mod vm;
-pub use vm::{compose_invocation_args, ComposeInvocation, InterpolationFile};
+pub use vm::{
+    compose_invocation_args, ComposeInvocation, InterpolationDescriptors, InterpolationFile,
+    InterpolationLocation,
+};
 
 pub(crate) mod healthcheck;
 

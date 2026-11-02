@@ -8,6 +8,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Preserve the interpolation file lock while a transferred file description is
+  still held; preparing custody leaves cleanup refused without group closure.
+
 - Preserve interpolation cleanup candidates when their ownership, mode, type or link count no longer matches the private-file policy.
 
 - Check interpolation file identity before moving a cleanup candidate; leave a mismatched entry in place.
