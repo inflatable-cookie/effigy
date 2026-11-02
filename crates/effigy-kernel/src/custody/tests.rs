@@ -3812,3 +3812,142 @@ fn managed_standard_capture_keeps_merged_order_styles_and_complete_utf8_reads() 
         .iter()
         .any(|span| span.text.contains("ready") && span.style != Default::default()));
 }
+
+/// One drain commits at most one bounded window per stream, not one append
+/// per read (effigy#558): a full pipe used to pay the append-and-provenance
+/// dance up to sixteen times per drain, which made a capture burst slower
+/// than its observer's committed-extent bound under shared I/O load. The
+/// fault hook counts durable appends (one `CaptureSync` per commit); fake
+/// pipes keep read counts, arrival order and the final bytes deterministic.
+#[cfg(feature = "fault-injection")]
+#[test]
+fn a_full_drain_commits_one_window_per_stream() {
+    use crate::fault::{self, Point};
+    use std::cell::Cell;
+    use std::rc::Rc;
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            fault::hook(None);
+            fault::arm(None);
+        }
+    }
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let path = home.path().join("canonical.log");
+    let output = CanonicalOutput::with_secrets(
+        MergedLog::prepare_test(&path).unwrap(),
+        vec![],
+        4096,
+        4096,
+    )
+    .unwrap();
+    let pid = std::process::id();
+    let receipt = ProcessReceipt {
+        identity: crate::ident::process_identity(pid)
+            .verified()
+            .expect("own process identity")
+            .clone(),
+        pgid: pid,
+        nonce: "drain-window".into(),
+        grace_millis: 20,
+    };
+    let (stdout_read, stdout_write) = spawn::pipe().unwrap();
+    let (stderr_read, stderr_write) = spawn::pipe().unwrap();
+    for fd in [&stdout_read, &stderr_read, &stdout_write, &stderr_write] {
+        // SAFETY: live pipe end and a supported descriptor flag. The write
+        // end stays nonblocking so the fill observes capacity as WouldBlock
+        // instead of waiting forever for a drain that has not started.
+        if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) } < 0 {
+            panic!("nonblocking capture pipe");
+        }
+    }
+    // Fill both pipes with a bounded burst: more than one read's worth, so
+    // the old per-read commits multiplied, and less than the 64 KiB styled
+    // window, so both commits stay in the window the pane matches.
+    fn fill(fd: &std::os::fd::OwnedFd, line: &str) -> Vec<u8> {
+        let budget = 3 * 8192;
+        let mut written = Vec::new();
+        while written.len() < budget {
+            let mut chunk = line.as_bytes().repeat(64);
+            chunk.truncate(8192);
+            // SAFETY: live nonblocking pipe write end and an initialized slice.
+            let count = unsafe {
+                libc::write(fd.as_raw_fd(), chunk.as_ptr().cast(), chunk.len())
+            };
+            if count < 0 {
+                let error = io::Error::last_os_error();
+                assert!(
+                    matches!(error.kind(), io::ErrorKind::WouldBlock),
+                    "pipe fill failed: {error}"
+                );
+                break;
+            }
+            written.extend_from_slice(&chunk[..count as usize]);
+        }
+        assert!(written.len() >= 2 * 8192, "a full pipe spans at least two reads");
+        written
+    }
+    let stdout_bytes = fill(&stdout_write, "stdout window payload 0123456789\n");
+    let stderr_bytes = fill(&stderr_write, "stderr window payload 0123456789\n");
+    let mut core = ProcessCore {
+        receipt,
+        interpolation: None,
+        anchor: None,
+        logs: [None, None],
+        canonical_output: Some(output.clone()),
+        output: VecDeque::new(),
+        streams: [VecDeque::new(), VecDeque::new()],
+        queue_max: 4096,
+        stdout: Some(stdout_read),
+        stderr: Some(stderr_read),
+        stdin: None,
+        pipeline: OutputPipeline::new(vec![]),
+        tail: VecDeque::new(),
+        tail_max: 4096,
+        capture: CaptureState::Complete,
+        exit: None,
+        reaped: false,
+        deadline: None,
+        terminal: None,
+        pty: false,
+        registration: None,
+        capture_eof_sent: false,
+    };
+    let commits = Rc::new(Cell::new(0u32));
+    let counted = commits.clone();
+    fault::hook(Some(Box::new(move |at| {
+        if at == Point::CaptureSync {
+            counted.set(counted.get() + 1);
+        }
+    })));
+    let _reset = Reset;
+    core.drain();
+    fault::hook(None);
+    assert_eq!(commits.get(), 2, "one durable commit per stream per drain");
+    let read_identity = MergedLog::identity(&path).unwrap();
+    let expected = [stdout_bytes, stderr_bytes].concat();
+    assert_eq!(read_identity.length as usize, expected.len());
+    let mut got = Vec::new();
+    let mut offset = 0u64;
+    while (offset as usize) < expected.len() {
+        let read = MergedLog::read_plain(&path, Some(read_identity.identity), offset, 64 * 1024)
+            .unwrap();
+        assert_eq!(read.from, offset);
+        assert!(!read.bytes.is_empty());
+        got.extend_from_slice(&read.bytes);
+        offset = read.from + read.bytes.len() as u64;
+    }
+    assert_eq!(got, expected, "drain bytes arrive in pipe order");
+    let tap = std::fs::read(home.path().join("canonical.log.styled-tap")).unwrap();
+    let tap: serde_json::Value = serde_json::from_slice(&tap).unwrap();
+    assert_eq!(
+        tap.get("chunks").and_then(|chunks| chunks.as_array()).map(Vec::len),
+        Some(2),
+        "the styled tap records exactly one chunk per commit"
+    );
+    assert!(!output.is_failed());
+    assert_eq!(output.capture_state(), CaptureState::Complete);
+    drop(core);
+}

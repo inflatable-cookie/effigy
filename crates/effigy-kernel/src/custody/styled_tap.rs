@@ -87,7 +87,10 @@ impl Tap {
         if wire.len() > MAX_WIRE {
             return Err(io::Error::other("styled tap exceeds its wire bound"));
         }
-        super::merged::atomic::publish(&self.dir, &self.name, &self.window, "styles", expected)
+        // Presentation data publishes without durability barriers: readers
+        // match it exactly against a verified canonical read or render plain
+        // text, so no lost window can expose or lose a canonical byte.
+        super::merged::atomic::publish_style_data(&self.dir, &self.name, &self.window, expected)
             .map(|_| ())
     }
 }

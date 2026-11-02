@@ -1446,6 +1446,21 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- A capture pump drain commits at most one bounded 64 KiB window per stream
+  instead of one durable append per pipe read. A chatty producer's full pipe
+  paid the append-and-provenance dance (and the styled-tap window rewrite) up
+  to sixteen times per drain, so the canonical full-pipe capture fixture
+  could exceed its committed-extent observation bound under shared I/O load
+  and fail intermittently (effigy#558, effigy#548). Arrival order, redaction,
+  the per-turn read bound, prompt stop and capture identity are unchanged;
+  the burst the fixture observes now commits in about a sixth of the time.
+
+- The `.styled-tap` sidecar publishes its style window through the atomic
+  stage-and-rename boundary without fsync barriers. The sidecar is optional
+  presentation data that grants no durability acknowledgement; a lost or torn
+  window renders plain text, the designed fallback, and the canonical log is
+  unaffected.
+
 - A managed run whose owning client dies while its environment is still being
   brought up no longer leaks the environment behind a `cleanup complete`
   report. The run journals its environment-stop obligation once `up` ends, so
