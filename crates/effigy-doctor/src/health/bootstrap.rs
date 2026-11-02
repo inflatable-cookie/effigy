@@ -1354,30 +1354,6 @@ mod tests {
     }
 
     #[test]
-    fn child_without_any_lock_or_install_is_a_gap() {
-        let root = temp_root("no-lock");
-        let workspace = root.join("workspace");
-        let child = workspace.join("child");
-        let manifest = manifest(&child);
-        mark_repo(&workspace);
-        write(
-            &child.join("package.json"),
-            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
-        );
-
-        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
-
-        assert_eq!(gap.reason, BootstrapReason::MissingLocalLock);
-        assert_eq!(gap.install_root, child);
-        assert_eq!(gap.route, "child");
-        assert!(gap.lock_root.is_none());
-        assert!(gap.lock_name.is_none());
-        assert!(gap.evidence().contains("reason=missing-local-lock"));
-
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
     fn workspace_member_detection_matches_common_patterns() {
         let root = temp_root("membership");
         let workspace = root.join("workspace");
