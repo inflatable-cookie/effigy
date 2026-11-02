@@ -3325,7 +3325,14 @@ never form one.
 
 **Staged production cut (Tom, 2026-11-01).** Workspace-mode container up
 currently refuses by name before workspace preparation or apply; private
-Compose and production Discard remain refused. The retained reserved-guest
+Compose and production Discard remain refused. The compile-time private
+qualification path and its authenticated preparation child are described in
+[contract 053](053-environment-reconciler-contract.md). In that path, a reserved
+Env Run may park only after fresh completion/group closure, exact process and
+anchor retirement, and acknowledged backup/interpolation cleanup. Its checkout
+lease and sentinel remain retained; closing shared gate descriptions never
+explicitly unlocks another description. Unknown preserves the held gate and
+exact owner. The retained reserved-guest
 publication, target revalidation, activation-deadline and guest-write crash
 tests require private apply and are not evidence of those behaviors while it
 is refused. Their acceptance is deferred to effigy#533 and effigy#531 before

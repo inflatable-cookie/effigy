@@ -89,6 +89,8 @@ pub(super) fn run(home: &Path, cancel: CancelToken, mode: &str) {
         process_spec,
         &bounded,
         Some(retained),
+        None,
+        None,
     );
     let refused = result.is_err();
     let effects = run.effects().unwrap().len();
@@ -108,11 +110,64 @@ pub(super) fn run(home: &Path, cancel: CancelToken, mode: &str) {
         };
         (completed, output)
     });
-    let cleanup = run.settle_workspace_recoverable(
-        &cx.operation().cleanup(Duration::from_secs(15)).unwrap(),
-        &mut Strict,
-    );
-    assert!(cleanup.is_ok(), "qualification cleanup: {cleanup:?}");
+    let cleanup = cx.operation().cleanup(Duration::from_secs(15)).unwrap();
+    let cleanup_ok = if matches!(
+        mode,
+        "private-qualification" | "private-qualification-descendant"
+    ) {
+        match run.park_workspace(&reservation, Instant::now() + Duration::from_secs(10)) {
+            Ok(parked) => {
+                assert_eq!(
+                    mode, "private-qualification",
+                    "a live descendant must retain Env"
+                );
+                assert!(
+                    !directory.join("compose.env").exists(),
+                    "exact file cleanup precedes Env release"
+                );
+                assert!(
+                    matches!(
+                        effigy_kernel::gate::Gate::probe(
+                            &cx.operation().observe().unwrap(),
+                            &root,
+                            &owner
+                        ),
+                        Observed::Verified(effigy_kernel::gate::GateState::Free, _)
+                    ),
+                    "Env is actually free for integrations"
+                );
+                parked.settle(&cleanup, &mut Strict).is_ok()
+            }
+            Err((error, retained)) => {
+                assert_eq!(
+                    mode, "private-qualification-descendant",
+                    "closed owner must park: {error}"
+                );
+                assert!(
+                    directory.join("compose.env").exists(),
+                    "Unknown keeps exact file"
+                );
+                assert!(
+                    matches!(
+                        effigy_kernel::gate::Gate::probe(
+                            &cx.operation().observe().unwrap(),
+                            &root,
+                            &owner
+                        ),
+                        Observed::Verified(effigy_kernel::gate::GateState::Held(_), _)
+                    ),
+                    "Unknown keeps Env"
+                );
+                retained
+                    .settle_workspace_recoverable(&cleanup, &mut Strict)
+                    .is_ok()
+            }
+        }
+    } else {
+        run.settle_workspace_recoverable(&cleanup, &mut Strict)
+            .is_ok()
+    };
+    assert!(cleanup_ok, "qualification cleanup remains unsettled");
     reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
     assert!(
         ordinary_refused && before == 0,

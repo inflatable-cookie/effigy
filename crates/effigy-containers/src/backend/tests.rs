@@ -129,6 +129,11 @@ fn an_unreadable_backend_record_refuses_in_words() {
         "prepare writes the checkout store at {}",
         database.display()
     );
+    // Prove the original fixture settled before making its journal unreadable.
+    // Restore these same bytes after the refusal assertions so fixture cleanup
+    // can verify those owners; corruption is never evidence of helper absence.
+    effigy_test_support::process::close_root(fixture._fixture.path()).unwrap();
+    let healthy_database = std::fs::read(&database).unwrap();
     std::fs::write(&database, b"not a database").unwrap();
 
     let observed = exact(&fixture);
@@ -152,6 +157,8 @@ fn an_unreadable_backend_record_refuses_in_words() {
         "no `Debug` structure reaches a person: {error}"
     );
     assert!(error.contains("EFFIGY_COMPOSE_BACKEND"), "{error}");
+    std::fs::write(&database, healthy_database).unwrap();
+    effigy_test_support::process::close_root(fixture._fixture.path()).unwrap();
 }
 
 #[test]

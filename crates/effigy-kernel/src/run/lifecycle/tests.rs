@@ -2139,15 +2139,21 @@ fn retained_interpolation_caller_drop_preserves_unknown_until_verified_group_clo
     .unwrap();
     let leader = process.identity().identity;
     let deadline = Instant::now() + Duration::from_secs(5);
-    while !home.path().join("descendant").exists() {
-        assert!(Instant::now() < deadline);
+    // File creation precedes echo's write. Wait for the complete PID, then
+    // prove that incarnation as before; existence alone races a partial write.
+    let descendant: u32 = loop {
+        if let Some(pid) = std::fs::read_to_string(home.path().join("descendant"))
+            .ok()
+            .and_then(|text| text.strip_suffix('\n').and_then(|pid| pid.parse().ok()))
+        {
+            break pid;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "descendant PID publication unavailable"
+        );
         std::thread::sleep(Duration::from_millis(5));
-    }
-    let descendant: u32 = std::fs::read_to_string(home.path().join("descendant"))
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
+    };
     let descendant = crate::ident::process_identity(descendant)
         .verified()
         .unwrap()

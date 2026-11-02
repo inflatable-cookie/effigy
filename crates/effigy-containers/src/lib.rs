@@ -45,6 +45,8 @@ pub use policy::hosts::{
 pub use policy::inline_workspace::{
     load_inline_workspace_container_policy, resolve_inline_workspace_exec_working_dir,
 };
+#[cfg(feature = "workspace-private-qualification")]
+pub use policy::load::load_container_policy_for_qualification_inputs;
 pub use policy::load::{
     declares_container_registry, effective_attach_mode, load_all_container_policies,
     load_container_exec_target, load_container_exec_working_dir, load_container_policy,

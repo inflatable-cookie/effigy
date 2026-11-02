@@ -291,6 +291,16 @@ impl Run<'_> {
         &mut self,
         cleanup: &CleanupContext,
     ) -> Result<(), RunError> {
+        self.close_checkout_backup_recoverable(cleanup)?;
+        self.checkout_custody.take();
+        self.ancestor_closure.take();
+        Ok(())
+    }
+
+    fn close_checkout_backup_recoverable(
+        &mut self,
+        cleanup: &CleanupContext,
+    ) -> Result<(), RunError> {
         if let Some(custody) = self.checkout_custody.as_mut() {
             if let Some(backup) = custody.partial_backup.as_mut() {
                 backup.close(cleanup).map_err(|_| {
@@ -326,8 +336,65 @@ impl Run<'_> {
                 }
             }
         }
-        self.checkout_custody.take();
-        self.ancestor_closure.take();
+        if let Some(custody) = self.checkout_custody.as_mut() {
+            custody.backup.take();
+        }
+        Ok(())
+    }
+
+    /// Parking may close shared Env descriptions only after every private
+    /// workload and its exact backup have positively closed. The checkout
+    /// lease and sentinel stay on this same Run across gate-free integrations.
+    #[cfg(feature = "workspace-private-qualification")]
+    pub(super) fn prepare_qualification_park(
+        &mut self,
+        deadline: std::time::Instant,
+    ) -> Result<(), RunError> {
+        self.can_effect()?;
+        let cx = self.cx.child_until(deadline);
+        cx.operation().check("workspace private park")?;
+        let cleanup = cx.operation().cleanup_within();
+        let effects = self.effects()?;
+        for effect in effects
+            .iter()
+            .filter(|effect| effect.spec.kind == crate::custody::KIND && !effect.state.terminal())
+        {
+            if !matches!(
+                self.completed.get(&effect.sequence),
+                Some(crate::outcome::RequiredObligation::ProcessExit(_))
+            ) {
+                return Err(RunError::unavailable(
+                    "workspace private workload completion unavailable",
+                ));
+            }
+            let core = self.processes.get(&effect.sequence).ok_or_else(|| {
+                RunError::unavailable("workspace private workload owner unavailable")
+            })?;
+            crate::custody::verify_qualification_closure(core, cx.operation())?;
+        }
+        for effect in effects
+            .iter()
+            .rev()
+            .filter(|effect| effect.spec.kind == crate::custody::KIND && !effect.state.terminal())
+        {
+            let (state, _) = crate::custody::settle_effect(
+                effect,
+                self.processes.get(&effect.sequence).cloned(),
+                &cleanup,
+                || false,
+            );
+            if state != crate::run::EffectState::Released {
+                return Err(RunError::unavailable(
+                    "workspace private workload closure remains Unknown",
+                ));
+            }
+            // Keep Applied until final settlement: publication's required-effect
+            // predicate still needs the successful apply. The exact live core
+            // retains its verified exit/closure and idempotent stop state.
+        }
+        self.close_checkout_backup_recoverable(&cleanup)?;
+        cx.operation()
+            .check("workspace private custody closed for park")?;
         Ok(())
     }
 

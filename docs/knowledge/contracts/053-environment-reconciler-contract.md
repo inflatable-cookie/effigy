@@ -42,9 +42,21 @@ The default production activation does not supply that custody plan or execute a
 private apply. The separate `workspace-private-qualification` compile-time
 feature supplies a custody plan to the guarded activation and selects the
 explicit `private_apply::qualification_only` strategy. No installed CLI,
-configuration or environment toggle enables it. The preparation-output gate
-still refuses, including in this candidate, until private preparation is wired;
-the complete CLI session is not yet executable through this feature.
+configuration or environment toggle enables it. Qualification preparation
+requires an already prepared checkout identity and current source closure;
+missing/stale sources and shared-service preparation refuse before effects.
+The parent admits a separate reserved Env Run for preparation and runs
+same-executable children with discarded streams. Each child authenticates its
+actual applied process receipt, purpose-tagged intent digest, current Env fence,
+held gate and live same-image parent/sentinel before effects. A nonce or
+declarative intent is insufficient; a receipt for another intent or purpose
+cannot authorize this preparation entry.
+Input preparation and validation reuse the ordinary preparation implementation;
+the parent publishes the reobserved render through its actual Env Run between
+those children. The exact render digest is rechecked before and after validation.
+Session access crosses the existing one-shot descriptor grant, never ambient
+credential bytes. Failed preparation settles that same owner before cancelling
+its reservation; Unknown retains the owner and exclusion.
 
 The qualification spawn requires the creator image captured at process entry,
 the exact live detached Env sentinel, checkout backup and anchor, and the
@@ -57,12 +69,28 @@ qualify apply success without a separate fresh group-closure observation. The
 exact interpolation descriptors remain on the Env owner until its verified
 settlement, including on unknown results and caller-handle drop.
 
+The actual activation Env Run receives the helper plan separately from its
+Session owner. Named recovery commands use the CLI's `container <NAME> <verb>`
+grammar. Before gate-free integrations, qualification verifies actual workload
+completion and fresh group closure, retires each exact process/anchor and closes
+the backup with verified interpolation cleanup. Only then may it close its own
+shared gate descriptions, without explicitly unlocking another description.
+The checkout fence lease and sentinel remain on the same parked Run. Unknown
+closure, helper acknowledgement, cleanup, deadline or cancellation keeps Env
+held. Retirement stays inside the original absolute deadline and cancellation;
+it creates no fresh cleanup window. Required apply effects remain Applied until
+final settlement, preserving the existing publication predicate and real exit
+obligation.
+
+
 An interpolation-bound Discard receipt has an explicit combined envelope. The
 new decoder accepts it; legacy readers cannot interpret it as an ordinary
 process, and recovery without the live descriptor owner preserves residue.
 `test:workspace:private-qualification:kernel` exercises source/fixture custody
-only. Native backend, full CLI session, genuine old-binary and consumer
-qualification, retained-review acceptance and the final production GO remain
+only. The qualification CLI control uses the real front end, reserved Env
+custody, apply, guest publication, commit and selected session with doubled
+external backend/guest I/O; it is not native evidence. Native backend,
+genuine old-binary and consumer qualification, retained-review acceptance and the final production GO remain
 separate requirements. Ordinary private backend invocation and Discard remain
 refused.
 

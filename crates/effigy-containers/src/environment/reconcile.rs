@@ -114,19 +114,17 @@ impl Operation {
             Self::Down | Self::Reset | Self::Handover | Self::Reap => "down",
             Self::Up | Self::Import => "status",
         };
-        let mut argv = vec![
-            OsString::from("effigy"),
-            OsString::from("container"),
-            OsString::from(verb),
-        ];
+        let mut argv = vec![OsString::from("effigy"), OsString::from("container")];
         if !env.is_empty() {
             argv.push(OsString::from(env));
         }
+        argv.push(OsString::from(verb));
         Invocation::validated(argv, |argv| {
-            argv.len() >= 3
+            argv.len() == if env.is_empty() { 3 } else { 4 }
                 && argv[0] == "effigy"
                 && argv[1] == "container"
-                && matches!(argv[2].to_str(), Some("down" | "status"))
+                && argv.last().is_some_and(|arg| arg == verb)
+                && (env.is_empty() || argv[2] == env)
         })
         .map_err(|_| EnvError::Invalid("invalid recovery command".into()))
     }
@@ -1015,11 +1013,12 @@ impl<'r> EnvRun<'r> {
         op: Operation,
         wait: Wait,
         reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+        custody: Option<effigy_kernel::supervise::LifecyclePlan>,
     ) -> Result<Self, EnvAdmissionFailure<'r>> {
         let claim = reservation
             .claim()
             .map_err(|error| EnvError::from_run(&env.name, error))?;
-        Self::admit_recoverable(ctx, env, op, wait, Some(claim))
+        Self::admit_recoverable(ctx, env, op, wait, Some(claim), custody)
     }
 
     fn admit(
@@ -1029,7 +1028,7 @@ impl<'r> EnvRun<'r> {
         wait: Wait,
         claim: Option<effigy_kernel::workspace_session::ActivationClaim>,
     ) -> Result<Self, EnvError> {
-        Self::admit_recoverable(ctx, env, op, wait, claim).map_err(|failure| {
+        Self::admit_recoverable(ctx, env, op, wait, claim, None).map_err(|failure| {
             if let Some(owner) = failure.owner {
                 if let Ok(cleanup) = ctx.cleanup() {
                     match owner {
@@ -1052,6 +1051,7 @@ impl<'r> EnvRun<'r> {
         op: Operation,
         wait: Wait,
         claim: Option<effigy_kernel::workspace_session::ActivationClaim>,
+        custody: Option<effigy_kernel::supervise::LifecyclePlan>,
     ) -> Result<Self, EnvAdmissionFailure<'r>> {
         if ctx.cx.operation().placement() != Placement::Host {
             return Err(EnvError::HostAuthorityRequired.into());
@@ -1091,7 +1091,7 @@ impl<'r> EnvRun<'r> {
             wait,
             acknowledge: vec![],
             next,
-            custody: None,
+            custody,
         };
         let admitted = admit_under_gate_probe(ctx.root, env, &progress, || match claim {
             Some(claim) => Run::begin_claimed_recoverable(

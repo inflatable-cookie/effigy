@@ -134,7 +134,9 @@ impl ComposeInvocation {
                     "interpolation custody unavailable".into(),
                 )
             })?;
-        effigy_kernel::custody::Custody::spawn_workspace_discard_qualification(run, spec, cx, file)
+        effigy_kernel::custody::Custody::spawn_workspace_discard_qualification(
+            run, spec, cx, file, None, None,
+        )
     }
 
     /// Direct-child callers cannot safely transfer this owner into group custody.

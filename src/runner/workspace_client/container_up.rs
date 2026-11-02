@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::serving_host::ServingHostRequest;
 
 mod cleanup_integrations;
-mod cli_preflight;
+pub(in crate::runner) mod cli_preflight;
 mod declaration;
 #[cfg(feature = "workspace-serving-fixture")]
 mod fake_io;
@@ -68,13 +68,20 @@ pub(crate) fn fixture_prepared_declaration(
     serde_json::to_value(declaration).map_err(|_| "fixture serialization unavailable".into())
 }
 
-/// Refuse the unqualified output capability before any workspace preparation
-/// or reserved admission. Removed only when the reviewed private entrypoints
-/// are wired at both production boundaries; no fixture exemption qualifies it.
+/// Production refuses before any workspace preparation or reserved admission.
+/// The separate compile-time qualification candidate uses the authenticated
+/// custodied preparation entry; there is no normal CLI/config/env bypass.
 pub(in crate::runner) fn require_private_preparation_output() -> Result<(), RunError> {
-    Err(RunError::unavailable(
-        "workspace private preparation output is unavailable; no workspace apply was attempted",
-    ))
+    #[cfg(feature = "workspace-private-qualification")]
+    {
+        Ok(())
+    }
+    #[cfg(not(feature = "workspace-private-qualification"))]
+    {
+        Err(RunError::unavailable(
+            "workspace private preparation output is unavailable; no workspace apply was attempted",
+        ))
+    }
 }
 
 /// Ordinary CLI preparation finishes before launch. Only this declarative

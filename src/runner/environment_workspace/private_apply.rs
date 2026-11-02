@@ -101,7 +101,8 @@ pub(in crate::runner) fn qualification_only(
     if !Path::new(&program).is_absolute() {
         return Err(unavailable());
     }
-    let mut env = std::env::vars_os()
+    let mut env = crate::runner::secret_session::workload_ambient_environment()
+        .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
         .map(|(key, value)| (key, EnvValue::Plain(value)))
         .collect::<std::collections::BTreeMap<_, _>>();
     for (key, value) in command.env {
@@ -140,7 +141,8 @@ pub(in crate::runner) fn qualification_only(
         _ => return Err(unavailable()),
     };
     if !matches!(
-        process.qualification_group_closure(bounded.operation()),
+        process
+            .wait_qualification_group_closure(&bounded.operation().child(Duration::from_secs(2))),
         Observed::Verified(..) | Observed::Absent(_)
     ) {
         return Err(unavailable());

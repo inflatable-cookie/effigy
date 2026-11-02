@@ -12,6 +12,11 @@ with cfg_path.with_suffix(".calls").open("a") as calls:
     calls.write(json.dumps(args) + "\n")
 if args[:1] == ["--context"]:
     args = args[2:]
+if args == ["ps"] and cfg_path.with_suffix(".prepare-failure").exists():
+    cfg_path.with_suffix(".prepare-failure-observed").write_text("crossed")
+    print("adversarial-secret-backend-diagnostic")
+    print("adversarial-secret-backend-diagnostic", file=sys.stderr)
+    sys.exit(87)
 project = "fixture-web"
 for flag in ("-p", "--project-name"):
     if flag in args:

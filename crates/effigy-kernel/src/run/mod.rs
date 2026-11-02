@@ -1313,6 +1313,16 @@ impl<'a> Run<'a> {
                     "workspace activation deadline expired",
                 ));
             }
+            #[cfg(feature = "workspace-private-qualification")]
+            let gates = if self.sentinel.is_some() && self.checkout_custody.is_some() {
+                self.prepare_qualification_park(deadline)?;
+                self.guard
+                    .park_after_custody_closed()
+                    .map_err(RunError::refused)?
+            } else {
+                self.guard.park().map_err(RunError::refused)?
+            };
+            #[cfg(not(feature = "workspace-private-qualification"))]
             let gates = self.guard.park().map_err(RunError::refused)?;
             Ok((snapshot, gates, identity, resume_facts))
         })();

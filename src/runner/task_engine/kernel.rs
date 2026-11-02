@@ -673,6 +673,11 @@ pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
         Ok(router) => router,
         Err(_) => return Some(70),
     };
+    #[cfg(feature = "workspace-private-qualification")]
+    if entry == "__kernel-workspace-private-prepare" {
+        adopt_signal_router(router);
+        return Some(crate::runner::container_command::qualification::entry());
+    }
     if let Some(result) = effigy_kernel::probe::internal_entry(entry, router.root_cancel()) {
         return Some(i32::from(result.is_err()));
     }

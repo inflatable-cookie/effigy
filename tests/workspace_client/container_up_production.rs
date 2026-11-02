@@ -1088,3 +1088,216 @@ fn actual_detached_entry_refuses_valid_prepared_input_before_admission_or_plan()
         "no engine observation or effect"
     );
 }
+
+/// Real CLI, real Env/helper/file custody, doubled backend and guest only.
+#[cfg(feature = "workspace-private-qualification")]
+#[test]
+fn actual_cli_fake_backend_reaches_committed_workspace() {
+    let fixture = BackendFixture::new();
+    effigy_core::worktree_scope::prepare_checkout_token(&fixture.project)
+        .expect("prepared identity");
+    let output = fixture
+        .workspace_command()
+        .args(["--detach", "--json"])
+        .output()
+        .expect("actual CLI");
+    let diagnostics = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.status.success(),
+        "{diagnostics}\nfixed stage: {}\nengine calls: {}",
+        std::fs::read_to_string(fixture.config.with_extension("failure")).unwrap_or_default(),
+        fixture.calls()
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("JSON success");
+    assert_eq!(report["ok"], true, "{report}");
+    assert_eq!(
+        fixture
+            .calls()
+            .lines()
+            .filter(|line| line.contains("\"up\""))
+            .count(),
+        1,
+        "one actual apply: {}",
+        fixture.calls()
+    );
+    let connection = rusqlite::Connection::open_with_flags(
+        fixture.project.join(".effigy/state/kernel.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .expect("journal");
+    let selected: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM workspace_activation_reservations WHERE state='committed'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("actual commit");
+    assert_eq!(selected, 1, "actual committed workspace reservation");
+    let selected_run: String = connection
+        .query_row(
+            "SELECT session_run FROM workspace_selection_obligations WHERE state='switched'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("durable switched selection");
+    let phase: String = connection
+        .query_row(
+            "SELECT phase FROM runs WHERE run_id=?1",
+            [&selected_run],
+            |row| row.get(0),
+        )
+        .expect("selected live owner");
+    assert_ne!(
+        phase, "closed",
+        "Serving acknowledges a live selected owner"
+    );
+    let files: std::collections::BTreeMap<String, Vec<u8>> = serde_json::from_slice(
+        &std::fs::read(fixture.config.parent().unwrap().join("guest-files.json"))
+            .expect("actual guest writes"),
+    )
+    .expect("guest map");
+    let documents: Vec<_> = files
+        .values()
+        .filter_map(|bytes| {
+            serde_json::from_slice::<effigy_kernel::workspace_session::WorkspaceContextDocument>(
+                bytes,
+            )
+            .ok()
+        })
+        .collect();
+    assert_eq!(documents.len(), 1, "one complete v2 publication");
+    assert_eq!(
+        documents[0].session.run_id, selected_run,
+        "guest publication names the actually selected owner"
+    );
+    drop(connection);
+    fixture.assert_settled();
+    assert_no_durable_error_bytes(&fixture.project);
+    assert_no_durable_error_bytes(&fixture.home);
+    assert!(
+        !fixture
+            .fixture
+            .path()
+            .join("forced-fixture-cleanup")
+            .exists(),
+        "normal cleanup required"
+    );
+}
+
+#[cfg(feature = "workspace-private-qualification")]
+#[test]
+fn qualification_private_preparation_failure_discards_all_backend_diagnostics() {
+    let fixture = BackendFixture::new();
+    effigy_core::worktree_scope::prepare_checkout_token(&fixture.project)
+        .expect("prepared identity");
+    std::fs::write(fixture.config.with_extension("prepare-failure"), b"fail")
+        .expect("private fixture fault");
+    let output = fixture
+        .workspace_command()
+        .args(["--detach", "--json"])
+        .output()
+        .expect("actual CLI");
+    assert!(!output.status.success());
+    let diagnostics = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        diagnostics.contains("stage=child-preparation"),
+        "{diagnostics}"
+    );
+    assert!(!diagnostics.contains("adversarial-secret-backend-diagnostic"));
+    assert!(
+        fixture
+            .config
+            .with_extension("prepare-failure-observed")
+            .exists(),
+        "real failing backend boundary crossed"
+    );
+    assert!(
+        !fixture.calls().contains("\"up\""),
+        "preparation failure prevents apply"
+    );
+    fixture.assert_settled();
+    assert_no_durable_error_bytes(&fixture.project);
+    assert_no_durable_error_bytes(&fixture.home);
+    assert!(!fixture
+        .fixture
+        .path()
+        .join("forced-fixture-cleanup")
+        .exists());
+}
+
+#[cfg(feature = "workspace-private-qualification")]
+#[test]
+fn qualification_preparation_entry_refuses_a_forged_process_receipt() {
+    let fixture = BackendFixture::new();
+    let cx = super::super::effects();
+    let root = super::super::state_root(&cx, &fixture.home, &fixture.project);
+    drop(effigy_kernel::store::Store::open(&cx, &root).expect("empty real journal"));
+    let intent = serde_json::json!({
+        "directory": effigy_kernel::fs::DirFd::open(&fixture.project).unwrap().identity().unwrap(),
+        "checkout": effigy_kernel::id::CheckoutId::new(effigy_kernel::id::CheckoutKind::EphemeralClone, [44;16]),
+        "environment": "web", "backend_kind": effigy_containers::environment::BackendKind::DockerDesktop,
+        "engine":"docker", "profile":"default", "render":null,
+    });
+    let before_project = snapshot(&fixture.project);
+    let before_home = snapshot(&fixture.home);
+    let output = fixture
+        .command()
+        .arg("__kernel-workspace-private-prepare")
+        .arg(intent.to_string())
+        .env(
+            "EFFIGY_CUSTODY_NONCE",
+            format!("{}:1", effigy_kernel::id::RunId::new(1, [44; 10]).unwrap()),
+        )
+        .output()
+        .expect("direct forged child");
+    assert_eq!(
+        output.status.code(),
+        Some(66),
+        "real custody authentication refused"
+    );
+    assert!(output.stdout.is_empty() && output.stderr.is_empty());
+    assert_eq!(
+        snapshot(&fixture.project),
+        before_project,
+        "no effects on unauthenticated entry"
+    );
+    assert_eq!(snapshot(&fixture.home), before_home);
+    assert!(fixture.calls().is_empty());
+}
+
+#[cfg(feature = "workspace-private-qualification")]
+#[test]
+fn qualification_preparation_receipt_cannot_authorize_a_different_intent() {
+    let fixture = BackendFixture::new();
+    effigy_core::worktree_scope::prepare_checkout_token(&fixture.project)
+        .expect("prepared identity");
+    let output = fixture
+        .workspace_command()
+        .args(["--detach", "--json"])
+        .env("EFFIGY_TEST_PREPARATION_INTENT_FAULT", "1")
+        .output()
+        .expect("actual qualified spawn");
+    assert!(!output.status.success());
+    let diagnostics = String::from_utf8_lossy(&output.stdout);
+    assert!(diagnostics.contains("stage=child-custody"), "{diagnostics}");
+    assert!(
+        fixture.calls().is_empty(),
+        "mismatched intent gets no backend I/O"
+    );
+    fixture.assert_settled();
+    assert_no_durable_error_bytes(&fixture.project);
+    assert_no_durable_error_bytes(&fixture.home);
+    assert!(!fixture
+        .fixture
+        .path()
+        .join("forced-fixture-cleanup")
+        .exists());
+}

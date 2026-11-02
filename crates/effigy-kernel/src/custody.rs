@@ -1075,6 +1075,8 @@ impl Custody {
         spec: ProcessSpec,
         cx: &EffectContext,
         file: Option<crate::interpolation::RetainedInterpolation>,
+        handoff: Option<OwnedFd>,
+        preparation_intent: Option<crate::id::Digest>,
     ) -> Result<OwnedProcess, SpawnError> {
         if !matches!(spec.terminal, Terminal::Discard) {
             return Err(SpawnError::Refused("qualification requires Discard".into()));
@@ -1088,10 +1090,11 @@ impl Custody {
             crate::ctx::Capability::AdapterEffect,
             true,
             None,
-            None,
+            handoff,
             None,
             file,
             Some(image),
+            preparation_intent,
         )
     }
 
@@ -1114,6 +1117,7 @@ impl Custody {
             None,
             None,
             Some(file),
+            None,
             None,
         )
     }
@@ -1143,6 +1147,7 @@ impl Custody {
             canonical_output,
             None,
             None,
+            None,
         )
     }
     // Every parameter is a distinct spawn knob the public entry points set;
@@ -1160,6 +1165,7 @@ impl Custody {
         canonical_output: Option<CanonicalOutput>,
         interpolation: Option<crate::interpolation::RetainedInterpolation>,
         qualification: Option<&crate::supervise::image_identity::CreatorImage>,
+        preparation_intent: Option<crate::id::Digest>,
     ) -> Result<OwnedProcess, SpawnError> {
         // A discard receipt needs every recovery helper to understand the
         // disposition before this owner records an intent or forks. Existing
@@ -1198,7 +1204,14 @@ impl Custody {
         } else {
             secrets.clone()
         });
-        let ticket = run.intend_process(process_intent(&spec, run.fence().clone(), required)?)?;
+        let mut intent = process_intent(&spec, run.fence().clone(), required)?;
+        if let Some(digest) = preparation_intent {
+            // This purpose-tagged protocol field is authority; the redacted
+            // human label remains diagnostic only (K10).
+            intent.payload["workspace_preparation_v1"] =
+                serde_json::to_value(digest).map_err(RunError::from)?;
+        }
+        let ticket = run.intend_process(intent)?;
         let nonce = format!("{}:{}", run.id(), ticket.sequence());
         let image = run.anchor_image()?;
         let closure = run.closure_pin()?;
@@ -1503,6 +1516,21 @@ impl OwnedProcess {
             return Observed::Unknown(unknown("workspace qualification deadline or cancellation"));
         }
         result
+    }
+
+    /// Retry only fresh closure observations within the caller's bounded
+    /// context. Unknown never becomes absence merely because time passes.
+    #[cfg(feature = "workspace-private-qualification")]
+    pub fn wait_qualification_group_closure(&self, cx: &OperationContext) -> Observed<Closure> {
+        loop {
+            let observed = self.qualification_group_closure(cx);
+            if matches!(observed, Observed::Verified(..) | Observed::Absent(_))
+                || cx.check("workspace qualification closure wait").is_err()
+            {
+                return observed;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
 
     pub fn complete(&self, run: &mut Run<'_>, exit: Exit) -> Result<(), RunError> {
@@ -1913,6 +1941,106 @@ impl ProcessCore {
         }
     }
 }
+/// Fresh closure of the exact live core; a leader exit is insufficient.
+#[cfg(feature = "workspace-private-qualification")]
+pub(crate) fn verify_qualification_closure(
+    core: &Arc<Mutex<ProcessCore>>,
+    cx: &OperationContext,
+) -> Result<(), RunError> {
+    cx.check("workspace private group closure")?;
+    let core = lock(core);
+    if core.exit.is_none()
+        || !matches!(
+            anchor::closed(
+                &core.receipt,
+                core.anchor.as_ref(),
+                core.exit.map(|_| &core.receipt.identity)
+            ),
+            Observed::Verified(..) | Observed::Absent(_)
+        )
+    {
+        return Err(RunError::unavailable(
+            "workspace private group closure remains Unknown",
+        ));
+    }
+    cx.check("workspace private group closure")?;
+    Ok(())
+}
+
+/// Authenticate a qualification preparation child against the actual applied
+/// process receipt, purpose-tagged intent digest, current Env fence, live parent/sentinel
+/// and held Env gate. Declarative argv or a copied nonce alone cannot authorize preparation.
+#[cfg(feature = "workspace-private-qualification")]
+pub fn verify_workspace_qualification_child(
+    root: &crate::root::StateRoot,
+    owner: &crate::id::ResourceId,
+    cx: &crate::ctx::ObserveContext,
+    intent_digest: &crate::id::Digest,
+) -> Result<(), RunError> {
+    let refused = || RunError::refused("workspace preparation child custody unavailable");
+    cx.check("preparation child custody")?;
+    if root.is_machine() || owner.kind() != crate::id::ResourceKind::Env {
+        return Err(refused());
+    }
+    let nonce = std::env::var("EFFIGY_CUSTODY_NONCE").map_err(|_| refused())?;
+    let (run, sequence) = nonce.split_once(':').ok_or_else(refused)?;
+    let run: crate::id::RunId = run.parse().map_err(|_| refused())?;
+    let sequence: i64 = sequence.parse().map_err(|_| refused())?;
+    let observed = crate::store::Store::read(cx, root);
+    let reader = observed.verified().ok_or_else(refused)?;
+    let effects = crate::run::effects(reader, run)
+        .verified()
+        .cloned()
+        .ok_or_else(refused)?;
+    let effect = effects
+        .iter()
+        .find(|effect| effect.sequence == sequence)
+        .ok_or_else(refused)?;
+    if effect.spec.target.resource != *owner
+        || effect.spec.kind != KIND
+        || effect.state != EffectState::Applied
+        || effect.spec.payload.get("workspace_preparation_v1")
+            != Some(&serde_json::to_value(intent_digest)?)
+    {
+        return Err(refused());
+    }
+    crate::run::check_workspace_fence(reader.conn(), &effect.spec.target)?;
+    let record: StoredProcessRecord =
+        serde_json::from_value(effect.receipt.clone().ok_or_else(refused)?)?;
+    if !matches!(record, StoredProcessRecord::Discard { .. }) {
+        return Err(refused());
+    }
+    let record = record.into_record();
+    let identity = crate::ident::process_identity(std::process::id())
+        .verified()
+        .cloned()
+        .ok_or_else(refused)?;
+    if record.process.identity != identity || record.process.nonce != nonce {
+        return Err(refused());
+    }
+    verify_foreground_receipt(effect, run)?;
+    if !matches!(
+        crate::gate::Gate::probe(cx, root, owner),
+        Observed::Verified(crate::gate::GateState::Held(_), _)
+    ) {
+        return Err(refused());
+    }
+    let metadata = crate::run::metadata(cx, root, run)
+        .verified()
+        .cloned()
+        .ok_or_else(refused)?;
+    if metadata.placement != "detached"
+        || metadata.sentinel_status != crate::run::SentinelStatus::Live
+    {
+        return Err(refused());
+    }
+    let image = crate::supervise::image_identity::creator()?;
+    image.verify_process(metadata.owner.as_ref().ok_or_else(refused)?)?;
+    image.verify_process(metadata.sentinel.as_ref().ok_or_else(refused)?)?;
+    cx.check("preparation child custody")?;
+    Ok(())
+}
+
 /// The memory backup independently validates the complete pre-go receipt.
 /// Only a ready, tagged anchor and the exact run/sequence nonce can be acked.
 pub(crate) fn verify_foreground_receipt(

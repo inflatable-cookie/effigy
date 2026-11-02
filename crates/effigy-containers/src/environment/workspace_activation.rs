@@ -1093,6 +1093,9 @@ impl<'r> WorkspaceActivation<'r> {
                 .into())
             }
         };
+        // Preserve the caller's reviewed helper plan for the actual Env owner,
+        // as well as the distinct session owner admitted below.
+        let environment_custody = options.custody.clone();
         let run_id = options.id;
         let next = options.next.clone();
         let owner = invocation.spec().owner.clone();
@@ -1142,48 +1145,54 @@ impl<'r> WorkspaceActivation<'r> {
                 };
             }
         };
-        let environment =
-            match EnvRun::begin_claimed_recoverable(ctx, env, Operation::Up, wait, &reservation) {
-                Ok(environment) => environment,
-                Err(failure) => {
-                    let custody = match failure.owner {
-                        Some(super::reconcile::EnvAdmissionOwner::Guarded(environment)) => {
-                            GuardedAbortState::GuardedEnvironment {
-                                root: ctx.root,
-                                environment,
-                                supervisor: Box::new(supervisor),
-                                reservation,
-                                attempt,
-                            }
-                        }
-                        Some(super::reconcile::EnvAdmissionOwner::Run(environment)) => {
-                            GuardedAbortState::Environment {
-                                root: ctx.root,
-                                environment,
-                                supervisor: Box::new(supervisor),
-                                reservation,
-                                attempt,
-                            }
-                        }
-                        None => GuardedAbortState::AdmissionUnknown {
+        let environment = match EnvRun::begin_claimed_recoverable(
+            ctx,
+            env,
+            Operation::Up,
+            wait,
+            &reservation,
+            environment_custody,
+        ) {
+            Ok(environment) => environment,
+            Err(failure) => {
+                let custody = match failure.owner {
+                    Some(super::reconcile::EnvAdmissionOwner::Guarded(environment)) => {
+                        GuardedAbortState::GuardedEnvironment {
                             root: ctx.root,
+                            environment,
                             supervisor: Box::new(supervisor),
                             reservation,
                             attempt,
+                        }
+                    }
+                    Some(super::reconcile::EnvAdmissionOwner::Run(environment)) => {
+                        GuardedAbortState::Environment {
+                            root: ctx.root,
+                            environment,
+                            supervisor: Box::new(supervisor),
+                            reservation,
+                            attempt,
+                        }
+                    }
+                    None => GuardedAbortState::AdmissionUnknown {
+                        root: ctx.root,
+                        supervisor: Box::new(supervisor),
+                        reservation,
+                        attempt,
+                    },
+                };
+                return match custody.retry(ctx, wait) {
+                    Ok(()) => Err(failure.error.into()),
+                    Err((cleanup_error, custody)) => Err(WorkspaceBeginFailure {
+                        error: EnvError::Cleanup {
+                            cause: Box::new(failure.error),
+                            failures: vec![cleanup_error],
                         },
-                    };
-                    return match custody.retry(ctx, wait) {
-                        Ok(()) => Err(failure.error.into()),
-                        Err((cleanup_error, custody)) => Err(WorkspaceBeginFailure {
-                            error: EnvError::Cleanup {
-                                cause: Box::new(failure.error),
-                                failures: vec![cleanup_error],
-                            },
-                            custody: Some(Box::new(GuardedAbortCustody { state: *custody })),
-                        }),
-                    };
-                }
-            };
+                        custody: Some(Box::new(GuardedAbortCustody { state: *custody })),
+                    }),
+                };
+            }
+        };
         Ok(WorkspaceBegin::Activate(Box::new(Self {
             environment,
             supervisor,
