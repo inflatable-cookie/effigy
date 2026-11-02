@@ -59,8 +59,8 @@ where
     let _operation_plan = data_operation_plan(repo_root, &policy, ContainerDataOperation::list());
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    validate_compose_backend_runtime(repo_root, &policy)
-        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    // Data list reads volume state and never applies Compose, so the
+    // apply-time backend preflight has no effect to admit here.
 
     let colima_running = runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
@@ -130,8 +130,8 @@ where
     );
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    validate_compose_backend_runtime(repo_root, &policy)
-        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    // Cache list reads volume state and never applies Compose, so the
+    // apply-time backend preflight has no effect to admit here.
 
     let colima_running = runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
@@ -270,8 +270,9 @@ where
         );
         validate_container_policy(repo_root, &policy)
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-        validate_compose_backend_runtime(repo_root, &policy)
-            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+        // Cache prune removes named volumes through the runtime's volume
+        // commands after proving the stack stopped; it never applies Compose,
+        // so the apply-time backend preflight has no effect to admit here.
 
         ensure_cache_prune_target_is_stopped(
             &policy.name,
@@ -751,8 +752,9 @@ where
     );
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    validate_compose_backend_runtime(repo_root, &policy)
-        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    // Export and import run one throwaway volume container through the
+    // runtime's own run command; Compose is never applied, so the apply-time
+    // backend preflight has no effect to admit here.
     validate_transfer_path(archive_path, action)?;
     if !runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?
@@ -815,6 +817,8 @@ where
     );
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    // Pull-production starts the stack, so the apply-time backend preflight
+    // (temp-root sharing, nerdctl mounts budget) admits before that apply.
     validate_compose_backend_runtime(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let hook = policy.pull_production_hook.clone().ok_or_else(|| {

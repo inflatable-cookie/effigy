@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use effigy_containers::{
-    exec::colima_is_running, load_container_policy, validate_compose_backend_runtime,
-    validate_container_policy, EffectiveContainerPolicy,
+    exec::colima_is_running, load_container_policy, validate_container_policy,
+    EffectiveContainerPolicy,
 };
 use effigy_exec::{CwdMapper, ExecAlias, ExecAliasTable};
 use effigy_manifest::{
@@ -70,13 +70,9 @@ pub(super) fn resolve_named_exec_surface(
             error.to_string(),
         )
     })?;
-    validate_compose_backend_runtime(repo_root, &policy).map_err(|error| {
-        RunnerError::container_surface_policy(
-            "backend validation",
-            container_name,
-            error.to_string(),
-        )
-    })?;
+    // Exec surfaces attach to containers of an already-running stack; the
+    // surface starts nothing itself, so the apply-time backend preflight has
+    // no effect to admit here.
     Ok(ResolvedExecSurface {
         container_name: container_name.to_owned(),
         config,
