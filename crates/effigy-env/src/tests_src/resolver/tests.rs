@@ -22,19 +22,18 @@ fn make_context_with_timeout(timeout: Duration) -> ResolutionContext<'static> {
     }
 }
 
-fn make_context_with_env(vars: &[(&str, &str)]) -> ResolutionContext<'static> {
+fn make_context_with_sources(
+    process_env: &[(&str, &str)],
+    dotenv: &[(&str, &str)],
+) -> ResolutionContext<'static> {
     let mut ctx = make_context();
-    for (k, v) in vars {
-        ctx.process_env.insert((*k).to_owned(), (*v).to_owned());
+    for (key, value) in process_env {
+        ctx.process_env
+            .insert((*key).to_owned(), (*value).to_owned());
     }
-    ctx
-}
-
-fn make_context_with_dotenv(vars: &[(&str, &str)]) -> ResolutionContext<'static> {
-    let mut ctx = make_context();
-    for (k, v) in vars {
+    for (key, value) in dotenv {
         ctx.dotenv_overrides
-            .insert((*k).to_owned(), (*v).to_owned());
+            .insert((*key).to_owned(), (*value).to_owned());
     }
     ctx
 }
@@ -79,61 +78,67 @@ fn schema(entries: Vec<EnvSchemaEntry>) -> EnvSchema {
     }
 }
 
-#[test]
-fn resolve_literal_default() {
-    let s = schema(vec![entry(
+fn port_schema() -> EnvSchema {
+    schema(vec![entry(
         "PORT",
         Some(EnvValueExpr::Literal("3000".to_owned())),
-    )]);
-    let resolved = resolve_schema(&s, &make_context()).unwrap();
-    assert_eq!(resolved.get_value("PORT"), Some("3000"));
-    assert_eq!(
-        resolved.get("PORT").unwrap().source,
-        ResolvedSource::SchemaDefault
-    );
+    )])
 }
 
+/// Resolution reads the process env first, then dotenv overrides, then the
+/// schema value — each row names the sources it pits against each other.
 #[test]
-fn resolve_process_env_takes_priority() {
-    let s = schema(vec![entry(
-        "PORT",
-        Some(EnvValueExpr::Literal("3000".to_owned())),
-    )]);
-    let ctx = make_context_with_env(&[("PORT", "8080")]);
-    let resolved = resolve_schema(&s, &ctx).unwrap();
-    assert_eq!(resolved.get_value("PORT"), Some("8080"));
-    assert_eq!(
-        resolved.get("PORT").unwrap().source,
-        ResolvedSource::ProcessEnv
-    );
-}
+fn resolution_priority_runs_process_env_then_dotenv_then_schema() {
+    struct PriorityRow {
+        name: &'static str,
+        process_env: &'static [(&'static str, &'static str)],
+        dotenv: &'static [(&'static str, &'static str)],
+        value: &'static str,
+        source: ResolvedSource,
+    }
 
-#[test]
-fn resolve_dotenv_overrides_schema_default() {
-    let s = schema(vec![entry(
-        "PORT",
-        Some(EnvValueExpr::Literal("3000".to_owned())),
-    )]);
-    let ctx = make_context_with_dotenv(&[("PORT", "9090")]);
-    let resolved = resolve_schema(&s, &ctx).unwrap();
-    assert_eq!(resolved.get_value("PORT"), Some("9090"));
-    assert_eq!(
-        resolved.get("PORT").unwrap().source,
-        ResolvedSource::DotenvOverride
-    );
-}
+    let rows = [
+        PriorityRow {
+            name: "schema-default",
+            process_env: &[],
+            dotenv: &[],
+            value: "3000",
+            source: ResolvedSource::SchemaDefault,
+        },
+        PriorityRow {
+            name: "process-env-over-schema",
+            process_env: &[("PORT", "8080")],
+            dotenv: &[],
+            value: "8080",
+            source: ResolvedSource::ProcessEnv,
+        },
+        PriorityRow {
+            name: "dotenv-over-schema",
+            process_env: &[],
+            dotenv: &[("PORT", "9090")],
+            value: "9090",
+            source: ResolvedSource::DotenvOverride,
+        },
+        PriorityRow {
+            name: "process-env-over-dotenv",
+            process_env: &[("PORT", "8080")],
+            dotenv: &[("PORT", "9090")],
+            value: "8080",
+            source: ResolvedSource::ProcessEnv,
+        },
+    ];
 
-#[test]
-fn resolve_process_env_over_dotenv() {
-    let s = schema(vec![entry(
-        "PORT",
-        Some(EnvValueExpr::Literal("3000".to_owned())),
-    )]);
-    let mut ctx = make_context_with_env(&[("PORT", "8080")]);
-    ctx.dotenv_overrides
-        .insert("PORT".to_owned(), "9090".to_owned());
-    let resolved = resolve_schema(&s, &ctx).unwrap();
-    assert_eq!(resolved.get_value("PORT"), Some("8080"));
+    for row in &rows {
+        let ctx = make_context_with_sources(row.process_env, row.dotenv);
+        let resolved = resolve_schema(&port_schema(), &ctx).unwrap();
+        assert_eq!(resolved.get_value("PORT"), Some(row.value), "{}", row.name);
+        assert_eq!(
+            resolved.get("PORT").unwrap().source,
+            row.source,
+            "{}",
+            row.name
+        );
+    }
 }
 
 #[test]
@@ -150,6 +155,8 @@ fn resolve_env_ref() {
     );
 }
 
+/// Template variables interpolate schema entries and fall back to the process
+/// environment for names the schema does not declare.
 #[test]
 fn resolve_template() {
     let s = schema(vec![
@@ -171,10 +178,7 @@ fn resolve_template() {
         resolved.get("URL").unwrap().source,
         ResolvedSource::TemplateInterpolation
     );
-}
 
-#[test]
-fn resolve_template_with_process_env() {
     let s = schema(vec![entry(
         "URL",
         Some(EnvValueExpr::Template(vec![
@@ -182,7 +186,7 @@ fn resolve_template_with_process_env() {
             TemplatePart::VarRef("EXT_HOST".to_owned()),
         ])),
     )]);
-    let ctx = make_context_with_env(&[("EXT_HOST", "example.com")]);
+    let ctx = make_context_with_sources(&[("EXT_HOST", "example.com")], &[]);
     let resolved = resolve_schema(&s, &ctx).unwrap();
     assert_eq!(resolved.get_value("URL"), Some("https://example.com"));
 }
@@ -236,15 +240,14 @@ fn resolve_circular_dependency_detected() {
     assert!(msg.contains("circular dependency"), "got: {msg}");
 }
 
+/// An entry with no value is skipped unless it is `@required`, which is a
+/// resolution error naming the key.
 #[test]
-fn resolve_missing_optional_is_ok() {
+fn missing_entries_follow_the_required_annotation() {
     let s = schema(vec![entry("MAYBE", None)]);
     let resolved = resolve_schema(&s, &make_context()).unwrap();
     assert!(!resolved.contains_key("MAYBE"));
-}
 
-#[test]
-fn resolve_missing_required_is_error() {
     let s = schema(vec![entry_required("MUST_HAVE", None)]);
     let err = resolve_schema(&s, &make_context()).unwrap_err();
     let msg = err.to_string();

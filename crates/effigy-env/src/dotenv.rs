@@ -45,8 +45,11 @@ fn strip_matching_quotes(value: &str) -> &str {
 mod tests {
     use super::parse_dotenv_entries;
 
+    /// Supported forms parse, unsupported lines are skipped, and quoting is
+    /// kept literal when unmatched.
     #[test]
-    fn parse_dotenv_entries_supports_comments_export_and_quotes() {
+    fn dotenv_lines_parse_their_supported_and_refused_forms() {
+        // Comments, `export` prefixes and quote styles are supported.
         let parsed = parse_dotenv_entries(
             r#"
 # ignored comment
@@ -58,10 +61,9 @@ BAZ='single quoted'
         assert_eq!(parsed.get("FOO").map(String::as_str), Some("bar"));
         assert_eq!(parsed.get("BAR").map(String::as_str), Some("quoted value"));
         assert_eq!(parsed.get("BAZ").map(String::as_str), Some("single quoted"));
-    }
 
-    #[test]
-    fn parse_dotenv_entries_ignores_invalid_lines_and_empty_keys() {
+        // Lines without `=`, and empty keys, are skipped; the first `=` splits
+        // the value.
         let parsed = parse_dotenv_entries(
             r#"
 NO_EQUALS
@@ -77,10 +79,8 @@ valid = value
             Some("a=b=c")
         );
         assert_eq!(parsed.get("valid").map(String::as_str), Some("value"));
-    }
 
-    #[test]
-    fn parse_dotenv_entries_keeps_unmatched_quotes_literal() {
+        // Unmatched quotes stay literal.
         let parsed = parse_dotenv_entries(
             r#"
 UNMATCHED_DQ="value

@@ -1,14 +1,10 @@
 use super::{ResolvedValue, SecretString};
 
+/// The secret never surfaces through Display or Debug.
 #[test]
-fn secret_display_is_redacted() {
+fn secret_display_and_debug_stay_redacted() {
     let secret = SecretString::new("hunter2".to_owned());
     assert_eq!(format!("{secret}"), "[REDACTED]");
-}
-
-#[test]
-fn secret_debug_is_masked() {
-    let secret = SecretString::new("hunter2".to_owned());
     assert_eq!(format!("{secret:?}"), "SecretString(****)");
 }
 
@@ -27,15 +23,13 @@ fn secret_zeroize_for_test_clears_visible_bytes() {
     );
 }
 
+/// A resolved value displays its own content only when plain.
 #[test]
-fn resolved_value_plain_display() {
+fn resolved_value_display_matches_its_variant() {
     let value = ResolvedValue::Plain("hello".to_owned());
     assert_eq!(format!("{value}"), "hello");
     assert!(!value.is_secret());
-}
 
-#[test]
-fn resolved_value_secret_display() {
     let value = ResolvedValue::Secret(SecretString::new("secret".to_owned()));
     assert_eq!(format!("{value}"), "[REDACTED]");
     assert!(value.is_secret());

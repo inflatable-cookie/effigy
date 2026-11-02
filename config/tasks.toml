@@ -498,6 +498,8 @@
 "test:cli:command-behavior" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(/^command_behavior_tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 3600000 }] }
 "test:task-engine:cli" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --test documentation_coverage_tests --test changelog_tests --test bootstrap_cli_tests --no-fail-fast --retries 0 {args}", timeout_ms = 3600000 }] }
 "test:env:schema" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-env --test schema_integration --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
+# v0.15 test-value audit: scoped lint for the environment and task-model crates.
+"test:audit:env-tasks:lint" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-env -p effigy-tasks --all-targets -- -D warnings", timeout_ms = 600000 }] }
 # Q-008 generic per-program fallback: config parsing, the shim's exact-argv and
 # no-recursion proofs, the CLI wiring, and the help/skill documentation condition.
 "test:programs:fallback" = { durable = true, visibility = "internal", group = "Maintenance", run = [
