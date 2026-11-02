@@ -1721,7 +1721,8 @@ fn spawn_generation(
         dependency_env,
         listener,
     );
-    let environment = classify_child_environment(spec, environment, dependency_env, ClassifyPurpose::Spawn)?;
+    let environment =
+        classify_child_environment(spec, environment, dependency_env, ClassifyPurpose::Spawn)?;
     let process = ProcessSpec {
         argv: vec![
             OsString::from("/bin/sh"),
@@ -3050,12 +3051,7 @@ mod tests {
             ("UNKNOWN", "opaque"),
         ]
         .into_iter()
-        .map(|(key, value)| {
-            (
-                std::ffi::OsString::from(key),
-                EnvValue::Plain(value.into()),
-            )
-        })
+        .map(|(key, value)| (std::ffi::OsString::from(key), EnvValue::Plain(value.into())))
         .collect();
 
         let capture = super::classify_environment(
@@ -3205,7 +3201,7 @@ mod tests {
         let guard = Gate::acquire(
             &context,
             &root,
-            &[resource.clone()],
+            std::slice::from_ref(&resource),
             Wait::FailFast,
         )
         .expect("hold the gate");
@@ -3227,8 +3223,7 @@ mod tests {
             &resource,
             Instant::now() + Duration::from_secs(10)
         ));
-        let _ = done
-            .recv_timeout(Duration::from_secs(1))
+        done.recv_timeout(Duration::from_secs(1))
             .expect("the releasing thread finished");
     }
 
