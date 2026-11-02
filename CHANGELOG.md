@@ -1480,6 +1480,13 @@ During v0.x, MINOR bumps may include breaking changes.
   writes for a listener-less environment, plus every host-process log the
   fixture holds and its own process rows.
 
+- A host-process restart no longer refuses while its predecessor drains. A
+  supervisor releases its gate flock only after settle has journaled the run
+  closed, so a replace that started its successor on the journal's closure
+  alone could be refused by the still-held gate and report a workload that
+  never started. The replace now waits for the gate itself within the stop's
+  own pickup budget before its successor's admission reads it (effigy#567).
+
 - A capture pump drain commits at most one bounded 64 KiB window per stream
   instead of one durable append per pipe read. A chatty producer's full pipe
   paid the append-and-provenance dance (and the styled-tap window rewrite) up
