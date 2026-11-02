@@ -3833,16 +3833,10 @@ fn a_full_drain_commits_one_window_per_stream() {
         }
     }
     let home = home();
-    let cx = cx();
-    let root = StateRoot::effects(&cx, home.path()).unwrap();
     let path = home.path().join("canonical.log");
-    let output = CanonicalOutput::with_secrets(
-        MergedLog::prepare_test(&path).unwrap(),
-        vec![],
-        4096,
-        4096,
-    )
-    .unwrap();
+    let output =
+        CanonicalOutput::with_secrets(MergedLog::prepare_test(&path).unwrap(), vec![], 4096, 4096)
+            .unwrap();
     let pid = std::process::id();
     let receipt = ProcessReceipt {
         identity: crate::ident::process_identity(pid)
@@ -3873,9 +3867,7 @@ fn a_full_drain_commits_one_window_per_stream() {
             let mut chunk = line.as_bytes().repeat(64);
             chunk.truncate(8192);
             // SAFETY: live nonblocking pipe write end and an initialized slice.
-            let count = unsafe {
-                libc::write(fd.as_raw_fd(), chunk.as_ptr().cast(), chunk.len())
-            };
+            let count = unsafe { libc::write(fd.as_raw_fd(), chunk.as_ptr().cast(), chunk.len()) };
             if count < 0 {
                 let error = io::Error::last_os_error();
                 assert!(
@@ -3886,7 +3878,10 @@ fn a_full_drain_commits_one_window_per_stream() {
             }
             written.extend_from_slice(&chunk[..count as usize]);
         }
-        assert!(written.len() >= 2 * 8192, "a full pipe spans at least two reads");
+        assert!(
+            written.len() >= 2 * 8192,
+            "a full pipe spans at least two reads"
+        );
         written
     }
     let stdout_bytes = fill(&stdout_write, "stdout window payload 0123456789\n");
@@ -3932,8 +3927,8 @@ fn a_full_drain_commits_one_window_per_stream() {
     let mut got = Vec::new();
     let mut offset = 0u64;
     while (offset as usize) < expected.len() {
-        let read = MergedLog::read_plain(&path, Some(read_identity.identity), offset, 64 * 1024)
-            .unwrap();
+        let read =
+            MergedLog::read_plain(&path, Some(read_identity.identity), offset, 64 * 1024).unwrap();
         assert_eq!(read.from, offset);
         assert!(!read.bytes.is_empty());
         got.extend_from_slice(&read.bytes);
@@ -3943,7 +3938,9 @@ fn a_full_drain_commits_one_window_per_stream() {
     let tap = std::fs::read(home.path().join("canonical.log.styled-tap")).unwrap();
     let tap: serde_json::Value = serde_json::from_slice(&tap).unwrap();
     assert_eq!(
-        tap.get("chunks").and_then(|chunks| chunks.as_array()).map(Vec::len),
+        tap.get("chunks")
+            .and_then(|chunks| chunks.as_array())
+            .map(Vec::len),
         Some(2),
         "the styled tap records exactly one chunk per commit"
     );
