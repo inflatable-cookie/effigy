@@ -1461,25 +1461,6 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
-- Start a declared host-process workload whose run string names a path that
-  embeds a runner identity again. Since the host output provenance boundary,
-  a plain (non-listener) spawn specification classified every non-allowlisted
-  ambient value as secret, and the kernel's spawn preflight then refused any
-  workload whose argv contained such a value: a queue-owned runner embeds
-  its task and run identifiers in the workspace path the workload's own
-  command names, so every such spawn refused, the supervisor settled the
-  workload as a failed exit, the activation still reported success, and the
-  only evidence sat in `host-processes/<container>/<name>.log` where the
-  activation's own diagnostics did not read it (QA 434a16f6, QA05c6ed7f;
-  effigy#567). Classification now names its consumer: the canonical output's
-  redaction set keeps every unproven value classified, while the spawn
-  specification permits unproven values without secret-bearing names.
-  Secret-bearing names and schema-proven secrets stay classified for both and keep
-  the kernel's argv refusal, and no redaction rule changed. The nested-effigy
-  proof's timeout evidence now reads the plain log shape the supervisor
-  writes for a listener-less environment, plus every host-process log the
-  fixture holds and its own process rows.
-
 - A host-process restart no longer refuses while its predecessor drains. A
   supervisor releases its gate flock only after settle has journaled the run
   closed, so a replace that started its successor on the journal's closure

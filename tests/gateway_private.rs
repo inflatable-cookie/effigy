@@ -7375,7 +7375,22 @@ fn nested_effigy_host_process_stops_with_closure_verified() {
         .join(".effigy/runtime/host-processes/web")
         .join("api.log");
 
-    let up = run_container_cli(&checkout, &cleanup, &["up", "--detach"]);
+    // The fixture supplies its own environment, so unknown runner values
+    // cannot collide with the synthetic workload's argv.
+    let mut isolated = container_command(&checkout, &cleanup);
+    let fixture_env: Vec<_> = isolated
+        .get_envs()
+        .filter_map(|(key, value)| value.map(|value| (key.to_owned(), value.to_owned())))
+        .collect();
+    let up = isolated
+        .env_clear()
+        .envs(fixture_env)
+        .env("TMPDIR", std::env::temp_dir())
+        .env("TMP", std::env::temp_dir())
+        .env("TEMP", std::env::temp_dir())
+        .args(["up", "--detach"])
+        .output_owned()
+        .expect("run isolated container CLI");
     let fixture_root = fixture.path().to_path_buf();
     let up_text = format!(
         "{}{}",

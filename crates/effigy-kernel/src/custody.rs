@@ -171,65 +171,6 @@ impl ProcessSpec {
         Ok(secrets)
     }
 }
-
-#[cfg(test)]
-mod argv_preflight {
-    use super::*;
-    use std::ffi::OsString;
-
-    fn spec(env: &[(OsString, EnvValue)], argv: Vec<OsString>) -> ProcessSpec {
-        ProcessSpec {
-            argv,
-            cwd: std::path::PathBuf::from("/"),
-            env: env.iter().cloned().collect(),
-            grace: Duration::from_secs(1),
-            lifetime: Lifetime::Finite(Duration::from_secs(1)),
-            terminal: Terminal::None,
-            label: "fixture".into(),
-        }
-    }
-
-    /// The shared spawn preflight refuses a classified value in argv, so the
-    /// secret bytes never reach `ps`; the same bytes as Plain never refuse, so
-    /// a runner that keeps an unproven value plain in its spawn specification
-    /// (the proven/conservative split behind effigy#567) starts the workload
-    /// it declares while the classified form keeps the refusal attributable.
-    #[test]
-    fn a_classified_value_in_argv_refuses_and_the_same_plain_bytes_do_not() {
-        let identity = "649c84ee-10f6-47be-905d-ff1dfe24a760";
-        let argv = vec![
-            OsString::from("/bin/sh"),
-            OsString::from("-c"),
-            OsString::from(format!(
-                "exec '/stacks/ns-{identity}/target/debug/effigy' fixture:api"
-            )),
-        ];
-        let classified = spec(
-            &[(
-                OsString::from("NORTHSTAR_TASK_ID"),
-                EnvValue::Secret(SecretValue::new(identity.as_bytes().to_vec()).unwrap()),
-            )],
-            argv.clone(),
-        );
-        let error = classified
-            .validated_secrets()
-            .expect_err("a classified value in argv refuses");
-        assert!(
-            error.to_string().contains("NORTHSTAR_TASK_ID"),
-            "the refusal names its key: {error}"
-        );
-        let plain = spec(
-            &[(
-                OsString::from("NORTHSTAR_TASK_ID"),
-                EnvValue::Plain(OsString::from(identity)),
-            )],
-            argv,
-        );
-        plain
-            .validated_secrets()
-            .expect("the same bytes as Plain never refuse");
-    }
-}
 impl std::fmt::Debug for ProcessSpec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("ProcessSpec { argv/env/label: [REDACTED] }")

@@ -1287,9 +1287,6 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
             None,
         ),
         &[],
-        // The supervisor's own canonical output redacts every unproven
-        // ambient value, whatever the spawn below delivers (effigy#567).
-        ClassifyPurpose::Capture,
     )
     .map_err(|error| {
         effigy_kernel::run::RunError::step_failed("host output environment provenance", error)
@@ -1721,8 +1718,7 @@ fn spawn_generation(
         dependency_env,
         listener,
     );
-    let environment =
-        classify_child_environment(spec, environment, dependency_env, ClassifyPurpose::Spawn)?;
+    let environment = classify_child_environment(spec, environment, dependency_env)?;
     let process = ProcessSpec {
         argv: vec![
             OsString::from("/bin/sh"),
@@ -1742,26 +1738,14 @@ fn spawn_generation(
     Custody::spawn_logged_auxiliary(run, process, cx, output)
 }
 
-/// Capture retains unproven ambient values for redaction. Spawn permits
-/// unproven values without secret-bearing names to avoid incidental argv
-/// collisions; known secrets and secret-bearing names remain guarded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::runner) enum ClassifyPurpose {
-    /// The canonical output's redaction set: every unproven value stays
-    /// classified and redacted.
-    Capture,
-    /// Spawn keeps secret-bearing names and proven secrets classified.
-    Spawn,
-}
-
 /// Preserve schema provenance across the detached boundary by loading the
 /// producer's schema before spawn. A malformed schema refuses the producer.
-/// Capture conservatively classifies ambient values without provenance.
+/// Ambient values without provenance are conservatively secret: a name that
+/// merely looks harmless cannot declassify a credential.
 fn classify_child_environment(
     spec: &HostProcessRuntimeSpec,
     environment: BTreeMap<OsString, effigy_kernel::custody::EnvValue>,
     generated: &[(String, String)],
-    purpose: ClassifyPurpose,
 ) -> Result<BTreeMap<OsString, effigy_kernel::custody::EnvValue>, effigy_kernel::custody::SpawnError>
 {
     let mut declared = BTreeMap::new();
@@ -1781,7 +1765,7 @@ fn classify_child_environment(
     }
     let mut literals = spec.env.clone();
     literals.extend(generated.iter().cloned());
-    let mut classified = classify_environment(environment, &literals, &declared, purpose)?;
+    let mut classified = classify_environment(environment, &literals, &declared)?;
     crate::runner::managed_color::apply(&mut classified, spec.ansi_front);
     Ok(classified)
 }
@@ -1790,7 +1774,6 @@ fn classify_environment(
     environment: BTreeMap<OsString, effigy_kernel::custody::EnvValue>,
     literals: &BTreeMap<String, String>,
     schema: &BTreeMap<String, bool>,
-    purpose: ClassifyPurpose,
 ) -> Result<BTreeMap<OsString, effigy_kernel::custody::EnvValue>, effigy_kernel::custody::SpawnError>
 {
     use effigy_kernel::custody::{EnvValue, SecretValue};
@@ -1830,17 +1813,7 @@ fn classify_environment(
                     || nonsecret_host_environment(name)
                     || nonsecret_launcher_flag(name, &value)
             });
-            // A value that carries a declared secret's bytes stays classified
-            // for both consumers, whatever its own name resolves to. Only a
-            // value with no secret-bearing name that carries nothing proven is
-            // spawn-plain: capture keeps it classified for redaction.
-            let value = if value.is_empty()
-                || (plain && !contains_secret)
-                || (purpose == ClassifyPurpose::Spawn
-                    && !plain
-                    && !contains_secret
-                    && !secret_bearing_name(name))
-            {
+            let value = if value.is_empty() || (plain && !contains_secret) {
                 EnvValue::Plain(value)
             } else {
                 EnvValue::Secret(SecretValue::new(value.as_bytes().to_vec())?)
@@ -1868,15 +1841,12 @@ fn nonsecret_launcher_flag(name: &str, value: &std::ffi::OsStr) -> bool {
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
     });
-    (known || switch) && !secret_bearing_name(name)
-}
-
-fn secret_bearing_name(name: &str) -> bool {
-    name.split('_').any(|segment| {
-        ["TOKEN", "KEY", "SECRET", "PASSWORD", "CREDENTIAL", "AUTH"]
-            .iter()
-            .any(|secret| segment.eq_ignore_ascii_case(secret))
-    })
+    (known || switch)
+        && !name.split('_').any(|segment| {
+            ["TOKEN", "KEY", "SECRET", "PASSWORD", "CREDENTIAL", "AUTH"]
+                .iter()
+                .any(|secret| segment.eq_ignore_ascii_case(secret))
+        })
 }
 
 /// Only transport/session facts with established non-secret meaning. All
@@ -2890,9 +2860,7 @@ mod tests {
         let schema = [("TOKEN".into(), true), ("PUBLIC".into(), false)]
             .into_iter()
             .collect();
-        let classified =
-            super::classify_environment(values, &literals, &schema, ClassifyPurpose::Capture)
-                .unwrap();
+        let classified = super::classify_environment(values, &literals, &schema).unwrap();
         for key in ["TOKEN", "ALIAS", "UNKNOWN", "LC_TOKEN"] {
             assert!(
                 matches!(
@@ -2945,13 +2913,9 @@ mod tests {
                 .map(|(key, value)| (key.into(), EnvValue::Plain(value.into())))
                 .collect()
         };
-        let classified = super::classify_environment(
-            environment(),
-            &Default::default(),
-            &Default::default(),
-            ClassifyPurpose::Capture,
-        )
-        .unwrap();
+        let classified =
+            super::classify_environment(environment(), &Default::default(), &Default::default())
+                .unwrap();
         assert!(classified
             .values()
             .all(|value| matches!(value, EnvValue::Plain(_))));
@@ -2959,7 +2923,6 @@ mod tests {
             environment(),
             &Default::default(),
             &[("CLAUDECODE".into(), true)].into_iter().collect(),
-            ClassifyPurpose::Capture,
         )
         .unwrap();
         assert!(matches!(
@@ -2977,7 +2940,6 @@ mod tests {
             &[("CLAUDE_CODE_UNRECOGNIZED_SWITCH".into(), true)]
                 .into_iter()
                 .collect(),
-            ClassifyPurpose::Capture,
         )
         .unwrap();
         for name in [
@@ -3017,132 +2979,11 @@ mod tests {
             .collect(),
             &Default::default(),
             &Default::default(),
-            ClassifyPurpose::Capture,
         )
         .unwrap();
         assert!(suspicious
             .values()
             .all(|value| matches!(value, EnvValue::Secret(_))));
-    }
-
-    /// The spawn specification an unproven runner environment produces starts
-    /// the workload it declares: a queue identity that sits in both the
-    /// checkout path (the run's argv) and the environment stays spawn-plain,
-    /// so the kernel's argv guard never refuses the author's own command
-    /// (effigy#567), while the same value stays classified for the canonical
-    /// output's redaction and every proven secret keeps the refusal.
-    #[test]
-    fn spawn_specification_starts_declared_workloads_an_unproven_environment_names() {
-        use effigy_kernel::custody::EnvValue;
-
-        // The shape the nested-effigy proof and every queue-owned runner
-        // carries: identity variables whose values the workspace path embeds.
-        let task_identity = "649c84ee-10f6-47be-905d-ff1dfe24a760";
-        let environment: std::collections::BTreeMap<std::ffi::OsString, EnvValue> = [
-            ("NORTHSTAR_TASK_ID", task_identity),
-            (
-                "NORTHSTAR_RUN_TOKEN",
-                "ef36b3aa51ea8a7dc8cf8d9ec7ccbef9093c7e3b95cbcb71f3944c007110e332",
-            ),
-            ("UNKNOWN", "opaque"),
-        ]
-        .into_iter()
-        .map(|(key, value)| (std::ffi::OsString::from(key), EnvValue::Plain(value.into())))
-        .collect();
-
-        let capture = super::classify_environment(
-            environment.clone(),
-            &Default::default(),
-            &Default::default(),
-            ClassifyPurpose::Capture,
-        )
-        .unwrap();
-        for key in ["NORTHSTAR_TASK_ID", "NORTHSTAR_RUN_TOKEN", "UNKNOWN"] {
-            assert!(
-                matches!(
-                    capture.get(std::ffi::OsStr::new(key)),
-                    Some(EnvValue::Secret(_))
-                ),
-                "capture keeps {key} classified"
-            );
-        }
-        let spawn = super::classify_environment(
-            environment,
-            &Default::default(),
-            &Default::default(),
-            ClassifyPurpose::Spawn,
-        )
-        .unwrap();
-        assert!(matches!(
-            spawn.get(std::ffi::OsStr::new("NORTHSTAR_RUN_TOKEN")),
-            Some(EnvValue::Secret(_))
-        ));
-        for key in ["NORTHSTAR_TASK_ID", "UNKNOWN"] {
-            assert!(
-                matches!(
-                    spawn.get(std::ffi::OsStr::new(key)),
-                    Some(EnvValue::Plain(_))
-                ),
-                "spawn keeps {key} plain so the workload starts"
-            );
-        }
-        let declared = [("TASK_TOKEN".to_owned(), true)].into_iter().collect();
-        let declared_environment: std::collections::BTreeMap<std::ffi::OsString, EnvValue> = [(
-            OsString::from("TASK_TOKEN"),
-            EnvValue::Plain(task_identity.into()),
-        )]
-        .into_iter()
-        .collect();
-        for purpose in [ClassifyPurpose::Capture, ClassifyPurpose::Spawn] {
-            let classified = super::classify_environment(
-                declared_environment.clone(),
-                &Default::default(),
-                &declared,
-                purpose,
-            )
-            .unwrap();
-            assert!(
-                matches!(
-                    classified.get(std::ffi::OsStr::new("TASK_TOKEN")),
-                    Some(EnvValue::Secret(_))
-                ),
-                "a schema-proven secret stays classified for {purpose:?}"
-            );
-        }
-        // A plain-named value that carries a proven secret's bytes stays
-        // classified for both consumers, so the kernel's argv guard keeps a
-        // refusal to attribute. The proven value itself must be present for
-        // the containment check to see it, which is the classifier's own rule.
-        let carried: std::collections::BTreeMap<std::ffi::OsString, EnvValue> = [
-            (
-                OsString::from("TASK_TOKEN"),
-                EnvValue::Plain(task_identity.into()),
-            ),
-            (
-                OsString::from("ALIAS"),
-                EnvValue::Plain(format!("prefix-{task_identity}-suffix").into()),
-            ),
-        ]
-        .into_iter()
-        .collect();
-        for purpose in [ClassifyPurpose::Capture, ClassifyPurpose::Spawn] {
-            let classified = super::classify_environment(
-                carried.clone(),
-                &Default::default(),
-                &declared,
-                purpose,
-            )
-            .unwrap();
-            for key in ["TASK_TOKEN", "ALIAS"] {
-                assert!(
-                    matches!(
-                        classified.get(std::ffi::OsStr::new(key)),
-                        Some(EnvValue::Secret(_))
-                    ),
-                    "{key} carrying proven secret bytes stays classified for {purpose:?}"
-                );
-            }
-        }
     }
 
     /// The replace step waits for the predecessor's gate flock, not just its
