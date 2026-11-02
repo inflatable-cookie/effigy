@@ -1,6 +1,6 @@
 # Colima workspace-sessions qualification packet — candidate a00394012, r1
 
-Artifacts manifest SHA-256: `3e03dcddc221ae007138465b0a248041580fe35f5f4d57ffa474621ac32a13ee`
+Artifacts manifest SHA-256: `0ce99c8da77ef5bf0a6a3d7080f60c070735a13ed824b8135c046c6f22c3589c`
 
 Subject: the merged workspace-session cut at commit
 `a00394012ae8dafe52981c36d459ec0491ec0552`, executed against the Colima

@@ -43,13 +43,13 @@ guest_sha = digest(guest_binary)
 if guest_binary.is_symlink() or guest_sha != preparation['guest_binary_sha256']:
     raise RuntimeError('guest binary hash differs from the prepared record')
 
-IMAGE = manifest['images']['runtime']
+IMAGE = preparation['environment']['guest_build']['runtime_image']
 IDENT_A = manifest['synthetic']['ident_a']
 IDENT_B = manifest['synthetic']['ident_b']
 UUID_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 PULL_FLAG = ['--pull=never']
 
-results = {'refusals': [], 'identity': [], 'resolve': [], 'cleanup': []}
+results = {'refusals': [], 'identity': [], 'resolve': [], 'cleanup': {}}
 
 
 def create_identity_container(name):

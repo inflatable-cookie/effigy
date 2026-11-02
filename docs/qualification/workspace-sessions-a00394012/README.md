@@ -133,7 +133,7 @@ Receipts, renders, logs and cleanup receipts are 0600 files under
 `/Volumes/Builds/scratch/effigy/530/`. The synthetic fixture roots are exactly
 `/Users/tom/.effigy-scratch/530-qual-20261102-colima`,
 `/Users/tom/.effigy-scratch/530-qual-20261102-desktop` and
-`/Users/tom/.effigy-scratch/530-qual-20261102-linuxvm`; cleanup is exact-ID and
+`/Users/tom/.effigy-scratch/530-qual-20261102-linuxvm-fixture`; cleanup is exact-ID and
 exact-manifest only. Shared state is never pruned, recreated, repaired,
 imported, reset, inspected for secret values or re-mounted: the
 `effigy-shared-mariadb-0721de3e` project (container

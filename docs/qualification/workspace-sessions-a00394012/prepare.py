@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 os.umask(0o077)
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -125,6 +126,7 @@ for name, data in FIXTURE_BYTES.items():
 # Guest binary: built only under this GO, from the frozen source, recorded by hash.
 guest_binary = BASE / ('530-' + backend + '-guest-binary')
 if backend == 'linux':
+    runtime_image = engine.require_image(RUNTIME_IMAGE['reference'], RUNTIME_IMAGE['id'])
     tool = {}
     for name, argv in (('cargo', ['cargo', '--version']), ('rustc', ['rustc', '--version'])):
         out = run(['/usr/bin/ssh', '-o', 'BatchMode=yes', vm_alias,
@@ -147,7 +149,8 @@ if backend == 'linux':
     guest_sha = digest(guest_binary)
     environment['guest_toolchain'] = tool
     environment['guest_build'] = {'route': 'native in-VM plain Cargo (recorded guest escape)',
-                                  'toolchain': tool, 'build_exit': build.returncode}
+                                  'toolchain': tool, 'build_exit': build.returncode,
+                                  'runtime_image': runtime_image}
 else:
     toolchain = engine.require_image(TOOLCHAIN['reference'], TOOLCHAIN['id'])
     runtime_image = engine.require_image(RUNTIME_IMAGE['reference'], RUNTIME_IMAGE['id'])

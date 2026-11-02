@@ -40,6 +40,9 @@ guest_binary = BASE / ('530-' + backend + '-guest-binary')
 if guest_binary.is_symlink() or digest(guest_binary) != preparation['guest_binary_sha256']:
     raise RuntimeError('guest binary hash differs from the prepared record')
 
+runtime_row = preparation['environment']['guest_build']['runtime_image']
+engine.require_image(runtime_row['reference'], runtime_row['id'])
+
 if backend == 'linux':
     uname = run(['/usr/bin/ssh', '-o', 'BatchMode=yes', vm_alias, 'uname -a'],
                 timeout=30).stdout.strip()
@@ -85,9 +88,10 @@ cells.append({'argv': ['__guest-identity'], 'exit': host_probe.returncode,
               'refusal': 'guest-local identity is unproven',
               'stderr_sha256': hashlib.sha256(host_probe.stderr.encode()).hexdigest()})
 
+container_names = run(engine.args('ps', '-a', '--format', '{{.Names}}'), timeout=60).stdout.splitlines()
 for name in (manifest['synthetic']['ident_a'], manifest['synthetic']['ident_b'],
              manifest['synthetic']['build_container']):
-    if name in current['containers']:
+    if name and name in container_names:
         raise RuntimeError('synthetic container name already present: ' + name)
 
 report = {'backend': backend, 'bundle': bundle, 'go': go,

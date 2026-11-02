@@ -1,6 +1,6 @@
 # Docker Desktop workspace-sessions qualification packet — candidate a00394012, r1
 
-Artifacts manifest SHA-256: `98a1d6beb691a22b1abf1e0d9b0c1d7efadfd4b6506a8f967fb8ee064873a4c1`
+Artifacts manifest SHA-256: `3a25ffad93508b175df1d46803ce988e01699c3836ef14478a3e7d219f4187f7`
 
 Subject: the merged workspace-session cut at commit
 `a00394012ae8dafe52981c36d459ec0491ec0552`, executed against Docker Desktop
