@@ -1074,7 +1074,7 @@
 # publishes no record outside launchd. Private fixtures and owned descriptors
 # only; no launchd registration, privileged endpoint or live gateway state.
 "test:gateway:handoff-adoption" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "gateway-handoff-adoption", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy --lib --filterset 'test(listener_handoff) | test(parse_gateway_run_accepts_listener_handoff_flag) | test(parse_gateway_run_defaults_listener_handoff_off)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
+  { id = "gateway-handoff-adoption", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy --lib --filterset 'test(listener_handoff) | test(parse_internal_gateway_run_defaults_and_handoff_flag)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
 ] }
 # User-owned gateway migration boundary (task 155): finite privilege
 # inventory, read-only readiness gate with injected setup evidence, byte-exact
