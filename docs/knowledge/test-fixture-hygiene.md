@@ -108,11 +108,20 @@ The fixture's `Drop` runs the sweep after the proof's own `container down`, so
 an unwinding or unsettled proof is covered. A killed process runs no `Drop`, so
 each `AdapterlessSetup` also starts a watchdog: it keeps capturing the fixture's
 generations and their group members into `sweep-ledger.json` under the fixture
-root while its owner lives, and stops them by identity once the owner is gone.
-The normal cleanup reads that ledger too. A settled `down` clears the listener's
-record, so a member captured before the stop would otherwise be lost. The interrupted-parent proof
+root while its owner lives, and stops them by identity once the owner is gone,
+publishing an exit receipt that names its owner's PID and its own boot/start
+identity as its final write. The normal cleanup reads that ledger too. A
+settled `down` clears the listener's record, so a member captured before the
+stop would otherwise be lost. The interrupted-parent proof
 (`managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent`)
-runs that path through the real adapterless fixture.
+runs that path through the real adapterless fixture, and its root removal
+follows recorded-generation liveness with two positive waits: the watchdog's
+exit receipt, and the same kernel helper settlement `Fixture` removal uses
+(`close_root`). The owner's detached host-process supervisor may still owe
+its stop report and journal settlement after the watchdog killed the listener
+child; recorded liveness proves nothing about such writers, and QA
+918de4a0's DirectoryNotEmpty removal shows the gap without naming the racer
+(effigy#617).
 
 ## The fixture CLI environment
 
