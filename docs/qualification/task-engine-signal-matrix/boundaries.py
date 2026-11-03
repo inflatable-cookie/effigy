@@ -984,7 +984,7 @@ def t_modeled_gate_substring_is_not_status():
     overlay = armed_fixture(tmp)
     result, _double = run_execute(tmp, overlay, mode='bad-status')
     assert result['kind'] == 'unknown'
-    assert 'foreground gate was not released' in result['reason']
+    assert 'task gate was not released' in result['reason']
 
 
 def t_parse_inspect_and_snapshot_and_status():
