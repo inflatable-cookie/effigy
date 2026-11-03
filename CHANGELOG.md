@@ -886,8 +886,10 @@ During v0.x, MINOR bumps may include breaking changes.
   predicate under the gate and skips a digest that gained an intent or a
   reference between the selection and the delete, so either ordering of the
   race keeps bytes, row and references coherent. Genuine orphans are still
-  reclaimed, the recheck is one indexed read per candidate, and the
-  per-candidate writer batches stay as short as before.
+  reclaimed, the recheck is one read per candidate — its reference half is a
+  digest lookup and its staging-event half scans the journal, the shape the
+  selection already pays — and the per-candidate writer batches stay as
+  short as before.
 
 ### Changed
 

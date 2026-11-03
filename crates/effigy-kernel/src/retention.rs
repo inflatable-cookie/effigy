@@ -296,7 +296,11 @@ pub fn retain(
     // that gained an intent or a reference after the selection keeps its
     // bytes, its row and the references that name it (K15, effigy#608), and
     // one that stayed unreferenced is still reclaimed. The recheck is one
-    // indexed read per candidate; the writer batches stay as short as before.
+    // read per candidate, the same scan shape the selection already pays:
+    // the reference half is a digest lookup, but the staging-event half reads
+    // the journal, which carries no index on kind, state or payload.
+    // Correctness, not a new index, is this repair's scope; the writer
+    // batches stay as short as before.
     let mut removed = 0usize;
     if !objects.is_empty() {
         let object_guard = crate::objects::lock(cx, root)?;
