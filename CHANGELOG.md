@@ -893,6 +893,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Capture complete Git source command output before deciding whether a floating
+  bundle ref moved, and preserve the pin when capture is incomplete.
+
 - Preserve representative failing test names in nested task error output.
 
 - Restrict `effigy container cache prune --global` to volumes whose complete

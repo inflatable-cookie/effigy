@@ -310,6 +310,8 @@ pub(crate) struct ProcessCore {
     /// canonical capture; two projections are never concatenated into one.
     streams: [VecDeque<u8>; 2],
     queue_max: usize,
+    output_truncated: bool,
+    source_capture: bool,
     stdout: Option<OwnedFd>,
     stderr: Option<OwnedFd>,
     /// The owner's side of a `Terminal::Pipe` child's stdin.
@@ -1256,6 +1258,8 @@ impl Custody {
                 output: VecDeque::new(),
                 streams: [VecDeque::new(), VecDeque::new()],
                 queue_max: cx.operation().limits().queue_bytes,
+                output_truncated: false,
+                source_capture: capability == crate::ctx::Capability::AcquireSource,
                 stdout: Some(stdout),
                 stderr: Some(stderr),
                 stdin,
@@ -1364,6 +1368,35 @@ impl OwnedProcess {
             .deadline
             .is_some_and(|at| Instant::now() >= at)
     }
+    // A source result is usable only after both pipes reach EOF under the same deadline.
+    fn finish_source_capture(&self, cx: &OperationContext) -> Result<(), String> {
+        loop {
+            cx.check("source capture").map_err(|e| e.to_string())?;
+            let mut core = lock(&self.core);
+            if core.canonical_output.is_some() || core.deadline.is_none() {
+                return Err("source capture requires finite plain capture".into());
+            }
+            if core.exit.is_none() {
+                return Err("source exit is not verified".into());
+            }
+            if core.deadline.is_some_and(|at| Instant::now() >= at) {
+                return Err("source capture deadline expired".into());
+            }
+            core.drain();
+            if core.stdout.is_none() && core.stderr.is_none() {
+                cx.check("source capture").map_err(|e| e.to_string())?;
+                if core.deadline.is_some_and(|at| Instant::now() >= at) {
+                    return Err("source capture deadline expired".into());
+                }
+                if core.output_truncated || core.capture != CaptureState::Complete {
+                    return Err("source capture incomplete or truncated".into());
+                }
+                return Ok(());
+            }
+            drop(core);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
     pub fn take_output(&self) -> Vec<u8> {
         let mut core = lock(&self.core);
         if let Some(output) = &core.canonical_output {
@@ -1412,6 +1445,13 @@ impl OwnedProcess {
             }
             let result = core.poll();
             if matches!(result, Observed::Verified(..)) {
+                let source_capture = core.source_capture;
+                drop(core);
+                if source_capture {
+                    if let Err(e) = self.finish_source_capture(cx) {
+                        return Observed::Unknown(unknown(e));
+                    }
+                }
                 return result;
             }
             drop(core);
@@ -1529,6 +1569,7 @@ impl ProcessCore {
         }
         self.output.extend(clean.iter().map(|(_, byte)| *byte));
         while self.output.len() > self.queue_max {
+            self.output_truncated = true;
             self.output.pop_front();
         }
         self.tail.extend(clean.into_iter().map(|(_, byte)| byte));
@@ -1647,6 +1688,9 @@ impl ProcessCore {
     }
     fn poll(&mut self) -> Observed<Exit> {
         self.drain();
+        self.poll_exit()
+    }
+    fn poll_exit(&mut self) -> Observed<Exit> {
         if let Some(exit) = self.exit {
             return Observed::Verified(exit, evidence());
         }
