@@ -871,6 +871,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- Focus the compiler-feedback inventory tests on distinct detector claims: the
+  synthetic renamed-helper case is folded into the real rustc alias-resolver
+  fixture, the string/comment lexing cases into one code-only contract, and
+  new controls pin the test-target diagnostic skip, the `steps::step` migration
+  row, char literals and lifetimes, the missing-sink refusal, the sink's one
+  allowed non-import mention, and the migration message's marker text. The
+  production detector is unchanged (effigy#593).
+
 - Census self-test and the Cargo-route / TMPDIR hygiene detectors now prove
   named scanner and detector claims on owned fixtures: include! / file-module
   / tokio / unknown-gate attribution, ignored-missing uncovered, ignored-flag
