@@ -8,34 +8,17 @@ fn mapper() -> CwdMapper {
 }
 
 #[test]
-fn map_repo_root_to_container_root() {
-    let m = mapper();
-    let result = m
-        .host_to_container(Path::new("/Users/tom/projects/client"))
-        .unwrap();
-    assert_eq!(result, PathBuf::from("/var/www/html"));
-}
-
-#[test]
 fn map_repo_root_does_not_emit_trailing_slash() {
     // PathBuf::join("") otherwise emits "/var/www/html/" which nerdctl/runc
     // rejects via "current working directory is outside of container mount
     // namespace root" because it does not match the container's WORKDIR
-    // string exactly.
+    // string exactly. PathBuf equality does not catch this: a trailing-slash
+    // mutation still passes PathBuf == PathBuf.
     let m = mapper();
     let result = m
         .host_to_container(Path::new("/Users/tom/projects/client"))
         .unwrap();
     assert_eq!(result.to_string_lossy(), "/var/www/html");
-}
-
-#[test]
-fn map_subdirectory() {
-    let m = mapper();
-    let result = m
-        .host_to_container(Path::new("/Users/tom/projects/client/app/Models"))
-        .unwrap();
-    assert_eq!(result, PathBuf::from("/var/www/html/app/Models"));
 }
 
 #[test]
@@ -55,8 +38,9 @@ fn map_deep_subdirectory() {
 #[test]
 fn reject_path_outside_repo() {
     let m = mapper();
-    let result = m.host_to_container(Path::new("/Users/tom/other-project"));
-    assert!(result.is_err());
+    // Same-prefix sibling is the starts_with trap: "client-evil" shares the
+    // repo-root string prefix but must not map.
+    let result = m.host_to_container(Path::new("/Users/tom/projects/client-evil"));
     assert!(matches!(
         result.unwrap_err(),
         ExecError::CwdOutsideRepo { .. }
@@ -67,7 +51,10 @@ fn reject_path_outside_repo() {
 fn reject_parent_directory_of_repo() {
     let m = mapper();
     let result = m.host_to_container(Path::new("/Users/tom/projects"));
-    assert!(result.is_err());
+    assert!(matches!(
+        result.unwrap_err(),
+        ExecError::CwdOutsideRepo { .. }
+    ));
 }
 
 #[test]
@@ -85,6 +72,10 @@ fn container_to_host_roundtrip() {
 fn container_to_host_root() {
     let m = mapper();
     let host = m.container_to_host(Path::new("/var/www/html")).unwrap();
+    // PathBuf equality currently passes. String equality does not:
+    // join("") yields "/Users/tom/projects/client/" (task 583 covering run,
+    // left/right quoted in the PR). Host→container already special-cases the
+    // empty relative; container→host does not. Recorded as a separate repair.
     assert_eq!(host, PathBuf::from("/Users/tom/projects/client"));
 }
 

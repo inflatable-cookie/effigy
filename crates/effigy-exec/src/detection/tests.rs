@@ -20,8 +20,6 @@ fn capabilities_without_effigy() -> ContainerCapabilities {
     }
 }
 
-// ── Strategy determination ────────────────────────────────────────
-
 #[test]
 fn handoff_when_effigy_installed() {
     let caps = capabilities_with_effigy();
@@ -59,8 +57,6 @@ fn raw_exec_when_no_effigy() {
     );
 }
 
-// ── Compose exec args ────────────────────────────────────────────
-
 #[test]
 fn handoff_compose_args() {
     let strategy = ExecStrategy::Handoff {
@@ -80,13 +76,48 @@ fn raw_exec_compose_args() {
     assert_eq!(args, vec!["-w", "/var/www/html", "php", "artisan", "test"]);
 }
 
-// ── Probe spec ───────────────────────────────────────────────────
-
 #[test]
 fn standard_probe_has_expected_checks() {
     let spec = standard_probe_spec();
     let descriptions: Vec<&str> = spec.checks.iter().map(|c| c.description.as_str()).collect();
-    assert!(descriptions.contains(&"effigy installation"));
-    assert!(descriptions.contains(&"effigy version"));
-    assert!(descriptions.contains(&"bash availability"));
+    assert_eq!(
+        descriptions,
+        [
+            "effigy installation",
+            "effigy version",
+            "bash availability",
+            "sh availability",
+        ]
+    );
+}
+
+#[test]
+fn capabilities_from_probe_results_prefer_bash_and_parse_version() {
+    let mut results = HashMap::new();
+    results.insert(
+        "effigy installation".to_string(),
+        ProbeResult {
+            success: true,
+            output: String::new(),
+        },
+    );
+    results.insert(
+        "effigy version".to_string(),
+        ProbeResult {
+            success: true,
+            output: "0.2.13".to_string(),
+        },
+    );
+    results.insert(
+        "bash availability".to_string(),
+        ProbeResult {
+            success: false,
+            output: String::new(),
+        },
+    );
+    let caps = build_capabilities_from_results(&results);
+    assert!(caps.has_effigy);
+    assert_eq!(caps.effigy_version.as_deref(), Some("0.2.13"));
+    assert_eq!(caps.shell, "/bin/sh");
+    assert_eq!(caps.tools.get("bash"), Some(&false));
 }
