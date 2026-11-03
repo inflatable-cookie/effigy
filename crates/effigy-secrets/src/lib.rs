@@ -714,11 +714,77 @@ mod tests {
     }
 
     #[test]
+    fn vault_envelope_rejects_unsupported_schema_version() {
+        // The documented forward-compat gate: a vault written by a newer
+        // schema must refuse at parse with the exact version diagnostic,
+        // never attempt a decrypt it cannot name.
+        let mut envelope = envelope_fixture();
+        envelope.schema_version = 2;
+        let json = envelope.to_json_pretty().expect("serialize");
+        let error = VaultEnvelope::from_json(&json).expect_err("version should fail");
+        assert_eq!(
+            error.to_string(),
+            "unsupported vault schema version `2` (expected `1`)"
+        );
+    }
+
+    #[test]
     fn vault_envelope_rejects_empty_ciphertext() {
         let mut envelope = envelope_fixture();
         envelope.payload.ciphertext.clear();
         let error = envelope.validate().expect_err("ciphertext should fail");
         assert_eq!(error.to_string(), "vault ciphertext is empty");
+    }
+
+    #[test]
+    fn vault_envelope_rejects_unsupported_kdf_metadata() {
+        // Both header fields that name the KDF must agree with the one
+        // supported algorithm; algorithm confusion refuses at parse. The
+        // refusal reports the actual `kdf.name` field, so the algorithms
+        // header mismatch below shows the supported name in the message.
+        let mut envelope = envelope_fixture();
+        envelope.kdf.name = "pbkdf2".to_owned();
+        let error = envelope.validate().expect_err("kdf name should fail");
+        assert_eq!(
+            error.to_string(),
+            "unsupported vault kdf `pbkdf2` (expected `argon2id`)"
+        );
+
+        let mut envelope = envelope_fixture();
+        envelope.algorithms.kdf = "pbkdf2".to_owned();
+        let error = envelope.validate().expect_err("algorithms kdf should fail");
+        assert_eq!(
+            error.to_string(),
+            "unsupported vault kdf `argon2id` (expected `argon2id`)"
+        );
+    }
+
+    #[test]
+    fn vault_envelope_rejects_empty_salt() {
+        // An empty KDF salt is a cryptographic degeneracy (same passphrase
+        // plus empty salt derives the same key everywhere): refuse it.
+        let mut envelope = envelope_fixture();
+        envelope.kdf.salt.clear();
+        let error = envelope.validate().expect_err("empty salt should fail");
+        assert_eq!(error.to_string(), "vault salt is empty");
+    }
+
+    #[test]
+    fn vault_envelope_rejects_wrong_nonce_length() {
+        // The AEAD nonce must be exactly 24 bytes; degenerate lengths refuse
+        // with their own diagnostics at parse, not inside a decrypt.
+        let mut envelope = envelope_fixture();
+        envelope.cipher.nonce.clear();
+        let error = envelope.validate().expect_err("empty nonce should fail");
+        assert_eq!(error.to_string(), "vault nonce is empty");
+
+        let mut envelope = envelope_fixture();
+        envelope.cipher.nonce = vec![5; 16];
+        let error = envelope.validate().expect_err("short nonce should fail");
+        assert_eq!(
+            error.to_string(),
+            "invalid vault nonce length `16` (expected `24`)"
+        );
     }
 
     #[test]
@@ -897,6 +963,62 @@ mod tests {
     }
 
     #[test]
+    fn vault_envelope_rejects_tampered_local_dev_payload() {
+        // The convenience-unlock wrap must meet the same structural
+        // strictness as the main payload: cipher name, nonce length and
+        // ciphertext presence are all validated before a decrypt is tried.
+        let key = LocalDevUnlockKey::generate().expect("generate local-dev key");
+        let base = VaultPlaintextPayload::empty()
+            .encrypt_with_passphrase_and_local_dev_key("vault-passphrase", &key)
+            .expect("encrypt");
+
+        let mut envelope = base.clone();
+        envelope
+            .local_dev
+            .as_mut()
+            .expect("local-dev block")
+            .cipher
+            .name = "rot13".to_owned();
+        let error = envelope
+            .validate()
+            .expect_err("local-dev cipher should fail");
+        assert_eq!(
+            error.to_string(),
+            "unsupported vault cipher `rot13` (expected `xchacha20poly1305`)"
+        );
+
+        let mut envelope = base.clone();
+        envelope
+            .local_dev
+            .as_mut()
+            .expect("local-dev block")
+            .cipher
+            .nonce = vec![5; 8];
+        // Through the unlock path itself: decrypt_with_local_dev_key
+        // validates the wrap before touching the AEAD.
+        let error = envelope
+            .decrypt_with_local_dev_key(&key)
+            .expect_err("local-dev nonce length should fail");
+        assert_eq!(
+            error.to_string(),
+            "invalid vault nonce length `8` (expected `24`)"
+        );
+
+        let mut envelope = base.clone();
+        envelope
+            .local_dev
+            .as_mut()
+            .expect("local-dev block")
+            .payload
+            .ciphertext
+            .clear();
+        let error = envelope
+            .validate()
+            .expect_err("local-dev ciphertext should fail");
+        assert_eq!(error.to_string(), "vault ciphertext is empty");
+    }
+
+    #[test]
     fn local_unlock_credential_requires_matching_key_and_private_files() {
         let root = tempfile::tempdir().expect("tempdir");
         let vault_path = root.path().join("local.vault");
@@ -939,7 +1061,51 @@ mod tests {
                 read_local_unlock_passphrase(&vault_path),
                 Err(VaultFileError::UnsafeLocalUnlockPermissions)
             ));
+            fs::set_permissions(&credential_path, fs::Permissions::from_mode(0o600))
+                .expect("restore credential mode");
+            // The key file itself is the long-lived capability: a
+            // group/world-readable key refuses even with a private
+            // credential.
+            fs::set_permissions(&key_path, fs::Permissions::from_mode(0o644))
+                .expect("make key unsafe");
+            assert!(matches!(
+                read_local_unlock_passphrase(&vault_path),
+                Err(VaultFileError::UnsafeLocalUnlockPermissions)
+            ));
         }
+    }
+
+    #[test]
+    fn local_unlock_without_credential_reads_as_none() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let vault_path = root.path().join("local.vault");
+        // No credential file at all: the vault is simply locked, not in
+        // error. Callers treat None as "prompt or refuse", so this branch
+        // must stay a None, not a failure.
+        assert_eq!(
+            read_local_unlock_passphrase(&vault_path).expect("absent credential"),
+            None
+        );
+
+        // A credential without its key is corrupt state, not an unlock:
+        // reading the missing key file fails as I/O, not as permissions.
+        let key = LocalDevUnlockKey::generate().expect("key");
+        let credential_path = local_unlock_credential_path(&vault_path);
+        fs::write(
+            &credential_path,
+            seal_local_unlock_passphrase(&key, "vault-passphrase").expect("seal"),
+        )
+        .expect("credential file");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&credential_path, fs::Permissions::from_mode(0o600))
+                .expect("credential mode");
+        }
+        assert!(matches!(
+            read_local_unlock_passphrase(&vault_path),
+            Err(VaultFileError::LocalUnlockIo(_))
+        ));
     }
 
     #[test]
@@ -980,6 +1146,18 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "unsupported vault cipher `rot13` (expected `xchacha20poly1305`)"
+        );
+
+        // The algorithms header must agree with the payload cipher too; the
+        // refusal reports the payload's cipher name.
+        let mut envelope = envelope_fixture();
+        envelope.algorithms.cipher = "rot13".to_owned();
+        let error = envelope
+            .validate()
+            .expect_err("algorithms cipher should fail");
+        assert_eq!(
+            error.to_string(),
+            "unsupported vault cipher `xchacha20poly1305` (expected `xchacha20poly1305`)"
         );
     }
 
