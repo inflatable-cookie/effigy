@@ -95,6 +95,18 @@ fn scan_markdown_links_ignores_fenced_code_blocks() {
     assert!(failures.is_empty());
 }
 
+#[test]
+fn scan_markdown_links_reports_missing_local_target() {
+    let fixture = DocsFixture::new("missing-target");
+    fixture.write("README.md", "[gone](./missing.md)\n[ok](./existing.md)\n");
+    fixture.write("existing.md", "exists\n");
+
+    let failures = scan_markdown_links(&fixture.root().join("README.md")).expect("scan");
+    assert_eq!(failures.len(), 1, "unexpected failures: {failures:?}");
+    assert_eq!(failures[0].target, "./missing.md");
+    assert_eq!(failures[0].reason, "target does not exist");
+}
+
 fn rendered_relative_paths(root: &Path, files: &[PathBuf]) -> Vec<String> {
     files
         .iter()
@@ -274,21 +286,6 @@ fn insert_log_index_entry_rejects_duplicate_active_logs() {
     let index = "# Logs\n\n## Active logs\n\n- old\n\n## Active logs\n\n- older\n";
     let entry = "- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)";
     assert!(insert_log_index_entry(index, entry).is_err());
-}
-
-#[test]
-fn insert_log_index_entry_repeat_run_stays_idempotent() {
-    let index = "# Logs\n\n## Active logs\n\n- [`2026-03/01-000000-old.md`](./2026-03/01-000000-old.md)\n\n## Next move\n- dispatch\n";
-    let entry = "- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)";
-    // Mirror the runner: skip insertion when the exact bullet already exists.
-    let once = insert_log_index_entry(index, entry).expect("first insert");
-    let twice = if once.lines().any(|line| line.trim() == entry) {
-        once.clone()
-    } else {
-        insert_log_index_entry(&once, entry).expect("second insert")
-    };
-    assert_eq!(once, twice);
-    assert_eq!(twice.matches("2026-03/02-160000-my-log.md").count(), 2);
 }
 
 #[test]

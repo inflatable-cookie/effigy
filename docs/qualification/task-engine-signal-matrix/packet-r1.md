@@ -1,6 +1,7 @@
 # Task-engine real-container signal packet r1
 
-Queue task effigy#582 (index from effigy#579). Status: **prepared, not
+Queue tasks effigy#582 (executable path) and effigy#585 (HostCli identity
+and generation binding); index from effigy#579. Status: **prepared, not
 executed.** Armed: **false.**
 
 This packet is the smallest later-executable shape for the genuine missing
@@ -87,20 +88,43 @@ list. `spawn` is always `false` on the plan. A plan is never execution.
 1. Refuse if any attempt receipt already exists (invocation, inventory,
    cleanup, error). Failure and unknown are not retry tokens.
 2. Write `invocation-receipt.json` O_EXCL (`qualification: false`).
-3. Drive HostCli-shaped calls: inspect, `/proc` helper `snap`/`kill`
-   (`exec -i -u 0 <id> sh -c <HELPER> effigy-custody …`), the candidate
-   `[binary, hold]` workload, owner signal, and `tasks status hold --json`.
+3. Drive HostCli-shaped calls through `HostCliDriver`:
+   - inspect: parse PascalCase `Id` / `Created` / `State.Running` and the
+     GO image digest. Exit 0 is not verification.
+   - start the frozen candidate `hold` selector as a live recorded owner
+     (`pid` + start identity, new session). HostCli prepends `program` to
+     `argv`; the workload tail is `[hold]`, never a duplicated binary.
+   - per-cell 64-hex nonce on `EFFIGY_CUSTODY_NONCE` and as the helper's
+     first stdin line. The packet generates that nonce and authenticates
+     helper snaps against it; a later GO/integration binds any engine
+     in-band registration line.
+   - helper `snap`: complete `boot` + `pid:[N]` + every `p` line.
+     Failed-observe omits `members`; verified empty is `members=[]`.
+   - signal only that recorded owner (INT/TERM/HUP/KILL) and wait the
+     original SIGNAL_EXIT budget. Wait timeout is `LostResponse`; no
+     blanket kill.
+   - helper-kill of leftover owned members uses the observed boot and
+     namespace, never literal `boot`/`ns`.
+   - status argv is `[tasks, status, hold, --json]` on the candidate;
+     parse `effigy.tasks-status.v3`. A modeled `not-recorded` substring
+     is not a gate.
 4. CLI uses `HostCliDriver` only. Tests inject `LabeledDouble` as a
-   Python argument. There is no environment or config switch.
+   Python argument, and call `HostCliDriver` against owned local
+   fake-executables for argv/stdin/nonce/generation, async owner
+   signal/wait/timeout and status schema. Those fixtures are not a
+   container engine. There is no environment or config switch.
 5. A labeled-double result is `kind: labeled-double`, never native
    qualification. A HostCli completion is `kind: native-pass`, still
    `qualification: false` until a later owner accepts it.
 6. Missing helper closure, lost responses, cleanup partial failure, and
    failure after admission keep truthful typed results and retain the
-   invocation receipt.
+   invocation receipt. Parent exit, PID-only and list-empty never grant
+   closure. Foreign/unknown members are not signalled.
 
 ## What passing the battery is
 
 `test:qualification:task-engine-signals` runs `boundaries.py` against
-fake backends, disposable fixture metadata, and a labeled double. A pass
-is packet admission plus execute control-flow, not native task closure.
+fake backends, a labeled double, and owned local HostCli fake-executables.
+A pass is packet admission plus execute control-flow and driver plumbing,
+not native task closure. Native Linux sequence TERM/HUP via
+`linux-custody.sh` remains separately GO-gated.

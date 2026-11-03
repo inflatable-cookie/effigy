@@ -2093,11 +2093,16 @@ is gone or shows different start ticks. Exec failure is `Unknown`, never
   `docs/qualification/task-engine-signal-matrix/` for the missing
   real-container INT/TERM/HUP/KILL `RemoteExecAdapter` cells. Task #582
   replaced the `--execute` stub with a GO-bound HostCli pass and added
-  dedicated sequence TERM/HUP host-fixture cells; the committed packet
-  stays unarmed and `qualification: false`. Status prepared-not-executed:
-  packet delivery, labeled-double control flow and host sequence fixtures
-  are not live-engine qualification and do not replace the consumer steps
-  below. The recorded steps, on each
+  dedicated sequence TERM/HUP host-fixture cells. Task #585 binds per-cell
+  64-hex nonce, live recorded owner pid/start, inspect and
+  `effigy.tasks-status.v3` parse, observed-generation helper-kill, and
+  failed-observe distinct from empty; the committed packet stays unarmed
+  and `qualification: false`. Status prepared-not-executed: packet
+  delivery, labeled-double control flow, HostCli local fake-executable
+  plumbing and host sequence fixtures are not live-engine qualification
+  and do not replace the consumer steps below. Native Linux sequence
+  TERM/HUP via `linux-custody.sh` remains separately GO-gated. The recorded
+  steps, on each
   backend with the candidate binary:
   1. cbs: `effigy schema:refresh`, then `effigy seed`; compare the dumped
      schema files and step outcomes with v0.14.1; repeat `seed` under
@@ -3514,7 +3519,9 @@ comparison is frozen in the plan (including "nothing running") and exposed as
 invokes **under the activation gate immediately before the one Compose apply**: it
 re-observes and requires the *exact* frozen facts, so two individually valid
 observations of different containers, a container that appeared, and a container
-that disappeared all refuse. The pre-decision read alone cannot see any of that.
+that disappeared all refuse. "Nothing running" is a verified empty project
+listing; an unavailable inventory is Unknown and grants no NoPredecessor (R3).
+The pre-decision read alone cannot see any of that.
 The intended hash must describe the canonical apply paths before publication,
 and the preflight must not materialize them there: the only
 owners that materialize a render (`policy::render::prepare`/`prepare_resolved`)
