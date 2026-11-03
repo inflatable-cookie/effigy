@@ -287,6 +287,36 @@ publication failure/late revalidation/handoff recovery, actual down/fresh-up,
 and exact supervisor crash followed by refusing reuse and explicit down/fresh-up.
 These prove source/fixture behavior, not native backend or consumer acceptance.
 
+### Per-case source evidence (effigy#619, 2026-11-03)
+
+Both maintained selectors pass at the reconciled head: `test:workspace:private-qualification:publication`
+(9/9) and `test:workspace:private-qualification:cli` (13/13), exit 0, source head
+`90b8299035913230850bfd414184344620386647`, recorded by effigy#619's run. These
+are source receipts; they are not native evidence. Each named case pins the
+following exact source and controls:
+
+| Case | Exact source | What it pins | Controls asserted |
+| --- | --- | --- | --- |
+| Expired publication deadline refuses without guest I/O | `workspace_reserved_expired_publication_deadline_refuses_without_guest_io`, `src/runner/workspace_command/tests/reserved_guest.rs` (`Fault::ExpiredDeadline`) | An already-past absolute deadline is refused, never replaced by a fresh budget | error names the expired deadline; zero credentials, zero guest effects, no probe; predecessor selectors unchanged; no `unfinished_selection` row a successor could settle |
+| Every guest write boundary crash preserves authority | `workspace_reserved_every_guest_write_boundary_crash_before_after_preserves_authority` (`Fault::Io(index, after)` over every enumerated effect, before and after I/O) | Each staging/selection effect interrupts cleanly; authority never leaves the owner | partial effects cannot return success; binary/entry selectors stay predecessor or complete-object; context stays `3`/`4`; an interrupted committed switch is settled by bounded abandonment, never left Pending |
+| Gated re-observation of a replaced target refuses | `workspace_reserved_gated_reobservation_of_a_replaced_target_refuses` (`Fault::GatedChangedTarget`) | Same-shaped target with a changed boot id refuses at the gated read | refusal names the preflight/gated identity mismatch; exactly one gated read; no credential; no artifact staged |
+| Callback keeps the original activation deadline | `workspace_reserved_callback_keeps_the_original_activation_deadline` (`Fault::LongObservationBudget`, `recording_backend`) | A 24-hour producer request cannot leak: reobserve and apply both get exactly the activation's own absolute deadline | reobserve deadline is at or before the activation's deadline and in the future; the apply receives that same instant, so a fresh or self-measured budget fails |
+| Gated re-observation past the deadline refuses without reading | `workspace_reserved_gated_reobservation_past_the_deadline_refuses_without_reading` (`Fault::GatedExpiredDeadline`) | A spent absolute deadline refuses before the gated read runs | zero gated reads; error names the deadline; no credential |
+| Gated re-observation of another valid id refuses | `workspace_reserved_gated_reobservation_of_another_valid_id_refuses` (`Fault::GatedIdMismatch`) | An individually valid foreign full id is not an acceptable observation | refusal as a replaced target; one gated read; no credential; no staging |
+| Owner publishes one full v2 through real commit and selection | `workspace_reserved_owner_publishes_one_full_v2_through_real_commit_and_selection` (`Fault::None`) | The positive path: one real frozen Compose apply, real commit/CAS, selector switch, selected session | exactly one `up -d` with `--context fixture-context compose`, `--build --remove-orphans` and the compose files; one credential mint at the generation gate; one context probe before any switch; the committed v2 document names the selected run/generation, endpoint/pin equality, 0600 credential; independent `verify` passes and stale generations refuse; cleanup settles the owner |
+| Owner refuses identity/alias/peer/pin/publication without selector switch | `workspace_reserved_owner_refuses_identity_alias_peer_pin_and_publication_without_selector_switch` (ten faults: identity/Unknown, alias, peer, pin, publication, context probe/peer/pin, stale document) | Every foreign or Unknown observation at the identity, channel and document boundaries refuses before the selector switch | context/binary/entry selectors stay at predecessor values; minted credentials only where the fault sits past the credential boundary; staged-but-unswitched bytes never become a publication |
+| Revalidation re-observes and refuses a changed target | `workspace_reserved_revalidation_reobserves_and_refuses_changed_target` (`Fault::Revalidate`, `Fault::RevalidateChanged`) | Explicit revalidation re-reads through the same gate; a changed target refuses after the second observation | positive revalidation selects; the changed-target run refuses with two reads and no credential |
+| Real CLI reaches committed selection, ownership and cleanup | `actual_cli_fake_backend_reaches_committed_workspace`, `tests/workspace_client/container_up_production.rs` | The real `effigy container up --system dev --detach --json` front end through real preparation, Env/helper/file custody and doubled engine/guest I/O | exactly one actual apply; one committed reservation; one durable switched obligation naming the live selected run (phase not closed); one complete v2 publication naming that run; fixture settled; no durable error bytes; no forced cleanup |
+
+The remaining selector cells are the failure/foreign/Unknown controls around
+that positive route: preparation failure discards backend diagnostics, forged
+receipts refuse the preparation entry, preparation never starts or repairs a
+backend, handoff/phase-B/late-revalidation failures unwind outside Env and
+retain Unknown, down/fresh-up and crash recovery refuse reuse then recover, and
+secret interpolation is owned through commit and never reaches diagnostics or
+durable state. The kernel custody fixture's `old` mode still requires the
+native packet's genuine older executable and refuses otherwise.
+
 Existing-target artifact reuse remains refused by the unchanged
 `observe_decision_artifact` descriptor-pin gate. Shared-service preparation and
 missing/stale source closures also refuse. These limitations are not native

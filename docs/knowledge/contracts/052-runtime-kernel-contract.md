@@ -3399,6 +3399,52 @@ reader does not infer an absent gate from silence:
 | S4 backup identity/reuse before Register, actual ACK, anchor verification before GO | landed | `MemoryGuard::register` re-proves the retained backup's exact incarnation before any frame; its acknowledgement names the frame's reserved request number; and process custody qualifies the recorded anchor and leader before the receipt and again before the `go` byte. |
 | S5 real mixed-binary and process-death controls | partial | A helper frame from another protocol version refuses by name, and real-process controls stop the recorded anchor and backup to prove the refusals. A genuine old-binary pair, Linux and native packets, and owner-death recovery for the resident owner are still outstanding. |
 
+**Reconciliation after #531/#534 (effigy#619, 2026-11-03).** The rows above stay
+as recorded at the #529 cut. Against the landed qualification cut, the
+applicable claims resolve in source as follows; none of it claims native,
+old-binary or consumer closure, and a genuine old-binary pair, Linux and native
+packets remain the native qualification tasks' own inputs:
+
+- **S1** resolved at descriptor level, not by wiring the scaffold. The
+  Run-owned prelaunch slot (`interpolation::PrelaunchInterpolation`) commits a
+  durable pending obligation before helper checks, hands hold-only descriptors
+  to the checkout backup over the private SCM_RIGHTS channel, and lets only the
+  never-forked live owner quarantine, unlink and sync; binding consumes the
+  slot only through a real process installation, which is why a refused fork
+  stays recoverable and `Run::mark_workspace_partial_fork` remains deliberately
+  unwired (test-only) for the reason the row records. Controls:
+  `prelaunch_pending_obligation_is_atomic_and_legacy_unreadable`,
+  `prelaunch_interpolation_caller_drop_keeps_exact_descriptors_and_env_gate`,
+  `reserved_env_admission_retains_interpolation_under_its_own_custody`,
+  `reserved_env_admission_failure_returns_the_exact_partial_custodian`.
+- **S2** is enabled in the qualification-only route. Qualification executables
+  capture the creator image at process entry
+  (`supervise::initialize_private_qualification_image`), and
+  `qualify_workspace_discard_images` requires that entry capture to match the
+  live sentinel identity and the retained checkout backup identity before GO,
+  with helpers and anchors re-observed. Foreign images, missing birth and
+  expired budgets refuse before a workload intent
+  (`qualification_discard_refuses_foreign_images_missing_birth_and_expired_context`);
+  ordinary Discard refuses unchanged. Default builds still leave the module
+  unused, and the accepted macOS accidental-skew limit stands.
+- **S3** composition is extended, rules unchanged. `SentinelLease::verify_retained`,
+  retained partial leases and explicit child environments remain. Interrupted
+  workspace sessions recover through `run::settle_interrupted` from the
+  environment recovery route, and committed-but-interrupted selections compose
+  `unfinished_selection`/`selection_recovered`/`selection_abandoned` under the
+  Env guard (the reserved-guest crash/partial-switch and
+  unknown-liveness/dead-listener proofs).
+- **S5** owner-death and leader-exit composition is proven in source.
+  `qualification_group_closure`/`wait_qualification_group_closure` separate a
+  leader exit from a fresh group closure
+  (`qualification_discard_does_not_confuse_leader_exit_with_group_closure`); a
+  closed owner leaves retained custody that parks Env and the exact
+  interpolation file until a recoverable settle (the kernel custody fixture's
+  descendant mode); the process-death matrix controls remain
+  (`custody_signal_and_owner_kill_matrix_settles_without_survivors`,
+  `owner_loss_settles_through_the_run_sentinel_and_retires_its_anchor`). A
+  foreign copy stays negative coverage, never old-binary credit.
+
 **Workspace activation intent (effigy#535).** That refusal is asked for by the
 invocation, not inferred from the declaration. Naming a container or accepting
 `[containers].default` is the ordinary Compose invocation this command has
