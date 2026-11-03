@@ -1570,7 +1570,7 @@ database = "acowtancy"
         assert_eq!(fs::read(&staged_path).expect("staged bytes"), b"select 1;");
         assert_eq!(
             fs::read(&sentinel).expect("sentinel bytes"),
-            &*SENTINEL_BYTES
+            SENTINEL_BYTES
         );
         // The probe directory holds only its sentinel; no
         // `<target>--dump.sql` stray landed beside it or in the repo root.
@@ -1629,7 +1629,7 @@ database = "acowtancy"
             .exists());
         assert_eq!(
             fs::read(&sentinel).expect("sentinel bytes"),
-            &*SENTINEL_BYTES
+            SENTINEL_BYTES
         );
     }
 
@@ -1764,7 +1764,7 @@ database = "app"
             .exists());
         assert_eq!(
             fs::read(&sentinel).expect("sentinel bytes"),
-            &*SENTINEL_BYTES
+            SENTINEL_BYTES
         );
     }
 
