@@ -883,6 +883,21 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Restrict `effigy container cache prune --global` to volumes whose complete
+  runtime evidence proves Effigy ownership (effigy#611). The prune removed
+  every cache-shaped candidate the backend did not report in use, so a
+  cache-like name alone — or a legacy content match on an opaque `efv-*`
+  volume — could send an unrelated lookalike volume to `volume rm`, and a
+  failed batch inspect read as missing metadata. The prune now inspects every
+  candidate completely and removes only volumes carrying Effigy's own
+  `com.effigy.managed`, `com.effigy.project` and `com.effigy.volume-name`
+  labels whose labelled project is not discovered running; lookalike and
+  unlabelled legacy volumes are reported as warnings and left intact, and
+  listing, inspection or running-project discovery failures are errors, never
+  absence or success. The read-only `cache list --global` keeps its name and
+  content classification, so legacy `efv-*` inventory stays visible; pruning
+  such unlabelled legacy volumes is no longer offered.
+
 - Retention no longer deletes an object a concurrent publication has just made
   desired or last-applied (effigy#608). A sweep selected its orphan candidates
   without the objects gate, then removed each selected digest's canonical

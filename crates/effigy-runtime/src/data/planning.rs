@@ -416,4 +416,96 @@ mod tests {
             "profile-wide cache inventory (project=acowtancy-dev, kind=rust-target)"
         );
     }
+
+    fn metadata_with_labels(name: &str, labels: &[(&str, &str)]) -> RuntimeVolumeMetadata {
+        RuntimeVolumeMetadata {
+            name: name.to_owned(),
+            mount_point: Some("/var/lib/mock".to_owned()),
+            size_bytes: Some(1024),
+            labels: labels
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+        }
+    }
+
+    /// Only the exact managed/project/volume-name label triple proves
+    /// ownership; anything else is a lookalike with the precise reason.
+    #[test]
+    fn effigy_owned_project_requires_the_exact_label_triple() {
+        let owned = metadata_with_labels(
+            "web-dev-workspace-api-target",
+            &[
+                ("com.effigy.managed", "true"),
+                ("com.effigy.project", "web-dev"),
+                ("com.effigy.volume-name", "web-dev-workspace-api-target"),
+            ],
+        );
+        assert_eq!(
+            effigy_owned_project("web-dev-workspace-api-target", &owned),
+            Ok("web-dev".to_owned())
+        );
+        // Missing project label.
+        let no_project = metadata_with_labels(
+            "acme-website-target",
+            &[("com.effigy.managed", "true")],
+        );
+        assert!(effigy_owned_project("acme-website-target", &no_project)
+            .expect_err("missing project label")
+            .contains("com.effigy.project` is missing"));
+        // Volume-name label naming another volume.
+        let wrong_name = metadata_with_labels(
+            "acme-website-target",
+            &[
+                ("com.effigy.managed", "true"),
+                ("com.effigy.project", "acme"),
+                ("com.effigy.volume-name", "other-volume"),
+            ],
+        );
+        assert!(effigy_owned_project("acme-website-target", &wrong_name)
+            .expect_err("volume-name mismatch")
+            .contains("com.effigy.volume-name"));
+        // Managed label not true.
+        let not_managed = metadata_with_labels(
+            "acme-website-target",
+            &[
+                ("com.effigy.managed", "false"),
+                ("com.effigy.project", "acme"),
+                ("com.effigy.volume-name", "acme-website-target"),
+            ],
+        );
+        assert!(effigy_owned_project("acme-website-target", &not_managed)
+            .expect_err("managed label not true")
+            .contains("com.effigy.managed"));
+    }
+
+    /// Proven ownership names the project exactly for display; name markers
+    /// and Compose labels stay fallbacks for volumes without the triple.
+    #[test]
+    fn cache_entries_prefer_the_owned_project_label_over_inference() {
+        let running_projects = BTreeSet::new();
+        let mut metadata = BTreeMap::new();
+        // A volume whose name markers would infer a different project than
+        // its own label names.
+        metadata.insert(
+            "workspace-app-reference-dev-workspace-acme-api-target".to_owned(),
+            metadata_with_labels(
+                "workspace-app-reference-dev-workspace-acme-api-target",
+                &[
+                    ("com.effigy.managed", "true"),
+                    ("com.effigy.project", "acme-dev"),
+                    ("com.effigy.volume-name", "workspace-app-reference-dev-workspace-acme-api-target"),
+                ],
+            ),
+        );
+        let entries = collect_global_cache_entries_from_names(
+            vec!["workspace-app-reference-dev-workspace-acme-api-target".to_owned()],
+            &running_projects,
+            &metadata,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        );
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].project_name.as_deref(), Some("acme-dev"));
+    }
 }

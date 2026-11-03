@@ -780,7 +780,11 @@ only when Effigy's labels prove it: `com.effigy.managed=true`,
 `com.effigy.volume-name` naming the volume. Reset and cache prune remove only
 such volumes; a same-named lookalike is reported and left alone, and data
 import and export refuse it. A listing or inspection failure is an error,
-never an absence (contract 052 R3).
+never an absence (contract 052 R3). The profile-wide cache prune has no single
+environment, so each candidate volume's own labels are the ownership evidence:
+the labelled project names the volume's owner, a discovered-running owning
+project is left intact, and cache-like names or legacy content classification
+mark diagnostic inventory only — they never admit removal (effigy#611).
 
 The focused `test:containers:generations:cli` proof snapshots bytes and filesystem
 metadata around status, hosts, scope, plan, render and logs for a translated `compose_file`

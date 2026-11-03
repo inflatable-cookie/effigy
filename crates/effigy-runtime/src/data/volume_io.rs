@@ -202,7 +202,8 @@ mod tests {
     use std::process::Output;
     use std::sync::{Arc, Mutex};
 
-    use super::volume_identities;
+    use super::{inspect_runtime_volume_metadata_batch_strict, volume_identities};
+    use crate::EffigyRuntimeError;
     use effigy_catalog::volumes::{DockerCommand, VolumeIdentity};
 
     fn command_output(stdout: &str) -> Output {
@@ -272,5 +273,107 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert!(calls.iter().any(|call| call.contains("volume ls")));
         assert!(calls.iter().any(|call| call.contains("volume inspect")));
+    }
+
+    fn inspect_output(stdout: &str) -> Output {
+        Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    fn owned_entry(name: &str) -> String {
+        format!(
+            "{{\"Name\":\"{name}\",\"Mountpoint\":\"/var/lib/docker/volumes/{name}/_data\",\"Labels\":{{\"com.effigy.managed\":\"true\",\"com.effigy.project\":\"web-dev\",\"com.effigy.volume-name\":\"{name}\"}}}}"
+        )
+    }
+
+    /// The strict batch records every requested name exactly once; spawn
+    /// failures, omitted rows and duplicates are errors, never absence.
+    #[test]
+    fn strict_metadata_batch_refuses_incomplete_and_ambiguous_inspection() {
+        let names = vec!["web-dev-a".to_owned(), "web-dev-b".to_owned()];
+
+        // Complete inspection succeeds.
+        let complete = inspect_runtime_volume_metadata_batch_strict(
+            Path::new("."),
+            "endpoint",
+            &names,
+            &|_cwd: &Path, _endpoint: &str, _command: &DockerCommand| {
+                Ok(inspect_output(&format!(
+                    "[{},{}]",
+                    owned_entry("web-dev-a"),
+                    owned_entry("web-dev-b")
+                )))
+            },
+        )
+        .expect("complete inspection");
+        assert_eq!(complete.len(), 2);
+
+        // A spawn failure propagates.
+        let spawn_error = inspect_runtime_volume_metadata_batch_strict(
+            Path::new("."),
+            "endpoint",
+            &names,
+            &|_cwd: &Path, _endpoint: &str, _command: &DockerCommand| {
+                Err(EffigyRuntimeError::task_invocation("volume inspect failed (1)"))
+            },
+        )
+        .expect_err("spawn failure");
+        assert!(spawn_error.to_string().contains("volume inspect failed"));
+
+        // An omitted row is an error naming the missing volume.
+        let partial = inspect_runtime_volume_metadata_batch_strict(
+            Path::new("."),
+            "endpoint",
+            &names,
+            &|_cwd: &Path, _endpoint: &str, _command: &DockerCommand| {
+                Ok(inspect_output(&format!("[{}]", owned_entry("web-dev-a"))))
+            },
+        )
+        .expect_err("partial inspection");
+        assert!(partial.to_string().contains("web-dev-b"), "{partial}");
+
+        // Duplicate rows for one name are ambiguous evidence.
+        let duplicate = inspect_runtime_volume_metadata_batch_strict(
+            Path::new("."),
+            "endpoint",
+            &names,
+            &|_cwd: &Path, _endpoint: &str, _command: &DockerCommand| {
+                Ok(inspect_output(&format!(
+                    "[{},{},{}]",
+                    owned_entry("web-dev-a"),
+                    owned_entry("web-dev-a"),
+                    owned_entry("web-dev-b")
+                )))
+            },
+        )
+        .expect_err("duplicate rows");
+        assert!(duplicate.to_string().contains("duplicate entries"), "{duplicate}");
+
+        // Malformed JSON is an error.
+        let malformed = inspect_runtime_volume_metadata_batch_strict(
+            Path::new("."),
+            "endpoint",
+            &names,
+            &|_cwd: &Path, _endpoint: &str, _command: &DockerCommand| {
+                Ok(inspect_output("not json"))
+            },
+        )
+        .expect_err("malformed output");
+        assert!(malformed.to_string().contains("JSON"), "{malformed}");
+
+        // An empty request never touches the runtime.
+        let empty = inspect_runtime_volume_metadata_batch_strict(
+            Path::new("."),
+            "endpoint",
+            &[],
+            &|_cwd: &Path, _endpoint: &str, _command: &DockerCommand| {
+                Err(EffigyRuntimeError::task_invocation("must not spawn"))
+            },
+        )
+        .expect("empty request");
+        assert!(empty.is_empty());
     }
 }

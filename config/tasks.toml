@@ -1507,6 +1507,13 @@
   "sh scripts/oxide-selector.sh check -p effigy-core -p effigy-manifest -p effigy-containers -p effigy-release -p effigy --lib --tests",
   "sh scripts/oxide-selector.sh clippy -p effigy-core -p effigy-manifest --lib -- -D warnings",
 ] }
+# Global cache prune ownership gate (effigy#611): the destructive producer in
+# effigy-runtime and the catalog volume-identity helpers it reuses compile and
+# lint clean together.
+"check:runtime:cache-prune" = { visibility = "internal", group = "Maintenance", run = [
+  "sh scripts/oxide-selector.sh check -p effigy-runtime -p effigy-catalog --all-targets",
+  "sh scripts/oxide-selector.sh clippy -p effigy-runtime -p effigy-catalog --all-targets -- -D warnings",
+] }
 # Caller deadline continuity through Colima service discovery and container
 # capture (task effigy#093). Private fake-runtime fixtures plus one controlled
 # spawn-delay seam prove the caller's absolute deadline is not rebased, an
