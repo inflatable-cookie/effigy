@@ -284,6 +284,11 @@ fn begin_with_hook(root: &Path) -> (TaskRun, i32) {
         .trim()
         .parse()
         .unwrap();
+    eprintln!(
+        "fixture={root:?} run={} hook_start={:?}",
+        task_run.id(),
+        effigy_kernel::ident::process_identity(pid as u32)
+    );
     (task_run, pid)
 }
 
@@ -347,6 +352,10 @@ fn remote_admission_lost_after_registration_stops_remote_session() {
                         e.spec.kind == "kernel:remote-process"
                             && e.state == effigy_kernel::run::EffectState::Applied
                     }) {
+                        eprintln!(
+                            "run={run_id} phase=applied effects={}",
+                            serde_json::to_string(&effects).expect("encode effects")
+                        );
                         kill_hook(pid);
                         break;
                     }
@@ -375,6 +384,7 @@ fn remote_admission_lost_after_registration_stops_remote_session() {
     );
     thread.join().expect("hook perturbation");
     let warnings = task_run.close(WorkloadOutcome::Interrupted);
+    receipt(&matrix.root, run_id, "settled");
     assert!(result.is_err(), "lost admission must fail the task");
     assert!(warnings.is_empty(), "{warnings:?}");
     assert!(
@@ -401,6 +411,10 @@ fn remote_admission_loss_with_unknown_closure_leaves_residue() {
                         e.spec.kind == "kernel:remote-process"
                             && e.state == effigy_kernel::run::EffectState::Applied
                     }) {
+                        eprintln!(
+                            "run={run_id} phase=applied effects={}",
+                            serde_json::to_string(&effects).expect("encode effects")
+                        );
                         std::fs::write(engine.dir.join("down"), b"").expect("model unreachable");
                         kill_hook(pid);
                         break;
@@ -425,6 +439,7 @@ fn remote_admission_loss_with_unknown_closure_leaves_residue() {
     );
     thread.join().expect("hook perturbation");
     let warnings = task_run.close(WorkloadOutcome::Interrupted);
+    receipt(&matrix.root, run_id, "settled");
     let alive = matrix.engine.alive();
     matrix.engine.signal(libc::SIGKILL);
     assert!(result.is_err(), "lost admission must fail the task");
