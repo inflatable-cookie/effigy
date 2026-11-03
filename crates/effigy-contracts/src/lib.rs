@@ -1458,27 +1458,25 @@ fn create_container_status_contract_fixture(
     fixtures: &mut ContractFixtures,
     mode: StatusFixtureMode,
 ) -> Result<PathBuf, String> {
-    let fixture = fixtures
-        .directory("container-status-", FixturePlacement::External)
-        .map_err(|error| error.to_string())?;
-    std::fs::write(fixture.join("package.json"), "{}\n").map_err(|error| error.to_string())?;
-    std::fs::write(
-        fixture.join("effigy.toml"),
-        "[containers]\ndefault='web'\n[containers.web]\ncompose_file='compose.yml'\nprimary_service='app'\nprofile='effigy'\nproject_name='fixture-web-dev'\nworking_dir='/workspace'\n",
-    )
-    .map_err(|error| error.to_string())?;
-    std::fs::write(
-        fixture.join("compose.yml"),
-        "services:\n  app:\n    image: example\n",
+    let fixture = create_contract_fixture_files(
+        fixtures,
+        &[
+            (
+                "effigy.toml",
+                "[containers]\ndefault='web'\n[containers.web]\ncompose_file='compose.yml'\nprimary_service='app'\nprofile='effigy'\nproject_name='fixture-web-dev'\nworking_dir='/workspace'\n",
+            ),
+            ("compose.yml", "services:\n  app:\n    image: example\n"),
+            ("bin/colima", status_fixture_colima_script(mode)),
+            (
+                "bin/docker",
+                "#!/bin/sh\nprintf 'unexpected docker invocation: %s\\n' \"$*\" >&2\nexit 1\n",
+            ),
+        ],
     )
     .map_err(|error| error.to_string())?;
     let bin = fixture.join("bin");
-    std::fs::create_dir_all(&bin).map_err(|error| error.to_string())?;
-    write_unix_executable(&bin.join("colima"), status_fixture_colima_script(mode))?;
-    write_unix_executable(
-        &bin.join("docker"),
-        "#!/bin/sh\nprintf 'unexpected docker invocation: %s\\n' \"$*\" >&2\nexit 1\n",
-    )?;
+    make_unix_executable(&bin.join("colima"))?;
+    make_unix_executable(&bin.join("docker"))?;
     let path = match std::env::var("PATH") {
         Ok(rest) => format!("{}:{rest}", bin.display()),
         Err(_) => bin.display().to_string(),
@@ -1550,8 +1548,10 @@ exit 1
     }
 }
 
-fn write_unix_executable(path: &Path, contents: &str) -> Result<(), String> {
-    std::fs::write(path, contents).map_err(|error| error.to_string())?;
+/// Mark an already-written fixture script executable through the owned
+/// boundary: the bytes land via `create_contract_fixture_files`, this only
+/// enforces the executable contract (mode 0o755 on unix).
+fn make_unix_executable(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1560,6 +1560,10 @@ fn write_unix_executable(path: &Path, contents: &str) -> Result<(), String> {
             .permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(path, perms).map_err(|error| error.to_string())?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
     }
     Ok(())
 }
@@ -1577,7 +1581,14 @@ fn create_contract_fixture_files(
 ) -> Result<PathBuf, std::io::Error> {
     let fixture_dir = fixtures.directory("effigy-contract-", FixturePlacement::External)?;
     for (name, content) in [("package.json", "{}\n")].iter().chain(files) {
-        std::fs::write(fixture_dir.join(name), content)?;
+        let path = fixture_dir.join(name);
+        // Nested names (for example `bin/colima`) create their parent inside
+        // the owned fixture root, which keeps the directory itself as the
+        // single RAII-owned unit of cleanup.
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, content)?;
     }
     Ok(fixture_dir)
 }
