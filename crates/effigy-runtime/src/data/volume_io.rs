@@ -160,3 +160,82 @@ where
         String::from_utf8_lossy(&output.stdout).as_ref(),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::process::Output;
+    use std::sync::{Arc, Mutex};
+
+    use super::volume_identities;
+    use effigy_catalog::volumes::{DockerCommand, VolumeIdentity};
+
+    fn command_output(stdout: &str) -> Output {
+        Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    /// Listing decides presence; only present names are inspected, and the
+    /// strict runtime labels decide Owned versus Lookalike.
+    #[test]
+    fn volume_identities_classifies_listed_and_absent_names_from_runtime_labels() {
+        let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+        let calls_for_capture = Arc::clone(&calls);
+        let capture = move |_cwd: &Path, _endpoint: &str, command: &DockerCommand| {
+            let rendered = command.args.join(" ");
+            calls_for_capture
+                .lock()
+                .expect("calls lock")
+                .push(rendered.clone());
+            let output = if rendered.contains("volume ls") {
+                "web-project-demo-data\tdriver\t\n".to_owned()
+            } else if rendered.contains("volume inspect") {
+                "[{\"Name\":\"web-project-demo-data\",\"Mountpoint\":\"/var/lib/demo\",\"UsageData\":{\"Size\":2048},\"Labels\":{\"com.effigy.managed\":\"true\",\"com.effigy.project\":\"web-project\",\"com.effigy.volume-name\":\"web-project-demo-data\"}}]".to_owned()
+            } else {
+                String::new()
+            };
+            Ok(command_output(&output))
+        };
+
+        // An empty request must not touch the runtime at all.
+        let empty = volume_identities(
+            Path::new("/tmp/repo"),
+            "endpoint",
+            "web-project",
+            &[],
+            &capture,
+        )
+        .expect("empty request");
+        assert!(empty.is_empty());
+        assert!(calls.lock().expect("calls lock").is_empty());
+
+        let identities = volume_identities(
+            Path::new("/tmp/repo"),
+            "endpoint",
+            "web-project",
+            &[
+                "web-project-demo-data".to_owned(),
+                "web-project-absent".to_owned(),
+            ],
+            &capture,
+        )
+        .expect("identities");
+
+        assert_eq!(
+            identities.get("web-project-demo-data"),
+            Some(&VolumeIdentity::Owned)
+        );
+        assert_eq!(
+            identities.get("web-project-absent"),
+            Some(&VolumeIdentity::Absent)
+        );
+        // Exactly one listing and one inspect; the absent name triggers no extra probe.
+        let calls = calls.lock().expect("calls lock");
+        assert_eq!(calls.len(), 2);
+        assert!(calls.iter().any(|call| call.contains("volume ls")));
+        assert!(calls.iter().any(|call| call.contains("volume inspect")));
+    }
+}

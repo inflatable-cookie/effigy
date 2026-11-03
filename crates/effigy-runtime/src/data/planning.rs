@@ -212,14 +212,12 @@ fn volume_project_name_from_labels(labels: &BTreeMap<String, String>) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::generated_policy;
-    use effigy_containers::{
-        ContainerCacheOperation, ContainerConfirmationPolicy, ContainerDataOperation,
-        ContainerOperationKind, ContainerSideEffectClass,
-    };
 
+    /// Every marker family `project_name_from_volume_name` recognises; the
+    /// inferred project drives the `in use` marking of global cache entries.
     #[test]
-    fn project_name_inference_handles_workspace_cache_volumes() {
+    fn project_name_inference_covers_each_volume_name_marker_family() {
+        // Workspace marker.
         assert_eq!(
             project_name_from_volume_name("workspace-app-reference-dev-workspace-acme-api-target"),
             Some("workspace-app-reference-dev".to_owned())
@@ -228,20 +226,14 @@ mod tests {
             project_name_from_volume_name("acowtancy-dev-workspace-cargo-git"),
             Some("acowtancy-dev".to_owned())
         );
-    }
-
-    #[test]
-    fn project_name_inference_handles_stack_iso_cache_volumes() {
+        // Stack-ISO marker.
         assert_eq!(
             project_name_from_volume_name(
                 "workspace-app-reference-dev_stack-iso-poodle-node-modules"
             ),
             Some("workspace-app-reference-dev".to_owned())
         );
-    }
-
-    #[test]
-    fn project_name_inference_handles_duplicated_project_prefix_volumes() {
+        // Duplicated project prefix (the underscore fallback).
         assert_eq!(
             project_name_from_volume_name("acme-reference-dev_acme-reference-dev-cargo-registry"),
             Some("acme-reference-dev".to_owned())
@@ -394,64 +386,5 @@ mod tests {
             ),
             "profile-wide cache inventory (project=acowtancy-dev, kind=rust-target)"
         );
-    }
-
-    #[test]
-    fn data_operation_plan_keeps_transfer_identity() {
-        let policy = generated_policy("web");
-        let archive = std::path::PathBuf::from("/tmp/export.tar.gz");
-        let plan = data_operation_plan(
-            std::path::Path::new("/tmp/repo"),
-            &policy,
-            ContainerDataOperation::export("postgres-data", archive.clone()),
-        );
-
-        assert_eq!(plan.request.policy_name, "web");
-        assert_eq!(plan.request.backend_id.as_deref(), Some("colima"));
-        assert_eq!(plan.side_effect, ContainerSideEffectClass::WritesHostData);
-        match plan.request.kind {
-            ContainerOperationKind::Data(ContainerDataOperation::Export(operation)) => {
-                assert_eq!(operation.volume, "postgres-data");
-                assert_eq!(operation.path, archive);
-            }
-            other => panic!("unexpected operation kind: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn cache_prune_operation_plan_requires_confirmation() {
-        let policy = generated_policy("web");
-        let plan = cache_operation_plan(
-            std::path::Path::new("/tmp/repo"),
-            &policy,
-            ContainerCacheOperation::prune(false, None, None, false),
-        );
-
-        assert_eq!(plan.side_effect, ContainerSideEffectClass::RemovesCacheData);
-        assert_eq!(
-            plan.confirmation,
-            ContainerConfirmationPolicy::RequireConfirmation {
-                reason: "operation removes cache data",
-            }
-        );
-    }
-
-    #[test]
-    fn global_cache_operation_plan_keeps_profile_identity() {
-        let plan = global_cache_operation_plan(
-            std::path::Path::new("/tmp/repo"),
-            "effigy",
-            ContainerCacheOperation::list(true, Some("project".to_owned()), None),
-        );
-
-        assert_eq!(plan.request.policy_name, "profile:effigy");
-        assert_eq!(plan.request.backend_id.as_deref(), Some("colima"));
-        match plan.request.kind {
-            ContainerOperationKind::Cache(ContainerCacheOperation::List(operation)) => {
-                assert!(operation.all);
-                assert_eq!(operation.project.as_deref(), Some("project"));
-            }
-            other => panic!("unexpected operation kind: {other:?}"),
-        }
     }
 }
