@@ -1643,8 +1643,8 @@ impl Drop for InterruptedOwner {
 /// so its `Drop` never runs. The watchdog it started must stop every generation
 /// it recorded: the listener child, its background job and the gateway daemon.
 /// The root is removed only after the watchdog's exit receipt and the kernel
-/// helper settlement, because recorded liveness alone raced a still-settling
-/// writer (effigy#617).
+/// helper settlement, because recorded liveness alone cannot prove a
+/// still-settling writer has stopped (effigy#617).
 #[test]
 fn managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent() {
     let scratch = managed_host_fixture();

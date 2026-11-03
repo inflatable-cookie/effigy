@@ -19,10 +19,10 @@
 //! `down` clears the leader's record before the cleanup runs. A fixture's
 //! watchdog outlives the fixture if the fixture is killed, which is the only
 //! cleanup an interrupted owner gets: no `Drop` runs in a killed process.
-//! Its stop pass is followed by an exit receipt naming its own and its
-//! owner's identities, so a proof that removes the root after an interrupted
-//! owner can wait for the helper itself instead of inferring its completion
-//! from the recorded generations going quiet (effigy#617).
+//! Its stop pass is followed by an exit receipt naming its owner's PID and
+//! its own boot/start identity, so a proof that removes the root after an
+//! interrupted owner can wait for the helper itself instead of inferring its
+//! completion from the recorded generations going quiet (effigy#617).
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -489,9 +489,10 @@ pub(super) fn wait_for_watchdog_exit(
 
 /// Freezes the watchdog at its ledger-write boundary while the discriminator's
 /// control file exists, and marks that this real writer reached the boundary.
-/// The marker names the exact helper and owner identities at the boundary;
-/// the hold releases on its own after [`WATCHDOG_HOLD_BUDGET`]. Only the
-/// discriminator sets the environment, so no fixture watchdog runs held.
+/// The marker names the owner's PID and the exact helper identity at the
+/// boundary; the hold releases on its own after [`WATCHDOG_HOLD_BUDGET`].
+/// Only the discriminator sets the environment, so no fixture watchdog runs
+/// held.
 fn hold_at_ledger_boundary(hold: &Path, owner: u32) {
     let held = hold.with_extension("held");
     let marker = serde_json::json!({
@@ -605,8 +606,8 @@ pub(super) fn spawn_watchdog(root: &Path) -> Child {
     spawn_watchdog_for(root, std::process::id(), None)
 }
 
-/// [`spawn_watchdog`] with an explicit owner identity and an optional hold
-/// control file for the removal-ordering discriminator.
+/// [`spawn_watchdog`] with an explicit owner PID and an optional hold control
+/// file for the removal-ordering discriminator.
 pub(super) fn spawn_watchdog_for(root: &Path, owner: u32, hold: Option<&Path>) -> Child {
     use std::os::unix::process::CommandExt;
     let mut command = Command::new(std::env::current_exe().expect("test binary"));
