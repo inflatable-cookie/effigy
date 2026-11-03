@@ -532,6 +532,24 @@ mod tests {
     }
 
     #[test]
+    fn nextest_identity_survives_output_and_evidence_folding() {
+        let mut lines: Vec<String> = (0..30)
+            .map(|step| format!("running test {step}"))
+            .collect();
+        lines.insert(15, "FAIL [ 0.123s] example::tests::broken".to_owned());
+        lines.push("error: test run failed".to_owned());
+        let stdout = (0..20).map(|n| format!("progress {n}")).collect::<Vec<_>>().join("\n");
+        let error = HumanError::new("task failed")
+            .evidence("exit code 100")
+            .evidence_output("stderr", &lines.join("\n"))
+            .evidence_output("stdout", &stdout);
+        let rendered = error.render_text();
+        assert!(rendered.contains("example::tests::broken"), "{rendered}");
+        assert!(rendered.contains("lines omitted"), "{rendered}");
+        assert!(error.evidence_lines().len() <= MAX_EVIDENCE_LINES);
+    }
+
+    #[test]
     fn the_last_line_that_names_a_cause_beats_a_quiet_final_line() {
         let log = "mysqld is alive\n[ERROR] InnoDB: cannot allocate memory\nshutdown complete";
         assert_eq!(
