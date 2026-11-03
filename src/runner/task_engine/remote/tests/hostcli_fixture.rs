@@ -181,9 +181,13 @@ fn hostcli_signal_case(signal: i32) {
     let path = std::env::join_paths(std::iter::once(bin.clone()).chain(
         std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
     )).unwrap();
+    // Keep the fixture owner and every re-exec on one privately owned image.
+    let candidate = root.join("candidate-test");
+    fs::copy(std::env::current_exe().unwrap(), &candidate).unwrap();
+    fs::set_permissions(&candidate, fs::Permissions::from_mode(0o500)).unwrap();
     let module = module_path!().split_once("::").map_or(module_path!(), |(_, rest)| rest);
     let child_name = format!("{module}::hostcli_fixture_child");
-    let child = Command::new(std::env::current_exe().unwrap())
+    let child = Command::new(&candidate)
         .args(["--exact", &child_name, "--nocapture"])
         .current_dir(&root).env(CHILD, &root).env("HOME", &home)
         .env("TMPDIR", &root).env("PATH", path)
