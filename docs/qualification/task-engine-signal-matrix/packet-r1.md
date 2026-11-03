@@ -7,8 +7,10 @@ executed.** Armed: **false.**
 This packet is the smallest later-executable shape for the genuine missing
 real-engine cells in `matrix.json`: real-container × INT/TERM/HUP/KILL
 through production `RemoteExecAdapter` / `ComposeRemote::<HostCli>`, plus
-strict foreign/unknown refusal, on one bounded run. It does not qualify
-those cells. Boundary doubles prove packet admission and execute
+strict foreign/unknown refusal, on one bounded run. The current driver is
+not yet a feasible qualification path: its nonce is not the kernel's remote
+registration nonce, and it does not wait for verified settlement. It does not
+qualify those cells. Boundary doubles prove packet admission and execute
 control-flow only.
 
 ## Subject
@@ -94,15 +96,17 @@ list. `spawn` is always `false` on the plan. A plan is never execution.
    - start the frozen candidate `hold` selector as a live recorded owner
      (`pid` + start identity, new session). HostCli prepends `program` to
      `argv`; the workload tail is `[hold]`, never a duplicated binary.
-   - per-cell 64-hex nonce on `EFFIGY_CUSTODY_NONCE` and as the helper's
-     first stdin line. The packet generates that nonce and authenticates
-     helper snaps against it; a later GO/integration binds any engine
-     in-band registration line.
+   - per-cell 64-hex packet-generated nonce on `EFFIGY_CUSTODY_NONCE` and
+     as the helper's first stdin line. This does not bind the kernel remote
+     registration: the host client strips that variable, and the kernel
+     generates its own nonce from the run, fence and effect sequence. An
+     authenticated observation of the actual registration is still required.
    - helper `snap`: complete `boot` + `pid:[N]` + every `p` line.
      Failed-observe omits `members`; verified empty is `members=[]`.
    - signal only that recorded owner (INT/TERM/HUP/KILL) and wait the
-     original SIGNAL_EXIT budget. Wait timeout is `LostResponse`; no
-     blanket kill.
+     original SIGNAL_EXIT budget. The current driver observes closure too
+     early; owner exit alone does not establish retained settlement. Wait
+     timeout is `LostResponse`; no blanket kill.
    - helper-kill of leftover owned members uses the observed boot and
      namespace, never literal `boot`/`ns`.
    - status argv is `[tasks, status, hold, --json]` on the candidate;
