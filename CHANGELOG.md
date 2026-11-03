@@ -1480,6 +1480,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- A SQLite durability-write failure (`SQLITE_IOERR_FSYNC` and the sibling
+  write, directory-fsync, and atomic-write extended codes) stays
+  `unavailable` and keeps the extended code, but no longer says "nothing is
+  broken, and retrying once it answers is safe". That write is unknown, not
+  proved corrupt: do not replay the operation or run the explicit repair;
+  observations still work (effigy#580). A process-custody refusal now prints
+  the same sentence instead of a Debug tree.
+
 - A host-process restart no longer refuses while its predecessor drains. A
   supervisor releases its gate flock only after settle has journaled the run
   closed, so a replace that started its successor on the journal's closure

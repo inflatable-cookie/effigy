@@ -156,16 +156,44 @@ impl StoreError {
 /// `kernel.db`.
 const CORRUPT_REPAIR: &str = "the explicit repair moves `kernel.db` and its `-journal`, `-wal` \
 and `-shm` files aside, and then this command works";
+
+/// SQLite extended codes that mean a durability write did not complete.
+/// These stay `StoreError::Sqlite` (settle retries only `Io`) and keep
+/// `Category::Unavailable`, but they do not carry the category's
+/// "retrying is safe" next step: that write is unknown, not proved corrupt.
+fn sqlite_durability_write(code: i32) -> bool {
+    matches!(
+        code,
+        rusqlite::ffi::SQLITE_IOERR_FSYNC
+            | rusqlite::ffi::SQLITE_IOERR_DIR_FSYNC
+            | rusqlite::ffi::SQLITE_IOERR_WRITE
+            | rusqlite::ffi::SQLITE_IOERR_BEGIN_ATOMIC
+            | rusqlite::ffi::SQLITE_IOERR_COMMIT_ATOMIC
+            | rusqlite::ffi::SQLITE_IOERR_ROLLBACK_ATOMIC
+    )
+}
+
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Verified corruption is the one case that says `Corrupt` and names the
-        // repair; every other error renders through its category's one display.
+        // repair. A newer schema, a cancellation, and a durability-write I/O
+        // failure also skip the category's default next step. Every other error
+        // renders through its category's one display.
         match self {
             Self::Corrupt(reason) => {
                 return write!(
                     f,
                     "Effigy is broken: kernel.db is corrupt ({reason}); nothing was changed, and \
                      {CORRUPT_REPAIR}"
+                )
+            }
+            Self::Sqlite { code, message } if sqlite_durability_write(*code) => {
+                return write!(
+                    f,
+                    "the state store could not proceed: kernel.db failed a durable write \
+                     ({message}, SQLite code {code}); that write is unknown, not proved corrupt, \
+                     so do not replay this operation or run the explicit repair; observations \
+                     still work"
                 )
             }
             Self::UnknownSchema { found } if *found > SCHEMA_VERSION => {
