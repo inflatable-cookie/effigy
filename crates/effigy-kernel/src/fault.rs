@@ -21,6 +21,8 @@ macro_rules! points {
     };
 }
 points! {
+    RetentionObjectsSelected,
+    RetentionObjectDeleted,
     ObjectStageBefore,
     ObjectStageCreated,
     ObjectWriteBefore,

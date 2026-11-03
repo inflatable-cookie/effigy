@@ -873,6 +873,24 @@ During v0.x, MINOR bumps may include breaking changes.
   The kernel's object verifier also refuses an entry the closure digest cannot
   name, such as an extra empty directory.
 
+### Fixed
+
+- Retention no longer deletes an object a concurrent publication has just made
+  desired or last-applied (effigy#608). A sweep selected its orphan candidates
+  without the objects gate, then removed each selected digest's canonical
+  bytes and row under the gate without rechecking it, so a publication that
+  journalled its intent before the gate and committed its desired reference
+  under it could lose exactly the bytes its references name, leaving
+  `object_refs` and `resources.desired` pointing at a missing object.
+  Retention now rechecks every candidate against the same unreferenced
+  predicate under the gate and skips a digest that gained an intent or a
+  reference between the selection and the delete, so either ordering of the
+  race keeps bytes, row and references coherent. Genuine orphans are still
+  reclaimed, the recheck is one read per candidate — its reference half is a
+  digest lookup and its staging-event half scans the journal, the shape the
+  selection already pays — and the per-candidate writer batches stay as
+  short as before.
+
 ### Changed
 
 - Focus the compiler-feedback inventory tests on distinct detector claims: the
