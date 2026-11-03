@@ -134,43 +134,6 @@ impl EffigyRuntimeContext {
         self.task_source = Some(task_source);
         self
     }
-
-    #[cfg(test)]
-    pub fn fake(invocation_cwd: PathBuf, command_root: PathBuf) -> Self {
-        Self {
-            invocation_cwd: invocation_cwd.clone(),
-            command_root: command_root.clone(),
-            repo_override: None,
-            target: ResolvedRuntimeTarget {
-                resolved_root: command_root.clone(),
-                resolution_mode: "test".to_owned(),
-                evidence: vec!["test context".to_owned()],
-                warnings: Vec::new(),
-            },
-            resolved_target: ResolvedTarget {
-                resolved_root: command_root,
-                resolution_mode: effigy_core::resolver::ResolutionMode::AutoNearest,
-                evidence: vec!["test context".to_owned()],
-                warnings: Vec::new(),
-            },
-            paths: RuntimePathSet {
-                home: Some(PathBuf::from("/tmp/home")),
-                shell: Some(PathBuf::from("/bin/sh")),
-                path: Some(OsString::from("/usr/bin")),
-            },
-            host: HostRuntimeInfo {
-                os: "test-os".to_owned(),
-                arch: "test-arch".to_owned(),
-                no_color: false,
-                ci: false,
-            },
-            container: ContainerRuntimeInfo {
-                inside_container_handoff: false,
-            },
-            invocation_mode: RuntimeInvocationMode::Host,
-            task_source: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -409,7 +372,11 @@ impl std::error::Error for RuntimeContextError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{CapturedEnv, EffigyRuntimeContext, RuntimeInvocationMode, TaskSourceContext};
+    use super::{
+        activate_external_task_source_isolation, external_task_source_isolation_active,
+        CapturedEnv, EffigyRuntimeContext, RuntimeInvocationMode, TaskSourceContext,
+        EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME,
+    };
     use std::ffi::OsString;
     use std::fs;
     use std::path::PathBuf;
@@ -516,6 +483,71 @@ mod tests {
         assert_eq!(
             context.task_source().unwrap().manifest_path,
             source.join("effigy.toml")
+        );
+    }
+
+    /// The isolation marker is the nested-process secret boundary:
+    /// `skill run` activates it around an external task source
+    /// (src/runner/skill_command.rs), and nested Effigy processes resolve no
+    /// consumer secrets while it is present (crates/effigy-rhai and
+    /// src/runner/execute/pipeline/standard.rs read it back). Activation must
+    /// set the marker and a guard drop must remove it again: a leaked marker
+    /// would isolate processes long after the external source finished.
+    #[test]
+    fn an_isolation_guard_sets_the_marker_and_clears_it_on_drop() {
+        /// Restores the exact environment this test found, including an
+        /// inherited marker value, even when an assertion fails.
+        struct RestoreInherited(&'static str, Option<std::ffi::OsString>);
+        impl Drop for RestoreInherited {
+            fn drop(&mut self) {
+                match self.1.take() {
+                    Some(value) => std::env::set_var(self.0, value),
+                    None => std::env::remove_var(self.0),
+                }
+            }
+        }
+
+        let _lock = effigy_test_support::env::lock();
+        let _restore = RestoreInherited(
+            EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME,
+            std::env::var_os(EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME),
+        );
+        std::env::remove_var(EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME);
+
+        assert!(!external_task_source_isolation_active());
+        let guard = activate_external_task_source_isolation();
+        assert!(external_task_source_isolation_active());
+        assert_eq!(
+            std::env::var_os(EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME).as_deref(),
+            Some(std::ffi::OsStr::new("1"))
+        );
+        drop(guard);
+        assert!(!external_task_source_isolation_active());
+        assert_eq!(
+            std::env::var_os(EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME),
+            None
+        );
+    }
+
+    /// A marker that already named an outer boundary must survive an inner
+    /// external source: the guard restores the value it captured instead of
+    /// clobbering or clearing it.
+    #[test]
+    fn an_isolation_guard_restores_a_previous_marker_on_drop() {
+        let _previous = effigy_test_support::env::ScopedEnv::set(
+            EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME,
+            "outer",
+        );
+
+        let guard = activate_external_task_source_isolation();
+        assert_eq!(
+            std::env::var_os(EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME).as_deref(),
+            Some(std::ffi::OsStr::new("1"))
+        );
+        drop(guard);
+        assert_eq!(
+            std::env::var_os(EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME).as_deref(),
+            Some(std::ffi::OsStr::new("outer"))
         );
     }
 }
