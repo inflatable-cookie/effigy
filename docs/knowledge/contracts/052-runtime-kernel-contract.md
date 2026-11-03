@@ -2091,9 +2091,13 @@ is gone or shows different start ticks. Exec failure is `Unknown`, never
   helper and identity resolution above have not yet run against a live
   engine. Task #579 prepared an UNARMED source packet at
   `docs/qualification/task-engine-signal-matrix/` for the missing
-  real-container INT/TERM/HUP/KILL `RemoteExecAdapter` cells. Status
-  prepared-not-executed: packet delivery is not live-engine qualification
-  and does not replace the consumer steps below. The recorded steps, on each
+  real-container INT/TERM/HUP/KILL `RemoteExecAdapter` cells. Task #582
+  replaced the `--execute` stub with a GO-bound HostCli pass and added
+  dedicated sequence TERM/HUP host-fixture cells; the committed packet
+  stays unarmed and `qualification: false`. Status prepared-not-executed:
+  packet delivery, labeled-double control flow and host sequence fixtures
+  are not live-engine qualification and do not replace the consumer steps
+  below. The recorded steps, on each
   backend with the candidate binary:
   1. cbs: `effigy schema:refresh`, then `effigy seed`; compare the dumped
      schema files and step outcomes with v0.14.1; repeat `seed` under

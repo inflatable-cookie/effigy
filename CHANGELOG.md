@@ -378,6 +378,18 @@ During v0.x, MINOR bumps may include breaking changes.
   subprocess, and a well-formed GO still refuses while placeholders stay
   `UNARMED`.
 
+- The same packet's executable path and dedicated sequence TERM/HUP host
+  cells (task effigy#582): `--execute` is a real GO-bound HostCli pass after
+  exact source/candidate/packet/manifest/hash/engine/image/root admission,
+  not a structural stub; the committed packet stays unarmed and never binds
+  `queue.proofExecution`. Tests inject a labeled double for argv, one-shot
+  receipts, refusal/fault ordering and foreign refuse; a plan is never
+  execution; failure and unknown are not retry tokens. Dedicated sequence
+  TERM/HUP cases on the existing kill-matrix harness are host-source proof;
+  old #298 shared-path credit is kept as history; native Linux via
+  `linux-custody.sh` remains separately GO-gated. Prepared, not executed:
+  labeled-double control flow is not native qualification.
+
 - **A forwarded workspace command streams to its terminal outcome.** A task a
   container-mode guest asks the host to run is now a Level 1 foreground command
   (contract 052 §8.11, Tom's 2026-11-01 ruling): the host run carries no PTY and

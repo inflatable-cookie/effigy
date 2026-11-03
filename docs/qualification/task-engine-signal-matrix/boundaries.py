@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Committed refusal-boundary battery for the task-engine signal packet.
 
-Queue task effigy#579. Installed-Effigy selector
+Queue tasks effigy#579 and effigy#582. Installed-Effigy selector
 `test:qualification:task-engine-signals` runs only this file. Fake backends
 and disposable fixture metadata under this run's TMPDIR (or
 /Volumes/Builds/scratch/effigy/579/) — no VM, engine, container, image,
-install, or native task. Passing these controls is not native closure.
+install, or native task. Armed-shape execute cases inject a labeled double;
+passing these controls is not native closure.
 """
+import hashlib
 import json
 import os
 import sys
@@ -15,12 +17,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common  # noqa: E402
+import execute  # noqa: E402
 import launch  # noqa: E402
 from common import (  # noqa: E402
-    DIR, HEX40, HEX64, SCRATCH, SIGNAL_CELLS, UNARMED, Refused,
+    DIR, HELPER_NAME, HEX40, HEX64, SCRATCH, SIGNAL_CELLS, UNARMED, Refused,
     apply_overlay, bundle_digest, construct_plan, load_manifest,
-    parse_identity, require_armed, verify_go_receipt, verify_packet_bundle,
+    parse_identity, production_helper, require_armed, verify_go_receipt,
+    verify_packet_bundle,
 )
+from execute import LabeledDouble, execute_pass  # noqa: E402
 
 PASS = []
 FAIL = []
@@ -93,13 +98,13 @@ def go_text(bundle_sha, scratch, **over):
     return '\n'.join(lines) + '\n'
 
 
-def armed_overlay(scratch):
+def armed_overlay(scratch, binary_sha=None, source=None, binary_path=None):
     return {
         'armed': True,
         'candidate': {
-            'source_commit': 'd' * 40,
-            'binary_sha256': 'c' * 64,
-            'binary_path': str(scratch / 'candidate' / 'effigy'),
+            'source_commit': source or ('d' * 40),
+            'binary_sha256': binary_sha or ('c' * 64),
+            'binary_path': binary_path or str(scratch / 'candidate' / 'effigy'),
         },
         'engine': {
             'kind': 'colima-nerdctl',
@@ -108,6 +113,107 @@ def armed_overlay(scratch):
             'image_digest': 'sha256:' + 'b' * 64,
         },
     }
+
+
+def armed_fixture(scratch):
+    cand = scratch / 'candidate'
+    cand.mkdir(parents=True, exist_ok=True)
+    path = cand / 'effigy'
+    data = b'labeled-double-candidate\n'
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700)
+    os.write(fd, data)
+    os.close(fd)
+    sha = hashlib.sha256(data).hexdigest()
+    overlay = armed_overlay(scratch, binary_sha=sha, binary_path=str(path))
+    return overlay
+
+
+def write_matching_go(tmp, overlay, **over):
+    candidate = overlay['candidate']
+    engine = overlay['engine']
+    _, rest = engine['identity'].split(':', 1)
+    full_id, context = rest.split('@', 1)
+    tmpfile(tmp, 'go.txt', go_text(
+        BUNDLE, tmp,
+        engine=engine['kind'],
+        full_id=full_id,
+        context=context,
+        engine_id=engine['identity'],
+        image_digest=engine['image_digest'],
+        binary=candidate['binary_path'],
+        binary_sha256=candidate['binary_sha256'],
+        source=candidate['source_commit'],
+        **over,
+    ))
+
+
+def snap_owned():
+    return {
+        'kind': 'verified', 'code': 0,
+        'stdout': b'boot x\nns y\np 10 S 1 10 10 100 y\np 11 S 10 10 10 101 y\n',
+        'stderr': b'',
+    }
+
+
+def snap_empty():
+    return {'kind': 'verified', 'code': 0, 'stdout': b'boot x\nns y\n', 'stderr': b''}
+
+
+def snap_foreign():
+    return {
+        'kind': 'verified', 'code': 0,
+        'stdout': b'boot x\nns y\np 99 S 1 99 99 200 n\n',
+        'stderr': b'',
+    }
+
+
+class Script:
+    def __init__(self, mode='happy'):
+        self.mode = mode
+
+    def __call__(self, call):
+        op = call['op']
+        phase = call.get('phase')
+        if self.mode == 'lost-snap' and op == 'helper-snap' and phase == 'registered':
+            return {'lost': True, 'reason': 'response lost'}
+        if self.mode == 'missing-closure' and phase == 'after-signal':
+            return snap_owned()
+        if self.mode == 'cleanup-partial' and phase == 'post':
+            return snap_owned()
+        if self.mode == 'cleanup-partial' and op == 'helper-kill':
+            return {'kind': 'failed', 'partial': True, 'code': 1, 'stdout': b'partial\n', 'stderr': b''}
+        if self.mode == 'missing-image' and op == 'inspect':
+            return {'kind': 'failed', 'code': 1, 'stdout': b'', 'stderr': b'no such image'}
+        if op == 'inspect':
+            return {'kind': 'verified', 'code': 0, 'stdout': b'{}\n', 'stderr': b''}
+        if op == 'helper-snap':
+            if phase == 'registered':
+                return snap_owned()
+            if phase == 'after-signal':
+                return snap_empty()
+            if phase == 'foreign':
+                return snap_foreign()
+            return snap_empty()
+        if op == 'workload':
+            return {'kind': 'running', 'code': 0, 'stdout': b'', 'stderr': b''}
+        if op == 'signal-owner':
+            return {'kind': 'verified', 'code': 0, 'stdout': b'', 'stderr': b''}
+        if op == 'status':
+            return {'kind': 'verified', 'gate': 'not-recorded', 'stdout': b'not-recorded\n', 'stderr': b''}
+        if op == 'helper-kill':
+            return {'kind': 'verified', 'code': 0, 'stdout': b'sent\n', 'stderr': b''}
+        raise AssertionError('unexpected call %r' % {k: call[k] for k in ('op', 'phase', 'cell') if k in call})
+
+
+def run_execute(tmp, overlay, mode='happy'):
+    if not os.path.lexists(tmp / 'go.txt'):
+        write_matching_go(tmp, overlay)
+    go = verify_go_receipt(tmp / 'go.txt', BUNDLE, scratch_dir=tmp)
+    working = apply_overlay(load_manifest(), overlay)
+    plan = construct_plan(working)
+    double = LabeledDouble(Script(mode))
+    result = execute_pass(working, go, plan, tmp, transport=double, allow_native=False)
+    return result, double
 
 
 BUNDLE = None
@@ -135,6 +241,11 @@ def t_helpers_import_no_subprocess():
         text = (DIR / name).read_text()
         for needle in ('subprocess', 'os.system', 'os.popen', 'os.execv', 'os.spawn'):
             assert needle not in text, '%s names %s' % (name, needle)
+    host = (DIR / 'execute.py').read_text()
+    assert 'subprocess.run' in host
+    assert 'HostCliDriver' in host
+    assert 'EFFIGY_QUAL_TRANSPORT' not in host
+    assert 'TEST_REMOTE' not in host
 
 
 def t_committed_unarmed():
@@ -263,12 +374,15 @@ def t_go_well_formed_still_unarmed():
     expect_refused(lambda: require_armed(load_manifest()), 'unarmed')
 
 
-def t_launch_execute_refused():
-    expect_refused(lambda: launch.main(['--execute']), 'execute')
+def t_launch_execute_unarmed_with_go():
+    tmp = owned_tmp()
+    tmpfile(tmp, 'go.txt', go_text(BUNDLE, tmp))
+    expect_refused(lambda: launch.main(['--execute'], scratch_dir=tmp), 'unarmed')
 
 
 def t_launch_missing_go_refused():
-    expect_refused(lambda: launch.main([]), 'missing')
+    tmp = owned_tmp()
+    expect_refused(lambda: launch.main(['--execute'], scratch_dir=tmp), 'missing')
 
 
 def t_construct_plan_shape():
@@ -375,7 +489,12 @@ def t_matrix_missing_cells_are_real_container():
         'container-kill', 'container-foreign-unknown',
     ]
     shared = [c['id'] for c in matrix['cells'] if c['credit'] == 'shared-path']
-    assert shared == ['sequence-term', 'sequence-hup']
+    assert shared == []
+    host = [c for c in matrix['cells'] if c['credit'] == 'host-source']
+    assert [c['id'] for c in host] == ['sequence-term', 'sequence-hup']
+    for cell in host:
+        assert 'linux-custody.sh' in (cell.get('obligation') or '')
+        assert 'shared-path' in (cell.get('receipt') or '')
     accepted_plain = [c['id'] for c in matrix['cells']
                       if c['kind'] == 'plain' and c['credit'] == 'accepted']
     assert 'plain-int' in accepted_plain and 'plain-kill' in accepted_plain
@@ -411,6 +530,179 @@ def t_identity_rejects_fake():
                    'production Compose')
 
 
+def t_execute_py_is_a_helper():
+    obj = load_manifest()
+    assert 'execute.py' in obj['helpers']
+    assert (DIR / 'execute.py').is_file() and not (DIR / 'execute.py').is_symlink()
+
+
+def t_default_transport_is_hostcli():
+    driver = execute.default_transport()
+    assert driver.__class__.__name__ == 'HostCliDriver'
+    assert driver.label == 'HostCli'
+
+
+def t_execute_armed_double_records_hostcli_argv():
+    tmp = owned_tmp()
+    overlay = armed_fixture(tmp)
+    result, double = run_execute(tmp, overlay)
+    assert result['kind'] == 'labeled-double'
+    assert result['qualification'] is False
+    assert result['credit'] == 'source-control-flow'
+    assert result['retry'] is False
+    helper = production_helper()
+    full_id = 'a' * 64
+    inspect = next(c for c in double.calls if c['op'] == 'inspect')
+    assert inspect['program'] == 'colima'
+    assert inspect['argv'][:4] == ['nerdctl', '--profile', 'qual-579', '--']
+    assert inspect['argv'][-2:] == ['inspect', full_id]
+    snap = next(c for c in double.calls if c['op'] == 'helper-snap' and c.get('phase') == 'registered')
+    assert snap['program'] == 'colima'
+    assert snap['argv'][4:9] == ['exec', '-i', '-u', '0', full_id]
+    assert snap['argv'][9:11] == ['sh', '-c']
+    assert snap['argv'][11] == helper
+    assert snap['argv'][12] == HELPER_NAME
+    assert snap['argv'][13] == 'snap'
+    workload = next(c for c in double.calls if c['op'] == 'workload')
+    assert workload['argv'] == [overlay['candidate']['binary_path'], 'hold']
+    signals = [c['argv'][0] for c in double.calls if c['op'] == 'signal-owner']
+    assert signals == ['INT', 'TERM', 'HUP', 'KILL']
+    assert not any(c['op'] == 'helper-kill' for c in double.calls)
+    ids = [c['id'] for c in result['cells']]
+    assert ids[:4] == ['container-int', 'container-term', 'container-hup', 'container-kill']
+    assert ids[-1] == 'container-foreign-unknown'
+    assert result['cells'][-1]['refused_pids'] == ['99']
+    blob = json.dumps(
+        [{'program': c.get('program'), 'argv': c.get('argv')} for c in double.calls]
+    ).lower()
+    for fragment in ('pkill', 'killall', 'colima start', 'docker pull'):
+        assert fragment not in blob
+    invocation = json.loads((tmp / 'invocation-receipt.json').read_text())
+    assert invocation['qualification'] is False
+    assert invocation['transport'] == 'labeled-double'
+
+
+def t_execute_one_shot_refuses_resend():
+    tmp = owned_tmp()
+    overlay = armed_fixture(tmp)
+    result, _double = run_execute(tmp, overlay)
+    assert result['kind'] == 'labeled-double'
+    expect_refused(lambda: run_execute(tmp, overlay)[0], 'already attempted')
+
+
+def t_execute_lost_response_is_unknown_not_retry():
+    tmp = owned_tmp()
+    overlay = armed_fixture(tmp)
+    result, _double = run_execute(tmp, overlay, mode='lost-snap')
+    assert result['kind'] == 'unknown'
+    assert result['qualification'] is False
+    assert result['retry'] is False
+    assert 'lost' in result['reason']
+    error = json.loads((tmp / 'error-receipt.json').read_text())
+    assert error['retry'] is False
+    expect_refused(lambda: run_execute(tmp, overlay)[0], 'already attempted')
+
+
+def t_execute_missing_closure_is_unknown():
+    tmp = owned_tmp()
+    overlay = armed_fixture(tmp)
+    result, _double = run_execute(tmp, overlay, mode='missing-closure')
+    assert result['kind'] == 'unknown'
+    assert 'parent exit is not closure' in result['reason']
+    assert result['retry'] is False
+
+
+def t_execute_cleanup_partial_is_failed():
+    tmp = owned_tmp()
+    overlay = armed_fixture(tmp)
+    result, _double = run_execute(tmp, overlay, mode='cleanup-partial')
+    assert result['kind'] == 'failed'
+    assert 'cleanup partial' in result['reason']
+    cleanup = json.loads((tmp / 'cleanup-receipt.json').read_text())
+    assert cleanup['failed']
+    assert cleanup['retry'] is False
+
+
+def t_execute_failure_before_admission_leaves_no_invocation():
+    tmp = owned_tmp()
+    overlay = armed_fixture(tmp)
+    write_matching_go(tmp, overlay, packet='9' * 64)
+    expect_refused(
+        lambda: launch.main(['--execute'], scratch_dir=tmp, overlay=overlay,
+                            transport=LabeledDouble(Script())),
+        'packet SHA',
+    )
+    assert not (tmp / 'invocation-receipt.json').exists()
+
+
+def t_execute_failure_after_admission_keeps_invocation():
+    tmp = owned_tmp()
+    overlay = armed_fixture(tmp)
+    result, _double = run_execute(tmp, overlay, mode='missing-image')
+    assert result['kind'] == 'failed'
+    assert 'preparation prerequisite' in result['reason']
+    assert (tmp / 'invocation-receipt.json').is_file()
+    expect_refused(lambda: run_execute(tmp, overlay)[0], 'already attempted')
+
+
+def t_execute_go_mismatch_refuses_before_effects():
+    tmp = owned_tmp()
+    overlay = armed_fixture(tmp)
+    tmpfile(tmp, 'go.txt', go_text(
+        BUNDLE, tmp,
+        engine='docker-compose',
+        engine_id='docker-compose:%s@qual-579' % ('a' * 64),
+        context='qual-579',
+        image_digest=overlay['engine']['image_digest'],
+        binary=overlay['candidate']['binary_path'],
+        binary_sha256=overlay['candidate']['binary_sha256'],
+        source=overlay['candidate']['source_commit'],
+    ))
+    expect_refused(
+        lambda: launch.main(['--execute'], scratch_dir=tmp, overlay=overlay,
+                            transport=LabeledDouble(Script())),
+        'does not match',
+    )
+    assert not (tmp / 'invocation-receipt.json').exists()
+
+
+def t_execute_native_refused_without_allow_flag():
+    tmp = owned_tmp()
+    overlay = armed_fixture(tmp)
+    write_matching_go(tmp, overlay)
+    go = verify_go_receipt(tmp / 'go.txt', BUNDLE, scratch_dir=tmp)
+    working = apply_overlay(load_manifest(), overlay)
+    plan = construct_plan(working)
+    expect_refused(
+        lambda: execute_pass(working, go, plan, tmp, transport=None, allow_native=False),
+        'HostCli',
+    )
+    assert not (tmp / 'invocation-receipt.json').exists()
+
+
+def t_launch_execute_with_double_is_control_flow():
+    tmp = owned_tmp()
+    overlay = armed_fixture(tmp)
+    write_matching_go(tmp, overlay)
+    code = launch.main(
+        ['--execute'], scratch_dir=tmp, overlay=overlay,
+        transport=LabeledDouble(Script()), allow_native=False,
+    )
+    assert code == 0
+    invocation = json.loads((tmp / 'invocation-receipt.json').read_text())
+    assert invocation['transport'] == 'labeled-double'
+    assert invocation['qualification'] is False
+
+
+def t_plan_is_never_execution():
+    tmp = owned_tmp()
+    overlay = armed_fixture(tmp)
+    write_matching_go(tmp, overlay)
+    code = launch.main([], scratch_dir=tmp, overlay=overlay)
+    assert code == 0
+    assert not (tmp / 'invocation-receipt.json').exists()
+
+
 CASES = [
     t_packet_bundle,
     t_helpers_are_plain_files,
@@ -431,7 +723,7 @@ CASES = [
     t_go_forbidden_pkill,
     t_go_531_reuse,
     t_go_well_formed_still_unarmed,
-    t_launch_execute_refused,
+    t_launch_execute_unarmed_with_go,
     t_launch_missing_go_refused,
     t_construct_plan_shape,
     t_construct_refuses_unarmed,
@@ -449,6 +741,19 @@ CASES = [
     t_signal_cell_ids_match_plan,
     t_identity_rejects_non_hex,
     t_identity_rejects_fake,
+    t_execute_py_is_a_helper,
+    t_default_transport_is_hostcli,
+    t_execute_armed_double_records_hostcli_argv,
+    t_execute_one_shot_refuses_resend,
+    t_execute_lost_response_is_unknown_not_retry,
+    t_execute_missing_closure_is_unknown,
+    t_execute_cleanup_partial_is_failed,
+    t_execute_failure_before_admission_leaves_no_invocation,
+    t_execute_failure_after_admission_keeps_invocation,
+    t_execute_go_mismatch_refuses_before_effects,
+    t_execute_native_refused_without_allow_flag,
+    t_launch_execute_with_double_is_control_flow,
+    t_plan_is_never_execution,
 ]
 
 
