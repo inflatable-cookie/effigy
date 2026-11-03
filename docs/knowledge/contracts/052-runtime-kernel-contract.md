@@ -1940,6 +1940,13 @@ environment effect without a holder check, because recording calls no adapter.
 
 ### 5.10 Remote custody
 
+The remote effect records the selected host backend executable and working
+directory identity. Retained recovery revalidates that binding with the
+sentinel environment cleared; an absent or changed binding leaves cleanup
+unknown and never falls back to ambient PATH. Earlier intents without this
+binding also refuse recovery. Backend operation still requires a usable
+context under the cleared environment.
+
 The source-only signal qualification observer is feature-gated and read-only.
 It checks an exact owned run, live owner and sentinel, gate, checkout and
 environment generations, and the recorded remote intent and receipt. Its

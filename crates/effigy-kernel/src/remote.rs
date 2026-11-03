@@ -136,6 +136,30 @@ exec "$@"
 /// that the known, live container on the registered boot was inventoried
 /// completely and no process carries the nonce; anything less is `Unknown`.
 pub trait RemoteExecAdapter {
+    /// Adapter-private recovery evidence is recorded with this run's intent.
+    /// An adapter that does not need host executable recovery returns `None`.
+    #[doc(hidden)]
+    fn capture_recovery_binding(
+        &mut self,
+        _target: &ContainerTarget,
+        _cx: &OperationContext,
+    ) -> Result<Option<serde_json::Value>, AdapterError> {
+        Ok(None)
+    }
+
+    /// Restore only evidence the adapter itself understands. A mismatched
+    /// binding is uncertainty, never permission to search ambient PATH.
+    #[doc(hidden)]
+    fn restore_recovery_binding(
+        &mut self,
+        binding: Option<&serde_json::Value>,
+        _cx: &OperationContext,
+    ) -> Result<(), AdapterError> {
+        if binding.is_some() {
+            return Err(AdapterError(inconsistent("unknown recovery binding")));
+        }
+        Ok(())
+    }
     fn identity(
         &mut self,
         target: &ContainerTarget,
@@ -198,6 +222,8 @@ struct Intent {
     env: Fence,
     container: ContainerIdentity,
     nonce: Nonce,
+    #[serde(default)]
+    recovery: Option<serde_json::Value>,
     grace_millis: u64,
     call_millis: u64,
 }
@@ -261,6 +287,10 @@ impl RemoteCustody {
         crate::fault_point!(RemoteBeforeIdentity).map_err(RunError::from)?;
         let identity_cx = cx.operation().child(spec.call_timeout);
         check(&identity_cx, "remote identity").map_err(RemoteError::Unknown)?;
+        let recovery = adapter
+            .capture_recovery_binding(&spec.target, &identity_cx)
+            .map_err(|error| RemoteError::Unknown(error.0))?;
+        check(&identity_cx, "remote identity").map_err(RemoteError::Unknown)?;
         let identity = adapter.identity(&spec.target, &identity_cx);
         check(&identity_cx, "remote identity").map_err(RemoteError::Unknown)?;
         let id = match identity {
@@ -279,6 +309,7 @@ impl RemoteCustody {
             env: spec.env.clone(),
             container: id.clone(),
             nonce: nonce.clone(),
+            recovery,
             grace_millis: millis(spec.grace),
             call_millis: millis(spec.call_timeout),
         };
@@ -548,6 +579,9 @@ pub(crate) fn settle_effect(
         if intent.env != effect.spec.target || !valid_identity(&intent.container) {
             return Err(inconsistent("remote intent fence"));
         }
+        adapter
+            .restore_recovery_binding(intent.recovery.as_ref(), cx.operation())
+            .map_err(|error| error.0)?;
         let budget = Duration::from_millis(intent.call_millis);
         let reg = if let Some(receipt) = &effect.receipt {
             serde_json::from_value::<RemoteRegistration>(receipt.clone())

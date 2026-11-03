@@ -103,10 +103,11 @@ via `linux-custody.sh` remains separately GO-gated.
 
 The feature-gated host fixture definition exercises the task-engine producer,
 kernel observation and packet consumer against an owned fake HostCli backend,
-including INT, TERM, HUP and owner SIGKILL. Its test-only sentinel seam records
-the cleared environment before adding the fake backend path. The fixture has
-not been executed at this head, and that shim does not prove discovery of a
-real backend by an unchanged candidate.
+including INT, TERM, HUP and owner SIGKILL. The sentinel retains its cleared
+environment; the effect records the selected backend identity and recovery
+revalidates it before use. The owned fixture and changed-backend refusal have
+not been executed at this head. A real backend must also work with the cleared
+environment; native qualification remains separately gated.
 
 Future GO (separately authorized) must name an already-running engine and
 an already-present image digest, and a later reviewed candidate pin.

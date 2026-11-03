@@ -47,9 +47,6 @@ if len(args) >= 10 and args[:7] == ['exec', '-i', '-u', '0', full_id, 'sh', '-c'
     if args[7] != (root / 'expected-helper').read_text():
         raise SystemExit(98)
     op = args[9:]
-    if os.environ.get('EFFIGY_SIGNAL_FIXTURE_RECOVERY') == '1':
-        with (root / 'recovery-calls').open('a') as log:
-            log.write((op[0] if op else 'missing') + '\n')
     nonce = sys.stdin.readline().strip()
     if op == ['boot']:
         print('fixture-boot')

@@ -141,10 +141,9 @@ not native task closure. Native Linux sequence TERM/HUP via
 The feature-gated `hostcli_registration_and_signals_settle_through_real_owner_and_sentinel`
 source fixture connects the task-engine producer, the kernel observer and the
 packet's registration consumer to an owned fake Docker executable. Its inline
-sentinel records that its environment was cleared, then a test-only seam adds
-the fake executable's path and fixture scratch directory. A separate cleared
-environment discovery control does not launch a backend. This fixture tests
-the retained mechanism under that controlled route; it does not prove that an
-unchanged candidate can discover a particular real backend after owner death.
-Both the fixture and the real-backend discovery precondition remain unverified
-until their named checks and later native gates run.
+sentinel records that its environment was cleared and retains it that way.
+The selected executable and working directory are recorded with the remote
+effect and revalidated before recovery; missing or changed identity refuses.
+A separate cleared-environment discovery control does not launch a backend.
+Neither the fixture nor use of a real backend with a cleared environment has
+been verified at this head; the named checks and native gates remain required.

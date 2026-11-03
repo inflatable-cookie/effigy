@@ -8,6 +8,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Bind remote task recovery to its selected backend executable and working
+  directory. Missing or changed identity leaves cleanup unknown rather than
+  selecting another executable after the owner exits (effigy#590).
+
 - Fail a container activation whose declared host process cannot start, in
   attached and detached modes alike, instead of demoting a plain (non-listener)
   workload's start failure to a warning only the detached supervisor's own

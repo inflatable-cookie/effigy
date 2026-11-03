@@ -31,6 +31,9 @@ use effigy_kernel::run::Fence;
 use super::backend::{BackendKind, BackendSelection};
 use crate::BackendId;
 
+mod recovery_binding;
+use recovery_binding::RecoveryBinding;
+
 /// TERM to KILL for the local exec client.
 const CLIENT_GRACE: Duration = Duration::from_secs(3);
 /// Values of forwarded variables in the relay's private environment.
@@ -125,6 +128,19 @@ pub struct CliOutput {
 /// The backend CLI seam. `input` arrives on stdin, never in argv; the call
 /// ends by `deadline`. An error means the call's effect is unknown.
 pub trait BackendCli {
+    #[doc(hidden)]
+    fn capture_recovery(&mut self, _program: &str, _deadline: Instant) -> Result<Option<serde_json::Value>, String> {
+        Ok(None)
+    }
+    #[doc(hidden)]
+    fn restore_recovery(&mut self, binding: Option<&serde_json::Value>, _deadline: Instant) -> Result<(), String> {
+        if binding.is_some() { return Err("unknown backend recovery binding".into()); }
+        Ok(())
+    }
+    #[doc(hidden)]
+    fn launch_program(&self, program: &str, _deadline: Instant) -> Result<OsString, String> {
+        Ok(host_program(program))
+    }
     fn run(
         &mut self,
         program: &str,
@@ -138,9 +154,31 @@ pub trait BackendCli {
 #[derive(Debug, Clone)]
 pub struct HostCli {
     pub workdir: PathBuf,
+    binding: Option<RecoveryBinding>,
 }
 
 impl BackendCli for HostCli {
+    fn capture_recovery(&mut self, program: &str, deadline: Instant) -> Result<Option<serde_json::Value>, String> {
+        let binding = RecoveryBinding::capture(program, &self.workdir, deadline)?;
+        let encoded = serde_json::to_value(&binding).map_err(|_| "backend binding cannot be recorded")?;
+        self.binding = Some(binding);
+        Ok(Some(encoded))
+    }
+
+    fn restore_recovery(&mut self, binding: Option<&serde_json::Value>, deadline: Instant) -> Result<(), String> {
+        let binding: RecoveryBinding = serde_json::from_value(binding.cloned().ok_or("backend binding missing")?)
+            .map_err(|_| "invalid backend recovery binding")?;
+        let workdir = binding.verify_record(deadline)?.1.to_path_buf();
+        self.workdir = workdir;
+        self.binding = Some(binding);
+        Ok(())
+    }
+
+    fn launch_program(&self, program: &str, deadline: Instant) -> Result<OsString, String> {
+        let binding = self.binding.as_ref().ok_or("backend binding missing")?;
+        Ok(binding.verify(program, deadline)?.0.as_os_str().to_owned())
+    }
+
     fn run(
         &mut self,
         program: &str,
@@ -148,7 +186,10 @@ impl BackendCli for HostCli {
         input: &[u8],
         deadline: Instant,
     ) -> Result<CliOutput, String> {
-        crate::exec::run_input_capture_until(&self.workdir, program, args, input, deadline)
+        let binding = self.binding.as_ref().ok_or("backend binding missing")?;
+        let (executable, workdir) = binding.verify(program, deadline)?;
+        let executable = executable.to_str().ok_or("backend executable path is not UTF-8")?;
+        crate::exec::run_input_capture_until(workdir, executable, args, input, deadline)
             .map(|output| CliOutput {
                 code: output.status.code(),
                 stdout: output.stdout,
@@ -185,6 +226,7 @@ impl ComposeRemote<HostCli> {
         Self::with_cli(
             HostCli {
                 workdir: std::env::temp_dir(),
+                binding: None,
             },
             None,
         )
@@ -194,6 +236,7 @@ impl ComposeRemote<HostCli> {
         Self::with_cli(
             HostCli {
                 workdir: exec.cwd.clone(),
+                binding: None,
             },
             Some(exec),
         )
@@ -369,6 +412,7 @@ impl<C: BackendCli> ComposeRemote<C> {
         &self,
         container: &RemoteContainer,
         cmd: RemoteCommand,
+        deadline: Instant,
     ) -> Result<ProcessSpec, AdapterError> {
         let exec = self
             .exec
@@ -422,7 +466,7 @@ impl<C: BackendCli> ComposeRemote<C> {
             argv.push(OsString::from("effigy-remote"));
             argv.push(OsString::from(names.len().to_string()));
             argv.extend(names.iter().cloned());
-            argv.push(host_program("colima"));
+            argv.push(self.cli.launch_program("colima", deadline).map_err(|error| inconsistent(&error))?);
             argv.push(OsString::from(&container.context));
             argv.push(OsString::from(if cmd.terminal == RemoteTerminal::None {
                 "none"
@@ -440,7 +484,7 @@ impl<C: BackendCli> ComposeRemote<C> {
             argv.push(OsString::from("effigy-remote"));
             argv.push(OsString::from(names.len().to_string()));
             argv.extend(names.iter().cloned());
-            argv.push(host_program("docker"));
+            argv.push(self.cli.launch_program("docker", deadline).map_err(|error| inconsistent(&error))?);
             argv.extend(docker_target(&container.context));
             argv.push(OsString::from("exec"));
             argv.extend(flags);
@@ -641,6 +685,26 @@ impl<C: BackendCli> Transport for Session<'_, C> {
 }
 
 impl<C: BackendCli> RemoteExecAdapter for ComposeRemote<C> {
+    fn capture_recovery_binding(
+        &mut self,
+        target: &ContainerTarget,
+        cx: &OperationContext,
+    ) -> Result<Option<serde_json::Value>, AdapterError> {
+        let container = RemoteContainer::parse(&target.0)
+            .ok_or_else(|| inconsistent("not an exact container target"))?;
+        let (program, _) = container.runtime(Vec::new());
+        let deadline = deadline(cx).map_err(AdapterError)?;
+        self.cli.capture_recovery(program, deadline).map_err(|error| inconsistent(&error))
+    }
+
+    fn restore_recovery_binding(
+        &mut self,
+        binding: Option<&serde_json::Value>,
+        cx: &OperationContext,
+    ) -> Result<(), AdapterError> {
+        let deadline = deadline(cx).map_err(AdapterError)?;
+        self.cli.restore_recovery(binding, deadline).map_err(|error| inconsistent(&error))
+    }
     /// Colima's VM shell carries the forwarded values on stdin, so it cannot
     /// also hold a terminal: a terminal request there attaches stdin only.
     fn terminal(&self, id: &ContainerIdentity, requested: RemoteTerminal) -> RemoteTerminal {
@@ -701,7 +765,7 @@ impl<C: BackendCli> RemoteExecAdapter for ComposeRemote<C> {
         })?;
         let container = RemoteContainer::parse(&id.id)
             .ok_or_else(|| inconsistent("not an exact container identity"))?;
-        self.launch_spec(&container, cmd)
+        self.launch_spec(&container, cmd, deadline(cx.operation()).map_err(AdapterError)?)
     }
 
     fn signal_session(

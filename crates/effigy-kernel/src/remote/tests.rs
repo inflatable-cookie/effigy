@@ -62,6 +62,7 @@ fn intent(reg: &RemoteRegistration) -> Intent {
         env: reg.env.clone(),
         container: reg.container.clone(),
         nonce: reg.nonce.clone(),
+        recovery: None,
         grace_millis: 0,
         call_millis: 1000,
     }

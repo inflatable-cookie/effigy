@@ -182,7 +182,7 @@ fn hostcli_fixture_child() {
     close(run, exit.workload);
 }
 
-fn hostcli_signal_case(signal: i32) {
+fn hostcli_signal_case(signal: i32, changed_backend: bool) {
     let scratch = std::env::var_os("TMPDIR").expect("run TMPDIR");
     let root = tempfile::Builder::new().prefix("signal-hostcli-")
         .tempdir_in(scratch).unwrap().keep();
@@ -311,10 +311,13 @@ fn hostcli_signal_case(signal: i32) {
     let moved_snapshot = snapshot.replace(" 100 y\n", " 101 y\n");
     assert_ne!(snapshot, moved_snapshot);
     packet_consumer(&root, &python, &registration, &owner, &moved_snapshot, false);
-    assert!(!root.join("recovery-calls").exists(), "refusal checks must not signal or clean up");
     assert_eq!(ident::process_identity(guest_pid).verified(), owned.guest.as_ref());
     assert_eq!(ident::process_identity(grandchild_pid).verified(), owned.grandchild.as_ref());
     assert_eq!(wait_file(&root.join("sentinel-environment"), deadline), "cleared");
+    let prior_calls = fs::read_to_string(root.join("backend-argv.jsonl")).unwrap().lines().count();
+    if changed_backend {
+        writeln!(fs::OpenOptions::new().append(true).open(&backend).unwrap(), "\n# replacement").unwrap();
+    }
     assert_eq!(ident::process_identity(owner_pid).verified(), Some(&owner));
     // The direct child's start identity was rechecked immediately above.
     nix::sys::signal::kill(nix::unistd::Pid::from_raw(i32::try_from(owner_pid).unwrap()),
@@ -328,6 +331,25 @@ fn hostcli_signal_case(signal: i32) {
     fs::write(root.join("owner-exit"), format!("signal={:?}\n", exit.signal())).unwrap();
     if signal == libc::SIGKILL { assert_eq!(exit.signal(), Some(libc::SIGKILL)); }
     else { assert!(exit.success(), "routed fixture owner failed"); }
+    if changed_backend {
+        loop {
+            let observe = kernel::observe();
+            let reader = Store::read(&observe, state);
+            let summary = reader.verified().and_then(|r| effigy_kernel::run::summary(r, run).verified().cloned());
+            if summary.as_ref().is_some_and(|s| s.phase == Phase::Closed && s.cleanup_complete == Some(false)) { break; }
+            assert!(Instant::now() < settle_deadline, "changed backend did not leave truthful residue");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(fs::read_to_string(root.join("backend-argv.jsonl")).unwrap().lines().count(), prior_calls,
+                   "changed backend must not be executed during recovery");
+        assert!(matches!(ident::process_state(guest_pid), Observed::Verified(ProcessState::Active | ProcessState::Stopped, _)));
+        assert!(matches!(ident::process_state(grandchild_pid), Observed::Verified(ProcessState::Active | ProcessState::Stopped, _)));
+        effigy_test_support::process::wait_kernel_helpers_within(&repo, Duration::from_secs(10)).unwrap();
+        drop(owned);
+        assert!(matches!(ident::process_state(guest_pid), Observed::Verified(ProcessState::Zombie, _) | Observed::Absent(_)));
+        assert!(matches!(ident::process_state(grandchild_pid), Observed::Verified(ProcessState::Zombie, _) | Observed::Absent(_)));
+        return;
+    }
     loop {
         let observe = kernel::observe();
         let reader = Store::read(&observe, state);
@@ -356,9 +378,12 @@ fn hostcli_signal_case(signal: i32) {
         assert!(matches!(argv.get(2).map(String::as_str), Some("inspect" | "exec")));
     }
     if signal == libc::SIGKILL {
-        let calls = fs::read_to_string(root.join("recovery-calls")).unwrap();
-        assert!(calls.lines().filter(|line| *line == "snap").count() >= 2, "settlement must re-observe the delayed guest");
-        assert!(calls.lines().any(|line| line == "kill"));
+        let journal = fs::read_to_string(root.join("backend-argv.jsonl")).unwrap();
+        let calls: Vec<Vec<String>> = journal.lines().skip(prior_calls)
+            .map(|line| serde_json::from_str(line).unwrap()).collect();
+        assert!(calls.iter().filter(|argv| argv.get(11).map(String::as_str) == Some("snap")).count() >= 2,
+                "settlement must re-observe the delayed guest");
+        assert!(calls.iter().any(|argv| argv.get(11).map(String::as_str) == Some("kill")));
     }
     assert!(matches!(ident::process_state(guest_pid), Observed::Verified(ProcessState::Zombie, _) | Observed::Absent(_)), "guest closure was not positively observed");
     assert!(matches!(ident::process_state(grandchild_pid), Observed::Verified(ProcessState::Zombie, _) | Observed::Absent(_)), "grandchild closure was not positively observed");
@@ -369,6 +394,11 @@ fn hostcli_signal_case(signal: i32) {
 #[test]
 fn hostcli_registration_and_signals_settle_through_real_owner_and_sentinel() {
     for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGKILL] {
-        hostcli_signal_case(signal);
+        hostcli_signal_case(signal, false);
     }
+}
+
+#[test]
+fn hostcli_changed_backend_refuses_owner_death_recovery() {
+    hostcli_signal_case(libc::SIGKILL, true);
 }
