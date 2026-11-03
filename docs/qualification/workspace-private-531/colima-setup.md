@@ -138,8 +138,9 @@ and8092 bytes are not final candidates. Full aggregate inputs/GO-index remain
 
 ## Recovery execution seam
 
-The [fixed-purpose recovery gate](recovery.md) presently refuses before effects.
-The retained non-child identity-bound signal/positive backend closure witness is
-unproved; no watch-then-kill assumption or restart follows. Full Queue accounting
+The [fixed-purpose administrative route](recovery.md) requires a future bound
+operator GO explicitly accepting the residual numeric-PID signal race. Default
+preparation refuses; an exit observation does not prove positive backend closure
+or authorize a restart. No native decision or observation is supplied here. Full Queue accounting
 leaves at most22.743 seconds of the original native allowance; the proposed new
 600-second recovery window is not approved.

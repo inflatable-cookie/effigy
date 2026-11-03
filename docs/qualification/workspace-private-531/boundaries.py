@@ -515,6 +515,7 @@ class Boundaries(unittest.TestCase):
 
 # This route also selects the new owned-child recovery boundaries.
 from recovery_boundaries import RecoveryBoundaries
+from administrative_boundaries import AdministrativeBoundaries
 
 if __name__ == '__main__':
     os.umask(0o077)

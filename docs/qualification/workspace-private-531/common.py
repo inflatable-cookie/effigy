@@ -194,14 +194,14 @@ def validate_inputs(value, head):
     return value
 
 
-def validate_go(go, inputs_hash, cell, head):
+def validate_go(go, inputs_hash, cell, head, *, effects='workspace-private-531-full-session-r1'):
     require(go['schema'] == 'effigy.workspace-private-native-go.v1', 'unknown GO schema')
     require(go['operator'] == 'Tom' and go['decision_id'] and go['kind'] == 'native', 'scoped native GO required')
     require(go['source_head'] == head and go['inputs_sha256'] == inputs_hash, 'GO candidate/input binding mismatch')
     require(go['backend'] == cell['backend'], 'GO belongs to another backend')
     require(go['budget_seconds'] == cell['budget_seconds'], 'GO budget mismatch')
     require(go['engine_identity'] == cell['engine_identity'], 'GO engine identity mismatch')
-    require(go['effects'] == 'workspace-private-531-full-session-r1', 'GO does not cover this packet')
+    require(go['effects'] == effects, 'GO does not cover this packet')
     # Expiry is checked on each machine immediately before effects.
     import datetime
     expires = datetime.datetime.fromisoformat(go['expires_at'].replace('Z', '+00:00'))

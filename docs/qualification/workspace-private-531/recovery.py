@@ -1,7 +1,7 @@
 """Fixed #531 recovery admission and owned-child exit observation. No runtime CLI.
 
-No signal or resume executor exists for the retained non-child agent: a numeric
-PID plus kqueue observation is not an identity-bound signal capability.
+Default preparation refuses. The separate administrative route requires an
+explicit bound operator GO acknowledging that numeric-PID signaling is not race-free.
 """
 from dataclasses import dataclass
 import datetime
@@ -13,8 +13,8 @@ PROFILE = 'effigy-531-qualification'
 CONTROL = '/Volumes/Builds/scratch/effigy/531c'
 SHARED = '/Volumes/Builds/scratch/effigy/531-colima-qualification'
 RESIDUAL = ('Darwin kqueue NOTE_EXIT observes termination but does not bind '
-            'kill(pid, SIGINT) to that process identity; no supported retained-agent '
-            'identity-bound graceful signal capability has been established')
+            'kill(pid, SIGINT) to that process identity; administrative signaling requires '
+            'a separately bound operator GO explicitly accepting that residual risk')
 RESUME = ('/opt/homebrew/Cellar/colima/0.10.3/bin/colima', 'start', '-p', PROFILE,
           '--runtime', 'containerd', '--arch', 'aarch64', '--vm-type', 'vz',
           '--cpus', '2', '--memory', '2', '--disk', '20', '--root-disk', '20',
@@ -45,7 +45,7 @@ class Deadline:
 
 
 # Recorded metadata only: this function never observes a profile, PID or disk.
-def admit_recorded(plan, observed, deadline):
+def admit_recorded(plan, observed, deadline, *, agent_alive=True):
     deadline.remaining()
     require(plan['profile'] == PROFILE and plan['control']['path'] == CONTROL
             and plan['shared']['path'] == SHARED, 'wrong private profile/root')
@@ -80,7 +80,7 @@ def admit_recorded(plan, observed, deadline):
     require(agent['pid'] == 94093 and agent['uid'] == 501 and agent['ppid'] == 1
             and agent['started_utc'] == '2026-11-02T23:37:10Z'
             and agent['executable'] == '/opt/homebrew/Cellar/lima/2.2.1/bin/limactl'
-            and agent['profile'] == PROFILE and observed['agent_alive'] is True,
+            and agent['profile'] == PROFILE and observed['agent_alive'] is agent_alive,
             'retained agent identity not verified')
     require(observed['configuration'] == {
         'runtime': 'containerd', 'arch': 'aarch64', 'vm_type': 'vz', 'guest_os': 'Linux',
@@ -98,25 +98,25 @@ def admit_recorded(plan, observed, deadline):
 def prepare_retained(plan, observed, deadline):
     """Executable pre-effect refusal. Caller data/watches cannot override it.
 
-    Even a later operator GO cannot turn an observation into the missing kernel
-    capability. A new reviewed mechanism is required before any native executor.
+    An exit observation is not an identity-bound signal capability. The separate
+    administrative route can accept that residual only through a bound operator GO.
     """
     admit_recorded(plan, observed, deadline)
     return {'status': 'refused', 'reason': RESIDUAL, 'signals': 0, 'resumes': 0,
             'runtime_observed': False, 'authority_granted': False}
 
 
-class ChildExitWatch:
-    """Real Darwin NOTE_EXIT watcher, ONLY for a caller's newly owned Popen child.
+class ProcessExitWatch:
+    """Darwin NOTE_EXIT observation; caller must already hold observation authority.
 
     Registration and the exit event are observations. They grant no signal
     capability, exit status, VZ closure or permission to resume a backend.
     """
-    def __init__(self, child, deadline):
+    def __init__(self, pid, deadline):
         deadline.remaining()
-        require(child.pid > 1 and child.pid != 94093, 'owned child required')
+        require(type(pid) is int and pid > 1, 'positive process identity required')
         require(hasattr(select, 'kqueue'), 'Darwin kqueue unavailable')
-        self.pid = child.pid
+        self.pid = pid
         self.deadline = deadline
         self.queue = select.kqueue()
         self.closed = False
@@ -146,6 +146,13 @@ class ChildExitWatch:
         if not self.closed:
             self.closed = True
             self.queue.close()
+
+
+class ChildExitWatch(ProcessExitWatch):
+    """Local proof adapter; never accepts the retained historical PID."""
+    def __init__(self, child, deadline):
+        require(child.pid != 94093, 'owned child required')
+        super().__init__(child.pid, deadline)
 
 
 class RecordedIntents:

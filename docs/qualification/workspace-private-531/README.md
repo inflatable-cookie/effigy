@@ -329,6 +329,7 @@ caller-drop source control verifies the resident descriptor through its shared
 file lock after all caller descriptions close, and verifies Env remains held.
 Its exact-helper fixture teardown is not production settlement credit.
 
-The [recovery preparation gate](recovery.md) implements pre-effect refusal for the
-retained agent: a Darwin exit event does not close the identity-to-signal race.
-Owned-child watcher proofs and recorded admission tests grant no runtime authority.
+The [administrative recovery route](recovery.md) stays unarmed until a separate
+Queue-bound operator GO explicitly accepts one numeric-PID SIGINT and its residual
+PID-reuse risk. It never claims race-free signaling or closure from an exit event.
+Owned-child proofs and recorded admissions grant no runtime authority.
