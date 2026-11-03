@@ -120,6 +120,10 @@ when the real cause was two named services failing their health checks.
   - the evidence (exit code, the last relevant output, the health check's
     own message, the conflicting owner);
   - the next action, as an exact command when one exists.
+  Bounded command evidence retains representative test failure identities and
+  assertion lines through nested task errors, alongside other causes and stream
+  endings. It reports omissions when the evidence exceeds its budget; it does
+  not promise to retain every failure. Redaction applies before storage.
 - **No internal structures in human output.** Rust `Debug` renderings, enum
   and variant names, and nested `Unknown(StoreUnreadable(…))` chains never
   reach a person unrendered. Keep those details for `--json` and verbose
