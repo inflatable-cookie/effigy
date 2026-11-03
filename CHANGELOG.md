@@ -893,6 +893,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Preserve representative failing test names in nested task error output.
+
 - Restrict `effigy container cache prune --global` to volumes whose complete
   runtime evidence proves Effigy ownership (effigy#611). The prune removed
   every cache-shaped candidate the backend did not report in use, so a

@@ -75,24 +75,45 @@ impl HumanError {
         self
     }
 
-    /// Keep the first [`EVIDENCE_HEAD_LINES`] and the newest lines, with one
+    /// Keep the first lines, representative causes and newest lines, with one
     /// marker counting what the fold dropped.
     fn fold_evidence(&mut self) {
-        const TAIL: usize = MAX_EVIDENCE_LINES - EVIDENCE_HEAD_LINES - 1;
         if self.evidence.len() <= MAX_EVIDENCE_LINES {
             return;
         }
-        let previous = self
-            .evidence
-            .get(EVIDENCE_HEAD_LINES)
-            .and_then(|line| omitted_count(line))
-            .unwrap_or(0);
-        let counted = self.evidence.len() - usize::from(previous > 0);
-        let omitted = previous + counted - EVIDENCE_HEAD_LINES - TAIL;
-        let tail = self.evidence.split_off(self.evidence.len() - TAIL);
-        self.evidence.truncate(EVIDENCE_HEAD_LINES);
-        self.evidence.push(format!("({omitted} lines omitted)"));
-        self.evidence.extend(tail);
+        let middle = &self.evidence[EVIDENCE_HEAD_LINES..];
+        let previous: usize = middle.iter().filter_map(|line| omitted_count(line)).sum();
+        let candidates: Vec<usize> = (EVIDENCE_HEAD_LINES..self.evidence.len())
+            .filter(|&index| omitted_count(&self.evidence[index]).is_none())
+            .collect();
+        let mut causes: Vec<usize> = candidates
+            .iter()
+            .copied()
+            .filter(|&index| evidence_priority(&self.evidence[index]) > 0)
+            .collect();
+        causes.sort_by_key(|&index| {
+            (
+                std::cmp::Reverse(evidence_priority(&self.evidence[index])),
+                std::cmp::Reverse(index),
+            )
+        });
+        causes.truncate(OUTPUT_CAUSE_LINES);
+        let capacity = MAX_EVIDENCE_LINES - EVIDENCE_HEAD_LINES - 1;
+        let mut kept = causes;
+        for &index in candidates.iter().rev() {
+            if kept.len() == capacity {
+                break;
+            }
+            if !kept.contains(&index) {
+                kept.push(index);
+            }
+        }
+        kept.sort_unstable();
+        let omitted = previous + candidates.len() - kept.len();
+        let mut folded = self.evidence[..EVIDENCE_HEAD_LINES].to_vec();
+        folded.push(format!("({omitted} lines omitted)"));
+        folded.extend(kept.into_iter().map(|index| self.evidence[index].clone()));
+        self.evidence = folded;
     }
 
     /// Add the output of a failed command: its first lines name the failure,
@@ -177,10 +198,29 @@ fn names_a_cause(line: &str) -> bool {
     CAUSE_MARKERS.iter().any(|marker| lowered.contains(marker))
 }
 
+// Nextest's failure identity and assertion are more useful than its final
+// generic summary. Other errors remain eligible, including backend fatals.
+fn evidence_priority(line: &str) -> u8 {
+    let lower = line.to_ascii_lowercase();
+    let trimmed = lower.trim_start();
+    if trimmed.starts_with("fail ") {
+        3
+    } else if trimmed.contains("assertion failed") {
+        2
+    } else if trimmed == "error: test run failed" {
+        0
+    } else if names_a_cause(line) {
+        1
+    } else {
+        0
+    }
+}
+
 /// One block of a command's or service's output, ready to show: every line
 /// redacted and bounded, the first [`OUTPUT_HEAD_LINES`] and last
 /// [`OUTPUT_TAIL_LINES`] kept, the last [`OUTPUT_CAUSE_LINES`] lines in the
-/// middle that name a cause kept too, and one marker counting the rest. A
+/// middle that name a cause kept too (prioritizing test failures), and one
+/// marker counting the rest. A
 /// runner that prints its failures to stdout and its progress to stderr keeps
 /// both ends, so the cause survives whichever stream carried it.
 pub fn bound_output(output: &str) -> Vec<String> {
@@ -194,13 +234,19 @@ pub fn bound_output(output: &str) -> Vec<String> {
     }
     let tail_start = lines.len() - OUTPUT_TAIL_LINES;
     let middle = &lines[OUTPUT_HEAD_LINES..tail_start];
-    let causes: Vec<String> = (0..middle.len())
-        .rev()
-        .filter(|index| names_a_cause(&middle[*index]))
-        .take(OUTPUT_CAUSE_LINES)
-        .collect::<Vec<_>>()
+    let mut cause_indices: Vec<usize> = (0..middle.len())
+        .filter(|&index| evidence_priority(&middle[index]) > 0)
+        .collect();
+    cause_indices.sort_by_key(|&index| {
+        (
+            std::cmp::Reverse(evidence_priority(&middle[index])),
+            std::cmp::Reverse(index),
+        )
+    });
+    cause_indices.truncate(OUTPUT_CAUSE_LINES);
+    cause_indices.sort_unstable();
+    let causes: Vec<String> = cause_indices
         .into_iter()
-        .rev()
         .map(|index| middle[index].clone())
         .collect();
     let omitted = lines.len() - (OUTPUT_HEAD_LINES + causes.len() + OUTPUT_TAIL_LINES);
@@ -528,6 +574,27 @@ mod tests {
             "{rendered}"
         );
         assert!(rendered.contains("Compiling crate 29"), "{rendered}");
+        assert!(error.evidence_lines().len() <= MAX_EVIDENCE_LINES);
+    }
+
+    #[test]
+    fn nextest_identity_survives_output_and_evidence_folding() {
+        let mut lines: Vec<String> = (0..30).map(|step| format!("running test {step}")).collect();
+        lines.insert(15, "FAIL [ 0.123s] example::tests::broken".to_owned());
+        lines.insert(16, "assertion failed: first".to_owned());
+        lines.insert(17, "assertion failed: second".to_owned());
+        lines.push("error: test run failed".to_owned());
+        let stdout = (0..20)
+            .map(|n| format!("progress {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let error = HumanError::new("task failed")
+            .evidence("exit code 100")
+            .evidence_output("stderr", &lines.join("\n"))
+            .evidence_output("stdout", &stdout);
+        let rendered = error.render_text();
+        assert!(rendered.contains("example::tests::broken"), "{rendered}");
+        assert!(rendered.contains("lines omitted"), "{rendered}");
         assert!(error.evidence_lines().len() <= MAX_EVIDENCE_LINES);
     }
 
