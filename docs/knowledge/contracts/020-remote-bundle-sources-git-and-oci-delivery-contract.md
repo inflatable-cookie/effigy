@@ -194,7 +194,9 @@ Preparation runs as a kernel Prepare operation under the declaring checkout's
 identity. It never journals source acquisition in the machine store.
 Gate admission and source acquisition share a 120-second deadline. Git and ORAS
 run through `Custody::spawn_source`, with journalled intent and a registered
-sentinel. Failure and cancellation settle through the kernel. Guests consume
+sentinel. Source command output is consumed only after both captured streams reach
+EOF within the original command deadline; incomplete or truncated capture fails
+the acquisition or check. Failure and cancellation settle through the kernel. Guests consume
 materialized pins; source acquisition requires host authority, so a guest with
 a stale pin is told to run `effigy bundle sync` on the host.
 

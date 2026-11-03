@@ -2086,3 +2086,5 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 # Narrow compile and lint checks for the shared human error renderer.
 "check:human-errors" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-ui --all-targets", timeout_ms = 900000 }] }
 "lint:human-errors" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-ui --all-targets -- -D warnings", timeout_ms = 900000 }] }
+
+"test:kernel:source-capture-proof" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 }, { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(source_capture_exit_interleaving)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }

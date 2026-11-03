@@ -776,19 +776,113 @@ fn container_up_refreshes_a_changed_path_bundle() {
     assert_ne!(fs::read(&pin).unwrap(), initial);
 }
 
+/// Durable per-run copies of one fixture's captured command output and the
+/// source check's own record. The milestone harness truncates a failing
+/// stage's streamed output, so the default-profile failure of the floating-ref
+/// proof must leave each `dev` run's exact stdout and stderr plus what its
+/// bounded `git ls-remote` actually saw on the runner's kept scratch root. A
+/// passing proof removes the directory only after every assertion; any panic
+/// leaves everything persisted so far behind.
+fn persist_run_evidence(dir: &Path, label: &str, fixture: &Fixture, check_log: &Path) {
+    for (stream, source) in [
+        ("stdout", fixture.logs.join("stdout")),
+        ("stderr", fixture.logs.join("stderr")),
+        ("check-log", check_log.to_path_buf()),
+    ] {
+        let bytes = fs::read(&source).unwrap_or_default();
+        let _ = fs::write(dir.join(format!("{label}.{stream}.log")), bytes);
+    }
+}
+
+/// The real `git` this test process resolves on PATH, using custody's own
+/// resolution semantics, so the fixture shim can delegate to it by absolute
+/// path without recursing through itself.
+fn resolve_git_on_path() -> PathBuf {
+    std::env::var_os("PATH")
+        .and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|dir| dir.join("git"))
+                .find(|candidate| {
+                    candidate.is_file()
+                        && std::fs::metadata(candidate)
+                            .is_ok_and(|meta| meta.permissions().mode() & 0o111 != 0)
+                })
+        })
+        .expect("the bundle_pins fixtures require git on PATH")
+}
+
+/// A `git` shim installed ahead of the real one on one fixture's PATH: the
+/// source check's bounded `ls-remote` is recorded with its argv, exit and the
+/// raw bytes the remote served, while its stdout and stderr still reach the
+/// product's capture unchanged, and every other invocation execs the real
+/// git. Like the OCI fixture's own `oras` executable, it proves behavior
+/// against a controlled boundary instead of trusting a later probe.
+fn install_git_check_shim(fixture: &Fixture) -> (PathBuf, PathBuf) {
+    let dir = fixture.owner.path().join("git-shim");
+    fs::create_dir_all(&dir).unwrap();
+    let shim = dir.join("git");
+    fs::write(
+        &shim,
+        r#"#!/bin/sh
+real="$EFFIGY_REAL_GIT"
+log="$EFFIGY_GIT_SHIM_LOG"
+if [ -n "$log" ] && [ "$1" = "ls-remote" ]; then
+  served="${log}.served"
+  errs="${log}.stderr"
+  "$real" "$@" > "$served" 2> "$errs"
+  status=$?
+  {
+    printf 'ls-remote argv:'; for arg in "$@"; do printf ' %s' "$arg"; done; printf '\n'
+    printf 'ls-remote exit=%s\n' "$status"
+    printf 'ls-remote served stdout:\n'
+    cat "$served"
+    printf 'ls-remote served stderr:\n'
+    cat "$errs"
+  } >> "$log"
+  cat "$served"
+  cat "$errs" >&2
+  exit "$status"
+fi
+exec "$real" "$@"
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+    let log = dir.join("record.log");
+    (dir, log)
+}
+
 #[test]
 fn a_floating_git_ref_updates_on_dev_at_most_once_per_ttl() {
     let fixture = Fixture::new();
     let source = fixture.owner.path().join("source");
+    let evidence = std::env::temp_dir().join(format!(
+        "effigy-bundle-pins-evidence/a_floating_git_ref_updates_on_dev_at_most_once_per_ttl-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&evidence).unwrap();
+    let (shim_dir, check_log) = install_git_check_shim(&fixture);
+    let real_git = resolve_git_on_path();
+    let shim_path = std::env::join_paths(std::iter::once(shim_dir.clone()).chain(
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+    ))
+    .unwrap();
+    let extra = [
+        ("PATH", Path::new(&shim_path)),
+        ("EFFIGY_REAL_GIT", real_git.as_path()),
+        ("EFFIGY_GIT_SHIM_LOG", check_log.as_path()),
+    ];
     let first = init_git_bundle(&source, &fixture.home, "one");
     git_bundle_manifest(&fixture, &source, None);
-    let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    let (ok, output) = fixture.run(&["dev"], &extra, Duration::from_secs(30));
+    persist_run_evidence(&evidence, "initial-acquire", &fixture, &check_log);
     assert!(ok, "{output}");
     assert!(output.contains("one"), "{output}");
     assert_eq!(pinned_revision(&fixture), first);
 
     let second = commit_git_bundle(&source, &fixture.home, "two");
-    let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    let (ok, output) = fixture.run(&["dev"], &extra, Duration::from_secs(30));
+    persist_run_evidence(&evidence, "first-upstream-move", &fixture, &check_log);
     assert!(ok, "{output}");
     assert!(output.contains("two"), "{output}");
     assert!(
@@ -803,7 +897,8 @@ fn a_floating_git_ref_updates_on_dev_at_most_once_per_ttl() {
 
     // Inside the window the upstream moves again and the pin stays put.
     commit_git_bundle(&source, &fixture.home, "three");
-    let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    let (ok, output) = fixture.run(&["dev"], &extra, Duration::from_secs(30));
+    persist_run_evidence(&evidence, "inside-ttl-keep", &fixture, &check_log);
     assert!(ok, "{output}");
     assert!(
         output.contains("two") && !output.contains("three"),
@@ -814,9 +909,42 @@ fn a_floating_git_ref_updates_on_dev_at_most_once_per_ttl() {
 
     // Past the recorded check, the next Prepare checks and updates again.
     fs::remove_file(fixture.repo.join(".effigy/sources.update.json")).unwrap();
-    let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    let (ok, output) = fixture.run(&["dev"], &extra, Duration::from_secs(30));
+    persist_run_evidence(&evidence, "after-record-removal", &fixture, &check_log);
     assert!(ok, "{output}");
-    assert!(output.contains("three"), "{output}");
+    // A silent keep must name its own state, and the two silent paths leave
+    // the same recreated record and the same post-hoc upstream view, so the
+    // shim's check record decides it: it holds what the product's own
+    // ls-remote ran, its exit and the raw bytes the remote served, separating
+    // an empty or unparseable listing from an equal-revision keep. The
+    // fixture's own ls-remote is the plain-client view of the same remote at
+    // this moment, the lock names the pin the run kept, and the recreated
+    // record is contract 020's proof that the due check ran at all.
+    let upstream = git_in(
+        &source,
+        &fixture.home,
+        &[
+            "ls-remote",
+            "--",
+            &format!("file://{}", source.display()),
+            "main",
+        ],
+    );
+    let record = fs::read_to_string(fixture.repo.join(".effigy/sources.update.json"));
+    let check = fs::read_to_string(&check_log).unwrap_or_default();
+    assert!(
+        output.contains("three"),
+        "floating refresh kept {} while the fixture's own git serves \n\
+         ({upstream}); the source check's own record:\n{check}\n\
+         removed-record state after the run: {record:?}; output: {output}",
+        pinned_revision(&fixture)
+    );
+    // Retention outlasts every assertion: a passing proof removes the
+    // directory, including the empty parent — a concurrently running proof
+    // owns its own pid-suffixed child, so this parent removal only ever takes
+    // an empty directory — and any panic above leaves everything persisted.
+    let _ = fs::remove_dir_all(&evidence);
+    let _ = fs::remove_dir(std::env::temp_dir().join("effigy-bundle-pins-evidence"));
 }
 
 #[test]
