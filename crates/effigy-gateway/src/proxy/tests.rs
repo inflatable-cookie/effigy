@@ -184,3 +184,118 @@ fn http_to_https_redirect_depends_on_request_scheme() {
         .unwrap();
     assert!(maybe_redirect_http_to_https(&https, &route, &config, true).is_none());
 }
+
+struct Abort(tokio::task::JoinHandle<()>);
+impl Drop for Abort {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Production `handle_request` → `is_websocket_upgrade` → `handle_websocket_upgrade`
+/// vs `forward_request`. Distinct from `strip_hop_by_hop_except_upgrade_preserves_websocket`,
+/// which only checks header preservation.
+///
+/// Upstream returns 101 when any `Upgrade` header arrives, else 200. The
+/// websocket path keeps `Upgrade`; the ordinary path strips it (Connection lists
+/// it). A case-sensitive or always-false detector fails the mixed-case 101; an
+/// always-true detector fails the h2c 200.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handle_request_routes_websocket_upgrade_by_header() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target = listener.local_addr().unwrap();
+    let _upstream = Abort(tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut buf = Vec::new();
+                let mut tmp = [0u8; 512];
+                loop {
+                    let n = match stream.read(&mut tmp).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => n,
+                    };
+                    buf.extend_from_slice(&tmp[..n]);
+                    if buf.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let head = String::from_utf8_lossy(&buf);
+                let has_upgrade = head.lines().any(|line| {
+                    line.split_once(':')
+                        .is_some_and(|(name, _)| name.eq_ignore_ascii_case("upgrade"))
+                });
+                let response = if has_upgrade {
+                    "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: upgrade\r\n\r\n"
+                } else {
+                    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nordinary"
+                };
+                let _ = stream.write_all(response.as_bytes()).await;
+            });
+        }
+    }));
+
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    crate::locks::write_tolerant(&table).upsert(Route {
+        domain: "ws.test".into(),
+        target: Some(target.to_string()),
+        dns_ip: None,
+        tcp_port: None,
+        tcp_target: None,
+        source: RouteSource::Task,
+        project: "/fixture".into(),
+        managed_listener: None,
+        tls: false,
+        registered: Utc::now(),
+    });
+    let proxy_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = proxy_listener.local_addr().unwrap();
+    let (stop, shutdown) = tokio::sync::watch::channel(false);
+    let server = tokio::spawn(run_proxy_server_on(
+        proxy_listener,
+        ProxyConfig::default(),
+        table,
+        Arc::new(GatewayStats::new()),
+        shutdown,
+    ));
+
+    async fn raw_status(addr: SocketAddr, upgrade: Option<&str>) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let mut request = String::from("GET / HTTP/1.1\r\nHost: ws.test\r\n");
+        if let Some(value) = upgrade {
+            request.push_str("Connection: Upgrade\r\nUpgrade: ");
+            request.push_str(value);
+            request.push_str("\r\n");
+        }
+        request.push_str("\r\n");
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut buf = [0u8; 256];
+        let n = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut buf))
+            .await
+            .expect("proxy response")
+            .unwrap();
+        let text = std::str::from_utf8(&buf[..n]).unwrap();
+        let status = text
+            .split_whitespace()
+            .nth(1)
+            .and_then(|token| token.parse().ok())
+            .unwrap_or(0);
+        assert_ne!(status, 0, "unparseable proxy response: {text:?}");
+        status
+    }
+
+    for (label, upgrade, expected) in [
+        ("mixed-case websocket", Some("WebSocket"), 101),
+        ("missing upgrade", None, 200),
+        ("h2c", Some("h2c"), 200),
+        ("invalid value", Some("not-a-protocol"), 200),
+    ] {
+        assert_eq!(raw_status(address, upgrade).await, expected, "{label}");
+    }
+
+    stop.send(true).unwrap();
+    server.await.unwrap().unwrap();
+}
