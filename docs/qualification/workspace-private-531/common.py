@@ -9,6 +9,7 @@ import subprocess
 
 BACKENDS = ('colima', 'desktop', 'linux')
 SCRATCH = Path('/Volumes/Builds/scratch/effigy')
+SSH_CONTROL = SCRATCH / '531-linux-control'
 PACKET = Path(__file__).resolve().parent
 HEX = re.compile(r'[0-9a-f]{64}')
 
@@ -105,13 +106,62 @@ def open_qualification_root(binding):
         raise
 
 
+def ssh_prefix(cell):
+    alias = cell['ssh_alias']
+    require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*', alias), 'exact SSH alias required')
+    config = artifact(cell['ssh_config'])
+    info = config.lstat()
+    parent = SSH_CONTROL.lstat()
+    require(config.is_relative_to(SSH_CONTROL) and config.resolve(strict=True) == config
+            and not any(p.is_symlink() for p in config.parents)
+            and stat.S_ISDIR(parent.st_mode) and stat.S_IMODE(parent.st_mode) == 0o700
+            and parent.st_uid == os.geteuid()
+            and info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == 0o600,
+            'private canonical SSH config required')
+    # No Include/Match/command hooks or wildcard hosts in this test-only config.
+    values = {}
+    for line in config.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        parts = line.split(None, 1)
+        require(len(parts) == 2 and parts[0].lower() not in values, 'simple isolated SSH config required')
+        values[parts[0].lower()] = parts[1]
+    fixed = dict(host=alias, batchmode='yes', stricthostkeychecking='yes', identitiesonly='yes',
+                 identityagent='none', globalknownhostsfile='/dev/null', updatehostkeys='no',
+                 forwardagent='no', clearallforwardings='yes', requesttty='no',
+                 permitlocalcommand='no', canonicalizehostname='no', proxycommand='none',
+                 proxyjump='none', remotecommand='none', localcommand='none', connecttimeout='10')
+    require(set(values) == set(fixed) | {'hostname', 'user', 'identityfile', 'userknownhostsfile'}
+            and all(values.get(k) == v for k, v in fixed.items()), 'isolated SSH policy differs')
+    import ipaddress
+    try:
+        ipaddress.ip_address(values['hostname'])
+    except ValueError as error:
+        raise RuntimeError('observed SSH endpoint required') from error
+    require(values['user'] == 'effigy531', 'dedicated SSH user required')
+    for key in ('identityfile', 'userknownhostsfile'):
+        path = Path(values[key])
+        require(path.is_absolute() and str(path) == values[key] and '..' not in path.parts
+                and path.is_relative_to(SSH_CONTROL) and re.fullmatch(r'[A-Za-z0-9_./-]+', values[key])
+                and path.resolve(strict=False) == path and not path.is_relative_to(
+                    qualification_path(cell['qualification_root'])), 'private unshared SSH path required')
+    known = artifact(cell['ssh_known_hosts'])
+    known_info = known.lstat()
+    require(str(known) == values['userknownhostsfile'] and known_info.st_uid == os.geteuid()
+            and stat.S_IMODE(known_info.st_mode) == 0o600, 'pinned private known-hosts required')
+    return ['/usr/bin/ssh', '-F', str(config), '-o', 'BatchMode=yes', alias]
+
+
 def validate_inputs(value, head):
     require(value['schema'] == 'effigy.workspace-private-proof.v1', 'unknown input schema')
     require(value['source_head'] == head, 'candidate is not the immutable proof head')
     require(tuple(cell['backend'] for cell in value['backends']) == BACKENDS,
             'all three native backends are required, in order')
     for cell in value['backends']:
-        qualification_path(cell.get('qualification_root'))
+        root = qualification_path(cell.get('qualification_root'))
+        require(not root.is_relative_to(SSH_CONTROL) and not SSH_CONTROL.is_relative_to(root),
+                'qualification root must exclude SSH control')
         require(cell['source_head'] == head, 'backend candidate source differs')
         require(cell['old_source_head'] != head and re.fullmatch(r'[0-9a-f]{40}', cell['old_source_head']),
                 'genuine old source identity required')
@@ -133,6 +183,10 @@ def validate_inputs(value, head):
         require(cell['driver'] in ('local', 'ssh'), 'unknown native driver')
         require((cell['backend'] == 'linux') == (cell['driver'] == 'ssh'),
                 'Linux must execute natively in its separately approved Linux host')
+        if cell['driver'] == 'ssh':
+            require(all(isinstance(cell.get(key), dict) and set(cell[key]) == {'path', 'sha256'}
+                        and HEX.fullmatch(cell[key]['sha256']) for key in ('ssh_config', 'ssh_known_hosts')),
+                    'pinned isolated SSH config and host keys required')
         require(cell['engine_kind'] in ('colima', 'docker'), 'unknown engine kind')
         require((cell['backend'] == 'colima') == (cell['engine_kind'] == 'colima'), 'backend engine mismatch')
         require(not any(key.startswith(('EFFIGY_TEST', 'EFFIGY_WORKSPACE_ACTIVATION_FAKE'))

@@ -8,7 +8,7 @@ import shlex
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (PACKET, SCRATCH, artifact, digest, exclusive, load, require, run,
-                    open_qualification_root, qualification_path, source_head, validate_go, validate_inputs)
+                    open_qualification_root, qualification_path, source_head, ssh_prefix, validate_go, validate_inputs)
 
 
 def main():
@@ -33,6 +33,11 @@ def main():
     for cell in value['backends']:
         go = artifact(go_index[cell['backend']])
         validate_go(load(go), args.sha256, cell, head)
+    # Every local config is pinned/private and checked before creating evidence or
+    # starting any backend. -F avoids the user's global SSH configuration.
+    for cell in value['backends']:
+        if cell['driver'] == 'ssh':
+            ssh_prefix(cell)
     evidence = Path(value['evidence'])
     require(evidence.parent.resolve().is_relative_to(SCRATCH.resolve()) and not evidence.exists(),
             'evidence must be a fresh scratch directory')
@@ -45,19 +50,20 @@ def main():
         if cell['driver'] == 'ssh':
             # Remote source/artifact preparation is separately GO-owned. No copy,
             # build, VM start or install is hidden inside proof execution.
-            require(cell['ssh_alias'] and not cell['ssh_alias'].startswith('-'), 'invalid Linux host alias')
+            def ssh():
+                return ssh_prefix(cell)  # Recheck pinned bytes/policy before every SSH command.
             remote = cell['remote']
             for name in ('common.py', 'runtime.py', 'probe.py'):
-                found = run(['/usr/bin/ssh', '-o', 'BatchMode=yes', cell['ssh_alias'],
+                found = run(ssh() + [
                              'sha256sum -- ' + shlex.quote(str(Path(remote['packet']) / name))]).stdout.decode().split()[0]
                 require(found == digest(PACKET / name), 'remote reviewed driver differs')
-            found = run(['/usr/bin/ssh', '-o', 'BatchMode=yes', cell['ssh_alias'],
+            found = run(ssh() + [
                          'sha256sum -- ' + shlex.quote(remote['inputs'])]).stdout.decode().split()[0]
             require(found == args.sha256, 'remote exact input file differs')
-            found = run(['/usr/bin/ssh', '-o', 'BatchMode=yes', cell['ssh_alias'],
+            found = run(ssh() + [
                          'sha256sum -- ' + shlex.quote(remote['go_bindings'])]).stdout.decode().split()[0]
             require(found == args.go_sha256, 'remote GO receipt index differs')
-            command = ['/usr/bin/ssh', '-o', 'BatchMode=yes', cell['ssh_alias'],
+            command = ssh() + [
                        shlex.join(['python3', '-I', '-B', str(Path(remote['packet']) / 'runtime.py'),
                                    '--inputs', remote['inputs'], '--sha256', args.sha256,
                                    '--go-bindings', remote['go_bindings'], '--go-sha256', args.go_sha256, '--backend', 'linux'])]
@@ -69,7 +75,7 @@ def main():
         require(receipt_path and Path(receipt_path) == expected,
                 'runtime returned no bounded receipt; native result remains unverified')
         if cell['driver'] == 'ssh':
-            receipt_hash = run(['/usr/bin/ssh', '-o', 'BatchMode=yes', cell['ssh_alias'],
+            receipt_hash = run(ssh() + [
                                 'sha256sum -- ' + shlex.quote(receipt_path)]).stdout.decode().split()[0]
         else:
             _, fd = open_qualification_root(cell['qualification_root'])

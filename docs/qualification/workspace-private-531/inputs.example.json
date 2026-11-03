@@ -307,6 +307,14 @@
         "device": "RECORD_ACTUAL_DEVICE",
         "inode": "RECORD_ACTUAL_INODE",
         "uid": "RECORD_ACTUAL_OWNER_UID"
+      },
+      "ssh_config": {
+        "path": "/Volumes/Builds/scratch/effigy/531-linux-control/ssh-config",
+        "sha256": "RECORD_PRIVATE_CONFIG_SHA256"
+      },
+      "ssh_known_hosts": {
+        "path": "/Volumes/Builds/scratch/effigy/531-linux-control/known-hosts",
+        "sha256": "RECORD_PUBLIC_HOST_KEYS_SHA256"
       }
     }
   ]

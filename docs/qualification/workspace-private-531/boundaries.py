@@ -30,6 +30,8 @@ def inputs():
                                     device=0, inode=0, uid=os.geteuid()),
             driver='ssh' if backend == 'linux' else 'local', engine_identity=backend,
             engine_kind='colima' if backend == 'colima' else 'docker'))
+    cells[2].update(ssh_config=dict(path=str(SCRATCH / 'unarmed-ssh'), sha256='e' * 64),
+                    ssh_known_hosts=dict(path=str(SCRATCH / 'unarmed-known-hosts'), sha256='e' * 64))
     return dict(schema='effigy.workspace-private-proof.v1', source_head=HEAD, backends=cells)
 
 
@@ -42,6 +44,168 @@ def go(cell):
 
 
 class Boundaries(unittest.TestCase):
+    def test_private_guest_context_hash_exclusive_identity_and_retention(self):
+        import image_context as context
+        recipe = (PACKET / 'runtime.Dockerfile').read_bytes()
+        with tempfile.TemporaryDirectory(prefix='531-image-', dir=os.environ['TMPDIR']) as directory:
+            parent = Path(directory)
+            identity = context.binding(parent)
+            name = 'effigy-531-image-' + 'a' * 32
+            for payload, sha in ((b'', context.RECIPE_SHA256), (recipe + b'altered', context.RECIPE_SHA256),
+                                 (recipe, '0' * 64)):
+                with self.assertRaises(RuntimeError):
+                    context.stage(identity, name, payload, sha)
+                self.assertEqual(list(parent.iterdir()), [])
+            wrong = dict(identity, inode=identity['inode'] + 1)
+            with self.assertRaises(RuntimeError):
+                context.stage(wrong, name, recipe, context.RECIPE_SHA256)
+            result = context.stage(identity, name, recipe, context.RECIPE_SHA256)
+            self.assertEqual(context.verify_context(identity, name, result), result)
+            self.assertEqual([p.name for p in (parent / name).iterdir()], ['Dockerfile'])
+            self.assertEqual((parent / name).stat().st_mode & 0o777, 0o700)
+            with self.assertRaises(FileExistsError):
+                context.stage(identity, name, recipe, context.RECIPE_SHA256)
+            (parent / name / 'Dockerfile').write_bytes(b'changed')
+            with self.assertRaises(RuntimeError):
+                context.verify_context(identity, name, result)
+            self.assertTrue((parent / name).exists(), 'uncertain context must remain retained')
+
+    def test_image_preparation_orders_real_context_before_one_build_and_check(self):
+        import image_context as context
+        import image_prepare as preparation
+        import subprocess
+        for fault in (None, 'transfer', 'bad-receipt', 'python', 'build', 'engine', 'mount', 'profile', 'vm'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory(
+                    prefix='531-image-plan-', dir=os.environ['TMPDIR']) as directory:
+                root = Path(directory)
+                control, shared, parent = (root / n for n in ('control', 'shared', 'guest'))
+                for p in (control, shared, parent):
+                    p.mkdir(mode=0o700)
+                recipe = root / 'recipe'
+                recipe.write_bytes((PACKET / 'runtime.Dockerfile').read_bytes())
+                plan = dict(profile=preparation.PROFILE, colima_home=str(control / 'c'),
+                    control=context.binding(control), shared=context.binding(shared),
+                    engine_id='9ea86682-b930-4da6-9901-73681bd7ba85',
+                    machine_id='52aa90d932e84f0382bd2bbde03ba72a', budget_seconds=1058,
+                    token='b' * 32, guest_parent=context.binding(parent),
+                    context_program_sha256=digest(context.__file__),
+                    preparation_program_sha256=digest(preparation.__file__),
+                    recipe=dict(path=str(recipe), sha256=context.RECIPE_SHA256),
+                    colima_binary=dict(path=str(root / 'colima-double'),
+                        sha256='55278419bd4288e4ab11eb30be13f5e655f3886c0979b68e435df910dbc9bbdf'))
+                start = datetime.datetime.now(datetime.timezone.utc)
+                plan.update(started_at_utc=start.isoformat(),
+                            deadline_utc=(start + datetime.timedelta(seconds=1058)).isoformat())
+                owner = control / 'owner.json'
+                owner.write_text(json.dumps(dict(task='12563bc2-e1fe-421d-94b5-6bb1df991eb5',
+                    run='06266c0c-08a4-4592-9dd3-e4240db42c77',
+                    roots=dict(control=plan['control'], shared=plan['shared']))))
+                plan['owner_receipt'] = dict(path=str(owner), sha256=digest(owner))
+                status = dict(display_name='colima [profile=' + preparation.PROFILE + ']',
+                    runtime='containerd', arch='aarch64', cpu=2, memory=2147483648, disk=21474836480,
+                    driver='macOS Virtualization.Framework', mount_type='virtiofs', kubernetes=False,
+                    containerd_socket='unix://' + str(control / 'c' / preparation.PROFILE / 'containerd.sock'),
+                    buildkitd_socket='unix://' + str(control / 'c' / preparation.PROFILE / 'buildkitd.sock'))
+                guest = dict(parent=plan['guest_parent'], storage=[dict(fstype='ext4')],
+                    architecture='aarch64', machine_id=plan['machine_id'],
+                    shares=[dict(target=str(shared), source='lima-4661d5013c960385',
+                                 fstype='virtiofs', options='rw,relatime')])
+                if fault == 'profile': status['display_name'] = 'another profile'
+                if fault == 'mount': guest['shares'].append(dict(guest['shares'][0]))
+                if fault == 'vm': guest['machine_id'] = 'another VM'
+                calls = []
+                def call(argv, *, env, timeout, data):
+                    calls.append((argv, timeout))
+                    self.assertNotIn('LIMA_HOME', env)
+                    self.assertLessEqual(timeout, 605)
+                    output, code = b'', 0
+                    if 'status' in argv: output = json.dumps(status).encode()
+                    elif 'info' in argv: output = (plan['engine_id'] if fault != 'engine' else 'foreign').encode()
+                    elif argv[-1] == 'probe':
+                        output = json.dumps(guest).encode()
+                        if fault == 'python': code = 127
+                    elif 'stage' in argv:
+                        spec = json.loads(argv[-1])
+                        if fault == 'transfer': code = 66
+                        else:
+                            transferred = context.stage(spec['parent'], spec['name'], data, spec['sha256'])
+                            if fault == 'bad-receipt': transferred['sha256'] = '0' * 64
+                            output = json.dumps(transferred).encode()
+                    elif 'verify' in argv:
+                        spec = json.loads(argv[-1])
+                        output = json.dumps(context.verify_context(spec['parent'], spec['name'], spec['context'])).encode()
+                    elif 'build' in argv:
+                        self.assertNotEqual(argv[-1], '-')
+                        self.assertEqual(argv[-1], str(parent / ('effigy-531-image-' + plan['token'])))
+                        self.assertIn('linux/arm64', argv)
+                        if fault == 'build': code = 1
+                    elif 'inspect' in argv:
+                        output = json.dumps([dict(Architecture='arm64', Os='linux', Id='sha256:' + 'e' * 64)]).encode()
+                    elif 'run' in argv: output = b'synthetic public tools receipt'
+                    return subprocess.CompletedProcess(argv, code, output, b'')
+                real_artifact = preparation.artifact
+                def artifact_double(item):
+                    return Path(item['path']) if item is plan['colima_binary'] else real_artifact(item)
+                with patch.object(preparation, 'CONTROL', control), patch.object(preparation, 'SHARED', shared), \
+                     patch.object(preparation, 'artifact', side_effect=artifact_double):
+                    if fault is None:
+                        preparation.prepare(plan, call)
+                        with self.assertRaises(FileExistsError):
+                            preparation.prepare(plan, call)
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            preparation.prepare(plan, call)
+                self.assertEqual(sum('build' in args for args, _ in calls), int(fault in (None, 'build')))
+                self.assertEqual(sum('run' in args for args, _ in calls), int(fault is None))
+                for args, _ in calls:
+                    if 'ssh' in args:
+                        self.assertIn('timeout', args)
+                        self.assertIn('-k', args)
+                self.assertEqual(list(shared.iterdir()), [])
+                for budget in (0, 1059):
+                    with patch.object(preparation, 'CONTROL', control), patch.object(preparation, 'SHARED', shared), \
+                         self.assertRaises(RuntimeError):
+                        preparation.validate_plan(dict(plan, budget_seconds=budget))
+
+    def test_isolated_ssh_config_hash_policy_and_no_global_fallback(self):
+        import common
+        with tempfile.TemporaryDirectory(prefix='531-ssh-', dir=os.environ['TMPDIR']) as directory:
+            root = Path(directory)
+            config = root / 'ssh-config'
+            fixed = dict(Host='effigy-531-vault', HostName='192.0.2.1', User='effigy531',
+                IdentityFile=str(root / 'uncreated-private-key'), UserKnownHostsFile=str(root / 'known-hosts'),
+                BatchMode='yes', StrictHostKeyChecking='yes', IdentitiesOnly='yes', IdentityAgent='none',
+                GlobalKnownHostsFile='/dev/null', UpdateHostKeys='no', ForwardAgent='no',
+                ClearAllForwardings='yes', RequestTTY='no', PermitLocalCommand='no',
+                CanonicalizeHostname='no', ProxyCommand='none', ProxyJump='none', RemoteCommand='none',
+                LocalCommand='none', ConnectTimeout='10')
+            text = ''.join(k + ' ' + v + '\n' for k, v in fixed.items())
+            config.write_text(text); config.chmod(0o600)
+            known = root / 'known-hosts'
+            known.write_text('synthetic source-only host-key fixture')
+            known.chmod(0o600)
+            cell = inputs()['backends'][2]
+            cell.update(ssh_alias='effigy-531-vault', ssh_config=dict(path=str(config), sha256=digest(config)),
+                        ssh_known_hosts=dict(path=str(known), sha256=digest(known)))
+            with patch.object(common, 'SSH_CONTROL', root), \
+                 patch('subprocess.run', side_effect=AssertionError('SSH during config validation')):
+                prefix = common.ssh_prefix(cell)
+                self.assertEqual(prefix[:3], ['/usr/bin/ssh', '-F', str(config)])
+                cell['ssh_config']['sha256'] = '0' * 64
+                with self.assertRaises(RuntimeError): common.ssh_prefix(cell)
+                cell['ssh_config']['sha256'] = digest(config)
+                config.chmod(0o644)
+                with self.assertRaises(RuntimeError): common.ssh_prefix(cell)
+                config.chmod(0o600)
+                for change in (text + 'Include elsewhere\n', text.replace('Host effigy-531-vault', 'Host *'),
+                               text.replace('ProxyCommand none', 'ProxyCommand arbitrary-command'),
+                               text.replace('StrictHostKeyChecking yes', 'StrictHostKeyChecking no')):
+                    config.write_text(change); cell['ssh_config']['sha256'] = digest(config)
+                    with self.assertRaises(RuntimeError): common.ssh_prefix(cell)
+                config.write_text(text); cell['ssh_config']['sha256'] = digest(config)
+                config.unlink(); config.symlink_to(root / 'absent')
+                with self.assertRaises(RuntimeError): common.ssh_prefix(cell)
+
     def test_setup_socket_preflight_refuses_observed_long_path_before_effects(self):
         from setup_preflight import socket_preflight, PROFILE
         with patch('subprocess.run', side_effect=AssertionError('setup preflight ran a command')), \
@@ -342,6 +506,7 @@ class Boundaries(unittest.TestCase):
                  patch.object(launch, 'load', side_effect=[value, {name: {'path': name} for name in BACKENDS}]
                               + [go(cell) for cell in value['backends']]), \
                  patch.object(launch, 'artifact', side_effect=[Path(name) for name in BACKENDS]), \
+                 patch.object(launch, 'ssh_prefix', return_value=['/usr/bin/ssh', '-F', 'fixture-only', 'fixture']), \
                  patch.object(launch, 'run', return_value=result) as native:
                 with self.assertRaisesRegex(RuntimeError, 'no bounded receipt'):
                     launch.main()

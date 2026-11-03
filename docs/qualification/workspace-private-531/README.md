@@ -50,7 +50,8 @@ Each backend's input pins:
   absolute path, device, inode and uid. It must be a private `0700` directory
   owned by the native executor, strictly below removable scratch. Missing pins,
   aliases, changed identities and already used/nonempty roots refuse;
-- Linux's actual SSH alias, prepositioned reviewed driver directory, and exact
+- Linux's actual SSH alias, private `ssh_config` and `ssh_known_hosts` path/hash
+  artifacts, prepositioned reviewed driver directory, and exact
   input/GO-index paths on its native Linux host. Linux executes the candidate
   there against its local engine. A macOS candidate talking to remote Docker
   cannot substitute for native Linux custody.
@@ -81,14 +82,19 @@ pulls, builds, downloads, installs, starts/stops a VM, changes shared workflows,
 or changes tracked source. Source archive / build preparation, any native
 builder use and Linux placement require their own scoped authorization.
 
-The [dedicated Colima setup request](colima-setup.md) shares only the pinned
-qualification root and keeps control files outside it. The first setup failed on a measured 120-byte Lima socket path before any image
-build. The revised proposal computes the full future path before setup effects
-and requests a separate GO for its canonical 101-byte layout, within the remaining
-1516-second cap. Old partial resources remain retained. Its runtime recipe is
-unbuilt; it does not claim the producer image supplies Python. The separate
-[Linux SSH/placement proposal](linux-setup.md) preserves the reviewed SSH route
-and distinguishes unknown account/share capabilities from executable authority.
+The [Colima preparation plan](colima-setup.md) records the failed120-byte
+socket layout, successful101-byte private VM start and subsequent nerdctl stdin
+context refusal with zero builds/checks. The source-reviewed continuation keeps
+the same builder and transfers only the public recipe into a fresh private guest
+context, with actual hash/owner/readback, engine/mount checks, one-shot stages and
+at most1058seconds remaining. No extra start or budget reset is authorized.
+Drive-remount history requires fresh actual health/identity admission; prior
+metadata is not current VM health. The runtime recipe remains unbuilt.
+The [Linux proposal](linux-setup.md) distinguishes canonical path spelling from
+native filesystem and Vault-backing provenance; it prefers native ext4 only after
+an explicit accepted chain, without assuming shared-folder custody semantics.
+Linux SSH uses a pinned private `-F` config and pinned public known-hosts artifact;
+no global config edit, alternate transport or credential sharing is introduced.
 
 Preparation uses the existing Effigy build surfaces:
 `build:workspace:private-qualification` builds the uninstalled candidate/utility;
@@ -114,9 +120,10 @@ Do not infer that a managed output remains after its lease or cleanup.
 The guest artifact uses the existing `workspace:linux:artifact` producer under
 its separate scoped builder GO. Its normal receipt must be preserved. The
 native proof does not rebuild it or bless bytes with new sidecars. All ad-hoc
-files, logs and source fixtures stay on removable scratch. Linux must have the
-approved Vault/removable scratch mounted at the same absolute scratch root;
-absence is a routing failure, not permission to use an internal-drive path.
+files, logs and source fixtures stay on removable scratch. Linux must have positively proven approved Vault/removable backing at the same
+canonical scratch path. The proposed native-ext4 placement needs an explicit
+accepted host/guest provenance chain; a path prefix or filesystem name alone is
+insufficient. Missing placement evidence refuses, with no internal-drive fallback.
 
 ## Separate GO receipts and the one selector
 
