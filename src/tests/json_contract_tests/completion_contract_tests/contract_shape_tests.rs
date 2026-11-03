@@ -1,6 +1,6 @@
 use crate::runner::json_contract_tests::prelude::{
-    assert_candidates_cache_policy, assert_schema_v1, fs, lock_test, run_completion_task,
-    run_invocation_json, temp_workspace, with_completion_cache_default, write_manifest,
+    assert_schema_v1, fs, lock_test, run_invocation_json, temp_workspace,
+    with_completion_cache_default, write_manifest,
 };
 
 #[test]
@@ -57,30 +57,19 @@ fn builtin_completion_candidates_json_contract_has_versioned_shape() {
         "completion",
         &["candidates", "--prefix", "catalog_a", "--json"],
     );
+    // The first-call cache-state fields (miss_initial policy, null age/ttl) are
+    // pinned by cache_behavior_tests; this test owns the payload shape and the
+    // prefix-filtered multi-manifest inventory.
     assert_schema_v1(&parsed, "effigy.completion.candidates.v1");
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["prefix"], "catalog_a");
-    assert_candidates_cache_policy(&parsed, false, "miss_initial", 2000, "default");
     assert_eq!(parsed["manifest_count"], 2);
-    assert!(parsed["cache_age_ms"].is_null());
-    assert!(parsed["cache_ttl_ms"].is_null());
     let candidates = parsed["candidates"].as_array().expect("candidates array");
     assert!(candidates
         .iter()
         .any(|value| value.as_str() == Some("catalog_a/api")));
 }
 
-#[test]
-fn builtin_completion_candidates_help_json_uses_help_schema() {
-    let _guard = lock_test();
-    let _env = with_completion_cache_default();
-    let root = temp_workspace("completion-candidates-help-json");
-    write_manifest(&root.join("effigy.toml"), "");
-
-    let out = run_completion_task(root, &["candidates", "--help", "--json"])
-        .expect("run completion candidates --help --json");
-
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.help.v1");
-    assert_eq!(parsed["topic"], "completion-candidates");
-}
+// `completion candidates --help --json` is pinned by help_tests: the parsed
+// help.v1 topic/usage table (help_tests/json_contract_tests) plus the rendered
+// precedence case in help_tests/precedence_tests.

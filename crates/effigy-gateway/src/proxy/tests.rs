@@ -58,86 +58,42 @@ fn connection_listed_headers_stripped() {
 }
 
 #[test]
-fn forwarding_headers_added() {
-    let mut headers = hyper::HeaderMap::new();
+fn forwarding_headers_record_peer_proto_and_append() {
     let peer: SocketAddr = "192.168.1.100:54321".parse().unwrap();
 
-    add_forwarding_headers(&mut headers, "myapp.test", peer, false);
-
+    let mut http = hyper::HeaderMap::new();
+    add_forwarding_headers(&mut http, "myapp.test", peer, false);
     assert_eq!(
-        headers.get("x-forwarded-for").unwrap().to_str().unwrap(),
+        http.get("x-forwarded-for").unwrap().to_str().unwrap(),
         "192.168.1.100"
     );
     assert_eq!(
-        headers.get("x-forwarded-host").unwrap().to_str().unwrap(),
+        http.get("x-forwarded-host").unwrap().to_str().unwrap(),
         "myapp.test"
     );
     assert_eq!(
-        headers.get("x-forwarded-proto").unwrap().to_str().unwrap(),
+        http.get("x-forwarded-proto").unwrap().to_str().unwrap(),
         "http"
     );
     assert_eq!(
-        headers.get("x-real-ip").unwrap().to_str().unwrap(),
+        http.get("x-real-ip").unwrap().to_str().unwrap(),
         "192.168.1.100"
     );
-}
 
-#[test]
-fn forwarding_headers_mark_https_when_requested() {
-    let mut headers = hyper::HeaderMap::new();
-    let peer: SocketAddr = "192.168.1.100:54321".parse().unwrap();
-
-    add_forwarding_headers(&mut headers, "myapp.test", peer, true);
-
+    let mut https = hyper::HeaderMap::new();
+    add_forwarding_headers(&mut https, "myapp.test", peer, true);
     assert_eq!(
-        headers.get("x-forwarded-proto").unwrap().to_str().unwrap(),
+        https.get("x-forwarded-proto").unwrap().to_str().unwrap(),
         "https"
     );
-}
 
-#[test]
-fn forwarding_headers_append_to_existing() {
-    let mut headers = hyper::HeaderMap::new();
-    headers.insert("x-forwarded-for", HeaderValue::from_static("10.0.0.1"));
-    let peer: SocketAddr = "192.168.1.100:54321".parse().unwrap();
-
-    add_forwarding_headers(&mut headers, "myapp.test", peer, false);
-
+    let mut chained = hyper::HeaderMap::new();
+    chained.insert("x-forwarded-for", HeaderValue::from_static("10.0.0.1"));
+    add_forwarding_headers(&mut chained, "myapp.test", peer, false);
     assert_eq!(
-        headers.get("x-forwarded-for").unwrap().to_str().unwrap(),
+        chained.get("x-forwarded-for").unwrap().to_str().unwrap(),
         "10.0.0.1, 192.168.1.100"
     );
-}
-
-#[test]
-fn websocket_upgrade_detected() {
-    let req = Request::builder()
-        .header("upgrade", "websocket")
-        .header("connection", "Upgrade")
-        .body(Empty::<Bytes>::new())
-        .unwrap();
-    let upgrade_val = req
-        .headers()
-        .get(UPGRADE)
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.eq_ignore_ascii_case("websocket"))
-        .unwrap_or(false);
-    assert!(upgrade_val);
-}
-
-#[test]
-fn websocket_upgrade_not_detected_for_normal_request() {
-    let req = Request::builder()
-        .header("content-type", "text/html")
-        .body(Empty::<Bytes>::new())
-        .unwrap();
-    let upgrade_val = req
-        .headers()
-        .get(UPGRADE)
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.eq_ignore_ascii_case("websocket"))
-        .unwrap_or(false);
-    assert!(!upgrade_val);
 }
 
 #[test]
@@ -187,11 +143,7 @@ fn no_route_response_names_the_domain_and_its_manifest_entry() {
 }
 
 #[test]
-fn http_route_redirects_to_https_when_tls_is_enabled() {
-    let req = Request::builder()
-        .uri("/admin?tab=users")
-        .body(Empty::<Bytes>::new())
-        .unwrap();
+fn http_to_https_redirect_depends_on_request_scheme() {
     let route = Route {
         domain: "myapp.test".to_owned(),
         target: Some("127.0.0.1:41002".to_owned()),
@@ -209,9 +161,12 @@ fn http_route_redirects_to_https_when_tls_is_enabled() {
         ..ProxyConfig::default()
     };
 
+    let http = Request::builder()
+        .uri("/admin?tab=users")
+        .body(Empty::<Bytes>::new())
+        .unwrap();
     let response =
-        maybe_redirect_http_to_https(&req, &route, &config, false).expect("should redirect");
-
+        maybe_redirect_http_to_https(&http, &route, &config, false).expect("should redirect");
     assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT);
     assert_eq!(
         response
@@ -222,30 +177,125 @@ fn http_route_redirects_to_https_when_tls_is_enabled() {
             .unwrap(),
         "https://myapp.test/admin?tab=users"
     );
-}
 
-#[test]
-fn https_route_does_not_redirect_when_request_is_already_https() {
-    let req = Request::builder()
+    let https = Request::builder()
         .uri("/")
         .body(Empty::<Bytes>::new())
         .unwrap();
-    let route = Route {
-        domain: "myapp.test".to_owned(),
-        target: Some("127.0.0.1:41002".to_owned()),
+    assert!(maybe_redirect_http_to_https(&https, &route, &config, true).is_none());
+}
+
+struct Abort(tokio::task::JoinHandle<()>);
+impl Drop for Abort {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Production `handle_request` → `is_websocket_upgrade` → `handle_websocket_upgrade`
+/// vs `forward_request`. Distinct from `strip_hop_by_hop_except_upgrade_preserves_websocket`,
+/// which only checks header preservation.
+///
+/// Upstream returns 101 when any `Upgrade` header arrives, else 200. The
+/// websocket path keeps `Upgrade`; the ordinary path strips it (Connection lists
+/// it). A case-sensitive or always-false detector fails the mixed-case 101; an
+/// always-true detector fails the h2c 200.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handle_request_routes_websocket_upgrade_by_header() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target = listener.local_addr().unwrap();
+    let _upstream = Abort(tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut buf = Vec::new();
+                let mut tmp = [0u8; 512];
+                loop {
+                    let n = match stream.read(&mut tmp).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => n,
+                    };
+                    buf.extend_from_slice(&tmp[..n]);
+                    if buf.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let head = String::from_utf8_lossy(&buf);
+                let has_upgrade = head.lines().any(|line| {
+                    line.split_once(':')
+                        .is_some_and(|(name, _)| name.eq_ignore_ascii_case("upgrade"))
+                });
+                let response = if has_upgrade {
+                    "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: upgrade\r\n\r\n"
+                } else {
+                    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nordinary"
+                };
+                let _ = stream.write_all(response.as_bytes()).await;
+            });
+        }
+    }));
+
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    crate::locks::write_tolerant(&table).upsert(Route {
+        domain: "ws.test".into(),
+        target: Some(target.to_string()),
         dns_ip: None,
         tcp_port: None,
         tcp_target: None,
-        source: RouteSource::Container,
-        project: "/tmp/project".to_owned(),
-        tls: true,
+        source: RouteSource::Task,
+        project: "/fixture".into(),
         managed_listener: None,
+        tls: false,
         registered: Utc::now(),
-    };
-    let config = ProxyConfig {
-        tls_bind_addr: Some("127.0.0.1:443".parse().unwrap()),
-        ..ProxyConfig::default()
-    };
+    });
+    let proxy_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = proxy_listener.local_addr().unwrap();
+    let (stop, shutdown) = tokio::sync::watch::channel(false);
+    let server = tokio::spawn(run_proxy_server_on(
+        proxy_listener,
+        ProxyConfig::default(),
+        table,
+        Arc::new(GatewayStats::new()),
+        shutdown,
+    ));
 
-    assert!(maybe_redirect_http_to_https(&req, &route, &config, true).is_none());
+    async fn raw_status(addr: SocketAddr, upgrade: Option<&str>) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let mut request = String::from("GET / HTTP/1.1\r\nHost: ws.test\r\n");
+        if let Some(value) = upgrade {
+            request.push_str("Connection: Upgrade\r\nUpgrade: ");
+            request.push_str(value);
+            request.push_str("\r\n");
+        }
+        request.push_str("\r\n");
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut buf = [0u8; 256];
+        let n = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut buf))
+            .await
+            .expect("proxy response")
+            .unwrap();
+        let text = std::str::from_utf8(&buf[..n]).unwrap();
+        let status = text
+            .split_whitespace()
+            .nth(1)
+            .and_then(|token| token.parse().ok())
+            .unwrap_or(0);
+        assert_ne!(status, 0, "unparseable proxy response: {text:?}");
+        status
+    }
+
+    for (label, upgrade, expected) in [
+        ("mixed-case websocket", Some("WebSocket"), 101),
+        ("missing upgrade", None, 200),
+        ("h2c", Some("h2c"), 200),
+        ("invalid value", Some("not-a-protocol"), 200),
+    ] {
+        assert_eq!(raw_status(address, upgrade).await, expected, "{label}");
+    }
+
+    stop.send(true).unwrap();
+    server.await.unwrap().unwrap();
 }

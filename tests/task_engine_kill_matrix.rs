@@ -517,10 +517,110 @@ run = "echo after >> runs.log"
     assert_eq!(leftovers, 0, "helper logs are removed after use");
 }
 
+/// One sequence cell: owned leader + grandchild, no later step, foreground
+/// gate `not-recorded`. Extra subprocess starts are the fixture owner plus
+/// those two descendants.
+fn sequence_signal_cell(step: usize, signal: i32, json: bool) {
+    let fixture = Fixture::new();
+    let steps = (0..3)
+        .map(|index| {
+            let command = if index == step {
+                "sleep 300 & echo $! > grandchild.pid; echo $$ > leader.pid; wait".to_owned()
+            } else {
+                format!("echo {index} >> effects")
+            };
+            format!(
+                "{{ id = 'step-{index}', run = {} }}",
+                toml::Value::String(command)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    fs::write(
+        fixture.repo.join("effigy.toml"),
+        format!("[tasks.hold]\nrun = [{steps}]\n"),
+    )
+    .unwrap();
+    let args = if json {
+        vec!["--json", "hold"]
+    } else {
+        vec!["hold"]
+    };
+    let mut owner = fixture.effigy(&args).spawn_owned().unwrap();
+    let cell = format!("step={step}, signal={signal}, json={json}");
+    eprintln!("sequence matrix {cell}");
+    let grandchild = fixture.read_sequence_pid("grandchild.pid", &mut owner, &cell);
+    let leader = fixture.read_sequence_pid("leader.pid", &mut owner, &cell);
+    // Ready/go barrier: the live gate names this owner, so the
+    // signal below interrupts an admitted run whose router exists
+    // instead of guessing that startup has finished.
+    let live = wait_state(&fixture, "hold", &["running"], Duration::from_secs(15));
+    assert_eq!(
+        live["current"]["pid"].as_u64(),
+        Some(u64::from(owner.id())),
+        "{cell}: the live run names its owner: {live}"
+    );
+    let run_id = live["current"]["run_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{cell}: live run id: {live}"))
+        .to_owned();
+    // SAFETY: our direct fixture child, never a pattern or foreign PID.
+    assert_eq!(unsafe { libc::kill(owner.id() as i32, signal) }, 0);
+    let exit = wait_exit(&mut owner, Duration::from_secs(40)).expect("sequence exits");
+    let output = owner.wait_with_output().expect("drain owner output");
+    {
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(
+            (exit.code(), exit.signal()),
+            (
+                (signal != libc::SIGKILL).then(|| 128 + signal),
+                (signal == libc::SIGKILL).then_some(signal),
+            ),
+            "{cell}: {output:?}"
+        );
+    }
+    if json && signal != libc::SIGKILL {
+        let envelope: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("one cancellation envelope");
+        assert_eq!(
+            envelope["error"]["details"]["steps"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+        assert_eq!(
+            envelope["error"]["details"]["failed_step"],
+            format!("step-{step}")
+        );
+    }
+    assert!(
+        wait_gone(grandchild, Duration::from_secs(30)),
+        "grandchild survived step {step}, signal {signal}, json={json}"
+    );
+    assert!(
+        wait_gone(leader, Duration::from_secs(30)),
+        "leader survived"
+    );
+    let settled = wait_foreground_settled(&fixture, "hold", Duration::from_secs(40));
+    let effects = fs::read_to_string(fixture.repo.join("effects")).unwrap_or_default();
+    assert_eq!(
+        effects.lines().count(),
+        step,
+        "{cell}: later steps must not start: {settled}"
+    );
+    assert!(
+        settled["history"].as_array().is_some_and(Vec::is_empty),
+        "{cell}: a foreground completion keeps no history: {settled}"
+    );
+    assert_run_not_recorded(&fixture, &run_id, &cell);
+}
+
 /// Each cell settles the whole tree: first and last step, INT and KILL, and
 /// one JSON cell for the cancellation envelope. Text/JSON exit, effects, env
-/// and nested-gate parity is `sequence_text_json_exit_effects_env_and_nested_gate_parity`;
-/// the four `kill_case` tests cover TERM and HUP.
+/// and nested-gate parity is `sequence_text_json_exit_effects_env_and_nested_gate_parity`.
+/// Dedicated sequence TERM/HUP cells are the two tests below. The four
+/// `kill_case` tests remain the plain-path receipts.
 #[test]
 fn sequence_signal_matrix_each_step_text_and_json_settles_the_entire_tree() {
     let cells = [
@@ -529,100 +629,22 @@ fn sequence_signal_matrix_each_step_text_and_json_settles_the_entire_tree() {
         (1, libc::SIGINT, true),
     ];
     for (step, signal, json) in cells {
-        let fixture = Fixture::new();
-        let steps = (0..3)
-            .map(|index| {
-                let command = if index == step {
-                    "sleep 300 & echo $! > grandchild.pid; echo $$ > leader.pid; wait".to_owned()
-                } else {
-                    format!("echo {index} >> effects")
-                };
-                format!(
-                    "{{ id = 'step-{index}', run = {} }}",
-                    toml::Value::String(command)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        fs::write(
-            fixture.repo.join("effigy.toml"),
-            format!("[tasks.hold]\nrun = [{steps}]\n"),
-        )
-        .unwrap();
-        let args = if json {
-            vec!["--json", "hold"]
-        } else {
-            vec!["hold"]
-        };
-        let mut owner = fixture.effigy(&args).spawn_owned().unwrap();
-        let cell = format!("step={step}, signal={signal}, json={json}");
-        eprintln!("sequence matrix {cell}");
-        let grandchild = fixture.read_sequence_pid("grandchild.pid", &mut owner, &cell);
-        let leader = fixture.read_sequence_pid("leader.pid", &mut owner, &cell);
-        // Ready/go barrier: the live gate names this owner, so the
-        // signal below interrupts an admitted run whose router exists
-        // instead of guessing that startup has finished.
-        let live = wait_state(&fixture, "hold", &["running"], Duration::from_secs(15));
-        assert_eq!(
-            live["current"]["pid"].as_u64(),
-            Some(u64::from(owner.id())),
-            "{cell}: the live run names its owner: {live}"
-        );
-        let run_id = live["current"]["run_id"]
-            .as_str()
-            .unwrap_or_else(|| panic!("{cell}: live run id: {live}"))
-            .to_owned();
-        // SAFETY: our direct fixture child, never a pattern or foreign PID.
-        assert_eq!(unsafe { libc::kill(owner.id() as i32, signal) }, 0);
-        let exit = wait_exit(&mut owner, Duration::from_secs(40)).expect("sequence exits");
-        let output = owner.wait_with_output().expect("drain owner output");
-        {
-            use std::os::unix::process::ExitStatusExt;
-            assert_eq!(
-                (exit.code(), exit.signal()),
-                (
-                    (signal != libc::SIGKILL).then(|| 128 + signal),
-                    (signal == libc::SIGKILL).then_some(signal),
-                ),
-                "{cell}: {output:?}"
-            );
-        }
-        if json && signal != libc::SIGKILL {
-            let envelope: serde_json::Value =
-                serde_json::from_slice(&output.stdout).expect("one cancellation envelope");
-            assert_eq!(
-                envelope["error"]["details"]["steps"]
-                    .as_array()
-                    .unwrap()
-                    .len(),
-                3
-            );
-            assert_eq!(
-                envelope["error"]["details"]["failed_step"],
-                format!("step-{step}")
-            );
-        }
-        assert!(
-            wait_gone(grandchild, Duration::from_secs(30)),
-            "grandchild survived step {step}, signal {signal}, json={json}"
-        );
-        assert!(
-            wait_gone(leader, Duration::from_secs(30)),
-            "leader survived"
-        );
-        let settled = wait_foreground_settled(&fixture, "hold", Duration::from_secs(40));
-        let effects = fs::read_to_string(fixture.repo.join("effects")).unwrap_or_default();
-        assert_eq!(
-            effects.lines().count(),
-            step,
-            "{cell}: later steps must not start: {settled}"
-        );
-        assert!(
-            settled["history"].as_array().is_some_and(Vec::is_empty),
-            "{cell}: a foreground completion keeps no history: {settled}"
-        );
-        assert_run_not_recorded(&fixture, &run_id, &cell);
+        sequence_signal_cell(step, signal, json);
     }
+}
+
+/// Dedicated sequence × TERM: first-step hold with a background grandchild.
+/// Extra subprocess starts: one fixture owner, its leader, and that grandchild.
+#[test]
+fn sequence_signal_matrix_term_settles_owned_descendants_and_skips_later_steps() {
+    sequence_signal_cell(0, libc::SIGTERM, false);
+}
+
+/// Dedicated sequence × HUP: first-step hold with a background grandchild.
+/// Extra subprocess starts: one fixture owner, its leader, and that grandchild.
+#[test]
+fn sequence_signal_matrix_hup_settles_owned_descendants_and_skips_later_steps() {
+    sequence_signal_cell(0, libc::SIGHUP, false);
 }
 
 /// Text and JSON agree on exit, effects, env and nested gates. The fixture

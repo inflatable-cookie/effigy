@@ -184,7 +184,7 @@ primary_service = "app"
         true,
         None,
         None,
-        Some(services.as_slice()),
+        services.as_slice(),
         None,
     );
 
@@ -297,7 +297,7 @@ primary_service = "app"
         render_digest: "shared-render".to_owned(),
     }];
 
-    let report = status_report(&policy, "containerd", true, None, Some(true), None, None);
+    let report = status_report(&policy, "containerd", true, None, Some(true), &[], None);
 
     assert!(report.success_text.contains("shared_services: 1"));
     assert!(report
@@ -931,7 +931,7 @@ primary_service = "app"
     let mut policy = load_container_policy(&root, None).expect("policy");
     policy.declared_media_mounts = vec!["storage/uploads:/var/www/html/storage/uploads".to_owned()];
 
-    let report = status_report(&policy, "containerd", true, None, None, None, None);
+    let report = status_report(&policy, "containerd", true, None, None, &[], None);
 
     assert_eq!(
         report.json["media_mounts"][0],
@@ -979,7 +979,7 @@ primary_service = "app"
         true,
         None,
         Some(true),
-        Some(services.as_slice()),
+        services.as_slice(),
         Some("NAME STATUS\napp running\n"),
     );
 
@@ -1028,7 +1028,7 @@ primary_service = "app"
         true,
         None,
         None,
-        Some(services.as_slice()),
+        services.as_slice(),
         None,
     );
 
@@ -1065,10 +1065,41 @@ primary_service = "app"
     .expect("compose");
 
     let policy = load_container_policy(&root, None).expect("policy");
-    let report = status_report(&policy, "containerd", true, None, Some(false), None, None);
+    let report = status_report(&policy, "containerd", true, None, Some(false), &[], None);
 
     assert_eq!(report.json["primary_service_exec_ready"], false);
     assert!(report
         .success_text
         .contains("primary_service_exec_ready: no"));
+}
+
+#[test]
+fn status_report_emits_an_empty_services_array_when_the_runtime_is_stopped() {
+    let root = temp_repo("status-stopped-empty-services");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let report = status_report(&policy, "containerd", false, None, None, &[], None);
+
+    assert_eq!(report.json["runtime_running"], false);
+    assert_eq!(report.json["services"], serde_json::json!([]));
+    assert!(report.success_text.contains("services:"));
+    assert!(report.success_text.contains("(none)"));
 }

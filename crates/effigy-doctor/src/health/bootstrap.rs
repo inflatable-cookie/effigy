@@ -801,12 +801,15 @@ mod tests {
         std::fs::remove_dir_all(root).ok();
     }
 
+    /// An empty install directory and a partial install (one declared
+    /// dependency present, one missing) are both missing-local-install gaps
+    /// rooted at the child, with the missing packages named in the evidence.
     #[test]
-    fn child_with_empty_local_install_is_a_gap() {
+    fn child_with_empty_or_partial_local_install_is_a_gap() {
         let root = temp_root("empty-install");
         let workspace = root.join("workspace");
         let child = workspace.join("child");
-        let manifest = manifest(&child);
+        let child_manifest = manifest(&child);
         write_workspace_root(&workspace, None);
         mark_repo(&child);
         write(
@@ -818,38 +821,29 @@ mod tests {
         // The parent provides the package the child never installed.
         install_dependency(&workspace, "left-pad");
 
-        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
+        let gap = health_js_bootstrap_gap(&child, &workspace, &child_manifest).expect("gap");
 
         assert_eq!(gap.reason, BootstrapReason::MissingLocalInstall);
         assert_eq!(gap.install_root, child);
         assert_eq!(gap.missing_dependencies, vec!["left-pad".to_owned()]);
         assert!(gap.evidence().contains("missing_deps=left-pad"));
 
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn child_with_partial_local_install_missing_a_declared_dependency_is_a_gap() {
-        let root = temp_root("partial-install");
-        let workspace = root.join("workspace");
-        let child = workspace.join("child");
-        let manifest = manifest(&child);
-        write_workspace_root(&workspace, None);
-        mark_repo(&child);
+        // A child that installed one of its two declared dependencies still
+        // misses the other one.
+        let partial = workspace.join("partial");
+        let partial_manifest = manifest(&partial);
         write(
-            &child.join("package.json"),
+            &partial.join("package.json"),
             r#"{"dependencies":{"left-pad":"1.3.0","right-pad":"1.0.0"}}"#,
         );
-        write(&child.join("bun.lock"), "");
-        // The child installed one of its two declared dependencies.
-        install_dependency(&child, "right-pad");
-        // The parent provides the missing package.
+        write(&partial.join("bun.lock"), "");
+        install_dependency(&partial, "right-pad");
         install_dependency(&workspace, "left-pad");
 
-        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
+        let gap = health_js_bootstrap_gap(&partial, &workspace, &partial_manifest).expect("gap");
 
         assert_eq!(gap.reason, BootstrapReason::MissingLocalInstall);
-        assert_eq!(gap.install_root, child);
+        assert_eq!(gap.install_root, partial);
         assert_eq!(gap.missing_dependencies, vec!["left-pad".to_owned()]);
         assert!(gap.evidence().contains("missing_deps=left-pad"));
 
@@ -1191,12 +1185,15 @@ mod tests {
         std::fs::remove_dir_all(root).ok();
     }
 
+    /// An ancestor lock without any workspace declaration and one whose
+    /// declared patterns exclude the child are both unverified-ancestor-lock
+    /// gaps rooted at the child.
     #[test]
-    fn ancestor_lock_without_workspace_membership_is_a_gap() {
+    fn ancestor_lock_without_membership_or_matching_pattern_is_a_gap() {
         let root = temp_root("foreign");
         let workspace = root.join("workspace");
         let child = workspace.join("child");
-        let manifest = manifest(&child);
+        let child_manifest = manifest(&child);
         // Parent locks and installs but never declares the child a member.
         write_workspace_root(&workspace, None);
         write(
@@ -1205,7 +1202,7 @@ mod tests {
         );
         std::fs::create_dir_all(workspace.join("node_modules")).expect("parent install");
 
-        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
+        let gap = health_js_bootstrap_gap(&child, &workspace, &child_manifest).expect("gap");
 
         assert_eq!(gap.reason, BootstrapReason::UnverifiedAncestorLock);
         assert_eq!(gap.install_root, child);
@@ -1215,35 +1212,30 @@ mod tests {
             .contains("reason=ancestor-lock-without-workspace-membership"));
         assert!(gap.remediation().contains("effigy bootstrap --path child"));
 
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn ancestor_workspace_pattern_that_excludes_the_child_is_a_gap() {
-        let root = temp_root("excluded");
-        let workspace = root.join("workspace");
-        let child = workspace.join("child");
-        let manifest = manifest(&child);
+        // A declared pattern that does not match the child excludes it too.
+        let excluded = workspace.join("excluded");
+        let excluded_manifest = manifest(&excluded);
         write_workspace_root(&workspace, Some(r#"["packages/*"]"#));
         write(
-            &child.join("package.json"),
+            &excluded.join("package.json"),
             r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
         );
-        std::fs::create_dir_all(workspace.join("node_modules")).expect("parent install");
 
-        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
-
+        let gap = health_js_bootstrap_gap(&excluded, &workspace, &excluded_manifest).expect("gap");
         assert_eq!(gap.reason, BootstrapReason::UnverifiedAncestorLock);
 
         std::fs::remove_dir_all(root).ok();
     }
 
+    /// A child with no local lock needs its own bootstrap whether or not an
+    /// ancestor could lend one: its own git boundary must not borrow the
+    /// ancestor install, and with no lock anywhere there is nothing to borrow.
     #[test]
-    fn standalone_child_with_its_own_git_boundary_needs_a_local_bootstrap() {
+    fn child_without_a_local_lock_needs_a_local_bootstrap() {
         let root = temp_root("standalone");
         let workspace = root.join("workspace");
         let child = workspace.join("child");
-        let manifest = manifest(&child);
+        let child_manifest = manifest(&child);
         write_workspace_root(&workspace, None);
         mark_repo(&child);
         write(
@@ -1254,13 +1246,32 @@ mod tests {
         // repository with no lock and must not borrow it.
         std::fs::create_dir_all(workspace.join("node_modules")).expect("ancestor install");
 
-        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
+        let gap = health_js_bootstrap_gap(&child, &workspace, &child_manifest).expect("gap");
 
         assert_eq!(gap.reason, BootstrapReason::MissingLocalLock);
         assert_eq!(gap.install_root, child);
         assert_eq!(gap.route, "child");
         assert!(gap.evidence().contains("reason=missing-local-lock"));
         assert!(gap.remediation().contains("effigy bootstrap --path child"));
+
+        // With no lock and no install anywhere — no ancestor to borrow from —
+        // the gap is the same missing-local-lock shape.
+        let bare_workspace = workspace.join("bare-ws");
+        mark_repo(&bare_workspace);
+        let bare = bare_workspace.join("child");
+        let bare_manifest = manifest(&bare);
+        write(
+            &bare.join("package.json"),
+            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+        );
+
+        let gap = health_js_bootstrap_gap(&bare, &bare_workspace, &bare_manifest).expect("gap");
+        assert_eq!(gap.reason, BootstrapReason::MissingLocalLock);
+        assert_eq!(gap.install_root, bare);
+        assert_eq!(gap.route, "child");
+        assert!(gap.lock_root.is_none());
+        assert!(gap.lock_name.is_none());
+        assert!(gap.evidence().contains("reason=missing-local-lock"));
 
         std::fs::remove_dir_all(root).ok();
     }
@@ -1338,30 +1349,6 @@ mod tests {
         );
         write(&non_js.join("bun.lock"), "");
         assert!(health_js_bootstrap_gap(&non_js, &workspace, &non_js_manifest).is_none());
-
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn child_without_any_lock_or_install_is_a_gap() {
-        let root = temp_root("no-lock");
-        let workspace = root.join("workspace");
-        let child = workspace.join("child");
-        let manifest = manifest(&child);
-        mark_repo(&workspace);
-        write(
-            &child.join("package.json"),
-            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
-        );
-
-        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
-
-        assert_eq!(gap.reason, BootstrapReason::MissingLocalLock);
-        assert_eq!(gap.install_root, child);
-        assert_eq!(gap.route, "child");
-        assert!(gap.lock_root.is_none());
-        assert!(gap.lock_name.is_none());
-        assert!(gap.evidence().contains("reason=missing-local-lock"));
 
         std::fs::remove_dir_all(root).ok();
     }

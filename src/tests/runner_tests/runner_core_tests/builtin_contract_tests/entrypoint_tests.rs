@@ -1,29 +1,12 @@
-use crate::runner::tests::prelude::{
-    assert_builtin_error_contract_case_table, assert_builtin_help_case_table, builtin_help_case,
-    builtin_shared_unknown_argument_cases,
-};
+use crate::runner::tests::prelude::{assert_builtin_help_case_table, builtin_help_case};
 
 #[test]
 fn run_manifest_task_builtin_entrypoint_help_json_contract_table() {
+    // Completion and completion-candidates `--help --json` payloads are pinned
+    // by help_tests/json_contract_tests (parsed topic/usage) and
+    // help_tests/precedence_tests (rendered candidates schema/topic); their
+    // unknown-argument contracts live in argument_tests' shared cases.
     let cases = [
-        builtin_help_case(
-            "builtin-entrypoint-completion-help-json",
-            "completion",
-            &["--help", "--json", "--wat"],
-            &[
-                "\"schema\": \"effigy.help.v1\"",
-                "\"topic\": \"completion\"",
-            ],
-        ),
-        builtin_help_case(
-            "builtin-entrypoint-completion-candidates-help-json",
-            "completion",
-            &["candidates", "--help", "--json", "--wat"],
-            &[
-                "\"schema\": \"effigy.help.v1\"",
-                "\"topic\": \"completion-candidates\"",
-            ],
-        ),
         builtin_help_case(
             "builtin-entrypoint-scan-help-json",
             "scan",
@@ -39,14 +22,4 @@ fn run_manifest_task_builtin_entrypoint_help_json_contract_table() {
     ];
 
     assert_builtin_help_case_table(&cases);
-}
-
-#[test]
-fn run_manifest_task_builtin_entrypoint_unknown_argument_contract_table() {
-    let cases = builtin_shared_unknown_argument_cases(
-        "builtin-entrypoint-completion-candidates-unknown-arg",
-        "builtin-entrypoint-scan-unknown-arg",
-    );
-
-    assert_builtin_error_contract_case_table(&cases);
 }

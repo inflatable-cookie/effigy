@@ -96,35 +96,37 @@ fn plan(runner: TestRunner, command: &str) -> TestRunnerPlan {
 
 const SCHEMA_OK: &str = "  printf '%s\\n' '{\"schema\":\"oxide.pool.describe/1\"}'\n  exit 0";
 
+/// With a usable `oxide`, both Rust suite runners lease a slot through it:
+/// nextest keeps its arguments and the plain `cargo test` fallback maps to
+/// `oxide test`.
 #[test]
-fn oxide_route_leases_nextest_when_pool_describe_reports_the_schema() {
-    let workspace = fixture("nextest");
-    let bin = fake_oxide(workspace.path(), SCHEMA_OK);
-    let _env = with_path(&bin, &[(ESCAPE_ENV, None)]);
+fn oxide_route_leases_rust_suites_when_pool_describe_reports_the_schema() {
+    for (name, runner, command, routed_command) in [
+        (
+            "nextest",
+            TestRunner::CargoNextest,
+            "cargo nextest run --workspace",
+            "oxide nextest run --workspace",
+        ),
+        (
+            "cargo-test",
+            TestRunner::CargoTest,
+            "cargo test",
+            "oxide test",
+        ),
+    ] {
+        let workspace = fixture(name);
+        let bin = fake_oxide(workspace.path(), SCHEMA_OK);
+        let _env = with_path(&bin, &[(ESCAPE_ENV, None)]);
 
-    let routed = route_rust_plan(plan(
-        TestRunner::CargoNextest,
-        "cargo nextest run --workspace",
-    ))
-    .expect("route");
-
-    assert_eq!(routed.command, "oxide nextest run --workspace");
-    assert!(
-        routed.evidence[0].contains("oxide.pool.describe/1"),
-        "{:?}",
-        routed.evidence
-    );
-}
-
-#[test]
-fn oxide_route_maps_the_cargo_test_fallback_to_oxide_test() {
-    let workspace = fixture("cargo-test");
-    let bin = fake_oxide(workspace.path(), SCHEMA_OK);
-    let _env = with_path(&bin, &[(ESCAPE_ENV, None)]);
-
-    let routed = route_rust_plan(plan(TestRunner::CargoTest, "cargo test")).expect("route");
-
-    assert_eq!(routed.command, "oxide test");
+        let routed = route_rust_plan(plan(runner, command)).expect("route");
+        assert_eq!(routed.command, routed_command, "{name}");
+        assert!(
+            routed.evidence[0].contains("oxide.pool.describe/1"),
+            "{name}: {:?}",
+            routed.evidence
+        );
+    }
 }
 
 #[test]
@@ -180,10 +182,16 @@ fn oxide_route_fails_loudly_when_pool_describe_is_unusable() {
             "  printf '%s\\n' '{\"schema\":\"oxide.pool.describe/9\"}'\n  exit 0",
             "oxide.pool.describe/9",
         ),
+        (
+            "invalid-escape",
+            "  printf '%s\\n' '{\"schema\":\"oxide.pool.describe/1\"}'\n  exit 0",
+            "must be `oxide` or `cargo`",
+        ),
     ] {
         let workspace = fixture(name);
         let bin = fake_oxide(workspace.path(), body);
-        let _env = with_path(&bin, &[(ESCAPE_ENV, None)]);
+        let escape = if name == "invalid-escape" { Some("bogus") } else { None };
+        let _env = with_path(&bin, &[(ESCAPE_ENV, escape)]);
 
         let error = route_rust_plan(plan(TestRunner::CargoNextest, "cargo nextest run"))
             .expect_err("an unusable oxide must not fall back silently");

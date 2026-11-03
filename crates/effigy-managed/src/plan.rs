@@ -556,12 +556,11 @@ run = "bun run dev"
         }
     }
 
-    /// effigy#322: a plain `[tasks.dev]` bound to an environment is a managed
-    /// session. Its own `run` is the one workload; no `concurrent` entry and
-    /// no `role = "lifecycle"` entry is required.
+    /// effigy#322: a bound environment is a session with or without its own
+    /// run, a lifecycle role, or gateway/health_wait flags.
     #[test]
-    fn a_bound_task_needs_no_concurrent_entries() {
-        let (_root, plan) = plan_for(BOUND_DEV, "dev", &[]);
+    fn bound_environment_session_shapes() {
+        let (_root_own, plan) = plan_for(BOUND_DEV, "dev", &[]);
         let plan = plan
             .expect("a bound task is a managed session")
             .expect("plan");
@@ -569,12 +568,42 @@ run = "bun run dev"
         assert_eq!(
             plan.processes.len(),
             1,
-            "the task's own run is the workload"
+            "own-run: the task's own run is the workload"
         );
         assert_eq!(plan.processes[0].name, "dev");
         assert_eq!(plan.processes[0].role, ManagedProcessRole::Standard);
         assert_eq!(plan.processes[0].run, "bun run dev");
         assert_eq!(plan.tab_order, vec!["dev".to_owned()]);
+
+        let env_only = BOUND_DEV.replace("run = \"bun run dev\"\n", "");
+        let (_root_env, plan) = plan_for(&env_only, "dev", &[]);
+        let plan = plan.expect("managed session").expect("plan");
+        assert!(
+            plan.processes.is_empty(),
+            "environment-only: no workload of its own"
+        );
+
+        let lifecycle = BOUND_DEV.replace("# BOUND_DEV_TASK_FIELDS", "container_lifecycle = true");
+        let (_root_lifecycle, plan) = plan_for(&lifecycle, "dev", &[]);
+        assert_eq!(
+            plan.expect("managed session")
+                .expect("plan")
+                .processes
+                .len(),
+            1,
+            "container_lifecycle: the environment is the binding's, not a role's"
+        );
+
+        let gateway = BOUND_DEV.replace(
+            "# BOUND_DEV_TASK_FIELDS",
+            "gateway = true\nhealth_wait = true",
+        );
+        let (_root_gateway, plan) = plan_for(&gateway, "dev", &[]);
+        let plan = plan.expect("managed session").expect("plan");
+        assert!(
+            plan.owns_environment,
+            "gateway/health_wait: a plain bound task owns its environment"
+        );
     }
 
     /// The profile's passthrough arguments reach the task's own run, minus the
@@ -588,19 +617,6 @@ run = "bun run dev"
             plan.processes[0].run.contains("'--port' '3000'"),
             "the arguments after the profile reach the run: {}",
             plan.processes[0].run
-        );
-    }
-
-    /// A bound environment with nothing to run is still a session: the
-    /// environment's host processes and services are its tabs.
-    #[test]
-    fn a_bound_environment_without_a_run_is_an_environment_only_session() {
-        let manifest = BOUND_DEV.replace("run = \"bun run dev\"\n", "");
-        let (_root, plan) = plan_for(&manifest, "dev", &[]);
-        let plan = plan.expect("managed session").expect("plan");
-        assert!(
-            plan.processes.is_empty(),
-            "an environment-only session runs no workload of its own"
         );
     }
 
@@ -618,35 +634,6 @@ run = "bun run dev"
             .expect_err("an unbound task needs concurrent entries")
             .to_string();
         assert!(error.contains("requires `concurrent"), "got: {error}");
-    }
-
-    /// `container_lifecycle = true` no longer demands a lifecycle entry: the
-    /// environment is the binding's.
-    #[test]
-    fn container_lifecycle_needs_no_lifecycle_entry() {
-        let manifest = BOUND_DEV.replace("# BOUND_DEV_TASK_FIELDS", "container_lifecycle = true");
-        let (_root, plan) = plan_for(&manifest, "dev", &[]);
-        assert!(
-            plan.expect("managed session")
-                .expect("plan")
-                .processes
-                .len()
-                == 1,
-            "the environment is the binding's, not a role's"
-        );
-    }
-
-    /// `gateway` and `health_wait` need a session that owns its environment,
-    /// which a plain bound task is.
-    #[test]
-    fn gateway_and_health_wait_need_only_an_environment_session() {
-        let manifest = BOUND_DEV.replace(
-            "# BOUND_DEV_TASK_FIELDS",
-            "gateway = true\nhealth_wait = true",
-        );
-        let (_root, plan) = plan_for(&manifest, "dev", &[]);
-        let plan = plan.expect("managed session").expect("plan");
-        assert!(plan.owns_environment);
     }
 
     /// A session with its own entries owns nothing unless it says so, so a
@@ -708,13 +695,135 @@ concurrent = [{ name = "api", run = "bun run api", after = ["database"] }]
     }
 
     #[test]
-    fn a_terminal_program_with_its_environment_is_a_session() {
-        let manifest = r#"
+    fn start_and_tab_ranks_order_processes_independently() {
+        let ranked = r#"
 [tasks.dev]
 mode = "tui"
-concurrent = [{ name = "api", run = "printf api", start = 1, tab = 1 }]
+concurrent = [
+  { name = "late-start", run = "printf late", start = 3, tab = 1 },
+  { name = "early-start", run = "printf early", start = 1, tab = 3 },
+  { name = "mid", run = "printf mid", start = 2, tab = 2 }
+]
 "#;
-        let (_root, plan) = plan_for(manifest, "dev", &[]);
-        assert!(plan.expect("managed session").is_some());
+        let (_root_ranked, plan) = plan_for(ranked, "dev", &[]);
+        let plan = plan.expect("managed session").expect("plan");
+        let names: Vec<&str> = plan
+            .processes
+            .iter()
+            .map(|process| process.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            ["early-start", "mid", "late-start"],
+            "start_rank orders process start independently of declaration order"
+        );
+        assert_eq!(
+            plan.tab_order,
+            vec![
+                "late-start".to_owned(),
+                "mid".to_owned(),
+                "early-start".to_owned()
+            ],
+            "tab_rank orders tabs independently of start_rank"
+        );
+
+        let omitted_tab = r#"
+[tasks.dev]
+mode = "tui"
+concurrent = [
+  { name = "second", run = "printf second", start = 2 },
+  { name = "first", run = "printf first", start = 1 }
+]
+"#;
+        let (_root_omitted, plan) = plan_for(omitted_tab, "dev", &[]);
+        let plan = plan.expect("managed session").expect("plan");
+        let names: Vec<&str> = plan
+            .processes
+            .iter()
+            .map(|process| process.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            ["first", "second"],
+            "omitted tab keeps start_rank process order"
+        );
+        assert_eq!(
+            plan.tab_order,
+            vec!["first".to_owned(), "second".to_owned()],
+            "omitted tab_rank follows start_rank"
+        );
+    }
+
+    #[test]
+    fn lifecycle_role_and_readiness_gates_refuse_invalid_shapes() {
+        let two_lifecycle = BOUND_DEV
+            .replace("# BOUND_DEV_TASK_FIELDS", "container_lifecycle = true")
+            .replace(
+                "run = \"bun run dev\"\n",
+                "concurrent = [\n  { name = \"one\", role = \"lifecycle\" },\n  { name = \"two\", role = \"lifecycle\" },\n]\n",
+            );
+        let (_root_two, plan) = plan_for(&two_lifecycle, "dev", &[]);
+        let error = plan.expect_err("only one lifecycle role").to_string();
+        assert!(
+            error.contains("only one `role = \"lifecycle\"` entry is supported"),
+            "two lifecycle: {error}"
+        );
+
+        let lifecycle_without_flag = BOUND_DEV.replace(
+            "run = \"bun run dev\"\n",
+            "concurrent = [{ role = \"lifecycle\" }]\n",
+        );
+        let (_root_flag, plan) = plan_for(&lifecycle_without_flag, "dev", &[]);
+        let error = plan
+            .expect_err("lifecycle requires container_lifecycle")
+            .to_string();
+        assert!(
+            error.contains("`role = \"lifecycle\"` requires `container_lifecycle = true`"),
+            "lifecycle without flag: {error}"
+        );
+
+        let empty_ready = BOUND_DEV.replace(
+            "# BOUND_DEV_TASK_FIELDS",
+            "health_wait = true\nready_message = \"   \"",
+        );
+        let (_root_empty, plan) = plan_for(&empty_ready, "dev", &[]);
+        let error = plan.expect_err("empty ready_message").to_string();
+        assert!(
+            error.contains("`ready_message` must be a non-empty string"),
+            "empty ready_message: {error}"
+        );
+
+        let ready_without_wait =
+            BOUND_DEV.replace("# BOUND_DEV_TASK_FIELDS", "ready_message = \"up\"");
+        let (_root_ready, plan) = plan_for(&ready_without_wait, "dev", &[]);
+        let error = plan
+            .expect_err("ready_message requires health_wait")
+            .to_string();
+        assert!(
+            error.contains("`ready_message` requires `health_wait = true`"),
+            "ready without wait: {error}"
+        );
+
+        let zero_timeout = BOUND_DEV.replace(
+            "# BOUND_DEV_TASK_FIELDS",
+            "health_wait = true\nhealth_wait_timeout_secs = 0",
+        );
+        let (_root_zero, plan) = plan_for(&zero_timeout, "dev", &[]);
+        let error = plan
+            .expect_err("timeout must be greater than zero")
+            .to_string();
+        assert!(
+            error.contains("`health_wait_timeout_secs` must be greater than zero"),
+            "zero timeout: {error}"
+        );
+
+        let timeout_without_wait =
+            BOUND_DEV.replace("# BOUND_DEV_TASK_FIELDS", "health_wait_timeout_secs = 30");
+        let (_root_timeout, plan) = plan_for(&timeout_without_wait, "dev", &[]);
+        let error = plan.expect_err("timeout requires health_wait").to_string();
+        assert!(
+            error.contains("`health_wait_timeout_secs` requires `health_wait = true`"),
+            "timeout without wait: {error}"
+        );
     }
 }

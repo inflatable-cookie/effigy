@@ -37,9 +37,12 @@ doctor = true
     assert_eq!(flattened_scan_findings.len(), 1);
 }
 
+/// Both scan checks share the `doctor = false` → section-omitted mapping; one
+/// workspace with both flags off asserts each check_id is absent from sections
+/// and findings (named assertions keep per-check diagnostics).
 #[test]
-fn doctor_json_contract_omits_scan_duplicate_blocks_when_doctor_flag_is_disabled() {
-    let root = temp_workspace("doctor-json-scan-duplicate-blocks-disabled");
+fn doctor_json_contract_omits_scan_checks_when_doctor_flag_is_disabled() {
+    let root = temp_workspace("doctor-json-scan-checks-disabled");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
     write_manifest(
         &root.join("effigy.toml"),
@@ -48,13 +51,25 @@ warn = 20
 high = 40
 critical = 80
 doctor = false
+
+[scan.god_files]
+warn = 10
+high = 14
+critical = 20
+doctor = false
 "#,
     );
     write_duplicate_block_file(&root.join("src/alpha.rs"), "shared", 38);
     write_duplicate_block_file(&root.join("src/beta.rs"), "shared", 38);
+    let body = (0..15)
+        .map(|idx| format!("const high_{idx} = {idx};"))
+        .collect::<Vec<String>>()
+        .join("\n");
+    fs::write(root.join("src/high.ts"), format!("{body}\n")).expect("write high");
 
     let parsed = run_doctor_json(root);
     assert_schema_v1(&parsed, "effigy.doctor.v1");
     assert_eq!(parsed["ok"], true);
     assert_scan_omitted(&parsed, "scan.duplicate-blocks");
+    assert_scan_omitted(&parsed, "scan.god-files");
 }

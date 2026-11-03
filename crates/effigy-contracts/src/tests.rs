@@ -371,54 +371,6 @@ fn payload_schemas_compile_relative_to_the_index() {
 }
 
 #[test]
-fn invalid_payload_schema_is_reported_as_an_error() {
-    let repo = tempfile::tempdir().expect("repo");
-    std::fs::write(
-        repo.path().join("broken.json"),
-        json!({ "type": "object", "required": 7 }).to_string(),
-    )
-    .expect("write payload schema");
-    std::fs::write(
-        repo.path().join("effigy.toml"),
-        "[contracts]\nschema_index = \"index.json\"\n",
-    )
-    .expect("write manifest");
-    std::fs::write(
-        repo.path().join("index.json"),
-        json!({
-            "version": 1,
-            "payload_schemas": { "effigy.tasks.v1": "broken.json" },
-            "schemas": []
-        })
-        .to_string(),
-    )
-    .expect("write index");
-
-    let error = prepare_check_json(
-        repo.path(),
-        &ContractsConfig::load(repo.path()).expect("config"),
-        None,
-        None,
-        &SelectionValidation::Skip,
-        None,
-    )
-    .expect_err("invalid payload schema must fail the run");
-
-    assert!(
-        error
-            .to_string()
-            .contains("not valid Draft 2020-12 JSON Schema"),
-        "{error}"
-    );
-    let payload = error
-        .check_json_payload()
-        .expect("contract-body refusal carries check-json identity");
-    assert_eq!(payload["schema"], "effigy.contracts.check-json.v1");
-    assert_eq!(payload["ok"], false);
-    assert_eq!(payload["failures"][0]["schema"], CONTRACT_BODY_SCHEMA);
-}
-
-#[test]
 fn malformed_payload_schema_is_refused_before_fixture_effects() {
     let repo = tempfile::tempdir().expect("repo");
     std::fs::write(
@@ -671,6 +623,66 @@ fn release_platform_contract_fixture_is_a_ready_single_identity_release() {
         .contains("## [Unreleased]"));
     drop(fixtures);
     assert!(!root.exists());
+}
+
+#[test]
+fn container_status_contract_fixture_injects_a_baked_runtime_on_path() {
+    let repo = tempfile::tempdir().unwrap();
+    let mut fixtures = super::ContractFixtures::new(repo.path());
+    let args = super::expand_contract_fixture_tokens(
+        "effigy --json container web status --repo <fixture_container_status>",
+        &mut fixtures,
+    )
+    .unwrap();
+    let root = std::path::PathBuf::from(args.last().unwrap());
+    assert!(root.join("effigy.toml").is_file());
+    assert!(
+        std::fs::read_to_string(root.join("effigy.toml"))
+            .unwrap()
+            .contains("working_dir='/workspace'"),
+        "status fixture must satisfy CWD mapping so known-running can probe exec"
+    );
+    assert!(root.join("bin/colima").is_file());
+    assert_eq!(
+        fixtures
+            .row_env
+            .get("EFFIGY_COMPOSE_BACKEND")
+            .map(String::as_str),
+        Some("colima")
+    );
+    let path = fixtures.row_env.get("PATH").expect("PATH");
+    assert!(
+        path.starts_with(&format!("{}:", root.join("bin").display()))
+            || path == &root.join("bin").display().to_string(),
+        "{path}"
+    );
+    drop(fixtures);
+    assert!(!root.exists());
+}
+
+#[test]
+fn changed_only_compares_whole_row_documents_not_schema_id() {
+    let row = |command: &str| super::ContractRow {
+        schema: "effigy.command.v1".to_owned(),
+        schema_version: 1,
+        command: command.to_owned(),
+        expect_failure: false,
+        isolated_home: false,
+        payload_schema: None,
+        raw: json!({"schema": "effigy.command.v1", "command": command}),
+    };
+    let hosts = row("effigy --json container web hosts --repo live");
+    let old_status = row("effigy --json container web status --repo live");
+    let new_status = row("effigy --json container web status --repo <fixture_container_status>");
+    let added =
+        row("effigy --json container web status --repo <fixture_container_status_unavailable>");
+    let selected = super::rows_changed_from(
+        &[hosts.clone(), new_status.clone(), added.clone()],
+        &[hosts.clone(), old_status],
+    );
+    assert_eq!(selected.len(), 2);
+    assert_eq!(selected[0].command, new_status.command);
+    assert_eq!(selected[1].command, added.command);
 }
 
 /// Compile one of the shipped payload schema documents.

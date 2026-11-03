@@ -116,80 +116,7 @@ async fn start_echo_server(port: u16) -> tokio::task::JoinHandle<()> {
 // --- DNS integration tests ---
 
 #[tokio::test]
-async fn dns_resolves_registered_domain_end_to_end() {
-    let dns_port = available_udp_port().await;
-    let config = DnsConfig {
-        bind_addr: SocketAddr::from(([127, 0, 0, 1], dns_port)),
-        tld: "test".to_string(),
-        resolve_to: std::net::Ipv4Addr::LOCALHOST,
-    };
-
-    let mut table = RouteTable::new();
-    table.upsert(test_route("myapp.test", "127.0.0.1:8080"));
-    let shared = Arc::new(RwLock::new(table));
-
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
-    // Start DNS server.
-    let dns_cache = Arc::new(effigy_gateway::dns::DnsCache::new(
-        std::time::Duration::from_secs(2),
-    ));
-    let dns_handle = tokio::spawn(run_dns_server(
-        config,
-        shared,
-        Arc::new(GatewayStats::new()),
-        dns_cache,
-        shutdown_rx,
-    ));
-
-    // Give the server a moment to bind.
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-    // Send a DNS query.
-    use hickory_proto::op::{Message, MessageType, OpCode, Query};
-    use hickory_proto::rr::{Name, RData, RecordType};
-    use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
-    use std::str::FromStr;
-
-    let mut query_msg = Message::new(42, MessageType::Query, OpCode::Query);
-    query_msg.metadata.recursion_desired = true;
-    query_msg.add_query(Query::query(
-        Name::from_str("myapp.test.").unwrap(),
-        RecordType::A,
-    ));
-
-    let query_bytes = query_msg.to_bytes().unwrap();
-
-    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    socket
-        .send_to(&query_bytes, format!("127.0.0.1:{dns_port}"))
-        .await
-        .unwrap();
-
-    let mut buf = vec![0u8; 512];
-    let (len, _) = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        socket.recv_from(&mut buf),
-    )
-    .await
-    .expect("DNS response timeout")
-    .unwrap();
-
-    let response = Message::from_bytes(&buf[..len]).unwrap();
-    assert_eq!(response.metadata.id, 42);
-    assert_eq!(response.answers.len(), 1);
-    match &response.answers[0].data {
-        RData::A(a) => assert_eq!(a.0, std::net::Ipv4Addr::LOCALHOST),
-        other => panic!("expected A record, got {other:?}"),
-    }
-
-    // Shutdown.
-    let _ = shutdown_tx.send(true);
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), dns_handle).await;
-}
-
-#[tokio::test]
-async fn dns_resolves_registered_domain_to_route_specific_ip_end_to_end() {
+async fn dns_resolves_registered_domains_end_to_end() {
     let dns_port = available_udp_port().await;
     let config = DnsConfig {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], dns_port)),
@@ -198,6 +125,7 @@ async fn dns_resolves_registered_domain_to_route_specific_ip_end_to_end() {
     };
 
     let mut table = RouteTable::new();
+    table.upsert(test_route("myapp.test", "127.0.0.1:8080"));
     table.upsert(test_route_with_dns_ip(
         "db.myapp.test",
         "127.0.0.1:5432",
@@ -216,7 +144,6 @@ async fn dns_resolves_registered_domain_to_route_specific_ip_end_to_end() {
         dns_cache,
         shutdown_rx,
     ));
-
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     use hickory_proto::op::{Message, MessageType, OpCode, Query};
@@ -224,34 +151,39 @@ async fn dns_resolves_registered_domain_to_route_specific_ip_end_to_end() {
     use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
     use std::str::FromStr;
 
-    let mut query_msg = Message::new(43, MessageType::Query, OpCode::Query);
-    query_msg.metadata.recursion_desired = true;
-    query_msg.add_query(Query::query(
-        Name::from_str("db.myapp.test.").unwrap(),
-        RecordType::A,
-    ));
-
-    let query_bytes = query_msg.to_bytes().unwrap();
-
-    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    socket
-        .send_to(&query_bytes, format!("127.0.0.1:{dns_port}"))
+    async fn query_a(dns_port: u16, id: u16, name: &str) -> Message {
+        let mut query_msg = Message::new(id, MessageType::Query, OpCode::Query);
+        query_msg.metadata.recursion_desired = true;
+        query_msg.add_query(Query::query(Name::from_str(name).unwrap(), RecordType::A));
+        let query_bytes = query_msg.to_bytes().unwrap();
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        socket
+            .send_to(&query_bytes, format!("127.0.0.1:{dns_port}"))
+            .await
+            .unwrap();
+        let mut buf = vec![0u8; 512];
+        let (len, _) = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            socket.recv_from(&mut buf),
+        )
         .await
+        .expect("DNS response timeout")
         .unwrap();
+        Message::from_bytes(&buf[..len]).unwrap()
+    }
 
-    let mut buf = vec![0u8; 512];
-    let (len, _) = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        socket.recv_from(&mut buf),
-    )
-    .await
-    .expect("DNS response timeout")
-    .unwrap();
+    let localhost = query_a(dns_port, 42, "myapp.test.").await;
+    assert_eq!(localhost.metadata.id, 42);
+    assert_eq!(localhost.answers.len(), 1);
+    match &localhost.answers[0].data {
+        RData::A(a) => assert_eq!(a.0, Ipv4Addr::LOCALHOST),
+        other => panic!("expected A record, got {other:?}"),
+    }
 
-    let response = Message::from_bytes(&buf[..len]).unwrap();
-    assert_eq!(response.metadata.id, 43);
-    assert_eq!(response.answers.len(), 1);
-    match &response.answers[0].data {
+    let route_ip = query_a(dns_port, 43, "db.myapp.test.").await;
+    assert_eq!(route_ip.metadata.id, 43);
+    assert_eq!(route_ip.answers.len(), 1);
+    match &route_ip.answers[0].data {
         RData::A(a) => assert_eq!(a.0, Ipv4Addr::new(127, 1, 0, 7)),
         other => panic!("expected A record, got {other:?}"),
     }
@@ -368,51 +300,13 @@ async fn proxy_returns_no_route_page() {
 // --- Gateway internal endpoints ──────────────────────────────────────
 
 #[tokio::test]
-async fn gateway_health_endpoint() {
-    let proxy_port = available_port().await;
-    let shared = Arc::new(RwLock::new(RouteTable::new()));
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
-    let proxy_config = ProxyConfig {
-        bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
-        tls_bind_addr: None,
-        connect_timeout: std::time::Duration::from_secs(5),
-        response_timeout: std::time::Duration::from_secs(30),
-        max_request_body: 0,
-    };
-
-    let proxy_handle = tokio::spawn(run_proxy_server(
-        proxy_config,
-        shared,
-        Arc::new(GatewayStats::new()),
-        shutdown_rx,
-    ));
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-    let client = reqwest::Client::new();
-    let response = client
-        .get(format!("http://127.0.0.1:{proxy_port}/_effigy/health"))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(body["status"], "ok");
-
-    let _ = shutdown_tx.send(true);
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
-}
-
-#[tokio::test]
-async fn gateway_routes_endpoint() {
+async fn gateway_internal_endpoints_health_routes_and_unknown() {
     let proxy_port = available_port().await;
 
     let mut table = RouteTable::new();
     table.upsert(test_route("app.test", "127.0.0.1:8080"));
     table.upsert(test_route("api.test", "127.0.0.1:3000"));
     let shared = Arc::new(RwLock::new(table));
-
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let proxy_config = ProxyConfig {
@@ -432,15 +326,23 @@ async fn gateway_routes_endpoint() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
-    let response = client
+    let health = client
+        .get(format!("http://127.0.0.1:{proxy_port}/_effigy/health"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(health.status(), 200);
+    let health_body: serde_json::Value = health.json().await.unwrap();
+    assert_eq!(health_body["status"], "ok");
+
+    let routes = client
         .get(format!("http://127.0.0.1:{proxy_port}/_effigy/routes"))
         .send()
         .await
         .unwrap();
-
-    assert_eq!(response.status(), 200);
+    assert_eq!(routes.status(), 200);
     assert_eq!(
-        response
+        routes
             .headers()
             .get("content-type")
             .unwrap()
@@ -448,51 +350,23 @@ async fn gateway_routes_endpoint() {
             .unwrap(),
         "application/json"
     );
-
-    let body: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(body["count"], 2);
-    let routes = body["routes"].as_array().unwrap();
-    let domains: Vec<&str> = routes
+    let routes_body: serde_json::Value = routes.json().await.unwrap();
+    assert_eq!(routes_body["count"], 2);
+    let domains: Vec<&str> = routes_body["routes"]
+        .as_array()
+        .unwrap()
         .iter()
         .map(|r| r["domain"].as_str().unwrap())
         .collect();
     assert!(domains.contains(&"app.test"));
     assert!(domains.contains(&"api.test"));
 
-    let _ = shutdown_tx.send(true);
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
-}
-
-#[tokio::test]
-async fn gateway_unknown_endpoint_returns_404() {
-    let proxy_port = available_port().await;
-    let shared = Arc::new(RwLock::new(RouteTable::new()));
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
-    let proxy_config = ProxyConfig {
-        bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
-        tls_bind_addr: None,
-        connect_timeout: std::time::Duration::from_secs(5),
-        response_timeout: std::time::Duration::from_secs(30),
-        max_request_body: 0,
-    };
-
-    let proxy_handle = tokio::spawn(run_proxy_server(
-        proxy_config,
-        shared,
-        Arc::new(GatewayStats::new()),
-        shutdown_rx,
-    ));
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-    let client = reqwest::Client::new();
-    let response = client
+    let unknown = client
         .get(format!("http://127.0.0.1:{proxy_port}/_effigy/nonexistent"))
         .send()
         .await
         .unwrap();
-
-    assert_eq!(response.status(), 404);
+    assert_eq!(unknown.status(), 404);
 
     let _ = shutdown_tx.send(true);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
@@ -793,7 +667,7 @@ async fn start_body_echo_server(port: u16) -> tokio::task::JoinHandle<()> {
 }
 
 #[tokio::test]
-async fn proxy_forwards_post_body() {
+async fn proxy_forwards_post_bodies() {
     let upstream_port = available_port().await;
     let proxy_port = available_port().await;
 
@@ -825,7 +699,7 @@ async fn proxy_forwards_post_body() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
-    let response = client
+    let json = client
         .post(format!("http://127.0.0.1:{proxy_port}/api/data"))
         .header("host", "myapp.test")
         .header("content-type", "application/json")
@@ -833,9 +707,8 @@ async fn proxy_forwards_post_body() {
         .send()
         .await
         .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = response.text().await.unwrap();
+    assert_eq!(json.status(), 200);
+    let body = json.text().await.unwrap();
     assert!(body.contains("method=POST"), "body: {body}");
     assert!(
         body.contains("content-type=application/json"),
@@ -847,55 +720,15 @@ async fn proxy_forwards_post_body() {
         "body: {body}"
     );
 
-    let _ = shutdown_tx.send(true);
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
-}
-
-#[tokio::test]
-async fn proxy_forwards_large_body() {
-    let upstream_port = available_port().await;
-    let proxy_port = available_port().await;
-
-    let _echo = start_body_echo_server(upstream_port).await;
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-    let mut table = RouteTable::new();
-    table.upsert(test_route(
-        "myapp.test",
-        &format!("127.0.0.1:{upstream_port}"),
-    ));
-    let shared = Arc::new(RwLock::new(table));
-
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let proxy_config = ProxyConfig {
-        bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
-        tls_bind_addr: None,
-        connect_timeout: std::time::Duration::from_secs(5),
-        response_timeout: std::time::Duration::from_secs(30),
-        max_request_body: 0,
-    };
-
-    let proxy_handle = tokio::spawn(run_proxy_server(
-        proxy_config,
-        shared,
-        Arc::new(GatewayStats::new()),
-        shutdown_rx,
-    ));
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-    // 100KB body.
-    let large_body = "x".repeat(100_000);
-    let client = reqwest::Client::new();
-    let response = client
+    let large = client
         .post(format!("http://127.0.0.1:{proxy_port}/upload"))
         .header("host", "myapp.test")
-        .body(large_body)
+        .body("x".repeat(100_000))
         .send()
         .await
         .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = response.text().await.unwrap();
+    assert_eq!(large.status(), 200);
+    let body = large.text().await.unwrap();
     assert!(
         body.contains("body-length=100000"),
         "should forward full 100KB body: {body}"

@@ -8,6 +8,20 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Fail a container activation whose declared host process cannot start, in
+  attached and detached modes alike, instead of demoting a plain (non-listener)
+  workload's start failure to a warning only the detached supervisor's own
+  output carries. An environment never reports success while its declared
+  workload never started: the refusal names the process and its cause
+  (effigy#559).
+
+- Fail a detached `container up` when a plain host workload is refused before
+  its first exec. The supervisor reports that launch on the owning client's
+  event pipe, and the activation carries the kernel's key-only diagnostic
+  instead of reporting success while the run settles failed (effigy#574). An
+  ordinary later application exit still happens after the workload started.
+  Secret classification and the argv guard are unchanged.
+
 - Redact a managed listener's quoted child output on every surface again:
   progress lines, detached text refusals and JSON withheld-route envelopes
   replace the values of secret-shaped `key=value` words with `<redacted>`
@@ -351,6 +365,42 @@ During v0.x, MINOR bumps may include breaking changes.
   committed fake-backend refusal battery runnable as
   `effigy test:qualification:acow`. Prepared, not executed: every missing GO,
   receipt, pin or identity refuses before any effect.
+
+- The task-engine signal-matrix evidence index and UNARMED real-container
+  packet (`docs/qualification/task-engine-signal-matrix/`, task effigy#579):
+  accepted #298 native Linux kill-matrix and foreign-generation credit, #236
+  RemoteExecAdapter source/caller over fake shims, #325 hook protocol, and
+  #373 legacy-shadow retirement stay mapped to their receipts; the genuine
+  gap is real-container INT/TERM/HUP/KILL through production
+  `RemoteExecAdapter` / `ComposeRemote`. The committed fake-backend battery
+  is `effigy test:qualification:task-engine-signals`. Prepared, not executed:
+  missing or wrong GO/hash/backend/ownership refuse before any native
+  subprocess, and a well-formed GO still refuses while placeholders stay
+  `UNARMED`.
+
+- The same packet's executable path and dedicated sequence TERM/HUP host
+  cells (task effigy#582): `--execute` is a real GO-bound HostCli pass after
+  exact source/candidate/packet/manifest/hash/engine/image/root admission,
+  not a structural stub; the committed packet stays unarmed and never binds
+  `queue.proofExecution`. Tests inject a labeled double for argv, one-shot
+  receipts, refusal/fault ordering and foreign refuse; a plan is never
+  execution; failure and unknown are not retry tokens. Dedicated sequence
+  TERM/HUP cases on the existing kill-matrix harness are host-source proof;
+  old #298 shared-path credit is kept as history; native Linux via
+  `linux-custody.sh` remains separately GO-gated. Prepared, not executed:
+  labeled-double control flow is not native qualification.
+
+- The same packet's HostCli identity and generation binding (task
+  effigy#585): per-cell 64-hex nonce on `EFFIGY_CUSTODY_NONCE` and helper
+  stdin, live recorded owner pid/start with bounded async signal/wait,
+  inspect and `effigy.tasks-status.v3` parse (exit 0 and a modeled
+  `not-recorded` substring are not verification), observed-generation
+  helper-kill, and failed-observe distinct from an empty inventory. Tests
+  still inject a labeled double, and also drive `HostCliDriver` through
+  owned local fake-executables; those fixtures are not a container engine.
+  The committed packet stays unarmed and `qualification: false`. Native
+  Linux sequence TERM/HUP via `linux-custody.sh` remains separately
+  GO-gated.
 
 - **A forwarded workspace command streams to its terminal outcome.** A task a
   container-mode guest asks the host to run is now a Level 1 foreground command
@@ -820,6 +870,14 @@ During v0.x, MINOR bumps may include breaking changes.
   name, such as an extra empty directory.
 
 ### Changed
+
+- Census self-test and the Cargo-route / TMPDIR hygiene detectors now prove
+  named scanner and detector claims on owned fixtures: include! / file-module
+  / tokio / unknown-gate attribution, ignored-missing uncovered, ignored-flag
+  mismatch, unrecorded vs stale Cargo routes, and bare vs hardcoded vs
+  quoted-string `mktemp`. `effigy test:qa:static-guards` runs the synthetic
+  trees; live `test:inventory`, `qa:docs:cargo-routes` and `qa:docs:mktemp`
+  stay the repository checks (effigy#591).
 
 - The Acow ordinary-Compose consumer qualification packet's warm-up
   prerequisite is now the ACTUAL r18 ordinary-Compose proof receipt
@@ -1456,6 +1514,50 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Name environment recovery commands with the CLI's `container <NAME> <verb>`
   argument order so actual sentinel admission accepts them.
+
+- `container status --json` no longer emits `services: null` when the runtime
+  is not running. A known-stopped host reports `runtime_running: false` with
+  an empty `services` array. A failed, unparsable, or otherwise unusable
+  Colima status probe fails the command with envelope `error.kind=unavailable`
+  instead of flattening uncertainty into an empty or successful payload
+  (effigy#588). The JSON contract rows for this surface now run against
+  hermetic fake-runtime fixtures.
+
+- A managed listener that fails readiness keeps that `failed` record through
+  settlement of an unpublished successor generation. A retrying supervisor
+  stopped during the next generation's admission delay no longer replaces the
+  refusal (status, diagnostic, generation) with a blank `stopped` terminal
+  (effigy#587). An explicit later activation still writes its own `starting`
+  record. HTTP 503 remains a definite terminal refusal.
+
+- Predecessor compatibility of an unpublished render takes NoPredecessor only
+  from a verified empty project listing. An unavailable inventory stays
+  Unknown and grants nothing; a quiet fixture is not an empty observation
+  (effigy#586).
+
+- A SQLite durability-write failure (`SQLITE_IOERR_FSYNC` and the sibling
+  write, directory-fsync, and atomic-write extended codes) stays
+  `unavailable` and keeps the extended code, but no longer says "nothing is
+  broken, and retrying once it answers is safe". That write is unknown, not
+  proved corrupt: do not replay the operation or run the explicit repair;
+  observations still work (effigy#580). A process-custody refusal now prints
+  the same sentence instead of a Debug tree.
+
+- A host-process restart no longer refuses while its predecessor drains. A
+  supervisor releases its gate flock only after settle has journaled the run
+  closed, so a replace that started its successor on the journal's closure
+  alone could be refused by the still-held gate and report a workload that
+  never started. The replace now waits for the gate itself within the stop's
+  own pickup budget before its successor's admission reads it (effigy#567).
+
+- Restore the `COMPOSER_HOME/vendor/bin` PATH preference for `composer global
+  exec …` deferrals on the handoff-local container branch. Dispatching the
+  rendered runtime command there (color wrapper, runtime env) meant the raw
+  `composer global exec` prefix never matched, so the child could not resolve
+  `composer` from the global vendor bin and exited 127. The preference again
+  keys on the semantic command while the rendered command remains the
+  execution text; host routing, the wrapper, secret delivery, depth and loop
+  protection are unchanged (effigy#568).
 
 - A capture pump drain commits at most one bounded 64 KiB window per stream
   instead of one durable append per pipe read. A chatty producer's full pipe

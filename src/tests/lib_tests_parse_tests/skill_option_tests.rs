@@ -2,91 +2,102 @@ use crate::tests::prelude::{
     parse_command, Command, PathBuf, SkillArgs, SkillStdioMode, SkillSubcommand, TaskInvocation,
 };
 
+/// One row per positive `skill` mapping: the tasks path form and the run
+/// forms — passthrough separation, named lookup, typed `--stdio`.
 #[test]
-fn parse_skill_tasks_requires_explicit_path() {
-    let command = parse_command(vec![
-        "skill".to_owned(),
-        "tasks".to_owned(),
-        "--path".to_owned(),
-        "/opt/skills/example".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse skill tasks");
-    assert_eq!(
-        command,
-        Command::Skill(SkillArgs {
-            subcommand: SkillSubcommand::Tasks {
-                path: PathBuf::from("/opt/skills/example"),
-            },
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_skill_run_keeps_source_target_and_passthrough_separate() {
-    let command = parse_command(vec![
-        "skill".to_owned(),
-        "run".to_owned(),
-        "--path".to_owned(),
-        "/opt/skills/example/effigy.toml".to_owned(),
-        "example/check".to_owned(),
-        "--repo".to_owned(),
-        "/work/consumer".to_owned(),
-        "--json".to_owned(),
-        "--".to_owned(),
-        "--repo".to_owned(),
-        "literal-task-arg".to_owned(),
-    ])
-    .expect("parse skill run");
-    assert_eq!(
-        command,
-        Command::Skill(SkillArgs {
-            subcommand: SkillSubcommand::Run {
-                path: Some(PathBuf::from("/opt/skills/example/effigy.toml")),
-                stdio: SkillStdioMode::Default,
-                task: TaskInvocation {
-                    name: "example/check".to_owned(),
-                    args: vec![
-                        "--".to_owned(),
-                        "--repo".to_owned(),
-                        "literal-task-arg".to_owned(),
-                    ],
+fn parse_skill_run_and_tasks_map_paths_selectors_and_stdio() {
+    let cases: &[(&[&str], SkillArgs)] = &[
+        (
+            &["skill", "tasks", "--path", "/opt/skills/example", "--json"],
+            SkillArgs {
+                subcommand: SkillSubcommand::Tasks {
+                    path: PathBuf::from("/opt/skills/example"),
                 },
-                repo_override: Some(PathBuf::from("/work/consumer")),
+                output_json: true,
             },
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_skill_run_allows_named_lookup_without_path() {
-    let command = parse_command(vec![
-        "skill".to_owned(),
-        "run".to_owned(),
-        "northstar/retired-concepts".to_owned(),
-    ])
-    .expect("parse named skill run");
-    assert_eq!(
-        command,
-        Command::Skill(SkillArgs {
-            subcommand: SkillSubcommand::Run {
-                path: None,
-                stdio: SkillStdioMode::Default,
-                task: TaskInvocation {
-                    name: "northstar/retired-concepts".to_owned(),
-                    args: Vec::new(),
+        ),
+        (
+            &[
+                "skill",
+                "run",
+                "--path",
+                "/opt/skills/example/effigy.toml",
+                "example/check",
+                "--repo",
+                "/work/consumer",
+                "--json",
+                "--",
+                "--repo",
+                "literal-task-arg",
+            ],
+            SkillArgs {
+                subcommand: SkillSubcommand::Run {
+                    path: Some(PathBuf::from("/opt/skills/example/effigy.toml")),
+                    stdio: SkillStdioMode::Default,
+                    task: TaskInvocation {
+                        name: "example/check".to_owned(),
+                        args: vec![
+                            "--".to_owned(),
+                            "--repo".to_owned(),
+                            "literal-task-arg".to_owned(),
+                        ],
+                    },
+                    repo_override: Some(PathBuf::from("/work/consumer")),
                 },
-                repo_override: None,
+                output_json: true,
             },
-            output_json: false,
-        })
-    );
+        ),
+        (
+            &["skill", "run", "northstar/retired-concepts"],
+            SkillArgs {
+                subcommand: SkillSubcommand::Run {
+                    path: None,
+                    stdio: SkillStdioMode::Default,
+                    task: TaskInvocation {
+                        name: "northstar/retired-concepts".to_owned(),
+                        args: Vec::new(),
+                    },
+                    repo_override: None,
+                },
+                output_json: false,
+            },
+        ),
+        (
+            &[
+                "skill",
+                "run",
+                "northstar/retired-concepts",
+                "--stdio",
+                "passthrough",
+            ],
+            SkillArgs {
+                subcommand: SkillSubcommand::Run {
+                    path: None,
+                    stdio: SkillStdioMode::Passthrough,
+                    task: TaskInvocation {
+                        name: "northstar/retired-concepts".to_owned(),
+                        args: Vec::new(),
+                    },
+                    repo_override: None,
+                },
+                output_json: false,
+            },
+        ),
+    ];
+    for (args, expected) in cases {
+        assert_eq!(
+            parse_command(args.iter().map(|arg| (*arg).to_owned())).expect("parse should succeed"),
+            Command::Skill(expected.clone()),
+            "{args:?}"
+        );
+    }
 }
 
+/// Skill refusals and the json×stdio incompatibility. The local `--json`
+/// conflict is detected in `parse_skill_command`; the leading-global one in
+/// `apply_global_cli_options` — two distinct branches, both kept.
 #[test]
-fn parse_skill_run_requires_a_qualified_selector_without_path() {
+fn parse_skill_refuses_unqualified_selectors_and_missing_arguments() {
     let unqualified = parse_command(vec![
         "skill".to_owned(),
         "run".to_owned(),
@@ -110,25 +121,22 @@ fn parse_skill_run_requires_a_qualified_selector_without_path() {
             "{selector}: {error}"
         );
     }
-}
 
-#[test]
-fn parse_skill_stdio_passthrough_is_typed() {
-    let command = parse_command(vec![
+    let missing_path =
+        parse_command(vec!["skill".to_owned(), "tasks".to_owned()]).expect_err("path is required");
+    assert!(missing_path.to_string().contains("requires --path"));
+    let missing_selector = parse_command(vec![
         "skill".to_owned(),
         "run".to_owned(),
-        "northstar/retired-concepts".to_owned(),
-        "--stdio".to_owned(),
-        "passthrough".to_owned(),
+        "--path".to_owned(),
+        "/opt/skills/example".to_owned(),
     ])
-    .expect("parse passthrough");
-    let Command::Skill(args) = command else {
-        panic!("expected skill command");
-    };
-    assert!(args.stdio_passthrough());
-    assert!(!args.output_json);
+    .expect_err("selector is required");
+    assert!(missing_selector
+        .to_string()
+        .contains("requires a task selector"));
 
-    let invalid = parse_command(vec![
+    let invalid_stdio = parse_command(vec![
         "skill".to_owned(),
         "run".to_owned(),
         "northstar/retired-concepts".to_owned(),
@@ -136,11 +144,11 @@ fn parse_skill_stdio_passthrough_is_typed() {
         "raw".to_owned(),
     ])
     .expect_err("--stdio only accepts passthrough");
-    assert!(invalid.to_string().contains("passthrough"), "{invalid}");
-}
+    assert!(
+        invalid_stdio.to_string().contains("passthrough"),
+        "{invalid_stdio}"
+    );
 
-#[test]
-fn parse_skill_run_rejects_json_with_stdio_passthrough_in_both_flag_positions() {
     let local = parse_command(vec![
         "skill".to_owned(),
         "run".to_owned(),
@@ -162,20 +170,4 @@ fn parse_skill_run_rejects_json_with_stdio_passthrough_in_both_flag_positions() 
     ])
     .expect_err("global --json conflicts with passthrough");
     assert!(global.to_string().contains("incompatible"), "{global}");
-}
-#[test]
-fn parse_skill_rejects_missing_path_and_selector() {
-    let missing_path =
-        parse_command(vec!["skill".to_owned(), "tasks".to_owned()]).expect_err("path is required");
-    assert!(missing_path.to_string().contains("requires --path"));
-    let missing_selector = parse_command(vec![
-        "skill".to_owned(),
-        "run".to_owned(),
-        "--path".to_owned(),
-        "/opt/skills/example".to_owned(),
-    ])
-    .expect_err("selector is required");
-    assert!(missing_selector
-        .to_string()
-        .contains("requires a task selector"));
 }

@@ -116,6 +116,9 @@
 # not rewrite a source-linked consumer lockfile. Pass the usual scope and
 # filter, for example `effigy test:focused -p effigy-deps --lib -E 'test(x)'`.
 "test:focused" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --locked --config-file tests/config/gateway-nextest.toml --user-config-file none {args} --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 }] }
+"test:audit:changelog-ui:lint" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-changelog -p effigy-ui --all-targets -- -D warnings", timeout_ms = 600000 }] }
+"test:audit:docs-policy-json-schema:lint" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-docs-policy -p effigy-json-schema --all-targets -- -D warnings", timeout_ms = 600000 }] }
+"test:audit:managed-execution:lint" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-managed -p effigy-execution --all-targets -- -D warnings", timeout_ms = 600000 }] }
 # Focused repros retain the owning durable-journal budget (600s per test).
 "test:focused:journal-heavy" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --locked --config-file tests/config/journal-heavy-nextest.toml --user-config-file none {args} --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1900000 }] }
 "test:deps:lockfile-workflows" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-deps --lib --test cargo_link --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 1800000 }] }
@@ -498,6 +501,11 @@
 "test:cli:command-behavior" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(/^command_behavior_tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 3600000 }] }
 "test:task-engine:cli" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --test documentation_coverage_tests --test changelog_tests --test bootstrap_cli_tests --no-fail-fast --retries 0 {args}", timeout_ms = 3600000 }] }
 "test:env:schema" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-env --test schema_integration --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
+# v0.15 test-value audit: scoped lint for the environment and task-model crates.
+"test:audit:env-tasks:lint" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-env -p effigy-tasks --all-targets -- -D warnings", timeout_ms = 600000 }] }
+# v0.15 test-value audit: scoped lint for execution-routing and scan-engine crates.
+"test:audit:exec-scan:lint" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-exec -p effigy-scan --all-targets -- -D warnings", timeout_ms = 600000 }] }
+"test:audit:state-data-contracts:lint" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-state -p effigy-data -p effigy-contracts --all-targets -- -D warnings", timeout_ms = 600000 }] }
 # Q-008 generic per-program fallback: config parsing, the shim's exact-argv and
 # no-recursion proofs, the CLI wiring, and the help/skill documentation condition.
 "test:programs:fallback" = { durable = true, visibility = "internal", group = "Maintenance", run = [
@@ -1074,7 +1082,7 @@
 # publishes no record outside launchd. Private fixtures and owned descriptors
 # only; no launchd registration, privileged endpoint or live gateway state.
 "test:gateway:handoff-adoption" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "gateway-handoff-adoption", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy --lib --filterset 'test(listener_handoff) | test(parse_gateway_run_accepts_listener_handoff_flag) | test(parse_gateway_run_defaults_listener_handoff_off)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
+  { id = "gateway-handoff-adoption", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy --lib --filterset 'test(listener_handoff) | test(parse_internal_gateway_run_defaults_and_handoff_flag)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
 ] }
 # User-owned gateway migration boundary (task 155): finite privilege
 # inventory, read-only readiness gate with injected setup evidence, byte-exact
@@ -1218,9 +1226,7 @@
   "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(workspace_ownership_finding_is_named_and_actionable)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
   "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(task_activation_surfaces_workspace_permission_failure)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
   "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_command_capture_until)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
-  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_manifest_task_php_app_bundle_defers_inside_container)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
-  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_manifest_task_php_app_bundle_defers_locally_inside_handoff_container)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
-  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_manifest_task_php_app_handoff_local_deferral_prefers_composer_global_bin)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_manifest_task_php_app_bundle_defers_inside_container) | test(run_manifest_task_composer_global_exec_handoff_local_deferral_resolves_the_global_vendor_bin)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
   "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_manifest_task_php_app_library_bundle_prepares_workspace_permissions_before_exec)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
   "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(cli_container_data_seed_json_reports_seed_contract)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
   "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-doctor --lib -E 'test(runtime_diagnostics_run_when_budget_already_expired)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
@@ -2053,6 +2059,16 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 
 "lint:workspace:private-qualification:kernel-fixture" = { visibility = "internal", group = "Maintenance", description = "Compile and lint only the changed native qualification helper protocol fixture.", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-kernel --features fault-injection,workspace-private-qualification --bin kernel-custody-fixture -- -D warnings", timeout_ms = 900000 }] }
 
+# Task-engine signal-matrix packet (tasks effigy#579/#582/#585): committed
+# fake-backend refusal battery, labeled-double execute control-flow, and
+# owned local HostCli fake-executable plumbing for
+# docs/qualification/task-engine-signal-matrix/ — no VM, engine, container,
+# image, install or native task. Doubles and local fixtures prove packet
+# admission, execute ordering and driver identity wiring, not native
+# closure. The packet stays UNARMED; a later GO window is separately
+# authorized. Native linux-custody.sh sequence TERM/HUP remains owed.
+"test:qualification:task-engine-signals" = { durable = true, visibility = "internal", group = "Maintenance", description = "Run the task-engine signal-matrix packet's fake-backend refusal, labeled-double execute, and local HostCli fixture boundaries; no native effects.", run = [{ run = "python3 -I -B docs/qualification/task-engine-signal-matrix/boundaries.py", timeout_ms = 300000 }] }
+
 # Fake-only proof (effigy#542) that the ordinary-Compose Colima qualification
 # launcher enforces its complete read-only entry sweep: exact network/volume
 # identity baselines, fixture-ancestor mount and symlink safety, GO/manifest
@@ -2062,8 +2078,14 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 
 # ---- Whole-suite census (effigy#555) -----------------------------------------
 # Proves scripts/test-inventory.py's reconciliation logic on embedded controls:
-# duplicate-ID detection, missing attribution, macro-generated attribution, and
-# the ignored / feature-gated / platform-gated / target-gated distinctions.
-# Pure Python, no Cargo, never runs a test body. The census route itself is
-# documented in docs/knowledge/test-assurance.md.
+# duplicate-ID detection, missing attribution, include!/file-module/macro
+# attribution, ignored / feature-gated / platform-gated / target-gated /
+# unknown-gated distinctions, and that an ignored declaration missing from
+# the collected list stays uncovered. Pure Python, no Cargo, never runs a
+# test body. The census route itself is documented in
+# docs/knowledge/test-assurance.md.
 "test:inventory" = { durable = true, visibility = "internal", group = "Maintenance", description = "Prove the test-suite census helper's reconciliation logic.", run = [{ run = "python3 scripts/test-inventory.py self-test", timeout_ms = 120000 }] }
+# Owned synthetic-tree proofs for the Cargo-route and mktemp detectors. Live
+# qa:docs:cargo-routes and qa:docs:mktemp stay the repository checks; this
+# selector never scans the real tree.
+"test:qa:static-guards" = { visibility = "internal", group = "Maintenance", description = "Prove the Cargo-route and mktemp hygiene detectors on owned synthetic trees.", run = [{ run = "python3 scripts/test_hygiene_guards.py", timeout_ms = 120000 }] }

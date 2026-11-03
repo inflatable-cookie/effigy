@@ -46,29 +46,30 @@ run = [{ rhai = "scripts/validate.rhai" }]
     assert_file_text_equals(&root.join("nested.txt"), "nested-ok");
 }
 
+/// One child-task contract for `task::run`: a prefixed catalog child runs
+/// under the child's own lock from every supported task spelling and call
+/// site — an array Rhai step naming a dot-prefixed child, a compact run
+/// object naming a colon-path child, and the same compact child invoked from
+/// inside a Rhai user function. The flat shorthand spelling is a manifest
+/// parse shape and keeps its own detector in `effigy-manifest`'s tests.
 #[test]
-fn rhai_task_run_supports_prefixed_catalog_child_tasks_without_parent_lock_conflict() {
+fn rhai_task_run_supports_prefixed_catalog_children_without_parent_lock_conflict() {
     let _guard = lock_test();
-    let root = temp_workspace("rhai-prefixed-catalog-child-task");
-    fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
+
+    let array_step = temp_workspace("rhai-prefixed-catalog-child-task");
+    write_catalog_child_fixture(&array_step, false);
     fs::write(
-        root.join("scripts/hydrate.rhai"),
+        array_step.join("scripts/hydrate.rhai"),
         r#"
 task::run("farmyard/install", [args[0]]);
 "#,
     )
     .expect("write rhai script");
     write_manifest(
-        &root.join("effigy.toml"),
+        &array_step.join("effigy.toml"),
         r#"[tasks.hydrate]
 run = [{ rhai = "scripts/hydrate.rhai" }]
 "#,
-    );
-    let farmyard = create_workspace_dir(&root, "farmyard");
-    write_catalog_tasks(
-        &farmyard,
-        Some("farmyard"),
-        &[("install", "printf %s {args} > ../installed.txt")],
     );
 
     run_manifest_task_with_cwd(
@@ -76,11 +77,96 @@ run = [{ rhai = "scripts/hydrate.rhai" }]
             name: "hydrate".to_owned(),
             args: vec!["snapshot-a".to_owned()],
         },
-        root.clone(),
+        array_step.clone(),
     )
     .expect("prefixed child task should run under its own lock");
+    assert_file_text_equals(&array_step.join("installed.txt"), "snapshot-a");
 
-    assert_file_text_equals(&root.join("installed.txt"), "snapshot-a");
+    let colon_path = temp_workspace("compact-run-object-rhai-prefixed-colon-child-task");
+    write_catalog_child_fixture(&colon_path, true);
+    fs::write(
+        colon_path.join("scripts/hydrate.rhai"),
+        r#"
+task::run("farmyard/migration:source:install-media", [args[0]]);
+"#,
+    )
+    .expect("write rhai script");
+    write_manifest(
+        &colon_path.join("effigy.toml"),
+        r#"[tasks]
+hydrate = { run = { rhai = "scripts/hydrate.rhai" }, run_in = "host" }
+"#,
+    );
+
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "hydrate".to_owned(),
+            args: vec!["snapshot-a".to_owned()],
+        },
+        colon_path.clone(),
+    )
+    .expect("prefixed colon child task should run under its own lock");
+    assert_file_text_equals(&colon_path.join("installed.txt"), "snapshot-a");
+
+    let fn_scoped = temp_workspace("compact-run-object-rhai-function-child-task");
+    write_catalog_child_fixture(&fn_scoped, true);
+    fs::write(
+        fn_scoped.join("scripts/hydrate.rhai"),
+        r#"
+fn run_task(task_name, task_args) {
+    task::run(task_name, task_args);
+}
+
+run_task("farmyard/migration:source:install-media", [args[0]]);
+"#,
+    )
+    .expect("write rhai script");
+    write_manifest(
+        &fn_scoped.join("effigy.toml"),
+        r#"[tasks]
+hydrate = { run = { rhai = "scripts/hydrate.rhai" }, run_in = "host" }
+"#,
+    );
+
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "hydrate".to_owned(),
+            args: vec!["snapshot-a".to_owned()],
+        },
+        fn_scoped.clone(),
+    )
+    .expect("child task called inside Rhai function should use child lock");
+    assert_file_text_equals(&fn_scoped.join("installed.txt"), "snapshot-a");
+}
+
+/// The catalog half of the child-task fixtures: `farmyard` with a dot-named
+/// task, or with the colon-path task and the nested-repo marker the colon
+/// fixtures declare.
+fn write_catalog_child_fixture(root: &std::path::Path, colon_task: bool) {
+    fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
+    let farmyard = create_workspace_dir(root, "farmyard");
+    if colon_task {
+        fs::write(
+            farmyard.join("Cargo.toml"),
+            "[package]\nname = \"farmyard\"\nversion = \"0.1.0\"\n",
+        )
+        .expect("write nested repo marker");
+        write_manifest(
+            &farmyard.join("effigy.toml"),
+            r#"[catalog]
+alias = "farmyard"
+
+[tasks."migration:source:install-media"]
+run = "printf %s {args} > ../installed.txt"
+"#,
+        );
+    } else {
+        write_catalog_tasks(
+            &farmyard,
+            Some("farmyard"),
+            &[("install", "printf %s {args} > ../installed.txt")],
+        );
+    }
 }
 
 #[test]
@@ -119,178 +205,6 @@ run = [{ rhai = "scripts/hydrate.rhai" }]
         root.clone(),
     )
     .expect("embedded prefixed child task should run under its own lock");
-
-    assert_file_text_equals(&root.join("installed.txt"), "snapshot-a");
-}
-
-#[test]
-fn direct_rhai_task_run_supports_prefixed_catalog_child_tasks_without_parent_lock_conflict() {
-    let _guard = lock_test();
-    let root = temp_workspace("direct-rhai-prefixed-catalog-child-task");
-    fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
-    fs::write(
-        root.join("scripts/hydrate.rhai"),
-        r#"
-task::run("farmyard/install", [args[0]]);
-"#,
-    )
-    .expect("write rhai script");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks]
-hydrate = { rhai = "scripts/hydrate.rhai" }
-"#,
-    );
-    let farmyard = create_workspace_dir(&root, "farmyard");
-    write_catalog_tasks(
-        &farmyard,
-        Some("farmyard"),
-        &[("install", "printf %s {args} > ../installed.txt")],
-    );
-
-    run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "hydrate".to_owned(),
-            args: vec!["snapshot-a".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("direct Rhai prefixed child task should run under its own lock");
-
-    assert_file_text_equals(&root.join("installed.txt"), "snapshot-a");
-}
-
-#[test]
-fn compact_run_object_rhai_task_run_supports_prefixed_catalog_child_tasks_without_parent_lock_conflict(
-) {
-    let _guard = lock_test();
-    let root = temp_workspace("compact-run-object-rhai-prefixed-catalog-child-task");
-    fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
-    fs::write(
-        root.join("scripts/hydrate.rhai"),
-        r#"
-task::run("farmyard/install", [args[0]]);
-"#,
-    )
-    .expect("write rhai script");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks]
-hydrate = { run = { rhai = "scripts/hydrate.rhai" }, run_in = "host" }
-"#,
-    );
-    let farmyard = create_workspace_dir(&root, "farmyard");
-    write_catalog_tasks(
-        &farmyard,
-        Some("farmyard"),
-        &[("install", "printf %s {args} > ../installed.txt")],
-    );
-
-    run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "hydrate".to_owned(),
-            args: vec!["snapshot-a".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("compact run-object Rhai prefixed child task should run under its own lock");
-
-    assert_file_text_equals(&root.join("installed.txt"), "snapshot-a");
-}
-
-#[test]
-fn compact_run_object_rhai_task_run_supports_prefixed_colon_catalog_child_tasks_without_parent_lock_conflict(
-) {
-    let _guard = lock_test();
-    let root = temp_workspace("compact-run-object-rhai-prefixed-colon-child-task");
-    fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
-    fs::write(
-        root.join("scripts/hydrate.rhai"),
-        r#"
-task::run("farmyard/migration:source:install-media", [args[0]]);
-"#,
-    )
-    .expect("write rhai script");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks]
-hydrate = { run = { rhai = "scripts/hydrate.rhai" }, run_in = "host" }
-"#,
-    );
-    let farmyard = create_workspace_dir(&root, "farmyard");
-    fs::write(
-        farmyard.join("Cargo.toml"),
-        "[package]\nname = \"farmyard\"\nversion = \"0.1.0\"\n",
-    )
-    .expect("write nested repo marker");
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        r#"[catalog]
-alias = "farmyard"
-
-[tasks."migration:source:install-media"]
-run = "printf %s {args} > ../installed.txt"
-"#,
-    );
-
-    run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "hydrate".to_owned(),
-            args: vec!["snapshot-a".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("prefixed colon child task should run under its own lock");
-
-    assert_file_text_equals(&root.join("installed.txt"), "snapshot-a");
-}
-
-#[test]
-fn compact_run_object_rhai_task_run_inside_user_function_uses_requested_child_task_lock() {
-    let _guard = lock_test();
-    let root = temp_workspace("compact-run-object-rhai-function-child-task");
-    fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
-    fs::write(
-        root.join("scripts/hydrate.rhai"),
-        r#"
-fn run_task(task_name, task_args) {
-    task::run(task_name, task_args);
-}
-
-run_task("farmyard/migration:source:install-media", [args[0]]);
-"#,
-    )
-    .expect("write rhai script");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks]
-hydrate = { run = { rhai = "scripts/hydrate.rhai" }, run_in = "host" }
-"#,
-    );
-    let farmyard = create_workspace_dir(&root, "farmyard");
-    fs::write(
-        farmyard.join("Cargo.toml"),
-        "[package]\nname = \"farmyard\"\nversion = \"0.1.0\"\n",
-    )
-    .expect("write nested repo marker");
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        r#"[catalog]
-alias = "farmyard"
-
-[tasks."migration:source:install-media"]
-run = "printf %s {args} > ../installed.txt"
-"#,
-    );
-
-    run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "hydrate".to_owned(),
-            args: vec!["snapshot-a".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("child task called inside Rhai function should use child lock");
 
     assert_file_text_equals(&root.join("installed.txt"), "snapshot-a");
 }

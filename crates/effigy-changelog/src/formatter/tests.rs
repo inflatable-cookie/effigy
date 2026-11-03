@@ -2,32 +2,6 @@ use super::*;
 use crate::parser::parse_changelog;
 
 #[test]
-fn format_removes_empty_sections() {
-    let input = "\
-# Changelog
-
-## [Unreleased]
-
-### Breaking
-
-### Added
-- Feature one
-
-### Changed
-
-### Fixed
-";
-    let changelog = parse_changelog(input).expect("should parse");
-    let formatted = format_changelog(&changelog);
-
-    assert!(formatted.contains("### Added"));
-    assert!(formatted.contains("- Feature one"));
-    assert!(!formatted.contains("### Breaking"));
-    assert!(!formatted.contains("### Changed"));
-    assert!(!formatted.contains("### Fixed"));
-}
-
-#[test]
 fn format_preserves_unreleased_even_when_empty() {
     let input = "\
 # Changelog

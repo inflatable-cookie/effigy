@@ -1023,29 +1023,24 @@ fn complete_container_up_runtime_integrations(
         }
     };
 
-    let mut warnings = plan.warnings.clone();
+    let warnings = plan.warnings.clone();
     // Listener startup shares this bring-up's one observation budget: a
-    // listener that has not opened its port when it is spent withholds its own
-    // route instead of holding the activation open (effigy#455, effigy#411).
+    // listener that has not opened its port when it is spent withholds its
+    // own route instead of holding the activation open (effigy#455,
+    // effigy#411). A host-process supervisor that fails to start is a
+    // failed activation in every mode, listener or not: the environment
+    // would otherwise report success while its declared workload never
+    // started, with nothing durable naming the failure (effigy#559).
     integration_stage(progress, 7, "starting host listeners");
     let (managed_host_listeners, managed_host_listener_failures) =
         match start_host_processes_for_container(repo_root, policy, Some(deadline)) {
             Ok(report) => (report.ready, report.failures),
-            Err(error)
-                if policy
-                    .host_processes
-                    .iter()
-                    .any(|process| process.listener.is_some()) =>
-            {
+            Err(error) => {
                 if plan.attach_mode == EffectiveAttachMode::Detached {
                     return Err(detached_activation_error(policy, error));
                 }
                 let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
                 return Err(finish_container_up_failure(error, cleanup_result));
-            }
-            Err(error) => {
-                warnings.push(format!("host-process supervisor failed to start: {error}"));
-                (Vec::new(), Vec::new())
             }
         };
 

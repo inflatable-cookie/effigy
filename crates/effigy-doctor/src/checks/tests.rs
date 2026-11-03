@@ -1,7 +1,9 @@
 use super::definitions::doctor_check_definitions;
 
+/// The built-in check registry is a stable ordered surface: the run order and
+/// the progress labels downstream surfaces parse must not drift silently.
 #[test]
-fn doctor_check_registry_order_is_stable() {
+fn doctor_check_registry_order_and_progress_labels_are_stable() {
     let order = doctor_check_definitions()
         .iter()
         .map(|check| check.name)
@@ -18,10 +20,7 @@ fn doctor_check_registry_order_is_stable() {
             "health_task",
         ]
     );
-}
 
-#[test]
-fn doctor_check_registry_progress_labels_are_stable() {
     let labels = doctor_check_definitions()
         .iter()
         .filter_map(|check| check.progress_label.map(|label| label.active))

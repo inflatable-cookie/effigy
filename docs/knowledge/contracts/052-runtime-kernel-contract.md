@@ -884,6 +884,7 @@ a transaction.
 | ENOSPC | The commit fails and the operation stops before its effect. A replace leaves the previous file intact. |
 | Busy or locked (another writer) | Wait the store's own window (30 s admission and effects, 120 s settle), then report `Unavailable` with the holder's pid and run (§6.1). Settle never reports a task failure for it. |
 | Cannot open, or permissions deny the file | `Unavailable`, naming the path it could not open. Never `Corrupt`: the file is not wrong, its environment is. |
+| Durability-write I/O (`SQLITE_IOERR_FSYNC`, `WRITE`, `DIR_FSYNC`, atomic-write codes) | `Unavailable`, keeping the SQLite extended code. The write is unknown, not proved corrupt: do not replay the operation or run the explicit repair. Observations still work. Never `Corrupt` unless a later verified integrity check says so (§6.1). |
 | Killed writer mid-transaction | SQLite rolls back the uncommitted write-ahead frames. A reader keeps the last committed snapshot without repairing anything; the next writer recovers. |
 | Perm | Mutate refuses before any effect. Observe returns `Unknown(PermissionDenied)`. |
 | Clock | Records carry wall time for display and journal sequence for order. Nothing compares wall times for authority. |
@@ -2088,7 +2089,21 @@ is gone or shows different start ticks. Exec failure is `Unknown`, never
   and Linux Docker. Apple Containers must pass before it is supported. This
   is a qualification-lane step (planner ruling, 2026-10-20): the relays,
   helper and identity resolution above have not yet run against a live
-  engine. The recorded steps, on each backend with the candidate binary:
+  engine. Task #579 prepared an UNARMED source packet at
+  `docs/qualification/task-engine-signal-matrix/` for the missing
+  real-container INT/TERM/HUP/KILL `RemoteExecAdapter` cells. Task #582
+  replaced the `--execute` stub with a GO-bound HostCli pass and added
+  dedicated sequence TERM/HUP host-fixture cells. Task #585 binds per-cell
+  64-hex nonce, live recorded owner pid/start, inspect and
+  `effigy.tasks-status.v3` parse, observed-generation helper-kill, and
+  failed-observe distinct from empty; the committed packet stays unarmed
+  and `qualification: false`. Status prepared-not-executed: packet
+  delivery, labeled-double control flow, HostCli local fake-executable
+  plumbing and host sequence fixtures are not live-engine qualification
+  and do not replace the consumer steps below. Native Linux sequence
+  TERM/HUP via `linux-custody.sh` remains separately GO-gated. The recorded
+  steps, on each
+  backend with the candidate binary:
   1. cbs: `effigy schema:refresh`, then `effigy seed`; compare the dumped
      schema files and step outcomes with v0.14.1; repeat `seed` under
      `--json` and compare `steps`.
@@ -2374,6 +2389,15 @@ A cancellation is not a refusal. A run, a gate wait or a store wait that a
 signal, a stop request or an owner exit ended renders as `cancelled by SIGINT`
 (and the like) with no category's next step, and reports `Unavailable` where a
 category is carried across a process boundary (F7).
+
+A durability-write I/O failure (`SQLITE_IOERR_FSYNC`, `SQLITE_IOERR_WRITE`,
+`SQLITE_IOERR_DIR_FSYNC`, or the atomic-write codes) stays `Unavailable` and
+keeps the SQLite extended code. It does not carry the category's "retrying
+once it answers is safe" next step: that write is unknown, not proved corrupt,
+so the next step is not to replay the operation or run the explicit repair.
+Observations still work. A generic I/O error that is not one of those codes
+keeps the ordinary Unavailable next step. Settle retries `StoreError::Io`
+only; a durability-write stays `Sqlite` so it is never blindly replayed.
 
 The same three kinds hold outside the kernel: `RunnerError::category()` maps
 every runner failure to `Refused`, `Unavailable` or `Broken` instead of
@@ -3502,7 +3526,9 @@ comparison is frozen in the plan (including "nothing running") and exposed as
 invokes **under the activation gate immediately before the one Compose apply**: it
 re-observes and requires the *exact* frozen facts, so two individually valid
 observations of different containers, a container that appeared, and a container
-that disappeared all refuse. The pre-decision read alone cannot see any of that.
+that disappeared all refuse. "Nothing running" is a verified empty project
+listing; an unavailable inventory is Unknown and grants no NoPredecessor (R3).
+The pre-decision read alone cannot see any of that.
 The intended hash must describe the canonical apply paths before publication,
 and the preflight must not materialize them there: the only
 owners that materialize a render (`policy::render::prepare`/`prepare_resolved`)

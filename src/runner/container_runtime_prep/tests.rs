@@ -1467,10 +1467,100 @@ fn a_stalled_scope_token_makes_predecessor_ownership_unknown() {
     });
 }
 
+/// Verified empty inventory for NoPredecessor. Inspect and hashing are past
+/// that short-circuit and panic if the adapter walks them.
+struct EmptyPredecessorInventory;
+
+impl super::PredecessorBackend for EmptyPredecessorInventory {
+    fn inventory(
+        &mut self,
+        _: &Path,
+        _: &effigy_containers::EffectiveContainerPolicy,
+        _: std::time::Instant,
+    ) -> effigy_kernel::observe::Observed<Vec<effigy_containers::exec::RunningComposeContainer>>
+    {
+        effigy_kernel::observe::Observed::Verified(
+            Vec::new(),
+            effigy_kernel::observe::Evidence::new("fixture inventory".into(), None).expect("fixed"),
+        )
+    }
+    fn inspect(
+        &mut self,
+        _: &Path,
+        _: &effigy_containers::EffectiveContainerPolicy,
+        _: &str,
+        _: std::time::Instant,
+    ) -> effigy_kernel::observe::Observed<Vec<u8>> {
+        panic!("NoPredecessor does not inspect a predecessor")
+    }
+    fn config_hashes(
+        &mut self,
+        _: &Path,
+        _: &effigy_containers::EffectiveContainerPolicy,
+        _: std::time::Instant,
+    ) -> Result<std::collections::BTreeMap<String, String>, RunnerError> {
+        panic!("NoPredecessor does not hash Compose config")
+    }
+}
+
+/// Unavailable inventory stays Unknown. Inspect and hashing panic if reached.
+struct UnavailablePredecessorInventory;
+
+impl super::PredecessorBackend for UnavailablePredecessorInventory {
+    fn inventory(
+        &mut self,
+        _: &Path,
+        _: &effigy_containers::EffectiveContainerPolicy,
+        _: std::time::Instant,
+    ) -> effigy_kernel::observe::Observed<Vec<effigy_containers::exec::RunningComposeContainer>>
+    {
+        effigy_kernel::observe::Observed::Unknown(
+            effigy_kernel::observe::UnknownReason::Inconsistent(
+                "fixture inventory is unavailable".into(),
+            ),
+        )
+    }
+    fn inspect(
+        &mut self,
+        _: &Path,
+        _: &effigy_containers::EffectiveContainerPolicy,
+        _: &str,
+        _: std::time::Instant,
+    ) -> effigy_kernel::observe::Observed<Vec<u8>> {
+        panic!("Unknown inventory does not inspect a predecessor")
+    }
+    fn config_hashes(
+        &mut self,
+        _: &Path,
+        _: &effigy_containers::EffectiveContainerPolicy,
+        _: std::time::Instant,
+    ) -> Result<std::collections::BTreeMap<String, String>, RunnerError> {
+        panic!("Unknown inventory does not hash Compose config")
+    }
+}
+
+fn count_preflight_staging(sealed: &super::SealedRender) -> usize {
+    let staging = sealed
+        .root()
+        .parent()
+        .and_then(|tree| tree.parent())
+        .expect("staging");
+    fs::read_dir(staging)
+        .expect("staging")
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("preflight-")
+        })
+        .count()
+}
+
 /// The production adapter, on an unpublished frozen render: it seals through the
 /// kernel owner and returns the receipt, which the environment's fenced publisher
-/// then promotes. The Compose-hash comparison needs a live stack, which this
-/// environment has not, so that half is exercised by the fake seam.
+/// then promotes. NoPredecessor is a verified empty listing from the private
+/// backend seam; a live nerdctl/Colima inventory is not a hermetic empty proof.
 #[test]
 fn the_predecessor_adapter_seals_an_unpublished_render_for_the_fenced_publisher() {
     let fixture = effigy_test_support::Fixture::new("effigy-preflight-adapter-").expect("fixture");
@@ -1499,33 +1589,27 @@ fn the_predecessor_adapter_seals_an_unpublished_render_for_the_fenced_publisher(
             std::time::Instant::now() + std::time::Duration::from_secs(30),
         )
         .expect("the adapter seals the render");
-        let observed = super::observed_predecessor_compatibility(
+        let observed = super::observed_predecessor_compatibility_with(
             &checkout,
             sealed.policy(),
             std::time::Instant::now() + std::time::Duration::from_secs(30),
+            &mut EmptyPredecessorInventory,
         );
-        let effigy_kernel::observe::Observed::Verified(compatibility, _) = observed else {
-            panic!("a project with nothing running is observed as such");
-        };
-        assert_eq!(
-            compatibility,
-            super::PredecessorCompatibility::NoPredecessor
-        );
+        match observed {
+            effigy_kernel::observe::Observed::Verified(compatibility, _) => {
+                assert_eq!(
+                    compatibility,
+                    super::PredecessorCompatibility::NoPredecessor
+                );
+            }
+            other => panic!(
+                "a verified empty listing is NoPredecessor: {}",
+                other.unproven()
+            ),
+        }
         // One seal only: the observation read the retained private tree.
-        let staging = sealed
-            .root()
-            .parent()
-            .and_then(|tree| tree.parent())
-            .expect("staging");
         assert_eq!(
-            fs::read_dir(staging)
-                .expect("staging")
-                .flatten()
-                .filter(|entry| entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("preflight-"))
-                .count(),
+            count_preflight_staging(&sealed),
             2,
             "one tree plus its lease; the observation staged nothing"
         );
@@ -1552,6 +1636,64 @@ fn the_predecessor_adapter_seals_an_unpublished_render_for_the_fenced_publisher(
             .map(|object| object.closure.digest()),
             Some(render.closure.digest())
         );
+    });
+}
+
+/// An unavailable inventory is Unknown, not inferred empty. The unpublished
+/// seal stays leased and unpublished.
+#[test]
+fn an_unavailable_predecessor_inventory_is_unknown_not_no_predecessor() {
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-preflight-unknown-inv-").expect("fixture");
+    let checkout = fixture.path().join("checkout");
+    let home = fixture.path().join("home/.effigy");
+    fs::create_dir_all(&checkout).expect("checkout");
+    fs::create_dir_all(&home).expect("home");
+    fs::create_dir_all(checkout.join(".git")).expect("git directory");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"one\"\n[containers.one]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
+    )
+    .expect("manifest");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: example:one\n",
+    )
+    .expect("compose file");
+    effigy_containers::with_test_effigy_home(&home, || {
+        let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        let render = policy.render.as_ref().expect("render");
+        let sealed = super::seal_render_for_preflight(
+            &policy,
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
+        )
+        .expect("the adapter seals the render");
+        let observed = super::observed_predecessor_compatibility_with(
+            &checkout,
+            sealed.policy(),
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
+            &mut UnavailablePredecessorInventory,
+        );
+        match observed {
+            effigy_kernel::observe::Observed::Unknown(reason) => {
+                let text = reason.to_string();
+                assert!(
+                    text.contains("fixture inventory is unavailable"),
+                    "bounded inventory cause: {text}"
+                );
+            }
+            other => panic!(
+                "unavailable inventory grants no NoPredecessor: {}",
+                other.unproven()
+            ),
+        }
+        assert_eq!(
+            count_preflight_staging(&sealed),
+            2,
+            "Unknown inventory stages no second tree"
+        );
+        assert!(sealed.receipt().matches(&render.closure));
+        assert!(!render.path.exists(), "no canonical object yet");
     });
 }
 

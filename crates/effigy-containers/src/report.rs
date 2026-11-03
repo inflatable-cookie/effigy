@@ -465,7 +465,7 @@ pub fn status_report(
     runtime_running: bool,
     health: Option<&'static str>,
     primary_service_exec_ready: Option<bool>,
-    services: Option<&[ContainerStatusService]>,
+    services: &[ContainerStatusService],
     compose_ps: Option<&str>,
 ) -> ContainerCommandReport {
     let json = json!({
@@ -528,28 +528,28 @@ pub fn status_report(
     if let Some(health) = health {
         lines.push(format!("health: {health}"));
     }
-    if let Some(services) = services {
+    if !services.is_empty() {
         lines.push(String::new());
         lines.push("services:".to_owned());
-        if services.is_empty() {
-            lines.push("(none)".to_owned());
-        } else {
-            for service in services {
-                let ports = if service.ports.is_empty() {
-                    String::new()
-                } else {
-                    format!(" [{}]", service.ports.join(", "))
-                };
-                lines.push(format!("- {}: {}{}", service.name, service.status, ports));
-                if let Some(health) = service.health.as_ref() {
-                    lines.push(format!("  health: {}", health.text()));
-                }
+        for service in services {
+            let ports = if service.ports.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", service.ports.join(", "))
+            };
+            lines.push(format!("- {}: {}{}", service.name, service.status, ports));
+            if let Some(health) = service.health.as_ref() {
+                lines.push(format!("  health: {}", health.text()));
             }
         }
     } else if let Some(compose_ps) = compose_ps {
         lines.push(String::new());
         lines.push("compose status:".to_owned());
         lines.push(compose_ps.trim().to_owned());
+    } else {
+        lines.push(String::new());
+        lines.push("services:".to_owned());
+        lines.push("(none)".to_owned());
     }
     ContainerCommandReport {
         json,

@@ -15,9 +15,9 @@ use super::process::{
 };
 use crate::{
     colima::{
-        colima_start_command, colima_status_command, colima_stop_command,
-        managed_colima_profile_drift, managed_colima_profile_resources, parse_colima_running,
-        prepare_managed_colima_profile,
+        classify_colima_observation, colima_start_command, colima_status_command,
+        colima_stop_command, managed_colima_profile_drift, managed_colima_profile_resources,
+        parse_colima_running, prepare_managed_colima_profile, ColimaObservation,
     },
     compose::{resolve_compose_backend_for_repo, resolve_host_cli_program, ComposeBackend},
     user_global_backend_preference, user_global_colima_profile, BackendId,
@@ -330,6 +330,76 @@ pub fn require_qualification_backend_running(
             .map_err(|error| runtime_readiness_error(&error))?;
     }
     Ok(false)
+}
+
+/// Status-path observation of the selected backend.
+///
+/// Lifecycle helpers still treat a failed Colima status as "not running".
+/// `container status` JSON must not flatten that into a success payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeObservation {
+    Running,
+    Stopped,
+    Unavailable { detail: String },
+}
+
+pub fn observe_runtime_backend(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<RuntimeObservation, ContainerExecError> {
+    match resolve_compose_backend_for_repo(repo_root, policy) {
+        ComposeBackend::Docker => {
+            let output = run_runtime_command_capture_for_policy_allow_failure(
+                repo_root,
+                policy,
+                &[OsString::from("ps")],
+            )?;
+            if output.status.success() {
+                Ok(RuntimeObservation::Running)
+            } else {
+                Ok(RuntimeObservation::Stopped)
+            }
+        }
+        ComposeBackend::ColimaNerdctl => observe_colima_backend(policy, repo_root),
+    }
+}
+
+fn observe_colima_backend(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<RuntimeObservation, ContainerExecError> {
+    let cmd = colima_status_command(policy);
+    let args: Vec<&str> = cmd.args.iter().map(|s| s.as_str()).collect();
+    let output = run_command_capture_allow_failure_with_deadline(
+        repo_root,
+        &cmd.program,
+        &args,
+        &cmd.label,
+        None,
+    )?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Ok(
+        match classify_colima_observation(output.status.success(), &stdout, &stderr) {
+            ColimaObservation::Running => RuntimeObservation::Running,
+            ColimaObservation::Stopped => RuntimeObservation::Stopped,
+            ColimaObservation::Unavailable => RuntimeObservation::Unavailable {
+                detail: unavailable_colima_detail(&stdout, &stderr),
+            },
+        },
+    )
+}
+
+fn unavailable_colima_detail(stdout: &str, stderr: &str) -> String {
+    let stderr = stderr.trim();
+    if !stderr.is_empty() {
+        return stderr.to_owned();
+    }
+    let stdout = stdout.trim();
+    if !stdout.is_empty() {
+        return stdout.to_owned();
+    }
+    "colima status produced no usable observation".to_owned()
 }
 
 pub fn ensure_runtime_backend_running(

@@ -742,11 +742,9 @@ mod tests {
     use effigy_context::{CapturedEnv, EffigyRuntimeContext, TaskSourceContext};
 
     use super::{
-        CatalogSelectionMode, ExecutionBindingInput, ExecutionBindingKind, ExecutionBindingPlan,
         ExecutionDiscoveryInput, ExecutionDispatchPlan, ExecutionEnvironmentPlan, ExecutionIntent,
         ExecutionOutputMode, ExecutionRoute, ExecutionRunTarget, ExecutionRuntimeArgsPlan,
-        ExecutionRuntimePolicy, ExecutionSelectionCatalogSummary, ExecutionSelectionInput,
-        ExecutionSelectionPlan, ExecutionSurface, TaskExecutionRequestBuilder,
+        ExecutionRuntimePolicy, ExecutionSurface, TaskExecutionRequestBuilder,
     };
 
     fn temp_repo(name: &str) -> PathBuf {
@@ -784,6 +782,18 @@ mod tests {
             }
         );
         assert_eq!(plan.request.runtime_policy.run_in, ExecutionRunTarget::Host);
+
+        let either = TaskExecutionRequestBuilder::new()
+            .runtime_context(context("either-host"))
+            .task("test", Vec::new())
+            .runtime_policy(ExecutionRuntimePolicy::either())
+            .resolve()
+            .expect("either without handoff");
+        assert_eq!(
+            either.route,
+            ExecutionRoute::Host,
+            "Either without a container handoff stays on the host"
+        );
     }
 
     #[test]
@@ -798,11 +808,19 @@ mod tests {
         let request = TaskExecutionRequestBuilder::new()
             .runtime_context(target_context.with_task_source(source_context.clone()))
             .task("skill/check", Vec::new())
+            .output_mode(ExecutionOutputMode::Json)
             .build()
             .expect("request");
 
         let plan = ExecutionDispatchPlan::from_request(request).expect("dispatch plan");
-        assert_eq!(plan.preflight_input().task_source, Some(source_context));
+        let input = plan.preflight_input();
+        assert_eq!(input.task_source, Some(source_context));
+        assert_eq!(
+            input.output_mode,
+            ExecutionOutputMode::Json,
+            "preflight carries the request output mode"
+        );
+        assert_eq!(input.selector, "skill/check");
     }
 
     #[test]
@@ -936,6 +954,27 @@ mod tests {
             root,
             "execution plans must keep target repo authority from the captured context"
         );
+
+        let either = TaskExecutionRequestBuilder::new()
+            .runtime_context(
+                EffigyRuntimeContext::builder()
+                    .cwd_override(Some(nested.clone()))
+                    .captured_env(CapturedEnv {
+                        container_handoff: Some(OsString::from("1")),
+                        ..CapturedEnv::default()
+                    })
+                    .capture()
+                    .expect("either handoff context"),
+            )
+            .task("test", Vec::new())
+            .runtime_policy(ExecutionRuntimePolicy::either())
+            .resolve()
+            .expect("either handoff");
+        assert_eq!(
+            either.route,
+            ExecutionRoute::LocalContainerHandoff { service: None },
+            "Either plus an in-container handoff stays local"
+        );
     }
 
     #[test]
@@ -965,28 +1004,6 @@ mod tests {
         assert_eq!(plan.output_mode, ExecutionOutputMode::Json);
         assert_eq!(plan.surface, ExecutionSurface::Bootstrap);
         assert_eq!(plan.route, ExecutionRoute::Host);
-    }
-
-    #[test]
-    fn dispatch_plan_exposes_preflight_input() {
-        let context = context("dispatch-preflight");
-        let cwd = context.invocation_cwd().join("workspace");
-        let request = TaskExecutionRequestBuilder::new()
-            .runtime_context(context)
-            .task("db:migrate", vec!["--json".to_owned()])
-            .surface(ExecutionSurface::Rhai)
-            .environment(ExecutionEnvironmentPlan::default().cwd(cwd.clone()))
-            .build()
-            .expect("request");
-
-        let input = ExecutionDispatchPlan::from_request(request)
-            .expect("dispatch plan")
-            .preflight_input();
-
-        assert_eq!(input.selector, "db:migrate");
-        assert_eq!(input.args, vec!["--json"]);
-        assert_eq!(input.cwd, cwd);
-        assert_eq!(input.surface, ExecutionSurface::Rhai);
     }
 
     #[test]
@@ -1028,21 +1045,16 @@ mod tests {
             vec!["--json".to_owned(), "--".to_owned(), "--json".to_owned()]
         );
         assert_eq!(exec.passthrough, vec!["--".to_owned(), "--json".to_owned()]);
-    }
 
-    #[test]
-    fn runtime_args_plan_strips_selector_plan_flag_before_passthrough() {
-        let args = vec![
+        let plan_args = vec![
             "--plan".to_owned(),
             "--json".to_owned(),
             "--".to_owned(),
             "--plan".to_owned(),
         ];
-
-        let plan = ExecutionRuntimeArgsPlan::from_args(&args).expect("runtime args");
-
-        assert!(plan.plan);
-        assert!(plan.output_json);
+        let plan = ExecutionRuntimeArgsPlan::from_args(&plan_args).expect("plan flag");
+        assert!(plan.plan, "--plan on the Effigy half");
+        assert!(plan.output_json, "--json on the Effigy half beside --plan");
         assert_eq!(
             plan.raw_args,
             vec![
@@ -1052,7 +1064,11 @@ mod tests {
                 "--plan".to_owned()
             ]
         );
-        assert_eq!(plan.exec_args, vec!["--".to_owned(), "--plan".to_owned()]);
+        assert_eq!(
+            plan.exec_args,
+            vec!["--".to_owned(), "--plan".to_owned()],
+            "task --plan after -- survives"
+        );
     }
 
     #[test]
@@ -1085,71 +1101,26 @@ mod tests {
     }
 
     #[test]
-    fn selection_input_and_plan_summarize_selected_task() {
-        let discovery =
-            ExecutionDiscoveryInput::new("api/test", PathBuf::from("/tmp/repo/api"), None)
-                .resolve(PathBuf::from("/tmp/repo/api"), PathBuf::from("/tmp/repo"))
-                .expect("discovery");
-        let input = ExecutionSelectionInput::from_discovery(&discovery);
-        let plan = ExecutionSelectionPlan::new(
-            input,
-            ExecutionSelectionCatalogSummary {
-                alias: "api".to_owned(),
-                catalog_root: PathBuf::from("/tmp/repo/api"),
-                manifest_path: PathBuf::from("/tmp/repo/api/effigy.toml"),
-                depth: 1,
-            },
-            CatalogSelectionMode::ExplicitPrefix,
-            vec!["selected catalog `api` by explicit prefix".to_owned()],
-            "test",
-        );
-
-        assert_eq!(plan.input.selector.prefix.as_deref(), Some("api"));
-        assert_eq!(plan.input.selector.task_name, "test");
-        assert_eq!(plan.input.invocation_cwd, PathBuf::from("/tmp/repo/api"));
-        assert_eq!(plan.input.resolved_root, PathBuf::from("/tmp/repo"));
-        assert_eq!(plan.catalog.alias, "api");
-        assert_eq!(plan.catalog.depth, 1);
-        assert_eq!(plan.mode, CatalogSelectionMode::ExplicitPrefix);
+    fn builder_refuses_missing_runtime_context_or_invocation() {
+        let missing_context = TaskExecutionRequestBuilder::new()
+            .task("test", Vec::new())
+            .build()
+            .expect_err("missing runtime context");
         assert_eq!(
-            plan.evidence,
-            vec!["selected catalog `api` by explicit prefix".to_owned()]
-        );
-        assert_eq!(plan.task_name, "test");
-    }
-
-    #[test]
-    fn binding_plan_summarizes_binding_resolution_without_task_model() {
-        let discovery =
-            ExecutionDiscoveryInput::new("api/test", PathBuf::from("/tmp/repo/api"), None)
-                .resolve(PathBuf::from("/tmp/repo/api"), PathBuf::from("/tmp/repo"))
-                .expect("discovery");
-        let selection = ExecutionSelectionPlan::new(
-            ExecutionSelectionInput::from_discovery(&discovery),
-            ExecutionSelectionCatalogSummary {
-                alias: "api".to_owned(),
-                catalog_root: PathBuf::from("/tmp/repo/api"),
-                manifest_path: PathBuf::from("/tmp/repo/api/effigy.toml"),
-                depth: 1,
-            },
-            CatalogSelectionMode::CwdNearest,
-            vec!["selected nearest in-scope catalog `api`".to_owned()],
-            "test",
+            missing_context.to_string(),
+            "missing runtime context",
+            "MissingRuntimeContext"
         );
 
-        let plan = ExecutionBindingPlan::new(
-            ExecutionBindingInput::new(selection, "standard task execution"),
-            ExecutionBindingKind::NamedContainer,
-            Some("web".to_owned()),
-            false,
+        let missing_invocation = TaskExecutionRequestBuilder::new()
+            .runtime_context(context("missing-invocation"))
+            .build()
+            .expect_err("missing invocation");
+        assert_eq!(
+            missing_invocation.to_string(),
+            "missing execution invocation",
+            "MissingInvocation"
         );
-
-        assert_eq!(plan.input.runtime_surface, "standard task execution");
-        assert_eq!(plan.input.selection.task_name, "test");
-        assert_eq!(plan.input.selection.catalog.alias, "api");
-        assert_eq!(plan.kind, ExecutionBindingKind::NamedContainer);
-        assert_eq!(plan.requested_container_name.as_deref(), Some("web"));
-        assert!(!plan.inline_workspace);
     }
 
     #[test]

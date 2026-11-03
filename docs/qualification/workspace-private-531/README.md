@@ -87,7 +87,11 @@ socket layout, successful101-byte private VM start and subsequent nerdctl stdin
 context refusal with zero builds/checks. The source-reviewed continuation keeps
 the same builder and transfers only the public recipe into a fresh private guest
 context, with actual hash/owner/readback, engine/mount checks, one-shot stages and
-at most1058seconds remaining. No extra start or budget reset is authorized.
+the previously bound1058-second ceiling. The subsequent health-admission attempt
+refused because the private profile reported not running, before any transfer,
+build or check. Its recorded completion consumed331.704124seconds; neither the
+old ceiling nor its observed remainder is a new allowance. No extra start or
+budget reset is authorized; final accounting and operator disposition are pending.
 Drive-remount history requires fresh actual health/identity admission; prior
 metadata is not current VM health. The runtime recipe remains unbuilt.
 The [Linux proposal](linux-setup.md) distinguishes canonical path spelling from
@@ -95,6 +99,19 @@ native filesystem and Vault-backing provenance; it prefers native ext4 only afte
 an explicit accepted chain, without assuming shared-folder custody semantics.
 Linux SSH uses a pinned private `-F` config and pinned public known-hosts artifact;
 no global config edit, alternate transport or credential sharing is introduced.
+
+Preparation and proof requests are different admissions. Assemble one concrete
+preparation request listing each unresolved backend fact, exact permitted probe
+or effect, owner authority, remaining numeric bound and retained-resource
+disposition. Unknown inputs stay explicitly missing; do not manufacture runtime
+inputs or request proof from partial preparation receipts. Separately authorized
+preparation may establish those facts without spending the aggregate proof.
+Only after actual backend inputs and candidate/source bindings are complete may
+the planner bind the three scoped native GOs and single aggregate invocation.
+An unavailable runtime stops its affected step and retains its receipt; a new
+request or evidence-only review does not authorize replay. The task-budget choice
+to change approach preserves this ordering and grants no budget extension,
+runtime activation, cleanup, consumer action or production-enable authority.
 
 Preparation uses the existing Effigy build surfaces:
 `build:workspace:private-qualification` builds the uninstalled candidate/utility;

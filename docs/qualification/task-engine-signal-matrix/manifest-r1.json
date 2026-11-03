@@ -1,0 +1,95 @@
+{
+  "schema": "effigy.qualification.task-engine-signal-matrix.r1",
+  "task": "effigy#585",
+  "status": "prepared-not-executed",
+  "armed": false,
+  "qualification": false,
+  "helpers": [
+    "README.md",
+    "matrix.json",
+    "packet-r1.md",
+    "manifest-r1.json",
+    "common.py",
+    "launch.py",
+    "execute.py",
+    "boundaries.py"
+  ],
+  "scratch_root": "/Volumes/Builds/scratch/effigy/579",
+  "receipts": {
+    "go": "go.txt",
+    "invocation": "invocation-receipt.json",
+    "inventory_pre": "inventory-pre.json",
+    "inventory_post": "inventory-post.json",
+    "cleanup": "cleanup-receipt.json",
+    "error": "error-receipt.json"
+  },
+  "candidate": {
+    "source_commit": "UNARMED",
+    "binary_sha256": "UNARMED",
+    "binary_path": "UNARMED",
+    "note": "placeholders stay UNARMED until a later reviewed source/binary pin after final integration; GO matching those pins can drive one HostCli pass; this launcher never installs over live Effigy and never binds queue.proofExecution"
+  },
+  "engine": {
+    "kind": "UNARMED",
+    "identity": "UNARMED",
+    "context": "UNARMED",
+    "image_digest": "UNARMED",
+    "allowed_kinds": ["colima-nerdctl", "docker-compose"],
+    "forbidden_contexts": ["effigy"],
+    "note": "engine must already be running and named in GO; image digest must already be present; missing image/runtime is a preparation prerequisite, not permission; Colima profile effigy and #531/#574 GO are refused"
+  },
+  "adapter": {
+    "type": "ComposeRemote<HostCli>",
+    "call_path": "src/runner/task_engine/remote.rs::run_remote",
+    "identity_format": "engine:full-id@context",
+    "full_id_hex_len": 64
+  },
+  "deadlines_s": {
+    "ack": 60,
+    "call": 20,
+    "grace": 3,
+    "signal_exit": 10
+  },
+  "fixture_task": {
+    "selector": "hold",
+    "run_in": "container",
+    "discard": false,
+    "workspace_private_apply": false
+  },
+  "cells": [
+    "container-int",
+    "container-term",
+    "container-hup",
+    "container-kill",
+    "container-foreign-unknown"
+  ],
+  "closure": {
+    "infer_from_owner_exit": false,
+    "infer_from_no_output": false,
+    "infer_from_label_match": false,
+    "infer_from_reused_pid": false,
+    "infer_from_empty_list": false,
+    "infer_from_fake_transport": false,
+    "require_proc_helper_identity_recheck": true,
+    "client_exit_is_remote_closure": false
+  },
+  "forbidden": [
+    "colima start",
+    "colima stop",
+    "colima restart",
+    "docker pull",
+    "docker build",
+    "nerdctl pull",
+    "nerdctl build",
+    "install:local",
+    "pkill",
+    "killall",
+    "profile effigy",
+    "task#531 GO",
+    "task#574 GO",
+    "Discard as the ordinary container task",
+    "workspace-private apply as the engine path",
+    "TEST_REMOTE",
+    "fake engine as real-engine credit"
+  ]
+}

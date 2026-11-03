@@ -153,6 +153,41 @@ struct HostProcessDependency {
     state_file: PathBuf,
 }
 
+/// A host-process supervisor's event for its owning client, on the kernel's
+/// engine-event channel (`supervise::Event::Engine`). Delivery is best
+/// effort: the same fact is also in the run journal and the process log, so
+/// a lost frame costs the bring-up its latency, never the record. Both ends
+/// are the same verified binary, so the shapes carry no version history
+/// (the managed run's wire precedent).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum HostProcessEvent {
+    /// A generation was refused or failed before any process ran, with the
+    /// spawn's own explanation as `detail`. A kernel pre-exec refusal — an
+    /// ambient value classified secret whose bytes occur in the run string,
+    /// for example — arrives here with its redacted key-only message. A
+    /// plain workload declares no readiness of its own and keeps no listener
+    /// state, so this event is the only channel that carries the failed
+    /// launch to the activation before the run settles (effigy#574).
+    LaunchFailed { process: String, detail: String },
+}
+
+/// Reports a plain workload's failed launch to the owning client before the
+/// run settles (effigy#574). Every `spawn_generation` error is decided
+/// before any process ran — the kernel reaps a blocked pre-exec child — so
+/// the detail never describes a workload that existed. The activation reads
+/// this event as its launch barrier; without it a workload that never
+/// started could only settle failed behind a bring-up that reported
+/// success.
+fn report_launch_failed(session: &EngineSession, process: &str, detail: &str) {
+    if let Ok(bytes) = serde_json::to_vec(&HostProcessEvent::LaunchFailed {
+        process: process.to_owned(),
+        detail: detail.to_owned(),
+    }) {
+        session.event(bytes);
+    }
+}
+
 /// One supervisor's latest listener observation. Unknown fields stay readable
 /// so a record written by an earlier build is read once and rewritten without
 /// its retired identity proofs.
@@ -1586,6 +1621,15 @@ fn supervise_plain_host_process(
     let mut child = match spawn_generation(run, cx, spec, &dependency_env, None) {
         Ok(child) => child,
         Err(error) => {
+            // The generation never ran: every spawn error is decided before
+            // any process exists, and a kernel pre-exec refusal (a classified
+            // ambient value whose bytes occur in the run string, for example)
+            // is among them. Report the failed launch on the owning client's
+            // event pipe before the settle, so the activation carries it
+            // instead of reporting a workload that never started
+            // (effigy#574). The plain exit record the restart policy reads
+            // is unchanged.
+            report_launch_failed(session, &spec.process_name, &error.to_string());
             append_log_line(
                 spec.output.as_ref(),
                 &format!(
@@ -2153,13 +2197,15 @@ impl Drop for ListenerReportPath {
 
 /// A completed teardown makes no endpoint or child claim: the terminal record
 /// must not retain a generation an explicit start would have to reconcile.
+///
+/// A generation that failed keeps its diagnostic. Settlement stop of an
+/// unpublished successor of the same supervisor must not replace that
+/// evidence with a blank `stopped` record (contract 005). A later activation
+/// has a different supervisor pid and writes its own `starting` record.
 fn write_terminal_listener_state(
     spec: &HostProcessRuntimeSpec,
     supervisor_pid: u32,
 ) -> Result<(), RunnerError> {
-    // A generation that failed keeps the one line that explains it. Only this
-    // supervisor's own last generation counts: a later activation writes its
-    // own `starting` record before it can fail.
     if fs::read(&spec.listener_state_file)
         .ok()
         .and_then(|raw| serde_json::from_slice::<HostListenerState>(&raw).ok())
@@ -2194,7 +2240,10 @@ fn supervise_managed_host_listener(
 
     if stop_requested(run, watch, spec) || shutdown.load(Ordering::SeqCst) {
         shutdown.store(true, Ordering::SeqCst);
-        ListenerGeneration::new(spec, supervisor_pid, "").write("stopped")?;
+        // This generation has not published `starting` yet. Settlement of a
+        // withheld start walks this path while a retrying supervisor is still
+        // in admission, and must not blank a prior `failed` record.
+        write_terminal_listener_state(spec, supervisor_pid)?;
         return Ok(GenerationEnd::Stopped);
     }
     // Publish this activation's record before waiting on dependencies or
@@ -2986,6 +3035,88 @@ mod tests {
             .all(|value| matches!(value, EnvValue::Secret(_))));
     }
 
+    /// The replace step waits for the predecessor's gate flock, not just its
+    /// journal closure: the supervisor drops its guard after settle journals
+    /// the run closed, and a successor admitted in that window is refused by
+    /// the still-held gate (effigy#567). The wait reports a drained gate
+    /// immediately, a held gate as held until the flock drops, and free again
+    /// once it does.
+    #[test]
+    fn a_replace_waits_for_the_predecessor_gate_flock_to_drain() {
+        use effigy_kernel::ctx::{CancelToken, Deadline, EffectClass, OperationContext, Placement};
+        use effigy_kernel::gate::{Gate, Wait};
+        use effigy_kernel::id::{CheckoutId, CheckoutKind};
+        use effigy_kernel::root::StateRoot;
+
+        let home = effigy_test_support::Fixture::short_home("hp-gate-").expect("fixture home");
+        let checkout = home.path().join("checkout");
+        std::fs::create_dir(&checkout).expect("checkout directory");
+        let context = OperationContext::new(
+            Deadline::Open(effigy_kernel::ctx::OpenReason::DevServer),
+            CancelToken::default(),
+            effigy_kernel::ctx::Limits {
+                capture_tail: 64 * 1024,
+                log_rotate: 1 << 20,
+                log_keep: 3,
+                line_max: 64 * 1024,
+                queue_bytes: 1 << 20,
+                probe_concurrency: 1,
+            },
+            EffectClass::Mutate,
+            Placement::Host,
+        )
+        .effects()
+        .expect("mutate context");
+        let root = StateRoot::checkout_effects(
+            &context,
+            home.path(),
+            &effigy_kernel::location::CheckoutLocation {
+                root: effigy_core::worktree_scope::checkout_root(&checkout),
+            },
+        )
+        .expect("state root");
+        let checkout_id = CheckoutId::new(CheckoutKind::Filesystem, [7; 16]);
+        let resource =
+            effigy_kernel::id::ResourceId::host_process(checkout_id, "web", "effigy", "app")
+                .expect("host process resource");
+
+        // A gate nobody holds reports free without waiting.
+        assert!(kernel_run::wait_for_predecessor_gate(
+            &root,
+            &resource,
+            Instant::now()
+        ));
+
+        // A held gate stays held for exactly as long as its flock does.
+        let guard = Gate::acquire(
+            &context,
+            &root,
+            std::slice::from_ref(&resource),
+            Wait::FailFast,
+        )
+        .expect("hold the gate");
+        assert!(!kernel_run::wait_for_predecessor_gate(
+            &root,
+            &resource,
+            Instant::now() + Duration::from_millis(120)
+        ));
+
+        // Once the predecessor releases its flock, the wait returns.
+        let (released, done) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            drop(guard);
+            let _ = released.send(());
+        });
+        assert!(kernel_run::wait_for_predecessor_gate(
+            &root,
+            &resource,
+            Instant::now() + Duration::from_secs(10)
+        ));
+        done.recv_timeout(Duration::from_secs(1))
+            .expect("the releasing thread finished");
+    }
+
     use super::*;
     use effigy_containers::{HostProcessRestart, HostProcessSignal};
     use nix::sys::signal::kill;
@@ -3063,6 +3194,113 @@ mod tests {
         .unwrap();
         wait_for_listener_activation(&path, "app", "current-activation", Duration::from_secs(1))
             .expect("a published activation record satisfies the barrier");
+    }
+
+    fn terminal_state_spec(path: PathBuf) -> HostProcessRuntimeSpec {
+        let mut spec = runtime_spec(&[]);
+        spec.listener_state_file = path;
+        spec.listener = Some(EffectiveManagedHostListener {
+            bind: "127.0.0.1:0".to_owned(),
+            readiness_path: "/health".to_owned(),
+            readiness_status: 200,
+            readiness_timeout_secs: 1,
+            declared_route_domain: "delayed.host.test".to_owned(),
+            route_domain: "delayed.host.test".to_owned(),
+            route_tls: true,
+        });
+        spec
+    }
+
+    /// Settlement of an unpublished successor must keep this supervisor's
+    /// failed generation: diagnostic, observed status and generation stay.
+    #[test]
+    fn unpublished_teardown_keeps_this_supervisors_failed_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.listener.json");
+        let pid = std::process::id();
+        let spec = terminal_state_spec(path.clone());
+        let mut failed = published_listener_state("runtime", "failed");
+        failed["supervisor_pid"] = serde_json::json!(pid);
+        failed["generation"] = serde_json::json!("losing-generation");
+        failed["route_domain"] = serde_json::json!("delayed.host.test");
+        failed["diagnostic"] = serde_json::json!(
+            "managed listener at 127.0.0.1:1 answered /health with HTTP 503 where 200 is required (status_mismatch)"
+        );
+        failed["observed_status"] = serde_json::json!(503);
+        write_private_json(&path, &failed).unwrap();
+
+        write_terminal_listener_state(&spec, pid).unwrap();
+
+        let state = read_json(&path);
+        assert_eq!(state["status"], "failed", "{state}");
+        assert_eq!(state["generation"], "losing-generation", "{state}");
+        assert_eq!(state["observed_status"], 503, "{state}");
+        assert_eq!(state["route_domain"], "delayed.host.test", "{state}");
+        assert!(
+            state["diagnostic"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("status_mismatch"),
+            "{state}"
+        );
+        assert!(
+            state["route_owner"].is_null() && state["child_pid"].is_null(),
+            "{state}"
+        );
+    }
+
+    /// A generation that never failed still settles as a blank `stopped`
+    /// record: no diagnostic, no child, no endpoint owner.
+    #[test]
+    fn unpublished_teardown_settles_a_starting_generation_as_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.listener.json");
+        let pid = std::process::id();
+        let spec = terminal_state_spec(path.clone());
+        let mut starting = published_listener_state("runtime", "starting");
+        starting["supervisor_pid"] = serde_json::json!(pid);
+        starting["generation"] = serde_json::json!("starting-generation");
+        write_private_json(&path, &starting).unwrap();
+
+        write_terminal_listener_state(&spec, pid).unwrap();
+
+        let state = read_json(&path);
+        assert_eq!(state["status"], "stopped", "{state}");
+        assert_eq!(state["generation"], "", "{state}");
+        assert!(
+            state["route_owner"].is_null() && state["child_pid"].is_null(),
+            "{state}"
+        );
+        assert!(state.get("diagnostic").is_none(), "{state}");
+        assert!(state.get("observed_status").is_none(), "{state}");
+    }
+
+    /// A later activation is a different supervisor: its teardown may replace
+    /// a previous activation's failed record with a blank terminal one.
+    #[test]
+    fn later_activation_teardown_replaces_a_previous_supervisors_failed_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.listener.json");
+        let previous = std::process::id();
+        let successor = previous.wrapping_add(1);
+        let spec = terminal_state_spec(path.clone());
+        let mut failed = published_listener_state("runtime", "failed");
+        failed["supervisor_pid"] = serde_json::json!(previous);
+        failed["generation"] = serde_json::json!("previous-failed");
+        failed["diagnostic"] = serde_json::json!("status_mismatch");
+        write_private_json(&path, &failed).unwrap();
+
+        write_terminal_listener_state(&spec, successor).unwrap();
+
+        let state = read_json(&path);
+        assert_eq!(state["status"], "stopped", "{state}");
+        assert_eq!(state["generation"], "", "{state}");
+        assert_eq!(
+            state["supervisor_pid"],
+            serde_json::json!(successor),
+            "{state}"
+        );
+        assert!(state.get("diagnostic").is_none(), "{state}");
     }
 
     #[test]
@@ -5688,31 +5926,49 @@ while True:
     /// its own group, while a live grandchild still is (effigy#336).
     #[test]
     fn host_process_leader_exit_observation_excludes_the_exited_leader() {
-        use std::os::unix::process::CommandExt;
+        use effigy_test_support::process::FixtureCommandExt;
 
         let dir = tempfile::tempdir().expect("fixture dir");
         let grandchild_file = dir.path().join("grandchild.pid");
+        // The leader owns its group and stays live (`wait`), so the
+        // observation sees both a running leader and a real grandchild before
+        // it exits. The pid is published by rename, so the observer reads a
+        // complete file or none: `printf > file` leaves an empty file between
+        // create and write, and the flake that read that window failed on an
+        // empty pid (effigy#574). The owned guard stops this exact fixture
+        // group on any exit path, assert panics included, so the sleeper pair
+        // cannot leak.
         let mut leader = std::process::Command::new("/bin/sh")
-            // The leader stays live (`wait`) so the observation sees both a
-            // running leader and a real grandchild before it exits.
             .args([
                 "-c",
-                "sleep 300 & printf '%s\\n' \"$!\" > \"$1\"; wait",
+                "sleep 300 & printf '%s\\n' \"$!\" > \"$1.tmp\" && mv \"$1.tmp\" \"$1\"; wait",
                 "sh",
             ])
             .arg(&grandchild_file)
-            .process_group(0)
-            .spawn()
+            .spawn_owned()
             .expect("leader in its own group");
         let pid = leader.id();
         wait_until("the grandchild to record its pid", || {
-            grandchild_file.exists()
+            fs::read_to_string(&grandchild_file)
+                .ok()
+                .and_then(|record| record.trim().parse::<u32>().ok())
+                .is_some()
         });
         let grandchild = fs::read_to_string(&grandchild_file)
             .expect("grandchild pid file")
             .trim()
             .parse::<u32>()
             .expect("grandchild pid");
+        // The owned leader guard stops the group only until the leader is
+        // reaped. This pid is the fixture's other owned process: stop it on
+        // every exit path, including a panic after `wait` (effigy#574).
+        struct StopPid(i32);
+        impl Drop for StopPid {
+            fn drop(&mut self) {
+                let _ = kill(Pid::from_raw(self.0), Signal::SIGKILL);
+            }
+        }
+        let _stop_grandchild = StopPid(grandchild as i32);
         assert!(
             group_members(pid).contains(&pid),
             "the running leader is a member of its own group"

@@ -8,8 +8,9 @@ use effigy_containers::{
     exec::{
         capture_running_container_stats_for_profile, colima_profile_warnings,
         compose_status_is_running, list_compose_containers_for_policy_including_stopped,
-        list_compose_containers_for_project_including_stopped, run_compose_invocation_capture,
-        runtime_backend_is_running, selected_backend_label, ContainerExecError,
+        list_compose_containers_for_project_including_stopped, observe_runtime_backend,
+        run_compose_invocation_capture, runtime_backend_is_running, selected_backend_label,
+        ContainerExecError, RuntimeObservation,
     },
     health::probe_health_status,
     health::readiness::{inspect_project_health, ServiceHealth},
@@ -55,8 +56,21 @@ pub fn run_container_status(
     // ran, `compose ps`. It never applies Compose, so the apply-time backend
     // preflight (temp-root sharing, nerdctl mounts budget) has no effect to
     // admit here and would refuse reports before their read-only operation.
-    let runtime_running = runtime_backend_is_running(&policy, repo_root)
-        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    let runtime_running = match observe_runtime_backend(&policy, repo_root) {
+        Ok(RuntimeObservation::Running) => true,
+        Ok(RuntimeObservation::Stopped) => false,
+        Ok(RuntimeObservation::Unavailable { detail }) => {
+            return Err(EffigyRuntimeError::unavailable(format!(
+                "container runtime observation is unavailable: {detail}"
+            )));
+        }
+        Err(ContainerExecError::Launch { command, error }) => {
+            return Err(EffigyRuntimeError::TaskCommandLaunch { command, error });
+        }
+        Err(error) => {
+            return Err(EffigyRuntimeError::unavailable(error.to_string()));
+        }
+    };
     let _manager_report = lifecycle_operation_report(
         repo_root,
         &policy,
@@ -106,7 +120,7 @@ pub fn run_container_status(
         runtime_running,
         health,
         primary_service_exec_ready,
-        runtime_running.then_some(services.as_slice()),
+        services.as_slice(),
         compose_ps.as_deref(),
     );
     // Compose created nothing for this project, so there is no service row to

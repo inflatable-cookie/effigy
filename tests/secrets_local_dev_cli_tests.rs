@@ -4,8 +4,8 @@ use std::fs;
 use std::process::{Command, Stdio};
 
 use effigy_secrets::{
-    local_dev_unlock_key_path, local_unlock_credential_path, LocalDevUnlockKey, SecretValue,
-    VaultPlaintextPayload, VaultSecretRecord,
+    local_dev_unlock_key_path, local_unlock_credential_path, seal_local_unlock_passphrase,
+    LocalDevUnlockKey, SecretValue, VaultPlaintextPayload, VaultSecretRecord,
 };
 
 #[test]
@@ -78,6 +78,144 @@ fn dev_key_alone_lets_doctor_report_what_it_can_read() {
         serde_json::json!(["api_token"])
     );
     assert!(!String::from_utf8_lossy(&doctor.stdout).contains("tok_local_dev"));
+}
+
+#[test]
+fn doctor_reports_a_passphrase_unlock_through_the_sealed_credential() {
+    let root = support::temp_workspace("effigy-secrets-cli", "execution");
+    let vault_path = write_fixture(&root, false);
+
+    // The custody state where the doctor's local-dev-key attempt cannot be
+    // the reported factor: the vault predates the local-dev slot, so the key
+    // file minted later cannot read it, and the credential that key sealed
+    // holds the one passphrase left. This is the state the doctor's warning
+    // names: run `effigy secrets unlock` with the passphrase to mint a new
+    // key. The companion locked state (no usable factor at all, doctor
+    // reports `locked` without an unlock) is covered by
+    // `secrets_doctor_reports_locked_vault_without_passphrase` in
+    // src/tests/runner_tests/runner_core_tests/secrets_tests.rs.
+    let local_dev_key = LocalDevUnlockKey::generate().expect("generate local-dev key");
+    let key_path = local_dev_unlock_key_path(&vault_path);
+    fs::write(&key_path, local_dev_key.expose()).expect("write local-dev key");
+    let credential =
+        seal_local_unlock_passphrase(&local_dev_key, "vault-passphrase").expect("seal credential");
+    let credential_path = local_unlock_credential_path(&vault_path);
+    fs::write(&credential_path, &credential).expect("write sealed credential");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in [&key_path, &credential_path] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+                .expect("secure local unlock file");
+        }
+    }
+
+    // All passphrase environment sources are cleared and stdin is not a terminal, so
+    // the sealed credential is the only passphrase source the doctor holds.
+    let doctor = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["secrets", "doctor", "--json"])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
+        .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
+        .env_remove("EFFIGY_SECRET_PASSPHRASE")
+        .output()
+        .expect("run doctor");
+    assert!(
+        doctor.status.success(),
+        "doctor failed: {}\nstdout: {}",
+        String::from_utf8_lossy(&doctor.stderr),
+        String::from_utf8_lossy(&doctor.stdout)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&doctor.stdout).expect("doctor json");
+    assert_eq!(json["result"]["vault_state"]["status"], "unlocked");
+    assert_eq!(json["result"]["vault_state"]["unlock"], "passphrase");
+    assert_eq!(
+        json["result"]["vault_state"]["stored_keys"],
+        serde_json::json!(["api_token"])
+    );
+    // The one warning names the stale local-dev key; the "local-dev unlock is
+    // not configured" warning must not appear, because the key file exists.
+    let warnings = json["result"]["warnings"].as_array().expect("warnings");
+    assert_eq!(warnings.len(), 1, "warnings: {warnings:?}");
+    assert!(warnings[0]
+        .as_str()
+        .expect("warning text")
+        .starts_with("the local-dev key cannot read the vault"));
+    // Factor and shape only: neither the stored value nor the passphrase
+    // that opened the vault is ever printed.
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(!stdout.contains("tok_local_dev"));
+    assert!(!stdout.contains("vault-passphrase"));
+
+    // The one-line summary names the passphrase factor the way `effigy dev`
+    // names its own: `unlocked (passphrase)`, not the local-dev label.
+    let text = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["secrets", "doctor"])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
+        .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
+        .env_remove("EFFIGY_SECRET_PASSPHRASE")
+        .output()
+        .expect("run text doctor");
+    assert!(
+        text.status.success(),
+        "text doctor failed: {}\nstdout: {}",
+        String::from_utf8_lossy(&text.stderr),
+        String::from_utf8_lossy(&text.stdout)
+    );
+    let rendered = String::from_utf8_lossy(&text.stdout);
+    assert!(rendered.contains("vault: unlocked (passphrase)"));
+    assert!(!rendered.contains("tok_local_dev"));
+    assert!(!rendered.contains("vault-passphrase"));
+}
+
+#[test]
+fn doctor_fails_closed_when_the_sealed_credential_cannot_be_opened() {
+    let root = support::temp_workspace("effigy-secrets-cli", "execution");
+    let vault_path = write_fixture(&root, false);
+
+    // Keep the credential structurally valid and private, but seal it with a
+    // different synthetic key than the key stored beside the vault.
+    let local_dev_key = LocalDevUnlockKey::generate().expect("generate local-dev key");
+    let unrelated_key = LocalDevUnlockKey::generate().expect("generate unrelated key");
+    let key_path = local_dev_unlock_key_path(&vault_path);
+    fs::write(&key_path, local_dev_key.expose()).expect("write local-dev key");
+    let credential =
+        seal_local_unlock_passphrase(&unrelated_key, "credential-canary").expect("seal credential");
+    let credential_path = local_unlock_credential_path(&vault_path);
+    fs::write(&credential_path, credential).expect("write sealed credential");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in [&key_path, &credential_path] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+                .expect("secure local unlock file");
+        }
+    }
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["secrets", "doctor", "--json"])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
+        .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
+        .env_remove("EFFIGY_SECRET_PASSPHRASE")
+        .output()
+        .expect("run doctor");
+
+    assert!(!doctor.status.success(), "doctor unexpectedly succeeded");
+    let stderr = String::from_utf8_lossy(&doctor.stderr);
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    let diagnostic = format!("{stdout}{stderr}");
+    assert!(
+        diagnostic.contains("failed to decrypt vault payload"),
+        "diagnostic: {diagnostic}"
+    );
+    assert!(!diagnostic.contains("credential-canary"));
+    assert!(!diagnostic.contains("vault-passphrase"));
+    assert!(!diagnostic.contains("tok_local_dev"));
 }
 
 #[test]
@@ -182,22 +320,6 @@ fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
         "{}",
         String::from_utf8_lossy(&set.stderr)
     );
-
-    let doctor = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(["secrets", "doctor", "--json"])
-        .current_dir(&root)
-        .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
-        .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
-        .stdin(Stdio::null())
-        .output()
-        .expect("doctor with unlocked vault");
-    assert!(
-        doctor.status.success(),
-        "{}",
-        String::from_utf8_lossy(&doctor.stderr)
-    );
-    let json: serde_json::Value = serde_json::from_slice(&doctor.stdout).expect("doctor json");
-    assert_eq!(json["result"]["vault_state"]["status"], "unlocked");
 
     let changed = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(["secrets", "change-passphrase"])

@@ -1,64 +1,19 @@
 use std::io::Error;
 use std::path::Path;
 
-use effigy_tasks::ResolutionMode;
-
 use super::*;
 use crate::contracts::{check_id, remediation};
 use crate::{DoctorSeverity, DoctorState};
 
-#[test]
-fn workflow_root_resolution_message_contract_is_stable() {
-    let cases = [
-        (ResolutionMode::Explicit, "explicit (--repo)"),
-        (ResolutionMode::AutoNearest, "auto (nearest root)"),
-        (
-            ResolutionMode::AutoPromoted,
-            "auto (promoted workspace root)",
-        ),
-    ];
-
-    for (mode, label) in cases {
-        let mut state = DoctorState::new();
-        WorkflowFinding::RootResolution {
-            resolved_root: Path::new("/tmp/workspace"),
-            resolution_mode: mode,
-        }
-        .emit(&mut state);
-
-        assert_eq!(state.findings.len(), 1);
-        let finding = &state.findings[0];
-        assert_eq!(finding.check_id, check_id::WORKSPACE_ROOT_RESOLUTION);
-        assert_eq!(finding.severity, DoctorSeverity::Info);
-        assert!(finding.evidence.contains(label));
-        assert_eq!(finding.remediation, remediation::USE_REPO_OVERRIDE);
-    }
-}
-
-#[test]
-fn workflow_manifest_availability_contracts_are_stable() {
-    let mut state = DoctorState::new();
-    WorkflowFinding::MissingManifestFiles {
-        resolved_root: Path::new("/tmp/workspace"),
-    }
-    .emit(&mut state);
-    WorkflowFinding::NoValidManifests.emit(&mut state);
-
-    assert_eq!(state.findings.len(), 2);
-    assert_eq!(state.findings[0].check_id, check_id::MANIFEST_PARSE);
-    assert_eq!(state.findings[0].severity, DoctorSeverity::Warning);
-    assert_eq!(state.findings[0].remediation, remediation::ADD_MANIFEST);
-    assert_eq!(state.findings[1].check_id, check_id::MANIFEST_PARSE);
-    assert_eq!(state.findings[1].severity, DoctorSeverity::Error);
-    assert_eq!(
-        state.findings[1].evidence,
-        "no valid manifests were available for downstream checks"
-    );
-    assert_eq!(
-        state.findings[1].remediation,
-        remediation::FIX_MANIFEST_ERRORS_FIRST
-    );
-}
+// The workflow root-resolution and manifest-availability finding contracts are
+// asserted through their real dispatch paths in `workflow::tests`
+// (`root_resolution_finding_tracks_expected_mode_labels_and_contract`,
+// `manifest_availability_missing_manifest_message_is_stable`,
+// `manifest_availability_parse_failure_message_is_stable`), which drive the
+// same `WorkflowFinding` templates via `handler::{
+// emit_root_resolution_finding,add_manifest_availability_findings}`; the
+// bootstrap template contract lives with its integration survivor in
+// `health::tests::missing_child_bootstrap_emits_finding_and_skips_health`.
 
 #[test]
 fn manifest_parse_templates_preserve_message_contract() {
@@ -94,25 +49,6 @@ fn manifest_parse_templates_preserve_message_contract() {
         state.findings[2].remediation,
         remediation::MANIFEST_STRICT_PARSE
     );
-}
-
-#[test]
-fn health_bootstrap_template_emits_actionable_error() {
-    let mut state = DoctorState::new();
-    HealthFinding::bootstrap_missing(
-        "observed=missing-local-install; manager=bun".to_owned(),
-        "run `effigy bootstrap --path child`".to_owned(),
-    )
-    .emit(&mut state);
-
-    assert_eq!(state.findings.len(), 1);
-    assert_eq!(state.findings[0].check_id, check_id::HEALTH_TASK_BOOTSTRAP);
-    assert_eq!(state.findings[0].severity, DoctorSeverity::Error);
-    assert_eq!(
-        state.findings[0].remediation,
-        "run `effigy bootstrap --path child`"
-    );
-    assert!(!state.findings[0].fixable);
 }
 
 #[test]

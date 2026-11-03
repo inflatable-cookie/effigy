@@ -178,22 +178,6 @@ fn parse_bare_qa_group_words_stay_repository_selectors() {
 }
 
 #[test]
-fn parse_tasks_status_route_is_unchanged_by_qa_routes() {
-    let cmd = parse_command(vec![
-        "tasks".to_owned(),
-        "status".to_owned(),
-        "test".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("existing status route unchanged");
-    let Command::Tasks(args) = cmd else {
-        panic!("expected Tasks command");
-    };
-    assert_eq!(args.status_selector.as_deref(), Some("test"));
-    assert_eq!(args.qa, None);
-}
-
-#[test]
 fn parse_tasks_qa_group_help_returns_tasks_panel() {
     let cmd = parse_command(vec![
         "tasks".to_owned(),

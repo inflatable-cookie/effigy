@@ -132,7 +132,11 @@ explicit exec paths: a declared volume absent from a live stack cannot grant
 chown authority over the host bind beneath it. Permission target metadata uses
 the most specific declared mount and retains its repair authority. `container
 status` reports the services, their runtime state and readiness; it has no
-separate mount-drift field.
+separate mount-drift field. The `effigy.container.status.v1` payload always
+carries `services` as an array: known-running includes observed rows (including
+Exited owned containers); known-stopped is `runtime_running: false` with
+`services: []`. An unavailable or unparsable runtime observation fails the
+command with envelope `error.kind=unavailable` and grants nothing.
 
 ## Optional workspace mounts at creation
 
@@ -463,6 +467,21 @@ policy. A supervisor that failed before spawning its first child cannot be
 detached while waiting for an `Active` event it never emitted. A withheld
 supervisor is stopped, so a retry cannot publish after the partial-exposure
 report; an explicit restart or a later `up` retries that listener.
+
+A supervisor that fails to start is an activation failure in its own right,
+whether or not any declared process carries a listener (effigy#559). The
+bring-up refuses in attached and detached modes alike and names the process
+and its cause; it never reports success while a declared workload's
+supervisor never started, and a plain workload's start failure is never
+demoted to a warning only the detached supervisor's own output would carry.
+The same refusal applies when the supervisor starts and the kernel refuses
+the first generation before exec: a plain workload never reaches `Active`,
+and the bring-up names the process and the kernel's key-only cause instead
+of reporting success while that run settles failed (effigy#574). An ordinary
+later application exit or readiness failure happens after `Active` and is
+not this seam. A withheld or failed listener keeps the partial-exposure
+semantics above; this sentence covers the start seam those reports already
+name for listener-bearing environments.
 
 A listener that a later activation does not start is never taken on trust
 either: it is reconciled against its own published generation and route first,

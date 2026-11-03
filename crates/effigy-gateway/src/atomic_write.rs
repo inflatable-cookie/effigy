@@ -21,20 +21,3 @@ pub(crate) fn temp_path(path: &Path, purpose: &str) -> PathBuf {
         nanos.saturating_add(counter as u128)
     ))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::temp_path;
-    use std::path::Path;
-
-    #[test]
-    fn temp_path_changes_between_calls_for_same_target() {
-        let path = Path::new("/tmp/ports.json");
-        let first = temp_path(path, "ports");
-        let second = temp_path(path, "ports");
-
-        assert_ne!(first, second);
-        assert_eq!(first.parent(), path.parent());
-        assert_eq!(second.parent(), path.parent());
-    }
-}

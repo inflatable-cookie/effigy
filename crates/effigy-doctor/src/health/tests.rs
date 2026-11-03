@@ -113,6 +113,7 @@ fn missing_child_bootstrap_emits_finding_and_skips_health() {
     assert!(bootstrap
         .remediation
         .contains("effigy bootstrap --path child"));
+    assert!(!bootstrap.fixable, "a bootstrap gap is not auto-fixable");
     assert!(!state
         .findings
         .iter()

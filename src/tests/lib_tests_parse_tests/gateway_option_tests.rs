@@ -2,63 +2,36 @@ use crate::tests::prelude::{
     parse_command, Command, GatewayArgs, GatewayPrivateArgs, GatewaySubcommand,
     InternalGatewayArgs, PathBuf,
 };
-#[test]
-fn parse_gateway_status_supports_json() {
-    let cmd = parse_command(vec![
-        "gateway".to_owned(),
-        "status".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Gateway(GatewayArgs {
-            subcommand: GatewaySubcommand::Status,
-            private: None,
-            output_json: true,
-        })
-    );
-}
 
+/// One row per simple `gateway` subcommand mapping: status, up, down and
+/// setup-tls with the local `--json` arm.
 #[test]
-fn parse_gateway_up_and_down_commands() {
-    let up = parse_command(vec!["gateway".to_owned(), "up".to_owned()]).expect("up");
-    let down = parse_command(vec!["gateway".to_owned(), "down".to_owned()]).expect("down");
-
-    assert_eq!(
-        up,
-        Command::Gateway(GatewayArgs {
-            subcommand: GatewaySubcommand::Up,
-            private: None,
-            output_json: false,
-        })
-    );
-    assert_eq!(
-        down,
-        Command::Gateway(GatewayArgs {
-            subcommand: GatewaySubcommand::Down,
-            private: None,
-            output_json: false,
-        })
-    );
-}
-
-#[test]
-fn parse_gateway_setup_tls_supports_json() {
-    let cmd = parse_command(vec![
-        "gateway".to_owned(),
-        "setup-tls".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Gateway(GatewayArgs {
-            subcommand: GatewaySubcommand::SetupTls,
-            private: None,
-            output_json: true,
-        })
-    );
+fn parse_gateway_subcommands_map_their_flags() {
+    let cases: &[(&[&str], GatewaySubcommand, bool)] = &[
+        (
+            &["gateway", "status", "--json"],
+            GatewaySubcommand::Status,
+            true,
+        ),
+        (&["gateway", "up"], GatewaySubcommand::Up, false),
+        (&["gateway", "down"], GatewaySubcommand::Down, false),
+        (
+            &["gateway", "setup-tls", "--json"],
+            GatewaySubcommand::SetupTls,
+            true,
+        ),
+    ];
+    for (args, subcommand, output_json) in cases {
+        assert_eq!(
+            parse_command(args.iter().map(|arg| (*arg).to_owned())).expect("parse should succeed"),
+            Command::Gateway(GatewayArgs {
+                subcommand: subcommand.clone(),
+                private: None,
+                output_json: *output_json,
+            }),
+            "{args:?}"
+        );
+    }
 }
 
 #[test]
@@ -162,32 +135,23 @@ fn parse_gateway_retired_listener_handoff_commands_refuse_actionably() {
     }
 }
 
+/// The internal `__gateway-run` surface: the handoff flag maps on and off.
 #[test]
-fn parse_gateway_run_accepts_listener_handoff_flag() {
-    let cmd = parse_command(vec![
-        "__gateway-run".to_owned(),
-        "--listener-handoff".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::InternalGateway(InternalGatewayArgs {
-            private: None,
-            listener_handoff: true,
-        })
-    );
-}
-
-#[test]
-fn parse_gateway_run_defaults_listener_handoff_off() {
-    let cmd = parse_command(vec!["__gateway-run".to_owned()]).expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::InternalGateway(InternalGatewayArgs {
-            private: None,
-            listener_handoff: false,
-        })
-    );
+fn parse_internal_gateway_run_defaults_and_handoff_flag() {
+    let cases: &[(&[&str], bool)] = &[
+        (&["__gateway-run", "--listener-handoff"], true),
+        (&["__gateway-run"], false),
+    ];
+    for (args, listener_handoff) in cases {
+        assert_eq!(
+            parse_command(args.iter().map(|arg| (*arg).to_owned())).expect("parse should succeed"),
+            Command::InternalGateway(InternalGatewayArgs {
+                private: None,
+                listener_handoff: *listener_handoff,
+            }),
+            "{args:?}"
+        );
+    }
 }
 
 #[test]

@@ -17,10 +17,25 @@ build: installed nerdctl2.3.1 [rejects that context form](https://github.com/con
 That impossible command is replaced here; do not retry it or switch builders.
 
 Preparation consumed283.44seconds of the original1800, then457.74 of1516.
-The next cap is **1058seconds**, rounded down from1516−457.74, also within the
-remaining task budget. Include admission, transfer, build/check, postchecks and
-evidence/report work; preserve smaller deadlines/cancellation. No refund,
-reset, extension, extra start, install or cleanup allowance follows.
+The following image-preparation attempt was bound to **1058seconds**, rounded
+down from1516−457.74. It then refused on its first status command: the exact
+profile reported not running (exit1,0.1858005seconds). No context, build, check,
+start or repair followed. Recorded completion consumed331.704124seconds through
+postchecks/evidence;726.295876seconds was the remainder at that observation,
+**not a fresh allowance**. Final Queue accounting, including report work, must
+be reconciled before another bounded continuation. Do not reuse an expired
+absolute deadline or reissue1058seconds from the helper's structural ceiling.
+The task-budget choice to change approach grants no extension or native effect.
+Include admission, transfer, build/check, postchecks and evidence/report work in
+any subsequently authorized scope; preserve smaller deadlines/cancellation.
+No refund, reset, extra start, install or cleanup allowance follows.
+
+The image build and tools check are unspent, but their prerequisites are not
+currently proved. Preserve the failed-admission receipt and retained resources.
+An unavailable-profile diagnostic does not establish a safely stopped VM or
+authorize its start/repair. The planner must bind the separately scoped operator
+disposition and actual remaining budget before further native work; no repeated
+status probe, automatic retry or receipt-routing loop supplies that authority.
 
 | Retained item | Required identity |
 | --- | --- |

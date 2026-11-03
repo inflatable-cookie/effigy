@@ -6,23 +6,16 @@ use crate::runner::tests::prelude::{
 #[test]
 fn run_manifest_task_builtin_argument_contract_matrix_is_stable() {
     let mut cases = vec![
-        builtin_contract_error_case(
-            "builtin-arg-contract-doctor-unknown",
-            "doctor",
-            &["--wat"],
-            &["unknown argument(s) for built-in `doctor`: --wat"],
-        ),
+        // `doctor --wat` is pinned by tasks_and_doctor_command_tests
+        // (`doctor --wat --huh` renders the same message superset) and
+        // `tasks --task` by that family's tasks matrix; the completion
+        // candidates `--prefix` requires-value row lives in help_tests'
+        // completion argument-validation table.
         builtin_contract_error_case(
             "builtin-arg-contract-doctor-env-schema-unsupported",
             "doctor",
             &["--env-schema", "config/test.env.schema"],
             &["`--env-schema` is not supported for built-in `doctor`"],
-        ),
-        builtin_contract_error_case(
-            "builtin-arg-contract-tasks-missing-task",
-            "tasks",
-            &["--task"],
-            &["task argument --task requires a value"],
         ),
         builtin_contract_error_case(
             "builtin-arg-contract-tasks-missing-resolve",
@@ -35,12 +28,6 @@ fn run_manifest_task_builtin_argument_contract_matrix_is_stable() {
             "config",
             &["--schema", "--target"],
             &["`--target` requires a value for built-in `config`"],
-        ),
-        builtin_contract_error_case(
-            "builtin-arg-contract-completion-candidates-missing-prefix",
-            "completion",
-            &["candidates", "--prefix"],
-            &["completion candidates argument --prefix requires a value"],
         ),
         builtin_contract_error_case(
             "builtin-arg-contract-init-unknown",

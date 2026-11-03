@@ -1377,19 +1377,10 @@ fn status_gate_check_still_fails_for_non_version_blockers() {
     assert!(!status.ready);
 }
 
-#[test]
-fn an_empty_unreleased_section_blocks_the_release_plan() {
-    let root = write_empty_unreleased_repo("prepare-empty-unreleased");
-    let plan = plan_release_pipeline(&root).expect("release plan");
-    assert!(!plan.ready);
-    assert!(
-        plan.blockers
-            .iter()
-            .any(|blocker| blocker.contains("unreleased changelog section has no entries")),
-        "{:?}",
-        plan.blockers
-    );
-}
+// The plan-level empty-unreleased blocker is pinned by
+// `status_gate_check_passes_with_empty_unreleased_and_reports_no_next_version`,
+// which runs `plan_release_pipeline` on the same fixture shape and asserts the
+// blocker string and `!ready` with gates proven passing.
 
 #[test]
 fn optional_next_version_blocker_matches_only_absent_proposals() {
@@ -1444,60 +1435,63 @@ fn suggested_bump_for(
 }
 
 #[test]
-fn proposed_bump_removed_category_is_minor_under_pre_1_0() {
-    let changelog = "# Changelog\n\n## [Unreleased]\n\n### Removed\n- Removed public API\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n";
-    assert_eq!(
-        suggested_bump_for(changelog, "0.2.4", true),
-        super::BumpKind::Minor
-    );
-}
-
-#[test]
-fn proposed_bump_fixed_only_category_stays_patch() {
-    let changelog = "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Compatible fix\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n";
-    assert_eq!(
-        suggested_bump_for(changelog, "0.2.4", true),
-        super::BumpKind::Patch
-    );
-}
-
-#[test]
-fn proposed_bump_mixed_removed_and_fixed_is_minor() {
-    let changelog = "# Changelog\n\n## [Unreleased]\n\n### Removed\n- Removed public API\n\n### Fixed\n- Compatible fix\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n";
-    assert_eq!(
-        suggested_bump_for(changelog, "0.2.4", true),
-        super::BumpKind::Minor
-    );
-}
-
-#[test]
-fn proposed_bump_removed_outside_pre_1_0_forces_major() {
-    let changelog = "# Changelog\n\n## [Unreleased]\n\n### Removed\n- Removed public API\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n";
-    assert_eq!(
-        suggested_bump_for(changelog, "0.2.4", false),
-        super::BumpKind::Major
-    );
-}
-
-#[test]
-fn proposed_bump_normal_1_x_release_is_unchanged() {
-    let added = "# Changelog\n\n## [Unreleased]\n\n### Added\n- New feature\n\n## [1.4.2] - 2026-03-10\n\n### Fixed\n- Prior release\n";
-    assert_eq!(
-        suggested_bump_for(added, "1.4.2", true),
-        super::BumpKind::Minor
-    );
-
-    let fixed = "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Compatible fix\n\n## [1.4.2] - 2026-03-10\n\n### Fixed\n- Prior release\n";
-    assert_eq!(
-        suggested_bump_for(fixed, "1.4.2", true),
-        super::BumpKind::Patch
-    );
-
-    let removed = "# Changelog\n\n## [Unreleased]\n\n### Removed\n- Removed public API\n\n## [1.4.2] - 2026-03-10\n\n### Fixed\n- Prior release\n";
-    assert_eq!(
-        suggested_bump_for(removed, "1.4.2", true),
-        super::BumpKind::Major
-    );
+fn suggested_bump_maps_changelog_categories_to_bump_kinds() {
+    // One row per changelog shape the bump derivation reads; a broken mapping
+    // names its row in the assert context.
+    let rows: &[(&str, &str, bool, super::BumpKind)] = &[
+        (
+            "### Removed\n- Removed public API",
+            "0.2.4",
+            true,
+            super::BumpKind::Minor,
+        ),
+        (
+            "### Fixed\n- Compatible fix",
+            "0.2.4",
+            true,
+            super::BumpKind::Patch,
+        ),
+        (
+            "### Removed\n- Removed public API\n\n### Fixed\n- Compatible fix",
+            "0.2.4",
+            true,
+            super::BumpKind::Minor,
+        ),
+        (
+            "### Removed\n- Removed public API",
+            "0.2.4",
+            false,
+            super::BumpKind::Major,
+        ),
+        (
+            "### Added\n- New feature",
+            "1.4.2",
+            true,
+            super::BumpKind::Minor,
+        ),
+        (
+            "### Fixed\n- Compatible fix",
+            "1.4.2",
+            true,
+            super::BumpKind::Patch,
+        ),
+        (
+            "### Removed\n- Removed public API",
+            "1.4.2",
+            true,
+            super::BumpKind::Major,
+        ),
+    ];
+    for (categories, current, pre_1_0, expected) in rows {
+        let changelog = format!(
+            "# Changelog\n\n## [Unreleased]\n\n{categories}\n\n## [{current}] - 2026-03-10\n\n### Fixed\n- Prior release\n"
+        );
+        assert_eq!(
+            suggested_bump_for(&changelog, current, *pre_1_0),
+            *expected,
+            "categories `{categories}` at {current} (pre-1.0: {pre_1_0})"
+        );
+    }
 }
 
 fn write_nested_lockfile_release_repo(name: &str, sync_files: &str) -> PathBuf {

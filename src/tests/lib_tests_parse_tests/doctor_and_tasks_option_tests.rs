@@ -3,212 +3,166 @@ use crate::tests::prelude::{
     TasksArgs,
 };
 
-#[test]
-fn parse_doctor_with_repo_fix_and_json() {
-    let cmd = parse_command(vec![
-        "doctor".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-        "--fix".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Doctor(DoctorArgs {
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            output_json: true,
-            fix: true,
-            verbose: false,
-            deep: false,
-            catalog: None,
-            all_catalogs: false,
-            refresh: false,
-            explain: None,
-        })
-    );
+/// The default `DoctorArgs` shape; rows name the fields they set.
+fn base_doctor() -> DoctorArgs {
+    DoctorArgs {
+        repo_override: None,
+        output_json: false,
+        fix: false,
+        verbose: false,
+        deep: false,
+        catalog: None,
+        all_catalogs: false,
+        refresh: false,
+        explain: None,
+    }
 }
 
+/// One row per distinct `doctor` flag mapping in `parse_doctor`: the
+/// `--repo`/`--fix`/`--json` combination, `--verbose`, the explanation
+/// target with its `--` passthrough and the deep-catalog-refresh triple.
 #[test]
-fn parse_doctor_with_verbose_flag() {
-    let cmd = parse_command(vec!["doctor".to_owned(), "--verbose".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Doctor(DoctorArgs {
-            repo_override: None,
-            output_json: false,
-            fix: false,
-            verbose: true,
-            deep: false,
-            catalog: None,
-            all_catalogs: false,
-            refresh: false,
-            explain: None,
-        })
-    );
-}
-
-#[test]
-fn parse_doctor_with_explain_target_and_args() {
-    let cmd = parse_command(vec![
-        "doctor".to_owned(),
-        "catalog_a/build".to_owned(),
-        "--".to_owned(),
-        "--watch".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Doctor(DoctorArgs {
-            repo_override: None,
-            output_json: false,
-            fix: false,
-            verbose: false,
-            deep: false,
-            catalog: None,
-            all_catalogs: false,
-            refresh: false,
-            explain: Some(TaskInvocation {
-                name: "catalog_a/build".to_owned(),
-                args: vec!["--".to_owned(), "--watch".to_owned()],
+fn parse_doctor_flags_map_their_fields() {
+    let cases: &[(&[&str], Command)] = &[
+        (
+            &["doctor", "--repo", "/tmp/repo", "--fix", "--json"],
+            Command::Doctor(DoctorArgs {
+                repo_override: Some(PathBuf::from("/tmp/repo")),
+                output_json: true,
+                fix: true,
+                ..base_doctor()
             }),
-        })
-    );
+        ),
+        (
+            &["doctor", "--verbose"],
+            Command::Doctor(DoctorArgs {
+                verbose: true,
+                ..base_doctor()
+            }),
+        ),
+        (
+            &["doctor", "catalog_a/build", "--", "--watch"],
+            Command::Doctor(DoctorArgs {
+                explain: Some(TaskInvocation {
+                    name: "catalog_a/build".to_owned(),
+                    args: vec!["--".to_owned(), "--watch".to_owned()],
+                }),
+                ..base_doctor()
+            }),
+        ),
+        (
+            &["doctor", "--deep", "--catalog", "api", "--refresh"],
+            Command::Doctor(DoctorArgs {
+                deep: true,
+                catalog: Some("api".to_owned()),
+                refresh: true,
+                ..base_doctor()
+            }),
+        ),
+    ];
+    for (args, expected) in cases {
+        assert_eq!(
+            &parse_command(args.iter().map(|arg| (*arg).to_owned())).expect("parse should succeed"),
+            expected,
+            "{args:?}"
+        );
+    }
 }
 
+/// The three `validate_doctor_flags` refusals stay distinct: deep-only
+/// flags without `--deep`, `--catalog` with `--all-catalogs`, and deep
+/// flags after an explanation selector.
 #[test]
-fn parse_doctor_with_deep_scope_and_refresh() {
-    let cmd = parse_command(vec![
-        "doctor".to_owned(),
-        "--deep".to_owned(),
-        "--catalog".to_owned(),
-        "api".to_owned(),
-        "--refresh".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Doctor(DoctorArgs {
-            repo_override: None,
-            output_json: false,
-            fix: false,
-            verbose: false,
-            deep: true,
-            catalog: Some("api".to_owned()),
-            all_catalogs: false,
-            refresh: true,
-            explain: None,
-        })
-    );
+fn parse_doctor_refuses_invalid_flag_combinations() {
+    let cases: &[(&[&str], &str)] = &[
+        (&["doctor", "--all-catalogs"], "require `--deep`"),
+        (
+            &["doctor", "--deep", "--catalog", "api", "--all-catalogs"],
+            "mutually exclusive",
+        ),
+        (
+            &["doctor", "build", "--deep"],
+            "explanation mode cannot combine",
+        ),
+    ];
+    for (args, needle) in cases {
+        let error =
+            parse_command(args.iter().map(|arg| (*arg).to_owned())).expect_err("parse should fail");
+        assert!(error.to_string().contains(needle), "{args:?}: {error}");
+    }
 }
 
+/// One row per distinct `tasks` route: listing filters, bare `--json`,
+/// `status` with a selector, the missing-selector refusal route and
+/// `status --all`. Full-struct equality pins `qa: None` on every row —
+/// qa-group routes never leak into plain status results.
 #[test]
-fn parse_doctor_rejects_deep_only_flags_without_deep() {
-    let error = parse_command(vec!["doctor".to_owned(), "--all-catalogs".to_owned()])
-        .expect_err("parse should fail");
-    assert!(error.to_string().contains("require `--deep`"));
-}
-
-#[test]
-fn parse_doctor_rejects_catalog_and_all_catalogs_together() {
-    let error = parse_command(vec![
-        "doctor".to_owned(),
-        "--deep".to_owned(),
-        "--catalog".to_owned(),
-        "api".to_owned(),
-        "--all-catalogs".to_owned(),
-    ])
-    .expect_err("parse should fail");
-    assert!(error.to_string().contains("mutually exclusive"));
-}
-
-#[test]
-fn parse_doctor_rejects_deep_flag_after_explain_selector() {
-    let error = parse_command(vec![
-        "doctor".to_owned(),
-        "build".to_owned(),
-        "--deep".to_owned(),
-    ])
-    .expect_err("parse should fail");
-    assert!(error
-        .to_string()
-        .contains("explanation mode cannot combine"));
-}
-
-#[test]
-fn parse_tasks_with_filters() {
-    let cmd = parse_command(vec![
-        "tasks".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-        "--task".to_owned(),
-        "db:reset".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Tasks(TasksArgs {
-            all: false,
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            task_name: Some("db:reset".to_owned()),
-            resolve_selector: None,
-            status_selector: None,
-            status_all: false,
-            output_json: false,
-            pretty_json: true,
-            qa: None,
-        })
-    );
-}
-
-#[test]
-fn parse_tasks_supports_json_flag() {
-    let cmd =
-        parse_command(vec!["tasks".to_owned(), "--json".to_owned()]).expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Tasks(TasksArgs {
-            all: false,
-            repo_override: None,
-            task_name: None,
-            resolve_selector: None,
-            status_selector: None,
-            status_all: false,
-            output_json: true,
-            pretty_json: true,
-            qa: None,
-        })
-    );
-}
-
-#[test]
-fn parse_tasks_status_with_selector_and_json() {
-    let cmd = parse_command(vec![
-        "tasks".to_owned(),
-        "status".to_owned(),
-        "catalog_a/api".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Tasks(TasksArgs {
-            all: false,
-            repo_override: None,
-            task_name: None,
-            resolve_selector: None,
-            status_selector: Some("catalog_a/api".to_owned()),
-            status_all: false,
-            output_json: true,
-            pretty_json: true,
-            qa: None,
-        })
-    );
-}
-
-#[test]
-fn parse_tasks_status_requires_selector() {
+fn parse_tasks_routes_map_their_filters() {
+    let cases: &[(&[&str], Command)] = &[
+        (
+            &["tasks", "--repo", "/tmp/repo", "--task", "db:reset"],
+            Command::Tasks(TasksArgs {
+                all: false,
+                repo_override: Some(PathBuf::from("/tmp/repo")),
+                task_name: Some("db:reset".to_owned()),
+                resolve_selector: None,
+                status_selector: None,
+                status_all: false,
+                output_json: false,
+                pretty_json: true,
+                qa: None,
+            }),
+        ),
+        (
+            &["tasks", "--json"],
+            Command::Tasks(TasksArgs {
+                all: false,
+                repo_override: None,
+                task_name: None,
+                resolve_selector: None,
+                status_selector: None,
+                status_all: false,
+                output_json: true,
+                pretty_json: true,
+                qa: None,
+            }),
+        ),
+        (
+            &["tasks", "status", "catalog_a/api", "--json"],
+            Command::Tasks(TasksArgs {
+                all: false,
+                repo_override: None,
+                task_name: None,
+                resolve_selector: None,
+                status_selector: Some("catalog_a/api".to_owned()),
+                status_all: false,
+                output_json: true,
+                pretty_json: true,
+                qa: None,
+            }),
+        ),
+        (
+            &["tasks", "status", "--all", "--json"],
+            Command::Tasks(TasksArgs {
+                all: false,
+                repo_override: None,
+                task_name: None,
+                resolve_selector: None,
+                status_selector: None,
+                status_all: true,
+                output_json: true,
+                pretty_json: true,
+                qa: None,
+            }),
+        ),
+    ];
+    for (args, expected) in cases {
+        assert_eq!(
+            &parse_command(args.iter().map(|arg| (*arg).to_owned())).expect("parse should succeed"),
+            expected,
+            "{args:?}"
+        );
+    }
     let error = parse_command(vec![
         "tasks".to_owned(),
         "status".to_owned(),
@@ -218,268 +172,193 @@ fn parse_tasks_status_requires_selector() {
     assert_eq!(error.to_string(), "`tasks status` requires a selector");
 }
 
+/// One row per distinct `deploy` subcommand mapping: environment positional
+/// and flag spellings per verb, the export provider/path/plan vocabulary,
+/// `--write-report`, `apply --yes`, `history --limit` and `redeploy`.
+/// `deploy status` is pinned too (it had no parse-level mapping test
+/// before; runner-core execution tests cover the action itself).
 #[test]
-fn parse_tasks_status_all_with_json() {
-    let cmd = parse_command(vec![
-        "tasks".to_owned(),
-        "status".to_owned(),
-        "--all".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Tasks(TasksArgs {
-            all: false,
-            repo_override: None,
-            task_name: None,
-            resolve_selector: None,
-            status_selector: None,
-            status_all: true,
-            output_json: true,
-            pretty_json: true,
-            qa: None,
-        })
-    );
+fn parse_deploy_subcommands_map_their_flags() {
+    let cases: &[(&[&str], Command)] = &[
+        (
+            &["deploy", "model", "--repo", "/tmp/repo", "--json"],
+            Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::Model { env: None },
+                repo_override: Some(PathBuf::from("/tmp/repo")),
+                output_json: true,
+            }),
+        ),
+        (
+            &[
+                "deploy",
+                "export",
+                "acme-cloud",
+                "--repo",
+                "/tmp/repo",
+                "--path",
+                "infra/deploy",
+                "--plan",
+                "--json",
+            ],
+            Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::Export {
+                    provider: "acme-cloud".to_owned(),
+                    env: None,
+                    path: PathBuf::from("infra/deploy"),
+                    plan: true,
+                },
+                repo_override: Some(PathBuf::from("/tmp/repo")),
+                output_json: true,
+            }),
+        ),
+        (
+            &["deploy", "model", "production", "--json"],
+            Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::Model {
+                    env: Some("production".to_owned()),
+                },
+                repo_override: None,
+                output_json: true,
+            }),
+        ),
+        (
+            &["deploy", "model", "--env", "uat", "--json"],
+            Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::Model {
+                    env: Some("uat".to_owned()),
+                },
+                repo_override: None,
+                output_json: true,
+            }),
+        ),
+        (
+            &[
+                "deploy",
+                "export",
+                "acme-cloud",
+                "production",
+                "--path",
+                "infra/deploy",
+                "--plan",
+            ],
+            Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::Export {
+                    provider: "acme-cloud".to_owned(),
+                    env: Some("production".to_owned()),
+                    path: PathBuf::from("infra/deploy"),
+                    plan: true,
+                },
+                repo_override: None,
+                output_json: false,
+            }),
+        ),
+        (
+            &[
+                "deploy",
+                "export",
+                "acme-cloud",
+                "--env",
+                "uat",
+                "--path",
+                "infra/deploy",
+            ],
+            Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::Export {
+                    provider: "acme-cloud".to_owned(),
+                    env: Some("uat".to_owned()),
+                    path: PathBuf::from("infra/deploy"),
+                    plan: false,
+                },
+                repo_override: None,
+                output_json: false,
+            }),
+        ),
+        (
+            &["deploy", "plan", "uat", "--write-report", "--json"],
+            Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::Plan {
+                    env: "uat".to_owned(),
+                    write_report: true,
+                },
+                repo_override: None,
+                output_json: true,
+            }),
+        ),
+        (
+            &["deploy", "apply", "production", "--yes", "--json"],
+            Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::Apply {
+                    env: "production".to_owned(),
+                    yes: true,
+                },
+                repo_override: None,
+                output_json: true,
+            }),
+        ),
+        (
+            &["deploy", "status", "uat", "--json"],
+            Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::Status {
+                    env: "uat".to_owned(),
+                },
+                repo_override: None,
+                output_json: true,
+            }),
+        ),
+        (
+            &["deploy", "history", "uat", "--limit", "5", "--json"],
+            Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::History {
+                    env: "uat".to_owned(),
+                    limit: Some(5),
+                },
+                repo_override: None,
+                output_json: true,
+            }),
+        ),
+        (
+            &[
+                "deploy",
+                "redeploy",
+                "uat",
+                "--deployment",
+                "deploy-1",
+                "--yes",
+            ],
+            Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::Redeploy {
+                    env: "uat".to_owned(),
+                    deployment: "deploy-1".to_owned(),
+                    yes: true,
+                },
+                repo_override: None,
+                output_json: false,
+            }),
+        ),
+    ];
+    for (args, expected) in cases {
+        assert_eq!(
+            &parse_command(args.iter().map(|arg| (*arg).to_owned())).expect("parse should succeed"),
+            expected,
+            "{args:?}"
+        );
+    }
 }
 
+/// Export needs its `--path`; unknown deploy words are refused.
 #[test]
-fn parse_deploy_model_with_repo_and_json() {
-    let cmd = parse_command(vec![
-        "deploy".to_owned(),
-        "model".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Deploy(DeployArgs {
-            subcommand: DeploySubcommand::Model { env: None },
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_deploy_export_provider_with_path_plan_and_json() {
-    let cmd = parse_command(vec![
+fn parse_deploy_refuses_missing_export_path() {
+    let error = parse_command(vec![
         "deploy".to_owned(),
         "export".to_owned(),
         "acme-cloud".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-        "--path".to_owned(),
-        "infra/deploy".to_owned(),
-        "--plan".to_owned(),
-        "--json".to_owned(),
     ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Deploy(DeployArgs {
-            subcommand: DeploySubcommand::Export {
-                provider: "acme-cloud".to_owned(),
-                env: None,
-                path: PathBuf::from("infra/deploy"),
-                plan: true,
-            },
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            output_json: true,
-        })
+    .expect_err("export without --path must fail");
+    assert!(
+        error.to_string().contains("--path"),
+        "export refusal must name --path: {error}"
     );
-}
-
-#[test]
-fn parse_deploy_model_with_environment_positional() {
-    let cmd = parse_command(vec![
-        "deploy".to_owned(),
-        "model".to_owned(),
-        "production".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Deploy(DeployArgs {
-            subcommand: DeploySubcommand::Model {
-                env: Some("production".to_owned()),
-            },
-            repo_override: None,
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_deploy_model_with_environment_flag() {
-    let cmd = parse_command(vec![
-        "deploy".to_owned(),
-        "model".to_owned(),
-        "--env".to_owned(),
-        "uat".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Deploy(DeployArgs {
-            subcommand: DeploySubcommand::Model {
-                env: Some("uat".to_owned()),
-            },
-            repo_override: None,
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_deploy_export_with_environment_positional() {
-    let cmd = parse_command(vec![
-        "deploy".to_owned(),
-        "export".to_owned(),
-        "acme-cloud".to_owned(),
-        "production".to_owned(),
-        "--path".to_owned(),
-        "infra/deploy".to_owned(),
-        "--plan".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Deploy(DeployArgs {
-            subcommand: DeploySubcommand::Export {
-                provider: "acme-cloud".to_owned(),
-                env: Some("production".to_owned()),
-                path: PathBuf::from("infra/deploy"),
-                plan: true,
-            },
-            repo_override: None,
-            output_json: false,
-        })
-    );
-}
-
-#[test]
-fn parse_deploy_export_with_environment_flag() {
-    let cmd = parse_command(vec![
-        "deploy".to_owned(),
-        "export".to_owned(),
-        "acme-cloud".to_owned(),
-        "--env".to_owned(),
-        "uat".to_owned(),
-        "--path".to_owned(),
-        "infra/deploy".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Deploy(DeployArgs {
-            subcommand: DeploySubcommand::Export {
-                provider: "acme-cloud".to_owned(),
-                env: Some("uat".to_owned()),
-                path: PathBuf::from("infra/deploy"),
-                plan: false,
-            },
-            repo_override: None,
-            output_json: false,
-        })
-    );
-}
-
-#[test]
-fn parse_deploy_plan_with_env_write_report_and_json() {
-    let cmd = parse_command(vec![
-        "deploy".to_owned(),
-        "plan".to_owned(),
-        "uat".to_owned(),
-        "--write-report".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Deploy(DeployArgs {
-            subcommand: DeploySubcommand::Plan {
-                env: "uat".to_owned(),
-                write_report: true,
-            },
-            repo_override: None,
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_deploy_apply_requires_yes_in_model_not_parser() {
-    let cmd = parse_command(vec![
-        "deploy".to_owned(),
-        "apply".to_owned(),
-        "production".to_owned(),
-        "--yes".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Deploy(DeployArgs {
-            subcommand: DeploySubcommand::Apply {
-                env: "production".to_owned(),
-                yes: true,
-            },
-            repo_override: None,
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_deploy_history_with_limit() {
-    let cmd = parse_command(vec![
-        "deploy".to_owned(),
-        "history".to_owned(),
-        "uat".to_owned(),
-        "--limit".to_owned(),
-        "5".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Deploy(DeployArgs {
-            subcommand: DeploySubcommand::History {
-                env: "uat".to_owned(),
-                limit: Some(5),
-            },
-            repo_override: None,
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_deploy_redeploy_with_deployment_and_yes() {
-    let cmd = parse_command(vec![
-        "deploy".to_owned(),
-        "redeploy".to_owned(),
-        "uat".to_owned(),
-        "--deployment".to_owned(),
-        "deploy-1".to_owned(),
-        "--yes".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Deploy(DeployArgs {
-            subcommand: DeploySubcommand::Redeploy {
-                env: "uat".to_owned(),
-                deployment: "deploy-1".to_owned(),
-                yes: true,
-            },
-            repo_override: None,
-            output_json: false,
-        })
-    );
+    let unknown = parse_command(vec!["deploy".to_owned(), "wat".to_owned()])
+        .expect_err("unknown deploy subcommand must fail");
+    assert_eq!(unknown.to_string(), "unknown argument: wat");
 }

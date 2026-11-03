@@ -148,6 +148,41 @@ pub fn parse_colima_running(stdout: &str, stderr: &str) -> bool {
     stdout_lower.contains("running") || stderr_lower.contains("running")
 }
 
+/// What a Colima status probe actually observed.
+///
+/// `parse_colima_running` stays a boolean used by lifecycle and doctor. Status
+/// JSON must not flatten a failed or unparsable probe into "stopped".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColimaObservation {
+    Running,
+    Stopped,
+    Unavailable,
+}
+
+/// Classify one Colima status capture without treating unknown as stopped.
+pub fn classify_colima_observation(success: bool, stdout: &str, stderr: &str) -> ColimaObservation {
+    if parse_colima_running(stdout, stderr) {
+        return ColimaObservation::Running;
+    }
+    if colima_output_is_explicitly_stopped(stdout, stderr)
+        || (success && stdout.trim().is_empty() && stderr.trim().is_empty())
+    {
+        return ColimaObservation::Stopped;
+    }
+    ColimaObservation::Unavailable
+}
+
+fn colima_output_is_explicitly_stopped(stdout: &str, stderr: &str) -> bool {
+    let stdout_lower = stdout.to_ascii_lowercase();
+    let stderr_lower = stderr.to_ascii_lowercase();
+    stdout_lower.contains("not running")
+        || stderr_lower.contains("not running")
+        || stdout_lower.contains("stopped")
+        || stderr_lower.contains("stopped")
+        || stdout_lower.contains("profile does not exist")
+        || stderr_lower.contains("profile does not exist")
+}
+
 pub fn managed_colima_profile_resources(profile: &str) -> Option<ColimaResourcePlan> {
     managed_colima_profile_resources_with_disk(
         profile,

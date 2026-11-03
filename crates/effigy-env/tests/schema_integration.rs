@@ -3,6 +3,8 @@
 //! The per-feature behaviour (literals, overrides, validation kinds) is covered
 //! by the crate's own unit tests; these cases prove the public load/resolve/
 //! export path against the shared schema fixtures and against unreadable input.
+//! The fixture contract case also carries the plain/secret export split and the
+//! `env_values`/`into_env_values` exports on that same public path.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -10,7 +12,7 @@ use std::time::Duration;
 
 use effigy_env as env_schema;
 use effigy_env::resolver::ResolvedSource;
-use effigy_env::{EnvSchemaError, EnvValue};
+use effigy_env::EnvSchemaError;
 
 fn fixture_path(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -119,36 +121,40 @@ fn schema_fixtures_parse_and_resolve_their_declared_contract() {
                 "{}",
                 case.fixture
             );
+            // The sensitive entry exports only through the secret split.
+            assert!(
+                !resolved.plain_env().contains_key("SESSION_SECRET"),
+                "{}: sensitive entry leaked into the plain export",
+                case.fixture
+            );
         }
+        // The plain and secret exports partition the resolved entries.
+        let secret_count = resolved.secret_env().len();
+        assert_eq!(
+            resolved.plain_env().len(),
+            case.entries.len() - secret_count,
+            "{}",
+            case.fixture
+        );
+
+        // The public export carries plain and secret variants for every entry,
+        // and the consuming export carries the same set.
+        let exported = resolved.env_values();
+        assert_eq!(exported.len(), case.entries.len(), "{}", case.fixture);
+        for (key, value) in case.resolved {
+            match exported.get(*key) {
+                Some(env_schema::ResolvedValue::Plain(exported)) => {
+                    assert_eq!(exported, value, "{}: {key}", case.fixture);
+                }
+                Some(env_schema::ResolvedValue::Secret(secret)) => {
+                    assert_eq!(secret.expose(), *value, "{}: {key}", case.fixture);
+                }
+                other => panic!("{}: {key} missing from the export: {other:?}", case.fixture),
+            }
+        }
+        let consumed = resolved.into_env_values();
+        assert_eq!(consumed.len(), case.entries.len(), "{}", case.fixture);
     }
-}
-
-/// A sensitive annotation exports only through `secret_env`, and an exec value
-/// resolves to the command's output with its own source.
-#[test]
-fn sensitive_and_exec_annotations_reach_the_resolved_contract() {
-    let dir = tempfile::tempdir().expect("schema directory");
-    let path = write_schema(
-        dir.path(),
-        "# @sensitive\nDB_PASSWORD=secret123\n\nAPP_NAME=my-app\n\nGREETING=exec('echo hello-world')\n",
-    );
-
-    let resolved = resolve(&path, dir.path(), &BTreeMap::new());
-
-    let secrets = resolved.secret_env();
-    assert_eq!(secrets.len(), 1);
-    assert_eq!(secrets[0].0, "DB_PASSWORD");
-    assert_eq!(secrets[0].1.expose(), "secret123");
-    let plain = resolved.plain_env();
-    assert_eq!(plain.len(), 2);
-    assert!(plain.contains_key("APP_NAME"));
-    assert!(plain.contains_key("GREETING"));
-    assert!(!plain.contains_key("DB_PASSWORD"));
-    assert_eq!(resolved.get_value("GREETING"), Some("hello-world"));
-    assert_eq!(
-        resolved.get("GREETING").unwrap().source,
-        ResolvedSource::ExecCommand
-    );
 }
 
 #[test]
@@ -194,31 +200,6 @@ fn public_resolve_and_validate_env_surfaces_validation_errors_without_reloading(
         rendered.contains("env schema validation failed"),
         "got: {rendered}"
     );
-}
-
-#[test]
-fn resolved_env_exports_hash_map_of_env_values() {
-    let dir = tempfile::tempdir().expect("schema directory");
-    std::fs::copy(
-        fixture_path("rfc-app.env.schema"),
-        dir.path().join(".env.schema"),
-    )
-    .expect("copy fixture schema");
-    let resolved = resolve(&dir.path().join(".env.schema"), dir.path(), &app_dotenv());
-
-    let exported = resolved.env_values();
-    assert_eq!(exported.len(), 5);
-    match exported.get("PORT") {
-        Some(EnvValue::Plain(value)) => assert_eq!(value, "3000"),
-        other => panic!("expected plain PORT export, got {other:?}"),
-    }
-    match exported.get("SESSION_SECRET") {
-        Some(EnvValue::Secret(value)) => assert_eq!(value.expose(), "from-dotenv-secret"),
-        other => panic!("expected secret SESSION_SECRET export, got {other:?}"),
-    }
-
-    let consumed = resolved.into_env_values();
-    assert_eq!(consumed.len(), 5);
 }
 
 #[test]

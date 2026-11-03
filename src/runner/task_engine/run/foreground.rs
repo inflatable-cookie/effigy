@@ -176,7 +176,7 @@ impl TaskRun {
             return Err(error);
         }
         process.map_err(|error| {
-            RunnerError::task_invocation(format!("process custody refused: {error:?}"))
+            RunnerError::task_invocation(format!("process custody refused: {error}"))
         })
     }
 

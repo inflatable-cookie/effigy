@@ -1691,7 +1691,23 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         "the failing startup must settle as a published failure: {delayed_state}; output={delayed_report}"
     );
     assert_ne!(delayed_state["generation"], collision_generation);
+    assert!(
+        delayed_state["generation"]
+            .as_str()
+            .is_some_and(|generation| !generation.is_empty()),
+        "failed startup dropped its generation provenance: {delayed_state}"
+    );
     assert_eq!(delayed_state["route_domain"], "delayed.host.test");
+    assert_eq!(
+        delayed_state["observed_status"], 503,
+        "failed startup dropped the observed refusal status: {delayed_state}"
+    );
+    assert!(
+        delayed_state["diagnostic"]
+            .as_str()
+            .is_some_and(|diagnostic| diagnostic.contains("status_mismatch")),
+        "failed startup dropped its refusal diagnostic: {delayed_state}"
+    );
     assert!(
         delayed_state["route_owner"].is_null(),
         "failed startup retained an endpoint owner: {delayed_state}; stderr={}",
@@ -4243,6 +4259,77 @@ fn bounded_tail(path: &Path, max: usize) -> String {
 /// control directory's state and the bring-up adapter log. All of it is
 /// fixture-owned and bounded, so the failure names what the nested run
 /// actually did instead of reporting an assumed cause from the timeout.
+/// task567: every host-process log the fixture actually holds, wherever its
+/// checkout materialized the runtime directory, with a bounded tail of each.
+/// The plain (non-listener) supervisor writes to
+/// `host-processes/<container>/<name>.log`, the managed (listener) one to
+/// `host-processes/<container>/<profile>/<name>.log`; the timeout evidence
+/// must name whichever exists instead of one assumed shape.
+fn nested_host_process_log_evidence(fixture_root: &Path) -> String {
+    let mut logs: Vec<PathBuf> = Vec::new();
+    let mut stack = vec![fixture_root.to_path_buf()];
+    let mut visited = 0usize;
+    while let Some(dir) = stack.pop() {
+        visited += 1;
+        if visited > 20_000 || logs.len() > 16 {
+            break;
+        }
+        let already_inside = dir
+            .components()
+            .any(|component| component.as_os_str() == "host-processes");
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                if already_inside
+                    || name == "host-processes"
+                    || name == ".effigy"
+                    || name == "runtime"
+                    || name == "home"
+                    || name == "checkout"
+                {
+                    stack.push(path);
+                }
+            } else if already_inside
+                && path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with(".log"))
+            {
+                logs.push(path);
+            }
+        }
+    }
+    if logs.is_empty() {
+        return "<no host-process log exists anywhere under the fixture>".to_owned();
+    }
+    logs.sort();
+    logs.iter()
+        .map(|log| format!("{}={:?}", log.display(), bounded_tail(log, 4_000)))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// task567 diagnostic: process-table rows whose command names the fixture, so
+/// a supervisor or workload that is alive, zombie or gone says so itself.
+fn nested_fixture_process_evidence(fixture_root: &Path) -> String {
+    let Ok(output) = Command::new("ps")
+        .args(["-axo", "pid=,ppid=,pgid=,stat=,command="])
+        .output()
+    else {
+        return "<process table unreadable>".to_owned();
+    };
+    let root = fixture_root.display().to_string();
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| line.contains(&root))
+        .map(|line| line.trim().to_owned())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn wait_for_nested_app_pid(
     pid_file: &Path,
     fixture_root: &Path,
@@ -4273,11 +4360,13 @@ fn wait_for_nested_app_pid(
                 "<absent>".to_owned()
             };
             panic!(
-                "timed out waiting for the nested task's app ({}); host-process log={}\nsweep ledger={}\ncontrol directory: {control_inventory}\nbring-up adapter log={}",
+                "timed out waiting for the nested task's app ({}); host-process log={}\nsweep ledger={}\ncontrol directory: {control_inventory}\nbring-up adapter log={}\nhost-process logs found under the fixture:\n{}\nfixture-owned process rows:\n{}",
                 pid_file.display(),
                 bounded_tail(host_process_log, 8_000),
                 bounded_tail(&fixture_root.join("sweep-ledger.json"), 4_000),
                 bounded_tail(docker_log, 2_000),
+                nested_host_process_log_evidence(fixture_root),
+                nested_fixture_process_evidence(fixture_root),
             );
         }
         thread::sleep(Duration::from_millis(25));
@@ -7184,14 +7273,23 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
 /// SIGTERM, takes three seconds to finish before it exits. That drain is longer
 /// than the outer supervisor's escalation is comfortable with, so the stop has
 /// to observe the whole closure rather than cut the workload short or call the
-/// evidence inconsistent.
+/// evidence inconsistent. The pid and the drain mark publish by rename, so a
+/// waiter never sees an empty file in the window between creation and the
+/// write reaching the filesystem (effigy#559: a loaded runner polled the
+/// file's existence inside that window and read an empty pid). The QA
+/// failure had no pid file; this hardening does not explain that failure.
 const NESTED_EFFIGY_APP: &str = r#"
 import os, signal, sys, time
 pid_file, drained = sys.argv[1], sys.argv[2]
-open(pid_file, "w").write(str(os.getpid()))
+staged = pid_file + ".staged"
+with open(staged, "w") as handle:
+    handle.write(str(os.getpid()))
+os.replace(staged, pid_file)
 def stop(*_):
     time.sleep(3)
-    open(drained, "w").write("drained\n")
+    with open(drained + ".staged", "w") as handle:
+        handle.write("drained\n")
+    os.replace(drained + ".staged", drained)
     sys.exit(0)
 signal.signal(signal.SIGTERM, stop)
 while True:
@@ -7284,12 +7382,32 @@ fn nested_effigy_host_process_stops_with_closure_verified() {
         mkcert_calls: effects.mkcert_calls.clone(),
         docker_log: docker_log.clone(),
     };
+    // This environment's only host process declares no listener, so the
+    // runtime directory is the plain `host-processes/<container>` shape the
+    // supervisor writes for it (effigy#567: the timeout evidence used to read
+    // the managed `<container>/<profile>` shape and reported a log that could
+    // never exist).
     let log_path = checkout
         .join(".effigy/runtime/host-processes/web")
-        .join(profile)
         .join("api.log");
 
-    let up = run_container_cli(&checkout, &cleanup, &["up", "--detach"]);
+    // The fixture supplies its own environment, so unknown runner values
+    // cannot collide with the synthetic workload's argv.
+    let mut isolated = container_command(&checkout, &cleanup);
+    let fixture_env: Vec<_> = isolated
+        .get_envs()
+        .filter_map(|(key, value)| value.map(|value| (key.to_owned(), value.to_owned())))
+        .collect();
+    let up = isolated
+        .env_clear()
+        .envs(fixture_env)
+        .env("TMPDIR", std::env::temp_dir())
+        .env("TMP", std::env::temp_dir())
+        .env("TEMP", std::env::temp_dir())
+        .args(["up", "--detach"])
+        .output_owned()
+        .expect("run isolated container CLI");
+    let fixture_root = fixture.path().to_path_buf();
     let up_text = format!(
         "{}{}",
         String::from_utf8_lossy(&up.stdout),
@@ -7302,7 +7420,7 @@ fn nested_effigy_host_process_stops_with_closure_verified() {
     );
     wait_for_nested_app_pid(
         &pid_file,
-        fixture.path(),
+        &fixture_root,
         &control,
         &log_path,
         &docker_log,
@@ -7360,6 +7478,12 @@ fn nested_app_pid_timeout_carries_child_owner_and_error_evidence() {
     let app = control.join("app.py");
     fs::write(&app, "import os, signal\n").expect("fixture app");
     let pid_file = control.join("app-pid");
+    let nested_log = fixture
+        .path()
+        .join("checkout/.effigy/runtime/host-processes/web/api.log");
+    fs::create_dir_all(nested_log.parent().unwrap()).expect("nested log directory");
+    fs::write(&nested_log, "nested supervisor evidence").expect("nested log");
+    assert!(nested_host_process_log_evidence(fixture.path()).contains("nested supervisor evidence"));
     let log = fixture.path().join("api.log");
     let suffix = "[effigy host-process] started `api` (pid 50645)\n\
          [effigy host-process] `api` exited (code 1)\n";
@@ -7417,6 +7541,325 @@ fn nested_app_pid_timeout_carries_child_owner_and_error_evidence() {
     assert!(
         message.contains("compose up -d"),
         "the timeout carries the bring-up adapter log: {message}"
+    );
+}
+
+/// A refused supervisor start must fail both activation modes and name its
+/// cause. The gate reproduces a refusal deterministically; it does not claim
+/// to identify the trigger behind the missing QA workload.
+#[test]
+fn plain_host_process_start_refusal_fails_a_detached_activation() {
+    check_plain_host_process_start_refusal(true);
+}
+
+#[test]
+fn plain_host_process_start_refusal_cleans_up_attached_activation() {
+    check_plain_host_process_start_refusal(false);
+}
+
+fn check_plain_host_process_start_refusal(detached: bool) {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    private_directory(&home);
+    let foreign_ca = fixture.path().join("foreign-ca");
+    private_directory(&foreign_ca);
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, _https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+
+    let checkout = fixture.path().join("checkout");
+    fs::create_dir(&checkout).expect("refusal checkout");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n",
+    )
+    .expect("write fixture compose file");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Refusal Fixture"]);
+    git(
+        &checkout,
+        &["config", "user.email", "refusal-fixture@example.invalid"],
+    );
+    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+    let manifest = format!(
+        "[containers]\ndefault = \"web\"\n\n[containers.web]\ndriver = \"colima\"\nprofile = {profile}\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n[[containers.web.host_processes]]\nname = \"api\"\nrun = \"exec sleep 1000\"\nrestart = \"never\"\n\n",
+        profile = toml_quote("fixture"),
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("write the refusal manifest");
+
+    // The same identity work the fixture CLI performs before every run, so
+    // the gate this test holds names the resource the supervisor child will
+    // try to admit under.
+    effigy_core::worktree_scope::prepare_checkout_token(&checkout).expect("fixture identity");
+    let policy = effigy_containers::load_container_policy(&checkout, Some("web"))
+        .expect("declared container policy");
+    let checkout_id = effigy_containers::environment::EnvRef::for_policy(&policy)
+        .expect("environment reference")
+        .checkout;
+    let resource =
+        effigy_kernel::id::ResourceId::host_process(checkout_id, "web", "fixture", "api")
+            .expect("host process resource");
+    let context = effigy_kernel::ctx::OperationContext::new(
+        effigy_kernel::ctx::Deadline::Open(effigy_kernel::ctx::OpenReason::DevServer),
+        effigy_kernel::ctx::CancelToken::default(),
+        effigy_kernel::ctx::Limits {
+            capture_tail: 64 * 1024,
+            log_rotate: 1 << 20,
+            log_keep: 3,
+            line_max: 64 * 1024,
+            queue_bytes: 1 << 20,
+            probe_concurrency: 1,
+        },
+        effigy_kernel::ctx::EffectClass::Mutate,
+        effigy_kernel::ctx::Placement::Host,
+    )
+    .effects()
+    .expect("mutate context");
+    let root = effigy_kernel::root::StateRoot::checkout_effects(
+        &context,
+        &home,
+        &effigy_kernel::location::CheckoutLocation {
+            root: effigy_core::worktree_scope::checkout_root(&checkout),
+        },
+    )
+    .expect("checkout state root");
+    let _gate = effigy_kernel::gate::Gate::acquire(
+        &context,
+        &root,
+        std::slice::from_ref(&resource),
+        effigy_kernel::gate::Wait::FailFast,
+    )
+    .expect("hold the host process admission gate");
+
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
+
+    let args: &[&str] = if detached {
+        &["up", "--detach"]
+    } else {
+        &["up"]
+    };
+    let up = run_container_cli(&checkout, &cleanup, args);
+    let up_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&up.stdout),
+        String::from_utf8_lossy(&up.stderr)
+    );
+    assert!(
+        !up.status.success(),
+        "a refused host-process start must fail the detached activation: {up_text}"
+    );
+    assert!(
+        up_text.contains("host process `api`"),
+        "the refusal names the host process: {up_text}"
+    );
+    assert!(
+        up_text.contains("held"),
+        "the refusal names the held admission gate as its cause: {up_text}"
+    );
+    if !detached {
+        let log = fs::read_to_string(&docker_log).expect("docker fixture log");
+        assert!(
+            log.lines().any(|line| line.contains(" down")),
+            "attached activation tears down compose: {log}"
+        );
+    }
+}
+
+/// A plain workload the kernel refuses before its first exec — a controlled
+/// ambient value with no provenance whose bytes occur in the run string, so
+/// the classifier marks it secret and the argv guard refuses it — must fail
+/// its `up` with the redacted key-only refusal, and the same bring-up without
+/// that value must start the workload for real (effigy#574). Before the
+/// activation carried the refusal, the detached `up` reported success while
+/// the workload settled failed; the synthetic value is unproven by policy, so
+/// this control changes no classification and no guard (effigy#567 kept both).
+#[test]
+fn plain_host_workload_refused_before_exec_fails_up_then_a_clean_up_starts() {
+    const CANARY: &str = "fixture-canary-token-7c41a9";
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    private_directory(&home);
+    let foreign_ca = fixture.path().join("foreign-ca");
+    private_directory(&foreign_ca);
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, _https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+
+    let checkout = fixture.path().join("checkout");
+    fs::create_dir(&checkout).expect("preflight checkout");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n",
+    )
+    .expect("write fixture compose file");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Preflight Fixture"]);
+    git(
+        &checkout,
+        &["config", "user.email", "preflight-fixture@example.invalid"],
+    );
+    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+
+    let control = fixture.path().join("preflight-control");
+    fs::create_dir(&control).expect("preflight control directory");
+    let pid_file = control.join("api-pid");
+    // The workload records its own pid and then sleeps, so the passing phase
+    // proves a genuine positive start. The canary's bytes sit in the run
+    // string (a shell comment still reaches ps-visible argv), which is what
+    // the refusal reproduces; the run string is identical in both phases and
+    // only the ambient value changes.
+    let run = format!(
+        "printf '%s\\n' \"$$\" > {}; exec sleep 120 # {CANARY}",
+        toml_quote(&pid_file.display().to_string())
+    );
+    let manifest = format!(
+        "[containers]\ndefault = \"web\"\n\n[containers.web]\ndriver = \"colima\"\nprofile = {profile}\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n[[containers.web.host_processes]]\nname = \"api\"\nrun = {run}\nrestart = \"never\"\n\n",
+        profile = toml_quote("fixture"),
+        run = toml_quote(&run),
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("write the preflight manifest");
+
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
+    let log_path = checkout
+        .join(".effigy/runtime/host-processes/web")
+        .join("api.log");
+    let host_log = || fs::read_to_string(&log_path).unwrap_or_default();
+
+    // Failed before: the ambient value is unproven, its bytes occur in the
+    // run string, and the bring-up must refuse instead of reporting success.
+    let refused = run_container_cli_with_env(
+        &checkout,
+        &cleanup,
+        &["up", "--detach"],
+        &[("FIXTURE_AMBIENT_TOKEN", CANARY)],
+    );
+    let refused_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&refused.stdout),
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(
+        !refused.status.success(),
+        "a workload refused before its first exec must fail the bring-up: {refused_text}\nlog={}",
+        host_log()
+    );
+    assert!(
+        refused_text.contains("host process `api`"),
+        "the refusal names the host process: {refused_text}"
+    );
+    assert!(
+        refused_text
+            .contains("secret in argv from classified environment key `FIXTURE_AMBIENT_TOKEN`"),
+        "the refusal carries the kernel's key-only diagnostic: {refused_text}"
+    );
+    assert!(
+        !refused_text.contains(CANARY),
+        "the redacted refusal never names the synthetic value: {refused_text}"
+    );
+    assert!(
+        !pid_file.exists(),
+        "a refused workload never launched: {}",
+        host_log()
+    );
+
+    // Passed after: the identical manifest without the colliding ambient
+    // value starts the workload for real, and the exact owned stop settles
+    // it again.
+    let up = run_container_cli(&checkout, &cleanup, &["up", "--detach"]);
+    let up_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&up.stdout),
+        String::from_utf8_lossy(&up.stderr)
+    );
+    assert!(
+        up.status.success(),
+        "the clean bring-up must start its workload: {up_text}\nlog={}",
+        host_log()
+    );
+    let fixture_root = fixture.path().to_path_buf();
+    wait_for_nested_app_pid(
+        &pid_file,
+        &fixture_root,
+        &control,
+        &log_path,
+        &docker_log,
+        Duration::from_secs(60),
+    );
+    let app_pid: i32 = fs::read_to_string(&pid_file)
+        .expect("the workload records its pid")
+        .trim()
+        .parse()
+        .expect("the workload pid is a number");
+    assert!(
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(app_pid), None).is_ok(),
+        "the workload is genuinely running after the clean bring-up"
+    );
+
+    let down = run_container_cli(&checkout, &cleanup, &["down"]);
+    let down_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&down.stdout),
+        String::from_utf8_lossy(&down.stderr)
+    );
+    assert!(
+        down.status.success(),
+        "`container web down` failed: {down_text}\nlog={}",
+        host_log()
+    );
+    assert!(
+        !down_text.contains("contradicts itself")
+            && !down_text.contains("group closure unverified"),
+        "the owned stop reports verified closure: {down_text}"
+    );
+    assert!(
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(app_pid), None).is_err(),
+        "the workload is gone after the owned stop: {down_text}"
     );
 }
 
