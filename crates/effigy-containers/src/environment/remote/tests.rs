@@ -462,7 +462,9 @@ fn docker_launch_forwards_values_privately_and_keeps_the_operator_terminal() {
     ] {
         let cmd = command(terminal);
         let wrapper = strings(&cmd.wrapper_argv());
-        let spec = launcher.launch_spec(&container(), cmd, Instant::now() + Duration::from_secs(5)).unwrap();
+        let spec = launcher
+            .launch_spec(&container(), cmd, Instant::now() + Duration::from_secs(5))
+            .unwrap();
         let argv = strings(&spec.argv);
         assert_eq!(argv[..3], ["/bin/sh", "-c", DOCKER_RELAY]);
         assert_eq!(
@@ -534,13 +536,23 @@ fn colima_launch_relays_values_to_the_vm_and_attaches_stdin_for_a_terminal() {
         RemoteTerminal::Tty
     );
     assert!(launcher
-        .launch_spec(&target, command(RemoteTerminal::Tty), Instant::now() + Duration::from_secs(5))
+        .launch_spec(
+            &target,
+            command(RemoteTerminal::Tty),
+            Instant::now() + Duration::from_secs(5)
+        )
         .is_err());
     for (terminal, mode, flags) in [
         (RemoteTerminal::None, "none", vec![]),
         (RemoteTerminal::Stdin, "stdin", vec!["-i"]),
     ] {
-        let spec = launcher.launch_spec(&target, command(terminal), Instant::now() + Duration::from_secs(5)).unwrap();
+        let spec = launcher
+            .launch_spec(
+                &target,
+                command(terminal),
+                Instant::now() + Duration::from_secs(5),
+            )
+            .unwrap();
         let argv = strings(&spec.argv);
         assert_eq!(argv[2], COLIMA_RELAY);
         assert!(argv[8].ends_with("colima"));
@@ -576,14 +588,22 @@ fn launch_refuses_multi_line_values_unportable_names_and_recovery_adapters() {
         "KEY".into(),
         EnvValue::Secret(SecretValue::new(b"line\nline".to_vec()).unwrap()),
     );
-    assert!(launcher.launch_spec(&container(), cmd, Instant::now() + Duration::from_secs(5)).is_err());
+    assert!(launcher
+        .launch_spec(&container(), cmd, Instant::now() + Duration::from_secs(5))
+        .is_err());
     let mut cmd = command(RemoteTerminal::None);
     cmd.env
         .insert("BAD-NAME".into(), EnvValue::Plain("x".into()));
-    assert!(launcher.launch_spec(&container(), cmd, Instant::now() + Duration::from_secs(5)).is_err());
+    assert!(launcher
+        .launch_spec(&container(), cmd, Instant::now() + Duration::from_secs(5))
+        .is_err());
     let (recovery, _) = adapter(Engine::new());
     assert!(recovery
-        .launch_spec(&container(), command(RemoteTerminal::None), Instant::now() + Duration::from_secs(5))
+        .launch_spec(
+            &container(),
+            command(RemoteTerminal::None),
+            Instant::now() + Duration::from_secs(5)
+        )
         .is_err());
 }
 

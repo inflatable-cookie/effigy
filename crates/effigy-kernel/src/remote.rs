@@ -303,8 +303,8 @@ impl RemoteCustody {
             }
         };
         check(cx.operation(), "remote identity").map_err(RemoteError::Unknown)?;
-        let nonce = session_nonce(run.id(), run.fence(), run.effects()?.len())
-            .map_err(RunError::from)?;
+        let nonce =
+            session_nonce(run.id(), run.fence(), run.effects()?.len()).map_err(RunError::from)?;
         let intent = Intent {
             env: spec.env.clone(),
             container: id.clone(),
@@ -408,7 +408,13 @@ fn session_nonce(
     preceding_effects: usize,
 ) -> Result<Nonce, serde_json::Error> {
     let input = serde_json::to_vec(&(run, owner, preceding_effects))?;
-    Ok(Nonce(crate::id::Digest::of(&input).0.iter().map(|b| format!("{b:02x}")).collect()))
+    Ok(Nonce(
+        crate::id::Digest::of(&input)
+            .0
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+    ))
 }
 fn valid_identity(id: &ContainerIdentity) -> bool {
     [&id.id, &id.created, &id.vm_boot_id].iter().all(|s| {
@@ -441,7 +447,10 @@ pub fn qualification_registration(
     let intent: Intent = serde_json::from_value(effect.spec.payload.clone())
         .map_err(|_| inconsistent("invalid remote intent"))?;
     let registration: RemoteRegistration = serde_json::from_value(
-        effect.receipt.clone().ok_or_else(|| inconsistent("registration missing"))?,
+        effect
+            .receipt
+            .clone()
+            .ok_or_else(|| inconsistent("registration missing"))?,
     )
     .map_err(|_| inconsistent("invalid registration"))?;
     if intent.env != *expected_env || intent.container != *expected_container {
@@ -473,7 +482,13 @@ pub fn qualification_owned_registration(
 ) -> Result<RemoteRegistration, UnknownReason> {
     use crate::gate::{Gate, GateState};
     use crate::run::{Phase, SentinelStatus};
-    let QualificationSubject { run, task, owner, env, container } = *subject;
+    let QualificationSubject {
+        run,
+        task,
+        owner,
+        env,
+        container,
+    } = *subject;
     let check_owner = || -> Result<(), UnknownReason> {
         if root.owning_directory().identity().ok() != Some(directories.0)
             || root.state_directory().identity().ok() != Some(directories.1)
@@ -498,7 +513,17 @@ pub fn qualification_owned_registration(
                         && diag.run.as_deref() == Some(run.to_string().as_str())
                         && diag.start.as_deref() == Some(owner.start.text().as_str())
                         && diag.boot.as_deref() == Some(owner.boot.as_str())
-                        && matches!(diag.state, Observed::Verified(crate::ident::ProcessState::Active | crate::ident::ProcessState::Stopped, _)) => Ok(()),
+                        && matches!(
+                            diag.state,
+                            Observed::Verified(
+                                crate::ident::ProcessState::Active
+                                    | crate::ident::ProcessState::Stopped,
+                                _
+                            )
+                        ) =>
+                {
+                    Ok(())
+                }
                 _ => Err(inconsistent("owner gate differs")),
             },
             _ => Err(inconsistent("owner gate unavailable")),
@@ -506,16 +531,21 @@ pub fn qualification_owned_registration(
     };
     check_owner()?;
     let reader = crate::store::Store::read(cx, root);
-    let reader = reader.verified().ok_or_else(|| inconsistent("store unavailable"))?;
+    let reader = reader
+        .verified()
+        .ok_or_else(|| inconsistent("store unavailable"))?;
     let summary = crate::run::summary(reader, run);
-    let summary = summary.verified().ok_or_else(|| inconsistent("run unavailable"))?;
+    let summary = summary
+        .verified()
+        .ok_or_else(|| inconsistent("run unavailable"))?;
     let invocation = summary
         .invocation
         .as_ref()
         .ok_or_else(|| inconsistent("invocation missing"))?;
     if summary.parent.is_some()
         || matches!(summary.phase, Phase::Stopping | Phase::Closed)
-        || invocation.spec().task != *task || invocation.spec().owner != task.resource()
+        || invocation.spec().task != *task
+        || invocation.spec().owner != task.resource()
     {
         return Err(inconsistent("run or canonical task differs"));
     }
@@ -531,14 +561,19 @@ pub fn qualification_owned_registration(
         .verified()
         .ok_or_else(|| inconsistent("effects unavailable"))?;
     let registration = qualification_registration(effects, env, container)?;
-    let index = effects.iter().position(|effect| effect.spec.kind == KIND)
+    let index = effects
+        .iter()
+        .position(|effect| effect.spec.kind == KIND)
         .ok_or_else(|| inconsistent("remote effect missing"))?;
     if effects.iter().enumerate().any(|(index, effect)| {
         index.checked_add(1).and_then(|n| i64::try_from(n).ok()) != Some(effect.sequence)
     }) {
         return Err(inconsistent("effect sequence incomplete"));
     }
-    let owner_fence = Fence { resource: invocation.spec().owner.clone(), generation: summary.generation };
+    let owner_fence = Fence {
+        resource: invocation.spec().owner.clone(),
+        generation: summary.generation,
+    };
     let nonce = session_nonce(run, &owner_fence, index)
         .map_err(|_| inconsistent("run nonce unavailable"))?;
     if registration.nonce != nonce {

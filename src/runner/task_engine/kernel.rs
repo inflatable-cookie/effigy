@@ -675,23 +675,35 @@ pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
             let valid = (|| {
                 let name = name?;
                 let suffix = name.strip_prefix("signal-hostcli-")?;
-                if suffix.len() < 6 || !suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
+                if suffix.len() < 6
+                    || !suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
                     || !root.starts_with("/Volumes/Builds/scratch/effigy/")
                     || std::fs::canonicalize(&root).ok()? != root
-                { return None; }
+                {
+                    return None;
+                }
                 let directory = std::fs::symlink_metadata(&root).ok()?;
                 let file = std::fs::symlink_metadata(&marker).ok()?;
-                if !directory.is_dir() || directory.mode() & 0o077 != 0
-                    || !file.file_type().is_file() || file.nlink() != 1
-                    || file.uid() != directory.uid() || file.mode() & 0o077 != 0
+                if !directory.is_dir()
+                    || directory.mode() & 0o077 != 0
+                    || !file.file_type().is_file()
+                    || file.nlink() != 1
+                    || file.uid() != directory.uid()
+                    || file.mode() & 0o077 != 0
                     || std::fs::read_to_string(&marker).ok()?.trim() != name
-                { return None; }
+                {
+                    return None;
+                }
                 Some(())
-            })().is_some();
+            })()
+            .is_some();
             if valid {
-                let cleared = std::env::var_os("PATH").is_none()
-                    && std::env::var_os("TMPDIR").is_none();
-                let _ = std::fs::write(root.join("sentinel-environment"), if cleared { "cleared" } else { "inherited" });
+                let cleared =
+                    std::env::var_os("PATH").is_none() && std::env::var_os("TMPDIR").is_none();
+                let _ = std::fs::write(
+                    root.join("sentinel-environment"),
+                    if cleared { "cleared" } else { "inherited" },
+                );
             }
         }
     }

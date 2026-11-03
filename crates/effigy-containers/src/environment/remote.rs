@@ -129,12 +129,22 @@ pub struct CliOutput {
 /// ends by `deadline`. An error means the call's effect is unknown.
 pub trait BackendCli {
     #[doc(hidden)]
-    fn capture_recovery(&mut self, _program: &str, _deadline: Instant) -> Result<Option<serde_json::Value>, String> {
+    fn capture_recovery(
+        &mut self,
+        _program: &str,
+        _deadline: Instant,
+    ) -> Result<Option<serde_json::Value>, String> {
         Ok(None)
     }
     #[doc(hidden)]
-    fn restore_recovery(&mut self, binding: Option<&serde_json::Value>, _deadline: Instant) -> Result<(), String> {
-        if binding.is_some() { return Err("unknown backend recovery binding".into()); }
+    fn restore_recovery(
+        &mut self,
+        binding: Option<&serde_json::Value>,
+        _deadline: Instant,
+    ) -> Result<(), String> {
+        if binding.is_some() {
+            return Err("unknown backend recovery binding".into());
+        }
         Ok(())
     }
     #[doc(hidden)]
@@ -158,16 +168,26 @@ pub struct HostCli {
 }
 
 impl BackendCli for HostCli {
-    fn capture_recovery(&mut self, program: &str, deadline: Instant) -> Result<Option<serde_json::Value>, String> {
+    fn capture_recovery(
+        &mut self,
+        program: &str,
+        deadline: Instant,
+    ) -> Result<Option<serde_json::Value>, String> {
         let binding = RecoveryBinding::capture(program, &self.workdir, deadline)?;
-        let encoded = serde_json::to_value(&binding).map_err(|_| "backend binding cannot be recorded")?;
+        let encoded =
+            serde_json::to_value(&binding).map_err(|_| "backend binding cannot be recorded")?;
         self.binding = Some(binding);
         Ok(Some(encoded))
     }
 
-    fn restore_recovery(&mut self, binding: Option<&serde_json::Value>, deadline: Instant) -> Result<(), String> {
-        let binding: RecoveryBinding = serde_json::from_value(binding.cloned().ok_or("backend binding missing")?)
-            .map_err(|_| "invalid backend recovery binding")?;
+    fn restore_recovery(
+        &mut self,
+        binding: Option<&serde_json::Value>,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        let binding: RecoveryBinding =
+            serde_json::from_value(binding.cloned().ok_or("backend binding missing")?)
+                .map_err(|_| "invalid backend recovery binding")?;
         let workdir = binding.verify_record(deadline)?.1.to_path_buf();
         self.workdir = workdir;
         self.binding = Some(binding);
@@ -188,7 +208,9 @@ impl BackendCli for HostCli {
     ) -> Result<CliOutput, String> {
         let binding = self.binding.as_ref().ok_or("backend binding missing")?;
         let (executable, workdir) = binding.verify(program, deadline)?;
-        let executable = executable.to_str().ok_or("backend executable path is not UTF-8")?;
+        let executable = executable
+            .to_str()
+            .ok_or("backend executable path is not UTF-8")?;
         crate::exec::run_input_capture_until(workdir, executable, args, input, deadline)
             .map(|output| CliOutput {
                 code: output.status.code(),
@@ -466,7 +488,11 @@ impl<C: BackendCli> ComposeRemote<C> {
             argv.push(OsString::from("effigy-remote"));
             argv.push(OsString::from(names.len().to_string()));
             argv.extend(names.iter().cloned());
-            argv.push(self.cli.launch_program("colima", deadline).map_err(|error| inconsistent(&error))?);
+            argv.push(
+                self.cli
+                    .launch_program("colima", deadline)
+                    .map_err(|error| inconsistent(&error))?,
+            );
             argv.push(OsString::from(&container.context));
             argv.push(OsString::from(if cmd.terminal == RemoteTerminal::None {
                 "none"
@@ -484,7 +510,11 @@ impl<C: BackendCli> ComposeRemote<C> {
             argv.push(OsString::from("effigy-remote"));
             argv.push(OsString::from(names.len().to_string()));
             argv.extend(names.iter().cloned());
-            argv.push(self.cli.launch_program("docker", deadline).map_err(|error| inconsistent(&error))?);
+            argv.push(
+                self.cli
+                    .launch_program("docker", deadline)
+                    .map_err(|error| inconsistent(&error))?,
+            );
             argv.extend(docker_target(&container.context));
             argv.push(OsString::from("exec"));
             argv.extend(flags);
@@ -694,7 +724,9 @@ impl<C: BackendCli> RemoteExecAdapter for ComposeRemote<C> {
             .ok_or_else(|| inconsistent("not an exact container target"))?;
         let (program, _) = container.runtime(Vec::new());
         let deadline = deadline(cx).map_err(AdapterError)?;
-        self.cli.capture_recovery(program, deadline).map_err(|error| inconsistent(&error))
+        self.cli
+            .capture_recovery(program, deadline)
+            .map_err(|error| inconsistent(&error))
     }
 
     fn restore_recovery_binding(
@@ -703,7 +735,9 @@ impl<C: BackendCli> RemoteExecAdapter for ComposeRemote<C> {
         cx: &OperationContext,
     ) -> Result<(), AdapterError> {
         let deadline = deadline(cx).map_err(AdapterError)?;
-        self.cli.restore_recovery(binding, deadline).map_err(|error| inconsistent(&error))
+        self.cli
+            .restore_recovery(binding, deadline)
+            .map_err(|error| inconsistent(&error))
     }
     /// Colima's VM shell carries the forwarded values on stdin, so it cannot
     /// also hold a terminal: a terminal request there attaches stdin only.
@@ -765,7 +799,11 @@ impl<C: BackendCli> RemoteExecAdapter for ComposeRemote<C> {
         })?;
         let container = RemoteContainer::parse(&id.id)
             .ok_or_else(|| inconsistent("not an exact container identity"))?;
-        self.launch_spec(&container, cmd, deadline(cx.operation()).map_err(AdapterError)?)
+        self.launch_spec(
+            &container,
+            cmd,
+            deadline(cx.operation()).map_err(AdapterError)?,
+        )
     }
 
     fn signal_session(
