@@ -58,7 +58,7 @@ def authorize(inputs, ih, index, index_hash, deadline):
     r.require(atoms.count('--guestagent') == 1 and atoms[atoms.index('--guestagent')+1] == plan['target_path'],
               'target differs from exact retained payload role')
     path = Path(plan['target_path'])
-    public = load(PACKET/'payload-public-digests.json', 'payload_collect_once.py')
+    public = load(PACKET/'payload-public-digests.json')
     prefix = Path('/opt')/'homebrew'
     canonical = prefix/'Cellar'/'lima'/'2.2.1'/'share'/'lima'/public['payload_name']
     locator = prefix/'share'/'lima'/public['payload_name']
