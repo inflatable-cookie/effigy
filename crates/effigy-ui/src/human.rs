@@ -203,7 +203,9 @@ fn names_a_cause(line: &str) -> bool {
 fn evidence_priority(line: &str) -> u8 {
     let lower = line.to_ascii_lowercase();
     let trimmed = lower.trim_start();
-    if trimmed.starts_with("fail ") || trimmed.contains("assertion failed") {
+    if trimmed.starts_with("fail ") {
+        3
+    } else if trimmed.contains("assertion failed") {
         2
     } else if trimmed == "error: test run failed" {
         0
@@ -579,6 +581,8 @@ mod tests {
     fn nextest_identity_survives_output_and_evidence_folding() {
         let mut lines: Vec<String> = (0..30).map(|step| format!("running test {step}")).collect();
         lines.insert(15, "FAIL [ 0.123s] example::tests::broken".to_owned());
+        lines.insert(16, "assertion failed: first".to_owned());
+        lines.insert(17, "assertion failed: second".to_owned());
         lines.push("error: test run failed".to_owned());
         let stdout = (0..20)
             .map(|n| format!("progress {n}"))
