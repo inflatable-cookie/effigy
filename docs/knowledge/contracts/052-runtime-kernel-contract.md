@@ -884,6 +884,7 @@ a transaction.
 | ENOSPC | The commit fails and the operation stops before its effect. A replace leaves the previous file intact. |
 | Busy or locked (another writer) | Wait the store's own window (30 s admission and effects, 120 s settle), then report `Unavailable` with the holder's pid and run (§6.1). Settle never reports a task failure for it. |
 | Cannot open, or permissions deny the file | `Unavailable`, naming the path it could not open. Never `Corrupt`: the file is not wrong, its environment is. |
+| Durability-write I/O (`SQLITE_IOERR_FSYNC`, `WRITE`, `DIR_FSYNC`, atomic-write codes) | `Unavailable`, keeping the SQLite extended code. The write is unknown, not proved corrupt: do not replay the operation or run the explicit repair. Observations still work. Never `Corrupt` unless a later verified integrity check says so (§6.1). |
 | Killed writer mid-transaction | SQLite rolls back the uncommitted write-ahead frames. A reader keeps the last committed snapshot without repairing anything; the next writer recovers. |
 | Perm | Mutate refuses before any effect. Observe returns `Unknown(PermissionDenied)`. |
 | Clock | Records carry wall time for display and journal sequence for order. Nothing compares wall times for authority. |
@@ -2374,6 +2375,15 @@ A cancellation is not a refusal. A run, a gate wait or a store wait that a
 signal, a stop request or an owner exit ended renders as `cancelled by SIGINT`
 (and the like) with no category's next step, and reports `Unavailable` where a
 category is carried across a process boundary (F7).
+
+A durability-write I/O failure (`SQLITE_IOERR_FSYNC`, `SQLITE_IOERR_WRITE`,
+`SQLITE_IOERR_DIR_FSYNC`, or the atomic-write codes) stays `Unavailable` and
+keeps the SQLite extended code. It does not carry the category's "retrying
+once it answers is safe" next step: that write is unknown, not proved corrupt,
+so the next step is not to replay the operation or run the explicit repair.
+Observations still work. A generic I/O error that is not one of those codes
+keeps the ordinary Unavailable next step. Settle retries `StoreError::Io`
+only; a durability-write stays `Sqlite` so it is never blindly replayed.
 
 The same three kinds hold outside the kernel: `RunnerError::category()` maps
 every runner failure to `Refused`, `Unavailable` or `Broken` instead of

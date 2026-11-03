@@ -11,8 +11,10 @@ use std::time::Duration;
 /// How a kernel or run error reads to a person (K4).
 ///
 /// There are three, and every error is exactly one of them. The category owns
-/// the single next step that is true for every error in it; the error's own
-/// text names the rule, what was waited on or the check that failed.
+/// the default next step for errors in it; Display special cases (a
+/// cancellation, a newer schema, a durability-write I/O failure, verified
+/// corruption) replace that step when the default would be false. The error's
+/// own text names the rule, what was waited on or the check that failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Category {

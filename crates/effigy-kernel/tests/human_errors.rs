@@ -2,12 +2,14 @@
 //!
 //! Every kernel and run error is exactly one of three categories (K4,
 //! contract 052 §6): **Refused** (a rule said no), **Unavailable** (something
-//! did not answer; retrying is safe) or **Broken** (Effigy's own data is wrong,
+//! did not answer; retrying is safe except for a durability-write I/O
+//! failure, which stays unknown) or **Broken** (Effigy's own data is wrong,
 //! an Effigy bug). Only verified corruption says `Corrupt` and suggests the
 //! explicit repair (effigy#360).
 use std::time::Duration;
 
 use effigy_kernel::ctx::{Interrupt, StopCause};
+use effigy_kernel::custody::SpawnError;
 use effigy_kernel::fs::FsError;
 use effigy_kernel::human::Category;
 use effigy_kernel::observe::{Observed, UnknownReason};
@@ -67,6 +69,107 @@ fn a_kernel_db_that_cannot_be_opened_is_unavailable_and_names_the_path() {
             tail(Category::Unavailable)
         )
     );
+}
+
+#[test]
+fn a_durable_write_failure_is_unavailable_and_never_safe_to_replay() {
+    // Constructor/SQLite-fault double: rusqlite `SqliteFailure` with extended
+    // code 1034 (`SQLITE_IOERR_FSYNC`), not a physical fsync reproduction.
+    // Observed Praxis QA 14bd263a rendered this as Unavailable plus
+    // "retrying once it answers is safe"; that next step is false for an
+    // unknown durability write (effigy#580).
+    let error = StoreError::from(rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error {
+            code: rusqlite::ErrorCode::SystemIoFailure,
+            extended_code: rusqlite::ffi::SQLITE_IOERR_FSYNC,
+        },
+        Some("disk I/O error".into()),
+    ));
+    let rendered = error.to_string();
+    assert_eq!(error.category(), Category::Unavailable);
+    assert_eq!(
+        rendered,
+        "the state store could not proceed: kernel.db failed a durable write (disk I/O error, \
+         SQLite code 1034); that write is unknown, not proved corrupt, so do not replay this \
+         operation or run the explicit repair; observations still work"
+    );
+    assert!(
+        !rendered.contains("retrying once it answers is safe")
+            && !rendered.contains("nothing is broken")
+            && !rendered.contains("kernel.db is corrupt"),
+        "{rendered}"
+    );
+
+    let wrapped = RunError::from(error.clone());
+    assert_eq!(wrapped.category(), Category::Unavailable);
+    assert_eq!(wrapped.to_string(), rendered);
+
+    let spawn = SpawnError::Unrecorded(wrapped);
+    let spawn_rendered = spawn.to_string();
+    assert!(
+        spawn_rendered.starts_with(
+            "the process started but its record could not be kept (the state store could not \
+             proceed: kernel.db failed a durable write"
+        ),
+        "{spawn_rendered}"
+    );
+    assert!(
+        !spawn_rendered.contains("Unrecorded(") && !spawn_rendered.contains("Sqlite {"),
+        "{spawn_rendered}"
+    );
+
+    for extended in [
+        rusqlite::ffi::SQLITE_IOERR_WRITE,
+        rusqlite::ffi::SQLITE_IOERR_DIR_FSYNC,
+        rusqlite::ffi::SQLITE_IOERR_BEGIN_ATOMIC,
+        rusqlite::ffi::SQLITE_IOERR_COMMIT_ATOMIC,
+        rusqlite::ffi::SQLITE_IOERR_ROLLBACK_ATOMIC,
+    ] {
+        let sibling = StoreError::from(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::SystemIoFailure,
+                extended_code: extended,
+            },
+            Some("disk I/O error".into()),
+        ));
+        let sibling_rendered = sibling.to_string();
+        assert_eq!(sibling.category(), Category::Unavailable);
+        assert!(
+            sibling_rendered.contains("failed a durable write"),
+            "{sibling_rendered}"
+        );
+        assert!(
+            !sibling_rendered.contains("retrying once it answers is safe"),
+            "{sibling_rendered}"
+        );
+    }
+}
+
+#[test]
+fn a_generic_sqlite_io_error_still_says_retrying_is_safe() {
+    // `SQLITE_IOERR_READ` is I/O, not a durability write: it keeps the
+    // ordinary Unavailable next step. A settle timeout is the same class of
+    // control (see `a_settle_timeout_reads_as_unavailable`): generic ctx
+    // settle wording is not a proved Env lock or a 1034 (effigy#580).
+    let error = StoreError::from(rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error {
+            code: rusqlite::ErrorCode::SystemIoFailure,
+            extended_code: rusqlite::ffi::SQLITE_IOERR_READ,
+        },
+        Some("disk I/O error".into()),
+    ));
+    let rendered = error.to_string();
+    assert_eq!(error.category(), Category::Unavailable);
+    assert_eq!(
+        rendered,
+        format!(
+            "the state store could not proceed: kernel.db refused the query (disk I/O error, \
+             SQLite code {}); {}",
+            rusqlite::ffi::SQLITE_IOERR_READ,
+            tail(Category::Unavailable)
+        )
+    );
+    assert!(!rendered.contains("failed a durable write"), "{rendered}");
 }
 
 #[test]
