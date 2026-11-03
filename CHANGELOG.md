@@ -1512,6 +1512,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- The harness `mktemp` TMPDIR guard treats an unescaped `$(mktemp …)` or
+  backtick substitution inside double quotes as a command again, while still
+  ignoring quoted mentions, single-quoted literals, and escaped dollar-paren
+  or backtick openers (effigy#592). `effigy test:qa:static-guards` names those
+  cases; `qa:docs:mktemp` stays the live-tree check. This restores the
+  placement policy that effigy#591's quoted-mention skip had missed; it is not
+  a new safety rule.
+
 - `container status --json` no longer emits `services: null` when the runtime
   is not running. A known-stopped host reports `runtime_running: false` with
   an empty `services` array. A failed, unparsable, or otherwise unusable

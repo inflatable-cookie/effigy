@@ -18,6 +18,13 @@ annotation on the same line or the line above:
 
     native_dir=$(mktemp -d)  # mktemp-exempt: container guest temp
 
+Quoted data is not a call: `echo "please run mktemp"` and `'mktemp -d'`
+are ignored, as is an escaped dollar-paren or backtick opener. An unescaped
+`$(mktemp …)` or backtick substitution still runs inside double quotes and
+is checked. The scan is line-local lexical matching of that subset, not a
+shell parser (eval, aliases, and substitutions that span lines are out of
+scope).
+
 Usage: scripts/check-mktemp.py   (exit 1 on any bare or `/tmp`-template call)
 """
 
@@ -36,7 +43,9 @@ CRATE_SCRIPTS = re.compile(r"^crates/[^/]+/tests/scripts$")
 SKIP = ("scripts/check-mktemp.py",)
 EXEMPT = re.compile(r"mktemp-exempt:\s*(\S.*)")
 MKTEMP = re.compile(r"(?<![\w./-])mktemp(?![\w.-])")
-# A `mktemp` only counts as a call at a command position, not inside a string.
+# A `mktemp` only counts as a call at a command position. Quoted data is
+# not a call; an unescaped `$(...)` or backtick substitution inside double
+# quotes still runs, so those stay commands.
 COMMAND_POSITION = re.compile(
     r"(\$\(|`|[\s;&|({]$|^|\b(?:then|do|else|command|exec)\s+)$"
 )
@@ -62,18 +71,93 @@ def strip_comment(line):
     return line
 
 
-def in_quotes(line, index):
-    """Whether `index` sits inside a single- or double-quoted string."""
+def in_literal_text(line, index):
+    """Whether `index` is shell data rather than a command.
+
+    Single-quoted text is always data. Double-quoted text is data except
+    inside an unescaped `$(...)` or backtick substitution opened in that
+    region; those run, so `mktemp` there is a command. An escaped dollar
+    or escaped backtick does not open a substitution. Arithmetic
+    `$((...))` is not a command substitution. The walk is line-local
+    lexical matching of this subset, not a shell parser: eval, aliases,
+    and substitutions that span lines stay out of scope.
+    """
     quote = None
-    for pos, char in enumerate(line):
+    stack = []
+    pos = 0
+    length = len(line)
+    while pos < length:
         if pos == index:
             return quote is not None
-        if quote:
-            if char == quote and pos and line[pos - 1] != "\\":
+        char = line[pos]
+        if quote == "'":
+            if char == "'":
                 quote = None
-        elif char in ('"', "'"):
+            pos += 1
+            continue
+        if char == "\\" and pos + 1 < length:
+            pos += 2
+            continue
+        if quote == '"':
+            if char == '"':
+                quote = None
+                pos += 1
+                continue
+            if _opens_command_substitution(line, pos):
+                stack.append(("dollar", 1, quote))
+                quote = None
+                pos += 2
+                continue
+            if char == "`":
+                stack.append(("backtick", quote))
+                quote = None
+                pos += 1
+                continue
+            pos += 1
+            continue
+        if char in ("'", '"'):
             quote = char
+            pos += 1
+            continue
+        if _opens_command_substitution(line, pos):
+            stack.append(("dollar", 1, quote))
+            quote = None
+            pos += 2
+            continue
+        if char == "`":
+            if stack and stack[-1][0] == "backtick":
+                _, quote = stack.pop()
+            else:
+                stack.append(("backtick", quote))
+                quote = None
+            pos += 1
+            continue
+        if char == "(" and stack and stack[-1][0] == "dollar":
+            kind, depth, restore = stack[-1]
+            stack[-1] = (kind, depth + 1, restore)
+            pos += 1
+            continue
+        if char == ")" and stack and stack[-1][0] == "dollar":
+            kind, depth, restore = stack[-1]
+            if depth == 1:
+                stack.pop()
+                quote = restore
+            else:
+                stack[-1] = (kind, depth - 1, restore)
+            pos += 1
+            continue
+        pos += 1
     return quote is not None
+
+
+def _opens_command_substitution(line, pos):
+    """Unescaped `$(` that is not arithmetic `$((`."""
+    return (
+        pos + 1 < len(line)
+        and line[pos] == "$"
+        and line[pos + 1] == "("
+        and not (pos + 2 < len(line) and line[pos + 2] == "(")
+    )
 
 
 def scanned_files():
@@ -106,6 +190,8 @@ def template_of(code, start):
     for word in WORD.findall(code[start:]):
         if word.startswith("-"):
             continue
+        if not word.strip("\"'`"):
+            continue
         return word
     return None
 
@@ -129,7 +215,7 @@ def complaints(path):
     for index, line in enumerate(lines):
         code = strip_comment(line)
         for match in MKTEMP.finditer(code):
-            if in_quotes(code, match.start()):
+            if in_literal_text(code, match.start()):
                 continue
             if not COMMAND_POSITION.search(code[: match.start()]):
                 continue
