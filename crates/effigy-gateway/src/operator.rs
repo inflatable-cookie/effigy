@@ -1176,16 +1176,6 @@ mod tests {
         assert!(first == Some(parent as u64) || parent_unreadable, "{log}");
     }
 
-    #[test]
-    fn failed_http_self_test_is_bounded() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let home = tempfile::tempdir().unwrap();
-        let mut config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
-        config.proxy.bind_addr = listener.local_addr().unwrap();
-        let before = Instant::now();
-        assert!(self_test(&config, Duration::from_millis(80)).is_err());
-        assert!(before.elapsed() < Duration::from_secs(2));
-    }
     fn self_test_error(bind_addr: std::net::SocketAddr, budget: Duration) -> String {
         let home = tempfile::tempdir().unwrap();
         let mut config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
@@ -1206,7 +1196,9 @@ mod tests {
             std::thread::sleep(Duration::from_secs(1));
             drop(stream);
         });
+        let before = Instant::now();
         let error = self_test_error(address, Duration::from_millis(300));
+        assert!(before.elapsed() < Duration::from_secs(2));
         assert!(error.contains("(deadline)"), "{error}");
         assert!(
             error.contains("the observation timed out during HTTP response"),

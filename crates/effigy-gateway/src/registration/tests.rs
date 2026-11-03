@@ -66,40 +66,6 @@ fn publication_records_the_owner_generation_and_reserved_address() {
 }
 
 #[test]
-fn register_and_deregister_roundtrip() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("routes.json");
-    let checkout = dir.path().join("checkout");
-    std::fs::create_dir_all(&checkout).unwrap();
-    let project = checkout.display().to_string();
-
-    let reg = RouteRegistration {
-        domain: "myapp.test".to_string(),
-        target: Some("127.0.0.1:8080".to_string()),
-        dns_ip: None,
-        tcp_port: None,
-        tcp_target: None,
-        tls: false,
-        project_path: project.clone(),
-        source: RouteSource::Container,
-    };
-
-    register_route(&path, &reg).unwrap();
-
-    let table = RouteTable::load(&path).unwrap();
-    assert_eq!(table.len(), 1);
-    assert_eq!(
-        table.lookup("myapp.test").unwrap().target.as_deref(),
-        Some("127.0.0.1:8080")
-    );
-
-    deregister_route(&path, "myapp.test", &project).unwrap();
-
-    let table = RouteTable::load(&path).unwrap();
-    assert!(table.is_empty());
-}
-
-#[test]
 fn register_upserts_existing() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("routes.json");
@@ -123,6 +89,9 @@ fn register_upserts_existing() {
         Some("127.0.0.1:9090")
     );
     assert!(table.lookup("myapp.test").unwrap().tls);
+
+    deregister_route(&path, "myapp.test", &project).unwrap();
+    assert!(RouteTable::load(&path).unwrap().is_empty());
 }
 
 #[test]

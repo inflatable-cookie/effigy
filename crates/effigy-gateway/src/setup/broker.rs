@@ -255,19 +255,6 @@ pub(super) fn remove(
 mod tests {
     use super::*;
     #[test]
-    fn broker_definition_logs_stderr_under_private_var_log() {
-        // A broker that fails to start must leave evidence: launchd writes the
-        // job's stderr to /private/var/log/<label>.log (#406).
-        let label = crate::bind_broker::label(501);
-        let plist = String::from_utf8(definition(501, 20, Path::new("/fixture/effigy"))).unwrap();
-        assert!(
-            plist.contains(&format!(
-                "<key>StandardErrorPath</key><string>/private/var/log/{label}.log</string>"
-            )),
-            "{plist}"
-        );
-    }
-    #[test]
     fn loaded_foreign_job_and_unknown_observation_never_bootout() {
         crate::setup::tests::with_run(|run, cx, home| {
             for code in [0, 1] {
@@ -318,6 +305,13 @@ mod tests {
             assert!(xml.contains("<integer>432</integer>"));
             assert!(xml.contains("<key>SockPathOwner</key><integer>0</integer>"));
             assert!(!xml.contains("__gateway-user-run"));
+            let label = crate::bind_broker::label(501);
+            assert!(
+                xml.contains(&format!(
+                    "<key>StandardErrorPath</key><string>/private/var/log/{label}.log</string>"
+                )),
+                "{xml}"
+            );
             remove(run, cx, &jobs, &helpers, 501, adapter).unwrap();
             assert!(!plist.exists());
             std::fs::write(&plist, b"foreign definition").unwrap();

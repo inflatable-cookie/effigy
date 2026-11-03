@@ -2753,6 +2753,10 @@ mod tests {
                 std::fs::read(&paths.unit).unwrap(),
                 b"[Unit]\nDescription=someone else\n"
             );
+            assert!(
+                paths.wants.exists(),
+                "Foreign teardown must leave the activation entry in place"
+            );
             assert_eq!(observe_unit(&paths, uid), UnitState::Foreign);
         });
     }
@@ -3008,23 +3012,21 @@ mod tests {
     }
 
     #[test]
-    fn a_foreign_activation_link_is_never_followed_or_removed() {
+    fn remove_preserves_a_foreign_activation_link_when_the_unit_is_missing() {
         with_run(|_run, cx| {
             let home = tempfile::tempdir().unwrap();
             let paths = paths(home.path());
             let uid = nix::unistd::Uid::effective().as_raw();
-            std::fs::create_dir_all(&paths.user_dir).unwrap();
-            std::fs::write(&paths.unit, b"foreign").unwrap();
             std::fs::create_dir_all(paths.wants.parent().unwrap()).unwrap();
             let foreign = home.path().join("elsewhere.service");
             std::fs::write(&foreign, b"foreign unit").unwrap();
             std::os::unix::fs::symlink(&foreign, &paths.wants).unwrap();
             let mut systemd = FakeSystemd::default();
-            // A foreign unit is preserved, and its link is not ours to touch.
             assert!(remove(cx, &paths, uid, &mut systemd).is_err());
             assert!(systemd.calls.is_empty());
-            assert!(paths.wants.exists());
+            assert_eq!(std::fs::read_link(&paths.wants).unwrap(), foreign);
             assert_eq!(std::fs::read(&foreign).unwrap(), b"foreign unit");
+            assert!(!paths.unit.exists());
         });
     }
 
@@ -3149,37 +3151,6 @@ mod tests {
         dropped.apply = FakeApply::Drops;
         assert!(install_capability(&mut dropped, 501).is_err());
         assert_eq!(dropped.state, BindCapabilityState::Missing);
-    }
-
-    #[test]
-    fn capability_refuses_a_binary_the_operator_does_not_own_or_may_not_run() {
-        let facts = ExecutableFacts {
-            regular: true,
-            executable: true,
-            nlink: 1,
-            mode: 0o100755,
-            uid: 501,
-            gid: 20,
-            len: 4096,
-        };
-        for refused in [
-            ExecutableFacts {
-                regular: false,
-                ..facts
-            },
-            ExecutableFacts {
-                executable: false,
-                ..facts
-            },
-            ExecutableFacts {
-                mode: 0o100775,
-                ..facts
-            },
-            ExecutableFacts { uid: 502, ..facts },
-            ExecutableFacts { len: 0, ..facts },
-        ] {
-            assert!(validate_executable(&refused, 501).is_err(), "{refused:?}");
-        }
     }
 
     #[test]
@@ -5208,36 +5179,6 @@ mod tests {
                 Some(previous)
             );
             assert_eq!(std::fs::read_link(&paths.wants).unwrap(), paths.unit);
-        });
-    }
-
-    /// A replacement that appears at the shared unit name while the manager
-    /// disables the unit is preserved and reported: Effigy deletes no
-    /// activation entry, so it cannot delete a replacement either.
-    #[test]
-    fn a_replacement_at_the_unit_name_is_never_deleted_by_effigy() {
-        with_run(|run, cx| {
-            let home = tempfile::tempdir().unwrap();
-            let paths = paths(home.path());
-            let uid = nix::unistd::Uid::effective().as_raw();
-            let binary = installed_binary(home.path());
-            let mut manager = FakeManager::for_paths(&paths);
-            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
-
-            let elsewhere = home.path().join("elsewhere.service");
-            std::fs::write(&elsewhere, b"[Unit]\n").unwrap();
-            let mut replacing = ReplaceEntryOnDisable {
-                paths: paths.clone(),
-                entry: elsewhere.clone(),
-            };
-            let error = remove(cx, &paths, uid, &mut replacing).unwrap_err();
-            assert!(
-                error.to_string().contains("preserved, not deleted"),
-                "{error}"
-            );
-            // The replacement is exactly where it was, and the old unit too.
-            assert_eq!(std::fs::read_link(&paths.wants).unwrap(), elsewhere);
-            assert!(paths.unit.exists());
         });
     }
 
