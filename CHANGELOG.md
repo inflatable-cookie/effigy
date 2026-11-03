@@ -8,6 +8,16 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Keep copied database seed payloads inside the owned `.effigy/local/db-seeds`
+  staging root: target labels are percent-encoded into the staged file name
+  instead of being joined onto the staging root raw, so an absolute or
+  parent-bearing `--db-seed <target>=<file>` label can no longer write the
+  payload outside that root or outside the checkout. The returned paths, the
+  seed environment handoff, both metadata files and cleanup now name the same
+  staged object; distinct labels stay distinct names, existing overwrite and
+  duplicate-refusal behavior is unchanged, and ordinary
+  `<target>--<file>.sql` output names are preserved (effigy#612).
+
 - Secure `effigy secrets export` plaintext destinations before writing secret
   bytes: the opened file is set to owner-only (0600) first, including when the
   destination already exists with broader permissions, and the held descriptor

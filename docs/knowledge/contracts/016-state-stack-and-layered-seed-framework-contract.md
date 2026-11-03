@@ -760,6 +760,22 @@ Rules:
 - app-specific behavior remains inside repo-owned tasks
 - capture and conflict logic remain future adapters
 
+## DB Seed Staging Containment
+
+The seed/import path stages every payload directly inside its owned
+`.effigy/local/db-seeds` root, for `container data seed` and SQL layers
+alike. Target labels stay opaque logical names (`DataTargetRef` carries any
+string): staging percent-encodes the label into the staged file-name
+component, so an absolute, parent-bearing or separator-bearing label cannot
+move the copy, the metadata or cleanup outside that root, and distinct
+labels stay distinct staged names. Ordinary labels keep the existing
+`<target>--<file>` names byte for byte. Both metadata files, the seed
+environment handoff and cleanup name the staged payload through one
+repo-relative path under that root. Containment is lexical: a same-user
+symlink already planted at a staged path would still redirect the copy,
+which sits inside the documented local trust boundary rather than a
+hostile-same-user guarantee.
+
 ## SQL Apply Adapter
 
 SQL apply is a database import adapter, not a migration engine.

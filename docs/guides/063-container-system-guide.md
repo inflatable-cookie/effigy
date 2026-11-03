@@ -1455,7 +1455,11 @@ effigy container data seed --db-seed cbs=./cbs.sql --db-seed cbs-mortcalc=./mort
 ```
 
 OCI refs must use the explicit `oci://` prefix. `data seed` stages the artifact
-under `.effigy/local/db-seeds/` before the app-specific seed logic runs.
+under `.effigy/local/db-seeds/` before the app-specific seed logic runs. The
+`<target>` in `<target>=<file>` is a logical name, not a path: it is
+percent-encoded into the staged file name, so every payload stays inside
+`.effigy/local/db-seeds/` even for labels with slashes or leading dots
+(`legacy/mysql` stages as `legacy%2Fmysql--dump.sql`).
 
 The staged file is cleaned up when the seed succeeds. A refusal or an aborted
 import leaves it in place, so a corrected re-run does not need the source
