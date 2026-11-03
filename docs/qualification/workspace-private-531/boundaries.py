@@ -513,6 +513,9 @@ class Boundaries(unittest.TestCase):
                 self.assertEqual(native.call_count, 1)
 
 
+# This route also selects the new owned-child recovery boundaries.
+from recovery_boundaries import RecoveryBoundaries
+
 if __name__ == '__main__':
     os.umask(0o077)
     unittest.main()

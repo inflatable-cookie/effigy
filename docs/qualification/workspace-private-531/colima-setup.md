@@ -135,3 +135,11 @@ builds/transfer, consumer/install/proof/production/merge effects remain excluded
 Final candidate freeze waits #574 and #580 source integration. Historical e51
 and8092 bytes are not final candidates. Full aggregate inputs/GO-index remain
 **UNARMED**, production Discard refused and merge held.
+
+## Recovery execution seam
+
+The [fixed-purpose recovery gate](recovery.md) presently refuses before effects.
+The retained non-child identity-bound signal/positive backend closure witness is
+unproved; no watch-then-kill assumption or restart follows. Full Queue accounting
+leaves at most22.743 seconds of the original native allowance; the proposed new
+600-second recovery window is not approved.

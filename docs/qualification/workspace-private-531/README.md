@@ -328,3 +328,7 @@ The prelaunch marker without its exact live owner remains unresolved. The
 caller-drop source control verifies the resident descriptor through its shared
 file lock after all caller descriptions close, and verifies Env remains held.
 Its exact-helper fixture teardown is not production settlement credit.
+
+The [recovery preparation gate](recovery.md) implements pre-effect refusal for the
+retained agent: a Darwin exit event does not close the identity-to-signal race.
+Owned-child watcher proofs and recorded admission tests grant no runtime authority.
