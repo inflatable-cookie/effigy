@@ -1263,6 +1263,37 @@ def t_hostcli_fixture_foreign_pid_is_refused():
         reap_driver(driver)
 
 
+def t_hostcli_owner_missing_start_identity_is_refused():
+    tmp = owned_tmp()
+    env, candidate = hostcli_env(tmp)
+    driver = HostCliDriver(env=env)
+    try:
+        started = driver.start({'op': 'workload', 'program': str(candidate), 'argv': ['hold']})
+        expect_refused(
+            lambda: driver.signal({
+                'op': 'signal-owner', 'program': str(candidate), 'argv': ['TERM'],
+                'pid': started['pid'], 'start': None,
+            }),
+            'start identity',
+        )
+        original = execute.process_start_identity
+        try:
+            for observed in (None, 'moved'):
+                execute.process_start_identity = lambda _pid: observed
+                expect_refused(
+                    lambda: driver.signal({
+                        'op': 'signal-owner', 'program': str(candidate), 'argv': ['TERM'],
+                        'pid': started['pid'], 'start': started['start'],
+                    }),
+                    'start identity',
+                )
+        finally:
+            execute.process_start_identity = original
+        assert driver.owners[started['pid']]['proc'].poll() is None
+    finally:
+        reap_driver(driver)
+
+
 def t_hostcli_unparsable_inspect_stdout_is_not_verified():
     tmp = owned_tmp()
     env, _candidate = hostcli_env(tmp, inspect=b'[]')
@@ -1282,6 +1313,7 @@ def t_hostcli_unparsable_inspect_stdout_is_not_verified():
 
 
 CASES = [
+    t_hostcli_owner_missing_start_identity_is_refused,
     t_packet_bundle,
     t_helpers_are_plain_files,
     t_helpers_import_no_subprocess,

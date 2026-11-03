@@ -174,11 +174,11 @@ class HostCliDriver:
         if recorded is None:
             raise Refused('HostCli owner is not a live recorded owner')
         expected_start = call.get('start')
-        if expected_start is not None and recorded.get('start') != expected_start:
+        if not expected_start or recorded.get('start') != expected_start:
             raise Refused('HostCli owner start identity does not match')
         live = process_start_identity(pid)
-        if recorded.get('start') and live is not None and live != recorded.get('start'):
-            raise Refused('HostCli owner start identity moved')
+        if live != expected_start:
+            raise Refused('HostCli owner start identity unavailable or moved')
         argv = list(call.get('argv') or [])
         sig_name = argv[0] if argv else None
         sig = SIGNAL_NUMBERS.get(sig_name)
