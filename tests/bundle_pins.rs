@@ -776,19 +776,41 @@ fn container_up_refreshes_a_changed_path_bundle() {
     assert_ne!(fs::read(&pin).unwrap(), initial);
 }
 
+/// Durable per-run copies of one fixture's captured command output. The
+/// milestone harness truncates a failing stage's streamed output, so the
+/// default-profile failure of the floating-ref proof must leave each `dev`
+/// run's exact stdout and stderr on the runner's kept scratch root. A passing
+/// proof removes the directory; a panicked one leaves it behind.
+fn persist_run_evidence(dir: &Path, label: &str, fixture: &Fixture) {
+    for (stream, source) in [
+        ("stdout", fixture.logs.join("stdout")),
+        ("stderr", fixture.logs.join("stderr")),
+    ] {
+        let bytes = fs::read(&source).unwrap_or_default();
+        let _ = fs::write(dir.join(format!("{label}.{stream}.log")), bytes);
+    }
+}
+
 #[test]
 fn a_floating_git_ref_updates_on_dev_at_most_once_per_ttl() {
     let fixture = Fixture::new();
     let source = fixture.owner.path().join("source");
+    let evidence = std::env::temp_dir().join(format!(
+        "effigy-bundle-pins-evidence/a_floating_git_ref_updates_on_dev_at_most_once_per_ttl-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&evidence).unwrap();
     let first = init_git_bundle(&source, &fixture.home, "one");
     git_bundle_manifest(&fixture, &source, None);
     let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    persist_run_evidence(&evidence, "initial-acquire", &fixture);
     assert!(ok, "{output}");
     assert!(output.contains("one"), "{output}");
     assert_eq!(pinned_revision(&fixture), first);
 
     let second = commit_git_bundle(&source, &fixture.home, "two");
     let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    persist_run_evidence(&evidence, "first-upstream-move", &fixture);
     assert!(ok, "{output}");
     assert!(output.contains("two"), "{output}");
     assert!(
@@ -804,6 +826,7 @@ fn a_floating_git_ref_updates_on_dev_at_most_once_per_ttl() {
     // Inside the window the upstream moves again and the pin stays put.
     commit_git_bundle(&source, &fixture.home, "three");
     let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    persist_run_evidence(&evidence, "inside-ttl-keep", &fixture);
     assert!(ok, "{output}");
     assert!(
         output.contains("two") && !output.contains("three"),
@@ -815,8 +838,34 @@ fn a_floating_git_ref_updates_on_dev_at_most_once_per_ttl() {
     // Past the recorded check, the next Prepare checks and updates again.
     fs::remove_file(fixture.repo.join(".effigy/sources.update.json")).unwrap();
     let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    persist_run_evidence(&evidence, "after-record-removal", &fixture);
     assert!(ok, "{output}");
-    assert!(output.contains("three"), "{output}");
+    // A silent keep must name its own state: what the upstream serves at this
+    // moment (a plain client, the fixture's own git), which revision the lock
+    // still records, and whether the removed check record was recreated. The
+    // record is contract 020's proof that the due remote check ran at all.
+    let upstream = git_in(
+        &source,
+        &fixture.home,
+        &[
+            "ls-remote",
+            "--",
+            &format!("file://{}", source.display()),
+            "main",
+        ],
+    );
+    let record = fs::read_to_string(fixture.repo.join(".effigy/sources.update.json"));
+    let _ = fs::remove_dir_all(&evidence);
+    // A concurrently running proof owns its own pid-suffixed child, so this
+    // parent removal only ever takes an empty directory.
+    let _ = fs::remove_dir(std::env::temp_dir().join("effigy-bundle-pins-evidence"));
+    assert!(
+        output.contains("three"),
+        "floating refresh kept {} instead of the upstream the fixture now serves \
+         ({upstream}); removed-record state after the run: {:?}; output: {output}",
+        pinned_revision(&fixture),
+        record
+    );
 }
 
 #[test]
