@@ -258,6 +258,12 @@ effigy secrets export --format env --output .effigy/runtime/secrets/local.env --
 Writes plaintext values to a file. This is an explicit compatibility escape
 hatch, not the default runtime path. Requires `--yes`.
 
+The destination is secured to owner-only permissions (0600) before any secret
+byte is written, including when the file already exists, and the held file
+descriptor is what gets secured. On Unix, a reader that already has the file
+open keeps its access; the export neither revokes open descriptors nor
+publishes atomically.
+
 ## Use In Tasks
 
 Secrets with `targets = ["tasks"]` are injected into task processes when the

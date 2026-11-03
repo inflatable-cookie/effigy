@@ -8,6 +8,26 @@ use effigy_secrets::{
 };
 use std::fs;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+/// Seeds `path` at mode 0644 so an export into it starts from a destination
+/// that is readable beyond its owner.
+#[cfg(unix)]
+fn seed_export_destination(path: &std::path::Path, contents: &str) {
+    fs::create_dir_all(path.parent().expect("destination parent")).expect("mkdir");
+    fs::write(path, contents).expect("seed destination contents");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o644)).expect("seed destination mode");
+}
+
+fn destination_mode(path: &std::path::Path) -> u32 {
+    fs::metadata(path)
+        .expect("destination exists")
+        .permissions()
+        .mode()
+        & 0o777
+}
+
 #[test]
 fn secrets_doctor_json_treats_missing_section_as_ok() {
     let root = temp_workspace("secrets-doctor-missing");
@@ -789,6 +809,288 @@ fn secrets_export_blocks_missing_required_before_writing() {
         .to_string()
         .contains("required secret(s) missing from the vault"));
     assert!(!root.join(".effigy/runtime/secrets/local.env").exists());
+}
+
+#[test]
+#[cfg(unix)]
+fn secrets_export_fresh_file_mode_is_owner_only() {
+    let root = temp_workspace("secrets-export-fresh-mode");
+    write_root_manifest(&root, declared_secrets_manifest());
+    let _env = secret_test_env("vault-passphrase", Some("postgres://secret-value"));
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Init,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("init should succeed");
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Set {
+            name: "database_url".to_owned(),
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("set should succeed");
+
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Export {
+            format: SecretsExportFormat::Env,
+            output: std::path::PathBuf::from(".effigy/runtime/secrets/local.env"),
+            yes: true,
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("export should succeed");
+
+    let output = root.join(".effigy/runtime/secrets/local.env");
+    assert_eq!(destination_mode(&output), 0o600);
+    assert_eq!(
+        fs::read_to_string(&output).expect("read export"),
+        "DATABASE_URL=postgres://secret-value\n"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn secrets_export_existing_destination_replaces_contents_and_secures_mode() {
+    let root = temp_workspace("secrets-export-existing-mode");
+    write_root_manifest(&root, declared_secrets_manifest());
+    let _env = secret_test_env("vault-passphrase", Some("postgres://secret-value"));
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Init,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("init should succeed");
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Set {
+            name: "database_url".to_owned(),
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("set should succeed");
+    let output = root.join(".effigy/runtime/secrets/local.env");
+    seed_export_destination(&output, "stale=contents\n");
+
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Export {
+            format: SecretsExportFormat::Env,
+            output: std::path::PathBuf::from(".effigy/runtime/secrets/local.env"),
+            yes: true,
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("export should succeed");
+
+    assert_eq!(destination_mode(&output), 0o600);
+    assert_eq!(
+        fs::read_to_string(&output).expect("read export"),
+        "DATABASE_URL=postgres://secret-value\n"
+    );
+}
+
+/// Discriminator: the write crossing fails after securing, so the observed
+/// 0600 mode proves permissions landed before the first secret byte. The
+/// pre-repair writer had no securing step before `write_all`, so the same
+/// injected failure left the destination at its pre-existing 0644 mode.
+#[test]
+#[cfg(all(unix, feature = "fault-injection"))]
+fn secrets_export_existing_destination_secures_mode_before_first_write() {
+    let root = temp_workspace("secrets-export-write-fault-mode");
+    write_root_manifest(&root, declared_secrets_manifest());
+    let _env = secret_test_env("vault-passphrase", Some("postgres://secret-value"));
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Init,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("init should succeed");
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Set {
+            name: "database_url".to_owned(),
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("set should succeed");
+    let output = root.join(".effigy/runtime/secrets/local.env");
+    seed_export_destination(&output, "stale=contents\n");
+
+    let error = effigy_kernel::fault_injection::with_hook(
+        |point| {
+            if point == "SecretsExportWrite" {
+                Err(std::io::Error::from(std::io::ErrorKind::StorageFull))
+            } else {
+                Ok(())
+            }
+        },
+        || {
+            run_command(Command::Secrets(SecretsArgs {
+                subcommand: SecretsSubcommand::Export {
+                    format: SecretsExportFormat::Env,
+                    output: std::path::PathBuf::from(".effigy/runtime/secrets/local.env"),
+                    yes: true,
+                },
+                repo_override: Some(root.clone()),
+                output_json: false,
+            }))
+        },
+    )
+    .expect_err("injected write failure should fail the export");
+
+    let rendered = error.to_string();
+    assert!(rendered.contains("failed to write secrets export"));
+    assert!(!rendered.contains("postgres://secret-value"));
+    assert_eq!(
+        destination_mode(&output),
+        0o600,
+        "mode must be secured before the first secret write"
+    );
+    assert_eq!(
+        fs::read(&output).expect("read destination"),
+        b"",
+        "no secret byte may precede the failed write"
+    );
+}
+
+/// Discriminator: securing fails at the seam before any write, so the
+/// destination keeps its pre-existing 0644 mode and never receives a secret
+/// byte. The pre-repair writer had no securing crossing: it stored plaintext
+/// first and only then tightened permissions by path.
+#[test]
+#[cfg(all(unix, feature = "fault-injection"))]
+fn secrets_export_securing_failure_refuses_before_secret_bytes() {
+    let root = temp_workspace("secrets-export-secure-fault");
+    write_root_manifest(&root, declared_secrets_manifest());
+    let _env = secret_test_env("vault-passphrase", Some("postgres://secret-value"));
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Init,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("init should succeed");
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Set {
+            name: "database_url".to_owned(),
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("set should succeed");
+    let output = root.join(".effigy/runtime/secrets/local.env");
+    seed_export_destination(&output, "stale=contents\n");
+
+    let error = effigy_kernel::fault_injection::with_hook(
+        |point| {
+            if point == "SecretsExportSecure" {
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            } else {
+                Ok(())
+            }
+        },
+        || {
+            run_command(Command::Secrets(SecretsArgs {
+                subcommand: SecretsSubcommand::Export {
+                    format: SecretsExportFormat::Env,
+                    output: std::path::PathBuf::from(".effigy/runtime/secrets/local.env"),
+                    yes: true,
+                },
+                repo_override: Some(root.clone()),
+                output_json: false,
+            }))
+        },
+    )
+    .expect_err("injected securing failure should fail the export");
+
+    let rendered = error.to_string();
+    assert!(rendered.contains("failed to secure secrets export permissions"));
+    assert!(!rendered.contains("postgres://secret-value"));
+    assert_eq!(destination_mode(&output), 0o644, "mode must stay unsecured");
+    assert_eq!(
+        fs::read(&output).expect("read destination"),
+        b"",
+        "no secret byte may be written when securing fails"
+    );
+}
+
+/// Discriminator for opened-object handling: at the write crossing a new file
+/// is renamed over the destination path, so the bytes land on an inode the
+/// destination path no longer names. The pre-repair writer chmod'ed by path
+/// afterwards, which secured the substitute file and left the secret-bearing
+/// original at 0644 for its alias.
+#[test]
+#[cfg(all(unix, feature = "fault-injection"))]
+fn secrets_export_permissions_apply_to_opened_object_not_substituted_path() {
+    let root = temp_workspace("secrets-export-path-replacement");
+    write_root_manifest(&root, declared_secrets_manifest());
+    let _env = secret_test_env("vault-passphrase", Some("postgres://secret-value"));
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Init,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("init should succeed");
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Set {
+            name: "database_url".to_owned(),
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("set should succeed");
+    let output = root.join(".effigy/runtime/secrets/local.env");
+    let alias = root.join(".effigy/runtime/secrets/local.env.alias");
+    let replacement = root.join(".effigy/runtime/secrets/replacement.env");
+    seed_export_destination(&output, "stale=contents\n");
+    fs::hard_link(&output, &alias).expect("alias the destination inode");
+    seed_export_destination(&replacement, "innocent=contents\n");
+
+    effigy_kernel::fault_injection::with_hook(
+        {
+            let output = output.clone();
+            let replacement = replacement.clone();
+            move |point| {
+                if point == "SecretsExportWrite" {
+                    fs::rename(&replacement, &output)?;
+                }
+                Ok(())
+            }
+        },
+        || {
+            run_command(Command::Secrets(SecretsArgs {
+                subcommand: SecretsSubcommand::Export {
+                    format: SecretsExportFormat::Env,
+                    output: std::path::PathBuf::from(".effigy/runtime/secrets/local.env"),
+                    yes: true,
+                },
+                repo_override: Some(root.clone()),
+                output_json: false,
+            }))
+        },
+    )
+    .expect("export should succeed");
+
+    assert_eq!(
+        destination_mode(&alias),
+        0o600,
+        "the opened inode must be secured through its descriptor"
+    );
+    assert_eq!(
+        fs::read_to_string(&alias).expect("read alias"),
+        "DATABASE_URL=postgres://secret-value\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&output).expect("read substituted path"),
+        "innocent=contents\n"
+    );
+    assert_eq!(
+        destination_mode(&output),
+        0o644,
+        "the permission change must not follow the replaced path"
+    );
 }
 
 #[test]

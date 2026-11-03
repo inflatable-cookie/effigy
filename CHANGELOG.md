@@ -8,6 +8,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Secure `effigy secrets export` plaintext destinations before writing secret
+  bytes: the opened file is set to owner-only (0600) first, including when the
+  destination already exists with broader permissions, and the held descriptor
+  is secured rather than a later pathname lookup. A securing or write failure
+  now refuses before any secret byte lands. On Unix, readers that already hold
+  the destination keep their access; the export neither revokes open
+  descriptors nor publishes atomically (effigy#610).
+
 - Bind remote task recovery to its selected backend executable and working
   directory. Missing or changed identity leaves cleanup unknown rather than
   selecting another executable after the owner exits (effigy#590).

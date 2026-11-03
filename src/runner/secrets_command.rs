@@ -903,12 +903,20 @@ fn normalize_imported_secret_name(raw_key: &str) -> String {
     normalized.trim_matches('_').to_owned()
 }
 
+/// Writes plaintext export bytes, securing the opened destination to 0600
+/// before the first secret byte is written. `mode(0o600)` applies at creation
+/// only; an existing destination keeps its prior mode until `set_permissions`
+/// fires on the held descriptor, so the export never stores secret bytes while
+/// the opened file is readable beyond its owner. The descriptor — not a later
+/// pathname lookup — is secured, so a path replaced between `open` and the
+/// write cannot redirect the permission change. Unix limitation: readers that
+/// already hold the destination stay able to read what they already have open;
+/// the writer neither revokes open descriptors nor publishes atomically.
 #[cfg(unix)]
 fn write_env_export_file_inner(path: &Path, bytes: &[u8]) -> Result<(), RunnerError> {
     use std::fs::OpenOptions;
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
     let mut file = OpenOptions::new()
         .create(true)
@@ -922,18 +930,44 @@ fn write_env_export_file_inner(path: &Path, bytes: &[u8]) -> Result<(), RunnerEr
                 path.display()
             ))
         })?;
-    file.write_all(bytes).map_err(|error| {
+    export_fault_point("SecretsExportSecure").map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to secure secrets export permissions {}: {error}",
+            path.display()
+        ))
+    })?;
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to secure secrets export permissions {}: {error}",
+                path.display()
+            ))
+        })?;
+    export_fault_point("SecretsExportWrite").map_err(|error| {
         RunnerError::task_invocation(format!(
             "failed to write secrets export {}: {error}",
             path.display()
         ))
     })?;
-    fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|error| {
+    file.write_all(bytes).map_err(|error| {
         RunnerError::task_invocation(format!(
-            "failed to secure secrets export permissions {}: {error}",
+            "failed to write secrets export {}: {error}",
             path.display()
         ))
     })
+}
+
+/// Fault crossings for the export permission proofs; inert without the
+/// `fault-injection` feature, and no environment variable arms them.
+#[cfg(unix)]
+fn export_fault_point(name: &'static str) -> std::io::Result<()> {
+    #[cfg(feature = "fault-injection")]
+    return effigy_kernel::fault_injection::point(name);
+    #[cfg(not(feature = "fault-injection"))]
+    {
+        let _ = name;
+        Ok(())
+    }
 }
 
 #[cfg(not(unix))]
