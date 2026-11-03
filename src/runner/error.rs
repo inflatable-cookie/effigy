@@ -826,6 +826,12 @@ impl From<EffigyRuntimeError> for RunnerError {
             EffigyRuntimeError::Cwd(error) => Self::Cwd(error),
             EffigyRuntimeError::Ui(message) => Self::Ui(message),
             EffigyRuntimeError::TaskInvocation(message) => Self::TaskInvocation(message),
+            EffigyRuntimeError::Unavailable(message) => Self::TaskCommandFailure {
+                command: "container status".to_owned(),
+                code: None,
+                stdout: String::new(),
+                stderr: message,
+            },
             EffigyRuntimeError::TaskCommandLaunch { command, error } => {
                 Self::TaskCommandLaunch { command, error }
             }

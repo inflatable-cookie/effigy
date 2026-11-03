@@ -5,6 +5,7 @@ pub enum EffigyRuntimeError {
     Cwd(std::io::Error),
     Ui(String),
     TaskInvocation(String),
+    Unavailable(String),
     TaskCommandLaunch {
         command: String,
         error: std::io::Error,
@@ -15,13 +16,19 @@ impl EffigyRuntimeError {
     pub fn task_invocation(message: impl Into<String>) -> Self {
         Self::TaskInvocation(message.into())
     }
+
+    pub fn unavailable(message: impl Into<String>) -> Self {
+        Self::Unavailable(message.into())
+    }
 }
 
 impl std::fmt::Display for EffigyRuntimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Cwd(error) => write!(f, "{error}"),
-            Self::Ui(message) | Self::TaskInvocation(message) => write!(f, "{message}"),
+            Self::Ui(message) | Self::TaskInvocation(message) | Self::Unavailable(message) => {
+                write!(f, "{message}")
+            }
             Self::TaskCommandLaunch { command, error } => {
                 write!(f, "failed to launch `{command}`: {error}")
             }

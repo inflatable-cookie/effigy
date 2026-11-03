@@ -1492,6 +1492,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- `container status --json` no longer emits `services: null` when the runtime
+  is not running. A known-stopped host reports `runtime_running: false` with
+  an empty `services` array. A failed, unparsable, or otherwise unusable
+  Colima status probe fails the command with envelope `error.kind=unavailable`
+  instead of flattening uncertainty into an empty or successful payload
+  (effigy#588). The JSON contract rows for this surface now run against
+  hermetic fake-runtime fixtures.
+
 - A SQLite durability-write failure (`SQLITE_IOERR_FSYNC` and the sibling
   write, directory-fsync, and atomic-write extended codes) stays
   `unavailable` and keeps the extended code, but no longer says "nothing is

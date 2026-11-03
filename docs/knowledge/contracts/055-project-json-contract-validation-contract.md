@@ -40,6 +40,19 @@ survives through command completion and is removed with the other owned
 fixtures; omitted or false preserves the caller's environment. Non-boolean
 values refuse the index.
 
+`--changed-only <BASE>` selects rows whose whole index document changed
+against that git base. Duplicate envelope schema ids (`effigy.command.v1`
+hosts many commands) are compared as full row documents, not last-wins by
+schema id.
+
+Container-status rows use `<fixture_container_status>`,
+`<fixture_container_status_stopped>`, and
+`<fixture_container_status_unavailable>`. Expansion writes an owned repo plus
+a PATH-prefixed status-only fake `colima`/`docker` (mode baked into the
+script) and forces `EFFIGY_COMPOSE_BACKEND=colima`. The checker still runs
+the real CLI. The unavailable row sets `expect_failure` and does not name
+`payload_schema`, because a failure envelope has a null `result`.
+
 ```json
 "payload_schemas": {
   "effigy.command.v1": "payload-schemas/effigy.command.v1.json"

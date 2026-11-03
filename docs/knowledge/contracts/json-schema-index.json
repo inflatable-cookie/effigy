@@ -248,10 +248,29 @@
     {
       "schema": "effigy.command.v1",
       "schema_version": 1,
-      "command": "effigy --json container web status --repo docs/knowledge/contracts/fixtures/container-runtime",
-      "surface": "container status and backend choice (guide 085)",
+      "command": "effigy --json container web status --repo <fixture_container_status>",
+      "surface": "container status known-running (guide 085)",
       "status": "active",
+      "isolated_home": true,
       "payload_schema": "effigy.container.status.v1"
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
+      "command": "effigy --json container web status --repo <fixture_container_status_stopped>",
+      "surface": "container status known-stopped (guide 085)",
+      "status": "active",
+      "isolated_home": true,
+      "payload_schema": "effigy.container.status.v1"
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
+      "command": "effigy --json container web status --repo <fixture_container_status_unavailable>",
+      "surface": "container status unavailable runtime (guide 085)",
+      "status": "active",
+      "isolated_home": true,
+      "expect_failure": true
     },
     {
       "schema": "effigy.container.migrate.v1",
