@@ -19,6 +19,26 @@ impl Drop for Abort {
     }
 }
 
+/// `publish_current_gateway` looks up the PID parent and does not create it.
+/// An operator tempfile without `.effigy/gateway` therefore fails at
+/// ClaimPublishBefore with `Io(NotFound)` and never reaches ENOSPC.
+#[cfg(unix)]
+#[test]
+fn publish_fails_with_not_found_when_gateway_parent_is_absent() {
+    let home = tempfile::tempdir().unwrap();
+    let pid_path = home.path().join(".effigy/gateway/gateway.pid");
+    let error =
+        crate::identity::publish_current_gateway(&pid_path, nix::unistd::Uid::effective().as_raw())
+            .expect_err("absent gateway parent fails before identity write");
+    match error {
+        GatewayError::Io(io) => {
+            assert_eq!(io.kind(), std::io::ErrorKind::NotFound, "{io}");
+        }
+        other => panic!("expected Io(NotFound), got {other:?}"),
+    }
+    assert!(!pid_path.exists());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn faults_engine_gateway_endpoint_commit() {
     let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -48,6 +68,13 @@ async fn faults_engine_gateway_endpoint_commit() {
     ] {
         let home = tempfile::tempdir().unwrap();
         let root = home.path().join(".effigy/gateway");
+        // Operator publish does not create its parent; setup does.
+        crate::private_state::create_owner_only_directory(&root)
+            .expect("owner-only operator gateway directory");
+        assert!(
+            root.is_dir(),
+            "operator identity publication requires an owned gateway directory"
+        );
         let mut config = GatewayConfig::standard(root.clone());
         // Only fixture-owned, dynamically selected unprivileged endpoints.
         // Keep the TCP selection bound until immediately before daemon start.
@@ -120,12 +147,20 @@ async fn faults_engine_gateway_endpoint_commit() {
                 })
             },
         );
-        assert!(outcome.is_err(), "fault must cross {point}");
+        let err = outcome.expect_err(&format!("fault must cross {point}"));
+        assert!(
+            err.to_string().contains("No space left")
+                || matches!(&err, GatewayError::Io(io) if io.raw_os_error() == Some(libc::ENOSPC)),
+            "{point} must be ENOSPC, got {err:?}"
+        );
         let recovered = store.snapshot().unwrap();
-        let committed = point != "ClaimPublishBefore";
+        // Only ClaimPublishAfter sits after the SQLite commit. Retain* fire
+        // inside the transaction and roll back.
+        let committed = point == "ClaimPublishAfter";
         assert_eq!(
             recovered.routes().unwrap().lookup("fault.test").is_some(),
-            committed
+            committed,
+            "{point} outcome={err:?} snapshot={recovered:?}"
         );
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
