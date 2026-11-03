@@ -2093,11 +2093,16 @@ is gone or shows different start ticks. Exec failure is `Unknown`, never
   `docs/qualification/task-engine-signal-matrix/` for the missing
   real-container INT/TERM/HUP/KILL `RemoteExecAdapter` cells. Task #582
   replaced the `--execute` stub with a GO-bound HostCli pass and added
-  dedicated sequence TERM/HUP host-fixture cells; the committed packet
-  stays unarmed and `qualification: false`. Status prepared-not-executed:
-  packet delivery, labeled-double control flow and host sequence fixtures
-  are not live-engine qualification and do not replace the consumer steps
-  below. The recorded steps, on each
+  dedicated sequence TERM/HUP host-fixture cells. Task #585 binds per-cell
+  64-hex nonce, live recorded owner pid/start, inspect and
+  `effigy.tasks-status.v3` parse, observed-generation helper-kill, and
+  failed-observe distinct from empty; the committed packet stays unarmed
+  and `qualification: false`. Status prepared-not-executed: packet
+  delivery, labeled-double control flow, HostCli local fake-executable
+  plumbing and host sequence fixtures are not live-engine qualification
+  and do not replace the consumer steps below. Native Linux sequence
+  TERM/HUP via `linux-custody.sh` remains separately GO-gated. The recorded
+  steps, on each
   backend with the candidate binary:
   1. cbs: `effigy schema:refresh`, then `effigy seed`; compare the dumped
      schema files and step outcomes with v0.14.1; repeat `seed` under

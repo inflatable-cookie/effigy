@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Launcher for the task-engine real-container signal packet.
 
-Queue tasks effigy#579 and effigy#582. This file never starts a VM, engine,
-container, image pull, or install by itself. Missing GO, wrong hashes, and
-UNARMED committed placeholders refuse before effects. A plan is never
-execution. `--execute` is a real GO-bound pass: the CLI uses HostCliDriver
-only; tests inject a labeled double as a Python argument. Duplicate or
-lost-response resend is refused from retained attempt evidence.
+Queue tasks effigy#579, effigy#582 and effigy#585. This file never starts
+a VM, engine, container, image pull, or install by itself. Missing GO,
+wrong hashes, and UNARMED committed placeholders refuse before effects.
+A plan is never execution. `--execute` is a real GO-bound pass: the CLI
+uses HostCliDriver only; tests inject a labeled double as a Python
+argument. Duplicate or lost-response resend is refused from retained
+attempt evidence.
 """
 import json
 import sys

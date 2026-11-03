@@ -390,6 +390,18 @@ During v0.x, MINOR bumps may include breaking changes.
   `linux-custody.sh` remains separately GO-gated. Prepared, not executed:
   labeled-double control flow is not native qualification.
 
+- The same packet's HostCli identity and generation binding (task
+  effigy#585): per-cell 64-hex nonce on `EFFIGY_CUSTODY_NONCE` and helper
+  stdin, live recorded owner pid/start with bounded async signal/wait,
+  inspect and `effigy.tasks-status.v3` parse (exit 0 and a modeled
+  `not-recorded` substring are not verification), observed-generation
+  helper-kill, and failed-observe distinct from an empty inventory. Tests
+  still inject a labeled double, and also drive `HostCliDriver` through
+  owned local fake-executables; those fixtures are not a container engine.
+  The committed packet stays unarmed and `qualification: false`. Native
+  Linux sequence TERM/HUP via `linux-custody.sh` remains separately
+  GO-gated.
+
 - **A forwarded workspace command streams to its terminal outcome.** A task a
   container-mode guest asks the host to run is now a Level 1 foreground command
   (contract 052 §8.11, Tom's 2026-11-01 ruling): the host run carries no PTY and
