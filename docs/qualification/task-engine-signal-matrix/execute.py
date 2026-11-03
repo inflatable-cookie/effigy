@@ -18,6 +18,7 @@ import json
 import os
 import signal as os_signal
 import subprocess
+import time
 from pathlib import Path
 
 from common import (
@@ -96,7 +97,7 @@ class HostCliDriver:
         program = self._require_program(call)
         argv = list(call.get('argv') or [])
         self._scan_forbidden(program, argv)
-        deadline = int(call.get('deadline_s') or CALL_S)
+        deadline = call.get('deadline_s', CALL_S)
         try:
             completed = subprocess.run(  # noqa: S603 — HostCli is the real driver
                 [program] + argv,
@@ -205,7 +206,7 @@ class HostCliDriver:
         recorded = self.owners.get(pid)
         if recorded is None or recorded.get('proc') is None:
             raise Refused('HostCli owner is not a live recorded owner')
-        deadline = int(call.get('deadline_s') or SIGNAL_EXIT_S)
+        deadline = call.get('deadline_s', SIGNAL_EXIT_S)
         proc = recorded['proc']
         try:
             code = proc.wait(timeout=deadline)
@@ -478,6 +479,7 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
         last_generation = generation
         cell['generation'] = generation
 
+        settlement_deadline = time.monotonic() + SIGNAL_EXIT_S
         try:
             transport.signal({
                 'op': 'signal-owner',
@@ -504,39 +506,14 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
             return write_error('failed', str(exc))
 
         try:
-            after = drive(
-                'helper-snap',
-                helper_tail(full_id, ['snap'], helper_script),
-                input_bytes=(nonce + '\n').encode(),
-                cell=cell_id,
-                extra={'helper': HELPER_NAME, 'phase': 'after-signal', 'nonce': nonce},
-            )
-        except LostResponse as exc:
-            return write_error('unknown', '%s closure snap lost: %s' % (cell_id, exc))
-        after_obs = observe_snapshot(after, nonce_supplied=True)
-        if after_obs['observe'] != 'verified':
-            return write_error(
-                'unknown',
-                '%s closure failed-observe: %s' % (cell_id, after_obs.get('reason')),
-            )
-        if after_obs['boot'] != generation['boot'] or after_obs['ns'] != generation['ns']:
-            return write_error('unknown', '%s generation moved' % cell_id)
-        leftover = owned_members(after_obs['members'])
-        if leftover:
-            cell['closure'] = 'missing'
-            outcome['cells'].append(cell)
-            return write_error(
-                'unknown',
-                '%s owned descendants still present; parent exit is not closure' % cell_id,
-            )
-        cell['closure'] = 'helper-empty-owned'
-
-        try:
+            remaining = settlement_deadline - time.monotonic()
+            if remaining <= 0:
+                raise LostResponse('settlement deadline exceeded')
             transport.wait({
                 'op': 'wait-owner',
                 'pid': owner_pid,
                 'start': owner_start,
-                'deadline_s': SIGNAL_EXIT_S,
+                'deadline_s': remaining,
                 'identity': identity,
                 'cell': cell_id,
             })
@@ -551,6 +528,34 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
             return write_error('unknown', '%s owner wait lost: %s' % (cell_id, exc))
         except Refused as exc:
             return write_error('failed', str(exc))
+
+        while True:
+            remaining = settlement_deadline - time.monotonic()
+            if remaining <= 0:
+                return write_error('unknown', '%s settlement deadline exceeded' % cell_id)
+            try:
+                after = drive(
+                    'helper-snap',
+                    helper_tail(full_id, ['snap'], helper_script),
+                    deadline_s=min(CALL_S, remaining),
+                    input_bytes=(nonce + '\n').encode(),
+                    cell=cell_id,
+                    extra={'helper': HELPER_NAME, 'phase': 'after-signal', 'nonce': nonce},
+                )
+            except LostResponse as exc:
+                return write_error('unknown', '%s closure snap lost: %s' % (cell_id, exc))
+            if time.monotonic() >= settlement_deadline:
+                return write_error('unknown', '%s settlement deadline exceeded' % cell_id)
+            after_obs = observe_snapshot(after, nonce_supplied=True)
+            if after_obs['observe'] != 'verified':
+                return write_error('unknown', '%s closure failed-observe: %s' % (
+                    cell_id, after_obs.get('reason')))
+            if after_obs['boot'] != generation['boot'] or after_obs['ns'] != generation['ns']:
+                return write_error('unknown', '%s generation moved' % cell_id)
+            if not owned_members(after_obs['members']):
+                cell['closure'] = 'helper-empty-owned'
+                break
+            time.sleep(min(0.05, max(0, settlement_deadline - time.monotonic())))
 
         try:
             status = transport.call({

@@ -210,6 +210,7 @@ class Script:
     def __init__(self, mode='happy'):
         self.mode = mode
         self.pids = 4242
+        self.after_counts = {}
 
     def __call__(self, call):
         op = call['op']
@@ -218,6 +219,11 @@ class Script:
             return {'lost': True, 'reason': 'response lost'}
         if self.mode == 'missing-closure' and phase == 'after-signal':
             return snap_owned()
+        if self.mode == 'later-closure' and phase == 'after-signal':
+            cell = call['cell']
+            self.after_counts[cell] = self.after_counts.get(cell, 0) + 1
+            if self.after_counts[cell] == 1:
+                return snap_owned()
         if self.mode == 'cleanup-partial' and phase == 'post':
             return snap_owned()
         if self.mode == 'cleanup-partial' and op == 'helper-kill':
@@ -719,8 +725,20 @@ def t_execute_missing_closure_is_unknown():
     overlay = armed_fixture(tmp)
     result, _double = run_execute(tmp, overlay, mode='missing-closure')
     assert result['kind'] == 'unknown'
-    assert 'parent exit is not closure' in result['reason']
+    assert 'settlement deadline exceeded' in result['reason']
     assert result['retry'] is False
+
+
+def t_execute_waits_for_later_closure():
+    tmp = owned_tmp()
+    result, double = run_execute(tmp, armed_fixture(tmp), mode='later-closure')
+    assert result['kind'] == 'labeled-double'
+    for cell in SIGNAL_CELLS:
+        cell_id = cell[0]
+        ops = [c['op'] for c in double.calls if c.get('cell') == cell_id]
+        assert ops.index('wait-owner') < ops.index('helper-snap', ops.index('wait-owner'))
+        assert sum(c.get('phase') == 'after-signal' and c.get('cell') == cell_id
+                   for c in double.calls) == 2
 
 
 def t_execute_cleanup_partial_is_failed():
@@ -1357,6 +1375,7 @@ CASES = [
     t_execute_one_shot_refuses_resend,
     t_execute_lost_response_is_unknown_not_retry,
     t_execute_missing_closure_is_unknown,
+    t_execute_waits_for_later_closure,
     t_execute_cleanup_partial_is_failed,
     t_execute_failure_before_admission_leaves_no_invocation,
     t_execute_failure_after_admission_keeps_invocation,
