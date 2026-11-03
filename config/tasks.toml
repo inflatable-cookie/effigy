@@ -2025,6 +2025,13 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 # its packet-r1.md, never this selector.
 "test:qualification:acow" = { durable = true, visibility = "internal", group = "Maintenance", description = "Run the Acow ordinary-Compose qualification packet's fake-backend refusal boundaries; no native effects.", run = [{ run = "python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/boundaries.py", timeout_ms = 300000 }] }
 
+# Task-engine signal-matrix packet (task effigy#579): committed fake-backend
+# refusal battery for docs/qualification/task-engine-signal-matrix/ — no VM,
+# engine, container, image, install or native task. Doubles prove packet
+# admission only, not native closure. The packet stays UNARMED; a later GO
+# window is separately authorized.
+"test:qualification:task-engine-signals" = { durable = true, visibility = "internal", group = "Maintenance", description = "Run the task-engine signal-matrix packet's fake-backend refusal boundaries; no native effects.", run = [{ run = "python3 -I -B docs/qualification/task-engine-signal-matrix/boundaries.py", timeout_ms = 300000 }] }
+
 # Fake-only proof (effigy#542) that the ordinary-Compose Colima qualification
 # launcher enforces its complete read-only entry sweep: exact network/volume
 # identity baselines, fixture-ancestor mount and symlink safety, GO/manifest

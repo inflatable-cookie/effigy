@@ -366,6 +366,18 @@ During v0.x, MINOR bumps may include breaking changes.
   `effigy test:qualification:acow`. Prepared, not executed: every missing GO,
   receipt, pin or identity refuses before any effect.
 
+- The task-engine signal-matrix evidence index and UNARMED real-container
+  packet (`docs/qualification/task-engine-signal-matrix/`, task effigy#579):
+  accepted #298 native Linux kill-matrix and foreign-generation credit, #236
+  RemoteExecAdapter source/caller over fake shims, #325 hook protocol, and
+  #373 legacy-shadow retirement stay mapped to their receipts; the genuine
+  gap is real-container INT/TERM/HUP/KILL through production
+  `RemoteExecAdapter` / `ComposeRemote`. The committed fake-backend battery
+  is `effigy test:qualification:task-engine-signals`. Prepared, not executed:
+  missing or wrong GO/hash/backend/ownership refuse before any native
+  subprocess, and a well-formed GO still refuses while placeholders stay
+  `UNARMED`.
+
 - **A forwarded workspace command streams to its terminal outcome.** A task a
   container-mode guest asks the host to run is now a Level 1 foreground command
   (contract 052 §8.11, Tom's 2026-11-01 ruling): the host run carries no PTY and
