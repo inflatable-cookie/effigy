@@ -455,7 +455,7 @@ fn recover(scenario: &dyn Scenario, home: &Path, label: &str) -> World {
             })
             .map(|r| r.id.to_string())
             .collect();
-        let refused = match super::scenarios::rerun(home, owner, n) {
+        let refused = match super::scenarios::rerun(home, owner, n, &recovery_cleanup(&cx)) {
             Ok(()) => false,
             Err(run::RunError::PredecessorUnsettled { .. }) if !residue.is_empty() => true,
             Err(error) => panic!(

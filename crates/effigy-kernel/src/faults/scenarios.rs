@@ -4,7 +4,7 @@ use super::driver::{drive, Scenario};
 use super::oracles::Oracle;
 use super::world::{self, install_audits, World};
 use super::*;
-use crate::custody::{Custody, Lifetime, ProcessReceipt, ProcessSpec, Terminal};
+use crate::custody::{Custody, Lifetime, OwnedProcess, ProcessReceipt, ProcessSpec, Terminal};
 use crate::fault::Point;
 use crate::gate::{Gate, Wait};
 use crate::id::*;
@@ -74,7 +74,7 @@ pub(super) fn begin<'a>(
     n: u8,
     custody: Option<Supervision>,
     acknowledge: Vec<RunId>,
-    fake: &mut Fake,
+    fake: &mut impl SettlementAdapter,
 ) -> Result<Run<'a>, RunError> {
     Run::begin(
         cx,
@@ -96,12 +96,21 @@ pub(super) fn begin<'a>(
 }
 /// The recovery step's rerun: a fresh successor of `owner`, settled at once.
 /// The caller distinguishes unacknowledged residue (K5) from other errors.
-pub(super) fn rerun(home: &Path, owner: &ResourceId, n: u8) -> Result<(), RunError> {
+/// The settle rides the caller's recovery budget: nothing is injected at this
+/// step, so inheriting the one-second injected-scenario bound turned plain
+/// store latency under shard load into a spurious `Interrupted(TimedOut)`
+/// refusal (effigy#618).
+pub(super) fn rerun(
+    home: &Path,
+    owner: &ResourceId,
+    n: u8,
+    cleanup: &CleanupContext,
+) -> Result<(), RunError> {
     let cx = mutate();
     let root = StateRoot::effects(&cx, home).expect("root");
     let mut fake = Fake::new(home);
     let run = begin(&cx, &root, owner.clone(), n, None, vec![], &mut fake)?;
-    run.settle(&cleanup(&cx), &mut fake).map(drop)
+    run.settle(cleanup, &mut fake).map(drop)
 }
 
 // --- The durable strict fake: adapter effects, environment backend calls. ---
@@ -336,6 +345,47 @@ pub(super) fn stop_foreign() {
     let _ = child.wait();
 }
 
+// --- Anchor retirement pin. ---
+
+/// Freezes each launch's recorded anchor against its own self-retirement for
+/// the length of the faulted run. The `AnchorStop`/`AnchorStopped` points
+/// observe settlement's retirement of a *verified live* anchor; since
+/// effigy#520 an anchor also retires itself within one poll of its group
+/// closing — legitimately, before settlement ever reaches it — so a
+/// free-running anchor made those required points a coin flip under shard
+/// load (effigy#618). A stopped anchor is still positive evidence
+/// (`ProcessState::Stopped` verifies), settlement still stops it last by
+/// identity, and recovery stops it the same way, so the pin holds exactly the
+/// lifecycle boundary the points observe instead of racing it. No authority is
+/// manufactured: the identity, nonce and group evidence are the launch's own.
+/// Dropping the pin continues the anchors: on the settled path they are
+/// already gone, and on an abandoned run they retire themselves as the
+/// contract allows, never outliving their group.
+#[derive(Default)]
+pub(super) struct AnchorPin {
+    pids: Vec<u32>,
+}
+impl AnchorPin {
+    pub(super) fn pin(&mut self, processes: &[OwnedProcess]) {
+        for anchor in processes.iter().filter_map(|process| process.anchor()) {
+            self.pids.push(anchor.pid);
+            // SAFETY: the recorded anchor of this scenario's own launch; the
+            // signal only suspends it until settlement stops it or the pin
+            // drops. A reused pid inside one scenario run is not a real
+            // window, and every other harness kill works on recorded pids.
+            unsafe { libc::kill(anchor.pid as i32, libc::SIGSTOP) };
+        }
+    }
+}
+impl Drop for AnchorPin {
+    fn drop(&mut self) {
+        for pid in &self.pids {
+            // SAFETY: recorded anchors of this scenario's own launches.
+            unsafe { libc::kill(*pid as i32, libc::SIGCONT) };
+        }
+    }
+}
+
 // --- Custody scenarios: plain task, sequence, multi-child test. ---
 
 #[derive(Debug)]
@@ -426,12 +476,14 @@ impl Scenario for Steps {
         )
         .ok()?;
         let mut failed = None;
+        let mut anchors = AnchorPin::default();
         for step in self.steps {
             let specs = step
                 .iter()
                 .map(|body| workload(home, body, finite()))
                 .collect();
             let mut processes = attempt!(run, &cx, fake, Custody::spawn_all(&mut run, specs, &cx));
+            anchors.pin(&processes);
             // The last member of a group may linger; settle stops it.
             let waited = processes.len() - usize::from(processes.len() > 1);
             for process in processes.iter_mut().take(waited) {
@@ -574,7 +626,9 @@ impl Scenario for ManagedAttach {
             Attachments::attach(&mut run, &env_fence(1), AttachMode::Borrow, Wait::FailFast)
         );
         let spec = workload(home, LINGER, Lifetime::Open(OpenReason::DevServer));
+        let mut anchors = AnchorPin::default();
         let _process = attempt!(run, &cx, fake, Custody::spawn(&mut run, spec, &cx));
+        anchors.pin(std::slice::from_ref(&_process));
         attempt!(run, &cx, fake, run.advance(Phase::Active));
         // A front end's stop is a durable fenced request, never a signal.
         let stop = Request {
@@ -1444,6 +1498,176 @@ impl Scenario for ObjectReset {
 #[test]
 fn faults_objects_reset_is_atomic_and_preserves_sibling() {
     drive(&ObjectReset);
+}
+
+// --- Controlled discriminators for the effigy#618 failure classes. ---
+
+/// A strict fake whose adapter release is proved only after a fixed delay, so
+/// a settle's budget is observable without touching the shared fake.
+struct DelayedRelease {
+    fake: Fake,
+    delay: Duration,
+}
+impl DelayedRelease {
+    fn new(home: &Path, delay: Duration) -> Self {
+        Self {
+            fake: Fake::new(home),
+            delay,
+        }
+    }
+    fn apply(&self, key: &str, fence: &Fence) {
+        self.fake.apply(key, fence);
+    }
+}
+impl SettlementAdapter for DelayedRelease {
+    fn observe(&mut self, effect: &Effect, cx: &CleanupContext) -> Observed<Fence> {
+        self.fake.observe(effect, cx)
+    }
+    fn release(&mut self, effect: &Effect, cx: &CleanupContext) -> Observed<()> {
+        std::thread::sleep(self.delay);
+        self.fake.release(effect, cx)
+    }
+    fn reconcile(&mut self, effect: &Effect, cx: &CleanupContext) -> Observed<Reconciled> {
+        std::thread::sleep(self.delay);
+        self.fake.reconcile(effect, cx)
+    }
+}
+
+/// The recovery-context discriminator (effigy#618): a settle whose first
+/// release is proved only after 1.2 s runs past the one-second
+/// injected-scenario budget, and the next effect's settle-phase check refuses
+/// it as `Interrupted(TimedOut)` — the recorded failure class, with the
+/// injected budget itself unchanged — while the recovery budget settles the
+/// very same run. The rerun that refused in the QA record rode the injected
+/// budget by accident; it now receives the recovery one.
+#[test]
+fn faults_recovery_budget_settles_a_slow_release_the_injected_budget_refuses() {
+    let home = home();
+    let cx = mutate();
+    let root = StateRoot::effects(&cx, &home.home()).expect("root");
+    let mut delayed = DelayedRelease::new(&home.home(), Duration::from_millis(1200));
+    let mut refused = begin(&cx, &root, task(10), 70, None, vec![], &mut delayed).expect("begin");
+    for key in ["slow-70", "next-70"] {
+        let ticket = refused
+            .intend(spec(
+                refused.fence().clone(),
+                key,
+                Settlement::Release(Value::Null),
+            ))
+            .expect("intend");
+        delayed.apply(key, refused.fence());
+        refused
+            .applied(&ticket, Value::Bool(true))
+            .expect("applied");
+        refused
+            .completed(&ticket, RequiredObligation::Applied)
+            .expect("completed");
+    }
+    refused.finish(WorkloadOutcome::Succeeded).expect("finish");
+    match refused.settle(&cleanup(&cx), &mut delayed) {
+        Err(RunError::Interrupted(Interrupt::TimedOut { .. })) => {}
+        other => panic!("the injected budget must still refuse: {other:?}"),
+    }
+    // Acknowledged residue admits a successor that touches nothing (K5).
+    let mut settled = begin(&cx, &root, task(10), 71, None, vec![id(70)], &mut delayed)
+        .expect("acknowledged begin");
+    for key in ["slow-71", "next-71"] {
+        let ticket = settled
+            .intend(spec(
+                settled.fence().clone(),
+                key,
+                Settlement::Release(Value::Null),
+            ))
+            .expect("intend");
+        delayed.apply(key, settled.fence());
+        settled
+            .applied(&ticket, Value::Bool(true))
+            .expect("applied");
+        settled
+            .completed(&ticket, RequiredObligation::Applied)
+            .expect("completed");
+    }
+    settled.finish(WorkloadOutcome::Succeeded).expect("finish");
+    settled
+        .settle(&recovery_cleanup(&cx), &mut delayed)
+        .expect("the recovery budget settles the same releases");
+}
+
+/// One custody launch whose workload exits at once, settled under an armed
+/// `AnchorStop`. Returns whether the point delivered.
+fn anchor_stop_delivery(home: &Home, pin: bool) -> bool {
+    let path = home.home();
+    let cx = mutate();
+    let root = StateRoot::effects(&cx, &path).expect("root");
+    let mut fake = Fake::new(&path);
+    let mut run = begin(
+        &cx,
+        &root,
+        task(11),
+        61,
+        Some(Supervision::Inline),
+        vec![],
+        &mut fake,
+    )
+    .expect("begin");
+    let specs = vec![workload(&path, "exit 0", finite())];
+    let mut processes = Custody::spawn_all(&mut run, specs, &cx).expect("spawn");
+    let anchor = processes[0].anchor().expect("recorded anchor");
+    let mut anchors = AnchorPin::default();
+    if pin {
+        anchors.pin(&processes);
+        // The pin is the state the discriminator proves: the recorded identity
+        // sits stopped until settlement stops it.
+        wait_until("pinned anchor stopped", Duration::from_secs(2), || {
+            matches!(
+                crate::ident::process_state(anchor.pid),
+                Observed::Verified(crate::ident::ProcessState::Stopped, _)
+            )
+        });
+    }
+    let exit = match processes[0].wait(&cx.operation().child(Duration::from_secs(1))) {
+        Observed::Verified(exit, _) => exit,
+        other => panic!("workload exit: {other:?}"),
+    };
+    processes[0].complete(&mut run, exit).expect("complete");
+    run.finish(WorkloadOutcome::Succeeded).expect("finish");
+    if pin {
+        // Past the anchor's poll bound a free-running anchor would be gone;
+        // the pinned one must still sit at its settlement boundary.
+        std::thread::sleep(Duration::from_millis(1200));
+    } else {
+        // The anchor retires itself within one poll of its group closing;
+        // wait past that bound so the miss is deterministic, not lucky.
+        wait_until("anchor self-retired", Duration::from_secs(5), || {
+            !world::identity_alive(&anchor)
+        });
+    }
+    crate::fault::arm(None);
+    crate::fault::arm_nth(Point::AnchorStop, 0, crate::fault::Fault::Enospc);
+    let settled = run.settle(&cleanup(&cx), &mut fake);
+    let delivered = crate::fault::fired();
+    crate::fault::arm(None);
+    assert!(settled.is_ok(), "settle: {settled:?}");
+    delivered
+}
+
+/// The missing-delivery discriminator (effigy#618): once the recorded anchor
+/// retires itself, settlement's verified retirement crosses neither
+/// `AnchorStop` nor `AnchorStopped` — the original failure, reproduced
+/// deterministically by waiting past the anchor's poll bound — while the pin
+/// holds the recorded anchor at that boundary and delivery is deterministic.
+#[test]
+fn faults_anchor_retirement_delivery_is_pinned_to_settlement() {
+    let first = home();
+    assert!(
+        !anchor_stop_delivery(&first, false),
+        "a self-retired anchor must not deliver at AnchorStop"
+    );
+    let second = home();
+    assert!(
+        anchor_stop_delivery(&second, true),
+        "the pinned anchor must deliver at AnchorStop"
+    );
 }
 
 pub(super) fn by_name(name: &str) -> &'static dyn Scenario {
