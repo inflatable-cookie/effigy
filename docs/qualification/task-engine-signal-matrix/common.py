@@ -205,6 +205,13 @@ def verify_go_receipt(path, bundle_sha, scratch_dir=SCRATCH):
     binary_sha = _line(text, 'binary-sha256')
     if not HEX64.fullmatch(binary_sha):
         raise Refused('binary-sha256 is not 64 hex digits')
+    observer = _line(text, 'observer')
+    observer_sha = _line(text, 'observer-sha256')
+    owner_root = _line(text, 'owner-root')
+    if not observer.startswith('/') or '..' in Path(observer).parts or not HEX64.fullmatch(observer_sha):
+        raise Refused('observer path or hash is invalid')
+    if not owner_root.startswith(str(scratch) + os.sep) or '..' in Path(owner_root).parts:
+        raise Refused('owner root is not under the owned scratch root')
     source = _line(text, 'source')
     if not HEX40.fullmatch(source):
         raise Refused('source is not a 40-hex commit')
@@ -225,6 +232,9 @@ def verify_go_receipt(path, bundle_sha, scratch_dir=SCRATCH):
         'image_digest': image,
         'binary': binary,
         'binary_sha256': binary_sha,
+        'observer': observer,
+        'observer_sha256': observer_sha,
+        'owner_root': owner_root,
         'source': source,
         'window': window,
         'inventory': inventory,
@@ -265,6 +275,12 @@ def require_armed(manifest):
     binary = candidate.get('binary_path')
     if not isinstance(binary, str) or not binary.startswith('/'):
         raise Refused('binary_path is not an absolute owned path')
+    if not isinstance(candidate.get('observer_path'), str) or not candidate['observer_path'].startswith('/'):
+        raise Refused('observer_path is not an absolute owned path')
+    if not HEX64.fullmatch(str(candidate.get('observer_sha256') or '')):
+        raise Refused('observer_sha256 is not 64 hex digits')
+    if not isinstance(candidate.get('owner_root'), str) or not candidate['owner_root'].startswith('/'):
+        raise Refused('owner_root is not an absolute owned path')
 
 
 def apply_overlay(manifest, overlay):
@@ -295,6 +311,9 @@ def match_go(manifest, go):
         raise Refused('GO binary does not match packet')
     if candidate.get('binary_sha256') != go['binary_sha256']:
         raise Refused('GO binary-sha256 does not match packet')
+    for field, key in (('observer_path', 'observer'), ('observer_sha256', 'observer_sha256'), ('owner_root', 'owner_root')):
+        if candidate.get(field) != go[key]:
+            raise Refused('GO %s does not match packet' % key)
     if candidate.get('source_commit') != go['source']:
         raise Refused('GO source does not match packet')
 
@@ -447,19 +466,31 @@ def parse_snapshot(stdout):
     boot = None
     ns = None
     members = []
+    seen = set()
     text = decode_output(stdout)
     for line in text.splitlines():
         fields = line.split(' ')
         if len(fields) == 2 and fields[0] == 'boot' and fields[1]:
+            if boot is not None:
+                return None
             boot = fields[1]
             continue
         if len(fields) == 2 and fields[0] == 'ns' and fields[1]:
+            if ns is not None:
+                return None
             ns = fields[1]
             continue
         if len(fields) == 8 and fields[0] == 'p':
             pid, state, ppid, pgrp, sid, start, nonce = fields[1:]
             if nonce not in ('y', 'n', '?', '-'):
                 return None
+            try:
+                if (int(pid) <= 0 or int(ppid) < 0 or int(pgrp) <= 0 or int(sid) <= 0
+                        or int(start) <= 0 or pid in seen or len(state) != 1):
+                    return None
+            except ValueError:
+                return None
+            seen.add(pid)
             members.append({
                 'pid': pid,
                 'state': state,
@@ -479,6 +510,8 @@ def parse_snapshot(stdout):
     try:
         pid_ns = int(ns[5:-1])
     except ValueError:
+        return None
+    if pid_ns <= 0:
         return None
     return {
         'boot': boot,
@@ -616,6 +649,9 @@ def construct_plan(manifest, overlay=None):
         'scratch': str(SCRATCH),
         'binary': candidate['binary_path'],
         'binary_sha256': candidate['binary_sha256'],
+        'observer': candidate['observer_path'],
+        'observer_sha256': candidate['observer_sha256'],
+        'owner_root': candidate['owner_root'],
         'source': candidate['source_commit'],
         'argv': [candidate['binary_path'], fixture.get('selector', 'hold')],
         'fixture_task': {

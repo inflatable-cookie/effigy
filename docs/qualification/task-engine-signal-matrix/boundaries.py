@@ -92,6 +92,9 @@ def go_text(bundle_sha, scratch, **over):
         'image-digest ' + over.get('image_digest', 'sha256:' + 'b' * 64),
         'binary ' + over.get('binary', str(scratch / 'candidate' / 'effigy')),
         'binary-sha256 ' + over.get('binary_sha256', 'c' * 64),
+        'observer ' + over.get('observer', str(scratch / 'candidate' / 'observer')),
+        'observer-sha256 ' + over.get('observer_sha256', 'e' * 64),
+        'owner-root ' + over.get('owner_root', str(scratch / 'owner')),
         'source ' + over.get('source', 'd' * 40),
         'window ' + over.get('window', '2026-11-03T00:00:00Z'),
         'inventory ' + over.get('inventory', str(scratch / 'inventory-pre.json')),
@@ -109,6 +112,9 @@ def armed_overlay(scratch, binary_sha=None, source=None, binary_path=None):
             'source_commit': source or ('d' * 40),
             'binary_sha256': binary_sha or ('c' * 64),
             'binary_path': binary_path or str(scratch / 'candidate' / 'effigy'),
+            'observer_path': str(scratch / 'candidate' / 'observer'),
+            'observer_sha256': 'e' * 64,
+            'owner_root': str(scratch / 'owner'),
         },
         'engine': {
             'kind': 'colima-nerdctl',
@@ -129,6 +135,12 @@ def armed_fixture(scratch):
     os.close(fd)
     sha = hashlib.sha256(data).hexdigest()
     overlay = armed_overlay(scratch, binary_sha=sha, binary_path=str(path))
+    observer = cand / 'observer'
+    observer.write_bytes(b'labeled-double-observer\n')
+    observer.chmod(0o700)
+    (scratch / 'owner').mkdir()
+    (scratch / 'owner' / '.effigy' / 'state').mkdir(parents=True)
+    overlay['candidate']['observer_sha256'] = hashlib.sha256(observer.read_bytes()).hexdigest()
     return overlay
 
 
@@ -146,6 +158,9 @@ def write_matching_go(tmp, overlay, **over):
         image_digest=engine['image_digest'],
         binary=candidate['binary_path'],
         binary_sha256=candidate['binary_sha256'],
+        observer=candidate['observer_path'],
+        observer_sha256=candidate['observer_sha256'],
+        owner_root=candidate['owner_root'],
         source=candidate['source_commit'],
         **over,
     ))
@@ -265,14 +280,39 @@ class Script:
             return snap_empty()
         if op == 'workload':
             self.pids += 1
-            env = call.get('env') or {}
-            nonce = env.get('EFFIGY_CUSTODY_NONCE') or call.get('nonce')
-            if not nonce or len(nonce) != NONCE_HEX_LEN:
-                raise AssertionError('workload missing per-cell nonce')
             return {
                 'kind': 'running', 'code': None, 'pid': self.pids, 'start': '100',
                 'stdout': b'', 'stderr': b'',
             }
+        if op == 'run-status':
+            return {'kind': 'verified', 'code': 0, 'stdout': json.dumps({
+                'schema': 'effigy.run.v1', 'run': {'run_id': 'owned-run',
+                    'state': 'running', 'pid': self.pids, 'task': 'hold'},
+            }).encode()}
+        if op == 'admission-status':
+            return {'kind': 'verified', 'code': 0, 'stdout': json.dumps({
+                'schema': STATUS_SCHEMA, 'state': 'running',
+                'current': {'run_id': 'owned-run', 'pid': self.pids},
+            }).encode()}
+        if op in ('registration', 'registration-recheck'):
+            if self.mode == 'lost-registration' or (self.mode == 'lost-recheck' and op == 'registration-recheck'):
+                return {'lost': True, 'reason': 'response lost'}
+            return {'kind': 'verified', 'code': 0, 'stdout': json.dumps({'registration': {
+                'container': {'id': 'foreign' if self.mode == 'foreign-registration' else call['identity'],
+                              'created': 'stale' if self.mode == 'stale-container' else '2026-01-01T00:00:00Z',
+                              'vm_boot_id': 'moved' if self.mode == 'moved-boot' else BOOT},
+                'nonce': 'f' * 64, 'pid_ns': 2 if self.mode == 'moved-registration' else 1, 'leader_pid': 10,
+                'leader_start_ticks': 200 if self.mode == 'moved-start' else 100, 'sid': 10,
+            }, 'owner': {'pid': self.pids, 'boot': 'host-boot',
+                         'start': {'LinuxTicks': 101 if self.mode == 'moved-owner' and op == 'registration-recheck' else 100}}}).encode()}
+        if op == 'terminal-status':
+            sig = dict(SIGNAL_CELLS)[call['cell']]
+            return {'kind': 'verified', 'code': 0, 'stdout': json.dumps({
+                'schema': 'effigy.run.v1', 'run': {'run_id': 'owned-run', 'task': 'hold',
+                    'phase': 'closed', 'cleanup': 'complete',
+                    'state': 'interrupted' if sig == 'KILL' else 'cancelled',
+                    'signal': None if sig == 'KILL' else int(getattr(os_signal, 'SIG' + sig))},
+            }).encode()}
         if op == 'signal-owner':
             if not call.get('program'):
                 raise AssertionError('signal-owner program is missing')
@@ -282,9 +322,11 @@ class Script:
         if op == 'wait-owner':
             return {'kind': 'verified', 'code': 0, 'stdout': b'', 'stderr': b''}
         if op == 'status':
+            payload = json.loads(status_json())
+            payload['latest'] = {'run_id': 'owned-run'}
             return {
                 'kind': 'verified', 'code': 0,
-                'stdout': status_json(), 'stderr': b'',
+                'stdout': json.dumps(payload).encode(), 'stderr': b'',
             }
         if op == 'helper-kill':
             return {'kind': 'verified', 'code': 0, 'stdout': b'sent\n', 'stderr': b''}
@@ -653,22 +695,16 @@ def t_execute_armed_double_records_hostcli_argv():
     assert snap['argv'][13] == 'snap'
     workloads = [c for c in double.calls if c['op'] == 'workload']
     assert len(workloads) == 4
-    nonces = []
     for workload in workloads:
         assert workload['program'] == overlay['candidate']['binary_path']
-        assert workload['argv'] == ['hold']
+        assert workload['argv'][0] == '--run-id' and workload['argv'][-1] == 'hold'
         assert workload['program'] not in workload['argv']
         assert workload.get('async') is True
-        nonce = (workload.get('env') or {}).get('EFFIGY_CUSTODY_NONCE')
-        assert nonce and HEX64.fullmatch(nonce)
-        nonces.append(nonce)
-    assert len(set(nonces)) == 4
+        assert 'EFFIGY_CUSTODY_NONCE' not in (workload.get('env') or {})
     registered = [c for c in double.calls if c['op'] == 'helper-snap' and c.get('phase') == 'registered']
     assert len(registered) == 4
-    for workload, snap_call in zip(workloads, registered):
-        nonce = (workload.get('env') or {}).get('EFFIGY_CUSTODY_NONCE')
-        assert snap_call.get('input') == (nonce + '\n').encode()
-        assert snap_call.get('nonce') == nonce
+    for snap_call in registered:
+        assert snap_call.get('input') == (('f' * 64) + '\n').encode()
     owners = [c for c in double.calls if c['op'] == 'signal-owner']
     assert [c['argv'][0] for c in owners] == ['INT', 'TERM', 'HUP', 'KILL']
     for owner in owners:
@@ -690,7 +726,7 @@ def t_execute_armed_double_records_hostcli_argv():
         assert cell['generation'] == {'boot': BOOT, 'ns': NS}
         assert cell['owner']['pid']
     rendered_result = json.dumps(result)
-    assert all(nonce not in rendered_result for nonce in nonces)
+    assert ('f' * 64) not in rendered_result
     blob = json.dumps(
         [{'program': c.get('program'), 'argv': c.get('argv')} for c in double.calls]
     ).lower()
@@ -720,6 +756,15 @@ def t_execute_lost_response_is_unknown_not_retry():
     error = json.loads((tmp / 'error-receipt.json').read_text())
     assert error['retry'] is False
     expect_refused(lambda: run_execute(tmp, overlay)[0], 'already attempted')
+
+
+def t_registration_mismatch_and_loss_refuse_before_signal():
+    for mode in ('lost-registration', 'foreign-registration', 'moved-registration',
+                 'stale-container', 'moved-boot', 'moved-start', 'lost-recheck', 'moved-owner'):
+        tmp = owned_tmp()
+        result, double = run_execute(tmp, armed_fixture(tmp), mode=mode)
+        assert result['kind'] == 'unknown'
+        assert not any(call['op'] in ('signal-owner', 'helper-kill') for call in double.calls)
 
 
 def t_execute_missing_closure_is_unknown():
@@ -840,14 +885,13 @@ def t_plan_is_never_execution():
 
 
 def t_constant_nonce_is_not_forwarded_placeholder():
-    """PR713 defect: execute used nonce='n'*32 and never put it on the workload."""
+    """The packet does not inject a guessed nonce into the candidate."""
     tmp = owned_tmp()
     overlay = armed_fixture(tmp)
     _result, double = run_execute(tmp, overlay)
     workloads = [c for c in double.calls if c['op'] == 'workload']
-    nonces = [(c.get('env') or {}).get('EFFIGY_CUSTODY_NONCE') for c in workloads]
-    assert all(n and n != 'n' * 32 and HEX64.fullmatch(n) for n in nonces)
-    assert len(set(nonces)) == 4
+    assert all('EFFIGY_CUSTODY_NONCE' not in (c.get('env') or {}) for c in workloads)
+    assert len([c for c in double.calls if c['op'] == 'registration']) == 4
 
 
 def t_signal_owner_program_is_not_none():
@@ -1376,6 +1420,7 @@ CASES = [
     t_execute_armed_double_records_hostcli_argv,
     t_execute_one_shot_refuses_resend,
     t_execute_lost_response_is_unknown_not_retry,
+    t_registration_mismatch_and_loss_refuse_before_signal,
     t_execute_missing_closure_is_unknown,
     t_execute_waits_for_later_closure,
     t_execute_cleanup_partial_is_failed,

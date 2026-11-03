@@ -6,8 +6,8 @@ of accepted proof credit plus an UNARMED executable packet for the genuine
 missing real-engine cells. `--execute` is a real GO-bound pass, not a stub.
 #585 added a packet nonce, live recorded owner identity, inspect/status
 parse, observed-generation helper-kill, and failed-observe distinct from
-empty. The packet nonce is not the kernel-generated remote nonce; actual
-registration binding and retained-settlement proof remain necessary. Packet
+empty. The source now attempts to observe the kernel-generated remote nonce;
+the real producer/consumer and retained-settlement proof remain necessary. Packet
 delivery, the boundary battery, a constructed command plan,
 a labeled-double control-flow pass, and owned local HostCli fake-executable
 fixtures are not native qualification, lane closure, or release credit.
@@ -83,9 +83,9 @@ Identity: `engine:full-id@context` with a 64-hex full id
 engine. No later accepted real-engine receipt was found in maintained
 source, the immutable PR reviews above, or the lane keep.
 
-The committed packet stays UNARMED. Its present execute path cannot qualify
-an unchanged candidate until it observes the actual kernel registration and
-proves retained settlement. Placeholders stay the sentinel
+The committed packet stays UNARMED. Its source binding cannot qualify an
+unchanged candidate until the actual producer and retained settlement are
+proved by the owned fixture. Placeholders stay the sentinel
 `UNARMED`. A missing or wrong GO, hash, backend, ownership, image, or
 runtime refuses before any native subprocess. A well-formed GO still
 refuses while committed placeholders stay unarmed. `--execute` is no

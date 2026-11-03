@@ -101,6 +101,20 @@ fn qualification_registration_refuses_partial_foreign_and_ambiguous_effects() {
     stale.generation = Generation::new(2);
     assert!(qualification_registration(&[applied], &stale, &container()).is_err());
 }
+
+#[cfg(feature = "qualification-observer")]
+#[test]
+fn qualification_nonce_changes_with_run_fence_and_effect_position() {
+    let first = RunId::new(1, [1; 10]).unwrap();
+    let second = RunId::new(2, [1; 10]).unwrap();
+    let owner = env();
+    let nonce = session_nonce(first, &owner, 0).unwrap();
+    assert_ne!(nonce, session_nonce(second, &owner, 0).unwrap());
+    assert_ne!(nonce, session_nonce(first, &owner, 1).unwrap());
+    let mut stale = owner.clone();
+    stale.generation = Generation::new(2);
+    assert_ne!(nonce, session_nonce(first, &stale, 0).unwrap());
+}
 fn step<C, R>(call: C, reply: R) -> Step<C, R> {
     Step {
         call,
@@ -470,6 +484,28 @@ fn journal_first_launch_strips_ack_and_local_exit_is_not_remote_completion() {
         let mut stale = env();
         stale.generation = Generation::new(2);
         assert!(qualification_registration(&effects, &stale, &container()).is_err());
+        let observe = cx.operation().observe().unwrap();
+        let owner = crate::ident::process_identity(std::process::id()).verified().unwrap().clone();
+        let directories = (root.owning_directory().identity().unwrap(), root.state_directory().identity().unwrap());
+        let invocation = inv();
+        let task = &invocation.spec().task;
+        let original_env = env();
+        let original_container = container();
+        let subject = QualificationSubject { run: run.id(), task, owner: &owner, env: &original_env, container: &original_container };
+        assert_eq!(qualification_owned_registration(&observe, &root, directories, &subject).unwrap(), remote.registration);
+        let wrong_run = QualificationSubject { run: RunId::new(2, [1; 10]).unwrap(), ..subject };
+        assert!(qualification_owned_registration(&observe, &root, directories, &wrong_run).is_err());
+        let wrong_fence = QualificationSubject { env: &stale, ..subject };
+        assert!(qualification_owned_registration(&observe, &root, directories, &wrong_fence).is_err());
+        let wrong_container = QualificationSubject { container: &foreign, ..subject };
+        assert!(qualification_owned_registration(&observe, &root, directories, &wrong_container).is_err());
+        let mut moved_root = directories;
+        moved_root.0.inode = moved_root.0.inode.wrapping_add(1);
+        assert!(qualification_owned_registration(&observe, &root, moved_root, &subject).is_err());
+        let mut foreign_owner = owner.clone();
+        foreign_owner.pid = foreign_owner.pid.saturating_add(1);
+        let wrong_owner = QualificationSubject { owner: &foreign_owner, ..subject };
+        assert!(qualification_owned_registration(&observe, &root, directories, &wrong_owner).is_err());
     }
     let exit = remote
         .client()

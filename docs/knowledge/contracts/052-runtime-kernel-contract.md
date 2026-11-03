@@ -1940,6 +1940,14 @@ environment effect without a holder check, because recording calls no adapter.
 
 ### 5.10 Remote custody
 
+The source-only signal qualification observer is feature-gated and read-only.
+It checks an exact owned run, live owner and sentinel, gate, checkout and
+environment generations, and the recorded remote intent and receipt. Its
+registration is not closure or authority to signal; the packet still needs a
+fresh complete guest inventory and settled terminal evidence. The owned
+producer/consumer and owner-death proof remains pending; see the
+[signal packet](../../qualification/task-engine-signal-matrix/packet-r1.md).
+
 #### API
 
 ```rust

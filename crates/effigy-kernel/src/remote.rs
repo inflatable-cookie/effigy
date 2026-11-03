@@ -273,16 +273,8 @@ impl RemoteCustody {
             }
         };
         check(cx.operation(), "remote identity").map_err(RemoteError::Unknown)?;
-        let nonce = Nonce(
-            crate::id::Digest::of(
-                &serde_json::to_vec(&(run.id(), run.fence(), run.effects()?.len()))
-                    .map_err(RunError::from)?,
-            )
-            .0
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect(),
-        );
+        let nonce = session_nonce(run.id(), run.fence(), run.effects()?.len())
+            .map_err(RunError::from)?;
         let intent = Intent {
             env: spec.env.clone(),
             container: id.clone(),
@@ -379,6 +371,14 @@ impl RemoteCustody {
 fn millis(d: Duration) -> u64 {
     d.as_millis().min(u128::from(u64::MAX)) as u64
 }
+fn session_nonce(
+    run: crate::id::RunId,
+    owner: &Fence,
+    preceding_effects: usize,
+) -> Result<Nonce, serde_json::Error> {
+    let input = serde_json::to_vec(&(run, owner, preceding_effects))?;
+    Ok(Nonce(crate::id::Digest::of(&input).0.iter().map(|b| format!("{b:02x}")).collect()))
+}
 fn valid_identity(id: &ContainerIdentity) -> bool {
     [&id.id, &id.created, &id.vm_boot_id].iter().all(|s| {
         !s.is_empty() && s.len() <= 4096 && !s.bytes().any(|b| b.is_ascii_whitespace() || b == 0)
@@ -424,18 +424,25 @@ pub fn qualification_registration(
 /// The directory and process identities are captured by the owning packet
 /// before this call; any moved or unreadable fact refuses the observation.
 #[cfg(feature = "qualification-observer")]
+#[derive(Debug, Clone, Copy)]
+pub struct QualificationSubject<'a> {
+    pub run: crate::id::RunId,
+    pub task: &'a crate::id::TaskId,
+    pub owner: &'a crate::ident::ProcessIdentity,
+    pub env: &'a Fence,
+    pub container: &'a ContainerIdentity,
+}
+
+#[cfg(feature = "qualification-observer")]
 pub fn qualification_owned_registration(
     cx: &crate::ctx::ObserveContext,
     root: &crate::root::StateRoot,
     directories: (crate::fs::DirectoryIdentity, crate::fs::DirectoryIdentity),
-    run: crate::id::RunId,
-    task: &crate::id::TaskId,
-    owner: &crate::ident::ProcessIdentity,
-    env: &Fence,
-    container: &ContainerIdentity,
+    subject: &QualificationSubject<'_>,
 ) -> Result<RemoteRegistration, UnknownReason> {
     use crate::gate::{Gate, GateState};
     use crate::run::{Phase, SentinelStatus};
+    let QualificationSubject { run, task, owner, env, container } = *subject;
     let check_owner = || -> Result<(), UnknownReason> {
         if root.owning_directory().identity().ok() != Some(directories.0)
             || root.state_directory().identity().ok() != Some(directories.1)
@@ -493,7 +500,24 @@ pub fn qualification_owned_registration(
         .verified()
         .ok_or_else(|| inconsistent("effects unavailable"))?;
     let registration = qualification_registration(effects, env, container)?;
+    let index = effects.iter().position(|effect| effect.spec.kind == KIND)
+        .ok_or_else(|| inconsistent("remote effect missing"))?;
+    if effects.iter().enumerate().any(|(index, effect)| {
+        index.checked_add(1).and_then(|n| i64::try_from(n).ok()) != Some(effect.sequence)
+    }) {
+        return Err(inconsistent("effect sequence incomplete"));
+    }
+    let owner_fence = Fence { resource: invocation.spec().owner.clone(), generation: summary.generation };
+    let nonce = session_nonce(run, &owner_fence, index)
+        .map_err(|_| inconsistent("run nonce unavailable"))?;
+    if registration.nonce != nonce {
+        return Err(inconsistent("run nonce differs"));
+    }
     check_owner()?;
+    let current = reader.resource(&env.resource);
+    if current.verified().map(|resource| resource.generation) != Some(env.generation) {
+        return Err(inconsistent("environment generation moved"));
+    }
     Ok(registration)
 }
 fn check(cx: &OperationContext, phase: &str) -> Result<(), UnknownReason> {
