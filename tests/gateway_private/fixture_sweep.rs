@@ -19,11 +19,16 @@
 //! `down` clears the leader's record before the cleanup runs. A fixture's
 //! watchdog outlives the fixture if the fixture is killed, which is the only
 //! cleanup an interrupted owner gets: no `Drop` runs in a killed process.
+//! Its stop pass is followed by an exit receipt naming its own and its
+//! owner's identities, so a proof that removes the root after an interrupted
+//! owner can wait for the helper itself instead of inferring its completion
+//! from the recorded generations going quiet (effigy#617).
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use effigy_gateway::identity::{
     read_live_process_identity, GatewayStartIdentity, LiveProcessIdentity,
@@ -31,11 +36,18 @@ use effigy_gateway::identity::{
 
 const WATCHDOG_ROOT_ENV: &str = "EFFIGY_FIXTURE_WATCHDOG_ROOT";
 const WATCHDOG_OWNER_ENV: &str = "EFFIGY_FIXTURE_WATCHDOG_OWNER";
+/// Set only by the removal-ordering discriminator, which freezes the real
+/// watchdog at its ledger-write boundary behind a control file.
+const WATCHDOG_HOLD_ENV: &str = "EFFIGY_FIXTURE_WATCHDOG_HOLD";
 const WATCHDOG_TEST: &str = "fixture_sweep::fixture_watchdog_helper";
 /// One process-table read per tick. A `ps` call costs tens of milliseconds, so
 /// a shorter tick would load a parallel run enough to slow the fixtures it guards.
 const WATCHDOG_INTERVAL: Duration = Duration::from_secs(1);
 const LEDGER_FILE: &str = "sweep-ledger.json";
+const WATCHDOG_EXIT_FILE: &str = "sweep-watchdog-exit.json";
+/// How long a held watchdog waits for the discriminator's control file to go
+/// before proceeding on its own, so a failed discriminator cannot park it.
+const WATCHDOG_HOLD_BUDGET: Duration = Duration::from_secs(30);
 
 /// A process that was in a recorded leader's group, with its identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,6 +65,24 @@ pub(super) struct Record {
     pub(super) boot: String,
     pub(super) start: GatewayStartIdentity,
     pub(super) members: Vec<Member>,
+}
+
+/// The watchdog's own boot and start identity, as published in its receipt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HelperIdentity {
+    boot: String,
+    start: GatewayStartIdentity,
+}
+
+/// The watchdog's completion receipt: the owner it watched, its own PID and
+/// identity. It is the helper's final write, so a receipt that names this
+/// owner proves every ledger write and the whole stop pass happened before
+/// it, and the named helper writes nothing after it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct WatchdogExit {
+    pub(super) owner: u32,
+    pub(super) watchdog: u32,
+    identity: Option<HelperIdentity>,
 }
 
 /// `(pid, pgid)` for every process, from one read of the process table.
@@ -359,6 +389,123 @@ pub(super) fn ledger_has_member(root: &Path, pid: u32) -> bool {
         .any(|record| record.members.iter().any(|member| member.pid == pid))
 }
 
+fn exit_receipt_path(root: &Path) -> PathBuf {
+    root.join(WATCHDOG_EXIT_FILE)
+}
+
+/// The watchdog's own identity at receipt time, for the wait's closure check.
+fn own_identity() -> Option<HelperIdentity> {
+    let live = read_live_process_identity(std::process::id()).ok()?;
+    Some(HelperIdentity {
+        boot: live.boot_identity,
+        start: live.start_identity,
+    })
+}
+
+fn identity_value(identity: &Option<HelperIdentity>) -> serde_json::Value {
+    match identity {
+        Some(identity) => serde_json::json!({
+            "boot": identity.boot,
+            "start": serde_json::to_value(&identity.start).expect("start identity"),
+        }),
+        None => serde_json::Value::Null,
+    }
+}
+
+/// Publishes the watchdog's exit receipt in one rename, like the ledger. This
+/// is the helper's final action before it exits: nothing writes afterwards.
+fn write_exit_receipt(root: &Path, owner: u32) {
+    let identity = own_identity();
+    let value = serde_json::json!({
+        "owner": owner,
+        "watchdog": std::process::id(),
+        "watchdog_identity": identity_value(&identity),
+    });
+    let temporary = root.join(format!("{WATCHDOG_EXIT_FILE}.tmp"));
+    fs::write(&temporary, value.to_string()).expect("write the watchdog exit receipt");
+    fs::rename(&temporary, exit_receipt_path(root)).expect("publish the watchdog exit receipt");
+}
+
+fn read_exit_receipt(root: &Path) -> Option<WatchdogExit> {
+    let value = fs::read_to_string(exit_receipt_path(root))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())?;
+    let owner = value["owner"].as_u64()? as u32;
+    let watchdog = value["watchdog"].as_u64()? as u32;
+    let identity = value["watchdog_identity"].as_object().and_then(|identity| {
+        Some(HelperIdentity {
+            boot: identity["boot"].as_str()?.to_owned(),
+            start: serde_json::from_value(identity["start"].clone()).ok()?,
+        })
+    });
+    Some(WatchdogExit {
+        owner,
+        watchdog,
+        identity,
+    })
+}
+
+/// Waits for the watchdog under `root` to publish its exit receipt for this
+/// exact `owner`, then for that recorded helper identity to be gone. The
+/// receipt is the helper's final write, so a returned receipt proves every
+/// ledger write and the whole stop pass preceded it; the closure check rules
+/// out a helper that stopped writing but never exited. A missing, unreadable,
+/// foreign-owner or unexited receipt keeps the wait polling until `budget`
+/// and then fails naming the last observation: absence is never proof.
+pub(super) fn wait_for_watchdog_exit(
+    root: &Path,
+    owner: u32,
+    budget: Duration,
+) -> io::Result<WatchdogExit> {
+    let deadline = Instant::now() + budget;
+    loop {
+        let last = match read_exit_receipt(root) {
+            Some(exit) if exit.owner == owner => {
+                let settled = match &exit.identity {
+                    Some(identity) => !holds_alive(exit.watchdog, &identity.boot, &identity.start),
+                    None => true,
+                };
+                if settled {
+                    return Ok(exit);
+                }
+                format!(
+                    "receipt names watchdog {} which still holds its identity",
+                    exit.watchdog
+                )
+            }
+            Some(exit) => format!("receipt names owner {}, not {owner}", exit.owner),
+            None => "no readable receipt yet".to_owned(),
+        };
+        if Instant::now() >= deadline {
+            return Err(io::Error::other(format!(
+                "the watchdog's exit receipt under {} did not settle within {budget:?}: {last}",
+                root.display()
+            )));
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Freezes the watchdog at its ledger-write boundary while the discriminator's
+/// control file exists, and marks that this real writer reached the boundary.
+/// The marker names the exact helper and owner identities at the boundary;
+/// the hold releases on its own after [`WATCHDOG_HOLD_BUDGET`]. Only the
+/// discriminator sets the environment, so no fixture watchdog runs held.
+fn hold_at_ledger_boundary(hold: &Path, owner: u32) {
+    let held = hold.with_extension("held");
+    let marker = serde_json::json!({
+        "owner": owner,
+        "watchdog": std::process::id(),
+        "watchdog_identity": identity_value(&own_identity()),
+    });
+    fs::write(&held, marker.to_string()).expect("write the watchdog hold marker");
+    let deadline = Instant::now() + WATCHDOG_HOLD_BUDGET;
+    while hold.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(50));
+    }
+    let _ = fs::remove_file(&held);
+}
+
 /// The records the watchdog wrote. A missing or unreadable ledger is empty,
 /// so only identities actually written can be signalled from it.
 fn read_ledger(root: &Path) -> Vec<Record> {
@@ -454,22 +601,32 @@ pub(super) fn any_alive(records: &[Record]) -> bool {
 /// Starts the fixture watchdog for `root`, owned by this process. If this
 /// process is killed, the watchdog stops what it recorded, by identity.
 pub(super) fn spawn_watchdog(root: &Path) -> Child {
+    spawn_watchdog_for(root, std::process::id(), None)
+}
+
+/// [`spawn_watchdog`] with an explicit owner identity and an optional hold
+/// control file for the removal-ordering discriminator.
+pub(super) fn spawn_watchdog_for(root: &Path, owner: u32, hold: Option<&Path>) -> Child {
     use std::os::unix::process::CommandExt;
-    Command::new(std::env::current_exe().expect("test binary"))
+    let mut command = Command::new(std::env::current_exe().expect("test binary"));
+    command
         .args(["--exact", WATCHDOG_TEST, "--ignored", "--nocapture"])
         .env(WATCHDOG_ROOT_ENV, root)
-        .env(WATCHDOG_OWNER_ENV, std::process::id().to_string())
+        .env(WATCHDOG_OWNER_ENV, owner.to_string())
         .process_group(0)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("start the fixture watchdog")
+        .stderr(Stdio::null());
+    if let Some(hold) = hold {
+        command.env(WATCHDOG_HOLD_ENV, hold);
+    }
+    command.spawn().expect("start the fixture watchdog")
 }
 
 /// The fixture watchdog body. It keeps the owner's generations and their group
 /// members captured in the ledger while the owner lives, then stops them once
-/// the owner is gone. It runs only as the child of a fixture.
+/// the owner is gone and publishes its exit receipt. It runs only as the child
+/// of a fixture.
 #[test]
 #[ignore = "started by a fixture as its watchdog"]
 fn fixture_watchdog_helper() {
@@ -478,14 +635,19 @@ fn fixture_watchdog_helper() {
         .expect("watchdog owner")
         .parse()
         .expect("watchdog owner pid");
+    let hold = std::env::var_os(WATCHDOG_HOLD_ENV).map(PathBuf::from);
     let mut known: Vec<Record> = Vec::new();
     while nix::sys::signal::kill(nix::unistd::Pid::from_raw(owner as i32), None).is_ok() {
         for fresh in read_records(&checkouts_under(&root), &root) {
             merge(&mut known, fresh);
         }
         capture_all(&mut known);
+        if let Some(hold) = &hold {
+            hold_at_ledger_boundary(hold, owner);
+        }
         write_ledger(&root, &known);
         thread::sleep(WATCHDOG_INTERVAL);
     }
     terminate_records(&known);
+    write_exit_receipt(&root, owner);
 }
