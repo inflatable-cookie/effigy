@@ -1,6 +1,6 @@
 {
   "schema": "effigy.qualification.task-engine-signal-matrix.r1",
-  "task": "effigy#579",
+  "task": "effigy#582",
   "status": "prepared-not-executed",
   "qualification": false,
   "legacy_shadow_oracle": "retired",
@@ -142,23 +142,23 @@
       "id": "sequence-term",
       "kind": "sequence",
       "signal": "TERM",
-      "credit": "shared-path",
-      "receipt": "plain TERM kill_case plus sequence INT/KILL at task#298; same kernel stop router; no dedicated sequence TERM cell in current source",
-      "call_path": "tests/task_engine_kill_matrix.rs (comment: the four kill_case tests cover TERM and HUP)",
-      "detector": "none dedicated",
-      "backend": "private disposable Linux VM (plain path)",
-      "obligation": "planner may require a dedicated sequence TERM cell later; this packet does not manufacture one"
+      "credit": "host-source",
+      "receipt": "old shared-path credit at task#298 (plain TERM kill_case plus sequence INT/KILL, same kernel stop router); dedicated host fixture task#582 sequence_signal_matrix_term_settles_owned_descendants_and_skips_later_steps",
+      "call_path": "tests/task_engine_kill_matrix.rs::sequence_signal_cell(0, SIGTERM, false)",
+      "detector": "test:focused -p effigy --test task_engine_kill_matrix -E 'test(sequence_signal_matrix_term_settles_owned_descendants_and_skips_later_steps)'",
+      "backend": "this-host kill-matrix fixture (not linux-custody.sh)",
+      "obligation": "native Linux sequence TERM via linux-custody.sh remains separately GO-gated and is still owed; this host fixture is not that cell"
     },
     {
       "id": "sequence-hup",
       "kind": "sequence",
       "signal": "HUP",
-      "credit": "shared-path",
-      "receipt": "plain HUP kill_case plus sequence INT/KILL at task#298; same kernel stop router; no dedicated sequence HUP cell in current source",
-      "call_path": "tests/task_engine_kill_matrix.rs",
-      "detector": "none dedicated",
-      "backend": "private disposable Linux VM (plain path)",
-      "obligation": "planner may require a dedicated sequence HUP cell later; this packet does not manufacture one"
+      "credit": "host-source",
+      "receipt": "old shared-path credit at task#298 (plain HUP kill_case plus sequence INT/KILL, same kernel stop router); dedicated host fixture task#582 sequence_signal_matrix_hup_settles_owned_descendants_and_skips_later_steps",
+      "call_path": "tests/task_engine_kill_matrix.rs::sequence_signal_cell(0, SIGHUP, false)",
+      "detector": "test:focused -p effigy --test task_engine_kill_matrix -E 'test(sequence_signal_matrix_hup_settles_owned_descendants_and_skips_later_steps)'",
+      "backend": "this-host kill-matrix fixture (not linux-custody.sh)",
+      "obligation": "native Linux sequence HUP via linux-custody.sh remains separately GO-gated and is still owed; this host fixture is not that cell"
     },
     {
       "id": "sequence-timeout-descendants",

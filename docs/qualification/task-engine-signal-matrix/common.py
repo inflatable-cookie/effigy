@@ -1,8 +1,10 @@
-"""Fail-closed machinery for the task-engine signal-matrix packet (effigy#579).
+"""Fail-closed machinery for the task-engine signal-matrix packet.
 
-Preparation only. Nothing here starts a VM, engine, container, image pull,
-install, or native task. Admission tests drive these verifiers against
-disposable fixture metadata. A constructed plan is not qualification.
+Queue tasks effigy#579 (index + unarmed packet) and effigy#582 (executable
+path). Admission and plan construction never start a VM, engine, container,
+image pull, install, or native task. A constructed plan is not execution.
+`--execute` is a real pass after exact GO/hash/engine/image/root admission;
+this module stays spawn-free. Native HostCli lives in execute.py.
 """
 import hashlib
 import json
@@ -48,6 +50,15 @@ SIGNAL_CELLS = (
     ('container-term', 'TERM'),
     ('container-hup', 'HUP'),
     ('container-kill', 'KILL'),
+)
+HELPER_NAME = 'effigy-custody'
+REMOTE_RS = DIR.parents[2] / 'crates' / 'effigy-containers' / 'src' / 'environment' / 'remote.rs'
+ATTEMPT_RECEIPT_KEYS = (
+    'invocation',
+    'inventory_pre',
+    'inventory_post',
+    'cleanup',
+    'error',
 )
 
 
@@ -263,6 +274,105 @@ def apply_overlay(manifest, overlay):
     if 'armed' in overlay:
         out['armed'] = overlay['armed']
     return out
+
+
+def match_go(manifest, go):
+    """GO must quote the same exact inputs the working packet is armed with."""
+    engine = manifest.get('engine') or {}
+    candidate = manifest.get('candidate') or {}
+    if engine.get('kind') != go['engine']:
+        raise Refused('GO engine does not match packet')
+    if engine.get('identity') != go['identity']:
+        raise Refused('GO engine-id does not match packet')
+    if engine.get('context') != go['context']:
+        raise Refused('GO context does not match packet')
+    if engine.get('image_digest') != go['image_digest']:
+        raise Refused('GO image-digest does not match packet')
+    if candidate.get('binary_path') != go['binary']:
+        raise Refused('GO binary does not match packet')
+    if candidate.get('binary_sha256') != go['binary_sha256']:
+        raise Refused('GO binary-sha256 does not match packet')
+    if candidate.get('source_commit') != go['source']:
+        raise Refused('GO source does not match packet')
+
+
+def verify_binary(path, expected_sha):
+    p = Path(path)
+    if p.is_symlink() or not p.is_file():
+        raise Refused('candidate binary missing or symlink')
+    actual = digest_file(p)
+    if actual != expected_sha:
+        raise Refused('candidate binary sha256 mismatch')
+    return actual
+
+
+def receipt_exclusive(path, data):
+    """Write a 0600 O_EXCL receipt. An existing file is a prior attempt: no retry."""
+    p = Path(path)
+    if p.is_symlink() or os.path.lexists(p):
+        raise Refused('already attempted; no retry: %s' % p.name)
+    payload = data if isinstance(data, (bytes, bytearray)) else (
+        json.dumps(data, indent=2, sort_keys=True) + '\n'
+    ).encode()
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+    try:
+        os.write(fd, payload)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.chmod(p, 0o600)
+    return digest_file(p)
+
+
+def refuse_prior_attempt(scratch, manifest):
+    receipts = manifest.get('receipts') or {}
+    for key in ATTEMPT_RECEIPT_KEYS:
+        name = receipts.get(key)
+        if not name:
+            continue
+        path = Path(scratch) / name
+        if path.is_symlink() or os.path.lexists(path):
+            raise Refused('already attempted; no retry: %s' % name)
+
+
+def docker_target(context):
+    flag = '--host' if '://' in context else '--context'
+    return [flag, context]
+
+
+def runtime_argv(kind, context, tail):
+    """HostCli argv frame from ComposeRemote::runtime. Never a fake engine."""
+    if kind == 'colima-nerdctl':
+        return 'colima', ['nerdctl', '--profile', context, '--'] + list(tail)
+    if kind == 'docker-compose':
+        return 'docker', docker_target(context) + list(tail)
+    raise Refused('engine kind is not a production Compose backend: %s' % kind)
+
+
+def production_helper():
+    """The shipped in-container /proc helper body. Refuse if it cannot be read."""
+    if REMOTE_RS.is_symlink() or not REMOTE_RS.is_file():
+        raise Refused('production remote.rs missing')
+    text = REMOTE_RS.read_text()
+    marker = 'pub(crate) const HELPER: &str = r#"'
+    start = text.find(marker)
+    if start < 0:
+        raise Refused('production HELPER constant missing')
+    start += len(marker)
+    end = text.find('"#;', start)
+    if end < 0:
+        raise Refused('production HELPER constant unterminated')
+    body = text[start:end]
+    if '/proc/' not in body or 'boot_id' not in body:
+        raise Refused('production HELPER is not the /proc identity helper')
+    return body
+
+
+def helper_tail(full_id, mode_args, helper_script=None):
+    script = helper_script if helper_script is not None else production_helper()
+    tail = ['exec', '-i', '-u', '0', full_id, 'sh', '-c', script, HELPER_NAME]
+    tail.extend(mode_args)
+    return tail
 
 
 def _scan_forbidden(plan):

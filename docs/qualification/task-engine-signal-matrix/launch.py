@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""UNARMED launcher for the task-engine real-container signal packet.
+"""Launcher for the task-engine real-container signal packet.
 
-Queue task effigy#579. This file never starts a VM, engine, container,
-image pull, install, or native task. On this prepared packet every path
-refuses before effects: missing GO, wrong hashes, and a well-formed GO
-against UNARMED placeholders alike. `--execute` is structurally refused.
-A later armed revision still constructs the owned command plan in-process
-and does not spawn from this helper.
+Queue tasks effigy#579 and effigy#582. This file never starts a VM, engine,
+container, image pull, or install by itself. Missing GO, wrong hashes, and
+UNARMED committed placeholders refuse before effects. A plan is never
+execution. `--execute` is a real GO-bound pass: the CLI uses HostCliDriver
+only; tests inject a labeled double as a Python argument. Duplicate or
+lost-response resend is refused from retained attempt evidence.
 """
 import json
 import sys
@@ -18,24 +18,45 @@ if (DIR.name, DIR.parent.name, DIR.parent.parent.name) != (
     raise RuntimeError('launcher must run from docs/qualification/task-engine-signal-matrix')
 
 sys.path.insert(0, str(DIR))
-import common  # noqa: E402
-from common import Refused, construct_plan, require_armed, verify_go_receipt, verify_packet_bundle  # noqa: E402
+from common import (  # noqa: E402
+    Refused, apply_overlay, construct_plan, match_go, require_armed,
+    verify_binary, verify_go_receipt, verify_packet_bundle,
+)
 
 
-def main(argv=None):
+def main(argv=None, scratch_dir=None, overlay=None, transport=None, allow_native=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     bundle = verify_packet_bundle()
-    if '--execute' in argv:
-        raise Refused('execute is structurally refused on this prepared packet')
-    scratch = Path(bundle['manifest']['scratch_root'])
-    verify_go_receipt(scratch / 'go.txt', bundle['bundle_sha256'], scratch_dir=scratch)
-    require_armed(bundle['manifest'])
-    plan = construct_plan(bundle['manifest'])
+    execute = '--execute' in argv
+    scratch = Path(scratch_dir) if scratch_dir is not None else Path(bundle['manifest']['scratch_root'])
+    go = verify_go_receipt(scratch / 'go.txt', bundle['bundle_sha256'], scratch_dir=scratch)
+    working = apply_overlay(bundle['manifest'], overlay)
+    require_armed(working)
+    match_go(working, go)
+    verify_binary(working['candidate']['binary_path'], working['candidate']['binary_sha256'])
+    plan = construct_plan(working)
     if plan.get('spawn') is not False:
         raise Refused('plan must not spawn')
-    json.dump(plan, sys.stdout, indent=2)
+    if not execute:
+        if plan.get('execute') is not False:
+            raise Refused('plan is never execution')
+        json.dump(plan, sys.stdout, indent=2)
+        sys.stdout.write('\n')
+        return 0
+    from execute import execute_pass  # noqa: E402 — CLI execute path only
+    if allow_native is None:
+        allow_native = transport is None
+    result = execute_pass(
+        working, go, plan, scratch, transport=transport, allow_native=allow_native,
+    )
+    json.dump(result, sys.stdout, indent=2)
     sys.stdout.write('\n')
-    return 0
+    kind = result.get('kind')
+    if kind in ('labeled-double', 'native-pass'):
+        return 0
+    if kind == 'refused':
+        return 2
+    return 1
 
 
 if __name__ == '__main__':

@@ -1,6 +1,6 @@
 {
   "schema": "effigy.qualification.task-engine-signal-matrix.r1",
-  "task": "effigy#579",
+  "task": "effigy#582",
   "status": "prepared-not-executed",
   "armed": false,
   "qualification": false,
@@ -11,6 +11,7 @@
     "manifest-r1.json",
     "common.py",
     "launch.py",
+    "execute.py",
     "boundaries.py"
   ],
   "scratch_root": "/Volumes/Builds/scratch/effigy/579",
@@ -26,7 +27,7 @@
     "source_commit": "UNARMED",
     "binary_sha256": "UNARMED",
     "binary_path": "UNARMED",
-    "note": "placeholders stay UNARMED on this prepared packet; a later armed revision pins reviewed source/binary hashes; this launcher never installs over live Effigy"
+    "note": "placeholders stay UNARMED until a later reviewed source/binary pin after final integration; GO matching those pins can drive one HostCli pass; this launcher never installs over live Effigy and never binds queue.proofExecution"
   },
   "engine": {
     "kind": "UNARMED",

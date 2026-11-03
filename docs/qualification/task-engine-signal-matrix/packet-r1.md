@@ -1,12 +1,14 @@
 # Task-engine real-container signal packet r1
 
-Queue task effigy#579. Status: **prepared, not executed.** Armed: **false.**
+Queue task effigy#582 (index from effigy#579). Status: **prepared, not
+executed.** Armed: **false.**
 
 This packet is the smallest later-executable shape for the genuine missing
 real-engine cells in `matrix.json`: real-container × INT/TERM/HUP/KILL
 through production `RemoteExecAdapter` / `ComposeRemote::<HostCli>`, plus
 strict foreign/unknown refusal, on one bounded run. It does not qualify
-those cells. Boundary doubles prove packet admission only.
+those cells. Boundary doubles prove packet admission and execute
+control-flow only.
 
 ## Subject
 
@@ -23,6 +25,8 @@ those cells. Boundary doubles prove packet admission only.
 - Closure: in-container `/proc` helper rechecks boot/ns/start ticks/nonce
   before signal. Never infer closure from owner exit, no output, label
   match, reused PID, empty list without completeness, or a fake transport.
+  The helper body is the shipped `HELPER` constant in
+  `crates/effigy-containers/src/environment/remote.rs`.
 - One bounded run. Pre/post exact-owned inventory and cleanup/error
   receipts under `/Volumes/Builds/scratch/effigy/579`.
 
@@ -55,13 +59,14 @@ than the pinned scratch file refuses before effects.
 
 Even a well-formed GO refuses while this prepared packet stays unarmed
 (`armed: false` and any `UNARMED` placeholder in the committed manifest).
-`--execute` is structurally refused on this packet. Missing image or
+`--execute` is a real pass after an armed working copy (in-memory overlay
+or a later committed pin) matches that GO exactly. Missing image or
 runtime is a preparation prerequisite, not permission: the engine named
 in GO must already be running and the image digest must already be
 present. This packet never starts, stops, or reconfigures a VM or engine,
 never pulls or builds an image, never runs `install:local`, never adopts
 foreign resources, and never uses Colima profile `effigy` or a #531/#574
-GO.
+GO. It never binds `queue.proofExecution`.
 
 Client exit is never remote closure (K6). Foreign cleanup is refused.
 Pattern kills (`pkill`, `killall`, aliases) are refused.
@@ -73,10 +78,29 @@ or a later armed revision of this packet) constructs the exact owned
 command plan in-process and does not spawn. The plan names the four
 signal cells, the foreign/unknown cell, the identity format, the original
 deadlines, the ordinary container hold task, and the forbidden-token
-list. `spawn` is always `false` on this prepared packet.
+list. `spawn` is always `false` on the plan. A plan is never execution.
+
+## Execute
+
+`launch.py --execute` after GO + armed match + candidate bytes:
+
+1. Refuse if any attempt receipt already exists (invocation, inventory,
+   cleanup, error). Failure and unknown are not retry tokens.
+2. Write `invocation-receipt.json` O_EXCL (`qualification: false`).
+3. Drive HostCli-shaped calls: inspect, `/proc` helper `snap`/`kill`
+   (`exec -i -u 0 <id> sh -c <HELPER> effigy-custody …`), the candidate
+   `[binary, hold]` workload, owner signal, and `tasks status hold --json`.
+4. CLI uses `HostCliDriver` only. Tests inject `LabeledDouble` as a
+   Python argument. There is no environment or config switch.
+5. A labeled-double result is `kind: labeled-double`, never native
+   qualification. A HostCli completion is `kind: native-pass`, still
+   `qualification: false` until a later owner accepts it.
+6. Missing helper closure, lost responses, cleanup partial failure, and
+   failure after admission keep truthful typed results and retain the
+   invocation receipt.
 
 ## What passing the battery is
 
 `test:qualification:task-engine-signals` runs `boundaries.py` against
-fake backends and disposable fixture metadata. A pass is packet
-admission, not native task closure.
+fake backends, disposable fixture metadata, and a labeled double. A pass
+is packet admission plus execute control-flow, not native task closure.
