@@ -625,6 +625,66 @@ fn release_platform_contract_fixture_is_a_ready_single_identity_release() {
     assert!(!root.exists());
 }
 
+#[test]
+fn container_status_contract_fixture_injects_a_baked_runtime_on_path() {
+    let repo = tempfile::tempdir().unwrap();
+    let mut fixtures = super::ContractFixtures::new(repo.path());
+    let args = super::expand_contract_fixture_tokens(
+        "effigy --json container web status --repo <fixture_container_status>",
+        &mut fixtures,
+    )
+    .unwrap();
+    let root = std::path::PathBuf::from(args.last().unwrap());
+    assert!(root.join("effigy.toml").is_file());
+    assert!(
+        std::fs::read_to_string(root.join("effigy.toml"))
+            .unwrap()
+            .contains("working_dir='/workspace'"),
+        "status fixture must satisfy CWD mapping so known-running can probe exec"
+    );
+    assert!(root.join("bin/colima").is_file());
+    assert_eq!(
+        fixtures
+            .row_env
+            .get("EFFIGY_COMPOSE_BACKEND")
+            .map(String::as_str),
+        Some("colima")
+    );
+    let path = fixtures.row_env.get("PATH").expect("PATH");
+    assert!(
+        path.starts_with(&format!("{}:", root.join("bin").display()))
+            || path == &root.join("bin").display().to_string(),
+        "{path}"
+    );
+    drop(fixtures);
+    assert!(!root.exists());
+}
+
+#[test]
+fn changed_only_compares_whole_row_documents_not_schema_id() {
+    let row = |command: &str| super::ContractRow {
+        schema: "effigy.command.v1".to_owned(),
+        schema_version: 1,
+        command: command.to_owned(),
+        expect_failure: false,
+        isolated_home: false,
+        payload_schema: None,
+        raw: json!({"schema": "effigy.command.v1", "command": command}),
+    };
+    let hosts = row("effigy --json container web hosts --repo live");
+    let old_status = row("effigy --json container web status --repo live");
+    let new_status = row("effigy --json container web status --repo <fixture_container_status>");
+    let added =
+        row("effigy --json container web status --repo <fixture_container_status_unavailable>");
+    let selected = super::rows_changed_from(
+        &[hosts.clone(), new_status.clone(), added.clone()],
+        &[hosts.clone(), old_status],
+    );
+    assert_eq!(selected.len(), 2);
+    assert_eq!(selected[0].command, new_status.command);
+    assert_eq!(selected[1].command, added.command);
+}
+
 /// Compile one of the shipped payload schema documents.
 fn repo_payload_schema(schema_id: &str) -> effigy_json_schema::CompiledSchema {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))

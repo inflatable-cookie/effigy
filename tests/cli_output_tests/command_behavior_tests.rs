@@ -2048,6 +2048,45 @@ fn assert_container_status_matches_schema(payload: &Value) {
     );
 }
 
+fn container_status_schema_errors(payload: &Value) -> Vec<String> {
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../docs/knowledge/contracts/payload-schemas/effigy.container.status.v1.json"
+    ))
+    .expect("parse container status schema");
+    let schema = effigy_json_schema::CompiledSchema::compile(&schema)
+        .expect("compile container status schema");
+    schema.validate(payload)
+}
+
+fn container_status_payload_template() -> Value {
+    serde_json::json!({
+        "ok": true,
+        "schema": "effigy.container.status.v1",
+        "schema_version": 1,
+        "container": "web",
+        "project_name": "fixture-web-dev",
+        "driver": "colima",
+        "backend": "containerd",
+        "backend_source": "environment",
+        "manifest_driver": "colima",
+        "compose_file": "compose.yml",
+        "primary_service": "app",
+        "primary_service_exec_ready": null,
+        "runtime_running": false,
+        "health": null,
+        "ports": [],
+        "mounts": [],
+        "media_mounts": [],
+        "services": [],
+        "shared_services": [],
+        "warnings": [],
+        "environment": {"backend": {}},
+        "profile": "effigy",
+        "compose_ps": null,
+        "detach_timeout_secs": 10
+    })
+}
+
 fn write_container_fixture(root: &std::path::Path, health_check: Option<&str>, mount: &str) {
     write_container_fixture_with_task(root, health_check, mount, false);
 }
@@ -2915,6 +2954,158 @@ fn cli_container_status_json_reports_default_container_contract() {
             .display()
     );
     assert_eq!(parsed["result"]["mounts"][0], expected_mount);
+}
+
+#[test]
+fn container_status_schema_rejects_null_services_and_keeps_an_empty_array() {
+    let valid = container_status_payload_template();
+    assert!(
+        container_status_schema_errors(&valid).is_empty(),
+        "template must satisfy the status schema"
+    );
+
+    let mut null_services = valid.clone();
+    null_services["services"] = Value::Null;
+    let errors = container_status_schema_errors(&null_services);
+    assert!(
+        errors.iter().any(|error| error.contains("/services")),
+        "null services must fail the payload schema: {errors:?}"
+    );
+
+    let mut missing_services = valid.clone();
+    missing_services
+        .as_object_mut()
+        .expect("object")
+        .remove("services");
+    let errors = container_status_schema_errors(&missing_services);
+    assert!(
+        !errors.is_empty(),
+        "omitted services must fail the payload schema"
+    );
+}
+
+#[test]
+fn cli_container_status_json_reports_observed_stopped_runtime_with_empty_services() {
+    let private = effigy_test_support::Fixture::workspace("effigy-status-stopped-")
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
+    write_container_fixture(&root, None, "./app:/workspace");
+    let (bin_dir, _colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("container")
+        .arg("web")
+        .arg("status")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .env("HOME", private_home(&root))
+        .env(
+            "EFFIGY_TEST_CONTAINERS_HOME",
+            private_home(&root).join(".effigy"),
+        )
+        .env("EFFIGY_COMPOSE_BACKEND", "colima")
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", root.join("colima-running"))
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success(), "status failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.container.status.v1");
+    assert_container_status_matches_schema(&parsed["result"]);
+    assert_eq!(parsed["result"]["runtime_running"], false);
+    assert_eq!(parsed["result"]["services"], serde_json::json!([]));
+}
+
+fn install_unavailable_colima(root: &std::path::Path) -> std::path::PathBuf {
+    let bin_dir = root.join("bin-unavailable");
+    fs::create_dir_all(&bin_dir).expect("mkdir unavailable bin");
+    write_executable(
+        &bin_dir.join("colima"),
+        r#"#!/bin/sh
+if [ "${1:-}" = "status" ]; then
+  printf 'error retrieving current runtime: empty value\n' >&2
+  exit 1
+fi
+printf 'unexpected colima invocation: %s\n' "$*" >&2
+exit 1
+"#,
+    );
+    write_executable(
+        &bin_dir.join("docker"),
+        r#"#!/bin/sh
+printf 'unexpected docker invocation: %s\n' "$*" >&2
+exit 1
+"#,
+    );
+    bin_dir
+}
+
+#[test]
+fn cli_container_status_json_fails_unavailable_runtime_without_empty_success() {
+    let private = effigy_test_support::Fixture::workspace("effigy-status-unavailable-")
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
+    write_container_fixture(&root, None, "./app:/workspace");
+    let bin_dir = install_unavailable_colima(&root);
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("container")
+        .arg("web")
+        .arg("status")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .env("HOME", private_home(&root))
+        .env(
+            "EFFIGY_TEST_CONTAINERS_HOME",
+            private_home(&root).join(".effigy"),
+        )
+        .env("EFFIGY_COMPOSE_BACKEND", "colima")
+        .env("PATH", path)
+        .output()
+        .expect("run effigy");
+
+    assert!(!output.status.success(), "unavailable status must fail");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["ok"], false);
+    assert_eq!(parsed["error"]["kind"], "unavailable");
+    assert!(parsed["result"].is_null(), "{}", parsed);
+    let message = parsed["error"]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let human = parsed["error"]["human"].to_string().to_ascii_lowercase();
+    assert!(
+        message.contains("empty value")
+            || human.contains("empty value")
+            || message.contains("unavailable")
+            || human.contains("unavailable"),
+        "observation must remain in the envelope: {parsed}"
+    );
+    assert!(
+        parsed["result"].get("services").is_none(),
+        "unavailable must not flatten to an empty success payload: {parsed}"
+    );
 }
 
 #[test]

@@ -132,7 +132,11 @@ explicit exec paths: a declared volume absent from a live stack cannot grant
 chown authority over the host bind beneath it. Permission target metadata uses
 the most specific declared mount and retains its repair authority. `container
 status` reports the services, their runtime state and readiness; it has no
-separate mount-drift field.
+separate mount-drift field. The `effigy.container.status.v1` payload always
+carries `services` as an array: known-running includes observed rows (including
+Exited owned containers); known-stopped is `runtime_running: false` with
+`services: []`. An unavailable or unparsable runtime observation fails the
+command with envelope `error.kind=unavailable` and grants nothing.
 
 ## Optional workspace mounts at creation
 

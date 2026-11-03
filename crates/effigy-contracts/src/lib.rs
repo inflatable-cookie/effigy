@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -735,16 +735,19 @@ fn select_contract_rows(
         Err(_) => return Ok(active_rows.to_vec()),
     };
     let old_active = load_active_contract_rows(&old_index)?;
-    let mut old_map = BTreeMap::new();
-    for row in old_active {
-        old_map.insert(row.schema.clone(), row.raw);
-    }
+    Ok(rows_changed_from(active_rows, &old_active))
+}
 
-    Ok(active_rows
+fn rows_changed_from(active: &[ContractRow], old: &[ContractRow]) -> Vec<ContractRow> {
+    // Compare whole row documents. Duplicate envelope schema ids are normal
+    // (`effigy.command.v1` hosts many commands); last-wins-by-schema would
+    // treat unrelated rows as changed.
+    let old_raws: HashSet<_> = old.iter().map(|row| row.raw.clone()).collect();
+    active
         .iter()
-        .filter(|row| old_map.get(&row.schema) != Some(&row.raw))
+        .filter(|row| !old_raws.contains(&row.raw))
         .cloned()
-        .collect())
+        .collect()
 }
 
 fn run_contract_row(
@@ -787,6 +790,9 @@ fn run_contract_row(
     command.args(args).current_dir(repo_root);
     if let Some(home) = isolated_home {
         command.env("HOME", home);
+    }
+    for (key, value) in &fixtures.row_env {
+        command.env(key, value);
     }
     let output = command.output().map_err(|error| CheckFailure {
         schema: row.schema.clone(),
@@ -983,6 +989,7 @@ fn expand_contract_fixture_tokens(
 ) -> Result<Vec<String>, String> {
     // Parse the indexed command before allocating fixtures. Substitute values
     // into existing arguments so spaces and quotes in paths stay literal.
+    fixtures.row_env.clear();
     let mut args = split_shell_like_args(&command.replace("<name>", "test"))?;
     if args.first().map(String::as_str) != Some("effigy") {
         return Err("index command must start with `effigy`".to_owned());
@@ -1079,6 +1086,45 @@ fn expand_contract_fixture_tokens(
     }
     if args
         .iter()
+        .any(|arg| arg.contains("<fixture_container_status>"))
+    {
+        let fixture =
+            create_container_status_contract_fixture(fixtures, StatusFixtureMode::Running)
+                .map_err(|error| error.to_string())?;
+        replace_contract_token(
+            &mut args,
+            "<fixture_container_status>",
+            &fixture.to_string_lossy(),
+        );
+    }
+    if args
+        .iter()
+        .any(|arg| arg.contains("<fixture_container_status_stopped>"))
+    {
+        let fixture =
+            create_container_status_contract_fixture(fixtures, StatusFixtureMode::Stopped)
+                .map_err(|error| error.to_string())?;
+        replace_contract_token(
+            &mut args,
+            "<fixture_container_status_stopped>",
+            &fixture.to_string_lossy(),
+        );
+    }
+    if args
+        .iter()
+        .any(|arg| arg.contains("<fixture_container_status_unavailable>"))
+    {
+        let fixture =
+            create_container_status_contract_fixture(fixtures, StatusFixtureMode::Unavailable)
+                .map_err(|error| error.to_string())?;
+        replace_contract_token(
+            &mut args,
+            "<fixture_container_status_unavailable>",
+            &fixture.to_string_lossy(),
+        );
+    }
+    if args
+        .iter()
         .any(|arg| arg.contains("<fixture_container_migrate>"))
     {
         let fixture = create_contract_fixture_files(
@@ -1143,6 +1189,7 @@ struct ContractFixtures {
     execution_root: PathBuf,
     directories: Vec<tempfile::TempDir>,
     qa_group: Option<Result<(PathBuf, String), String>>,
+    row_env: BTreeMap<String, String>,
 }
 
 impl ContractFixtures {
@@ -1151,6 +1198,7 @@ impl ContractFixtures {
             execution_root: repo_root.join(".effigy/tmp/contract-fixtures"),
             directories: Vec::new(),
             qa_group: None,
+            row_env: BTreeMap::new(),
         }
     }
 
@@ -1397,6 +1445,123 @@ fn run_fixture_command(
             String::from_utf8_lossy(&output.stderr).trim()
         ))
     }
+}
+
+#[derive(Clone, Copy)]
+enum StatusFixtureMode {
+    Running,
+    Stopped,
+    Unavailable,
+}
+
+fn create_container_status_contract_fixture(
+    fixtures: &mut ContractFixtures,
+    mode: StatusFixtureMode,
+) -> Result<PathBuf, String> {
+    let fixture = fixtures
+        .directory("container-status-", FixturePlacement::External)
+        .map_err(|error| error.to_string())?;
+    std::fs::write(fixture.join("package.json"), "{}\n").map_err(|error| error.to_string())?;
+    std::fs::write(
+        fixture.join("effigy.toml"),
+        "[containers]\ndefault='web'\n[containers.web]\ncompose_file='compose.yml'\nprimary_service='app'\nprofile='effigy'\nproject_name='fixture-web-dev'\nworking_dir='/workspace'\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        fixture.join("compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let bin = fixture.join("bin");
+    std::fs::create_dir_all(&bin).map_err(|error| error.to_string())?;
+    write_unix_executable(&bin.join("colima"), status_fixture_colima_script(mode))?;
+    write_unix_executable(
+        &bin.join("docker"),
+        "#!/bin/sh\nprintf 'unexpected docker invocation: %s\\n' \"$*\" >&2\nexit 1\n",
+    )?;
+    let path = match std::env::var("PATH") {
+        Ok(rest) => format!("{}:{rest}", bin.display()),
+        Err(_) => bin.display().to_string(),
+    };
+    fixtures.row_env.insert("PATH".to_owned(), path);
+    fixtures
+        .row_env
+        .insert("EFFIGY_COMPOSE_BACKEND".to_owned(), "colima".to_owned());
+    Ok(fixture)
+}
+
+fn status_fixture_colima_script(mode: StatusFixtureMode) -> &'static str {
+    match mode {
+        StatusFixtureMode::Running => {
+            r#"#!/bin/sh
+if [ "${1:-}" = "status" ]; then
+  printf 'colima is running\n'
+  exit 0
+fi
+subcmd=""
+for arg in "$@"; do
+  case "$arg" in
+    ps|exec) subcmd="$arg"; break ;;
+  esac
+done
+case "$subcmd" in
+  ps)
+    row_project="fixture-web-dev"
+    for arg in "$@"; do
+      case "$arg" in
+        label=com.docker.compose.project=*)
+          row_project="${arg#label=com.docker.compose.project=}"
+          ;;
+      esac
+    done
+    printf '%s-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\t%s\t/workspace\tapp\tFalse\n' "$row_project" "$row_project"
+    exit 0
+    ;;
+  exec)
+    exit 0
+    ;;
+  *)
+    printf 'unexpected colima invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+"#
+        }
+        StatusFixtureMode::Stopped => {
+            r#"#!/bin/sh
+if [ "${1:-}" = "status" ]; then
+  printf 'colima is not running\n'
+  exit 0
+fi
+printf 'unexpected colima invocation: %s\n' "$*" >&2
+exit 1
+"#
+        }
+        StatusFixtureMode::Unavailable => {
+            r#"#!/bin/sh
+if [ "${1:-}" = "status" ]; then
+  printf 'error retrieving current runtime: empty value\n' >&2
+  exit 1
+fi
+printf 'unexpected colima invocation: %s\n' "$*" >&2
+exit 1
+"#
+        }
+    }
+}
+
+fn write_unix_executable(path: &Path, contents: &str) -> Result<(), String> {
+    std::fs::write(path, contents).map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path)
+            .map_err(|error| error.to_string())?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 fn create_contract_fixture(

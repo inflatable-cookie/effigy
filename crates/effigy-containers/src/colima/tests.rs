@@ -27,6 +27,42 @@ fn parse_colima_running_detects_not_running() {
     ));
 }
 
+#[test]
+fn classify_colima_observation_keeps_running_stopped_and_unavailable_apart() {
+    assert_eq!(
+        classify_colima_observation(true, "INFO[0000] colima is running\n", ""),
+        ColimaObservation::Running
+    );
+    assert_eq!(
+        classify_colima_observation(true, "colima is not running\n", ""),
+        ColimaObservation::Stopped
+    );
+    assert_eq!(
+        classify_colima_observation(true, "Stopped\n", ""),
+        ColimaObservation::Stopped
+    );
+    assert_eq!(
+        classify_colima_observation(true, "", ""),
+        ColimaObservation::Stopped
+    );
+    assert_eq!(
+        classify_colima_observation(false, "error: not found", "profile does not exist"),
+        ColimaObservation::Stopped
+    );
+    assert_eq!(
+        classify_colima_observation(false, "", "error retrieving current runtime: empty value\n"),
+        ColimaObservation::Unavailable
+    );
+    assert_eq!(
+        classify_colima_observation(true, "garbled-observation-xyz\n", ""),
+        ColimaObservation::Unavailable
+    );
+    assert_eq!(
+        classify_colima_observation(false, "", ""),
+        ColimaObservation::Unavailable
+    );
+}
+
 /// The Colima argv each operation runs, and the command sequence a shutdown
 /// mode produces.
 #[test]

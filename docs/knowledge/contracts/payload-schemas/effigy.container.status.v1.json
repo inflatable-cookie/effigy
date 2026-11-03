@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "effigy.container.status.v1 payload",
-  "description": "Payload of `effigy container <name> status --json`: the chosen backend, its source and reason, the project identity, published ports and per-service health.",
+  "description": "Payload of `effigy container <name> status --json`: the chosen backend, its source and reason, the project identity, published ports and per-service health. `services` is always an array: empty when the runtime is observed stopped, never null.",
   "type": "object",
   "required": [
     "ok",

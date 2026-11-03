@@ -1504,6 +1504,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- `container status --json` no longer emits `services: null` when the runtime
+  is not running. A known-stopped host reports `runtime_running: false` with
+  an empty `services` array. A failed, unparsable, or otherwise unusable
+  Colima status probe fails the command with envelope `error.kind=unavailable`
+  instead of flattening uncertainty into an empty or successful payload
+  (effigy#588). The JSON contract rows for this surface now run against
+  hermetic fake-runtime fixtures.
+
 - A managed listener that fails readiness keeps that `failed` record through
   settlement of an unpublished successor generation. A retrying supervisor
   stopped during the next generation's admission delay no longer replaces the
