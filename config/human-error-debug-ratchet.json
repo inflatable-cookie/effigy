@@ -22,8 +22,6 @@
     "crates/effigy-kernel/src/run/checkout_custody.rs": 1,
     "crates/effigy-kernel/src/run/logs.rs": 1,
     "crates/effigy-kernel/src/supervise.rs": 5,
-    "crates/effigy-runtime/src/data/planning.rs": 2,
-    "crates/effigy-runtime/src/read.rs": 1,
     "crates/effigy-secrets/src/lib.rs": 2,
     "crates/effigy-state/src/capture.rs": 1,
     "crates/effigy-state/src/validation.rs": 4,
