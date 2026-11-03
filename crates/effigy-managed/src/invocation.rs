@@ -151,30 +151,84 @@ mod tests {
     }
 
     #[test]
-    fn headless_flag_is_removed_without_losing_profile() {
-        let parsed = parse_managed_invocation(&args(&["admin", "--headless"])).expect("parse");
+    fn parse_managed_invocation_actions_and_refusals() {
+        let parsed = parse_managed_invocation(&args(&["admin", "--headless"])).expect("headless");
         assert_eq!(
             parsed.action,
             ManagedInvocation::Run {
                 headless: true,
                 detach: false
-            }
+            },
+            "headless run"
         );
         assert_eq!(parsed.runtime_args.passthrough, ["admin"]);
-    }
 
-    #[test]
-    fn logs_accepts_process_follow_and_profile() {
+        let parsed = parse_managed_invocation(&args(&["admin", "--detach"])).expect("detach");
+        assert_eq!(
+            parsed.action,
+            ManagedInvocation::Run {
+                headless: true,
+                detach: true
+            },
+            "detach implies headless"
+        );
+        assert_eq!(parsed.runtime_args.passthrough, ["admin"]);
+
+        let parsed = parse_managed_invocation(&args(&["status", "--json", "--profile", "admin"]))
+            .expect("status");
+        assert_eq!(
+            parsed.action,
+            ManagedInvocation::Status {
+                profile: "admin".to_owned(),
+                json: true,
+            },
+            "status json + profile"
+        );
+
+        let parsed = parse_managed_invocation(&args(&["stop", "admin"])).expect("stop");
+        assert_eq!(
+            parsed.action,
+            ManagedInvocation::Stop {
+                profile: "admin".to_owned(),
+            },
+            "stop profile"
+        );
+
         let parsed =
             parse_managed_invocation(&args(&["logs", "api", "--follow", "--profile", "admin"]))
-                .expect("parse");
+                .expect("logs");
         assert_eq!(
             parsed.action,
             ManagedInvocation::Logs {
                 profile: "admin".to_owned(),
                 process: Some("api".to_owned()),
                 follow: true,
-            }
+            },
+            "logs process follow profile"
+        );
+
+        let error = parse_managed_invocation(&args(&["status", "admin", "extra"]))
+            .expect_err("status extra args")
+            .to_string();
+        assert!(
+            error.contains("managed `status` accepts only an optional profile name"),
+            "status extra: {error}"
+        );
+
+        let error = parse_managed_invocation(&args(&["logs", "--nope"]))
+            .expect_err("unknown logs flag")
+            .to_string();
+        assert!(
+            error.contains("unknown managed logs argument `--nope`"),
+            "logs unknown: {error}"
+        );
+
+        let error = parse_managed_invocation(&args(&["stop", "--profile", ""]))
+            .expect_err("empty profile")
+            .to_string();
+        assert!(
+            error.contains("managed `--profile` requires a non-empty value"),
+            "empty profile: {error}"
         );
     }
 }
