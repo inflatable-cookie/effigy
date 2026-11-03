@@ -127,14 +127,14 @@ not authority. The [proposed request](preflight-request.example.json) is explici
 unarmed and lists the missing bindings; it cannot be passed as an armed input.
 Preparation and review finish before any future native window starts.
 
-Inputs use schema `effigy.workspace-private-preflight.v1`: the fixed recovery
+Inputs use schema `effigy.workspace-private-preflight.v2`: the fixed recovery
 plan's `source_head`, `profile`, `budget_seconds`, `control`, `shared`, `root_disk`,
-`data_disk`, `agent`, `executables`, plus `recorded` admission and `programs` hashes.
+`data_disk`, `agent`, `executables`, plus `recorded` admission, `programs` hashes and a closed typed `rendering` binding.
 No additional keys or argv/environment overrides are accepted. Agent fields are
 exactly PID, parent, euid (`uid`), UTC start, canonical executable and profile;
 complete command rendering is the missing **output**, never guessed input.
-Program hashes cover common.py, recovery.py, administrative_recovery.py and
-preflight.py. The GO-index retains the existing `colima: {path, sha256}` format.
+Program hashes cover common.py, recovery.py, administrative_recovery.py,
+preflight.py and rendering.py; the GO additionally pins `rendering_sha256`. The GO-index retains the existing `colima: {path, sha256}` format.
 The GO must bind Tom/operator-board/native authority, exact source/input/target,
 `workspace-private-531-preflight-r1`, `one-read-only-preflight`, count1,
 `new-owner-bound-preflight`, and fresh start/expiry within the new allowance.
@@ -166,8 +166,10 @@ the bounded prefix and marks truncation/failure, never a complete rendering.
 Foreign or potentially credential-bearing bytes remain private; public receipt
 fields contain no raw bytes, exception messages or command rendering. Only a
 strict benign grammar admits a rendering: limactl/hostagent/fixed profile,
-optional `--debug` and pidfile/socket/logfile flags beneath the exact control
-root. Unknown flags or free arguments refuse; the grammar claims nothing about
+an optional pre-command `--debug` and exactly three typed, ordered pidfile,
+socket and guestagent option/value pairs beneath the exact control root. Each
+path and parent requires freshly matching owner/type/identity metadata. See the
+[closed rendering contract](rendering.md). Unknown flags or free arguments refuse; the grammar claims nothing about
 what the retained process currently renders. Admitted rendering is also private.
 It is **ps command rendering, not byte-delimited kernel argv**. Missing/failed
 identity remains refused/unknown, never process absence, disk health or closure.
@@ -180,3 +182,30 @@ The existing reviewed signal route is unchanged. A successful future preflight
 would still require owner verification, actual cleanup accounting and a separate
 fresh signal binding before any action. Production/full-session/consumer/final
 release and merge holds remain unchanged.
+
+
+## Consumed read-only attempt and current source preparation
+
+Decision8335884c v2 was exercised once at903ba344d and is consumed. Original
+REFUSED result and quarantine remain unchanged under owner root
+`531-approved-preflight.fcq_xhf3`; original stdout SHA256
+`36c6f0bc058c9c3cfc9ba3d5848f7afcccbf5f2314459351935155c1165dcf48`,
+result SHA256 `c90ed2706eaf893c4725ca011f6ef2a9c0a6b7bdb3b03d9b67694f0a3a427b63`.
+Driver entered16:20:31.007252Z before the16:20:35.554191Z cutoff; one ps exited0
+and was waited,389-byte stdout retained before parse, zero signals/watches/claims.
+The receipt is a correct refusal: both comm rendering and independent option/path
+predicates failed. Offline source analysis grants neither admitted identity nor
+any native replay. Review5756094137/r686-70–75 accepted that disposition.
+Conservative accounting, including the unintended automatic follow-up, charged
+584.550809/600 seconds through the released-state witness fenced before expiry.
+No part is fresh native authority or reusable allowance. Olda16 charge676.433/600,
+original<=22.743 seconds and global single1920min/50M ceiling remain separate.
+
+The current source-only delta adds exact owner atom binding **and** closed semantic
+and ownership checks. It never accepts the retained foreign socket merely because
+its spelling was captured. No real PID/root/alias/executable/socket was re-read.
+The unarmed request proposes a separately scoped future private endpoint-metadata
+request; current code cannot observe/adopt that outside path. New operator scope,
+source review, input/GO/deadline binding and independently established ownership
+would all remain necessary before any later native step. Historical903/37-test
+credit remains at its actual source; this delta needs its own packet/docs checks.

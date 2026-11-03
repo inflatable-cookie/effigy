@@ -13,8 +13,33 @@ import preflight as p
 import recovery as r
 from recovery_boundaries import recorded, deadline
 
-SAFE = (b'94093 1 501 Mon Nov  2 23:37:10 2026 /opt/homebrew/bin/limactl '
-        b'/opt/homebrew/bin/limactl hostagent colima-effigy-531-qualification\n')
+def recorded_rendering():
+    paths = {}
+    for n, (role, path) in enumerate((('pidfile', p.render.INSTANCE + '/ha.pid'),
+                                     ('socket', p.render.INSTANCE + '/ha.sock'),
+                                     ('guestagent', r.CONTROL + '/c/assets/lima-guestagent.Linux-aarch64.gz'))):
+        paths[role] = dict(path=path, device=1, inode=10+n, uid=501, mode=0o600,
+                           kind='socket' if role == 'socket' else 'regular', size=0,
+                           parent=dict(path=str(Path(path).parent), device=1, inode=20+n, uid=501, mode=0o700))
+    atoms = [p.render.ALIAS, 'hostagent']
+    for role in p.render.ROLES:
+        atoms.extend(['--'+role, paths[role]['path']])
+    atoms.append('colima-'+r.PROFILE)
+    return dict(policy='lima-2.2.1-private-hostagent-r1', comm_rule='reviewed-alias-full',
+                debug=False, paths=paths, expected_atoms=atoms)
+
+
+def recorded_facts(binding):
+    facts = copy.deepcopy(binding['paths'])
+    for pin in facts.values():
+        pin['canonical'] = True
+        pin['parent']['canonical'] = True
+    return facts
+
+
+SAFE = ('94093 1 501 Mon Nov  2 23:37:10 2026 ' + p.render.ALIAS + ' '
+        + ' '.join(recorded_rendering()['expected_atoms']) + '\n').encode('ascii')
+
 
 
 class FixtureObserver:
@@ -26,7 +51,8 @@ class FixtureObserver:
 
     def metadata(self, plan, bound, directory):
         bound.remaining()
-        return {'recorded_metadata_only': True}
+        p.render.admit_facts(plan['rendering'], recorded_facts(plan['rendering']))
+        return {'recorded_metadata_only': True, 'typed_private_path_roles_verified': True}
 
     def observe(self, directory, bound):
         self.calls += 1
@@ -41,7 +67,7 @@ class PreflightBoundaries(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.plan, self.observed = recorded()
-        self.plan.update(schema='effigy.workspace-private-preflight.v1', recorded=self.observed,
+        self.plan.update(schema='effigy.workspace-private-preflight.v2', recorded=self.observed, rendering=recorded_rendering(),
                          programs={name: p.digest(p.PACKET / name) for name in p.PROGRAMS})
         self.go = dict(schema='effigy.workspace-private-native-go.v1', operator='Tom', kind='native',
             operator_authority='operator (board)', decision_id='synthetic-preflight-decision',
@@ -76,6 +102,7 @@ class PreflightBoundaries(unittest.TestCase):
             return str(file), p.digest(file)
         path, ih = write('inputs.json', self.plan)
         self.go['inputs_sha256'] = ih
+        self.go.setdefault('rendering_sha256', p.render.binding_hash(self.plan['rendering']))
         go, gh = write('go.json', self.go)
         index, bh = write('index.json', dict(colima=dict(path=go, sha256=gh)))
         return path, ih, index, bh
@@ -99,7 +126,7 @@ class PreflightBoundaries(unittest.TestCase):
         changes = [dict(operator='planner'), dict(operator_authority='worker'), dict(kind='source'),
                    dict(action='one-administrative-sigint'), dict(effects=p.a.EFFECTS), dict(count=2),
                    dict(target=dict(self.go['target'], pid=94094)), dict(source_head='2'*40),
-                   dict(allowance='exhausted-a16a8464'), dict(expires_at='2020-01-01T00:00:00+00:00')]
+                   dict(allowance='exhausted-a16a8464'), dict(rendering_sha256='0'*64), dict(expires_at='2020-01-01T00:00:00+00:00')]
         with patch.object(p, 'NativeObserver', side_effect=AssertionError('target access')) as factory:
             for change in changes:
                 self.go = dict(original, **change)
@@ -148,6 +175,84 @@ class PreflightBoundaries(unittest.TestCase):
             with self.assertRaises(r.Refused):
                 p.preflight(*self.files(), deadline(), evidence, _observer=observer)
             self.assertEqual(observer.calls, 1)  # No replay into an existing evidence root.
+
+    def test_closed_typed_binding_and_foreign_path_refusals_before_observer(self):
+        original = copy.deepcopy(self.plan['rendering'])
+        variants = []
+        for key, value in [('comm_rule', 'arbitrary-prefix'), ('policy', 'generic-command'),
+                           ('expected_atoms', original['expected_atoms'] + ['--password', 'synthetic'])]:
+            variants.append(dict(original, **{key: value}))
+        for role, field, value in [('socket', 'path', '/synthetic-unowned/outside.sock'),
+                                    ('pidfile', 'path', p.render.INSTANCE + '/different.pid'),
+                                    ('guestagent', 'path', r.CONTROL + '/c/assets/untyped-data'),
+                                    ('socket', 'uid', 0), ('pidfile', 'mode', 0o666)]:
+            bad = copy.deepcopy(original)
+            old_path = bad['paths'][role]['path']
+            bad['paths'][role][field] = value
+            if field == 'path':
+                bad['paths'][role]['parent']['path'] = str(Path(value).parent)
+                bad['expected_atoms'] = [value if atom == old_path else atom for atom in bad['expected_atoms']]
+            variants.append(bad)
+        for bad in variants:
+            self.plan['rendering'] = bad
+            self.go.pop('rendering_sha256', None)
+            with patch.object(p, 'NativeObserver') as factory:
+                result, _ = self.invoke()
+                self.assertEqual(result['attempts'], 0)
+                factory.assert_not_called()
+
+    def test_derived_comm_rule_never_replaces_identity_or_option_binding(self):
+        binding = recorded_rendering()
+        expected = self.plan['agent']
+        for rule, comm in [('reviewed-alias-full', p.render.ALIAS),
+                           ('reviewed-alias-prefix16', p.render.ALIAS[:16])]:
+            binding['comm_rule'] = rule
+            raw = SAFE.replace((p.render.ALIAS+' ').encode(), (comm+' ').encode(), 1)
+            _, category = p.parse(raw, expected, binding)
+            self.assertEqual(category['option_pairs'], 3)
+            self.assertTrue(category['exact_ordered_atoms'])
+            for bad in (raw.replace(b'94093', b'94094'), raw.replace(b'--socket', b'--unknown'),
+                        raw.replace(b'hostagent', b'hostagent --debug'), raw.replace(b'colima-effigy', b'colima-foreign')):
+                with self.assertRaises(r.Refused):
+                    p.parse(bad, expected, binding)
+            with self.assertRaises(r.Refused):
+                p.parse(raw, expected, dict(binding, comm_rule='arbitrary-prefix'))
+        # Exact owner atoms are additional binding, never semantic permission.
+        bad = copy.deepcopy(binding)
+        bad['expected_atoms'].append('--unknown')
+        with self.assertRaises(r.Refused):
+            p.render.validate(bad)
+
+    def test_fresh_role_facts_require_exact_parent_owner_type_and_identity(self):
+        binding = recorded_rendering()
+        facts = recorded_facts(binding)
+        p.render.admit_facts(binding, facts)
+        for role in p.render.ROLES:
+            for key, value in [('uid', 0), ('inode', 999), ('canonical', False), ('kind', 'other'), ('size', 999)]:
+                bad = copy.deepcopy(facts)
+                bad[role][key] = value
+                with self.assertRaises(r.Refused):
+                    p.render.admit_facts(binding, bad)
+            bad = copy.deepcopy(facts)
+            bad[role]['parent']['inode'] = 999
+            with self.assertRaises(r.Refused):
+                p.render.admit_facts(binding, bad)
+        # Real harmless own-file metadata producer; never a real backend path.
+        file = self.root / 'benign-payload'
+        file.write_bytes(b'benign synthetic data')
+        os.chmod(file, 0o600)
+        found = p.render.path_facts(str(file))
+        self.assertEqual(found['kind'], 'regular')
+        self.assertEqual(found['size'], 21)
+        link = self.root / 'owned-alias'
+        link.symlink_to(file.name)
+        self.assertFalse(p.render.path_facts(str(link))['canonical'])
+        with patch.object(p.render, 'path_facts', side_effect=AssertionError('must not observe foreign path')) as native:
+            bad = copy.deepcopy(binding)
+            bad['paths']['socket']['path'] = '/synthetic-unowned/outside.sock'
+            with self.assertRaises(r.Refused):
+                p.render.observe_paths(bad, self.root, deadline())
+            native.assert_not_called()
 
     def test_deadline_expires_after_metadata_without_starting_client(self):
         observer = FixtureObserver(self.root)

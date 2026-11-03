@@ -17,12 +17,13 @@ import administrative_recovery as a
 from common import (PACKET, digest, exclusive, load, source_head, validate_go,
                     open_qualification_root, verify_qualification_root)
 import recovery as r
+import rendering as render
 
 EFFECTS = 'workspace-private-531-preflight-r1'
 ACTION = 'one-read-only-preflight'
 PS = ('/bin/ps', '-ww', '-p', '94093', '-o', 'pid=,ppid=,uid=,lstart=,comm=,args=')
 LIMIT = 16384
-PROGRAMS = ('common.py', 'recovery.py', 'administrative_recovery.py', 'preflight.py')
+PROGRAMS = ('common.py', 'recovery.py', 'administrative_recovery.py', 'preflight.py', 'rendering.py')
 
 
 def now():
@@ -36,11 +37,12 @@ def authorize(inputs, inputs_hash, go_index, index_hash, deadline):
     plan = load(a.bound_file(inputs, inputs_hash))
     r.require(plan['source_head'] == source_head(PACKET.parents[2]), 'source differs')
     r.require(set(plan) == {'schema', 'source_head', 'profile', 'budget_seconds', 'control', 'shared',
-                           'root_disk', 'data_disk', 'agent', 'executables', 'recorded', 'programs'}
-              and plan['schema'] == 'effigy.workspace-private-preflight.v1'
+                           'root_disk', 'data_disk', 'agent', 'executables', 'recorded', 'programs', 'rendering'}
+              and plan['schema'] == 'effigy.workspace-private-preflight.v2'
               and set(plan['agent']) == {'pid', 'ppid', 'uid', 'started_utc', 'executable', 'profile'},
               'fixed preflight target required')
     r.admit_recorded(plan, plan['recorded'], deadline)
+    render.validate(plan['rendering'])
     r.require(plan['programs'] == {name: digest(PACKET / name) for name in PROGRAMS}, 'programs differ')
     index = load(a.bound_file(go_index, index_hash))
     go = load(a.bound_file(index['colima']['path'], index['colima']['sha256']))
@@ -51,6 +53,7 @@ def authorize(inputs, inputs_hash, go_index, index_hash, deadline):
     r.require(go['operator_authority'] == 'operator (board)' and go['action'] == ACTION
               and type(go['count']) is int and go['count'] == 1 and go['target'] == plan['agent']
               and go['allowance'] == 'new-owner-bound-preflight'
+              and go['rendering_sha256'] == render.binding_hash(plan['rendering'])
               and start.tzinfo is not None and end.tzinfo is not None
               and start <= datetime.datetime.now(datetime.timezone.utc) < end
               and 0 < (end-start).total_seconds() <= plan['budget_seconds']
@@ -162,13 +165,14 @@ class NativeObserver:
         canonical = str(Path('/opt/homebrew/bin/limactl').resolve(strict=True))
         exclusive(directory / 'executable-alias.json', dict(canonical=canonical))
         r.require(canonical == plan['agent']['executable'], 'executable alias changed')
-        return dict(root_owner_disk_executable_pins_verified=True)
+        role_facts = render.observe_paths(plan['rendering'], directory, deadline)
+        return dict(root_owner_disk_executable_pins_verified=True, **role_facts)
 
     def observe(self, directory, deadline):
         return capture(directory, deadline)
 
 
-def parse(raw, expected):
+def parse(raw, expected, rendering_binding):
     # Unknown rendering stays quarantined; it is never included in public receipts.
     text = raw.decode('ascii')
     r.require(len(text.splitlines()) == 1 and not re.search(r'[^\x20-\x7e\n]', text), 'unsafe output')
@@ -176,23 +180,13 @@ def parse(raw, expected):
     r.require(len(row) == 10, 'incomplete identity')
     started = datetime.datetime.strptime(' '.join(row[3:8]), '%a %b %d %H:%M:%S %Y').strftime('%Y-%m-%dT%H:%M:%SZ')
     comm, rendering = row[8:]
-    # Conservative, fixed grammar, not a guessed current command line. Unknown
-    # flags/foreign paths/free text require later source review, never adoption.
-    atoms = rendering.split()
-    r.require(comm == '/opt/homebrew/bin/limactl' and atoms and atoms[0] == comm
-              and 'hostagent' in atoms and 'colima-' + r.PROFILE in atoms, 'foreign command')
-    for atom in atoms[1:]:
-        safe = atom in ('hostagent', 'colima-' + r.PROFILE, '--debug')
-        if atom.startswith(('--pidfile=', '--socket=', '--logfile=')):
-            path = atom.split('=', 1)[1]
-            safe = bool(re.fullmatch(re.escape(r.CONTROL) + r'/[A-Za-z0-9_./-]+', path)) and '..' not in Path(path).parts
-        r.require(safe, 'unreviewed or potentially credential-bearing command')
-    # Canonical executable is established by exact comm alias + pinned binary,
-    # without treating a caller-supplied executable string as a new target.
+    category = render.admit_command(comm, rendering.split(), rendering_binding)
+    # Alias resolution and executable digest are separate metadata guards.
+    # Neither full nor prefix comm rendering identifies an executable by itself.
     identity = dict(pid=int(row[0]), ppid=int(row[1]), uid=int(row[2]), started_utc=started,
                     executable=expected['executable'], profile=r.PROFILE)
     r.require(identity == expected, 'target identity differs')
-    return rendering
+    return rendering, category
 
 
 def preflight(inputs, inputs_hash, go_index, index_hash, deadline, evidence, *, _observer=None):
@@ -222,10 +216,10 @@ def preflight(inputs, inputs_hash, go_index, index_hash, deadline, evidence, *, 
         exclusive(directory / 'observation-intent.json', dict(argv=PS, started=now()))
         result['attempts'] = 1
         raw = io.observe(directory, deadline)
-        rendering = parse(raw, plan['agent'])
+        rendering, category = parse(raw, plan['agent'], plan['rendering'])
         deadline.remaining()
         raw_file(directory, 'admitted-rendering.private', rendering.encode('ascii'))
-        result.update(status='identity-observed-closure-unknown', ps_rendering_not_kernel_argv=True)
+        result.update(status='identity-observed-closure-unknown', ps_rendering_not_kernel_argv=True, rendering_category=category)
     except Exception as error:
         result['failure_type'] = type(error).__name__  # No raw output/error interpolation.
     finally:

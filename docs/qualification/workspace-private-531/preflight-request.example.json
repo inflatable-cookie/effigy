@@ -3,7 +3,7 @@
   "execute": false,
   "purpose": "Future owner-bound read-only preflight; this proposal is not authority",
   "entry": "preflight.preflight(inputs, inputs_hash, go_index, index_hash, deadline, evidence)",
-  "input_schema": "effigy.workspace-private-preflight.v1",
+  "input_schema": "effigy.workspace-private-preflight.v2",
   "effect": "workspace-private-531-preflight-r1",
   "action": "one-read-only-preflight",
   "count": 1,
@@ -12,13 +12,48 @@
   "stream_bytes_max": 16384,
   "target": "Existing effigy-531-qualification / PID 94093 only",
   "missing_owner_inputs": [
-    "Fresh operator board decision and separately granted allowance; a16a8464 is exhausted",
-    "Reviewed committed source head and exact common/recovery/administrative_recovery/preflight program SHA256 values",
+    "Fresh operator board decision and separately granted allowance; a16a8464 exhausted and 8335884c one-shot consumed",
+    "Reviewed new committed source head and common/recovery/administrative_recovery/preflight/rendering program SHA256 values",
     "Owner-bound immutable inputs containing exact retained metadata pins and recorded admission",
     "Authentic GO and GO-index hashes bound to those inputs, source, target, action and new-owner-bound-preflight allowance",
     "Fresh UTC start/expiry and matching command-local monotonic deadline (both at most 10 seconds), remaining global/native budget and report reserve",
     "Fresh private 0700 evidence directory outside Queue cleanup, selected before the native window",
-    "A successful original preflight receipt and exact safe ps rendering, still missing; no historical output reconstruction"
+    "A successful original preflight receipt and exact safe ps rendering, still missing; no historical output reconstruction",
+    "Exact owner-bound rendering structure plus GO rendering_sha256; closed semantic validation and fresh typed path metadata remain mandatory",
+    "Foreign socket ownership/authority remains missing; current implementation refuses it even if expected_atoms matches"
   ],
-  "future_step_after_receipt": "Owner reconciles actual cleanup debit and binds any signal action separately; this entry never signals or consumes that claim"
+  "future_step_after_receipt": "Owner reconciles actual cleanup debit and binds any signal action separately; this entry never signals or consumes that claim",
+  "rendering_policy": {
+    "policy": "lima-2.2.1-private-hostagent-r1",
+    "comm_rule": "owner must choose reviewed-alias-full or reviewed-alias-prefix16",
+    "expected_atoms": "owner supplies exact ordered atoms satisfying the closed role grammar; equality alone grants nothing",
+    "paths": "exact private pidfile/socket/guestagent role pins and parent metadata; missing, not guessed"
+  },
+  "foreign_socket_metadata_proposal": {
+    "armed": false,
+    "execute": false,
+    "supported_by_current_preflight": false,
+    "private_target_binding": "Future owner request must privately bind exact retained socket path and parent; do not copy raw ps or foreign path here",
+    "required_scope": "Separately approved read-only lstat/canonical parent-chain/type/owner/device/inode/mode facts for exactly that private path; no discovery, connection, contents, follow-up or adoption",
+    "missing_facts": [
+      "Exact path and each parent privately pinned to independent owner provenance, not equality with retained ps alone",
+      "Fresh canonical/no-symlink directory parent type, uid and permissions, and exact socket lstat type/uid/device/inode/mode or honest unavailable state",
+      "Authority connecting this external endpoint to the exact owned hostagent without adding a trusted root",
+      "New reviewed fixed invocation/source/input/GO/index/output bindings and dual-clock single-call/report/cleanup budget"
+    ],
+    "refusal_limits": "Unknown/unowned/outside path remains refused. Missing socket is not absence, closure, health or permission to restart. Proposal grants no observer or trusted-root expansion."
+  },
+  "completed_attempt": {
+    "decision": "8335884c-3de4-4cf1-a560-792bd38437bb v2",
+    "status": "REFUSED; preserved original, not reinterpreted",
+    "calls": 1,
+    "signals": 0,
+    "conservative_seconds_charged": 584.550809,
+    "allowance_seconds": 600,
+    "remaining_native_authority": false,
+    "old_a16_seconds_charged": 676.433,
+    "old_a16_allowance_seconds": 600,
+    "original_preparation_remainder_seconds_max": 22.743,
+    "global_ceiling": "single 1920min/50M, unchanged"
+  }
 }

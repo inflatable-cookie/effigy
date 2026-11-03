@@ -1,0 +1,37 @@
+{
+  "repository": "https://github.com/lima-vm/lima",
+  "tag": "v2.2.1",
+  "commit": "27bc4c4b101e27994e01e36566a0f2091bbca507",
+  "files": [
+    {
+      "path": "cmd/limactl/hostagent.go",
+      "url": "https://raw.githubusercontent.com/lima-vm/lima/27bc4c4b101e27994e01e36566a0f2091bbca507/cmd/limactl/hostagent.go",
+      "sha256": "c832575141604925f6fd0f1abf980550a58e2a61f179455d1b69c0a0e9683232"
+    },
+    {
+      "path": "pkg/instance/start.go",
+      "url": "https://raw.githubusercontent.com/lima-vm/lima/27bc4c4b101e27994e01e36566a0f2091bbca507/pkg/instance/start.go",
+      "sha256": "e462b6b4fe670c73a895d8a4efb9e185a1a906a8427aaab436ae480f53cb5fa0"
+    },
+    {
+      "path": "pkg/hostagent/hostagent.go",
+      "url": "https://raw.githubusercontent.com/lima-vm/lima/27bc4c4b101e27994e01e36566a0f2091bbca507/pkg/hostagent/hostagent.go",
+      "sha256": "62a0ffefdf8ee8495251a224c30561cc8fb80a7c3fd487d69b22d760b59e6ce5"
+    },
+    {
+      "path": "pkg/limatype/filenames/filenames.go",
+      "url": "https://raw.githubusercontent.com/lima-vm/lima/27bc4c4b101e27994e01e36566a0f2091bbca507/pkg/limatype/filenames/filenames.go",
+      "sha256": "799314e24431bbe4fc654970c650887d9e6173df1960e76d3070d7fd8572d08f"
+    },
+    {
+      "path": "pkg/usrlocal/usrlocal.go",
+      "url": "https://raw.githubusercontent.com/lima-vm/lima/27bc4c4b101e27994e01e36566a0f2091bbca507/pkg/usrlocal/usrlocal.go",
+      "sha256": "a761fe63ee7e1347e61a8f1eb67cc587c8b6f3f2dffeb27a86b6b8db94f99dce"
+    },
+    {
+      "path": "pkg/cidata/cidata.go",
+      "url": "https://raw.githubusercontent.com/lima-vm/lima/27bc4c4b101e27994e01e36566a0f2091bbca507/pkg/cidata/cidata.go",
+      "sha256": "c046f2b055c42f134eb656060d3d6bb5461bfa88d3faee087d6671e0890e35c2"
+    }
+  ]
+}
