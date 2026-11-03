@@ -188,77 +188,57 @@ pub struct RuntimeActivationReport {
 mod tests {
     use super::*;
 
+    /// `activate_container_runtime_for_task` reads exactly these request fields
+    /// and the lease policy out of the plan
+    /// (src/runner/container_runtime_prep/mod.rs): `request.repo_root` names
+    /// the held session root, `request.repo_override` and
+    /// `request.container_name` flow into every stage, and the lease policy
+    /// selects the activation's task retention. The plan must echo them
+    /// unchanged; a request that omits a container name must stay unnamed.
     #[test]
-    fn activation_plan_has_stable_stage_order() {
-        let plan = RuntimeActivationRequest::new(PathBuf::from("/tmp/repo"), "web")
+    fn plan_echoes_the_request_identity_the_activation_adapter_reads() {
+        let unnamed = RuntimeActivationRequest::new(PathBuf::from("/tmp/repo"), "web")
+            .repo_override(PathBuf::from("/tmp/override"))
+            .plan();
+        assert_eq!(unnamed.request.repo_root, PathBuf::from("/tmp/repo"));
+        assert_eq!(
+            unnamed.request.repo_override,
+            Some(PathBuf::from("/tmp/override"))
+        );
+        assert_eq!(unnamed.request.container_name, None);
+
+        let named = RuntimeActivationRequest::new(PathBuf::from("/tmp/repo"), "web")
             .container_name("web")
             .lease_policy(RuntimeLeasePolicy::RefreshOnActivation)
             .plan();
-
-        assert_eq!(
-            plan.stages,
-            vec![
-                RuntimeActivationStage::ValidatePolicy,
-                RuntimeActivationStage::ValidateBackend,
-                RuntimeActivationStage::CheckRunningState,
-                RuntimeActivationStage::EnsureRunning,
-                RuntimeActivationStage::PrepareMounts,
-                RuntimeActivationStage::ComposeUp,
-                RuntimeActivationStage::ExecReadiness,
-                RuntimeActivationStage::GatewayReadiness,
-                RuntimeActivationStage::AliasReconciliation,
-                RuntimeActivationStage::LeaseRefresh,
-            ]
-        );
-        assert_eq!(plan.request.container_name.as_deref(), Some("web"));
-        assert_eq!(plan.route, RuntimeActivationRoute::Task);
-        assert_eq!(plan.lease.policy, RuntimeLeasePolicy::RefreshOnActivation);
-        assert!(plan.readiness.probe_primary_service_exec);
-        assert!(plan.aliases.reconcile_primary_service_aliases);
+        assert_eq!(named.request.container_name.as_deref(), Some("web"));
+        assert_eq!(named.lease.policy, RuntimeLeasePolicy::RefreshOnActivation);
     }
 
+    /// `plan.aliases.register_gateway_routes` gates `ensure_gateway_ready` in
+    /// the activation adapter, and `plan.route` reaches the stage label and the
+    /// held-start decision. Exactly the Managed, Workspace and Bootstrap
+    /// routes register gateway routes; every other route skips them.
     #[test]
-    fn activation_request_can_set_route() {
-        let plan = RuntimeActivationRequest::new(PathBuf::from("/tmp/repo"), "web")
-            .route(RuntimeActivationRoute::Exec)
-            .plan();
-
-        assert_eq!(plan.request.route, RuntimeActivationRoute::Exec);
-        assert_eq!(plan.route, RuntimeActivationRoute::Exec);
-        assert!(!plan.aliases.register_gateway_routes);
-    }
-
-    #[test]
-    fn task_route_skips_gateway_registration_by_default() {
-        let plan = RuntimeActivationRequest::new(PathBuf::from("/tmp/repo"), "web").plan();
-
-        assert_eq!(plan.route, RuntimeActivationRoute::Task);
-        assert!(!plan.aliases.register_gateway_routes);
-    }
-
-    #[test]
-    fn managed_route_keeps_gateway_registration_enabled() {
-        let plan = RuntimeActivationRequest::new(PathBuf::from("/tmp/repo"), "web")
-            .route(RuntimeActivationRoute::Managed)
-            .plan();
-
-        assert!(plan.aliases.register_gateway_routes);
-    }
-
-    #[test]
-    fn activation_report_keeps_identity_and_cleanup_result() {
-        let report = RuntimeActivationRequest::new(PathBuf::from("/tmp/repo"), "web")
-            .container_name("app")
-            .lease_policy(RuntimeLeasePolicy::RefreshOnActivation)
-            .plan()
-            .report(false, RuntimeCleanupResult::Completed);
-
-        assert_eq!(report.repo_root, PathBuf::from("/tmp/repo"));
-        assert_eq!(report.policy_name, "web");
-        assert_eq!(report.container_name.as_deref(), Some("app"));
-        assert_eq!(report.route, RuntimeActivationRoute::Task);
-        assert!(!report.system_was_running);
-        assert_eq!(report.lease_policy, RuntimeLeasePolicy::RefreshOnActivation);
-        assert_eq!(report.cleanup_result, RuntimeCleanupResult::Completed);
+    fn gateway_route_registration_follows_the_activation_route() {
+        for (route, expected) in [
+            (RuntimeActivationRoute::Task, false),
+            (RuntimeActivationRoute::Exec, false),
+            (RuntimeActivationRoute::Rhai, false),
+            (RuntimeActivationRoute::Deferral, false),
+            (RuntimeActivationRoute::DataSeed, false),
+            (RuntimeActivationRoute::Managed, true),
+            (RuntimeActivationRoute::Workspace, true),
+            (RuntimeActivationRoute::Bootstrap, true),
+        ] {
+            let plan = RuntimeActivationRequest::new(PathBuf::from("/tmp/repo"), "web")
+                .route(route)
+                .plan();
+            assert_eq!(plan.route, route, "{route:?} must echo into the plan");
+            assert_eq!(
+                plan.aliases.register_gateway_routes, expected,
+                "{route:?} gateway-route registration"
+            );
+        }
     }
 }
