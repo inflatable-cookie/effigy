@@ -316,6 +316,52 @@ fn stage_db_seed_files_with_adapter(
     Ok(stage_db_seed_files_report_with_adapter(repo_root, db_seeds, adapter)?.staged)
 }
 
+/// Bytes preserved verbatim in a staged seed file name; every other byte
+/// (including `%`, path separators and control bytes) is percent-encoded.
+fn is_staged_seed_name_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_')
+}
+
+/// Percent-encode one target label into a single staging file-name component.
+///
+/// Encoding `%` itself keeps the mapping injective, so distinct labels stay
+/// distinct staged names while ordinary labels such as `app` or `legacy_mysql`
+/// keep their existing `<target>--<file>` names byte for byte. No label can
+/// introduce a separator or a parent component into the staged name.
+fn encode_staged_seed_name(label: &str) -> String {
+    let mut encoded = String::with_capacity(label.len());
+    for byte in label.bytes() {
+        if is_staged_seed_name_byte(byte) {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+/// The staged file name for one seed payload inside the owned staging root.
+fn staged_db_seed_file_name(target: Option<&str>, base_name: &str) -> String {
+    match target {
+        Some(target) => format!("{}--{base_name}", encode_staged_seed_name(target)),
+        None => base_name.to_owned(),
+    }
+}
+
+/// The repo-relative path that metadata, the seed environment handoff and
+/// cleanup all use for one staged payload.
+///
+/// Staging places every payload directly inside the owned `db-seeds` root, so
+/// this reconstruction names exactly the copied object.
+fn staged_seed_repo_path(staged_path: &Path) -> PathBuf {
+    Path::new(DB_SEEDS_DIR).join(
+        staged_path
+            .file_name()
+            .expect("staged seed file should have name"),
+    )
+}
+
+#[derive(Debug)]
 struct DbSeedStageReport {
     staged: Vec<StagedDbSeed>,
     artifact_reports: Vec<serde_json::Value>,
@@ -359,16 +405,26 @@ fn stage_db_seed_files_report_with_adapter(
             )));
         };
         let base_name = file_name.to_string_lossy().to_string();
-        let staged_name = match plan.input.target.as_ref() {
-            Some(target) => format!("{target}--{base_name}"),
-            None => base_name.clone(),
-        };
+        let staged_name = staged_db_seed_file_name(
+            plan.input.target.as_ref().map(DataTargetRef::as_str),
+            &base_name,
+        );
         if !seen_names.insert(staged_name.clone()) {
             return Err(RunnerError::task_invocation(format!(
                 "duplicate staged db seed file name `{staged_name}`; rename one input or use distinct seed targets"
             )));
         }
         let destination = staging_dir.join(&staged_name);
+        // Target labels are opaque (DataTargetRef carries any string), so the
+        // encoded staged name must be the only thing ever joined onto the
+        // staging root. This guard fails the staging closed if a name ever
+        // stops being a single component inside that root.
+        if destination.parent() != Some(staging_dir.as_path()) {
+            return Err(RunnerError::task_invocation(format!(
+                "staged db seed name `{staged_name}` is not a single file name inside {}; refusing to write outside owned staging",
+                staging_dir.display()
+            )));
+        }
         std::fs::copy(staged_artifact_file, &destination).map_err(|error| {
             RunnerError::task_invocation(format!(
                 "failed to stage db seed {source} -> {}: {error}",
@@ -395,12 +451,7 @@ fn stage_db_seed_files_report_with_adapter(
                 json!({
                     "target": seed.target,
                     "source_path": seed.source_path.display().to_string(),
-                    "staged_path": Path::new(DB_SEEDS_DIR)
-                        .join(
-                            seed.staged_path
-                                .file_name()
-                                .expect("staged seed file should have name"),
-                        )
+                    "staged_path": staged_seed_repo_path(&seed.staged_path)
                         .display()
                         .to_string(),
                 })
@@ -518,12 +569,7 @@ pub(in crate::runner) fn db_seed_env(staged_db_seeds: &[StagedDbSeed]) -> BTreeM
                 json!({
                     "target": seed.target,
                     "source_path": seed.source_path.display().to_string(),
-                    "staged_path": seeds_dir
-                        .join(
-                            seed.staged_path
-                                .file_name()
-                                .expect("staged seed file should have name"),
-                        )
+                    "staged_path": staged_seed_repo_path(&seed.staged_path)
                         .display()
                         .to_string(),
                 })
@@ -534,12 +580,7 @@ pub(in crate::runner) fn db_seed_env(staged_db_seeds: &[StagedDbSeed]) -> BTreeM
     let files = staged_db_seeds
         .iter()
         .map(|seed| {
-            seeds_dir
-                .join(
-                    seed.staged_path
-                        .file_name()
-                        .expect("staged seed file should have name"),
-                )
+            staged_seed_repo_path(&seed.staged_path)
                 .display()
                 .to_string()
         })
@@ -559,13 +600,7 @@ pub(in crate::runner) fn db_seed_env(staged_db_seeds: &[StagedDbSeed]) -> BTreeM
     }
 
     if staged_db_seeds.len() == 1 {
-        let staged_file = seeds_dir
-            .join(
-                staged_db_seeds[0]
-                    .staged_path
-                    .file_name()
-                    .expect("staged seed file should have name"),
-            )
+        let staged_file = staged_seed_repo_path(&staged_db_seeds[0].staged_path)
             .display()
             .to_string();
         for key in [DB_SEED_FILE_ENV, LEGACY_BOOTSTRAP_DB_SEED_FILE_ENV] {
@@ -1222,10 +1257,13 @@ fn db_seed_service_selection_error(
 #[cfg(test)]
 mod tests {
     use super::{
-        cleanup_builtin_seed_staging, db_seed_runtime_activation_plan, logical_database_targets,
-        resolve_db_seed_input_paths, resolve_db_seed_targets, stage_db_seed_files,
-        stage_db_seed_files_with_adapter, SeedMetadataEntry, DB_SEEDS_DIR, DB_SEEDS_METADATA_FILE,
-        LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE,
+        cleanup_builtin_seed_staging, db_seed_env, db_seed_runtime_activation_plan,
+        encode_staged_seed_name, logical_database_targets, resolve_db_seed_input_paths,
+        resolve_db_seed_targets, stage_db_seed_files, stage_db_seed_files_report_with_adapter,
+        stage_db_seed_files_with_adapter, SeedMetadataEntry, DB_SEEDS_DIR, DB_SEEDS_DIR_ENV,
+        DB_SEEDS_JSON_ENV, DB_SEEDS_METADATA_FILE, DB_SEED_COUNT_ENV, DB_SEED_FILES_ENV,
+        DB_SEED_FILE_ENV, DB_SEED_TARGET_ENV, LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE,
+        LEGACY_BOOTSTRAP_DB_SEED_FILE_ENV,
     };
     use effigy_cli::BootstrapDbSeedInput;
     use effigy_manifest::TaskManifest;
@@ -1237,7 +1275,7 @@ mod tests {
     };
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
     fn temp_repo(name: &str) -> PathBuf {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1253,6 +1291,47 @@ mod tests {
         )
         .expect("write manifest");
         root
+    }
+
+    /// A fixture repo whose manifest declares no data targets, so seed inputs
+    /// pass target resolution with any label (`DataTargetRef` stays opaque).
+    fn temp_repo_without_targets(name: &str) -> PathBuf {
+        let root = temp_repo(name);
+        fs::write(root.join("effigy.toml"), "[tasks.setup]\nrun = \"true\"\n")
+            .expect("write manifest");
+        root
+    }
+
+    /// A sentinel file inside the fixture repo but outside the owned staging
+    /// root: staging and cleanup must never touch it.
+    const SENTINEL_BYTES: &[u8; 14] = b"sentinel stays";
+
+    fn write_outside_sentinel(repo: &Path) -> PathBuf {
+        let outside = repo.join("outside-staging");
+        fs::create_dir_all(&outside).expect("create outside-staging");
+        let sentinel = outside.join("keep.txt");
+        fs::write(&sentinel, SENTINEL_BYTES).expect("write sentinel");
+        sentinel
+    }
+
+    fn read_metadata_entries(repo: &Path, file_name: &str) -> Vec<serde_json::Value> {
+        let raw = fs::read_to_string(repo.join(DB_SEEDS_DIR).join(file_name)).expect("metadata");
+        serde_json::from_str(&raw).expect("parse metadata json")
+    }
+
+    fn staging_file_names(repo: &Path) -> Vec<String> {
+        let mut names = fs::read_dir(repo.join(DB_SEEDS_DIR))
+            .expect("read staging dir")
+            .map(|entry| {
+                entry
+                    .expect("staging entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        names.sort();
+        names
     }
 
     #[test]
@@ -1463,6 +1542,315 @@ database = "acowtancy"
         .expect("cleanup missing staged seeds");
     }
 
+    /// An absolute target label must never redirect the copy: the payload is
+    /// staged inside the owned root under the encoded label, and the probe
+    /// directory outside staging keeps exactly its sentinel.
+    #[test]
+    fn db_seed_staging_absolute_target_stays_inside_owned_staging() {
+        let repo = temp_repo_without_targets("absolute-target");
+        fs::write(repo.join("dump.sql"), b"select 1;").expect("write source");
+        let sentinel = write_outside_sentinel(&repo);
+        let probe_dir = repo.join("outside-staging");
+
+        let staged = stage_db_seed_files(
+            &repo,
+            &[BootstrapDbSeedInput {
+                target: Some(probe_dir.display().to_string()),
+                path: repo.join("dump.sql"),
+            }],
+        )
+        .expect("stage seeds with an absolute target label");
+
+        let staged_name = format!(
+            "{}--dump.sql",
+            encode_staged_seed_name(&probe_dir.display().to_string())
+        );
+        let staged_path = repo.join(DB_SEEDS_DIR).join(&staged_name);
+        assert_eq!(staged[0].staged_path, staged_path);
+        assert_eq!(fs::read(&staged_path).expect("staged bytes"), b"select 1;");
+        assert_eq!(
+            fs::read(&sentinel).expect("sentinel bytes"),
+            &*SENTINEL_BYTES
+        );
+        // The probe directory holds only its sentinel; no
+        // `<target>--dump.sql` stray landed beside it or in the repo root.
+        assert_eq!(
+            fs::read_dir(&probe_dir)
+                .expect("read probe dir")
+                .map(|entry| entry.expect("probe entry").path())
+                .collect::<Vec<_>>(),
+            vec![sentinel]
+        );
+        assert!(!repo.join("outside-staging--dump.sql").exists());
+        // Metadata records the staged object under the owned root.
+        let entries = read_metadata_entries(&repo, DB_SEEDS_METADATA_FILE);
+        assert_eq!(
+            entries[0]["staged_path"],
+            format!("{DB_SEEDS_DIR}/{staged_name}")
+        );
+    }
+
+    /// Parent-bearing labels keep exact arithmetic: every payload lands
+    /// directly inside the staging root, no file appears at the raw join's
+    /// destination (`.effigy/local/`, `.effigy/`, the repo root or outside
+    /// the checkout), and the outside sentinel is untouched.
+    #[test]
+    fn db_seed_staging_parent_labels_stage_inside_staging() {
+        let repo = temp_repo_without_targets("parent-labels");
+        fs::write(repo.join("dump.sql"), b"select 1;").expect("write source");
+        let sentinel = write_outside_sentinel(&repo);
+
+        let labels = ["../one", "../../two", "../../../three", "../../../../four"];
+        let staged = stage_db_seed_files(
+            &repo,
+            &labels
+                .iter()
+                .map(|label| BootstrapDbSeedInput {
+                    target: Some((*label).to_owned()),
+                    path: repo.join("dump.sql"),
+                })
+                .collect::<Vec<_>>(),
+        )
+        .expect("stage parent-labelled seeds");
+
+        let staging = repo.join(DB_SEEDS_DIR);
+        for (seed, label) in staged.iter().zip(&labels) {
+            let expected = staging.join(format!("{}--dump.sql", encode_staged_seed_name(label)));
+            assert_eq!(seed.staged_path, expected, "label {label}");
+            assert_eq!(fs::read(&expected).expect("staged bytes"), b"select 1;");
+        }
+        assert!(!repo.join(".effigy/local/one--dump.sql").exists());
+        assert!(!repo.join(".effigy/two--dump.sql").exists());
+        assert!(!repo.join("three--dump.sql").exists());
+        assert!(!repo
+            .parent()
+            .expect("fixture parent")
+            .join("four--dump.sql")
+            .exists());
+        assert_eq!(
+            fs::read(&sentinel).expect("sentinel bytes"),
+            &*SENTINEL_BYTES
+        );
+    }
+
+    /// Distinct labels stay distinct staged names: the encoding is injective
+    /// (it encodes `%` itself), so `legacy/mysql` and `legacy%2Fmysql` cannot
+    /// collide and punctuation-only labels stay single components.
+    #[test]
+    fn db_seed_staging_encoding_keeps_distinct_labels_distinct() {
+        let repo = temp_repo("label-encoding");
+        fs::write(
+            repo.join("effigy.toml"),
+            r#"
+[data.targets."legacy/mysql"]
+service = "db"
+database = "app"
+
+[data.targets."legacy%2Fmysql"]
+service = "db"
+database = "app"
+
+[data.targets.".."]
+service = "db"
+database = "app"
+
+[data.targets."app v2"]
+service = "db"
+database = "app"
+"#,
+        )
+        .expect("write manifest");
+        for name in ["one", "two", "three", "four"] {
+            fs::write(repo.join(format!("{name}.sql")), format!("{name};")).expect("write source");
+        }
+
+        let inputs = [
+            ("legacy/mysql", "one.sql"),
+            ("legacy%2Fmysql", "two.sql"),
+            ("..", "three.sql"),
+            ("app v2", "four.sql"),
+        ];
+        let staged = stage_db_seed_files(
+            &repo,
+            &inputs
+                .iter()
+                .map(|(target, path)| BootstrapDbSeedInput {
+                    target: Some((*target).to_owned()),
+                    path: repo.join(path),
+                })
+                .collect::<Vec<_>>(),
+        )
+        .expect("stage distinct labels");
+
+        let expected_names = [
+            "legacy%2Fmysql--one.sql",
+            "legacy%252Fmysql--two.sql",
+            "..--three.sql",
+            "app%20v2--four.sql",
+        ];
+        let staging = repo.join(DB_SEEDS_DIR);
+        for (seed, expected) in staged.iter().zip(&expected_names) {
+            let staged_path = staging.join(expected);
+            assert_eq!(seed.staged_path, staged_path, "name {expected}");
+            assert!(staged_path.is_file(), "staged payload {expected}");
+        }
+    }
+
+    /// Returned paths, both metadata formats, the environment handoff and
+    /// cleanup all name the same staged object; cleanup removes exactly that
+    /// object and the metadata, and the sentinel outside staging survives.
+    #[test]
+    fn db_seed_staging_env_metadata_and_cleanup_name_one_object() {
+        let repo = temp_repo("env-metadata-cleanup");
+        fs::write(repo.join("dump.sql"), b"select 1;").expect("write source");
+        let sentinel = write_outside_sentinel(&repo);
+
+        let staged = stage_db_seed_files(
+            &repo,
+            &[BootstrapDbSeedInput {
+                target: Some("app".to_owned()),
+                path: repo.join("dump.sql"),
+            }],
+        )
+        .expect("stage seeds");
+
+        let staged_path = repo.join(DB_SEEDS_DIR).join("app--dump.sql");
+        assert_eq!(staged[0].staged_path, staged_path);
+        assert_eq!(fs::read(&staged_path).expect("staged bytes"), b"select 1;");
+
+        let recorded = format!("{DB_SEEDS_DIR}/app--dump.sql");
+        for file_name in [
+            DB_SEEDS_METADATA_FILE,
+            LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE,
+        ] {
+            let entries = read_metadata_entries(&repo, file_name);
+            assert_eq!(entries[0]["target"], "app", "{file_name}");
+            assert_eq!(entries[0]["staged_path"], recorded, "{file_name}");
+            assert_eq!(
+                fs::read(repo.join(&recorded)).expect("recorded bytes"),
+                b"select 1;"
+            );
+        }
+
+        let env = db_seed_env(&staged);
+        assert_eq!(env.get(DB_SEEDS_DIR_ENV).unwrap(), DB_SEEDS_DIR);
+        assert_eq!(env.get(DB_SEED_COUNT_ENV).unwrap(), "1");
+        assert_eq!(env.get(DB_SEED_FILE_ENV).unwrap(), recorded.as_str());
+        assert_eq!(env.get(DB_SEED_FILES_ENV).unwrap(), recorded.as_str());
+        assert_eq!(env.get(DB_SEED_TARGET_ENV).unwrap(), "app");
+        assert_eq!(
+            env.get(LEGACY_BOOTSTRAP_DB_SEED_FILE_ENV).unwrap(),
+            recorded.as_str()
+        );
+        let env_entries: Vec<serde_json::Value> =
+            serde_json::from_str(env.get(DB_SEEDS_JSON_ENV).unwrap()).expect("env metadata json");
+        assert_eq!(env_entries[0]["staged_path"], recorded);
+
+        let metadata: Vec<SeedMetadataEntry> = serde_json::from_str(
+            &fs::read_to_string(repo.join(DB_SEEDS_DIR).join(DB_SEEDS_METADATA_FILE))
+                .expect("read metadata"),
+        )
+        .expect("parse metadata entries");
+        cleanup_builtin_seed_staging(&repo, &metadata).expect("cleanup staged seeds");
+
+        assert!(!staged_path.exists());
+        assert!(!repo
+            .join(DB_SEEDS_DIR)
+            .join(DB_SEEDS_METADATA_FILE)
+            .exists());
+        assert!(!repo
+            .join(DB_SEEDS_DIR)
+            .join(LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE)
+            .exists());
+        assert_eq!(
+            fs::read(&sentinel).expect("sentinel bytes"),
+            &*SENTINEL_BYTES
+        );
+    }
+
+    /// A pre-existing destination inside staging is replaced in place, and
+    /// nothing else in the staging root changes.
+    #[test]
+    fn db_seed_staging_existing_destination_is_replaced_inside_staging() {
+        let repo = temp_repo("existing-destination");
+        fs::write(repo.join("dump.sql"), b"select 1;").expect("write source");
+        let staging = repo.join(DB_SEEDS_DIR);
+        fs::create_dir_all(&staging).expect("create staging dir");
+        fs::write(staging.join("app--dump.sql"), b"OLD STAGED BYTES")
+            .expect("write old staged payload");
+        fs::write(staging.join("unrelated.sql"), b"UNRELATED").expect("write unrelated file");
+
+        let staged = stage_db_seed_files(
+            &repo,
+            &[BootstrapDbSeedInput {
+                target: Some("app".to_owned()),
+                path: repo.join("dump.sql"),
+            }],
+        )
+        .expect("stage over an existing destination");
+
+        assert_eq!(
+            fs::read(&staged[0].staged_path).expect("staged bytes"),
+            b"select 1;"
+        );
+        assert_eq!(
+            fs::read(staging.join("unrelated.sql")).expect("unrelated bytes"),
+            b"UNRELATED"
+        );
+        assert_eq!(
+            staging_file_names(&repo),
+            vec![
+                "_effigy-bootstrap-db-seeds.json".to_owned(),
+                "_effigy-db-seeds.json".to_owned(),
+                "app--dump.sql".to_owned(),
+                "unrelated.sql".to_owned(),
+            ]
+        );
+    }
+
+    /// A colliding staged name fails before the second copy and before any
+    /// metadata is written, so cleanup never claims a payload it did not
+    /// stage.
+    #[test]
+    fn db_seed_staging_duplicate_staged_names_fail_before_copy() {
+        let repo = temp_repo_without_targets("duplicate-names");
+        fs::create_dir_all(repo.join("a")).expect("create a");
+        fs::create_dir_all(repo.join("b")).expect("create b");
+        fs::write(repo.join("a/dump.sql"), b"FIRST;").expect("write a");
+        fs::write(repo.join("b/app--dump.sql"), b"SECOND;").expect("write b");
+
+        let error = stage_db_seed_files(
+            &repo,
+            &[
+                BootstrapDbSeedInput {
+                    target: Some("app".to_owned()),
+                    path: repo.join("a/dump.sql"),
+                },
+                BootstrapDbSeedInput {
+                    target: None,
+                    path: repo.join("b/app--dump.sql"),
+                },
+            ],
+        )
+        .expect_err("colliding staged names should fail");
+
+        assert!(error
+            .to_string()
+            .contains("duplicate staged db seed file name `app--dump.sql`"));
+        assert_eq!(
+            fs::read(repo.join(DB_SEEDS_DIR).join("app--dump.sql")).expect("first payload"),
+            b"FIRST;"
+        );
+        assert!(!repo
+            .join(DB_SEEDS_DIR)
+            .join(DB_SEEDS_METADATA_FILE)
+            .exists());
+        assert!(!repo
+            .join(DB_SEEDS_DIR)
+            .join(LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE)
+            .exists());
+    }
+
     struct FakeOciArtifactAdapter;
 
     impl OciArtifactAdapter for FakeOciArtifactAdapter {
@@ -1501,6 +1889,95 @@ database = "acowtancy"
                 descriptor,
             })
         }
+    }
+
+    /// A pull adapter whose second pull refuses, to prove the failure path's
+    /// metadata honesty.
+    struct FailOnSecondPull {
+        pulls: AtomicUsize,
+    }
+
+    impl OciArtifactAdapter for FailOnSecondPull {
+        fn inspect(
+            &self,
+            request: &OciArtifactInspectRequest,
+        ) -> Result<OciArtifactDescriptor, OciArtifactError> {
+            Ok(OciArtifactDescriptor::new(&request.reference).with_digest("sha256:fakedigest"))
+        }
+
+        fn pull(
+            &self,
+            request: &OciArtifactPullRequest,
+        ) -> Result<OciArtifactPullReport, OciArtifactError> {
+            let index = self.pulls.fetch_add(1, Ordering::SeqCst);
+            if index >= 1 {
+                return Err(OciArtifactError::PullFailed {
+                    reference: request.reference.redacted(),
+                    message: "second pull refused".to_owned(),
+                });
+            }
+            let pulled_root = request.destination_root.join("fake-pull");
+            fs::create_dir_all(&pulled_root).expect("create pulled root");
+            fs::write(pulled_root.join("legacy.sql"), b"select 1;").expect("write pulled file");
+            Ok(OciArtifactPullReport {
+                descriptor: self.inspect(&OciArtifactInspectRequest {
+                    reference: request.reference.clone(),
+                })?,
+                pulled_root,
+                primary_files: vec![PathBuf::from("legacy.sql")],
+            })
+        }
+
+        fn push(
+            &self,
+            request: &OciArtifactPushRequest,
+        ) -> Result<OciArtifactPushReport, OciArtifactError> {
+            let descriptor =
+                OciArtifactDescriptor::new(&request.reference).with_digest("sha256:pushdigest");
+            Ok(OciArtifactPushReport {
+                pushed_ref: request.reference.redacted(),
+                digest: descriptor.digest.clone(),
+                descriptor,
+            })
+        }
+    }
+
+    /// A mid-stage OCI failure leaves the first payload staged, claims it in
+    /// no metadata file, and names the failing artifact in the error.
+    #[test]
+    fn db_seed_staging_oci_failure_leaves_no_metadata_claims() {
+        let repo = temp_repo_without_targets("oci-failure");
+        let adapter = FailOnSecondPull {
+            pulls: AtomicUsize::new(0),
+        };
+
+        let error = stage_db_seed_files_report_with_adapter(
+            &repo,
+            &[
+                BootstrapDbSeedInput {
+                    target: Some("app".to_owned()),
+                    path: PathBuf::from("oci://example/first:uat"),
+                },
+                BootstrapDbSeedInput {
+                    target: Some("beta".to_owned()),
+                    path: PathBuf::from("oci://example/second:uat"),
+                },
+            ],
+            &adapter,
+        )
+        .expect_err("the second pull should fail");
+
+        assert!(error.to_string().contains("second:uat"));
+        assert_eq!(adapter.pulls.load(Ordering::SeqCst), 2);
+        assert!(repo.join(DB_SEEDS_DIR).join("app--legacy.sql").is_file());
+        assert!(!repo
+            .join(DB_SEEDS_DIR)
+            .join(DB_SEEDS_METADATA_FILE)
+            .exists());
+        assert!(!repo
+            .join(DB_SEEDS_DIR)
+            .join(LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE)
+            .exists());
     }
 
     fn find_artifact_metadata_files(repo: &Path) -> Vec<PathBuf> {
