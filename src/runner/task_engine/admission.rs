@@ -304,11 +304,13 @@ pub(super) struct Admission {
     pub(super) waited: Duration,
 }
 
-impl Admission {
-    /// The hook still holds this run's admission. Its exit is observed through
-    /// the custody receipt the run owns, never through a retained identity.
-    pub(super) fn verify(&mut self) -> Result<(), RunnerError> {
-        let mut hook = lock(&self.core.hook);
+/// A borrowed run's held hook can be observed while its journal is locked.
+#[derive(Clone)]
+pub(super) struct AdmissionMonitor(Arc<AdmissionCore>);
+
+impl AdmissionMonitor {
+    pub(super) fn verify(&self) -> Result<(), RunnerError> {
+        let mut hook = lock(&self.0.hook);
         if matches!(hook.poll(), Observed::Verified(..)) {
             return Err(RunnerError::task_invocation(
                 "admission hook exited; workload stopped because admission fails closed",
@@ -316,6 +318,19 @@ impl Admission {
         }
         Ok(())
     }
+}
+
+impl Admission {
+    /// The hook still holds this run's admission. Its exit is observed through
+    /// the custody receipt the run owns, never through a retained identity.
+    pub(super) fn verify(&mut self) -> Result<(), RunnerError> {
+        self.monitor().verify()
+    }
+
+    pub(super) fn monitor(&self) -> AdmissionMonitor {
+        AdmissionMonitor(self.core.clone())
+    }
+
     /// Whether this admission reports its custody to the hook.
     pub(super) fn reporting(&self) -> bool {
         lock(&self.core.delivery).protocol == Protocol::V2

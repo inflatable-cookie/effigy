@@ -883,6 +883,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Stop routed remote tasks when the admission hook held by their run exits,
+  including during remote registration, and settle the recorded session.
+
 - Retention no longer deletes an object a concurrent publication has just made
   desired or last-applied (effigy#608). A sweep selected its orphan candidates
   without the objects gate, then removed each selected digest's canonical
@@ -898,6 +901,604 @@ During v0.x, MINOR bumps may include breaking changes.
   digest lookup and its staging-event half scans the journal, the shape the
   selection already pays — and the per-candidate writer batches stay as
   short as before.
+
+- `effigy run logs` can no longer hang forever on a workload observation it
+  cannot verify, and can no longer report bytes it never read as drained. A
+  successful journal lookup reset the follow's only retry deadline, so a
+  workload-process read that stayed `Unknown` polled forever in follow and
+  ordinary snapshots alike. Every observation now owns its deadline — the
+  journal, the workload evidence, each stream's log read — retrying within
+  the same 30-second budget; one stage's success never renews another's; a
+  spent budget ends the follow as the existing `unknown` envelope with the
+  reason it saw. An unverifiable stream read no longer passes as the log's
+  end: settled and snapshot success require verified reads, and the retry
+  holds the exact delivered offset, so a recovered read adds no gap and no
+  duplicate. Verified EOF, absent logs, expiry and truncation reports, and
+  lost-stream reattach are unchanged (effigy#609).
+
+- The kernel boundary ratchet passes again on main. Effigy#588's hermetic
+  container-status contract fixtures wrote their manifest, Compose file and
+  fake runtime scripts with raw `std::fs::write` calls in ordinary library
+  code, and the sentinel fixture's environment marker did the same in a
+  statement-gated block the scanner counts as production. The status fixture
+  now writes every file through the owned `create_contract_fixture_files`
+  boundary (which gained nested-name parent creation), executable bits are
+  applied by a permissions-only helper, and the marker moved into a named
+  cfg-gated function. Ownership, bytes, permissions, row environment and
+  cleanup behavior are unchanged; the baseline inventory is unchanged
+  (effigy#597).
+
+- The feedback checker no longer hides the code after an escaped character
+  literal. Its escape scan started on the escaped character, so `'\\'` — or a
+  byte literal like `b'\\'` — skipped its own closing quote and blanked every
+  following column through the next quote, letting a fixed-label spinner
+  written after it pass unreported. The scan now recognizes exactly rustc's
+  char literals — one character, or one `\n`/`\x`/`\u{...}` escape closed by
+  the very next quote — and leaves anything else (a lifetime, a malformed or
+  unterminated literal) visible as code, so uncertain input can only
+  over-report, never quietly blank executable code. Escaped-backslash,
+  escaped-quote, malformed-escape and literal/comment-contents controls pin
+  the repaired scan (effigy#594). This restores the documented promise that
+  literal contents are blanked while real code and exact line locations stay
+  visible; no feedback policy or sink exemption changes.
+
+- The harness `mktemp` TMPDIR guard treats an unescaped `$(mktemp …)` or
+  backtick substitution inside double quotes as a command again, while still
+  ignoring quoted mentions, single-quoted literals, and escaped dollar-paren
+  or backtick openers (effigy#592). `effigy test:qa:static-guards` names those
+  cases; `qa:docs:mktemp` stays the live-tree check. This restores the
+  placement policy that effigy#591's quoted-mention skip had missed; it is not
+  a new safety rule.
+
+- `container status --json` no longer emits `services: null` when the runtime
+  is not running. A known-stopped host reports `runtime_running: false` with
+  an empty `services` array. A failed, unparsable, or otherwise unusable
+  Colima status probe fails the command with envelope `error.kind=unavailable`
+  instead of flattening uncertainty into an empty or successful payload
+  (effigy#588). The JSON contract rows for this surface now run against
+  hermetic fake-runtime fixtures.
+
+- A managed listener that fails readiness keeps that `failed` record through
+  settlement of an unpublished successor generation. A retrying supervisor
+  stopped during the next generation's admission delay no longer replaces the
+  refusal (status, diagnostic, generation) with a blank `stopped` terminal
+  (effigy#587). An explicit later activation still writes its own `starting`
+  record. HTTP 503 remains a definite terminal refusal.
+
+- Predecessor compatibility of an unpublished render takes NoPredecessor only
+  from a verified empty project listing. An unavailable inventory stays
+  Unknown and grants nothing; a quiet fixture is not an empty observation
+  (effigy#586).
+
+- A SQLite durability-write failure (`SQLITE_IOERR_FSYNC` and the sibling
+  write, directory-fsync, and atomic-write extended codes) stays
+  `unavailable` and keeps the extended code, but no longer says "nothing is
+  broken, and retrying once it answers is safe". That write is unknown, not
+  proved corrupt: do not replay the operation or run the explicit repair;
+  observations still work (effigy#580). A process-custody refusal now prints
+  the same sentence instead of a Debug tree.
+
+- A host-process restart no longer refuses while its predecessor drains. A
+  supervisor releases its gate flock only after settle has journaled the run
+  closed, so a replace that started its successor on the journal's closure
+  alone could be refused by the still-held gate and report a workload that
+  never started. The replace now waits for the gate itself within the stop's
+  own pickup budget before its successor's admission reads it (effigy#567).
+
+- Restore the `COMPOSER_HOME/vendor/bin` PATH preference for `composer global
+  exec …` deferrals on the handoff-local container branch. Dispatching the
+  rendered runtime command there (color wrapper, runtime env) meant the raw
+  `composer global exec` prefix never matched, so the child could not resolve
+  `composer` from the global vendor bin and exited 127. The preference again
+  keys on the semantic command while the rendered command remains the
+  execution text; host routing, the wrapper, secret delivery, depth and loop
+  protection are unchanged (effigy#568).
+
+- A capture pump drain commits at most one bounded 64 KiB window per stream
+  instead of one durable append per pipe read. A chatty producer's full pipe
+  paid the append-and-provenance dance (and the styled-tap window rewrite) up
+  to sixteen times per drain, so the canonical full-pipe capture fixture
+  could exceed its committed-extent observation bound under shared I/O load
+  and fail intermittently (effigy#558, effigy#548). Arrival order, redaction,
+  the per-turn read bound, prompt stop and capture identity are unchanged;
+  the burst the fixture observes now commits in about a sixth of the time.
+
+- The `.styled-tap` sidecar publishes its style window through the atomic
+  stage-and-rename boundary without fsync barriers. The sidecar is optional
+  presentation data that grants no durability acknowledgement; a lost or torn
+  window renders plain text, the designed fallback, and the canonical log is
+  unaffected.
+
+- A managed run whose owning client dies while its environment is still being
+  brought up no longer leaks the environment behind a `cleanup complete`
+  report. The run journals its environment-stop obligation once `up` ends, so
+  the settle walks it in reverse order (K4); when the journal refuses the
+  obligation because the run is already settling (the window a client's death
+  opens), an owned environment's stop is discharged before the run ends and a
+  borrowed environment's failure propagates. The `up` transition is also
+  stopped and recorded when the stop is noticed, so no gate-holding child
+  outlives the poll.
+
+- Bind the Acow ordinary-Compose consumer qualification's prerequisite
+  receipt to the accepted proof-only reviewer callback Queue actually
+  exposes: the accepted retained-reviewer callback
+  (`task.resolution.review`, a faithful Queue completion record equal to the
+  reviewer run's own completion) with the released finished reviewer run
+  (`role` `reviewer`, `status` `finished`, `released`, not active) whose
+  agent equals `resolution.reviewerAgentId`, and `resolution.reviews` empty
+  (`server/review-verdicts.ts` `reviewRecordFor` emits per-subject verdict
+  records only for completions that carry verdicts, so the reviews-entry
+  shape required before never existed for the effigy#544 proof-only task).
+  Per-subject verdict records, callback/completion disagreement, and any
+  invented durable publication id still refuse (effigy#553).
+
+- Record pre-exec closure on a retained process core when a spawn is refused
+  after retaining its core and before custody transfer (a refusing workload gate, a lost
+  interpolation registration or a lost identity re-proof). The refused child
+  never execs and its pre-exec group is killed and reaped at the refusal, so
+  the settle reads release instead of contradicting live-custody evidence that
+  reported cleanup residue for work that never ran: a v2 admission refusal
+  settled its durable record with cleanup `incomplete`.
+
+- The Colima nerdctl mounts-budget preflight no longer refuses before commands
+  that never apply Compose. The admission guard is apply-time: activation and
+  `up`, pull-production, workspace artifact builds, runtime activation prep and
+  workspace sessions still refuse before their apply, while `container status`,
+  `container logs`, data list, cache list, cache prune, data export and import
+  and attach-only exec and shell sessions read or attach to an
+  already-running stack whose mounts were admitted when it was created, so a
+  query or session can no longer fail on a budget its operation would never
+  consume (effigy#546).
+- The mounts-budget estimate now models an option-less primary-service `tmpfs`
+  list as writable tmpfs rows with an empty source beside the merged volume
+  mounts, counting their bytes against the same guarded budget. Effigy's own
+  php-fpm catalog renders a `/run/effigy/secrets` tmpfs on the primary service,
+  and the previous refusal of the whole `tmpfs` field made every such stack
+  inadmissible on the Colima nerdctl fallback before seed, data, status or any
+  up could run. A `tmpfs` mapping form or an option-carrying entry
+  (`/path:size=…`) still refuses as an unmodelled serialization, with paths
+  omitted (effigy#546).
+- A plain `effigy container up` is the ordinary Compose invocation again for a
+  container a legacy bundle declares as its default system/workspace, so a
+  consumer whose export writes `[systems.<s>] container`,
+  `default_workspace` and an empty `[systems.<s>.workspaces.<w>]` while
+  `[containers].default` names the same container prepares and applies its
+  stack instead of refusing on the private workspace preparation capability.
+  The guarded workspace activation is now the explicit system/workspace
+  selection's route: `effigy container up --system <NAME>` resolves through
+  that system's default workspace and still refuses by name before preparation
+  or apply, as do private Compose and Discard. A task's own ensure and the
+  workspace handoff keep the ordinary path, and a source refresh cannot turn an
+  ordinary invocation into a private apply (effigy#535).
+- Colima's nerdctl compose preflight estimates the serialized `nerdctl/mounts`
+  label from recognized explicit primary-service bind and volume mounts across
+  compose overlays, including resolved bind sources and JSON escaping. It
+  models nerdctl v2.3.1's `Type`, `Source`, `Destination`, `Mode`, `RW`, and
+  `Propagation` row shape, plus the label key and JSON delimiters. A sanitized
+  21-row structure fixture matches the observed 3630 bytes. Preflight adds a
+  2% reserve rounded up and refuses at the guarded 3900-byte budget. Unsupported
+  volume syntax, known unmodelled service mount inputs and referenced
+  top-level named-volume options refuse before apply. The estimate does not
+  inspect image metadata for implicit `VOLUME` entries and the measured reserve
+  is not a universal runtime bound. Docker backends keep their existing
+  behavior; this guard does not consolidate mounts or make a consumer whose
+  declared mounts exceed the budget runnable. An empty/null service entry in a
+  runtime DNS overlay is treated as an empty mapping; other non-mapping
+  primary-service definitions still refuse.
+- Keep the workspace alias override and canonical environment identity in frozen
+  publication inputs. Enrolment credentials use the reserved environment
+  generation independently of the guest context generation.
+- Render sealed Compose read refusals as human-readable messages.
+
+- The detached workspace-serving proof and its fixture no longer depend on a
+  loaded host's timing, gate luck or cleanup order. A caller's startup budget
+  bounds the whole startup — the state root, the launch and the supervisor's
+  admission, not only the announcement wait — so a caller that asks for 1s is
+  answered by the deadline it named rather than after an inner step. A front end
+  that loses its handoff names the supervisor run it lost, so the proof waits for
+  that run to settle and for its recorded processes to leave instead of sleeping
+  and hoping. Two contender cases use two checkouts, because the kernel's serving
+  gate is keyed by the checkout a launch serves and a live owner would otherwise
+  answer for the other case. Fixture cleanup waits for kernel helpers in every
+  journal the fixture owns — a fixture whose checkout is a child directory records
+  its runs there — so a supervisor that is still leaving can no longer race the
+  directory removal into `Directory not empty`.
+
+- An interactive `effigy test` run that the operator stops can no longer report
+  a terminated suite as passed or as a failed check. The supervised session
+  records how each attempt ended — its own result, or a stop the session
+  caused — and that record is the one outcome authority: a suite that finished
+  keeps its own result, a suite the stop ended is `cancelled`, and a suite that
+  never started is `not_started`. `effigy.test.results.v1` targets carry
+  `outcome` (`passed`, `failed`, `cancelled`, `not_started`) beside the
+  unchanged `success` and `code` fields, the text results name the same state,
+  and a cancelled run exits `130`. A run the operator stopped is cancelled even
+  when the stop arrived before any suite started, while a suite that reported
+  its own failure keeps that failure: a cancellation is the run's own record,
+  never a suite's exit status. An ordinary `130` or `143` exit is therefore a
+  failure, in a terminal or without one; a suite that died from a signal no
+  stop sends (`SIGSEGV`, `SIGABRT`) is a failure too. Only a suite the run that
+  owns it recorded as stopped is `cancelled`, and that attempt's own child run
+  closes as `cancelled` while a failed attempt closes with the code it
+  reported. A nested helper invocation keeps its own exit code instead of
+  collapsing to `1`, and a run's closeout uses that error's own outcome, so a
+  cancelled `effigy test` closes its run as `cancelled` instead of `failed` and
+  its step is recorded `Cancelled` with code `130`; a cancelled QA-group run
+  closes its durable kernel run the same way. The session summary no longer
+  renders a signal-terminated process as `OK`.
+
+- Bind guest workspace channel aliases to their session-owned listener while retaining the numeric host endpoint for recovery.
+
+- A host task in a linked or detached worktree whose manifest declares no `[containers]` registry runs again. The absence is read from the manifest's shape, so it no longer surfaces as a container-policy refusal. A declared registry that cannot load still refuses, and a declared backing-service alias whose stack is not up still refuses before the run starts.
+
+- Concurrent first use of a runtime-scoped checkout no longer refuses one caller with `invalid worktree scope`. The scope token is staged in full and hard-linked into place, so a reader never sees a partial token; racing callers all read the one published token. A malformed persisted scope is still refused.
+
+- A managed host listener whose supervisor exits right after writing its final `failed` state reports that listener's own diagnostic, such as a reserved port that was already bound, instead of the generic "its supervisor exited before publishing readiness" error.
+
+- The restart-policy update after `up` (`restart: unless-stopped` for services that declare none) reaches only containers whose full ID, project, service, checkout and scope verify against the current policy. It names the verified full ID and is re-verified right before it is sent. A foreign or same-name container gets no update, and the owned-binding refusal for the selected service is unchanged.
+
+- A shared service's restart-policy update reaches only a container whose full ID, shared project, declared service, running state and render label equal the render `up` just published. It is re-verified right before it is sent, and a missing, foreign, stale, changed or ambiguous container gets no update.
+
+- A direct foreground task stays in memory custody and records no `latest` or
+  `history` entry, even when the user config declares a `[programs]` block.
+  Only a block that puts a shim on the run's `PATH` (program absent, or
+  `force = true`) moves the run to durable custody, since foreground runs
+  carry no shims. `effigy tasks status` for such a task now reports
+  `not-recorded` again.
+- `effigy container <name> status --json` always includes its required `warnings` array, even when empty.
+- A floating Git bundle source updates on `dev` again. The remote check read
+  `git ls-remote` output that the terminal sanitizer had stripped of its TAB,
+  so every check kept the old pin without a warning. The check now reads the
+  object id and ref name with or without that TAB.
+
+- Database seed and dump keep the database password out of every spawned
+  command's arguments. The command plan carries `MYSQL_PWD` / `PGPASSWORD` by
+  variable name and never the value, and each exec sources it from a private
+  per-exec file that is removed afterwards, so `MYSQL_PWD=<value>` and
+  `PGPASSWORD=<value>` no longer appear in a host argv, a process listing, a
+  receipt or a diagnostic on either the checkout-local or the shared Compose
+  route. Target resolution, the selected Compose project, seed/dump results,
+  reports and cleanup are unchanged.
+
+- Keep the existing workspace session and its holders authoritative, including
+  new borrowed operations after a failed activation, until the successor commits
+  atomically. Register detached successors under their private liveness slot and
+  retain the owning successor handle throughout publication. Read-only workspace
+  replay also works on older schema-1 journals without triggering migration.
+  Ordinary held reconciliation keeps the published session's Borrow fence usable
+  after a failed successor is cancelled.
+
+- A declared database data target whose service is `shared = true` now seeds and
+  dumps in that service's own machine-wide Compose project and render, so
+  `stack` and `hybrid` declarations of one shared identity feed one database and
+  volume instead of failing against the checkout-local Compose that removed the
+  service. The selected environment's declarations are used, so `--name hybrid`
+  seeds hybrid's target rather than the manifest default. Before the first
+  statement Effigy proves the expected render's every file (Compose input and
+  bound configuration) is present, readable and unchanged, and that the runtime
+  reports exactly one running container of the declared service in the declared
+  project from the declared render digest; a missing, unreadable or altered
+  render file, stopped or absent container, stale render, several running
+  containers, an unreadable runtime or environments that declare the same
+  service with different shared identities refuse and name the project and
+  recovery command. A data step never publishes a render, starts or replaces a
+  shared service — its own or an unrelated one — or falls back to a local
+  service of the same name; a seed that selects a shared target skips its
+  environment activation, and every activation a data seed performs (including a
+  routed app-defined `data:seed` task) leaves shared services alone. A seed
+  whose environment has shared services and is stopped refuses and names
+  `effigy container up <NAME>` instead of bringing it up, because that would
+  reconcile them; an environment with no shared services keeps its prior
+  bring-up behaviour, and the decision is made per activated environment, so a
+  catalog-routed step cannot start another catalog's shared service. The exec forwards
+  the client credential by name only: each call creates its own private 0600 file
+  that the Compose client sources before it runs, on the host or through the
+  Colima VM transport, and removes it afterwards, so concurrent data commands
+  never share a credential path and no value reaches a command line or a report.
+  Every shared Compose call is bounded (15 minutes for a control call, one hour
+  for a data exec) and takes its process group with it on expiry, while the
+  complete output still feeds the dump artifact. Unshared targets keep the
+  checkout-local route.
+- Linux workspace artifact builds select the requested Rust architecture/libc
+  target and retain a separate receipt beside each target binary. Missing target
+  libraries or linkers refuse the build before it can attest an artifact.
+
+- Workspace entry refuses a missing or retargeted `/usr/local/bin/effigy` link
+  before handoff and authenticates the bytes launched through that entry.
+
+- `effigy gateway setup` settles on Linux after it installs the low-port
+  capability. The installed `effigy` then carries
+  `cap_net_bind_service=ep`, so every later custody exec of it is a secure
+  exec: the kernel clears the process's dumpable attribute, and
+  `/proc/<pid>/environ` refuses the operator's own reads. Two kernel rules did
+  it: the secure exec cleared the anchor's dumpable attribute, and the ptrace
+  access check grants a read only when the reader's permitted capabilities
+  cover the target's, which an unprivileged operator never does. The group
+  anchor re-execs that same image, so custody could no longer read the anchor's
+  nonce, refused to signal it, and the setup run timed out in settle with the
+  process group still held by an anchor nobody could verify. The anchor now
+  drops every capability it inherited and restores the ordinary dumpable state
+  at entry, then verifies both — it runs no workload code, needs no capability
+  and holds no secret beyond the nonce the contract asks it to expose — so the
+  recorded generation, group and nonce still prove identity before any signal,
+  while the work it belongs to keeps its own capabilities and low-port bind.
+  A settle that still cannot finish now names the effect's own sequence, the
+  redacted label its intent recorded and the recorded custody reason instead of
+  only the elapsed wait, and `gateway setup` reports those entries when cleanup
+  is incomplete — including when the last open effect is the one that stayed
+  unresolved and no later effect can carry its reason. Every setup adapter
+  child also records which program it runs, so two identically labelled setup
+  commands stay attributable.
+
+- `effigy gateway setup` works on a machine where the operator home has never
+  held Effigy state. A gateway directory that is verified absent is no legacy
+  state to migrate, so first-ever setup reaches the platform step instead of
+  failing with `I/O error: No such file or directory`. Absence is never
+  inferred from an error, and it is the operator's own answer rather than the
+  root setup child's: a symlinked, unsafe or unreadable `.effigy` or gateway
+  directory, a `.effigy` owned by root or another account, a home the operator
+  cannot read or search, and a partial existing identity all still refuse and
+  change nothing, naming the path and the repair. The refusal for an executable
+  past setup's 512 MiB staging bound names the bound and points at a release
+  build.
+
+- Let completed machine gateway setup runs close their sentinel promptly,
+  avoiding a setup failure caused by a sentinel-close timeout.
+
+- Managed TUI panes now show nested Effigy progress as plain start and finish
+  lines instead of repeated spinner redraws and banners. Shutdown takes over
+  the progress display cleanly, and sequence labels name useful work instead of
+  generated step numbers.
+- Show Colima workspace sizing recommendations only for a selected workspace
+  service, avoiding misleading advice for hybrid and database-only environments.
+
+- A failing managed host listener withholds only its own route. `container up`
+  now decides exposure per declared route target: a listener that answers its
+  readiness request with the wrong status, or never opens its port, keeps its
+  own route absent while the container's verified routes and every other
+  ready listener stay published. `container up --detach` reports the partial
+  exposure in text and JSON, naming the published routes and the withheld
+  listener with its observed status and a bounded, redacted child-output tail,
+  instead of the whole activation's readiness and exposure as unverified. A
+  definite status mismatch is refused as soon as it is observed rather than
+  spending `readiness.timeout_secs`, and a still-closed port's progress line
+  carries the child's own bounded output tail. Progress and activation-budget
+  refusals name the supervisor's actual probe phase: an open port with no HTTP
+  status keeps its running readiness clock and is never described as closed.
+  A port that never opens is
+  bounded by the bring-up's observation budget instead of holding `up` open,
+  and its progress carries that same bounded, redacted tail. The timed-out
+  generation is settled before the command returns, so it cannot publish a
+  route after the report. A listener the activation did not start is reconciled
+  against its own published generation and the current declaration (domain,
+  TLS, bind, live readiness), so only a generation that still serves the
+  declared target keeps its route; a generation that fails that check is
+  settled and its route withdrawn, and a withheld listener's `depends_on`
+  chain withholds every dependent route, settling previously running dependents
+  under the current declaration even after the activation budget expires.
+  Retrying listener failures are settled too, including failures before the
+  first child, so detach cannot hang waiting for them to become active or let
+  them publish a late route. An incomplete settlement remains a refusal.
+  A log line whose `key=` marker falls
+  outside the bounded read window is dropped rather than printed unredacted
+  (effigy#455).
+- An environment transition settles on a budget that starts when settlement
+  does. The cleanup context used to be made when the transition opened, so a
+  cold stack whose activation ran past 60 seconds left its settlement already
+  expired and the command failed with `environment record ... timed out ...
+  waiting for the environment to settle` after an apply that had succeeded.
+  Each settlement now takes a fresh bounded 60-second budget: admission makes
+  its own once `Gate(Env)` is held, so a transition that queued behind another
+  one settles an interrupted predecessor on a whole budget, and the run's own
+  settle and every settling holder make theirs when they start.
+  `container up` and `container down` show the gate wait and the settlement as
+  steps.
+- A container workload's spawn environment drops every session vault access
+  key, exactly as a host workload's does. A `.env` or task `env` entry named
+  `EFFIGY_SECRET_PASSPHRASE`, `EFFIGY_INTERNAL_SECRET_PASSPHRASE`,
+  `EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS`, `EFFIGY_INTERNAL_SECRET_GRANT` or
+  `EFFIGY_TEST_SECRETS_PASSPHRASE` no longer reaches a container; the run's
+  declared secrets and the user's own variables still do.
+- State stack `depends_on` now requires an earlier layer. A self-reference or a
+  later key fails closed instead of planning in declaration order that ignored
+  the edge.
+- Digest-pinned `oci://` refs bind to their `@sha256:` pin through userinfo, and
+  inspect/pull/stage refuse an observed digest that does not match.
+- Builtin `effigy test` now routes a named-container suite's setup and teardown
+  with the suite command, so those hooks run inside the selected container.
+  Nested effigy re-entries still keep their own routing.
+- `effigy contracts check-json` reports a payload schema or selection contract
+  that is not valid Draft 2020-12 as `effigy.json-contract-body.v1` inside
+  `effigy.contracts.check-json.v1`, and stops before any indexed command.
+- Bun links no longer leave a machine-wide registration behind. `deps link bun`
+  retires the registration it created once the consumer symlink and ledger
+  exist, and an interrupt retires the same registrations before the signal stops
+  the command. Retiral is the exact `(consumer root, library)` claim, so a
+  sibling Bun root in the same checkout keeps its own claim.
+
+  The completion retiral runs inside the apply's own index transaction after the
+  ledger commits: a failed ledger write leaves the claim, registration and ledger
+  untouched, a failed index commit restores any registration it retired and
+  rolls the ledger and consumer links back, and a re-link over an existing claim
+  always writes the retired claim out.
+
+  An interrupted owner retires only what its own apply started. The transaction
+  marks the moment it becomes able to create a registration, so a link that
+  merely wanted the index lock retires nothing; the watcher then takes the index
+  lock itself with a bounded wait and retains any registration another consumer
+  claims, or one it cannot verify. It stops the whole `bun` process tree first —
+  handler installed before the owner can create anything, spawns reserved and
+  published, children in their own process group — and the command waits for the
+  pending cleanup before returning. A shared or foreign registration is never
+  removed. This is what stopped registrations pointing at deleted worktrees
+  accumulating.
+- Bun `deps unlink` now retires only the named consumer's claims when that
+  checkout is already gone, instead of no-op'ing and leaving the worktree claim
+  behind. Each claim records the checkout that wrote it, so `--repo` recovers a
+  nested Bun root without reaching into an independently nested checkout, and a
+  claim without that evidence is reported with the root to name. Recovery
+  without the ledger releases claims only: it never inspects, removes or verifies
+  a consumer `node_modules` link, because a claim names a registration rather
+  than the consumer tree that owns a link, so an unreadable or malformed
+  consumer path cannot block releasing the claim.
+- Bun `deps status` and `doctor` now verify the consumer's `node_modules`
+  symlink, which is the link. An absent machine-wide registration is expected;
+  one pointing at another path is still reported as a conflict.
+- Keep managed task secret values out of host and container process arguments,
+  using stdin bootstrap or a private, acknowledged environment file for
+  interactive container exec.
+- Auto-discovered `effigy.local.toml` now replaces conflicting committed manifest
+  leaves, with source and override details available in inspection.
+
+- A release's `receipt.json` now matches `effigy release receipt <run> --json`
+  at every checkpoint. It used to be written only once, before the final
+  `complete` status, so a completed Run's file read as unfinished. It is now
+  rewritten with each record write, through the same atomic route, and a
+  paused or failed Run keeps its recorded non-complete status.
+- Release settlement is no longer written into a release's receipt. A
+  completed release stays `complete` even when its cleanup has not settled;
+  `effigy release status` shows `Settlement: pending` or `incomplete` with the
+  `effigy release settle <run>` action, and the JSON `run` object gains a
+  `settlement` field only while settlement is pending. An unreadable release
+  journal, a journal that has gone missing while release state remains, or an
+  unreadable record now blocks `release status` instead of reporting no Run.
+- Bundle step overrides replace the execution kind, including retired `draft` defaults, while retaining other step metadata.
+- A shared service whose render directory is gone is refused before anything
+  changes. When a container whose own render is gone still exists, whichever
+  render it was created from, `container up` names it and the recovery (remove
+  that exact container with `rm -f`, then `effigy container up <NAME>`), and
+  does not restore the render or stop, remove or start anything. Its named data
+  volume is kept. A container whose render is present and differs is replaced
+  as before, and a missing render with no container takes the normal creation
+  path.
+- A container runtime that stops answering an inventory read can no longer
+  hold one `container up` open for minutes. Every runtime read Effigy makes is
+  bounded, and a bring-up's read after Compose returns and its readiness wait
+  share one deadline: the environment's declared
+  `[containers.<NAME>.health].timeout_secs` (60s by default), measured from the
+  moment Compose returned. A hung read therefore spends that budget once, its
+  probe child is stopped and reaped at the deadline, and the activation ends
+  with one refusal carrying the usual `state: unavailable`,
+  `readiness: unverified` evidence instead of a second Compose activation.
+- Managed-task `status`, `logs` and `stop` (`mode = "tui"`) inspect or stop an
+  existing session without acquiring a missing pinned source. The skip follows
+  the selected task's own `mode`, including a prefixed catalog name and a task
+  declared in an included manifest fragment. A real task run, including one
+  whose first argument is those words, still acquires the pin.
+- Mapping-form `build.additional_contexts` (`src: ../frontend`) now resolve
+  against the Compose file that names them, the same as sequence-form
+  `src=../frontend`. After render the path stays checkout-rooted instead of
+  being read against the generation directory. Remote, already-absolute, and
+  `service:<name>` named-context values are unchanged.
+- An unreadable run-holder list warns. `container up` still applies the edit,
+  since an unreadable list is not held, and prints a `[warn]` line on stderr
+  that the holders were not checked. A readable list keeps its held-environment
+  warning.
+- Explicit Colima profile repair and reset no longer kill processes by command
+  pattern. They refuse unprovable pidfiles and name the manual recovery option.
+- A container readiness refusal and a Colima profile refusal name the failed
+  service or profile, the cause they observed and one `next:` command. A
+  bring-up that never becomes ready ends its diagnostic with a single `next:`
+  line (`effigy container logs --service <NAME>`, then `effigy container up`),
+  and a failed health read points at `effigy doctor`. A failed Colima command
+  names its profile and carries its output as evidence. `--json` carries the
+  same action in `error.human.next_action`.
+- Human failures name their cause in words instead of printing a Rust `Debug`
+  tree, across the container, release, managed-run and bundle-source planes: an
+  unreadable kernel record reports the store's own sentence and next action, a
+  failed container command reports `exit code 1` rather than `Some(1)`, a
+  release refusal lists its unsettled effects as `publish tag` is `unknown`, and
+  a manifest's unparsable source lock names what could not be read. A stop that
+  interrupts a managed release now reads as the cancellation it is, instead of
+  reporting that the evidence contradicts itself. The human-error Debug ratchet
+  now covers the container policy, manifest and managed-run vocabularies that
+  the Q-017 audit found outside it, and its baseline dropped to 102 specifiers
+  from 135.
+- `effigy doctor` shows a named step for each scan check while it runs: `scanning for god files`,
+  `scanning for duplicate blocks` and `running health task`. Each ends with one line that names
+  the check: `✓ god files: no problems found`, or `✗ god files: 2 errors, see the findings below`.
+  Before, the deep scan showed no step and the health step cleared without a result. JSON and
+  piped output are unchanged.
+- A failing `bootstrap` setup or start step ends with `✗ running setup <selector> failed` (or
+  `✗ starting <selector> failed`) instead of clearing, so the failed selector stays on screen
+  above the error and its next action. A failed workspace shutdown names the system and its
+  cause on one line: `✗ workspace system <name> shutdown failed: <cause>`. JSON and piped
+  output are unchanged.
+- A failed task run and a refused `deploy apply`/`redeploy` carry their next
+  action in `--json` as `error.human.next_action`, the same instruction the
+  text `next:` line prints. The deploy refusal's runnable command is now that
+  line, not prose inside its message.
+- A managed listener whose route republication failed retries while its port
+  keeps answering, instead of staying unreachable until the child next goes
+  silent. `container <env> restart` holds `Gate(Env)` for its stop and spawn
+  only, so a hung readiness wait still yields to `down`, and a failed detach
+  rollback settles only the restarted process, never an unrelated host
+  process. The private orphan-certificate proof now waits on the actual
+  `certs/` pair, and `test:gateway:endpoints` selects the fresh-store watcher
+  proof.
+- A custody anchor no longer ignores SIGTERM: an idle `__kernel-anchor` exits
+  within a bounded grace when a harness stops the tree it started, and a run
+  that completes still retires its anchor during settlement, so a settled run
+  leaves none. SIGINT and SIGHUP stay ignored, because a terminal delivers them
+  to the whole foreground group. Losing the anchor on TERM while workload
+  members remain stays the existing `Unknown` outcome; no numeric group signal
+  is inferred (Q-014).
+- The built-in `effigy test` route owns the same suite sweep as a named test
+  selector: after its last host suite it names, TERMs and KILLs any process
+  that still carries the suite, and fails the route listing it. The marker
+  rides the environment for Linux and a descriptor the suite's own shell opens
+  for macOS, so a kernel custody payload still carries it.
+- Concurrent runs no longer refuse each other with `state store: store busy`:
+  the store uses write-ahead logging, one writer gate and a bounded busy
+  timeout, and a racing first open of a checkout journal waits instead of
+  refusing.
+- A `--json` invocation always emits the command envelope, including one
+  answered from the parent process, and documents its own version identity.
+- A failed detached `container up` keeps the sanitized cause, the activation
+  stage and its preparation step, and the backend's own last lines.
+- A corrupt store's refusal names the one repair, and a journal mode that is not
+  Effigy's is `Broken` rather than `Corrupt`.
+- A task run from a nested catalog directory opens the enclosing checkout's
+  journal, and commands run from the home directory no longer read
+  `~/.effigy/state`.
+- `effigy dev` delivers a project's container secrets every time the vault can
+  answer, and a nested `effigy` launched through a tool that closes inherited
+  descriptors still runs.
+- Shared-service project names stay stable and shared-service port reservations
+  no longer move on every `up`.
+- A second `container up` on a running, unchanged stack recreates nothing, and a
+  shared backing service no longer loses its port when another checkout brings
+  it up.
+- A gateway started before any route store existed serves the first route
+  published after it, and a deleted checkout's stale route no longer blocks
+  another checkout.
+- Retiring a container stops it before removing it, so a
+  `restart: unless-stopped` service is not restarted mid-retirement.
+- Managed host cleanup keeps its owned TERM/KILL sequence, and a stopped
+  service reports "container service `<name>` is not running" with the next
+  step.
+- `effigy test` host suites run nested Effigy invocations through the binary,
+  and a detected Rust suite in `effigy test` runs through Oxide.
+- `effigy container` without a name resolves `[containers].default` and then the
+  `[systems].default` workspace container.
+- A rendered Compose stack works on the `colima-nerdctl` (containerd) backend,
+  including health checks written as a Compose `CMD` exec form.
+- An edit a live run holds is reported rather than silently skipped, and a
+  changed configuration under live holders keeps the running generation until
+  they end.
+- A checkout path that cannot be read is not a deleted checkout, so an
+  unmounted volume or a permission refusal never prunes routes.
+- A repository task named `fmt` runs again for `effigy fmt`, and `effigy
+  changelog` accepts a CommonMark lazy continuation line instead of refusing it.
+- The machine gateway stays running after its last route is withdrawn; it no
+  longer stops five minutes after `container down`. A private gateway still
+  stops once its route table stays empty for five minutes, and its operator log
+  records the cause as `route table empty for 300 s`. A managed `container up`
+  that finds the machine gateway positively stopped starts it, and a start that
+  cannot verify a running gateway refuses instead of claiming it up.
+- Shared-service and alias refusals suggest the environment's up command in the
+  order the grammar accepts (`effigy container <NAME> up`); the previous
+  `effigy container up <NAME>` form never parsed.
 
 ### Changed
 
@@ -1548,606 +2149,6 @@ During v0.x, MINOR bumps may include breaking changes.
   (pr null, both publication ids null) now passes on the run-id linkage,
   and any non-null publication id refuses as invented surrogate evidence
   (effigy#552).
-
-### Fixed
-
-- `effigy run logs` can no longer hang forever on a workload observation it
-  cannot verify, and can no longer report bytes it never read as drained. A
-  successful journal lookup reset the follow's only retry deadline, so a
-  workload-process read that stayed `Unknown` polled forever in follow and
-  ordinary snapshots alike. Every observation now owns its deadline — the
-  journal, the workload evidence, each stream's log read — retrying within
-  the same 30-second budget; one stage's success never renews another's; a
-  spent budget ends the follow as the existing `unknown` envelope with the
-  reason it saw. An unverifiable stream read no longer passes as the log's
-  end: settled and snapshot success require verified reads, and the retry
-  holds the exact delivered offset, so a recovered read adds no gap and no
-  duplicate. Verified EOF, absent logs, expiry and truncation reports, and
-  lost-stream reattach are unchanged (effigy#609).
-
-- The kernel boundary ratchet passes again on main. Effigy#588's hermetic
-  container-status contract fixtures wrote their manifest, Compose file and
-  fake runtime scripts with raw `std::fs::write` calls in ordinary library
-  code, and the sentinel fixture's environment marker did the same in a
-  statement-gated block the scanner counts as production. The status fixture
-  now writes every file through the owned `create_contract_fixture_files`
-  boundary (which gained nested-name parent creation), executable bits are
-  applied by a permissions-only helper, and the marker moved into a named
-  cfg-gated function. Ownership, bytes, permissions, row environment and
-  cleanup behavior are unchanged; the baseline inventory is unchanged
-  (effigy#597).
-
-- The feedback checker no longer hides the code after an escaped character
-  literal. Its escape scan started on the escaped character, so `'\\'` — or a
-  byte literal like `b'\\'` — skipped its own closing quote and blanked every
-  following column through the next quote, letting a fixed-label spinner
-  written after it pass unreported. The scan now recognizes exactly rustc's
-  char literals — one character, or one `\n`/`\x`/`\u{...}` escape closed by
-  the very next quote — and leaves anything else (a lifetime, a malformed or
-  unterminated literal) visible as code, so uncertain input can only
-  over-report, never quietly blank executable code. Escaped-backslash,
-  escaped-quote, malformed-escape and literal/comment-contents controls pin
-  the repaired scan (effigy#594). This restores the documented promise that
-  literal contents are blanked while real code and exact line locations stay
-  visible; no feedback policy or sink exemption changes.
-
-- The harness `mktemp` TMPDIR guard treats an unescaped `$(mktemp …)` or
-  backtick substitution inside double quotes as a command again, while still
-  ignoring quoted mentions, single-quoted literals, and escaped dollar-paren
-  or backtick openers (effigy#592). `effigy test:qa:static-guards` names those
-  cases; `qa:docs:mktemp` stays the live-tree check. This restores the
-  placement policy that effigy#591's quoted-mention skip had missed; it is not
-  a new safety rule.
-
-- `container status --json` no longer emits `services: null` when the runtime
-  is not running. A known-stopped host reports `runtime_running: false` with
-  an empty `services` array. A failed, unparsable, or otherwise unusable
-  Colima status probe fails the command with envelope `error.kind=unavailable`
-  instead of flattening uncertainty into an empty or successful payload
-  (effigy#588). The JSON contract rows for this surface now run against
-  hermetic fake-runtime fixtures.
-
-- A managed listener that fails readiness keeps that `failed` record through
-  settlement of an unpublished successor generation. A retrying supervisor
-  stopped during the next generation's admission delay no longer replaces the
-  refusal (status, diagnostic, generation) with a blank `stopped` terminal
-  (effigy#587). An explicit later activation still writes its own `starting`
-  record. HTTP 503 remains a definite terminal refusal.
-
-- Predecessor compatibility of an unpublished render takes NoPredecessor only
-  from a verified empty project listing. An unavailable inventory stays
-  Unknown and grants nothing; a quiet fixture is not an empty observation
-  (effigy#586).
-
-- A SQLite durability-write failure (`SQLITE_IOERR_FSYNC` and the sibling
-  write, directory-fsync, and atomic-write extended codes) stays
-  `unavailable` and keeps the extended code, but no longer says "nothing is
-  broken, and retrying once it answers is safe". That write is unknown, not
-  proved corrupt: do not replay the operation or run the explicit repair;
-  observations still work (effigy#580). A process-custody refusal now prints
-  the same sentence instead of a Debug tree.
-
-- A host-process restart no longer refuses while its predecessor drains. A
-  supervisor releases its gate flock only after settle has journaled the run
-  closed, so a replace that started its successor on the journal's closure
-  alone could be refused by the still-held gate and report a workload that
-  never started. The replace now waits for the gate itself within the stop's
-  own pickup budget before its successor's admission reads it (effigy#567).
-
-- Restore the `COMPOSER_HOME/vendor/bin` PATH preference for `composer global
-  exec …` deferrals on the handoff-local container branch. Dispatching the
-  rendered runtime command there (color wrapper, runtime env) meant the raw
-  `composer global exec` prefix never matched, so the child could not resolve
-  `composer` from the global vendor bin and exited 127. The preference again
-  keys on the semantic command while the rendered command remains the
-  execution text; host routing, the wrapper, secret delivery, depth and loop
-  protection are unchanged (effigy#568).
-
-- A capture pump drain commits at most one bounded 64 KiB window per stream
-  instead of one durable append per pipe read. A chatty producer's full pipe
-  paid the append-and-provenance dance (and the styled-tap window rewrite) up
-  to sixteen times per drain, so the canonical full-pipe capture fixture
-  could exceed its committed-extent observation bound under shared I/O load
-  and fail intermittently (effigy#558, effigy#548). Arrival order, redaction,
-  the per-turn read bound, prompt stop and capture identity are unchanged;
-  the burst the fixture observes now commits in about a sixth of the time.
-
-- The `.styled-tap` sidecar publishes its style window through the atomic
-  stage-and-rename boundary without fsync barriers. The sidecar is optional
-  presentation data that grants no durability acknowledgement; a lost or torn
-  window renders plain text, the designed fallback, and the canonical log is
-  unaffected.
-
-- A managed run whose owning client dies while its environment is still being
-  brought up no longer leaks the environment behind a `cleanup complete`
-  report. The run journals its environment-stop obligation once `up` ends, so
-  the settle walks it in reverse order (K4); when the journal refuses the
-  obligation because the run is already settling (the window a client's death
-  opens), an owned environment's stop is discharged before the run ends and a
-  borrowed environment's failure propagates. The `up` transition is also
-  stopped and recorded when the stop is noticed, so no gate-holding child
-  outlives the poll.
-
-- Bind the Acow ordinary-Compose consumer qualification's prerequisite
-  receipt to the accepted proof-only reviewer callback Queue actually
-  exposes: the accepted retained-reviewer callback
-  (`task.resolution.review`, a faithful Queue completion record equal to the
-  reviewer run's own completion) with the released finished reviewer run
-  (`role` `reviewer`, `status` `finished`, `released`, not active) whose
-  agent equals `resolution.reviewerAgentId`, and `resolution.reviews` empty
-  (`server/review-verdicts.ts` `reviewRecordFor` emits per-subject verdict
-  records only for completions that carry verdicts, so the reviews-entry
-  shape required before never existed for the effigy#544 proof-only task).
-  Per-subject verdict records, callback/completion disagreement, and any
-  invented durable publication id still refuse (effigy#553).
-
-- Record pre-exec closure on a retained process core when a spawn is refused
-  after retaining its core and before custody transfer (a refusing workload gate, a lost
-  interpolation registration or a lost identity re-proof). The refused child
-  never execs and its pre-exec group is killed and reaped at the refusal, so
-  the settle reads release instead of contradicting live-custody evidence that
-  reported cleanup residue for work that never ran: a v2 admission refusal
-  settled its durable record with cleanup `incomplete`.
-
-- The Colima nerdctl mounts-budget preflight no longer refuses before commands
-  that never apply Compose. The admission guard is apply-time: activation and
-  `up`, pull-production, workspace artifact builds, runtime activation prep and
-  workspace sessions still refuse before their apply, while `container status`,
-  `container logs`, data list, cache list, cache prune, data export and import
-  and attach-only exec and shell sessions read or attach to an
-  already-running stack whose mounts were admitted when it was created, so a
-  query or session can no longer fail on a budget its operation would never
-  consume (effigy#546).
-- The mounts-budget estimate now models an option-less primary-service `tmpfs`
-  list as writable tmpfs rows with an empty source beside the merged volume
-  mounts, counting their bytes against the same guarded budget. Effigy's own
-  php-fpm catalog renders a `/run/effigy/secrets` tmpfs on the primary service,
-  and the previous refusal of the whole `tmpfs` field made every such stack
-  inadmissible on the Colima nerdctl fallback before seed, data, status or any
-  up could run. A `tmpfs` mapping form or an option-carrying entry
-  (`/path:size=…`) still refuses as an unmodelled serialization, with paths
-  omitted (effigy#546).
-- A plain `effigy container up` is the ordinary Compose invocation again for a
-  container a legacy bundle declares as its default system/workspace, so a
-  consumer whose export writes `[systems.<s>] container`,
-  `default_workspace` and an empty `[systems.<s>.workspaces.<w>]` while
-  `[containers].default` names the same container prepares and applies its
-  stack instead of refusing on the private workspace preparation capability.
-  The guarded workspace activation is now the explicit system/workspace
-  selection's route: `effigy container up --system <NAME>` resolves through
-  that system's default workspace and still refuses by name before preparation
-  or apply, as do private Compose and Discard. A task's own ensure and the
-  workspace handoff keep the ordinary path, and a source refresh cannot turn an
-  ordinary invocation into a private apply (effigy#535).
-- Colima's nerdctl compose preflight estimates the serialized `nerdctl/mounts`
-  label from recognized explicit primary-service bind and volume mounts across
-  compose overlays, including resolved bind sources and JSON escaping. It
-  models nerdctl v2.3.1's `Type`, `Source`, `Destination`, `Mode`, `RW`, and
-  `Propagation` row shape, plus the label key and JSON delimiters. A sanitized
-  21-row structure fixture matches the observed 3630 bytes. Preflight adds a
-  2% reserve rounded up and refuses at the guarded 3900-byte budget. Unsupported
-  volume syntax, known unmodelled service mount inputs and referenced
-  top-level named-volume options refuse before apply. The estimate does not
-  inspect image metadata for implicit `VOLUME` entries and the measured reserve
-  is not a universal runtime bound. Docker backends keep their existing
-  behavior; this guard does not consolidate mounts or make a consumer whose
-  declared mounts exceed the budget runnable. An empty/null service entry in a
-  runtime DNS overlay is treated as an empty mapping; other non-mapping
-  primary-service definitions still refuse.
-- Keep the workspace alias override and canonical environment identity in frozen
-  publication inputs. Enrolment credentials use the reserved environment
-  generation independently of the guest context generation.
-- Render sealed Compose read refusals as human-readable messages.
-
-- The detached workspace-serving proof and its fixture no longer depend on a
-  loaded host's timing, gate luck or cleanup order. A caller's startup budget
-  bounds the whole startup — the state root, the launch and the supervisor's
-  admission, not only the announcement wait — so a caller that asks for 1s is
-  answered by the deadline it named rather than after an inner step. A front end
-  that loses its handoff names the supervisor run it lost, so the proof waits for
-  that run to settle and for its recorded processes to leave instead of sleeping
-  and hoping. Two contender cases use two checkouts, because the kernel's serving
-  gate is keyed by the checkout a launch serves and a live owner would otherwise
-  answer for the other case. Fixture cleanup waits for kernel helpers in every
-  journal the fixture owns — a fixture whose checkout is a child directory records
-  its runs there — so a supervisor that is still leaving can no longer race the
-  directory removal into `Directory not empty`.
-
-- An interactive `effigy test` run that the operator stops can no longer report
-  a terminated suite as passed or as a failed check. The supervised session
-  records how each attempt ended — its own result, or a stop the session
-  caused — and that record is the one outcome authority: a suite that finished
-  keeps its own result, a suite the stop ended is `cancelled`, and a suite that
-  never started is `not_started`. `effigy.test.results.v1` targets carry
-  `outcome` (`passed`, `failed`, `cancelled`, `not_started`) beside the
-  unchanged `success` and `code` fields, the text results name the same state,
-  and a cancelled run exits `130`. A run the operator stopped is cancelled even
-  when the stop arrived before any suite started, while a suite that reported
-  its own failure keeps that failure: a cancellation is the run's own record,
-  never a suite's exit status. An ordinary `130` or `143` exit is therefore a
-  failure, in a terminal or without one; a suite that died from a signal no
-  stop sends (`SIGSEGV`, `SIGABRT`) is a failure too. Only a suite the run that
-  owns it recorded as stopped is `cancelled`, and that attempt's own child run
-  closes as `cancelled` while a failed attempt closes with the code it
-  reported. A nested helper invocation keeps its own exit code instead of
-  collapsing to `1`, and a run's closeout uses that error's own outcome, so a
-  cancelled `effigy test` closes its run as `cancelled` instead of `failed` and
-  its step is recorded `Cancelled` with code `130`; a cancelled QA-group run
-  closes its durable kernel run the same way. The session summary no longer
-  renders a signal-terminated process as `OK`.
-
-- Bind guest workspace channel aliases to their session-owned listener while retaining the numeric host endpoint for recovery.
-
-- A host task in a linked or detached worktree whose manifest declares no `[containers]` registry runs again. The absence is read from the manifest's shape, so it no longer surfaces as a container-policy refusal. A declared registry that cannot load still refuses, and a declared backing-service alias whose stack is not up still refuses before the run starts.
-
-- Concurrent first use of a runtime-scoped checkout no longer refuses one caller with `invalid worktree scope`. The scope token is staged in full and hard-linked into place, so a reader never sees a partial token; racing callers all read the one published token. A malformed persisted scope is still refused.
-
-- A managed host listener whose supervisor exits right after writing its final `failed` state reports that listener's own diagnostic, such as a reserved port that was already bound, instead of the generic "its supervisor exited before publishing readiness" error.
-
-- The restart-policy update after `up` (`restart: unless-stopped` for services that declare none) reaches only containers whose full ID, project, service, checkout and scope verify against the current policy. It names the verified full ID and is re-verified right before it is sent. A foreign or same-name container gets no update, and the owned-binding refusal for the selected service is unchanged.
-
-- A shared service's restart-policy update reaches only a container whose full ID, shared project, declared service, running state and render label equal the render `up` just published. It is re-verified right before it is sent, and a missing, foreign, stale, changed or ambiguous container gets no update.
-
-- A direct foreground task stays in memory custody and records no `latest` or
-  `history` entry, even when the user config declares a `[programs]` block.
-  Only a block that puts a shim on the run's `PATH` (program absent, or
-  `force = true`) moves the run to durable custody, since foreground runs
-  carry no shims. `effigy tasks status` for such a task now reports
-  `not-recorded` again.
-- `effigy container <name> status --json` always includes its required `warnings` array, even when empty.
-- A floating Git bundle source updates on `dev` again. The remote check read
-  `git ls-remote` output that the terminal sanitizer had stripped of its TAB,
-  so every check kept the old pin without a warning. The check now reads the
-  object id and ref name with or without that TAB.
-
-- Database seed and dump keep the database password out of every spawned
-  command's arguments. The command plan carries `MYSQL_PWD` / `PGPASSWORD` by
-  variable name and never the value, and each exec sources it from a private
-  per-exec file that is removed afterwards, so `MYSQL_PWD=<value>` and
-  `PGPASSWORD=<value>` no longer appear in a host argv, a process listing, a
-  receipt or a diagnostic on either the checkout-local or the shared Compose
-  route. Target resolution, the selected Compose project, seed/dump results,
-  reports and cleanup are unchanged.
-
-- Keep the existing workspace session and its holders authoritative, including
-  new borrowed operations after a failed activation, until the successor commits
-  atomically. Register detached successors under their private liveness slot and
-  retain the owning successor handle throughout publication. Read-only workspace
-  replay also works on older schema-1 journals without triggering migration.
-  Ordinary held reconciliation keeps the published session's Borrow fence usable
-  after a failed successor is cancelled.
-
-- A declared database data target whose service is `shared = true` now seeds and
-  dumps in that service's own machine-wide Compose project and render, so
-  `stack` and `hybrid` declarations of one shared identity feed one database and
-  volume instead of failing against the checkout-local Compose that removed the
-  service. The selected environment's declarations are used, so `--name hybrid`
-  seeds hybrid's target rather than the manifest default. Before the first
-  statement Effigy proves the expected render's every file (Compose input and
-  bound configuration) is present, readable and unchanged, and that the runtime
-  reports exactly one running container of the declared service in the declared
-  project from the declared render digest; a missing, unreadable or altered
-  render file, stopped or absent container, stale render, several running
-  containers, an unreadable runtime or environments that declare the same
-  service with different shared identities refuse and name the project and
-  recovery command. A data step never publishes a render, starts or replaces a
-  shared service — its own or an unrelated one — or falls back to a local
-  service of the same name; a seed that selects a shared target skips its
-  environment activation, and every activation a data seed performs (including a
-  routed app-defined `data:seed` task) leaves shared services alone. A seed
-  whose environment has shared services and is stopped refuses and names
-  `effigy container up <NAME>` instead of bringing it up, because that would
-  reconcile them; an environment with no shared services keeps its prior
-  bring-up behaviour, and the decision is made per activated environment, so a
-  catalog-routed step cannot start another catalog's shared service. The exec forwards
-  the client credential by name only: each call creates its own private 0600 file
-  that the Compose client sources before it runs, on the host or through the
-  Colima VM transport, and removes it afterwards, so concurrent data commands
-  never share a credential path and no value reaches a command line or a report.
-  Every shared Compose call is bounded (15 minutes for a control call, one hour
-  for a data exec) and takes its process group with it on expiry, while the
-  complete output still feeds the dump artifact. Unshared targets keep the
-  checkout-local route.
-- Linux workspace artifact builds select the requested Rust architecture/libc
-  target and retain a separate receipt beside each target binary. Missing target
-  libraries or linkers refuse the build before it can attest an artifact.
-
-- Workspace entry refuses a missing or retargeted `/usr/local/bin/effigy` link
-  before handoff and authenticates the bytes launched through that entry.
-
-- `effigy gateway setup` settles on Linux after it installs the low-port
-  capability. The installed `effigy` then carries
-  `cap_net_bind_service=ep`, so every later custody exec of it is a secure
-  exec: the kernel clears the process's dumpable attribute, and
-  `/proc/<pid>/environ` refuses the operator's own reads. Two kernel rules did
-  it: the secure exec cleared the anchor's dumpable attribute, and the ptrace
-  access check grants a read only when the reader's permitted capabilities
-  cover the target's, which an unprivileged operator never does. The group
-  anchor re-execs that same image, so custody could no longer read the anchor's
-  nonce, refused to signal it, and the setup run timed out in settle with the
-  process group still held by an anchor nobody could verify. The anchor now
-  drops every capability it inherited and restores the ordinary dumpable state
-  at entry, then verifies both — it runs no workload code, needs no capability
-  and holds no secret beyond the nonce the contract asks it to expose — so the
-  recorded generation, group and nonce still prove identity before any signal,
-  while the work it belongs to keeps its own capabilities and low-port bind.
-  A settle that still cannot finish now names the effect's own sequence, the
-  redacted label its intent recorded and the recorded custody reason instead of
-  only the elapsed wait, and `gateway setup` reports those entries when cleanup
-  is incomplete — including when the last open effect is the one that stayed
-  unresolved and no later effect can carry its reason. Every setup adapter
-  child also records which program it runs, so two identically labelled setup
-  commands stay attributable.
-
-- `effigy gateway setup` works on a machine where the operator home has never
-  held Effigy state. A gateway directory that is verified absent is no legacy
-  state to migrate, so first-ever setup reaches the platform step instead of
-  failing with `I/O error: No such file or directory`. Absence is never
-  inferred from an error, and it is the operator's own answer rather than the
-  root setup child's: a symlinked, unsafe or unreadable `.effigy` or gateway
-  directory, a `.effigy` owned by root or another account, a home the operator
-  cannot read or search, and a partial existing identity all still refuse and
-  change nothing, naming the path and the repair. The refusal for an executable
-  past setup's 512 MiB staging bound names the bound and points at a release
-  build.
-
-- Let completed machine gateway setup runs close their sentinel promptly,
-  avoiding a setup failure caused by a sentinel-close timeout.
-
-- Managed TUI panes now show nested Effigy progress as plain start and finish
-  lines instead of repeated spinner redraws and banners. Shutdown takes over
-  the progress display cleanly, and sequence labels name useful work instead of
-  generated step numbers.
-- Show Colima workspace sizing recommendations only for a selected workspace
-  service, avoiding misleading advice for hybrid and database-only environments.
-
-- A failing managed host listener withholds only its own route. `container up`
-  now decides exposure per declared route target: a listener that answers its
-  readiness request with the wrong status, or never opens its port, keeps its
-  own route absent while the container's verified routes and every other
-  ready listener stay published. `container up --detach` reports the partial
-  exposure in text and JSON, naming the published routes and the withheld
-  listener with its observed status and a bounded, redacted child-output tail,
-  instead of the whole activation's readiness and exposure as unverified. A
-  definite status mismatch is refused as soon as it is observed rather than
-  spending `readiness.timeout_secs`, and a still-closed port's progress line
-  carries the child's own bounded output tail. Progress and activation-budget
-  refusals name the supervisor's actual probe phase: an open port with no HTTP
-  status keeps its running readiness clock and is never described as closed.
-  A port that never opens is
-  bounded by the bring-up's observation budget instead of holding `up` open,
-  and its progress carries that same bounded, redacted tail. The timed-out
-  generation is settled before the command returns, so it cannot publish a
-  route after the report. A listener the activation did not start is reconciled
-  against its own published generation and the current declaration (domain,
-  TLS, bind, live readiness), so only a generation that still serves the
-  declared target keeps its route; a generation that fails that check is
-  settled and its route withdrawn, and a withheld listener's `depends_on`
-  chain withholds every dependent route, settling previously running dependents
-  under the current declaration even after the activation budget expires.
-  Retrying listener failures are settled too, including failures before the
-  first child, so detach cannot hang waiting for them to become active or let
-  them publish a late route. An incomplete settlement remains a refusal.
-  A log line whose `key=` marker falls
-  outside the bounded read window is dropped rather than printed unredacted
-  (effigy#455).
-- An environment transition settles on a budget that starts when settlement
-  does. The cleanup context used to be made when the transition opened, so a
-  cold stack whose activation ran past 60 seconds left its settlement already
-  expired and the command failed with `environment record ... timed out ...
-  waiting for the environment to settle` after an apply that had succeeded.
-  Each settlement now takes a fresh bounded 60-second budget: admission makes
-  its own once `Gate(Env)` is held, so a transition that queued behind another
-  one settles an interrupted predecessor on a whole budget, and the run's own
-  settle and every settling holder make theirs when they start.
-  `container up` and `container down` show the gate wait and the settlement as
-  steps.
-- A container workload's spawn environment drops every session vault access
-  key, exactly as a host workload's does. A `.env` or task `env` entry named
-  `EFFIGY_SECRET_PASSPHRASE`, `EFFIGY_INTERNAL_SECRET_PASSPHRASE`,
-  `EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS`, `EFFIGY_INTERNAL_SECRET_GRANT` or
-  `EFFIGY_TEST_SECRETS_PASSPHRASE` no longer reaches a container; the run's
-  declared secrets and the user's own variables still do.
-- State stack `depends_on` now requires an earlier layer. A self-reference or a
-  later key fails closed instead of planning in declaration order that ignored
-  the edge.
-- Digest-pinned `oci://` refs bind to their `@sha256:` pin through userinfo, and
-  inspect/pull/stage refuse an observed digest that does not match.
-- Builtin `effigy test` now routes a named-container suite's setup and teardown
-  with the suite command, so those hooks run inside the selected container.
-  Nested effigy re-entries still keep their own routing.
-- `effigy contracts check-json` reports a payload schema or selection contract
-  that is not valid Draft 2020-12 as `effigy.json-contract-body.v1` inside
-  `effigy.contracts.check-json.v1`, and stops before any indexed command.
-- Bun links no longer leave a machine-wide registration behind. `deps link bun`
-  retires the registration it created once the consumer symlink and ledger
-  exist, and an interrupt retires the same registrations before the signal stops
-  the command. Retiral is the exact `(consumer root, library)` claim, so a
-  sibling Bun root in the same checkout keeps its own claim.
-
-  The completion retiral runs inside the apply's own index transaction after the
-  ledger commits: a failed ledger write leaves the claim, registration and ledger
-  untouched, a failed index commit restores any registration it retired and
-  rolls the ledger and consumer links back, and a re-link over an existing claim
-  always writes the retired claim out.
-
-  An interrupted owner retires only what its own apply started. The transaction
-  marks the moment it becomes able to create a registration, so a link that
-  merely wanted the index lock retires nothing; the watcher then takes the index
-  lock itself with a bounded wait and retains any registration another consumer
-  claims, or one it cannot verify. It stops the whole `bun` process tree first —
-  handler installed before the owner can create anything, spawns reserved and
-  published, children in their own process group — and the command waits for the
-  pending cleanup before returning. A shared or foreign registration is never
-  removed. This is what stopped registrations pointing at deleted worktrees
-  accumulating.
-- Bun `deps unlink` now retires only the named consumer's claims when that
-  checkout is already gone, instead of no-op'ing and leaving the worktree claim
-  behind. Each claim records the checkout that wrote it, so `--repo` recovers a
-  nested Bun root without reaching into an independently nested checkout, and a
-  claim without that evidence is reported with the root to name. Recovery
-  without the ledger releases claims only: it never inspects, removes or verifies
-  a consumer `node_modules` link, because a claim names a registration rather
-  than the consumer tree that owns a link, so an unreadable or malformed
-  consumer path cannot block releasing the claim.
-- Bun `deps status` and `doctor` now verify the consumer's `node_modules`
-  symlink, which is the link. An absent machine-wide registration is expected;
-  one pointing at another path is still reported as a conflict.
-- Keep managed task secret values out of host and container process arguments,
-  using stdin bootstrap or a private, acknowledged environment file for
-  interactive container exec.
-- Auto-discovered `effigy.local.toml` now replaces conflicting committed manifest
-  leaves, with source and override details available in inspection.
-
-- A release's `receipt.json` now matches `effigy release receipt <run> --json`
-  at every checkpoint. It used to be written only once, before the final
-  `complete` status, so a completed Run's file read as unfinished. It is now
-  rewritten with each record write, through the same atomic route, and a
-  paused or failed Run keeps its recorded non-complete status.
-- Release settlement is no longer written into a release's receipt. A
-  completed release stays `complete` even when its cleanup has not settled;
-  `effigy release status` shows `Settlement: pending` or `incomplete` with the
-  `effigy release settle <run>` action, and the JSON `run` object gains a
-  `settlement` field only while settlement is pending. An unreadable release
-  journal, a journal that has gone missing while release state remains, or an
-  unreadable record now blocks `release status` instead of reporting no Run.
-- Bundle step overrides replace the execution kind, including retired `draft` defaults, while retaining other step metadata.
-- A shared service whose render directory is gone is refused before anything
-  changes. When a container whose own render is gone still exists, whichever
-  render it was created from, `container up` names it and the recovery (remove
-  that exact container with `rm -f`, then `effigy container up <NAME>`), and
-  does not restore the render or stop, remove or start anything. Its named data
-  volume is kept. A container whose render is present and differs is replaced
-  as before, and a missing render with no container takes the normal creation
-  path.
-- A container runtime that stops answering an inventory read can no longer
-  hold one `container up` open for minutes. Every runtime read Effigy makes is
-  bounded, and a bring-up's read after Compose returns and its readiness wait
-  share one deadline: the environment's declared
-  `[containers.<NAME>.health].timeout_secs` (60s by default), measured from the
-  moment Compose returned. A hung read therefore spends that budget once, its
-  probe child is stopped and reaped at the deadline, and the activation ends
-  with one refusal carrying the usual `state: unavailable`,
-  `readiness: unverified` evidence instead of a second Compose activation.
-- Managed-task `status`, `logs` and `stop` (`mode = "tui"`) inspect or stop an
-  existing session without acquiring a missing pinned source. The skip follows
-  the selected task's own `mode`, including a prefixed catalog name and a task
-  declared in an included manifest fragment. A real task run, including one
-  whose first argument is those words, still acquires the pin.
-- Mapping-form `build.additional_contexts` (`src: ../frontend`) now resolve
-  against the Compose file that names them, the same as sequence-form
-  `src=../frontend`. After render the path stays checkout-rooted instead of
-  being read against the generation directory. Remote, already-absolute, and
-  `service:<name>` named-context values are unchanged.
-- An unreadable run-holder list warns. `container up` still applies the edit,
-  since an unreadable list is not held, and prints a `[warn]` line on stderr
-  that the holders were not checked. A readable list keeps its held-environment
-  warning.
-- Explicit Colima profile repair and reset no longer kill processes by command
-  pattern. They refuse unprovable pidfiles and name the manual recovery option.
-- A container readiness refusal and a Colima profile refusal name the failed
-  service or profile, the cause they observed and one `next:` command. A
-  bring-up that never becomes ready ends its diagnostic with a single `next:`
-  line (`effigy container logs --service <NAME>`, then `effigy container up`),
-  and a failed health read points at `effigy doctor`. A failed Colima command
-  names its profile and carries its output as evidence. `--json` carries the
-  same action in `error.human.next_action`.
-- Human failures name their cause in words instead of printing a Rust `Debug`
-  tree, across the container, release, managed-run and bundle-source planes: an
-  unreadable kernel record reports the store's own sentence and next action, a
-  failed container command reports `exit code 1` rather than `Some(1)`, a
-  release refusal lists its unsettled effects as `publish tag` is `unknown`, and
-  a manifest's unparsable source lock names what could not be read. A stop that
-  interrupts a managed release now reads as the cancellation it is, instead of
-  reporting that the evidence contradicts itself. The human-error Debug ratchet
-  now covers the container policy, manifest and managed-run vocabularies that
-  the Q-017 audit found outside it, and its baseline dropped to 102 specifiers
-  from 135.
-- `effigy doctor` shows a named step for each scan check while it runs: `scanning for god files`,
-  `scanning for duplicate blocks` and `running health task`. Each ends with one line that names
-  the check: `✓ god files: no problems found`, or `✗ god files: 2 errors, see the findings below`.
-  Before, the deep scan showed no step and the health step cleared without a result. JSON and
-  piped output are unchanged.
-- A failing `bootstrap` setup or start step ends with `✗ running setup <selector> failed` (or
-  `✗ starting <selector> failed`) instead of clearing, so the failed selector stays on screen
-  above the error and its next action. A failed workspace shutdown names the system and its
-  cause on one line: `✗ workspace system <name> shutdown failed: <cause>`. JSON and piped
-  output are unchanged.
-- A failed task run and a refused `deploy apply`/`redeploy` carry their next
-  action in `--json` as `error.human.next_action`, the same instruction the
-  text `next:` line prints. The deploy refusal's runnable command is now that
-  line, not prose inside its message.
-- A managed listener whose route republication failed retries while its port
-  keeps answering, instead of staying unreachable until the child next goes
-  silent. `container <env> restart` holds `Gate(Env)` for its stop and spawn
-  only, so a hung readiness wait still yields to `down`, and a failed detach
-  rollback settles only the restarted process, never an unrelated host
-  process. The private orphan-certificate proof now waits on the actual
-  `certs/` pair, and `test:gateway:endpoints` selects the fresh-store watcher
-  proof.
-- A custody anchor no longer ignores SIGTERM: an idle `__kernel-anchor` exits
-  within a bounded grace when a harness stops the tree it started, and a run
-  that completes still retires its anchor during settlement, so a settled run
-  leaves none. SIGINT and SIGHUP stay ignored, because a terminal delivers them
-  to the whole foreground group. Losing the anchor on TERM while workload
-  members remain stays the existing `Unknown` outcome; no numeric group signal
-  is inferred (Q-014).
-- The built-in `effigy test` route owns the same suite sweep as a named test
-  selector: after its last host suite it names, TERMs and KILLs any process
-  that still carries the suite, and fails the route listing it. The marker
-  rides the environment for Linux and a descriptor the suite's own shell opens
-  for macOS, so a kernel custody payload still carries it.
-- Concurrent runs no longer refuse each other with `state store: store busy`:
-  the store uses write-ahead logging, one writer gate and a bounded busy
-  timeout, and a racing first open of a checkout journal waits instead of
-  refusing.
-- A `--json` invocation always emits the command envelope, including one
-  answered from the parent process, and documents its own version identity.
-- A failed detached `container up` keeps the sanitized cause, the activation
-  stage and its preparation step, and the backend's own last lines.
-- A corrupt store's refusal names the one repair, and a journal mode that is not
-  Effigy's is `Broken` rather than `Corrupt`.
-- A task run from a nested catalog directory opens the enclosing checkout's
-  journal, and commands run from the home directory no longer read
-  `~/.effigy/state`.
-- `effigy dev` delivers a project's container secrets every time the vault can
-  answer, and a nested `effigy` launched through a tool that closes inherited
-  descriptors still runs.
-- Shared-service project names stay stable and shared-service port reservations
-  no longer move on every `up`.
-- A second `container up` on a running, unchanged stack recreates nothing, and a
-  shared backing service no longer loses its port when another checkout brings
-  it up.
-- A gateway started before any route store existed serves the first route
-  published after it, and a deleted checkout's stale route no longer blocks
-  another checkout.
-- Retiring a container stops it before removing it, so a
-  `restart: unless-stopped` service is not restarted mid-retirement.
-- Managed host cleanup keeps its owned TERM/KILL sequence, and a stopped
-  service reports "container service `<name>` is not running" with the next
-  step.
-- `effigy test` host suites run nested Effigy invocations through the binary,
-  and a detected Rust suite in `effigy test` runs through Oxide.
-- `effigy container` without a name resolves `[containers].default` and then the
-  `[systems].default` workspace container.
-- A rendered Compose stack works on the `colima-nerdctl` (containerd) backend,
-  including health checks written as a Compose `CMD` exec form.
-- An edit a live run holds is reported rather than silently skipped, and a
-  changed configuration under live holders keeps the running generation until
-  they end.
-- A checkout path that cannot be read is not a deleted checkout, so an
-  unmounted volume or a permission refusal never prunes routes.
-- A repository task named `fmt` runs again for `effigy fmt`, and `effigy
-  changelog` accepts a CommonMark lazy continuation line instead of refusing it.
-- The machine gateway stays running after its last route is withdrawn; it no
-  longer stops five minutes after `container down`. A private gateway still
-  stops once its route table stays empty for five minutes, and its operator log
-  records the cause as `route table empty for 300 s`. A managed `container up`
-  that finds the machine gateway positively stopped starts it, and a start that
-  cannot verify a running gateway refuses instead of claiming it up.
-- Shared-service and alias refusals suggest the environment's up command in the
-  order the grammar accepts (`effigy container <NAME> up`); the previous
-  `effigy container up <NAME>` form never parsed.
 
 ## [0.14.1] - 2026-10-08
 

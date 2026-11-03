@@ -18,7 +18,7 @@ use effigy_containers::environment::{ComposeRemote, ExecOptions};
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_kernel::ctx::{OpenReason, StopCause};
 use effigy_kernel::custody::{EnvValue, Lifetime, SecretValue};
-use effigy_kernel::observe::Observed;
+use effigy_kernel::observe::{Observed, UnknownReason};
 use effigy_kernel::outcome::{RequiredObligation, WorkloadOutcome};
 use effigy_kernel::remote::{
     ContainerTarget, RemoteCommand, RemoteCustody, RemoteError, RemoteExecAdapter, RemoteLaunch,
@@ -68,6 +68,7 @@ pub(in crate::runner) fn run_remote(
     policy: &EffectiveContainerPolicy,
     task: RemoteTask<'_>,
 ) -> Result<PlainExit, RunnerError> {
+    run.verify_admission()?;
     let selection = crate::runner::environment::backend(task.repo_root, policy);
     let mut adapter =
         ComposeRemote::<effigy_containers::environment::HostCli>::launcher(exec_options(&task));
@@ -107,6 +108,7 @@ pub(in crate::runner) fn run_remote_with(
     fence: &mut dyn FnMut() -> Result<Fence, RunnerError>,
 ) -> Result<PlainExit, RunnerError> {
     let _waiting = CustodyWait::enter();
+    run.verify_admission()?;
     if let Some((code, workload)) = super::pending_stop(&run.target().label) {
         return Ok(not_run(code, workload));
     }
@@ -120,11 +122,24 @@ pub(in crate::runner) fn run_remote_with(
         .map(|budget| Instant::now() + budget);
     let env = container_env(task.env)?;
     let cx = kernel::effects();
+    let cx = deadline.map_or_else(|| cx.clone(), |at| cx.child_until(at));
+    let monitor = run.admission_monitor();
     let mut attempt = 0;
     let mut remote = loop {
         attempt += 1;
+        run.verify_admission()?;
         let fence = fence()?;
-        let launched = RemoteCustody::launch(
+        let mut admission_error = None;
+        let mut progress = || {
+            if let Some(monitor) = &monitor {
+                if let Err(error) = monitor.verify() {
+                    admission_error = Some(error);
+                    return Err(UnknownReason::Inconsistent("held admission lost".into()));
+                }
+            }
+            Ok(())
+        };
+        let launched = RemoteCustody::launch_checked(
             &mut *run.run_mut()?,
             RemoteLaunch {
                 env: fence,
@@ -140,7 +155,11 @@ pub(in crate::runner) fn run_remote_with(
             },
             &cx,
             adapter,
+            &mut progress,
         );
+        if let Some(error) = admission_error {
+            return Err(error);
+        }
         match launched {
             Ok(remote) => break remote,
             Err(RemoteError::Run(RunError::StaleGeneration { .. })) if attempt < FENCE_ATTEMPTS => {
@@ -151,6 +170,14 @@ pub(in crate::runner) fn run_remote_with(
                 // settlement still owns whatever was recorded.
                 if let Some((code, workload)) = super::pending_stop(&run.target().label) {
                     return Ok(not_run(code, workload));
+                }
+                if deadline.is_some_and(|at| Instant::now() >= at) {
+                    return Ok(not_run(
+                        124,
+                        WorkloadOutcome::TimedOut {
+                            phase: run.target().label.clone(),
+                        },
+                    ));
                 }
                 return Err(launch_error(&task.label, &remote_error(&error)));
             }
@@ -178,6 +205,12 @@ pub(in crate::runner) fn run_remote_with(
     let mut stopping: Option<(Stop, Instant)> = None;
     let mut requests_read = Instant::now();
     let exit = loop {
+        if let Err(error) = run.verify_admission() {
+            if let Ok(cleanup) = kernel::cleanup() {
+                let _ = adapter.signal_session(&remote.registration, Signal::Term, &cleanup);
+            }
+            return Err(error);
+        }
         if stopping.is_none() {
             let expired = deadline.is_some_and(|at| Instant::now() >= at);
             let stop = if expired || remote.client().expired() {
@@ -204,7 +237,16 @@ pub(in crate::runner) fn run_remote_with(
             let _ = kernel::poll_router();
         }
         match remote.client().poll() {
-            Observed::Verified(exit, _) => break Some(exit),
+            Observed::Verified(exit, _) => {
+                if let Err(error) = run.verify_admission() {
+                    if let Ok(cleanup) = kernel::cleanup() {
+                        let _ =
+                            adapter.signal_session(&remote.registration, Signal::Term, &cleanup);
+                    }
+                    return Err(error);
+                }
+                break Some(exit);
+            }
             _ if stopping
                 .as_ref()
                 .is_some_and(|(_, at)| at.elapsed() >= SIGNAL_EXIT_BUDGET) =>
