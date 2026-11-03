@@ -185,6 +185,7 @@ class PreflightBoundaries(unittest.TestCase):
         for role, field, value in [('socket', 'path', '/synthetic-unowned/outside.sock'),
                                     ('pidfile', 'path', p.render.INSTANCE + '/different.pid'),
                                     ('guestagent', 'path', r.CONTROL + '/c/assets/untyped-data'),
+                                    ('guestagent', 'path', '/synthetic-unowned/share/lima/lima-guestagent.Linux-aarch64.gz'),
                                     ('socket', 'uid', 0), ('pidfile', 'mode', 0o666)]:
             bad = copy.deepcopy(original)
             old_path = bad['paths'][role]['path']

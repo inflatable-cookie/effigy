@@ -20,7 +20,7 @@
     "Fresh private 0700 evidence directory outside Queue cleanup, selected before the native window",
     "A successful original preflight receipt and exact safe ps rendering, still missing; no historical output reconstruction",
     "Exact owner-bound rendering structure plus GO rendering_sha256; closed semantic validation and fresh typed path metadata remain mandatory",
-    "Foreign socket ownership/authority remains missing; current implementation refuses it even if expected_atoms matches"
+    "Outside-CONTROL guestagent payload provenance, regular-file ownership and independently grounded digest remain missing; no expected_atoms containing that path can pass the current closed derivation"
   ],
   "future_step_after_receipt": "Owner reconciles actual cleanup debit and binds any signal action separately; this entry never signals or consumes that claim",
   "rendering_policy": {
@@ -28,20 +28,6 @@
     "comm_rule": "owner must choose reviewed-alias-full or reviewed-alias-prefix16",
     "expected_atoms": "owner supplies exact ordered atoms satisfying the closed role grammar; equality alone grants nothing",
     "paths": "exact private pidfile/socket/guestagent role pins and parent metadata; missing, not guessed"
-  },
-  "foreign_socket_metadata_proposal": {
-    "armed": false,
-    "execute": false,
-    "supported_by_current_preflight": false,
-    "private_target_binding": "Future owner request must privately bind exact retained socket path and parent; do not copy raw ps or foreign path here",
-    "required_scope": "Separately approved read-only lstat/canonical parent-chain/type/owner/device/inode/mode facts for exactly that private path; no discovery, connection, contents, follow-up or adoption",
-    "missing_facts": [
-      "Exact path and each parent privately pinned to independent owner provenance, not equality with retained ps alone",
-      "Fresh canonical/no-symlink directory parent type, uid and permissions, and exact socket lstat type/uid/device/inode/mode or honest unavailable state",
-      "Authority connecting this external endpoint to the exact owned hostagent without adding a trusted root",
-      "New reviewed fixed invocation/source/input/GO/index/output bindings and dual-clock single-call/report/cleanup budget"
-    ],
-    "refusal_limits": "Unknown/unowned/outside path remains refused. Missing socket is not absence, closure, health or permission to restart. Proposal grants no observer or trusted-root expansion."
   },
   "completed_attempt": {
     "decision": "8335884c-3de4-4cf1-a560-792bd38437bb v2",
@@ -55,5 +41,31 @@
     "old_a16_allowance_seconds": 600,
     "original_preparation_remainder_seconds_max": 22.743,
     "global_ceiling": "single 1920min/50M, unchanged"
+  },
+  "guestagent_payload_proposal": {
+    "armed": false,
+    "execute": false,
+    "supported_by_current_preflight": false,
+    "role_correction": "Outside-root object is the regular gzip guestagent payload; pidfile and socket are the in-CONTROL instance ha.pid/ha.sock. Prior socket attribution is superseded by review5756595492/r686-76/r686-82.",
+    "private_target_binding": "Future owner request must privately pin the exact retained guestagent payload path and parent chain; do not copy raw ps or the private foreign path here",
+    "missing_facts": [
+      "Independent source/package provenance tying this exact payload to official Lima2.2.1 OS/architecture artifact or authenticated packaging manifest; locator spelling and retained ps equality are insufficient",
+      "Expected digest independently grounded in that provenance, with explicit compressed-file versus upstream artifact digest domain; no self-comparison or guessed checksum",
+      "Fresh exact regular-file canonical/no-symlink path, device/inode/uid/mode/size and canonical directory-parent ownership/permissions/identities, or honest unavailable state",
+      "New reviewed fixed invocation/source/input/GO/index/output bindings, fresh explicit operator read-only scope/allowance, dual UTC/monotonic deadline and report/cleanup reserve"
+    ],
+    "alternatives": [
+      {
+        "kind": "external-payload-provenance-and-digest",
+        "required_scope": "Separately scoped future read-only metadata plus bounded hash of exactly the privately bound regular gzip payload; no execution, extraction, connection, discovery, content publication or root adoption",
+        "current_admission": "Still refused outside CONTROL; later reviewed source and explicit owner scope required before any admission"
+      },
+      {
+        "kind": "independently-verified-in-control-placement",
+        "required_scope": "Future separate approval for any exact owned placement/copy after independent provenance/digest validation, with destination/parent metadata and later command/identity binding",
+        "current_admission": "No copy, rename, reconfiguration or relaunch authorized. Placement alone does not alter the retained process argv; any configuration/relaunch requires separate approval"
+      }
+    ],
+    "refusal_limits": "Unknown/unowned/outside payload remains refused. Unavailable payload is not process absence, health, closure or restart authority. Proposal grants no native observation, content read, placement, observer or trusted-root expansion."
   }
 }

@@ -195,17 +195,26 @@ Driver entered16:20:31.007252Z before the16:20:35.554191Z cutoff; one ps exited0
 and was waited,389-byte stdout retained before parse, zero signals/watches/claims.
 The receipt is a correct refusal: both comm rendering and independent option/path
 predicates failed. Offline source analysis grants neither admitted identity nor
-any native replay. Review5756094137/r686-70–75 accepted that disposition.
+any native replay. Review5756094137/r686-70–75 accepted that refusal disposition; its earlier
+foreign-object inference is superseded by review5756595492/r686-76/r686-82: the
+outside-root object is the regular gzip guestagent payload, not the instance socket.
 Conservative accounting, including the unintended automatic follow-up, charged
 584.550809/600 seconds through the released-state witness fenced before expiry.
 No part is fresh native authority or reusable allowance. Olda16 charge676.433/600,
 original<=22.743 seconds and global single1920min/50M ceiling remain separate.
 
 The current source-only delta adds exact owner atom binding **and** closed semantic
-and ownership checks. It never accepts the retained foreign socket merely because
-its spelling was captured. No real PID/root/alias/executable/socket was re-read.
-The unarmed request proposes a separately scoped future private endpoint-metadata
-request; current code cannot observe/adopt that outside path. New operator scope,
+and ownership checks. It never accepts the retained outside-CONTROL guestagent payload from
+captured spelling or owner atom equality; no such atoms can pass the closed
+in-CONTROL derivation. The instance pidfile/socket remain inside CONTROL. No real PID/root/alias/executable/socket was re-read.
+The unarmed request now targets the actual payload gap: independent official
+Lima2.2.1 artifact/package provenance, an independently grounded expected digest
+with explicit compressed/artifact domain, and exact regular-file/parent ownership
+facts under a separately scoped future metadata/hash request. It also describes
+an independently verified in-CONTROL placement alternative; no copy is authorized,
+and placement cannot alter the retained process argv without a separately approved
+configuration/relaunch and fresh binding. Current code cannot observe/adopt the
+outside payload. New operator scope,
 source review, input/GO/deadline binding and independently established ownership
 would all remain necessary before any later native step. Historical903/37-test
 credit remains at its actual source; this delta needs its own packet/docs checks.

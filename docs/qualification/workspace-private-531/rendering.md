@@ -72,16 +72,37 @@ dual clocks, bounded streams and zero target signal/watch/claim surfaces remain.
 
 ## Remaining foreign-path gap
 
-The retained receipt independently contains a socket outside the admitted roots.
-This implementation keeps refusing it; neither source semantics, comm repair nor
-exact ordered-atom equality can grant authority to that endpoint. The
-[unarmed request](preflight-request.example.json) defines the missing next scope:
-owner privately binds exactly that path and parent chain to independent provenance;
-a separately approved fixed read-only request establishes canonical/type/uid/mode/
-device/inode facts (or honest unavailability), without discovery, connection,
-content, cleanup, adoption or follow-up. No exact foreign path appears here.
-That proposal is not executable by the present observer and adds no trusted root.
-Missing socket/metadata would not prove absence, health, VM closure or safe restart.
+The outside-root object in the retained receipt is the **guestagent payload**,
+a regular gzip file at the upstream prefix/share/lima locator. The pidfile and
+socket values are the instance's `ha.pid`/`ha.sock` inside CONTROL. This corrects
+the earlier socket-role inference (review5756595492/r686-76 and r686-82);
+the original native REFUSED result and private bytes remain unchanged.
+
+Current validation rejects any outside-CONTROL guestagent value **before** owner
+atom equality can admit it. Equality to retained bytes cannot establish provenance,
+ownership or permission to consume a payload. The [unarmed request](preflight-request.example.json)
+now describes the actual missing facts and two alternatives for later owner review:
+
+- External payload provenance: privately bind the exact regular gzip file and each
+  parent, independent package/source provenance, version/OS/architecture, and an
+  expected digest tied independently to the official pinned Lima2.2.1 artifact or
+  an authenticated packaging manifest. A future separately approved read-only
+  request would establish canonical/type/uid/mode/device/inode/size facts and hash
+  the exact file under a bounded scope. A digest merely computed from the observed
+  file is not independent provenance. Compressed-file and upstream artifact digest
+  domains must be explicit; no guessed checksum, extraction, execution or raw content
+  publication. Current code still refuses this outside path even if those facts
+  later arrive; source review and explicit owner scope would be needed to change it.
+- In-CONTROL placement: independently verify the same payload provenance/digest,
+  then seek a separate scoped approval for any owned placement/copy and its exact
+  destination metadata. No placement is authorized here. Placement alone cannot
+  change the retained process's existing arguments; configuration or relaunch
+  would need its own explicit approval and fresh identity/command binding.
+
+No exact private payload path is copied here. Neither alternative adds a trusted
+root or an executable observer. Missing/unverified payload metadata is not process
+absence, disk health, VM closure or safe restart. The proposal requests no socket
+connection, process discovery, content publication, adoption, repair or follow-up.
 
 Synthetic tests use harmless analogue paths and recorded metadata, plus owned
 local fixture payloads. Offline parsing is not a new native pass. Both consumed
