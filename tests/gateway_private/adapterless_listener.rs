@@ -1470,6 +1470,9 @@ fn wait_for_pid(path: &Path) -> u32 {
     }
 }
 
+/// How long the interrupted proof waits for the owner's watchdog exit receipt.
+const WATCHDOG_EXIT_BUDGET: Duration = Duration::from_secs(20);
+
 /// Waits until the watchdog's ledger under `root` captures `pid` as a member.
 fn wait_for_ledger_member(root: &Path, pid: u32) {
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -1639,6 +1642,9 @@ impl Drop for InterruptedOwner {
 /// Interrupted parent: the owner runs the real adapterless path and is SIGKILLed,
 /// so its `Drop` never runs. The watchdog it started must stop every generation
 /// it recorded: the listener child, its background job and the gateway daemon.
+/// The root is removed only after the watchdog's exit receipt and the kernel
+/// helper settlement, because recorded liveness alone cannot prove a
+/// still-settling writer has stopped (effigy#617).
 #[test]
 fn managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent() {
     let scratch = managed_host_fixture();
@@ -1653,6 +1659,7 @@ fn managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent(
         .spawn()
         .expect("start the owner helper");
     let mut owner = InterruptedOwner { child, root: None };
+    let owner_pid = owner.child.id();
 
     let deadline = Instant::now() + Duration::from_secs(60);
     let root = loop {
@@ -1695,9 +1702,213 @@ fn managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent(
         "interrupted-parent proof: owner interrupted; watchdog stopped {} recorded generations",
         recorded.len()
     );
-    // The owner's fixture never dropped, so its tree is removed here, after the
-    // watchdog has stopped everything it recorded.
+    // Recorded liveness is not writer quiescence. The watchdog may only just
+    // have finished its stop pass, and the owner's detached host-process
+    // supervisor may still owe its stop report and kernel settlement after the
+    // watchdog killed the listener child. Which writer won QA 918de4a0's race
+    // is not proven: the DirectoryNotEmpty panic proves the ordering gap, not
+    // the racer (effigy#617). The owner's fixture never dropped, so its tree
+    // is removed here, only after the watchdog's identity-bound exit receipt
+    // and the kernel helper settlement both name this root quiescent.
+    fixture_sweep::wait_for_watchdog_exit(&root, owner_pid, WATCHDOG_EXIT_BUDGET)
+        .expect("the owner's watchdog finished its ledger writes and its stop pass");
+    effigy_test_support::process::close_root(&root)
+        .expect("the owner's kernel helpers settled before its fixture root is removed");
     fs::remove_dir_all(&root).expect("remove the interrupted owner's fixture root");
+    eprintln!(
+        "interrupted-parent proof: removal followed the watchdog receipt and kernel helper settlement"
+    );
+}
+
+/// How long the discriminator's negative control waits while the writer is
+/// provably held: no receipt can appear, so the wait must fail within this.
+const HELD_RECEIPT_BUDGET: Duration = Duration::from_secs(2);
+/// How long the released watchdog may take to finish its tick, stop pass and
+/// receipt before the discriminator names the wait a failure.
+const RELEASED_RECEIPT_BUDGET: Duration = Duration::from_secs(20);
+
+/// One phase of the removal-ordering discriminator: a fresh root, a real
+/// recorded generation, and the real watchdog helper frozen at its
+/// ledger-write boundary behind a sacrificial owner. `Drop` stops every child
+/// this phase started and removes the hold, so a failing phase leaves nothing
+/// running and nothing parked.
+struct HeldWatchdog {
+    owner: std::process::Child,
+    owner_pid: u32,
+    leader: std::process::Child,
+    watchdog: Option<std::process::Child>,
+    hold: PathBuf,
+    held: PathBuf,
+    recorded: Vec<fixture_sweep::Record>,
+    fixture: effigy_test_support::Fixture,
+}
+
+impl HeldWatchdog {
+    /// The guarded root. Reading it through the fixture keeps the fixture
+    /// alive for its own cleanup Drop.
+    fn root(&self) -> &Path {
+        self.fixture.path()
+    }
+
+    fn start(holds_dir: &Path, name: &str) -> Self {
+        let fixture = effigy_test_support::Fixture::new(&format!("sweep-discriminator-{name}-"))
+            .expect("discriminator fixture");
+        let root = fixture.path().to_path_buf();
+        let checkout = root.join(format!("checkout-{name}"));
+        fs::create_dir(&checkout).expect("discriminator checkout");
+        let leader = spawn_owned_sleeper();
+        record_listener_child(&checkout, &leader, None);
+        let recorded = fixture_sweep::snapshot_root(&root);
+        assert!(
+            recorded.iter().any(|record| record.pid == leader.id()),
+            "the discriminator's generation must be recorded while its leader lives: {recorded:?}"
+        );
+        let owner = spawn_owned_sleeper();
+        let owner_pid = owner.id();
+        let hold = holds_dir.join(format!("{name}.hold"));
+        let held = holds_dir.join(format!("{name}.held"));
+        fs::write(&hold, b"hold at the ledger boundary").expect("hold control file");
+        let watchdog = fixture_sweep::spawn_watchdog_for(&root, owner_pid, Some(&hold));
+        wait_for_file(
+            &held,
+            Duration::from_secs(15),
+            "the watchdog never reached its ledger-write boundary",
+        );
+        Self {
+            owner,
+            owner_pid,
+            leader,
+            watchdog: Some(watchdog),
+            hold,
+            held,
+            recorded,
+            fixture,
+        }
+    }
+
+    /// Kills and reaps the sacrificial owner and the recorded leader while the
+    /// writer stays frozen, so the boundary state matches an interrupted owner
+    /// whose recorded generations are already dead.
+    fn interrupt_around_the_held_writer(&mut self) {
+        self.owner
+            .kill()
+            .expect("interrupt the discriminator's owner");
+        self.owner.wait().expect("reap the discriminator's owner");
+        self.leader.kill().expect("stop the recorded leader");
+        self.leader.wait().expect("reap the recorded leader");
+        assert!(
+            !fixture_sweep::any_alive(&self.recorded),
+            "the recorded generation must be quiescent while the writer is held: {:?}",
+            self.recorded
+        );
+    }
+
+    fn release(&self) {
+        fs::remove_file(&self.hold).expect("release the held writer");
+    }
+
+    fn reap_watchdog(&mut self) -> std::process::ExitStatus {
+        self.watchdog
+            .take()
+            .expect("the watchdog is reaped once")
+            .wait()
+            .expect("reap the discriminator's watchdog")
+    }
+}
+
+impl Drop for HeldWatchdog {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.hold);
+        let _ = fs::remove_file(&self.held);
+        // A child this phase already reaped errors on kill and wait; only
+        // this phase's own children are ever touched.
+        let _ = self.owner.kill();
+        let _ = self.owner.wait();
+        let _ = self.leader.kill();
+        let _ = self.leader.wait();
+        if let Some(mut watchdog) = self.watchdog.take() {
+            let _ = watchdog.kill();
+            let _ = watchdog.wait();
+        }
+    }
+}
+
+/// Polls until `path` exists, so a producer's boundary marker is awaited
+/// positively and a missing one fails the wait naming the path.
+fn wait_for_file(path: &Path, budget: Duration, message: &str) {
+    let deadline = Instant::now() + budget;
+    while !path.exists() {
+        assert!(Instant::now() < deadline, "{message} ({})", path.display());
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The violated ordering behind the interrupted-parent proof's DirectoryNotEmpty
+/// removal (QA 918de4a0, effigy#617): a removal gated only on recorded-generation
+/// liveness can proceed while a real owned writer is still held at its write.
+/// This discriminator establishes that legal interleaving deterministically —
+/// it does not claim the historical schedule — with the actual watchdog helper
+/// frozen at its ledger-write boundary behind a sacrificial owner.
+///
+/// Old ordering: with the writer frozen and the recorded generation quiescent,
+/// removal proceeds; the released writer then dies at its ledger write against
+/// the removed root, which is reaped here as retained evidence.
+/// Corrected ordering: removal cannot proceed before the writer's identity-bound
+/// exit receipt; after release the writer completes its real ledger write,
+/// publishes the receipt, exits cleanly, and only then is the root removed.
+#[test]
+fn managed_host_adapterless_cleanup_removal_follows_owned_writer_quiescence() {
+    let holds = effigy_test_support::Fixture::new("sweep-hold-files-").expect("hold fixture");
+
+    let mut old = HeldWatchdog::start(holds.path(), "old");
+    old.interrupt_around_the_held_writer();
+    fs::remove_dir_all(old.root()).expect("old ordering removes the root before quiescence");
+    assert!(
+        !old.root().exists(),
+        "old ordering removed the root while the writer was held"
+    );
+    old.release();
+    let status = old.reap_watchdog();
+    assert!(
+        !status.success(),
+        "the released writer must die at its ledger write against the removed root: {status}"
+    );
+
+    let mut corrected = HeldWatchdog::start(holds.path(), "corrected");
+    corrected.interrupt_around_the_held_writer();
+    let while_held = fixture_sweep::wait_for_watchdog_exit(
+        corrected.root(),
+        corrected.owner_pid,
+        HELD_RECEIPT_BUDGET,
+    );
+    assert!(
+        while_held.is_err(),
+        "no receipt can exist while the writer is held: {while_held:?}"
+    );
+    assert!(
+        corrected.root().exists(),
+        "corrected cleanup must not remove the root before the writer settles"
+    );
+    corrected.release();
+    let exit = fixture_sweep::wait_for_watchdog_exit(
+        corrected.root(),
+        corrected.owner_pid,
+        RELEASED_RECEIPT_BUDGET,
+    )
+    .expect("the released writer settles with its exit receipt");
+    assert_eq!(
+        exit.owner, corrected.owner_pid,
+        "the receipt names this owner"
+    );
+    let status = corrected.reap_watchdog();
+    assert!(
+        status.success(),
+        "the settled writer exits cleanly: {status}"
+    );
+    effigy_test_support::process::close_root(corrected.root())
+        .expect("no kernel helpers remain under the discriminator's root");
+    fs::remove_dir_all(corrected.root()).expect("corrected removal follows writer quiescence");
+    assert!(!corrected.root().exists());
 }
 
 /// Normal cleanup after a settled `down`: the listener's record is gone and its

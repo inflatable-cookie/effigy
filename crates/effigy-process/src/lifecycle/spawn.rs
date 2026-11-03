@@ -207,6 +207,21 @@ mod tests {
         env.insert("EFFIGY_BROWSER_TERMINAL_COLS".to_owned(), "132".to_owned());
         env.insert("EFFIGY_BROWSER_TERMINAL_ROWS".to_owned(), "41".to_owned());
         assert_eq!(terminal_size_override_from_env_map(&env), Some((132, 41)));
+        // A zero or non-numeric dimension is malformed size evidence: the
+        // override must be dropped so the wrapped command is not prefixed
+        // with a broken `stty` invocation.
+        let mut zero = BTreeMap::new();
+        zero.insert("EFFIGY_BROWSER_TERMINAL_COLS".to_owned(), "0".to_owned());
+        zero.insert("EFFIGY_BROWSER_TERMINAL_ROWS".to_owned(), "41".to_owned());
+        assert_eq!(terminal_size_override_from_env_map(&zero), None);
+        let mut garbage = BTreeMap::new();
+        garbage.insert("EFFIGY_BROWSER_TERMINAL_COLS".to_owned(), "wide".to_owned());
+        garbage.insert("EFFIGY_BROWSER_TERMINAL_ROWS".to_owned(), "41".to_owned());
+        assert_eq!(terminal_size_override_from_env_map(&garbage), None);
+        // A missing dimension never yields a partial size.
+        let mut partial = BTreeMap::new();
+        partial.insert("EFFIGY_BROWSER_TERMINAL_COLS".to_owned(), "96".to_owned());
+        assert_eq!(terminal_size_override_from_env_map(&partial), None);
     }
 }
 

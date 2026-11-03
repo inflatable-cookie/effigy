@@ -636,6 +636,23 @@ fn a_long_backend_failure_keeps_the_fatal_line_it_ended_with() {
 }
 
 #[test]
+fn command_failure_keeps_a_middle_cause_on_stdout_after_stderr_progress() {
+    let stderr = (0..30)
+        .map(|n| format!("progress {n}\n"))
+        .collect::<String>();
+    let mut stdout = (0..30).map(|n| format!("output {n}\n")).collect::<Vec<_>>();
+    stdout.insert(15, "error: useful stdout cause\n".to_owned());
+    let human = super::task_command_failure_human("test", Some(1), &stdout.concat(), &stderr);
+    let rendered = human.render_text();
+    assert!(
+        rendered.contains("error: useful stdout cause"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("lines omitted"), "{rendered}");
+    assert!(human.evidence_lines().len() <= effigy_ui::human::MAX_EVIDENCE_LINES);
+}
+
+#[test]
 fn text_command_payload_carries_its_next_action_to_the_json_form() {
     let error = RunnerError::CommandJsonFailure {
         rendered: "qa group `ci` needs a planner\nscope: 3 files\nnext: run `effigy qa:plan`\n"

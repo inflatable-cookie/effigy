@@ -11,8 +11,28 @@ custody, identities, publication and TLS; its native build excludes
 This packet replaces the positive-gate gap in the
 [older subset packet](../workspace-sessions-a00394012/README.md). That packet's
 candidate, receipt history and subset launcher cannot qualify these cells.
-There is one retained Queue reviewer and one aggregate proof execution. Source
-or fixture checks do not count as native receipts.
+There is one retained Queue reviewer. Source or fixture checks do not count as
+native receipts.
+
+## Source delivery and deferred qualification
+
+Tom's [2026-11-03 source-split ruling](../../knowledge/contracts/release.md#source-delivery-and-separate-proof-tasks--2026-11-03)
+permits the implementation and compile-time qualification packet to merge after
+current-main integration review with ordinary production Discard still refused.
+The current `launch.py` still runs all backends together; it is **not yet split**
+into independently executable backend proofs. Follow-up preparation must bind
+all backend receipts to the same final candidate and exact inputs before any
+separately authorized native execution. Aggregate judgment requires all required
+backend and actual consumer gates, then Tom's separate production-enable GO.
+
+Historical packet/fixture success is not positive native qualification. The old
+subset launcher never established full sessions. The consumed guestagent check
+refused two recorded `0775` parent rows before payload open/hash; no installed
+payload hash, package provenance, health or closure was established. Its recorded
+leaf size differs from both pinned public references. The separate untrusted
+snapshot proposal remains UNAPPLIED. No consumed allowance is reusable, and
+`noAutomaticRetry` remains in force. This integration grants no new observation,
+signal, cleanup, install, consumer or release authority.
 
 ## Subject and immutable inputs
 

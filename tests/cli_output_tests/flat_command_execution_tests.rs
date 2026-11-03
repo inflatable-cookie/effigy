@@ -281,6 +281,50 @@ fn every_shadowable_builtin_loses_to_a_same_named_manifest_task() {
     }
 }
 
+#[test]
+fn nested_builtin_failure_keeps_nextest_identity_in_human_error() {
+    let root = temp_workspace("nested-nextest-evidence");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"[tasks.qa]
+run = [{ task = "test" }]
+
+[test.suites.synthetic]
+run = "sh runner.sh"
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join("runner.sh"),
+        r#"#!/bin/sh
+i=0
+while [ "$i" -lt 30 ]; do
+  printf '        PASS [ 0.001s] suite::test_%s\n' "$i" >&2
+  printf 'progress %s\n' "$i"
+  if [ "$i" -eq 15 ]; then
+    printf '        FAIL [ 0.123s] example::tests::broken\n' >&2
+    printf 'assertion failed: token=supersecret\n' >&2
+  fi
+  i=$((i + 1))
+done
+printf 'error: test run failed\n' >&2
+exit 100
+"#,
+    )
+    .expect("write synthetic runner");
+    let output = run_cli_command(&root, &["qa"]);
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = stderr_of(&output);
+    assert!(stderr.contains("example::tests::broken"), "{stderr}");
+    assert!(
+        stderr.contains("assertion failed: token=<redacted>"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("supersecret"), "{stderr}");
+    assert!(stderr.contains("lines omitted"), "{stderr}");
+    assert!(stdout_of(&output).contains("progress 29"));
+}
+
 /// A suite's own exit status is never evidence of an operator cancellation. A
 /// suite that reports the interrupted convention (`kill -INT $$` → 130) on its
 /// own is a failed check in the text, in the JSON payload, in the task's exit

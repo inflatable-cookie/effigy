@@ -317,6 +317,11 @@ Injection rules:
 - avoid persistent `.env` files by default
 - if a compatibility file is required, write it under `.effigy/runtime/`,
   redact it from reports, and make lifecycle/cleanup explicit
+- the `secrets export` writer secures the opened destination to owner-only
+  (0600) before the first secret byte is written, including when the file
+  already exists, and secures the held descriptor rather than a later pathname
+  lookup. On Unix, a reader that already holds the destination keeps its
+  access: the writer neither revokes open descriptors nor publishes atomically
 - never print secret values in JSON or text output
 
 ## Command Surface

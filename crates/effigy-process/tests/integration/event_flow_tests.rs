@@ -53,35 +53,6 @@ fn supervisor_captures_output_and_exit_events() {
 }
 
 #[test]
-fn supervisor_forwards_input_to_target_process() {
-    let root = temp_workspace("supervisor-input");
-    let supervisor = ProcessSupervisor::spawn(
-        root.clone(),
-        vec![process_spec(
-            "reader",
-            "IFS= read -r line; printf \"seen:%s\\n\" \"$line\"",
-            &root,
-        )],
-    )
-    .expect("spawn");
-
-    supervisor.send_input("reader", "r\n").expect("send input");
-
-    let mut saw = false;
-    for _ in 0..15 {
-        if let Some(event) = supervisor.next_event_timeout(Duration::from_millis(200)) {
-            if event.kind == ProcessEventKind::Stdout && event.payload.contains("seen:r") {
-                saw = true;
-                break;
-            }
-        }
-    }
-
-    supervisor.terminate_all();
-    assert!(saw, "expected forwarded stdin output");
-}
-
-#[test]
 fn supervisor_forwards_input_without_wait_lock_contention() {
     let root = temp_workspace("supervisor-input-streaming");
     let supervisor = ProcessSupervisor::spawn(
@@ -122,4 +93,46 @@ fn supervisor_forwards_input_without_wait_lock_contention() {
         saw_first && saw_second,
         "expected both forwarded stdin outputs"
     );
+}
+
+/// The pty wrapper is the `effigy open` shell-tab path: the spec's terminal
+/// size override must reach the wrapped command (the `stty cols/rows` prefix)
+/// and the command's output must stream back through the pty as Stdout
+/// events. macOS and Linux invoke the `script` wrapper with different argv,
+/// so this case exercises the platform's own production invocation.
+#[test]
+fn supervisor_pty_wrapper_applies_terminal_size_and_streams_output() {
+    let root = temp_workspace("supervisor-pty-terminal-size");
+    let mut spec = process_spec("pty-shell", "stty size", &root);
+    spec.pty = true;
+    spec.env
+        .insert("EFFIGY_BROWSER_TERMINAL_COLS".to_owned(), "96".to_owned());
+    spec.env
+        .insert("EFFIGY_BROWSER_TERMINAL_ROWS".to_owned(), "28".to_owned());
+    let supervisor = ProcessSupervisor::spawn(root.clone(), vec![spec]).expect("spawn pty");
+
+    let mut size_seen = false;
+    let mut exit_seen = false;
+    for _ in 0..40 {
+        if let Some(event) = supervisor.next_event_timeout(Duration::from_millis(100)) {
+            if event.process == "pty-shell" {
+                if event.kind == ProcessEventKind::Stdout && event.payload.contains("28 96") {
+                    size_seen = true;
+                }
+                if event.kind == ProcessEventKind::Exit {
+                    exit_seen = true;
+                }
+            }
+            if size_seen && exit_seen {
+                break;
+            }
+        }
+    }
+
+    supervisor.terminate_all();
+    assert!(
+        size_seen,
+        "expected the pty wrapper to apply the terminal size override (stty size reports rows cols)"
+    );
+    assert!(exit_seen, "expected the pty process to report Exit");
 }

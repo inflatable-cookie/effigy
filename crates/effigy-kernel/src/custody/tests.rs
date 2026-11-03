@@ -102,6 +102,8 @@ fn assert_recoverable_settlement_retains_core(lost_response: bool) {
         output: VecDeque::new(),
         streams: [VecDeque::new(), VecDeque::new()],
         queue_max: 0,
+        output_truncated: false,
+        source_capture: false,
         stdout: None,
         stderr: None,
         stdin: None,
@@ -2686,6 +2688,8 @@ impl FakeCapture {
             output: VecDeque::new(),
             streams: [VecDeque::new(), VecDeque::new()],
             queue_max: 4096,
+            output_truncated: false,
+            source_capture: false,
             stdout: None,
             stderr: None,
             stdin: None,
@@ -3935,6 +3939,8 @@ fn a_full_drain_commits_one_window_per_stream() {
         output: VecDeque::new(),
         streams: [VecDeque::new(), VecDeque::new()],
         queue_max: 4096,
+        output_truncated: false,
+        source_capture: false,
         stdout: Some(stdout_read),
         stderr: Some(stderr_read),
         stdin: None,
@@ -3987,4 +3993,82 @@ fn a_full_drain_commits_one_window_per_stream() {
     assert!(!output.is_failed());
     assert_eq!(output.capture_state(), CaptureState::Complete);
     drop(core);
+}
+
+#[test]
+fn source_capture_exit_interleaving() {
+    for mode in ["complete", "overflow", "deadline"] {
+        source_capture_case(mode);
+    }
+}
+fn source_capture_case(mode: &str) {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root).unwrap();
+    let mut child = Custody::spawn(
+        &mut run,
+        ProcessSpec {
+            argv: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "read line; printf 'owned pipe output\n'".into(),
+            ],
+            cwd: home.path().into(),
+            env: BTreeMap::new(),
+            grace: Duration::from_millis(20),
+            lifetime: Lifetime::Finite(Duration::from_secs(5)),
+            terminal: Terminal::Pipe,
+            label: "capture boundary proof".into(),
+        },
+        &cx,
+    )
+    .unwrap();
+    let pid = child.identity().identity.pid;
+    eprintln!("fixture pid={pid} started");
+    {
+        let mut core = lock(&child.core);
+        core.drain(); // First nonblocking drain, while the producer waits on stdin.
+        core.write_stdin(b"go\n", Instant::now() + Duration::from_secs(5))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if matches!(core.poll_exit(), Observed::Verified(..)) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "child exit not observed");
+            std::thread::yield_now();
+        }
+    }
+    assert!(
+        lock(&child.core).output.is_empty(),
+        "pre-exit drain saw no bytes"
+    );
+    let exit = lock(&child.core).exit.unwrap();
+    if mode == "overflow" {
+        lock(&child.core).queue_max = 1;
+    } else if mode == "deadline" {
+        lock(&child.core).deadline = Some(Instant::now());
+    }
+    let captured = child.finish_source_capture(cx.operation());
+    match mode {
+        "complete" => {
+            captured.unwrap();
+            assert_eq!(child.take_output(), b"owned pipe output\n");
+        }
+        "overflow" => assert!(captured.unwrap_err().contains("truncated")),
+        "deadline" => assert!(captured.unwrap_err().contains("deadline")),
+        _ => unreachable!(),
+    }
+    child.complete(&mut run, exit).unwrap();
+    run.finish(crate::outcome::WorkloadOutcome::Succeeded)
+        .unwrap();
+    let report = child.stop(&cx.operation().cleanup(Duration::from_secs(5)).unwrap());
+    eprintln!("fixture pid={pid} exit={exit:?} closure={:?}", report.group);
+    assert!(report.group.verified().is_some());
+    run.settle(
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
 }

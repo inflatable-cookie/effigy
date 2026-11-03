@@ -3000,6 +3000,13 @@ pub fn effects(
     reader: &crate::store::StoreReader,
     id: RunId,
 ) -> crate::observe::Observed<Vec<Effect>> {
+    // Engine proofs refuse this one observation (thread-local hook): the
+    // workload read turns `Unknown` while the journal lookup — a different
+    // read — keeps answering.
+    #[cfg(feature = "fault-injection")]
+    if crate::fault_point!(RunEffects).is_err() {
+        return crate::observe::Observed::Unknown(UnknownReason::Injected);
+    }
     match journal::effects(reader.conn(), id) {
         Ok(effects) => crate::observe::Observed::Verified(effects, settle::evidence()),
         Err(error) => {

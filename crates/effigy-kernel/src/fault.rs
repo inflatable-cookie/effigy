@@ -21,6 +21,8 @@ macro_rules! points {
     };
 }
 points! {
+    RetentionObjectsSelected,
+    RetentionObjectDeleted,
     ObjectStageBefore,
     ObjectStageCreated,
     ObjectWriteBefore,
@@ -57,6 +59,7 @@ points! {
     CaptureSetupAfterStdout,
     CaptureSetupBeforeThread,
     LogRead,
+    RunEffects,
     AnchorSpawn,
     AnchorRecord,
     AnchorStop,

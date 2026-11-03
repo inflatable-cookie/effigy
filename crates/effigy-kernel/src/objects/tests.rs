@@ -115,15 +115,345 @@ fn retain(home: &Path) -> crate::retention::RetentionReport {
     try_retain(home).unwrap()
 }
 fn try_retain(home: &Path) -> Result<crate::retention::RetentionReport, StoreError> {
-    let cx = context(EffectClass::Mutate);
-    let root = StateRoot::effects(&cx, home).unwrap();
-    let mut store = Store::open(&cx, &root).unwrap();
+    try_retain_with(home, &context(EffectClass::Mutate))
+}
+fn try_retain_with(
+    home: &Path,
+    cx: &EffectContext,
+) -> Result<crate::retention::RetentionReport, StoreError> {
+    let root = StateRoot::effects(cx, home).unwrap();
+    let mut store = Store::open(cx, &root).unwrap();
     crate::retention::retain(
-        &cx,
+        cx,
         &root,
         &mut store,
         crate::retention::RetentionBudget { max_removals: 100 },
     )
+}
+
+/// An eligible orphan: a settled publication whose reference a later settled
+/// run reset, so its row and bytes remain and nothing names it.
+fn seed_orphan(home: &Path, value: &Closure, owner: &str, n: u8) -> String {
+    let digest = value.digest().to_owned();
+    with_run(home, owner, n, |run| {
+        Objects::publish_desired(run, value).unwrap();
+        Objects::promote(run, &digest).unwrap();
+    });
+    with_run(home, owner, n + 1, |run| Objects::reset(run).unwrap());
+    let cx = context(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home).unwrap();
+    let store = Store::open(&cx, &root).unwrap();
+    assert!(
+        crate::retention::still_unreferenced(&store, &digest).unwrap(),
+        "the seed must be an eligible orphan before the pass"
+    );
+    assert!(
+        home.join(".effigy/state/objects").join(&digest).exists(),
+        "the seed keeps its canonical bytes"
+    );
+    digest
+}
+
+/// One coherence read over the whole publication surface: canonical bytes,
+/// object row, desired ref and `resources.desired`.
+fn assert_published(home: &Path, owner: &str, value: &Closure) {
+    let digest = value.digest();
+    assert!(
+        home.join(".effigy/state/objects").join(digest).exists(),
+        "canonical bytes survive"
+    );
+    assert_eq!(
+        read(home, owner, Role::Desired).verified().unwrap().closure,
+        *value,
+        "desired resolves to the published closure"
+    );
+    assert_eq!(
+        read(home, owner, Role::LastApplied)
+            .verified()
+            .unwrap()
+            .closure,
+        *value,
+        "last-applied resolves to the published closure"
+    );
+    let cx = context(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home).unwrap();
+    let store = Store::open(&cx, &root).unwrap();
+    let name = resource(owner).name().to_string();
+    let rows: i64 = store
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM objects WHERE digest=?1",
+            [digest],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(rows, 1, "the object row survives");
+    let desired: String = store
+        .conn()
+        .query_row(
+            "SELECT digest FROM object_refs WHERE resource=?1 AND role='desired'",
+            [&name],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(desired, digest, "the desired ref names the digest");
+    let resources_desired: String = store
+        .conn()
+        .query_row(
+            "SELECT desired FROM resources WHERE name=?1",
+            [&name],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        resources_desired, digest,
+        "resources.desired names the digest"
+    );
+}
+
+/// A deterministic race at the seam the brief names: retention selects its
+/// candidates without the objects gate, and a publication of the same digest
+/// under a different owner intends before that gate and commits its desired
+/// reference under it. The paused pass must not delete what it selected
+/// before the publication won the gate (K15, effigy#608). The schedule is a
+/// fault point, never a sleep. The hook seam itself exists only with
+/// `fault-injection`, so these three hook-coordinated cases are gated on it;
+/// the ungated cases below still prove the same preservation invariants
+/// without the feature.
+#[cfg(feature = "fault-injection")]
+#[test]
+fn retention_publication_winning_the_gate_after_selection_preserves_the_object() {
+    let home = tempfile::tempdir().unwrap();
+    let value = closure("raced");
+    let digest = seed_orphan(home.path(), &value, "dev", 1);
+    let (selected_tx, selected_rx) = std::sync::mpsc::channel();
+    let (resume_tx, resume_rx) = std::sync::mpsc::channel::<()>();
+    let home_path = home.path().to_path_buf();
+    let retention = std::thread::spawn(move || {
+        crate::fault_injection::with_hook(
+            move |name| {
+                if name == "RetentionObjectsSelected" {
+                    selected_tx.send(()).expect("signal selection");
+                    resume_rx.recv().expect("wait for the publication");
+                }
+                Ok(())
+            },
+            || try_retain(&home_path),
+        )
+    });
+    selected_rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("retention selected its candidates");
+    // The publication wins the gate while retention holds none: it intends
+    // before the gate and commits its row and desired reference under it.
+    with_run(home.path(), "other", 3, |run| {
+        Objects::publish_desired(run, &value).unwrap();
+        Objects::promote(run, &digest).unwrap();
+    });
+    let cx = context(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let store = Store::open(&cx, &root).unwrap();
+    assert!(
+        !crate::retention::still_unreferenced(&store, &digest).unwrap(),
+        "the publication made the raced digest referenced"
+    );
+    resume_tx.send(()).expect("resume retention");
+    let report = retention.join().unwrap().expect("retention pass");
+    assert_eq!(
+        report.objects, 0,
+        "a candidate that gained a reference is skipped, never deleted"
+    );
+    assert_published(home.path(), "other", &value);
+}
+
+/// The inverse ordering: the publication commits before the selection, so the
+/// digest is referenced already and is never a candidate at all.
+#[test]
+fn retention_publication_selected_after_publish_keeps_the_referenced_object() {
+    let home = tempfile::tempdir().unwrap();
+    let value = closure("inverse");
+    with_run(home.path(), "dev", 1, |run| {
+        Objects::publish_desired(run, &value).unwrap();
+        Objects::promote(run, value.digest()).unwrap();
+    });
+    let report = retain(home.path());
+    assert_eq!(report.objects, 0, "a referenced object is not a candidate");
+    assert_published(home.path(), "dev", &value);
+}
+
+/// Preservation must not over-retain: a digest with no event, ref or row
+/// naming it is still reclaimed, while a referenced sibling stays.
+#[test]
+fn retention_publication_genuine_orphan_is_still_reclaimed() {
+    let home = tempfile::tempdir().unwrap();
+    let orphan = closure("orphan");
+    let kept = closure("kept");
+    let orphan_digest = seed_orphan(home.path(), &orphan, "gone", 1);
+    with_run(home.path(), "stay", 3, |run| {
+        Objects::publish_desired(run, &kept).unwrap();
+        Objects::promote(run, kept.digest()).unwrap();
+    });
+    let report = retain(home.path());
+    assert_eq!(report.objects, 1, "only the genuine orphan is removed");
+    assert!(
+        !home
+            .path()
+            .join(".effigy/state/objects")
+            .join(&orphan_digest)
+            .exists(),
+        "the orphan's bytes are reclaimed"
+    );
+    assert_published(home.path(), "stay", &kept);
+}
+
+/// A pass whose context is cancelled while it sits between selection and the
+/// gate deletes nothing: a stale selection never outlives its authority.
+#[cfg(feature = "fault-injection")]
+#[test]
+fn retention_publication_cancelled_pass_deletes_nothing() {
+    let home = tempfile::tempdir().unwrap();
+    let value = closure("cancelled");
+    let digest = seed_orphan(home.path(), &value, "dev", 1);
+    let cx = context(EffectClass::Mutate);
+    let token = cx.operation().cancel_token().clone();
+    let (selected_tx, selected_rx) = std::sync::mpsc::channel();
+    let (resume_tx, resume_rx) = std::sync::mpsc::channel::<()>();
+    let home_path = home.path().to_path_buf();
+    let retention = std::thread::spawn(move || {
+        crate::fault_injection::with_hook(
+            move |name| {
+                if name == "RetentionObjectsSelected" {
+                    selected_tx.send(()).expect("signal selection");
+                    resume_rx.recv().expect("wait for the cancellation");
+                }
+                Ok(())
+            },
+            || try_retain_with(&home_path, &cx),
+        )
+    });
+    selected_rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("retention selected its candidates");
+    token.cancel(StopCause::Requested);
+    resume_tx.send(()).expect("resume retention");
+    let result = retention.join().unwrap();
+    assert!(
+        matches!(
+            result,
+            Err(StoreError::Interrupted(Interrupt::Cancelled {
+                cause: StopCause::Requested
+            }))
+        ),
+        "the cancelled pass refuses: {result:?}"
+    );
+    assert!(
+        home.path()
+            .join(".effigy/state/objects")
+            .join(&digest)
+            .exists(),
+        "a cancelled pass deletes nothing"
+    );
+}
+
+/// A pass with no bounded deadline never takes the objects gate: it refuses
+/// before deleting rather than holding the publication gate unbounded.
+#[test]
+fn retention_publication_open_deadline_refuses_the_gate_and_deletes_nothing() {
+    let home = tempfile::tempdir().unwrap();
+    let value = closure("open-deadline");
+    let digest = seed_orphan(home.path(), &value, "dev", 1);
+    let cx = OperationContext::new(
+        Deadline::Open(OpenReason::Shell),
+        CancelToken::default(),
+        Limits {
+            capture_tail: 1024,
+            log_rotate: 4096,
+            log_keep: 2,
+            line_max: 512,
+            queue_bytes: 2048,
+            probe_concurrency: 2,
+        },
+        EffectClass::Mutate,
+        Placement::Host,
+    )
+    .effects()
+    .unwrap();
+    let result = try_retain_with(home.path(), &cx);
+    assert!(
+        matches!(result, Err(StoreError::Unbounded)),
+        "an unbounded deadline refuses the objects gate: {result:?}"
+    );
+    assert!(
+        home.path()
+            .join(".effigy/state/objects")
+            .join(&digest)
+            .exists(),
+        "the refused pass deletes nothing"
+    );
+}
+
+/// The fix must not hold a broad store writer lock across the object sweep:
+/// while the pass sits between two delete batches (holding only the objects
+/// gate), an unrelated store writer proceeds immediately.
+#[cfg(feature = "fault-injection")]
+#[test]
+fn retention_publication_batches_leave_the_writer_gate_free() {
+    let home = tempfile::tempdir().unwrap();
+    let first = closure("batch-a");
+    let second = closure("batch-b");
+    let first_digest = seed_orphan(home.path(), &first, "dev", 1);
+    let second_digest = seed_orphan(home.path(), &second, "other", 3);
+    let (deleted_tx, deleted_rx) = std::sync::mpsc::channel();
+    let (probe_tx, probe_rx) = std::sync::mpsc::channel::<()>();
+    let home_path = home.path().to_path_buf();
+    let retention = std::thread::spawn(move || {
+        let mut fired = 0;
+        crate::fault_injection::with_hook(
+            move |name| {
+                if name == "RetentionObjectDeleted" {
+                    fired += 1;
+                    if fired == 1 {
+                        deleted_tx.send(()).expect("signal the first delete");
+                        probe_rx.recv().expect("wait for the probe writer");
+                    }
+                }
+                Ok(())
+            },
+            || try_retain(&home_path),
+        )
+    });
+    deleted_rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the first batch deleted");
+    // A plain unrelated writer with its own bounded budget: on the batched
+    // shape this returns at once; a broad writer lock across the sweep would
+    // block it until this bounded context expires and fail the expect.
+    let cx = context(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .transaction_within(&cx, crate::store::BusyWait::Context, |txn| {
+            txn.conn()
+                .execute(
+                    "INSERT OR REPLACE INTO meta(key, value) VALUES ('retention_probe', '1')",
+                    [],
+                )
+                .map_err(StoreError::from)
+        })
+        .expect("a writer proceeds between retention batches");
+    probe_tx.send(()).expect("resume retention");
+    let report = retention.join().unwrap().expect("retention pass");
+    assert_eq!(report.objects, 2, "both genuine orphans are reclaimed");
+    for digest in [&first_digest, &second_digest] {
+        assert!(
+            !home
+                .path()
+                .join(".effigy/state/objects")
+                .join(digest)
+                .exists(),
+            "{digest} is reclaimed"
+        );
+    }
 }
 #[test]
 fn closure_rejects_paths_that_escape_or_conflict() {
