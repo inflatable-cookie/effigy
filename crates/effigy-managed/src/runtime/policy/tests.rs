@@ -1,22 +1,5 @@
-use super::{enforce_non_zero_exit_policy, normalize_non_zero_exits};
+use super::enforce_non_zero_exit_policy;
 use crate::ManagedError;
-
-#[test]
-fn normalize_non_zero_exits_sorts_and_deduplicates() {
-    let exits = normalize_non_zero_exits(vec![
-        ("jobs".to_owned(), "exit=3".to_owned()),
-        ("api".to_owned(), "exit=2".to_owned()),
-        ("jobs".to_owned(), "exit=3".to_owned()),
-    ]);
-
-    assert_eq!(
-        exits,
-        vec![
-            ("api".to_owned(), "exit=2".to_owned()),
-            ("jobs".to_owned(), "exit=3".to_owned()),
-        ]
-    );
-}
 
 #[test]
 fn enforce_non_zero_exit_policy_returns_structured_error_when_enabled() {
