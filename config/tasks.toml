@@ -471,6 +471,15 @@
   { run = "sh scripts/oxide-selector.sh check -p effigy --features fault-injection --lib --tests", timeout_ms = 900000 },
   { run = "sh scripts/oxide-selector.sh clippy -p effigy --features fault-injection --lib --tests -- -D warnings", timeout_ms = 900000 },
 ] }
+# The run-effects observation seam proofs (effigy#609) touch one kernel
+# fault point; this compiles and strict-lints the touched kernel lib/tests in
+# both profiles.
+"check:kernel:run-effects-seam" = { visibility = "internal", group = "Maintenance", run = [
+  { run = "sh scripts/oxide-selector.sh check -p effigy-kernel --lib --tests", timeout_ms = 900000 },
+  { run = "sh scripts/oxide-selector.sh clippy -p effigy-kernel --lib --tests -- -D warnings", timeout_ms = 900000 },
+  { run = "sh scripts/oxide-selector.sh check -p effigy-kernel --lib --tests --features fault-injection", timeout_ms = 900000 },
+  { run = "sh scripts/oxide-selector.sh clippy -p effigy-kernel --lib --tests --features fault-injection -- -D warnings", timeout_ms = 900000 },
+] }
 "test:task-engine:consumer-fixtures" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "python3 tests/scripts/sequence-consumer-fixtures.py --candidate target/discovery-proof/effigy {args}", timeout_ms = 1800000 }] }
 "test:task-engine:consumer-baseline" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ run = "python3 tests/scripts/sequence-consumer-baseline.py --commit 7df05cf3fada5fc9e338c730ad685299c042e040 {args}", timeout_ms = 1500000 }] }
 "qa:task-engine:sequence-consumers" = { visibility = "internal", group = "Maintenance", run = [{ run = "python3 tests/scripts/sequence-consumer-plans.py --binary target/discovery-proof/effigy {args}", timeout_ms = 900000 }] }
