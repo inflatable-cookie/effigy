@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use effigy_catalog::volumes::{
-    CacheVolumeKind, RuntimeVolumeMetadata, VolumeIdentity, verify_volume_identity,
+    verify_volume_identity, CacheVolumeKind, RuntimeVolumeMetadata, VolumeIdentity,
 };
 use effigy_containers::{ContainerCacheGlobalEntry, EffectiveContainerPolicy};
 use effigy_containers::{
@@ -446,10 +446,8 @@ mod tests {
             Ok("web-dev".to_owned())
         );
         // Missing project label.
-        let no_project = metadata_with_labels(
-            "acme-website-target",
-            &[("com.effigy.managed", "true")],
-        );
+        let no_project =
+            metadata_with_labels("acme-website-target", &[("com.effigy.managed", "true")]);
         assert!(effigy_owned_project("acme-website-target", &no_project)
             .expect_err("missing project label")
             .contains("com.effigy.project` is missing"));
@@ -494,7 +492,10 @@ mod tests {
                 &[
                     ("com.effigy.managed", "true"),
                     ("com.effigy.project", "acme-dev"),
-                    ("com.effigy.volume-name", "workspace-app-reference-dev-workspace-acme-api-target"),
+                    (
+                        "com.effigy.volume-name",
+                        "workspace-app-reference-dev-workspace-acme-api-target",
+                    ),
                 ],
             ),
         );

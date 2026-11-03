@@ -9,8 +9,8 @@ use effigy_catalog::volumes::{
 use effigy_containers::ContainerCacheGlobalEntry;
 
 use super::planning::{
-    cache_kind_from_volume_name, collect_global_cache_entries_from_names,
-    effigy_owned_project, parse_volume_cache_kind_rows,
+    cache_kind_from_volume_name, collect_global_cache_entries_from_names, effigy_owned_project,
+    parse_volume_cache_kind_rows,
 };
 use super::volume_io::inspect_runtime_volume_metadata_batch_strict;
 use crate::read::discover_running_environments;
@@ -59,11 +59,15 @@ where
         .collect::<Vec<_>>();
     // Deletion evidence must be complete: a failed or partial inspection is
     // an error, never missing metadata that reads as removable (contract 005).
-    let metadata =
-        inspect_runtime_volume_metadata_batch_strict(cwd, profile, &names, run_runtime_volume_capture)?
-            .into_iter()
-            .map(|entry| (entry.name.clone(), entry))
-            .collect::<BTreeMap<_, _>>();
+    let metadata = inspect_runtime_volume_metadata_batch_strict(
+        cwd,
+        profile,
+        &names,
+        run_runtime_volume_capture,
+    )?
+    .into_iter()
+    .map(|entry| (entry.name.clone(), entry))
+    .collect::<BTreeMap<_, _>>();
     let legacy_mount_points = metadata
         .values()
         .filter(|entry| cache_kind_from_volume_name(&entry.name).is_none())

@@ -317,7 +317,9 @@ mod tests {
             "endpoint",
             &names,
             &|_cwd: &Path, _endpoint: &str, _command: &DockerCommand| {
-                Err(EffigyRuntimeError::task_invocation("volume inspect failed (1)"))
+                Err(EffigyRuntimeError::task_invocation(
+                    "volume inspect failed (1)",
+                ))
             },
         )
         .expect_err("spawn failure");
@@ -350,7 +352,10 @@ mod tests {
             },
         )
         .expect_err("duplicate rows");
-        assert!(duplicate.to_string().contains("duplicate entries"), "{duplicate}");
+        assert!(
+            duplicate.to_string().contains("duplicate entries"),
+            "{duplicate}"
+        );
 
         // Malformed JSON is an error.
         let malformed = inspect_runtime_volume_metadata_batch_strict(

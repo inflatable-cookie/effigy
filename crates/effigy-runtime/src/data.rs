@@ -29,8 +29,8 @@ use effigy_containers::{
 };
 
 use crate::EffigyRuntimeError;
-use cache::{collect_global_cache_inventory, project_is_running, GlobalCachePruneVerdict};
 pub use cache::discovered_running_projects;
+use cache::{collect_global_cache_inventory, project_is_running, GlobalCachePruneVerdict};
 use planning::{cache_kind_label, cache_scope_label, ensure_cache_prune_target_is_stopped};
 pub use planning::{
     cache_operation_plan, data_operation_plan, global_cache_operation_plan,
@@ -241,8 +241,7 @@ where
             .entries
             .into_iter()
             .filter(|cache| {
-                project_filter
-                    .is_none_or(|project| cache.project_name.as_deref() == Some(project))
+                project_filter.is_none_or(|project| cache.project_name.as_deref() == Some(project))
                     && kind_filter.is_none_or(|kind| cache.kind == kind)
             })
             .collect::<Vec<_>>();
@@ -406,8 +405,7 @@ where
             .entries
             .into_iter()
             .filter(|cache| {
-                project_filter
-                    .is_none_or(|project| cache.project_name.as_deref() == Some(project))
+                project_filter.is_none_or(|project| cache.project_name.as_deref() == Some(project))
                     && kind_filter.is_none_or(|kind| cache.kind == kind)
             })
             .collect::<Vec<_>>();
@@ -434,7 +432,11 @@ where
                         Some((done, total)),
                         None,
                     );
-                    run_runtime_volume_capture(cwd, &resolved_profile, &remove_volume_command(&name))?;
+                    run_runtime_volume_capture(
+                        cwd,
+                        &resolved_profile,
+                        &remove_volume_command(&name),
+                    )?;
                     progress.update(
                         format!("removing cache volume `{name}`"),
                         Some((done, total)),
@@ -471,8 +473,9 @@ where
                         Some(GlobalCachePruneVerdict::Foreign(reason)) => reason.clone(),
                         _ => format!("volume `{name}` has no complete inspection record"),
                     };
-                    warnings
-                        .push(format!("left {reason}; it was not created for this environment"));
+                    warnings.push(format!(
+                        "left {reason}; it was not created for this environment"
+                    ));
                     progress.update(
                         format!("skipping cache volume `{name}`"),
                         Some((done, total)),
@@ -1088,11 +1091,17 @@ mod global_cache_prune_tests {
             ),
             (
                 OWNED_STOPPED,
-                inspect_entry(OWNED_STOPPED, &effigy_labels(STOPPED_PROJECT, OWNED_STOPPED)),
+                inspect_entry(
+                    OWNED_STOPPED,
+                    &effigy_labels(STOPPED_PROJECT, OWNED_STOPPED),
+                ),
             ),
             (
                 OWNED_RUNNING,
-                inspect_entry(OWNED_RUNNING, &effigy_labels(RUNNING_PROJECT, OWNED_RUNNING)),
+                inspect_entry(
+                    OWNED_RUNNING,
+                    &effigy_labels(RUNNING_PROJECT, OWNED_RUNNING),
+                ),
             ),
         ])
     }
@@ -1116,9 +1125,7 @@ mod global_cache_prune_tests {
                 listing: standard_listing(),
                 inspect_fragments: standard_inspect_fragments(),
                 inspect_result: None,
-                kind_rows: format!(
-                    "/var/lib/docker/volumes/{LEGACY_EFV}/_data\trust-target\n"
-                ),
+                kind_rows: format!("/var/lib/docker/volumes/{LEGACY_EFV}/_data\trust-target\n"),
                 removals: Rc::new(RefCell::new(Vec::new())),
                 inspect_requests: Rc::new(RefCell::new(Vec::new())),
                 commands: Rc::new(RefCell::new(Vec::new())),
@@ -1127,9 +1134,7 @@ mod global_cache_prune_tests {
         }
 
         fn capture(&self, command: &DockerCommand) -> Result<Output, EffigyRuntimeError> {
-            self.commands
-                .borrow_mut()
-                .push(command.args.join(" "));
+            self.commands.borrow_mut().push(command.args.join(" "));
             let sub = |index: usize| command.args.get(index).map(String::as_str);
             if sub(0) == Some("volume") && sub(1) == Some("ls") {
                 return Ok(output(&self.listing.join("\n")));
@@ -1235,7 +1240,12 @@ mod global_cache_prune_tests {
         let entries = cache_entries(&report);
         assert!(entries.contains(&(OWNED_STOPPED.to_owned(), true, false)));
         assert!(entries.contains(&(OWNED_RUNNING.to_owned(), false, true)));
-        for foreign in [FOREIGN_TARGET, FOREIGN_NODE_MODULES, FOREIGN_PNPM, LEGACY_EFV] {
+        for foreign in [
+            FOREIGN_TARGET,
+            FOREIGN_NODE_MODULES,
+            FOREIGN_PNPM,
+            LEGACY_EFV,
+        ] {
             assert!(
                 entries.contains(&(foreign.to_owned(), false, false)),
                 "{foreign} must be listed as kept"
@@ -1244,7 +1254,12 @@ mod global_cache_prune_tests {
         // Every foreign volume is reported, not silently kept.
         let warnings = warning_lines(&report);
         assert_eq!(warnings.len(), 4, "warnings: {warnings:?}");
-        for foreign in [FOREIGN_TARGET, FOREIGN_NODE_MODULES, FOREIGN_PNPM, LEGACY_EFV] {
+        for foreign in [
+            FOREIGN_TARGET,
+            FOREIGN_NODE_MODULES,
+            FOREIGN_PNPM,
+            LEGACY_EFV,
+        ] {
             assert!(
                 warnings
                     .iter()
@@ -1301,7 +1316,10 @@ mod global_cache_prune_tests {
             |_cwd: &Path, _endpoint: &str, command: &DockerCommand| runtime.capture(command),
         )
         .expect_err("failed inspect must fail the prune");
-        assert!(error.to_string().contains("volume inspect failed"), "{error}");
+        assert!(
+            error.to_string().contains("volume inspect failed"),
+            "{error}"
+        );
         assert!(removals.borrow().is_empty());
     }
 
@@ -1310,7 +1328,10 @@ mod global_cache_prune_tests {
     #[test]
     fn global_cache_prune_duplicate_inspection_rows_are_an_error() {
         let mut runtime = FakeRuntime::standard();
-        let entry = inspect_entry(OWNED_STOPPED, &effigy_labels(STOPPED_PROJECT, OWNED_STOPPED));
+        let entry = inspect_entry(
+            OWNED_STOPPED,
+            &effigy_labels(STOPPED_PROJECT, OWNED_STOPPED),
+        );
         runtime
             .inspect_fragments
             .insert(OWNED_STOPPED, format!("{entry},{entry}"));
@@ -1326,9 +1347,7 @@ mod global_cache_prune_tests {
         )
         .expect_err("duplicate inspect rows must fail");
         assert!(
-            error
-                .to_string()
-                .contains("duplicate entries")
+            error.to_string().contains("duplicate entries")
                 && error.to_string().contains(OWNED_STOPPED),
             "{error}"
         );
@@ -1418,7 +1437,10 @@ mod global_cache_prune_tests {
         .expect("prune succeeds");
         assert!(removals.borrow().is_empty());
         assert_eq!(prune_report(&rendered)["removed_count"], 0);
-        assert_eq!(prune_report(&rendered)["caches"].as_array().map(Vec::len), Some(0));
+        assert_eq!(
+            prune_report(&rendered)["caches"].as_array().map(Vec::len),
+            Some(0)
+        );
 
         let runtime = FakeRuntime::standard();
         let removals = Rc::clone(&runtime.removals);
