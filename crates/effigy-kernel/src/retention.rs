@@ -282,23 +282,28 @@ pub fn retain(
     // among the newest 3 superseded per resource.
     let objects: Vec<String> = store
         .conn()
-        .prepare(
-            "SELECT digest FROM objects o WHERE NOT EXISTS (\
-               SELECT 1 FROM events e WHERE e.kind='kernel:object-staging' AND \
-               e.state IN ('intended','applied','unknown','residue') AND \
-               json_extract(e.target,'$.payload')=o.digest) AND NOT EXISTS (\
-               SELECT 1 FROM object_refs r WHERE r.digest=o.digest AND \
-               (r.role IN ('desired','last_applied') OR (r.role='superseded' AND (\
-                 SELECT count(*) FROM object_refs n WHERE n.resource=r.resource \
-                 AND n.role='superseded' AND n.seq > r.seq) < ?1))) LIMIT ?2",
-        )?
-        .query_map(params![SUPERSEDED_OBJECTS_KEPT, left as i64], |row| {
-            row.get(0)
-        })?
+        .prepare(&format!(
+            "SELECT digest FROM objects o WHERE {} LIMIT ?1",
+            unreferenced_where()
+        ))?
+        .query_map([left as i64], |row| row.get(0))?
         .collect::<Result<Vec<String>, _>>()?;
+    crate::fault_point!(RetentionObjectsSelected).map_err(StoreError::from)?;
+    // The selection read without the objects gate; the deletes run under it.
+    // A publication journals its intent before that gate and commits its row
+    // and desired reference under it, so every candidate is rechecked with
+    // [`still_unreferenced`] before its bytes and row are removed: a digest
+    // that gained an intent or a reference after the selection keeps its
+    // bytes, its row and the references that name it (K15, effigy#608), and
+    // one that stayed unreferenced is still reclaimed. The recheck is one
+    // indexed read per candidate; the writer batches stay as short as before.
+    let mut removed = 0usize;
     if !objects.is_empty() {
         let object_guard = crate::objects::lock(cx, root)?;
         for digest in &objects {
+            if !still_unreferenced(store, digest)? {
+                continue;
+            }
             objects_dir.remove_tree(&FileName::new(digest)?, Trust::Private, TREE_DEPTH + 4)?;
             objects_dir.sync()?;
             in_batch(store, cx, |txn| {
@@ -306,11 +311,13 @@ pub fn retain(
                     .execute("DELETE FROM objects WHERE digest=?1", [digest])?;
                 Ok(())
             })?;
+            crate::fault_point!(RetentionObjectDeleted).map_err(StoreError::from)?;
+            removed += 1;
         }
         drop(object_guard);
     }
-    report.objects = objects.len();
-    left = left.saturating_sub(objects.len());
+    report.objects = removed;
+    left = left.saturating_sub(removed);
 
     // Released claims whose quarantine has ended on the boot clock. An
     // `Unknown` clock keeps them (R3).
@@ -539,6 +546,38 @@ fn meta_value(store: &Store, key: &str) -> Result<Option<String>, StoreError> {
         [key],
         |row| row.get(0),
     ))?)
+}
+
+/// The object-candidate predicate (§7.4): nothing references the object — no
+/// staging event names it, and no desired or last-applied ref, nor one of the
+/// newest kept superseded refs per resource, points at it. Selection and the
+/// gate-held recheck share this one definition, so the two reads cannot
+/// drift apart.
+fn unreferenced_where() -> String {
+    format!(
+        "NOT EXISTS (\
+           SELECT 1 FROM events e WHERE e.kind='kernel:object-staging' AND \
+           e.state IN ('intended','applied','unknown','residue') AND \
+           json_extract(e.target,'$.payload')=o.digest) AND NOT EXISTS (\
+           SELECT 1 FROM object_refs r WHERE r.digest=o.digest AND \
+           (r.role IN ('desired','last_applied') OR (r.role='superseded' AND (\
+             SELECT count(*) FROM object_refs n WHERE n.resource=r.resource \
+             AND n.role='superseded' AND n.seq > r.seq) < {SUPERSEDED_OBJECTS_KEPT})))"
+    )
+}
+
+/// Whether a digest is still unreferenced. Publication journals its intent
+/// before the objects gate and commits its row and desired reference under
+/// it, so this read under the gate sees every in-flight publication either
+/// as an intent or as a reference.
+pub(crate) fn still_unreferenced(store: &Store, digest: &str) -> Result<bool, StoreError> {
+    let sql = format!(
+        "SELECT EXISTS (SELECT 1 FROM objects o WHERE o.digest=?1 AND {})",
+        unreferenced_where()
+    );
+    Ok(store
+        .conn()
+        .query_row(&sql, [digest], |row| row.get::<_, bool>(0))?)
 }
 
 /// One short write transaction that waits only for its own context: retention
