@@ -141,15 +141,46 @@ def _raw_string_start(text, index):
     return (len(match.group(1)), match.end() - 1) if match else None
 
 
+CHAR_ESCAPES = ('\'', '"', '\\', 'n', 'r', 't', '0')
+HEX_DIGITS = frozenset('0123456789abcdefABCDEF')
+
+
 def _char_literal_end(text, index):
-    """The end of a char literal at `index`, or None for a lifetime."""
+    """The end of a char literal at `index`, or None for a lifetime.
+
+    Only the shapes rustc accepts are recognized: one plain character, or one
+    escape — the single-character escapes, `\\x` with two hex digits, or
+    `\\u` with one to six hex digits in braces — closed by the very next quote.
+    Anything else (a lifetime, several characters, an unterminated or
+    malformed literal) returns None, and `code_only` leaves those columns as
+    code. The scan therefore never searches past a literal's own closing
+    quote: uncertain input can stay a false positive, but it can never blank
+    the executable code after it.
+    """
     if index + 1 >= len(text):
         return None
     if text[index + 1] == '\\':
         cursor = index + 2
-        while cursor < len(text) and text[cursor] != "'":
-            cursor += 2 if text[cursor] == '\\' else 1
-        return cursor + 1 if cursor < len(text) else None
+        if cursor >= len(text) or text[cursor] == '\n':
+            return None
+        if text[cursor] == 'x':
+            digits = text[cursor + 1:cursor + 3]
+            if len(digits) < 2 or any(digit not in HEX_DIGITS for digit in digits):
+                return None
+            cursor += 3
+        elif text[cursor] == 'u':
+            brace = text.find('}', cursor + 2, cursor + 9)
+            body = text[cursor + 2:brace]
+            if brace < 0 or not body or any(digit not in HEX_DIGITS for digit in body):
+                return None
+            cursor = brace + 1
+        elif text[cursor] in CHAR_ESCAPES:
+            cursor += 1
+        else:
+            return None
+        if cursor < len(text) and text[cursor] == "'":
+            return cursor + 1
+        return None
     if index + 2 < len(text) and text[index + 2] == "'" and text[index + 1] != "'":
         return index + 3
     return None

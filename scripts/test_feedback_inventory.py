@@ -302,6 +302,60 @@ fn show<'a>(text: &'a str) {
         self.assertIn('src/lifetimes.rs:2:', errors[1])
         self.assertIn('let bar = ProgressBar::no_length();', errors[1])
 
+    def test_an_escaped_backslash_or_quote_literal_preserves_later_code(self):
+        # The escape arm used to start its closing-quote scan on the escaped
+        # character, so `'\\'` skipped its own closing quote and blanked the
+        # real code through the next quote: `indicatif_errors` went quietly
+        # clean after `let sep = '\\';`. The scan now recognizes exactly
+        # rustc's char literals — one character, or one `\n`/`\x`/`\u{...}`
+        # escape closed by the very next quote — so an escaped backslash or
+        # quote blanks exactly itself and the ordinary char after the real
+        # call stays an ordinary char; a malformed escape stays visible as
+        # code (a possible false positive, never a false clean); and
+        # quote-shaped text inside strings and comments still is not code.
+        sources = {
+            'backslash.rs': r"""let sep = '\\';
+let bar = ProgressBar::no_length();
+let q = 'x';
+""",
+            'escaped_quote.rs': r"""let sep = '\'';
+let bar = ProgressBar::no_length();
+let q = 'x';
+""",
+            'uncertain.rs': r"""let broken = '\q;
+let bar = ProgressBar::no_length();
+let z = 'y';
+""",
+            'contents.rs': r"""const NOTE: &str = "the '\\'; separator";
+// the '\\'; here is a comment
+/* a '\\'; block comment too */
+fn commented_out() {
+    // let bar = ProgressBar::no_length();
+}
+fn show() {
+    let bar = ProgressBar::no_length();
+}
+""",
+        }
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            for name, text in sources.items():
+                (root / 'src' / name).write_text(text)
+            # code_only keeps the line structure and the real call verbatim.
+            for name, text in sources.items():
+                masked = lint.code_only(text)
+                self.assertEqual(len(masked.splitlines()), len(text.splitlines()), name)
+                self.assertIn('let bar = ProgressBar::no_length();', masked, name)
+            errors = lint.indicatif_errors(root)
+        self.assertEqual(len(errors), 4, errors)
+        for location in ('src/backslash.rs:2:', 'src/escaped_quote.rs:2:',
+                         'src/uncertain.rs:2:', 'src/contents.rs:8:'):
+            matching = [error for error in errors if error.startswith(location)]
+            self.assertEqual(len(matching), 1, (location, errors))
+            self.assertIn('let bar = ProgressBar::no_length();', matching[0])
+            self.assertIn(lint.SPINNER_MIGRATION, matching[0])
+
     def test_a_suppression_in_a_comment_or_literal_is_not_a_suppression(self):
         # The suppression scan used to read raw text, so a doc or message
         # string mentioning the attribute failed an unrelated change.
