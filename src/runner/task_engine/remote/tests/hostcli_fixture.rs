@@ -320,6 +320,7 @@ fn hostcli_signal_case(signal: i32, changed_backend: bool) {
         .tempdir_in(scratch)
         .unwrap()
         .keep();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
     let bin = root.join("bin");
     fs::create_dir(&bin).unwrap();
     let repo = root.join("repo");
