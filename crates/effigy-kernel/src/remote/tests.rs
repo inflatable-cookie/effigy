@@ -93,7 +93,7 @@ fn qualification_registration_refuses_partial_foreign_and_ambiguous_effects() {
     let registration = reg();
     let applied = effect(&registration, true);
     assert_eq!(
-        qualification_registration(&[applied.clone()], &env(), &container()).unwrap(),
+        qualification_registration(std::slice::from_ref(&applied), &env(), &container()).unwrap(),
         registration
     );
     assert!(
@@ -105,7 +105,7 @@ fn qualification_registration_refuses_partial_foreign_and_ambiguous_effects() {
     );
     let mut foreign = container();
     foreign.id = "foreign".into();
-    assert!(qualification_registration(&[applied.clone()], &env(), &foreign).is_err());
+    assert!(qualification_registration(std::slice::from_ref(&applied), &env(), &foreign).is_err());
     let mut stale = env();
     stale.generation = Generation::new(2);
     assert!(qualification_registration(&[applied], &stale, &container()).is_err());

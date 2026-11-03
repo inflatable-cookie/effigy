@@ -143,6 +143,36 @@ impl RecoveryBinding {
     }
 }
 
+fn inspect(path: &Path, deadline: Instant) -> Result<(FileIdentity, Digest), String> {
+    if Instant::now() >= deadline {
+        return Err("backend identity deadline exceeded".into());
+    }
+    let file = std::fs::File::open(path).map_err(|_| "backend executable unavailable")?;
+    let before = file
+        .metadata()
+        .map_err(|_| "backend executable unavailable")?;
+    if !before.is_file() || before.mode() & 0o111 == 0 || before.len() > MAX_EXECUTABLE_BYTES {
+        return Err("backend executable is not a bounded executable file".into());
+    }
+    let mut bytes = Vec::new();
+    (&file)
+        .take(MAX_EXECUTABLE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "backend executable unreadable")?;
+    let after = file
+        .metadata()
+        .map_err(|_| "backend executable unavailable")?;
+    let path_metadata = std::fs::metadata(path).map_err(|_| "backend executable unavailable")?;
+    if Instant::now() >= deadline
+        || u64::try_from(bytes.len()).ok() != Some(before.len())
+        || FileIdentity::from(&before) != FileIdentity::from(&after)
+        || FileIdentity::from(&before) != FileIdentity::from(&path_metadata)
+    {
+        return Err("backend executable changed or deadline expired".into());
+    }
+    Ok((FileIdentity::from(&before), Digest::of(&bytes)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,34 +245,4 @@ mod tests {
         };
         assert!(fresh.restore_recovery(Some(&encoded), deadline()).is_err());
     }
-}
-
-fn inspect(path: &Path, deadline: Instant) -> Result<(FileIdentity, Digest), String> {
-    if Instant::now() >= deadline {
-        return Err("backend identity deadline exceeded".into());
-    }
-    let file = std::fs::File::open(path).map_err(|_| "backend executable unavailable")?;
-    let before = file
-        .metadata()
-        .map_err(|_| "backend executable unavailable")?;
-    if !before.is_file() || before.mode() & 0o111 == 0 || before.len() > MAX_EXECUTABLE_BYTES {
-        return Err("backend executable is not a bounded executable file".into());
-    }
-    let mut bytes = Vec::new();
-    (&file)
-        .take(MAX_EXECUTABLE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "backend executable unreadable")?;
-    let after = file
-        .metadata()
-        .map_err(|_| "backend executable unavailable")?;
-    let path_metadata = std::fs::metadata(path).map_err(|_| "backend executable unavailable")?;
-    if Instant::now() >= deadline
-        || u64::try_from(bytes.len()).ok() != Some(before.len())
-        || FileIdentity::from(&before) != FileIdentity::from(&after)
-        || FileIdentity::from(&before) != FileIdentity::from(&path_metadata)
-    {
-        return Err("backend executable changed or deadline expired".into());
-    }
-    Ok((FileIdentity::from(&before), Digest::of(&bytes)))
 }

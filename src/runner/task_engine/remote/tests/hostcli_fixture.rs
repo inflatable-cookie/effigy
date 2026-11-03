@@ -713,7 +713,7 @@ fn hostcli_signal_case(signal: i32, changed_backend: bool) {
     );
     for line in argv_log.lines() {
         let argv: Vec<String> = serde_json::from_str(line).unwrap();
-        assert_eq!(argv.get(0).map(String::as_str), Some("--context"));
+        assert_eq!(argv.first().map(String::as_str), Some("--context"));
         assert_eq!(argv.get(1).map(String::as_str), Some("fixture"));
         assert!(matches!(
             argv.get(2).map(String::as_str),
