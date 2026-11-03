@@ -163,6 +163,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::process::ExitStatusExt;
     use std::path::Path;
     use std::process::Output;
     use std::sync::{Arc, Mutex};

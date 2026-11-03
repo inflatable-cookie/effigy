@@ -57,11 +57,13 @@ pub(super) fn validate_transfer_path(
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::process::ExitStatusExt;
     use std::path::Path;
     use std::process::Output;
     use std::sync::{Arc, Mutex};
 
-    use super::{resolve_managed_volume, run_volume_transfer, validate_transfer_path};
+    use super::super::run_volume_transfer;
+    use super::{resolve_managed_volume, validate_transfer_path};
     use crate::test_support::generated_policy;
     use effigy_catalog::volumes::{DockerCommand, ManagedVolume};
     use effigy_containers::ContainerDataTransferAction;
