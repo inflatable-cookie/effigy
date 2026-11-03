@@ -182,7 +182,7 @@ class MktempGuardTests(unittest.TestCase):
         )
         result = run_guard(repo, MKTEMP_GUARD)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("every harness `mktemp` honours TMPDIR", result.stdout)
+        self.assertIn('every harness `mktemp` honours TMPDIR', result.stdout)
 
     def test_bare_mktemp_fails(self):
         repo = self._repo()
@@ -236,6 +236,76 @@ class MktempGuardTests(unittest.TestCase):
         write(
             os.path.join(repo, "tests", "scripts", "note.sh"),
             'echo "please run mktemp"\n',
+        )
+        result = run_guard(repo, MKTEMP_GUARD)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_quoted_dollar_substitution_without_template_fails(self):
+        repo = self._repo()
+        write(
+            os.path.join(repo, "tests", "scripts", "quoted-sub.sh"),
+            'dir="$(mktemp -d)"\n',
+        )
+        result = run_guard(repo, MKTEMP_GUARD)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("has no template", result.stdout)
+        self.assertIn("tests/scripts/quoted-sub.sh:1", result.stdout)
+
+    def test_quoted_backtick_substitution_without_template_fails(self):
+        repo = self._repo()
+        write(
+            os.path.join(repo, "tests", "scripts", "quoted-tick.sh"),
+            'dir="`mktemp -d`"\n',
+        )
+        result = run_guard(repo, MKTEMP_GUARD)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("has no template", result.stdout)
+        self.assertIn("tests/scripts/quoted-tick.sh:1", result.stdout)
+
+    def test_quoted_substitution_hardcoded_tmp_fails(self):
+        repo = self._repo()
+        write(
+            os.path.join(repo, "tests", "scripts", "quoted-host.sh"),
+            'dir="$(mktemp -d /tmp/effigy-fixture.XXXXXX)"\n',
+        )
+        result = run_guard(repo, MKTEMP_GUARD)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("ignores TMPDIR", result.stdout)
+        self.assertIn("tests/scripts/quoted-host.sh:1", result.stdout)
+
+    def test_quoted_substitution_with_tmpdir_template_passes(self):
+        repo = self._repo()
+        write(
+            os.path.join(repo, "tests", "scripts", "quoted-ok.sh"),
+            'dir="$(mktemp -d "${TMPDIR:-/tmp}/effigy-fixture.XXXXXX")"\n',
+        )
+        result = run_guard(repo, MKTEMP_GUARD)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('every harness `mktemp` honours TMPDIR', result.stdout)
+
+    def test_single_quoted_literal_is_not_a_call(self):
+        repo = self._repo()
+        write(
+            os.path.join(repo, "tests", "scripts", "single.sh"),
+            "echo 'mktemp -d'\n",
+        )
+        result = run_guard(repo, MKTEMP_GUARD)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_escaped_dollar_opener_is_not_a_call(self):
+        repo = self._repo()
+        write(
+            os.path.join(repo, "tests", "scripts", "esc-dollar.sh"),
+            'echo "\\$(mktemp -d)"\n',
+        )
+        result = run_guard(repo, MKTEMP_GUARD)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_escaped_backtick_opener_is_not_a_call(self):
+        repo = self._repo()
+        write(
+            os.path.join(repo, "tests", "scripts", "esc-tick.sh"),
+            'echo "\\`mktemp -d\\`"\n',
         )
         result = run_guard(repo, MKTEMP_GUARD)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

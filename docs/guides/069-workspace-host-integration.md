@@ -327,8 +327,12 @@ directory lands on the volume:
   `effigy` runs that reuse their parent's directory.
 
 `effigy qa:docs:mktemp` keeps the shell half honest: a harness `mktemp`
-without a template, or with a `/tmp`-shaped one, fails the check. A script that
-runs *inside* a Linux guest or container is exempt, annotated inline
+without a template, or with a `/tmp`-shaped one, fails the check. A quoted
+mention, a single-quoted literal, and an escaped dollar-paren or backtick
+opener are not calls; an unescaped `$(...)` or backtick substitution inside
+double quotes still runs and is checked. The scan is line-local lexical
+matching of that subset, not a shell parser. A script that runs *inside* a
+Linux guest or container is exempt, annotated inline
 (`# mktemp-exempt: <reason>`), because the guest's `/tmp` is its own.
 
 What does not follow the scratch directory:

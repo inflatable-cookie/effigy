@@ -159,10 +159,14 @@ internal SSD.
 
 Shell harnesses follow the same rule through `${TMPDIR:-/tmp}` `mktemp`
 templates; `effigy qa:docs:mktemp` fails a bare `mktemp` or a `/tmp`-shaped
-template. A quoted mention is not a call. `effigy test:qa:static-guards`
-proves those diagnostics on an owned synthetic tree, including crate
-`tests/scripts` and the guest `mktemp-exempt` annotation; it does not
-replace the live check.
+template. A single-quoted literal, a double-quoted mention, and an escaped
+dollar-paren or backtick opener are not calls; an unescaped `$(...)` or
+backtick substitution inside double quotes is a call and still needs a
+`${TMPDIR:-/tmp}` template. The detector is line-local lexical matching of
+that subset (eval, aliases, and substitutions that span lines are out of
+scope), not a shell parser. `effigy test:qa:static-guards` proves those
+diagnostics on an owned synthetic tree, including crate `tests/scripts` and
+the guest `mktemp-exempt` annotation; it does not replace the live check.
 
 Live Colima container fixtures stage under `~/.cache` until the `effigy`
 profile mounts `/Volumes/Builds/scratch`. The profile's `colima.yaml` has
