@@ -62,6 +62,17 @@ member is live, and once the group has no live member it exits by itself within 
 bounded deadline (effigy#520), so an owner killed without settling leaves no
 anchor behind. SIGTERM stays the cooperative exit (Q-014), which retires evidence
 a harness stopped rather than leaving it to survive indefinitely.
+The §12.1 fault drives use that retirement boundary without racing it: each
+scenario pins the anchors it spawned (SIGSTOP) for the length of the faulted
+run, because a free-running anchor can retire itself within one poll of its
+group closing — legitimately, before settlement reaches it — and the required
+`AnchorStop`/`AnchorStopped` crossings then miss delivery under shard load
+(effigy#618). A stopped anchor is still positive evidence (`Stopped` verifies),
+settlement still stops it last by identity, and recovery stops it the same way,
+so the pin freezes exactly the boundary the points observe; dropping it
+continues the anchors, so an abandoned run still leaves no anchor behind. The
+recovery step's rerun settles on the recovery budget, not the one-second
+injected-scenario budget a faulted settle waits out (effigy#618).
 A custody group that owes the caller no terminal also gets its own session, so a
 suite, a nested task session or a harness census never meets a custody helper of
 another run in the session it started.
