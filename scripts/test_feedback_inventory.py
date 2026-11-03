@@ -226,11 +226,12 @@ struct Sink;
 
     def test_only_code_text_is_a_use(self):
         # `code_only` decides what counts as code: literal contents (plain,
-        # raw, with embedded quotes) and comments (line, block, nested block)
-        # are blanked, so a message naming a constructor and commented-out
-        # code are not uses, delimiters inside strings hide nothing, and
-        # every newline is kept, so the one real call is reported at its
-        # exact source line.
+        # raw, with embedded quotes — a raw string's contents, inner quote
+        # included, hide the code-shaped text after the quote) and comments
+        # (line, block, nested block) are blanked, so a message naming a
+        # constructor and commented-out code are not uses, delimiters inside
+        # strings hide nothing, and every newline is kept, so the one real
+        # call is reported at its exact source line.
         source = """/* a leading block
    comment */
 pub const HELP: &str = "Use indicatif to draw a ProgressBar";
@@ -242,6 +243,8 @@ pub fn message() -> &'static str {
 pub fn raw() -> &'static str {
     r#"indicatif ProgressStyle "quoted" /* not a comment */"#
 }
+
+pub const RAW_CODE: &str = r#"a " ProgressBar::no_length(); "#;
 
 fn commented_out() {
     // let bar = ProgressBar::no_length();
@@ -262,16 +265,17 @@ fn show() {
             (root / 'src' / 'code_only.rs').write_text(source)
             errors = lint.indicatif_errors(root)
         self.assertEqual(len(errors), 1, errors)
-        self.assertIn('src/code_only.rs:23:', errors[0])
+        self.assertIn('src/code_only.rs:25:', errors[0])
         self.assertIn('let bar = ProgressBar::no_length();', errors[0])
         self.assertIn('live_step(ProgressSource::waiting_for', errors[0])
 
     def test_char_literals_and_lifetimes_do_not_blank_later_code(self):
-        # A char literal (escaped or plain) and a lifetime are not string
-        # openers: a gate must not read the rest of the file as one literal
-        # and go quiet.
-        source = r"""const ESCAPED: char = '\'';
-const QUOTE: char = '"';
+        # A char literal is not a string opener in either spelling: the plain
+        # `'"'` survives only through the plain arm, the escaped `'\"'` only
+        # through the escape arm, and a lifetime through neither. A gate must
+        # not read the rest of the file as one literal and go quiet.
+        source = r"""const PLAIN_QUOTE: char = '"';
+const ESCAPED_QUOTE: char = '\"';
 
 fn show<'a>(text: &'a str) {
     let bar = ProgressBar::no_length();

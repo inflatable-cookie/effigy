@@ -875,9 +875,10 @@ During v0.x, MINOR bumps may include breaking changes.
   synthetic renamed-helper case is folded into the real rustc alias-resolver
   fixture, the string/comment lexing cases into one code-only contract, and
   new controls pin the test-target diagnostic skip, the `steps::step` migration
-  row, char literals and lifetimes, the missing-sink refusal, the sink's one
-  allowed non-import mention, and the migration message's marker text. The
-  production detector is unchanged (effigy#593).
+  row, char literals (plain and escaped spellings), lifetimes, raw strings, the
+  missing-sink refusal, the sink's one allowed non-import mention, and the
+  migration message's marker text. The production detector is unchanged
+  (effigy#593).
 
 - Census self-test and the Cargo-route / TMPDIR hygiene detectors now prove
   named scanner and detector claims on owned fixtures: include! / file-module
