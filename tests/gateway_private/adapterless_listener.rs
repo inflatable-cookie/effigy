@@ -1712,9 +1712,8 @@ fn managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent(
     // kernel helper settlement both name this root quiescent.
     fixture_sweep::wait_for_watchdog_exit(&root, owner_pid, WATCHDOG_EXIT_BUDGET)
         .expect("the owner's watchdog finished its ledger writes and its stop pass");
-    effigy_test_support::process::close_root(&root).expect(
-        "the owner's kernel helpers settled before its fixture root is removed",
-    );
+    effigy_test_support::process::close_root(&root)
+        .expect("the owner's kernel helpers settled before its fixture root is removed");
     fs::remove_dir_all(&root).expect("remove the interrupted owner's fixture root");
     eprintln!(
         "interrupted-parent proof: removal followed the watchdog receipt and kernel helper settlement"
@@ -1791,7 +1790,9 @@ impl HeldWatchdog {
     /// writer stays frozen, so the boundary state matches an interrupted owner
     /// whose recorded generations are already dead.
     fn interrupt_around_the_held_writer(&mut self) {
-        self.owner.kill().expect("interrupt the discriminator's owner");
+        self.owner
+            .kill()
+            .expect("interrupt the discriminator's owner");
         self.owner.wait().expect("reap the discriminator's owner");
         self.leader.kill().expect("stop the recorded leader");
         self.leader.wait().expect("reap the recorded leader");
@@ -1837,11 +1838,7 @@ impl Drop for HeldWatchdog {
 fn wait_for_file(path: &Path, budget: Duration, message: &str) {
     let deadline = Instant::now() + budget;
     while !path.exists() {
-        assert!(
-            Instant::now() < deadline,
-            "{message} ({})",
-            path.display()
-        );
+        assert!(Instant::now() < deadline, "{message} ({})", path.display());
         thread::sleep(Duration::from_millis(50));
     }
 }
@@ -1899,9 +1896,15 @@ fn managed_host_adapterless_cleanup_removal_follows_owned_writer_quiescence() {
         RELEASED_RECEIPT_BUDGET,
     )
     .expect("the released writer settles with its exit receipt");
-    assert_eq!(exit.owner, corrected.owner_pid, "the receipt names this owner");
+    assert_eq!(
+        exit.owner, corrected.owner_pid,
+        "the receipt names this owner"
+    );
     let status = corrected.reap_watchdog();
-    assert!(status.success(), "the settled writer exits cleanly: {status}");
+    assert!(
+        status.success(),
+        "the settled writer exits cleanly: {status}"
+    );
     effigy_test_support::process::close_root(corrected.root())
         .expect("no kernel helpers remain under the discriminator's root");
     fs::remove_dir_all(corrected.root()).expect("corrected removal follows writer quiescence");
