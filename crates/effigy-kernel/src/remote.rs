@@ -387,6 +387,115 @@ fn valid_identity(id: &ContainerIdentity) -> bool {
 fn inconsistent(s: &str) -> UnknownReason {
     UnknownReason::Inconsistent(s.into())
 }
+
+/// Check one journaled registration. This alone does not prove process or
+/// store ownership, and never authorizes a signal or establishes closure.
+#[cfg(feature = "qualification-observer")]
+pub fn qualification_registration(
+    effects: &[Effect],
+    expected_env: &Fence,
+    expected_container: &ContainerIdentity,
+) -> Result<RemoteRegistration, UnknownReason> {
+    let mut remote = effects.iter().filter(|effect| effect.spec.kind == KIND);
+    let effect = remote
+        .next()
+        .ok_or_else(|| inconsistent("remote intent missing"))?;
+    if remote.next().is_some()
+        || effect.state != EffectState::Applied
+        || effect.spec.target != *expected_env
+        || !effect.spec.required
+    {
+        return Err(inconsistent("remote effect ambiguous or not applied"));
+    }
+    let intent: Intent = serde_json::from_value(effect.spec.payload.clone())
+        .map_err(|_| inconsistent("invalid remote intent"))?;
+    let registration: RemoteRegistration = serde_json::from_value(
+        effect.receipt.clone().ok_or_else(|| inconsistent("registration missing"))?,
+    )
+    .map_err(|_| inconsistent("invalid registration"))?;
+    if intent.env != *expected_env || intent.container != *expected_container {
+        return Err(inconsistent("remote intent identity mismatch"));
+    }
+    stream::validate(&registration, &intent)?;
+    Ok(registration)
+}
+
+/// Observe an exact owned run without acquiring authority to change it.
+/// The directory and process identities are captured by the owning packet
+/// before this call; any moved or unreadable fact refuses the observation.
+#[cfg(feature = "qualification-observer")]
+pub fn qualification_owned_registration(
+    cx: &crate::ctx::ObserveContext,
+    root: &crate::root::StateRoot,
+    directories: (crate::fs::DirectoryIdentity, crate::fs::DirectoryIdentity),
+    run: crate::id::RunId,
+    task: &crate::id::TaskId,
+    owner: &crate::ident::ProcessIdentity,
+    env: &Fence,
+    container: &ContainerIdentity,
+) -> Result<RemoteRegistration, UnknownReason> {
+    use crate::gate::{Gate, GateState};
+    use crate::run::{Phase, SentinelStatus};
+    let check_owner = || -> Result<(), UnknownReason> {
+        if root.owning_directory().identity().ok() != Some(directories.0)
+            || root.state_directory().identity().ok() != Some(directories.1)
+            || crate::ident::process_identity(owner.pid).verified() != Some(owner)
+        {
+            return Err(inconsistent("owned root or process moved"));
+        }
+        let metadata = crate::run::metadata(cx, root, run);
+        let metadata = metadata
+            .verified()
+            .ok_or_else(|| inconsistent("run metadata unavailable"))?;
+        if metadata.owner.as_ref() != Some(owner)
+            || metadata.sentinel_status != SentinelStatus::Live
+        {
+            return Err(inconsistent("owner or sentinel differs"));
+        }
+        let gate = Gate::probe(cx, root, &task.resource());
+        match gate {
+            Observed::Verified(GateState::Held(holder), _) => match *holder {
+                Observed::Verified(diag, _)
+                    if diag.pid == owner.pid
+                        && diag.run.as_deref() == Some(run.to_string().as_str())
+                        && diag.start.as_deref() == Some(owner.start.text().as_str())
+                        && diag.boot.as_deref() == Some(owner.boot.as_str())
+                        && matches!(diag.state, Observed::Verified(crate::ident::ProcessState::Active | crate::ident::ProcessState::Stopped, _)) => Ok(()),
+                _ => Err(inconsistent("owner gate differs")),
+            },
+            _ => Err(inconsistent("owner gate unavailable")),
+        }
+    };
+    check_owner()?;
+    let reader = crate::store::Store::read(cx, root);
+    let reader = reader.verified().ok_or_else(|| inconsistent("store unavailable"))?;
+    let summary = crate::run::summary(reader, run);
+    let summary = summary.verified().ok_or_else(|| inconsistent("run unavailable"))?;
+    let invocation = summary
+        .invocation
+        .as_ref()
+        .ok_or_else(|| inconsistent("invocation missing"))?;
+    if summary.parent.is_some()
+        || matches!(summary.phase, Phase::Stopping | Phase::Closed)
+        || invocation.spec().task != *task || invocation.spec().owner != task.resource()
+    {
+        return Err(inconsistent("run or canonical task differs"));
+    }
+    let resource = reader.resource(&env.resource);
+    let resource = resource
+        .verified()
+        .ok_or_else(|| inconsistent("environment unavailable"))?;
+    if resource.generation != env.generation {
+        return Err(inconsistent("environment generation moved"));
+    }
+    let effects = crate::run::effects(reader, run);
+    let effects = effects
+        .verified()
+        .ok_or_else(|| inconsistent("effects unavailable"))?;
+    let registration = qualification_registration(effects, env, container)?;
+    check_owner()?;
+    Ok(registration)
+}
 fn check(cx: &OperationContext, phase: &str) -> Result<(), UnknownReason> {
     if cx.placement() != Placement::Host {
         return Err(UnknownReason::HostAuthorityRequired);

@@ -85,6 +85,22 @@ fn effect(reg: &RemoteRegistration, receipt: bool) -> Effect {
         reason: None,
     }
 }
+
+#[cfg(feature = "qualification-observer")]
+#[test]
+fn qualification_registration_refuses_partial_foreign_and_ambiguous_effects() {
+    let registration = reg();
+    let applied = effect(&registration, true);
+    assert_eq!(qualification_registration(&[applied.clone()], &env(), &container()).unwrap(), registration);
+    assert!(qualification_registration(&[effect(&registration, false)], &env(), &container()).is_err());
+    assert!(qualification_registration(&[applied.clone(), applied.clone()], &env(), &container()).is_err());
+    let mut foreign = container();
+    foreign.id = "foreign".into();
+    assert!(qualification_registration(&[applied.clone()], &env(), &foreign).is_err());
+    let mut stale = env();
+    stale.generation = Generation::new(2);
+    assert!(qualification_registration(&[applied], &stale, &container()).is_err());
+}
 fn step<C, R>(call: C, reply: R) -> Step<C, R> {
     Step {
         call,
@@ -437,6 +453,24 @@ fn journal_first_launch_strips_ack_and_local_exit_is_not_remote_completion() {
     let expected = expected(&run);
     let mut remote = RemoteCustody::launch(&mut run, launch_spec(), &cx, &mut a.0).unwrap();
     assert_eq!(remote.registration, expected);
+    #[cfg(feature = "qualification-observer")]
+    {
+        let effects = run.effects().unwrap();
+        assert_eq!(
+            qualification_registration(&effects, &env(), &container()).unwrap(),
+            remote.registration
+        );
+        let mut wrong = effects.clone();
+        let remote_effect = wrong.iter_mut().find(|effect| effect.spec.kind == KIND).unwrap();
+        remote_effect.receipt = Some(serde_json::to_value(reg()).unwrap());
+        assert!(qualification_registration(&wrong, &env(), &container()).is_err());
+        let mut foreign = container();
+        foreign.id = "foreign-container".into();
+        assert!(qualification_registration(&effects, &env(), &foreign).is_err());
+        let mut stale = env();
+        stale.generation = Generation::new(2);
+        assert!(qualification_registration(&effects, &stale, &container()).is_err());
+    }
     let exit = remote
         .client()
         .wait(&cx.operation().child(Duration::from_secs(1)));

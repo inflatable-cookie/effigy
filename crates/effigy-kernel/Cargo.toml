@@ -13,6 +13,8 @@ fault-injection = []
 # records an environment's own active publication without a container
 # activation. Absent from every product build.
 test-support = []
+# Read-only task-signal qualification utility; never in a product build.
+qualification-observer = []
 
 [dependencies]
 effigy-core = { path = "../effigy-core" }
@@ -39,6 +41,11 @@ workspace = true
 [[example]]
 name = "kernel-ratchet"
 path = "examples/kernel-ratchet.rs"
+
+[[example]]
+name = "signal-registration-observer"
+path = "examples/signal-registration-observer.rs"
+required-features = ["qualification-observer"]
 
 # Disposable same-binary re-exec harness, never part of a product install.
 # Built without a feature gate: `fault_point!` is inert outside a test build, so
