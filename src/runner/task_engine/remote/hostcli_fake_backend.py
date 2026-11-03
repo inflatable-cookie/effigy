@@ -87,9 +87,9 @@ if len(args) >= 10 and args[:7] == ['exec', '-i', '-u', '0', full_id, 'sh', '-c'
             print('sent')
         raise SystemExit(0)
     raise SystemExit(92)
-if (len(args) < 14 or args[:8] != ['exec', '-w', '/workspace', '--env-file', '/dev/fd/4', full_id, 'sh', '-c']
-        or args[8] != (root / 'expected-wrapper').read_text() or args[9] != 'sh'
-        or args[10] != (root / 'expected-register').read_text()
+if (len(args) != 15 or args[:9] != ['exec', '-i', '-w', '/workspace', '--env-file', '/dev/fd/4', full_id, 'sh', '-c']
+        or args[9] != (root / 'expected-wrapper').read_text() or args[10] != 'sh'
+        or args[11] != (root / 'expected-register').read_text()
         or args[-3:] != ['sh', '-lc', 'sleep 300']):
     raise SystemExit(93)
 with os.fdopen(4) as envfile:
