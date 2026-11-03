@@ -275,10 +275,9 @@ fn hostcli_fixture_child() {
     let Some(root) = std::env::var_os(CHILD).map(PathBuf::from) else {
         return;
     };
-    let router = effigy_kernel::signal::SignalRouter::install(
-        effigy_kernel::signal::RouterPolicy::Inline,
-    )
-    .expect("owned fixture signal router");
+    let router =
+        effigy_kernel::signal::SignalRouter::install(effigy_kernel::signal::RouterPolicy::Inline)
+            .expect("owned fixture signal router");
     kernel::adopt_signal_router(router);
     let repo = root.join("repo");
     let resource = environment(&repo);
