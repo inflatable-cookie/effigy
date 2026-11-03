@@ -180,6 +180,12 @@ impl TaskRun {
         })
     }
 
+    pub(in crate::runner::task_engine) fn admission_monitor(
+        &self,
+    ) -> Option<super::super::admission::AdmissionMonitor> {
+        self.admission.as_ref().map(|admission| admission.monitor())
+    }
+
     pub(in crate::runner) fn verify_admission(&mut self) -> Result<(), RunnerError> {
         if let Some(admission) = &mut self.admission {
             admission.verify()?;

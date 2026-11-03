@@ -256,6 +256,19 @@ impl RemoteCustody {
         cx: &EffectContext,
         adapter: &mut dyn RemoteExecAdapter,
     ) -> Result<OwnedRemote, RemoteError> {
+        Self::launch_checked(run, spec, cx, adapter, &mut || Ok(()))
+    }
+
+    /// Observe the owning run's progress guard at remote effect boundaries and
+    /// throughout registration. A refusal leaves the intent for settlement.
+    pub fn launch_checked(
+        run: &mut Run<'_>,
+        spec: RemoteLaunch,
+        cx: &EffectContext,
+        adapter: &mut dyn RemoteExecAdapter,
+        progress: &mut dyn FnMut() -> Result<(), UnknownReason>,
+    ) -> Result<OwnedRemote, RemoteError> {
+        progress().map_err(RemoteError::Unknown)?;
         cx.require(Capability::AdapterEffect)
             .map_err(|_| RemoteError::Unknown(UnknownReason::HostAuthorityRequired))?;
         check(cx.operation(), "remote launch").map_err(RemoteError::Unknown)?;
@@ -291,6 +304,7 @@ impl RemoteCustody {
             .capture_recovery_binding(&spec.target, &identity_cx)
             .map_err(|error| RemoteError::Unknown(error.0))?;
         check(&identity_cx, "remote identity").map_err(RemoteError::Unknown)?;
+        progress().map_err(RemoteError::Unknown)?;
         let identity = adapter.identity(&spec.target, &identity_cx);
         check(&identity_cx, "remote identity").map_err(RemoteError::Unknown)?;
         let id = match identity {
@@ -303,6 +317,7 @@ impl RemoteCustody {
             }
         };
         check(cx.operation(), "remote identity").map_err(RemoteError::Unknown)?;
+        progress().map_err(RemoteError::Unknown)?;
         let nonce =
             session_nonce(run.id(), run.fence(), run.effects()?.len()).map_err(RunError::from)?;
         let intent = Intent {
@@ -353,6 +368,7 @@ impl RemoteCustody {
             intent.clone(),
             terminal == RemoteTerminal::Tty,
         )));
+        progress().map_err(RemoteError::Unknown)?;
         let mut client = Custody::spawn_remote(run, client_spec, cx, stream.clone())
             .map_err(RemoteError::Spawn)?;
         let result = (|| {
@@ -360,6 +376,7 @@ impl RemoteCustody {
             let ack = cx.operation().child(spec.ack_timeout);
             let registration = loop {
                 check(&ack, "remote acknowledgement").map_err(RemoteError::Unknown)?;
+                progress().map_err(RemoteError::Unknown)?;
                 client.poll();
                 check(&ack, "remote acknowledgement").map_err(RemoteError::Unknown)?;
                 if let Some(result) = stream
@@ -371,6 +388,7 @@ impl RemoteCustody {
                 }
                 std::thread::sleep(Duration::from_millis(2));
             };
+            progress().map_err(RemoteError::Unknown)?;
             crate::fault_point!(RemoteAfterAckBeforeRecord).map_err(RunError::from)?;
             run.applied(
                 &ticket,

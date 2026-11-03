@@ -242,6 +242,414 @@ fn begin(root: &Path, task: &str) -> TaskRun {
     .expect("admitted")
 }
 
+fn begin_with_hook(root: &Path) -> (TaskRun, i32) {
+    let pid_file = root.join("hook-pid");
+    let hook = format!(
+        "echo $$ > '{}'; printf 'admit\\n'; while :; do sleep 1; done",
+        pid_file.display()
+    );
+    // SAFETY: nextest runs each test in a separate process and this test
+    // constructs its admission before starting any fixture threads.
+    unsafe { std::env::set_var("EFFIGY_ADMISSION_HOOK", &hook) };
+    let target = TaskTarget {
+        root: root.to_path_buf(),
+        catalog: String::new(),
+        task: "remote:hook".into(),
+        surface: effigy_core::task_selection::TaskSurface::Published,
+        profile: None,
+        shared_lock: None,
+        argument_scope: None,
+        label: "remote:hook".into(),
+    };
+    let task_run = TaskRun::begin(TaskRunRequest {
+        target: &target,
+        lock_wait_ms: 0,
+        custody: true,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: None,
+        admission: Some(effigy_manifest::ManifestTaskAdmission::Heavy),
+        workspace_admission: None,
+        cwd: None,
+    })
+    .expect("held admission");
+    // SAFETY: the temporary environment is no longer used by this test.
+    unsafe { std::env::remove_var("EFFIGY_ADMISSION_HOOK") };
+    let pid = std::fs::read_to_string(pid_file)
+        .expect("hook pid")
+        .trim()
+        .parse()
+        .unwrap();
+    (task_run, pid)
+}
+
+fn kill_hook(pid: i32) {
+    // SAFETY: the fixture started this hook and recorded its PID.
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGKILL) }, 0);
+}
+
+#[test]
+fn remote_admission_held_allows_completion() {
+    let fixture = fixture();
+    let (mut task_run, _) = begin_with_hook(&fixture.root);
+    let exit = run(
+        &fixture,
+        &mut task_run,
+        task(&fixture.root, "true", true, None),
+    );
+    assert_eq!(exit.workload, WorkloadOutcome::Succeeded);
+    close(task_run, exit.workload);
+}
+
+#[test]
+fn remote_admission_lost_before_launch_refuses_workload() {
+    let fixture = fixture();
+    let (mut task_run, pid) = begin_with_hook(&fixture.root);
+    kill_hook(pid);
+    let until = Instant::now() + Duration::from_secs(5);
+    while task_run.verify_admission().is_ok() {
+        assert!(Instant::now() < until, "hook did not exit");
+        std::thread::yield_now();
+    }
+    let mut adapter = fixture.model.clone();
+    let env = fixture.env.clone();
+    let result = run_remote_with(
+        &mut task_run,
+        task(&fixture.root, "true", true, None),
+        &mut adapter,
+        ContainerTarget(CONTAINER.into()),
+        &mut || current(&fixture.root, &env),
+    );
+    let launched = fixture.model.closed();
+    let _ = task_run.close(WorkloadOutcome::Interrupted);
+    assert!(result.is_err(), "lost admission must refuse launch");
+    assert!(!launched, "workload was launched");
+}
+
+#[test]
+fn remote_admission_lost_after_registration_stops_remote_session() {
+    let matrix = matrix();
+    let (mut task_run, pid) = begin_with_hook(&matrix.root);
+    let run_id = task_run.id();
+    let root = matrix.root.clone();
+    let thread = std::thread::spawn(move || {
+        let root = kernel::effects_root(&root).expect("store root");
+        let until = Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Observed::Verified(reader, _) = Store::read(&kernel::observe(), root) {
+                if let Observed::Verified(effects, _) = effigy_kernel::run::effects(&reader, run_id)
+                {
+                    if effects.iter().any(|e| {
+                        e.spec.kind == "kernel:remote-process"
+                            && e.state == effigy_kernel::run::EffectState::Applied
+                    }) {
+                        kill_hook(pid);
+                        break;
+                    }
+                }
+            }
+            assert!(
+                Instant::now() < until,
+                "remote registration was not recorded"
+            );
+            std::thread::yield_now();
+        }
+    });
+    let mut adapter = matrix.engine.clone();
+    let env = matrix.env.clone();
+    let result = run_remote_with(
+        &mut task_run,
+        task(
+            &matrix.root,
+            "while :; do sleep 0.05; done",
+            true,
+            Some(3000),
+        ),
+        &mut adapter,
+        ContainerTarget(CONTAINER.into()),
+        &mut || current(&matrix.root, &env),
+    );
+    thread.join().expect("hook perturbation");
+    let warnings = task_run.close(WorkloadOutcome::Interrupted);
+    assert!(result.is_err(), "lost admission must fail the task");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert!(
+        !matrix.engine.alive(),
+        "registered session survived settlement"
+    );
+}
+
+#[test]
+fn remote_admission_loss_with_unknown_closure_leaves_residue() {
+    let matrix = matrix();
+    let (mut task_run, pid) = begin_with_hook(&matrix.root);
+    let run_id = task_run.id();
+    let root = matrix.root.clone();
+    let engine = matrix.engine.clone();
+    let thread = std::thread::spawn(move || {
+        let root = kernel::effects_root(&root).expect("store root");
+        let until = Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Observed::Verified(reader, _) = Store::read(&kernel::observe(), root) {
+                if let Observed::Verified(effects, _) = effigy_kernel::run::effects(&reader, run_id)
+                {
+                    if effects.iter().any(|e| {
+                        e.spec.kind == "kernel:remote-process"
+                            && e.state == effigy_kernel::run::EffectState::Applied
+                    }) {
+                        std::fs::write(engine.dir.join("down"), b"").expect("model unreachable");
+                        kill_hook(pid);
+                        break;
+                    }
+                }
+            }
+            assert!(
+                Instant::now() < until,
+                "remote registration was not recorded"
+            );
+            std::thread::yield_now();
+        }
+    });
+    let mut adapter = matrix.engine.clone();
+    let env = matrix.env.clone();
+    let result = run_remote_with(
+        &mut task_run,
+        task_args(&matrix.root),
+        &mut adapter,
+        ContainerTarget(CONTAINER.into()),
+        &mut || current(&matrix.root, &env),
+    );
+    thread.join().expect("hook perturbation");
+    let warnings = task_run.close(WorkloadOutcome::Interrupted);
+    let alive = matrix.engine.alive();
+    matrix.engine.signal(libc::SIGKILL);
+    assert!(result.is_err(), "lost admission must fail the task");
+    assert!(
+        warnings.iter().any(|w| w.contains("cleanup is incomplete")),
+        "{warnings:?}"
+    );
+    assert!(alive, "unknown observation must not authorize a signal");
+}
+
+struct PendingAck(Model);
+
+impl RemoteExecAdapter for PendingAck {
+    fn identity(
+        &mut self,
+        target: &ContainerTarget,
+        cx: &OperationContext,
+    ) -> Observed<ContainerIdentity> {
+        self.0.identity(target, cx)
+    }
+    fn launch(
+        &mut self,
+        id: &ContainerIdentity,
+        cmd: RemoteCommand,
+        cx: &EffectContext,
+    ) -> Result<ProcessSpec, AdapterError> {
+        let mut spec = self.0.launch(id, cmd, cx)?;
+        let script = spec.argv[2].to_string_lossy();
+        spec.argv[2] = format!(
+            "touch '{0}/waiting'; while [ ! -f '{0}/release' ]; do sleep 0.02; done; {script}",
+            self.0.dir.display()
+        )
+        .into();
+        Ok(spec)
+    }
+    fn signal_session(
+        &mut self,
+        reg: &RemoteRegistration,
+        signal: Signal,
+        cx: &CleanupContext,
+    ) -> Observed<SessionState> {
+        self.0.signal_session(reg, signal, cx)
+    }
+    fn observe_session(
+        &mut self,
+        reg: &RemoteRegistration,
+        cx: &OperationContext,
+    ) -> Observed<SessionState> {
+        self.0.observe_session(reg, cx)
+    }
+    fn find_by_nonce(
+        &mut self,
+        id: &ContainerIdentity,
+        nonce: &Nonce,
+        cx: &OperationContext,
+    ) -> Observed<Option<RemoteRegistration>> {
+        self.0.find_by_nonce(id, nonce, cx)
+    }
+}
+
+#[test]
+fn remote_admission_lost_during_registration_stops_client() {
+    let fixture = fixture();
+    let (mut task_run, pid) = begin_with_hook(&fixture.root);
+    let dir = fixture.model.dir.clone();
+    let (finished, wait) = std::sync::mpsc::channel::<()>();
+    let thread = std::thread::spawn(move || {
+        let until = Instant::now() + Duration::from_secs(20);
+        while !dir.join("waiting").exists() {
+            assert!(Instant::now() < until, "registration client never started");
+            std::thread::yield_now();
+        }
+        kill_hook(pid);
+        // If the runner fails to observe the loss, release the fixture after
+        // a bounded watchdog so the unfixed discriminator can finish.
+        let _ = wait.recv_timeout(Duration::from_secs(3));
+        std::fs::write(dir.join("release"), b"").expect("release fixture");
+    });
+    let mut adapter = PendingAck(fixture.model.clone());
+    let env = fixture.env.clone();
+    let result = run_remote_with(
+        &mut task_run,
+        task(&fixture.root, "true", true, None),
+        &mut adapter,
+        ContainerTarget(CONTAINER.into()),
+        &mut || current(&fixture.root, &env),
+    );
+    let _ = finished.send(());
+    thread.join().expect("hook perturbation");
+    let launched = fixture.model.closed();
+    let warnings = task_run.close(WorkloadOutcome::Interrupted);
+    assert!(
+        result.is_err(),
+        "loss during registration must fail the task"
+    );
+    assert!(!launched, "workload ran after lost admission");
+    assert!(warnings.is_empty(), "{warnings:?}");
+}
+
+#[test]
+fn remote_admission_registration_obeys_original_deadline() {
+    let fixture = fixture();
+    let (mut task_run, _) = begin_with_hook(&fixture.root);
+    let mut adapter = PendingAck(fixture.model.clone());
+    let env = fixture.env.clone();
+    let start = Instant::now();
+    let exit = run_remote_with(
+        &mut task_run,
+        task(&fixture.root, "true", true, Some(300)),
+        &mut adapter,
+        ContainerTarget(CONTAINER.into()),
+        &mut || current(&fixture.root, &env),
+    )
+    .expect("timeout is an outcome");
+    assert!(matches!(exit.workload, WorkloadOutcome::TimedOut { .. }));
+    assert_eq!(exit.code, 124);
+    assert!(
+        start.elapsed() < Duration::from_secs(10),
+        "deadline was extended"
+    );
+    assert!(!fixture.model.closed(), "the workload was never released");
+    close(task_run, exit.workload);
+}
+
+#[test]
+fn remote_admission_held_honors_stop_request() {
+    let matrix = matrix();
+    let (mut task_run, _) = begin_with_hook(&matrix.root);
+    let run_id = task_run.id();
+    let fence = task_run.run_mut().unwrap().fence().clone();
+    let root = matrix.root.clone();
+    let thread = std::thread::spawn(move || {
+        let root = kernel::effects_root(&root).expect("store root");
+        let until = Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Observed::Verified(reader, _) = Store::read(&kernel::observe(), root) {
+                if let Observed::Verified(effects, _) = effigy_kernel::run::effects(&reader, run_id)
+                {
+                    if effects.iter().any(|e| {
+                        e.spec.kind == "kernel:remote-process"
+                            && e.state == effigy_kernel::run::EffectState::Applied
+                    }) {
+                        effigy_kernel::run::request(
+                            &kernel::effects(),
+                            root,
+                            &effigy_kernel::run::Request {
+                                id: effigy_kernel::id::RunId::new(99, [91; 10]).unwrap(),
+                                run: run_id,
+                                expected: fence,
+                                action: effigy_kernel::run::RequestAction::Stop,
+                            },
+                        )
+                        .expect("request stop");
+                        break;
+                    }
+                }
+            }
+            assert!(
+                Instant::now() < until,
+                "remote registration was not recorded"
+            );
+            std::thread::yield_now();
+        }
+    });
+    let mut adapter = matrix.engine.clone();
+    let env = matrix.env.clone();
+    let exit = run_remote_with(
+        &mut task_run,
+        task_args(&matrix.root),
+        &mut adapter,
+        ContainerTarget(CONTAINER.into()),
+        &mut || current(&matrix.root, &env),
+    )
+    .expect("stop is an outcome");
+    thread.join().expect("request sender");
+    assert!(matches!(exit.workload, WorkloadOutcome::Cancelled { .. }));
+    assert_eq!(exit.code, 1);
+    close(task_run, exit.workload);
+    assert!(
+        !matrix.engine.alive(),
+        "stop must settle the remote session"
+    );
+}
+
+#[test]
+fn remote_admission_v2_durable_run_refuses_before_hook() {
+    let fixture = fixture();
+    let pid_file = fixture.root.join("hook-pid");
+    let hook = format!(
+        "echo $$ > '{}'; printf 'admit\\n'; while :; do sleep 1; done",
+        pid_file.display()
+    );
+    // SAFETY: nextest isolates each test process, and no fixture thread is active.
+    unsafe {
+        std::env::set_var("EFFIGY_ADMISSION_HOOK", &hook);
+        std::env::set_var("EFFIGY_ADMISSION_PROTOCOL", "2");
+    }
+    let target = TaskTarget {
+        root: fixture.root.clone(),
+        catalog: String::new(),
+        task: "remote:v2".into(),
+        surface: effigy_core::task_selection::TaskSurface::Published,
+        profile: None,
+        shared_lock: None,
+        argument_scope: None,
+        label: "remote:v2".into(),
+    };
+    let result = TaskRun::begin(TaskRunRequest {
+        target: &target,
+        lock_wait_ms: 0,
+        custody: true,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: None,
+        admission: Some(effigy_manifest::ManifestTaskAdmission::Heavy),
+        workspace_admission: None,
+        cwd: None,
+    });
+    // SAFETY: no subsequent fixture work reads the temporary environment.
+    unsafe {
+        std::env::remove_var("EFFIGY_ADMISSION_HOOK");
+        std::env::remove_var("EFFIGY_ADMISSION_PROTOCOL");
+    }
+    assert!(result.is_err(), "durable v2 admission must refuse");
+    assert!(!pid_file.exists(), "v2 refusal must precede the hook");
+}
+
 fn task<'a>(
     root: &'a Path,
     workload: &str,
