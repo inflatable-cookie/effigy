@@ -1038,9 +1038,14 @@ Cache and persistent volume cleanup are separate. Generated Compose can put
 Rust `target`, `node_modules`, and pnpm store paths on disposable named
 volumes. `container cache list/prune` classifies those build caches;
 `container volume list/prune` handles named volume ownership, dormant repo
-volumes, and global orphans. Running projects are skipped by global cache
-prune. Persistent application data is never swept as a dormant or orphan
-cache. Explicit destructive operations require confirmation.
+volumes, and global orphans. The global cache prune deletes only volumes
+whose own Effigy labels prove ownership (`com.effigy.managed`,
+`com.effigy.project`, `com.effigy.volume-name`) whose labelled project is
+not running; name and content classification stay diagnostic, lookalikes and
+unlabelled legacy volumes are reported and left intact, and failed listing,
+inspection or discovery is an error, never absence. Persistent application
+data is never swept as a dormant or orphan cache. Explicit destructive
+operations require confirmation.
 
 ```sh
 effigy container cache list --global
@@ -1051,8 +1056,9 @@ effigy container volume prune --global --orphans --yes
 ```
 
 Cache classification uses mount targets as well as names so older opaque
-`efv-*` volumes can still be recognized. A named volume under an application
-data path is never reclassified as disposable only because it is idle.
+`efv-*` volumes can still be recognized in the read-only inventory; it never
+authorizes deletion. A named volume under an application data path is never
+reclassified as disposable only because it is idle.
 
 External host mounts use structured tables with `external = true`; legacy
 string mounts remain repo-relative. Generated published ports bind to

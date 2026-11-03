@@ -1533,10 +1533,16 @@ Cache volumes are created by catalog-generated compose files based on mount
 target heuristics. Legacy generated compose volumes with opaque `efv-*` names
 are also classified by their mounted contents, so old Rust target volumes show
 up as `rust-target` even when the volume name does not contain `target`.
-`cache list` inventories them and reports reclaimable and in-use size
-totals in text and JSON. Missing per-volume sizes keep `size_complete`
-false instead of pretending the total is complete. `cache prune` removes
-the same inventory and already reports removed/skipped size totals.
+`cache list` inventories that diagnostic classification and reports
+reclaimable and in-use size totals in text and JSON. Missing per-volume sizes
+keep `size_complete` false instead of pretending the total is complete.
+`cache prune` deletes only volumes whose own Effigy labels prove ownership
+(`com.effigy.managed=true`, `com.effigy.project`, `com.effigy.volume-name`)
+whose labelled project is not running: cache-like names and legacy content
+classification never authorize deletion, a lookalike or unlabelled legacy
+volume is reported as a warning and left alone, and a failed listing,
+inspection or running-project discovery is an error rather than an empty or
+removable inventory.
 
 Cache volume names include the container workspace path, so moving a mount from
 `/var/www/html` to `/var/www/inventors` gives a fresh `node_modules` volume
@@ -1562,7 +1568,9 @@ effigy container cache prune --kind rust-target --yes
 
 Safety rules:
 
-- running projects are skipped in `--global` mode
+- `--global` prune removes only volumes carrying Effigy's own ownership
+  labels whose labelled project is not running; lookalike and unlabelled
+  legacy volumes are kept and reported as warnings
 - prune requires confirmation unless `--yes` is passed
 - volume orphan cleanup is separate; use cache cleanup for Rust `target`
   pressure, not `container volume prune --global --orphans`

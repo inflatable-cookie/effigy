@@ -1,6 +1,6 @@
 use effigy_runtime::data::{
-    run_container_cache_list, run_container_cache_list_all, run_container_cache_list_under_path,
-    run_container_cache_prune, run_container_cache_prune_all,
+    discovered_running_projects, run_container_cache_list, run_container_cache_list_all,
+    run_container_cache_list_under_path, run_container_cache_prune, run_container_cache_prune_all,
 };
 
 use crate::runner::command_context::{active_invocation_cwd, resolve_active_command_context};
@@ -34,6 +34,7 @@ pub(super) fn run_container_cache_command(
                 project.as_deref(),
                 kind.as_deref(),
                 output_json,
+                discovered_running_projects,
                 runtime_volume_capture,
             )
             .map_err(Into::into)
@@ -65,6 +66,7 @@ pub(super) fn run_container_cache_command(
                 project.as_deref(),
                 kind.as_deref(),
                 output_json,
+                discovered_running_projects,
                 runtime_volume_capture,
             )
             .map_err(Into::into)
