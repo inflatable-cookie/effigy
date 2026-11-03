@@ -95,6 +95,11 @@ fn cli_tasks_json_carries_description_and_nulls_it_when_undeclared() {
     assert!(plain["description"].is_null());
 }
 
+/// `effigy <task> --help` prints the declaration — described and undeclared
+/// shapes — and never executes the task. The folded
+/// `cli_task_help_omits_the_description_line_when_undeclared` entry carried
+/// the second invocation's omission claim (effigy#602 mc3 showed that claim
+/// has no other detector).
 #[test]
 fn cli_task_help_prints_the_declaration_without_running_the_task() {
     let root = write_description_workspace("task-description-help");
@@ -113,6 +118,17 @@ fn cli_task_help_prints_the_declaration_without_running_the_task() {
     assert!(stdout.contains("Manifest: "), "got: {stdout}");
     assert!(
         !root.join("ran-marker.txt").exists(),
+        "task help must not execute the task"
+    );
+
+    let plain_stdout = stdout_of(run_effigy(&root, &["plain", "--help"]));
+    assert!(plain_stdout.contains("Task: plain"), "got: {plain_stdout}");
+    assert!(
+        !plain_stdout.contains("Description:"),
+        "an undeclared description must omit the line: {plain_stdout}"
+    );
+    assert!(
+        !root.join("plain-marker.txt").exists(),
         "task help must not execute the task"
     );
 }
@@ -136,19 +152,10 @@ fn cli_task_help_json_uses_the_builtin_help_payload() {
     );
 }
 
-#[test]
-fn cli_task_help_omits_the_description_line_when_undeclared() {
-    let root = write_description_workspace("task-description-help-plain");
-    let stdout = stdout_of(run_effigy(&root, &["plain", "--help"]));
-
-    assert!(stdout.contains("Task: plain"), "got: {stdout}");
-    assert!(!stdout.contains("Description:"), "got: {stdout}");
-    assert!(
-        !root.join("plain-marker.txt").exists(),
-        "task help must not execute the task"
-    );
-}
-
+// `cli_task_help_omits_the_description_line_when_undeclared` folded into
+// `cli_task_help_prints_the_declaration_without_running_the_task` with
+// effigy#602: same fixture builder, same help route, its omission and
+// no-execution assertions live in the folded test's second invocation.
 // `cli_task_arguments_after_double_dash_still_reach_the_task` was removed with
 // effigy#556: its single claim (post-`--` args reach the task) is carried by
 // `wave4_papercuts_tests::cli_task_args_after_delimiter_are_forwarded_instead_of_dropped`

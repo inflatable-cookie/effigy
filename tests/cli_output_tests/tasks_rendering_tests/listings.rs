@@ -1,23 +1,18 @@
 use super::*;
 
 #[test]
-fn cli_tasks_text_output_has_stable_section_spacing_and_two_line_task_entries() {
-    let root = write_catalog_build_workspace("cli-text-spacing-shape");
-
-    let stdout = run_effigy(&["tasks"], Some(&root), false);
-    assert!(stdout.contains("\n\nCatalogs\n"));
-    assert!(stdout.contains("\n\nTasks\n"));
-    assert!(stdout.contains("\n\nBuilt-in Tasks\n"));
-    assert!(stdout.contains(
-        "- cattle-grid/build : cattle-grid/effigy.toml\n      tsc -p tsconfig.json {args}"
-    ));
-}
-
-#[test]
 fn cli_tasks_text_output_matches_canonical_fixture_tail() {
     let root = write_catalog_build_workspace("cli-text-fixture-tail");
 
     let stdout = run_effigy(&["tasks"], Some(&root), false);
+    // The CLI header block must stay separated from the listing by a blank
+    // line (the #556-era spacing-shape entry's one distinct claim, folded
+    // here by effigy#602; every other claim it made lives in the exact tail
+    // below).
+    assert!(
+        stdout.contains("\n\nCatalogs\n"),
+        "the CLI header must separate from the Catalogs section: {stdout}"
+    );
     let expected = format!(
         "\
 Catalogs
