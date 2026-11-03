@@ -86,24 +86,32 @@ fn apply_from_step_profile_resolution_prefers_manifest_then_process_then_dotenv(
 
     assert_eq!(
         accumulator.chained_env().get("MY_VAR").map(String::as_str),
-        Some("from-manifest")
+        Some("from-manifest"),
+        "manifest wins over process and dotenv"
     );
-}
 
-#[test]
-fn apply_from_step_profile_resolution_uses_dotenv_when_manifest_and_process_missing() {
-    let root = temp_repo("dotenv");
-    fs::write(root.join(".env"), "MY_VAR=from-dotenv\n").expect("write .env");
-    let _env = EnvGuard::set("MY_VAR", None);
-
+    drop(_env);
+    let _env = EnvGuard::set("MY_VAR", Some("from-process"));
     let mut accumulator = StepEnvAccumulator::new(None, None).expect("accumulator");
     accumulator
         .apply_from_step("dev", &profile_step("MY_VAR"), &BTreeMap::new(), &root, &[])
         .expect("apply env profile");
-
     assert_eq!(
         accumulator.chained_env().get("MY_VAR").map(String::as_str),
-        Some("from-dotenv")
+        Some("from-process"),
+        "process wins over dotenv when manifest is absent"
+    );
+
+    drop(_env);
+    let _env = EnvGuard::set("MY_VAR", None);
+    let mut accumulator = StepEnvAccumulator::new(None, None).expect("accumulator");
+    accumulator
+        .apply_from_step("dev", &profile_step("MY_VAR"), &BTreeMap::new(), &root, &[])
+        .expect("apply env profile");
+    assert_eq!(
+        accumulator.chained_env().get("MY_VAR").map(String::as_str),
+        Some("from-dotenv"),
+        "dotenv when manifest and process are missing"
     );
 }
 

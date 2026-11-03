@@ -1,15 +1,17 @@
 # Task-engine signal matrix — evidence index and executable unarmed packet
 
-Queue task effigy#582, building on effigy#579. Status: **prepared, not
-executed.** This directory is a source-only reconciliation of accepted
-proof credit plus an UNARMED executable packet for the genuine missing
-real-engine cells. `--execute` is a real GO-bound pass, not a stub. Packet
-delivery, the boundary battery, a constructed command plan, and a labeled
-double control-flow pass are not native qualification, lane closure, or
-release credit.
+Queue tasks effigy#582 and effigy#585, building on effigy#579. Status:
+**prepared, not executed.** This directory is a source-only reconciliation
+of accepted proof credit plus an UNARMED executable packet for the genuine
+missing real-engine cells. `--execute` is a real GO-bound pass, not a stub.
+#585 binds per-cell nonce, live recorded owner identity, inspect/status
+parse, observed-generation helper-kill, and failed-observe distinct from
+empty. Packet delivery, the boundary battery, a constructed command plan,
+a labeled-double control-flow pass, and owned local HostCli fake-executable
+fixtures are not native qualification, lane closure, or release credit.
 
 Owning index: `matrix.json`. Packet contract: `packet-r1.md`. Pinned
-placeholders: `manifest-r1.json`. Admission and labeled-double battery:
+placeholders: `manifest-r1.json`. Admission, labeled-double, and local HostCli-fixture battery:
 `boundaries.py` (`test:qualification:task-engine-signals`). Launcher:
 `launch.py`. Execute pass: `execute.py`.
 
@@ -86,11 +88,14 @@ refuses while committed placeholders stay unarmed. `--execute` is no
 longer a structural stub: an in-memory armed overlay plus matching GO
 drives one source-immutable pass. Tests inject a labeled double to prove
 HostCli argv, one-shot receipts, refusal/fault ordering and foreign
-refuse without contacting a daemon. CLI `--execute` uses `HostCliDriver`
-only; there is no environment or config switch that turns double output
-into a native receipt. A labeled-double result is `qualification:
-false`. Failure and unknown after the invocation fence are retained
-evidence, never a retry token.
+refuse without contacting a daemon, and call `HostCliDriver` against
+owned local fake-executables for nonce/generation, async owner
+signal/wait/timeout and status schema. CLI `--execute` uses
+`HostCliDriver` only; there is no environment or config switch that turns
+double output into a native receipt. A labeled-double result is
+`qualification: false`. Failure and unknown after the invocation fence
+are retained evidence, never a retry token. Native Linux sequence TERM/HUP
+via `linux-custody.sh` remains separately GO-gated.
 
 Future GO (separately authorized) must name an already-running engine and
 an already-present image digest, and a later reviewed candidate pin.

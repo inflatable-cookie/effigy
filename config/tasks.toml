@@ -118,6 +118,7 @@
 "test:focused" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --locked --config-file tests/config/gateway-nextest.toml --user-config-file none {args} --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 }] }
 "test:audit:changelog-ui:lint" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-changelog -p effigy-ui --all-targets -- -D warnings", timeout_ms = 600000 }] }
 "test:audit:docs-policy-json-schema:lint" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-docs-policy -p effigy-json-schema --all-targets -- -D warnings", timeout_ms = 600000 }] }
+"test:audit:managed-execution:lint" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-managed -p effigy-execution --all-targets -- -D warnings", timeout_ms = 600000 }] }
 # Focused repros retain the owning durable-journal budget (600s per test).
 "test:focused:journal-heavy" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --locked --config-file tests/config/journal-heavy-nextest.toml --user-config-file none {args} --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1900000 }] }
 "test:deps:lockfile-workflows" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-deps --lib --test cargo_link --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 1800000 }] }
@@ -2028,13 +2029,15 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 # its packet-r1.md, never this selector.
 "test:qualification:acow" = { durable = true, visibility = "internal", group = "Maintenance", description = "Run the Acow ordinary-Compose qualification packet's fake-backend refusal boundaries; no native effects.", run = [{ run = "python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/boundaries.py", timeout_ms = 300000 }] }
 
-# Task-engine signal-matrix packet (tasks effigy#579/#582): committed
-# fake-backend refusal battery plus labeled-double execute control-flow for
+# Task-engine signal-matrix packet (tasks effigy#579/#582/#585): committed
+# fake-backend refusal battery, labeled-double execute control-flow, and
+# owned local HostCli fake-executable plumbing for
 # docs/qualification/task-engine-signal-matrix/ — no VM, engine, container,
-# image, install or native task. Doubles prove packet admission and execute
-# ordering, not native closure. The packet stays UNARMED; a later GO window
-# is separately authorized.
-"test:qualification:task-engine-signals" = { durable = true, visibility = "internal", group = "Maintenance", description = "Run the task-engine signal-matrix packet's fake-backend refusal and labeled-double execute boundaries; no native effects.", run = [{ run = "python3 -I -B docs/qualification/task-engine-signal-matrix/boundaries.py", timeout_ms = 300000 }] }
+# image, install or native task. Doubles and local fixtures prove packet
+# admission, execute ordering and driver identity wiring, not native
+# closure. The packet stays UNARMED; a later GO window is separately
+# authorized. Native linux-custody.sh sequence TERM/HUP remains owed.
+"test:qualification:task-engine-signals" = { durable = true, visibility = "internal", group = "Maintenance", description = "Run the task-engine signal-matrix packet's fake-backend refusal, labeled-double execute, and local HostCli fixture boundaries; no native effects.", run = [{ run = "python3 -I -B docs/qualification/task-engine-signal-matrix/boundaries.py", timeout_ms = 300000 }] }
 
 # Fake-only proof (effigy#542) that the ordinary-Compose Colima qualification
 # launcher enforces its complete read-only entry sweep: exact network/volume

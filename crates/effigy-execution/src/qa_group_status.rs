@@ -343,15 +343,63 @@ mod tests {
         QaGroupRunState,
     };
 
+    fn roundtrip_str<T>(value: T, expected: &str)
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+    {
+        let json = serde_json::to_string(&value).expect("serialize");
+        assert_eq!(json, format!("\"{expected}\""));
+        let back: T = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, value);
+    }
+
     #[test]
     fn state_names_are_stable_snake_case() {
-        assert_eq!(QaGroupOutcome::CapacityTimeout.as_str(), "capacity_timeout");
+        roundtrip_str(QaGroupOutcome::Passed, "passed");
+        roundtrip_str(QaGroupOutcome::Failed, "failed");
+        roundtrip_str(QaGroupOutcome::Cancelled, "cancelled");
+        roundtrip_str(QaGroupOutcome::TimedOut, "timed_out");
+        roundtrip_str(QaGroupOutcome::Blocked, "blocked");
+        roundtrip_str(QaGroupOutcome::CapacityTimeout, "capacity_timeout");
+        roundtrip_str(QaGroupOutcome::Unknown, "unknown");
+        assert_eq!(QaGroupOutcome::Unknown.as_str(), "unknown");
+
+        roundtrip_str(QaGroupMemberState::Passed, "passed");
+        roundtrip_str(QaGroupMemberState::Failed, "failed");
+        roundtrip_str(QaGroupMemberState::Cancelled, "cancelled");
+        roundtrip_str(QaGroupMemberState::TimedOut, "timed_out");
+        roundtrip_str(QaGroupMemberState::Blocked, "blocked");
+        roundtrip_str(QaGroupMemberState::NotStarted, "not_started");
         assert_eq!(QaGroupMemberState::NotStarted.as_str(), "not_started");
-        assert_eq!(
-            QaGroupRunState::WaitingForCapacity.as_str(),
-            "waiting_for_capacity"
-        );
+
+        roundtrip_str(QaGroupRunState::WaitingForCapacity, "waiting_for_capacity");
+        roundtrip_str(QaGroupRunState::Running, "running");
+        roundtrip_str(QaGroupRunState::Completed, "completed");
+        roundtrip_str(QaGroupRunState::Unknown, "unknown");
+        assert_eq!(QaGroupRunState::Unknown.as_str(), "unknown");
+
+        roundtrip_str(QaGroupBudgetState::WithinBudget, "within_budget");
+        roundtrip_str(QaGroupBudgetState::OverBudget, "over_budget");
+        roundtrip_str(QaGroupBudgetState::Unknown, "unknown");
         assert_eq!(QaGroupBudgetState::OverBudget.as_str(), "over_budget");
+
+        assert_ne!(
+            QaGroupRunState::Unknown.as_str(),
+            QaGroupMemberState::NotStarted.as_str(),
+            "run unknown and member not_started stay distinct public strings"
+        );
+        assert!(
+            serde_json::from_str::<QaGroupMemberState>("\"pending\"").is_err(),
+            "member state has no pending alias"
+        );
+        assert!(
+            serde_json::from_str::<QaGroupMemberState>("\"unknown\"").is_err(),
+            "member state does not accept run unknown"
+        );
+        assert!(
+            serde_json::from_str::<QaGroupRunState>("\"not_started\"").is_err(),
+            "run state does not accept member not_started"
+        );
     }
 
     #[test]

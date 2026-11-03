@@ -190,8 +190,8 @@ mod tests {
     use effigy_manifest::ManifestEnvEntry;
 
     use super::{
-        path_looks_container_local, render_builtin_task_reference_invocation,
-        render_command_template, render_rhai_step_invocation,
+        render_builtin_task_reference_invocation, render_command_template,
+        render_rhai_step_invocation,
     };
     use crate::RunSpecContext;
 
@@ -224,31 +224,57 @@ mod tests {
         assert!(rendered.contains("env EFFIGY_INTERNAL_SUPPRESS_HEADER=1"));
         assert!(rendered.contains("docs check headings"));
         assert!(rendered.ends_with("--strict"));
+        assert!(
+            !rendered.contains("/usr/local/bin/effigy"),
+            "a host path uses the host effigy, not the container install: {rendered}"
+        );
     }
 
     #[test]
     fn builtin_task_reference_invocation_uses_container_effigy_for_workspace_roots() {
-        let rendered = render_builtin_task_reference_invocation(
+        let exact_workspace = render_builtin_task_reference_invocation(
+            "docs check headings",
+            "",
+            Path::new("/workspace"),
+        )
+        .expect("exact /workspace");
+        assert!(
+            exact_workspace.contains("/usr/local/bin/effigy"),
+            "exact /workspace: {exact_workspace}"
+        );
+
+        let workspace_prefix = render_builtin_task_reference_invocation(
+            "docs check headings",
+            "",
+            Path::new("/workspace/repo"),
+        )
+        .expect("prefix /workspace/");
+        assert!(
+            workspace_prefix.contains("/usr/local/bin/effigy"),
+            "prefix /workspace/: {workspace_prefix}"
+        );
+
+        let exact_root = render_builtin_task_reference_invocation(
+            "docs check headings",
+            "",
+            Path::new("/workspace-root"),
+        )
+        .expect("exact /workspace-root");
+        assert!(
+            exact_root.contains("/usr/local/bin/effigy"),
+            "exact /workspace-root: {exact_root}"
+        );
+
+        let root_prefix = render_builtin_task_reference_invocation(
             "docs check headings",
             "",
             Path::new("/workspace-root/repo"),
         )
-        .expect("render task ref");
-
-        assert!(rendered.contains("/usr/local/bin/effigy"));
-    }
-
-    #[test]
-    fn container_local_path_detection_matches_workspace_roots() {
-        assert!(path_looks_container_local(Path::new("/workspace")));
-        assert!(path_looks_container_local(Path::new("/workspace/repo")));
-        assert!(path_looks_container_local(Path::new("/workspace-root")));
-        assert!(path_looks_container_local(Path::new(
-            "/workspace-root/repo"
-        )));
-        assert!(!path_looks_container_local(Path::new(
-            "/Users/tom/Dev/projects/repo"
-        )));
+        .expect("prefix /workspace-root/");
+        assert!(
+            root_prefix.contains("/usr/local/bin/effigy"),
+            "prefix /workspace-root/: {root_prefix}"
+        );
     }
 
     #[test]

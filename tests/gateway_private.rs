@@ -1691,7 +1691,23 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         "the failing startup must settle as a published failure: {delayed_state}; output={delayed_report}"
     );
     assert_ne!(delayed_state["generation"], collision_generation);
+    assert!(
+        delayed_state["generation"]
+            .as_str()
+            .is_some_and(|generation| !generation.is_empty()),
+        "failed startup dropped its generation provenance: {delayed_state}"
+    );
     assert_eq!(delayed_state["route_domain"], "delayed.host.test");
+    assert_eq!(
+        delayed_state["observed_status"], 503,
+        "failed startup dropped the observed refusal status: {delayed_state}"
+    );
+    assert!(
+        delayed_state["diagnostic"]
+            .as_str()
+            .is_some_and(|diagnostic| diagnostic.contains("status_mismatch")),
+        "failed startup dropped its refusal diagnostic: {delayed_state}"
+    );
     assert!(
         delayed_state["route_owner"].is_null(),
         "failed startup retained an endpoint owner: {delayed_state}; stderr={}",
