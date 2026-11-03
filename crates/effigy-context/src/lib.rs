@@ -495,7 +495,23 @@ mod tests {
     /// would isolate processes long after the external source finished.
     #[test]
     fn an_isolation_guard_sets_the_marker_and_clears_it_on_drop() {
+        /// Restores the exact environment this test found, including an
+        /// inherited marker value, even when an assertion fails.
+        struct RestoreInherited(&'static str, Option<std::ffi::OsString>);
+        impl Drop for RestoreInherited {
+            fn drop(&mut self) {
+                match self.1.take() {
+                    Some(value) => std::env::set_var(self.0, value),
+                    None => std::env::remove_var(self.0),
+                }
+            }
+        }
+
         let _lock = effigy_test_support::env::lock();
+        let _restore = RestoreInherited(
+            EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME,
+            std::env::var_os(EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME),
+        );
         std::env::remove_var(EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME);
 
         assert!(!external_task_source_isolation_active());
