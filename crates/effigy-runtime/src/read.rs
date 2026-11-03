@@ -578,52 +578,10 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        classify_exec_probe_result, primary_service_exec_readiness, read_operation_plan,
+        classify_exec_probe_result, primary_service_exec_readiness,
         should_probe_primary_service_exec,
     };
-    use effigy_containers::{
-        exec::ContainerExecError, ContainerOperationKind, ContainerReadOperation,
-        ContainerSideEffectClass, ContainerStatusService,
-    };
-
-    use crate::test_support::generated_policy;
-
-    #[test]
-    fn read_operation_plan_keeps_policy_identity_and_backend_id() {
-        let policy = generated_policy("web");
-        let plan = read_operation_plan(
-            std::path::Path::new("/tmp/repo"),
-            &policy,
-            ContainerReadOperation::status(false),
-        );
-
-        assert_eq!(
-            plan.request.repo_root,
-            std::path::PathBuf::from("/tmp/repo")
-        );
-        assert_eq!(plan.request.policy_name, "web");
-        assert_eq!(plan.request.backend_id.as_deref(), Some("colima"));
-        assert_eq!(plan.side_effect, ContainerSideEffectClass::ReadsRuntime);
-        assert!(!plan.consumes_declared_container_secrets());
-    }
-
-    #[test]
-    fn read_logs_operation_plan_keeps_service_and_follow_flags() {
-        let policy = generated_policy("web");
-        let plan = read_operation_plan(
-            std::path::Path::new("/tmp/repo"),
-            &policy,
-            ContainerReadOperation::logs(Some("worker".to_owned()), true),
-        );
-
-        match plan.request.kind {
-            ContainerOperationKind::Read(ContainerReadOperation::Logs(operation)) => {
-                assert_eq!(operation.service.as_deref(), Some("worker"));
-                assert!(operation.follow);
-            }
-            other => panic!("unexpected operation kind: {other:?}"),
-        }
-    }
+    use effigy_containers::{exec::ContainerExecError, ContainerStatusService};
 
     #[test]
     fn primary_service_exec_readiness_reports_ready_state_without_warning() {

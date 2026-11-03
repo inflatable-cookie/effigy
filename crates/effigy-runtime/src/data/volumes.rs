@@ -715,6 +715,12 @@ mod tests {
             None,
             "contact-patch-dev-postgres-data"
         ));
+        // With no discovered project state at all, nothing counts as in use.
+        assert!(!volume_is_in_use(
+            None,
+            None,
+            "contact-patch-dev-postgres-data"
+        ));
     }
 
     #[test]
@@ -808,9 +814,9 @@ mod tests {
         assert_eq!(mounts[1].destination, "/var/lib/mysql");
     }
 
-    #[test]
-    fn repo_scope_marks_running_unmounted_legacy_volume_as_stale() {
-        let declared = DeclaredRepoVolumes {
+    /// Reconciliation inputs shared by the stale-marking tests.
+    fn declared_repo(running_projects: BTreeSet<String>) -> DeclaredRepoVolumes {
+        DeclaredRepoVolumes {
             repo_root: "/tmp/workspace-app-reference".to_owned(),
             by_project: BTreeMap::from([(
                 "workspace-app-reference-dev".to_owned(),
@@ -821,9 +827,12 @@ mod tests {
                     mount_keys: BTreeSet::new(),
                 },
             )]),
-            running_projects: BTreeSet::from(["workspace-app-reference-dev".to_owned()]),
-        };
-        let reconciled = declared.reconcile_entry(ContainerVolumeGlobalEntry {
+            running_projects,
+        }
+    }
+
+    fn legacy_generated_entry() -> ContainerVolumeGlobalEntry {
+        ContainerVolumeGlobalEntry {
             name: "efv-f1958972bdd653b9".to_owned(),
             backend: "containerd".to_owned(),
             profile: "effigy".to_owned(),
@@ -836,8 +845,13 @@ mod tests {
             in_use: false,
             orphaned: false,
             orphan_reason: None,
-        });
+        }
+    }
 
+    #[test]
+    fn repo_scope_marks_legacy_generated_volumes_stale_and_backfills_repo_root() {
+        let running = declared_repo(BTreeSet::from(["workspace-app-reference-dev".to_owned()]));
+        let reconciled = running.reconcile_entry(legacy_generated_entry());
         assert_eq!(
             reconciled.repo_root.as_deref(),
             Some("/tmp/workspace-app-reference")
@@ -847,25 +861,72 @@ mod tests {
             reconciled.orphan_reason.as_deref(),
             Some("no-longer-declared")
         );
+
+        // The generated-volume arm marks stale even with nothing running.
+        let stopped = declared_repo(BTreeSet::new());
+        let reconciled = stopped.reconcile_entry(legacy_generated_entry());
+        assert!(reconciled.orphaned);
+        assert_eq!(
+            reconciled.orphan_reason.as_deref(),
+            Some("no-longer-declared")
+        );
     }
 
     #[test]
-    fn repo_scope_marks_stopped_legacy_generated_volume_as_stale() {
+    fn repo_scope_keeps_entries_matching_declared_service_mount_keys() {
         let declared = DeclaredRepoVolumes {
             repo_root: "/tmp/workspace-app-reference".to_owned(),
             by_project: BTreeMap::from([(
                 "workspace-app-reference-dev".to_owned(),
                 DeclaredProjectVolumes {
-                    runtime_names: BTreeSet::from([
-                        "workspace-app-reference-dev-postgres-data".to_owned()
-                    ]),
-                    mount_keys: BTreeSet::new(),
+                    runtime_names: BTreeSet::new(),
+                    mount_keys: BTreeSet::from([DeclaredMountKey {
+                        service: "postgres".to_owned(),
+                        mount_target: Some("/var/lib/postgresql/data".to_owned()),
+                        persist: true,
+                    }]),
                 },
             )]),
             running_projects: BTreeSet::new(),
         };
         let reconciled = declared.reconcile_entry(ContainerVolumeGlobalEntry {
-            name: "efv-f1958972bdd653b9".to_owned(),
+            name: "workspace-app-reference-dev-db-data".to_owned(),
+            backend: "containerd".to_owned(),
+            profile: "effigy".to_owned(),
+            project_name: Some("workspace-app-reference-dev".to_owned()),
+            repo_root: None,
+            service: Some("postgres".to_owned()),
+            mount_target: Some("/var/lib/postgresql/data".to_owned()),
+            persist: Some(true),
+            size_bytes: Some(65_000_000),
+            in_use: false,
+            orphaned: true,
+            orphan_reason: Some("no-longer-declared".to_owned()),
+        });
+
+        assert!(!reconciled.orphaned);
+        assert_eq!(reconciled.orphan_reason, None);
+        assert_eq!(
+            reconciled.repo_root.as_deref(),
+            Some("/tmp/workspace-app-reference")
+        );
+    }
+
+    #[test]
+    fn repo_scope_marks_undeclared_volumes_of_running_projects_stale() {
+        let declared = DeclaredRepoVolumes {
+            repo_root: "/tmp/workspace-app-reference".to_owned(),
+            by_project: BTreeMap::from([(
+                "workspace-app-reference-dev".to_owned(),
+                DeclaredProjectVolumes {
+                    runtime_names: BTreeSet::new(),
+                    mount_keys: BTreeSet::new(),
+                },
+            )]),
+            running_projects: BTreeSet::from(["workspace-app-reference-dev".to_owned()]),
+        };
+        let reconciled = declared.reconcile_entry(ContainerVolumeGlobalEntry {
+            name: "foreign-leftover-data".to_owned(),
             backend: "containerd".to_owned(),
             profile: "effigy".to_owned(),
             project_name: Some("workspace-app-reference-dev".to_owned()),
@@ -873,7 +934,7 @@ mod tests {
             service: None,
             mount_target: None,
             persist: None,
-            size_bytes: Some(5_700_000_000),
+            size_bytes: Some(1_000),
             in_use: false,
             orphaned: false,
             orphan_reason: None,
