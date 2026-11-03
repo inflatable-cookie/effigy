@@ -27,15 +27,12 @@ fn table(routes: Vec<Route>) -> RouteTable {
 }
 
 #[test]
-fn the_first_checkout_takes_the_pool_start() {
+fn another_checkouts_routes_reserve_their_addresses() {
     assert_eq!(
         claim_address(&RouteTable::new(), "/checkouts/one").expect("claim"),
         DEFAULT_LOOPBACK_START
     );
-}
 
-#[test]
-fn another_checkouts_routes_reserve_their_addresses() {
     let table = table(vec![
         route(
             "a.test",

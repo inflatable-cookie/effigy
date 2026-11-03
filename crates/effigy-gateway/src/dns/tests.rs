@@ -223,6 +223,11 @@ fn cache_stores_and_retrieves_the_answer_and_its_route_address() {
             "domain {domain}"
         );
     }
+
+    cache.clear();
+    for (domain, _, _) in cases {
+        assert!(cache.get(domain).is_none(), "cleared {domain}");
+    }
 }
 
 #[test]
@@ -232,17 +237,6 @@ fn cache_expires() {
 
     std::thread::sleep(Duration::from_millis(10));
     assert!(cache.get("myapp.test").is_none());
-}
-
-#[test]
-fn cache_clear_invalidates_all() {
-    let cache = DnsCache::new(Duration::from_secs(60));
-    cache.put("a.test".to_string(), true, None);
-    cache.put("b.test".to_string(), false, None);
-
-    cache.clear();
-    assert!(cache.get("a.test").is_none());
-    assert!(cache.get("b.test").is_none());
 }
 
 /// A route's own DNS address never outlives its route: a reload clears the
