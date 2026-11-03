@@ -324,12 +324,17 @@ For durable runs these close the lost-attach class (papercut 910c578a):
    is never touched or resubmitted.
 2. **Terminal, stream unavailable.** When the run is terminal and its log is
    gone, the follower reads the settled outcome from the journal and exits
-   with the run's real result. `unknown` is reported only when the journal
-   itself cannot be observed (R3), with a message naming the run for
-   `effigy run status`.
+   with the run's real result. `unknown` is reported when the journal, the
+   run's workload evidence, or one stream's log read cannot be verified:
+   each observation retries within its own 30-second budget — a different
+   stage's success never renews it — and a spent budget ends the follow with
+   the reason it saw, never as a settled or drained success (R3), with a
+   message naming the run for `effigy run status`.
 3. **Exact binding.** A follower binds to one run id, never another run of the
    same task or key. Expired log bytes (rotation keeps the newest segments of
    each stream) and failed log writes are reported, never silently skipped.
+   An unverifiable read holds the delivered offset: if it recovers, the read
+   continues exactly there — no gap, no duplicate.
 
 Logs are kernel family 6: `<checkout>/.effigy/state/runs/<run-id>/<seq>.<stream>.<offset>.log`,
 1 MiB segments, the newest four kept per stream, removed with the run by
@@ -369,6 +374,7 @@ Queue's migration to the hook is described in
 | `logs --follow` ends on settle; killed follower reattaches by offset | `test:run-control:cli` |
 | Stream loss before, at and after settle (engine fault points `FollowRead`, `FollowSettled`, `FollowDone`) | `test:run-control` (fault-injection build) |
 | Terminal run without logs; expired bytes; unreadable journal | `test:run-control`; `test:run-control:cli` |
+| An unverifiable workload observation or unread stream ends unknown within its own budget, never settled or drained success; a recovering observation resumes at the exact offset with no gap or duplicate (hook `RunEffects`; hidden stdout segments) | `test:run-control` |
 | Log segments, offsets, expiry, truncation, read fault | `test:kernel:run` |
 
 Q-010 implementation adds the classification, zero-write and multi-checkout

@@ -59,6 +59,7 @@ points! {
     CaptureSetupAfterStdout,
     CaptureSetupBeforeThread,
     LogRead,
+    RunEffects,
     AnchorSpawn,
     AnchorRecord,
     AnchorStop,

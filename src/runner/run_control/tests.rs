@@ -584,3 +584,437 @@ fn run_stop_settles_a_running_task_and_its_children() {
         StopStarted::AlreadyClosed
     );
 }
+
+// Honest unknown (KTE-02/03): a follow cannot hang on an observation that
+// stays unverifiable, and cannot report bytes it could not read as drained.
+// Each fixture damages exactly one observation — a journal event payload for
+// the workload read, or stdout's segment files for one stream's read — while
+// the journal lookup keeps answering on every poll, so each deadline is
+// proven independently of a successful lookup.
+
+use std::os::unix::fs::PermissionsExt;
+
+/// A workload that stays open until the fixture releases it, with no output.
+#[cfg(feature = "fault-injection")]
+const HOLD_UNTIL: &str = "while [ ! -f release.txt ]; do sleep 0.05; done";
+/// Produces stdout lines for about a second, then settles cleanly.
+#[cfg(feature = "fault-injection")]
+const DRIPS: &str =
+    "i=0; while [ $i -lt 20 ]; do echo out-$i; i=$((i+1)); sleep 0.05; done; exit 0";
+
+#[cfg(feature = "fault-injection")]
+fn drip_lines() -> Vec<u8> {
+    (0..20)
+        .map(|n| format!("out-{n}\n"))
+        .collect::<String>()
+        .into_bytes()
+}
+
+/// A run's retained log directory.
+fn log_dir(root: &Path, id: RunId) -> PathBuf {
+    root.join(".effigy/state/runs").join(id.to_string())
+}
+
+/// Shrinks the follow's retry budget for this test process. nextest runs
+/// each test in its own process, so no test sees another's budget; the
+/// shipped budget stays the full 30 s.
+fn arm_unknown_budget(budget: Duration) {
+    *TEST_UNKNOWN_BUDGET.lock().expect("budget lock") = Some(budget);
+}
+
+#[cfg(feature = "fault-injection")]
+fn wait_for_workload(root: &Path, id: RunId) {
+    // Steady state: every launch apply has been applied and verified, and
+    // the custodian reads the run's effects again only at settle. Fixtures
+    // damage evidence only inside this window.
+    wait_for("the running workload", || {
+        found(root, id).is_some_and(|record| record.view.state == "running")
+    });
+}
+
+#[cfg(feature = "fault-injection")]
+/// Refuses the first `count` crossings of `point`, then lets them through:
+/// `usize::MAX` never recovers. Scoped by `with_hook`, so only the caller's
+/// own reads fault; the fixture run's custody reads stay clean.
+#[cfg(feature = "fault-injection")]
+fn refuse_first(
+    point: &'static str,
+    count: usize,
+) -> impl FnMut(&'static str) -> std::io::Result<()> {
+    let mut seen = 0usize;
+    move |name| {
+        if name == point {
+            seen += 1;
+            if seen > count {
+                return Ok(());
+            }
+            return Err(std::io::Error::other("injected"));
+        }
+        Ok(())
+    }
+}
+
+/// Makes every stdout segment unreadable, so reading that one stream fails
+/// until the same files are restored; stderr stays readable throughout.
+fn hide_stdout_segments(dir: &Path) -> Vec<PathBuf> {
+    let mut hidden = Vec::new();
+    for entry in std::fs::read_dir(dir).expect("log directory") {
+        let path = entry.expect("entry").path();
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.contains(".stdout.") && name.ends_with(".log"))
+        {
+            let mut permissions = std::fs::metadata(&path).expect("metadata").permissions();
+            permissions.set_mode(0o000);
+            std::fs::set_permissions(&path, permissions).expect("hide segment");
+            hidden.push(path);
+        }
+    }
+    assert!(
+        !hidden.is_empty(),
+        "the fixture run captured stdout segments"
+    );
+    hidden
+}
+
+fn restore_segments(hidden: &[PathBuf]) {
+    for path in hidden {
+        let mut permissions = std::fs::metadata(path).expect("metadata").permissions();
+        permissions.set_mode(0o600);
+        std::fs::set_permissions(path, permissions).expect("restore segment");
+    }
+}
+
+/// A workload observation that never verifies again ends the follow with the
+/// reason it saw, inside the budget, although the journal lookup itself
+/// answers on every poll. Nothing is reported drained, and the run survives.
+#[test]
+#[cfg(feature = "fault-injection")]
+fn a_run_whose_workload_stays_unverifiable_ends_unknown_within_the_budget() {
+    let root = tempfile::tempdir().expect("root");
+    let key = key(root.path(), "workload-unknown");
+    let run = start(root.path(), "hold-quiet", &key, HOLD_UNTIL);
+    // Steady state: the launch is complete, so the fault affects only this
+    // follower's own reads.
+    wait_for_workload(root.path(), key.id());
+    arm_unknown_budget(Duration::from_millis(600));
+    let mut collected = Collected::default();
+    let mut offsets = Offsets::default();
+    let started = Instant::now();
+    let outcome =
+        effigy_kernel::fault_injection::with_hook(refuse_first("RunEffects", usize::MAX), || {
+            follow(
+                root.path(),
+                key.id(),
+                &mut offsets,
+                true,
+                &mut collected.sink(),
+            )
+        });
+    let elapsed = started.elapsed();
+    std::fs::write(root.path().join("release.txt"), b"").expect("release the run");
+    assert_eq!(run.join().expect("run thread"), 0);
+    let Err(FollowError::Unknown(reason)) = outcome else {
+        panic!("an unverifiable workload ends unknown: {outcome:?}");
+    };
+    assert!(reason.contains("could not tell"), "{reason}");
+    assert!(
+        elapsed >= Duration::from_millis(600),
+        "the deadline bounds the retries: {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "the budget ends the follow, not a hang: {elapsed:?}"
+    );
+    assert_eq!(
+        offsets,
+        Offsets::default(),
+        "nothing was reported as delivered"
+    );
+    let record = found(root.path(), key.id()).expect("the run is untouched");
+    assert!(
+        record.closed(),
+        "the released run still settles: {record:?}"
+    );
+    assert_eq!(record.exit_code(), 0);
+}
+
+/// A workload observation that fails a few times and then verifies recovers:
+/// the follow completes with every byte once, in order, and the run's real
+/// result.
+#[test]
+#[cfg(feature = "fault-injection")]
+fn a_briefly_unverifiable_workload_read_recovers_without_loss_or_duplicate() {
+    let root = tempfile::tempdir().expect("root");
+    let key = key(root.path(), "workload-transient");
+    let run = start(root.path(), "drips", &key, DRIPS);
+    wait_for_workload(root.path(), key.id());
+    arm_unknown_budget(Duration::from_secs(5));
+    let mut collected = Collected::default();
+    let mut offsets = Offsets::default();
+    let ending = effigy_kernel::fault_injection::with_hook(refuse_first("RunEffects", 3), || {
+        follow(
+            root.path(),
+            key.id(),
+            &mut offsets,
+            true,
+            &mut collected.sink(),
+        )
+    })
+    .expect("the transient failure recovers within the budget");
+    assert_eq!(run.join().expect("run thread"), 0);
+    let Ending::Settled(record) = ending else {
+        panic!("the run settles while followed");
+    };
+    assert_eq!(record.exit_code(), 0, "the run's real result");
+    assert_eq!(
+        collected.stdout,
+        drip_lines(),
+        "every byte arrived once, in order"
+    );
+    assert_eq!(offsets.stdout, drip_lines().len() as u64);
+}
+
+/// A terminal run whose workload evidence stays unverifiable is not reported
+/// settled either: the journal lookup keeps answering, the workload
+/// observation does not, and the follow ends unknown within the budget.
+#[cfg(feature = "fault-injection")]
+#[test]
+fn a_terminal_run_with_unverifiable_workload_evidence_is_not_reported_settled() {
+    let root = tempfile::tempdir().expect("root");
+    let key = key(root.path(), "terminal-workload-unknown");
+    assert_eq!(
+        start(root.path(), "quick", &key, "echo hi; exit 5")
+            .join()
+            .expect("run thread"),
+        5
+    );
+    arm_unknown_budget(Duration::from_millis(600));
+    let mut collected = Collected::default();
+    let mut offsets = Offsets::default();
+    let outcome =
+        effigy_kernel::fault_injection::with_hook(refuse_first("RunEffects", usize::MAX), || {
+            follow(
+                root.path(),
+                key.id(),
+                &mut offsets,
+                true,
+                &mut collected.sink(),
+            )
+        });
+    assert!(
+        matches!(&outcome, Err(FollowError::Unknown(_))),
+        "a terminal run with unverifiable workload evidence cannot be settled success: {outcome:?}"
+    );
+    assert_eq!(offsets, Offsets::default(), "nothing was reported drained");
+    let mut collected = Collected::default();
+    let ending = follow(
+        root.path(),
+        key.id(),
+        &mut Offsets::default(),
+        true,
+        &mut collected.sink(),
+    )
+    .expect("readable without the fault");
+    let Ending::Settled(record) = ending else {
+        panic!("terminal run");
+    };
+    assert_eq!(record.exit_code(), 5);
+    assert_eq!(collected.stdout, b"hi\n" as &[u8]);
+}
+
+/// A terminal run whose one stream cannot be read is not reported settled or
+/// drained; once the stream is readable again the same run reports its real
+/// result and output.
+#[test]
+fn a_terminal_run_with_an_unreadable_log_is_not_reported_settled_or_drained() {
+    let root = tempfile::tempdir().expect("root");
+    let key = key(root.path(), "unreadable-log");
+    assert_eq!(
+        start(root.path(), "quick", &key, "echo hi; exit 5")
+            .join()
+            .expect("run thread"),
+        5
+    );
+    let hidden = hide_stdout_segments(&log_dir(root.path(), key.id()));
+    arm_unknown_budget(Duration::from_millis(600));
+    let mut collected = Collected::default();
+    let mut offsets = Offsets::default();
+    let outcome = follow(
+        root.path(),
+        key.id(),
+        &mut offsets,
+        true,
+        &mut collected.sink(),
+    );
+    restore_segments(&hidden);
+    assert!(
+        matches!(&outcome, Err(FollowError::Unknown(reason)) if reason.contains("could not tell")),
+        "an unread log cannot become settled success: {outcome:?}"
+    );
+    assert!(!collected.logs_gone, "a hidden log is not an absent log");
+    assert!(
+        collected.stdout.is_empty(),
+        "no byte was reported delivered"
+    );
+    assert_eq!(offsets.stdout, 0, "nothing was reported drained");
+    let mut collected = Collected::default();
+    let ending = follow(
+        root.path(),
+        key.id(),
+        &mut Offsets::default(),
+        true,
+        &mut collected.sink(),
+    )
+    .expect("readable again");
+    let Ending::Settled(record) = ending else {
+        panic!("terminal run");
+    };
+    assert_eq!(record.exit_code(), 5, "the real result is still there");
+    assert_eq!(collected.stdout, b"hi\n" as &[u8]);
+}
+
+/// A stream that briefly cannot be read delays the snapshot and then
+/// completes it: one exact read of both streams, no gap and no duplicate,
+/// ending settled with the run's own result.
+#[test]
+fn a_briefly_unreadable_stream_recovers_to_one_exact_read() {
+    let root = tempfile::tempdir().expect("root");
+    let key = key(root.path(), "readable-again");
+    assert_eq!(
+        start(root.path(), "quick", &key, "echo hi; echo err >&2; exit 5")
+            .join()
+            .expect("run thread"),
+        5
+    );
+    let hidden = hide_stdout_segments(&log_dir(root.path(), key.id()));
+    let repair = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        restore_segments(&hidden);
+    });
+    arm_unknown_budget(Duration::from_secs(5));
+    let mut collected = Collected::default();
+    let mut offsets = Offsets::default();
+    let ending = follow(
+        root.path(),
+        key.id(),
+        &mut offsets,
+        false,
+        &mut collected.sink(),
+    )
+    .expect("the transient failure recovers within the budget");
+    repair.join().expect("repair thread");
+    let Ending::Settled(record) = ending else {
+        panic!("terminal run");
+    };
+    assert_eq!(record.exit_code(), 5);
+    assert_eq!(collected.stdout, b"hi\n" as &[u8]);
+    assert_eq!(collected.stderr, b"err\n" as &[u8]);
+    assert_eq!(offsets.stdout, 3);
+    assert_eq!(offsets.stderr, 4);
+}
+
+/// An open run's snapshot cannot pass while its workload evidence cannot be
+/// verified: the single pass ends unknown within the budget instead of
+/// returning an incomplete read as success.
+#[test]
+#[cfg(feature = "fault-injection")]
+fn an_open_runs_snapshot_cannot_pass_with_unverifiable_workload_evidence() {
+    let root = tempfile::tempdir().expect("root");
+    let key = key(root.path(), "open-unread");
+    let run = start(root.path(), "hold-quiet", &key, HOLD_UNTIL);
+    wait_for_workload(root.path(), key.id());
+    // Steady state only: launch applies read the run's effects back, so
+    // damaging earlier would break the fixture run itself.
+    arm_unknown_budget(Duration::from_millis(600));
+    let mut collected = Collected::default();
+    let mut offsets = Offsets::default();
+    let outcome =
+        effigy_kernel::fault_injection::with_hook(refuse_first("RunEffects", usize::MAX), || {
+            follow(
+                root.path(),
+                key.id(),
+                &mut offsets,
+                false,
+                &mut collected.sink(),
+            )
+        });
+    std::fs::write(root.path().join("release.txt"), b"").expect("release the run");
+    assert_eq!(run.join().expect("run thread"), 0);
+    assert!(
+        matches!(outcome, Err(FollowError::Unknown(_))),
+        "a snapshot that could not read its stream is not a success: {outcome:?}"
+    );
+    assert_eq!(offsets, Offsets::default());
+}
+
+/// Every observation owns its deadline: another stage's success never
+/// retires it, its own success does, and expiry uses the full shipped
+/// budget of fake-clock time (the proofs above shrink only their own
+/// process's budget).
+#[test]
+fn each_observation_owns_its_deadline_and_no_other_resets_it() {
+    let now = Instant::now();
+    let spent = now - UNKNOWN_BUDGET - Duration::from_secs(1);
+    let mut deadlines = RetryDeadlines::default();
+    deadlines.0[Observation::Workload.slot()] = Some(spent);
+    deadlines.0[Observation::Log(Stream::Stdout).slot()] = Some(spent);
+    deadlines.observed(Observation::Journal);
+    deadlines.observed(Observation::Log(Stream::Stderr));
+    assert_eq!(
+        deadlines.0[Observation::Workload.slot()],
+        Some(spent),
+        "another stage's success does not retire a failing stage's deadline"
+    );
+    assert_eq!(
+        deadlines.0[Observation::Log(Stream::Stdout).slot()],
+        Some(spent),
+        "the other stream's success does not retire this stream's deadline"
+    );
+    let outcome = deadlines.retrying(Observation::Workload, "the reason".to_owned());
+    assert!(
+        matches!(outcome, Err(FollowError::Unknown(reason)) if reason == "the reason"),
+        "past the budget the follow ends with that observation's reason"
+    );
+    deadlines.0[Observation::Workload.slot()] =
+        Some(now - (UNKNOWN_BUDGET - Duration::from_secs(1)));
+    deadlines
+        .retrying(Observation::Workload, "again".to_owned())
+        .expect("within the budget it keeps retrying");
+    deadlines.observed(Observation::Workload);
+    assert_eq!(
+        deadlines.0[Observation::Workload.slot()],
+        None,
+        "its own success retires the deadline"
+    );
+    assert_eq!(
+        deadlines.0[Observation::Log(Stream::Stdout).slot()],
+        Some(spent),
+        "and still nothing else's"
+    );
+}
+
+/// The typed unknown reaches callers through the existing envelope, with the
+/// original reason, under the run schema — no invented error schema.
+#[test]
+fn an_unknown_follow_maps_to_the_existing_unknown_envelope() {
+    let error = follow_error(
+        "run-9",
+        FollowError::Unknown("the store was busy".to_owned()),
+    );
+    let RunnerError::RunControl {
+        detail,
+        details_json,
+        ..
+    } = error
+    else {
+        panic!("the typed envelope: {error:?}");
+    };
+    assert!(detail.contains("outcome unknown"), "{detail}");
+    assert!(detail.contains("the store was busy"), "{detail}");
+    let envelope: serde_json::Value = serde_json::from_str(&details_json).expect("envelope");
+    assert_eq!(envelope["schema"], "effigy.run.v1");
+    assert_eq!(envelope["state"], "unknown");
+    assert_eq!(envelope["reason"], "the store was busy");
+}

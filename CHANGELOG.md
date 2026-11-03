@@ -1551,6 +1551,20 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- `effigy run logs` can no longer hang forever on a workload observation it
+  cannot verify, and can no longer report bytes it never read as drained. A
+  successful journal lookup reset the follow's only retry deadline, so a
+  workload-process read that stayed `Unknown` polled forever in follow and
+  ordinary snapshots alike. Every observation now owns its deadline — the
+  journal, the workload evidence, each stream's log read — retrying within
+  the same 30-second budget; one stage's success never renews another's; a
+  spent budget ends the follow as the existing `unknown` envelope with the
+  reason it saw. An unverifiable stream read no longer passes as the log's
+  end: settled and snapshot success require verified reads, and the retry
+  holds the exact delivered offset, so a recovered read adds no gap and no
+  duplicate. Verified EOF, absent logs, expiry and truncation reports, and
+  lost-stream reattach are unchanged (effigy#609).
+
 - The kernel boundary ratchet passes again on main. Effigy#588's hermetic
   container-status contract fixtures wrote their manifest, Compose file and
   fake runtime scripts with raw `std::fs::write` calls in ordinary library

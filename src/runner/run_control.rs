@@ -5,11 +5,15 @@
 //! offset. Losing the follower loses nothing: a new follower resumes at the
 //! offsets the first one delivered, and the run itself is never touched or
 //! resubmitted. When the run is terminal and its log is gone, the follower
-//! still reports the settled outcome from the journal; only an unobservable
-//! journal reads `unknown` (R3).
+//! still reports the settled outcome from the journal. What cannot be
+//! verified — the journal, the run's workload evidence, or one stream's log
+//! read — is retried within a bounded budget and then reported as `unknown`
+//! with the reason it saw, never as a drained success (R3).
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
@@ -30,8 +34,9 @@ const RUNS_SCHEMA: &str = "effigy.runs.v1";
 const LOGS_SCHEMA: &str = "effigy.run.logs.v1";
 /// One log read; a follower loops until it reaches the log's end.
 const READ_MAX: usize = 256 * 1024;
-/// How long a follower keeps retrying an unreadable journal before it
-/// reports the outcome unknown.
+/// How long a follower keeps retrying an observation it cannot verify — the
+/// journal, the run's workload evidence, or one stream's log read — before
+/// it reports the outcome unknown with the reason it saw.
 const UNKNOWN_BUDGET: Duration = Duration::from_secs(30);
 /// How long `run stop` waits for the owner to act on its request before it
 /// signals an owner that does not read requests.
@@ -354,14 +359,82 @@ pub(in crate::runner) enum FollowError {
     /// exactly what was delivered; a new follower resumes there.
     Lost(std::io::Error),
     NotFound,
-    /// The journal could not be observed within the budget (R3).
+    /// An observation — the journal, the run's workload evidence, or one
+    /// stream's log read — could not be verified within the budget (R3).
     Unknown(String),
 }
+
+/// Which observation a retry deadline tracks. Every observation owns its
+/// deadline: one stage's success retires only its own deadline, so a follow
+/// cannot hang on an observation that stays unverifiable while a cheaper one
+/// keeps answering on every poll.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Observation {
+    /// The journal lookup.
+    Journal,
+    /// The run's workload process, read from its own journal rows.
+    Workload,
+    /// One stream's log read.
+    Log(Stream),
+}
+
+impl Observation {
+    fn slot(self) -> usize {
+        match self {
+            Self::Journal => 0,
+            Self::Workload => 1,
+            Self::Log(stream) => 2 + stream as usize,
+        }
+    }
+}
+
+/// Per-observation retry deadlines. An observation that keeps coming back
+/// `Unknown` spends one `UNKNOWN_BUDGET` and then ends the follow with the
+/// reason it saw; a completed observation — a value or a proven absence —
+/// retires only its own deadline.
+#[derive(Default)]
+struct RetryDeadlines([Option<Instant>; 4]);
+
+impl RetryDeadlines {
+    /// Records a failed observation: starts its deadline on the first
+    /// failure, waits one poll toward it, and past the budget ends the
+    /// follow with that observation's reason.
+    fn retrying(&mut self, stage: Observation, reason: String) -> Result<(), FollowError> {
+        let since = self.0[stage.slot()].get_or_insert_with(Instant::now);
+        if since.elapsed() >= unknown_budget() {
+            return Err(FollowError::Unknown(reason));
+        }
+        std::thread::sleep(RUN_POLL);
+        Ok(())
+    }
+
+    /// A completed observation retires its own deadline and nothing else's.
+    fn observed(&mut self, stage: Observation) {
+        self.0[stage.slot()] = None;
+    }
+}
+
+/// The follow's retry budget. Proofs shrink it in-process under `cfg(test)`
+/// (nextest runs each test in its own process); the shipped budget stays
+/// `UNKNOWN_BUDGET` of real clock.
+fn unknown_budget() -> Duration {
+    #[cfg(test)]
+    if let Some(budget) = TEST_UNKNOWN_BUDGET.lock().expect("budget lock").as_ref() {
+        return *budget;
+    }
+    UNKNOWN_BUDGET
+}
+
+#[cfg(test)]
+static TEST_UNKNOWN_BUDGET: Mutex<Option<Duration>> = Mutex::new(None);
 
 /// Reads the run's workload logs from `offsets`, handing every byte to
 /// `sink` once and in order, until the log end (or, when following, until
 /// the run is terminal and its logs are drained). `offsets` always holds
-/// what the sink accepted.
+/// what the sink accepted. An observation that stays unverifiable — journal,
+/// workload evidence, or one stream's read — ends the follow as `Unknown`
+/// within the retry budget; a stream is never reported as drained when its
+/// read could not be verified.
 pub(in crate::runner) fn follow(
     checkout: &Path,
     id: RunId,
@@ -369,21 +442,17 @@ pub(in crate::runner) fn follow(
     keep_following: bool,
     sink: &mut dyn FnMut(Event<'_>) -> std::io::Result<()>,
 ) -> Result<Ending, FollowError> {
-    let mut unknown_since: Option<Instant> = None;
+    let mut deadlines = RetryDeadlines::default();
     let mut truncated = [false, false];
     loop {
         let record = match lookup_checkout(checkout, id) {
             Lookup::Found(record) => {
-                unknown_since = None;
+                deadlines.observed(Observation::Journal);
                 record
             }
             Lookup::NotFound => return Err(FollowError::NotFound),
             Lookup::Unknown(reason) => {
-                let since = *unknown_since.get_or_insert_with(Instant::now);
-                if since.elapsed() >= UNKNOWN_BUDGET {
-                    return Err(FollowError::Unknown(reason));
-                }
-                std::thread::sleep(RUN_POLL);
+                deadlines.retrying(Observation::Journal, reason)?;
                 continue;
             }
         };
@@ -398,10 +467,20 @@ pub(in crate::runner) fn follow(
             fault_point("FollowSettled").map_err(FollowError::Lost)?;
         }
         let process = match record.workload_process() {
-            Observed::Verified(process, _) => process,
-            Observed::Absent(_) => None,
-            Observed::Unknown(_) => {
-                std::thread::sleep(RUN_POLL);
+            Observed::Verified(process, _) => {
+                deadlines.observed(Observation::Workload);
+                process
+            }
+            Observed::Absent(_) => {
+                deadlines.observed(Observation::Workload);
+                None
+            }
+            Observed::Unknown(reason) => {
+                // The lookup above can keep answering on every poll; this
+                // deadline belongs to the workload observation itself, so a
+                // persistent failure still ends the follow within the budget
+                // instead of polling forever. The run is unaffected.
+                deadlines.retrying(Observation::Workload, reason.to_string())?;
                 continue;
             }
         };
@@ -412,12 +491,23 @@ pub(in crate::runner) fn follow(
                 loop {
                     let offset = offsets.get(stream);
                     let read = match record.read_log(sequence, stream, offset, READ_MAX) {
-                        Observed::Verified(read, _) => read,
+                        Observed::Verified(read, _) => {
+                            deadlines.observed(Observation::Log(stream));
+                            read
+                        }
                         Observed::Absent(_) => {
+                            deadlines.observed(Observation::Log(stream));
                             gone = true;
                             break;
                         }
-                        Observed::Unknown(_) => break,
+                        Observed::Unknown(reason) => {
+                            // An unverifiable read is not a drained stream:
+                            // retry the exact offset, and end the follow with
+                            // the reason rather than report the bytes that
+                            // could not be read as delivered.
+                            deadlines.retrying(Observation::Log(stream), reason.to_string())?;
+                            continue;
+                        }
                     };
                     if read.from > offset {
                         sink(Event::Expired {
