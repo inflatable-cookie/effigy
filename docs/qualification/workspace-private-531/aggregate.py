@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
-"""Read-only aggregate qualification verification; never a native action.
+"""Read-only OFFLINE aggregate qualification verification.
+
+Aggregate judgment (#624) reads and hashes retained original-receipt exports
+locally: no SSH, no runtime, no qualification-root reopen, no backend or VM
+observation. The authorized backend proof turn retains the exact original
+complete/failed receipt bytes as a bounded, hash-bound export inside its own
+budget; this verifier consumes only those retained copies.
 
 One backend success, fake fixture, diagnostic or refusal cannot qualify the
-packet: every required positive backend receipt must be authentic, complete and
-match the SAME final source/feature/common contract, with platform-specific
-artifacts explicit. This verifier writes nothing, starts no backend and mutates
-no resource; its only remote access is a read-only sha256sum over the Linux
-receipt through that backend's own pinned private SSH artifacts.
+packet: every required positive backend receipt must be authentic, complete,
+carry the fixed full-session cell contract, and match the SAME final source,
+feature and common contract. Each platform's actual artifact bytes stay bound
+to their own producer receipts and are compared per platform, never across
+platforms. This verifier writes nothing and starts nothing; its module surface
+deliberately excludes every SSH/runtime/native/root API.
 """
 import argparse
 import json
@@ -15,12 +22,16 @@ from pathlib import Path
 import re
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (BACKENDS, SCRATCH, digest, load, require, run, ssh_prefix,
-                    open_qualification_root)
+from common import BACKENDS, SCRATCH, digest, load, qualification_path, require
 
 CONTRACT = 'effigy.workspace-private-proof.v1'
 INVOCATION = 'effigy.workspace-private-backend-invocation.v1'
 QUALIFICATION_FEATURES = ['workspace-private-qualification']
+# The packet's fixed positive full-session cell contract, in first-occurrence
+# order. down and positive-session legitimately recur; no other cell may appear.
+REQUIRED_CELLS = ('production-refusal', 'positive-session', 'native-identity-and-tls', 'level-one-stream',
+                  'real-signal', 'credential-refusal', 'caller-drop', 'gap-and-truncation', 'kernel-custody',
+                  'down', 'session-crash-recovery', 'baseline-and-cleanup')
 
 
 def parse_pairs(values, label):
@@ -42,40 +53,52 @@ def receipt_file(raw, label):
 
 
 def common_contract(record):
+    # The shared contract is source, features, contract schema, executed driver
+    # bytes and old source identity. Actual artifact bytes are per-platform and
+    # are never compared across Darwin and native Linux.
     binding = record['binding']
-    return (binding['candidate']['sha256'], tuple(binding['candidate_receipt']['features']),
-            binding['production']['sha256'], tuple(binding['production_receipt']['features']),
-            binding['old_source_head'], binding['old_binary']['sha256'], binding['contract'],
-            json.dumps(binding['programs'], sort_keys=True))
+    return (binding['source_head'], binding['contract'],
+            tuple(binding['candidate_receipt']['features']), tuple(binding['production_receipt']['features']),
+            binding['old_source_head'], json.dumps(binding['programs'], sort_keys=True))
 
 
-def verify_original_receipt(record):
-    # The original complete receipt is authenticated against the pinned root
-    # itself: locally by held descriptor and identity, remotely by a read-only
-    # hash over the exact pinned SSH artifacts. No replacement receipt is read.
-    binding = record['binding']
-    root = binding['qualification_root']
-    expected = Path(root['path']) / 'complete.json'
-    require(Path(record['receipt']) == expected,
-            'the recorded receipt must be the pinned root\u2019s complete.json')
-    if binding['driver'] == 'ssh':
-        found = run(ssh_prefix(binding) + ['sha256sum', '--', str(expected)]).stdout.decode().split()[0]
-    else:
-        _, fd = open_qualification_root(root)
-        try:
-            try:
-                found = digest('complete.json', dir_fd=fd)
-            except OSError as error:
-                raise RuntimeError('original complete receipt is missing') from error
-        finally:
-            os.close(fd)
-    require(found == record['receipt_sha256'], 'original receipt differs from the recorded hash')
+def verify_receipt_semantics(record):
+    # Offline original-receipt judgment: hash the retained export locally and
+    # require the actual complete positive cell contract, recorded baseline,
+    # cleanup and fixture-retention equality. A caller bool alone is never
+    # authority; a copied, self-labelled or incomplete receipt refuses.
+    export = record['receipt_export']
+    path = receipt_file(export['path'], 'retained receipt export')
+    require(digest(path) == export['sha256'] == record['receipt_sha256'],
+            'retained original receipt bytes differ from the recorded hash')
+    parsed = load(path)
+    require(parsed.get('native') is True and parsed.get('production_enabled') is False,
+            'not a native, production-disabled complete receipt')
+    cells = parsed.get('cells')
+    require(isinstance(cells, list) and cells, 'complete receipt records no cells')
+    names = [cell.get('cell') for cell in cells]
+    require(all(name in REQUIRED_CELLS for name in names),
+            'receipt records a cell outside the fixed full-session contract')
+    require(list(dict.fromkeys(names)) == list(REQUIRED_CELLS),
+            'receipt cells do not match the fixed full-session contract in order')
+    require(names[0] == 'production-refusal' and names[-1] == 'baseline-and-cleanup',
+            'receipt does not span the ordinary refusal through restored baseline')
+    baseline = cells[0].get('inventory')
+    require(isinstance(baseline, dict) and cells[-1].get('inventory') == baseline
+            and cells[-1].get('fixture_retained') is True,
+            'recorded baseline/cleanup/fixture-retention differs')
+    require(any(cell.get('cell') == 'positive-session' and cell.get('session') for cell in cells),
+            'no positive full session recorded')
+    require(any(cell.get('cell') == 'down' and cell.get('closed') is True for cell in cells),
+            'no closed down recorded')
 
 
 def verify_record(backend, record, head):
     require(record['schema'] == INVOCATION and record['backend'] == backend
             and record['binding']['backend'] == backend, 'unknown or misbound invocation receipt')
-    require(record['exit_code'] == 0, 'a failed, refused or diagnostic backend cannot qualify the packet')
+    require(record['exit_code'] == 0 and record['source_unchanged'] is True
+            and record['positive'] is True,
+            'a failed, refused, diagnostic or source-changed backend cannot qualify the packet')
     binding = record['binding']
     require(binding['contract'] == CONTRACT, 'receipt contract differs')
     require(binding['source_head'] == head, 'stale or mixed-source receipt')
@@ -97,10 +120,16 @@ def verify_record(backend, record, head):
             and type(binding['budget_seconds']) is int and 0 < binding['budget_seconds'] <= 1800
             and binding['one_shot_marker'],
             'platform-specific artifacts must be explicit')
+    require(re.fullmatch(r'[0-9a-f]{64}', binding['inputs']['sha256'])
+            and binding['go_decision_id'] and binding['go_receipt'].get('sha256'),
+            'invocation authority bindings must be explicit')
     require((binding['driver'] == 'ssh') == (backend == 'linux')
             and (binding['engine_kind'] == 'colima') == (backend == 'colima'),
             'backend driver or engine identity differs from its platform')
-    verify_original_receipt(record)
+    root = qualification_path(binding['qualification_root'])
+    require(Path(record['receipt']) == root / 'complete.json',
+            'the recorded receipt must be the pinned root\u2019s complete.json')
+    verify_receipt_semantics(record)
 
 
 def aggregate(args):
@@ -118,16 +147,17 @@ def aggregate(args):
     for backend in BACKENDS:
         verify_record(backend, records[backend], args.source_head)
     require(len({common_contract(record) for record in records.values()}) == 1,
-            'receipts do not match the SAME final candidate contract')
+            'receipts do not match the SAME final source, features and common contract')
     first = records['colima']['binding']
     return {'schema': 'effigy.workspace-private-aggregate.v1', 'qualified': True,
             'source_head': args.source_head, 'contract': CONTRACT,
-            'candidate': {'sha256': first['candidate']['sha256'],
-                          'features': first['candidate_receipt']['features']},
-            'production': {'sha256': first['production']['sha256'],
-                           'features': first['production_receipt']['features']},
-            'old_baseline': {'source_head': first['old_source_head'],
-                             'sha256': first['old_binary']['sha256']},
+            'candidate_features': first['candidate_receipt']['features'],
+            'production_features': first['production_receipt']['features'],
+            'old_source_head': first['old_source_head'],
+            'artifacts': {backend: {'candidate': records[backend]['binding']['candidate'],
+                                    'production': records[backend]['binding']['production'],
+                                    'old_binary': records[backend]['binding']['old_binary']}
+                          for backend in BACKENDS},
             'backends': {backend: {'invocation_receipt': receipts[backend],
                                    'inputs': records[backend]['binding']['inputs'],
                                    'go_decision_id': records[backend]['binding']['go_decision_id'],
@@ -138,6 +168,7 @@ def aggregate(args):
                                    'qualification_root': records[backend]['binding']['qualification_root'],
                                    'native_receipt': records[backend]['receipt'],
                                    'native_receipt_sha256': records[backend]['receipt_sha256'],
+                                   'receipt_export': records[backend]['receipt_export'],
                                    'one_shot_marker': records[backend]['binding']['one_shot_marker']}
                          for backend in BACKENDS},
             'consumer': 'separate-owner-evidence-required', 'production_enablement': False}

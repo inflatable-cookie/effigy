@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """ONE Queue proof invocation; all backends, no partial-success result."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 import shlex
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (BACKENDS, PACKET, SCRATCH, artifact, digest, exclusive, load, require, run,
+from common import (BACKENDS, PACKET, SCRATCH, artifact, digest, exclusive, exclusive_bytes, load, require, run,
                     open_qualification_root, qualification_path, source_head, ssh_prefix, validate_go, validate_inputs)
 
 
@@ -83,14 +84,25 @@ def main():
         require(receipt_path and Path(receipt_path) == expected,
                 'runtime returned no bounded receipt; native result remains unverified')
         if cell['driver'] == 'ssh':
+            # The exact original receipt bytes travel only inside this already
+            # authorized proof turn: bounded transport, then hash-bound against
+            # the remote original. No transport or re-read ever happens later.
+            transported = run(ssh() + ['cat', '--', str(expected)], timeout=60).stdout
             receipt_hash = run(ssh() + [
                                 'sha256sum -- ' + shlex.quote(receipt_path)]).stdout.decode().split()[0]
         else:
             _, fd = open_qualification_root(cell['qualification_root'])
             try:
+                with os.fdopen(os.open(expected.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd), 'rb') as original:
+                    transported = original.read()
                 receipt_hash = digest(expected.name, dir_fd=fd)
             finally:
                 os.close(fd)
+        require(hashlib.sha256(transported).hexdigest() == receipt_hash,
+                'transported original receipt differs from its recorded hash')
+        export = evidence / (cell['backend'] + '-receipt.json')
+        exclusive_bytes(export, transported)
+        require(digest(export) == receipt_hash, 'retained receipt copy differs from the original hash')
         # The binding record fixes the exact selected authority and immutable
         # context of this invocation: source, executed programs, contract,
         # candidate, inputs, pinned root, old baseline, window and one-use marker.
@@ -114,8 +126,14 @@ def main():
         if cell['driver'] == 'ssh':
             binding.update(ssh_alias=cell['ssh_alias'], ssh_config=cell['ssh_config'],
                            ssh_known_hosts=cell['ssh_known_hosts'])
+        # The post-run source check gates positivity: a mid-window source edit
+        # yields honest, nonqualifying evidence, never a positive receipt.
+        unchanged = source_head(root) == head
         receipt = {'backend': cell['backend'], 'exit_code': result.returncode, 'receipt': receipt_path,
                    'receipt_sha256': receipt_hash,
+                   'receipt_export': {'path': str(export), 'sha256': receipt_hash},
+                   'source_unchanged': unchanged,
+                   'positive': result.returncode == 0 and unchanged,
                    'host': cell.get('ssh_alias', 'local'),
                    'stdout_sha256': __import__('hashlib').sha256(result.stdout).hexdigest(),
                    'stderr_sha256': __import__('hashlib').sha256(result.stderr).hexdigest(),
@@ -123,7 +141,7 @@ def main():
         exclusive(evidence / (cell['backend'] + '.json'), receipt)
         results.append(receipt)
         require(result.returncode == 0, 'native backend failed; no retry or partial qualification credit')
-        require(source_head(root) == head, 'proof source changed during execution')
+        require(unchanged, 'proof source changed during execution')
     if args.backend is None:
         # Only the single all-backend invocation writes this aggregate record;
         # an independent backend entry never implies packet qualification. The

@@ -23,12 +23,17 @@ effigy#620 split the packet's entry points: `launch.py --backend
 colima|desktop|linux` independently executes exactly one backend under its own
 scoped GO, binding the exact source, programs, contract, candidate, inputs,
 pinned root, old baseline, window budget and input-hash one-use marker, and
-recording the original complete/failed receipt. The single all-backend
+retaining the exact original complete/failed receipt bytes as a hash-bound
+export inside that authorized proof turn. Positivity is recorded only after
+the post-run source check, so a mid-window source edit yields honest,
+nonqualifying evidence. The single all-backend
 invocation remains available and still validates every GO before any native
-window. Backend receipts must still match the same final candidate and exact
-common contract; the read-only aggregate verifier refuses anything less before
-any aggregate judgment, which additionally requires the actual consumer gates
-and Tom's separate production-enable GO. The [owned transfer
+window. Backend receipts must still match the same final source, features and
+common contract — each platform's actual artifact bytes stay bound to their
+own producer receipts — and the read-only offline aggregate verifier refuses
+anything less before any aggregate judgment, which additionally requires the
+actual consumer gates and Tom's separate production-enable GO. The [owned
+transfer
 map](../../knowledge/contracts/release.md#source-delivery-and-separate-proof-tasks--2026-11-03)
 assigns source controls to effigy#619, SOURCE packet/backend bindings to #620,
 immutable artifact production after integrated main QA to #627, the Colima,
@@ -218,24 +223,34 @@ effigy proof:workspace:private-qualification -- --inputs <inputs.json> --sha256 
 It validates exactly the selected backend's scoped GO, consumes that backend's
 input-hash one-use marker, runs only that backend's full session, and records
 the original complete/failed receipt with its binding record in a fresh
-evidence directory. One entry is one positive native receipt: it is never an
-aggregate result and never writes an aggregate `complete.json`. Separate
+evidence directory, retaining the exact original receipt bytes as a hash-bound
+export inside the proof turn. Positivity is recorded only after the post-run
+source-unchanged check: a mid-window source edit refuses and yields honest,
+nonqualifying evidence. One entry is one positive native receipt: it is never
+an aggregate result and never writes an aggregate `complete.json`. Separate
 backend entries may bind different inputs and GO receipts; the common
 candidate contract must still compare exactly.
 
 After #621/#622/#623, effigy#624's independent judgment runs the read-only
-aggregate verifier over the three invocation receipts:
+offline aggregate verifier over the three invocation receipts:
 
 ```sh
 effigy verify:workspace:private-qualification:aggregate -- --source-head <head> --receipt colima=<receipt> --receipt desktop=<receipt> --receipt linux=<receipt> --receipt-sha256 colima=<hash> --receipt-sha256 desktop=<hash> --receipt-sha256 linux=<hash>
 ```
 
-It performs no native action and writes nothing. It refuses missing, failed,
-foreign, stale, mixed-source, mixed-candidate or incomplete receipts, and its
-verdict still requires the actual consumer evidence and Tom's separate
-release-kind production-enable GO. The deterministic producer recipes and the
-exact receipt/report formats that effigy#627 fills are fixed in
-[producer.md](producer.md).
+It performs no native action and writes nothing: no SSH, no runtime, no
+qualification-root reopen, no backend or VM observation. It reads and hashes
+the retained original-receipt exports locally, refuses missing, failed,
+source-changed, foreign, stale, mixed-source, mixed-candidate or incomplete
+receipts, and validates the fixed full-session cell contract of each export
+(native, production-disabled, the production-refusal through restored-baseline
+cell sequence, recorded baseline/cleanup/fixture-retention equality) — a
+caller bool alone is never authority. The shared contract compares the same
+final source, features and common contract; each platform's actual artifact
+bytes stay bound to their own producer receipts. Its verdict still requires
+the actual consumer evidence and Tom's separate release-kind production-enable
+GO. The deterministic producer recipes and the exact receipt/report formats
+that effigy#627 fills are fixed in [producer.md](producer.md).
 
 The native budget must be within existing spending authority and at most the
 1800-second test-runner window per backend. This cap is not a spending grant.

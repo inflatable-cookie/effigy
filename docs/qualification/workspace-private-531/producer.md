@@ -56,8 +56,8 @@ sequences; equal digests refuse.
 
 Selectors at `H`: `effigy build:workspace:private-qualification:test-inputs`
 (lists the actual compiled `custody` library and test executable paths without
-running them), `effigy build:workspace:private-qualification:kernel` (builds
-the same kernel custody fixture helper), and
+running them), `effigy test:workspace:private-qualification:kernel` (builds
+the kernel custody fixture helper in its first step), and
 `effigy build:workspace:private-qualification:cargo-metadata` (source Cargo
 metadata export). Then:
 
@@ -136,22 +136,39 @@ and the common contract must compare exactly.
 
 `launch.py --backend <name>` writes
 `effigy.workspace-private-backend-invocation.v1` into the fresh evidence
-directory: backend, exit code, host, original `receipt` path and
-`receipt_sha256`, stdout/stderr hashes, and the full `binding` — source head,
-executed program hashes, contract, candidate/production/old-baseline receipts,
-inputs and GO bindings, GO decision and expiry, pinned qualification root,
-driver, engine kind and identity, resident image, window budget and the
-input-hash one-shot marker. The original `complete.json`/`failed.json` receipt
-stays in the pinned qualification root; the evidence receipt never replaces it.
+directory: backend, exit code, source-unchanged and positive flags, host,
+original `receipt` path and `receipt_sha256`, the `receipt_export` binding,
+stdout/stderr hashes, and the full `binding` — source head, executed program
+hashes, contract, candidate/production/old-baseline receipts, inputs and GO
+bindings, GO decision and expiry, pinned qualification root, driver, engine
+kind and identity, resident image, window budget and the input-hash one-shot
+marker. The exact original `complete.json`/`failed.json` bytes are transported
+and retained inside the same authorized proof turn (locally from the held root
+descriptor; for Linux through the cell's pinned SSH artifacts only) as
+`<backend>-receipt.json` in the evidence directory, hash-bound to the original
+before the invocation receipt is written. The original proof roots stay
+retained; the export never replaces them.
 
-## Aggregate verdict format (read-only verifier)
+## Aggregate verdict format (read-only offline verifier)
 
 `effigy verify:workspace:private-qualification:aggregate --source-head <H>
 --receipt <backend>=<invocation receipt> --receipt-sha256 <backend>=<hash>`
-performs no native action and writes nothing. It qualifies only when every
-required positive backend receipt is authentic, complete and matches the same
-final source/feature/common contract with platform-specific artifacts
-explicit, and its verdict (schema `effigy.workspace-private-aggregate.v1`)
-still names `consumer: separate-owner-evidence-required` and
-`production_enablement: false`. One backend success, fake fixture, diagnostic
-or refusal cannot qualify the others.
+performs no native action and writes nothing: no SSH, no runtime, no
+qualification-root reopen, no backend or VM observation. It reads and hashes
+the retained original-receipt exports locally and refuses missing, failed,
+source-changed, foreign, stale, mixed-source or incomplete evidence. It
+validates the fixed full-session cell contract of each export (`native: true`,
+`production_enabled: false`, the production-refusal through restored-baseline
+cell sequence, recorded baseline/cleanup/fixture-retention equality) — a
+caller bool alone is never authority, and a copied, self-labelled or
+incomplete receipt refuses.
+
+The shared contract compares the SAME source head, features, contract schema,
+executed driver bytes and old source identity across receipts; each platform's
+actual artifact bytes stay bound to their own producer receipts and are never
+compared across Darwin and native Linux. Its verdict (schema
+`effigy.workspace-private-aggregate.v1`) names the per-platform artifacts
+explicitly and still requires `consumer:
+separate-owner-evidence-required` and `production_enablement: false`. One
+backend success, fake fixture, diagnostic or refusal cannot qualify the
+others.
