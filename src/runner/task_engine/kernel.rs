@@ -669,8 +669,27 @@ pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
     // only into the test binary, never a shipped candidate.
     #[cfg(all(test, feature = "signal-qualification-fixture"))]
     if entry == "__kernel-sentinel" {
+        use std::os::unix::fs::MetadataExt;
         if let Ok(root) = std::env::current_dir() {
-            if root.join("signal-fixture-owned").is_file() {
+            let marker = root.join("signal-fixture-owned");
+            let name = root.file_name().and_then(|name| name.to_str());
+            let valid = (|| {
+                let name = name?;
+                let suffix = name.strip_prefix("signal-hostcli-")?;
+                if suffix.len() < 6 || !suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
+                    || !root.starts_with("/Volumes/Builds/scratch/effigy/")
+                    || std::fs::canonicalize(&root).ok()? != root
+                { return None; }
+                let directory = std::fs::symlink_metadata(&root).ok()?;
+                let file = std::fs::symlink_metadata(&marker).ok()?;
+                if !directory.is_dir() || directory.mode() & 0o077 != 0
+                    || !file.file_type().is_file() || file.nlink() != 1
+                    || file.uid() != directory.uid() || file.mode() & 0o077 != 0
+                    || std::fs::read_to_string(&marker).ok()?.trim() != name
+                { return None; }
+                Some(())
+            })().is_some();
+            if valid {
                 let cleared = std::env::var_os("PATH").is_none()
                     && std::env::var_os("TMPDIR").is_none();
                 let _ = std::fs::write(root.join("sentinel-environment"), if cleared { "cleared" } else { "inherited" });

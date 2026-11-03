@@ -30,14 +30,25 @@ fn wait_file(path: &Path, deadline: Instant) -> String {
 struct Owned {
     owner: Child,
     guest: Option<ProcessIdentity>,
+    grandchild: Option<ProcessIdentity>,
     root: PathBuf,
     fixture: PathBuf,
+    complete: bool,
 }
 
-fn recorded_guest(root: &Path) -> Option<ProcessIdentity> {
-    let record: serde_json::Value = serde_json::from_slice(&fs::read(root.join("guest.json")).ok()?).ok()?;
-    let pid = u32::try_from(record["pid"].as_u64()?).ok()?;
-    let expected = record["host_start"].as_str()?;
+fn recorded_guest(root: &Path, pid_key: &str, start_key: &str) -> Option<ProcessIdentity> {
+    let complete = fs::read(root.join("guest.json")).ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+    let (record, pid_key, start_key) = match complete {
+        Some(record) => (record, pid_key, start_key),
+        None => {
+            let file = if pid_key == "pid" { "leader.json" } else { "grandchild.json" };
+            let record = serde_json::from_slice(&fs::read(root.join(file)).ok()?).ok()?;
+            (record, "pid", "host_start")
+        }
+    };
+    let pid = u32::try_from(record[pid_key].as_u64()?).ok()?;
+    let expected = record[start_key].as_str()?;
     let identity = ident::process_identity(pid).verified()?.clone();
     let matches = match &identity.start {
         ident::ProcessStartIdentity::LinuxTicks(ticks) => ticks.to_string() == expected,
@@ -51,6 +62,7 @@ fn recorded_guest(root: &Path) -> Option<ProcessIdentity> {
 
 impl Drop for Owned {
     fn drop(&mut self) {
+        if self.complete { return; }
         if matches!(self.owner.try_wait(), Ok(None)) {
             let _ = self.owner.kill();
             let _ = self.owner.wait();
@@ -59,16 +71,23 @@ impl Drop for Owned {
         if self.guest.is_none() {
             let until = Instant::now() + Duration::from_secs(1);
             while self.guest.is_none() && Instant::now() < until {
-                self.guest = recorded_guest(&self.fixture);
+                self.guest = recorded_guest(&self.fixture, "pid", "host_start");
                 if self.guest.is_none() { std::thread::sleep(Duration::from_millis(20)); }
             }
         }
-        if let Some(guest) = &self.guest {
+        if self.grandchild.is_none() {
+            let until = Instant::now() + Duration::from_secs(1);
+            while self.grandchild.is_none() && Instant::now() < until {
+                self.grandchild = recorded_guest(&self.fixture, "grandchild_pid", "grandchild_start");
+                if self.grandchild.is_none() { std::thread::sleep(Duration::from_millis(20)); }
+            }
+        }
+        for guest in [self.guest.as_ref(), self.grandchild.as_ref()].into_iter().flatten() {
             if ident::process_identity(guest.pid).verified() == Some(guest) {
                 // Only the fixture's freshly rechecked guest may be stopped.
                 if let Ok(pid) = i32::try_from(guest.pid) {
                     let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGKILL);
-                    let _ = fs::write(self.fixture.join("emergency-cleanup"), format!("pid={} signal=9 exit=unknown\n", guest.pid));
+                    let _ = fs::write(self.fixture.join(format!("emergency-cleanup-{}", guest.pid)), format!("pid={} signal=9 exit=unknown\n", guest.pid));
                     let until = Instant::now() + Duration::from_secs(10);
                     while Instant::now() < until && matches!(ident::process_state(guest.pid), Observed::Verified(ProcessState::Active | ProcessState::Stopped, _)) {
                         std::thread::sleep(Duration::from_millis(20));
@@ -81,8 +100,10 @@ impl Drop for Owned {
 }
 
 fn fake_snapshot(backend: &Path, nonce: &str) -> String {
+    let helper = fs::read_to_string(backend.parent().unwrap().parent().unwrap().join("expected-helper")).unwrap();
     let mut child = Command::new(backend)
-        .args(["--context", "fixture", "exec", "effigy-custody", "snap"])
+        .args(["--context", "fixture", "exec", "-i", "-u", "0", ID,
+               "sh", "-c", &helper, "effigy-custody", "snap"])
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn().unwrap();
     writeln!(child.stdin.take().unwrap(), "{nonce}").unwrap();
@@ -171,7 +192,17 @@ fn hostcli_signal_case(signal: i32) {
     let home = root.join("home");
     fs::create_dir(&repo).unwrap();
     fs::create_dir(&home).unwrap();
-    fs::write(root.join("signal-fixture-owned"), b"owned\n").unwrap();
+    let kernel_source = include_str!("../../../../../crates/effigy-kernel/src/remote.rs");
+    let container_source = include_str!("../../../../../crates/effigy-containers/src/environment/remote.rs");
+    let constant = |source: &'static str, marker: &str| -> &'static str {
+        source.split_once(marker).expect("fixture constant").1.split_once("\"#;").expect("fixture constant end").0
+    };
+    fs::write(root.join("expected-wrapper"), constant(kernel_source, "const WRAPPER: &str = r#\"")).unwrap();
+    fs::write(root.join("expected-register"), constant(kernel_source, "const REGISTER: &str = r#\"")).unwrap();
+    fs::write(root.join("expected-helper"), constant(container_source, "pub(crate) const HELPER: &str = r#\"")).unwrap();
+    let marker = root.join("signal-fixture-owned");
+    fs::write(&marker, root.file_name().unwrap().as_encoded_bytes()).unwrap();
+    fs::set_permissions(&marker, fs::Permissions::from_mode(0o600)).unwrap();
     let python = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
         .map(|dir| dir.join("python3")).find(|path| path.is_file())
         .expect("fixture python3");
@@ -194,14 +225,17 @@ fn hostcli_signal_case(signal: i32) {
         .env("EFFIGY_CUSTODY_NONCE", "packet-injected-not-kernel")
         .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
         .spawn().unwrap();
-    let mut owned = Owned { owner: child, guest: None, root: repo.clone(), fixture: root.clone() };
+    let mut owned = Owned { owner: child, guest: None, grandchild: None, root: repo.clone(), fixture: root.clone(), complete: false };
     let owner_pid = owned.owner.id();
     let deadline = Instant::now() + Duration::from_secs(60);
     let run: effigy_kernel::id::RunId = wait_file(&root.join("run-id"), deadline).parse().unwrap();
     let guest: serde_json::Value = serde_json::from_str(&wait_file(&root.join("guest.json"), deadline)).unwrap();
     let guest_pid = u32::try_from(guest["pid"].as_u64().unwrap()).unwrap();
+    let grandchild_pid = u32::try_from(guest["grandchild_pid"].as_u64().unwrap()).unwrap();
     owned.guest = ident::process_identity(guest_pid).verified().cloned();
+    owned.grandchild = ident::process_identity(grandchild_pid).verified().cloned();
     assert!(owned.guest.is_some(), "guest identity must be observable");
+    assert!(owned.grandchild.is_some(), "grandchild identity must be observable");
     let owner = ident::process_identity(owner_pid).verified().unwrap().clone();
     let observe = kernel::observe();
     let state = kernel::observe_root(&observe, &repo);
@@ -279,6 +313,7 @@ fn hostcli_signal_case(signal: i32) {
     packet_consumer(&root, &python, &registration, &owner, &moved_snapshot, false);
     assert!(!root.join("recovery-calls").exists(), "refusal checks must not signal or clean up");
     assert_eq!(ident::process_identity(guest_pid).verified(), owned.guest.as_ref());
+    assert_eq!(ident::process_identity(grandchild_pid).verified(), owned.grandchild.as_ref());
     assert_eq!(wait_file(&root.join("sentinel-environment"), deadline), "cleared");
     assert_eq!(ident::process_identity(owner_pid).verified(), Some(&owner));
     // The direct child's start identity was rechecked immediately above.
@@ -298,7 +333,7 @@ fn hostcli_signal_case(signal: i32) {
         let reader = Store::read(&observe, state);
         let summary = reader.verified().and_then(|r| effigy_kernel::run::summary(r, run).verified().cloned());
         if let Some(summary) = summary.as_ref().filter(|s| s.phase == Phase::Closed && s.cleanup_complete == Some(true)) {
-            if root.join("guest-exit").is_file() {
+            if root.join("guest-exit").is_file() && root.join("grandchild-exit").is_file() {
                 if signal == libc::SIGKILL {
                     assert_eq!(summary.workload, Some(WorkloadOutcome::Interrupted));
                 } else {
@@ -311,14 +346,24 @@ fn hostcli_signal_case(signal: i32) {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert_eq!(fs::read_to_string(root.join("guest-exit")).unwrap(), "exit=0\n");
+    assert_eq!(fs::read_to_string(root.join("grandchild-exit")).unwrap(), "exit=0\n");
+    let argv_log = fs::read_to_string(root.join("backend-argv.jsonl")).unwrap();
+    assert!(!argv_log.contains(registration.nonce.as_str()), "nonce leaked into backend argv");
+    for line in argv_log.lines() {
+        let argv: Vec<String> = serde_json::from_str(line).unwrap();
+        assert_eq!(argv.get(0).map(String::as_str), Some("--context"));
+        assert_eq!(argv.get(1).map(String::as_str), Some("fixture"));
+        assert!(matches!(argv.get(2).map(String::as_str), Some("inspect" | "exec")));
+    }
     if signal == libc::SIGKILL {
         let calls = fs::read_to_string(root.join("recovery-calls")).unwrap();
         assert!(calls.lines().filter(|line| *line == "snap").count() >= 2, "settlement must re-observe the delayed guest");
         assert!(calls.lines().any(|line| line == "kill"));
     }
     assert!(matches!(ident::process_state(guest_pid), Observed::Verified(ProcessState::Zombie, _) | Observed::Absent(_)), "guest closure was not positively observed");
+    assert!(matches!(ident::process_state(grandchild_pid), Observed::Verified(ProcessState::Zombie, _) | Observed::Absent(_)), "grandchild closure was not positively observed");
     effigy_test_support::process::wait_kernel_helpers_within(&repo, Duration::from_secs(10)).unwrap();
-    owned.guest = None;
+    owned.complete = true;
 }
 
 #[test]
