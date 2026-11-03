@@ -112,3 +112,12 @@ monotonic deadline and accounting through actual report/cleanup. The future fixe
 preflight invocation is unchanged; its v2 input binding is new. Administrative
 signal source stays byte-identical. All qualification/consumer/final-enable and
 merge holds remain.
+
+
+## Public digest provenance and separate future collection
+
+[Independent public payload references](payload-provenance.md) and the
+[UNARMED one-call request](payload-collection-request.example.json) prepare a
+separate evidence-only collector. It does not alter this v2 grammar: the outside
+guestagent path remains refused here. A public digest match is not installed
+package provenance, trusted-root adoption, signal authority or private apply.

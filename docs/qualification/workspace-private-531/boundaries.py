@@ -517,6 +517,7 @@ class Boundaries(unittest.TestCase):
 from recovery_boundaries import RecoveryBoundaries
 from administrative_boundaries import AdministrativeBoundaries
 from preflight_boundaries import PreflightBoundaries
+from payload_boundaries import PayloadBoundaries
 
 if __name__ == '__main__':
     os.umask(0o077)
