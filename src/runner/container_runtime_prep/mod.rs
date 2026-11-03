@@ -841,6 +841,8 @@ impl PredecessorCompatibility {
 /// Unknown, a changed container id, a changed config hash and a backend that
 /// cannot report Compose config hashes all refuse; only a live stack whose every
 /// service config is byte-identical to what this render produces is compatible.
+/// NoPredecessor is a verified empty listing. An unavailable inventory stays
+/// Unknown and grants nothing.
 ///
 /// Interpolation is not replayed: the hash is computed from the frozen rendered
 /// closure and the project, so a service config that depends on apply-time
@@ -995,6 +997,8 @@ pub(in crate::runner) fn observed_predecessor_compatibility_with(
                 && effigy_containers::exec::compose_status_is_running(&row.status)
         })
         .collect::<Vec<_>>();
+    // Verified empty listing only. Unknown inventory already returned above:
+    // an unavailable backend is not NoPredecessor.
     if running.is_empty() {
         return Observed::Verified(
             PredecessorCompatibility::NoPredecessor,
