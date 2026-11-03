@@ -871,6 +871,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- Census self-test and the Cargo-route / TMPDIR hygiene detectors now prove
+  named scanner and detector claims on owned fixtures: include! / file-module
+  / tokio / unknown-gate attribution, ignored-missing uncovered, ignored-flag
+  mismatch, unrecorded vs stale Cargo routes, and bare vs hardcoded vs
+  quoted-string `mktemp`. `effigy test:qa:static-guards` runs the synthetic
+  trees; live `test:inventory`, `qa:docs:cargo-routes` and `qa:docs:mktemp`
+  stay the repository checks (effigy#591).
+
 - The Acow ordinary-Compose consumer qualification packet's warm-up
   prerequisite is now the ACTUAL r18 ordinary-Compose proof receipt
   (`docs/qualification/acow-ordinary-compose-5f466914/`, task effigy#545,

@@ -2048,8 +2048,14 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 
 # ---- Whole-suite census (effigy#555) -----------------------------------------
 # Proves scripts/test-inventory.py's reconciliation logic on embedded controls:
-# duplicate-ID detection, missing attribution, macro-generated attribution, and
-# the ignored / feature-gated / platform-gated / target-gated distinctions.
-# Pure Python, no Cargo, never runs a test body. The census route itself is
-# documented in docs/knowledge/test-assurance.md.
+# duplicate-ID detection, missing attribution, include!/file-module/macro
+# attribution, ignored / feature-gated / platform-gated / target-gated /
+# unknown-gated distinctions, and that an ignored declaration missing from
+# the collected list stays uncovered. Pure Python, no Cargo, never runs a
+# test body. The census route itself is documented in
+# docs/knowledge/test-assurance.md.
 "test:inventory" = { durable = true, visibility = "internal", group = "Maintenance", description = "Prove the test-suite census helper's reconciliation logic.", run = [{ run = "python3 scripts/test-inventory.py self-test", timeout_ms = 120000 }] }
+# Owned synthetic-tree proofs for the Cargo-route and mktemp detectors. Live
+# qa:docs:cargo-routes and qa:docs:mktemp stay the repository checks; this
+# selector never scans the real tree.
+"test:qa:static-guards" = { visibility = "internal", group = "Maintenance", description = "Prove the Cargo-route and mktemp hygiene detectors on owned synthetic trees.", run = [{ run = "python3 scripts/test_hygiene_guards.py", timeout_ms = 120000 }] }

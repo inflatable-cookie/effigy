@@ -1,6 +1,6 @@
 # Test assurance and suite census
 
-Status: active. Owner: this file. Route: `effigy test:inventory` proves the census helper; `effigy qa:docs` guards this document.
+Status: active. Owner: this file. Route: `effigy test:inventory` proves the census helper; `effigy test:qa:static-guards` proves the Cargo-route and mktemp detectors on owned synthetic trees; `effigy qa:docs` guards this document.
 
 This file states what the Rust test suite promises, how the whole suite is
 counted reproducibly, and the rules a pruning wave must follow when it removes
@@ -81,10 +81,23 @@ tier, not the count.
 
 ```
 effigy test:inventory            # proves the helper's reconciliation logic
+effigy test:qa:static-guards     # Cargo-route and mktemp detectors on synthetic trees
 sh scripts/oxide-selector.sh nextest list --workspace --message-format json
 python3 scripts/test-inventory.py census --out <scratch-dir> \
     --nextest-list <collected-list.json>
 ```
+
+`test:inventory` is fixture-only (no Cargo). It names include!/file-module/macro
+attribution, duplicate and unattributed collected IDs, ignored / feature /
+platform / target / unknown gates, an ignored declaration missing from the
+collected list (never covered by exemption), and an ignored-flag mismatch.
+`test:qa:static-guards` copies the exact committed detectors into a private
+tree and asserts their exit diagnostics: unrecorded vs stale Cargo routes,
+Oxide nested-tool / escape / comment exclusions, catalog include and nested
+script traversal, bare vs hardcoded vs placeholder-less `mktemp`, guest
+exemptions, crate `tests/scripts` scan, and quoted-string mentions. Live
+`qa:docs:cargo-routes` and `qa:docs:mktemp` remain the repository checks.
+Most other T6 payloads are unassessed; this file does not certify them.
 
 `scripts/test-inventory.py` (standard library only) runs `cargo metadata`,
 scans every workspace target's module tree for declared tests with their cfg

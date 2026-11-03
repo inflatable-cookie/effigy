@@ -62,6 +62,20 @@ def strip_comment(line):
     return line
 
 
+def in_quotes(line, index):
+    """Whether `index` sits inside a single- or double-quoted string."""
+    quote = None
+    for pos, char in enumerate(line):
+        if pos == index:
+            return quote is not None
+        if quote:
+            if char == quote and pos and line[pos - 1] != "\\":
+                quote = None
+        elif char in ('"', "'"):
+            quote = char
+    return quote is not None
+
+
 def scanned_files():
     paths = []
     for directory in SCANNED:
@@ -115,6 +129,8 @@ def complaints(path):
     for index, line in enumerate(lines):
         code = strip_comment(line)
         for match in MKTEMP.finditer(code):
+            if in_quotes(code, match.start()):
+                continue
             if not COMMAND_POSITION.search(code[: match.start()]):
                 continue
             if exempt(lines, index):
