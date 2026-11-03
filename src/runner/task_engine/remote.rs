@@ -212,7 +212,7 @@ pub(in crate::runner) fn run_remote_with(
             return Err(error);
         }
         if stopping.is_none() {
-            let expired = deadline.is_some_and(|at| Instant::now() >= at);
+            let expired = post_registration_timeout_expired(deadline);
             let stop = if expired || remote.client().expired() {
                 Some(Stop::TimedOut)
             } else if super::run::stop_requested() {
@@ -318,6 +318,26 @@ pub(in crate::runner) fn run_remote_with(
         stdout: stdout.bytes,
         stderr: stderr.bytes,
     })
+}
+
+// The phase proof supplies a logical deadline and instant only after the real
+// registration has completed. Kernel contexts retain their real clocks.
+#[cfg(test)]
+thread_local! {
+    static TEST_TIMEOUT_DECISION: std::cell::Cell<Option<(Instant, Instant)>> = const { std::cell::Cell::new(None) };
+}
+
+fn post_registration_timeout_expired(deadline: Option<Instant>) -> bool {
+    #[cfg(test)]
+    if let Some((at, now)) = TEST_TIMEOUT_DECISION.with(std::cell::Cell::get) {
+        return timeout_expired(Some(at), now);
+    }
+    timeout_expired(deadline, Instant::now())
+}
+
+/// Decide timeout against the original deadline without rebasing it.
+fn timeout_expired(deadline: Option<Instant>, now: Instant) -> bool {
+    deadline.is_some_and(|at| now >= at)
 }
 
 /// Client exit is never remote closure (K6). A client that ended by a signal
