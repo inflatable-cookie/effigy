@@ -58,7 +58,11 @@ aggregate receipt judgment, actual Acow/CBS consumer continuity and final
 production enablement. All backend receipts must name the same final candidate
 and inputs; every required backend and consumer gate must pass before Tom's
 separate production-enable GO. The current all-backend launcher is not yet split.
-Source delivery transfers these obligations; it does not satisfy them.
+Source delivery transfers these obligations; it does not satisfy them. The
+[owned follow-up map](contracts/release.md#source-delivery-and-separate-proof-tasks--2026-11-03)
+is effigy#619 (source controls), #620 (candidate/bindings), #621–#623 (Colima,
+Desktop, Linux), #624 (aggregate judgment), #625 (Acow/CBS continuity) and #626
+(reviewed production enablement after Tom's final GO).
 
 The former proof-before-enablement cycle is superseded. No stage implies the
 next stage's authority or completion.

@@ -24,6 +24,11 @@ into independently executable backend proofs. Follow-up preparation must bind
 all backend receipts to the same final candidate and exact inputs before any
 separately authorized native execution. Aggregate judgment requires all required
 backend and actual consumer gates, then Tom's separate production-enable GO.
+The [owned transfer map](../../knowledge/contracts/release.md#source-delivery-and-separate-proof-tasks--2026-11-03)
+assigns source controls to effigy#619, final candidate/backend bindings to #620,
+Colima/Desktop/Linux to #621/#622/#623, aggregate judgment to #624, actual
+Acow/CBS consumer continuity to #625 and reviewed production enablement to #626.
+Task registration grants no execution authority.
 
 Historical packet/fixture success is not positive native qualification. The old
 subset launcher never established full sessions. The consumed guestagent check

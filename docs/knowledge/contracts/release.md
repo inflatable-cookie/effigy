@@ -133,6 +133,22 @@ qualification requires every required backend and consumer gate, followed by
 Tom's separate final release-kind production-enable GO. Source merge, fixture
 success and historical refusal receipts satisfy none of those gates.
 
+The owned transfer is:
+
+| Queue task | Required evidence or decision |
+| --- | --- |
+| effigy#619 | Nine deferred private-apply cases, positive real production CLI and applicable #529 S1/S2/S3/S5 controls |
+| effigy#620 | Final candidate and independently executable backend packet/source bindings after #531, #619 and #618 integrated-main QA |
+| effigy#621 | Full-session Colima proof with a usable owned environment, bound by #620 |
+| effigy#622 | Full-session Docker Desktop proof, bound by #620 |
+| effigy#623 | Full-session native Linux Docker Engine proof, bound by #620 |
+| effigy#624 | One independent aggregate receipt judgment after #621–#623 on the same final candidate |
+| effigy#625 | Actual owner-authorized Acow/CBS consumer and continuity verification after #624 |
+| effigy#626 | Reviewed production enablement after acceptance and Tom's separate release-kind final GO |
+
+Registration grants no native authority. These are transferred obligations,
+not passing receipts or waivers.
+
 The [private packet](../../qualification/workspace-private-531/README.md) still
 has one all-backend launcher; independent backend invocation and binding remain
 follow-up work. No native window, install, release, consumer activation or
