@@ -1504,6 +1504,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- A managed listener that fails readiness keeps that `failed` record through
+  settlement of an unpublished successor generation. A retrying supervisor
+  stopped during the next generation's admission delay no longer replaces the
+  refusal (status, diagnostic, generation) with a blank `stopped` terminal
+  (effigy#587). An explicit later activation still writes its own `starting`
+  record. HTTP 503 remains a definite terminal refusal.
+
 - Predecessor compatibility of an unpublished render takes NoPredecessor only
   from a verified empty project listing. An unavailable inventory stays
   Unknown and grants nothing; a quiet fixture is not an empty observation
