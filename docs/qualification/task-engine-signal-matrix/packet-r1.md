@@ -7,9 +7,11 @@ executed.** Armed: **false.**
 This packet is the smallest later-executable shape for the genuine missing
 real-engine cells in `matrix.json`: real-container × INT/TERM/HUP/KILL
 through production `RemoteExecAdapter` / `ComposeRemote::<HostCli>`, plus
-strict foreign/unknown refusal, on one bounded run. It does not qualify
-those cells. Boundary doubles prove packet admission and execute
-control-flow only.
+strict foreign/unknown refusal, on one bounded run. The current driver is
+not yet a demonstrated qualification path: the observer integration and
+bounded re-observation have not been proven against the actual producer and
+retained settlement. It does not qualify those cells. Boundary doubles prove
+packet admission and execute control-flow only.
 
 ## Subject
 
@@ -48,6 +50,9 @@ context <context>
 image-digest sha256:<64-hex>
 binary <absolute path>
 binary-sha256 <64-hex>
+observer <absolute path>
+observer-sha256 <64-hex>
+owner-root <absolute owned path under scratch root>
 source <40-hex>
 window <nonempty>
 inventory <absolute path under the scratch root>
@@ -94,15 +99,19 @@ list. `spawn` is always `false` on the plan. A plan is never execution.
    - start the frozen candidate `hold` selector as a live recorded owner
      (`pid` + start identity, new session). HostCli prepends `program` to
      `argv`; the workload tail is `[hold]`, never a duplicated binary.
-   - per-cell 64-hex nonce on `EFFIGY_CUSTODY_NONCE` and as the helper's
-     first stdin line. The packet generates that nonce and authenticates
-     helper snaps against it; a later GO/integration binds any engine
-     in-band registration line.
+   - start a fresh keyed durable run and resolve its exact owner and run via
+     typed status. A pinned, feature-gated observer checks the owned checkout,
+     live owner and sentinel, gate, journal, generation and registration.
+     The packet passes the observed nonce privately to the helper and checks
+     the registered leader's boot, namespace, PID, session and start ticks.
+     It never injects a packet nonce into the candidate.
    - helper `snap`: complete `boot` + `pid:[N]` + every `p` line.
      Failed-observe omits `members`; verified empty is `members=[]`.
-   - signal only that recorded owner (INT/TERM/HUP/KILL) and wait the
-     original SIGNAL_EXIT budget. Wait timeout is `LostResponse`; no
-     blanket kill.
+   - signal only that recorded owner (INT/TERM/HUP/KILL), wait for it, and
+     re-observe closure within the original SIGNAL_EXIT budget. Owner exit
+     alone does not establish retained settlement. Wait timeout is
+     `LostResponse`; no blanket kill. An owned production-seam fixture and
+     targeted validation are still required before this is a usable proof.
    - helper-kill of leftover owned members uses the observed boot and
      namespace, never literal `boot`/`ns`.
    - status argv is `[tasks, status, hold, --json]` on the candidate;
@@ -128,3 +137,13 @@ fake backends, a labeled double, and owned local HostCli fake-executables.
 A pass is packet admission plus execute control-flow and driver plumbing,
 not native task closure. Native Linux sequence TERM/HUP via
 `linux-custody.sh` remains separately GO-gated.
+
+The feature-gated `hostcli_registration_and_signals_settle_through_real_owner_and_sentinel`
+source fixture connects the task-engine producer, the kernel observer and the
+packet's registration consumer to an owned fake Docker executable. Its inline
+sentinel records that its environment was cleared and retains it that way.
+The selected executable and working directory are recorded with the remote
+effect and revalidated before recovery; missing or changed identity refuses.
+A separate cleared-environment discovery control does not launch a backend.
+Neither the fixture nor use of a real backend with a cleared environment has
+been verified at this head; the named checks and native gates remain required.

@@ -96,6 +96,8 @@ fault-injection = ["effigy-kernel/fault-injection"]
 # in a detached process. Enables the kernel's fixture-only active-publication
 # transaction; absent from every product build.
 workspace-serving-fixture = ["effigy-kernel/test-support"]
+# Disposable HostCli source fixture; absent from ordinary binaries.
+signal-qualification-fixture = ["effigy-kernel/qualification-observer"]
 
 [dependencies]
 base64 = "0.22"

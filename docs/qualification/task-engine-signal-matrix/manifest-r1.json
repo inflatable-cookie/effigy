@@ -27,6 +27,9 @@
     "source_commit": "UNARMED",
     "binary_sha256": "UNARMED",
     "binary_path": "UNARMED",
+    "observer_path": "UNARMED",
+    "observer_sha256": "UNARMED",
+    "owner_root": "UNARMED",
     "note": "placeholders stay UNARMED until a later reviewed source/binary pin after final integration; GO matching those pins can drive one HostCli pass; this launcher never installs over live Effigy and never binds queue.proofExecution"
   },
   "engine": {

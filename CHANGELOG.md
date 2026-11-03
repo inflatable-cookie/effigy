@@ -8,6 +8,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Bind remote task recovery to its selected backend executable and working
+  directory. Missing or changed identity leaves cleanup unknown rather than
+  selecting another executable after the owner exits (effigy#590).
+
 - Fail a container activation whose declared host process cannot start, in
   attached and detached modes alike, instead of demoting a plain (non-listener)
   workload's start failure to a warning only the detached supervisor's own
@@ -871,6 +875,15 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- Focus the compiler-feedback inventory tests on distinct detector claims: the
+  synthetic renamed-helper case is folded into the real rustc alias-resolver
+  fixture, the string/comment lexing cases into one code-only contract, and
+  new controls pin the test-target diagnostic skip, the `steps::step` migration
+  row, char literals (plain and escaped spellings), lifetimes, raw strings, the
+  missing-sink refusal, the sink's one allowed non-import mention, and the
+  migration message's marker text. The production detector is unchanged
+  (effigy#593).
+
 - Census self-test and the Cargo-route / TMPDIR hygiene detectors now prove
   named scanner and detector claims on owned fixtures: include! / file-module
   / tokio / unknown-gate attribution, ignored-missing uncovered, ignored-flag
@@ -1514,6 +1527,40 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Name environment recovery commands with the CLI's `container <NAME> <verb>`
   argument order so actual sentinel admission accepts them.
+
+- The kernel boundary ratchet passes again on main. Effigy#588's hermetic
+  container-status contract fixtures wrote their manifest, Compose file and
+  fake runtime scripts with raw `std::fs::write` calls in ordinary library
+  code, and the sentinel fixture's environment marker did the same in a
+  statement-gated block the scanner counts as production. The status fixture
+  now writes every file through the owned `create_contract_fixture_files`
+  boundary (which gained nested-name parent creation), executable bits are
+  applied by a permissions-only helper, and the marker moved into a named
+  cfg-gated function. Ownership, bytes, permissions, row environment and
+  cleanup behavior are unchanged; the baseline inventory is unchanged
+  (effigy#597).
+
+- The feedback checker no longer hides the code after an escaped character
+  literal. Its escape scan started on the escaped character, so `'\\'` — or a
+  byte literal like `b'\\'` — skipped its own closing quote and blanked every
+  following column through the next quote, letting a fixed-label spinner
+  written after it pass unreported. The scan now recognizes exactly rustc's
+  char literals — one character, or one `\n`/`\x`/`\u{...}` escape closed by
+  the very next quote — and leaves anything else (a lifetime, a malformed or
+  unterminated literal) visible as code, so uncertain input can only
+  over-report, never quietly blank executable code. Escaped-backslash,
+  escaped-quote, malformed-escape and literal/comment-contents controls pin
+  the repaired scan (effigy#594). This restores the documented promise that
+  literal contents are blanked while real code and exact line locations stay
+  visible; no feedback policy or sink exemption changes.
+
+- The harness `mktemp` TMPDIR guard treats an unescaped `$(mktemp …)` or
+  backtick substitution inside double quotes as a command again, while still
+  ignoring quoted mentions, single-quoted literals, and escaped dollar-paren
+  or backtick openers (effigy#592). `effigy test:qa:static-guards` names those
+  cases; `qa:docs:mktemp` stays the live-tree check. This restores the
+  placement policy that effigy#591's quoted-mention skip had missed; it is not
+  a new safety rule.
 
 - `container status --json` no longer emits `services: null` when the runtime
   is not running. A known-stopped host reports `runtime_running: false` with

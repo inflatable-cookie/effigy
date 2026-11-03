@@ -95,7 +95,8 @@ collected list (never covered by exemption), and an ignored-flag mismatch.
 tree and asserts their exit diagnostics: unrecorded vs stale Cargo routes,
 Oxide nested-tool / escape / comment exclusions, catalog include and nested
 script traversal, bare vs hardcoded vs placeholder-less `mktemp`, guest
-exemptions, crate `tests/scripts` scan, and quoted-string mentions. Live
+exemptions, crate `tests/scripts` scan, quoted mentions, escaped substitution
+openers, and double-quoted `$(...)` / backtick substitutions. Live
 `qa:docs:cargo-routes` and `qa:docs:mktemp` remain the repository checks.
 Most other T6 payloads are unassessed; this file does not certify them.
 

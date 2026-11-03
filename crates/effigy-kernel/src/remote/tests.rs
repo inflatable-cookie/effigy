@@ -62,6 +62,7 @@ fn intent(reg: &RemoteRegistration) -> Intent {
         env: reg.env.clone(),
         container: reg.container.clone(),
         nonce: reg.nonce.clone(),
+        recovery: None,
         grace_millis: 0,
         call_millis: 1000,
     }
@@ -84,6 +85,44 @@ fn effect(reg: &RemoteRegistration, receipt: bool) -> Effect {
         receipt: receipt.then(|| serde_json::to_value(reg).unwrap()),
         reason: None,
     }
+}
+
+#[cfg(feature = "qualification-observer")]
+#[test]
+fn qualification_registration_refuses_partial_foreign_and_ambiguous_effects() {
+    let registration = reg();
+    let applied = effect(&registration, true);
+    assert_eq!(
+        qualification_registration(std::slice::from_ref(&applied), &env(), &container()).unwrap(),
+        registration
+    );
+    assert!(
+        qualification_registration(&[effect(&registration, false)], &env(), &container()).is_err()
+    );
+    assert!(
+        qualification_registration(&[applied.clone(), applied.clone()], &env(), &container())
+            .is_err()
+    );
+    let mut foreign = container();
+    foreign.id = "foreign".into();
+    assert!(qualification_registration(std::slice::from_ref(&applied), &env(), &foreign).is_err());
+    let mut stale = env();
+    stale.generation = Generation::new(2);
+    assert!(qualification_registration(&[applied], &stale, &container()).is_err());
+}
+
+#[cfg(feature = "qualification-observer")]
+#[test]
+fn qualification_nonce_changes_with_run_fence_and_effect_position() {
+    let first = RunId::new(1, [1; 10]).unwrap();
+    let second = RunId::new(2, [1; 10]).unwrap();
+    let owner = env();
+    let nonce = session_nonce(first, &owner, 0).unwrap();
+    assert_ne!(nonce, session_nonce(second, &owner, 0).unwrap());
+    assert_ne!(nonce, session_nonce(first, &owner, 1).unwrap());
+    let mut stale = owner.clone();
+    stale.generation = Generation::new(2);
+    assert_ne!(nonce, session_nonce(first, &stale, 0).unwrap());
 }
 fn step<C, R>(call: C, reply: R) -> Step<C, R> {
     Step {
@@ -437,6 +476,85 @@ fn journal_first_launch_strips_ack_and_local_exit_is_not_remote_completion() {
     let expected = expected(&run);
     let mut remote = RemoteCustody::launch(&mut run, launch_spec(), &cx, &mut a.0).unwrap();
     assert_eq!(remote.registration, expected);
+    #[cfg(feature = "qualification-observer")]
+    {
+        let effects = run.effects().unwrap();
+        assert_eq!(
+            qualification_registration(&effects, &env(), &container()).unwrap(),
+            remote.registration
+        );
+        let mut wrong = effects.clone();
+        let remote_effect = wrong
+            .iter_mut()
+            .find(|effect| effect.spec.kind == KIND)
+            .unwrap();
+        remote_effect.receipt = Some(serde_json::to_value(reg()).unwrap());
+        assert!(qualification_registration(&wrong, &env(), &container()).is_err());
+        let mut foreign = container();
+        foreign.id = "foreign-container".into();
+        assert!(qualification_registration(&effects, &env(), &foreign).is_err());
+        let mut stale = env();
+        stale.generation = Generation::new(2);
+        assert!(qualification_registration(&effects, &stale, &container()).is_err());
+        let observe = cx.operation().observe().unwrap();
+        let owner = crate::ident::process_identity(std::process::id())
+            .verified()
+            .unwrap()
+            .clone();
+        let directories = (
+            root.owning_directory().identity().unwrap(),
+            root.state_directory().identity().unwrap(),
+        );
+        let invocation = inv();
+        let task = &invocation.spec().task;
+        let original_env = env();
+        let original_container = container();
+        let subject = QualificationSubject {
+            run: run.id(),
+            task,
+            owner: &owner,
+            env: &original_env,
+            container: &original_container,
+        };
+        assert_eq!(
+            qualification_owned_registration(&observe, &root, directories, &subject).unwrap(),
+            remote.registration
+        );
+        let wrong_run = QualificationSubject {
+            run: RunId::new(2, [1; 10]).unwrap(),
+            ..subject
+        };
+        assert!(
+            qualification_owned_registration(&observe, &root, directories, &wrong_run).is_err()
+        );
+        let wrong_fence = QualificationSubject {
+            env: &stale,
+            ..subject
+        };
+        assert!(
+            qualification_owned_registration(&observe, &root, directories, &wrong_fence).is_err()
+        );
+        let wrong_container = QualificationSubject {
+            container: &foreign,
+            ..subject
+        };
+        assert!(
+            qualification_owned_registration(&observe, &root, directories, &wrong_container)
+                .is_err()
+        );
+        let mut moved_root = directories;
+        moved_root.0.inode = moved_root.0.inode.wrapping_add(1);
+        assert!(qualification_owned_registration(&observe, &root, moved_root, &subject).is_err());
+        let mut foreign_owner = owner.clone();
+        foreign_owner.pid = foreign_owner.pid.saturating_add(1);
+        let wrong_owner = QualificationSubject {
+            owner: &foreign_owner,
+            ..subject
+        };
+        assert!(
+            qualification_owned_registration(&observe, &root, directories, &wrong_owner).is_err()
+        );
+    }
     let exit = remote
         .client()
         .wait(&cx.operation().child(Duration::from_secs(1)));

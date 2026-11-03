@@ -214,12 +214,6 @@ impl Fixture {
         Self::own_for_process(Self::new(prefix)?)
     }
 
-    /// [`Self::process_lifetime`] under `parent`: for state that needs a short
-    /// path, such as a home whose run sockets must fit a Unix socket path.
-    pub fn process_lifetime_in(prefix: &str, parent: &Path) -> io::Result<PathBuf> {
-        Self::own_for_process(Self::in_parent(prefix, parent)?)
-    }
-
     /// [`Self::process_lifetime`] for a home whose run sockets must fit a Unix
     /// socket path; the parent follows [`Self::short_home`].
     pub fn process_lifetime_short(prefix: &str) -> io::Result<PathBuf> {
