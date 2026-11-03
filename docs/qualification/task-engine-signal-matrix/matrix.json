@@ -1,0 +1,263 @@
+{
+  "schema": "effigy.qualification.task-engine-signal-matrix.r1",
+  "task": "effigy#579",
+  "status": "prepared-not-executed",
+  "qualification": false,
+  "legacy_shadow_oracle": "retired",
+  "routing": {
+    "census": "existing --plan/--resolve/TaskId comparisons already cover expected routes; no new giant census",
+    "cells": [
+      {
+        "id": "canonical-taskid",
+        "claim": "TaskId from checkout + catalog path + surface + declared task + profile; identity never from selector spelling",
+        "credit": "accepted",
+        "receipt": "current source after Q-012; expected canonical routing",
+        "call_path": "src/runner/task_engine/identity.rs",
+        "detector": "tests/task_engine_kill_matrix.rs::task_engine_equivalent_spellings_from_two_processes_serialize; tests/cli_output_tests/tasks_rendering_tests/resolve.rs",
+        "backend": "n/a",
+        "limit": "subdirectory spellings (build, api/build, ./apps/api/build) are one TaskId at the declaring root"
+      },
+      {
+        "id": "one-resolver",
+        "claim": "routing, --plan and --resolve share resolve_route",
+        "credit": "accepted",
+        "receipt": "current source (D1-10 / contract 017 K1)",
+        "call_path": "src/runner/execute/route.rs::resolve_route; src/runner/tasks_command/resolve.rs",
+        "detector": "tests/cli_output_tests/selector_plan_tests.rs; src/tests/runner_tests/runner_core_tests/direct_task_dispatch_tests.rs",
+        "backend": "n/a",
+        "limit": "--plan does not start the task"
+      },
+      {
+        "id": "consumer-expected-routes",
+        "claim": "composed consumer graphs against current expected routing",
+        "credit": "accepted",
+        "receipt": "current source fixtures",
+        "call_path": "tests/scripts/sequence-consumer-fixtures.py",
+        "detector": "test:task-engine:consumer-baseline",
+        "backend": "n/a",
+        "limit": "read-only consumer config knowledge; no actual consumer command, vault, bundle sync or runtime"
+      },
+      {
+        "id": "legacy-shadow-oracle",
+        "claim": "128-root v0.14-v0.14.1 legacy comparison layer stays retired",
+        "credit": "accepted",
+        "receipt": "task#373 0f22c5f2-ebc9-4823-a690-18d9ee6d9929 PR519; docs/knowledge/retired.toml Q-012 §3",
+        "call_path": "removed",
+        "detector": "retired.toml Q-012 §3 entries",
+        "backend": "n/a",
+        "limit": "the 128-root map remains inventory for choosing consumers, not a shadow oracle"
+      }
+    ]
+  },
+  "cells": [
+    {
+      "id": "plain-int",
+      "kind": "plain",
+      "signal": "INT",
+      "credit": "accepted",
+      "receipt": "task#298 98d0cde3-67bd-4bf9-b943-2e002eb78e08 PR435 head 58f49b713af20f0ad80cad3be03c4e5d171b06e8 review 5636323511 merged d014d79e",
+      "call_path": "tests/task_engine_kill_matrix.rs::kill_case(SIGINT)",
+      "detector": "test:task-engine:kill-matrix:linux",
+      "backend": "private disposable Linux VM; linux-custody.sh mode task-engine-fixtures; not a container engine",
+      "obligation": null
+    },
+    {
+      "id": "plain-term",
+      "kind": "plain",
+      "signal": "TERM",
+      "credit": "accepted",
+      "receipt": "task#298 PR435 review 5636323511",
+      "call_path": "tests/task_engine_kill_matrix.rs::kill_case(SIGTERM)",
+      "detector": "test:task-engine:kill-matrix:linux",
+      "backend": "private disposable Linux VM",
+      "obligation": null
+    },
+    {
+      "id": "plain-hup",
+      "kind": "plain",
+      "signal": "HUP",
+      "credit": "accepted",
+      "receipt": "task#298 PR435 review 5636323511",
+      "call_path": "tests/task_engine_kill_matrix.rs::kill_case(SIGHUP)",
+      "detector": "test:task-engine:kill-matrix:linux",
+      "backend": "private disposable Linux VM",
+      "obligation": null
+    },
+    {
+      "id": "plain-kill",
+      "kind": "plain",
+      "signal": "KILL",
+      "credit": "accepted",
+      "receipt": "task#298 PR435 review 5636323511",
+      "call_path": "tests/task_engine_kill_matrix.rs::kill_case(SIGKILL) sentinel settle",
+      "detector": "test:task-engine:kill-matrix:linux",
+      "backend": "private disposable Linux VM",
+      "obligation": null
+    },
+    {
+      "id": "plain-descendant-closure",
+      "kind": "plain",
+      "signal": "*",
+      "credit": "accepted",
+      "receipt": "task#298 PR435 review 5636323511",
+      "call_path": "kill_case wait_gone(leader) and wait_gone(grandchild); gate not-recorded",
+      "detector": "test:task-engine:kill-matrix:linux",
+      "backend": "private disposable Linux VM",
+      "obligation": null
+    },
+    {
+      "id": "sequence-int-step0-text",
+      "kind": "sequence",
+      "signal": "INT",
+      "credit": "accepted",
+      "receipt": "task#298 PR435 review 5636323511",
+      "call_path": "sequence_signal_matrix_each_step_text_and_json_settles_the_entire_tree cell (0, SIGINT, false)",
+      "detector": "test:task-engine:kill-matrix:linux",
+      "backend": "private disposable Linux VM",
+      "obligation": null
+    },
+    {
+      "id": "sequence-kill-step2-text",
+      "kind": "sequence",
+      "signal": "KILL",
+      "credit": "accepted",
+      "receipt": "task#298 PR435 review 5636323511",
+      "call_path": "sequence_signal_matrix cell (2, SIGKILL, false)",
+      "detector": "test:task-engine:kill-matrix:linux",
+      "backend": "private disposable Linux VM",
+      "obligation": null
+    },
+    {
+      "id": "sequence-int-step1-json",
+      "kind": "sequence",
+      "signal": "INT",
+      "credit": "accepted",
+      "receipt": "task#298 PR435 review 5636323511",
+      "call_path": "sequence_signal_matrix cell (1, SIGINT, true)",
+      "detector": "test:task-engine:kill-matrix:linux",
+      "backend": "private disposable Linux VM",
+      "obligation": null
+    },
+    {
+      "id": "sequence-term",
+      "kind": "sequence",
+      "signal": "TERM",
+      "credit": "shared-path",
+      "receipt": "plain TERM kill_case plus sequence INT/KILL at task#298; same kernel stop router; no dedicated sequence TERM cell in current source",
+      "call_path": "tests/task_engine_kill_matrix.rs (comment: the four kill_case tests cover TERM and HUP)",
+      "detector": "none dedicated",
+      "backend": "private disposable Linux VM (plain path)",
+      "obligation": "planner may require a dedicated sequence TERM cell later; this packet does not manufacture one"
+    },
+    {
+      "id": "sequence-hup",
+      "kind": "sequence",
+      "signal": "HUP",
+      "credit": "shared-path",
+      "receipt": "plain HUP kill_case plus sequence INT/KILL at task#298; same kernel stop router; no dedicated sequence HUP cell in current source",
+      "call_path": "tests/task_engine_kill_matrix.rs",
+      "detector": "none dedicated",
+      "backend": "private disposable Linux VM (plain path)",
+      "obligation": "planner may require a dedicated sequence HUP cell later; this packet does not manufacture one"
+    },
+    {
+      "id": "sequence-timeout-descendants",
+      "kind": "sequence",
+      "signal": null,
+      "credit": "accepted",
+      "receipt": "task#298 PR435 review 5636323511",
+      "call_path": "sequence_timeout_settles_descendants_before_skipping_remaining_steps",
+      "detector": "test:task-engine:kill-matrix:linux",
+      "backend": "private disposable Linux VM",
+      "obligation": null
+    },
+    {
+      "id": "foreign-generation-host",
+      "kind": "plain",
+      "signal": null,
+      "credit": "accepted",
+      "receipt": "task#298 PR435 review 5636323511 foreign-generation unknown 2/2",
+      "call_path": "test:fixtures:foreign-generation:linux",
+      "detector": "linux-custody.sh in the same private VM",
+      "backend": "Linux host process table",
+      "obligation": null
+    },
+    {
+      "id": "hook-custody-terminal",
+      "kind": "hook",
+      "signal": null,
+      "credit": "accepted",
+      "receipt": "task#325 631ec2a1-3980-4429-83dc-7df9715f7093 PR473 review 5641997919",
+      "call_path": "admission-hook terminal/custody protocol",
+      "detector": "PR473 retained review",
+      "backend": "n/a",
+      "obligation": "protocol delta only; not a signal-matrix substitute"
+    },
+    {
+      "id": "container-source-fake-engine",
+      "kind": "container",
+      "signal": "model-matrix",
+      "credit": "accepted-source",
+      "receipt": "task#236 da34736c-c2a0-4d19-bf5e-909794feb584 PR365 head 92678c4ca86a9882f63c68cecf3dfcc014ae8d51 review 5593366481 merged 04ea99aa",
+      "call_path": "src/runner/task_engine/remote/tests.rs in-process Engine; test:containers:environment",
+      "detector": "test:task-engine (model); test:containers:environment",
+      "backend": "FAKE Docker/Colima shims; TEST_REMOTE factory",
+      "obligation": "not a real-container engine receipt; fake transport is never real-engine credit"
+    },
+    {
+      "id": "container-int",
+      "kind": "container",
+      "signal": "INT",
+      "credit": "missing",
+      "receipt": null,
+      "call_path": "src/runner/task_engine/remote.rs::run_remote; crates/effigy-containers/src/environment/remote.rs ComposeRemote",
+      "detector": "this packet, later GO",
+      "backend": "real colima-nerdctl or docker-compose; identity engine:full-id@context",
+      "obligation": "real RemoteExecAdapter INT with registration, settlement, /proc helper identity recheck, owned descendant/group closure, terminal/gate evidence"
+    },
+    {
+      "id": "container-term",
+      "kind": "container",
+      "signal": "TERM",
+      "credit": "missing",
+      "receipt": null,
+      "call_path": "src/runner/task_engine/remote.rs::run_remote; ComposeRemote",
+      "detector": "this packet, later GO",
+      "backend": "real colima-nerdctl or docker-compose",
+      "obligation": "same as container-int for TERM"
+    },
+    {
+      "id": "container-hup",
+      "kind": "container",
+      "signal": "HUP",
+      "credit": "missing",
+      "receipt": null,
+      "call_path": "src/runner/task_engine/remote.rs::run_remote; ComposeRemote",
+      "detector": "this packet, later GO",
+      "backend": "real colima-nerdctl or docker-compose",
+      "obligation": "same as container-int for HUP"
+    },
+    {
+      "id": "container-kill",
+      "kind": "container",
+      "signal": "KILL",
+      "credit": "missing",
+      "receipt": null,
+      "call_path": "src/runner/task_engine/remote.rs::run_remote; ComposeRemote",
+      "detector": "this packet, later GO",
+      "backend": "real colima-nerdctl or docker-compose",
+      "obligation": "same as container-int for KILL; client exit is never remote closure (K6)"
+    },
+    {
+      "id": "container-foreign-unknown",
+      "kind": "container",
+      "signal": null,
+      "credit": "missing",
+      "receipt": null,
+      "call_path": "ComposeRemote identity recheck; kernel session foreign/unknown refusal",
+      "detector": "this packet, later GO",
+      "backend": "real colima-nerdctl or docker-compose",
+      "obligation": "strict foreign/unknown refusal on the real engine; host foreign-generation at #298 does not cover this cell"
+    }
+  ]
+}

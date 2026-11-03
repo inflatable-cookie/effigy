@@ -2088,7 +2088,12 @@ is gone or shows different start ticks. Exec failure is `Unknown`, never
   and Linux Docker. Apple Containers must pass before it is supported. This
   is a qualification-lane step (planner ruling, 2026-10-20): the relays,
   helper and identity resolution above have not yet run against a live
-  engine. The recorded steps, on each backend with the candidate binary:
+  engine. Task #579 prepared an UNARMED source packet at
+  `docs/qualification/task-engine-signal-matrix/` for the missing
+  real-container INT/TERM/HUP/KILL `RemoteExecAdapter` cells. Status
+  prepared-not-executed: packet delivery is not live-engine qualification
+  and does not replace the consumer steps below. The recorded steps, on each
+  backend with the candidate binary:
   1. cbs: `effigy schema:refresh`, then `effigy seed`; compare the dumped
      schema files and step outcomes with v0.14.1; repeat `seed` under
      `--json` and compare `steps`.
