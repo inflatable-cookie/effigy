@@ -101,6 +101,13 @@ double output into a native receipt. A labeled-double result is
 are retained evidence, never a retry token. Native Linux sequence TERM/HUP
 via `linux-custody.sh` remains separately GO-gated.
 
+The feature-gated host fixture definition exercises the task-engine producer,
+kernel observation and packet consumer against an owned fake HostCli backend,
+including INT, TERM, HUP and owner SIGKILL. Its test-only sentinel seam records
+the cleared environment before adding the fake backend path. The fixture has
+not been executed at this head, and that shim does not prove discovery of a
+real backend by an unchanged candidate.
+
 Future GO (separately authorized) must name an already-running engine and
 an already-present image digest, and a later reviewed candidate pin.
 The launcher never starts or reconfigures a VM/engine, never pulls or

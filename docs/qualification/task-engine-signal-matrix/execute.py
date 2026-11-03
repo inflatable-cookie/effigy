@@ -292,6 +292,17 @@ def registration_from_observer(result, identity, created, boot, pid_ns, owner_pi
         return None
 
 
+def matches_registration_snapshot(registration, observation, boot):
+    if (observation.get('observe') != 'verified' or observation.get('boot') != boot
+            or observation.get('pid_ns') != registration['pid_ns']):
+        return False
+    leaders = [member for member in owned_members(observation['members'])
+               if member['pid'] == str(registration['leader_pid'])
+               and member['start'] == str(registration['leader_start_ticks'])
+               and member['sid'] == str(registration['sid'])]
+    return len(leaders) == 1
+
+
 def _inventory_payload(phase, identity, transport, observation):
     payload = {
         'schema': SCHEMA,
@@ -582,13 +593,7 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
                 'unknown',
                 '%s registration failed-observe: %s' % (cell_id, snap_obs.get('reason')),
             )
-        owned = owned_members(snap_obs['members'])
-        leader = [member for member in owned
-                  if member['pid'] == str(registration['leader_pid'])
-                  and member['start'] == str(registration['leader_start_ticks'])
-                  and member['sid'] == str(registration['sid'])]
-        if (snap_obs['boot'] != pre_obs['boot'] or snap_obs['pid_ns'] != registration['pid_ns']
-                or len(leader) != 1):
+        if not matches_registration_snapshot(registration, snap_obs, pre_obs['boot']):
             return write_error('unknown', '%s registration omitted owned descendants' % cell_id)
         generation = {'boot': snap_obs['boot'], 'ns': snap_obs['ns']}
         last_generation = generation

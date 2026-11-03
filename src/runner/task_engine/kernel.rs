@@ -664,6 +664,22 @@ pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
     if !entry.starts_with("__kernel-") {
         return None;
     }
+    // The owned HostCli fixture proves what the inline sentinel inherited
+    // before making its private fake backend discoverable. This is compiled
+    // only into the test binary, never a shipped candidate.
+    #[cfg(all(test, feature = "signal-qualification-fixture"))]
+    if entry == "__kernel-sentinel" {
+        if let Ok(root) = std::env::current_dir() {
+            if root.join("signal-fixture-owned").is_file() {
+                let cleared = std::env::var_os("PATH").is_none()
+                    && std::env::var_os("TMPDIR").is_none();
+                let _ = std::fs::write(root.join("sentinel-environment"), if cleared { "cleared" } else { "inherited" });
+                std::env::set_var("PATH", root.join("bin"));
+                std::env::set_var("TMPDIR", &root);
+                std::env::set_var("EFFIGY_SIGNAL_FIXTURE_RECOVERY", "1");
+            }
+        }
+    }
     let policy = match entry {
         "__kernel-sentinel" => RouterPolicy::Sentinel,
         "__kernel-supervise" => RouterPolicy::Supervisor,
