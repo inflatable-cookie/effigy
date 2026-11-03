@@ -1,0 +1,24 @@
+{
+  "armed": false,
+  "execute": false,
+  "purpose": "Future owner-bound read-only preflight; this proposal is not authority",
+  "entry": "preflight.preflight(inputs, inputs_hash, go_index, index_hash, deadline, evidence)",
+  "input_schema": "effigy.workspace-private-preflight.v1",
+  "effect": "workspace-private-531-preflight-r1",
+  "action": "one-read-only-preflight",
+  "count": 1,
+  "single_call_seconds_max": 10,
+  "client_seconds_max": 2,
+  "stream_bytes_max": 16384,
+  "target": "Existing effigy-531-qualification / PID 94093 only",
+  "missing_owner_inputs": [
+    "Fresh operator board decision and separately granted allowance; a16a8464 is exhausted",
+    "Reviewed committed source head and exact common/recovery/administrative_recovery/preflight program SHA256 values",
+    "Owner-bound immutable inputs containing exact retained metadata pins and recorded admission",
+    "Authentic GO and GO-index hashes bound to those inputs, source, target, action and new-owner-bound-preflight allowance",
+    "Fresh UTC start/expiry and matching command-local monotonic deadline (both at most 10 seconds), remaining global/native budget and report reserve",
+    "Fresh private 0700 evidence directory outside Queue cleanup, selected before the native window",
+    "A successful original preflight receipt and exact safe ps rendering, still missing; no historical output reconstruction"
+  ],
+  "future_step_after_receipt": "Owner reconciles actual cleanup debit and binds any signal action separately; this entry never signals or consumes that claim"
+}
