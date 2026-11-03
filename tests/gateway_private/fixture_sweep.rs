@@ -75,14 +75,16 @@ struct HelperIdentity {
 }
 
 /// The watchdog's completion receipt: the owner it watched, its own PID and
-/// identity. It is the helper's final write, so a receipt that names this
-/// owner proves every ledger write and the whole stop pass happened before
-/// it, and the named helper writes nothing after it.
+/// its own identity. It is the helper's final write, so a receipt that names
+/// this owner proves every ledger write and the whole stop pass happened
+/// before it, and the named helper writes nothing after it. The identity is
+/// part of the receipt, not an extra: a receipt without one is refused,
+/// never accepted as settled.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct WatchdogExit {
     pub(super) owner: u32,
     pub(super) watchdog: u32,
-    identity: Option<HelperIdentity>,
+    identity: HelperIdentity,
 }
 
 /// `(pid, pgid)` for every process, from one read of the process table.
@@ -393,23 +395,23 @@ fn exit_receipt_path(root: &Path) -> PathBuf {
     root.join(WATCHDOG_EXIT_FILE)
 }
 
-/// The watchdog's own identity at receipt time, for the wait's closure check.
-fn own_identity() -> Option<HelperIdentity> {
-    let live = read_live_process_identity(std::process::id()).ok()?;
-    Some(HelperIdentity {
+/// The watchdog's own identity at receipt time. Required: a receipt without
+/// the helper's identity is never written, so the wait can always closure-
+/// check the exact process it names.
+fn own_identity() -> HelperIdentity {
+    let live = read_live_process_identity(std::process::id())
+        .expect("the watchdog's own identity for its exit receipt");
+    HelperIdentity {
         boot: live.boot_identity,
         start: live.start_identity,
-    })
+    }
 }
 
-fn identity_value(identity: &Option<HelperIdentity>) -> serde_json::Value {
-    match identity {
-        Some(identity) => serde_json::json!({
-            "boot": identity.boot,
-            "start": serde_json::to_value(&identity.start).expect("start identity"),
-        }),
-        None => serde_json::Value::Null,
-    }
+fn identity_value(identity: &HelperIdentity) -> serde_json::Value {
+    serde_json::json!({
+        "boot": identity.boot,
+        "start": serde_json::to_value(&identity.start).expect("start identity"),
+    })
 }
 
 /// Publishes the watchdog's exit receipt in one rename, like the ledger. This
@@ -432,12 +434,14 @@ fn read_exit_receipt(root: &Path) -> Option<WatchdogExit> {
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())?;
     let owner = value["owner"].as_u64()? as u32;
     let watchdog = value["watchdog"].as_u64()? as u32;
-    let identity = value["watchdog_identity"].as_object().and_then(|identity| {
-        Some(HelperIdentity {
-            boot: identity["boot"].as_str()?.to_owned(),
-            start: serde_json::from_value(identity["start"].clone()).ok()?,
-        })
-    });
+    let identity = value["watchdog_identity"]
+        .as_object()
+        .and_then(|identity| {
+            Some(HelperIdentity {
+                boot: identity["boot"].as_str()?.to_owned(),
+                start: serde_json::from_value(identity["start"].clone()).ok()?,
+            })
+        })?;
     Some(WatchdogExit {
         owner,
         watchdog,
@@ -450,8 +454,9 @@ fn read_exit_receipt(root: &Path) -> Option<WatchdogExit> {
 /// receipt is the helper's final write, so a returned receipt proves every
 /// ledger write and the whole stop pass preceded it; the closure check rules
 /// out a helper that stopped writing but never exited. A missing, unreadable,
-/// foreign-owner or unexited receipt keeps the wait polling until `budget`
-/// and then fails naming the last observation: absence is never proof.
+/// identity-less, foreign-owner or unexited receipt keeps the wait polling
+/// until `budget` and then fails naming the last observation: absence and
+/// unknown identity are never proof of quiescence.
 pub(super) fn wait_for_watchdog_exit(
     root: &Path,
     owner: u32,
@@ -461,11 +466,7 @@ pub(super) fn wait_for_watchdog_exit(
     loop {
         let last = match read_exit_receipt(root) {
             Some(exit) if exit.owner == owner => {
-                let settled = match &exit.identity {
-                    Some(identity) => !holds_alive(exit.watchdog, &identity.boot, &identity.start),
-                    None => true,
-                };
-                if settled {
+                if !holds_alive(exit.watchdog, &exit.identity.boot, &exit.identity.start) {
                     return Ok(exit);
                 }
                 format!(
@@ -474,7 +475,7 @@ pub(super) fn wait_for_watchdog_exit(
                 )
             }
             Some(exit) => format!("receipt names owner {}, not {owner}", exit.owner),
-            None => "no readable receipt yet".to_owned(),
+            None => "no readable receipt with a helper identity yet".to_owned(),
         };
         if Instant::now() >= deadline {
             return Err(io::Error::other(format!(

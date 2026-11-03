@@ -1704,12 +1704,12 @@ fn managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent(
     );
     // Recorded liveness is not writer quiescence. The watchdog may only just
     // have finished its stop pass, and the owner's detached host-process
-    // supervisor still owes its stop report and kernel settlement after the
-    // watchdog killed the listener child — QA 918de4a0 raced exactly such a
-    // writer into this removal and panicked with DirectoryNotEmpty
-    // (effigy#617). The owner's fixture never dropped, so its tree is removed
-    // here, only after the watchdog's identity-bound exit receipt and the
-    // kernel helper settlement both name this root quiescent.
+    // supervisor may still owe its stop report and kernel settlement after the
+    // watchdog killed the listener child. Which writer won QA 918de4a0's race
+    // is not proven: the DirectoryNotEmpty panic proves the ordering gap, not
+    // the racer (effigy#617). The owner's fixture never dropped, so its tree
+    // is removed here, only after the watchdog's identity-bound exit receipt
+    // and the kernel helper settlement both name this root quiescent.
     fixture_sweep::wait_for_watchdog_exit(&root, owner_pid, WATCHDOG_EXIT_BUDGET)
         .expect("the owner's watchdog finished its ledger writes and its stop pass");
     effigy_test_support::process::close_root(&root)

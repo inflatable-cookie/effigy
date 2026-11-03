@@ -117,10 +117,11 @@ lost. The interrupted-parent proof
 runs that path through the real adapterless fixture, and its root removal
 follows recorded-generation liveness with two positive waits: the watchdog's
 exit receipt, and the same kernel helper settlement `Fixture` removal uses
-(`close_root`). The owner's detached host-process supervisor still owes its
-stop report and journal settlement after the watchdog killed the listener
-child, and recorded liveness alone raced that writer into a DirectoryNotEmpty
-removal (QA 918de4a0, effigy#617).
+(`close_root`). The owner's detached host-process supervisor may still owe
+its stop report and journal settlement after the watchdog killed the listener
+child; recorded liveness proves nothing about such writers, and QA
+918de4a0's DirectoryNotEmpty removal shows the gap without naming the racer
+(effigy#617).
 
 ## The fixture CLI environment
 
