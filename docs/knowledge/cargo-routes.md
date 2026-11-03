@@ -18,7 +18,8 @@ script that this file does not record, and fails on a row whose route no
 longer runs plain Cargo. Comments, `cargo-*` binaries, `$CARGO`,
 `EFFIGY_OXIDE_ESCAPE=cargo` and a `scripts/oxide-selector.sh exec -- <tool>`
 route (the nested `cargo` word belongs to the tool Oxide leases) are not
-routes and never need a row.
+routes and never need a row. `effigy test:qa:static-guards` proves those
+diagnostics on an owned synthetic tree; it does not replace the live check.
 
 ## Transitioned routes
 
@@ -95,6 +96,7 @@ routes and never need a row.
 | `scripts/rehearse-linux-release-container.rhai` | genuine exception | 8 | Container build: same release container rehearse, and it runs the built binary inside it. |
 | `scripts/worktree-lifecycle.sh` | genuine exception | 8 | Paseo worktree setup/teardown hook (a warm-merge-style hook) pins `CARGO_TARGET_DIR=target/worktree-hooks` so `CARGO_TARGET_DIR` and `.cargo/config.toml` cannot move the staged binary between the two shells. |
 | `scripts/test-inventory.py` | transitioned | — | The census helper (effigy#555) spells its two Cargo words for the routes it drives — `cargo metadata` through `scripts/oxide-selector.sh exec --` and `cargo nextest list` through the selector's own nextest route; it never builds outside Oxide and never runs a test body. |
+| `scripts/test_hygiene_guards.py` | genuine exception | 8 | Cargo is the subject: owned synthetic-tree proofs of the Cargo-route detector; every `cargo` word is a fixture string or assertion, and the cases run the copied detector rather than Cargo. |
 | `tests/scripts/worktree-lifecycle-hooks.sh` | genuine exception | 8 | Cargo is the subject: every case runs against a stub `cargo` that records the pinned target directory and the arguments. |
 | `tests/scripts/install-local-bin.sh` | genuine exception | 8 | Cargo is the subject: a stub `cargo` records and refuses any fallback so the fixture can prove `install:local` uses the Oxide-routed release build, and the assertions name that stub. |
 | `tests/scripts/assurance-boundary-tests.sh` | genuine exception | 8 | Cargo is the subject: `cargo nextest list --message-format json` is the membership oracle the proof asserts against. |

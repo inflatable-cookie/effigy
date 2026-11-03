@@ -26,11 +26,14 @@ Usage:
 never runs a test body; `--nextest-list FILE` reuses an already collected list
 JSON instead of building. All artifacts land under --out. `self-test` proves
 the reconciliation logic on embedded fixtures: duplicate IDs, missing
-attribution, and the conditional distinctions (ignored vs feature-gated vs
-platform-gated vs target-gated), with no Cargo invocation.
+attribution, include!/file-module/macro attribution, and the conditional
+distinctions (ignored vs feature-gated vs platform-gated vs target-gated
+vs unknown-gated), with no Cargo invocation. An ignored declaration missing
+from the collected list stays uncovered.
 """
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -1354,7 +1357,9 @@ def render_summary(report, doctests, routes, provenance):
 
 def self_test():
     """Prove duplicate detection, missing attribution, and conditional classes."""
+    global ROOT
     tmp = tempfile.mkdtemp(prefix="effigy-test-inventory-selftest.")
+    old_root = ROOT
     failures = []
     try:
         pkg_dir = os.path.join(tmp, "demo")
@@ -1366,6 +1371,10 @@ def self_test():
 //! demo crate
 #![deny(missing_debug_implementations)]
 
+include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/included.rs"));
+
+mod child;
+
 #[cfg(feature = "nope")]
 mod gated_mod;
 #[cfg(test)]
@@ -1375,6 +1384,14 @@ mod m1 {
     #[test]
     #[ignore = "expensive baseline proof"]
     fn ignored_baseline() {}
+    #[test]
+    #[ignore = "native proof"]
+    fn ignored_uncollected() {}
+    #[tokio::test]
+    fn tokio_case() {}
+    #[cfg(mystery_pred)]
+    #[test]
+    fn mystery_gate() {}
     #[test]
     #[cfg(target_os = "linux")]
     fn linux_only() {}
@@ -1434,6 +1451,10 @@ mod m3 {
             f.write('''#[test]
 fn path_module_case() {}
 ''')
+        with open(os.path.join(src, "included.rs"), "w") as f:
+            f.write("#[test]\nfn included_case() {}\n")
+        with open(os.path.join(src, "child.rs"), "w") as f:
+            f.write("#[test]\nfn child_case() {}\n")
         with open(os.path.join(src, "gated_mod.rs"), "w") as f:
             f.write('''#[test]
 fn gated_mod_case() {}
@@ -1463,45 +1484,66 @@ fn integration_feature_case() {}
                  "required-features": ["fault-x"], "test": True},
             ],
         }
+        # include! resolves against ROOT; point it at the owned package so the
+        # splice is a real scan, not a reprinted constant.
+        ROOT = pkg_dir
         decls, targets_meta, macros = scan_workspace([pkg])
-        ids = sorted(d["id"] for d in decls
-                     if d["binary"] == "demo" and d["compiled_default"])
-        expect = ["demo_tests::path_module_case", "m1::ignored_baseline",
-                  "m1::panics", "m1::plain_collected", "m2::no_leaked_gate",
-                  "m3::after_statement_cfg", "plain_mod::inner_case",
-                  "test_inside_impl"]
-        if ids != expect:
-            failures.append(f"default-compiled lib decls {ids} != {expect}")
-        feat = [d for d in decls if d["id"] == "m1::feature_only"]
+        ROOT = old_root
+
+        def one(id_):
+            return [d for d in decls if d["id"] == id_]
+
+        path_mod = one("demo_tests::path_module_case")
+        if len(path_mod) != 1 or not path_mod[0]["compiled_default"]:
+            failures.append(f"#[path] module control failed: {path_mod}")
+        impl_fn = one("test_inside_impl")
+        if len(impl_fn) != 1 or not impl_fn[0]["compiled_default"]:
+            failures.append(f"impl-block test control failed: {impl_fn}")
+        if any(d["fn"] == "host_fn" for d in decls):
+            failures.append("non-test fn classified as a test")
+        inc = one("included_case")
+        if len(inc) != 1 or not inc[0]["compiled_default"]:
+            failures.append(f"include! splice control failed: {inc}")
+        child = one("child::child_case")
+        if len(child) != 1 or not child[0]["compiled_default"]:
+            failures.append(f"2018 file-module control failed: {child}")
+        tok = one("m1::tokio_case")
+        if len(tok) != 1 or tok[0]["test_kind"] != "tokio-test" or \
+                not tok[0]["compiled_default"]:
+            failures.append(f"tokio::test kind control failed: {tok}")
+        mystery = one("m1::mystery_gate")
+        if len(mystery) != 1 or mystery[0]["compiled_default"] or \
+                not mystery[0]["unknown_gated"]:
+            failures.append(f"unknown-gated classification wrong: {mystery}")
+        feat = one("m1::feature_only")
         if len(feat) != 1 or feat[0]["compiled_default"] or \
                 "extra" not in feat[0]["gated_out"]["reason"]:
             failures.append(f"feature-gated classification wrong: {feat}")
-        plat = [d for d in decls if d["id"] == "m1::linux_only"]
+        plat = one("m1::linux_only")
         if len(plat) != 1 or plat[0]["compiled_default"] or \
                 "target_os" not in plat[0]["gated_out"]["reason"]:
             failures.append(f"platform-gated classification wrong: {plat}")
-        ign = [d for d in decls if d["id"] == "m1::ignored_baseline"]
+        ign = one("m1::ignored_baseline")
         if len(ign) != 1 or not ign[0]["ignore"] or \
                 not ign[0]["compiled_default"]:
             failures.append(f"ignored classification wrong: {ign}")
-        sp = [d for d in decls if d["id"] == "m1::panics"]
+        sp = one("m1::panics")
         if len(sp) != 1 or not sp[0]["should_panic"]:
             failures.append(f"should_panic not recorded: {sp}")
-        leak = [d for d in decls if d["id"] == "m2::no_leaked_gate"]
+        leak = one("m2::no_leaked_gate")
         if len(leak) != 1 or [g["cfg"] for g in leak[0]["gates"]] != ["test"]:
             failures.append(f"cfg-block leak control failed: {leak}")
-        inner = [d for d in decls if d["id"] == "plain_mod::inner_case"]
+        inner = one("plain_mod::inner_case")
         if len(inner) != 1 or inner[0]["gates"] != []:
             failures.append(f"inner-attr adjacency control failed: {inner}")
-        gm = [d for d in decls if d["id"] == "gated_mod::gated_mod_case"]
+        gm = one("gated_mod::gated_mod_case")
         if len(gm) != 1 or gm[0]["compiled_default"] or \
                 "nope" not in gm[0]["gated_out"]["reason"]:
             failures.append(f"adjacent outer cfg gate control failed: {gm}")
-        stmt = [d for d in decls if d["id"] == "m3::after_statement_cfg"]
+        stmt = one("m3::after_statement_cfg")
         if len(stmt) != 1 or [g["cfg"] for g in stmt[0]["gates"]] != ["test"]:
             failures.append(f"statement-cfg leak control failed: {stmt}")
-        integ_feat = [d for d in decls
-                      if d["id"] == "integration_feature_case"]
+        integ_feat = one("integration_feature_case")
         if len(integ_feat) != 1 or integ_feat[0]["compiled_default"]:
             failures.append(f"integration feature gate wrong: {integ_feat}")
 
@@ -1530,12 +1572,15 @@ fn integration_feature_case() {}
                 },
             },
         }
-        # inject a duplicate declaration to prove duplicate detection
         active = next(d for d in decls if d["id"] == "m1::plain_collected")
         excluded = dict(active, gated_out={"reason": "cfg(not(test))"})
         paired = reconcile(decls + [excluded], targets_meta, list_data, macros)
         if paired["duplicate_ids"]:
             failures.append(f"excluded variant flagged as duplicate: {paired['duplicate_ids']}")
+        pair_flag = [r for r in paired["rows"]
+                     if r["id"] == "m1::plain_collected" and r.get("platform_pair")]
+        if len(pair_flag) != 1:
+            failures.append(f"platform-pair flag missing on complementary cfg: {pair_flag}")
         decls_dup = decls + [dict(active)]
         report = reconcile(decls_dup, targets_meta, list_data, macros)
         target = [r for r in report["rows"] if r["id"] == "target_case"]
@@ -1555,18 +1600,33 @@ fn integration_feature_case() {}
                             f"unattributed: {nd_by_id}")
         if not report["duplicate_ids"]:
             failures.append("duplicate-ID control failed")
-        mis = [r for r in report["rows"] if r["class"] == "collected-ignored-mismatch"]
-        if mis:
-            failures.append(f"unexpected ignored-mismatch rows: {mis}")
+        ign_miss = [r for r in report["rows"] if r["id"] == "m1::ignored_uncollected"]
+        if len(ign_miss) != 1 or ign_miss[0]["class"] != "declared-not-collected" \
+                or not ign_miss[0]["ignore"]:
+            failures.append(
+                f"ignored missing case covered by exemption: {ign_miss}")
+        mystery_row = [r for r in report["rows"] if r["id"] == "m1::mystery_gate"]
+        if len(mystery_row) != 1 or mystery_row[0]["class"] != "unknown-gated":
+            failures.append(f"unknown-gated reconcile class wrong: {mystery_row}")
+        mismatch_list = copy.deepcopy(list_data)
+        mismatch_list["rust-suites"]["demo"]["testcases"]["m1::plain_collected"][
+            "ignored"] = True
+        mismatched = reconcile(decls, targets_meta, mismatch_list, macros)
+        mis = [r for r in mismatched["rows"]
+               if r["class"] == "collected-ignored-mismatch"]
+        if len(mis) != 1 or mis[0]["id"] != "m1::plain_collected":
+            failures.append(f"ignored-mismatch control failed: {mis}")
     finally:
+        ROOT = old_root
         shutil.rmtree(tmp, ignore_errors=True)
     if failures:
         for f in failures:
             print(f"FAIL: {f}", file=sys.stderr)
         raise SystemExit(1)
-    print("self-test: ok (duplicate IDs, missing attribution, macro-generated "
-          "attribution, ignored / feature-gated / platform-gated / "
-          "target-required distinctions)")
+    print("self-test: ok (duplicate IDs, missing attribution, include!/file-"
+          "module/macro attribution, ignored / feature-gated / platform-gated "
+          "/ target-required / unknown-gated distinctions, ignored-missing "
+          "uncovered, ignored-mismatch)")
 
 
 def main():

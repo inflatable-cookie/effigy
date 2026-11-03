@@ -159,7 +159,10 @@ internal SSD.
 
 Shell harnesses follow the same rule through `${TMPDIR:-/tmp}` `mktemp`
 templates; `effigy qa:docs:mktemp` fails a bare `mktemp` or a `/tmp`-shaped
-template.
+template. A quoted mention is not a call. `effigy test:qa:static-guards`
+proves those diagnostics on an owned synthetic tree, including crate
+`tests/scripts` and the guest `mktemp-exempt` annotation; it does not
+replace the live check.
 
 Live Colima container fixtures stage under `~/.cache` until the `effigy`
 profile mounts `/Volumes/Builds/scratch`. The profile's `colima.yaml` has
