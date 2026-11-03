@@ -1,8 +1,8 @@
 use super::{
-    default_local_artifact_root, parse_oras_descriptor, stage_local_artifact, stage_oci_artifact,
-    ArtifactKind, ArtifactMetadata, ArtifactRefError, ArtifactSourceRef,
-    LocalArtifactStagingRequest, OciArtifactDescriptor, OciArtifactStagingRequest,
-    ARTIFACT_METADATA_SCHEMA,
+    default_local_artifact_root, parse_oras_descriptor, parse_oras_pull_files,
+    sanitize_process_output, stage_local_artifact, stage_oci_artifact, ArtifactKind,
+    ArtifactMetadata, ArtifactRefError, ArtifactSourceRef, LocalArtifactStagingRequest,
+    OciArtifactDescriptor, OciArtifactStagingRequest, ARTIFACT_METADATA_SCHEMA,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,34 +13,19 @@ fn temp_dir() -> PathBuf {
 }
 
 #[test]
-fn parses_local_sql_ref() {
-    let parsed = ArtifactSourceRef::parse("./backups/site.sql").expect("parse ref");
-
-    let ArtifactSourceRef::Local(local) = parsed else {
-        panic!("expected local ref");
-    };
-    assert_eq!(local.path(), PathBuf::from("./backups/site.sql").as_path());
-    assert_eq!(local.inferred_kind(), Some(ArtifactKind::SqlDump));
-}
-
-#[test]
-fn parses_local_compressed_sql_ref() {
-    let parsed = ArtifactSourceRef::parse("./backups/site.sql.gz").expect("parse ref");
-
-    let ArtifactSourceRef::Local(local) = parsed else {
-        panic!("expected local ref");
-    };
-    assert_eq!(local.inferred_kind(), Some(ArtifactKind::SqlDump));
-}
-
-#[test]
-fn parses_local_dump_ref() {
-    let parsed = ArtifactSourceRef::parse("/tmp/site.dump").expect("parse ref");
-
-    let ArtifactSourceRef::Local(local) = parsed else {
-        panic!("expected local ref");
-    };
-    assert_eq!(local.inferred_kind(), Some(ArtifactKind::SqlDump));
+fn parses_local_sql_refs_by_extension() {
+    for (name, path) in [
+        ("sql", "./backups/site.sql"),
+        ("sql-gz", "./backups/site.sql.gz"),
+        ("dump", "/tmp/site.dump"),
+    ] {
+        let parsed = ArtifactSourceRef::parse(path).expect(name);
+        let ArtifactSourceRef::Local(local) = parsed else {
+            panic!("{name}: expected local ref");
+        };
+        assert_eq!(local.path(), PathBuf::from(path).as_path(), "{name}");
+        assert_eq!(local.inferred_kind(), Some(ArtifactKind::SqlDump), "{name}");
+    }
 }
 
 #[test]
@@ -59,23 +44,32 @@ fn parses_explicit_oci_ref() {
 }
 
 #[test]
-fn rejects_unprefixed_registry_like_ref() {
-    let error = ArtifactSourceRef::parse("ghcr.io/acowtancy/legacy-cbs:latest")
-        .expect_err("reject ambiguous ref");
-
-    assert_eq!(
-        error,
-        ArtifactRefError::AmbiguousOciReference {
-            value: "ghcr.io/acowtancy/legacy-cbs:latest".to_owned()
-        }
-    );
-}
-
-#[test]
-fn rejects_empty_oci_ref() {
-    let error = ArtifactSourceRef::parse("oci://").expect_err("reject missing ref");
-
-    assert_eq!(error, ArtifactRefError::MissingOciReference);
+fn refuses_invalid_artifact_refs() {
+    for (name, value, expected) in [
+        ("empty", "", ArtifactRefError::Empty),
+        (
+            "missing-oci",
+            "oci://",
+            ArtifactRefError::MissingOciReference,
+        ),
+        (
+            "unsupported-scheme",
+            "https://example.com/foo.sql",
+            ArtifactRefError::UnsupportedScheme {
+                value: "https://example.com/foo.sql".to_owned(),
+            },
+        ),
+        (
+            "unprefixed-registry",
+            "ghcr.io/acowtancy/legacy-cbs:latest",
+            ArtifactRefError::AmbiguousOciReference {
+                value: "ghcr.io/acowtancy/legacy-cbs:latest".to_owned(),
+            },
+        ),
+    ] {
+        let error = ArtifactSourceRef::parse(value).expect_err(name);
+        assert_eq!(error, expected, "{name}");
+    }
 }
 
 #[test]
@@ -217,54 +211,47 @@ fn redacts_oci_userinfo_from_reportable_ref() {
     );
     let descriptor = OciArtifactDescriptor::new(&oci);
     assert_eq!(descriptor.reference, "***@ghcr.io/acowtancy/private:latest");
-}
-
-#[test]
-fn descriptor_captures_digest_from_ref() {
-    let parsed = ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/private@sha256:abc123")
-        .expect("parse ref");
-
-    let ArtifactSourceRef::Oci(oci) = parsed else {
-        panic!("expected oci source");
-    };
-    let descriptor = OciArtifactDescriptor::new(&oci);
-
-    assert_eq!(descriptor.digest.as_deref(), Some("sha256:abc123"));
-    assert_eq!(
-        descriptor.redacted_reference,
-        "ghcr.io/acowtancy/private@sha256:abc123"
+    let sanitized = sanitize_process_output(
+        &oci,
+        b"failed to pull token:secret@ghcr.io/acowtancy/private:latest: unauthorized\n",
+    );
+    assert!(!sanitized.contains("token:secret"), "{sanitized}");
+    assert!(
+        sanitized.contains("***@ghcr.io/acowtancy/private:latest"),
+        "{sanitized}"
     );
 }
 
 #[test]
-fn descriptor_captures_digest_from_ref_with_userinfo() {
-    let parsed =
-        ArtifactSourceRef::parse("oci://token:secret@ghcr.io/acowtancy/private@sha256:abc123")
-            .expect("parse ref");
-
-    let ArtifactSourceRef::Oci(oci) = parsed else {
-        panic!("expected oci source");
-    };
-    let descriptor = OciArtifactDescriptor::new(&oci);
-
-    assert_eq!(descriptor.digest.as_deref(), Some("sha256:abc123"));
-    assert_eq!(
-        descriptor.redacted_reference,
-        "***@ghcr.io/acowtancy/private@sha256:abc123"
-    );
-}
-
-#[test]
-fn descriptor_does_not_treat_userinfo_at_as_a_digest() {
-    let parsed = ArtifactSourceRef::parse("oci://token:secret@ghcr.io/acowtancy/private:latest")
-        .expect("parse ref");
-
-    let ArtifactSourceRef::Oci(oci) = parsed else {
-        panic!("expected oci source");
-    };
-    let descriptor = OciArtifactDescriptor::new(&oci);
-
-    assert_eq!(descriptor.digest, None);
+fn descriptor_binds_digest_from_pin_not_userinfo() {
+    for (name, raw, expected_digest, expected_redacted) in [
+        (
+            "plain-pin",
+            "oci://ghcr.io/acowtancy/private@sha256:abc123",
+            Some("sha256:abc123"),
+            "ghcr.io/acowtancy/private@sha256:abc123",
+        ),
+        (
+            "userinfo-pin",
+            "oci://token:secret@ghcr.io/acowtancy/private@sha256:abc123",
+            Some("sha256:abc123"),
+            "***@ghcr.io/acowtancy/private@sha256:abc123",
+        ),
+        (
+            "userinfo-not-digest",
+            "oci://token:secret@ghcr.io/acowtancy/private:latest",
+            None,
+            "***@ghcr.io/acowtancy/private:latest",
+        ),
+    ] {
+        let parsed = ArtifactSourceRef::parse(raw).expect(name);
+        let ArtifactSourceRef::Oci(oci) = parsed else {
+            panic!("{name}: expected oci source");
+        };
+        let descriptor = OciArtifactDescriptor::new(&oci);
+        assert_eq!(descriptor.digest.as_deref(), expected_digest, "{name}");
+        assert_eq!(descriptor.redacted_reference, expected_redacted, "{name}");
+    }
 }
 
 #[test]
@@ -463,4 +450,23 @@ fn rejects_oci_stage_paths_that_escape_the_pull_directory() {
             "{escape:?}: {error}"
         );
     }
+}
+
+#[test]
+fn parse_oras_pull_files_keeps_paths_relative_to_the_pull_root() {
+    let pulled_root = Path::new("/repo/.effigy/local/artifacts/.oci-pulls/legacy");
+    let files = parse_oras_pull_files(
+        pulled_root,
+        br#"{"files":[{"path":"legacy.sql"},{"path":"/repo/.effigy/local/artifacts/.oci-pulls/legacy/nested/media.bin"}]}"#,
+    )
+    .expect("parse files");
+    assert_eq!(
+        files,
+        vec![
+            PathBuf::from("legacy.sql"),
+            PathBuf::from("nested/media.bin"),
+        ]
+    );
+    assert!(parse_oras_pull_files(pulled_root, b"not json").is_none());
+    assert!(parse_oras_pull_files(pulled_root, br#"{"files":[{"path":1}]}"#).is_none());
 }
