@@ -1525,6 +1525,18 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- The kernel boundary ratchet passes again on main. Effigy#588's hermetic
+  container-status contract fixtures wrote their manifest, Compose file and
+  fake runtime scripts with raw `std::fs::write` calls in ordinary library
+  code, and the sentinel fixture's environment marker did the same in a
+  statement-gated block the scanner counts as production. The status fixture
+  now writes every file through the owned `create_contract_fixture_files`
+  boundary (which gained nested-name parent creation), executable bits are
+  applied by a permissions-only helper, and the marker moved into a named
+  cfg-gated function. Ownership, bytes, permissions, row environment and
+  cleanup behavior are unchanged; the baseline inventory is unchanged
+  (effigy#597).
+
 - The feedback checker no longer hides the code after an escaped character
   literal. Its escape scan started on the escaped character, so `'\\'` — or a
   byte literal like `b'\\'` — skipped its own closing quote and blanked every
