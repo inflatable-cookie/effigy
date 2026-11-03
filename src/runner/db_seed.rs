@@ -1568,10 +1568,7 @@ database = "acowtancy"
         let staged_path = repo.join(DB_SEEDS_DIR).join(&staged_name);
         assert_eq!(staged[0].staged_path, staged_path);
         assert_eq!(fs::read(&staged_path).expect("staged bytes"), b"select 1;");
-        assert_eq!(
-            fs::read(&sentinel).expect("sentinel bytes"),
-            SENTINEL_BYTES
-        );
+        assert_eq!(fs::read(&sentinel).expect("sentinel bytes"), SENTINEL_BYTES);
         // The probe directory holds only its sentinel; no
         // `<target>--dump.sql` stray landed beside it or in the repo root.
         assert_eq!(
@@ -1627,10 +1624,7 @@ database = "acowtancy"
             .expect("fixture parent")
             .join("four--dump.sql")
             .exists());
-        assert_eq!(
-            fs::read(&sentinel).expect("sentinel bytes"),
-            SENTINEL_BYTES
-        );
+        assert_eq!(fs::read(&sentinel).expect("sentinel bytes"), SENTINEL_BYTES);
     }
 
     /// Distinct labels stay distinct staged names: the encoding is injective
@@ -1762,10 +1756,7 @@ database = "app"
             .join(DB_SEEDS_DIR)
             .join(LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE)
             .exists());
-        assert_eq!(
-            fs::read(&sentinel).expect("sentinel bytes"),
-            SENTINEL_BYTES
-        );
+        assert_eq!(fs::read(&sentinel).expect("sentinel bytes"), SENTINEL_BYTES);
     }
 
     /// A pre-existing destination inside staging is replaced in place, and
