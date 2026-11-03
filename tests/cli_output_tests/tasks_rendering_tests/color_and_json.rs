@@ -1,20 +1,6 @@
 use super::*;
 
 #[test]
-fn cli_tasks_supports_colorized_output_when_forced() {
-    let root = temp_workspace("cli-color-tasks");
-    fs::write(
-        root.join("effigy.toml"),
-        "[tasks.dev]\nrun = \"printf root\"\n",
-    )
-    .expect("write manifest");
-
-    let stdout = run_effigy(&["tasks"], Some(&root), true);
-    assert!(stdout.contains("Catalogs"));
-    assert!(stdout.contains('\u{1b}'));
-}
-
-#[test]
 fn cli_config_global_json_mode_emits_machine_readable_payload() {
     let stdout = run_effigy(&["--json", "config"], None, false);
     let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
@@ -29,26 +15,20 @@ fn cli_config_global_json_mode_emits_machine_readable_payload() {
         .is_some_and(|text| text.contains("effigy.toml Reference")));
 }
 
+/// Forced-color styling for both row kinds the listing renders: catalog task
+/// rows (name, manifest path, run signature) and builtin rows (name, muted
+/// description). One spawn carries both claim sets; the folded
+/// `supports_colorized_output_when_forced` entry only asserted escapes
+/// anywhere in stdout, which the CLI header satisfies even when listing
+/// colorization is broken (effigy#602 mutation control mc2).
 #[test]
-fn cli_tasks_colorized_output_styles_task_name_path_and_signature() {
+fn cli_tasks_colorized_output_styles_catalog_task_and_builtin_rows() {
     let root = write_catalog_build_workspace("cli-color-task-style");
 
     let stdout = run_effigy(&["tasks"], Some(&root), true);
     assert!(stdout.contains("\u{1b}[1m\u{1b}[37mcattle-grid/build\u{1b}[0m"));
     assert!(stdout.contains("\u{1b}[38;5;244mcattle-grid/effigy.toml\u{1b}[0m"));
     assert!(stdout.contains("\u{1b}[2m\u{1b}[38;5;117mtsc -p tsconfig.json {args}\u{1b}[0m"));
-}
-
-#[test]
-fn cli_tasks_colorized_output_styles_builtin_task_description_as_muted() {
-    let root = temp_workspace("cli-color-builtin-style");
-    fs::write(
-        root.join("effigy.toml"),
-        "[tasks.dev]\nrun = \"printf root\"\n",
-    )
-    .expect("write manifest");
-
-    let stdout = run_effigy(&["tasks"], Some(&root), true);
     assert!(stdout.contains("\u{1b}[1m\u{1b}[37mhelp\u{1b}[0m"));
     assert!(stdout.contains("\u{1b}[38;5;244mShow general help (same as --help)\u{1b}[0m"));
 }
