@@ -77,7 +77,10 @@ first workload effect:
    of all foreground custodians has contract 052 §3.1's residue limit; the
    provider must verify its lease, not assume all workload descendants died.
    An orchestrator holds the slot for exactly as long as the hook process lives. A hook that exits after
-   `admit` releases nothing Effigy controls.
+   `admit` releases nothing Effigy controls. A run that holds its own hook checks it
+   before remote effects, while awaiting remote registration, and while the
+   remote workload runs. On loss it fails the task and settles the journaled
+   remote session; an unverified closure remains unknown.
 
 Every failure fails closed: `deny`, a timeout, an exit before answering, a
 malformed answer, a spawn failure or a signal. The run closes `NotStarted`,
