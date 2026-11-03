@@ -210,7 +210,11 @@ fn apply_guarded(
         seal,
         preflight,
         |run, effect, deadline| {
-            super::private_apply::qualified(
+            #[cfg(feature = "workspace-private-qualification")]
+            let apply = super::private_apply::qualification_only;
+            #[cfg(not(feature = "workspace-private-qualification"))]
+            let apply = super::private_apply::qualified;
+            apply(
                 run,
                 effect,
                 &super::PrivateApplyCommand {

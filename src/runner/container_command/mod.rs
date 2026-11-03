@@ -623,3 +623,6 @@ catalog = "workspace-rust-bun"
         assert!(repo_root_has_effigy_manifest(&repo));
     }
 }
+
+#[cfg(feature = "workspace-private-qualification")]
+pub(in crate::runner) mod qualification;

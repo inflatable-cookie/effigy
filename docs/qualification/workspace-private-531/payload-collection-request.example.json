@@ -1,0 +1,58 @@
+{
+  "armed": false,
+  "execute": false,
+  "entry": "payload_collection.collect(inputs, inputs_sha256, go_index, go_index_sha256, deadline, evidence)",
+  "input_schema": "effigy.guestagent-evidence.v1",
+  "effects": "workspace-private-531-guestagent-evidence-r1",
+  "action": "one-guestagent-metadata-hash",
+  "count": 1,
+  "allowance": "new-guestagent-evidence",
+  "observation_seconds_max": 10,
+  "total_seconds_max": 600,
+  "bytes_max": 16777216,
+  "noAutomaticRetry": true,
+  "capabilities": {
+    "preflight_v2_admission": false,
+    "trusted_root": false,
+    "installed_package_provenance": false,
+    "signal": false,
+    "watch": false,
+    "sigint_claim": false,
+    "workload": false,
+    "health": false,
+    "closure": false
+  },
+  "missing_owner_bindings": [
+    "Fresh explicit operator board decision for exact private lexical guestagent path AND derived canonical package path plus both exact parent chains, regular-file metadata and bounded compressed-file hash only",
+    "Fresh reviewed source head and SHA256 pins for common.py, recovery.py, administrative_recovery.py, payload_collection.py and payload-public-digests.json, plus payload_collect_once.py",
+    "Immutable inputs: exact private target_path, owner_uid501, original retained_stdout path/SHA, source_head/programs/budget_seconds; target must equal the sole --guestagent role from the original retained receipt",
+    "Authentic GO plus GO-index path/SHA from Queue owner; GO target_path_sha256, effect/action/count/new allowance/source/input hash/operator-board/native binding",
+    "Fresh UTC start/expiry <=600s inclusive, separately budgeted <=10s UTC and command-local monotonic observation deadline, latest-start/report reserve and final cleanup accounting",
+    "Fresh owner-only0700 empty canonical evidence directory outside q/retained roots; no existing directory reuse",
+    "Installed Homebrew bottle/build provenance remains unknown; published digests are independently derived public candidates, not a claim about installed bytes"
+  ],
+  "fixed_future_call": [
+    "Owner hash-verifies an immutable one-shot driver and all bound source/input/GO/index artifacts before any target access",
+    "Driver refuses after owner-bound latest-start, creates O_EXCL invocation intent in its fresh evidence root and constructs recovery.Deadline with <=9s left in both clocks",
+    "Driver calls the entry exactly once with the owner-provided four pins and evidence directory, persists the result/driver PID/argv/UTC+monotonic/exit/log hashes privately, waits its own client and reports immediately",
+    "No retry on any result, no owner/runtime observation afterward; reviewer judges original receipts only"
+  ],
+  "limits": "No extraction/execution/socket connection/discovery, copy/placement/install/adoption, v2 input synthesis or authority transfer. Reference mismatch refuses privately. Reference match yields evidence only; source/input/operator review remain required for any later route.",
+  "fixed_invocation": "PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -I -B docs/qualification/workspace-private-531/payload_collect_once.py <OWNER_BINDING_PATH> <OWNER_BINDING_SHA256>",
+  "driver_binding_schema": "effigy.guestagent-collection-binding.v1",
+  "driver_binding_fields": [
+    "schema",
+    "armed",
+    "noAutomaticRetry",
+    "source_head",
+    "inputs",
+    "inputs_sha256",
+    "go_index",
+    "go_index_sha256",
+    "evidence",
+    "started_at",
+    "expires_at",
+    "latest_start",
+    "report_reserve_seconds"
+  ]
+}

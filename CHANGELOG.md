@@ -893,6 +893,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Name environment recovery commands with the CLI's `container <NAME> <verb>`
+  argument order so actual sentinel admission accepts them.
+
 - Capture complete Git source command output before deciding whether a floating
   bundle ref moved, and preserve the pin when capture is incomplete.
 

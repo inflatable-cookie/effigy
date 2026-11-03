@@ -704,6 +704,12 @@ where
     // session's listener, key or run behind: a control failure is a listener
     // failure for this purpose, not an early return.
     let end = loop {
+        #[cfg(feature = "workspace-private-qualification")]
+        match service.session_stop_requested() {
+            Ok(true) => break RetirementCause::Down,
+            Ok(false) => {}
+            Err(_) => break RetirementCause::ListenerFailed,
+        }
         let control = match session.control(&mut run, &[]) {
             Ok(control) => control,
             Err(_) => break RetirementCause::ListenerFailed,

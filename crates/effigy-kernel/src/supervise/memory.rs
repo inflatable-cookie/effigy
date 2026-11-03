@@ -76,6 +76,17 @@ enum Message {
         binding: crate::interpolation::Binding,
         request: u64,
     },
+    /// Hold-only SCM_RIGHTS custody. This is never process or cleanup authority.
+    Prelaunch {
+        sequence: i64,
+        original: String,
+        location: crate::interpolation::Location,
+        request: u64,
+    },
+    ReleasePrelaunch {
+        sequence: i64,
+        request: u64,
+    },
     Finish {
         request: u64,
     },
@@ -318,6 +329,46 @@ impl MemoryGuard {
     }
     pub(crate) fn has_interpolation(&self) -> bool {
         self.has_interpolation
+    }
+    pub(crate) fn retain_prelaunch(
+        &mut self,
+        sequence: i64,
+        file: &crate::interpolation::RetainedInterpolation,
+    ) -> Result<(), RunError> {
+        self.verify_retained()?;
+        let request = self.requests.reserve()?;
+        self.has_interpolation = true;
+        let socket = self
+            .descriptors
+            .as_ref()
+            .ok_or_else(|| RunError::refused("helper has no descriptor custody channel"))?;
+        crate::interpolation::channel::send(socket, request, &file.prelaunch_descriptors()?)?;
+        let (original, location) = file.prelaunch_name();
+        memory_frame(
+            self.input
+                .as_mut()
+                .ok_or_else(|| RunError::unavailable("custody input closed"))?,
+            &Message::Prelaunch {
+                sequence,
+                original: original.into(),
+                location: location.clone(),
+                request,
+            },
+            self.cx.child(ACK_BUDGET).operation(),
+        )?;
+        self.ack(request)
+    }
+    pub(crate) fn release_prelaunch(&mut self, sequence: i64) -> Result<(), RunError> {
+        self.verify_retained()?;
+        let request = self.requests.reserve()?;
+        memory_frame(
+            self.input
+                .as_mut()
+                .ok_or_else(|| RunError::unavailable("custody input closed"))?,
+            &Message::ReleasePrelaunch { sequence, request },
+            self.cx.child(ACK_BUDGET).operation(),
+        )?;
+        self.ack(request)
     }
     pub(crate) fn retain_interpolation(
         &mut self,
@@ -683,6 +734,10 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
     output.flush()?;
     let mut effects: Vec<Effect> = Vec::new();
     let mut files: Vec<crate::interpolation::RetainedInterpolation> = Vec::new();
+    let mut prelaunch_files: std::collections::BTreeMap<
+        i64,
+        crate::interpolation::RetainedInterpolation,
+    > = Default::default();
     let mut last_request = 0u64;
     let mut finishing = false;
     let mut retained_completed = false;
@@ -711,14 +766,61 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
                                 return Err(RunError::refused("stale retained cleanup request"));
                             }
                             finishing = true;
-                            let complete = retained_completed
-                                || finish_interpolations(&effects, &mut files, &config)?;
+                            let complete = prelaunch_files.is_empty()
+                                && (retained_completed
+                                    || finish_interpolations(&effects, &mut files, &config)?);
                             retained_completed |= complete;
                             last_request = request;
                             output.write_all(&request.to_be_bytes())?;
                             output.write_all(&[u8::from(complete)])?;
                             output.flush()?;
                             return Ok(());
+                        }
+                        Message::Prelaunch {
+                            sequence,
+                            original,
+                            location,
+                            request,
+                        } => {
+                            if finishing || request <= last_request || sequence <= 0 {
+                                return Err(RunError::refused("invalid prelaunch custody request"));
+                            }
+                            let socket = descriptors
+                                .as_ref()
+                                .ok_or_else(|| RunError::refused("no descriptor custody socket"))?;
+                            let file =
+                                crate::interpolation::RetainedInterpolation::receive_prelaunch(
+                                    original,
+                                    location,
+                                    crate::interpolation::channel::receive(socket, request)?,
+                                )?;
+                            if let Some(retained) = prelaunch_files.get(&sequence) {
+                                if !retained.same_object(&file) {
+                                    return Err(RunError::refused(
+                                        "prelaunch retry changed its owner",
+                                    ));
+                                }
+                            } else {
+                                if prelaunch_files.len() >= 64 {
+                                    return Err(RunError::refused("too many prelaunch owners"));
+                                }
+                                prelaunch_files.insert(sequence, file);
+                            }
+                            request
+                        }
+                        Message::ReleasePrelaunch { sequence, request } => {
+                            if finishing || request <= last_request {
+                                return Err(RunError::refused("invalid prelaunch release request"));
+                            }
+                            if let Some(file) = prelaunch_files.get(&sequence) {
+                                if !file.prelaunch_unlinked()? {
+                                    return Err(RunError::refused(
+                                        "prelaunch file is not positively unlinked",
+                                    ));
+                                }
+                                prelaunch_files.remove(&sequence);
+                            }
+                            request
                         }
                         Message::Register { effect, request } => {
                             if finishing {
@@ -767,6 +869,9 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
                                     "interpolation retry changed its owner",
                                 ));
                             }
+                            // The actual process receipt and synced binding above are
+                            // required before replacing any hold-only descriptions.
+                            prelaunch_files.retain(|_, retained| !retained.same_object(&file));
                             if !files.iter().any(|retained| retained.same_binding(&file)) {
                                 if files.len() >= 64 {
                                     return Err(RunError::refused(
@@ -804,11 +909,12 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         }
     }
     drop(output);
-    if !files.is_empty() {
+    if !files.is_empty() || !prelaunch_files.is_empty() {
         // Retain exact descriptions across caller loss and every Unknown. Each
         // retry re-enters identity-qualified kernel settlement; no idle lock,
         // EOF or remembered PGID grants closure or signal authority.
-        while !finish_interpolations(&effects, &mut files, &config)? {
+        while !prelaunch_files.is_empty() || !finish_interpolations(&effects, &mut files, &config)?
+        {
             std::thread::sleep(Duration::from_millis(100));
         }
         retained_completed = true;

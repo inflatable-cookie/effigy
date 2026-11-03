@@ -335,6 +335,27 @@ fn run_container_up_inner(
         crate::runner::workspace_client::container_up::require_private_preparation_output()
             .map_err(|_| RunnerError::task_invocation("workspace private preparation output is unavailable; no preparation or workspace apply was attempted"))?;
     }
+    #[cfg(feature = "workspace-private-qualification")]
+    if let Some(checked) = &workspace_prevalidation {
+        operation.workspace_mode = true;
+        operation.stage = Some("private_preparation");
+        let policy = checked.prepare_qualification(repo_root)?;
+        let declaration = checked.verify_prepared(&policy)?;
+        operation.stage = Some("workspace_activation");
+        let published =
+            crate::runner::workspace_client::container_up::launch_prepared(&policy, declaration)?;
+        return Ok(if output_json {
+            published.json.to_string()
+        } else {
+            published.text
+        });
+    }
+    #[cfg(feature = "workspace-private-qualification")]
+    if workspace_selected {
+        return Err(RunnerError::task_invocation(
+            "workspace qualification requires a prepared workspace declaration",
+        ));
+    }
     // `container up` is a Prepare path (contract 020): a checkout whose bundle
     // or catalog source is behind refreshes it first and this run continues on
     // the newly selected bytes. Guests keep the pins they were handed.
@@ -555,6 +576,33 @@ fn prepare_container_up(
     detach: bool,
     operation: &mut DetachedOperationState,
 ) -> Result<ContainerUpPlan, RunnerError> {
+    prepare_container_up_with_loader(
+        repo_root,
+        name,
+        attach,
+        detach,
+        operation,
+        load_container_policy_for_creation_observed,
+    )
+}
+
+type CreationPolicyLoader = fn(
+    &Path,
+    Option<&str>,
+    &mut dyn FnMut(effigy_containers::policy::load::CreationPolicyStage),
+) -> Result<
+    (EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>),
+    effigy_containers::ContainerPolicyError,
+>;
+
+fn prepare_container_up_with_loader(
+    repo_root: &Path,
+    name: Option<&str>,
+    attach: bool,
+    detach: bool,
+    operation: &mut DetachedOperationState,
+    load: CreationPolicyLoader,
+) -> Result<ContainerUpPlan, RunnerError> {
     operation.preparation_step = Some("declaration");
     let stop_flag = install_stop_requested_flag()?;
     // Resolve the attach declaration without materializing policy or probing runtime.
@@ -588,23 +636,22 @@ fn prepare_container_up(
     let preparation =
         ProgressSource::waiting_for("the container policy, its ports and mount sources");
     let ports_step = TimedStep::live(preparation.clone());
-    let (policy, workspace_mount_decisions) =
-        match load_container_policy_for_creation_observed(repo_root, name, &mut |stage| {
-            preparation.update(stage.description(), None, None)
-        }) {
-            Ok(prepared) => {
-                ports_step.succeed("policy, ports and mount sources prepared");
-                prepared
-            }
-            Err(error) => {
-                ports_step.fail(if operation.workspace_mode {
-                    "workspace ordinary policy preparation failed".to_owned()
-                } else {
-                    error.to_string()
-                });
-                return Err(error.into());
-            }
-        };
+    let (policy, workspace_mount_decisions) = match load(repo_root, name, &mut |stage| {
+        preparation.update(stage.description(), None, None)
+    }) {
+        Ok(prepared) => {
+            ports_step.succeed("policy, ports and mount sources prepared");
+            prepared
+        }
+        Err(error) => {
+            ports_step.fail(if operation.workspace_mode {
+                "workspace ordinary policy preparation failed".to_owned()
+            } else {
+                error.to_string()
+            });
+            return Err(error.into());
+        }
+    };
     operation.preparation_step = Some("rendering");
     // Rendering is immediate, so it is one finished line and never a spinner.
     effigy_ui::steps::finish_line(
@@ -625,6 +672,13 @@ fn prepare_container_up(
     emit_warning_lines(&warnings);
     let attach_mode = effective_attach_mode(&policy, attach, detach);
     operation.preparation_step = Some("runtime");
+    #[cfg(feature = "workspace-private-qualification")]
+    let colima_started = if operation.workspace_mode {
+        effigy_containers::exec::require_qualification_backend_running(&policy, repo_root)?
+    } else {
+        ensure_runtime_backend_running(&policy, repo_root)?
+    };
+    #[cfg(not(feature = "workspace-private-qualification"))]
     let colima_started = ensure_runtime_backend_running(&policy, repo_root)?;
     emit_ssh_agent_socket_warning(&policy, repo_root);
     operation.preparation_step = Some("mounts");
@@ -3930,4 +3984,23 @@ impl crate::runner::workspace_client::container_up::integrations::IntegrationEff
             ))
         }
     }
+}
+
+/// Only the authenticated private preparation child calls this body. Its
+/// stdout/stderr already belong to the parent's qualified Discard custody.
+#[cfg(feature = "workspace-private-qualification")]
+pub(super) fn qualification_prepare_body(root: &Path, name: &str) -> Result<(), RunnerError> {
+    let mut operation = DetachedOperationState {
+        workspace_mode: true,
+        ..Default::default()
+    };
+    prepare_container_up_with_loader(
+        root,
+        Some(name),
+        false,
+        true,
+        &mut operation,
+        effigy_containers::load_container_policy_for_qualification_inputs,
+    )
+    .map(|_| ())
 }

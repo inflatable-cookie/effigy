@@ -88,6 +88,8 @@ publish = false
 workspace = true
 
 [features]
+# Uninstalled private workspace qualification candidate; native activation needs review.
+workspace-private-qualification = ["effigy-kernel/workspace-private-qualification", "effigy-containers/workspace-private-qualification"]
 # Engine fault points for run-control proofs; never in a product build.
 fault-injection = ["effigy-kernel/fault-injection"]
 # The disposable activation the workspace-serving process-lifetime proof runs
@@ -178,3 +180,8 @@ nix = { version = "0.31", default-features = false, features = ["term"] }
 # A run-control proof writes the fixture journal in a loop to show a read
 # beside a continuous writer answers at once (effigy#339).
 rusqlite = { version = "0.40", features = ["bundled"] }
+
+[[bin]]
+name = "workspace-qualification-fixture"
+path = "tests/support/workspace-qualification.rs"
+required-features = ["workspace-private-qualification"]

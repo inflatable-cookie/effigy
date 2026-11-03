@@ -111,6 +111,34 @@ impl ComposeInvocation {
         }
     }
 
+    /// Qualification-only adaptation; the exact prepared file is moved into
+    /// the same Env Run. Ordinary `spawn_retained` continues to refuse Discard.
+    #[cfg(feature = "workspace-private-qualification")]
+    pub fn spawn_workspace_discard_qualification(
+        mut self,
+        run: &mut effigy_kernel::run::Run<'_>,
+        mut spec: effigy_kernel::custody::ProcessSpec,
+        cx: &effigy_kernel::ctx::EffectContext,
+    ) -> Result<effigy_kernel::custody::OwnedProcess, effigy_kernel::custody::SpawnError> {
+        let program = spec.argv.first().cloned().ok_or_else(|| {
+            effigy_kernel::custody::SpawnError::Refused("missing Compose program".into())
+        })?;
+        spec.argv = std::iter::once(program).chain(self.args).collect();
+        let file = self
+            .interpolation
+            .take()
+            .map(InterpolationFile::into_retained)
+            .transpose()
+            .map_err(|_| {
+                effigy_kernel::custody::SpawnError::Refused(
+                    "interpolation custody unavailable".into(),
+                )
+            })?;
+        effigy_kernel::custody::Custody::spawn_workspace_discard_qualification(
+            run, spec, cx, file, None, None,
+        )
+    }
+
     /// Direct-child callers cannot safely transfer this owner into group custody.
     /// Refuse before spawn until they can admit a retained kernel Run.
     pub fn require_retained_custody_for_interpolation(&self) -> io::Result<()> {
@@ -289,6 +317,9 @@ impl InterpolationFile {
     pub fn prepare_custody(&mut self) -> io::Result<InterpolationDescriptors> {
         self.attempted = true;
         self.custody_prepared = true;
+        self.duplicate_custody()
+    }
+    fn duplicate_custody(&mut self) -> io::Result<InterpolationDescriptors> {
         if self.removed {
             return Err(invalid("interpolation file was already removed".into()));
         }
@@ -346,23 +377,27 @@ impl InterpolationFile {
     }
 
     /// Move this prepared file into the kernel's retained spawn path. The
-    /// original owner disables Drop cleanup before any fallible duplication.
+    /// original owner keeps cleanup until local descriptor preparation succeeds;
+    /// no descriptor has crossed a custody channel during this local step.
     pub fn into_retained(
         mut self,
     ) -> io::Result<effigy_kernel::interpolation::RetainedInterpolation> {
-        let descriptors = self.prepare_custody()?;
+        let descriptors = self.duplicate_custody()?;
         let location = match descriptors.location {
             InterpolationLocation::Original => effigy_kernel::interpolation::Location::Original,
             InterpolationLocation::Quarantine(name) => {
                 effigy_kernel::interpolation::Location::Quarantine(name)
             }
         };
-        effigy_kernel::interpolation::RetainedInterpolation::new(
+        let retained = effigy_kernel::interpolation::RetainedInterpolation::new(
             descriptors.file,
             descriptors.directory,
             descriptors.original,
             location,
-        )
+        )?;
+        self.attempted = true;
+        self.custody_prepared = true;
+        Ok(retained)
     }
 
     /// Attempt removal without consuming this owner. `Err` leaves the file and
@@ -1247,6 +1282,20 @@ if s.recv(1) != b'q':
         assert!(quarantine.exists());
         let candidate = File::open(&quarantine).expect("independent description");
         assert!(Flock::lock(candidate, FlockArg::LockExclusiveNonblock).is_err());
+    }
+
+    #[test]
+    fn local_retained_preparation_failure_keeps_cleanup_until_any_handoff() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let file = invocation.interpolation.expect("owner");
+        FAIL_AFTER_CUSTODY_FILE_DUP.with(|armed| armed.set(true));
+        assert!(file.into_retained().is_err());
+        assert!(
+            !path.exists(),
+            "local duplication never transferred custody or authorized a fork"
+        );
     }
 
     #[test]

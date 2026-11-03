@@ -410,8 +410,17 @@ fn discard_receipt_is_not_accepted_by_the_legacy_reader() {
         .expect("encode discard receipt");
     assert!(serde_json::from_value::<ProcessRecord>(encoded.clone()).is_err());
     assert!(matches!(
-        serde_json::from_value::<StoredProcessRecord>(encoded),
+        serde_json::from_value::<StoredProcessRecord>(encoded.clone()),
         Ok(StoredProcessRecord::Discard { .. })
+    ));
+    let combined = serde_json::json!({"interpolation_v1": encoded, "binding": {"pending": true}});
+    assert!(
+        serde_json::from_value::<ProcessRecord>(combined["interpolation_v1"].clone()).is_err(),
+        "the old interpolation decoder cannot flatten away Discard"
+    );
+    assert!(matches!(
+        serde_json::from_value::<StoredProcessRecord>(combined),
+        Ok(StoredProcessRecord::InterpolatedDiscard { .. })
     ));
 }
 
@@ -1000,30 +1009,57 @@ fn fault_child() {
     crate::fault::arm_point(point, fault);
     let cx = cx();
     let root = StateRoot::effects(&cx, Path::new(&home)).unwrap();
-    if let Ok(mut run) = begin(&cx, &root) {
-        if matches!(point, Point::SocketBind | Point::AppliedBefore) {
-            let _ = run.control_socket();
-        } else {
-            let process = ProcessSpec {
-                argv: vec![
-                    "/bin/sh".into(),
-                    "-c".into(),
-                    "printf started > workload-started; /bin/sleep 30".into(),
-                ],
-                cwd: home.into(),
-                env: BTreeMap::new(),
-                grace: Duration::from_millis(10),
-                lifetime: Lifetime::Finite(Duration::from_secs(30)),
-                terminal: Terminal::None,
-                label: "fault".into(),
-            };
-            let _ = Custody::spawn(&mut run, process, &cx);
+    let mut diagnostic = String::new();
+    match begin(&cx, &root) {
+        Ok(mut run) => {
+            if matches!(point, Point::SocketBind | Point::AppliedBefore) {
+                diagnostic = format!("socket: {:?}", run.control_socket());
+            } else {
+                let process = ProcessSpec {
+                    argv: vec![
+                        "/bin/sh".into(),
+                        "-c".into(),
+                        "printf started > workload-started; /bin/sleep 30".into(),
+                    ],
+                    cwd: home.into(),
+                    env: BTreeMap::new(),
+                    grace: Duration::from_millis(10),
+                    lifetime: Lifetime::Finite(Duration::from_secs(30)),
+                    terminal: Terminal::None,
+                    label: "fault".into(),
+                };
+                let spawned = Custody::spawn(&mut run, process, &cx);
+                if matches!(point, Point::AnchorStop | Point::AnchorStopped) {
+                    if let Ok(process) = &spawned {
+                        let anchor = lock(&process.core).anchor.clone().expect("owned anchor");
+                        assert_eq!(
+                            crate::ident::process_identity(anchor.pid).verified(),
+                            Some(&anchor)
+                        );
+                        // The workload is still live. Stop this exact owned anchor
+                        // so its normal auto-retirement cannot skip the fault cell.
+                        assert!(Command::new("/bin/kill")
+                            .arg("-STOP")
+                            .arg(anchor.pid.to_string())
+                            .status()
+                            .unwrap()
+                            .success());
+                    }
+                }
+                diagnostic = format!("spawn: {:?}", spawned.map(|_| ()));
+            }
+            let settlement = run.settle(
+                &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+                &mut Strict,
+            );
+            diagnostic.push_str(&format!("; settlement: {settlement:?}"));
         }
-        let _ = run.settle(
-            &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
-            &mut Strict,
-        );
+        Err(error) => diagnostic.push_str(&format!("admission: {error}")),
     }
+    assert!(
+        crate::fault::fired(),
+        "{point:?}/{fault:?} was not crossed: {diagnostic}"
+    );
 }
 #[cfg(feature = "fault-injection")]
 #[test]
@@ -1073,7 +1109,11 @@ fn fault_matrix_registration_spawn_and_socket_kill_enospc() {
                 exit.is_some()
             });
             if fault == "kill" {
-                assert_eq!(exit.unwrap().signal(), Some(libc::SIGKILL));
+                assert_eq!(
+                    exit.unwrap().signal(),
+                    Some(libc::SIGKILL),
+                    "{point}/{fault}: child did not reach its kill boundary"
+                );
             } else {
                 assert!(exit.unwrap().success());
             }

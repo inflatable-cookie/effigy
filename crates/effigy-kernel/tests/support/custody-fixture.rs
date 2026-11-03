@@ -80,6 +80,10 @@ fn spec(home: &Path) -> ProcessSpec {
     }
 }
 fn main() {
+    #[cfg(feature = "workspace-private-qualification")]
+    if std::env::args().nth(1).as_deref() != Some("private-qualification-uninitialized") {
+        initialize_private_qualification_image().expect("qualification entry image");
+    }
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let entry = args.first().and_then(|s| s.to_str()).unwrap_or("");
     let policy = match entry {
@@ -90,6 +94,15 @@ fn main() {
     let mut router = SignalRouter::install(policy).unwrap();
     if let Some(result) = effigy_kernel::probe::internal_entry(entry, router.root_cancel()) {
         result.unwrap();
+        return;
+    }
+    #[cfg(feature = "workspace-private-qualification")]
+    if entry.starts_with("private-qualification") {
+        qualification_fixture::run(
+            Path::new(args.get(1).expect("fixture root")),
+            router.root_cancel(),
+            entry,
+        );
         return;
     }
     if entry.starts_with("probe-") {
@@ -814,3 +827,7 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
 
 #[path = "probe-fixture.rs"]
 mod probe_fixture;
+
+#[cfg(feature = "workspace-private-qualification")]
+#[path = "qualification-fixture.rs"]
+mod qualification_fixture;

@@ -4,9 +4,9 @@ Status: implemented in `crates/effigy-containers/src/environment/` (engine)
 and `src/runner/environment.rs` (runner cutover), effigy#232. The
 `data_from` data claim and retire as a transition are later work (§9). The
 workspace session run and its host authority channel are implemented at the
-kernel and runner seam (052 §8.3, §8.7, §8.11); their production activation
-caller remains under development on the unmerged #512 branch; native backend
-qualification remains outstanding.
+kernel and runner seam (052 §8.3, §8.7, §8.11); ordinary production activation
+remains refused. The uninstalled #531 qualification path is described below;
+native backend qualification remains outstanding.
 
 For v0.15, workspace Level 1 forwards non-interactive commands only;
 guest PTY, attach, reconnect and detach acknowledgement are deferred to
@@ -26,17 +26,121 @@ sequence is exercised against the real owner — journal, gate order, binding,
 gated re-observation, commit, selector switch and recovery — while the process
 custody of the apply is not claimed.
 
-The qualified invocation is still refused. A same-Env private apply needs the
-Env run to own kernel custody (`Custody::spawn_auxiliary` refuses a run without
-a sentinel), and the workspace activation admits that run through
-`Run::begin_claimed_recoverable`, which refuses an activation that would carry
-one (`crates/effigy-kernel/src/run/mod.rs`, "recoverable claimed admission
-requires an environment activation without a sentinel"). Resident Env custody,
-its sentinel placement and its owner-death/old-reader recovery are the deferred
-S1 item from #512; `Terminal::Discard`, the other way to keep backend bytes out
-of retained logs, is refused until helper identities carry a verified image
-(`crates/effigy-kernel/src/custody.rs`). Until those land, no workspace apply
-starts a backend and every deferred proof that needs one states that by name.
+The qualified invocation is still refused. Recoverable Env admission now accepts
+an explicit custody plan and starts it through the recoverable workspace
+sentinel path. A startup failure returns the exact cleanup-only owner, including
+any partial sentinel and checkout backup, rather than settling or dropping it
+behind the reservation caller. The kernel controls
+`reserved_env_admission_retains_interpolation_under_its_own_custody` and
+`reserved_env_admission_failure_returns_the_exact_partial_custodian` cover
+reserved admission, exact descriptor custody through handle drop, verified
+closure cleanup, and retained ownership on partial startup. They use real
+kernel helpers in disposable fixtures; they do not qualify a native backend,
+Discard, or a full workspace session.
+
+The default production activation does not supply that custody plan or execute a
+private apply. The separate `workspace-private-qualification` compile-time
+feature supplies a custody plan to the guarded activation and selects the
+explicit `private_apply::qualification_only` strategy. No installed CLI,
+configuration or environment toggle enables it. Qualification preparation
+requires an already prepared checkout identity and current source closure;
+missing/stale sources and shared-service preparation refuse before effects.
+The parent admits a separate reserved Env Run for preparation and runs
+same-executable children with discarded streams. Each child authenticates its
+actual applied process receipt, purpose-tagged intent digest, current Env fence,
+held gate and live same-image parent/sentinel before effects. A nonce or
+declarative intent is insufficient; a receipt for another intent or purpose
+cannot authorize this preparation entry.
+Input preparation and validation reuse the ordinary preparation implementation;
+the parent publishes the reobserved render through its actual Env Run between
+those children. The exact render digest is rechecked before and after validation.
+Session access crosses the existing one-shot descriptor grant, never ambient
+credential bytes. Failed preparation settles that same owner before cancelling
+its reservation; Unknown retains the owner and exclusion.
+
+The qualification spawn requires the creator image captured at process entry,
+the exact live detached Env sentinel, checkout backup and anchor, and the
+original activation deadline. The image observations retain the documented
+macOS accidental-skew limit: path/vnode observations cannot prove a mapped
+image against an adversarial ABA replacement. Missing entry capture, foreign
+images, expired budgets and ordinary Discard calls refuse before a workload process
+intent. Helpers and anchors are re-observed before GO. Leader exit does not
+qualify apply success without a separate fresh group-closure observation. The
+exact interpolation descriptors remain on the Env owner until its verified
+settlement, including on unknown results and caller-handle drop.
+
+The actual activation Env Run receives the helper plan separately from its
+Session owner. Named recovery commands use the CLI's `container <NAME> <verb>`
+grammar. Before gate-free integrations, qualification verifies actual workload
+completion and fresh group closure, retires each exact process/anchor and closes
+the backup with verified interpolation cleanup. Only then may it close its own
+shared gate descriptions, without explicitly unlocking another description.
+The checkout fence lease and sentinel remain on the same parked Run. Unknown
+closure, helper acknowledgement, cleanup, deadline or cancellation keeps Env
+held. Retirement stays inside the original absolute deadline and cancellation;
+it creates no fresh cleanup window. Required apply effects remain Applied until
+final settlement, preserving the existing publication predicate and real exit
+obligation.
+
+
+An already created interpolation file first enters an exact Run-owned prelaunch
+slot with a durable, non-executable pending custody obligation. Its intent and
+unreadable pending receipt commit atomically, including across a lost post-commit
+result; old process readers cannot see a receipt-less row and infer non-execution.
+After helper-image
+checks and before any fork, the private SCM_RIGHTS channel gives the checkout
+backup hold-only descriptions; caller drop retains that exact file and Env gate.
+A real registered process receipt, synced binding and verified exact-object
+handoff replace the hold. Never-forked refusals may clean the same live file
+through no-clobber quarantine/unlink/sync before releasing its hold. Partial
+fork, missing owner and unknown acknowledgement remain unresolved. The pending
+envelope is not a process receipt, preparation capability or cleanup authority.
+
+An interpolation-bound Discard receipt has an explicit combined envelope. The
+new decoder accepts it; legacy readers cannot interpret it as an ordinary
+process, and recovery without the live descriptor owner preserves residue.
+`test:workspace:private-qualification:kernel` exercises source/fixture custody
+only. The qualification CLI control uses the real front end, reserved Env
+custody, apply, guest publication, commit and selected session with doubled
+external backend/guest I/O; it is not native evidence. Native backend,
+genuine old-binary and consumer qualification, retained-review acceptance and the final production GO remain
+separate requirements. Ordinary private backend invocation and Discard remain
+refused.
+
+Qualification preparation uses read-only running/status/containerd/BuildKit
+checks. It refuses a stopped or unknown backend and never starts a profile,
+repairs shared runtime units or rewrites managed VM settings. The ordinary
+backend ensure remains unchanged. The real CLI fixture now delivers a synthetic
+vault canary through both host environment delivery and the Colima-shaped
+interpolation-file route; the latter asserts the combined custody receipt,
+backend file read, verified file cleanup and absent diagnostic/durable plaintext.
+Neither external-I/O double is native qualification evidence.
+
+The qualification down uses the kernel's `DownCoordination`: foreign live or
+unresolved holders refuse before stop requests; only this session's children
+are stopped, their completed cleanup is checked, and the selected session must
+close with complete cleanup before the ordinary Env stop rechecks R4. The
+serving loop observes the adopted session's own fenced stop request as well as
+the outer supervisor's controls. Explicit interrupted-session recovery takes
+its recorded private slot through `settle_interrupted` before Env admission;
+a dead creator alone does not prove group closure or release that slot.
+
+The nine deferred `workspace_reserved_*` publication controls now have a
+qualification-feature selector that uses `private_apply::qualification_only`
+with real helpers and the same activation owner/deadline. Guest/backend I/O is
+doubled. The actual CLI fixture covers committed publication, guarded failures,
+down/fresh-up, and a killed selected supervisor. Existing-target artifact reuse
+still refuses at `observe_decision_artifact`'s descriptor-pinned probe gate;
+the crash control requires unchanged selection on that refusal, followed by
+explicit down and fresh up. It does not weaken that gate or claim successful
+reuse. Shared-service and stale-source preparation remain refused.
+
+The [531 full-session packet](../../qualification/workspace-private-531/README.md)
+provides one aggregate source-immutable selector for separately GO-armed Colima,
+Desktop and native Linux cells. Its runtime inputs and GO index are separately
+hash bound to avoid a circular hash dependency. Actual native artifacts, scoped
+GOs, receipts, consumer evidence, retained review acceptance and final production
+GO are still required. Packet boundary tests are source evidence only.
 
 Q-010 storage follows contract [052](052-runtime-kernel-contract.md) §3.1,
 §7 and §11, approved by planner and Tom (2026-10-22: "Approve"). Environment
@@ -81,7 +185,7 @@ fails without saying so.
 | Observe status/context | Partly in place, proof deferred. The channel carries `ObserveQuery`/`ObserveBody` under `ObserveContext` and `run::status` returns `Observed<RunStatus>`; v2 context verification binds the exact session generation. The production-route exact-status/context proof needs the same apply capability as the production E2E, so it stays with #531; unproved adapters refuse by name (052 §8.6). |
 | Level 1 coverage and missing adapters | Recorded and implemented as policy. Tom's 2026-11-01 ruling in 052 §8.6, `workspace_client/coverage_policy.rs` and `tests/workspace_client_coverage_policy.rs`: Level 1 forwards; every other guest request refuses with a stable unsupported diagnostic. |
 | Level 2 PTY work | Not conflated. 052 §8.6/§8.11 keep attach, reconnect, terminal input and real PTY as Level 2; nothing in #533 claims them. |
-| #529 helper custody | Not this task's owner and untouched. `Terminal::Discard` stays refused pending verified helper-image capability (`supervise/image_identity.rs` is still unwired). |
+| #529 helper custody | Its landed identity/ACK and anchor checks are preserved. Ordinary `Terminal::Discard` remains refused; the compile-time qualification candidate and its current limits are described above. |
 | #526 interpolation cleanup | Not this task's owner and untouched. Interpolation files are already per-invocation with a lock and a sweep (`policy/render/vm.rs`); #533 neither changes nor claims them. |
 | Discard refused | Unchanged. `run_private_detached_command`, `support/workspace_private.rs` and `Terminal::Discard` all still refuse; no Discard route was enabled. |
 | Production workspace apply | Refused by name, as the section above records. No backend process starts. |

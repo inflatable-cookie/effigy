@@ -90,6 +90,27 @@ pub fn prepare(policy: &EffectiveContainerPolicy) -> Result<(), ContainerPolicyE
     Ok(())
 }
 
+/// Qualification publishes only through the actual reserved Env Run.
+#[cfg(feature = "workspace-private-qualification")]
+pub fn prepare_under_qualification_owner(
+    run: &mut Run<'_>,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), ContainerPolicyError> {
+    let owner = ResourceId::environment(checkout(policy)?, &policy.name).map_err(error)?;
+    if run.fence().resource != owner {
+        return Err(error("qualification render owner differs"));
+    }
+    let render = policy
+        .render
+        .as_ref()
+        .ok_or_else(|| error("qualification render unavailable"))?;
+    Objects::publish_desired(run, &render.closure).map_err(error)?;
+    if let Some(backend) = crate::backend::metadata_to_record(policy) {
+        run.set_backend(&backend).map_err(error)?;
+    }
+    Ok(())
+}
+
 /// Write a shared render's files where its digest names them. Every file is
 /// content-addressed, so an identical file already there is left alone and a
 /// concurrent writer of the same bytes writes the same bytes (through a

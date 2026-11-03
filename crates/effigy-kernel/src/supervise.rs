@@ -35,13 +35,20 @@ pub(crate) mod anchor;
 // receipt protocol and its exact-owner checks have been independently reviewed.
 #[allow(dead_code)]
 mod birth_hash;
-// Observation scaffold only; it does not qualify a helper or enable Discard.
+// Ordinary builds do not consume these qualification-only observations.
 #[allow(dead_code)]
 #[cfg(not(test))]
-mod image_identity;
+pub(crate) mod image_identity;
 #[cfg(test)]
 pub(crate) mod image_identity;
 pub(crate) mod memory;
+
+/// Qualification executables call this at process entry. It grants no spawn
+/// authority and is absent from ordinary product builds.
+#[cfg(feature = "workspace-private-qualification")]
+pub fn initialize_private_qualification_image() -> io::Result<()> {
+    image_identity::initialize()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Placement {

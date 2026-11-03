@@ -6,12 +6,10 @@
 //! qualified private invocation, and a proof substitutes a fake backend there
 //! so the publication sequence itself is exercised against a real owner.
 //!
-//! The qualified invocation is not available yet. A same-Env apply needs the
-//! Env run to own kernel custody, and the workspace activation admits that run
-//! through `Run::begin_claimed_recoverable`, which refuses an activation that
-//! would carry a sentinel. Until resident Env custody lands, `qualified`
-//! performs no process work and reports the outcome unsettled, so no caller can
-//! mistake it for an executed apply.
+//! Ordinary production still refuses without process work. The separate
+//! compile-time qualification strategy below uses the actual Env owner and
+//! transfers the exact interpolation file into its retained custody; native
+//! qualification and a separate production-enable GO are still required.
 
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
@@ -71,4 +69,86 @@ pub(in crate::runner) fn qualified(
         command.until,
     )
     .map_err(|_| BackendError::Uncertain("workspace private apply outcome unavailable".into()))
+}
+
+/// Test-only candidate requiring review before native activation. The ordinary strategy above is always
+/// refused. This entry borrows the actual activation owner and deadline and
+/// moves the exact Compose interpolation file into its retained kernel custody.
+#[cfg(feature = "workspace-private-qualification")]
+pub(in crate::runner) fn qualification_only(
+    run: &mut Run<'_>,
+    effect: &EffectContext,
+    command: &PrivateApplyCommand<'_>,
+) -> Result<(), BackendError> {
+    use effigy_kernel::custody::{EnvValue, Lifetime, ProcessSpec, SecretValue, Terminal};
+    use effigy_kernel::observe::Observed;
+    use std::os::unix::ffi::OsStrExt;
+    use std::time::Duration;
+    let unavailable =
+        || BackendError::Uncertain("workspace private apply outcome unavailable".into());
+    let bounded = effect.child_until(command.until);
+    bounded
+        .operation()
+        .check("private workspace qualification")
+        .map_err(|_| unavailable())?;
+    let remaining = command
+        .until
+        .checked_duration_since(Instant::now())
+        .ok_or_else(unavailable)?;
+    let program = command.program.to_str().ok_or_else(unavailable)?;
+    let program = effigy_containers::compose::resolve_host_cli_program(program);
+    if !Path::new(&program).is_absolute() {
+        return Err(unavailable());
+    }
+    let mut env = crate::runner::secret_session::workload_ambient_environment()
+        .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
+        .map(|(key, value)| (key, EnvValue::Plain(value)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for (key, value) in command.env {
+        let value = if value.is_empty() {
+            EnvValue::Plain(value.clone())
+        } else {
+            EnvValue::Secret(
+                SecretValue::new(value.as_bytes().to_vec()).map_err(|_| unavailable())?,
+            )
+        };
+        env.insert(key.into(), value);
+    }
+    let invocation = effigy_containers::policy::render::compose_invocation_args(
+        command.program,
+        command.args,
+        command.env,
+    )
+    .map_err(|_| unavailable())?;
+    let mut process = invocation
+        .spawn_workspace_discard_qualification(
+            run,
+            ProcessSpec {
+                argv: vec![program],
+                cwd: command.workdir.into(),
+                env,
+                grace: Duration::from_secs(2),
+                lifetime: Lifetime::Finite(remaining),
+                terminal: Terminal::Discard,
+                label: command.label.into(),
+            },
+            &bounded,
+        )
+        .map_err(|_| unavailable())?;
+    let exit = match process.wait(bounded.operation()) {
+        Observed::Verified(exit, _) => exit,
+        _ => return Err(unavailable()),
+    };
+    if !matches!(
+        process
+            .wait_qualification_group_closure(&bounded.operation().child(Duration::from_secs(2))),
+        Observed::Verified(..) | Observed::Absent(_)
+    ) {
+        return Err(unavailable());
+    }
+    process.complete(run, exit).map_err(|_| unavailable())?;
+    if exit.code != 0 {
+        return Err(unavailable());
+    }
+    Ok(())
 }

@@ -129,6 +129,11 @@ fn an_unreadable_backend_record_refuses_in_words() {
         "prepare writes the checkout store at {}",
         database.display()
     );
+    // Prove the original fixture settled before making its journal unreadable.
+    // Restore these same bytes after the refusal assertions so fixture cleanup
+    // can verify those owners; corruption is never evidence of helper absence.
+    effigy_test_support::process::close_root(fixture._fixture.path()).unwrap();
+    let healthy_database = std::fs::read(&database).unwrap();
     std::fs::write(&database, b"not a database").unwrap();
 
     let observed = exact(&fixture);
@@ -152,17 +157,8 @@ fn an_unreadable_backend_record_refuses_in_words() {
         "no `Debug` structure reaches a person: {error}"
     );
     assert!(error.contains("EFFIGY_COMPOSE_BACKEND"), "{error}");
-
-    // The corrupted journal is this test's own fixture data: `prepare` wrote
-    // the store in this process and no kernel helper was ever launched under
-    // it. Remove what the test made unreadable, so fixture cleanup settles on
-    // the journal's absence instead of waiting out a store it is never
-    // allowed to read as proof that no helper exists (effigy#550).
-    let state = fixture.checkout.join(".effigy/state");
-    std::fs::remove_file(state.join("kernel.db")).unwrap();
-    for suffix in ["-journal", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(state.join(format!("kernel.db{suffix}")));
-    }
+    std::fs::write(&database, healthy_database).unwrap();
+    effigy_test_support::process::close_root(fixture._fixture.path()).unwrap();
 }
 
 #[test]

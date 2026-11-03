@@ -1,0 +1,123 @@
+# Closed hostagent rendering preparation — UNARMED
+
+This is source preparation, not acceptance of the retained REFUSED observation.
+Private bytes stay in their original quarantine. No private foreign path or raw
+command is copied into this contract, examples or tests.
+
+## Pinned source and option roles
+
+Official Lima tagv2.2.1 resolves through its annotated tag to commit
+`27bc4c4b101e27994e01e36566a0f2091bbca507`. [File URLs and SHA256](rendering-source.json)
+pin six public source snapshots; original snapshots/tag responses are retained
+in the evidence index outside Queue cleanup.
+
+[hostagent.go](https://github.com/lima-vm/lima/blob/27bc4c4b101e27994e01e36566a0f2091bbca507/cmd/limactl/hostagent.go)
+L27–115 defines the three observed option names. `--pidfile` names a PID file
+(the handler reads/writes it and defers its removal); `--socket` is required and
+names the hostagent's Unix HTTP API listener (the handler removes that path before
+listening); `--guestagent` names an optional local guest payload passed into
+hostagent creation. These are different authority roles, not interchangeable
+safe strings. Their presence alone does not establish ownership or authorize any
+of those upstream effects. This packet performs none of them.
+
+[start.go](https://github.com/lima-vm/lima/blob/27bc4c4b101e27994e01e36566a0f2091bbca507/pkg/instance/start.go)
+L218–288 constructs the ordered hostagent command: optional debug, hostagent,
+pidfile and socket pairs, optional guestagent pair, then instance. Other upstream
+branches exist (GUI, nerdctl, progress); this narrow packet deliberately refuses
+them. The [filename constants](https://github.com/lima-vm/lima/blob/27bc4c4b101e27994e01e36566a0f2091bbca507/pkg/limatype/filenames/filenames.go)
+L63–64 identify `ha.pid` and `ha.sock` beneath the instance directory.
+
+[hostagent.go](https://github.com/lima-vm/lima/blob/27bc4c4b101e27994e01e36566a0f2091bbca507/pkg/hostagent/hostagent.go)
+L98–110/201 passes the local guest payload toward ISO preparation;
+[cidata.go](https://github.com/lima-vm/lima/blob/27bc4c4b101e27994e01e36566a0f2091bbca507/pkg/cidata/cidata.go)
+L461–485 opens/decompresses it into the guest payload. The
+[locator](https://github.com/lima-vm/lima/blob/27bc4c4b101e27994e01e36566a0f2091bbca507/pkg/usrlocal/usrlocal.go)
+L129–145 uses OS/architecture names with an optional gzip suffix. Source explains
+the option; it does not prove the retained path's contents, provenance or owner.
+
+## Concrete v2 binding
+
+`rendering.py` defines one closed policy: `lima-2.2.1-private-hostagent-r1`.
+The owner-bound input adds exactly `rendering: {policy, comm_rule, debug, paths,
+expected_atoms}`. The authenticated GO adds `rendering_sha256`, the SHA256 of
+canonical JSON (`sort_keys=True`, separators comma/colon). Input and all five
+program hashes remain bound. Old v1 requests refuse before target access.
+
+`comm_rule` is exactly `reviewed-alias-full` or `reviewed-alias-prefix16`, derived
+from the already-reviewed executable alias. Prefix16 describes a deterministic
+expected **rendering category** motivated by this retained receipt. It is not a
+universal ps/Darwin contract or executable identity witness. Exact argv0, complete
+ordered atoms, PID/parent/euid/start/profile, executable/alias pins, root/owner
+checks and typed path facts remain independently mandatory. There is no arbitrary
+comm string or prefix length.
+
+The derived atoms contain the alias, optional debug, hostagent, exactly the three
+option/value pairs in source order and the exact private instance. Owner atoms
+must equal this derivation; unknown/duplicate/reordered options, extra positionals,
+credentials or foreign paths refuse even when an owner file repeats them exactly.
+Pidfile and socket must be the exact instance `ha.pid`/`ha.sock`. The guestagent
+must be a local Linux/aarch64 payload name under the existing control root. That
+restriction is deliberately narrower than upstream, not a claim about actual
+retained spelling or permission to rename/copy it.
+
+Each role pins path, device, inode, uid, mode, kind, size and an exact parent pin
+(path/device/inode/uid/mode). All paths stay under the existing control root;
+symlink/noncanonical/traversal paths, unowned/writable parents, wrong types or
+changed metadata refuse. A future authorized observer retains fresh lstat facts
+before comparison and verifies exact parent/type/owner/identity. No content read,
+PID-file modification, socket connection or trusted-root expansion is added.
+The parse receipt reports only policy/category/counters and binding provenance;
+original command/rendering remains private. Quarantine-before-parse, one call,
+dual clocks, bounded streams and zero target signal/watch/claim surfaces remain.
+
+## Remaining foreign-path gap
+
+The outside-root object in the retained receipt is the **guestagent payload**,
+a regular gzip file at the upstream prefix/share/lima locator. The pidfile and
+socket values are the instance's `ha.pid`/`ha.sock` inside CONTROL. This corrects
+the earlier socket-role inference (review5756595492/r686-76 and r686-82);
+the original native REFUSED result and private bytes remain unchanged.
+
+Current validation rejects any outside-CONTROL guestagent value **before** owner
+atom equality can admit it. Equality to retained bytes cannot establish provenance,
+ownership or permission to consume a payload. The [unarmed request](preflight-request.example.json)
+now describes the actual missing facts and two alternatives for later owner review:
+
+- External payload provenance: privately bind the exact regular gzip file and each
+  parent, independent package/source provenance, version/OS/architecture, and an
+  expected digest tied independently to the official pinned Lima2.2.1 artifact or
+  an authenticated packaging manifest. A future separately approved read-only
+  request would establish canonical/type/uid/mode/device/inode/size facts and hash
+  the exact file under a bounded scope. A digest merely computed from the observed
+  file is not independent provenance. Compressed-file and upstream artifact digest
+  domains must be explicit; no guessed checksum, extraction, execution or raw content
+  publication. Current code still refuses this outside path even if those facts
+  later arrive; source review and explicit owner scope would be needed to change it.
+- In-CONTROL placement: independently verify the same payload provenance/digest,
+  then seek a separate scoped approval for any owned placement/copy and its exact
+  destination metadata. No placement is authorized here. Placement alone cannot
+  change the retained process's existing arguments; configuration or relaunch
+  would need its own explicit approval and fresh identity/command binding.
+
+No exact private payload path is copied here. Neither alternative adds a trusted
+root or an executable observer. Missing/unverified payload metadata is not process
+absence, disk health, VM closure or safe restart. The proposal requests no socket
+connection, process discovery, content publication, adoption, repair or follow-up.
+
+Synthetic tests use harmless analogue paths and recorded metadata, plus owned
+local fixture payloads. Offline parsing is not a new native pass. Both consumed
+native decisions remain consumed; any later request needs fresh explicit operator
+scope/allowance, reviewed source/input/program/output/GO bindings, a new UTC and
+monotonic deadline and accounting through actual report/cleanup. The future fixed
+preflight invocation is unchanged; its v2 input binding is new. Administrative
+signal source stays byte-identical. All qualification/consumer/final-enable and
+merge holds remain.
+
+
+## Public digest provenance and separate future collection
+
+[Independent public payload references](payload-provenance.md) and the
+[UNARMED one-call request](payload-collection-request.example.json) prepare a
+separate evidence-only collector. It does not alter this v2 grammar: the outside
+guestagent path remains refused here. A public digest match is not installed
+package provenance, trusted-root adoption, signal authority or private apply.

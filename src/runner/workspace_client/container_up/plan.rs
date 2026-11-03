@@ -154,9 +154,8 @@ pub(super) fn prepare_observation(
     if super::fake_io::configured() {
         return super::fake_io::Observation::new(policy)
             .map(|observation| Box::new(observation) as Box<dyn ReservedBackendObservation + Send>)
-            .map_err(|error| {
+            .inspect_err(|_| {
                 super::fake_io::diagnostic("prepare observation unavailable");
-                error
             });
     }
     Ok(Box::new(ContainerBackendObservation::prepare(policy)?))

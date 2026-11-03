@@ -1,0 +1,321 @@
+{
+  "schema": "effigy.workspace-private-proof.v1",
+  "source_head": "EXACT_PUBLISHED_PR_HEAD",
+  "evidence": "/Volumes/Builds/scratch/effigy/531-approved-inputs/aggregate-evidence",
+  "backends": [
+    {
+      "backend": "colima",
+      "source_head": "EXACT_PUBLISHED_PR_HEAD",
+      "source_root": "/Volumes/Builds/scratch/effigy/531-approved-source-colima",
+      "old_source_head": "GENUINE_OLD_SOURCE_COMMIT",
+      "candidate_receipt": {
+        "source_head": "EXACT_PUBLISHED_PR_HEAD",
+        "features": [
+          "workspace-private-qualification"
+        ],
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "production_receipt": {
+        "source_head": "EXACT_PUBLISHED_PR_HEAD",
+        "features": [],
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "old_source_receipt": {
+        "source_head": "GENUINE_OLD_SOURCE_COMMIT",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "driver": "local",
+      "engine_kind": "colima",
+      "engine_identity": "RECORD_APPROVED_PROFILE_OR_CONTEXT",
+      "runtime_image": "sha256:RECORD_RESIDENT_IMAGE_ID",
+      "budget_seconds": 0,
+      "baseline": {
+        "containers": [],
+        "networks": [],
+        "volumes": []
+      },
+      "docker_config": "/RECORD/EXISTING/DOCKER/CONFIG",
+      "colima_home": "/RECORD/EXISTING/COLIMA/HOME",
+      "candidate": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/colima-candidate",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "production": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/colima-production",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "utility": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/colima-utility",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "kernel_fixture": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/colima-kernel_fixture",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "kernel_tests": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/colima-kernel_tests",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "custody_tests": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/colima-custody_tests",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "old_binary": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/colima-old_binary",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "guest_artifact": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-source-colima/.effigy/linux-release/artifacts/effigy-RECORD_LINUX_TRIPLE",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "guest_producer_receipt": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-source-colima/.effigy/linux-release/artifacts/effigy-RECORD_LINUX_TRIPLE.receipt",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "guest_active_version": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-source-colima/.effigy/linux-release/artifacts/effigy-RECORD_LINUX_TRIPLE.active-version",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "engine_binary": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/colima-engine_binary",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "nextest_binary": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/colima-nextest_binary",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "binaries_metadata": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/colima-binaries_metadata",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "cargo_metadata": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/colima-cargo_metadata",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "nextest_config": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/colima-nextest_config",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "qualification_root": {
+        "path": "/Volumes/Builds/scratch/effigy/531-colima-qualification",
+        "device": "RECORD_ACTUAL_DEVICE",
+        "inode": "RECORD_ACTUAL_INODE",
+        "uid": "RECORD_ACTUAL_OWNER_UID"
+      }
+    },
+    {
+      "backend": "desktop",
+      "source_head": "EXACT_PUBLISHED_PR_HEAD",
+      "source_root": "/Volumes/Builds/scratch/effigy/531-approved-source-desktop",
+      "old_source_head": "GENUINE_OLD_SOURCE_COMMIT",
+      "candidate_receipt": {
+        "source_head": "EXACT_PUBLISHED_PR_HEAD",
+        "features": [
+          "workspace-private-qualification"
+        ],
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "production_receipt": {
+        "source_head": "EXACT_PUBLISHED_PR_HEAD",
+        "features": [],
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "old_source_receipt": {
+        "source_head": "GENUINE_OLD_SOURCE_COMMIT",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "driver": "local",
+      "engine_kind": "docker",
+      "engine_identity": "RECORD_APPROVED_PROFILE_OR_CONTEXT",
+      "runtime_image": "sha256:RECORD_RESIDENT_IMAGE_ID",
+      "budget_seconds": 0,
+      "baseline": {
+        "containers": [],
+        "networks": [],
+        "volumes": []
+      },
+      "docker_config": "/RECORD/EXISTING/DOCKER/CONFIG",
+      "colima_home": "/RECORD/EXISTING/COLIMA/HOME",
+      "candidate": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/desktop-candidate",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "production": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/desktop-production",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "utility": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/desktop-utility",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "kernel_fixture": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/desktop-kernel_fixture",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "kernel_tests": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/desktop-kernel_tests",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "custody_tests": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/desktop-custody_tests",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "old_binary": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/desktop-old_binary",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "guest_artifact": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-source-desktop/.effigy/linux-release/artifacts/effigy-RECORD_LINUX_TRIPLE",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "guest_producer_receipt": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-source-desktop/.effigy/linux-release/artifacts/effigy-RECORD_LINUX_TRIPLE.receipt",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "guest_active_version": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-source-desktop/.effigy/linux-release/artifacts/effigy-RECORD_LINUX_TRIPLE.active-version",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "engine_binary": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/desktop-engine_binary",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "nextest_binary": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/desktop-nextest_binary",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "binaries_metadata": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/desktop-binaries_metadata",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "cargo_metadata": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/desktop-cargo_metadata",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "nextest_config": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/desktop-nextest_config",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "qualification_root": {
+        "path": "/Volumes/Builds/scratch/effigy/531-desktop-qualification",
+        "device": "RECORD_ACTUAL_DEVICE",
+        "inode": "RECORD_ACTUAL_INODE",
+        "uid": "RECORD_ACTUAL_OWNER_UID"
+      }
+    },
+    {
+      "backend": "linux",
+      "source_head": "EXACT_PUBLISHED_PR_HEAD",
+      "source_root": "/Volumes/Builds/scratch/effigy/531-approved-source-linux",
+      "old_source_head": "GENUINE_OLD_SOURCE_COMMIT",
+      "candidate_receipt": {
+        "source_head": "EXACT_PUBLISHED_PR_HEAD",
+        "features": [
+          "workspace-private-qualification"
+        ],
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "production_receipt": {
+        "source_head": "EXACT_PUBLISHED_PR_HEAD",
+        "features": [],
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "old_source_receipt": {
+        "source_head": "GENUINE_OLD_SOURCE_COMMIT",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "driver": "ssh",
+      "engine_kind": "docker",
+      "engine_identity": "RECORD_APPROVED_PROFILE_OR_CONTEXT",
+      "runtime_image": "sha256:RECORD_RESIDENT_IMAGE_ID",
+      "budget_seconds": 0,
+      "baseline": {
+        "containers": [],
+        "networks": [],
+        "volumes": []
+      },
+      "docker_config": "/RECORD/EXISTING/DOCKER/CONFIG",
+      "colima_home": "/RECORD/EXISTING/COLIMA/HOME",
+      "candidate": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/linux-candidate",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "production": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/linux-production",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "utility": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/linux-utility",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "kernel_fixture": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/linux-kernel_fixture",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "kernel_tests": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/linux-kernel_tests",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "custody_tests": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/linux-custody_tests",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "old_binary": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/linux-old_binary",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "guest_artifact": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-source-linux/.effigy/linux-release/artifacts/effigy-RECORD_LINUX_TRIPLE",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "guest_producer_receipt": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-source-linux/.effigy/linux-release/artifacts/effigy-RECORD_LINUX_TRIPLE.receipt",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "guest_active_version": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-source-linux/.effigy/linux-release/artifacts/effigy-RECORD_LINUX_TRIPLE.active-version",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "engine_binary": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/linux-engine_binary",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "ssh_alias": "RECORD_APPROVED_LINUX_ALIAS",
+      "remote": {
+        "packet": "/Volumes/Builds/scratch/effigy/531-reviewed-packet",
+        "inputs": "/Volumes/Builds/scratch/effigy/531-approved-inputs/inputs.json",
+        "go_bindings": "/Volumes/Builds/scratch/effigy/531-approved-inputs/go-index.json"
+      },
+      "nextest_binary": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/linux-nextest_binary",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "binaries_metadata": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/linux-binaries_metadata",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "cargo_metadata": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/linux-cargo_metadata",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "nextest_config": {
+        "path": "/Volumes/Builds/scratch/effigy/531-approved-inputs/linux-nextest_config",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "qualification_root": {
+        "path": "/Volumes/Builds/scratch/effigy/531-linux-qualification",
+        "device": "RECORD_ACTUAL_DEVICE",
+        "inode": "RECORD_ACTUAL_INODE",
+        "uid": "RECORD_ACTUAL_OWNER_UID"
+      },
+      "ssh_config": {
+        "path": "/Volumes/Builds/scratch/effigy/531-linux-control/ssh-config",
+        "sha256": "RECORD_PRIVATE_CONFIG_SHA256"
+      },
+      "ssh_known_hosts": {
+        "path": "/Volumes/Builds/scratch/effigy/531-linux-control/known-hosts",
+        "sha256": "RECORD_PUBLIC_HOST_KEYS_SHA256"
+      }
+    }
+  ]
+}

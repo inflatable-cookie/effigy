@@ -135,6 +135,18 @@ struct Probe {
 /// test process, with no capture. The reserved-guest proofs assert the
 /// publication sequence, so the process boundary is where their fake belongs;
 /// the qualified route owns the custody of the child it starts.
+#[cfg(feature = "workspace-private-qualification")]
+fn fake_backend(
+    run: &mut effigy_kernel::run::Run<'_>,
+    effect: &effigy_kernel::ctx::EffectContext,
+    command: &PrivateApplyCommand<'_>,
+) -> Result<(), effigy_containers::environment::BackendError> {
+    // Only the external executable is doubled. Run, helpers, receipt, output
+    // disposition, original deadline and verified closure are production code.
+    crate::runner::environment::workspace::private_apply::qualification_only(run, effect, command)
+}
+
+#[cfg(not(feature = "workspace-private-qualification"))]
 fn fake_backend(
     _run: &mut effigy_kernel::run::Run<'_>,
     _effect: &effigy_kernel::ctx::EffectContext,
@@ -564,7 +576,19 @@ home = "/home/vscode"
                 id: RunId::new(1_760_000_000_000, [1; 10]).unwrap(),
                 wait: Wait::FailFast,
                 acknowledge: vec![],
-                custody: None,
+                custody: {
+                    #[cfg(feature = "workspace-private-qualification")]
+                    {
+                        Some(effigy_kernel::supervise::LifecyclePlan {
+                            executable: effigy_kernel::supervise::Executable::current().unwrap(),
+                            placement: effigy_kernel::supervise::Placement::Detached,
+                        })
+                    }
+                    #[cfg(not(feature = "workspace-private-qualification"))]
+                    {
+                        None
+                    }
+                },
                 next: effigy_kernel::outcome::Invocation::validated(
                     vec!["effigy".into(), "container".into(), "status".into()],
                     |_| true,

@@ -3372,7 +3372,14 @@ never form one.
 
 **Staged production cut (Tom, 2026-11-01).** Workspace-mode container up
 currently refuses by name before workspace preparation or apply; private
-Compose and production Discard remain refused. The retained reserved-guest
+Compose and production Discard remain refused. The compile-time private
+qualification path and its authenticated preparation child are described in
+[contract 053](053-environment-reconciler-contract.md). In that path, a reserved
+Env Run may park only after fresh completion/group closure, exact process and
+anchor retirement, and acknowledged backup/interpolation cleanup. Its checkout
+lease and sentinel remain retained; closing shared gate descriptions never
+explicitly unlocks another description. Unknown preserves the held gate and
+exact owner. The retained reserved-guest
 publication, target revalidation, activation-deadline and guest-write crash
 tests require private apply and are not evidence of those behaviors while it
 is refused. Their acceptance is deferred to effigy#533 and effigy#531 before
@@ -3387,7 +3394,7 @@ reader does not infer an absent gate from silence:
 | Item | Status at this cut | Detail |
 | --- | --- | --- |
 | S1 bounded resident, pre-reserved partial-fork owner | deferred | It belongs to the owned-root/worker integration (effigy#533). `Run::mark_workspace_partial_fork` remains the unwired scaffold: a marker committed without pre-reserved custody cannot be cleared on a refused fork without inventing a non-occurrence proof, so wiring it ahead of the resident owner would create unresolved residue rather than protection. |
-| S2 supervisor image observation and refusal | not enabled | `supervise/image_identity.rs` is still an unwired observation scaffold. Requiring a helper image identity would refuse script and foreign helpers, and the accepted accidental-skew model plus K1 keep memory custody from refusing over a replaced binary beside a live run. The evidence a workspace helper would need before private output stays a later cut's obligation. |
+| S2 supervisor image observation and refusal | not enabled | Default builds leave `supervise/image_identity.rs` unused. The separate compile-time qualification route requires an entry-captured creator image and matching sentinel, checkout backup and anchor observations; ordinary Discard remains refused. Requiring a helper image identity refuses script and foreign helpers, and the accepted accidental-skew model plus K1 keep memory custody from refusing over a replaced binary beside a live run. The evidence a workspace helper would need before private output stays a later cut's obligation. |
 | S3 sentinel identity and explicit environment, including recovery | present in landed source, not extended here | Identity re-proof is `SentinelLease::verify_retained`, retained partial leases, and the detached supervisor's recorded identities; the child environment is explicit (`helper()` clears it and a detached launch passes exactly its own environment). Recovery after owner loss is the sentinel settle path. This cut adds no new sentinel image or environment rule. |
 | S4 backup identity/reuse before Register, actual ACK, anchor verification before GO | landed | `MemoryGuard::register` re-proves the retained backup's exact incarnation before any frame; its acknowledgement names the frame's reserved request number; and process custody qualifies the recorded anchor and leader before the receipt and again before the `go` byte. |
 | S5 real mixed-binary and process-death controls | partial | A helper frame from another protocol version refuses by name, and real-process controls stop the recorded anchor and backup to prove the refusals. A genuine old-binary pair, Linux and native packets, and owner-death recovery for the resident owner are still outstanding. |

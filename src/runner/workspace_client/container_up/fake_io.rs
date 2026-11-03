@@ -523,7 +523,9 @@ pub(super) fn activation_failure<E>(
         IntegratedFailure::PhaseA(PhaseAFailure::BeforeAdmission(_)) => "before admission",
         IntegratedFailure::PhaseA(PhaseAFailure::Admission(_)) => "admission",
         IntegratedFailure::PhaseA(PhaseAFailure::Guarded { .. }) => "sealed apply",
-        IntegratedFailure::Guarded { .. } => "bind/reacquire",
+        IntegratedFailure::Guarded { bound: None, .. } => "bind/reacquire",
+        IntegratedFailure::Guarded { effects: None, .. } => "integration effects",
+        IntegratedFailure::Guarded { .. } => "park",
         IntegratedFailure::Parked { .. } => "integrations/resume",
         IntegratedFailure::Cleanup(_) => "guarded cleanup",
         IntegratedFailure::CleanupOnly { .. } => "cleanup integrations",
@@ -538,4 +540,6 @@ pub(super) fn activation_failure<E>(
         } => "selected finish",
     };
     diagnostic(stage);
+    // Stage names are the complete diagnostic vocabulary here. Underlying
+    // backend, guest and kernel errors may contain protected data.
 }

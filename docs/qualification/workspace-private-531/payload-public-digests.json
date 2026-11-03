@@ -1,0 +1,43 @@
+{
+  "version": "2.2.1",
+  "guest_os": "Linux",
+  "guest_arch": "aarch64",
+  "homebrew_formula_commit": "0c6df12559a3519ab9ec567743faa1ea41790a6e",
+  "homebrew_formula_url": "https://raw.githubusercontent.com/Homebrew/homebrew-core/0c6df12559a3519ab9ec567743faa1ea41790a6e/Formula/l/lima.rb",
+  "homebrew_formula_sha256": "3b19c08797b01f1878bc95462fcf5f0f968fe5061206606d9529a62ad214a9ec",
+  "artifacts": [
+    {
+      "kind": "official-release-Darwin-arm64",
+      "url": "https://github.com/lima-vm/lima/releases/download/v2.2.1/lima-2.2.1-Darwin-arm64.tar.gz",
+      "sha256": "9e9eacce88f37e185c346bad73aa6136f738d8cdf8c3bb23cd42b071824bc66e",
+      "download_bytes": 38328082,
+      "archive_sha256": "9e9eacce88f37e185c346bad73aa6136f738d8cdf8c3bb23cd42b071824bc66e",
+      "member": "./share/lima/lima-guestagent.Linux-aarch64.gz",
+      "compressed_payload_bytes": 7421099,
+      "compressed_payload_sha256": "ed41b146a0aa9fb5e75d4b42d7af40c9ffb2cafadf4d8685762599e1960a72d7",
+      "uncompressed_payload_bytes": 19857568,
+      "uncompressed_payload_sha256": "cee7d526aa7642cad47223e8cd9a7afe7ed663188213c67ed554304e7f6f1071",
+      "executed": false,
+      "filesystem_extraction": false
+    },
+    {
+      "kind": "homebrew-arm64_sequoia",
+      "url": "https://ghcr.io/v2/homebrew/core/lima/blobs/sha256:47a100808049a4d9903d94f69c00ae74e4548fa3c3073a8aa70b847891de735b",
+      "sha256": "47a100808049a4d9903d94f69c00ae74e4548fa3c3073a8aa70b847891de735b",
+      "download_bytes": 38504444,
+      "archive_sha256": "47a100808049a4d9903d94f69c00ae74e4548fa3c3073a8aa70b847891de735b",
+      "member": "lima/2.2.1/share/lima/lima-guestagent.Linux-aarch64.gz",
+      "compressed_payload_bytes": 7421321,
+      "compressed_payload_sha256": "ac5191e9a41bb3997c5c4d1668eaeae98c23721874158aa88a641f646ae549aa",
+      "uncompressed_payload_bytes": 19857568,
+      "uncompressed_payload_sha256": "3f4949e94e44b4a83d4eb306fd69459976b8b777744d79f30ff9485e20ff0d79",
+      "executed": false,
+      "filesystem_extraction": false
+    }
+  ],
+  "installed_match_claimed": false,
+  "payload_name": "lima-guestagent.Linux-aarch64.gz",
+  "digest_domain": "compressed member bytes as shipped; never outer archive or recompressed bytes",
+  "installed_build_provenance": "not observed; exact installed bottle/build is missing",
+  "source_commit": "27bc4c4b101e27994e01e36566a0f2091bbca507"
+}

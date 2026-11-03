@@ -97,7 +97,9 @@ pub(crate) fn prevalidate_cli(
     .map_err(|_| unavailable())
 }
 
-pub(super) fn read_checkout(repo_root: &Path) -> Result<Option<CheckoutId>, RunnerError> {
+pub(in crate::runner) fn read_checkout(
+    repo_root: &Path,
+) -> Result<Option<CheckoutId>, RunnerError> {
     let Some(token) =
         effigy_core::worktree_scope::checkout_token(repo_root).map_err(|_| unavailable())?
     else {
@@ -125,7 +127,7 @@ pub(super) fn read_checkout(repo_root: &Path) -> Result<Option<CheckoutId>, Runn
     Ok(Some(CheckoutId::new(kind, bytes)))
 }
 
-pub(super) fn read_backend(
+pub(in crate::runner) fn read_backend(
     policy: &EffectiveContainerPolicy,
     checkout: Option<CheckoutId>,
 ) -> Result<BackendSelection, RunnerError> {
@@ -162,6 +164,26 @@ pub(super) fn read_backend(
 }
 
 impl CliPrevalidation {
+    #[cfg(feature = "workspace-private-qualification")]
+    pub(crate) fn prepare_qualification(
+        &self,
+        repo_root: &Path,
+    ) -> Result<EffectiveContainerPolicy, RunnerError> {
+        let checkout = self.checkout.ok_or_else(|| {
+            RunnerError::task_invocation(
+                "workspace qualification requires an already prepared checkout identity",
+            )
+        })?;
+        self.before_policy_preparation(repo_root, Some(&self.environment))?;
+        crate::runner::container_command::qualification::prepare(
+            repo_root,
+            self.identity,
+            checkout,
+            &self.environment,
+            &self.backend,
+        )
+    }
+
     /// Source refresh is ordinary preparation too. Recheck its retained root
     /// and selection before policy preparation can create mount sources.
     pub(crate) fn before_policy_preparation(

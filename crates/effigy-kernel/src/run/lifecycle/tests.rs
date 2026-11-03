@@ -1896,6 +1896,134 @@ fn retained_fixture_file(
 }
 
 #[test]
+fn reserved_env_admission_failure_returns_the_exact_partial_custodian() {
+    let home = effigy_test_support::short_tempdir("rf-").unwrap();
+    let cx = super::super::tests::context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let owner = ResourceId::environment(layered_checkout(), "reserved-failure").unwrap();
+    let reservation = crate::workspace_session::WorkspaceActivationReservation::reserve(
+        &cx,
+        &root,
+        &owner,
+        Wait::FailFast,
+    )
+    .unwrap();
+    let mut options = super::super::tests::opts(1);
+    options.custody = Some(LifecyclePlan {
+        executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+            .unwrap(),
+        placement: crate::supervise::Placement::Detached,
+    });
+    let mut fake = super::super::tests::Fake::new(home.path());
+    let helper_log = home.path().join("helpers.jsonl");
+    crate::fault::set_helper_log(Some(helper_log.clone()));
+    crate::fault::arm_point(
+        crate::fault::Point::WorkspaceSentinelAfterSpawn,
+        crate::fault::Fault::Enospc,
+    );
+    let result = Run::begin_claimed_recoverable(
+        &cx,
+        &root,
+        &super::super::tests::inv(owner.clone()),
+        options,
+        || Ok(super::super::tests::cleanup(&cx)),
+        &mut fake,
+        reservation.claim().unwrap(),
+    );
+    let fired = crate::fault::fired();
+    crate::fault::arm(None);
+    crate::fault::set_helper_log(None);
+    let (_, custody) = result.expect_err("partial startup must fail admission");
+    let custody = custody.expect("admitted Env owner must be returned");
+    let run_id = custody.run.id();
+    let partial = custody.run.partial_sentinel.as_ref().unwrap().child_id();
+    assert_eq!(run_id, super::super::tests::id(1));
+    assert!(fired && custody.run.guard.covers(&owner));
+    let (_, mut retained) = custody
+        .settle(&super::super::tests::cleanup(&cx), &mut fake)
+        .expect_err("unknown startup is not successful settlement");
+    assert_eq!(retained.run.id(), run_id);
+    assert_eq!(
+        retained.run.partial_sentinel.as_ref().unwrap().child_id(),
+        partial
+    );
+    assert!(retained.run.guard.covers(&owner));
+    // Fixture teardown by exact child, not evidence of production settlement.
+    retained
+        .run
+        .close_partial_workspace_sentinel(&super::super::tests::cleanup(&cx))
+        .unwrap();
+    for line in std::fs::read_to_string(helper_log).unwrap().lines() {
+        let child: ProcessIdentity = serde_json::from_str(line).unwrap();
+        assert_eq!(child.pid, partial);
+        reap_test_child(&child);
+    }
+    drop(retained);
+}
+
+#[test]
+fn reserved_env_admission_retains_interpolation_under_its_own_custody() {
+    let home = effigy_test_support::short_tempdir("rc-").unwrap();
+    let cx = super::super::tests::context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let owner = ResourceId::environment(layered_checkout(), "reserved-interpolation").unwrap();
+    let reservation = crate::workspace_session::WorkspaceActivationReservation::reserve(
+        &cx,
+        &root,
+        &owner,
+        Wait::FailFast,
+    )
+    .unwrap();
+    let mut options = super::super::tests::opts(1);
+    options.custody = Some(LifecyclePlan {
+        executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+            .unwrap(),
+        placement: crate::supervise::Placement::Detached,
+    });
+    let mut fake = super::super::tests::Fake::new(home.path());
+    let mut run = Run::begin_claimed_recoverable(
+        &cx,
+        &root,
+        &super::super::tests::inv(owner.clone()),
+        options,
+        || Ok(super::super::tests::cleanup(&cx)),
+        &mut fake,
+        reservation.claim().unwrap(),
+    )
+    .unwrap_or_else(|(error, _)| panic!("reserved custody admission: {error}"));
+    let backup = run.checkout_backup_identity().unwrap();
+    let sentinel = run.sentinel.as_ref().unwrap().identity.clone();
+    let directory = home.path().join("interpolation");
+    let process = crate::custody::Custody::spawn_interpolated(
+        &mut run,
+        crate::custody::ProcessSpec {
+            argv: vec!["/bin/sleep".into(), "30".into()],
+            env: std::collections::BTreeMap::new(),
+            cwd: home.path().into(),
+            grace: Duration::from_millis(10),
+            lifetime: crate::custody::Lifetime::Finite(Duration::from_secs(30)),
+            terminal: crate::custody::Terminal::None,
+            label: "reserved retained fixture".into(),
+        },
+        &cx,
+        retained_fixture_file(&directory),
+    )
+    .unwrap();
+    drop(process);
+    assert!(directory.join("compose-fixture.env").exists());
+    assert!(matches!(
+        Gate::probe(&cx.operation().observe().unwrap(), &root, &owner),
+        Observed::Verified(crate::gate::GateState::Held(_), _)
+    ));
+    run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake)
+        .unwrap_or_else(|(error, _)| panic!("reserved settlement: {error}"));
+    reap_test_child(&backup);
+    reap_test_child(&sentinel);
+    assert!(!directory.join("compose-fixture.env").exists());
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+}
+
+#[test]
 fn retained_interpolation_crosses_the_helper_and_cleans_only_after_group_closure() {
     let home = effigy_test_support::short_tempdir("if-").unwrap();
     let cx = super::super::tests::context();
@@ -2011,15 +2139,21 @@ fn retained_interpolation_caller_drop_preserves_unknown_until_verified_group_clo
     .unwrap();
     let leader = process.identity().identity;
     let deadline = Instant::now() + Duration::from_secs(5);
-    while !home.path().join("descendant").exists() {
-        assert!(Instant::now() < deadline);
+    // File creation precedes echo's write. Wait for the complete PID, then
+    // prove that incarnation as before; existence alone races a partial write.
+    let descendant: u32 = loop {
+        if let Some(pid) = std::fs::read_to_string(home.path().join("descendant"))
+            .ok()
+            .and_then(|text| text.strip_suffix('\n').and_then(|pid| pid.parse().ok()))
+        {
+            break pid;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "descendant PID publication unavailable"
+        );
         std::thread::sleep(Duration::from_millis(5));
-    }
-    let descendant: u32 = std::fs::read_to_string(home.path().join("descendant"))
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
+    };
     let descendant = crate::ident::process_identity(descendant)
         .verified()
         .unwrap()
@@ -2028,7 +2162,14 @@ fn retained_interpolation_caller_drop_preserves_unknown_until_verified_group_clo
         .effects()
         .unwrap()
         .into_iter()
-        .find(|effect| effect.spec.kind == crate::custody::KIND)
+        .find(|effect| {
+            effect.spec.kind == crate::custody::KIND
+                && effect
+                    .spec
+                    .payload
+                    .get("interpolation_prelaunch_v1")
+                    .is_none()
+        })
         .unwrap();
     let anchor: crate::ident::ProcessIdentity =
         serde_json::from_value(effect.receipt.unwrap()["interpolation_v1"]["anchor"].clone())
@@ -2298,7 +2439,14 @@ fn retained_interpolation_helper_death_leaves_durable_residue_not_false_completi
         .effects()
         .unwrap()
         .into_iter()
-        .find(|effect| effect.spec.kind == crate::custody::KIND)
+        .find(|effect| {
+            effect.spec.kind == crate::custody::KIND
+                && effect
+                    .spec
+                    .payload
+                    .get("interpolation_prelaunch_v1")
+                    .is_none()
+        })
         .unwrap();
     assert_eq!(effect.state, EffectState::Residue);
     let replay =
@@ -2367,7 +2515,14 @@ fn retained_interpolation_unsynced_binding_refuses_go_and_cannot_settle_as_plain
         .effects()
         .unwrap()
         .into_iter()
-        .find(|effect| effect.spec.kind == crate::custody::KIND)
+        .find(|effect| {
+            effect.spec.kind == crate::custody::KIND
+                && effect
+                    .spec
+                    .payload
+                    .get("interpolation_prelaunch_v1")
+                    .is_none()
+        })
         .unwrap();
     assert_eq!(effect.receipt.as_ref().unwrap()["binding"]["pending"], true);
     assert_eq!(
@@ -2428,7 +2583,14 @@ fn retained_interpolation_crash_child() {
         .effects()
         .unwrap()
         .into_iter()
-        .find(|effect| effect.spec.kind == crate::custody::KIND)
+        .find(|effect| {
+            effect.spec.kind == crate::custody::KIND
+                && effect
+                    .spec
+                    .payload
+                    .get("interpolation_prelaunch_v1")
+                    .is_none()
+        })
         .unwrap();
     let anchor: ProcessIdentity =
         serde_json::from_value(effect.receipt.unwrap()["interpolation_v1"]["anchor"].clone())
@@ -2519,4 +2681,158 @@ fn retained_interpolation_owner_sigkill_leaves_cleanup_with_the_same_helper() {
         "only the durable completion and foreign baseline remain"
     );
     home.finish();
+}
+
+#[test]
+fn prelaunch_interpolation_caller_drop_keeps_exact_descriptors_and_env_gate() {
+    let home = effigy_test_support::short_tempdir("ip-").unwrap();
+    let cx = super::super::tests::context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let owner = ResourceId::environment(layered_checkout(), "prelaunch-file").unwrap();
+    let mut fake = super::super::tests::Fake::new(home.path());
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &super::super::tests::inv(owner.clone()),
+        super::super::tests::opts(1),
+        &super::super::tests::cleanup(&cx),
+        &mut fake,
+    )
+    .unwrap();
+    run.enable_custody(&LifecyclePlan {
+        executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+            .unwrap(),
+        placement: crate::supervise::Placement::Detached,
+    })
+    .unwrap();
+    let backup = run.checkout_backup_identity().unwrap();
+    let sentinel = run.sentinel.as_ref().unwrap().identity.clone();
+    // Teardown is not settlement credit. No workload is forked in this cell;
+    // both identities are this fixture's exact re-executable helpers.
+    struct Helpers(Vec<ProcessIdentity>);
+    impl Drop for Helpers {
+        fn drop(&mut self) {
+            for identity in &self.0 {
+                let _ = crate::custody::signal_verified_process(identity, libc::SIGKILL, || {
+                    crate::ident::process_identity(identity.pid).verified() == Some(identity)
+                });
+                reap_test_child(identity);
+            }
+        }
+    }
+    let helpers = Helpers(vec![backup.clone(), sentinel]);
+    let directory = home.path().join("interpolation");
+    let slot = run
+        .retain_prelaunch_interpolation(retained_fixture_file(&directory))
+        .unwrap();
+    run.hold_prelaunch_interpolation(&slot).unwrap();
+    let effect = run
+        .effects()
+        .unwrap()
+        .into_iter()
+        .find(|effect| {
+            effect.spec.payload.get("interpolation_prelaunch_v1")
+                == Some(&serde_json::Value::Bool(true))
+        })
+        .unwrap();
+    assert_eq!(
+        crate::custody::settle_effect(&effect, None, &super::super::tests::cleanup(&cx), || false)
+            .0,
+        crate::run::EffectState::Residue,
+        "a pending marker is never a process receipt or cleanup authority"
+    );
+    drop(slot);
+    drop(run);
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        crate::ident::process_identity(backup.pid).verified(),
+        Some(&backup)
+    );
+    let independent = std::fs::OpenOptions::new()
+        .write(true)
+        .open(directory.join("compose-fixture.env"))
+        .unwrap();
+    assert!(
+        matches!(
+            independent.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ),
+        "after all caller descriptions close, the resident helper still holds the exact file lock"
+    );
+    // Run::drop's bounded guard wait can consume the workload context. This
+    // fresh read-only cleanup observation grants no new workload time.
+    let observe = cx.operation().cleanup(Duration::from_secs(5)).unwrap();
+    assert!(matches!(
+        Gate::probe(&observe.operation().observe().unwrap(), &root, &owner),
+        Observed::Verified(crate::gate::GateState::Held(_), _)
+    ));
+    drop(helpers);
+    assert!(
+        directory.join("compose-fixture.env").exists(),
+        "helper teardown is not file-cleanup evidence"
+    );
+}
+
+#[test]
+fn prelaunch_pending_obligation_is_atomic_and_legacy_unreadable() {
+    let home = effigy_test_support::short_tempdir("ia-").unwrap();
+    let cx = super::super::tests::context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let owner = ResourceId::environment(layered_checkout(), "atomic-prelaunch-file").unwrap();
+    let mut fake = super::super::tests::Fake::new(home.path());
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &super::super::tests::inv(owner),
+        super::super::tests::opts(1),
+        &super::super::tests::cleanup(&cx),
+        &mut fake,
+    )
+    .unwrap();
+    let directory = home.path().join("interpolation");
+    let file = retained_fixture_file(&directory);
+    crate::fault::arm_point(
+        crate::fault::Point::IntendAfter,
+        crate::fault::Fault::Enospc,
+    );
+    let result = run.retain_prelaunch_interpolation(file);
+    assert!(
+        crate::fault::fired(),
+        "the post-commit fault must actually cross"
+    );
+    crate::fault::arm(None);
+    assert!(
+        result.is_err(),
+        "the caller lost the committed publication result"
+    );
+    let effect = run
+        .effects()
+        .unwrap()
+        .into_iter()
+        .find(|effect| {
+            effect.spec.payload.get("interpolation_prelaunch_v1")
+                == Some(&serde_json::Value::Bool(true))
+        })
+        .unwrap();
+    assert_eq!(
+        effect.state,
+        crate::run::EffectState::Applied,
+        "a committed file obligation cannot appear as a receipt-less intended process"
+    );
+    assert_eq!(
+        effect
+            .receipt
+            .as_ref()
+            .and_then(|receipt| receipt.get("interpolation_pending_v1")),
+        Some(&serde_json::Value::Bool(true))
+    );
+    assert_eq!(
+        crate::custody::settle_effect(&effect, None, &super::super::tests::cleanup(&cx), || false)
+            .0,
+        crate::run::EffectState::Residue,
+        "a process reader cannot infer barrier non-release from a missing receipt"
+    );
+    run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake)
+        .unwrap_or_else(|(error, _)| panic!("exact never-forked owner can clean: {error}"));
+    assert!(!directory.join("compose-fixture.env").exists());
 }

@@ -15,6 +15,8 @@ mod control;
 pub(in crate::runner) mod discovery;
 mod holders;
 mod identity;
+#[cfg(feature = "workspace-private-qualification")]
+pub(in crate::runner) use kernel::TaskSettlement;
 mod kernel;
 mod legacy;
 mod process;

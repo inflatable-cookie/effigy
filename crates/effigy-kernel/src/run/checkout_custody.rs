@@ -92,6 +92,69 @@ impl Run<'_> {
         }
         Ok(())
     }
+    #[cfg(feature = "workspace-private-qualification")]
+    pub(crate) fn qualify_workspace_discard_images(
+        &mut self,
+    ) -> Result<&'static crate::supervise::image_identity::CreatorImage, RunError> {
+        self.can_effect()?;
+        self.require_environment_gate()?;
+        self.inspect_workspace_lifecycle()?;
+        self.verify_custody()?;
+        self.cx.operation().check("workspace helper images")?;
+        let image = crate::supervise::image_identity::creator()?;
+        let sentinel = self
+            .sentinel
+            .as_ref()
+            .ok_or_else(|| RunError::refused("workspace sentinel missing"))?;
+        image.verify_process(&sentinel.identity)?;
+        let backup = self
+            .checkout_custody
+            .as_mut()
+            .and_then(|custody| custody.backup.as_mut())
+            .ok_or_else(|| RunError::refused("workspace checkout backup missing"))?;
+        backup.verify_retained()?;
+        let identity = backup
+            .identity
+            .as_ref()
+            .ok_or_else(|| RunError::refused("workspace backup identity missing"))?;
+        image.verify_process(identity)?;
+        self.cx.operation().check("workspace helper images")?;
+        Ok(image)
+    }
+
+    pub(crate) fn hold_prelaunch_interpolation(
+        &mut self,
+        slot: &std::sync::Arc<std::sync::Mutex<crate::interpolation::PrelaunchInterpolation>>,
+    ) -> Result<(), RunError> {
+        let mut slot = slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let sequence = slot
+            .sequence
+            .ok_or_else(|| RunError::unavailable("prelaunch sequence unavailable"))?;
+        slot.hold_attempted = true;
+        let backup = self
+            .checkout_custody
+            .as_mut()
+            .and_then(|custody| custody.backup.as_mut())
+            .ok_or_else(|| RunError::unavailable("prelaunch checkout custodian unavailable"))?;
+        backup.retain_prelaunch(
+            sequence,
+            slot.file
+                .as_ref()
+                .ok_or_else(|| RunError::unavailable("prelaunch file unavailable"))?,
+        )
+    }
+    pub(super) fn release_prelaunch_interpolation(
+        &mut self,
+        sequence: i64,
+    ) -> Result<(), RunError> {
+        self.checkout_custody
+            .as_mut()
+            .and_then(|custody| custody.backup.as_mut())
+            .ok_or_else(|| RunError::unavailable("prelaunch custodian unavailable"))?
+            .release_prelaunch(sequence)
+    }
     pub(crate) fn retain_checkout_interpolation(
         &mut self,
         ticket: &EffectTicket,
@@ -261,6 +324,16 @@ impl Run<'_> {
         &mut self,
         cleanup: &CleanupContext,
     ) -> Result<(), RunError> {
+        self.close_checkout_backup_recoverable(cleanup)?;
+        self.checkout_custody.take();
+        self.ancestor_closure.take();
+        Ok(())
+    }
+
+    fn close_checkout_backup_recoverable(
+        &mut self,
+        cleanup: &CleanupContext,
+    ) -> Result<(), RunError> {
         if let Some(custody) = self.checkout_custody.as_mut() {
             if let Some(backup) = custody.partial_backup.as_mut() {
                 backup.close(cleanup).map_err(|_| {
@@ -296,8 +369,65 @@ impl Run<'_> {
                 }
             }
         }
-        self.checkout_custody.take();
-        self.ancestor_closure.take();
+        if let Some(custody) = self.checkout_custody.as_mut() {
+            custody.backup.take();
+        }
+        Ok(())
+    }
+
+    /// Parking may close shared Env descriptions only after every private
+    /// workload and its exact backup have positively closed. The checkout
+    /// lease and sentinel stay on this same Run across gate-free integrations.
+    #[cfg(feature = "workspace-private-qualification")]
+    pub(super) fn prepare_qualification_park(
+        &mut self,
+        deadline: std::time::Instant,
+    ) -> Result<(), RunError> {
+        self.can_effect()?;
+        let cx = self.cx.child_until(deadline);
+        cx.operation().check("workspace private park")?;
+        let cleanup = cx.operation().cleanup_within();
+        let effects = self.effects()?;
+        for effect in effects
+            .iter()
+            .filter(|effect| effect.spec.kind == crate::custody::KIND && !effect.state.terminal())
+        {
+            if !matches!(
+                self.completed.get(&effect.sequence),
+                Some(crate::outcome::RequiredObligation::ProcessExit(_))
+            ) {
+                return Err(RunError::unavailable(
+                    "workspace private workload completion unavailable",
+                ));
+            }
+            let core = self.processes.get(&effect.sequence).ok_or_else(|| {
+                RunError::unavailable("workspace private workload owner unavailable")
+            })?;
+            crate::custody::verify_qualification_closure(core, cx.operation())?;
+        }
+        for effect in effects
+            .iter()
+            .rev()
+            .filter(|effect| effect.spec.kind == crate::custody::KIND && !effect.state.terminal())
+        {
+            let (state, _) = crate::custody::settle_effect(
+                effect,
+                self.processes.get(&effect.sequence).cloned(),
+                &cleanup,
+                || false,
+            );
+            if state != crate::run::EffectState::Released {
+                return Err(RunError::unavailable(
+                    "workspace private workload closure remains Unknown",
+                ));
+            }
+            // Keep Applied until final settlement: publication's required-effect
+            // predicate still needs the successful apply. The exact live core
+            // retains its verified exit/closure and idempotent stop state.
+        }
+        self.close_checkout_backup_recoverable(&cleanup)?;
+        cx.operation()
+            .check("workspace private custody closed for park")?;
         Ok(())
     }
 

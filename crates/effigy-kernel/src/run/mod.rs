@@ -396,6 +396,8 @@ pub struct Run<'a> {
     checkout_custody: Option<checkout_custody::CheckoutCustody>,
     ancestor_closure: Option<crate::closure::ClosurePin>,
     closed_effects: Option<Vec<Effect>>,
+    prelaunch_interpolations:
+        Vec<std::sync::Arc<std::sync::Mutex<crate::interpolation::PrelaunchInterpolation>>>,
     processes: std::collections::BTreeMap<
         i64,
         std::sync::Arc<std::sync::Mutex<crate::custody::ProcessCore>>,
@@ -1277,6 +1279,7 @@ impl<'a> Run<'a> {
         };
         let checked = (|| {
             self.can_effect()?;
+            self.cleanup_prelaunch_interpolations()?;
             if std::time::Instant::now() >= deadline {
                 return Err(RunError::unavailable(
                     "workspace activation deadline expired",
@@ -1313,6 +1316,16 @@ impl<'a> Run<'a> {
                     "workspace activation deadline expired",
                 ));
             }
+            #[cfg(feature = "workspace-private-qualification")]
+            let gates = if self.sentinel.is_some() && self.checkout_custody.is_some() {
+                self.prepare_qualification_park(deadline)?;
+                self.guard
+                    .park_after_custody_closed()
+                    .map_err(RunError::refused)?
+            } else {
+                self.guard.park().map_err(RunError::refused)?
+            };
+            #[cfg(not(feature = "workspace-private-qualification"))]
             let gates = self.guard.park().map_err(RunError::refused)?;
             Ok((snapshot, gates, identity, resume_facts))
         })();
@@ -1501,7 +1514,9 @@ impl<'a> Run<'a> {
     }
 
     /// Preserve an already-admitted workspace Env owner when subsequent setup
-    /// fails. A failure before an owner is constructed returns no run.
+    /// fails, including partial sentinel startup. A failure before an owner is
+    /// constructed returns no run. Custody uses the recoverable workspace
+    /// startup path; it does not qualify Discard or private backend execution.
     #[allow(clippy::too_many_arguments)]
     pub fn begin_claimed_recoverable(
         cx: &EffectContext,
@@ -1515,9 +1530,13 @@ impl<'a> Run<'a> {
         if !matches!(
             claim,
             crate::workspace_session::ActivationClaim::Environment(_)
-        ) || opts.custody.is_some()
-        {
-            return Err((RunError::refused("recoverable claimed admission requires an environment activation without a sentinel"), None));
+        ) {
+            return Err((
+                RunError::refused(
+                    "recoverable claimed admission requires an environment activation",
+                ),
+                None,
+            ));
         }
         let mut retained = None;
         Self::begin_under(
@@ -1738,6 +1757,7 @@ impl<'a> Run<'a> {
                 machine_startup: None,
                 checkout_custody: None,
                 ancestor_closure: None,
+                prelaunch_interpolations: Default::default(),
                 processes: Default::default(),
                 session_launch: Default::default(),
             };
@@ -1802,6 +1822,7 @@ impl<'a> Run<'a> {
             machine_startup: planned.map(|_| machine::Startup::default()),
             checkout_custody: None,
             ancestor_closure: None,
+            prelaunch_interpolations: Default::default(),
             processes: Default::default(),
             session_launch: Default::default(),
         };
@@ -1822,6 +1843,16 @@ impl<'a> Run<'a> {
             }
         }
         if let Some(plan) = opts.custody {
+            // Recoverable Env admission must not drop a partial helper or
+            // settle behind its caller's reservation. Return the exact owner,
+            // including any partial sentinel and checkout backup, on failure.
+            if let Some(retained) = retained.as_mut() {
+                if let Err(error) = run.enable_workspace_custody(&plan) {
+                    **retained = Some(Box::new(run));
+                    return Err(error);
+                }
+                return Ok(run);
+            }
             let registration = crate::supervise::spawn_sentinel(&run, root, &plan, &opts.next);
             match registration.and_then(|registration| run.register_lifecycle(registration, &plan))
             {
@@ -2026,6 +2057,98 @@ impl<'a> Run<'a> {
     }
     pub(crate) fn intend_process(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
         self.intend_inner(spec)
+    }
+    pub(crate) fn retain_prelaunch_interpolation(
+        &mut self,
+        file: crate::interpolation::RetainedInterpolation,
+    ) -> Result<
+        std::sync::Arc<std::sync::Mutex<crate::interpolation::PrelaunchInterpolation>>,
+        RunError,
+    > {
+        let slot = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::interpolation::PrelaunchInterpolation {
+                file: Some(file),
+                fork_attempted: false,
+                sequence: None,
+                hold_attempted: false,
+            },
+        ));
+        // Even an ambiguous intent write must not drop the exact descriptions.
+        self.prelaunch_interpolations.push(slot.clone());
+        let spec = EffectSpec {
+            target: self.owner.clone(),
+            kind: crate::custody::KIND.into(),
+            payload: serde_json::json!({"interpolation_prelaunch_v1": true}),
+            settlement: Settlement::Release(Value::Null),
+            required: false,
+        };
+        let published = (|| {
+            self.can_effect()?;
+            crate::fault_point!(IntendBefore)?;
+            // Commit the explicit pending envelope with its intent. An old
+            // process reader must never observe a committed receipt-less row
+            // and infer that its barrier could not have opened.
+            let sequence = self.store.transaction(
+                &self.cx.child(std::time::Duration::from_secs(30)),
+                |txn| {
+                    journal::check_fence(txn.conn(), &self.owner)?;
+                    let sequence = journal::insert_effect(txn, self.id, &spec)?;
+                    journal::write_effect(
+                        txn,
+                        self.id,
+                        sequence,
+                        EffectState::Applied,
+                        Some(&serde_json::json!({"interpolation_pending_v1": true})),
+                        None,
+                    )?;
+                    Ok::<_, RunError>(sequence)
+                },
+            )?;
+            slot.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .sequence = Some(sequence);
+            crate::fault_point!(IntendAfter)?;
+            Ok::<_, RunError>(())
+        })();
+        if published.is_err() {
+            self.poisoned = true;
+        }
+        published?;
+        Ok(slot)
+    }
+    pub(crate) fn complete_prelaunch_interpolation(
+        &mut self,
+        sequence: i64,
+    ) -> Result<(), RunError> {
+        self.store.transaction(&self.cx, |txn| {
+            journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
+            journal::write_effect(txn, self.id, sequence, EffectState::Released, None, None)
+        })
+    }
+    fn cleanup_prelaunch_interpolations(&mut self) -> Result<(), RunError> {
+        for slot in self.prelaunch_interpolations.clone() {
+            let mut slot = slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if slot.file.is_some() && slot.fork_attempted {
+                return Err(RunError::unavailable(
+                    "interpolation prelaunch fork state remains Unknown",
+                ));
+            }
+            if let Some(file) = slot.file.as_mut() {
+                file.cleanup_before_fork().map_err(|_| {
+                    RunError::unavailable("unlaunched interpolation cleanup remains Unknown")
+                })?;
+                if slot.hold_attempted {
+                    let sequence = slot
+                        .sequence
+                        .ok_or_else(|| RunError::unavailable("prelaunch sequence unavailable"))?;
+                    self.release_prelaunch_interpolation(sequence)?;
+                }
+                slot.file = None;
+            }
+        }
+        Ok(())
     }
     pub(crate) fn retain_process(
         &mut self,

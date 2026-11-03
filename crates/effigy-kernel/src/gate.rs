@@ -241,6 +241,20 @@ impl GateGuard {
         self.scopes.clear();
         Ok(ids)
     }
+    /// The Run has closed its exact backup and all registered workloads.
+    /// Close our descriptions without an explicit unlock; this never releases
+    /// any description another custodian might still hold. Ordinary park
+    /// retains its shared-custody refusal.
+    #[cfg(feature = "workspace-private-qualification")]
+    pub(crate) fn park_after_custody_closed(&mut self) -> Result<Vec<ResourceId>, &'static str> {
+        if !self.release_actions.is_empty() {
+            return Err("gate has release actions");
+        }
+        let ids = self.gates.iter().map(|(id, _)| id.clone()).collect();
+        self.gates.clear();
+        self.scopes.clear();
+        Ok(ids)
+    }
     /// Foreground backup custody retains these same open descriptions. Once
     /// shared, closing a custodian must not explicitly unlock the other's
     /// flock. Workload forks still inherit only CLOEXEC copies.
