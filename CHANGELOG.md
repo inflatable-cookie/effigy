@@ -881,39 +881,6 @@ During v0.x, MINOR bumps may include breaking changes.
   The kernel's object verifier also refuses an entry the closure digest cannot
   name, such as an extra empty directory.
 
-### Fixed
-
-- Restrict `effigy container cache prune --global` to volumes whose complete
-  runtime evidence proves Effigy ownership (effigy#611). The prune removed
-  every cache-shaped candidate the backend did not report in use, so a
-  cache-like name alone — or a legacy content match on an opaque `efv-*`
-  volume — could send an unrelated lookalike volume to `volume rm`, and a
-  failed batch inspect read as missing metadata. The prune now inspects every
-  candidate completely and removes only volumes carrying Effigy's own
-  `com.effigy.managed`, `com.effigy.project` and `com.effigy.volume-name`
-  labels whose labelled project is not discovered running; lookalike and
-  unlabelled legacy volumes are reported as warnings and left intact, and
-  listing, inspection or running-project discovery failures are errors, never
-  absence or success. The read-only `cache list --global` keeps its name and
-  content classification, so legacy `efv-*` inventory stays visible; pruning
-  such unlabelled legacy volumes is no longer offered.
-
-- Retention no longer deletes an object a concurrent publication has just made
-  desired or last-applied (effigy#608). A sweep selected its orphan candidates
-  without the objects gate, then removed each selected digest's canonical
-  bytes and row under the gate without rechecking it, so a publication that
-  journalled its intent before the gate and committed its desired reference
-  under it could lose exactly the bytes its references name, leaving
-  `object_refs` and `resources.desired` pointing at a missing object.
-  Retention now rechecks every candidate against the same unreferenced
-  predicate under the gate and skips a digest that gained an intent or a
-  reference between the selection and the delete, so either ordering of the
-  race keeps bytes, row and references coherent. Genuine orphans are still
-  reclaimed, the recheck is one read per candidate — its reference half is a
-  digest lookup and its staging-event half scans the journal, the shape the
-  selection already pays — and the per-candidate writer batches stay as
-  short as before.
-
 ### Changed
 
 - Focus the compiler-feedback inventory tests on distinct detector claims: the
@@ -1565,6 +1532,37 @@ During v0.x, MINOR bumps may include breaking changes.
   (effigy#552).
 
 ### Fixed
+
+- Restrict `effigy container cache prune --global` to volumes whose complete
+  runtime evidence proves Effigy ownership (effigy#611). The prune removed
+  every cache-shaped candidate the backend did not report in use, so a
+  cache-like name alone — or a legacy content match on an opaque `efv-*`
+  volume — could send an unrelated lookalike volume to `volume rm`, and a
+  failed batch inspect read as missing metadata. The prune now inspects every
+  candidate completely and removes only volumes carrying Effigy's own
+  `com.effigy.managed`, `com.effigy.project` and `com.effigy.volume-name`
+  labels whose labelled project is not discovered running; lookalike and
+  unlabelled legacy volumes are reported as warnings and left intact, and
+  listing, inspection or running-project discovery failures are errors, never
+  absence or success. The read-only `cache list --global` keeps its name and
+  content classification, so legacy `efv-*` inventory stays visible; pruning
+  such unlabelled legacy volumes is no longer offered.
+
+- Retention no longer deletes an object a concurrent publication has just made
+  desired or last-applied (effigy#608). A sweep selected its orphan candidates
+  without the objects gate, then removed each selected digest's canonical
+  bytes and row under the gate without rechecking it, so a publication that
+  journalled its intent before the gate and committed its desired reference
+  under it could lose exactly the bytes its references name, leaving
+  `object_refs` and `resources.desired` pointing at a missing object.
+  Retention now rechecks every candidate against the same unreferenced
+  predicate under the gate and skips a digest that gained an intent or a
+  reference between the selection and the delete, so either ordering of the
+  race keeps bytes, row and references coherent. Genuine orphans are still
+  reclaimed, the recheck is one read per candidate — its reference half is a
+  digest lookup and its staging-event half scans the journal, the shape the
+  selection already pays — and the per-candidate writer batches stay as
+  short as before.
 
 - `effigy run logs` can no longer hang forever on a workload observation it
   cannot verify, and can no longer report bytes it never read as drained. A
