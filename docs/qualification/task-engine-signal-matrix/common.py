@@ -1,10 +1,11 @@
 """Fail-closed machinery for the task-engine signal-matrix packet.
 
-Queue tasks effigy#579 (index + unarmed packet) and effigy#582 (executable
-path). Admission and plan construction never start a VM, engine, container,
-image pull, install, or native task. A constructed plan is not execution.
-`--execute` is a real pass after exact GO/hash/engine/image/root admission;
-this module stays spawn-free. Native HostCli lives in execute.py.
+Queue tasks effigy#579 (index + unarmed packet), effigy#582 (executable
+path) and effigy#585 (real HostCli identity/generation binding). Admission
+and plan construction never start a VM, engine, container, image pull,
+install, or native task. A constructed plan is not execution. `--execute`
+is a real pass after exact GO/hash/engine/image/root admission; this
+module stays spawn-free. Native HostCli lives in execute.py.
 """
 import hashlib
 import json
@@ -52,6 +53,8 @@ SIGNAL_CELLS = (
     ('container-kill', 'KILL'),
 )
 HELPER_NAME = 'effigy-custody'
+NONCE_HEX_LEN = 64
+STATUS_SCHEMA = 'effigy.tasks-status.v3'
 REMOTE_RS = DIR.parents[2] / 'crates' / 'effigy-containers' / 'src' / 'environment' / 'remote.rs'
 ATTEMPT_RECEIPT_KEYS = (
     'invocation',
@@ -373,6 +376,171 @@ def helper_tail(full_id, mode_args, helper_script=None):
     tail = ['exec', '-i', '-u', '0', full_id, 'sh', '-c', script, HELPER_NAME]
     tail.extend(mode_args)
     return tail
+
+
+def helper_kill_tail(full_id, boot, ns, sig, kind, pid, start, helper_script=None):
+    """Helper kill argv using observed boot+namespace, never literal placeholders."""
+    if not boot or not ns or ns in ('ns', 'boot') or boot == 'boot':
+        raise Refused('helper-kill lacks observed generation')
+    if not str(ns).startswith('pid:[') or not str(ns).endswith(']'):
+        raise Refused('helper-kill namespace is not pid:[N]')
+    return helper_tail(
+        full_id,
+        ['kill', str(boot), str(ns), str(sig), str(kind), str(pid), str(start)],
+        helper_script,
+    )
+
+
+def generate_nonce():
+    """64 hex digits, the same width as the kernel remote Digest nonce."""
+    return os.urandom(NONCE_HEX_LEN // 2).hex()
+
+
+def decode_output(value):
+    if value is None:
+        return ''
+    if isinstance(value, bytes):
+        return value.decode('utf-8', 'replace')
+    return str(value)
+
+
+def parse_inspect(stdout, full_id, image_digest):
+    """Production inspect JSON: PascalCase Id/Created/State.Running plus image.
+
+    Exit 0 is not verification. Unparsable, the wrong id, a stopped container,
+    or an image that is not the GO digest returns None.
+    """
+    try:
+        rows = json.loads(decode_output(stdout))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+        return None
+    row = rows[0]
+    ident = row.get('Id')
+    if ident != full_id:
+        return None
+    created = row.get('Created')
+    if not isinstance(created, str) or not created or any(ch.isspace() for ch in created):
+        return None
+    state = row.get('State')
+    if not isinstance(state, dict) or state.get('Running') is not True:
+        return None
+    config = row.get('Config') if isinstance(row.get('Config'), dict) else {}
+    images = (row.get('Image'), row.get('ImageID'), config.get('Image'))
+    if image_digest not in images:
+        return None
+    return {
+        'id': ident,
+        'created': created,
+        'running': True,
+        'image': image_digest,
+    }
+
+
+def parse_snapshot(stdout):
+    """Complete helper inventory: boot, pid:[N], and every `p` line.
+
+    None is failed-observe. A verified empty inventory still has boot+ns and
+    members=[] only in that verified case.
+    """
+    boot = None
+    ns = None
+    members = []
+    text = decode_output(stdout)
+    for line in text.splitlines():
+        fields = line.split(' ')
+        if len(fields) == 2 and fields[0] == 'boot' and fields[1]:
+            boot = fields[1]
+            continue
+        if len(fields) == 2 and fields[0] == 'ns' and fields[1]:
+            ns = fields[1]
+            continue
+        if len(fields) == 8 and fields[0] == 'p':
+            pid, state, ppid, pgrp, sid, start, nonce = fields[1:]
+            if nonce not in ('y', 'n', '?', '-'):
+                return None
+            members.append({
+                'pid': pid,
+                'state': state,
+                'ppid': ppid,
+                'pgrp': pgrp,
+                'sid': sid,
+                'start': start,
+                'nonce': nonce,
+            })
+            continue
+        if line.strip():
+            return None
+    if not boot or not ns:
+        return None
+    if not ns.startswith('pid:[') or not ns.endswith(']'):
+        return None
+    try:
+        pid_ns = int(ns[5:-1])
+    except ValueError:
+        return None
+    return {
+        'boot': boot,
+        'ns': ns,
+        'pid_ns': pid_ns,
+        'members': members,
+    }
+
+
+def observe_snapshot(result, nonce_supplied=False):
+    """Distinguish failed-observe from a verified empty inventory."""
+    stdout = result.get('stdout') if isinstance(result, dict) else None
+    code = result.get('code') if isinstance(result, dict) else None
+    kind = result.get('kind') if isinstance(result, dict) else None
+    base = {
+        'stdout': decode_output(stdout),
+        'code': code,
+        'kind': kind,
+    }
+    if kind != 'verified' or code not in (0, None):
+        base['observe'] = 'failed'
+        base['reason'] = 'snap did not verify'
+        return base
+    parsed = parse_snapshot(stdout)
+    if parsed is None:
+        base['observe'] = 'failed'
+        base['reason'] = 'snap unparsable or incomplete'
+        return base
+    if nonce_supplied:
+        for member in parsed['members']:
+            if member['nonce'] not in ('y', 'n'):
+                base['observe'] = 'failed'
+                base['reason'] = 'snap nonce unread'
+                return base
+    base['observe'] = 'verified'
+    base.update(parsed)
+    return base
+
+
+def parse_status(stdout):
+    """tasks-status.v3 JSON. Substring 'not-recorded' is not a gate."""
+    try:
+        obj = json.loads(decode_output(stdout))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(obj, dict) or obj.get('schema') != STATUS_SCHEMA:
+        return None
+    state = obj.get('state')
+    if not isinstance(state, str) or not state:
+        return None
+    return {'schema': obj['schema'], 'state': state}
+
+
+def owned_members(members):
+    return [
+        m for m in members
+        if m.get('nonce') == 'y' and m.get('state') not in ('Z', 'X')
+    ]
+
+
+def foreign_members(members):
+    return [m for m in members if m.get('nonce') != 'y']
 
 
 def _scan_forbidden(plan):

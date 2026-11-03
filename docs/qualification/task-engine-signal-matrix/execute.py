@@ -1,47 +1,101 @@
 #!/usr/bin/env python3
 """One source-immutable bounded execute pass for the signal-matrix packet.
 
-Queue task effigy#582. Admission (GO, hashes, identities) happens before this
-module runs. A plan is never execution. CLI `--execute` uses HostCliDriver
-only: no environment or config switch can turn a labeled double into a native
-receipt. Tests inject LabeledDouble as a Python argument to prove argv,
-receipt, refusal and fault ordering without contacting a daemon.
+Queue tasks effigy#582 and effigy#585. Admission (GO, hashes, identities)
+happens before this module runs. A plan is never execution. CLI `--execute`
+uses HostCliDriver only: no environment or config switch can turn a labeled
+double into a native receipt. Tests inject LabeledDouble as a Python
+argument for in-process control-flow, and call HostCliDriver against owned
+local fake executables for argv/stdin/nonce/generation, async owner
+signaling, wait/timeout and status schema. Those fixtures are not a
+container engine and mint no qualification credit.
 
-Failure and unknown after the invocation fence are retained evidence, never a
-retry token. Duplicate or lost-response resend is refused.
+Failure and unknown after the invocation fence are retained evidence, never
+a retry token. Duplicate or lost-response resend is refused. Cleanup never
+blankets-kills or refunds the one-shot fence.
 """
 import json
 import os
+import signal as os_signal
 import subprocess
 from pathlib import Path
 
 from common import (
-    FORBIDDEN_TEXT, HELPER_NAME, SCHEMA, SIGNAL_CELLS, Refused, helper_tail,
-    production_helper, receipt_exclusive, refuse_prior_attempt, runtime_argv,
+    FORBIDDEN_TEXT, HELPER_NAME, SCHEMA, SIGNAL_CELLS, Refused,
+    decode_output, foreign_members, generate_nonce, helper_kill_tail,
+    helper_tail, observe_snapshot, owned_members, parse_inspect,
+    parse_status, production_helper, receipt_exclusive, refuse_prior_attempt,
+    runtime_argv,
 )
 
 CALL_S = 20
 ACK_S = 60
 GRACE_S = 3
 SIGNAL_EXIT_S = 10
+SIGNAL_NUMBERS = {
+    'INT': os_signal.SIGINT,
+    'TERM': os_signal.SIGTERM,
+    'HUP': os_signal.SIGHUP,
+    'KILL': os_signal.SIGKILL,
+}
 
 
 class LostResponse(Exception):
     """The transport returned no usable result. Typed unknown, not a retry."""
 
 
+def process_start_identity(pid):
+    """Kernel start ticks on Linux; `ps` lstart on this host. None if unreadable."""
+    procfs = Path('/proc/%d/stat' % pid)
+    if procfs.is_file():
+        try:
+            text = procfs.read_text()
+            rest = text[text.rfind(')') + 2:].split()
+            return rest[19]
+        except (OSError, IndexError):
+            return None
+    try:
+        completed = subprocess.run(  # noqa: S603 — identity read only
+            ['ps', '-p', str(pid), '-o', 'lstart='],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    ident = completed.stdout.decode('utf-8', 'replace').strip()
+    return ident or None
+
+
 class HostCliDriver:
-    """Production HostCli seam: one bounded backend CLI call. CLI only."""
+    """Production HostCli seam: bounded CLI call, async owner, exact-pid signal."""
 
     label = 'HostCli'
 
-    def call(self, call):
-        program = call['program']
-        argv = list(call['argv'])
+    def __init__(self, env=None, workdir=None):
+        self.env = env if env is not None else os.environ.copy()
+        self.workdir = workdir
+        self.owners = {}
+
+    def _require_program(self, call):
+        program = call.get('program')
+        if not isinstance(program, str) or not program:
+            raise Refused('HostCli program is missing')
+        return program
+
+    def _scan_forbidden(self, program, argv):
         blob = ' '.join([program] + [str(a) for a in argv]).lower()
         for fragment in FORBIDDEN_TEXT:
             if fragment.lower() in blob:
                 raise Refused('plan names a forbidden action: %s' % fragment)
+
+    def call(self, call):
+        program = self._require_program(call)
+        argv = list(call.get('argv') or [])
+        self._scan_forbidden(program, argv)
         deadline = int(call.get('deadline_s') or CALL_S)
         try:
             completed = subprocess.run(  # noqa: S603 — HostCli is the real driver
@@ -51,16 +105,118 @@ class HostCliDriver:
                 stderr=subprocess.PIPE,
                 timeout=deadline,
                 check=False,
+                env=self.env,
+                cwd=self.workdir,
             )
         except subprocess.TimeoutExpired as exc:
             raise LostResponse('HostCli deadline exceeded') from exc
         except OSError as exc:
             raise LostResponse('HostCli unavailable: %s' % exc) from exc
+        except TypeError as exc:
+            raise Refused('HostCli program is missing') from exc
         return {
             'kind': 'verified' if completed.returncode == 0 else 'failed',
             'code': completed.returncode,
             'stdout': completed.stdout,
             'stderr': completed.stderr,
+        }
+
+    def start(self, call):
+        program = self._require_program(call)
+        argv = list(call.get('argv') or [])
+        self._scan_forbidden(program, argv)
+        env = dict(self.env)
+        extra = call.get('env') or {}
+        for key, value in extra.items():
+            env[str(key)] = str(value)
+        try:
+            proc = subprocess.Popen(  # noqa: S603 — async owner, not a wait
+                [program] + argv,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env,
+                cwd=self.workdir,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            raise LostResponse('HostCli owner start unavailable: %s' % exc) from exc
+        except TypeError as exc:
+            raise Refused('HostCli program is missing') from exc
+        payload = call.get('input') or b''
+        if proc.stdin is not None:
+            if payload:
+                try:
+                    proc.stdin.write(payload)
+                except (BrokenPipeError, OSError):
+                    pass
+            try:
+                proc.stdin.close()
+            except OSError:
+                pass
+        start = process_start_identity(proc.pid)
+        self.owners[proc.pid] = {'proc': proc, 'start': start, 'program': program}
+        return {
+            'kind': 'running',
+            'code': None,
+            'pid': proc.pid,
+            'start': start,
+            'stdout': b'',
+            'stderr': b'',
+        }
+
+    def signal(self, call):
+        program = self._require_program(call)
+        pid = call.get('pid')
+        if not isinstance(pid, int) or pid <= 0:
+            raise Refused('HostCli owner pid is missing')
+        recorded = self.owners.get(pid)
+        if recorded is None:
+            raise Refused('HostCli owner is not a live recorded owner')
+        expected_start = call.get('start')
+        if expected_start is not None and recorded.get('start') != expected_start:
+            raise Refused('HostCli owner start identity does not match')
+        live = process_start_identity(pid)
+        if recorded.get('start') and live is not None and live != recorded.get('start'):
+            raise Refused('HostCli owner start identity moved')
+        argv = list(call.get('argv') or [])
+        sig_name = argv[0] if argv else None
+        sig = SIGNAL_NUMBERS.get(sig_name)
+        if sig is None:
+            raise Refused('HostCli signal is not INT/TERM/HUP/KILL')
+        self._scan_forbidden(program, argv)
+        try:
+            os.kill(pid, sig)
+        except OSError as exc:
+            raise LostResponse('HostCli owner signal failed: %s' % exc) from exc
+        return {
+            'kind': 'verified',
+            'code': 0,
+            'pid': pid,
+            'start': recorded.get('start'),
+            'stdout': b'',
+            'stderr': b'',
+        }
+
+    def wait(self, call):
+        pid = call.get('pid')
+        if not isinstance(pid, int) or pid <= 0:
+            raise Refused('HostCli owner pid is missing')
+        recorded = self.owners.get(pid)
+        if recorded is None or recorded.get('proc') is None:
+            raise Refused('HostCli owner is not a live recorded owner')
+        deadline = int(call.get('deadline_s') or SIGNAL_EXIT_S)
+        proc = recorded['proc']
+        try:
+            code = proc.wait(timeout=deadline)
+        except subprocess.TimeoutExpired as exc:
+            raise LostResponse('HostCli owner wait exceeded') from exc
+        return {
+            'kind': 'verified',
+            'code': code,
+            'pid': pid,
+            'stdout': b'',
+            'stderr': b'',
         }
 
 
@@ -82,43 +238,44 @@ class LabeledDouble:
             raise LostResponse(result.get('reason') or 'labeled double lost the response')
         return result
 
+    def start(self, call):
+        payload = dict(call)
+        payload['async'] = True
+        return self.call(payload)
+
+    def signal(self, call):
+        return self.call(call)
+
+    def wait(self, call):
+        payload = dict(call)
+        payload['op'] = 'wait-owner'
+        return self.call(payload)
+
 
 def default_transport():
     return HostCliDriver()
 
 
-def _decode(value):
-    if value is None:
-        return ''
-    if isinstance(value, bytes):
-        return value.decode('utf-8', 'replace')
-    return str(value)
-
-
-def _snap_members(result):
-    text = _decode(result.get('stdout'))
-    members = []
-    for line in text.splitlines():
-        parts = line.split()
-        if len(parts) >= 8 and parts[0] == 'p':
-            members.append({
-                'pid': parts[1],
-                'state': parts[2],
-                'ppid': parts[3],
-                'pgrp': parts[4],
-                'sid': parts[5],
-                'start': parts[6],
-                'nonce': parts[7],
-            })
-    return members
-
-
-def _owned(members):
-    return [m for m in members if m.get('nonce') == 'y' and m.get('state') not in ('Z', 'X')]
-
-
-def _foreign(members):
-    return [m for m in members if m.get('nonce') != 'y']
+def _inventory_payload(phase, identity, transport, observation):
+    payload = {
+        'schema': SCHEMA,
+        'phase': phase,
+        'identity': identity,
+        'transport': transport,
+        'qualification': False,
+        'observe': observation['observe'],
+        'code': observation.get('code'),
+        'stdout': observation.get('stdout') or '',
+    }
+    if observation['observe'] == 'verified':
+        payload['members'] = list(observation.get('members') or [])
+        payload['generation'] = {
+            'boot': observation['boot'],
+            'ns': observation['ns'],
+        }
+    else:
+        payload['reason'] = observation.get('reason') or 'failed-observe'
+    return payload
 
 
 def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False):
@@ -214,7 +371,13 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
         }
         if extra:
             call.update(extra)
-        calls.append({'op': op, 'program': program, 'argv_head': argv[:8], 'cell': cell})
+        calls.append({
+            'op': op,
+            'program': program,
+            'argv_head': argv[:8],
+            'cell': cell,
+            'stdin': decode_output(input_bytes).split('\n', 1)[0],
+        })
         return transport.call(call)
 
     try:
@@ -224,108 +387,212 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
     except Refused as exc:
         return write_error('failed', str(exc))
 
-    if inspect.get('kind') not in ('verified',) or inspect.get('code') not in (0, None):
-        return write_error('failed', 'image/runtime is a preparation prerequisite; inspect did not verify')
+    inspected = parse_inspect(inspect.get('stdout'), full_id, plan['image_digest'])
+    if inspect.get('kind') != 'verified' or inspect.get('code') not in (0, None) or inspected is None:
+        return write_error(
+            'failed',
+            'image/runtime is a preparation prerequisite; inspect did not verify',
+        )
 
     try:
-        pre = drive('helper-snap', helper_tail(full_id, ['snap'], helper_script),
-                    input_bytes=b'\n', extra={'helper': HELPER_NAME})
+        pre = drive(
+            'helper-snap',
+            helper_tail(full_id, ['snap'], helper_script),
+            input_bytes=b'\n',
+            extra={'helper': HELPER_NAME, 'phase': 'pre'},
+        )
     except LostResponse as exc:
         return write_error('unknown', 'inventory_pre lost: %s' % exc)
-    receipt_exclusive(scratch / receipts['inventory_pre'], {
-        'schema': SCHEMA,
-        'phase': 'pre',
-        'identity': identity,
-        'transport': transport.label,
-        'members': _snap_members(pre) if pre.get('kind') == 'verified' else [],
-        'qualification': False,
-    })
+    pre_obs = observe_snapshot(pre, nonce_supplied=False)
+    receipt_exclusive(scratch / receipts['inventory_pre'], _inventory_payload(
+        'pre', identity, transport.label, pre_obs,
+    ))
+    if pre_obs['observe'] != 'verified':
+        return write_error('unknown', 'inventory_pre failed-observe: %s' % pre_obs.get('reason'))
 
-    nonce = 'n' * 32
-    for cell_id, signal in SIGNAL_CELLS:
-        cell = {'id': cell_id, 'signal': signal, 'closure': None}
+    last_nonce = None
+    last_generation = None
+    for cell_id, sig_name in SIGNAL_CELLS:
+        nonce = generate_nonce()
+        last_nonce = nonce
+        cell = {
+            'id': cell_id,
+            'signal': sig_name,
+            'nonce': nonce,
+            'closure': None,
+        }
         try:
-            workload = transport.call({
+            selector = plan['fixture_task']['selector']
+            workload = transport.start({
                 'op': 'workload',
                 'program': plan['binary'],
-                'argv': list(plan['argv']),
+                'argv': [selector],
                 'input': b'',
+                'env': {'EFFIGY_CUSTODY_NONCE': nonce},
                 'deadline_s': ACK_S,
                 'identity': identity,
                 'cell': cell_id,
+                'nonce': nonce,
             })
-            calls.append({'op': 'workload', 'program': plan['binary'],
-                          'argv_head': list(plan['argv']), 'cell': cell_id})
+            calls.append({
+                'op': 'workload',
+                'program': plan['binary'],
+                'argv_head': [selector],
+                'cell': cell_id,
+                'nonce': nonce,
+                'async': True,
+                'pid': workload.get('pid'),
+            })
         except LostResponse as exc:
             return write_error('unknown', '%s workload lost: %s' % (cell_id, exc))
+        except Refused as exc:
+            return write_error('failed', str(exc))
         if workload.get('kind') not in ('verified', 'labeled-double', 'running'):
             return write_error('failed', '%s workload did not admit' % cell_id)
+        owner_pid = workload.get('pid')
+        owner_start = workload.get('start')
+        if not isinstance(owner_pid, int) or owner_pid <= 0:
+            return write_error('failed', '%s workload did not record a live owner' % cell_id)
+        cell['owner'] = {'pid': owner_pid, 'start': owner_start}
 
         try:
-            snap = drive('helper-snap', helper_tail(full_id, ['snap'], helper_script),
-                         input_bytes=(nonce + '\n').encode(), cell=cell_id,
-                         extra={'helper': HELPER_NAME, 'phase': 'registered'})
+            snap = drive(
+                'helper-snap',
+                helper_tail(full_id, ['snap'], helper_script),
+                input_bytes=(nonce + '\n').encode(),
+                cell=cell_id,
+                extra={'helper': HELPER_NAME, 'phase': 'registered', 'nonce': nonce},
+            )
         except LostResponse as exc:
             return write_error('unknown', '%s registration snap lost: %s' % (cell_id, exc))
-        owned = _owned(_snap_members(snap))
+        snap_obs = observe_snapshot(snap, nonce_supplied=True)
+        if snap_obs['observe'] != 'verified':
+            return write_error(
+                'unknown',
+                '%s registration failed-observe: %s' % (cell_id, snap_obs.get('reason')),
+            )
+        owned = owned_members(snap_obs['members'])
         if not owned:
             return write_error('unknown', '%s registration omitted owned descendants' % cell_id)
+        generation = {'boot': snap_obs['boot'], 'ns': snap_obs['ns']}
+        last_generation = generation
+        cell['generation'] = generation
 
         try:
-            transport.call({
+            transport.signal({
                 'op': 'signal-owner',
-                'program': None,
-                'argv': [signal],
+                'program': plan['binary'],
+                'argv': [sig_name],
                 'input': b'',
                 'deadline_s': GRACE_S,
                 'identity': identity,
                 'cell': cell_id,
+                'pid': owner_pid,
+                'start': owner_start,
             })
-            calls.append({'op': 'signal-owner', 'program': None,
-                          'argv_head': [signal], 'cell': cell_id})
+            calls.append({
+                'op': 'signal-owner',
+                'program': plan['binary'],
+                'argv_head': [sig_name],
+                'cell': cell_id,
+                'pid': owner_pid,
+                'start': owner_start,
+            })
         except LostResponse as exc:
             return write_error('unknown', '%s owner signal lost: %s' % (cell_id, exc))
+        except Refused as exc:
+            return write_error('failed', str(exc))
 
-        # Closure is the helper identity recheck, never owner exit.
         try:
-            after = drive('helper-snap', helper_tail(full_id, ['snap'], helper_script),
-                          input_bytes=(nonce + '\n').encode(), cell=cell_id,
-                          extra={'helper': HELPER_NAME, 'phase': 'after-signal'})
+            after = drive(
+                'helper-snap',
+                helper_tail(full_id, ['snap'], helper_script),
+                input_bytes=(nonce + '\n').encode(),
+                cell=cell_id,
+                extra={'helper': HELPER_NAME, 'phase': 'after-signal', 'nonce': nonce},
+            )
         except LostResponse as exc:
             return write_error('unknown', '%s closure snap lost: %s' % (cell_id, exc))
-        leftover = _owned(_snap_members(after))
+        after_obs = observe_snapshot(after, nonce_supplied=True)
+        if after_obs['observe'] != 'verified':
+            return write_error(
+                'unknown',
+                '%s closure failed-observe: %s' % (cell_id, after_obs.get('reason')),
+            )
+        if after_obs['boot'] != generation['boot'] or after_obs['ns'] != generation['ns']:
+            return write_error('unknown', '%s generation moved' % cell_id)
+        leftover = owned_members(after_obs['members'])
         if leftover:
             cell['closure'] = 'missing'
             outcome['cells'].append(cell)
-            return write_error('unknown', '%s owned descendants still present; parent exit is not closure' % cell_id)
+            return write_error(
+                'unknown',
+                '%s owned descendants still present; parent exit is not closure' % cell_id,
+            )
         cell['closure'] = 'helper-empty-owned'
+
+        try:
+            transport.wait({
+                'op': 'wait-owner',
+                'pid': owner_pid,
+                'start': owner_start,
+                'deadline_s': SIGNAL_EXIT_S,
+                'identity': identity,
+                'cell': cell_id,
+            })
+            calls.append({
+                'op': 'wait-owner',
+                'program': plan['binary'],
+                'argv_head': [],
+                'cell': cell_id,
+                'pid': owner_pid,
+            })
+        except LostResponse as exc:
+            return write_error('unknown', '%s owner wait lost: %s' % (cell_id, exc))
+        except Refused as exc:
+            return write_error('failed', str(exc))
+
         try:
             status = transport.call({
                 'op': 'status',
                 'program': plan['binary'],
-                'argv': [plan['binary'], 'tasks', 'status', 'hold', '--json'],
+                'argv': ['tasks', 'status', 'hold', '--json'],
                 'input': b'',
                 'deadline_s': CALL_S,
                 'identity': identity,
                 'cell': cell_id,
             })
-            calls.append({'op': 'status', 'program': plan['binary'],
-                          'argv_head': ['tasks', 'status', 'hold'], 'cell': cell_id})
+            calls.append({
+                'op': 'status',
+                'program': plan['binary'],
+                'argv_head': ['tasks', 'status', 'hold', '--json'],
+                'cell': cell_id,
+            })
         except LostResponse as exc:
             return write_error('unknown', '%s gate status lost: %s' % (cell_id, exc))
-        gate = _decode(status.get('stdout'))
-        if 'not-recorded' not in gate and status.get('gate') != 'not-recorded':
+        except Refused as exc:
+            return write_error('failed', str(exc))
+        parsed_status = parse_status(status.get('stdout'))
+        if parsed_status is None or parsed_status['state'] != 'not-recorded':
             return write_error('unknown', '%s foreground gate was not released' % cell_id)
-        cell['gate'] = 'not-recorded'
+        cell['gate'] = parsed_status['state']
         outcome['cells'].append(cell)
 
+    foreign_input = ((last_nonce or '') + '\n').encode()
     try:
-        foreign_snap = drive('helper-snap', helper_tail(full_id, ['snap'], helper_script),
-                             input_bytes=(nonce + '\n').encode(), cell='container-foreign-unknown',
-                             extra={'helper': HELPER_NAME, 'phase': 'foreign'})
+        foreign_snap = drive(
+            'helper-snap',
+            helper_tail(full_id, ['snap'], helper_script),
+            input_bytes=foreign_input,
+            cell='container-foreign-unknown',
+            extra={'helper': HELPER_NAME, 'phase': 'foreign', 'nonce': last_nonce},
+        )
     except LostResponse as exc:
         return write_error('unknown', 'foreign snap lost: %s' % exc)
-    foreign = _foreign(_snap_members(foreign_snap))
+    foreign_obs = observe_snapshot(foreign_snap, nonce_supplied=bool(last_nonce))
+    if foreign_obs['observe'] != 'verified':
+        return write_error('unknown', 'foreign failed-observe: %s' % foreign_obs.get('reason'))
+    foreign = foreign_members(foreign_obs['members'])
     kill_calls_before = sum(1 for c in calls if c.get('op') == 'helper-kill')
     # Strict refuse: never issue helper-kill for a foreign/unknown member.
     if foreign:
@@ -349,37 +616,55 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
 
     cleanup_failed = []
     try:
-        post = drive('helper-snap', helper_tail(full_id, ['snap'], helper_script),
-                     input_bytes=(nonce + '\n').encode(), extra={'helper': HELPER_NAME, 'phase': 'post'})
+        post = drive(
+            'helper-snap',
+            helper_tail(full_id, ['snap'], helper_script),
+            input_bytes=foreign_input,
+            extra={'helper': HELPER_NAME, 'phase': 'post', 'nonce': last_nonce},
+        )
     except LostResponse as exc:
         return write_error('unknown', 'inventory_post lost: %s' % exc)
-    leftover_owned = _owned(_snap_members(post))
+    post_obs = observe_snapshot(post, nonce_supplied=bool(last_nonce))
+    if post_obs['observe'] != 'verified':
+        receipt_exclusive(scratch / receipts['inventory_post'], _inventory_payload(
+            'post', identity, transport.label, post_obs,
+        ))
+        return write_error('unknown', 'inventory_post failed-observe: %s' % post_obs.get('reason'))
+    leftover_owned = owned_members(post_obs['members'])
+    generation = last_generation or {'boot': post_obs['boot'], 'ns': post_obs['ns']}
     for member in leftover_owned:
         try:
             killed = drive(
                 'helper-kill',
-                helper_tail(
+                helper_kill_tail(
                     full_id,
-                    ['kill', 'boot', 'ns', 'TERM', 'member', member['pid'], member['start']],
+                    post_obs['boot'],
+                    post_obs['ns'],
+                    'TERM',
+                    'member',
+                    member['pid'],
+                    member['start'],
                     helper_script,
                 ),
-                input_bytes=(nonce + '\n').encode(),
-                extra={'helper': HELPER_NAME, 'owned_pid': member['pid']},
+                input_bytes=foreign_input,
+                extra={
+                    'helper': HELPER_NAME,
+                    'owned_pid': member['pid'],
+                    'generation': {'boot': post_obs['boot'], 'ns': post_obs['ns']},
+                },
             )
         except LostResponse as exc:
             cleanup_failed.append({'pid': member['pid'], 'reason': 'lost: %s' % exc})
             continue
-        text = _decode(killed.get('stdout')).strip()
+        except Refused as exc:
+            cleanup_failed.append({'pid': member['pid'], 'reason': str(exc)})
+            continue
+        text = decode_output(killed.get('stdout')).strip()
         if killed.get('kind') == 'failed' or text not in ('sent', 'gone') or killed.get('partial'):
             cleanup_failed.append({'pid': member['pid'], 'reason': text or 'partial'})
-    receipt_exclusive(scratch / receipts['inventory_post'], {
-        'schema': SCHEMA,
-        'phase': 'post',
-        'identity': identity,
-        'transport': transport.label,
-        'members': _snap_members(post) if post.get('kind') == 'verified' else [],
-        'qualification': False,
-    })
+    receipt_exclusive(scratch / receipts['inventory_post'], _inventory_payload(
+        'post', identity, transport.label, post_obs,
+    ))
     receipt_exclusive(scratch / receipts['cleanup'], {
         'schema': SCHEMA,
         'identity': identity,
@@ -388,6 +673,7 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
         'failed': cleanup_failed,
         'retry': False,
         'qualification': False,
+        'generation': generation,
     })
     if cleanup_failed:
         return write_error('failed', 'cleanup partial failure of owned members')
