@@ -307,7 +307,7 @@ fn god_file_text_output_reports_the_language_and_default_thresholds() {
 
 #[test]
 fn normalize_rel_path_uses_forward_slashes() {
-    let path = PathBuf::from("src/demo.rs");
+    let path = PathBuf::from("src\\demo.rs");
     assert_eq!(normalize_rel_path(&path), "src/demo.rs");
 }
 
