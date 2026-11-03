@@ -3,7 +3,10 @@
 //! locally; its session closes only when the workload has ended or the
 //! remote stop reached it. Real-engine qualification is a separate lane.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use effigy_kernel::ctx::{CleanupContext, EffectContext, OperationContext};
 use effigy_kernel::custody::{ProcessSpec, Terminal};
@@ -281,6 +284,11 @@ fn begin_with_hook(root: &Path) -> (TaskRun, i32) {
         .trim()
         .parse()
         .unwrap();
+    eprintln!(
+        "fixture={root:?} run={} hook_start={:?}",
+        task_run.id(),
+        effigy_kernel::ident::process_identity(pid as u32)
+    );
     (task_run, pid)
 }
 
@@ -344,6 +352,10 @@ fn remote_admission_lost_after_registration_stops_remote_session() {
                         e.spec.kind == "kernel:remote-process"
                             && e.state == effigy_kernel::run::EffectState::Applied
                     }) {
+                        eprintln!(
+                            "run={run_id} phase=applied effects={}",
+                            serde_json::to_string(&effects).expect("encode effects")
+                        );
                         kill_hook(pid);
                         break;
                     }
@@ -372,6 +384,7 @@ fn remote_admission_lost_after_registration_stops_remote_session() {
     );
     thread.join().expect("hook perturbation");
     let warnings = task_run.close(WorkloadOutcome::Interrupted);
+    receipt(&matrix.root, run_id, "settled");
     assert!(result.is_err(), "lost admission must fail the task");
     assert!(warnings.is_empty(), "{warnings:?}");
     assert!(
@@ -398,6 +411,10 @@ fn remote_admission_loss_with_unknown_closure_leaves_residue() {
                         e.spec.kind == "kernel:remote-process"
                             && e.state == effigy_kernel::run::EffectState::Applied
                     }) {
+                        eprintln!(
+                            "run={run_id} phase=applied effects={}",
+                            serde_json::to_string(&effects).expect("encode effects")
+                        );
                         std::fs::write(engine.dir.join("down"), b"").expect("model unreachable");
                         kill_hook(pid);
                         break;
@@ -422,6 +439,7 @@ fn remote_admission_loss_with_unknown_closure_leaves_residue() {
     );
     thread.join().expect("hook perturbation");
     let warnings = task_run.close(WorkloadOutcome::Interrupted);
+    receipt(&matrix.root, run_id, "settled");
     let alive = matrix.engine.alive();
     matrix.engine.signal(libc::SIGKILL);
     assert!(result.is_err(), "lost admission must fail the task");
@@ -685,9 +703,29 @@ fn run(fixture: &Fixture, run: &mut TaskRun, task: RemoteTask<'_>) -> PlainExit 
     .expect("remote run")
 }
 
+fn receipt(root: &Path, run_id: effigy_kernel::id::RunId, phase: &str) {
+    let store = kernel::effects_root(root).expect("store root");
+    let Observed::Verified(reader, _) = Store::read(&kernel::observe(), store) else {
+        panic!("cannot read {phase} store");
+    };
+    let Observed::Verified(effects, _) = effigy_kernel::run::effects(&reader, run_id) else {
+        panic!("cannot read {phase} effects");
+    };
+    eprintln!(
+        "fixture={:?} run={} phase={} effects={}",
+        root,
+        run_id,
+        phase,
+        serde_json::to_string(&effects).expect("encode effects")
+    );
+}
+
 fn close(run: TaskRun, workload: WorkloadOutcome) {
+    let root = run.target().root.clone();
+    let run_id = run.id();
     let warnings = run.close(workload);
     assert!(warnings.is_empty(), "{warnings:?}");
+    receipt(&root, run_id, "settled");
 }
 
 #[test]
@@ -786,12 +824,37 @@ fn a_concurrent_environment_bring_up_leaves_the_outcome_truthful() {
     close(task_run, exit.workload);
 }
 
-/// A timeout stops the remote session, not only the local client; the
-/// run's settle observes the session closed.
+/// Controlled-time proof of the post-registration timeout boundary.
+#[test]
+fn timeout_decision_uses_the_original_deadline() {
+    let start = Instant::now();
+    let deadline = Some(start + Duration::from_millis(300));
+    assert!(!timeout_expired(
+        deadline,
+        start + Duration::from_millis(299)
+    ));
+    assert!(timeout_expired(
+        deadline,
+        start + Duration::from_millis(300)
+    ));
+    assert!(timeout_expired(
+        deadline,
+        start + Duration::from_millis(301)
+    ));
+    assert!(!timeout_expired(None, start + Duration::from_millis(300)));
+}
+
+/// Controlled post-registration timeout decision, genuine registration and
+/// settlement. Registration itself uses its ordinary real context; this is
+/// not an end-to-end real-clock 300 ms timing proof.
 #[test]
 fn a_timeout_reaches_the_remote_session_and_settles_it() {
     let fixture = fixture();
     let mut task_run = begin(&fixture.root, "remote:timeout");
+    let run_id = task_run.id();
+    let start = Instant::now();
+    let deadline = start + Duration::from_millis(300);
+    TEST_TIMEOUT_DECISION.with(|clock| clock.set(Some((deadline, deadline))));
     let exit = run(
         &fixture,
         &mut task_run,
@@ -799,9 +862,25 @@ fn a_timeout_reaches_the_remote_session_and_settles_it() {
             &fixture.root,
             "while [ ! -f \"$MODEL_STOP\" ]; do sleep 0.05; done; exit 143",
             true,
-            Some(300),
+            None,
         ),
     );
+    TEST_TIMEOUT_DECISION.with(|clock| clock.set(None));
+    let store = kernel::effects_root(&fixture.root).expect("store root");
+    let Observed::Verified(reader, _) = Store::read(&kernel::observe(), store) else {
+        panic!("cannot read registration");
+    };
+    let Observed::Verified(effects, _) = effigy_kernel::run::effects(&reader, run_id) else {
+        panic!("cannot read effects");
+    };
+    assert!(
+        effects
+            .iter()
+            .any(|effect| effect.spec.kind == "kernel:remote-process"
+                && effect.state == effigy_kernel::run::EffectState::Applied),
+        "registration must be applied"
+    );
+    receipt(&fixture.root, run_id, "applied");
     assert!(matches!(exit.workload, WorkloadOutcome::TimedOut { .. }));
     assert_eq!(exit.code, 124);
     assert!(fixture.model.dir.join("stop").exists());
@@ -812,11 +891,23 @@ fn a_timeout_reaches_the_remote_session_and_settles_it() {
 /// A container modelled by real host processes. The exec client starts the
 /// workload in a process group of its own, as an engine runs it apart from
 /// its client, so a killed client leaves the "remote" workload running. The
-/// session is that group; `boot` and `down` files model an engine restart
-/// and an unreachable engine.
+/// session is the workload's own process - signals reach the group, but a
+/// killed member's zombie or a reused pid must not read as a live workload;
+/// `boot` and `down` files model an engine restart and an unreachable engine.
 #[derive(Clone)]
 struct Engine {
     dir: PathBuf,
+    /// The recorded child remains signalable until its owner reaps it.
+    leader: Arc<Mutex<Option<i32>>>,
+    reaper: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+    terminal_gate: Arc<Mutex<Option<TerminalGate>>>,
+    client_waiting: Arc<Mutex<Option<std::fs::File>>>,
+    observed_running: Arc<Mutex<Option<mpsc::Sender<()>>>>,
+}
+
+struct TerminalGate {
+    reached: mpsc::Sender<()>,
+    release: mpsc::Receiver<()>,
 }
 
 impl Engine {
@@ -839,17 +930,20 @@ impl Engine {
         }
     }
 
-    /// Whether any process of the workload's group survives.
+    /// True until the owning parent has observed and reaped the workload.
     fn alive(&self) -> bool {
-        // SAFETY: signal 0 only probes the recorded group; nothing is sent.
-        self.pid("leader")
-            .is_some_and(|leader| unsafe { libc::killpg(leader, 0) } == 0)
+        self.leader
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
     }
 
     fn signal(&self, signal: i32) {
-        if let Some(leader) = self.pid("leader") {
-            // SAFETY: the group this model started and recorded.
-            unsafe { libc::killpg(leader, signal) };
+        let leader = self.leader.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(pid) = *leader {
+            // The mutex excludes reaping, so this recorded group cannot be reused.
+            // SAFETY: this is the process group created by this fixture.
+            unsafe { libc::killpg(pid, signal) };
         }
     }
 
@@ -912,20 +1006,43 @@ impl RemoteExecAdapter for Engine {
             "ENGINE_DIR".into(),
             EnvValue::Plain(self.dir.clone().into()),
         );
-        // The engine runs the workload apart from its client: in a process
-        // group of its own, holding none of the client's descriptors, reaped
-        // by the engine (a thread here), never by the client.
-        use std::os::unix::process::CommandExt;
+        // The engine owns the workload and publishes its reaped status over
+        // a FIFO. The client cannot finish before the terminal receipt exists.
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::process::{CommandExt, ExitStatusExt};
+        let gate = self
+            .terminal_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if gate.is_some() {
+            let waiting = self.dir.join("waiting");
+            let name = std::ffi::CString::new(waiting.as_os_str().as_bytes()).expect("FIFO path");
+            // SAFETY: name is a valid path in the owned fixture directory.
+            assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(waiting)
+                .expect("open waiting FIFO");
+            *self
+                .client_waiting
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(file);
+            env.insert("ENGINE_BARRIER".into(), EnvValue::Plain("1".into()));
+        }
+        let fifo = self.dir.join("terminal");
+        let fifo_name = std::ffi::CString::new(fifo.as_os_str().as_bytes()).expect("FIFO path");
+        // SAFETY: fifo_name is a valid C path in the owned fixture directory.
+        assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
+        let mut receipt = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&fifo)
+            .expect("open terminal FIFO");
         let mut workload = std::process::Command::new("/bin/sh")
             .arg("-c")
-            .arg(format!(
-                "{}\necho $? > \"$ENGINE_DIR/exit\"",
-                cmd.argv
-                    .last()
-                    .cloned()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-            ))
+            .arg(cmd.argv.last().cloned().unwrap_or_default())
             .env("ENGINE_DIR", &self.dir)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -937,11 +1054,43 @@ impl RemoteExecAdapter for Engine {
                     error.to_string(),
                 ))
             })?;
-        std::fs::write(self.dir.join("leader"), workload.id().to_string())
-            .expect("record the workload group");
-        std::thread::spawn(move || {
-            let _ = workload.wait();
+        let pid = workload.id() as i32;
+        let identity = effigy_kernel::ident::process_identity(workload.id());
+        eprintln!("fixture={:?} workload_start={identity:?}", self.dir);
+        std::fs::write(self.dir.join("leader"), pid.to_string()).expect("record workload group");
+        *self.leader.lock().unwrap_or_else(PoisonError::into_inner) = Some(pid);
+        let leader = self.leader.clone();
+        let fixture_dir = self.dir.clone();
+        let reaper = std::thread::spawn(move || {
+            if let Some(gate) = gate {
+                let _ = gate.reached.send(());
+                let _ = gate.release.recv();
+            }
+            // WNOWAIT pins the child identity until signalers and the reaper
+            // serialize on the mutex. It blocks without polling readiness.
+            // SAFETY: zeroed siginfo is valid and waitid writes it.
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            // SAFETY: pid is our direct child, retained until the wait below.
+            let result = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    pid as libc::id_t,
+                    &mut info,
+                    libc::WEXITED | libc::WNOWAIT,
+                )
+            };
+            assert_eq!(result, 0, "waitid: {}", std::io::Error::last_os_error());
+            let mut state = leader.lock().unwrap_or_else(PoisonError::into_inner);
+            let status = workload.wait().expect("reap workload");
+            eprintln!("fixture={fixture_dir:?} workload_pid={pid} waited_status={status:?}");
+            *state = None;
+            drop(state);
+            let code = status
+                .code()
+                .unwrap_or_else(|| 128 + status.signal().expect("signal status"));
+            writeln!(receipt, "{code}").expect("publish terminal receipt");
         });
+        *self.reaper.lock().unwrap_or_else(PoisonError::into_inner) = Some(reaper);
         Ok(ProcessSpec {
             // The exec client ends with the workload, with its status, or 137
             // when the engine killed it.
@@ -950,9 +1099,9 @@ impl RemoteExecAdapter for Engine {
                 "-c".into(),
                 concat!(
                     "printf '\\036EFFIGY-CUSTODY v1 %s 4242 4242 100 boot-model 401\\n' \"$MODEL_NONCE\" >&2; ",
-                    "echo $$ > \"$ENGINE_DIR/client\"; leader=$(cat \"$ENGINE_DIR/leader\"); ",
-                    "while [ ! -f \"$ENGINE_DIR/exit\" ] && kill -0 \"$leader\" 2>/dev/null; do sleep 0.02; done; ",
-                    "[ -f \"$ENGINE_DIR/exit\" ] && exit \"$(cat \"$ENGINE_DIR/exit\")\"; exit 137"
+                    "echo $$ > \"$ENGINE_DIR/client\"; ",
+                    "if [ -n \"$ENGINE_BARRIER\" ]; then printf x > \"$ENGINE_DIR/waiting\"; fi; ",
+                    "read -r code < \"$ENGINE_DIR/terminal\"; exit \"$code\""
                 )
                 .into(),
             ],
@@ -989,7 +1138,18 @@ impl RemoteExecAdapter for Engine {
         _: &RemoteRegistration,
         _: &OperationContext,
     ) -> Observed<SessionState> {
-        self.state()
+        let state = self.state();
+        if matches!(state, Observed::Verified(SessionState::Running, _)) {
+            if let Some(sender) = self
+                .observed_running
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take()
+            {
+                let _ = sender.send(());
+            }
+        }
+        state
     }
 
     fn find_by_nonce(
@@ -1016,6 +1176,11 @@ fn matrix() -> Matrix {
     let root = dir.path().to_path_buf();
     let engine = Engine {
         dir: root.join("engine"),
+        leader: Arc::new(Mutex::new(None)),
+        reaper: Arc::new(Mutex::new(None)),
+        terminal_gate: Arc::new(Mutex::new(None)),
+        client_waiting: Arc::new(Mutex::new(None)),
+        observed_running: Arc::new(Mutex::new(None)),
     };
     std::fs::create_dir(&engine.dir).expect("engine dir");
     let settle = engine.clone();
@@ -1034,6 +1199,15 @@ impl Drop for Matrix {
     fn drop(&mut self) {
         // Never leave a workload behind, whatever the assertion outcome.
         self.engine.signal(libc::SIGKILL);
+        if let Some(reaper) = self
+            .engine
+            .reaper
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
+            reaper.join().expect("workload reaper");
+        }
     }
 }
 
@@ -1044,8 +1218,34 @@ fn step_under(
     during: impl FnOnce(Engine) + Send + 'static,
 ) -> (TaskRun, PlainExit) {
     let mut task_run = begin(&matrix.root, task);
+    let run_id = task_run.id();
+    let store_root = matrix.root.clone();
     let engine = matrix.engine.clone();
     let perturb = std::thread::spawn(move || {
+        // The kernel's own record is the producer: the perturbation lands
+        // on a registered session, since a readiness file is not proof of
+        // registration.
+        let store = kernel::effects_root(&store_root).expect("store root");
+        let until = Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Observed::Verified(reader, _) = Store::read(&kernel::observe(), store) {
+                if let Observed::Verified(effects, _) = effigy_kernel::run::effects(&reader, run_id)
+                {
+                    if effects.iter().any(|effect| {
+                        effect.spec.kind == "kernel:remote-process"
+                            && effect.state == effigy_kernel::run::EffectState::Applied
+                    }) {
+                        eprintln!(
+                            "fixture={store_root:?} run={run_id} phase=applied effects={}",
+                            serde_json::to_string(&effects).expect("encode effects")
+                        );
+                        break;
+                    }
+                }
+            }
+            assert!(Instant::now() < until, "registration was not recorded");
+            std::thread::sleep(Duration::from_millis(2));
+        }
         engine.wait_for("client");
         engine.wait_for("leader");
         during(engine);
@@ -1086,17 +1286,94 @@ fn matrix_client_death_interrupts_the_step_and_settle_stops_the_session() {
 }
 
 /// Container stop: the engine kills the workload. The step records the
-/// workload's own end, and settle observes the session closed.
+/// workload's own end, and settle observes the session closed. Session
+/// closure is asserted first: it is the fact the outcome classification
+/// trusts the client's own end across.
 #[test]
 fn matrix_container_stop_records_the_workload_end_and_settles_closed() {
     let matrix = matrix();
     let (task_run, exit) = step_under(&matrix, "remote:matrix:stop", |engine| {
         engine.signal(libc::SIGKILL);
     });
+    // Discriminator at the lifecycle boundary: the workload's end closed the
+    // session before the client's own status could be mistaken for its loss.
+    assert!(
+        !matrix.engine.alive(),
+        "the workload's end closed the session"
+    );
     assert_eq!(exit.workload, WorkloadOutcome::Failed { code: 137 });
     assert_eq!(exit.code, 137);
     close(task_run, exit.workload);
     assert!(!matrix.engine.alive());
+}
+
+/// Exercise the old client-first ordering and the receipt-first ordering at
+/// the same owned terminal boundary. Neither result claims a historical cause.
+#[test]
+fn matrix_terminal_producer_orders_client_completion() {
+    for client_first in [true, false] {
+        let matrix = matrix();
+        let (reached_tx, reached_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (observed_tx, observed_rx) = mpsc::channel();
+        *matrix.engine.terminal_gate.lock().unwrap() = Some(TerminalGate {
+            reached: reached_tx,
+            release: release_rx,
+        });
+        let release = Arc::new(Mutex::new(Some(release_tx)));
+        let release_on_fixed = release.clone();
+        let (task_run, exit) = step_under(&matrix, "remote:matrix:ordering", move |engine| {
+            let mut byte = [0];
+            engine
+                .client_waiting
+                .lock()
+                .unwrap()
+                .as_mut()
+                .expect("waiting FIFO")
+                .read_exact(&mut byte)
+                .expect("client reached receipt barrier");
+            assert_eq!(byte, [b'x']);
+            engine.signal(libc::SIGKILL);
+            reached_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("terminal producer reached barrier");
+            assert!(engine.alive(), "unreaped child remains owned");
+            if client_first {
+                *engine.observed_running.lock().unwrap() = Some(observed_tx);
+                let client = engine.pid("client").expect("owned client");
+                // SAFETY: this is the client started and recorded by the fixture.
+                unsafe { libc::kill(client, libc::SIGKILL) };
+                observed_rx
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("consumer observed the unclosed session");
+            } else {
+                release_on_fixed
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .unwrap()
+                    .send(())
+                    .expect("release terminal producer");
+            }
+        });
+        if client_first {
+            assert_eq!(exit.workload, WorkloadOutcome::Interrupted);
+            assert_ne!(exit.workload, WorkloadOutcome::Failed { code: 137 });
+            release
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap()
+                .send(())
+                .expect("release terminal producer");
+        } else {
+            assert_eq!(exit.workload, WorkloadOutcome::Failed { code: 137 });
+            assert_eq!(exit.code, 137);
+            assert!(!matrix.engine.alive(), "receipt follows owned reap");
+        }
+        close(task_run, exit.workload);
+        assert!(!matrix.engine.alive(), "settlement observes owned closure");
+    }
 }
 
 /// Engine restart: the VM reboots under the step. The new boot proves the
