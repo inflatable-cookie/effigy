@@ -686,9 +686,11 @@ def t_execute_armed_double_records_hostcli_argv():
     assert ids[-1] == 'container-foreign-unknown'
     assert result['cells'][-1]['refused_pids'] == ['99']
     for cell in result['cells'][:4]:
-        assert HEX64.fullmatch(cell['nonce'])
+        assert 'nonce' not in cell
         assert cell['generation'] == {'boot': BOOT, 'ns': NS}
         assert cell['owner']['pid']
+    rendered_result = json.dumps(result)
+    assert all(nonce not in rendered_result for nonce in nonces)
     blob = json.dumps(
         [{'program': c.get('program'), 'argv': c.get('argv')} for c in double.calls]
     ).lower()

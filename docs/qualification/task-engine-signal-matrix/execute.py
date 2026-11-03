@@ -377,7 +377,8 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
             'program': program,
             'argv_head': argv[:8],
             'cell': cell,
-            'stdin': decode_output(input_bytes).split('\n', 1)[0],
+            # A helper's first input line is the custody nonce, never receipt data.
+            'stdin': '[redacted]' if input_bytes else '',
         })
         return transport.call(call)
 
@@ -419,7 +420,6 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
         cell = {
             'id': cell_id,
             'signal': sig_name,
-            'nonce': nonce,
             'closure': None,
         }
         try:
@@ -440,7 +440,6 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
                 'program': plan['binary'],
                 'argv_head': [selector],
                 'cell': cell_id,
-                'nonce': nonce,
                 'async': True,
                 'pid': workload.get('pid'),
             })
