@@ -994,6 +994,17 @@ mod tests {
             .expect("local-dev block")
             .cipher
             .nonce = vec![5; 8];
+        // The validate() arm is the discriminating assertion: the unlock
+        // path re-derives the identical diagnostic from xnonce_from_cipher,
+        // so only this assertion fails if the local_dev nonce check alone
+        // is dropped.
+        let error = envelope
+            .validate()
+            .expect_err("local-dev nonce length should fail");
+        assert_eq!(
+            error.to_string(),
+            "invalid vault nonce length `8` (expected `24`)"
+        );
         // Through the unlock path itself: decrypt_with_local_dev_key
         // validates the wrap before touching the AEAD.
         let error = envelope
