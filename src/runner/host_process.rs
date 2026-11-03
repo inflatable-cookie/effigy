@@ -2197,13 +2197,15 @@ impl Drop for ListenerReportPath {
 
 /// A completed teardown makes no endpoint or child claim: the terminal record
 /// must not retain a generation an explicit start would have to reconcile.
+///
+/// A generation that failed keeps its diagnostic. Settlement stop of an
+/// unpublished successor of the same supervisor must not replace that
+/// evidence with a blank `stopped` record (contract 005). A later activation
+/// has a different supervisor pid and writes its own `starting` record.
 fn write_terminal_listener_state(
     spec: &HostProcessRuntimeSpec,
     supervisor_pid: u32,
 ) -> Result<(), RunnerError> {
-    // A generation that failed keeps the one line that explains it. Only this
-    // supervisor's own last generation counts: a later activation writes its
-    // own `starting` record before it can fail.
     if fs::read(&spec.listener_state_file)
         .ok()
         .and_then(|raw| serde_json::from_slice::<HostListenerState>(&raw).ok())
@@ -2238,7 +2240,10 @@ fn supervise_managed_host_listener(
 
     if stop_requested(run, watch, spec) || shutdown.load(Ordering::SeqCst) {
         shutdown.store(true, Ordering::SeqCst);
-        ListenerGeneration::new(spec, supervisor_pid, "").write("stopped")?;
+        // This generation has not published `starting` yet. Settlement of a
+        // withheld start walks this path while a retrying supervisor is still
+        // in admission, and must not blank a prior `failed` record.
+        write_terminal_listener_state(spec, supervisor_pid)?;
         return Ok(GenerationEnd::Stopped);
     }
     // Publish this activation's record before waiting on dependencies or
@@ -3189,6 +3194,113 @@ mod tests {
         .unwrap();
         wait_for_listener_activation(&path, "app", "current-activation", Duration::from_secs(1))
             .expect("a published activation record satisfies the barrier");
+    }
+
+    fn terminal_state_spec(path: PathBuf) -> HostProcessRuntimeSpec {
+        let mut spec = runtime_spec(&[]);
+        spec.listener_state_file = path;
+        spec.listener = Some(EffectiveManagedHostListener {
+            bind: "127.0.0.1:0".to_owned(),
+            readiness_path: "/health".to_owned(),
+            readiness_status: 200,
+            readiness_timeout_secs: 1,
+            declared_route_domain: "delayed.host.test".to_owned(),
+            route_domain: "delayed.host.test".to_owned(),
+            route_tls: true,
+        });
+        spec
+    }
+
+    /// Settlement of an unpublished successor must keep this supervisor's
+    /// failed generation: diagnostic, observed status and generation stay.
+    #[test]
+    fn unpublished_teardown_keeps_this_supervisors_failed_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.listener.json");
+        let pid = std::process::id();
+        let spec = terminal_state_spec(path.clone());
+        let mut failed = published_listener_state("runtime", "failed");
+        failed["supervisor_pid"] = serde_json::json!(pid);
+        failed["generation"] = serde_json::json!("losing-generation");
+        failed["route_domain"] = serde_json::json!("delayed.host.test");
+        failed["diagnostic"] = serde_json::json!(
+            "managed listener at 127.0.0.1:1 answered /health with HTTP 503 where 200 is required (status_mismatch)"
+        );
+        failed["observed_status"] = serde_json::json!(503);
+        write_private_json(&path, &failed).unwrap();
+
+        write_terminal_listener_state(&spec, pid).unwrap();
+
+        let state = read_json(&path);
+        assert_eq!(state["status"], "failed", "{state}");
+        assert_eq!(state["generation"], "losing-generation", "{state}");
+        assert_eq!(state["observed_status"], 503, "{state}");
+        assert_eq!(state["route_domain"], "delayed.host.test", "{state}");
+        assert!(
+            state["diagnostic"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("status_mismatch"),
+            "{state}"
+        );
+        assert!(
+            state["route_owner"].is_null() && state["child_pid"].is_null(),
+            "{state}"
+        );
+    }
+
+    /// A generation that never failed still settles as a blank `stopped`
+    /// record: no diagnostic, no child, no endpoint owner.
+    #[test]
+    fn unpublished_teardown_settles_a_starting_generation_as_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.listener.json");
+        let pid = std::process::id();
+        let spec = terminal_state_spec(path.clone());
+        let mut starting = published_listener_state("runtime", "starting");
+        starting["supervisor_pid"] = serde_json::json!(pid);
+        starting["generation"] = serde_json::json!("starting-generation");
+        write_private_json(&path, &starting).unwrap();
+
+        write_terminal_listener_state(&spec, pid).unwrap();
+
+        let state = read_json(&path);
+        assert_eq!(state["status"], "stopped", "{state}");
+        assert_eq!(state["generation"], "", "{state}");
+        assert!(
+            state["route_owner"].is_null() && state["child_pid"].is_null(),
+            "{state}"
+        );
+        assert!(state.get("diagnostic").is_none(), "{state}");
+        assert!(state.get("observed_status").is_none(), "{state}");
+    }
+
+    /// A later activation is a different supervisor: its teardown may replace
+    /// a previous activation's failed record with a blank terminal one.
+    #[test]
+    fn later_activation_teardown_replaces_a_previous_supervisors_failed_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.listener.json");
+        let previous = std::process::id();
+        let successor = previous.wrapping_add(1);
+        let spec = terminal_state_spec(path.clone());
+        let mut failed = published_listener_state("runtime", "failed");
+        failed["supervisor_pid"] = serde_json::json!(previous);
+        failed["generation"] = serde_json::json!("previous-failed");
+        failed["diagnostic"] = serde_json::json!("status_mismatch");
+        write_private_json(&path, &failed).unwrap();
+
+        write_terminal_listener_state(&spec, successor).unwrap();
+
+        let state = read_json(&path);
+        assert_eq!(state["status"], "stopped", "{state}");
+        assert_eq!(state["generation"], "", "{state}");
+        assert_eq!(
+            state["supervisor_pid"],
+            serde_json::json!(successor),
+            "{state}"
+        );
+        assert!(state.get("diagnostic").is_none(), "{state}");
     }
 
     #[test]

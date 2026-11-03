@@ -1492,6 +1492,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- A managed listener that fails readiness keeps that `failed` record through
+  settlement of an unpublished successor generation. A retrying supervisor
+  stopped during the next generation's admission delay no longer replaces the
+  refusal (status, diagnostic, generation) with a blank `stopped` terminal
+  (effigy#587). An explicit later activation still writes its own `starting`
+  record. HTTP 503 remains a definite terminal refusal.
+
 - A SQLite durability-write failure (`SQLITE_IOERR_FSYNC` and the sibling
   write, directory-fsync, and atomic-write extended codes) stays
   `unavailable` and keeps the extended code, but no longer says "nothing is
