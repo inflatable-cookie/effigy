@@ -368,6 +368,23 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- Independent per-backend entry points for the private workspace qualification
+  packet (task effigy#620): `effigy proof:workspace:private-qualification --
+  --backend <colima|desktop|linux>` executes exactly one backend's full session
+  under exactly that backend's scoped native GO, binding the exact source head,
+  executed program hashes, contract, candidate, inputs, pinned qualification
+  root, genuine old baseline, window budget and input-hash one-use marker, and
+  recording the original complete/failed receipt with its binding in a fresh
+  evidence directory. A read-only aggregate verifier
+  (`verify:workspace:private-qualification:aggregate`) qualifies the packet
+  only when all three positive backend receipts are authentic, complete and
+  match the same final source/feature/common contract with platform-specific
+  artifacts explicit, refusing missing, failed, foreign, stale, mixed-source
+  or incomplete evidence; the single all-backend invocation and every existing
+  boundary are unchanged, ordinary production Discard stays refused, and
+  `producer.md` fixes the deterministic immutable artifact recipes and
+  receipt/report formats that effigy#627 will produce.
+
 - A whole-suite test census and assurance contract (task effigy#555):
   `docs/knowledge/test-assurance.md` states what the suite promises, the six
   proof tiers, the conditional families and their selector routes, and the
