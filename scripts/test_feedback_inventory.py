@@ -270,10 +270,13 @@ fn show() {
         self.assertIn('live_step(ProgressSource::waiting_for', errors[0])
 
     def test_char_literals_and_lifetimes_do_not_blank_later_code(self):
-        # A char literal is not a string opener in either spelling: the plain
-        # `'"'` survives only through the plain arm, the escaped `'\"'` only
-        # through the escape arm, and a lifetime through neither. A gate must
-        # not read the rest of the file as one literal and go quiet.
+        # A char literal is not a string opener in either spelling, and a
+        # lifetime is not a char-literal opener: the plain `'"'` survives only
+        # through the plain arm, the escaped `'\"'` only through the escape
+        # arm, and a lifetime through neither. If a lifetime is read as an
+        # opener, everything up to the next apostrophe goes dark — so the
+        # second file puts its next apostrophe after the real call. A gate
+        # must not read the rest of the file as one literal and go quiet.
         source = r"""const PLAIN_QUOTE: char = '"';
 const ESCAPED_QUOTE: char = '\"';
 
@@ -282,14 +285,22 @@ fn show<'a>(text: &'a str) {
     let _ = text;
 }
 """
+        spread = r"""fn f(x: &'static str) {
+    let bar = ProgressBar::no_length();
+    let _ = (x, bar, &'static ());
+}
+"""
         with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
             root = pathlib.Path(directory)
             (root / 'src').mkdir()
             (root / 'src' / 'chars.rs').write_text(source)
+            (root / 'src' / 'lifetimes.rs').write_text(spread)
             errors = lint.indicatif_errors(root)
-        self.assertEqual(len(errors), 1, errors)
+        self.assertEqual(len(errors), 2, errors)
         self.assertIn('src/chars.rs:5:', errors[0])
         self.assertIn('let bar = ProgressBar::no_length();', errors[0])
+        self.assertIn('src/lifetimes.rs:2:', errors[1])
+        self.assertIn('let bar = ProgressBar::no_length();', errors[1])
 
     def test_a_suppression_in_a_comment_or_literal_is_not_a_suppression(self):
         # The suppression scan used to read raw text, so a doc or message
