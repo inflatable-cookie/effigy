@@ -16,13 +16,15 @@ blankets-kills or refunds the one-shot fence.
 """
 import json
 import os
+import secrets
 import signal as os_signal
 import subprocess
+import time
 from pathlib import Path
 
 from common import (
     FORBIDDEN_TEXT, HELPER_NAME, SCHEMA, SIGNAL_CELLS, Refused,
-    decode_output, foreign_members, generate_nonce, helper_kill_tail,
+    decode_output, foreign_members, helper_kill_tail,
     helper_tail, observe_snapshot, owned_members, parse_inspect,
     parse_status, production_helper, receipt_exclusive, refuse_prior_attempt,
     runtime_argv,
@@ -96,7 +98,7 @@ class HostCliDriver:
         program = self._require_program(call)
         argv = list(call.get('argv') or [])
         self._scan_forbidden(program, argv)
-        deadline = int(call.get('deadline_s') or CALL_S)
+        deadline = call.get('deadline_s', CALL_S)
         try:
             completed = subprocess.run(  # noqa: S603 — HostCli is the real driver
                 [program] + argv,
@@ -174,11 +176,11 @@ class HostCliDriver:
         if recorded is None:
             raise Refused('HostCli owner is not a live recorded owner')
         expected_start = call.get('start')
-        if expected_start is not None and recorded.get('start') != expected_start:
+        if not expected_start or recorded.get('start') != expected_start:
             raise Refused('HostCli owner start identity does not match')
         live = process_start_identity(pid)
-        if recorded.get('start') and live is not None and live != recorded.get('start'):
-            raise Refused('HostCli owner start identity moved')
+        if live != expected_start:
+            raise Refused('HostCli owner start identity unavailable or moved')
         argv = list(call.get('argv') or [])
         sig_name = argv[0] if argv else None
         sig = SIGNAL_NUMBERS.get(sig_name)
@@ -205,7 +207,7 @@ class HostCliDriver:
         recorded = self.owners.get(pid)
         if recorded is None or recorded.get('proc') is None:
             raise Refused('HostCli owner is not a live recorded owner')
-        deadline = int(call.get('deadline_s') or SIGNAL_EXIT_S)
+        deadline = call.get('deadline_s', SIGNAL_EXIT_S)
         proc = recorded['proc']
         try:
             code = proc.wait(timeout=deadline)
@@ -256,6 +258,51 @@ def default_transport():
     return HostCliDriver()
 
 
+def directory_identity(path):
+    path = Path(path)
+    if path.is_symlink() or not path.is_dir():
+        raise Refused('owned directory unavailable or symlink')
+    info = path.stat()
+    return {'device': info.st_dev, 'inode': info.st_ino}
+
+
+def registration_from_observer(result, identity, created, boot, pid_ns, owner_pid):
+    if result.get('kind') != 'verified' or result.get('code') != 0:
+        return None
+    try:
+        payload = json.loads(decode_output(result.get('stdout')))
+        registration = payload['registration']
+        owner = payload['owner']
+        if not isinstance(owner, dict) or owner.get('pid') != owner_pid or not owner.get('boot') or not owner.get('start'):
+            return None
+        container = registration['container']
+        nonce = registration['nonce']
+        if (container['id'] != identity or container['created'] != created
+                or container['vm_boot_id'] != boot):
+            return None
+        if registration['pid_ns'] != pid_ns or not isinstance(nonce, str) or len(nonce) != 64:
+            return None
+        if any(c not in '0123456789abcdef' for c in nonce):
+            return None
+        for field in ('leader_pid', 'leader_start_ticks', 'sid'):
+            if not isinstance(registration[field], int) or registration[field] <= 0:
+                return None
+        return registration, owner
+    except (ValueError, TypeError, KeyError):
+        return None
+
+
+def matches_registration_snapshot(registration, observation, boot):
+    if (observation.get('observe') != 'verified' or observation.get('boot') != boot
+            or observation.get('pid_ns') != registration['pid_ns']):
+        return False
+    leaders = [member for member in owned_members(observation['members'])
+               if member['pid'] == str(registration['leader_pid'])
+               and member['start'] == str(registration['leader_start_ticks'])
+               and member['sid'] == str(registration['sid'])]
+    return len(leaders) == 1
+
+
 def _inventory_payload(phase, identity, transport, observation):
     payload = {
         'schema': SCHEMA,
@@ -285,7 +332,7 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
     if transport is None:
         if not allow_native:
             raise Refused('native HostCli driver requires CLI --execute after admission')
-        transport = default_transport()
+        transport = HostCliDriver(workdir=plan['owner_root'])
     if getattr(transport, 'label', None) == 'labeled-double' and allow_native:
         raise Refused('CLI --execute cannot take a labeled double')
 
@@ -376,7 +423,8 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
             'program': program,
             'argv_head': argv[:8],
             'cell': cell,
-            'stdin': decode_output(input_bytes).split('\n', 1)[0],
+            # A helper's first input line is the custody nonce, never receipt data.
+            'stdin': '[redacted]' if input_bytes else '',
         })
         return transport.call(call)
 
@@ -410,15 +458,18 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
     if pre_obs['observe'] != 'verified':
         return write_error('unknown', 'inventory_pre failed-observe: %s' % pre_obs.get('reason'))
 
+    try:
+        owner_root_identity = directory_identity(plan['owner_root'])
+    except (Refused, OSError) as exc:
+        return write_error('unknown', 'owner root unavailable: %s' % exc)
+
     last_nonce = None
     last_generation = None
     for cell_id, sig_name in SIGNAL_CELLS:
-        nonce = generate_nonce()
-        last_nonce = nonce
+        run_key = 'signal-' + secrets.token_hex(16)
         cell = {
             'id': cell_id,
             'signal': sig_name,
-            'nonce': nonce,
             'closure': None,
         }
         try:
@@ -426,20 +477,17 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
             workload = transport.start({
                 'op': 'workload',
                 'program': plan['binary'],
-                'argv': [selector],
+                'argv': ['--run-id', run_key, selector],
                 'input': b'',
-                'env': {'EFFIGY_CUSTODY_NONCE': nonce},
                 'deadline_s': ACK_S,
                 'identity': identity,
                 'cell': cell_id,
-                'nonce': nonce,
             })
             calls.append({
                 'op': 'workload',
                 'program': plan['binary'],
-                'argv_head': [selector],
+                'argv_head': ['--run-id', run_key, selector],
                 'cell': cell_id,
-                'nonce': nonce,
                 'async': True,
                 'pid': workload.get('pid'),
             })
@@ -451,9 +499,83 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
             return write_error('failed', '%s workload did not admit' % cell_id)
         owner_pid = workload.get('pid')
         owner_start = workload.get('start')
-        if not isinstance(owner_pid, int) or owner_pid <= 0:
-            return write_error('failed', '%s workload did not record a live owner' % cell_id)
+        if not isinstance(owner_pid, int) or owner_pid <= 0 or not owner_start:
+            return write_error('unknown', '%s workload owner identity unavailable' % cell_id)
         cell['owner'] = {'pid': owner_pid, 'start': owner_start}
+
+        # Resolve this fresh keyed occurrence using the candidate's typed run
+        # status. The private observer rechecks its journal, gate and owner.
+        try:
+            admission_deadline = time.monotonic() + ACK_S
+            while True:
+                remaining = admission_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ValueError('admission deadline exceeded')
+                status = transport.call({
+                    'op': 'admission-status', 'program': plan['binary'],
+                    'argv': ['tasks', 'status', selector, '--json'], 'input': b'',
+                    'deadline_s': min(CALL_S, remaining), 'identity': identity, 'cell': cell_id,
+                })
+                if status.get('kind') != 'verified':
+                    raise ValueError('run status unavailable')
+                obj = json.loads(decode_output(status.get('stdout')))
+                if obj.get('schema') != 'effigy.tasks-status.v3':
+                    raise ValueError('task status schema differs')
+                if obj.get('state') == 'not-recorded' and obj.get('current') is None:
+                    time.sleep(min(0.05, max(0, admission_deadline - time.monotonic())))
+                    continue
+                view = obj.get('current') or {}
+                if (obj.get('state') != 'running' or view.get('pid') != owner_pid
+                        or not isinstance(view.get('run_id'), str)):
+                    raise ValueError('run identity differs')
+                run_id = view['run_id']
+                break
+            remaining = admission_deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError('admission deadline exceeded')
+            keyed = transport.call({
+                'op': 'run-status', 'program': plan['binary'],
+                'argv': ['run', 'status', run_key, '--json'], 'input': b'',
+                'deadline_s': min(CALL_S, remaining), 'identity': identity, 'cell': cell_id,
+            })
+            keyed_obj = json.loads(decode_output(keyed.get('stdout')))
+            keyed_run = keyed_obj['run']
+            if (keyed.get('kind') != 'verified' or keyed_obj.get('schema') != 'effigy.run.v1'
+                    or keyed_run.get('run_id') != run_id or keyed_run.get('pid') != owner_pid
+                    or keyed_run.get('task') != selector or keyed_run.get('state') != 'running'):
+                raise ValueError('run key differs')
+            root = Path(plan['owner_root'])
+            if directory_identity(root) != owner_root_identity:
+                raise ValueError('owner root moved')
+            state = root / '.effigy' / 'state'
+            directory_identity(root / '.effigy')
+            request = {
+                'checkout': str(root), 'checkout_identity': owner_root_identity,
+                'state_identity': directory_identity(state), 'run': run_id,
+                'task': selector, 'owner_pid': owner_pid,
+                'container': {'id': identity, 'created': inspected['created'],
+                              'vm_boot_id': pre_obs['boot']},
+            }
+            remaining = admission_deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError('admission deadline exceeded')
+            observed = transport.call({
+                'op': 'registration', 'program': plan['observer'], 'argv': [],
+                'input': json.dumps(request).encode(), 'deadline_s': min(CALL_S, remaining),
+                'identity': identity, 'cell': cell_id,
+            })
+            if time.monotonic() >= admission_deadline:
+                raise ValueError('admission deadline exceeded')
+            binding = registration_from_observer(
+                observed, identity, inspected['created'], pre_obs['boot'], pre_obs['pid_ns'], owner_pid)
+            if binding is None:
+                raise ValueError('registration unavailable')
+        except (LostResponse, Refused, ValueError, TypeError, KeyError, OSError) as exc:
+            return write_error('unknown', '%s registration unavailable: %s' % (cell_id, exc))
+        registration, owner_identity = binding
+        nonce = registration['nonce']
+        last_nonce = nonce
+        cell['run_id'] = run_id
 
         try:
             snap = drive(
@@ -471,13 +593,30 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
                 'unknown',
                 '%s registration failed-observe: %s' % (cell_id, snap_obs.get('reason')),
             )
-        owned = owned_members(snap_obs['members'])
-        if not owned:
+        if not matches_registration_snapshot(registration, snap_obs, pre_obs['boot']):
             return write_error('unknown', '%s registration omitted owned descendants' % cell_id)
         generation = {'boot': snap_obs['boot'], 'ns': snap_obs['ns']}
         last_generation = generation
         cell['generation'] = generation
 
+        try:
+            remaining = admission_deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError('admission deadline exceeded')
+            request['expected_owner'] = owner_identity
+            recheck = transport.call({
+                'op': 'registration-recheck', 'program': plan['observer'], 'argv': [],
+                'input': json.dumps(request).encode(), 'deadline_s': min(CALL_S, remaining),
+                'identity': identity, 'cell': cell_id,
+            })
+            if (time.monotonic() >= admission_deadline or registration_from_observer(
+                    recheck, identity, inspected['created'], pre_obs['boot'], pre_obs['pid_ns'],
+                    owner_pid) != binding):
+                raise ValueError('registration or owner moved')
+        except (LostResponse, Refused, ValueError, TypeError, KeyError) as exc:
+            return write_error('unknown', '%s registration recheck failed: %s' % (cell_id, exc))
+
+        settlement_deadline = time.monotonic() + SIGNAL_EXIT_S
         try:
             transport.signal({
                 'op': 'signal-owner',
@@ -504,39 +643,14 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
             return write_error('failed', str(exc))
 
         try:
-            after = drive(
-                'helper-snap',
-                helper_tail(full_id, ['snap'], helper_script),
-                input_bytes=(nonce + '\n').encode(),
-                cell=cell_id,
-                extra={'helper': HELPER_NAME, 'phase': 'after-signal', 'nonce': nonce},
-            )
-        except LostResponse as exc:
-            return write_error('unknown', '%s closure snap lost: %s' % (cell_id, exc))
-        after_obs = observe_snapshot(after, nonce_supplied=True)
-        if after_obs['observe'] != 'verified':
-            return write_error(
-                'unknown',
-                '%s closure failed-observe: %s' % (cell_id, after_obs.get('reason')),
-            )
-        if after_obs['boot'] != generation['boot'] or after_obs['ns'] != generation['ns']:
-            return write_error('unknown', '%s generation moved' % cell_id)
-        leftover = owned_members(after_obs['members'])
-        if leftover:
-            cell['closure'] = 'missing'
-            outcome['cells'].append(cell)
-            return write_error(
-                'unknown',
-                '%s owned descendants still present; parent exit is not closure' % cell_id,
-            )
-        cell['closure'] = 'helper-empty-owned'
-
-        try:
+            remaining = settlement_deadline - time.monotonic()
+            if remaining <= 0:
+                raise LostResponse('settlement deadline exceeded')
             transport.wait({
                 'op': 'wait-owner',
                 'pid': owner_pid,
                 'start': owner_start,
-                'deadline_s': SIGNAL_EXIT_S,
+                'deadline_s': remaining,
                 'identity': identity,
                 'cell': cell_id,
             })
@@ -551,6 +665,60 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
             return write_error('unknown', '%s owner wait lost: %s' % (cell_id, exc))
         except Refused as exc:
             return write_error('failed', str(exc))
+
+        while True:
+            remaining = settlement_deadline - time.monotonic()
+            if remaining <= 0:
+                return write_error('unknown', '%s settlement deadline exceeded' % cell_id)
+            try:
+                after = drive(
+                    'helper-snap',
+                    helper_tail(full_id, ['snap'], helper_script),
+                    deadline_s=min(CALL_S, remaining),
+                    input_bytes=(nonce + '\n').encode(),
+                    cell=cell_id,
+                    extra={'helper': HELPER_NAME, 'phase': 'after-signal', 'nonce': nonce},
+                )
+            except LostResponse as exc:
+                return write_error('unknown', '%s closure snap lost: %s' % (cell_id, exc))
+            if time.monotonic() >= settlement_deadline:
+                return write_error('unknown', '%s settlement deadline exceeded' % cell_id)
+            after_obs = observe_snapshot(after, nonce_supplied=True)
+            if after_obs['observe'] != 'verified':
+                return write_error('unknown', '%s closure failed-observe: %s' % (
+                    cell_id, after_obs.get('reason')))
+            if after_obs['boot'] != generation['boot'] or after_obs['ns'] != generation['ns']:
+                return write_error('unknown', '%s generation moved' % cell_id)
+            if not owned_members(after_obs['members']):
+                remaining = settlement_deadline - time.monotonic()
+                if remaining <= 0:
+                    return write_error('unknown', '%s settlement deadline exceeded' % cell_id)
+                try:
+                    terminal = transport.call({
+                        'op': 'terminal-status', 'program': plan['binary'],
+                        'argv': ['run', 'status', run_id, '--json'], 'input': b'',
+                        'deadline_s': remaining, 'identity': identity, 'cell': cell_id,
+                    })
+                    terminal_obj = json.loads(decode_output(terminal.get('stdout')))
+                    terminal_view = terminal_obj['run']
+                    if (terminal.get('kind') != 'verified' or terminal_obj.get('schema') != 'effigy.run.v1'
+                            or terminal_view.get('run_id') != run_id or terminal_view.get('task') != selector):
+                        raise ValueError('terminal identity differs')
+                    if terminal_view.get('phase') == 'closed':
+                        if terminal_view.get('cleanup') != 'complete':
+                            raise ValueError('cleanup not complete')
+                        if sig_name == 'KILL':
+                            if terminal_view.get('state') != 'interrupted':
+                                raise ValueError('owner-death outcome differs')
+                        elif (terminal_view.get('state') != 'cancelled'
+                              or terminal_view.get('signal') != int(SIGNAL_NUMBERS[sig_name])):
+                            raise ValueError('signal outcome differs')
+                        cell['closure'] = 'helper-empty-owned'
+                        cell['terminal'] = terminal_view.get('state')
+                        break
+                except (LostResponse, Refused, ValueError, TypeError, KeyError) as exc:
+                    return write_error('unknown', '%s terminal observation failed: %s' % (cell_id, exc))
+            time.sleep(min(0.05, max(0, settlement_deadline - time.monotonic())))
 
         try:
             status = transport.call({
@@ -573,8 +741,16 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
         except Refused as exc:
             return write_error('failed', str(exc))
         parsed_status = parse_status(status.get('stdout'))
-        if parsed_status is None or parsed_status['state'] != 'not-recorded':
-            return write_error('unknown', '%s foreground gate was not released' % cell_id)
+        try:
+            task_status = json.loads(decode_output(status.get('stdout')))
+        except (TypeError, ValueError):
+            task_status = {}
+        if (status.get('kind') != 'verified' or parsed_status is None
+                or parsed_status['state'] != 'not-recorded'
+                or task_status.get('current') is not None
+                or (task_status.get('latest') or {}).get('run_id') != run_id
+                or task_status.get('warnings')):
+            return write_error('unknown', '%s task gate was not released' % cell_id)
         cell['gate'] = parsed_status['state']
         outcome['cells'].append(cell)
 
@@ -592,24 +768,19 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
     foreign_obs = observe_snapshot(foreign_snap, nonce_supplied=bool(last_nonce))
     if foreign_obs['observe'] != 'verified':
         return write_error('unknown', 'foreign failed-observe: %s' % foreign_obs.get('reason'))
+    if (foreign_obs['boot'], foreign_obs['ns']) != (last_generation['boot'], last_generation['ns']):
+        return write_error('unknown', 'foreign generation moved')
     foreign = foreign_members(foreign_obs['members'])
+    if not foreign:
+        return write_error('unknown', 'foreign observation has no positive foreign member')
     kill_calls_before = sum(1 for c in calls if c.get('op') == 'helper-kill')
     # Strict refuse: never issue helper-kill for a foreign/unknown member.
-    if foreign:
-        outcome['cells'].append({
-            'id': 'container-foreign-unknown',
-            'signal': None,
-            'obligation': 'strict foreign/unknown refusal',
-            'refused_pids': [m['pid'] for m in foreign],
-        })
-    else:
-        outcome['cells'].append({
-            'id': 'container-foreign-unknown',
-            'signal': None,
-            'obligation': 'strict foreign/unknown refusal',
-            'refused_pids': [],
-            'note': 'no foreign members in the labeled observation',
-        })
+    outcome['cells'].append({
+        'id': 'container-foreign-unknown',
+        'signal': None,
+        'obligation': 'strict foreign/unknown refusal',
+        'refused_pids': [m['pid'] for m in foreign],
+    })
     kill_calls_after = sum(1 for c in calls if c.get('op') == 'helper-kill')
     if kill_calls_after != kill_calls_before:
         return write_error('failed', 'foreign/unknown observation issued helper-kill')
@@ -630,6 +801,8 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
             'post', identity, transport.label, post_obs,
         ))
         return write_error('unknown', 'inventory_post failed-observe: %s' % post_obs.get('reason'))
+    if (post_obs['boot'], post_obs['ns']) != (last_generation['boot'], last_generation['ns']):
+        return write_error('unknown', 'post inventory generation moved')
     leftover_owned = owned_members(post_obs['members'])
     generation = last_generation or {'boot': post_obs['boot'], 'ns': post_obs['ns']}
     for member in leftover_owned:
@@ -677,6 +850,8 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
     })
     if cleanup_failed:
         return write_error('failed', 'cleanup partial failure of owned members')
+    if leftover_owned:
+        return write_error('unknown', 'post inventory found owned members after closure; cleanup is not closure proof')
 
     if transport.label == 'labeled-double':
         return record('labeled-double', retry=False)

@@ -35,6 +35,10 @@ def main(argv=None, scratch_dir=None, overlay=None, transport=None, allow_native
     require_armed(working)
     match_go(working, go)
     verify_binary(working['candidate']['binary_path'], working['candidate']['binary_sha256'])
+    verify_binary(working['candidate']['observer_path'], working['candidate']['observer_sha256'])
+    owner_root = Path(working['candidate']['owner_root'])
+    if owner_root.is_symlink() or not owner_root.is_dir() or owner_root.resolve() != owner_root:
+        raise Refused('owner root missing or symlink')
     plan = construct_plan(working)
     if plan.get('spawn') is not False:
         raise Refused('plan must not spawn')

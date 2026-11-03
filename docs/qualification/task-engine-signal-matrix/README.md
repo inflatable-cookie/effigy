@@ -4,9 +4,11 @@ Queue tasks effigy#582 and effigy#585, building on effigy#579. Status:
 **prepared, not executed.** This directory is a source-only reconciliation
 of accepted proof credit plus an UNARMED executable packet for the genuine
 missing real-engine cells. `--execute` is a real GO-bound pass, not a stub.
-#585 binds per-cell nonce, live recorded owner identity, inspect/status
+#585 added a packet nonce, live recorded owner identity, inspect/status
 parse, observed-generation helper-kill, and failed-observe distinct from
-empty. Packet delivery, the boundary battery, a constructed command plan,
+empty. The source now attempts to observe the kernel-generated remote nonce;
+the real producer/consumer and retained-settlement proof remain necessary. Packet
+delivery, the boundary battery, a constructed command plan,
 a labeled-double control-flow pass, and owned local HostCli fake-executable
 fixtures are not native qualification, lane closure, or release credit.
 
@@ -81,7 +83,9 @@ Identity: `engine:full-id@context` with a 64-hex full id
 engine. No later accepted real-engine receipt was found in maintained
 source, the immutable PR reviews above, or the lane keep.
 
-The committed packet stays UNARMED. Placeholders stay the sentinel
+The committed packet stays UNARMED. Its source binding cannot qualify an
+unchanged candidate until the actual producer and retained settlement are
+proved by the owned fixture. Placeholders stay the sentinel
 `UNARMED`. A missing or wrong GO, hash, backend, ownership, image, or
 runtime refuses before any native subprocess. A well-formed GO still
 refuses while committed placeholders stay unarmed. `--execute` is no
@@ -96,6 +100,14 @@ double output into a native receipt. A labeled-double result is
 `qualification: false`. Failure and unknown after the invocation fence
 are retained evidence, never a retry token. Native Linux sequence TERM/HUP
 via `linux-custody.sh` remains separately GO-gated.
+
+The feature-gated host fixture definition exercises the task-engine producer,
+kernel observation and packet consumer against an owned fake HostCli backend,
+including INT, TERM, HUP and owner SIGKILL. The sentinel retains its cleared
+environment; the effect records the selected backend identity and recovery
+revalidates it before use. The owned fixture and changed-backend refusal have
+not been executed at this head. A real backend must also work with the cleared
+environment; native qualification remains separately gated.
 
 Future GO (separately authorized) must name an already-running engine and
 an already-present image digest, and a later reviewed candidate pin.
