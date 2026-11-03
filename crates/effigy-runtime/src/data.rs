@@ -6,6 +6,7 @@ mod transfer;
 mod volume_io;
 mod volumes;
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Output;
 
@@ -28,7 +29,8 @@ use effigy_containers::{
 };
 
 use crate::EffigyRuntimeError;
-use cache::{collect_global_cache_entries, project_is_running};
+use cache::{collect_global_cache_inventory, project_is_running, GlobalCachePruneVerdict};
+pub use cache::discovered_running_projects;
 use planning::{cache_kind_label, cache_scope_label, ensure_cache_prune_target_is_stopped};
 pub use planning::{
     cache_operation_plan, data_operation_plan, global_cache_operation_plan,
@@ -203,15 +205,17 @@ where
     })
 }
 
-pub fn run_container_cache_list_all<F>(
+pub fn run_container_cache_list_all<FL, F>(
     cwd: &Path,
     profile: Option<&str>,
     project_filter: Option<&str>,
     kind_filter: Option<&str>,
     output_json: bool,
+    list_running_projects: FL,
     run_runtime_volume_capture: F,
 ) -> Result<String, EffigyRuntimeError>
 where
+    FL: Fn() -> Result<BTreeSet<String>, EffigyRuntimeError>,
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
     CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
@@ -226,15 +230,22 @@ where
                 kind_filter.map(str::to_owned),
             ),
         );
-        let caches =
-            collect_global_cache_entries(cwd, &resolved_profile, &run_runtime_volume_capture)?
-                .into_iter()
-                .filter(|cache| {
-                    project_filter
-                        .is_none_or(|project| cache.project_name.as_deref() == Some(project))
-                        && kind_filter.is_none_or(|kind| cache.kind == kind)
-                })
-                .collect::<Vec<_>>();
+        let running_projects = list_running_projects()?;
+        let inventory = collect_global_cache_inventory(
+            cwd,
+            &resolved_profile,
+            &running_projects,
+            &run_runtime_volume_capture,
+        )?;
+        let caches = inventory
+            .entries
+            .into_iter()
+            .filter(|cache| {
+                project_filter
+                    .is_none_or(|project| cache.project_name.as_deref() == Some(project))
+                    && kind_filter.is_none_or(|kind| cache.kind == kind)
+            })
+            .collect::<Vec<_>>();
         progress.update(
             "inspecting cache volumes",
             Some((caches.len() as u64, caches.len() as u64)),
@@ -358,15 +369,17 @@ where
     })
 }
 
-pub fn run_container_cache_prune_all<F>(
+pub fn run_container_cache_prune_all<FL, F>(
     cwd: &Path,
     profile: Option<&str>,
     project_filter: Option<&str>,
     kind_filter: Option<&str>,
     output_json: bool,
+    list_running_projects: FL,
     run_runtime_volume_capture: F,
 ) -> Result<String, EffigyRuntimeError>
 where
+    FL: Fn() -> Result<BTreeSet<String>, EffigyRuntimeError>,
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
     CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
@@ -382,15 +395,22 @@ where
                 false,
             ),
         );
-        let caches =
-            collect_global_cache_entries(cwd, &resolved_profile, &run_runtime_volume_capture)?
-                .into_iter()
-                .filter(|cache| {
-                    project_filter
-                        .is_none_or(|project| cache.project_name.as_deref() == Some(project))
-                        && kind_filter.is_none_or(|kind| cache.kind == kind)
-                })
-                .collect::<Vec<_>>();
+        let running_projects = list_running_projects()?;
+        let inventory = collect_global_cache_inventory(
+            cwd,
+            &resolved_profile,
+            &running_projects,
+            &run_runtime_volume_capture,
+        )?;
+        let caches = inventory
+            .entries
+            .into_iter()
+            .filter(|cache| {
+                project_filter
+                    .is_none_or(|project| cache.project_name.as_deref() == Some(project))
+                    && kind_filter.is_none_or(|kind| cache.kind == kind)
+            })
+            .collect::<Vec<_>>();
         let total = caches.len() as u64;
         progress.now_waiting_for(PROBE_VOLUME_REMOVE);
         progress.update(
@@ -399,52 +419,82 @@ where
             Some(format!("listed {total} cache volumes")),
         );
         let mut entries = Vec::new();
+        let mut warnings = Vec::new();
         for (index, cache) in caches.into_iter().enumerate() {
             let done = index as u64 + 1;
             let name = cache.name.clone();
-            if cache.in_use {
-                progress.update(
-                    format!("skipping cache volume `{name}`"),
-                    Some((done, total)),
-                    Some(format!("`{name}` in use")),
-                );
-                entries.push(ContainerCachePruneEntry {
-                    name: cache.name,
-                    kind: cache.kind,
-                    size_bytes: cache.size_bytes,
-                    project_name: cache.project_name,
-                    removed: false,
-                    in_use: true,
-                });
-                continue;
+            // Contract 005: cache-like names and content classification are
+            // diagnostics and never deletion authority. Only the volume's own
+            // Effigy labels admit removal, and a discovered-running owning
+            // project stays intact.
+            match inventory.verdicts.get(&name) {
+                Some(GlobalCachePruneVerdict::Removable) => {
+                    progress.update(
+                        format!("removing cache volume `{name}`"),
+                        Some((done, total)),
+                        None,
+                    );
+                    run_runtime_volume_capture(cwd, &resolved_profile, &remove_volume_command(&name))?;
+                    progress.update(
+                        format!("removing cache volume `{name}`"),
+                        Some((done, total)),
+                        Some(format!("removed `{name}`")),
+                    );
+                    entries.push(ContainerCachePruneEntry {
+                        name: cache.name,
+                        kind: cache.kind,
+                        size_bytes: cache.size_bytes,
+                        project_name: cache.project_name,
+                        removed: true,
+                        in_use: false,
+                    });
+                }
+                Some(GlobalCachePruneVerdict::OwnedInUse { project: _ }) => {
+                    progress.update(
+                        format!("skipping cache volume `{name}`"),
+                        Some((done, total)),
+                        Some(format!("`{name}` in use")),
+                    );
+                    entries.push(ContainerCachePruneEntry {
+                        name: cache.name,
+                        kind: cache.kind,
+                        size_bytes: cache.size_bytes,
+                        project_name: cache.project_name,
+                        removed: false,
+                        in_use: true,
+                    });
+                }
+                verdict => {
+                    // Foreign labels (or a verdict that could not be resolved)
+                    // keep the volume intact and say why.
+                    let reason = match verdict {
+                        Some(GlobalCachePruneVerdict::Foreign(reason)) => reason.clone(),
+                        _ => format!("volume `{name}` has no complete inspection record"),
+                    };
+                    warnings
+                        .push(format!("left {reason}; it was not created for this environment"));
+                    progress.update(
+                        format!("skipping cache volume `{name}`"),
+                        Some((done, total)),
+                        Some(format!("left {reason}")),
+                    );
+                    entries.push(ContainerCachePruneEntry {
+                        name: cache.name,
+                        kind: cache.kind,
+                        size_bytes: cache.size_bytes,
+                        project_name: cache.project_name,
+                        removed: false,
+                        in_use: cache.in_use,
+                    });
+                }
             }
-            progress.update(
-                format!("removing cache volume `{name}`"),
-                Some((done, total)),
-                None,
-            );
-            run_runtime_volume_capture(cwd, &resolved_profile, &remove_volume_command(&name))?;
-            progress.update(
-                format!("removing cache volume `{name}`"),
-                Some((done, total)),
-                Some(format!("removed `{name}`")),
-            );
-            entries.push(ContainerCachePruneEntry {
-                name: cache.name,
-                kind: cache.kind,
-                size_bytes: cache.size_bytes,
-                project_name: cache.project_name,
-                removed: true,
-                in_use: false,
-            });
         }
         let scope_label =
             cache_scope_label("profile-wide cache inventory", project_filter, kind_filter);
 
-        Ok(render_container_report(
-            cache_prune_report(&scope_label, &entries),
-            output_json,
-        ))
+        let mut report = cache_prune_report(&scope_label, &entries);
+        annotate_warning_lines(&mut report, &warnings);
+        Ok(render_container_report(report, output_json))
     })
 }
 

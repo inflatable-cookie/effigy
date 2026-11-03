@@ -161,6 +161,40 @@ where
     ))
 }
 
+/// Complete, unambiguous runtime metadata for named volumes on one endpoint.
+/// A spawn failure is an error, never an absence, and the strict parse refuses
+/// malformed, partial or duplicate rows so missing evidence can never read as
+/// absent metadata (contract 005: an inspection failure is an error).
+pub(super) fn inspect_runtime_volume_metadata_batch_strict<F>(
+    cwd: &Path,
+    profile: &str,
+    names: &[String],
+    run_runtime_volume_capture: &F,
+) -> Result<Vec<RuntimeVolumeMetadata>, EffigyRuntimeError>
+where
+    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
+{
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let output = run_runtime_volume_capture(cwd, profile, &inspect_volumes_command(names))?;
+    let metadata = parse_inspect_volume_metadata_list_strict(
+        String::from_utf8_lossy(&output.stdout).as_ref(),
+        names,
+    )
+    .map_err(EffigyRuntimeError::task_invocation)?;
+    let mut seen = BTreeSet::new();
+    for entry in &metadata {
+        if !seen.insert(entry.name.as_str()) {
+            return Err(EffigyRuntimeError::task_invocation(format!(
+                "volume inspect returned duplicate entries for `{}`",
+                entry.name
+            )));
+        }
+    }
+    Ok(metadata)
+}
+
 #[cfg(test)]
 mod tests {
     use std::os::unix::process::ExitStatusExt;

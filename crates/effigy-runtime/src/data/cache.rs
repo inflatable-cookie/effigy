@@ -10,31 +10,57 @@ use effigy_containers::ContainerCacheGlobalEntry;
 
 use super::planning::{
     cache_kind_from_volume_name, collect_global_cache_entries_from_names,
-    parse_volume_cache_kind_rows,
+    effigy_owned_project, parse_volume_cache_kind_rows,
 };
-use super::volume_io::inspect_runtime_volume_metadata_batch;
+use super::volume_io::inspect_runtime_volume_metadata_batch_strict;
 use crate::read::discover_running_environments;
 use crate::EffigyRuntimeError;
 
-pub(super) fn collect_global_cache_entries<F>(
+/// Deletion authority for one global cache candidate (contract 005). Name and
+/// content classification stay diagnostic; only the volume's own Effigy
+/// labels prove ownership, and a discovered-running owning project stays
+/// intact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum GlobalCachePruneVerdict {
+    /// Effigy's labels prove ownership and the owning project is not
+    /// discovered running.
+    Removable,
+    /// Effigy's labels prove ownership, but the owning project is discovered
+    /// running.
+    OwnedInUse { project: String },
+    /// The labels do not prove Effigy ownership; reported and left alone.
+    Foreign(String),
+}
+
+/// The profile-wide cache inventory plus the per-candidate prune verdicts
+/// derived from complete runtime evidence.
+pub(super) struct GlobalCacheInventory {
+    /// Diagnostic cache-shaped entries; the report shape is unchanged.
+    pub entries: Vec<ContainerCacheGlobalEntry>,
+    /// One verdict per listed candidate name.
+    pub verdicts: BTreeMap<String, GlobalCachePruneVerdict>,
+}
+
+pub(super) fn collect_global_cache_inventory<F>(
     cwd: &Path,
     profile: &str,
+    running_projects: &BTreeSet<String>,
     run_runtime_volume_capture: &F,
-) -> Result<Vec<ContainerCacheGlobalEntry>, EffigyRuntimeError>
+) -> Result<GlobalCacheInventory, EffigyRuntimeError>
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
-    let running_projects = discover_running_environments()?
-        .into_iter()
-        .map(|environment| environment.policy.project_name)
-        .collect::<BTreeSet<_>>();
     let listed = run_runtime_volume_capture(cwd, profile, &list_all_volumes_command())?;
     let names = parse_listed_volume_names(String::from_utf8_lossy(&listed.stdout).as_ref())
         .into_iter()
         .filter(|name| cache_kind_from_volume_name(name).is_some() || name.starts_with("efv-"))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect::<Vec<_>>();
+    // Deletion evidence must be complete: a failed or partial inspection is
+    // an error, never missing metadata that reads as removable (contract 005).
     let metadata =
-        inspect_runtime_volume_metadata_batch(cwd, profile, &names, run_runtime_volume_capture)?
+        inspect_runtime_volume_metadata_batch_strict(cwd, profile, &names, run_runtime_volume_capture)?
             .into_iter()
             .map(|entry| (entry.name.clone(), entry))
             .collect::<BTreeMap<_, _>>();
@@ -84,13 +110,58 @@ where
         })
         .unwrap_or_default()
     };
-    Ok(collect_global_cache_entries_from_names(
+    let entries = collect_global_cache_entries_from_names(
         names,
-        &running_projects,
+        running_projects,
         &metadata,
         &cache_kind_by_name,
         &usage_by_mount_point,
-    ))
+    );
+    let verdicts = entries
+        .iter()
+        .map(|cache| {
+            (
+                cache.name.clone(),
+                prune_verdict(&cache.name, &metadata, running_projects),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    Ok(GlobalCacheInventory { entries, verdicts })
+}
+
+/// The prune verdict for one listed candidate. Ownership comes only from the
+/// volume's own Effigy labels; activity comes only from the discovered
+/// running projects keyed by the labelled project.
+fn prune_verdict(
+    name: &str,
+    metadata_by_name: &BTreeMap<String, effigy_catalog::volumes::RuntimeVolumeMetadata>,
+    running_projects: &BTreeSet<String>,
+) -> GlobalCachePruneVerdict {
+    let Some(metadata) = metadata_by_name.get(name) else {
+        // Complete strict inspection records every listed candidate, so this
+        // is not reachable through the runtime path; unproven ownership is
+        // kept intact rather than treated as removable.
+        return GlobalCachePruneVerdict::Foreign(format!(
+            "volume `{name}` has no complete inspection record"
+        ));
+    };
+    match effigy_owned_project(name, metadata) {
+        Ok(project) if running_projects.contains(&project) => {
+            GlobalCachePruneVerdict::OwnedInUse { project }
+        }
+        Ok(_) => GlobalCachePruneVerdict::Removable,
+        Err(reason) => GlobalCachePruneVerdict::Foreign(reason),
+    }
+}
+
+/// The projects with discovered running environments: the authoritative
+/// activity evidence for global cache pruning. A discovery failure is an
+/// error, never an empty inventory (contract 052 R3: unknown grants nothing).
+pub fn discovered_running_projects() -> Result<BTreeSet<String>, EffigyRuntimeError> {
+    Ok(discover_running_environments()?
+        .into_iter()
+        .map(|environment| environment.policy.project_name)
+        .collect())
 }
 
 pub(super) fn project_is_running(

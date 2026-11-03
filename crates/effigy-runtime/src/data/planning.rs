@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use effigy_catalog::volumes::{CacheVolumeKind, RuntimeVolumeMetadata};
+use effigy_catalog::volumes::{
+    CacheVolumeKind, RuntimeVolumeMetadata, VolumeIdentity, verify_volume_identity,
+};
 use effigy_containers::{ContainerCacheGlobalEntry, EffectiveContainerPolicy};
 use effigy_containers::{
     ContainerCacheOperation, ContainerDataOperation, ContainerOperationKind,
@@ -140,7 +142,11 @@ pub(super) fn collect_global_cache_entries_from_names(
             continue;
         };
         let metadata = metadata_by_name.get(&name);
-        let project_name = project_name_from_volume_name(&name)
+        // Proven Effigy ownership names the project exactly; name markers and
+        // Compose labels stay diagnostic fallbacks for everything else.
+        let project_name = metadata
+            .and_then(|entry| effigy_owned_project(&name, entry).ok())
+            .or_else(|| project_name_from_volume_name(&name))
             .or_else(|| metadata.and_then(|entry| volume_project_name_from_labels(&entry.labels)));
         let in_use = project_name
             .as_ref()
@@ -207,6 +213,29 @@ fn volume_project_name_from_labels(labels: &BTreeMap<String, String>) -> Option<
         .get("com.docker.compose.project")
         .filter(|project| !project.is_empty())
         .cloned()
+}
+
+/// The project Effigy's own labels prove for this volume, if any. Ownership
+/// requires the exact triple from contract 005: `com.effigy.managed=true`,
+/// `com.effigy.project` naming the project and `com.effigy.volume-name`
+/// naming this volume. Anything else is a lookalike, never an owner.
+pub(super) fn effigy_owned_project(
+    volume_name: &str,
+    metadata: &RuntimeVolumeMetadata,
+) -> Result<String, String> {
+    let Some(project) = metadata.labels.get("com.effigy.project") else {
+        return Err(format!(
+            "volume `{volume_name}` exists but label `com.effigy.project` is missing"
+        ));
+    };
+    match verify_volume_identity(project, volume_name, Some(metadata)) {
+        VolumeIdentity::Owned => Ok(project.clone()),
+        VolumeIdentity::Lookalike(reason) => Err(reason),
+        // A present runtime record is never absent.
+        VolumeIdentity::Absent => Err(format!(
+            "volume `{volume_name}` has no complete inspection record"
+        )),
+    }
 }
 
 #[cfg(test)]
