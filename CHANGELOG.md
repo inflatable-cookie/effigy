@@ -918,6 +918,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Refuse a keyed invocation when a different task publishes that key during
+  admission, instead of attaching it to the other task's run (effigy#629).
+
 - Name environment recovery commands with the CLI's `container <NAME> <verb>`
   argument order so actual sentinel admission accepts them.
 

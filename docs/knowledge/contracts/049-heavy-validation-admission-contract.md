@@ -273,8 +273,10 @@ following is the Q-010 control boundary (contract 052 §3.1).
   replaces the old host-global key semantics: no central uniqueness index is
   kept. Within a checkout the first invocation starts, a repeat/race attaches
   and returns its result, and a key bound to a different task refuses. Keys
-  remain unique within retention (newest 20 settled runs per task). Managed
-  tasks keep their existing `--run-id` refusal.
+  remain unique within retention (newest 20 settled runs per task). Records
+  found after a concurrent admission failure are checked against the recorded
+  task before attachment; an unreadable record never authorizes attachment.
+  Managed tasks keep their existing `--run-id` refusal.
 - **`effigy runs [--limit N] [--all]`.** This checkout's durable task and
   QA-group runs plus verified live foreground diagnostics, newest first.
   `--all` uses bounded checkout discovery in 052 §7.6. JSON remains
