@@ -432,6 +432,182 @@ fn expired_log_bytes_are_reported_never_skipped_silently() {
 }
 
 #[test]
+fn keyed_contender_observes_the_run_published_after_its_lookup() {
+    let root = tempfile::tempdir().expect("root");
+    let key = key(root.path(), "published-race");
+    let (looked_up, observed) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let contender_root = root.path().to_path_buf();
+    let contender_key = key.clone();
+    let contender = std::thread::spawn(move || {
+        crate::runner::task_engine::after_key_lookup_for_test(move || {
+            looked_up.send(()).expect("report absent lookup");
+            released.recv().expect("release contender");
+        });
+        TaskRun::begin(TaskRunRequest {
+            target: &target(&contender_root, "build"),
+            lock_wait_ms: 0,
+            custody: false,
+            scratch: false,
+            managed_run_token: None,
+            args: &[],
+            key: Some(&contender_key),
+            admission: None,
+            workspace_admission: None,
+            cwd: None,
+        })
+    });
+    observed.recv().expect("contender looked up absent key");
+    let winner = TaskRun::begin(TaskRunRequest {
+        target: &target(root.path(), "build"),
+        lock_wait_ms: 0,
+        custody: false,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: Some(&key),
+        admission: None,
+        workspace_admission: None,
+        cwd: None,
+    })
+    .expect("winner publishes while holding its gate");
+    assert_eq!(winner.id(), key.id());
+    release.send(()).expect("release contender");
+    let loser = contender.join().expect("contender thread");
+    assert!(
+        matches!(loser, Err(RunnerError::RunKeyExists { ref run }) if *run == key.id().to_string()),
+        "contender must name the published run: {loser:?}"
+    );
+    assert_eq!(
+        list_runs(Some(root.path()), 50).expect("runs").runs.len(),
+        1
+    );
+    winner.close(effigy_kernel::outcome::WorkloadOutcome::Succeeded);
+}
+
+#[test]
+fn different_task_contender_refuses_the_key_published_after_its_lookup() {
+    let root = tempfile::tempdir().expect("root");
+    let key = key(root.path(), "foreign-race");
+    let (looked_up, observed) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let contender_root = root.path().to_path_buf();
+    let contender_key = key.clone();
+    let contender = std::thread::spawn(move || {
+        crate::runner::task_engine::after_key_lookup_for_test(move || {
+            looked_up.send(()).expect("report absent lookup");
+            released.recv().expect("release contender");
+        });
+        TaskRun::begin(TaskRunRequest {
+            target: &target(&contender_root, "deploy"),
+            lock_wait_ms: 0,
+            custody: false,
+            scratch: false,
+            managed_run_token: None,
+            args: &[],
+            key: Some(&contender_key),
+            admission: None,
+            workspace_admission: None,
+            cwd: None,
+        })
+    });
+    observed.recv().expect("contender looked up absent key");
+    let winner = TaskRun::begin(TaskRunRequest {
+        target: &target(root.path(), "build"),
+        lock_wait_ms: 0,
+        custody: false,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: Some(&key),
+        admission: None,
+        workspace_admission: None,
+        cwd: None,
+    })
+    .expect("winner publishes while holding its gate");
+    release.send(()).expect("release contender");
+    let error = contender
+        .join()
+        .expect("contender thread")
+        .expect_err("different task must refuse");
+    assert!(
+        error.to_string().contains("already names run"),
+        "foreign key must refuse, got {error:?}"
+    );
+    assert_eq!(
+        list_runs(Some(root.path()), 50).expect("runs").runs.len(),
+        1
+    );
+    winner.close(effigy_kernel::outcome::WorkloadOutcome::Succeeded);
+}
+
+#[test]
+fn keyed_contention_before_publication_refuses_without_attaching() {
+    use effigy_kernel::gate::{Gate, Wait};
+    let root = tempfile::tempdir().expect("root");
+    let key = key(root.path(), "unpublished");
+    let target = target(root.path(), "build");
+    let checkout = crate::runner::task_engine::checkout::mint(root.path()).expect("checkout");
+    let state = crate::runner::task_engine::checkout_effects_root(root.path()).expect("state");
+    let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::Shell);
+    let owner = target.owner(checkout).expect("owner");
+    let gate = Gate::acquire(&cx, state, &[owner], Wait::FailFast).expect("hold task gate");
+    let result = TaskRun::begin(TaskRunRequest {
+        target: &target,
+        lock_wait_ms: 0,
+        custody: false,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: Some(&key),
+        admission: None,
+        workspace_admission: None,
+        cwd: None,
+    });
+    assert!(
+        matches!(result, Err(ref error) if !matches!(error, RunnerError::RunKeyExists { .. })),
+        "unpublished gate is not an attachment: {result:?}"
+    );
+    assert!(list_runs(Some(root.path()), 50)
+        .expect("runs")
+        .runs
+        .is_empty());
+    drop(gate);
+}
+
+#[test]
+fn unreadable_key_journal_refuses_without_attaching() {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let root = tempfile::tempdir().expect("root");
+    let key = key(root.path(), "unreadable");
+    let state = crate::runner::task_engine::checkout_effects_root(root.path()).expect("state");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(state.path().join(effigy_kernel::store::DB_NAME))
+        .expect("owned journal");
+    file.write_all(b"not a sqlite journal")
+        .expect("write corrupt journal");
+    drop(file);
+    let result = TaskRun::begin(TaskRunRequest {
+        target: &target(root.path(), "build"),
+        lock_wait_ms: 0,
+        custody: false,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: Some(&key),
+        admission: None,
+        workspace_admission: None,
+        cwd: None,
+    });
+    let error = result.expect_err("unreadable journal refuses");
+    assert!(error.to_string().contains("cannot be checked"), "{error}");
+}
+
+#[test]
 fn a_run_key_names_one_run_under_racing_invocations_and_repeats() {
     let root = tempfile::tempdir().expect("root");
     let key = key(root.path(), "race");

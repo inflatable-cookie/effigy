@@ -56,6 +56,8 @@ pub(in crate::runner) use kernel::{
     routed_signals, startup_executable, state_home_path, CustodyWait,
 };
 pub(in crate::runner) use process::spawn_environment;
+#[cfg(test)]
+pub(in crate::runner) use run::after_key_lookup_for_test;
 pub(in crate::runner) use run::{fresh_request_id, fresh_run_id, request_run_stop};
 pub(in crate::runner) use spawn_env::remaining as remaining_lifetime;
 pub(in crate::runner) use spawn_env::{nested_capture, spawn_plain_env, SpawnScope};

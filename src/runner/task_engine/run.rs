@@ -229,6 +229,15 @@ struct Parent {
 thread_local! {
     static PARENTS: RefCell<Vec<Parent>> = const { RefCell::new(Vec::new()) };
 }
+#[cfg(test)]
+thread_local! {
+    static AFTER_KEY_LOOKUP: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(in crate::runner) fn after_key_lookup_for_test(hook: impl FnOnce() + 'static) {
+    AFTER_KEY_LOOKUP.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
 pub(in crate::runner) struct ParentScope;
 impl Drop for ParentScope {
     fn drop(&mut self) {
@@ -489,6 +498,12 @@ impl TaskRun {
             (Some(admission), _) => admission.ticket.run(),
             (None, Some(key)) => {
                 refuse_bound_key(key, &task_id, &request.target.root)?;
+                #[cfg(test)]
+                AFTER_KEY_LOOKUP.with(|slot| {
+                    if let Some(hook) = slot.borrow_mut().take() {
+                        hook();
+                    }
+                });
                 key.id()
             }
             (None, None) => new_run_id()?,
@@ -634,13 +649,17 @@ impl TaskRun {
                 &mut TaskSettlement::default(),
             ),
         }
-        .map_err(|error| match request.key {
-            // The racing first invocation with this key holds the gate, or
-            // finished between our check and our insert: attach to it.
-            Some(key) if key_run_exists(key, &request.target.root) => RunnerError::RunKeyExists {
-                run: key.id().to_string(),
-            },
-            _ => begin_error(error, request.target, request.lock_wait_ms, started),
+        .map_err(|error| {
+            if let Some(key) = request.key {
+                // Another invocation may have published after our first lookup.
+                // Classify its actual task before offering to attach.
+                if key_run_exists(key, &request.target.root) {
+                    if let Err(bound) = refuse_bound_key(key, &task_id, &request.target.root) {
+                        return bound;
+                    }
+                }
+            }
+            begin_error(error, request.target, request.lock_wait_ms, started)
         });
         let run = match run {
             Ok(run) => run,

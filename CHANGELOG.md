@@ -918,6 +918,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Refuse a keyed invocation when a different task publishes that key during
+  admission, instead of attaching it to the other task's run (effigy#629).
+
 - Collect every remaining default-suite failure at milestone QA instead of
   cancelling the selection at the first one: canonical `effigy qa` now runs
   its built-in default suite as `test -- --no-fail-fast`, so the resolved
