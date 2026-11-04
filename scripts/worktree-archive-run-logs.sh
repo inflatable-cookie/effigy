@@ -144,7 +144,14 @@ for rundir in "$runs"/*; do
       break
     fi
     out="$dest/$id.$name"
-    if ! head -c "$want" <"$src" >"$out" 2>/dev/null; then
+    # BSD head rejects a zero byte count. Empty regular segments are valid
+    # evidence, so create their empty archive copy directly instead.
+    if [ "$want" -eq 0 ]; then
+      if ! : >"$out"; then
+        rm -f "$out"
+        fail "cannot write archive copy of $id/$name"
+      fi
+    elif ! head -c "$want" <"$src" >"$out" 2>/dev/null; then
       rm -f "$out"
       if [ -r "$src" ]; then
         fail "cannot write archive copy of $id/$name"

@@ -918,6 +918,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Preserve empty regular kernel run-log segments as zero-byte archive copies
+  with their SHA-256 manifest entry during worktree teardown (effigy#633).
 - Preserve this checkout's kernel run logs before worktree teardown
   removes the checkout: `scripts/worktree-lifecycle.sh teardown` first runs
   the bounded `scripts/worktree-archive-run-logs.sh` helper, which copies

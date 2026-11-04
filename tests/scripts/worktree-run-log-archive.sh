@@ -33,12 +33,13 @@ mkdir -p "$repo/.effigy/state/runs/7" "$repo/.effigy/state/runs/9"
 printf 'hello stdout\n' >"$repo/.effigy/state/runs/7/0.stdout.0.log"
 printf 'boom stderr\n' >"$repo/.effigy/state/runs/7/0.stderr.0.log"
 printf 'second run\n' >"$repo/.effigy/state/runs/9/3.stdout.128.log"
+: >"$repo/.effigy/state/runs/9/4.stderr.0.log"
 sh "$helper" "$repo" "$base/nested" >"$out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] || fail "copy exit $rc: $(cat "$out")"
 grep -q "status=ok" "$out" || fail "expected status=ok: $(cat "$out")"
 dest=$(sed -n 's/.*archive=\([^ ]*\).*/\1/p' "$out")
 [ -n "$dest" ] && [ -d "$dest" ] || fail "no archive dir: $(cat "$out")"
-for rel in 7/0.stdout.0.log 7/0.stderr.0.log 9/3.stdout.128.log; do
+for rel in 7/0.stdout.0.log 7/0.stderr.0.log 9/3.stdout.128.log 9/4.stderr.0.log; do
   flat=$(printf '%s' "$rel" | tr '/' '.')
   cmp -s "$repo/.effigy/state/runs/$rel" "$dest/$flat" || fail "bytes differ for $rel"
   size=$(wc -c <"$repo/.effigy/state/runs/$rel" | tr -d ' ')

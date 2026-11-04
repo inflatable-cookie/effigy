@@ -1535,8 +1535,9 @@ archive copies the available original files from only this checkout's
 a fresh private `0700` directory under `/Volumes/Builds/scratch/effigy/`
 — outside Queue run cleanup so the evidence survives checkout removal —
 with a manifest binding each copy to its checkout-relative path, byte count
-and SHA-256. Symlinks, nonregular files and anything outside that tree are
-refused and recorded, never followed; per-file (1 MiB), total (16 MiB) and
+and SHA-256. Empty regular segments are retained as zero-byte copies with the
+SHA-256 of empty bytes. Symlinks, nonregular files and anything outside that
+tree are refused and recorded, never followed; per-file (1 MiB), total (16 MiB) and
 file-count (200) caps, changed sources and unreadable files are recorded
 honestly; a missing runs tree is a no-op, while a refused (symlinked
 state component) or unavailable (unusable scratch base) archive fails
