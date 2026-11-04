@@ -48,6 +48,15 @@ def exclusive(path, value, *, dir_fd=None):
         os.fsync(out.fileno())
 
 
+def exclusive_bytes(path, data, *, dir_fd=None):
+    # Exclusive fsynced retention of exact original bytes (never a re-encoding).
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
+    with os.fdopen(fd, 'wb') as out:
+        out.write(data)
+        out.flush()
+        os.fsync(out.fileno())
+
+
 def run(argv, *, cwd=None, env=None, timeout=30, check=True, data=None):
     # Diagnostics are fixed: subprocess output can include a guest credential.
     result = subprocess.run([str(x) for x in argv], cwd=cwd, env=env, input=data,

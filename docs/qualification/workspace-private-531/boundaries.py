@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (BACKENDS, PACKET, SCRATCH, artifact, digest, exclusive, validate_go,
+from common import (BACKENDS, PACKET, SCRATCH, artifact, digest, exclusive, exclusive_bytes, validate_go,
                     open_qualification_root, qualification_path, validate_inputs)
 
 HEAD = '1' * 40
@@ -41,6 +41,92 @@ def go(cell):
                 backend=cell['backend'], budget_seconds=cell['budget_seconds'], engine_identity=cell['engine_identity'],
                 effects='workspace-private-531-full-session-r1',
                 expires_at=(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=1)).isoformat())
+
+
+def entry_go(cell, inputs_sha256):
+    value = go(cell)
+    value['inputs_sha256'] = inputs_sha256
+    return value
+
+
+BASELINE = {'containers': ['baseline-container'], 'networks': [{'name': 'baseline-net', 'engine_id': None,
+            'configuration_sha256': 'n' * 64}], 'volumes': ['baseline-volume']}
+
+
+def complete_cells():
+    # The exact full-session cell contract runtime.py records, with the fields
+    # the aggregate's positive-semantics judgment reads.
+    return ([{'cell': 'production-refusal', 'inventory': BASELINE},
+             {'cell': 'positive-session', 'session': 'session-1', 'environment_generation': 4,
+              'container_id': 'c' * 64},
+             {'cell': 'native-identity-and-tls', 'wrong_pin_refused': True},
+             {'cell': 'level-one-stream', 'real_exit': 23, 'no_pty_and_stdin_eof': True},
+             {'cell': 'real-signal', 'signal': 15},
+             {'cell': 'credential-refusal', 'invalid_new_client_refused': True},
+             {'cell': 'caller-drop', 'actual_cancelled_and_settled': True, 'cause': 'OwnerLost'},
+             {'cell': 'gap-and-truncation', 'unknown_refused': True},
+             {'cell': 'kernel-custody', 'actual_helpers': True},
+             {'cell': 'down', 'session': 'session-1', 'closed': True},
+             {'cell': 'session-crash-recovery', 'killed_supervisor': 'supervisor-1', 'fresh_session': 'session-2'},
+             {'cell': 'positive-session', 'session': 'session-3', 'environment_generation': 5},
+             {'cell': 'down', 'session': 'session-2', 'closed': True},
+             {'cell': 'positive-session', 'session': 'session-4', 'environment_generation': 6},
+             {'cell': 'down', 'session': 'session-4', 'closed': True},
+             {'cell': 'baseline-and-cleanup', 'inventory': BASELINE, 'fixture_retained': True}])
+
+
+def invocation_record(backend, cell, base, source_head=HEAD, inputs_sha256='f' * 64, complete=None,
+                      label=None):
+    # An owned, original-shaped invocation receipt over real fixture files; the
+    # original complete receipt lives in a real pinned root whose identity is
+    # observed, never asserted, and its exact bytes are retained as an export.
+    label = label or backend
+    qual = base / ('root-' + label)
+    qual.mkdir(mode=0o700)
+    identity = qual.stat()
+    cell = copy.deepcopy(cell)
+    cell['qualification_root'] = dict(path=str(qual), device=identity.st_dev,
+                                     inode=identity.st_ino, uid=identity.st_uid)
+    complete_path = qual / 'complete.json'
+    exclusive(complete_path, complete or {'cells': complete_cells(), 'native': True,
+                                          'production_enabled': False})
+    export = base / (label + '-receipt-export.json')
+    exclusive_bytes(export, complete_path.read_bytes())
+    binding = {'schema': 'effigy.workspace-private-backend-invocation.v1', 'backend': backend,
+               'source_head': source_head,
+               'programs': {name: 'p' * 64 for name in ('launch.py', 'runtime.py', 'common.py', 'probe.py')},
+               'contract': 'effigy.workspace-private-proof.v1',
+               'candidate': dict(cell['candidate']), 'candidate_receipt': dict(cell['candidate_receipt']),
+               'production': dict(cell['production']), 'production_receipt': dict(cell['production_receipt']),
+               'old_source_head': cell['old_source_head'], 'old_binary': dict(cell['old_binary']),
+               'old_source_receipt': dict(cell['old_source_receipt']),
+               'inputs': {'path': str(base / (backend + '-inputs.json')), 'sha256': inputs_sha256},
+               'go_bindings': {'path': str(base / 'go-index.json'), 'sha256': '1' * 64},
+               'go_receipt': {'path': str(base / (backend + '-go-receipt.json')), 'sha256': '2' * 64},
+               'go_decision_id': 'recorded-operator-decision', 'go_expires_at': '2099-01-01T00:00:00+00:00',
+               'qualification_root': cell['qualification_root'], 'driver': cell['driver'],
+               'engine_kind': cell['engine_kind'], 'engine_identity': cell['engine_identity'],
+               'runtime_image': cell['runtime_image'], 'budget_seconds': cell['budget_seconds'],
+               'one_shot_marker': str(SCRATCH / ('531-' + inputs_sha256 + '-' + backend + '.started.json'))}
+    if cell['driver'] == 'ssh':
+        binding.update(ssh_alias=cell.get('ssh_alias', 'effigy-531-vault'), ssh_config=cell['ssh_config'],
+                       ssh_known_hosts=cell['ssh_known_hosts'])
+    record = {'schema': 'effigy.workspace-private-backend-invocation.v1', 'backend': backend, 'exit_code': 0,
+              'source_unchanged': True, 'positive': True,
+              'host': binding.get('ssh_alias', 'local'), 'receipt': str(complete_path),
+              'receipt_sha256': digest(complete_path),
+              'receipt_export': {'path': str(export), 'sha256': digest(export)},
+              'stdout_sha256': 'a' * 64, 'stderr_sha256': 'a' * 64,
+              'binding': binding}
+    path = base / (label + '.invocation.json')
+    exclusive(path, record)
+    return path, record
+
+
+def write_bound(base, name, value):
+    path = base / name
+    exclusive(path, value)
+    return path, digest(path)
 
 
 class Boundaries(unittest.TestCase):
@@ -243,11 +329,12 @@ class Boundaries(unittest.TestCase):
     def test_packet_modules_parse_without_bytecode_or_effects(self):
         for path in PACKET.glob('*.py'):
             ast.parse(path.read_bytes(), filename=str(path))
-        # Importing the launcher/runtime is safe even without a GO or engine.
+        # Importing the launcher/runtime/verifier is safe even without a GO or engine.
         with patch('subprocess.run', side_effect=AssertionError('native call during import')):
             import launch
             import runtime
-            self.assertTrue(callable(launch.main) and callable(runtime.main))
+            import aggregate
+            self.assertTrue(callable(launch.main) and callable(runtime.main) and callable(aggregate.main))
 
     def test_stream_probe_requires_observed_first_frames_before_completion(self):
         import selectors
@@ -512,6 +599,498 @@ class Boundaries(unittest.TestCase):
                     launch.main()
                 self.assertEqual(native.call_count, 1)
 
+
+    def test_backend_entry_selects_its_exact_authority_and_binds_the_original_receipt(self):
+        import io
+        import launch
+        from contextlib import redirect_stdout
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory(prefix='531-entry-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            cells = {cell['backend']: cell for cell in inputs()['backends']}
+            qual = base / 'entry-root'
+            qual.mkdir(mode=0o700)
+            identity = qual.stat()
+            cells['desktop']['qualification_root'] = dict(path=str(qual), device=identity.st_dev,
+                                                         inode=identity.st_ino, uid=identity.st_uid)
+            complete = qual / 'complete.json'
+            exclusive(complete, {'cells': [], 'native': True})
+
+            def fixture(evidence_name='evidence', foreign_desktop=False):
+                value = inputs()
+                value['evidence'] = str(base / evidence_name)
+                value['backends'] = [cells[cell['backend']] for cell in value['backends']]
+                inputs_path, approved = write_bound(base, 'inputs-' + evidence_name + '.json', value)
+                index = {}
+                for backend, cell in cells.items():
+                    receipt = entry_go(cell, approved)
+                    if foreign_desktop and backend == 'desktop':
+                        receipt['backend'] = 'colima'  # the selected GO names another backend
+                    path, bound = write_bound(base, backend + '-go-' + evidence_name + '.json', receipt)
+                    index[backend] = {'path': str(path), 'sha256': bound}
+                index_path, index_hash = write_bound(base, 'go-index-' + evidence_name + '.json', index)
+                argv = ['launch.py', '--inputs', str(inputs_path), '--sha256', approved,
+                        '--go-bindings', str(index_path), '--go-sha256', index_hash]
+                return argv, value
+
+            # A GO naming another backend refuses before any evidence or effect.
+            argv, _ = fixture(evidence_name='evidence-foreign', foreign_desktop=True)
+            with patch.object(sys, 'argv', argv + ['--backend', 'desktop']), \
+                 patch.object(launch, 'source_head', return_value=HEAD), \
+                 patch.object(launch, 'run', side_effect=AssertionError('native run for foreign authority')), \
+                 patch.object(Path, 'mkdir', side_effect=AssertionError('effect for foreign authority')):
+                with self.assertRaisesRegex(RuntimeError, 'GO belongs to another backend'):
+                    launch.main()
+
+            # Only the selected backend's GO is read: the other GO receipts stay
+            # unparsable bytes, so any attempt to validate them would fail loudly.
+            argv, value = fixture()
+            for backend in ('colima', 'linux'):
+                (base / (backend + '-go-evidence.json')).write_bytes(b'not a go receipt')
+            result = SimpleNamespace(returncode=0, stderr=b'',
+                                     stdout=json.dumps({'receipt': str(complete)}).encode())
+            printed = io.StringIO()
+            with patch.object(sys, 'argv', argv + ['--backend', 'desktop']), \
+                 patch.object(launch, 'source_head', return_value=HEAD), \
+                 patch.object(launch, 'run', return_value=result) as native, \
+                 redirect_stdout(printed):
+                launch.main()
+            self.assertEqual(native.call_count, 1)
+            payload = json.loads(printed.getvalue())
+            self.assertEqual(payload['backend'], 'desktop')
+            self.assertFalse(payload['qualified'])
+            self.assertEqual(payload['aggregate'], 'verify:workspace:private-qualification:aggregate')
+            self.assertFalse(payload['production_enablement'])
+            record = json.loads(Path(payload['invocation']).read_text())
+            self.assertEqual(record['exit_code'], 0)
+            self.assertIs(record['positive'], True)
+            self.assertIs(record['source_unchanged'], True)
+            self.assertEqual(record['receipt'], str(complete))
+            self.assertEqual(record['receipt_sha256'], digest(complete))
+            export = record['receipt_export']
+            self.assertEqual(digest(Path(export['path'])), record['receipt_sha256'])
+            binding = record['binding']
+            for key in ('source_head', 'programs', 'contract', 'candidate', 'candidate_receipt', 'production',
+                        'production_receipt', 'old_source_head', 'old_binary', 'old_source_receipt', 'inputs',
+                        'go_bindings', 'go_receipt', 'go_decision_id', 'qualification_root', 'driver',
+                        'engine_kind', 'engine_identity', 'runtime_image', 'budget_seconds', 'one_shot_marker'):
+                self.assertIn(key, binding)
+            self.assertEqual(binding['source_head'], HEAD)
+            self.assertEqual(binding['contract'], 'effigy.workspace-private-proof.v1')
+            self.assertEqual(binding['qualification_root']['path'], str(qual))
+            self.assertEqual(binding['inputs']['sha256'], argv[argv.index('--sha256') + 1])
+            self.assertEqual(binding['go_receipt'],
+                             json.loads((base / 'go-index-evidence.json').read_text())['desktop'])
+            self.assertEqual(binding['programs']['launch.py'], digest(PACKET / 'launch.py'))
+            self.assertTrue(binding['one_shot_marker'].endswith('-desktop.started.json'))
+            self.assertFalse((base / 'evidence' / 'complete.json').exists(),
+                             'one backend entry cannot imply aggregate qualification')
+
+            # A source change after the backend refuses and yields honest,
+            # nonqualifying evidence: the bound receipt stays, never positive.
+            argv, value = fixture(evidence_name='evidence-2')
+            with patch.object(sys, 'argv', argv + ['--backend', 'desktop']), \
+                 patch.object(launch, 'source_head', side_effect=[HEAD, '3' * 40]), \
+                 patch.object(launch, 'run', return_value=result):
+                with self.assertRaisesRegex(RuntimeError, 'proof source changed'):
+                    launch.main()
+            retained = json.loads((base / 'evidence-2' / 'desktop.json').read_text())
+            self.assertEqual(retained['exit_code'], 0)
+            self.assertIs(retained['source_unchanged'], False)
+            self.assertIs(retained['positive'], False)
+            self.assertEqual(digest(Path(retained['receipt_export']['path'])), retained['receipt_sha256'])
+
+    def test_linux_export_transport_is_quoted_bounded_and_hash_bound(self):
+        import hashlib
+        import launch
+        import shlex
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory(prefix='531-export-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            # The remote original lives behind a path that requires quoting; the
+            # local root is never opened for the ssh driver.
+            receipt_root = str(SCRATCH / '531-unarmed linux')
+            receipt_path = receipt_root + '/complete.json'
+            payload = json.dumps({'cells': complete_cells(), 'native': True,
+                                  'production_enabled': False}).encode()
+
+            def fixture(evidence_name):
+                value = inputs()
+                value['evidence'] = str(base / evidence_name)
+                cell = copy.deepcopy(value['backends'][2])
+                cell['ssh_alias'] = 'effigy-531-vault'
+                cell['qualification_root'] = dict(path=receipt_root, device=0, inode=0, uid=os.geteuid())
+                remote_inputs = str(base / ('remote-inputs-' + evidence_name + '.json'))
+                remote_go = str(base / ('remote-go-' + evidence_name + '.json'))
+                cell['remote'] = {'packet': str(base / 'remote-packet'), 'inputs': remote_inputs,
+                                  'go_bindings': remote_go}
+                value['backends'][2] = cell
+                inputs_path, approved = write_bound(base, 'inputs-' + evidence_name + '.json', value)
+                go_path, _ = write_bound(base, 'linux-go-' + evidence_name + '.json', entry_go(cell, approved))
+                index_path, index_hash = write_bound(base, 'go-index-' + evidence_name + '.json',
+                                                     {'linux': {'path': str(go_path), 'sha256': digest(go_path)}})
+                argv = ['launch.py', '--inputs', str(inputs_path), '--sha256', approved,
+                        '--go-bindings', str(index_path), '--go-sha256', index_hash, '--backend', 'linux']
+                digests = {str(Path(cell['remote']['packet']) / name): digest(PACKET / name)
+                           for name in ('common.py', 'runtime.py', 'probe.py')}
+                digests[remote_inputs] = approved
+                digests[remote_go] = index_hash
+                return argv, digests, approved
+
+            def drive(argv, digests, transported_payload, receipt_digest, evidence_name):
+                calls = []
+                def transport_double(prefix_argv, **kwargs):
+                    calls.append(list(prefix_argv))
+                    command = prefix_argv[-1]
+                    if command.startswith('sha256sum -- '):
+                        target = shlex.split(command)[-1]
+                        found = receipt_digest if target == receipt_path else digests[target]
+                        return SimpleNamespace(returncode=0, stderr=b'',
+                                               stdout=(found + '  ' + target + '\n').encode())
+                    if command.startswith('head -c '):
+                        return SimpleNamespace(returncode=0, stderr=b'', stdout=transported_payload)
+                    # The reviewed runtime itself, executed over the pinned transport.
+                    return SimpleNamespace(returncode=0, stderr=b'',
+                                           stdout=json.dumps({'receipt': receipt_path}).encode())
+                with patch.object(sys, 'argv', argv), \
+                     patch.object(launch, 'source_head', return_value=HEAD), \
+                     patch.object(launch, 'ssh_prefix', return_value=['ssh-fixture', 'alias']), \
+                     patch.object(launch, 'run', side_effect=transport_double):
+                    launch.main()
+                return calls
+
+            # Positive: quoted remote read capped at the source, hash-bound
+            # transport, retained export.
+            argv, digests, approved = fixture('evidence')
+            calls = drive(argv, digests, payload, hashlib.sha256(payload).hexdigest(), 'evidence')
+            export_calls = [item for item in calls if item[-1].startswith('head -c ')]
+            self.assertEqual(len(export_calls), 1)
+            self.assertEqual(export_calls[0][-1], 'head -c ' + str(launch.MAX_EXPORT_BYTES + 1)
+                             + ' -- ' + shlex.quote(receipt_path))
+            self.assertIn(' ', receipt_path, 'the exercised remote path requires quoting')
+            record = json.loads((base / 'evidence' / 'linux.json').read_text())
+            self.assertEqual(record['receipt'], receipt_path)
+            self.assertEqual(record['receipt_sha256'], hashlib.sha256(payload).hexdigest())
+            self.assertIs(record['positive'], True)
+            export = record['receipt_export']
+            self.assertEqual(Path(export['path']).read_bytes(), payload)
+            self.assertEqual(export['sha256'], record['receipt_sha256'])
+            self.assertFalse((base / 'evidence' / 'complete.json').exists())
+
+            # A transport delivering bytes other than the recorded original refuses.
+            argv, digests, approved = fixture('evidence-2')
+            with self.assertRaisesRegex(RuntimeError, 'transported original receipt differs'):
+                drive(argv, digests, payload + b' ', hashlib.sha256(payload).hexdigest(), 'evidence-2')
+            self.assertFalse((base / 'evidence-2' / 'linux.json').exists())
+
+            # An oversized transport refuses before retention on either driver.
+            oversize = b'x' * (launch.MAX_EXPORT_BYTES + 1)
+            argv, digests, approved = fixture('evidence-3')
+            with self.assertRaisesRegex(RuntimeError, 'exceeds its retained size bound'):
+                drive(argv, digests, oversize, hashlib.sha256(oversize).hexdigest(), 'evidence-3')
+            self.assertFalse((base / 'evidence-3' / 'linux.json').exists())
+
+            # The local driver's held-descriptor read is size-bounded too.
+            value = inputs()
+            value['evidence'] = str(base / 'evidence-4')
+            local_cell = copy.deepcopy(value['backends'][1])
+            local_root = base / 'oversize-root'
+            local_root.mkdir(mode=0o700)
+            identity = local_root.stat()
+            local_cell['qualification_root'] = dict(path=str(local_root), device=identity.st_dev,
+                                                    inode=identity.st_ino, uid=identity.st_uid)
+            (local_root / 'complete.json').write_bytes(oversize)
+            value['backends'][1] = local_cell
+            inputs_path, approved = write_bound(base, 'inputs-local-oversize.json', value)
+            go_path, _ = write_bound(base, 'desktop-go-oversize.json', entry_go(local_cell, approved))
+            index_path, index_hash = write_bound(base, 'go-index-oversize.json',
+                                                 {'desktop': {'path': str(go_path), 'sha256': digest(go_path)}})
+            argv = ['launch.py', '--inputs', str(inputs_path), '--sha256', approved,
+                    '--go-bindings', str(index_path), '--go-sha256', index_hash, '--backend', 'desktop']
+            local_result = SimpleNamespace(returncode=0, stderr=b'',
+                                           stdout=json.dumps({'receipt': str(local_root / 'complete.json')}).encode())
+            with patch.object(sys, 'argv', argv), \
+                 patch.object(launch, 'source_head', return_value=HEAD), \
+                 patch.object(launch, 'run', return_value=local_result):
+                with self.assertRaisesRegex(RuntimeError, 'exceeds its retained size bound'):
+                    launch.main()
+            self.assertFalse((base / 'evidence-4' / 'desktop.json').exists())
+
+    def test_one_shot_marker_consumes_replay_at_the_runtime_entry(self):
+        import runtime
+        with tempfile.TemporaryDirectory(prefix='531-one-shot-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            value = inputs()
+            inputs_path, approved = write_bound(base, 'inputs.json', value)
+            cell = value['backends'][1]
+            go_path, _ = write_bound(base, 'desktop-go.json', entry_go(cell, approved))
+            index_path, index_hash = write_bound(base, 'go-index.json',
+                                                 {'desktop': {'path': str(go_path), 'sha256': digest(go_path)}})
+            argv = ['runtime.py', '--inputs', str(inputs_path), '--sha256', approved,
+                    '--go-bindings', str(index_path), '--go-sha256', index_hash, '--backend', 'desktop']
+            windows = []
+            class FakeWindow:
+                def __init__(self, cell, sha256, go):
+                    windows.append(cell['backend'])
+                def execute(self):
+                    pass
+                def close(self):
+                    pass
+            with patch.object(sys, 'argv', argv), patch.object(runtime, 'SCRATCH', base), \
+                 patch.object(runtime, 'Window', FakeWindow):
+                runtime.main()
+            self.assertEqual(windows, ['desktop'])
+            marker = base / ('531-' + approved + '-desktop.started.json')
+            self.assertEqual(json.loads(marker.read_text())['backend'], 'desktop')
+            with patch.object(sys, 'argv', argv), patch.object(runtime, 'SCRATCH', base), \
+                 patch.object(runtime, 'Window', FakeWindow):
+                with self.assertRaises(FileExistsError):
+                    runtime.main()
+            self.assertEqual(windows, ['desktop'], 'replay must refuse before another window')
+
+    def test_aggregate_verifier_is_read_only_and_requires_all_positive_same_contract_receipts(self):
+        import io
+        import aggregate
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory(prefix='531-aggregate-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            cells = inputs()['backends']
+            cells[2]['ssh_alias'] = 'effigy-531-vault'
+            paths, records = {}, {}
+            for backend, cell in zip(BACKENDS, cells):
+                paths[backend], records[backend] = invocation_record(backend, cell, base)
+
+            receipts = ['{}={}'.format(backend, paths[backend]) for backend in BACKENDS]
+            hashes = ['{}={}'.format(backend, digest(paths[backend])) for backend in BACKENDS]
+
+            def call(source_head=HEAD, receipt_list=None, hash_list=None):
+                receipt_list = receipts if receipt_list is None else receipt_list
+                hash_list = hashes if hash_list is None else hash_list
+                return (['aggregate.py', '--source-head', source_head]
+                        + sum((['--receipt', item] for item in receipt_list), [])
+                        + sum((['--receipt-sha256', item] for item in hash_list), []))
+
+            def mutated(name, backend, **changes):
+                record = copy.deepcopy(records[backend])
+                record['binding'] = dict(record['binding'], **changes.pop('binding', {}))
+                record.update(changes)
+                path, bound = write_bound(base, name, record)
+                return '{}={}'.format(backend, path), '{}={}'.format(backend, bound)
+
+            def reexported(name, backend, payload):
+                # Honestly bound export bytes that are not a qualifying receipt:
+                # the whole byte chain is consistent, the semantics are not.
+                export = base / name
+                exclusive_bytes(export, payload)
+                record = copy.deepcopy(records[backend])
+                record['receipt_export'] = {'path': str(export), 'sha256': digest(export)}
+                record['receipt_sha256'] = digest(export)
+                path, bound = write_bound(base, name + '.invocation.json', record)
+                return '{}={}'.format(backend, path), '{}={}'.format(backend, bound)
+
+            # Native Linux genuinely has its own artifact bytes; only the shared
+            # source, features, contract, driver bytes and old source are equal.
+            linux_cell = copy.deepcopy(cells[2])
+            linux_cell.update(candidate=dict(linux_cell['candidate'], sha256='e' * 64),
+                              candidate_receipt=dict(linux_cell['candidate_receipt'], sha256='e' * 64),
+                              production=dict(linux_cell['production'], sha256='d' * 64),
+                              production_receipt=dict(linux_cell['production_receipt'], sha256='d' * 64),
+                              old_binary=dict(linux_cell['old_binary'], sha256='9' * 64),
+                              old_source_receipt=dict(linux_cell['old_source_receipt'], sha256='9' * 64))
+            platform_path, _ = invocation_record('linux', linux_cell, base, label='linux-platform')
+            per_platform = [('{}={}'.format(backend, platform_path if backend == 'linux' else paths[backend]))
+                            for backend in BACKENDS]
+            per_platform_hashes = [('{}={}'.format(backend, digest(platform_path if backend == 'linux'
+                                                                       else paths[backend])))
+                                   for backend in BACKENDS]
+
+            # Every fixture byte exists before the verifier runs; the final
+            # snapshot proves it wrote and mutated nothing.
+            foreign = base / 'foreign.invocation.json'
+            foreign.write_text(paths['desktop'].read_text() + ' ')
+            failed_binding, failed_hash = mutated('failed.invocation.json', 'desktop', exit_code=1)
+            changed_binding, changed_hash = mutated('source-changed.invocation.json', 'desktop',
+                                                    source_unchanged=False, positive=False)
+            stale_binding, stale_hash = mutated('stale.invocation.json', 'linux',
+                                                binding={'source_head': '2' * 40})
+            feature_binding, feature_hash = mutated('feature.invocation.json', 'linux', binding={
+                'candidate_receipt': dict(records['linux']['binding']['candidate_receipt'],
+                                          features=['workspace-private-qualification',
+                                                    'workspace-serving-fixture'])})
+            misbound_binding, misbound_hash = mutated('misbound.invocation.json', 'linux', binding={
+                'candidate': dict(records['linux']['binding']['candidate'], sha256='7' * 64)})
+            foreign_old_binding, foreign_old_hash = mutated('foreign-old.invocation.json', 'linux', binding={
+                'old_source_head': '4' * 40,
+                'old_source_receipt': dict(records['linux']['binding']['old_source_receipt'],
+                                           source_head='4' * 40)})
+            contract_binding, contract_hash = mutated('contract.invocation.json', 'linux', binding={
+                'contract': 'effigy.workspace-private-proof.v0'})
+            production_binding, production_hash = mutated('production-features.invocation.json', 'linux',
+                                                          binding={'production_receipt': dict(
+                                                              records['linux']['binding']['production_receipt'],
+                                                              features=['workspace-private-qualification'])})
+            programs_binding, programs_hash = mutated('programs.invocation.json', 'linux', binding={
+                'programs': dict(records['linux']['binding']['programs'], **{'runtime.py': 'q' * 64})})
+            renamed_binding, renamed_hash = mutated('renamed.invocation.json', 'desktop',
+                                                    receipt=str(base / 'root-desktop' / 'other.json'))
+            driver_binding, driver_hash = mutated('driver.invocation.json', 'linux', binding={'driver': 'local'})
+            absent_record = copy.deepcopy(records['desktop'])
+            absent_record['receipt_export'] = {'path': str(base / 'absent-export.json'),
+                                               'sha256': records['desktop']['receipt_export']['sha256']}
+            absent_path, absent_bound = write_bound(base, 'absent-export.invocation.json', absent_record)
+            failed_reexport = reexported('failed-export.json', 'desktop', json.dumps(
+                {'error_type': 'RuntimeError', 'cells_completed': 9, 'native_pass': False}).encode())
+            production_reexport = reexported('production-export.json', 'desktop', json.dumps(
+                {'cells': complete_cells(), 'native': True, 'production_enabled': True}).encode())
+            incomplete_reexport = reexported('incomplete-export.json', 'desktop', json.dumps(
+                {'cells': [cell for cell in complete_cells() if cell['cell'] != 'kernel-custody'],
+                 'native': True, 'production_enabled': False}).encode())
+            no_session_reexport = reexported('no-session-export.json', 'desktop', json.dumps(
+                {'cells': [cell for cell in complete_cells() if cell['cell'] != 'positive-session'],
+                 'native': True, 'production_enabled': False}).encode())
+            drifted_cells = complete_cells()
+            drifted_cells[-1]['inventory'] = dict(BASELINE, containers=['drifted'])
+            drifted_reexport = reexported('drifted-export.json', 'desktop', json.dumps(
+                {'cells': drifted_cells, 'native': True, 'production_enabled': False}).encode())
+            foreign_export = base / 'foreign-export.json'
+            foreign_export.write_bytes(Path(records['desktop']['receipt_export']['path']).read_bytes() + b' ')
+            foreign_export_record = copy.deepcopy(records['desktop'])
+            foreign_export_record['receipt_export'] = {'path': str(foreign_export),
+                                                       'sha256': digest(foreign_export)}
+            foreign_export_path, foreign_export_bound = write_bound(
+                base, 'foreign-export.invocation.json', foreign_export_record)
+            # One false or wrong positive fact per cell family must refuse.
+            fact_mutations = [
+                ('positive-session', 'session', ''),
+                ('positive-session', 'session', False),
+                ('native-identity-and-tls', 'wrong_pin_refused', False),
+                ('level-one-stream', 'real_exit', 0),
+                ('level-one-stream', 'no_pty_and_stdin_eof', False),
+                ('real-signal', 'signal', 9),
+                ('credential-refusal', 'invalid_new_client_refused', False),
+                ('caller-drop', 'actual_cancelled_and_settled', False),
+                ('caller-drop', 'cause', 'Unknown'),
+                ('gap-and-truncation', 'unknown_refused', False),
+                ('kernel-custody', 'actual_helpers', False),
+                ('session-crash-recovery', 'killed_supervisor', ''),
+                ('session-crash-recovery', 'fresh_session', ''),
+                ('down', 'closed', False),
+                ('down', 'closed', 1),
+                ('baseline-and-cleanup', 'fixture_retained', False),
+            ]
+            fact_cases = []
+            for index, (family, field, wrong) in enumerate(fact_mutations):
+                mutated_cells = complete_cells()
+                for cell in mutated_cells:
+                    if cell['cell'] == family:
+                        cell[field] = wrong
+                fact_binding, fact_bound = reexported(
+                    'fact-{}.json'.format(index), 'desktop',
+                    json.dumps({'cells': mutated_cells, 'native': True,
+                                'production_enabled': False}).encode())
+                fact_cases.append((
+                    call(receipt_list=receipts[:1] + [fact_binding] + receipts[2:],
+                         hash_list=hashes[:1] + [fact_bound] + hashes[2:]),
+                    'receipt records a cell without its recorded positive facts',
+                    '{}.{}'.format(family, field)))
+            before = sorted(str(p) for p in base.rglob('*'))
+
+            def invoke(argv):
+                # Offline guard: aggregation must never reach SSH, runtime,
+                # native or root APIs; retained exports are read locally only.
+                with patch('subprocess.run', side_effect=AssertionError('aggregate ran a subprocess')), \
+                     patch('subprocess.Popen', side_effect=AssertionError('aggregate spawned a process')), \
+                     patch('os.system', side_effect=AssertionError('aggregate ran a shell command')), \
+                     patch('os.kill', side_effect=AssertionError('aggregate signalled a process')), \
+                     patch.object(sys, 'argv', argv), redirect_stdout(io.StringIO()) as printed:
+                    aggregate.main()
+                return json.loads(printed.getvalue())
+
+            def refuses(argv, message):
+                with self.assertRaisesRegex(RuntimeError, message):
+                    invoke(argv)
+
+            verdict = invoke(call(receipt_list=per_platform, hash_list=per_platform_hashes))
+            self.assertEqual(sorted(verdict['backends']), sorted(BACKENDS))
+            self.assertTrue(verdict['qualified'])
+            self.assertEqual(verdict['candidate_features'], ['workspace-private-qualification'])
+            self.assertEqual(verdict['production_features'], [])
+            self.assertEqual(verdict['old_source_head'], '2' * 40)
+            self.assertNotEqual(verdict['artifacts']['linux']['candidate'],
+                                verdict['artifacts']['desktop']['candidate'],
+                                'platform artifact bytes are explicit and may differ')
+            self.assertEqual(verdict['artifacts']['desktop'], verdict['artifacts']['colima'])
+            self.assertEqual(verdict['consumer'], 'separate-owner-evidence-required')
+            self.assertFalse(verdict['production_enablement'])
+
+            desktop_replaced = call(receipt_list=receipts[:1] + [failed_binding] + receipts[2:],
+                                    hash_list=hashes[:1] + [failed_hash] + hashes[2:])
+            linux_replaced = call(receipt_list=receipts[:2] + [feature_binding],
+                                  hash_list=hashes[:2] + [feature_hash])
+            cases = [
+                (call(source_head='nothex'), 'final source head required'),
+                (call(receipt_list=receipts[:2], hash_list=hashes[:2]), 'missing backend receipt'),
+                (call(receipt_list=receipts + [receipts[0]], hash_list=hashes + [hashes[0]]),
+                 'exactly one --receipt binding per backend'),
+                (call(receipt_list=receipts[:2] + ['misc=' + str(paths['linux'])], hash_list=hashes),
+                 'exactly one --receipt binding per backend'),
+                (call(receipt_list=receipts[:1] + ['desktop=' + str(foreign)] + receipts[2:], hash_list=hashes),
+                 'differs from its bound hash'),
+                (desktop_replaced, 'cannot qualify'),
+                (call(receipt_list=receipts[:1] + [changed_binding] + receipts[2:],
+                      hash_list=hashes[:1] + [changed_hash] + hashes[2:]), 'cannot qualify'),
+                (call(receipt_list=receipts[:2] + [stale_binding], hash_list=hashes[:2] + [stale_hash]),
+                 'stale or mixed-source'),
+                (linux_replaced, 'exact qualification candidate contract'),
+                (call(receipt_list=receipts[:2] + [misbound_binding], hash_list=hashes[:2] + [misbound_hash]),
+                 'exact qualification candidate contract'),
+                (call(receipt_list=receipts[:2] + [foreign_old_binding], hash_list=hashes[:2] + [foreign_old_hash]),
+                 'SAME final source, features and common contract'),
+                (call(receipt_list=receipts[:2] + [contract_binding], hash_list=hashes[:2] + [contract_hash]),
+                 'receipt contract differs'),
+                (call(receipt_list=receipts[:2] + [production_binding], hash_list=hashes[:2] + [production_hash]),
+                 'exact ordinary production contract'),
+                (call(receipt_list=receipts[:2] + [programs_binding], hash_list=hashes[:2] + [programs_hash]),
+                 'SAME final source, features and common contract'),
+                (call(receipt_list=receipts[:1] + [renamed_binding] + receipts[2:],
+                      hash_list=hashes[:1] + [renamed_hash] + hashes[2:]),
+                 'must be the pinned root\u2019s complete.json'),
+                (call(receipt_list=receipts[:2] + [driver_binding], hash_list=hashes[:2] + [driver_hash]),
+                 'driver or engine identity differs from its platform'),
+                (call(receipt_list=receipts[:1] + ['desktop=/etc/hosts'] + receipts[2:], hash_list=hashes),
+                 'absolute retained scratch file'),
+                (call(receipt_list=receipts[:1] + ['desktop=' + str(absent_path)] + receipts[2:],
+                      hash_list=hashes[:1] + ['desktop=' + absent_bound] + hashes[2:]),
+                 'retained receipt export'),
+                (call(receipt_list=receipts[:1] + ['desktop=' + str(foreign_export_path)] + receipts[2:],
+                      hash_list=hashes[:1] + ['desktop=' + foreign_export_bound] + hashes[2:]),
+                 'retained original receipt bytes differ'),
+                (call(receipt_list=receipts[:1] + [failed_reexport[0]] + receipts[2:],
+                      hash_list=hashes[:1] + [failed_reexport[1]] + hashes[2:]),
+                 'native, production-disabled complete receipt'),
+                (call(receipt_list=receipts[:1] + [production_reexport[0]] + receipts[2:],
+                      hash_list=hashes[:1] + [production_reexport[1]] + hashes[2:]),
+                 'native, production-disabled complete receipt'),
+                (call(receipt_list=receipts[:1] + [incomplete_reexport[0]] + receipts[2:],
+                      hash_list=hashes[:1] + [incomplete_reexport[1]] + hashes[2:]),
+                 'fixed full-session contract'),
+                (call(receipt_list=receipts[:1] + [no_session_reexport[0]] + receipts[2:],
+                      hash_list=hashes[:1] + [no_session_reexport[1]] + hashes[2:]),
+                 'fixed full-session contract'),
+                (call(receipt_list=receipts[:1] + [drifted_reexport[0]] + receipts[2:],
+                      hash_list=hashes[:1] + [drifted_reexport[1]] + hashes[2:]),
+                 'baseline/cleanup/fixture-retention'),
+            ]
+            for argv, message in cases:
+                refuses(argv, message)
+            for argv, message, _family in fact_cases:
+                refuses(argv, message)
+
+            # The verifier module surface excludes every SSH/runtime/native/root API.
+            for symbol in ('run', 'ssh_prefix', 'open_qualification_root', 'subprocess'):
+                self.assertFalse(hasattr(aggregate, symbol), 'aggregate verifier imports ' + symbol)
+            self.assertEqual(sorted(str(p) for p in base.rglob('*')), before,
+                             'the aggregate verifier must not write or mutate anything')
 
 # This route also selects the new owned-child recovery boundaries.
 from recovery_boundaries import RecoveryBoundaries

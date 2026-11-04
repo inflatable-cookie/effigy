@@ -19,16 +19,28 @@ native receipts.
 Tom's [2026-11-03 source-split ruling](../../knowledge/contracts/release.md#source-delivery-and-separate-proof-tasks--2026-11-03)
 permits the implementation and compile-time qualification packet to merge after
 current-main integration review with ordinary production Discard still refused.
-The current `launch.py` still runs all backends together; it is **not yet split**
-into independently executable backend proofs. Follow-up preparation must bind
-all backend receipts to the same final candidate and exact inputs before any
-separately authorized native execution. Aggregate judgment requires all required
-backend and actual consumer gates, then Tom's separate production-enable GO.
-The [owned transfer map](../../knowledge/contracts/release.md#source-delivery-and-separate-proof-tasks--2026-11-03)
-assigns source controls to effigy#619, final candidate/backend bindings to #620,
-Colima/Desktop/Linux to #621/#622/#623, aggregate judgment to #624, actual
-Acow/CBS consumer continuity to #625 and reviewed production enablement to #626.
-Task registration grants no execution authority.
+effigy#620 split the packet's entry points: `launch.py --backend
+colima|desktop|linux` independently executes exactly one backend under its own
+scoped GO, binding the exact source, programs, contract, candidate, inputs,
+pinned root, old baseline, window budget and input-hash one-use marker, and
+retaining the exact original complete/failed receipt bytes as a hash-bound
+export inside that authorized proof turn. Positivity is recorded only after
+the post-run source check, so a mid-window source edit yields honest,
+nonqualifying evidence. The single all-backend
+invocation remains available and still validates every GO before any native
+window. Backend receipts must still match the same final source, features and
+common contract — each platform's actual artifact bytes stay bound to their
+own producer receipts — and the read-only offline aggregate verifier refuses
+anything less before any aggregate judgment, which additionally requires the
+actual consumer gates and Tom's separate production-enable GO. The [owned
+transfer
+map](../../knowledge/contracts/release.md#source-delivery-and-separate-proof-tasks--2026-11-03)
+assigns source controls to effigy#619, SOURCE packet/backend bindings to #620,
+immutable artifact production after integrated main QA to #627, the Colima,
+Desktop and Linux full-session proofs to #621/#622/#623 (each bound by both
+#620 and #627), aggregate judgment to #624, actual Acow/CBS consumer
+continuity to #625 and reviewed production enablement to #626. Task
+registration grants no execution authority.
 
 Historical packet/fixture success is not positive native qualification. The old
 subset launcher never established full sessions. The consumed guestagent check
@@ -167,7 +179,7 @@ canonical scratch path. The proposed native-ext4 placement needs an explicit
 accepted host/guest provenance chain; a path prefix or filesystem name alone is
 insufficient. Missing placement evidence refuses, with no internal-drive fallback.
 
-## Separate GO receipts and the one selector
+## Separate GO receipts and the entry selectors
 
 First freeze the runtime inputs and obtain their SHA-256. Each native GO is then
 recorded as `effigy.workspace-private-native-go.v1`, naming Tom's actual decision
@@ -180,10 +192,12 @@ operator authority.
 A separate GO index maps `colima`, `desktop`, `linux` to each receipt's
 `{ "path": "<absolute receipt>", "sha256": "<actual receipt hash>" }`.
 Keeping this index separate avoids a circular input-hash/GO-hash dependency.
-Queue binds **both** the runtime-input and GO-index hashes. All three GOs are
-validated before a native window starts. No backend subset is a passing result.
+Queue binds **both** the runtime-input and GO-index hashes. When the invocation
+omits `--backend`, all three GOs are validated before a native window starts;
+with `--backend`, exactly the selected backend's GO is validated. No backend
+subset is a passing aggregate result.
 
-The exact selector to bind, after replacing the four arguments with reviewed
+The all-backend selector to bind, after replacing the four arguments with reviewed
 absolute input paths and actual hashes, is:
 
 ```sh
@@ -198,6 +212,47 @@ body is supplied by the input. If the supported Queue route, host mapping or
 exact native GOs cannot execute all three cells, name that concrete seam to the
 planner before native action. Do not spend the one proof allowance on the old
 subset launcher, split off another product route, or retry a failed proof.
+
+An independently executable backend entry binds exactly one cell of the same
+frozen inputs:
+
+```sh
+effigy proof:workspace:private-qualification -- --inputs <inputs.json> --sha256 <inputs-sha256> --go-bindings <go-index.json> --go-sha256 <go-index-sha256> --backend <colima|desktop|linux>
+```
+
+It validates exactly the selected backend's scoped GO, consumes that backend's
+input-hash one-use marker, runs only that backend's full session, and records
+the original complete/failed receipt with its binding record in a fresh
+evidence directory, retaining the exact original receipt bytes through a
+quoted, size-bounded, hash-bound export inside the proof turn. Positivity is
+recorded only after the post-run
+source-unchanged check: a mid-window source edit refuses and yields honest,
+nonqualifying evidence. One entry is one positive native receipt: it is never
+an aggregate result and never writes an aggregate `complete.json`. Separate
+backend entries may bind different inputs and GO receipts; the common
+candidate contract must still compare exactly.
+
+After #621/#622/#623, effigy#624's independent judgment runs the read-only
+offline aggregate verifier over the three invocation receipts:
+
+```sh
+effigy verify:workspace:private-qualification:aggregate -- --source-head <head> --receipt colima=<receipt> --receipt desktop=<receipt> --receipt linux=<receipt> --receipt-sha256 colima=<hash> --receipt-sha256 desktop=<hash> --receipt-sha256 linux=<hash>
+```
+
+It performs no native action and writes nothing: no SSH, no runtime, no
+qualification-root reopen, no backend or VM observation. It reads and hashes
+the retained original-receipt exports locally, refuses missing, failed,
+source-changed, foreign, stale, mixed-source, mixed-candidate or incomplete
+receipts, and validates the fixed full-session cell contract of each export
+(native, production-disabled, the production-refusal through restored-baseline
+cell sequence, each cell's recorded positive facts, and the recorded
+baseline/cleanup/fixture-retention equality) — a
+caller bool alone is never authority. The shared contract compares the same
+final source, features and common contract; each platform's actual artifact
+bytes stay bound to their own producer receipts. Its verdict still requires
+the actual consumer evidence and Tom's separate release-kind production-enable
+GO. The deterministic producer recipes and the exact receipt/report formats
+that effigy#627 fills are fixed in [producer.md](producer.md).
 
 The native budget must be within existing spending authority and at most the
 1800-second test-runner window per backend. This cap is not a spending grant.
