@@ -50,6 +50,19 @@ const BOUNDED_POLL_INTERVAL: Duration = Duration::from_millis(5);
 /// deadline; it is a fixed, documented cleanup bound.
 const BOUNDED_TERM_GRACE: Duration = Duration::from_millis(500);
 
+// Shipping builds always read the real clock. Mapping proofs may control the
+// same reading as the other capture path, without replacing process capture.
+fn capture_now() -> Instant {
+    #[cfg(test)]
+    {
+        super::controlled_capture_clock::now()
+    }
+    #[cfg(not(test))]
+    {
+        Instant::now()
+    }
+}
+
 /// One command's retained output plus its exit status.
 #[derive(Debug)]
 pub(in crate::runner) struct BoundedCapture {
@@ -403,7 +416,7 @@ impl BoundedCommandBudget {
     /// boundary, from the original operation origin, with no spawn, stream
     /// or leader of the refused step to observe.
     pub(in crate::runner) fn boundary_observations(&self) -> BoundedRefusalObservations {
-        BoundedRefusalObservations::budget_boundary(self.origin, self.deadline, Instant::now())
+        BoundedRefusalObservations::budget_boundary(self.origin, self.deadline, capture_now())
     }
 
     /// A refusal decided at a budget boundary before this step's transport
@@ -449,7 +462,7 @@ impl BoundedCommandBudget {
     /// workspace entry path verifies the pinned guest instead of acquiring one.
     #[cfg(test)]
     pub(in crate::runner) fn remaining_time(&self) -> Option<Duration> {
-        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        let remaining = self.deadline.saturating_duration_since(capture_now());
         (!remaining.is_zero()).then_some(remaining)
     }
 
@@ -471,7 +484,7 @@ impl BoundedCommandBudget {
         // An expired deadline refuses before any spawn, so it is not counted as
         // an attempt. The boundary observations record that truthfully: not
         // attempted, with no stream or leader of this step to observe.
-        if Instant::now() >= self.deadline {
+        if capture_now() >= self.deadline {
             return Err(self.boundary_refusal(phase, BoundedCaptureFailure::Deadline));
         }
         match phase {
@@ -484,7 +497,7 @@ impl BoundedCommandBudget {
         // observations run from the origin to here, attempt observations from
         // here to the refusal snapshot. This is a strictly internal join on
         // the same clock, not a rebased or invented origin.
-        let attempt_started = Instant::now();
+        let attempt_started = capture_now();
         let limit = BoundedStreamLimit {
             origin: self.origin,
             deadline: self.deadline,
@@ -700,8 +713,8 @@ pub(in crate::runner) fn run_command_capture_bounded(
     attempt_started: Instant,
 ) -> Result<BoundedCapture, BoundedTransportRefusal> {
     let resolved_program = resolve_host_program(program);
-    if Instant::now() >= limit.deadline {
-        let now = Instant::now();
+    if capture_now() >= limit.deadline {
+        let now = capture_now();
         return Err(BoundedTransportRefusal {
             failure: BoundedCaptureFailure::Deadline,
             observations: Box::new(refusal_observations(
@@ -737,7 +750,7 @@ pub(in crate::runner) fn run_command_capture_bounded(
         Some(path) => {
             // The spawn syscall was never issued, so this is not an attempt.
             let file = std::fs::File::open(path).map_err(|_| {
-                launch_refusal(BoundedSpawnDisposition::NotAttempted, Instant::now())
+                launch_refusal(BoundedSpawnDisposition::NotAttempted, capture_now())
             })?;
             command.stdin(Stdio::from(file));
         }
@@ -761,7 +774,7 @@ pub(in crate::runner) fn run_command_capture_bounded(
     let mut child = command.spawn().map_err(|_| {
         launch_refusal(
             BoundedSpawnDisposition::AttemptedNotConfirmed,
-            Instant::now(),
+            capture_now(),
         )
     })?;
     // A child exists from here on, whatever later refusals report.
@@ -769,11 +782,11 @@ pub(in crate::runner) fn run_command_capture_bounded(
 
     let Some(stdout) = child.stdout.take() else {
         terminate_owned_group(&mut child);
-        return Err(launch_refusal(spawned, Instant::now()));
+        return Err(launch_refusal(spawned, capture_now()));
     };
     let Some(stderr) = child.stderr.take() else {
         terminate_owned_group(&mut child);
-        return Err(launch_refusal(spawned, Instant::now()));
+        return Err(launch_refusal(spawned, capture_now()));
     };
 
     let stdout_overflow = Arc::new(AtomicBool::new(false));
@@ -832,10 +845,10 @@ pub(in crate::runner) fn run_command_capture_bounded(
         // Its PID/group therefore cannot be reused before owned cancellation.
         let streams_complete = matches!(stdout_outcome, Some(StreamOutcome::Complete(_)))
             && matches!(stderr_outcome, Some(StreamOutcome::Complete(_)));
-        if Instant::now() >= limit.deadline {
+        if capture_now() >= limit.deadline {
             // Snapshot before termination: one coherent decision instant, no
             // diagnostic try_wait, no reap, no post-deadline observation.
-            let now = Instant::now();
+            let now = capture_now();
             let reader_ended = !channel_open;
             let leader_exit = if leader_observed_alive {
                 BoundedLeaderExitObservation::Alive
@@ -863,7 +876,7 @@ pub(in crate::runner) fn run_command_capture_bounded(
                 Ok(status @ Some(_)) => exit_status = status,
                 Err(_) => {
                     terminate_owned_group(&mut child);
-                    return Err(launch_refusal(spawned, Instant::now()));
+                    return Err(launch_refusal(spawned, capture_now()));
                 }
             }
         }
@@ -904,7 +917,7 @@ pub(in crate::runner) fn run_command_capture_bounded(
         if let Some(failure) = failure {
             // Snapshot at the decision instant, before the fixed termination
             // grace: still no diagnostic try_wait and no early reap.
-            let now = Instant::now();
+            let now = capture_now();
             let reader_ended = !channel_open;
             let observations = refusal_observations(
                 limit,
