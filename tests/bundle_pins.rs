@@ -1774,10 +1774,7 @@ fn consumer_effective_manifests_match_after_importing_their_actual_cached_bytes(
     }
 }
 
-#[test]
-fn legacy_bytes_are_imported_before_a_failed_remote_update() {
-    let fixture = Fixture::new();
-    fixture.write_path_bundle();
+fn install_legacy_bundle(fixture: &Fixture) {
     let url = fixture
         .owner
         .path()
@@ -1800,20 +1797,180 @@ fn legacy_bytes_are_imported_before_a_failed_remote_update() {
         format!("[bundle]\nbase = {{ type = \"git\", url = {url:?} }}\n"),
     )
     .unwrap();
+}
+
+/// The wrapper publishes its identity, then blocks before executing the real
+/// sentinel. Import-only work must finish without crossing this barrier; a
+/// fetch must cross it. The controller always releases and joins its worker
+/// before asserting, so even the original implementation settles its helper.
+fn import_sentinel_barrier(import: bool) -> bool {
+    use std::io::Write;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::sync::mpsc;
+
+    let fixture = Fixture::new();
+    fixture.write_path_bundle();
+    install_legacy_bundle(&fixture);
+    if !import {
+        fs::remove_dir_all(fixture.repo.join(".effigy/cache/bundles")).unwrap();
+    }
+    let ready = fixture.owner.path().join("sentinel-started");
+    let release = fixture.owner.path().join("sentinel-release");
+    let fifo = std::ffi::CString::new(release.as_os_str().as_bytes()).unwrap();
+    // SAFETY: fifo is a live NUL-terminated pathname in this fixture's private
+    // directory. mkfifo retains no pointer; the path does not already exist.
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    let wrapper = fixture.owner.path().join("sentinel-wrapper");
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = __kernel-sentinel ]; then\n  echo $$ > '{}'\n  read release < '{}'\nfi\nexec '{}' \"$@\"\n",
+            ready.display(), release.display(), env!("CARGO_BIN_EXE_effigy"),
+        ),
+    ).unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut prep = effigy_manifest::SourcePreparation {
+        home: fixture.home.clone(),
+        executable: wrapper,
+        cancel: Default::default(),
+        budget: Duration::from_secs(8),
+        next: effigy_kernel::outcome::Invocation::validated(
+            vec!["bundle".into(), "sync".into()],
+            |args| args == ["bundle", "sync"],
+        )
+        .unwrap(),
+        progress: effigy_manifest::SourceProgress::silent(),
+    };
+    let manifest = fixture.repo.join("effigy.toml");
     let pin = fixture.repo.join(".effigy/sources.lock.json");
+    if import {
+        prep.budget = Duration::ZERO;
+        assert!(effigy_manifest::prepare_missing_bundle_sources(&manifest, &prep).is_err());
+        assert!(!pin.exists(), "expired import published a pin");
+        prep.budget = Duration::from_secs(8);
+        prep.cancel.cancel(effigy_kernel::ctx::StopCause::Requested);
+        assert!(effigy_manifest::prepare_missing_bundle_sources(&manifest, &prep).is_err());
+        assert!(!pin.exists(), "cancelled import published a pin");
+        prep.cancel = Default::default();
+    }
+    let started = Instant::now();
+    let (tx, rx) = mpsc::channel();
+    let (crossed, result) = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let result = effigy_manifest::prepare_missing_bundle_sources(&manifest, &prep);
+            tx.send(result).unwrap();
+        });
+        loop {
+            if let Some(pid) = fs::read_to_string(&ready)
+                .ok()
+                .and_then(|text| text.trim().parse::<u32>().ok())
+            {
+                let identity = effigy_kernel::ident::process_identity(pid);
+                eprintln!(
+                    "sentinel barrier import={import}: {identity:?}; pin exists: {}",
+                    pin.exists()
+                );
+                // Only this wrapper opens this private FIFO. Nonblocking open
+                // avoids a stuck controller if the kernel already stopped it.
+                loop {
+                    match fs::OpenOptions::new()
+                        .write(true)
+                        .custom_flags(libc::O_NONBLOCK)
+                        .open(&release)
+                    {
+                        Ok(mut file) => {
+                            file.write_all(b"release\n").unwrap();
+                            break;
+                        }
+                        Err(_) => {
+                            if let Ok(result) = rx.try_recv() {
+                                return (true, result);
+                            }
+                            std::thread::yield_now();
+                        }
+                    }
+                }
+                return (true, rx.recv().unwrap());
+            }
+            match rx.recv_timeout(Duration::from_millis(10)) {
+                Ok(result) => return (false, result),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(error) => panic!("source worker disconnected: {error}"),
+            }
+        }
+    });
+    eprintln!(
+        "sentinel barrier import={import}: completed in {}ms",
+        started.elapsed().as_millis()
+    );
+    if import {
+        assert!(result.is_ok(), "{result:?}");
+        assert!(pin.exists());
+        let (ok, output) = fixture.run(&["dev", "--plan"], &[], Duration::from_secs(8));
+        assert!(ok && output.contains("original"), "{output}");
+    } else {
+        assert!(
+            result.as_ref().is_err_and(|error| error
+                .to_string()
+                .contains("source acquisition exited 128: fatal: repository")
+                && error.to_string().contains("does not exist")),
+            "absent remote must fail through Git: {result:?}"
+        );
+        assert!(!pin.exists());
+    }
+    crossed
+}
+
+#[test]
+fn legacy_import_does_not_wait_for_a_sentinel_but_acquisition_does() {
+    let imported = import_sentinel_barrier(true);
+    let acquired = import_sentinel_barrier(false);
+    assert!(
+        !imported,
+        "local legacy import waited for sentinel readiness"
+    );
+    assert!(acquired, "remote acquisition lost its sentinel custody");
+}
+
+#[test]
+fn legacy_bytes_are_imported_before_a_failed_remote_update() {
+    let fixture = Fixture::new();
+    fixture.write_path_bundle();
+    install_legacy_bundle(&fixture);
+    let pin = fixture.repo.join(".effigy/sources.lock.json");
+    eprintln!(
+        "legacy import: first plan starting (pin exists: {})",
+        pin.exists()
+    );
     let (ok, output) = fixture.run(&["dev", "--plan"], &[], Duration::from_secs(8));
+    eprintln!("legacy import: first plan finished");
     assert!(ok, "{output}");
     assert!(output.contains("original"), "{output}");
     // A read path imports the v0.14.1 bytes into the lock and never reaches the
     // absent remote: the pin names those bytes from now on.
     assert!(pin.exists(), "{output}");
+    let lock: serde_json::Value = serde_json::from_slice(&fs::read(&pin).unwrap()).unwrap();
+    let object = fixture
+        .repo
+        .join(".effigy")
+        .join(lock["sources"]["bundle"]["object"].as_str().unwrap());
+    for name in ["bundle.toml", "effigy.toml"] {
+        assert_eq!(
+            fs::read(object.join(name)).unwrap(),
+            fs::read(fixture.repo.join("bundle").join(name)).unwrap()
+        );
+    }
+    eprintln!("legacy import: executing pinned bytes");
     let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(20));
     assert!(ok, "{output}");
     assert!(output.contains("original"), "{output}");
     let previous = fs::read(&pin).unwrap();
+    eprintln!("legacy import: explicit sync starting");
     let (ok, _) = fixture.run(&["bundle", "sync"], &[], Duration::from_secs(20));
     assert!(!ok);
     assert_eq!(fs::read(pin).unwrap(), previous);
+    eprintln!("legacy import: final plan starting");
     let (ok, output) = fixture.run(&["dev", "--plan"], &[], Duration::from_secs(8));
     assert!(ok, "{output}");
     assert!(output.contains("original"), "{output}");

@@ -918,6 +918,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Import cached legacy bundle bytes during planning without starting an unused
+  sentinel. Fetches still require full custody, and planning keeps its original
+  deadline and checkout publication gates (effigy#635).
+
 - Preserve empty regular kernel run-log segments as zero-byte archive copies
   with their SHA-256 manifest entry during worktree teardown (effigy#633).
 - Preserve this checkout's kernel run logs before worktree teardown
