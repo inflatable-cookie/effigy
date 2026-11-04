@@ -10,6 +10,7 @@ use crate::root::StateRoot;
 use crate::run;
 use crate::store::Store;
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
 use std::process::{Command, Stdio};
 
 const SCENARIO: &str = "EFFIGY_KERNEL_FAULT_SCENARIO";
@@ -101,7 +102,7 @@ impl Tally {
 }
 /// One faulted run: a fault at the `nth` crossing of a point, or `Unknown`
 /// at one observation.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Job {
     Point(Point, usize, Fault),
     Observation(usize),
@@ -119,6 +120,14 @@ fn jobs(trace: &[Point], observations: usize) -> Vec<Job> {
 /// Worker processes per drive. Shards are processes, never threads: the probe
 /// runtime, the foreign fixture and child reaping are process-wide.
 const SHARDS: usize = 6;
+/// Rotate the starting shard at each crossing. There are six faults and six
+/// shards: plain modulo puts every Stall (and its parent-side inspection) on
+/// one process, while faster fault types finish and leave that process alone.
+/// Rotation preserves job order within each shard and visits every job once.
+fn job_shard(ordinal: usize) -> usize {
+    (ordinal + ordinal / Fault::ALL.len()) % SHARDS
+}
+
 const PLAN: &str = "EFFIGY_KERNEL_FAULT_PLAN";
 const SHARD: &str = "EFFIGY_KERNEL_FAULT_SHARD";
 
@@ -174,6 +183,7 @@ pub(super) fn drive(scenario: &dyn Scenario) {
         })
         .collect();
     let mut tally = Tally::default();
+    let mut measured = BTreeMap::new();
     let mut failed = Vec::new();
     for (shard, mut child) in shards {
         let status = child.wait().expect("shard wait");
@@ -184,10 +194,40 @@ pub(super) fn drive(scenario: &dyn Scenario) {
         let encoded = std::fs::read_to_string(plan.path().join(format!("tally-{shard}")))
             .expect("shard tally");
         tally.merge(&encoded);
+        let costs = std::fs::read_to_string(plan.path().join(format!("costs-{shard}")))
+            .expect("whole-job costs");
+        for line in costs.lines() {
+            let (ordinal, nanos) = line.split_once(' ').expect("whole-job cost row");
+            let ordinal: usize = ordinal.parse().expect("job ordinal");
+            let cost = Duration::from_nanos(nanos.parse().expect("job nanoseconds"));
+            assert_eq!(job_shard(ordinal), shard, "job assigned to wrong shard");
+            assert!(measured.insert(ordinal, cost).is_none(), "duplicate job");
+        }
+        eprintln!("fault-costs {} shard {shard}\n{costs}", scenario.name());
     }
     assert!(
         failed.is_empty(),
         "{}: failed shards: {failed:?}",
+        scenario.name()
+    );
+    let expected = jobs(&trace, observations);
+    assert_eq!(
+        measured.keys().copied().collect::<Vec<_>>(),
+        (0..expected.len()).collect::<Vec<_>>()
+    );
+    let mut old = [Duration::ZERO; SHARDS];
+    let mut rotated = [Duration::ZERO; SHARDS];
+    for (ordinal, cost) in measured {
+        old[ordinal % SHARDS] += cost;
+        rotated[job_shard(ordinal)] += cost;
+    }
+    eprintln!(
+        "fault-plan {} observations {observations} points {}",
+        scenario.name(),
+        encoded.join(" ")
+    );
+    eprintln!(
+        "fault-scheduling {} whole-job cost sums: old {old:?}, rotated {rotated:?}",
         scenario.name()
     );
     for point in &trace {
@@ -264,14 +304,23 @@ fn fault_shard() {
         index.parse().expect("shard"),
         count.parse().expect("shards"),
     );
+    assert_eq!(count, SHARDS, "the plan uses six shards");
     let _foreign = ForeignGuard;
     let mut tally = Tally::default();
-    for (_, job) in jobs(&trace, observations)
+    let mut costs =
+        std::fs::File::create(plan.join(format!("costs-{index}"))).expect("whole-job costs");
+    for (ordinal, job) in jobs(&trace, observations)
         .into_iter()
         .enumerate()
-        .filter(|(i, _)| i % count == index)
+        .filter(|(i, _)| job_shard(*i) == index)
     {
+        std::fs::write(plan.join(format!("progress-{index}")), format!("{job:?}\n"))
+            .expect("shard progress");
+        let started = Instant::now();
         run_job(scenario, job, baseline, &mut tally);
+        // Includes HOME preparation, fault delivery, recovery, oracle checks
+        // and HOME drop. A missing row is incomplete work, never zero cost.
+        writeln!(costs, "{ordinal} {}", started.elapsed().as_nanos()).expect("whole-job cost");
     }
     std::fs::write(plan.join(format!("tally-{index}")), tally.encode()).expect("tally");
 }
@@ -616,4 +665,45 @@ fn fault_child() {
     fault::arm_from_env();
     scenario.run(&home);
     fault::arm(None);
+}
+
+/// Exercise the same assignment used by the six re-executed shards. Keep the
+/// exact crossing/fault and observation identities, not just job counts.
+#[test]
+fn rotated_shards_preserve_jobs_and_distribute_each_fault() {
+    let trace = [Point::AttachBefore; SHARDS];
+    let plan = jobs(&trace, 13);
+    let mut merged = Vec::new();
+    for shard in 0..SHARDS {
+        let assigned: Vec<_> = plan
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(ordinal, _)| job_shard(*ordinal) == shard)
+            .collect();
+        assert!(assigned.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        for fault in Fault::ALL {
+            assert_eq!(
+                assigned
+                    .iter()
+                    .filter(|(_, job)| matches!(job,
+                Job::Point(_, _, delivered) if *delivered == fault))
+                    .count(),
+                1
+            );
+        }
+        // The old assignment concentrates one fault type on each shard.
+        assert_eq!(
+            plan.iter()
+                .enumerate()
+                .filter(|(ordinal, job)| ordinal % SHARDS == shard
+                    && matches!(job,
+                Job::Point(_, _, fault) if *fault == Fault::ALL[shard]))
+                .count(),
+            SHARDS
+        );
+        merged.extend(assigned);
+    }
+    merged.sort_by_key(|(ordinal, _)| *ordinal);
+    assert_eq!(merged, plan.into_iter().enumerate().collect::<Vec<_>>());
 }

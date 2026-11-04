@@ -73,6 +73,16 @@ so the pin freezes exactly the boundary the points observe; dropping it
 continues the anchors, so an abandoned run still leaves no anchor behind. The
 recovery step's rerun settles on the recovery budget, not the one-second
 injected-scenario budget a faulted settle waits out (effigy#618).
+The six fault shards rotate the starting shard at each traced crossing. With
+six fault types, plain modulo assigned every Stall and its parent-side
+inspection to one process. Rotation spreads those jobs without changing the
+crossing/fault or observation inventory, increasing concurrency, or changing
+any deadline. Each shard retains plan order. Whole-job receipts include HOME
+preparation, delivery, recovery, oracle checks and HOME cleanup; the parent
+checks that every planned job appears exactly once on its assigned shard.
+Progress names unfinished work; a missing cost row is unknown, never zero.
+Old versus rotated cost sums are a scheduling model using measured jobs,
+not a reconstruction of a historical timeout or proof of runtime closure.
 A custody group that owes the caller no terminal also gets its own session, so a
 suite, a nested task session or a harness census never meets a custody helper of
 another run in the session it started.
