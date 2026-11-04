@@ -1233,7 +1233,10 @@ mod capture_deadline_tests {
                         nix::sys::signal::Signal::SIGKILL,
                     );
                 }
-                panic!("recorded workload generation {pid} survived {bound:?}");
+                panic!(
+                    "recorded workload generation {pid} survived {} ms",
+                    bound.as_millis()
+                );
             }
             thread::sleep(Duration::from_millis(20));
         }
