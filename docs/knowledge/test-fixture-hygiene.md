@@ -199,3 +199,19 @@ change can close it.
 The kernel fault-injection sweep is no longer an exception: it runs in the
 run's temp root like every other fixture. The kernel fault selectors are its
 proof on the Builds volume.
+
+The adapterless republication fixture holds its initial serving phase until
+verified HTTPS succeeds, then keeps the port closed until route withdrawal and
+listener state agree. A private control connection releases each phase; elapsed
+server uptime does not schedule the outage. Same-child/generation/address
+assertions and the real three-miss probes remain. This is owned fixture ordering
+proof, not a reconstruction of historical QA scheduling or native qualification.
+
+The producer-ordering discriminator shares that fixture's Python HTTPServer
+source and parks the initial HTTP consumer at outage admission. For the original
+input, an observer pauses the producer after its real three-second timer and
+socket close, before the 25-second recovery wait: the first connection refuses.
+For the fixed input, admission reports before waiting for the consumer's release,
+so the same consumer receives the expected body. The observer selects a legal
+thread ordering, not a historical schedule. The lifecycle case separately keeps
+verified HTTPS and route/child/generation/address assertions.
