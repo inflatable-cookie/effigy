@@ -212,10 +212,18 @@ fn reply(identity: &WorkspaceContainerIdentity) -> serde_json::Value {
     serde_json::to_value(document).expect("probe reply document")
 }
 
-fn observed_unknown<T: std::fmt::Debug>(observed: &Observed<T>) -> String {
+fn observed_kind<T>(observed: &Observed<T>) -> &'static str {
+    match observed {
+        Observed::Verified(..) => "Verified",
+        Observed::Absent(..) => "Absent",
+        Observed::Unknown(..) => "Unknown",
+    }
+}
+
+fn observed_unknown<T>(observed: &Observed<T>) -> String {
     match observed {
         Observed::Unknown(reason) => reason.to_string(),
-        other => panic!("expected Unknown, saw {other:?}"),
+        other => panic!("expected Unknown, saw {}", observed_kind(other)),
     }
 }
 
@@ -242,7 +250,10 @@ fn identity_observes_the_staged_object_in_the_verified_target() {
                 "bounded exec of the staged digest object reported its own container identity"
             );
         }
-        other => panic!("expected a verified identity, saw {other:?}"),
+        other => panic!(
+            "expected a verified identity, saw {}",
+            observed_kind(&other)
+        ),
     }
     let argv = backend.argv();
     assert_eq!(argv.first().map(String::as_str), Some("exec"));
@@ -683,7 +694,7 @@ fn context_dial_reports_the_guests_own_peer_and_pin() {
             assert_eq!(evidence.peer.to_string(), PEER);
             assert_eq!(evidence.pin, pin());
         }
-        other => panic!("expected a verified dial, saw {other:?}"),
+        other => panic!("expected a verified dial, saw {}", observed_kind(&other)),
     }
     let argv = backend.argv();
     let script = argv.last().expect("the shell that runs the object");
@@ -791,7 +802,7 @@ fn alias_resolution_and_pinned_dial_refuse_another_alias_peer_or_pin() {
             assert_eq!(alias.target, claimed());
             assert_eq!(alias.address.to_string(), "192.168.65.254");
         }
-        other => panic!("expected a verified alias, saw {other:?}"),
+        other => panic!("expected a verified alias, saw {}", observed_kind(&other)),
     }
     assert_eq!(
         guest_argv(resolve_args()),
@@ -853,7 +864,10 @@ fn alias_resolution_and_pinned_dial_refuse_another_alias_peer_or_pin() {
             assert_eq!(evidence.peer.to_string(), PEER);
             assert_eq!(evidence.pin, pin());
         }
-        other => panic!("expected a verified pinned dial, saw {other:?}"),
+        other => panic!(
+            "expected a verified pinned dial, saw {}",
+            observed_kind(&other)
+        ),
     }
     assert_eq!(
         guest_argv(dial_args(
