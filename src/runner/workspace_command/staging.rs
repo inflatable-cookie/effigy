@@ -286,7 +286,10 @@ impl<'a> StagedGuestProbe<'a> {
             Ok(object) => object,
             Err(reason) => return Observed::Unknown(reason),
         };
+        #[cfg(not(test))]
         let started = std::time::Instant::now();
+        #[cfg(test)]
+        let started = crate::runner::exec_command::controlled_capture_clock::now();
         let Some(deadline) = started
             .checked_add(budget)
             .filter(|deadline| *deadline > started)
@@ -309,7 +312,11 @@ impl<'a> StagedGuestProbe<'a> {
         };
         // A capture that ended at the deadline is a timeout even when the
         // process managed to print something first.
-        let expired = std::time::Instant::now() >= deadline;
+        #[cfg(not(test))]
+        let finished = std::time::Instant::now();
+        #[cfg(test)]
+        let finished = crate::runner::exec_command::controlled_capture_clock::now();
+        let expired = finished >= deadline;
         let captured = match captured {
             Ok(_) if expired => {
                 return Observed::Unknown(UnknownReason::TimedOut {

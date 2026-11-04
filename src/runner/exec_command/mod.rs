@@ -33,7 +33,7 @@ use surface::{
 
 mod bounded;
 #[cfg(test)]
-mod controlled_capture_clock;
+pub(in crate::runner) mod controlled_capture_clock;
 mod surface;
 mod transport;
 
