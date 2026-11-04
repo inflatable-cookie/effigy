@@ -834,6 +834,87 @@ fn managed_host_listener_probe_miss_does_not_restart_the_child() {
     assert_success(down);
 }
 
+/// The real producer shared by the lifecycle proof and its ordering control.
+fn republication_server(control_address: SocketAddr) -> String {
+    format!(
+            "{}\nimport threading, time, socket\ncontrol = socket.create_connection(({:?}, {}))\nstate = {{\"server\": http.server.HTTPServer((host, int(port)), Handler)}}\ndef serve():\n    state[\"server\"].serve_forever()\ndef outage():\n    control.sendall(b'i')\n    assert control.recv(1) == b'x'\n    server = state[\"server\"]\n    server.shutdown()\n    server.server_close()\n    control.sendall(b'x')\n    assert control.recv(1) == b'r'\n    state[\"server\"] = http.server.HTTPServer((host, int(port)), Handler)\n    threading.Thread(target=serve, daemon=True).start()\nthreading.Thread(target=outage, daemon=True).start()\nserve()\nwhile True:\n    time.sleep(1)\n",
+            plain_server("answered again"),
+            control_address.ip().to_string(),
+            control_address.port()
+        )
+}
+
+/// Park the initial consumer at the producer's outage-admission boundary.
+/// The fixed producer must still serve there, until initial HTTPS releases it.
+/// This uses its real HTTPServer; no gateway or kernel policy is simulated.
+#[test]
+fn republication_producer_waits_for_its_initial_consumer() {
+    let fixture = effigy_test_support::Fixture::new("republish-order-").unwrap();
+    let control = TcpListener::bind("127.0.0.1:0").unwrap();
+    let script = republication_server(control.local_addr().unwrap()).replace(
+        "def serve():",
+        "control.sendall((str(state[\"server\"].server_port) + \"\\n\").encode())\ndef serve():",
+    );
+    let script_path = fixture.path().join("server.py");
+    fs::write(&script_path, script).unwrap();
+    let mut child = Command::new("python3")
+        .arg(&script_path)
+        .env("EFFIGY_MANAGED_HOST_LISTENER_BIND", "127.0.0.1:0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(
+            fs::File::create(fixture.path().join("server.stderr")).unwrap(),
+        ))
+        .spawn_owned()
+        .unwrap();
+    let identity = read_live_process_identity(child.id()).expect("owned producer identity");
+    fs::write(
+        fixture.path().join("producer-identity.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "pid": child.id(), "boot": &identity.boot_identity, "start": &identity.start_identity
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    eprintln!(
+        "ordering producer identity={}",
+        fs::read_to_string(fixture.path().join("producer-identity.json")).unwrap()
+    );
+    let (mut control, _) = control.accept().unwrap();
+    let mut port = String::new();
+    loop {
+        let mut byte = [0];
+        control.read_exact(&mut byte).unwrap();
+        if byte[0] == b'\n' {
+            break;
+        }
+        port.push(char::from(byte[0]));
+    }
+    let address: SocketAddr = format!("127.0.0.1:{}", port.trim()).parse().unwrap();
+    let mut boundary = [0];
+    control.read_exact(&mut boundary).unwrap();
+    assert_eq!(&boundary, b"i", "producer reached outage admission");
+    // The consumer was deliberately unscheduled until this boundary. On the
+    // old timer input it is already inside the closed-port window. On the
+    // fixed input the producer is parked before closing, awaiting the consumer.
+    let response = TcpStream::connect(address).and_then(|mut stream| {
+        stream.write_all(b"GET / HTTP/1.0\r\nHost: fixture\r\n\r\n")?;
+        let mut response = String::new();
+        stream.read_to_string(&mut response)?;
+        Ok(response)
+    });
+    assert_eq!(read_live_process_identity(child.id()).unwrap(), identity);
+    child.kill().expect("stop this owned producer");
+    let exit = child.wait().expect("reap this owned producer");
+    eprintln!("ordering producer reaped; success={}", exit.success());
+    assert!(
+        response
+            .as_ref()
+            .is_ok_and(|body| body.contains("answered again")),
+        "initial consumer crossed the producer's outage: {response:?}"
+    );
+}
+
 /// Three consecutive liveness misses withdraw the route; when the port
 /// answers again the same generation republishes it. The child is never
 /// restarted, so its generation and pid stay the same throughout.
@@ -859,12 +940,7 @@ fn managed_host_listener_republishes_its_route_when_the_port_answers_again() {
     let control_address = control.local_addr().unwrap();
     fs::write(
         checkout.join("server.py"),
-        format!(
-            "{}\nimport threading, time, socket\ncontrol = socket.create_connection(({:?}, {}))\nstate = {{\"server\": http.server.HTTPServer((host, int(port)), Handler)}}\ndef serve():\n    state[\"server\"].serve_forever()\ndef outage():\n    assert control.recv(1) == b'x'\n    server = state[\"server\"]\n    server.shutdown()\n    server.server_close()\n    control.sendall(b'x')\n    assert control.recv(1) == b'r'\n    state[\"server\"] = http.server.HTTPServer((host, int(port)), Handler)\n    threading.Thread(target=serve, daemon=True).start()\nthreading.Thread(target=outage, daemon=True).start()\nserve()\nwhile True:\n    time.sleep(1)\n",
-            plain_server("answered again"),
-            control_address.ip().to_string(),
-            control_address.port()
-        ),
+        republication_server(control_address),
     )
     .expect("fixture server script");
     let cleanup = setup.cleanup(&effects, &checkout, profile);
@@ -885,12 +961,17 @@ fn managed_host_listener_republishes_its_route_when_the_port_answers_again() {
         .as_str()
         .expect("published address")
         .to_owned();
+    let (mut control, _) = control.accept().expect("server control connection");
+    let mut admission = [0];
+    control
+        .read_exact(&mut admission)
+        .expect("outage admission boundary");
+    assert_eq!(&admission, b"i");
     assert_eq!(
         curl_https(setup.https_address, &setup.ca_path, domain, "/"),
         "answered again"
     );
 
-    let (mut control, _) = control.accept().expect("server control connection");
     control
         .write_all(b"x")
         .expect("begin outage after initial HTTPS");
