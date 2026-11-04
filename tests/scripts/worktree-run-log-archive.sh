@@ -26,6 +26,39 @@ new_fixture() {
   out="$fx/out.log"
 }
 
+# Resolution uses the staged binary only when neither deterministic override is set.
+new_fixture
+mkdir -p "$repo/.effigy/state/runs/1" "$repo/.local-install/worktree-hooks" "$fx/temp" "$fx/stash"
+printf 'evidence' >"$repo/.effigy/state/runs/1/log"
+cat >"$repo/.local-install/worktree-hooks/effigy" <<EOF
+#!/bin/sh
+printf '%s\n' "$fx/stash"
+EOF
+chmod +x "$repo/.local-install/worktree-hooks/effigy"
+TMPDIR="$fx/temp" sh "$helper" "$repo" >"$out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] || fail "configured root exit $rc: $(cat "$out")"
+grep -q "archive=$fx/stash/qa-run-logs" "$out" || fail "configured root not used"
+[ ! -e "$fx/Builds" ] || fail "old Builds root touched"
+dest=$(sed -n 's/.*archive=\([^ ]*\).*/\1/p' "$out")
+rm -rf "$repo/.effigy"
+[ "$(cat "$dest/1.log")" = evidence ] || fail "archive did not survive cleanup"
+mkdir -p "$repo/.effigy/state/runs/1"
+: >"$repo/.effigy/state/runs/1/log"
+printf '#!/bin/sh\nprintf "%%s\\n" "%s"\n' "$fx/temp" >"$repo/.local-install/worktree-hooks/effigy"
+TMPDIR="$fx/temp" sh "$helper" "$repo" >"$out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] || fail "disposable destination accepted"
+printf '#!/bin/sh\nprintf "%%s\\n" "%s"\n' "$fx/missing" >"$repo/.local-install/worktree-hooks/effigy"
+TMPDIR="$fx/temp" sh "$helper" "$repo" >"$out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] || fail "missing configured destination accepted"
+printf '#!/bin/sh\nexit 1\n' >"$repo/.local-install/worktree-hooks/effigy"
+TMPDIR="$fx/temp" sh "$helper" "$repo" >"$out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] || fail "resolution failure ignored"
+EFFIGY_RUN_LOG_ARCHIVE_BASE="$fx/archive-base" TMPDIR="$fx/temp" sh "$helper" "$repo" "$fx/explicit" >"$out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q "archive=$fx/explicit/" "$out" || fail "explicit precedence failed"
+EFFIGY_RUN_LOG_ARCHIVE_BASE="$fx/archive-base" TMPDIR="$fx/temp" sh "$helper" "$repo" >"$out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q "archive=$fx/archive-base/" "$out" || fail "fixture override failed"
+ok "configured destination, cleanup, failure and precedence"
+
 # 1. Exact bytes, manifest binding, multiple runs/segments; no log contents
 # on stdout; archive base subdirectory is created on demand.
 new_fixture

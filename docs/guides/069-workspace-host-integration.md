@@ -310,6 +310,14 @@ observation.
   outright, the sentinel settles the run and its suites, and the directory is
   left for the sweep like any other killed run's.
 
+Worktree teardown archives future QA run logs under the configured `[scratch].root`,
+outside the disposable run directory. If scratch is unconfigured, it retains the
+existing `/Volumes/Builds/scratch/effigy` destination. An unreadable or malformed
+configuration, or an unusable configured destination, reports archival failure;
+teardown still attempts its cleanup. An explicit archive base takes precedence,
+followed by the fixture-only `EFFIGY_RUN_LOG_ARCHIVE_BASE` override. Existing
+archives are not moved. Changing this setting is a separate host operation.
+
 ### What follows the scratch directory
 
 `TMPDIR` is the contract, so anything that asks the platform for its temp
