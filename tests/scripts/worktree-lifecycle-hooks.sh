@@ -51,6 +51,20 @@ CARGO
   }
 }
 
+# A failed config lookup must still retire and unlink.
+new_fixture
+run_hook setup || exit 2
+mkdir -p "$repo/.effigy/state/runs/1"
+: >"$repo/.effigy/state/runs/1/log"
+(cd "$repo" && HOME="$fx/home" NORTHSTAR_SKILL_PATH="$fx/skill" \
+  STUB_FAIL_ON=__worktree-archive-scratch-root PATH="$fx/stale:$fx/bin:/usr/bin:/bin" \
+  sh scripts/worktree-lifecycle.sh teardown) >"$fx/out.log" 2>&1; rc=$?
+[ "$rc" -ne 0 ] || fail "config failure not reported"
+grep -q 'container retire --yes' "$log" || fail "retire skipped after config failure"
+grep -q 'skill run.*unlink' "$log" || fail "unlink skipped after config failure"
+grep -q 'run-log archive failed' "$fx/out.log" || fail "archive error missing"
+ok "config failure preserves cleanup"
+
 # 1. setup: build precedes link; stale PATH effigy never called.
 new_fixture
 run_hook setup; rc=$?

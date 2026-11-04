@@ -21,7 +21,8 @@
 #
 #   worktree-archive-run-logs.sh [checkout-root [archive-base]]
 #
-# `archive-base` defaults to /Volumes/Builds/scratch/effigy, which is private
+# `archive-base` defaults to the configured user scratch root, or
+# /Volumes/Builds/scratch/effigy when unconfigured, which is private
 # host scratch OUTSIDE Queue run cleanup so the archive survives checkout
 # removal; the run's TMPDIR must never be the destination. The
 # EFFIGY_RUN_LOG_ARCHIVE_BASE environment override exists for deterministic
@@ -38,7 +39,8 @@ MAX_TOTAL=16777216
 
 here=$(cd "$(dirname "$0")" && pwd -P)
 root=${1:-$here/..}
-base=${2:-${EFFIGY_RUN_LOG_ARCHIVE_BASE:-$DEFAULT_BASE}}
+base=${2:-${EFFIGY_RUN_LOG_ARCHIVE_BASE:-}}
+resolver=${3:-$root/.local-install/worktree-hooks/effigy}
 
 say() { echo "worktree-archive-run-logs: $*"; }
 fail() { echo "worktree-archive-run-logs: error: $*" >&2; exit 1; }
@@ -52,6 +54,26 @@ for component in "$root/.effigy" "$root/.effigy/state" "$runs"; do
     exit 1
   fi
 done
+
+if [ -z "$base" ]; then
+  base=$("$resolver" __worktree-archive-scratch-root)
+  resolve_rc=$?
+  case "$resolve_rc" in
+    0) ;;
+    2) base=$DEFAULT_BASE ;;
+    *) fail "cannot resolve configured archive base (exit $resolve_rc)" ;;
+  esac
+  # A configured root cannot be inside the disposable run temp directory.
+  if [ "$resolve_rc" -eq 0 ] && [ -n "${TMPDIR:-}" ]; then
+    resolved_temp=$(cd "$TMPDIR" && pwd -P) || fail "cannot resolve TMPDIR"
+    [ -d "$base" ] || fail "configured archive base does not exist: $base"
+    resolved_base=$(cd "$base" && pwd -P) || fail "cannot resolve archive base: $base"
+    case "$resolved_base/" in
+      "$resolved_temp/"*) fail "archive base is inside TMPDIR: $base" ;;
+    esac
+    base=$resolved_base
+  fi
+fi
 
 mkdir -p "$base" 2>/dev/null
 [ -d "$base" ] || { say "status=unavailable reason=no-archive-base base=$base"; exit 1; }

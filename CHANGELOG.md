@@ -1597,6 +1597,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- Worktree QA log archives follow the configured user scratch root for future teardowns.
+
 - Focus the compiler-feedback inventory tests on distinct detector claims: the
   synthetic renamed-helper case is folded into the real rustc alias-resolver
   fixture, the string/comment lexing cases into one code-only contract, and

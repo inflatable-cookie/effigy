@@ -260,3 +260,5 @@ causal source path, not the schedule of an earlier QA occurrence.
 Run this case through `test:focused` with `--features fault-injection` and its
 exact test filter. `lint:bundle:deadline-proof` covers that feature's targets;
 the ordinary bundle controls also run without the feature.
+
+Worktree archive controls use private synthetic scratch roots and retain the explicit archive-base and fixture override routes. They must not probe or move real host archives.

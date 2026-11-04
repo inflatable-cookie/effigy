@@ -1,10 +1,29 @@
 fn main() {
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    if raw_args == ["__worktree-archive-scratch-root"] {
+        match effigy_manifest::load_user_config() {
+            Ok(config) => match config.scratch.root() {
+                Some(root) if root.is_absolute() && !root.to_string_lossy().contains('\n') => {
+                    println!("{}", root.display());
+                }
+                Some(_) => {
+                    eprintln!("archive scratch root must be an absolute single-line path");
+                    std::process::exit(1);
+                }
+                None => std::process::exit(2),
+            },
+            Err(error) => {
+                eprintln!("cannot load archive scratch configuration: {error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     #[cfg(feature = "workspace-private-qualification")]
     if effigy_kernel::supervise::initialize_private_qualification_image().is_err() {
         eprintln!("workspace qualification creator image unavailable");
         std::process::exit(1);
     }
-    let raw_args: Vec<String> = std::env::args().skip(1).collect();
     #[cfg(target_os = "macos")]
     if raw_args
         .first()
