@@ -82,7 +82,21 @@ preparation, delivery, recovery, oracle checks and HOME cleanup; the parent
 checks that every planned job appears exactly once on its assigned shard.
 Progress names unfinished work; a missing cost row is unknown, never zero.
 Old versus rotated cost sums are a scheduling model using measured jobs,
-not a reconstruction of a historical timeout or proof of runtime closure.
+not a measured speedup, causal timeout repair or proof of runtime closure.
+Tom's operator decision `f6d749dc-b601-4e3b-9eca-c17373752e4f` v2
+(2026-11-04) admits this coverage-preserving scheduling improvement on that
+basis. It supersedes the causal-repair outcome, not the evidence limits in
+[review 5770051968](https://github.com/inflatable-cookie/effigy/pull/756#pullrequestreview-5770051968).
+
+The environment handover timeout in QA `80c1ea79-08d2-4465-8371-a3d0e438359c`
+at `34999093f5c6c32b71e1770a3f5364c176bd6fb4` remains unexplained
+(600.004s). Planner lead `0d76b0ea-5e87-4ec2-9f47-d4f923ecaa07` owns
+that residual and subsequent integrated QA; shard balancing does not close it.
+Private evidence manifests under `/Volumes/Builds/scratch/effigy/` are
+`636-handover.jGCpYT/MANIFEST.json` (assignment/cost receipts) and
+`636-phase-diagnostic.OwegYV/MANIFEST.json` (the additional original-assignment
+diagnostic passed in 400.638s without identifying a causal dependency).
+The original QA records remain in `milestone-gateway-bundle-integrated.mm55sff6/`.
 A custody group that owes the caller no terminal also gets its own session, so a
 suite, a nested task session or a harness census never meets a custody helper of
 another run in the session it started.
