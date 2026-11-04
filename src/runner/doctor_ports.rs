@@ -1115,18 +1115,22 @@ esac
         pgfile: &Path,
         ready: &Path,
     ) {
-        use effigy_containers::exec::capture_test_clock::{
-            advance, control,
-        };
+        use effigy_containers::exec::capture_test_clock::{control, Guard};
 
         struct CaptureGuard {
-            thread: Option<std::thread::JoinHandle<Result<bool, crate::runner::error::RunnerError>>>,
+            thread:
+                Option<std::thread::JoinHandle<Result<bool, crate::runner::error::RunnerError>>>,
             deadline: Instant,
+            clock: Guard,
         }
         impl CaptureGuard {
             fn finish(&mut self) -> Result<bool, crate::runner::error::RunnerError> {
-                advance(self.deadline + Duration::from_millis(1));
-                self.thread.take().expect("owned capture thread").join().expect("capture thread")
+                self.clock.advance(self.deadline + Duration::from_millis(1));
+                self.thread
+                    .take()
+                    .expect("owned capture thread")
+                    .join()
+                    .expect("capture thread")
             }
         }
         impl Drop for CaptureGuard {
@@ -1140,7 +1144,7 @@ esac
         }
 
         let started = Instant::now();
-        let _clock = control(started);
+        let clock = control(started);
         let deadline = started + LIVENESS_DEADLINE;
         let mut capture = CaptureGuard {
             thread: Some(std::thread::spawn({
@@ -1149,26 +1153,49 @@ esac
                 move || is_primary_service_running_with_deadline(&root, &policy, Some(deadline))
             })),
             deadline,
+            clock,
         };
         let readiness_bound = started + LIVENESS_UPPER_BOUND;
         while !ready.exists() {
-            assert!(Instant::now() < readiness_bound, "owned liveness phase never became ready");
+            assert!(
+                Instant::now() < readiness_bound,
+                "owned liveness phase never became ready"
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
         let pids = recorded_owned_pids(pgfile);
-        assert_eq!(pids.len(), 2, "the shell and its descendant must both be recorded");
-        let identities = pids.iter().map(|pid| {
-            let identity = effigy_process::process_start_identity(*pid);
-            assert!(identity.is_some(), "owned pid {pid} must be live before expiry");
-            (*pid, identity)
-        }).collect::<Vec<_>>();
-        let error = capture.finish().expect_err("authenticated hung phase must time out");
+        assert_eq!(
+            pids.len(),
+            2,
+            "the shell and its descendant must both be recorded"
+        );
+        let identities = pids
+            .iter()
+            .map(|pid| {
+                let pid = u32::try_from(*pid).expect("positive owned pid");
+                let identity = effigy_process::process_start_identity(pid);
+                assert!(
+                    identity.is_some(),
+                    "owned pid {pid} must be live before expiry"
+                );
+                (pid, identity)
+            })
+            .collect::<Vec<_>>();
+        let error = capture
+            .finish()
+            .expect_err("authenticated hung phase must time out");
         assert!(error.to_string().contains("timed out"), "got {error}");
-        assert!(started.elapsed() < LIVENESS_UPPER_BOUND, "hung phase must not wait out sleep 300");
+        assert!(
+            started.elapsed() < LIVENESS_UPPER_BOUND,
+            "hung phase must not wait out sleep 300"
+        );
         wait_for_processes_gone(pgfile);
         for (pid, identity) in identities {
-            assert_ne!(effigy_process::process_start_identity(pid), identity,
-                "the authenticated generation must be gone after reap");
+            assert_ne!(
+                effigy_process::process_start_identity(pid),
+                identity,
+                "the authenticated generation must be gone after reap"
+            );
         }
     }
 
@@ -1207,10 +1234,15 @@ esac
         );
         let _env = with_runtime_env(&bin);
         liveness_reap_after_authenticated_start(&root, &policy_for(&root), &pgfile, &marker);
-        assert!(marker.exists(), "the composed probe must have been exercised");
+        assert!(
+            marker.exists(),
+            "the composed probe must have been exercised"
+        );
         let argv = fs::read_to_string(spawn_log).expect("recorded complete argv");
-        assert!(argv.contains("status") && argv.contains("nerdctl") && argv.contains("ps"),
-            "both phases must share the original deadline: {argv}");
+        assert!(
+            argv.contains("status") && argv.contains("nerdctl") && argv.contains("ps"),
+            "both phases must share the original deadline: {argv}"
+        );
     }
 
     #[test]

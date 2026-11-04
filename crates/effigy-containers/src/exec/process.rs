@@ -873,7 +873,7 @@ fn capture_child(
                     stderr: err,
                 });
             }
-            if drain_deadline.is_some_and(|deadline| capture_deadline_now() >= deadline) {
+            if drain_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "capture unavailable: child exited but inherited pipe EOF was not verified; writer provenance and settlement unknown"));
             }
         }

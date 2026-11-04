@@ -24,7 +24,7 @@ static CONTROLLED_NOW: Mutex<Option<Instant>> = Mutex::new(None);
 
 /// Held while a proof controls the reading; dropping it restores the wall
 /// clock for any later capture on this process.
-pub(super) struct ControlledCaptureClockGuard;
+pub(in crate::runner) struct ControlledCaptureClockGuard;
 
 impl Drop for ControlledCaptureClockGuard {
     fn drop(&mut self) {
@@ -36,7 +36,7 @@ impl Drop for ControlledCaptureClockGuard {
 
 /// Freeze the reading at `frozen` until the guard drops or
 /// [`advance_controlled_capture_clock`] moves it.
-pub(super) fn control_capture_clock(frozen: Instant) -> ControlledCaptureClockGuard {
+pub(in crate::runner) fn control_capture_clock(frozen: Instant) -> ControlledCaptureClockGuard {
     *CONTROLLED_NOW
         .lock()
         .expect("controlled capture clock lock") = Some(frozen);
@@ -45,7 +45,7 @@ pub(super) fn control_capture_clock(frozen: Instant) -> ControlledCaptureClockGu
 
 /// Move the reading. A proof advances it past the original deadline only
 /// after the owned workload's start is authenticated.
-pub(super) fn advance_controlled_capture_clock(to: Instant) {
+pub(in crate::runner) fn advance_controlled_capture_clock(to: Instant) {
     *CONTROLLED_NOW
         .lock()
         .expect("controlled capture clock lock") = Some(to);

@@ -1809,15 +1809,31 @@ mod tests {
             OsString::from("-d"),
         ];
         let started = std::time::Instant::now();
-        let error = super::run_shared_compose_bounded(
-            &root,
-            &policy,
-            &args,
-            super::ContainerAction::Activate,
-            "shared deadline proof",
-            None,
-            std::time::Duration::from_millis(300),
-        )
+        let deadline = started + std::time::Duration::from_millis(300);
+        let _clock =
+            crate::runner::exec_command::controlled_capture_clock::control_capture_clock(started);
+        let error = std::thread::scope(|scope| {
+            struct Expire(std::time::Instant);
+            impl Drop for Expire {
+                fn drop(&mut self) {
+                    crate::runner::exec_command::controlled_capture_clock::advance_controlled_capture_clock(self.0);
+                }
+            }
+            let call = scope.spawn(|| super::run_shared_compose_bounded(
+                &root, &policy, &args, super::ContainerAction::Activate,
+                "shared deadline proof", None, std::time::Duration::from_millis(300),
+            ));
+            let expire = Expire(deadline + std::time::Duration::from_secs(20));
+            let ready_bound = started + std::time::Duration::from_secs(20);
+            while !pid_file.exists() {
+                assert!(std::time::Instant::now() < ready_bound, "runtime did not publish its identity");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let pid: u32 = std::fs::read_to_string(&pid_file).expect("published pid").parse().expect("pid");
+            assert!(effigy_process::process_start_identity(pid).is_some(), "runtime generation must be live before expiry");
+            drop(expire);
+            call.join().expect("capture thread")
+        })
         .expect_err("a hung call must hit its deadline");
         assert!(
             error.to_string().contains("did not complete within"),
