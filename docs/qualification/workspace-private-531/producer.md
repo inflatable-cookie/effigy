@@ -143,10 +143,11 @@ hashes, contract, candidate/production/old-baseline receipts, inputs and GO
 bindings, GO decision and expiry, pinned qualification root, driver, engine
 kind and identity, resident image, window budget and the input-hash one-shot
 marker. The exact original `complete.json`/`failed.json` bytes are transported
-and retained inside the same authorized proof turn (locally from the held root
-descriptor; for Linux through the cell's pinned SSH artifacts only) as
-`<backend>-receipt.json` in the evidence directory, hash-bound to the original
-before the invocation receipt is written. The original proof roots stay
+and retained inside the same authorized proof turn — quoted and size-bounded
+(1 MiB) on every driver, locally from the held root descriptor, for Linux
+through the cell's pinned SSH artifacts only — as `<backend>-receipt.json` in
+the evidence directory, hash-bound to the original before the invocation
+receipt is written. The original proof roots stay
 retained; the export never replaces them.
 
 ## Aggregate verdict format (read-only offline verifier)
@@ -159,7 +160,8 @@ the retained original-receipt exports locally and refuses missing, failed,
 source-changed, foreign, stale, mixed-source or incomplete evidence. It
 validates the fixed full-session cell contract of each export (`native: true`,
 `production_enabled: false`, the production-refusal through restored-baseline
-cell sequence, recorded baseline/cleanup/fixture-retention equality) — a
+cell sequence, each cell's recorded positive facts, recorded
+collectively with baseline/cleanup/fixture-retention equality) — a
 caller bool alone is never authority, and a copied, self-labelled or
 incomplete receipt refuses.
 

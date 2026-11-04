@@ -60,14 +60,14 @@ def complete_cells():
              {'cell': 'positive-session', 'session': 'session-1', 'environment_generation': 4,
               'container_id': 'c' * 64},
              {'cell': 'native-identity-and-tls', 'wrong_pin_refused': True},
-             {'cell': 'level-one-stream', 'real_exit': 23},
+             {'cell': 'level-one-stream', 'real_exit': 23, 'no_pty_and_stdin_eof': True},
              {'cell': 'real-signal', 'signal': 15},
              {'cell': 'credential-refusal', 'invalid_new_client_refused': True},
-             {'cell': 'caller-drop', 'cause': 'OwnerLost'},
+             {'cell': 'caller-drop', 'actual_cancelled_and_settled': True, 'cause': 'OwnerLost'},
              {'cell': 'gap-and-truncation', 'unknown_refused': True},
              {'cell': 'kernel-custody', 'actual_helpers': True},
              {'cell': 'down', 'session': 'session-1', 'closed': True},
-             {'cell': 'session-crash-recovery', 'fresh_session': 'session-2'},
+             {'cell': 'session-crash-recovery', 'killed_supervisor': 'supervisor-1', 'fresh_session': 'session-2'},
              {'cell': 'positive-session', 'session': 'session-3', 'environment_generation': 5},
              {'cell': 'down', 'session': 'session-2', 'closed': True},
              {'cell': 'positive-session', 'session': 'session-4', 'environment_generation': 6},
@@ -700,6 +700,120 @@ class Boundaries(unittest.TestCase):
             self.assertIs(retained['positive'], False)
             self.assertEqual(digest(Path(retained['receipt_export']['path'])), retained['receipt_sha256'])
 
+    def test_linux_export_transport_is_quoted_bounded_and_hash_bound(self):
+        import hashlib
+        import launch
+        import shlex
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory(prefix='531-export-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            # The remote original lives behind a path that requires quoting; the
+            # local root is never opened for the ssh driver.
+            receipt_root = str(SCRATCH / '531-unarmed linux')
+            receipt_path = receipt_root + '/complete.json'
+            payload = json.dumps({'cells': complete_cells(), 'native': True,
+                                  'production_enabled': False}).encode()
+
+            def fixture(evidence_name):
+                value = inputs()
+                value['evidence'] = str(base / evidence_name)
+                cell = copy.deepcopy(value['backends'][2])
+                cell['ssh_alias'] = 'effigy-531-vault'
+                cell['qualification_root'] = dict(path=receipt_root, device=0, inode=0, uid=os.geteuid())
+                remote_inputs = str(base / ('remote-inputs-' + evidence_name + '.json'))
+                remote_go = str(base / ('remote-go-' + evidence_name + '.json'))
+                cell['remote'] = {'packet': str(base / 'remote-packet'), 'inputs': remote_inputs,
+                                  'go_bindings': remote_go}
+                value['backends'][2] = cell
+                inputs_path, approved = write_bound(base, 'inputs-' + evidence_name + '.json', value)
+                go_path, _ = write_bound(base, 'linux-go-' + evidence_name + '.json', entry_go(cell, approved))
+                index_path, index_hash = write_bound(base, 'go-index-' + evidence_name + '.json',
+                                                     {'linux': {'path': str(go_path), 'sha256': digest(go_path)}})
+                argv = ['launch.py', '--inputs', str(inputs_path), '--sha256', approved,
+                        '--go-bindings', str(index_path), '--go-sha256', index_hash, '--backend', 'linux']
+                digests = {str(Path(cell['remote']['packet']) / name): digest(PACKET / name)
+                           for name in ('common.py', 'runtime.py', 'probe.py')}
+                digests[remote_inputs] = approved
+                digests[remote_go] = index_hash
+                return argv, digests, approved
+
+            def drive(argv, digests, transported_payload, receipt_digest, evidence_name):
+                calls = []
+                def transport_double(prefix_argv, **kwargs):
+                    calls.append(list(prefix_argv))
+                    command = prefix_argv[-1]
+                    if command.startswith('sha256sum -- '):
+                        target = shlex.split(command)[-1]
+                        found = receipt_digest if target == receipt_path else digests[target]
+                        return SimpleNamespace(returncode=0, stderr=b'',
+                                               stdout=(found + '  ' + target + '\n').encode())
+                    if command.startswith('cat -- '):
+                        return SimpleNamespace(returncode=0, stderr=b'', stdout=transported_payload)
+                    # The reviewed runtime itself, executed over the pinned transport.
+                    return SimpleNamespace(returncode=0, stderr=b'',
+                                           stdout=json.dumps({'receipt': receipt_path}).encode())
+                with patch.object(sys, 'argv', argv), \
+                     patch.object(launch, 'source_head', return_value=HEAD), \
+                     patch.object(launch, 'ssh_prefix', return_value=['ssh-fixture', 'alias']), \
+                     patch.object(launch, 'run', side_effect=transport_double):
+                    launch.main()
+                return calls
+
+            # Positive: quoted remote cat, hash-bound transport, retained export.
+            argv, digests, approved = fixture('evidence')
+            calls = drive(argv, digests, payload, hashlib.sha256(payload).hexdigest(), 'evidence')
+            cat_calls = [item for item in calls if item[-1].startswith('cat -- ')]
+            self.assertEqual(len(cat_calls), 1)
+            self.assertEqual(cat_calls[0][-1], 'cat -- ' + shlex.quote(receipt_path))
+            self.assertIn(' ', receipt_path, 'the exercised remote path requires quoting')
+            record = json.loads((base / 'evidence' / 'linux.json').read_text())
+            self.assertEqual(record['receipt'], receipt_path)
+            self.assertEqual(record['receipt_sha256'], hashlib.sha256(payload).hexdigest())
+            self.assertIs(record['positive'], True)
+            export = record['receipt_export']
+            self.assertEqual(Path(export['path']).read_bytes(), payload)
+            self.assertEqual(export['sha256'], record['receipt_sha256'])
+            self.assertFalse((base / 'evidence' / 'complete.json').exists())
+
+            # A transport delivering bytes other than the recorded original refuses.
+            argv, digests, approved = fixture('evidence-2')
+            with self.assertRaisesRegex(RuntimeError, 'transported original receipt differs'):
+                drive(argv, digests, payload + b' ', hashlib.sha256(payload).hexdigest(), 'evidence-2')
+            self.assertFalse((base / 'evidence-2' / 'linux.json').exists())
+
+            # An oversized transport refuses before retention on either driver.
+            oversize = b'x' * (launch.MAX_EXPORT_BYTES + 1)
+            argv, digests, approved = fixture('evidence-3')
+            with self.assertRaisesRegex(RuntimeError, 'exceeds its retained size bound'):
+                drive(argv, digests, oversize, hashlib.sha256(oversize).hexdigest(), 'evidence-3')
+            self.assertFalse((base / 'evidence-3' / 'linux.json').exists())
+
+            # The local driver's held-descriptor read is size-bounded too.
+            value = inputs()
+            value['evidence'] = str(base / 'evidence-4')
+            local_cell = copy.deepcopy(value['backends'][1])
+            local_root = base / 'oversize-root'
+            local_root.mkdir(mode=0o700)
+            identity = local_root.stat()
+            local_cell['qualification_root'] = dict(path=str(local_root), device=identity.st_dev,
+                                                    inode=identity.st_ino, uid=identity.st_uid)
+            (local_root / 'complete.json').write_bytes(oversize)
+            value['backends'][1] = local_cell
+            inputs_path, approved = write_bound(base, 'inputs-local-oversize.json', value)
+            go_path, _ = write_bound(base, 'desktop-go-oversize.json', entry_go(local_cell, approved))
+            index_path, index_hash = write_bound(base, 'go-index-oversize.json',
+                                                 {'desktop': {'path': str(go_path), 'sha256': digest(go_path)}})
+            argv = ['launch.py', '--inputs', str(inputs_path), '--sha256', approved,
+                    '--go-bindings', str(index_path), '--go-sha256', index_hash, '--backend', 'desktop']
+            local_result = SimpleNamespace(returncode=0, stderr=b'',
+                                           stdout=json.dumps({'receipt': str(local_root / 'complete.json')}).encode())
+            with patch.object(sys, 'argv', argv), \
+                 patch.object(launch, 'source_head', return_value=HEAD), \
+                 patch.object(launch, 'run', return_value=local_result):
+                with self.assertRaisesRegex(RuntimeError, 'exceeds its retained size bound'):
+                    launch.main()
+            self.assertFalse((base / 'evidence-4' / 'desktop.json').exists())
+
     def test_one_shot_marker_consumes_replay_at_the_runtime_entry(self):
         import runtime
         with tempfile.TemporaryDirectory(prefix='531-one-shot-', dir=os.environ['TMPDIR']) as directory:
@@ -807,6 +921,12 @@ class Boundaries(unittest.TestCase):
                 'old_source_head': '4' * 40,
                 'old_source_receipt': dict(records['linux']['binding']['old_source_receipt'],
                                            source_head='4' * 40)})
+            contract_binding, contract_hash = mutated('contract.invocation.json', 'linux', binding={
+                'contract': 'effigy.workspace-private-proof.v0'})
+            production_binding, production_hash = mutated('production-features.invocation.json', 'linux',
+                                                          binding={'production_receipt': dict(
+                                                              records['linux']['binding']['production_receipt'],
+                                                              features=['workspace-private-qualification'])})
             programs_binding, programs_hash = mutated('programs.invocation.json', 'linux', binding={
                 'programs': dict(records['linux']['binding']['programs'], **{'runtime.py': 'q' * 64})})
             renamed_binding, renamed_hash = mutated('renamed.invocation.json', 'desktop',
@@ -837,6 +957,38 @@ class Boundaries(unittest.TestCase):
                                                        'sha256': digest(foreign_export)}
             foreign_export_path, foreign_export_bound = write_bound(
                 base, 'foreign-export.invocation.json', foreign_export_record)
+            # One false or wrong positive fact per cell family must refuse.
+            fact_mutations = [
+                ('positive-session', 'session', ''),
+                ('native-identity-and-tls', 'wrong_pin_refused', False),
+                ('level-one-stream', 'real_exit', 0),
+                ('level-one-stream', 'no_pty_and_stdin_eof', False),
+                ('real-signal', 'signal', 9),
+                ('credential-refusal', 'invalid_new_client_refused', False),
+                ('caller-drop', 'actual_cancelled_and_settled', False),
+                ('caller-drop', 'cause', 'Unknown'),
+                ('gap-and-truncation', 'unknown_refused', False),
+                ('kernel-custody', 'actual_helpers', False),
+                ('session-crash-recovery', 'killed_supervisor', ''),
+                ('session-crash-recovery', 'fresh_session', ''),
+                ('down', 'closed', False),
+                ('baseline-and-cleanup', 'fixture_retained', False),
+            ]
+            fact_cases = []
+            for index, (family, field, wrong) in enumerate(fact_mutations):
+                mutated_cells = complete_cells()
+                for cell in mutated_cells:
+                    if cell['cell'] == family:
+                        cell[field] = wrong
+                fact_binding, fact_bound = reexported(
+                    'fact-{}.json'.format(index), 'desktop',
+                    json.dumps({'cells': mutated_cells, 'native': True,
+                                'production_enabled': False}).encode())
+                fact_cases.append((
+                    call(receipt_list=receipts[:1] + [fact_binding] + receipts[2:],
+                         hash_list=hashes[:1] + [fact_bound] + hashes[2:]),
+                    'receipt records a cell without its recorded positive facts',
+                    '{}.{}'.format(family, field)))
             before = sorted(str(p) for p in base.rglob('*'))
 
             def invoke(argv):
@@ -890,6 +1042,10 @@ class Boundaries(unittest.TestCase):
                  'exact qualification candidate contract'),
                 (call(receipt_list=receipts[:2] + [foreign_old_binding], hash_list=hashes[:2] + [foreign_old_hash]),
                  'SAME final source, features and common contract'),
+                (call(receipt_list=receipts[:2] + [contract_binding], hash_list=hashes[:2] + [contract_hash]),
+                 'receipt contract differs'),
+                (call(receipt_list=receipts[:2] + [production_binding], hash_list=hashes[:2] + [production_hash]),
+                 'exact ordinary production contract'),
                 (call(receipt_list=receipts[:2] + [programs_binding], hash_list=hashes[:2] + [programs_hash]),
                  'SAME final source, features and common contract'),
                 (call(receipt_list=receipts[:1] + [renamed_binding] + receipts[2:],
@@ -922,6 +1078,8 @@ class Boundaries(unittest.TestCase):
                  'baseline/cleanup/fixture-retention'),
             ]
             for argv, message in cases:
+                refuses(argv, message)
+            for argv, message, _family in fact_cases:
                 refuses(argv, message)
 
             # The verifier module surface excludes every SSH/runtime/native/root API.

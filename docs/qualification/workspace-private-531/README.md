@@ -223,8 +223,9 @@ effigy proof:workspace:private-qualification -- --inputs <inputs.json> --sha256 
 It validates exactly the selected backend's scoped GO, consumes that backend's
 input-hash one-use marker, runs only that backend's full session, and records
 the original complete/failed receipt with its binding record in a fresh
-evidence directory, retaining the exact original receipt bytes as a hash-bound
-export inside the proof turn. Positivity is recorded only after the post-run
+evidence directory, retaining the exact original receipt bytes through a
+quoted, size-bounded, hash-bound export inside the proof turn. Positivity is
+recorded only after the post-run
 source-unchanged check: a mid-window source edit refuses and yields honest,
 nonqualifying evidence. One entry is one positive native receipt: it is never
 an aggregate result and never writes an aggregate `complete.json`. Separate
@@ -244,7 +245,8 @@ the retained original-receipt exports locally, refuses missing, failed,
 source-changed, foreign, stale, mixed-source, mixed-candidate or incomplete
 receipts, and validates the fixed full-session cell contract of each export
 (native, production-disabled, the production-refusal through restored-baseline
-cell sequence, recorded baseline/cleanup/fixture-retention equality) — a
+cell sequence, each cell's recorded positive facts, and recorded
+collectively with baseline/cleanup/fixture-retention equality) — a
 caller bool alone is never authority. The shared contract compares the same
 final source, features and common contract; each platform's actual artifact
 bytes stay bound to their own producer receipts. Its verdict still requires

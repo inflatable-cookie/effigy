@@ -32,6 +32,22 @@ QUALIFICATION_FEATURES = ['workspace-private-qualification']
 REQUIRED_CELLS = ('production-refusal', 'positive-session', 'native-identity-and-tls', 'level-one-stream',
                   'real-signal', 'credential-refusal', 'caller-drop', 'gap-and-truncation', 'kernel-custody',
                   'down', 'session-crash-recovery', 'baseline-and-cleanup')
+# The recorded positive facts each cell family must carry; None means a truthy
+# recorded identity, any other value must compare exactly. No caller bool alone
+# is authority: a wrong, false or absent fact refuses the receipt.
+CELL_FACTS = {
+    'positive-session': {'session': None},
+    'native-identity-and-tls': {'wrong_pin_refused': True},
+    'level-one-stream': {'real_exit': 23, 'no_pty_and_stdin_eof': True},
+    'real-signal': {'signal': 15},
+    'credential-refusal': {'invalid_new_client_refused': True},
+    'caller-drop': {'actual_cancelled_and_settled': True, 'cause': 'OwnerLost'},
+    'gap-and-truncation': {'unknown_refused': True},
+    'kernel-custody': {'actual_helpers': True},
+    'session-crash-recovery': {'killed_supervisor': None, 'fresh_session': None},
+    'down': {'closed': True},
+    'baseline-and-cleanup': {'fixture_retained': True},
+}
 
 
 def parse_pairs(values, label):
@@ -83,14 +99,15 @@ def verify_receipt_semantics(record):
             'receipt cells do not match the fixed full-session contract in order')
     require(names[0] == 'production-refusal' and names[-1] == 'baseline-and-cleanup',
             'receipt does not span the ordinary refusal through restored baseline')
+    for cell in cells:
+        for field, expected in CELL_FACTS.get(cell.get('cell'), {}).items():
+            recorded = field in cell and cell[field] is not None and cell[field] != ''
+            require(recorded and (cell[field] == expected if expected is not None else True),
+                    'receipt records a cell without its recorded positive facts')
     baseline = cells[0].get('inventory')
     require(isinstance(baseline, dict) and cells[-1].get('inventory') == baseline
             and cells[-1].get('fixture_retained') is True,
             'recorded baseline/cleanup/fixture-retention differs')
-    require(any(cell.get('cell') == 'positive-session' and cell.get('session') for cell in cells),
-            'no positive full session recorded')
-    require(any(cell.get('cell') == 'down' and cell.get('closed') is True for cell in cells),
-            'no closed down recorded')
 
 
 def verify_record(backend, record, head):

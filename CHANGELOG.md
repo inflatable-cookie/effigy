@@ -375,13 +375,15 @@ During v0.x, MINOR bumps may include breaking changes.
   executed program hashes, contract, candidate, inputs, pinned qualification
   root, genuine old baseline, window budget and input-hash one-use marker, and
   recording the original complete/failed receipt — with its exact bytes
-  retained as a hash-bound export inside the proof turn — in a fresh evidence
+  retained through a quoted, size-bounded, hash-bound export inside the proof
+  turn — in a fresh evidence
   directory. Positivity is recorded only after the post-run source-unchanged
   check, so a mid-window source edit yields honest, nonqualifying evidence. A
   read-only offline aggregate verifier
   (`verify:workspace:private-qualification:aggregate`) qualifies the packet
   only when all three positive backend receipts are authentic, complete,
-  carry the fixed full-session cell contract with recorded baseline/cleanup
+  carry the fixed full-session cell contract with each cell's recorded
+  positive facts and recorded baseline/cleanup
   equality, and match the same final source, features and common contract —
   each platform's actual artifact bytes stay bound to their own producer
   receipts — reading retained exports locally with no SSH, runtime or root

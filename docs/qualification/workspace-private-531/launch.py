@@ -11,6 +11,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (BACKENDS, PACKET, SCRATCH, artifact, digest, exclusive, exclusive_bytes, load, require, run,
                     open_qualification_root, qualification_path, source_head, ssh_prefix, validate_go, validate_inputs)
 
+# Receipt exports are small bounded JSON documents; anything larger refuses
+# before retention on every driver.
+MAX_EXPORT_BYTES = 1024 * 1024
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -85,19 +89,21 @@ def main():
                 'runtime returned no bounded receipt; native result remains unverified')
         if cell['driver'] == 'ssh':
             # The exact original receipt bytes travel only inside this already
-            # authorized proof turn: bounded transport, then hash-bound against
-            # the remote original. No transport or re-read ever happens later.
-            transported = run(ssh() + ['cat', '--', str(expected)], timeout=60).stdout
+            # authorized proof turn: quoted, size-bounded transport, then
+            # hash-bound against the remote original. No transport or re-read
+            # ever happens later.
+            transported = run(ssh() + ['cat -- ' + shlex.quote(str(expected))], timeout=60).stdout
             receipt_hash = run(ssh() + [
                                 'sha256sum -- ' + shlex.quote(receipt_path)]).stdout.decode().split()[0]
         else:
             _, fd = open_qualification_root(cell['qualification_root'])
             try:
                 with os.fdopen(os.open(expected.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd), 'rb') as original:
-                    transported = original.read()
+                    transported = original.read(MAX_EXPORT_BYTES + 1)
                 receipt_hash = digest(expected.name, dir_fd=fd)
             finally:
                 os.close(fd)
+        require(len(transported) <= MAX_EXPORT_BYTES, 'original receipt exceeds its retained size bound')
         require(hashlib.sha256(transported).hexdigest() == receipt_hash,
                 'transported original receipt differs from its recorded hash')
         export = evidence / (cell['backend'] + '-receipt.json')
