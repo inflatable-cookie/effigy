@@ -15,7 +15,7 @@ Q-010 process custody: Git operations, hosted evidence lookups and stage tasks r
 checkout run explicitly. Before launch, the run registers its sentinel and each
 process receipt; closure and bounded output are verified before a stage consumes
 the result. Adapter exit codes are interpreted by the stage (a missing tag is
-an observed absence), while unknown closure refuses completion. Workspace guests
+an observed absence), while unknown closure refuses completion. Settlement refusals report categorical group and capture states and a residue count without exposing observation details. Workspace guests
 cannot mutate release state through the host-only release API.
 
 ## 1. Purpose

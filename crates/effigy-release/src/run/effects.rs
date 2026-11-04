@@ -67,6 +67,23 @@ pub enum HostedEvidence {
     },
 }
 
+pub(super) fn settlement_refusal(
+    report: &effigy_kernel::custody::StopReport,
+) -> Option<ReleaseError> {
+    use effigy_kernel::{custody::CaptureState, observe::Observed};
+    let group_unknown = !matches!(report.group, Observed::Verified(..) | Observed::Absent(_));
+    let capture_truncated = report.capture != CaptureState::Complete;
+    if !group_unknown && report.residue.is_empty() && !capture_truncated {
+        return None;
+    }
+    Some(ReleaseError::TaskInvocation(format!(
+        "release process closure or capture is unresolved (group: {}; residue count: {}; capture: {})",
+        if group_unknown { "unknown" } else { "settled" },
+        report.residue.len(),
+        if capture_truncated { "truncated" } else { "complete" },
+    )))
+}
+
 fn command_error(context: &str, output: &std::process::Output) -> ReleaseError {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let detail = stderr.trim();
@@ -390,13 +407,8 @@ impl GitEffects {
             ReleaseError::TaskInvocation(format!("release process cleanup context: {error:?}"))
         })?;
         let closed = process.stop(&cleanup);
-        if !matches!(closed.group, Observed::Verified(..) | Observed::Absent(_))
-            || !closed.residue.is_empty()
-            || closed.capture != CaptureState::Complete
-        {
-            return Err(ReleaseError::TaskInvocation(
-                "release process closure or capture is unresolved".into(),
-            ));
+        if let Some(error) = settlement_refusal(&closed) {
+            return Err(error);
         }
         let (out, err) = process.take_stream_output();
         stdout.extend(out);
