@@ -160,8 +160,8 @@ the retained original-receipt exports locally and refuses missing, failed,
 source-changed, foreign, stale, mixed-source or incomplete evidence. It
 validates the fixed full-session cell contract of each export (`native: true`,
 `production_enabled: false`, the production-refusal through restored-baseline
-cell sequence, each cell's recorded positive facts, recorded
-collectively with baseline/cleanup/fixture-retention equality) — a
+cell sequence, each cell's recorded positive facts, and the recorded
+baseline/cleanup/fixture-retention equality) — a
 caller bool alone is never authority, and a copied, self-labelled or
 incomplete receipt refuses.
 

@@ -374,11 +374,11 @@ During v0.x, MINOR bumps may include breaking changes.
   under exactly that backend's scoped native GO, binding the exact source head,
   executed program hashes, contract, candidate, inputs, pinned qualification
   root, genuine old baseline, window budget and input-hash one-use marker, and
-  recording the original complete/failed receipt — with its exact bytes
-  retained through a quoted, size-bounded, hash-bound export inside the proof
-  turn — in a fresh evidence
-  directory. Positivity is recorded only after the post-run source-unchanged
-  check, so a mid-window source edit yields honest, nonqualifying evidence. A
+  recording the original complete/failed receipt with its exact bytes retained
+  through a quoted, size-bounded, hash-bound export inside the proof turn, in
+  a fresh evidence directory. Positivity is recorded only after the post-run
+  source-unchanged check, so a mid-window source edit yields honest,
+  nonqualifying evidence. A
   read-only offline aggregate verifier
   (`verify:workspace:private-qualification:aggregate`) qualifies the packet
   only when all three positive backend receipts are authentic, complete,

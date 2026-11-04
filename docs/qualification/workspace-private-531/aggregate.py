@@ -78,6 +78,25 @@ def common_contract(record):
             binding['old_source_head'], json.dumps(binding['programs'], sort_keys=True))
 
 
+def fact_recorded(cell, field, expected):
+    # Identity facts (expected None) must be a non-bool, non-empty string or
+    # integer; boolean facts compare by identity so 1 never passes for True;
+    # any other expected value compares type-exactly. A wrong, false, absent
+    # or type-confused fact refuses the receipt.
+    if field not in cell:
+        return False
+    value = cell[field]
+    if expected is None:
+        if isinstance(value, bool):
+            return False
+        if isinstance(value, str):
+            return value != ''
+        return isinstance(value, int)
+    if isinstance(expected, bool):
+        return value is expected
+    return type(value) == type(expected) and value == expected
+
+
 def verify_receipt_semantics(record):
     # Offline original-receipt judgment: hash the retained export locally and
     # require the actual complete positive cell contract, recorded baseline,
@@ -101,8 +120,7 @@ def verify_receipt_semantics(record):
             'receipt does not span the ordinary refusal through restored baseline')
     for cell in cells:
         for field, expected in CELL_FACTS.get(cell.get('cell'), {}).items():
-            recorded = field in cell and cell[field] is not None and cell[field] != ''
-            require(recorded and (cell[field] == expected if expected is not None else True),
+            require(fact_recorded(cell, field, expected),
                     'receipt records a cell without its recorded positive facts')
     baseline = cells[0].get('inventory')
     require(isinstance(baseline, dict) and cells[-1].get('inventory') == baseline

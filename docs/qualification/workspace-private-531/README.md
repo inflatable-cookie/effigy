@@ -245,8 +245,8 @@ the retained original-receipt exports locally, refuses missing, failed,
 source-changed, foreign, stale, mixed-source, mixed-candidate or incomplete
 receipts, and validates the fixed full-session cell contract of each export
 (native, production-disabled, the production-refusal through restored-baseline
-cell sequence, each cell's recorded positive facts, and recorded
-collectively with baseline/cleanup/fixture-retention equality) — a
+cell sequence, each cell's recorded positive facts, and the recorded
+baseline/cleanup/fixture-retention equality) — a
 caller bool alone is never authority. The shared contract compares the same
 final source, features and common contract; each platform's actual artifact
 bytes stay bound to their own producer receipts. Its verdict still requires

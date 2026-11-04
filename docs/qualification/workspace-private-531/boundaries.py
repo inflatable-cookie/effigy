@@ -747,7 +747,7 @@ class Boundaries(unittest.TestCase):
                         found = receipt_digest if target == receipt_path else digests[target]
                         return SimpleNamespace(returncode=0, stderr=b'',
                                                stdout=(found + '  ' + target + '\n').encode())
-                    if command.startswith('cat -- '):
+                    if command.startswith('head -c '):
                         return SimpleNamespace(returncode=0, stderr=b'', stdout=transported_payload)
                     # The reviewed runtime itself, executed over the pinned transport.
                     return SimpleNamespace(returncode=0, stderr=b'',
@@ -759,12 +759,14 @@ class Boundaries(unittest.TestCase):
                     launch.main()
                 return calls
 
-            # Positive: quoted remote cat, hash-bound transport, retained export.
+            # Positive: quoted remote read capped at the source, hash-bound
+            # transport, retained export.
             argv, digests, approved = fixture('evidence')
             calls = drive(argv, digests, payload, hashlib.sha256(payload).hexdigest(), 'evidence')
-            cat_calls = [item for item in calls if item[-1].startswith('cat -- ')]
-            self.assertEqual(len(cat_calls), 1)
-            self.assertEqual(cat_calls[0][-1], 'cat -- ' + shlex.quote(receipt_path))
+            export_calls = [item for item in calls if item[-1].startswith('head -c ')]
+            self.assertEqual(len(export_calls), 1)
+            self.assertEqual(export_calls[0][-1], 'head -c ' + str(launch.MAX_EXPORT_BYTES + 1)
+                             + ' -- ' + shlex.quote(receipt_path))
             self.assertIn(' ', receipt_path, 'the exercised remote path requires quoting')
             record = json.loads((base / 'evidence' / 'linux.json').read_text())
             self.assertEqual(record['receipt'], receipt_path)
@@ -960,6 +962,7 @@ class Boundaries(unittest.TestCase):
             # One false or wrong positive fact per cell family must refuse.
             fact_mutations = [
                 ('positive-session', 'session', ''),
+                ('positive-session', 'session', False),
                 ('native-identity-and-tls', 'wrong_pin_refused', False),
                 ('level-one-stream', 'real_exit', 0),
                 ('level-one-stream', 'no_pty_and_stdin_eof', False),
@@ -972,6 +975,7 @@ class Boundaries(unittest.TestCase):
                 ('session-crash-recovery', 'killed_supervisor', ''),
                 ('session-crash-recovery', 'fresh_session', ''),
                 ('down', 'closed', False),
+                ('down', 'closed', 1),
                 ('baseline-and-cleanup', 'fixture_retained', False),
             ]
             fact_cases = []

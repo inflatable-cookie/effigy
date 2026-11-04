@@ -89,10 +89,11 @@ def main():
                 'runtime returned no bounded receipt; native result remains unverified')
         if cell['driver'] == 'ssh':
             # The exact original receipt bytes travel only inside this already
-            # authorized proof turn: quoted, size-bounded transport, then
-            # hash-bound against the remote original. No transport or re-read
-            # ever happens later.
-            transported = run(ssh() + ['cat -- ' + shlex.quote(str(expected))], timeout=60).stdout
+            # authorized proof turn: quoted transport capped at the remote
+            # source with head -c, then hash-bound against the remote original.
+            # No transport or re-read ever happens later.
+            transported = run(ssh() + ['head -c ' + str(MAX_EXPORT_BYTES + 1) + ' -- '
+                                       + shlex.quote(str(expected))], timeout=60).stdout
             receipt_hash = run(ssh() + [
                                 'sha256sum -- ' + shlex.quote(receipt_path)]).stdout.decode().split()[0]
         else:
