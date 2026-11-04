@@ -853,11 +853,17 @@ fn managed_host_listener_republishes_its_route_when_the_port_answers_again() {
         listener_declaration(domain, "127.0.0.1:0", 30)
     );
     let checkout = adapterless_environment(setup.fixture.path(), profile, &manifest);
+    // Queue the control connection before serving. Initial HTTPS success then
+    // proves accept cannot race Python startup. Only this test owns the peer.
+    let control = TcpListener::bind("127.0.0.1:0").expect("outage control listener");
+    let control_address = control.local_addr().unwrap();
     fs::write(
         checkout.join("server.py"),
         format!(
-            "{}\nimport threading, time\nstate = {{\"server\": http.server.HTTPServer((host, int(port)), Handler)}}\ndef serve():\n    state[\"server\"].serve_forever()\ndef outage():\n    time.sleep(3)\n    server = state[\"server\"]\n    server.shutdown()\n    server.server_close()\n    time.sleep(25)\n    state[\"server\"] = http.server.HTTPServer((host, int(port)), Handler)\n    threading.Thread(target=serve, daemon=True).start()\nthreading.Thread(target=outage, daemon=True).start()\nserve()\nwhile True:\n    time.sleep(1)\n",
-            plain_server("answered again")
+            "{}\nimport threading, time, socket\ncontrol = socket.create_connection(({:?}, {}))\nstate = {{\"server\": http.server.HTTPServer((host, int(port)), Handler)}}\ndef serve():\n    state[\"server\"].serve_forever()\ndef outage():\n    assert control.recv(1) == b'x'\n    server = state[\"server\"]\n    server.shutdown()\n    server.server_close()\n    control.sendall(b'x')\n    assert control.recv(1) == b'r'\n    state[\"server\"] = http.server.HTTPServer((host, int(port)), Handler)\n    threading.Thread(target=serve, daemon=True).start()\nthreading.Thread(target=outage, daemon=True).start()\nserve()\nwhile True:\n    time.sleep(1)\n",
+            plain_server("answered again"),
+            control_address.ip().to_string(),
+            control_address.port()
         ),
     )
     .expect("fixture server script");
@@ -884,8 +890,18 @@ fn managed_host_listener_republishes_its_route_when_the_port_answers_again() {
         "answered again"
     );
 
-    // The port is silent for 25 seconds: at least three consecutive five-second
-    // probes miss, so the route is withdrawn. A refused store read is neither
+    let (mut control, _) = control.accept().expect("server control connection");
+    control
+        .write_all(b"x")
+        .expect("begin outage after initial HTTPS");
+    let mut closed = [0];
+    control
+        .read_exact(&mut closed)
+        .expect("server closed its listener");
+    assert_eq!(&closed, b"x");
+
+    // Hold the port silent until three consecutive five-second probes miss
+    // and withdrawal is observed; recovery cannot race these assertions. A refused store read is neither
     // withdrawal nor publication evidence: the wait polls until the store
     // answers (effigy#554).
     wait_for_withdrawn_route(
@@ -911,6 +927,10 @@ fn managed_host_listener_republishes_its_route_when_the_port_answers_again() {
     assert_eq!(withdrawn["generation"], generation, "{withdrawn}");
     assert_eq!(withdrawn["child_pid"], child_pid, "{withdrawn}");
     wait_for_file_contains(&log_path, "route withdrawn", Duration::from_secs(10));
+
+    control
+        .write_all(b"r")
+        .expect("recover after observed withdrawal");
 
     // The port answers again: the same generation republishes the route. An
     // unreadable store is not readiness either: the wait polls until the store

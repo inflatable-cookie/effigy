@@ -199,3 +199,10 @@ change can close it.
 The kernel fault-injection sweep is no longer an exception: it runs in the
 run's temp root like every other fixture. The kernel fault selectors are its
 proof on the Builds volume.
+
+The adapterless republication fixture holds its initial serving phase until
+verified HTTPS succeeds, then keeps the port closed until route withdrawal and
+listener state agree. A private control connection releases each phase; elapsed
+server uptime does not schedule the outage. Same-child/generation/address
+assertions and the real three-miss probes remain. This is owned fixture ordering
+proof, not a reconstruction of historical QA scheduling or native qualification.

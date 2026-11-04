@@ -34,6 +34,12 @@ refuse instead, and the refusal names the path and the repair. The v0.14.1
 legacy path is unaffected: it has a gateway directory, so migration reads that
 state rather than classifying absence.
 
+First-launch identity reads also coordinate when the record lock did not exist
+at the first open: after reading the pair, a newly created trusted lock causes
+a fresh read under that lock. A real identity-only record still refuses. An
+unsafe, inaccessible or persistently held lock retains the existing
+uncoordinated validation path; no startup budget changes.
+
 ## Unprovable status and the headless precondition
 
 `gateway status` never upgrades unproven state. When this caller cannot read

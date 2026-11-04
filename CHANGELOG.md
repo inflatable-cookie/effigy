@@ -918,6 +918,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Coordinate private gateway first-start identity reads with a record lock
+  created during the read, avoiding a false interrupted-publication refusal.
+
 - Preserve empty regular kernel run-log segments as zero-byte archive copies
   with their SHA-256 manifest entry during worktree teardown (effigy#633).
 - Preserve this checkout's kernel run logs before worktree teardown

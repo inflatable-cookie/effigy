@@ -300,8 +300,28 @@ fn read_snapshot_coordinated(
     pid_path: &Path,
     owner_uid: u32,
 ) -> Result<Option<GatewayRecordSnapshot>, GatewayError> {
-    let _shared = GatewayRecordLock::share(pid_path, owner_uid)?;
-    read_snapshot_for_owner(pid_path, owner_uid)
+    read_snapshot_coordinated_with(pid_path, owner_uid, || {
+        read_snapshot_for_owner(pid_path, owner_uid)
+    })
+}
+
+fn read_snapshot_coordinated_with(
+    pid_path: &Path,
+    owner_uid: u32,
+    read: impl FnOnce() -> Result<Option<GatewayRecordSnapshot>, GatewayError>,
+) -> Result<Option<GatewayRecordSnapshot>, GatewayError> {
+    let (_shared, lock_absent) = GatewayRecordLock::share(pid_path, owner_uid)?;
+    let snapshot = read();
+    // On first launch the writer can create the lock AFTER our open returned
+    // NotFound, then publish between our PID and sidecar reads. If a trusted
+    // lock appeared, discard that uncoordinated observation and read under it.
+    // Existing inaccessible/unsafe/timed-out locks retain their refusal path.
+    if lock_absent {
+        if let (Some(_shared), _) = GatewayRecordLock::share(pid_path, owner_uid)? {
+            return read_snapshot_for_owner(pid_path, owner_uid);
+        }
+    }
+    snapshot
 }
 
 /// Test seam for the elevated root context: resolves the directory owner
@@ -889,12 +909,13 @@ struct GatewayRecordLock(File);
 
 #[cfg(unix)]
 impl GatewayRecordLock {
-    /// Shared half of the record lock for readers. `None` means this caller
+    /// Shared half of the record lock for readers. The boolean names an absent
+    /// lock at open time. `None` means this caller
     /// could not coordinate with a publisher: no lock file exists yet, the
     /// lock file is not openable by this caller, or a publisher held it for
     /// longer than [`READ_LOCK_BUDGET`]. Record validation still runs in every
     /// case, so an uncoordinated read keeps failing closed.
-    fn share(pid_path: &Path, owner_uid: u32) -> Result<Option<Self>, GatewayError> {
+    fn share(pid_path: &Path, owner_uid: u32) -> Result<(Option<Self>, bool), GatewayError> {
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
         let lock_path = pid_path.with_extension("lock");
@@ -907,20 +928,16 @@ impl GatewayRecordLock {
             .open(&lock_path)
         {
             Ok(file) => file,
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
-                ) =>
-            {
-                return Ok(None)
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((None, true)),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                return Ok((None, false))
             }
             Err(error) => return Err(GatewayError::Io(error)),
         };
         let metadata = file.metadata().map_err(GatewayError::Io)?;
         let path_metadata = match fs::symlink_metadata(&lock_path) {
             Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((None, false)),
             Err(error) => return Err(GatewayError::Io(error)),
         };
         if path_metadata.file_type().is_symlink()
@@ -932,15 +949,15 @@ impl GatewayRecordLock {
         {
             // A writer would refuse this lock too, so nothing validates a pair
             // through it; read the records without coordination.
-            return Ok(None);
+            return Ok((None, false));
         }
         let deadline = Instant::now() + READ_LOCK_BUDGET;
         loop {
             match fs2::FileExt::try_lock_shared(&file) {
-                Ok(()) => return Ok(Some(Self(file))),
+                Ok(()) => return Ok((Some(Self(file)), false)),
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     if Instant::now() >= deadline {
-                        return Ok(None);
+                        return Ok((None, false));
                     }
                     std::thread::sleep(Duration::from_millis(2));
                 }
@@ -999,8 +1016,8 @@ struct GatewayRecordLock;
 
 #[cfg(not(unix))]
 impl GatewayRecordLock {
-    fn share(_pid_path: &Path, _owner_uid: u32) -> Result<Option<Self>, GatewayError> {
-        Ok(None)
+    fn share(_pid_path: &Path, _owner_uid: u32) -> Result<(Option<Self>, bool), GatewayError> {
+        Ok((None, false))
     }
 
     fn acquire(_pid_path: &Path, _owner_uid: u32) -> Result<Self, GatewayError> {
@@ -1403,6 +1420,33 @@ mod tests {
             .expect("publish");
         assert_eq!(snapshot.pid(), std::process::id());
         assert_eq!(snapshot.digest(), published.digest());
+    }
+
+    /// The first reader finds no lock. A real publisher then creates it and
+    /// installs the sidecar between the reader's two file reads.
+    #[cfg(unix)]
+    #[test]
+    fn gateway_identity_first_reader_coordinates_a_newly_created_lock() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = private_fixture_dir();
+        let pid_path = dir.path().join("gateway.pid");
+        let owner_uid = fs::metadata(dir.path()).unwrap().uid();
+        let mut published = None;
+        let snapshot = read_snapshot_coordinated_with(&pid_path, owner_uid, || {
+            let mut partial = None;
+            published = Some(
+                publish_current_gateway_with(&pid_path, owner_uid, || {
+                    partial = Some(read_snapshot_for_owner(&pid_path, owner_uid));
+                })
+                .unwrap(),
+            );
+            let partial = partial.expect("reader crossed publication");
+            assert!(partial.is_err(), "uncoordinated half-pair must refuse");
+            partial
+        })
+        .expect("coordinate the newly created lock")
+        .expect("complete pair");
+        assert_eq!(snapshot.digest(), published.unwrap().digest());
     }
 
     #[test]
