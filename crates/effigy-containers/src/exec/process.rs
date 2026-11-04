@@ -118,6 +118,58 @@ pub(super) fn run_command_capture_os_with_env_until(
     require_success(label, output)
 }
 
+/// Private fixture clock for the caller's capture deadline only. EOF drain,
+/// termination and process settlement continue to use the real clock.
+#[cfg(any(test, feature = "test-support"))]
+pub mod capture_test_clock {
+    use std::sync::{Mutex, MutexGuard};
+    use std::time::Instant;
+
+    static SERIAL: Mutex<()> = Mutex::new(());
+    static NOW: Mutex<Option<Instant>> = Mutex::new(None);
+
+    pub struct Guard {
+        _serial: MutexGuard<'static, ()>,
+    }
+
+    pub fn control(start: Instant) -> Guard {
+        let serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
+        *NOW.lock().unwrap_or_else(|error| error.into_inner()) = Some(start);
+        Guard { _serial: serial }
+    }
+
+    impl Guard {
+        pub fn advance(&self, to: Instant) {
+            let mut now = NOW.lock().unwrap_or_else(|error| error.into_inner());
+            assert!(to >= now.expect("controlled capture clock"));
+            *now = Some(to);
+        }
+    }
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            *NOW.lock().unwrap_or_else(|error| error.into_inner()) = None;
+        }
+    }
+
+    pub(super) fn now() -> Instant {
+        NOW.lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .unwrap_or_else(Instant::now)
+    }
+}
+
+fn capture_deadline_now() -> Instant {
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        capture_test_clock::now()
+    }
+    #[cfg(not(any(test, feature = "test-support")))]
+    {
+        Instant::now()
+    }
+}
+
 /// One post-exit drain budget for both streams, without retained reader threads.
 const PIPE_EOF_GRACE: Duration = Duration::from_secs(2);
 const CAPTURE_LIMIT: usize = 1024 * 1024;
@@ -788,7 +840,7 @@ fn capture_child(
                     exited = Some(status);
                     drain_deadline = Some(Instant::now() + eof_grace);
                 }
-                Ok(None) if deadline.is_some_and(|deadline| Instant::now() >= deadline) => {
+                Ok(None) if deadline.is_some_and(|deadline| capture_deadline_now() >= deadline) => {
                     terminate_child_process_tree(&mut child);
                     exited = Some(child.wait()?);
                     drain_deadline = Some(Instant::now() + eof_grace);
@@ -821,7 +873,7 @@ fn capture_child(
                     stderr: err,
                 });
             }
-            if drain_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            if drain_deadline.is_some_and(|deadline| capture_deadline_now() >= deadline) {
                 return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "capture unavailable: child exited but inherited pipe EOF was not verified; writer provenance and settlement unknown"));
             }
         }
@@ -913,7 +965,7 @@ pub(super) fn remaining_until_deadline(
     deadline: Instant,
     label: &str,
 ) -> Result<Duration, ContainerExecError> {
-    let remaining = deadline.saturating_duration_since(Instant::now());
+    let remaining = deadline.saturating_duration_since(capture_deadline_now());
     if remaining.is_zero() {
         return Err(deadline_already_elapsed(label));
     }
@@ -1042,7 +1094,7 @@ pub fn run_input_capture_until(
         command: format!("{program} {}", format_args(args)),
         error,
     };
-    if Instant::now() >= deadline {
+    if capture_deadline_now() >= deadline {
         return Err(deadline_already_elapsed(program));
     }
     let mut child = spawn_capture_child(workdir, program, args, true).map_err(launch)?;
