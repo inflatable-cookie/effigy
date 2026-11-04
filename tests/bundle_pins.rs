@@ -1939,6 +1939,7 @@ fn legacy_bytes_are_imported_before_a_failed_remote_update() {
     fixture.write_path_bundle();
     install_legacy_bundle(&fixture);
     let pin = fixture.repo.join(".effigy/sources.lock.json");
+    // Distinguish the two identical plan argv in any future timeout report.
     eprintln!(
         "legacy import: first plan starting (pin exists: {})",
         pin.exists()
