@@ -951,6 +951,23 @@ impl From<RunnerError> for CommandCaptureError {
     }
 }
 
+/// The clock reading `capture_command_until` compares against the caller's
+/// absolute deadline. Production reads the wall clock and the
+/// `#[cfg(not(test))]` build compiles to exactly that. Under test, a proof
+/// may control the reading (`controlled_capture_clock`) so a bounded fixture
+/// proof can hold the original deadline until an owned workload's start is
+/// authenticated, then advance past the same deadline: spawning, waiting,
+/// draining and owned-group termination stay real in both builds.
+#[cfg(not(test))]
+fn capture_expiry_clock() -> Instant {
+    Instant::now()
+}
+
+#[cfg(test)]
+fn capture_expiry_clock() -> Instant {
+    super::controlled_capture_clock::controlled_capture_now().unwrap_or_else(Instant::now)
+}
+
 pub(in crate::runner) fn capture_command_until(
     repo_root: &Path,
     program: &OsStr,
@@ -973,7 +990,7 @@ pub(in crate::runner) fn capture_command_until(
         resolved_program.to_string_lossy(),
         format_args(args)
     );
-    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+    if deadline.is_some_and(|deadline| capture_expiry_clock() >= deadline) {
         return Err(CommandCaptureError::Deadline {
             command: command_label,
         });
@@ -1041,7 +1058,7 @@ pub(in crate::runner) fn capture_command_until(
         stderr.read_to_end(&mut bytes).map(|_| bytes)
     });
     loop {
-        if Instant::now() >= deadline {
+        if capture_expiry_clock() >= deadline {
             super::bounded::terminate_owned_group(&mut child);
             // An escaped, unowned writer must not defeat the caller deadline.
             // Drop unfinished handles; never join a reader without observing EOF.
@@ -1152,6 +1169,199 @@ fn format_args(args: &[OsString]) -> String {
 #[cfg(test)]
 mod capture_deadline_tests {
     use super::*;
+    #[cfg(unix)]
+    use crate::runner::exec_command::controlled_capture_clock;
+    #[cfg(unix)]
+    use std::fs;
+    #[cfg(unix)]
+    use std::sync::mpsc;
+
+    /// The workload shape the deep doctor's bounded health execution runs:
+    /// the shell records its background writer's PID, parks on it, and the
+    /// writer would leak the marker after a real 2s if the tree outlived the
+    /// deadline. Returns (record path, marker path, script).
+    #[cfg(unix)]
+    fn health_workload_fixture(
+        root: &std::path::Path,
+    ) -> (std::path::PathBuf, std::path::PathBuf, String) {
+        let record = root.join("health-child-pid");
+        let marker = root.join("leaked-health-child");
+        let script = format!(
+            "(/bin/sleep 2; printf leaked > '{}') & printf %s $! > '{}'; wait",
+            marker.display(),
+            record.display()
+        );
+        (record, marker, script)
+    }
+
+    /// Read the recorded workload PID with a real wall bound. The record is
+    /// the workload's own start authentication: without it, no stop or
+    /// closure claim would be available.
+    #[cfg(unix)]
+    fn wait_for_recorded_workload_pid(record: &std::path::Path, bound: Duration) -> u32 {
+        let started = Instant::now();
+        loop {
+            if let Ok(raw) = fs::read_to_string(record) {
+                let pid = raw.trim().parse::<u32>().unwrap_or(0);
+                if pid > 0 {
+                    return pid;
+                }
+            }
+            assert!(
+                started.elapsed() < bound,
+                "the owned workload never recorded its start: {} stayed absent",
+                record.display()
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Wait the recorded generation out with a real wall bound. An
+    /// identity-matched survivor is force-stopped by its recorded PID; an
+    /// absent identity is never treated as proven closure.
+    #[cfg(unix)]
+    fn wait_recorded_workload_generation_gone(pid: u32, identity: Option<&str>, bound: Duration) {
+        let started = Instant::now();
+        while let Some(identity) = identity {
+            if !effigy_process::process_start_identity_matches(pid, identity) {
+                return;
+            }
+            if started.elapsed() >= bound {
+                if let Ok(raw) = i32::try_from(pid) {
+                    let _ = nix::sys::signal::kill(
+                        nix::unistd::Pid::from_raw(raw),
+                        nix::sys::signal::Signal::SIGKILL,
+                    );
+                }
+                panic!("recorded workload generation {pid} survived {bound:?}");
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// The deterministic post-start tree-stop proof the cold-CLI proof cannot
+    /// make: the health workload really starts (authenticated by its own PID
+    /// record while the deadline clock is held), then the SAME original
+    /// 1000ms deadline is allowed to expire and the real deadline loop must
+    /// terminate the owned group. Spawning, waiting, draining and
+    /// owned-group termination are real; only the expiry reading is
+    /// controlled.
+    #[cfg(unix)]
+    #[test]
+    fn controlled_deadline_stops_authenticated_health_workload_tree() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().to_path_buf();
+        let (record, marker, script) = health_workload_fixture(&root);
+
+        let frozen_start = Instant::now();
+        let _controlled = controlled_capture_clock::control_capture_clock(frozen_start);
+        let deadline = frozen_start + Duration::from_millis(1000);
+
+        let (sender, receiver) = mpsc::channel();
+        {
+            let root = root.clone();
+            thread::spawn(move || {
+                let result = run_command_capture_until(
+                    &root,
+                    OsStr::new("/bin/sh"),
+                    &[OsString::from("-c"), OsString::from(script)],
+                    None,
+                    Some(deadline),
+                );
+                let _ = sender.send(result);
+            });
+        }
+
+        // Authenticate the workload's start by its own record while the
+        // deadline reading is held. At this point the workload is milliseconds
+        // old, so its start generation must be samplable.
+        let pid = wait_for_recorded_workload_pid(&record, Duration::from_secs(30));
+        let identity = effigy_process::process_start_identity(pid);
+        assert!(
+            identity.is_some(),
+            "the owned workload's start generation must be samplable while the deadline is held: pid {pid}"
+        );
+
+        // Start authenticated: advance past the SAME original deadline and let
+        // the real deadline loop terminate the owned group.
+        controlled_capture_clock::advance_controlled_capture_clock(
+            deadline + Duration::from_millis(1),
+        );
+        let error = receiver
+            .recv_timeout(Duration::from_secs(30))
+            .expect("bounded capture settles after the controlled expiry")
+            .expect_err("parked health workload must hit the deadline");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("timed out"),
+            "expected timeout, got {rendered}"
+        );
+        assert!(
+            rendered.contains("/bin/sh"),
+            "the refusal must name the owned command: {rendered}"
+        );
+
+        // Real wall bound for cleanup: the recorded writer generation must be
+        // gone after the deadline's owned-group termination.
+        wait_recorded_workload_generation_gone(pid, identity.as_deref(), Duration::from_secs(30));
+
+        // Strongest leak oracle: wait out the writer's full real 2s window,
+        // then require the marker to be absent. Covers the parked shell and
+        // every descendant the owned group kill was responsible for.
+        let writer_window_end = frozen_start + Duration::from_millis(2200);
+        if Instant::now() < writer_window_end {
+            thread::sleep(writer_window_end - Instant::now());
+        }
+        assert!(
+            !marker.exists(),
+            "timed-out health workload wrote its leak marker"
+        );
+    }
+
+    /// Negative early-expiry control: the SAME original deadline, expired
+    /// before the spawn attempt, must refuse the health workload without ever
+    /// starting it. A never-started child produces no tree claim — only the
+    /// honest refusal.
+    #[cfg(unix)]
+    #[test]
+    fn controlled_expired_deadline_refuses_health_workload_before_spawn() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (record, marker, script) = health_workload_fixture(temp.path());
+
+        let frozen_start = Instant::now();
+        let _controlled = controlled_capture_clock::control_capture_clock(frozen_start);
+        let deadline = frozen_start + Duration::from_millis(1000);
+        controlled_capture_clock::advance_controlled_capture_clock(
+            deadline + Duration::from_millis(1),
+        );
+
+        let error = capture_command_until_refusal(temp.path(), &script, deadline);
+        assert!(error.contains("timed out"), "expected timeout, got {error}");
+        assert!(
+            !record.exists() && !marker.exists(),
+            "an expired deadline must never spawn the health workload"
+        );
+    }
+
+    /// Run the early-expiry refusal through the same wrapper the doctor
+    /// ports use, so the observed message is the production refusal text.
+    #[cfg(unix)]
+    fn capture_command_until_refusal(
+        root: &std::path::Path,
+        script: &str,
+        deadline: Instant,
+    ) -> String {
+        match run_command_capture_until(
+            root,
+            OsStr::new("/bin/sh"),
+            &[OsString::from("-c"), OsString::from(script)],
+            None,
+            Some(deadline),
+        ) {
+            Ok(_) => "unexpectedly completed".to_owned(),
+            Err(error) => error.to_string(),
+        }
+    }
 
     #[test]
     fn run_command_capture_until_expired_deadline_does_not_spawn() {
