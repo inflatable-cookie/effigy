@@ -1720,7 +1720,7 @@
 ] }
 
 # JSON contract QA
-"qa:json" = { visibility = "public", group = "Validation", description = "Validate every active JSON contract row, its envelope and its payload schema.", run = "effigy contracts check-json --print-selected=text" }
+"qa:json" = { visibility = "public", group = "Validation", description = "Validate every active JSON contract row, its envelope and its payload schema.", run = [{ task = "contracts check-json --print-selected=text" }] }
 "qa:ci:json" = { visibility = "internal", group = "Maintenance", run = [
   "effigy contracts check-json --print-selected=json",
   "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(cli_contracts_)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
