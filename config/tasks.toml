@@ -116,6 +116,8 @@
 # not rewrite a source-linked consumer lockfile. Pass the usual scope and
 # filter, for example `effigy test:focused -p effigy-deps --lib -E 'test(x)'`.
 "test:focused" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --locked --config-file tests/config/gateway-nextest.toml --user-config-file none {args} --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 }] }
+# Strict feature compile/lint for the real CLI bundle deadline discriminator.
+"lint:bundle:deadline-proof" = { visibility = "internal", group = "Maintenance", description = "Compile and strictly lint the test-only CLI sentinel boundary and its owned deadline proof.", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy --all-targets --features fault-injection -- -D warnings", timeout_ms = 900000 }] }
 "test:audit:changelog-ui:lint" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-changelog -p effigy-ui --all-targets -- -D warnings", timeout_ms = 600000 }] }
 "test:audit:docs-policy-json-schema:lint" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-docs-policy -p effigy-json-schema --all-targets -- -D warnings", timeout_ms = 600000 }] }
 "test:audit:managed-execution:lint" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-managed -p effigy-execution --all-targets -- -D warnings", timeout_ms = 600000 }] }

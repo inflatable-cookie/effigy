@@ -70,7 +70,14 @@ impl Fixture {
             command.env(name, value);
         }
         let mut child = command.spawn().unwrap();
-        let deadline = Instant::now() + bound;
+        let started = Instant::now();
+        let deadline = started + bound;
+        eprintln!(
+            "fixture command {args:?}: pid={} identity={:?} bound_ms={}",
+            child.id(),
+            effigy_kernel::ident::process_identity(child.id()),
+            bound.as_millis()
+        );
         let status = loop {
             if let Some(status) = child.try_wait().unwrap() {
                 break status;
@@ -80,7 +87,11 @@ impl Fixture {
                 unsafe {
                     libc::kill(-(child.id() as i32), libc::SIGKILL);
                 }
-                let _ = child.wait();
+                let waited = child.wait();
+                eprintln!(
+                    "fixture command {args:?}: deadline at {}ms; stopped own group and waited: {waited:?}",
+                    started.elapsed().as_millis()
+                );
                 panic!(
                     "effigy {args:?} exceeded its fixture deadline: {}",
                     fs::read_to_string(&stderr).unwrap()
@@ -1931,6 +1942,126 @@ fn legacy_import_does_not_wait_for_a_sentinel_but_acquisition_does() {
         "local legacy import waited for sentinel readiness"
     );
     assert!(acquired, "remote acquisition lost its sentinel custody");
+}
+
+/// The first real CLI plan starts cold, with the normal eight-second fixture
+/// limit. A sentinel wrapper withholds the actual readiness acknowledgement
+/// until that command exits. No acknowledgement, pin or workload is fabricated.
+#[cfg(feature = "fault-injection")]
+#[test]
+fn first_legacy_cli_plan_finishes_without_waiting_for_sentinel_readiness() {
+    use effigy_kernel::{ident, observe::Observed};
+    use std::io::Write;
+    use std::os::unix::{ffi::OsStrExt, fs::OpenOptionsExt};
+    use std::sync::mpsc;
+
+    let fixture = Fixture::new();
+    fixture.write_path_bundle();
+    install_legacy_bundle(&fixture);
+    let ready = fixture.home.join("sentinel-started");
+    let release = fixture.home.join("sentinel-release");
+    let wrapper = fixture.home.join("sentinel-wrapper");
+    let fifo = std::ffi::CString::new(release.as_os_str().as_bytes()).unwrap();
+    // SAFETY: fifo is a live NUL-terminated private pathname. mkfifo retains
+    // no pointer; no other fixture can create this path.
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    fs::write(&wrapper, format!(
+        "#!/bin/sh\nif [ \"$1\" = __kernel-sentinel ]; then\n  echo $$ > '{}'\n  read release < '{}'\nfi\nexec '{}' \"$@\"\n",
+        ready.display(), release.display(), env!("CARGO_BIN_EXE_effigy"),
+    )).unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+    let pin = fixture.repo.join(".effigy/sources.lock.json");
+    assert!(!pin.exists());
+    let started = Instant::now();
+    eprintln!("deadline discriminator: FIRST dev --plan; fresh HOME and no pin");
+    let (tx, rx) = mpsc::channel();
+    let (planned, helper) = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let result = std::panic::catch_unwind(|| {
+                fixture.run(
+                    &["dev", "--plan"],
+                    &[("EFFIGY_TEST_BUNDLE_SENTINEL", &wrapper)],
+                    Duration::from_secs(8),
+                )
+            });
+            tx.send(result).unwrap();
+        });
+        let mut helper = None;
+        loop {
+            if helper.is_none() {
+                if let Some(pid) = fs::read_to_string(&ready)
+                    .ok()
+                    .and_then(|text| text.trim().parse::<u32>().ok())
+                {
+                    if let Observed::Verified(identity, _) = ident::process_identity(pid) {
+                        eprintln!("deadline discriminator: owned sentinel {identity:?} blocked before acknowledgement; pin={}", pin.exists());
+                        helper = Some(identity);
+                    }
+                }
+            }
+            match rx.recv_timeout(Duration::from_millis(10)) {
+                Ok(result) => return (result, helper),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(error) => panic!("CLI worker disconnected: {error}"),
+            }
+        }
+    });
+    let elapsed = started.elapsed();
+    eprintln!("deadline discriminator: first plan returned in {}ms; helper_started={} pin={}; stderr follows:\n{}", elapsed.as_millis(), helper.is_some(), pin.exists(), fs::read_to_string(fixture.logs.join("stderr")).unwrap());
+    // Cleanup has its own bound, never extra workload time. Even the unfixed
+    // command's panic is resumed only after its exact helper is quiescent.
+    let cleanup = Instant::now() + Duration::from_secs(15);
+    let mut quiescent = !ready.exists();
+    if let Some(identity) = &helper {
+        loop {
+            let gone = match ident::process_identity(identity.pid) {
+                Observed::Absent(_) => true,
+                Observed::Verified(actual, _) => actual != *identity,
+                Observed::Unknown(_) => false,
+            };
+            if gone
+                || (matches!(
+                    ident::process_state(identity.pid),
+                    Observed::Verified(ident::ProcessState::Zombie, _)
+                ) && matches!(ident::process_identity(identity.pid), Observed::Verified(actual, _) if actual == *identity))
+            {
+                quiescent = true;
+                break;
+            }
+            // The release is private to the recorded wrapper. Nonblocking open
+            // cannot hang if the kernel has already stopped that helper.
+            if let Ok(mut file) = fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&release)
+            {
+                let _ = file.write_all(b"release\n");
+            }
+            if Instant::now() >= cleanup {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    if !quiescent {
+        let kept = fixture.owner.keep();
+        panic!(
+            "owned sentinel quiescence unproved; fixture retained at {}",
+            kept.display()
+        );
+    }
+    eprintln!("deadline discriminator: recorded helper quiescent before fixture removal");
+    let (ok, output) = planned.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+    assert!(ok && output.contains("original"), "{output}");
+    assert!(pin.exists());
+    assert!(
+        elapsed < Duration::from_secs(8),
+        "first-launch-inclusive plan exceeded eight seconds"
+    );
+    assert!(
+        helper.is_none(),
+        "local import waited on an unused sentinel"
+    );
 }
 
 #[test]

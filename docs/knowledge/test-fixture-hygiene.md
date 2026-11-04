@@ -215,3 +215,24 @@ For the fixed input, admission reports before waiting for the consumer's release
 so the same consumer receives the expected body. The observer selects a legal
 thread ordering, not a historical schedule. The lifecycle case separately keeps
 verified HTTPS and route/child/generation/address assertions.
+
+## Bundle import deadline proof
+
+`bundle_pins::first_legacy_cli_plan_finishes_without_waiting_for_sentinel_readiness`
+runs the first real CLI plan in a fresh fixture with the original eight-second
+limit. With `fault-injection` only, `EFFIGY_TEST_BUNDLE_SENTINEL` can select a
+wrapper inside that fixture's canonical private HOME. Ordinary builds contain
+no override and always use their own executable.
+
+The wrapper blocks before the real sentinel acknowledges readiness; it is
+released only after the CLI returns or reaches its unchanged deadline. The
+fixture records the CLI and helper start identities, stops and waits its own CLI
+group on timeout, then verifies helper quiescence before removing its root.
+Unproved quiescence fails and retains the fixture. Import must finish without
+starting a helper; acquisition controls still require real custody and Git's
+expected absent-remote error. The controlled first-call failure establishes a
+causal source path, not the schedule of an earlier QA occurrence.
+
+Run this case through `test:focused` with `--features fault-injection` and its
+exact test filter. `lint:bundle:deadline-proof` covers that feature's targets;
+the ordinary bundle controls also run without the feature.
