@@ -28,25 +28,33 @@ pub(super) struct ControlledCaptureClockGuard;
 
 impl Drop for ControlledCaptureClockGuard {
     fn drop(&mut self) {
-        *CONTROLLED_NOW.lock().expect("controlled capture clock lock") = None;
+        *CONTROLLED_NOW
+            .lock()
+            .expect("controlled capture clock lock") = None;
     }
 }
 
 /// Freeze the reading at `frozen` until the guard drops or
 /// [`advance_controlled_capture_clock`] moves it.
 pub(super) fn control_capture_clock(frozen: Instant) -> ControlledCaptureClockGuard {
-    *CONTROLLED_NOW.lock().expect("controlled capture clock lock") = Some(frozen);
+    *CONTROLLED_NOW
+        .lock()
+        .expect("controlled capture clock lock") = Some(frozen);
     ControlledCaptureClockGuard
 }
 
 /// Move the reading. A proof advances it past the original deadline only
 /// after the owned workload's start is authenticated.
 pub(super) fn advance_controlled_capture_clock(to: Instant) {
-    *CONTROLLED_NOW.lock().expect("controlled capture clock lock") = Some(to);
+    *CONTROLLED_NOW
+        .lock()
+        .expect("controlled capture clock lock") = Some(to);
 }
 
 /// The reading the real capture's deadline checks observe under test, or
 /// `None` when no proof currently controls the clock.
 pub(super) fn controlled_capture_now() -> Option<Instant> {
-    *CONTROLLED_NOW.lock().expect("controlled capture clock lock")
+    *CONTROLLED_NOW
+        .lock()
+        .expect("controlled capture clock lock")
 }

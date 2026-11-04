@@ -1303,11 +1303,7 @@ mod capture_deadline_tests {
 
         // Real wall bound for cleanup: the recorded writer generation must be
         // gone after the deadline's owned-group termination.
-        wait_recorded_workload_generation_gone(
-            pid,
-            identity.as_deref(),
-            Duration::from_secs(30),
-        );
+        wait_recorded_workload_generation_gone(pid, identity.as_deref(), Duration::from_secs(30));
 
         // Strongest leak oracle: wait out the writer's full real 2s window,
         // then require the marker to be absent. Covers the parked shell and
@@ -1340,10 +1336,7 @@ mod capture_deadline_tests {
         );
 
         let error = capture_command_until_refusal(temp.path(), &script, deadline);
-        assert!(
-            error.contains("timed out"),
-            "expected timeout, got {error}"
-        );
+        assert!(error.contains("timed out"), "expected timeout, got {error}");
         assert!(
             !record.exists() && !marker.exists(),
             "an expired deadline must never spawn the health workload"
