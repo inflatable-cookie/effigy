@@ -19,6 +19,8 @@ mod interpolation_tests;
 #[path = "exec/name_store_tests.rs"]
 mod name_store_tests;
 mod process;
+#[cfg(any(test, feature = "test-support"))]
+pub use process::capture_test_clock;
 pub(crate) use process::error_is_timeout;
 mod ssh_agent_preflight;
 

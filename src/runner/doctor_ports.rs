@@ -1104,36 +1104,117 @@ esac
         );
     }
 
+    /// The production capture clock alone is held while the *real* liveness
+    /// call authenticates its owned shell and descendant. Expiring the same
+    /// original one-second deadline then exercises actual group termination.
+    /// Wall-clock startup is deliberately a different premise from reaping.
+    #[cfg(unix)]
+    fn liveness_reap_after_authenticated_start(
+        root: &Path,
+        policy: &EffectiveContainerPolicy,
+        pgfile: &Path,
+        ready: &Path,
+    ) {
+        use effigy_containers::exec::capture_test_clock::{control, Guard};
+
+        struct CaptureGuard {
+            thread:
+                Option<std::thread::JoinHandle<Result<bool, crate::runner::error::RunnerError>>>,
+            deadline: Instant,
+            clock: Guard,
+        }
+        impl CaptureGuard {
+            fn finish(&mut self) -> Result<bool, crate::runner::error::RunnerError> {
+                self.clock.advance(self.deadline + Duration::from_millis(1));
+                self.thread
+                    .take()
+                    .expect("owned capture thread")
+                    .join()
+                    .expect("capture thread")
+            }
+        }
+        impl Drop for CaptureGuard {
+            fn drop(&mut self) {
+                // Installed before the first fallible assertion: even a failed
+                // receipt must release the clock and wait for owned cleanup.
+                if self.thread.is_some() {
+                    let _ = self.finish();
+                }
+            }
+        }
+
+        let started = Instant::now();
+        let clock = control(started);
+        let deadline = started + LIVENESS_DEADLINE;
+        let mut capture = CaptureGuard {
+            thread: Some(std::thread::spawn({
+                let root = root.to_path_buf();
+                let policy = policy.clone();
+                move || is_primary_service_running_with_deadline(&root, &policy, Some(deadline))
+            })),
+            deadline,
+            clock,
+        };
+        let readiness_bound = started + LIVENESS_UPPER_BOUND;
+        while !ready.exists() {
+            assert!(
+                Instant::now() < readiness_bound,
+                "owned liveness phase never became ready"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let pids = recorded_owned_pids(pgfile);
+        assert_eq!(
+            pids.len(),
+            2,
+            "the shell and its descendant must both be recorded"
+        );
+        let identities = pids
+            .iter()
+            .map(|pid| {
+                let pid = u32::try_from(*pid).expect("positive owned pid");
+                let identity = effigy_process::process_start_identity(pid);
+                assert!(
+                    identity.is_some(),
+                    "owned pid {pid} must be live before expiry"
+                );
+                (pid, identity)
+            })
+            .collect::<Vec<_>>();
+        let error = capture
+            .finish()
+            .expect_err("authenticated hung phase must time out");
+        assert!(error.to_string().contains("timed out"), "got {error}");
+        assert!(
+            started.elapsed() < LIVENESS_UPPER_BOUND,
+            "hung phase must not wait out sleep 300"
+        );
+        wait_for_processes_gone(pgfile);
+        for (pid, identity) in identities {
+            assert_ne!(
+                effigy_process::process_start_identity(pid),
+                identity,
+                "the authenticated generation must be gone after reap"
+            );
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn hung_colima_liveness_probe_is_bounded_and_reaps_its_process_group() {
         let _lock = lock_test();
         let (_temp, root) = fresh_root("hung-colima-liveness");
         let pgfile = root.join("colima-process-group");
+        let ready = root.join("colima-ready");
         let bin = install_fake_colima(
             &root,
             &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$$\" > '{pg}'\nsleep 300 &\nprintf '%s\\n' \"$!\" >> '{pg}'\nwait\n",
-                pg = pgfile.display()
+                "#!/bin/sh\nprintf '%s\\n' \"$$\" > '{pg}'\nsleep 300 &\nprintf '%s\\n' \"$!\" >> '{pg}'\n: > '{ready}'\nwait\n",
+                pg = pgfile.display(), ready = ready.display()
             ),
         );
         let _env = with_runtime_env(&bin);
-        let policy = policy_for(&root);
-
-        let started = Instant::now();
-        let error = is_primary_service_running_with_deadline(
-            &root,
-            &policy,
-            Some(Instant::now() + LIVENESS_DEADLINE),
-        )
-        .expect_err("hung probe must time out");
-
-        assert!(error.to_string().contains("timed out"), "got {error}");
-        assert!(
-            started.elapsed() < LIVENESS_UPPER_BOUND,
-            "hung probe must die at the deadline, not wait out sleep 300"
-        );
-        wait_for_processes_gone(&pgfile);
+        liveness_reap_after_authenticated_start(&root, &policy_for(&root), &pgfile, &ready);
     }
 
     #[cfg(unix)]
@@ -1143,34 +1224,24 @@ esac
         let (_temp, root) = fresh_root("hung-compose-ps");
         let marker = root.join("ps-spawned");
         let spawn_log = root.join("ps-argv");
+        let pgfile = root.join("ps-process-group");
         let bin = install_fake_colima(
             &root,
             &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{log}'\ncase \"$1\" in\n  status) printf 'status: Running\\n'; exit 0 ;;\n  nerdctl) printf 'spawned\\n' >> '{}'; sleep 300 ;;\n  *) exit 0 ;;\nesac\n",
-                marker.display(),
-                log = spawn_log.display()
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{log}'\ncase \"$1\" in\n  status) printf 'status: Running\\n'; exit 0 ;;\n  nerdctl) printf '%s\\n' \"$$\" > '{pg}'; sleep 300 & printf '%s\\n' \"$!\" >> '{pg}'; : > '{ready}'; wait ;;\n  *) exit 0 ;;\nesac\n",
+                pg = pgfile.display(), ready = marker.display(), log = spawn_log.display()
             ),
         );
         let _env = with_runtime_env(&bin);
-        let policy = policy_for(&root);
-
-        let started = Instant::now();
-        let error = is_primary_service_running_with_deadline(
-            &root,
-            &policy,
-            Some(Instant::now() + LIVENESS_DEADLINE),
-        )
-        .expect_err("hung compose ps must time out");
-
-        assert!(error.to_string().contains("timed out"), "got {error}");
-        assert!(
-            started.elapsed() < LIVENESS_UPPER_BOUND,
-            "compose ps probe must die at the shared deadline"
-        );
+        liveness_reap_after_authenticated_start(&root, &policy_for(&root), &pgfile, &marker);
         assert!(
             marker.exists(),
-            "the composed probe must have been exercised; argv log: {:?}",
-            fs::read_to_string(&spawn_log).unwrap_or_default()
+            "the composed probe must have been exercised"
+        );
+        let argv = fs::read_to_string(spawn_log).expect("recorded complete argv");
+        assert!(
+            argv.contains("status") && argv.contains("nerdctl") && argv.contains("ps"),
+            "both phases must share the original deadline: {argv}"
         );
     }
 
