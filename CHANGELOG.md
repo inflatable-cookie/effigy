@@ -918,6 +918,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Collect every remaining default-suite failure at milestone QA instead of
+  cancelling the selection at the first one: canonical `effigy qa` now runs
+  its built-in default suite as `test -- --no-fail-fast`, so the resolved
+  command is `oxide nextest run --workspace --no-fail-fast` and the run
+  still exits non-zero on failure. Generic `effigy test` keeps nextest's
+  own fail-fast default and focused selectors keep their explicit
+  `--no-fail-fast` / `--max-fail` choices (effigy#630).
+
 - Name environment recovery commands with the CLI's `container <NAME> <verb>`
   argument order so actual sentinel admission accepts them.
 
