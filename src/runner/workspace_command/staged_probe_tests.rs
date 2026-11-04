@@ -657,6 +657,13 @@ fn the_publication_guest_shares_one_deadline_and_refuses_without_spawning() {
 
 #[test]
 fn context_dial_reports_the_guests_own_peer_and_pin() {
+    // This asserts mapping/classification, not scheduler latency. The actual
+    // backend, bounded pipes and parser still run; timeout controls below use
+    // the real clock. A past reading also detects any accidental wall-clock
+    // deadline check left in this path without sleeping or warming a launch.
+    let _clock = crate::runner::exec_command::controlled_capture_clock::control_capture_clock(
+        Instant::now() - Duration::from_secs(10),
+    );
     let backend = Backend::new("context-dial");
     let mut expected = reply(&claimed());
     expected["peer"] = serde_json::json!(PEER);
@@ -886,6 +893,45 @@ fn a_hung_staged_probe_is_bounded_and_reported_as_a_timeout() {
 }
 
 #[test]
+fn controlled_staged_deadline_still_expires_after_backend_start() {
+    use crate::runner::exec_command::controlled_capture_clock::{
+        advance_controlled_capture_clock, control_capture_clock,
+    };
+
+    let backend = Backend::new("controlled-timeout");
+    backend.body("exec sleep 2");
+    let _env = backend.env();
+    let policy = backend.policy();
+    let frozen = Instant::now() - Duration::from_secs(10);
+    let _clock = control_capture_clock(frozen);
+    let spawns = backend.spawns.clone();
+    // The controller always advances (even if launch fails), and joins before
+    // assertions/root cleanup. Capture itself owns termination and reaping.
+    let controller = std::thread::spawn(move || {
+        let wait_until = Instant::now() + Duration::from_secs(5);
+        while !spawns.exists() && Instant::now() < wait_until {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let started = spawns.exists();
+        advance_controlled_capture_clock(frozen + Duration::from_millis(150));
+        started
+    });
+    let mut probe = backend.linked_probe(&policy);
+    let observed = probe.identity(&claimed(), &object(), Duration::from_millis(150));
+    let started = controller.join().expect("clock controller joined");
+    assert!(started, "the real backend began before controlled expiry");
+    assert_eq!(backend.spawns(), 1);
+    assert!(matches!(
+        observed,
+        Observed::Unknown(UnknownReason::TimedOut { .. })
+    ));
+    drop(_clock);
+    assert!(
+        crate::runner::exec_command::controlled_capture_clock::controlled_capture_now().is_none()
+    );
+}
+
+#[test]
 fn the_guest_dial_budget_is_never_zero_and_never_past_the_entry_ceiling() {
     assert_eq!(guest_dial_ms(Duration::ZERO), 1);
     assert_eq!(guest_dial_ms(Duration::from_millis(1500)), 1500);
@@ -894,6 +940,13 @@ fn the_guest_dial_budget_is_never_zero_and_never_past_the_entry_ceiling() {
 
 #[test]
 fn staged_probe_backend_stderr_is_never_an_observation_diagnostic() {
+    // This asserts mapping/classification, not scheduler latency. The actual
+    // backend, bounded pipes and parser still run; timeout controls below use
+    // the real clock. A past reading also detects any accidental wall-clock
+    // deadline check left in this path without sleeping or warming a launch.
+    let _clock = crate::runner::exec_command::controlled_capture_clock::control_capture_clock(
+        Instant::now() - Duration::from_secs(10),
+    );
     let backend = Backend::new("private-stderr");
     backend.body("printf '%s' 'adversarial-secret-backend-diagnostic' >&2\nexit 73");
     let _env = backend.env();
