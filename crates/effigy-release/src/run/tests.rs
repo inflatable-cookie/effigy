@@ -2726,3 +2726,63 @@ fn a_checkout_with_no_release_state_still_has_no_run() {
         .expect("a fresh checkout reads as no Run")
         .is_none());
 }
+
+#[cfg(test)]
+mod settlement_tests {
+    use super::super::effects::settlement_refusal;
+    use effigy_kernel::{
+        custody::{CaptureState, Closure, StopReport},
+        observe::{AbsenceProof, Evidence, Observed, UnknownReason},
+    };
+
+    #[test]
+    fn settlement_refusal_matrix_and_redaction() {
+        for group in 0..3 {
+            for residue in 0..2 {
+                for truncated in [false, true] {
+                    let secret = "secret-adversarial-value";
+                    let report = StopReport {
+                        leader: Observed::Unknown(UnknownReason::Injected),
+                        group: match group {
+                            0 => Observed::Verified(
+                                Closure,
+                                Evidence::new("test".into(), None).unwrap(),
+                            ),
+                            1 => Observed::Absent(AbsenceProof::GroupEmpty { pgid: 1 }),
+                            _ => Observed::Unknown(UnknownReason::Untrusted(secret.into())),
+                        },
+                        capture: if truncated {
+                            CaptureState::Truncated(secret.into())
+                        } else {
+                            CaptureState::Complete
+                        },
+                        signals: vec![],
+                        residue: if residue == 1 {
+                            vec![UnknownReason::Untrusted(secret.into())]
+                        } else {
+                            vec![]
+                        },
+                    };
+                    let result = settlement_refusal(&report);
+                    assert_eq!(result.is_none(), group != 2 && residue == 0 && !truncated);
+                    if let Some(error) = result {
+                        let text = error.to_string();
+                        assert!(text.contains("release process closure or capture is unresolved"));
+                        assert!(text.contains(if group == 2 {
+                            "group: unknown"
+                        } else {
+                            "group: settled"
+                        }));
+                        assert!(text.contains(&format!("residue count: {residue}")));
+                        assert!(text.contains(if truncated {
+                            "capture: truncated"
+                        } else {
+                            "capture: complete"
+                        }));
+                        assert!(!text.contains(secret));
+                    }
+                }
+            }
+        }
+    }
+}

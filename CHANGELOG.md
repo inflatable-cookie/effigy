@@ -918,6 +918,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Distinguish unresolved release process group, residue and capture conditions in refusal messages.
+
 - Import cached legacy bundle bytes during planning without starting an unused
   sentinel. Fetches still require full custody, and planning keeps its original
   deadline and checkout publication gates (effigy#635).
