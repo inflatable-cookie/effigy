@@ -2,9 +2,13 @@ use serde_json::Value;
 use std::fs;
 use std::io::Write;
 #[cfg(unix)]
+use std::io::Read;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+#[cfg(unix)]
+use std::sync::mpsc;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -818,38 +822,57 @@ fn cli_doctor_supports_colorized_output_when_forced() {
     assert!(combined.contains('\u{1b}'));
 }
 
-/// One fixture child a bounded-doctor proof waits on: the process that would
-/// write the leaked marker, and the start generation that proves identity when
-/// it could be sampled while the child was still alive.
+/// Bounded replacement for `wait_with_output` for the spawned doctor: the
+/// doctor owns the real deadline and must exit with its own pipes closed. If
+/// it — or a writer that escaped its owned groups — holds a pipe past the
+/// bound, stop the doctor by its recorded PID and fail instead of hanging
+/// the suite. nextest ends the test process on failure, so a blocked reader
+/// thread cannot outlive it.
 #[cfg(unix)]
-struct RecordedFixtureChild {
-    pid: u32,
-    identity: Option<String>,
-}
-
-/// Read the child record the health task writes before it parks, and sample the
-/// recorded generation while it is still alive. The record's presence is the
-/// proof that doctor really reached the health task; the worker is stopped by
-/// this PID alone if it somehow outlives the proof.
-#[cfg(unix)]
-fn recorded_fixture_child(record: &std::path::Path) -> RecordedFixtureChild {
-    let deadline = Instant::now() + Duration::from_secs(20);
+fn bounded_doctor_output(
+    mut doctor: std::process::Child,
+    bound: Duration,
+    label: &str,
+) -> std::process::Output {
+    let started = Instant::now();
+    let (stdout_sender, stdout_receiver) = mpsc::channel::<Vec<u8>>();
+    let (stderr_sender, stderr_receiver) = mpsc::channel::<Vec<u8>>();
+    let mut stdout_pipe = doctor.stdout.take().expect("piped doctor stdout");
+    let mut stderr_pipe = doctor.stderr.take().expect("piped doctor stderr");
+    std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = Read::read_to_end(&mut stdout_pipe, &mut buffer);
+        let _ = stdout_sender.send(buffer);
+    });
+    std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = Read::read_to_end(&mut stderr_pipe, &mut buffer);
+        let _ = stderr_sender.send(buffer);
+    });
     loop {
-        if let Ok(raw) = fs::read_to_string(record) {
-            let pid = raw
-                .trim()
-                .parse::<u32>()
-                .unwrap_or_else(|_| panic!("health child record is not a PID: {raw:?}"));
-            assert!(pid > 0, "health child record must hold a PID: {raw:?}");
-            let identity = effigy_process::process_start_identity(pid);
-            return RecordedFixtureChild { pid, identity };
+        match doctor.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = stdout_receiver
+                    .recv_timeout(Duration::from_secs(10))
+                    .unwrap_or_else(|_| panic!("{label} left a writer holding its stdout pipe"));
+                let stderr = stderr_receiver
+                    .recv_timeout(Duration::from_secs(10))
+                    .unwrap_or_else(|_| panic!("{label} left a writer holding its stderr pipe"));
+                return std::process::Output {
+                    status,
+                    stdout,
+                    stderr,
+                };
+            }
+            Ok(None) => {}
+            Err(error) => panic!("{label} could not be waited on: {error}"),
         }
-        assert!(
-            Instant::now() < deadline,
-            "the bounded doctor never started the health child: {} stayed absent",
-            record.display()
-        );
-        std::thread::sleep(Duration::from_millis(10));
+        if started.elapsed() >= bound {
+            let _ = doctor.kill();
+            let _ = doctor.wait();
+            panic!("{label} did not exit within {bound:?}");
+        }
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -889,8 +912,7 @@ fn cli_deep_doctor_timeout_terminates_health_process_tree() {
     let child_record = root.join("health-child-pid");
     // The background child records its own PID, parks, then writes the leaked
     // marker. The marker is the negative control: a tree that outlived doctor's
-    // budget would write it, and the proof only asserts its absence once the
-    // recorded generation is provably gone.
+    // budget would write it.
     fs::write(
         root.join("effigy.toml"),
         format!(
@@ -901,6 +923,14 @@ fn cli_deep_doctor_timeout_terminates_health_process_tree() {
     )
     .expect("write manifest");
 
+    // The doctor owns the real 1000ms deadline. Whether the health workload
+    // manages to record its start inside that budget is scheduler-dependent:
+    // a loaded host can legitimately exhaust the budget while the health
+    // subprocess is still booting. So the proof waits for the doctor's own
+    // bounded exit instead of demanding a child record, then branches on
+    // authenticated evidence. The deterministic post-start tree-stop proof
+    // lives at the owning capture boundary
+    // (`controlled_deadline_stops_authenticated_health_workload_tree`).
     let started = Instant::now();
     let doctor = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("doctor")
@@ -912,10 +942,7 @@ fn cli_deep_doctor_timeout_terminates_health_process_tree() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("run bounded doctor");
-    let child = recorded_fixture_child(&child_record);
-    let output = doctor
-        .wait_with_output()
-        .expect("bounded doctor settles its own process tree");
+    let output = bounded_doctor_output(doctor, Duration::from_secs(30), "bounded doctor");
     assert!(
         started.elapsed() < Duration::from_secs(30),
         "bounded doctor outlived its budget by far"
@@ -928,18 +955,39 @@ fn cli_deep_doctor_timeout_terminates_health_process_tree() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(rendered.contains("complete: false"), "{rendered}");
-    assert!(rendered.contains("health_task"));
+    // Every incomplete deep run accounts for the health check: either it
+    // exhausted the budget with the workload owned, or an earlier phase
+    // exhausted the budget and the health check is honestly skipped.
+    assert!(rendered.contains("health_task"), "{rendered}");
 
-    // Observable barrier: the recorded child generation exits, rather than a
-    // fixed sleep long enough to outlast its 2 s write. Once it is gone, an
-    // absent marker proves the timeout stopped it before it wrote.
-    wait_for_recorded_generation_exit(
-        child.pid,
-        child.identity.as_deref(),
-        Duration::from_secs(60),
-        "timed-out health child",
-    );
-    assert!(!marker.exists(), "timed-out health child survived doctor");
+    // Branch on evidence only. A record means the workload really started and
+    // doctor must have stopped it: wait the recorded generation out (with an
+    // identity-matched force stop as the owned backstop) and require no leak.
+    // The workload parks 2s against the 1s budget, so at doctor's exit the
+    // recorded generation is normally still samplable; if it is already gone,
+    // absence of identity is not proof of closure and only the leak oracle is
+    // claimed. No record is a correct pre-spawn refusal: a never-started child
+    // proves nothing about tree termination, so no termination claim is made.
+    if let Ok(raw) = fs::read_to_string(&child_record) {
+        let pid = raw
+            .trim()
+            .parse::<u32>()
+            .unwrap_or_else(|_| panic!("health child record is not a PID: {raw:?}"));
+        assert!(pid > 0, "health child record must hold a PID: {raw:?}");
+        let identity = effigy_process::process_start_identity(pid);
+        wait_for_recorded_generation_exit(
+            pid,
+            identity.as_deref(),
+            Duration::from_secs(60),
+            "timed-out health child",
+        );
+        assert!(!marker.exists(), "timed-out health child survived doctor");
+    } else {
+        assert!(
+            !marker.exists(),
+            "a doctor that refused before the health workload started leaked a writer it never owned"
+        );
+    }
 }
 
 fn real_path_binary(name: &str) -> PathBuf {

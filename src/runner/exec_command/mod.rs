@@ -32,6 +32,8 @@ use surface::{
 };
 
 mod bounded;
+#[cfg(test)]
+mod controlled_capture_clock;
 mod surface;
 mod transport;
 
