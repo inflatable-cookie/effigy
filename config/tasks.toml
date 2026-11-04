@@ -379,6 +379,14 @@
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/kernel-faults-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^faults::/) & not test(/^faults::matrix::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 },
 ] }
+"test:kernel:faults:environment" = { durable = true, visibility = "internal", description = "Run the six-shard environment handover fault matrix at its normal bound.", group = "Maintenance", run = [
+  { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/kernel-faults-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^faults::scenarios::faults_environment_up_down_handover_with_concurrent_attach$/)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 },
+] }
+"test:kernel:faults:controls" = { durable = true, visibility = "internal", description = "Check fault job assignment, pinned anchor delivery, recovery budgets and oracles.", group = "Maintenance", run = [
+  { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/kernel-faults-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(rotated_shards_preserve_jobs_and_distribute_each_fault) | test(faults_anchor_retirement_delivery_is_pinned_to_settlement) | test(faults_recovery_) | test(oracle_controls_reject_every_violating_world)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 },
+] }
 "test:kernel:matrix" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/kernel-faults-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^faults::matrix::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 },
