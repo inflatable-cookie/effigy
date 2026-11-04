@@ -94,6 +94,15 @@ remains is identity: the payload's `schema`/`schema_version` must match the inde
 row, and a nested `result`/`error.details` payload is unwrapped before its
 schema id is checked.
 
+## Checkout-owned QA
+
+The repository's `qa:json` uses a built-in `contracts check-json` task reference.
+It runs the invoking Effigy executable, whose checker also uses its own executable
+for indexed CLI rows. A bare shell `effigy` command would instead select PATH's
+installation, which may lack the current index's fixture tokens. Status rows keep
+their fixture directories alive through execution and inject baked Colima/Docker
+scripts; Running, Stopped and unavailable checks do not probe a native runtime.
+
 ## Selection validation
 
 `validate-selection` is folded into `check-json`:

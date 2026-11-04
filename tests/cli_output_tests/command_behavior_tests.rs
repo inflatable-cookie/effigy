@@ -590,6 +590,122 @@ fn write_contract_repo(root: &std::path::Path, selection_contract: &str) {
     .expect("write selection contract");
 }
 
+#[cfg(unix)]
+#[test]
+fn cli_contracts_qa_json_binds_checker_to_invoking_executable() {
+    let root = temp_execution_workspace("contracts-checkout-binding");
+    let tasks: toml::Value =
+        toml::from_str(include_str!("../../config/tasks.toml")).expect("repository tasks");
+    let task = &tasks["tasks"]["qa:json"];
+    let mut index: Value = serde_json::from_str(include_str!(
+        "../../docs/knowledge/contracts/json-schema-index.json"
+    ))
+    .expect("repository index");
+    let rows = index["schemas"].as_array_mut().expect("rows");
+    rows.retain(|row| {
+        row["command"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("<fixture_container_status")
+    });
+    assert_eq!(rows.len(), 3);
+    for (row, mode) in rows.iter_mut().zip(["running", "stopped", "unavailable"]) {
+        row["payload_schema"] = Value::String(mode.to_owned());
+    }
+    index["payload_schemas"] = serde_json::json!({
+        "running": "running.json", "stopped": "stopped.json", "unavailable": "unavailable.json"
+    });
+    for (name, schema) in [
+        (
+            "running",
+            serde_json::json!({"required": ["runtime_running", "services"], "properties": {
+            "runtime_running": {"const": true}, "services": {"minItems": 1}}}),
+        ),
+        (
+            "stopped",
+            serde_json::json!({"required": ["runtime_running", "services"], "properties": {
+            "runtime_running": {"const": false}, "services": {"const": []}}}),
+        ),
+        (
+            "unavailable",
+            serde_json::json!({"required": ["error"], "properties": {
+            "error": {"required": ["kind"], "properties": {"kind": {"const": "unavailable"}}}}}),
+        ),
+    ] {
+        fs::write(root.join(format!("{name}.json")), schema.to_string()).expect("schema");
+    }
+    fs::write(root.join("index.json"), index.to_string()).expect("index");
+    let manifest = format!(
+        "[contracts]\nschema_index='index.json'\n[tasks]\n'qa:json' = {}\n",
+        task
+    );
+    let bin = root.join("bin");
+    fs::create_dir(&bin).expect("trap bin");
+    let receipt = root.join("foreign-argv");
+    write_executable(
+        &bin.join("effigy"),
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nexit 97\n",
+            receipt.display()
+        ),
+    );
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH"));
+    let invoke = || {
+        Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .current_dir(&root)
+            .arg("qa:json")
+            .env("PATH", &path)
+            .env("NO_COLOR", "1")
+            .env_remove("EFFIGY_EXECUTABLE")
+            .output()
+            .expect("run QA-owned checker route")
+    };
+    // Original command must select the foreign PATH executable.
+    fs::write(
+        root.join("effigy.toml"),
+        manifest.replace(
+            &task.to_string(),
+            "{ run = 'effigy contracts check-json --print-selected=text' }",
+        ),
+    )
+    .expect("original manifest");
+    let original = invoke();
+    eprintln!(
+        "original qa:json exit={}\n{}",
+        original.status,
+        String::from_utf8_lossy(&original.stdout)
+    );
+    assert!(
+        !original.status.success(),
+        "original route accepted foreign checker"
+    );
+    assert_eq!(
+        fs::read_to_string(&receipt).expect("trap invoked"),
+        "contracts\ncheck-json\n--print-selected=text\n"
+    );
+    fs::remove_file(&receipt).expect("clear owned receipt");
+    fs::write(root.join("effigy.toml"), manifest).expect("fixed manifest");
+    let fixed = invoke();
+    eprintln!(
+        "fixed qa:json exit={}\n{}",
+        fixed.status,
+        String::from_utf8_lossy(&fixed.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&fixed.stdout);
+    assert!(
+        fixed.status.success(),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&fixed.stderr)
+    );
+    assert!(!receipt.exists(), "fixed route invoked foreign checker");
+    assert_eq!(
+        stdout
+            .matches("[ok] schema, version and payload schema validated")
+            .count(),
+        3
+    );
+}
+
 #[test]
 fn cli_contracts_check_json_validates_the_selection_payload() {
     let root = temp_workspace("contracts-selection-payload");

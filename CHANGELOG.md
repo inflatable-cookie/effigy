@@ -918,6 +918,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Bind repository JSON QA to the invoking Effigy checker so a stale PATH installation cannot misread current container-status fixtures.
+
 - Distinguish unresolved release process group, residue and capture conditions in refusal messages.
 
 - Import cached legacy bundle bytes during planning without starting an unused
