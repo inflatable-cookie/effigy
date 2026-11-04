@@ -152,4 +152,23 @@ grep -q "built-effigy.*unlink" "$log" || fail "unlink skipped after archive fail
 ok "archive failure still cleans up, teardown stays non-zero"
 rm -rf "$fx"
 
+# 10. an unavailable archive base fails the teardown after retire and
+# unlink are still attempted.
+new_fixture
+run_hook setup || fail "setup"
+mkdir -p "$repo/.effigy/state/runs/7"
+printf 'failure bytes\n' >"$repo/.effigy/state/runs/7/0.stdout.0.log"
+rm -rf "$fx/archive-base"
+touch "$fx/archive-base"
+run_hook teardown; rc=$?
+rm -f "$fx/archive-base"
+mkdir -p "$fx/archive-base"
+[ "$rc" -ne 0 ] || fail "teardown succeeded despite unavailable archive base"
+grep -q "worktree-archive-run-logs: status=unavailable" "$fx/out.log" ||
+  fail "unavailable archive not reported: $(cat "$fx/out.log")"
+grep -q "built-effigy container retire --yes" "$log" || fail "retire skipped after unavailable archive"
+grep -q "built-effigy.*unlink" "$log" || fail "unlink skipped after unavailable archive"
+ok "unavailable archive still cleans up, teardown stays non-zero"
+rm -rf "$fx"
+
 [ "$fails" -eq 0 ] && echo "all lifecycle hook tests passed" || { echo "$fails failure(s)" >&2; exit 1; }

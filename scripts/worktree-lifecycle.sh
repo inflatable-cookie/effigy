@@ -58,6 +58,9 @@ teardown)
   fi
   if [ "$retire_rc" -ne 0 ]; then
     echo "[error] worktree-lifecycle: container retire failed (exit $retire_rc); skill unlink skipped" >&2
+    if [ "$archive_rc" -ne 0 ]; then
+      echo "[error] worktree-lifecycle: run-log archive also failed (exit $archive_rc)" >&2
+    fi
     exit "$retire_rc"
   fi
   skill unlink

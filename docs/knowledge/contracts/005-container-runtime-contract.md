@@ -1538,7 +1538,9 @@ with a manifest binding each copy to its checkout-relative path, byte count
 and SHA-256. Symlinks, nonregular files and anything outside that tree are
 refused and recorded, never followed; per-file (1 MiB), total (16 MiB) and
 file-count (200) caps, changed sources and unreadable files are recorded
-honestly; a missing runs tree is a no-op and only the artifact location,
+honestly; a missing runs tree is a no-op, while a refused (symlinked
+state component) or unavailable (unusable scratch base) archive fails
+with exit 1; only the artifact location,
 manifest hash and status are printed, never log contents. An archive
 failure is reported but the retire/unlink cleanup is still attempted, and
 the teardown exits non-zero when the archive failed even if cleanup

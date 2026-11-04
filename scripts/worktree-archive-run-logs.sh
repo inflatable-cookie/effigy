@@ -12,9 +12,10 @@
 # Scope is ONLY the resolved checkout's `.effigy/state/runs/`, exactly two
 # levels deep (`<run>/<segment>`), regular files only. Symlinks, nonregular
 # files and anything outside that tree are refused and recorded, never
-# followed; there is no broad tree walk. A missing runs tree is a no-op, and
-# a symlinked state component or an unusable scratch base is reported without
-# archiving. Nothing here deletes, rebuilds, contacts a backend, or touches a
+# followed; there is no broad tree walk. A missing runs tree is a no-op; a
+# symlinked state component or an unusable scratch base is reported and
+# fails (exit 1) without archiving, so the hook still runs cleanup and then
+# reports the failure. Nothing here deletes, rebuilds, contacts a backend, or touches a
 # foreign checkout, HOME state or VM contents. Archives are retained; this
 # helper never deletes an archive it or anyone else made.
 #
@@ -48,12 +49,12 @@ runs="$root/.effigy/state/runs"
 for component in "$root/.effigy" "$root/.effigy/state" "$runs"; do
   if [ -L "$component" ]; then
     say "status=refused reason=symlink-component path=$component"
-    exit 0
+    exit 1
   fi
 done
 
 mkdir -p "$base" 2>/dev/null
-[ -d "$base" ] || { say "status=unavailable reason=no-archive-base base=$base"; exit 0; }
+[ -d "$base" ] || { say "status=unavailable reason=no-archive-base base=$base"; exit 1; }
 dest=$(mktemp -d "$base/qa-run-logs.XXXXXX") || fail "cannot create archive dir under $base"
 chmod 0700 "$dest" || fail "cannot secure $dest"
 

@@ -61,6 +61,31 @@ grep -q "status=no-state" "$out" || fail "expected status=no-state: $(cat "$out"
 ok "no-state no-op"
 rm -rf "$fx"
 
+# 2b. A symlinked state component is refused with a failure exit, never
+# followed into another tree.
+new_fixture
+mkdir -p "$fx/elsewhere/state/runs/7"
+printf 'foreign\n' >"$fx/elsewhere/state/runs/7/0.stdout.0.log"
+mkdir -p "$repo/.effigy"
+ln -s "$fx/elsewhere/state" "$repo/.effigy/state"
+sh "$helper" "$repo" "$base" >"$out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] || fail "refused exit $rc"
+grep -q "status=refused" "$out" || fail "expected status=refused: $(cat "$out")"
+[ -z "$(ls -A "$base")" ] || fail "archive created from a refused tree"
+ok "symlink-component refusal fails"
+rm -rf "$fx"
+
+# 2c. An unusable archive base is reported with a failure exit.
+new_fixture
+mkdir -p "$repo/.effigy/state/runs/7"
+printf 'bytes\n' >"$repo/.effigy/state/runs/7/0.stdout.0.log"
+touch "$fx/filebase"
+sh "$helper" "$repo" "$fx/filebase/sub" >"$out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] || fail "unavailable exit $rc"
+grep -q "status=unavailable" "$out" || fail "expected status=unavailable: $(cat "$out")"
+ok "unavailable-base failure"
+rm -rf "$fx"
+
 # 3. Symlinks, outside trees and nonregular files are refused, never
 # followed; the regular control file is still archived.
 new_fixture

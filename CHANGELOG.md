@@ -928,9 +928,10 @@ During v0.x, MINOR bumps may include breaking changes.
   nonregular files are refused, per-file/total/file-count caps and
   changed/unreadable sources are recorded honestly, a missing runs tree is
   a no-op, and only the artifact location, manifest hash and status are
-  printed. An archive failure is reported but the container retire and
-  skill unlink cleanup is still attempted; the teardown stays non-zero.
-  (effigy#632).
+  printed. An archive failure — including a refused symlinked state
+  component or an unusable scratch base — is reported but the container
+  retire and skill unlink cleanup is still attempted; the teardown stays
+  non-zero. (effigy#632).
 
 - Name environment recovery commands with the CLI's `container <NAME> <verb>`
   argument order so actual sentinel admission accepts them.
