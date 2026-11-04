@@ -333,6 +333,24 @@ fn source_preparation() -> Result<effigy_manifest::SourcePreparation, RunnerErro
     })?;
     let executable =
         std::env::current_exe().map_err(|err| RunnerError::task_invocation(err.to_string()))?;
+    // Only the explicit test feature can interpose this fixture's sentinel
+    // executable. Ordinary builds always re-exec their own image.
+    #[cfg(feature = "fault-injection")]
+    let executable = match std::env::var_os("EFFIGY_TEST_BUNDLE_SENTINEL") {
+        None => executable,
+        Some(path) => {
+            let path = std::fs::canonicalize(path)
+                .map_err(|err| RunnerError::task_invocation(err.to_string()))?;
+            let fixture_home = std::fs::canonicalize(&home)
+                .map_err(|err| RunnerError::task_invocation(err.to_string()))?;
+            if !path.starts_with(&fixture_home) {
+                return Err(RunnerError::task_invocation(
+                    "bundle sentinel fixture must be inside its private HOME".to_owned(),
+                ));
+            }
+            path
+        }
+    };
     let next = effigy_kernel::outcome::Invocation::validated(
         vec!["bundle".into(), "sync".into()],
         |args| args == ["bundle", "sync"],

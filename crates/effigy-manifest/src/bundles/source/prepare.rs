@@ -182,6 +182,8 @@ impl RefreshReason {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SourcePlan {
+    /// Missing-pin reads can snapshot legacy bytes without launching a child.
+    Import,
     Acquire(RefreshReason),
     /// A floating Git source whose remote check is due.
     RemoteCheck,
@@ -244,6 +246,9 @@ fn prepare(
                     // running the task (contract 020 §Behaviour rule 1).
                     Some(pin) if parent(&manifest).join(".effigy").join(&pin.object).is_dir() => {
                         SourcePlan::Keep
+                    }
+                    None if legacy_root(&manifest, selection).is_some_and(|root| root.is_dir()) => {
+                        SourcePlan::Import
                     }
                     _ => SourcePlan::Acquire(RefreshReason::Missing),
                 },
@@ -335,9 +340,15 @@ fn prepare(
     let mut random = [0; 10];
     getrandom::fill(&mut random).map_err(|err| error(&manifest, err.to_string()))?;
     let run_id = RunId::new(0, random).map_err(|err| error(&manifest, err.to_string()))?;
-    let remote = selections
-        .values()
-        .any(|selection| !matches!(selection, BundleSelection::Path { .. }));
+    // A legacy import is local snapshot/publication work. Keep its real run
+    // and gates, but do not wait for a sentinel when no child can be launched.
+    let remote = selections.iter().any(|(name, selection)| {
+        !matches!(selection, BundleSelection::Path { .. })
+            && matches!(
+                plans.get(name),
+                Some(SourcePlan::Acquire(_) | SourcePlan::RemoteCheck)
+            )
+    });
     let custody = if remote {
         Some(LifecyclePlan {
             executable: Executable::capture(&preparation.executable)
@@ -807,6 +818,18 @@ fn acquire_and_publish(
             &directory,
             run,
         )?;
+    }
+    // If a legacy directory disappeared after planning, refuse honestly rather
+    // than silently falling through to a fetch without planned custody.
+    for (name, plan) in plans {
+        if *plan == SourcePlan::Import && !imported.contains_key(name) {
+            return Err(error(
+                manifest,
+                format!(
+                    "legacy source `{name}` disappeared before import; run `effigy bundle sync`"
+                ),
+            ));
+        }
     }
     let mut pins = imported.clone();
     let mut reports = BTreeMap::new();

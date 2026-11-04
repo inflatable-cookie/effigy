@@ -306,6 +306,13 @@ Before fetching anything for an existing checkout, Prepare snapshots the bytes
 currently used by its path source or its existing Git/OCI cache and records the
 pins. If the subsequent sync fails, those imported bytes remain selected. Reads
 before this first Prepare use the existing bytes without changing them.
+A missing-pin read that only imports legacy bytes uses the checkout Prepare run,
+gates and atomic pin publication without starting a sentinel: it launches no
+child. Any fetch or remote check still requires full sentinel custody. If a
+planned legacy directory disappears before import, the read refuses rather than
+falling through to an unplanned fetch. Deadline and cancellation checks still
+apply to the local snapshot and publication.
+
 The old Git URL/ref and OCI registry/name/version cache layouts are import inputs
 only; their refresh writer and cache lock are removed.
 
