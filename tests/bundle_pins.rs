@@ -1968,8 +1968,17 @@ fn legacy_bytes_are_imported_before_a_failed_remote_update() {
     assert!(output.contains("original"), "{output}");
     let previous = fs::read(&pin).unwrap();
     eprintln!("legacy import: explicit sync starting");
-    let (ok, _) = fixture.run(&["bundle", "sync"], &[], Duration::from_secs(20));
-    assert!(!ok);
+    let (ok, output) = fixture.run(&["bundle", "sync"], &[], Duration::from_secs(20));
+    assert!(!ok, "{output}");
+    assert!(
+        output.contains("source acquisition exited 128: fatal: repository"),
+        "explicit sync did not reach the intended Git failure: {output}"
+    );
+    let absent = fixture.owner.path().join("absent-remote");
+    assert!(
+        output.contains(&format!("'{}' does not exist", absent.display())),
+        "explicit sync failed for a different repository: {output}"
+    );
     assert_eq!(fs::read(pin).unwrap(), previous);
     eprintln!("legacy import: final plan starting");
     let (ok, output) = fixture.run(&["dev", "--plan"], &[], Duration::from_secs(8));
