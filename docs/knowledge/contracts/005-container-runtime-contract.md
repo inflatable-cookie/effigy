@@ -1526,15 +1526,33 @@ This repository's own `paseo.json` hooks call `scripts/worktree-lifecycle.sh`
 instead of an installed `effigy`. `setup` discards any staged binary, builds
 `effigy` from the checkout with `CARGO_TARGET_DIR` pinned to
 `target/worktree-hooks`, stages it at `.local-install/worktree-hooks/effigy`,
-then runs the skill `link`. `teardown`
-runs `container retire --yes` and then skill `unlink` with the staged binary,
-so Queue milestone cleanup exercises the lifecycle code under test. Setup
+then runs the skill `link`. `teardown` first archives this checkout's
+kernel run logs with `scripts/worktree-archive-run-logs.sh`, then runs
+`container retire --yes` and skill `unlink` with the staged binary,
+so Queue milestone cleanup exercises the lifecycle code under test. The
+archive copies the available original files from only this checkout's
+`.effigy/state/runs/` (exactly `<run>/<segment>`, regular files only) into
+a fresh private `0700` directory under `/Volumes/Builds/scratch/effigy/`
+— outside Queue run cleanup so the evidence survives checkout removal —
+with a manifest binding each copy to its checkout-relative path, byte count
+and SHA-256. Symlinks, nonregular files and anything outside that tree are
+refused and recorded, never followed; per-file (1 MiB), total (16 MiB) and
+file-count (200) caps, changed sources and unreadable files are recorded
+honestly; a missing runs tree is a no-op, while a refused (symlinked
+state component) or unavailable (unusable scratch base) archive fails
+with exit 1; only the artifact location,
+manifest hash and status are printed, never log contents. An archive
+failure is reported but the retire/unlink cleanup is still attempted, and
+the teardown exits non-zero when the archive failed even if cleanup
+succeeded. Setup
 stages the binary even if later QA fails. A missing or failed build, link or
 retire exits non-zero; teardown never falls back to the PATH `effigy` and does
 not unlink after a retire failure. Limits: the helper compiles with raw
 `cargo` as bootstrap, does not install anything globally, and a checkout whose
 setup never ran cannot be torn down by this hook. Covered by
-`test:worktree:lifecycle-hooks`. `NORTHSTAR_SKILL_PATH` still overrides the
+`test:worktree:lifecycle-hooks` (hook wiring and order) and
+`test:worktree:run-log-archive` (helper byte/manifest/bounds/refusal proof).
+`NORTHSTAR_SKILL_PATH` still overrides the
 skill location.
 
 Repo-owned Compose is classified as such: cleanup uses the scoped project

@@ -694,6 +694,10 @@
   "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(cli_container_retire_named_environment_refuses_before_effects)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 "test:worktree:lifecycle-hooks" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh tests/scripts/worktree-lifecycle-hooks.sh" }
+# Teardown log preservation (effigy#632): bounded private archive of this
+# checkout's kernel run logs before Queue removes the checkout, so exact
+# nested failure bytes survive the bounded human fold.
+"test:worktree:run-log-archive" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh tests/scripts/worktree-run-log-archive.sh" }
 # The selector must reuse the real shared Oxide pool when a harness overrides
 # HOME: a cold pool under a temporary home writes 3.3-3.8 GB to the internal
 # SSD per run. A stub `oxide` answers `status`, so the fixture builds nothing.

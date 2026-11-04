@@ -918,6 +918,21 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Preserve this checkout's kernel run logs before worktree teardown
+  removes the checkout: `scripts/worktree-lifecycle.sh teardown` first runs
+  the bounded `scripts/worktree-archive-run-logs.sh` helper, which copies
+  the available original files from only this checkout's
+  `.effigy/state/runs/` into a fresh private directory under
+  `/Volumes/Builds/scratch/effigy/` with a manifest binding each copy to
+  its checkout-relative path, byte count and SHA-256. Symlinks and
+  nonregular files are refused, per-file/total/file-count caps and
+  changed/unreadable sources are recorded honestly, a missing runs tree is
+  a no-op, and only the artifact location, manifest hash and status are
+  printed. An archive failure — including a refused symlinked state
+  component or an unusable scratch base — is reported but the container
+  retire and skill unlink cleanup is still attempted; the teardown stays
+  non-zero. (effigy#632).
+
 - Refuse a keyed invocation when a different task publishes that key during
   admission, instead of attaching it to the other task's run (effigy#629).
 

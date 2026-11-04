@@ -6,7 +6,7 @@
 # reuses the staged binary and fails closed when it is missing.
 #
 #   worktree-lifecycle.sh setup      build, link
-#   worktree-lifecycle.sh teardown   retire container scope, unlink
+#   worktree-lifecycle.sh teardown   archive run logs, retire container scope, unlink
 #
 # The staged binary lives under .local-install/ (gitignored) so it survives
 # between the separate setup and teardown shells. The cargo target directory
@@ -46,8 +46,28 @@ setup)
 teardown)
   [ -f "$staged" ] && [ -x "$staged" ] ||
     die "no checkout-built binary at $staged; run setup first (no fallback to PATH)"
-  "$staged" container retire --yes
+  # Preserve owned kernel failure evidence before the checkout disappears:
+  # a bounded copy of this checkout's run logs. An archive failure is
+  # reported but never skips the required retire/unlink cleanup below.
+  archive_rc=0
+  sh "$root/scripts/worktree-archive-run-logs.sh" "$root" || archive_rc=$?
+  if "$staged" container retire --yes; then
+    retire_rc=0
+  else
+    retire_rc=$?
+  fi
+  if [ "$retire_rc" -ne 0 ]; then
+    echo "[error] worktree-lifecycle: container retire failed (exit $retire_rc); skill unlink skipped" >&2
+    if [ "$archive_rc" -ne 0 ]; then
+      echo "[error] worktree-lifecycle: run-log archive also failed (exit $archive_rc)" >&2
+    fi
+    exit "$retire_rc"
+  fi
   skill unlink
+  if [ "$archive_rc" -ne 0 ]; then
+    echo "[error] worktree-lifecycle: run-log archive failed (exit $archive_rc); cleanup completed" >&2
+    exit "$archive_rc"
+  fi
   ;;
 *)
   die "usage: worktree-lifecycle.sh setup|teardown"
