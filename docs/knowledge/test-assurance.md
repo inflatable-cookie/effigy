@@ -28,6 +28,15 @@ not comparable case-for-case.
 Passing a test does not establish its value. The census counts; only the
 per-family audit decides what survives.
 
+Milestone failure collection: canonical `effigy qa` runs its built-in default
+suite as `test -- --no-fail-fast`, so the resolved default command is
+`oxide nextest run --workspace --no-fail-fast` and a milestone run collects
+every remaining selected default-suite failure instead of cancelling the
+selection at the first one, while still exiting non-zero (effigy#630).
+The generic `effigy test` default keeps nextest's own fail-fast behavior;
+only the `qa` step passes the flag, and focused selectors keep their explicit
+`--no-fail-fast` / `--max-fail` choices.
+
 ## Proof tiers
 
 Every case belongs to exactly one tier. Cost and review expectations follow the
