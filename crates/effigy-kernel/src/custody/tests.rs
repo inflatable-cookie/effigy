@@ -1616,7 +1616,9 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
         (Terminal::Pty, 0),
         (Terminal::None, 1),
         (Terminal::None, 2),
+        (Terminal::None, 3), // controlled natural retirement before recovery
     ] {
+        eprintln!("anchor recovery terminal={terminal:?} mode={mode} starting");
         let home = home();
         let cx = cx();
         let spec = ProcessSpec {
@@ -1647,6 +1649,54 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
         let descendant = fixture_identity(pid);
         fixture.0.push(descendant.clone());
         assert_ne!(platform::read_nonce(pid).verified(), Some(&r.nonce));
+        if mode == 0 {
+            // Recovery needs continuity until its own positive closure round.
+            // An independently retiring anchor need not share that round (#520).
+            // Pin only our verified generation; recovery excludes the anchor
+            // from both TERM and CONT and stops it last after workload closure.
+            assert!(anchor::verified(&r, &anchor));
+            platform::numeric(anchor.pid, false, libc::SIGSTOP);
+            wait(|| {
+                matches!(
+                    crate::ident::process_state(anchor.pid),
+                    Observed::Verified(crate::ident::ProcessState::Stopped, _)
+                )
+            });
+            assert!(anchor::verified(&r, &anchor));
+        }
+        if mode == 3 {
+            // Real ordering control: once the last workload retires, the anchor
+            // can retire without the recovering observer having proved closure.
+            // This demonstrates the old fixture's premise, not the historical
+            // failed cell or the row its discarded closure detail would name.
+            assert!(anchor::verified(&r, &anchor));
+            assert!(platform::group_pids(r.pgid).unwrap().contains(&anchor.pid));
+            let anchor_state = crate::ident::process_state(anchor.pid);
+            assert!(matches!(
+                anchor_state,
+                Observed::Verified(crate::ident::ProcessState::Active, _)
+            ));
+            assert!(platform::generation(&descendant).verified().is_some());
+            platform::numeric(pid, false, libc::SIGKILL);
+            wait(|| matches!(platform::generation(&anchor), Observed::Absent(_)));
+            // Split the actual membership reads across that owned retirement:
+            // an observer that listed the anchor cannot exclude its vanished row.
+            let row = platform::membership_row(anchor.pid, anchor_state, || {
+                crate::ident::process_identity(anchor.pid)
+            })
+            .unwrap();
+            assert!(matches!(row, platform::MembershipRow::Unproven(pid) if pid == anchor.pid));
+            assert_eq!(
+                platform::classify_round(&[row], &[]),
+                platform::RoundVerdict::Unproven
+            );
+            let sent = anchor::signal(&r, &anchor, libc::SIGTERM);
+            eprintln!("anchor recovery terminal={terminal:?} mode={mode} retired signal={sent:?}");
+            assert!(
+                matches!(sent, Observed::Unknown(UnknownReason::Inconsistent(ref reason))
+                if reason == "unproven group closure; anchor=generation:absent")
+            );
+        }
         if mode == 1 {
             // SAFETY: exact recorded fixture identity, checked immediately.
             assert!(platform::generation(&anchor).verified().is_some());
@@ -1662,13 +1712,14 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
             });
         }
         let cleanup = cx.operation().cleanup(Duration::from_secs(2)).unwrap();
+        let mut refusal = None;
         let result = if mode == 2 {
             let old =
                 serde_json::from_value::<ProcessRecord>(serde_json::to_value(&r).unwrap()).unwrap();
             assert!(old.anchor.is_none());
             platform::recover(&old.process, &cleanup, &mut || false)
         } else {
-            anchor::recover(&r, &anchor, &cleanup, &mut || false, &mut None)
+            anchor::recover(&r, &anchor, &cleanup, &mut || false, &mut refusal)
         };
         let survived = platform::generation(&descendant).verified().is_some()
             && matches!(
@@ -1678,13 +1729,17 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
                     _
                 )
             );
-        if mode != 0 && survived {
+        if matches!(mode, 1 | 2) && survived {
             // Acknowledgement proves the descendant ran after recovery and
             // processed pending traps before we inspect the signal marker.
             std::fs::write(home.path().join("check"), "check").unwrap();
             wait(|| home.path().join("checked").exists());
         }
         let signalled = home.path().join("signalled").exists();
+        // Preserve the returned facts before cleanup changes the fixture.
+        eprintln!(
+            "anchor recovery terminal={terminal:?} mode={mode} result={result:?} refusal={refusal:?} survived={survived} signalled={signalled}"
+        );
         // Always retire our recorded descendant before asserting the verdict.
         if survived {
             platform::numeric(pid, false, libc::SIGKILL);
@@ -1704,14 +1759,19 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
                 Observed::Verified(..) | Observed::Absent(_)
             )
         });
-        if mode != 0 {
-            assert!(matches!(result, Observed::Unknown(_)), "{result:?}");
+        if matches!(mode, 1 | 2) {
+            assert!(
+                matches!(result, Observed::Unknown(UnknownReason::Inconsistent(ref reason))
+                    if (mode == 1 && reason.contains(UNPROVEN_GROUP_CLOSURE))
+                        || (mode == 2 && reason.starts_with("group contains members without generation evidence:"))),
+                "terminal={terminal:?} mode={mode} {result:?} refusal={refusal:?}"
+            );
             assert!(survived, "lost anchor must grant no signal authority");
             assert!(!signalled, "refusal must deliver neither TERM nor CONT");
         } else {
             assert!(
                 matches!(result, Observed::Verified(..) | Observed::Absent(_)),
-                "{result:?}"
+                "terminal={terminal:?} mode={mode} {result:?} refusal={refusal:?}"
             );
             assert!(!survived);
         }
