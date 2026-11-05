@@ -1515,6 +1515,8 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         ),
         Duration::from_secs(15),
     );
+    // This dependent witness establishes publication and ownership only;
+    // the app's actual HTTPS serving witness is checked above.
     let dependent_successor = wait_for_listener_generation(
         &listener_state_path(primary_checkout, primary_profile, "consumer"),
         &private_gateway.join("routes.json"),
@@ -4228,6 +4230,9 @@ fn fixture_environment_command(checkout: &Path, cleanup: &ManagedContainerCleanu
                     "AI_AGENT"
                         | "CLAUDECODE"
                         | "CLAUDE_AGENT_SDK_VERSION"
+                        // The inherited Nucleus branch name also collides with
+                        // the public primary host label in listener proofs.
+                        | "NUCLEUS_BASE_BRANCH"
                         | "CLICOLOR"
                         | "CLICOLOR_FORCE"
                         | "FORCE_COLOR"
