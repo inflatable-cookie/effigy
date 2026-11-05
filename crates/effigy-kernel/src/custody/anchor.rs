@@ -5,13 +5,110 @@ use crate::ident::{self, ProcessState};
 
 const NO_LIVE_MEMBER: &str = "no live workload member to signal";
 
-pub(super) fn verified(r: &ProcessReceipt, anchor: &ProcessIdentity) -> bool {
-    platform::generation(anchor).verified().is_some()
-        && matches!(ident::process_state(anchor.pid), Observed::Verified(ProcessState::Active | ProcessState::Stopped, _))
-        && platform::read_nonce(anchor.pid).verified() == Some(&r.nonce)
-        && platform::not_earlier(anchor, r)
+// These labels contain only categories, never observation payloads.
+#[derive(Clone, Copy)]
+pub(super) struct VerificationFailure {
+    pub stage: &'static str,
+    pub category: &'static str,
+}
+
+fn required<T>(stage: &'static str, observation: Observed<T>) -> Result<T, VerificationFailure> {
+    match observation {
+        Observed::Verified(value, _) => Ok(value),
+        Observed::Absent(proof) => Err(VerificationFailure {
+            stage,
+            category: match proof {
+                AbsenceProof::StartIdentityDiffers { .. } | AbsenceProof::BootChanged { .. } => {
+                    "replaced"
+                }
+                _ => "absent",
+            },
+        }),
+        Observed::Unknown(_) => Err(VerificationFailure {
+            stage,
+            category: "unreadable",
+        }),
+    }
+}
+
+// Lazy observations preserve the original short-circuit order and count.
+pub(super) fn verify_with(
+    generation: impl FnOnce() -> Observed<()>,
+    state: impl FnOnce() -> Observed<ProcessState>,
+    nonce: impl FnOnce() -> Result<bool, &'static str>,
+    birth: impl FnOnce() -> Result<(), &'static str>,
+    group: impl FnOnce() -> i32,
+    pgid: u32,
+) -> Result<(), VerificationFailure> {
+    required("generation", generation())?;
+    if required("state", state())? == ProcessState::Zombie {
+        return Err(VerificationFailure {
+            stage: "state",
+            category: "zombie",
+        });
+    }
+    match nonce() {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(VerificationFailure {
+                stage: "nonce",
+                category: "mismatch",
+            })
+        }
+        Err(category) => {
+            return Err(VerificationFailure {
+                stage: "nonce",
+                category,
+            })
+        }
+    }
+    birth().map_err(|category| VerificationFailure {
+        stage: "birth",
+        category,
+    })?;
+    let current = group();
+    if current != pgid as i32 {
+        return Err(VerificationFailure {
+            stage: "current-group",
+            category: if current < 0 {
+                "unreadable"
+            } else {
+                "mismatch"
+            },
+        });
+    }
+    Ok(())
+}
+
+fn verification(r: &ProcessReceipt, anchor: &ProcessIdentity) -> Result<(), VerificationFailure> {
+    verify_with(
+        || platform::generation(anchor),
+        || ident::process_state(anchor.pid),
+        || platform::anchor_nonce(anchor.pid).map(|nonce| nonce == r.nonce),
+        || {
+            if platform::not_earlier(anchor, r) {
+                Ok(())
+            } else if anchor.boot != r.identity.boot {
+                Err("boot-mismatch")
+            } else {
+                Err("birth-order-or-kind")
+            }
+        },
         // SAFETY: generation validated the positive, range-checked pid.
-        && unsafe { libc::getpgid(anchor.pid as i32) } == r.pgid as i32
+        || unsafe { libc::getpgid(anchor.pid as i32) },
+        r.pgid,
+    )
+}
+
+pub(super) fn verified(r: &ProcessReceipt, anchor: &ProcessIdentity) -> bool {
+    verification(r, anchor).is_ok()
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ClosureDetail {
+    pub path: &'static str,
+    pub result: &'static str,
+    pub role: &'static str,
 }
 
 pub(super) fn closed<'a>(
@@ -19,25 +116,24 @@ pub(super) fn closed<'a>(
     anchor: Option<&'a ProcessIdentity>,
     leader: Option<&'a ProcessIdentity>,
 ) -> Observed<Closure> {
-    let Some(anchor) = anchor.filter(|a| verified(r, a)) else {
-        let accounted: Vec<&ProcessIdentity> = leader.into_iter().collect();
-        return platform::group_closed(r.pgid, &accounted);
-    };
-    let mut accounted: Vec<&ProcessIdentity> = vec![anchor];
+    closed_detail(r, anchor, leader).0
+}
+
+fn closed_detail(
+    r: &ProcessReceipt,
+    anchor: Option<&ProcessIdentity>,
+    leader: Option<&ProcessIdentity>,
+) -> (Observed<Closure>, ClosureDetail) {
+    let verified_anchor = anchor.filter(|a| verified(r, a));
+    let mut accounted: Vec<&ProcessIdentity> = verified_anchor.into_iter().collect();
     accounted.extend(leader);
-    match platform::group_membership(r.pgid).map(|rows| platform::classify_round(&rows, &accounted))
-    {
-        Ok(platform::RoundVerdict::Empty) => Observed::Verified(Closure, evidence()),
-        Ok(platform::RoundVerdict::Live) => {
-            Observed::Unknown(unknown("workload still has live members"))
-        }
-        // A row that could not be resolved may hide a member this inventory
-        // cannot see: never closure, and the caller re-inventories.
-        Ok(platform::RoundVerdict::Unproven) => {
-            Observed::Unknown(unknown(crate::custody::UNPROVEN_GROUP_CLOSURE))
-        }
-        Err(e) => Observed::Unknown(unknown(e)),
-    }
+    platform::closure_detail(
+        r.pgid,
+        &accounted,
+        anchor,
+        leader.or(Some(&r.identity)),
+        verified_anchor.is_some(),
+    )
 }
 
 /// Each pidfd opens before the generation observation; on macOS the documented
@@ -60,43 +156,61 @@ pub(super) fn signal(
     anchor: &ProcessIdentity,
     signal: i32,
 ) -> Observed<SignalDelivered> {
-    if ![libc::SIGTERM, libc::SIGCONT, libc::SIGKILL, libc::SIGINT].contains(&signal) {
-        return Observed::Unknown(unknown("invalid custody signal"));
-    }
-    if !verified(r, anchor) {
-        // The anchor is the group's continuity evidence. Without it the group
-        // cannot be proved closed, so the refusal carries the named state.
-        return Observed::Unknown(unknown(crate::custody::UNPROVEN_GROUP_CLOSURE));
-    }
-    let pids = match platform::live_pids(r.pgid) {
-        Ok(pids) => pids,
-        Err(e) => return Observed::Unknown(unknown(e)),
-    };
-    let mut delivered = None;
-    for pid in pids.into_iter().filter(|pid| *pid != anchor.pid) {
-        let member = match ident::process_identity(pid) {
-            Observed::Verified(member, _) => member,
-            Observed::Absent(_) => continue,
-            Observed::Unknown(reason) => return Observed::Unknown(reason),
+    signal_detail(r, anchor, signal).0
+}
+
+fn signal_detail(
+    r: &ProcessReceipt,
+    anchor: &ProcessIdentity,
+    signal: i32,
+) -> (Observed<SignalDelivered>, Option<VerificationFailure>) {
+    let mut failure_detail = None;
+    let observed = (|| {
+        if ![libc::SIGTERM, libc::SIGCONT, libc::SIGKILL, libc::SIGINT].contains(&signal) {
+            return Observed::Unknown(unknown("invalid custody signal"));
+        }
+        if let Err(failure) = verification(r, anchor) {
+            failure_detail = Some(failure);
+            // The anchor is the group's continuity evidence. Without it the group
+            // cannot be proved closed, so the refusal carries the named state.
+            return Observed::Unknown(unknown(format!(
+                "{}; anchor={}:{}",
+                crate::custody::UNPROVEN_GROUP_CLOSURE,
+                failure.stage,
+                failure.category
+            )));
+        }
+        let pids = match platform::live_pids(r.pgid) {
+            Ok(pids) => pids,
+            Err(e) => return Observed::Unknown(unknown(e)),
         };
-        let sent = member_signal(r, anchor, &member, signal);
-        if let Observed::Verified(sent, _) = &sent {
-            delivered = Some(sent.clone());
-        }
-        if let Observed::Unknown(reason) = sent {
-            // A process can retire between inventory and its evidence read.
-            if matches!(
-                ident::process_state(pid),
-                Observed::Absent(_) | Observed::Verified(ProcessState::Zombie, _)
-            ) {
-                continue;
+        let mut delivered = None;
+        for pid in pids.into_iter().filter(|pid| *pid != anchor.pid) {
+            let member = match ident::process_identity(pid) {
+                Observed::Verified(member, _) => member,
+                Observed::Absent(_) => continue,
+                Observed::Unknown(reason) => return Observed::Unknown(reason),
+            };
+            let sent = member_signal(r, anchor, &member, signal);
+            if let Observed::Verified(sent, _) = &sent {
+                delivered = Some(sent.clone());
             }
-            return Observed::Unknown(reason);
+            if let Observed::Unknown(reason) = sent {
+                // A process can retire between inventory and its evidence read.
+                if matches!(
+                    ident::process_state(pid),
+                    Observed::Absent(_) | Observed::Verified(ProcessState::Zombie, _)
+                ) {
+                    continue;
+                }
+                return Observed::Unknown(reason);
+            }
         }
-    }
-    delivered
-        .map(|sent| Observed::Verified(sent, evidence()))
-        .unwrap_or_else(|| Observed::Unknown(unknown(NO_LIVE_MEMBER)))
+        delivered
+            .map(|sent| Observed::Verified(sent, evidence()))
+            .unwrap_or_else(|| Observed::Unknown(unknown(NO_LIVE_MEMBER)))
+    })();
+    (observed, failure_detail)
 }
 
 pub(super) fn stop(
@@ -156,21 +270,54 @@ pub(super) fn recover(
         } else {
             libc::SIGTERM
         };
-        for sig in [sig, libc::SIGCONT] {
-            if let Observed::Unknown(reason) = signal(r, anchor, sig) {
-                if matches!(
-                    closed(r, Some(anchor), None),
-                    Observed::Verified(..) | Observed::Absent(_)
-                ) {
+        let selected = sig;
+        for sig in [selected, libc::SIGCONT] {
+            let (sent, failure) = signal_detail(r, anchor, sig);
+            if let Observed::Unknown(reason) = sent {
+                let (closure, detail) = closed_detail(r, Some(anchor), None);
+                if matches!(closure, Observed::Verified(..) | Observed::Absent(_)) {
                     return stop(r, Some(anchor), cx);
                 }
                 if matches!(&reason, crate::observe::UnknownReason::Inconsistent(message) if message == NO_LIVE_MEMBER)
                 {
                     break;
                 }
-                return Observed::Unknown(reason);
+                return Observed::Unknown(recovery_refusal(reason, failure, selected, sig, detail));
             }
         }
         std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn signal_name(signal: i32) -> &'static str {
+    match signal {
+        libc::SIGTERM => "TERM",
+        libc::SIGKILL => "KILL",
+        libc::SIGCONT => "CONT",
+        _ => "other",
+    }
+}
+
+pub(super) fn recovery_refusal(
+    reason: UnknownReason,
+    failure: Option<VerificationFailure>,
+    selected: i32,
+    attempt: i32,
+    closure: ClosureDetail,
+) -> UnknownReason {
+    // Preserve variant and original reason. Only our bounded anchor refusal
+    // gains context; arbitrary external error strings are never copied here.
+    match reason {
+        UnknownReason::Inconsistent(message) if failure.is_some() => {
+            UnknownReason::Inconsistent(format!(
+                "{message}; stop={} attempt={} closure={}:{} row={}",
+                signal_name(selected),
+                signal_name(attempt),
+                closure.path,
+                closure.result,
+                closure.role
+            ))
+        }
+        other => other,
     }
 }

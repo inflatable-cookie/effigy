@@ -1164,7 +1164,15 @@ have left the group inside the round after forking a member this inventory canno
 see; it is `unproven` and the anchor stays alive. Any other read
 failure makes the inventory an error, never an absence. In both of those cases the
 anchor keeps retrying as the group's evidence and the observing path reports the
-named state `unproven group closure`. An inventory is not atomic with process
+named state `unproven group closure`. Anchored recovery refusals retain the
+first failed verification category from the existing short-circuit checks and
+the already-computed follow-up closure path, verdict and relevant row role,
+alongside the selected stop signal and failed attempt. These bounded categories
+add no observations or authority. The real owner-loss matrix captures the
+owner's returned exit status and emits bounded status/effect/refusal facts to
+captured test stderr before an incomplete/deadline panic deletes its fixture.
+This is diagnostic fidelity, not evidence of a reliability repair or a cause
+for an earlier refusal. An inventory is not atomic with process
 creation, so a descendant forked and orphaned inside the window can be missed:
 repeated scans are **best effort**, never a proof of an empty group. On Linux,
 the inventory starts with all PIDs. If a PID disappears before `getpgid` can
