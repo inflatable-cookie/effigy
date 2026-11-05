@@ -2198,6 +2198,7 @@ fn a_hosted_wait_stops_the_run_without_holding_a_process_open() {
     commit_and_push(&waited);
 
     let mut effects = TestEffects::new(&waited.root);
+    effects.inner.trace_settlement = true;
     effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
     effects.hosted_evidence = vec![HostedEvidence::Waiting {
         detail: "hosted evidence for gate `hosted` is pending: run … status is `in_progress`."
