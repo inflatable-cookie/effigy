@@ -1275,7 +1275,14 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
                     .join(profile)
                     .join("app.listener.json"),
             );
-            let response = curl_https_response(https_address, &ca_path, &route.domain, "/");
+            let response = wait_for_listener_https(
+                https_address,
+                &ca_path,
+                &route.domain,
+                &state,
+                body,
+                Instant::now() + Duration::from_secs(5),
+            );
             assert!(
                 response.contains("200 OK")
                     && response.contains(&format!("{body}@{}", state["child_pid"])),
@@ -1406,7 +1413,14 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
             direct_response.contains(&format!("{body}@{}", state["child_pid"])),
             "the reserved listener returned an unexpected response: {direct_response}"
         );
-        let gateway_response = curl_https_response(https_address, &ca_path, domain, "/");
+        let gateway_response = wait_for_listener_https(
+            https_address,
+            &ca_path,
+            domain,
+            state,
+            body,
+            Instant::now() + Duration::from_secs(5),
+        );
         let expected_body = format!("{body}@{}", state["child_pid"]);
         assert!(
             gateway_response.contains("200 OK") && gateway_response.contains(&expected_body),
@@ -1453,12 +1467,13 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     // The withdrawn generation no longer serves; its successor binds the same
     // reserved port again.
     fs::write(state_dir.join("continue-exit"), "continue\n").expect("allow old generation to exit");
+    let deadline = Instant::now() + Duration::from_secs(20);
     let new_state = wait_for_listener_generation(
         &listener_state_path(primary_checkout, primary_profile, "app"),
         &private_gateway.join("routes.json"),
         primary_domain,
         old_state["generation"].as_str().unwrap(),
-        Duration::from_secs(20),
+        deadline.saturating_duration_since(Instant::now()),
     );
     let new_address = new_state["address"]
         .as_str()
@@ -1480,9 +1495,14 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         &new_state,
         "app restart",
     );
-    assert_eq!(
-        curl_https(https_address, &ca_path, primary_domain, "/"),
-        format!("{primary_body}@{}", new_state["child_pid"])
+    assert_ne!(new_state["child_pid"], old_state["child_pid"]);
+    wait_for_listener_https(
+        https_address,
+        &ca_path,
+        primary_domain,
+        &new_state,
+        primary_body,
+        deadline,
     );
     let consumer_log = &prior_consumer_logs[0].0;
     wait_for_file_contains(
@@ -1528,9 +1548,13 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     let sibling_domain = checkouts[2].2.as_str();
     let sibling_state = &app_states[2];
     let route_path = private_gateway.join("routes.json");
-    assert_eq!(
-        curl_https(https_address, &ca_path, sibling_domain, "/"),
-        format!("{}@{}", checkouts[2].3, sibling_state["child_pid"])
+    wait_for_listener_https(
+        https_address,
+        &ca_path,
+        sibling_domain,
+        sibling_state,
+        checkouts[2].3,
+        Instant::now() + Duration::from_secs(5),
     );
 
     let down = run_container_cli(primary_checkout, &container_cleanup, &["down", "--json"]);
@@ -1566,10 +1590,13 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     for index in [1, 2] {
         let (checkout, profile, domain, body) = &checkouts[index];
         let state = read_json_file(&listener_state_path(checkout, profile, "app"));
-        assert_eq!(
-            curl_https(https_address, &ca_path, domain, "/"),
-            format!("{body}@{}", state["child_pid"]),
-            "stopping one worktree must preserve sibling listener routes"
+        wait_for_listener_https(
+            https_address,
+            &ca_path,
+            domain,
+            &state,
+            body,
+            Instant::now() + Duration::from_secs(5),
         );
     }
 
@@ -2642,10 +2669,13 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
             .cloned()
             .expect("published scoped listener route");
         assert_eq!(route.target.as_deref(), state["address"].as_str());
-        assert_eq!(
-            curl_https(https_address, &ca_path, &effective[index], "/"),
-            format!("{body}@{}", state["child_pid"]),
-            "scoped HTTPS name must reach its own listener"
+        wait_for_listener_https(
+            https_address,
+            &ca_path,
+            &effective[index],
+            &state,
+            body,
+            Instant::now() + Duration::from_secs(5),
         );
         let requests = fs::read_to_string(fixture.path().join(format!(
             "scoped-control-{index}/readiness-refused.requests.log"
@@ -2670,10 +2700,15 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         generations.push(generation.to_owned());
         child_pids.push(state["child_pid"].clone());
     }
-    assert_eq!(
-        curl_https(https_address, &ca_path, DECLARED_HOST, "/"),
-        format!("primary-body@{}", child_pids[0]),
-        "the declared host stays with the primary checkout"
+    let primary_state = read_json_file(&state_path(&checkouts[0].0, checkouts[0].1));
+    assert_eq!(primary_state["child_pid"], child_pids[0]);
+    wait_for_listener_https(
+        https_address,
+        &ca_path,
+        DECLARED_HOST,
+        &primary_state,
+        "primary-body",
+        Instant::now() + Duration::from_secs(5),
     );
 
     // The inventory reports the listener-only declaration as declared -> effective.
@@ -2832,12 +2867,13 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
     );
     fs::write(restart_control.join("continue-exit"), "continue\n")
         .expect("allow old scoped generation to exit");
+    let deadline = Instant::now() + Duration::from_secs(20);
     let new_state = wait_for_listener_generation(
         &state_path(restart_checkout, restart_profile),
         &routes_path,
         &effective[1],
         old_state["generation"].as_str().unwrap(),
-        Duration::from_secs(20),
+        deadline.saturating_duration_since(Instant::now()),
     );
     assert_eq!(
         new_state["address"], old_state["address"],
@@ -2854,9 +2890,14 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         &new_state,
         "scoped successor",
     );
-    assert_eq!(
-        curl_https(https_address, &ca_path, &effective[1], "/"),
-        format!("{restart_body}@{new_child_pid}")
+    assert_ne!(new_child_pid, old_state["child_pid"]);
+    wait_for_listener_https(
+        https_address,
+        &ca_path,
+        &effective[1],
+        &new_state,
+        restart_body,
+        deadline,
     );
     wait_for_file_contains(
         &restart_checkout
@@ -2878,9 +2919,14 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
             Some(generations[index].as_str()),
             "a sibling restart must not change this generation"
         );
-        assert_eq!(
-            curl_https(https_address, &ca_path, &effective[index], "/"),
-            format!("{body}@{}", child_pids[index])
+        assert_eq!(state["child_pid"], child_pids[index]);
+        wait_for_listener_https(
+            https_address,
+            &ca_path,
+            &effective[index],
+            &state,
+            body,
+            Instant::now() + Duration::from_secs(5),
         );
     }
 
@@ -2895,11 +2941,16 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         "scoped stop must remove its own listener route"
     );
     for index in [0, 2] {
-        let (_, _, body) = &checkouts[index];
-        assert_eq!(
-            curl_https(https_address, &ca_path, &effective[index], "/"),
-            format!("{body}@{}", child_pids[index]),
-            "teardown of one scope must leave sibling routes unchanged"
+        let (checkout, profile, body) = &checkouts[index];
+        let state = read_json_file(&state_path(checkout, profile));
+        assert_eq!(state["child_pid"], child_pids[index]);
+        wait_for_listener_https(
+            https_address,
+            &ca_path,
+            &effective[index],
+            &state,
+            body,
+            Instant::now() + Duration::from_secs(5),
         );
     }
     assert!(
