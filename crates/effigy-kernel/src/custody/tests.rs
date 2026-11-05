@@ -1655,7 +1655,10 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
             // Pin only our verified generation; recovery excludes the anchor
             // from both TERM and CONT and stops it last after workload closure.
             assert!(anchor::verified(&r, &anchor));
-            platform::numeric(anchor.pid, false, libc::SIGSTOP);
+            // SAFETY: full verification above established this positive,
+            // range-checked owned generation. This test alone needs STOP;
+            // custody's production numeric helper deliberately rejects it.
+            assert_eq!(unsafe { libc::kill(anchor.pid as i32, libc::SIGSTOP) }, 0);
             wait(|| {
                 matches!(
                     crate::ident::process_state(anchor.pid),
