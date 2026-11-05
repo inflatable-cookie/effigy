@@ -23,6 +23,92 @@ use super::*;
 // fixtures
 // ---------------------------------------------------------------------------
 
+// Read only the report already returned by live stop. Never reinventory or
+// print observation payloads. Nextest retains this before TempDir cleanup.
+pub(super) fn trace_settlement(
+    label: &str,
+    operation: &str,
+    report: &effigy_kernel::custody::StopReport,
+) {
+    use effigy_kernel::{custody::CaptureState, observe::Observed};
+    let label = match label {
+        "release git" => "release git",
+        _ => "other",
+    };
+    let group = match &report.group {
+        Observed::Verified(..) => "verified",
+        Observed::Absent(_) => "absent",
+        Observed::Unknown(reason) => settlement_reason(reason),
+    };
+    let capture = match report.capture {
+        CaptureState::Complete => "complete",
+        CaptureState::Truncated(_) => "truncated",
+    };
+    let leader = match &report.leader {
+        Observed::Verified(..) => "verified",
+        Observed::Absent(_) => "absent",
+        Observed::Unknown(reason) => settlement_reason(reason),
+    };
+    eprintln!("release settlement: label={label}; operation={operation}; leader={leader}; group={group}; capture={capture}; residue={}", report.residue.len());
+    for reason in &report.residue {
+        eprintln!("release settlement residue: {}", settlement_reason(reason));
+    }
+}
+
+fn settlement_reason(reason: &effigy_kernel::observe::UnknownReason) -> &'static str {
+    use effigy_kernel::observe::UnknownReason;
+    match reason {
+        UnknownReason::TimedOut { phase, .. } => {
+            if phase.starts_with("group closure of process group ") {
+                "timed-out:group-closure"
+            } else {
+                "timed-out:other"
+            }
+        }
+        UnknownReason::Busy { .. } => "busy",
+        UnknownReason::Cancelled(_) => "cancelled",
+        UnknownReason::PermissionDenied => "permission-denied",
+        UnknownReason::ToolUnavailable(_) => "tool-unavailable",
+        UnknownReason::Unparsable(_) => "unparsable",
+        UnknownReason::Inconsistent(message) => match message.as_str() {
+            "no live workload member to signal" => "inconsistent:no-live-workload-member",
+            "unproven group closure" => "inconsistent:unproven-group-closure",
+            "leader already reaped" => "inconsistent:leader-already-reaped",
+            "group still has live members" => "inconsistent:live-group",
+            "workload still has live members" => "inconsistent:live-workload",
+            _ => {
+                // Only exact known anchor facts can leave this private seam.
+                const ANCHOR_FACTS: &[&str] = &[
+                    "generation:absent",
+                    "generation:replaced",
+                    "generation:unreadable",
+                    "state:absent",
+                    "state:replaced",
+                    "state:unreadable",
+                    "state:zombie",
+                    "nonce:mismatch",
+                    "nonce:unreadable",
+                    "nonce:missing",
+                    "nonce:unparsable",
+                    "birth:boot-mismatch",
+                    "birth:birth-order-or-kind",
+                    "current-group:unreadable",
+                    "current-group:mismatch",
+                ];
+                message
+                    .strip_prefix("unproven group closure; anchor=")
+                    .and_then(|fact| ANCHOR_FACTS.iter().copied().find(|known| *known == fact))
+                    .unwrap_or("inconsistent:other")
+            }
+        },
+        UnknownReason::GuardUnavailable => "guard-unavailable",
+        UnknownReason::Injected => "injected",
+        UnknownReason::Untrusted(_) => "untrusted",
+        UnknownReason::HostAuthorityRequired => "host-authority-required",
+        UnknownReason::StoreUnreadable(_) => "store-unreadable",
+    }
+}
+
 struct Fixture {
     root: PathBuf,
     home: PathBuf,
@@ -544,6 +630,7 @@ fn a_full_run_prepares_certifies_publishes_and_writes_a_receipt() {
     let fixture = fixture("full");
     single_identity_project(&fixture);
     let mut effects = TestEffects::new(&fixture.root);
+    effects.inner.trace_settlement = true;
     effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
 
     let outcome = run(&fixture, &mut effects, ReleaseAction::Run, None);
@@ -2111,6 +2198,7 @@ fn a_hosted_wait_stops_the_run_without_holding_a_process_open() {
     commit_and_push(&waited);
 
     let mut effects = TestEffects::new(&waited.root);
+    effects.inner.trace_settlement = true;
     effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
     effects.hosted_evidence = vec![HostedEvidence::Waiting {
         detail: "hosted evidence for gate `hosted` is pending: run … status is `in_progress`."
@@ -2734,6 +2822,48 @@ mod settlement_tests {
         custody::{CaptureState, Closure, StopReport},
         observe::{AbsenceProof, Evidence, Observed, UnknownReason},
     };
+
+    #[test]
+    fn diagnostic_reasons_preserve_categories_without_payloads() {
+        use super::settlement_reason;
+        for payload in [
+            "secret-adversarial-value",
+            "unproven group closure; anchor=nonce:missing; secret-adversarial-value",
+            "unproven group closure; anchor=secret-adversarial-value",
+            "no live workload member to signal\nsecret-adversarial-value",
+        ] {
+            assert_eq!(
+                settlement_reason(&UnknownReason::Inconsistent(payload.into())),
+                "inconsistent:other"
+            );
+            assert_eq!(
+                settlement_reason(&UnknownReason::Untrusted(payload.into())),
+                "untrusted"
+            );
+        }
+        assert_eq!(
+            settlement_reason(&UnknownReason::Inconsistent(
+                "no live workload member to signal".into()
+            )),
+            "inconsistent:no-live-workload-member"
+        );
+        assert_eq!(
+            settlement_reason(&UnknownReason::Inconsistent(
+                "unproven group closure; anchor=nonce:missing".into()
+            )),
+            "nonce:missing"
+        );
+        assert_eq!(
+            settlement_reason(&UnknownReason::TimedOut {
+                phase: "group closure of process group secret-adversarial-value".into()
+            }),
+            "timed-out:group-closure"
+        );
+        assert_eq!(
+            settlement_reason(&UnknownReason::PermissionDenied),
+            "permission-denied"
+        );
+    }
 
     #[test]
     fn settlement_refusal_matrix_and_redaction() {

@@ -237,6 +237,8 @@ pub struct GitEffects {
     pub remote: String,
     pub task_runner: TaskRunner,
     executable: Result<Executable, String>,
+    #[cfg(test)]
+    pub(super) trace_settlement: bool,
 }
 
 /// How a release stage runs a task.
@@ -253,6 +255,8 @@ impl GitEffects {
             remote: "origin".to_owned(),
             task_runner: TaskRunner::CurrentBinary,
             executable: Executable::current().map_err(|error| error.to_string()),
+            #[cfg(test)]
+            trace_settlement: false,
         }
     }
 
@@ -363,6 +367,14 @@ impl GitEffects {
                 .iter()
                 .map(|(key, value)| (key.into(), EnvValue::Plain(value.into()))),
         );
+        #[cfg(test)]
+        let diagnostic_operation = match argv.get(3).and_then(|arg| arg.to_str()) {
+            Some("commit") => "commit",
+            Some("add") => "add",
+            Some("push") => "push",
+            Some("reset") => "reset",
+            _ => "other",
+        };
         let spec = ProcessSpec {
             argv,
             cwd: cwd.into(),
@@ -407,6 +419,10 @@ impl GitEffects {
             ReleaseError::TaskInvocation(format!("release process cleanup context: {error:?}"))
         })?;
         let closed = process.stop(&cleanup);
+        #[cfg(test)]
+        if self.trace_settlement {
+            super::tests::trace_settlement(label, diagnostic_operation, &closed);
+        }
         if let Some(error) = settlement_refusal(&closed) {
             return Err(error);
         }
