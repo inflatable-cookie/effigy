@@ -2259,6 +2259,7 @@ pub(crate) fn settle_effect(
     if receipt.pgid != receipt.identity.pid || receipt.pgid == 0 || receipt.pgid > i32::MAX as u32 {
         return (EffectState::Residue, Some("invalid group identity".into()));
     }
+    let mut refusal = None;
     let observed = if let Some(core) = live {
         let report = lock(&core).stop_escalating(cx, &mut escalate);
         if !report.residue.is_empty() {
@@ -2276,13 +2277,25 @@ pub(crate) fn settle_effect(
         }
         report.group
     } else if let Some(anchor) = &anchor {
-        anchor::recover(&receipt, anchor, cx, &mut escalate)
+        anchor::recover(&receipt, anchor, cx, &mut escalate, &mut refusal)
     } else {
         platform::recover(&receipt, cx, &mut escalate)
     };
+    settle_recovery(observed, refusal)
+}
+
+// Keep the original observation separate from diagnostic journal text: even
+// payload-free Unknown variants must remain Unknown and settle as residue.
+fn settle_recovery(
+    observed: Observed<Closure>,
+    refusal: Option<String>,
+) -> (EffectState, Option<String>) {
     match observed {
         Observed::Verified(..) | Observed::Absent(_) => (EffectState::Released, None),
-        Observed::Unknown(reason) => (EffectState::Residue, Some(format!("{reason}"))),
+        Observed::Unknown(reason) => (
+            EffectState::Residue,
+            Some(refusal.unwrap_or_else(|| format!("{reason}"))),
+        ),
     }
 }
 

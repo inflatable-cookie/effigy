@@ -1668,7 +1668,7 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
             assert!(old.anchor.is_none());
             platform::recover(&old.process, &cleanup, &mut || false)
         } else {
-            anchor::recover(&r, &anchor, &cleanup, &mut || false)
+            anchor::recover(&r, &anchor, &cleanup, &mut || false, &mut None)
         };
         let survived = platform::generation(&descendant).verified().is_some()
             && matches!(
@@ -4071,4 +4071,266 @@ fn source_capture_case(mode: &str) {
         &mut Strict,
     )
     .unwrap();
+}
+
+#[test]
+fn anchor_refusal_categories_keep_short_circuit_order_and_bounded_rendering() {
+    use crate::ident::ProcessState;
+    use std::cell::RefCell;
+    let cells = [
+        ("generation", "absent"),
+        ("generation", "replaced"),
+        ("generation", "unreadable"),
+        ("state", "absent"),
+        ("state", "unreadable"),
+        ("state", "zombie"),
+        ("nonce", "missing"),
+        ("nonce", "unparsable"),
+        ("nonce", "unreadable"),
+        ("nonce", "mismatch"),
+        ("birth", "boot-mismatch"),
+        ("birth", "birth-order-or-kind"),
+        ("current-group", "unreadable"),
+        ("current-group", "mismatch"),
+    ];
+    for (stage, category) in cells {
+        let calls = RefCell::new(Vec::new());
+        let failure = anchor::verify_with(
+            || {
+                calls.borrow_mut().push("generation");
+                match (stage, category) {
+                    ("generation", "absent") => {
+                        Observed::Absent(AbsenceProof::NoSuchProcess { pid: 1 })
+                    }
+                    ("generation", "replaced") => {
+                        Observed::Absent(AbsenceProof::StartIdentityDiffers { pid: 1 })
+                    }
+                    ("generation", _) => Observed::Unknown(unknown("secret raw error")),
+                    _ => Observed::Verified((), evidence()),
+                }
+            },
+            || {
+                calls.borrow_mut().push("state");
+                match (stage, category) {
+                    ("state", "absent") => Observed::Absent(AbsenceProof::NoSuchProcess { pid: 1 }),
+                    ("state", "unreadable") => Observed::Unknown(unknown("secret raw error")),
+                    ("state", _) => Observed::Verified(ProcessState::Zombie, evidence()),
+                    _ => Observed::Verified(ProcessState::Stopped, evidence()),
+                }
+            },
+            || {
+                calls.borrow_mut().push("nonce");
+                if stage == "nonce" {
+                    if category == "mismatch" {
+                        Ok(false)
+                    } else {
+                        Err(category)
+                    }
+                } else {
+                    Ok(true)
+                }
+            },
+            || {
+                calls.borrow_mut().push("birth");
+                if stage == "birth" {
+                    Err(category)
+                } else {
+                    Ok(())
+                }
+            },
+            || {
+                calls.borrow_mut().push("current-group");
+                if category == "unreadable" {
+                    -1
+                } else {
+                    2
+                }
+            },
+            1,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(failure.stage, stage);
+        assert_eq!(failure.category, category);
+        let order = ["generation", "state", "nonce", "birth", "current-group"];
+        let end = order.iter().position(|s| *s == stage).unwrap();
+        assert_eq!(*calls.borrow(), order[..=end]);
+        for path in ["verified-anchor", "fallback"] {
+            for result in ["positive", "live", "unproven", "inventory-error"] {
+                let detail = anchor::ClosureDetail {
+                    path,
+                    result,
+                    role: "anchor",
+                };
+                for selected in [libc::SIGTERM, libc::SIGKILL] {
+                    for attempt in [selected, libc::SIGCONT] {
+                        let reason = unknown(format!(
+                            "{UNPROVEN_GROUP_CLOSURE}; anchor={stage}:{category}"
+                        ));
+                        let rendered = anchor::recovery_refusal(
+                            &reason,
+                            anchor::SignalFailure {
+                                verification: Some(failure),
+                                stage: "anchor-verification",
+                            },
+                            selected,
+                            attempt,
+                            detail,
+                        );
+                        let text = rendered;
+                        assert!(text.starts_with("unproven group closure; anchor="));
+                        assert!(text.contains(&format!("closure={path}:{result} row=anchor")));
+                        assert!(text.len() < 256);
+                        assert!(!text.contains("secret"));
+                    }
+                }
+            }
+        }
+    }
+    let detail = anchor::ClosureDetail {
+        path: "fallback",
+        result: "unproven",
+        role: "other",
+    };
+    for (reason, category) in [
+        (UnknownReason::PermissionDenied, "permission-denied"),
+        (unknown("private raw inventory error"), "inconsistent"),
+        (
+            UnknownReason::Unparsable("private raw identity error".into()),
+            "unparsable",
+        ),
+    ] {
+        for stage in ["inventory", "member-identity", "member-signal"] {
+            let original = reason.clone();
+            let text = anchor::recovery_refusal(
+                &reason,
+                anchor::SignalFailure {
+                    verification: None,
+                    stage,
+                },
+                libc::SIGTERM,
+                libc::SIGCONT,
+                detail,
+            );
+            assert_eq!(reason, original);
+            assert_eq!(
+                settle_recovery(Observed::Unknown(reason.clone()), Some(text.clone())),
+                (EffectState::Residue, Some(text.clone()))
+            );
+            assert!(text.contains(&format!("refusal={stage}:{category}")));
+            assert!(text.contains("anchor=verified-at-entry"));
+            assert!(text.contains("stop=TERM attempt=CONT closure=fallback:unproven row=other"));
+            assert!(!text.contains("private"));
+            assert!(text.len() < 256);
+        }
+    }
+}
+
+#[test]
+fn anchor_closure_details_use_the_existing_inventory_and_generation_accounting() {
+    let a = ProcessIdentity {
+        pid: 100,
+        boot: serde_json::from_value(serde_json::json!("controlled-boot")).unwrap(),
+        start: crate::ident::ProcessStartIdentity::LinuxTicks(10),
+    };
+    let mut leader = a.clone();
+    leader.pid += 1;
+    let mut other = a.clone();
+    other.pid += 2;
+    for path in ["verified-anchor", "fallback"] {
+        for (rows, expected, role) in [
+            (vec![], "positive", "none"),
+            (
+                vec![platform::MembershipRow::NotLive(a.pid)],
+                "positive",
+                "none",
+            ),
+            (
+                vec![platform::MembershipRow::Live(a.clone())],
+                "live",
+                "anchor",
+            ),
+            (
+                vec![platform::MembershipRow::Unproven(leader.pid)],
+                "unproven",
+                "leader",
+            ),
+            (
+                vec![platform::MembershipRow::Unproven(other.pid)],
+                "unproven",
+                "other",
+            ),
+            (
+                vec![
+                    platform::MembershipRow::Unproven(a.pid),
+                    platform::MembershipRow::Live(other.clone()),
+                ],
+                "live",
+                "other",
+            ),
+        ] {
+            let detail = anchor::ClosureDetail {
+                path,
+                result: "positive",
+                role: "none",
+            };
+            let (observed, detail) =
+                platform::closure_inventory(Ok(rows), &[], Some(&a), Some(&leader), detail);
+            assert_eq!(detail.result, expected);
+            assert_eq!(detail.role, role);
+            assert_eq!(
+                matches!(observed, Observed::Verified(..)),
+                expected == "positive"
+            );
+        }
+        let detail = anchor::ClosureDetail {
+            path,
+            result: "positive",
+            role: "none",
+        };
+        let (observed, detail) = platform::closure_inventory(
+            Err(io::Error::other("private raw error")),
+            &[],
+            Some(&a),
+            None,
+            detail,
+        );
+        assert!(matches!(observed, Observed::Unknown(_)));
+        assert_eq!(detail.result, "inventory-error");
+        let detail = anchor::ClosureDetail {
+            path,
+            result: "positive",
+            role: "none",
+        };
+        let (observed, detail) = platform::closure_inventory(
+            Ok(vec![
+                platform::MembershipRow::Live(a.clone()),
+                platform::MembershipRow::Unproven(leader.pid),
+            ]),
+            &[&a, &leader],
+            Some(&a),
+            Some(&leader),
+            detail,
+        );
+        assert!(matches!(observed, Observed::Verified(..)));
+        assert_eq!(detail.result, "positive");
+    }
+}
+
+#[test]
+fn anchored_recovery_journal_detail_cannot_turn_unknown_into_release() {
+    for observation in [
+        Observed::Verified(Closure, evidence()),
+        Observed::Absent(AbsenceProof::GroupEmpty { pgid: 100 }),
+    ] {
+        assert_eq!(
+            settle_recovery(observation, None),
+            (EffectState::Released, None)
+        );
+    }
+    let reason = UnknownReason::PermissionDenied;
+    assert_eq!(
+        settle_recovery(Observed::Unknown(reason.clone()), None),
+        (EffectState::Residue, Some(reason.to_string()))
+    );
 }

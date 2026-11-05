@@ -104,16 +104,90 @@ pub(crate) fn not_earlier(member: &ProcessIdentity, receipt: &ProcessReceipt) ->
 /// [`crate::custody::UNPROVEN_GROUP_CLOSURE`], and the caller re-inventories rather
 /// than treating it as absence.
 pub(crate) fn group_closed(pgid: u32, accounted: &[&ProcessIdentity]) -> Observed<Closure> {
-    if let Observed::Absent(_) = group_exists(pgid) {
-        return gone(pgid);
+    closure_detail(pgid, accounted, None, None, false).0
+}
+
+pub(super) fn closure_detail(
+    pgid: u32,
+    accounted: &[&ProcessIdentity],
+    anchor: Option<&ProcessIdentity>,
+    leader: Option<&ProcessIdentity>,
+    verified_anchor: bool,
+) -> (Observed<Closure>, anchor::ClosureDetail) {
+    let detail = anchor::ClosureDetail {
+        path: if verified_anchor {
+            "verified-anchor"
+        } else {
+            "fallback"
+        },
+        result: "positive",
+        role: "none",
+    };
+    // The verified-anchor route never performed this probe.
+    if !verified_anchor && matches!(group_exists(pgid), Observed::Absent(_)) {
+        return (gone(pgid), detail);
     }
-    match group_membership(pgid).map(|rows| classify_round(&rows, accounted)) {
-        Ok(RoundVerdict::Empty) => Observed::Verified(Closure, evidence()),
-        Ok(RoundVerdict::Live) => Observed::Unknown(unknown("group still has live members")),
-        Ok(RoundVerdict::Unproven) => {
-            Observed::Unknown(unknown(crate::custody::UNPROVEN_GROUP_CLOSURE))
+    closure_inventory(group_membership(pgid), accounted, anchor, leader, detail)
+}
+
+pub(super) fn closure_inventory(
+    inventory: io::Result<Vec<MembershipRow>>,
+    accounted: &[&ProcessIdentity],
+    anchor: Option<&ProcessIdentity>,
+    leader: Option<&ProcessIdentity>,
+    mut detail: anchor::ClosureDetail,
+) -> (Observed<Closure>, anchor::ClosureDetail) {
+    let observed = match inventory {
+        Ok(rows) => {
+            let verdict = classify_round(&rows, accounted);
+            detail.role = closure_role(&rows, accounted, verdict, anchor, leader);
+            match verdict {
+                RoundVerdict::Empty => Observed::Verified(Closure, evidence()),
+                RoundVerdict::Live => {
+                    detail.result = "live";
+                    Observed::Unknown(unknown(if detail.path == "verified-anchor" {
+                        "workload still has live members"
+                    } else {
+                        "group still has live members"
+                    }))
+                }
+                RoundVerdict::Unproven => {
+                    detail.result = "unproven";
+                    Observed::Unknown(unknown(crate::custody::UNPROVEN_GROUP_CLOSURE))
+                }
+            }
         }
-        Err(e) => Observed::Unknown(unknown(e)),
+        Err(e) => {
+            detail.result = "inventory-error";
+            Observed::Unknown(unknown(e))
+        }
+    };
+    (observed, detail)
+}
+
+fn closure_role(
+    rows: &[MembershipRow],
+    accounted: &[&ProcessIdentity],
+    verdict: RoundVerdict,
+    anchor: Option<&ProcessIdentity>,
+    leader: Option<&ProcessIdentity>,
+) -> &'static str {
+    let pid = rows.iter().find_map(|row| match (verdict, row) {
+        (RoundVerdict::Live, MembershipRow::Live(identity)) if !accounted.contains(&identity) => {
+            Some(identity.pid)
+        }
+        (RoundVerdict::Unproven, MembershipRow::Unproven(pid))
+            if !accounted.iter().any(|known| known.pid == *pid) =>
+        {
+            Some(*pid)
+        }
+        _ => None,
+    });
+    match pid {
+        Some(pid) if anchor.is_some_and(|a| a.pid == pid) => "anchor",
+        Some(pid) if leader.is_some_and(|l| l.pid == pid) => "leader",
+        Some(_) => "other",
+        None => "none",
     }
 }
 pub(super) fn recover(
@@ -608,6 +682,16 @@ pub(super) fn read_nonce(pid: u32) -> Observed<String> {
     read_nonce_key(pid, b"EFFIGY_CUSTODY_NONCE=")
 }
 pub(crate) fn read_nonce_key(pid: u32, key: &[u8]) -> Observed<String> {
+    nonce_observation(pid, key).0
+}
+pub(super) fn anchor_nonce(pid: u32) -> Result<String, &'static str> {
+    let (observed, category) = nonce_observation(pid, b"EFFIGY_CUSTODY_NONCE=");
+    match observed {
+        Observed::Verified(value, _) => Ok(value),
+        _ => Err(category),
+    }
+}
+fn nonce_observation(pid: u32, key: &[u8]) -> (Observed<String>, &'static str) {
     match environment(pid) {
         Ok(bytes) => {
             match bytes
@@ -615,13 +699,19 @@ pub(crate) fn read_nonce_key(pid: u32, key: &[u8]) -> Observed<String> {
                 .find_map(|entry| entry.strip_prefix(key))
             {
                 Some(nonce) => match String::from_utf8(nonce.to_vec()) {
-                    Ok(nonce) => Observed::Verified(nonce, evidence()),
-                    Err(_) => Observed::Unknown(unknown("unparsable custody nonce")),
+                    Ok(nonce) => (Observed::Verified(nonce, evidence()), "matched"),
+                    Err(_) => (
+                        Observed::Unknown(unknown("unparsable custody nonce")),
+                        "unparsable",
+                    ),
                 },
-                None => Observed::Unknown(unknown("custody nonce missing")),
+                None => (
+                    Observed::Unknown(unknown("custody nonce missing")),
+                    "missing",
+                ),
             }
         }
-        Err(e) => Observed::Unknown(unknown(e)),
+        Err(e) => (Observed::Unknown(unknown(e)), "unreadable"),
     }
 }
 #[cfg(target_os = "linux")]
