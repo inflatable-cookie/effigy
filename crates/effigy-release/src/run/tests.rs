@@ -44,7 +44,12 @@ pub(super) fn trace_settlement(
         CaptureState::Complete => "complete",
         CaptureState::Truncated(_) => "truncated",
     };
-    eprintln!("release settlement: label={label}; operation={operation}; group={group}; capture={capture}; residue={}", report.residue.len());
+    let leader = match &report.leader {
+        Observed::Verified(..) => "verified",
+        Observed::Absent(_) => "absent",
+        Observed::Unknown(reason) => settlement_reason(reason),
+    };
+    eprintln!("release settlement: label={label}; operation={operation}; leader={leader}; group={group}; capture={capture}; residue={}", report.residue.len());
     for reason in &report.residue {
         eprintln!("release settlement residue: {}", settlement_reason(reason));
     }
@@ -2816,6 +2821,48 @@ mod settlement_tests {
         custody::{CaptureState, Closure, StopReport},
         observe::{AbsenceProof, Evidence, Observed, UnknownReason},
     };
+
+    #[test]
+    fn diagnostic_reasons_preserve_categories_without_payloads() {
+        use super::settlement_reason;
+        for payload in [
+            "secret-adversarial-value",
+            "unproven group closure; anchor=nonce:missing; secret-adversarial-value",
+            "unproven group closure; anchor=secret-adversarial-value",
+            "no live workload member to signal\nsecret-adversarial-value",
+        ] {
+            assert_eq!(
+                settlement_reason(&UnknownReason::Inconsistent(payload.into())),
+                "inconsistent:other"
+            );
+            assert_eq!(
+                settlement_reason(&UnknownReason::Untrusted(payload.into())),
+                "untrusted"
+            );
+        }
+        assert_eq!(
+            settlement_reason(&UnknownReason::Inconsistent(
+                "no live workload member to signal".into()
+            )),
+            "inconsistent:no-live-workload-member"
+        );
+        assert_eq!(
+            settlement_reason(&UnknownReason::Inconsistent(
+                "unproven group closure; anchor=nonce:missing".into()
+            )),
+            "nonce:missing"
+        );
+        assert_eq!(
+            settlement_reason(&UnknownReason::TimedOut {
+                phase: "group closure of process group secret-adversarial-value".into()
+            }),
+            "timed-out:group-closure"
+        );
+        assert_eq!(
+            settlement_reason(&UnknownReason::PermissionDenied),
+            "permission-denied"
+        );
+    }
 
     #[test]
     fn settlement_refusal_matrix_and_redaction() {
