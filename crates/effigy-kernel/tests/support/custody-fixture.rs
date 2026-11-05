@@ -411,10 +411,27 @@ fn main() {
     if entry == "engine-client" {
         // An owning (or, with `detach`, detaching) client of one engine run.
         let detach = args.get(2).is_some_and(|mode| mode == "detach");
+        let mut launch = engine_launch(home);
+        if args
+            .get(2)
+            .is_some_and(|mode| mode == "owning-witness" || mode == "owning-witness-gated")
+        {
+            launch
+                .env
+                .push(("FIXTURE_ENGINE_WITNESS".into(), "1".into()));
+        }
+        if args
+            .get(2)
+            .is_some_and(|mode| mode == "owning-witness-gated")
+        {
+            launch
+                .env
+                .push(("FIXTURE_ENGINE_WITNESS_GATE".into(), "1".into()));
+        }
         let mut client = start_engine(
             &cx,
             home,
-            engine_launch(home),
+            launch,
             &Executable::current().unwrap(),
             if detach {
                 ClientMode::Detach
@@ -750,7 +767,9 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
             argv: vec![
                 "/bin/sh".into(),
                 "-c".into(),
-                if std::env::var_os("FIXTURE_ENGINE_LONG_GRACE").is_some() {
+                if std::env::var_os("FIXTURE_ENGINE_WITNESS_GATE").is_some() {
+                    ": > engine-witness-pending; read gate < engine-witness.gate; echo $$ > engine-workload.pid; exec /bin/sleep 40".into()
+                } else if std::env::var_os("FIXTURE_ENGINE_LONG_GRACE").is_some() {
                     "trap '' TERM; echo $$ > engine-workload.pid; exec /bin/sleep 40".into()
                 } else {
                     "echo $$ > engine-workload.pid; exec /bin/sleep 40".into()
@@ -766,6 +785,18 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
         &cx,
     )
     .map_err(|error| RunError::unavailable(format!("the fixture workload spawn: {error:?}")))?;
+    if std::env::var_os("FIXTURE_ENGINE_WITNESS").is_some() {
+        std::fs::write(
+            home.join("engine-workload.receipt.pending"),
+            serde_json::to_vec(&child.identity()).unwrap(),
+        )
+        .unwrap();
+        std::fs::rename(
+            home.join("engine-workload.receipt.pending"),
+            home.join("engine-workload.receipt"),
+        )
+        .unwrap();
+    }
     run.advance(Phase::Active)?;
     session.active();
     let cause = loop {
