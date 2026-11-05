@@ -1764,30 +1764,128 @@ fn engine_output(home: &Path) -> String {
     String::from_utf8(read.verified().unwrap().bytes.clone()).unwrap()
 }
 
-/// Ruling 5: an owning client's death, here an agent's SIGKILL, stops and
-/// settles the engine's run; its workload does not survive (O1a).
-#[test]
-fn custody_engine_owning_client_kill_stops_and_settles() {
-    let home = home();
-    let mut client = engine_client(home.path(), "owning");
+// Only this owner-kill proof needs shell publication as well as engine Active.
+// Other engine-client callers retain their existing readiness contract.
+struct OwningKillFixture {
+    client: ChildGuard,
+    receipt: Option<ProcessReceipt>,
+}
+impl Drop for OwningKillFixture {
+    fn drop(&mut self) {
+        let _ = self.client.0.kill();
+        let _ = self.client.0.wait();
+        if let Some(receipt) = &self.receipt {
+            if effigy_kernel::ident::process_identity(receipt.identity.pid).verified()
+                == Some(&receipt.identity)
+            {
+                // SAFETY: only the fresh spawn receipt's positive group, with
+                // its leader generation still verified, is signalled.
+                unsafe {
+                    libc::kill(-(receipt.pgid as i32), libc::SIGKILL);
+                }
+            }
+        }
+    }
+}
+fn owning_poll(end: Instant, label: &str, mut poll: impl FnMut() -> (bool, String)) {
+    loop {
+        let (done, last) = poll();
+        if done {
+            return;
+        }
+        assert!(Instant::now() < end, "owner-kill {label}: last={last}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+fn owning_witness(home: &Path, receipt: &ProcessReceipt) -> Result<(), &'static str> {
+    let text = std::fs::read_to_string(home.join("engine-workload.pid"))
+        .map_err(|_| "missing/unreadable witness")?;
+    let digits = text.strip_suffix('\n').ok_or("incomplete witness")?;
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Err("invalid witness");
+    }
+    let pid = digits.parse::<u32>().map_err(|_| "invalid PID")?;
+    if pid == 0 || pid > i32::MAX as u32 || pid != receipt.identity.pid {
+        return Err("witness differs from fresh receipt");
+    }
+    if effigy_kernel::ident::process_identity(pid).verified() != Some(&receipt.identity) {
+        return Err("workload identity unverified");
+    }
+    Ok(())
+}
+fn owning_ready(home: &Path, fixture: &mut OwningKillFixture) -> (bool, String) {
+    let ready = home.join("client-ready").exists();
+    if fixture.receipt.is_none() {
+        fixture.receipt = std::fs::read(home.join("engine-workload.receipt"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<ProcessReceipt>(&bytes).ok())
+            .filter(|r| {
+                r.identity.pid > 0 && r.identity.pid <= i32::MAX as u32 && r.pgid == r.identity.pid
+            });
+    }
+    let witness = fixture
+        .receipt
+        .as_ref()
+        .ok_or("receipt pending")
+        .and_then(|receipt| owning_witness(home, receipt));
+    (
+        ready && witness.is_ok(),
+        format!(
+            "client-ready={ready}, witness={}",
+            witness.err().unwrap_or("verified")
+        ),
+    )
+}
+fn owning_start(home: &Path, gated: bool) -> OwningKillFixture {
+    OwningKillFixture {
+        client: ChildGuard(
+            Command::new(fixture())
+                .arg("engine-client")
+                .arg(home)
+                .arg(if gated {
+                    "owning-witness-gated"
+                } else {
+                    "owning-witness"
+                })
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        ),
+        receipt: None,
+    }
+}
+fn owning_finish(home: &Path, fixture: &mut OwningKillFixture) {
     assert!(matches!(
-        engine_status(home.path()),
+        engine_status(home),
         Observed::Verified(RunStatus::Live(_), _)
     ));
     // SAFETY: SIGKILL to the fixture client process this test spawned.
     assert_eq!(
-        unsafe { libc::kill(client.0.id() as i32, libc::SIGKILL) },
+        unsafe { libc::kill(fixture.client.0.id() as i32, libc::SIGKILL) },
         0
     );
-    client.0.wait().unwrap();
-    eventually(|| {
-        matches!(
-            engine_status(home.path()),
-            Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
-        )
-    });
-    let Observed::Verified(RunStatus::Closed { workload, .. }, _) = engine_status(home.path())
-    else {
+    fixture.client.0.wait().unwrap();
+    owning_poll(
+        Instant::now() + Duration::from_secs(12),
+        "terminal status",
+        || {
+            let status = engine_status(home);
+            let (done, label) = match status {
+                Observed::Verified(RunStatus::Closed { complete: true, .. }, _) => {
+                    (true, "closed complete")
+                }
+                Observed::Verified(RunStatus::Closed { .. }, _) => (false, "closed incomplete"),
+                Observed::Verified(RunStatus::Live(_), _) => (false, "live"),
+                Observed::Verified(_, _) => (false, "other status"),
+                Observed::Absent(_) => (false, "absent"),
+                Observed::Unknown(_) => (false, "unknown"),
+            };
+            (done, label.into())
+        },
+    );
+    let Observed::Verified(RunStatus::Closed { workload, .. }, _) = engine_status(home) else {
         panic!("closed");
     };
     assert!(
@@ -1798,20 +1896,131 @@ fn custody_engine_owning_client_kill_stops_and_settles() {
                 ..
             }
         ),
-        "{workload:?}"
+        "owner-kill: expected OwnerLost"
     );
-    eventually(|| workload_gone(home.path()));
-    // The engine got its client's cwd and explicit environment, and its own
-    // output reached the run log redacted. The journal closes before the
-    // engine flushes its capture, so wait for the tail.
-    eventually(|| engine_output(home.path()).ends_with('\n'));
-    let output = engine_output(home.path());
-    assert!(output.contains("engine output [REDACTED]"), "{output:?}");
-    assert!(output.contains("env=present"), "{output:?}");
+    owning_poll(
+        Instant::now() + Duration::from_secs(12),
+        "witness/no-survivor",
+        || {
+            let receipt = fixture.receipt.as_ref().unwrap();
+            let witness = std::fs::read_to_string(home.join("engine-workload.pid"))
+                .is_ok_and(|text| text == format!("{}\n", receipt.identity.pid));
+            let absent = matches!(
+                effigy_kernel::ident::process_identity(receipt.identity.pid),
+                Observed::Absent(_)
+            );
+            let gone = witness && absent && workload_gone(home);
+            (
+                gone,
+                format!("bound witness={witness}, identity absent={absent}, workload gone={gone}"),
+            )
+        },
+    );
+    owning_poll(
+        Instant::now() + Duration::from_secs(12),
+        "output completion",
+        || {
+            let output = engine_output(home);
+            (
+                output.ends_with('\n'),
+                format!("bytes={}, newline={}", output.len(), output.ends_with('\n')),
+            )
+        },
+    );
+    let output = engine_output(home);
     assert!(
-        output.contains(&format!("cwd={}", home.path().display())),
-        "{output:?}"
+        output.contains("engine output [REDACTED]"),
+        "redacted output missing"
     );
+    assert!(output.contains("env=present"), "explicit env missing");
+    assert!(
+        output.contains(&format!("cwd={}", home.display())),
+        "client cwd missing"
+    );
+}
+
+/// Ruling 5: establish the shell's witness before killing its owning client.
+#[test]
+fn custody_engine_owning_client_kill_stops_and_settles() {
+    let home = home();
+    let end = Instant::now() + Duration::from_secs(12);
+    let mut fixture = owning_start(home.path(), false);
+    owning_poll(end, "client/witness readiness", || {
+        owning_ready(home.path(), &mut fixture)
+    });
+    owning_finish(home.path(), &mut fixture);
+}
+
+/// Real exec/Active/client-ready precede the shell's actual publication.
+/// This discriminator does not identify the historical generic deadline cause.
+#[test]
+fn custody_engine_owning_client_witness_barrier_discriminates_old_consumer() {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    for fixed in [false, true] {
+        let home = home();
+        let fifo = std::ffi::CString::new(
+            home.path()
+                .join("engine-witness.gate")
+                .as_os_str()
+                .as_encoded_bytes(),
+        )
+        .unwrap();
+        // SAFETY: a NUL-terminated path inside this fresh fixture; no borrowed pointers escape.
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        let end = Instant::now() + Duration::from_secs(12);
+        let mut fixture = owning_start(home.path(), true);
+        owning_poll(end, "controlled client/producer readiness", || {
+            let client = home.path().join("client-ready").exists();
+            let producer = home.path().join("engine-witness-pending").exists();
+            let (_, last) = owning_ready(home.path(), &mut fixture);
+            (client && producer && fixture.receipt.is_some(), last)
+        });
+        assert!(!owning_ready(home.path(), &mut fixture).0);
+        assert!(!workload_gone(home.path()));
+        if !fixed {
+            // The old consumer kills at client-ready, while publication is blocked.
+            fixture.client.0.kill().unwrap();
+            fixture.client.0.wait().unwrap();
+            owning_poll(end, "old consumer terminal", || {
+                let closed = matches!(
+                    engine_status(home.path()),
+                    Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
+                );
+                (closed, format!("closed={closed}"))
+            });
+            assert!(!home.path().join("engine-workload.pid").exists());
+            assert!(
+                !workload_gone(home.path()),
+                "original missing-witness oracle must fail"
+            );
+            println!("old consumer: Active/client-ready, owner loss, Closed complete, missing witness; original oracle=false");
+            continue;
+        }
+        // These are rejected without ever probing their numeric contents.
+        for invalid in [b"".as_slice(), b"0\n", b"-1\n", b"1\n", b"123"] {
+            std::fs::write(home.path().join("engine-workload.pid"), invalid).unwrap();
+            assert!(!owning_ready(home.path(), &mut fixture).0);
+        }
+        std::fs::remove_file(home.path().join("engine-workload.pid")).unwrap();
+        std::fs::create_dir(home.path().join("engine-workload.pid")).unwrap();
+        assert!(!owning_ready(home.path(), &mut fixture).0);
+        std::fs::remove_dir(home.path().join("engine-workload.pid")).unwrap();
+        // Release the real producer only after the fixed consumer refused readiness.
+        owning_poll(end, "producer release", || {
+            let write = std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(home.path().join("engine-witness.gate"))
+                .and_then(|mut file| file.write_all(b"publish\n"));
+            (write.is_ok(), "FIFO reader pending".into())
+        });
+        owning_poll(end, "client/witness readiness", || {
+            owning_ready(home.path(), &mut fixture)
+        });
+        owning_finish(home.path(), &mut fixture);
+        println!("fixed consumer: refused pending/invalid witness, real publication verified, OwnerLost/no-survivor/output oracles passed");
+    }
 }
 
 #[test]
