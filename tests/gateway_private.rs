@@ -3548,6 +3548,7 @@ fn managed_host_listener_leader_exit_restarts_by_policy() {
         &ca_path,
         replaced_domain,
         &successor,
+        "restart-body",
         deadline,
     );
     let response = wait_for_listener_https(
@@ -3555,6 +3556,7 @@ fn managed_host_listener_leader_exit_restarts_by_policy() {
         &ca_path,
         replaced_domain,
         &successor,
+        "restart-body",
         deadline,
     );
     assert!(
@@ -3678,10 +3680,14 @@ fn wait_for_listener_https(
     address: SocketAddr,
     ca: &Path,
     domain: &str,
-    successor: &Value,
+    generation: &Value,
+    body: &str,
     deadline: Instant,
 ) -> String {
-    let expected = format!("restart-body@{}", successor["child_pid"]);
+    let pid = generation["child_pid"]
+        .as_u64()
+        .expect("listener child pid");
+    let expected = format!("{body}@{pid}");
     loop {
         let response = curl_https_response_with_timeout(
             address,
@@ -3690,13 +3696,17 @@ fn wait_for_listener_https(
             "/",
             deadline.saturating_duration_since(Instant::now()),
         );
-        if response.contains("200 OK") && response.contains(&expected) {
+        if response.starts_with("HTTP/1.1 200 OK\r\n")
+            && response
+                .split_once("\r\n\r\n")
+                .is_some_and(|(_, body)| body == expected)
+        {
             return response;
         }
         assert!(
             Instant::now() < deadline,
-            "gateway did not serve successor {}: {response}",
-            successor["generation"]
+            "gateway did not serve generation {} with body {expected:?}: {response}",
+            generation["generation"]
         );
         thread::sleep(
             Duration::from_millis(25).min(deadline.saturating_duration_since(Instant::now())),
@@ -4317,6 +4327,8 @@ fn wait_for_listener_generation(
                             route.target.as_deref() == state["address"].as_str()
                                 && route.managed_listener.as_ref().is_some_and(|owner| {
                                     Some(owner.generation.as_str()) == state["generation"].as_str()
+                                        && serde_json::to_value(owner).ok().as_ref()
+                                            == Some(&state["route_owner"])
                                 })
                         }) {
                             return state;
@@ -7309,12 +7321,13 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
     );
     // The task's custody is over: its lease is revoked, and the supervisor
     // still owns the listener because the environment owns it.
+    let deadline = Instant::now() + Duration::from_secs(30);
     let first = wait_for_listener_generation(
         &state_path,
         &routes_path,
         domain,
         "",
-        Duration::from_secs(30),
+        deadline.saturating_duration_since(Instant::now()),
     );
     let first_address = first["address"]
         .as_str()
@@ -7322,11 +7335,9 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
         .parse::<SocketAddr>()
         .expect("first listener socket address");
     assert_ne!(first_address.port(), 0);
-    let first_response = curl_https_response(https_address, &ca_path, domain, "/");
-    assert!(
-        first_response.contains(&format!("{body}@{}", first["child_pid"])),
-        "the first generation serves its published route: {first_response}"
-    );
+    // Publication precedes asynchronous proxy consumption. Both witnesses
+    // share the original readiness window rather than starting another one.
+    wait_for_listener_https(https_address, &ca_path, domain, &first, body, deadline);
 
     // A generation that ends after the task's lease is gone still settles its
     // own route and restarts: both are endpoint-store work.
@@ -7352,6 +7363,8 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
                         route.target.as_deref() == state["address"].as_str()
                             && route.managed_listener.as_ref().is_some_and(|owner| {
                                 Some(owner.generation.as_str()) == state["generation"].as_str()
+                                    && serde_json::to_value(owner).ok().as_ref()
+                                        == Some(&state["route_owner"])
                             })
                     }) {
                         break state.clone();
@@ -7374,11 +7387,11 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
         successor["address"], first["address"],
         "a restart reuses the port Effigy reserved"
     );
-    let successor_response = curl_https_response(https_address, &ca_path, domain, "/");
-    assert!(
-        successor_response.contains(&format!("{body}@{}", successor["child_pid"])),
-        "the restarted generation serves its published route: {successor_response}"
+    assert_ne!(
+        successor["child_pid"], first["child_pid"],
+        "the successor must be a fresh listener process"
     );
+    wait_for_listener_https(https_address, &ca_path, domain, &successor, body, deadline);
     let log = fs::read_to_string(&log_path).unwrap_or_default();
     assert!(
         !log.contains("is not a valid run request"),
