@@ -441,9 +441,8 @@ fn matrix_facts(status: &Observed<RunStatus>) -> String {
                 let reason = effect
                     .reason
                     .as_deref()
-                    .and_then(|r| r.split_once("(unproven group closure; anchor="))
-                    .and_then(|(_, tail)| tail.split_once(')'))
-                    .map(|(facts, _)| facts)
+                    .and_then(|r| r.split_once("unproven group closure; anchor="))
+                    .map(|(_, tail)| tail.split_once(')').map_or(tail, |(facts, _)| facts))
                     .filter(|facts| {
                         facts.len() <= 256
                             && facts
@@ -470,7 +469,41 @@ fn matrix_failure(writer: &mut impl std::io::Write, provenance: &str, facts: &st
 
 #[test]
 fn matrix_failure_facts_are_written_before_unwind() {
-    let diagnostic = "unproven group closure; anchor=generation:absent; stop=KILL attempt=CONT closure=fallback:unproven row=leader";
+    const CHILD: &str = "EFFIGY_TEST_MATRIX_FAILURE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        // A single controlled failing libtest subprocess, not the real matrix
+        // or the custody helper. Its actual stderr is captured across unwind.
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "matrix_failure_facts_are_written_before_unwind"])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(101));
+        assert!(output.stderr.len() < 4096);
+        let text = String::from_utf8(output.stderr).unwrap();
+        let facts = text.find("matrix failure controlled-preservation status=closed complete=false process-state=left as residue").unwrap();
+        let panic = text.find("controlled assertion failure").unwrap();
+        let unwind = text.find("controlled fixture unwinding").unwrap();
+        assert!(facts < panic && panic < unwind);
+        assert!(text.contains("refusal=member-signal:permission-denied; stop=KILL attempt=CONT closure=fallback:unproven row=leader"));
+        assert!(!text.contains("private fixture nonce"));
+        eprintln!("controlled failing subprocess captured stderr:\n{text}");
+        return;
+    }
+    std::panic::set_hook(Box::new(|_| {
+        use std::io::Write;
+        writeln!(std::io::stderr().lock(), "controlled assertion failure").unwrap();
+    }));
+    let _fixture = home();
+    struct UnwindMarker;
+    impl Drop for UnwindMarker {
+        fn drop(&mut self) {
+            use std::io::Write;
+            writeln!(std::io::stderr().lock(), "controlled fixture unwinding").unwrap();
+        }
+    }
+    let _unwind = UnwindMarker;
+    let diagnostic = "unproven group closure; anchor=verified-at-entry; refusal=member-signal:permission-denied; stop=KILL attempt=CONT closure=fallback:unproven row=leader";
     let status = Observed::Verified(
         RunStatus::Closed {
             workload: WorkloadOutcome::Succeeded,
@@ -489,33 +522,17 @@ fn matrix_failure_facts_are_written_before_unwind() {
                 },
                 state: EffectState::Residue,
                 receipt: Some(serde_json::json!({"nonce": "private fixture nonce"})),
-                reason: Some(UnknownReason::Inconsistent(diagnostic.into()).to_string()),
+                reason: Some(diagnostic.into()),
             }],
         },
         Evidence::new("controlled journal".into(), None).unwrap(),
     );
-    let mut retained = Vec::new();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        matrix_failure(
-            &mut retained,
-            "placement=inline requested=9 owner-signal=9",
-            &matrix_facts(&status),
-        );
-        panic!("controlled assertion failure");
-    }));
-    assert!(result.is_err());
-    let text = String::from_utf8(retained).unwrap();
-    assert!(text.contains("complete=false process-state=left as residue"));
-    assert!(text.contains(
-        "anchor=generation:absent; stop=KILL attempt=CONT closure=fallback:unproven row=leader"
-    ));
-    assert!(!text.contains("private"));
-    // The same writer reaches normal captured logs, without helper stderr.
     matrix_failure(
         &mut std::io::stderr().lock(),
         "controlled-preservation",
-        text.trim(),
+        &matrix_facts(&status),
     );
+    panic!("controlled assertion failure");
 }
 
 #[test]

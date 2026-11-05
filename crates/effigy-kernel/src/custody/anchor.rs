@@ -159,18 +159,28 @@ pub(super) fn signal(
     signal_detail(r, anchor, signal).0
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct SignalFailure {
+    pub verification: Option<VerificationFailure>,
+    pub stage: &'static str,
+}
+
 fn signal_detail(
     r: &ProcessReceipt,
     anchor: &ProcessIdentity,
     signal: i32,
-) -> (Observed<SignalDelivered>, Option<VerificationFailure>) {
-    let mut failure_detail = None;
+) -> (Observed<SignalDelivered>, SignalFailure) {
+    let mut failure_detail = SignalFailure {
+        verification: None,
+        stage: "signal",
+    };
     let observed = (|| {
         if ![libc::SIGTERM, libc::SIGCONT, libc::SIGKILL, libc::SIGINT].contains(&signal) {
             return Observed::Unknown(unknown("invalid custody signal"));
         }
+        failure_detail.stage = "anchor-verification";
         if let Err(failure) = verification(r, anchor) {
-            failure_detail = Some(failure);
+            failure_detail.verification = Some(failure);
             // The anchor is the group's continuity evidence. Without it the group
             // cannot be proved closed, so the refusal carries the named state.
             return Observed::Unknown(unknown(format!(
@@ -180,17 +190,20 @@ fn signal_detail(
                 failure.category
             )));
         }
+        failure_detail.stage = "inventory";
         let pids = match platform::live_pids(r.pgid) {
             Ok(pids) => pids,
             Err(e) => return Observed::Unknown(unknown(e)),
         };
         let mut delivered = None;
         for pid in pids.into_iter().filter(|pid| *pid != anchor.pid) {
+            failure_detail.stage = "member-identity";
             let member = match ident::process_identity(pid) {
                 Observed::Verified(member, _) => member,
                 Observed::Absent(_) => continue,
                 Observed::Unknown(reason) => return Observed::Unknown(reason),
             };
+            failure_detail.stage = "member-signal";
             let sent = member_signal(r, anchor, &member, signal);
             if let Observed::Verified(sent, _) = &sent {
                 delivered = Some(sent.clone());
@@ -249,6 +262,7 @@ pub(super) fn recover(
     anchor: &ProcessIdentity,
     cx: &CleanupContext,
     escalate: &mut impl FnMut() -> bool,
+    refusal: &mut Option<String>,
 ) -> Observed<Closure> {
     let grace = Instant::now()
         .checked_add(Duration::from_millis(r.grace_millis))
@@ -282,7 +296,8 @@ pub(super) fn recover(
                 {
                     break;
                 }
-                return Observed::Unknown(recovery_refusal(reason, failure, selected, sig, detail));
+                *refusal = Some(recovery_refusal(&reason, failure, selected, sig, detail));
+                return Observed::Unknown(reason);
             }
         }
         std::thread::sleep(Duration::from_millis(5));
@@ -298,26 +313,41 @@ fn signal_name(signal: i32) -> &'static str {
     }
 }
 
+// The separate journal detail keeps even payload-free UnknownReason variants
+// intact. Only fixed categories enter the detail, never the reason's payload.
 pub(super) fn recovery_refusal(
-    reason: UnknownReason,
-    failure: Option<VerificationFailure>,
+    reason: &UnknownReason,
+    failure: SignalFailure,
     selected: i32,
     attempt: i32,
     closure: ClosureDetail,
-) -> UnknownReason {
-    // Preserve variant and original reason. Only our bounded anchor refusal
-    // gains context; arbitrary external error strings are never copied here.
-    match reason {
-        UnknownReason::Inconsistent(message) if failure.is_some() => {
-            UnknownReason::Inconsistent(format!(
-                "{message}; stop={} attempt={} closure={}:{} row={}",
-                signal_name(selected),
-                signal_name(attempt),
-                closure.path,
-                closure.result,
-                closure.role
-            ))
-        }
-        other => other,
-    }
+) -> String {
+    let category = match reason {
+        UnknownReason::TimedOut { .. } => "timed-out",
+        UnknownReason::Busy { .. } => "busy",
+        UnknownReason::Cancelled(_) => "cancelled",
+        UnknownReason::PermissionDenied => "permission-denied",
+        UnknownReason::ToolUnavailable(_) => "tool-unavailable",
+        UnknownReason::Unparsable(_) => "unparsable",
+        UnknownReason::Inconsistent(_) => "inconsistent",
+        UnknownReason::GuardUnavailable => "guard-unavailable",
+        UnknownReason::Injected => "injected",
+        UnknownReason::Untrusted(_) => "untrusted",
+        UnknownReason::HostAuthorityRequired => "host-authority-required",
+        UnknownReason::StoreUnreadable(_) => "store-unreadable",
+    };
+    let anchor = failure.verification.map_or_else(
+        || "verified-at-entry".to_owned(),
+        |failed| format!("{}:{}", failed.stage, failed.category),
+    );
+    format!(
+        "{}; anchor={anchor}; refusal={}:{category}; stop={} attempt={} closure={}:{} row={}",
+        crate::custody::UNPROVEN_GROUP_CLOSURE,
+        failure.stage,
+        signal_name(selected),
+        signal_name(attempt),
+        closure.path,
+        closure.result,
+        closure.role
+    )
 }

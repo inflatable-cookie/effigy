@@ -1668,7 +1668,7 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
             assert!(old.anchor.is_none());
             platform::recover(&old.process, &cleanup, &mut || false)
         } else {
-            anchor::recover(&r, &anchor, &cleanup, &mut || false)
+            anchor::recover(&r, &anchor, &cleanup, &mut || false, &mut None)
         };
         let survived = platform::generation(&descendant).verified().is_some()
             && matches!(
@@ -4168,15 +4168,16 @@ fn anchor_refusal_categories_keep_short_circuit_order_and_bounded_rendering() {
                             "{UNPROVEN_GROUP_CLOSURE}; anchor={stage}:{category}"
                         ));
                         let rendered = anchor::recovery_refusal(
-                            reason,
-                            Some(failure),
+                            &reason,
+                            anchor::SignalFailure {
+                                verification: Some(failure),
+                                stage: "anchor-verification",
+                            },
                             selected,
                             attempt,
                             detail,
                         );
-                        let UnknownReason::Inconsistent(text) = rendered else {
-                            panic!("changed variant")
-                        };
+                        let text = rendered;
                         assert!(text.starts_with("unproven group closure; anchor="));
                         assert!(text.contains(&format!("closure={path}:{result} row=anchor")));
                         assert!(text.len() < 256);
@@ -4191,14 +4192,37 @@ fn anchor_refusal_categories_keep_short_circuit_order_and_bounded_rendering() {
         result: "unproven",
         role: "other",
     };
-    for reason in [
-        UnknownReason::PermissionDenied,
-        unknown("no live workload member to signal"),
+    for (reason, category) in [
+        (UnknownReason::PermissionDenied, "permission-denied"),
+        (unknown("private raw inventory error"), "inconsistent"),
+        (
+            UnknownReason::Unparsable("private raw identity error".into()),
+            "unparsable",
+        ),
     ] {
-        assert_eq!(
-            anchor::recovery_refusal(reason.clone(), None, libc::SIGKILL, libc::SIGCONT, detail),
-            reason
-        );
+        for stage in ["inventory", "member-identity", "member-signal"] {
+            let original = reason.clone();
+            let text = anchor::recovery_refusal(
+                &reason,
+                anchor::SignalFailure {
+                    verification: None,
+                    stage,
+                },
+                libc::SIGTERM,
+                libc::SIGCONT,
+                detail,
+            );
+            assert_eq!(reason, original);
+            assert_eq!(
+                settle_recovery(Observed::Unknown(reason.clone()), Some(text.clone())),
+                (EffectState::Residue, Some(text.clone()))
+            );
+            assert!(text.contains(&format!("refusal={stage}:{category}")));
+            assert!(text.contains("anchor=verified-at-entry"));
+            assert!(text.contains("stop=TERM attempt=CONT closure=fallback:unproven row=other"));
+            assert!(!text.contains("private"));
+            assert!(text.len() < 256);
+        }
     }
 }
 
@@ -4291,4 +4315,22 @@ fn anchor_closure_details_use_the_existing_inventory_and_generation_accounting()
         assert!(matches!(observed, Observed::Verified(..)));
         assert_eq!(detail.result, "positive");
     }
+}
+
+#[test]
+fn anchored_recovery_journal_detail_cannot_turn_unknown_into_release() {
+    for observation in [
+        Observed::Verified(Closure, evidence()),
+        Observed::Absent(AbsenceProof::GroupEmpty { pgid: 100 }),
+    ] {
+        assert_eq!(
+            settle_recovery(observation, None),
+            (EffectState::Released, None)
+        );
+    }
+    let reason = UnknownReason::PermissionDenied;
+    assert_eq!(
+        settle_recovery(Observed::Unknown(reason.clone()), None),
+        (EffectState::Residue, Some(reason.to_string()))
+    );
 }
