@@ -908,7 +908,10 @@ exact route generation is removed. Stale stop callbacks can remove only their
 route generation. Teardown signals recorded supervisor/child generations and
 removes only their recorded routes. Nothing about a listener is re-proved per
 connection: the gateway forwards the route to its published target like any
-other route.
+other route. `ready` records listener readiness and committed route publication;
+the gateway installs that snapshot asynchronously. A caller proving public
+serving must observe the expected response through the gateway, within its
+existing readiness deadline.
 
 A published listener stays published while the supervisor's run is alive and
 the listener port answers. The supervisor connects to that port every five

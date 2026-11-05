@@ -3381,6 +3381,12 @@ fn managed_host_listener_leader_exit_restarts_by_policy() {
     let ca_path = private_gateway.join("ca/rootCA.pem");
     let route_table = private_gateway.join("routes.json");
 
+    // Hold the consumer at an empty snapshot while the actual supervisor
+    // publishes. This controls consumption, not the producer or its replies.
+    let held_routes = effigy_gateway::routes::LiveRouteTable::new(route_table.clone())
+        .expect("initial empty consumer snapshot");
+    assert!(held_routes.read().is_empty());
+
     let checkout = fixture.path().join("leader-exit");
     fs::create_dir(&checkout).expect("leader exit checkout");
     fs::write(
@@ -3486,12 +3492,15 @@ fn managed_host_listener_leader_exit_restarts_by_policy() {
     let settled_pid = u32::try_from(settled["child_pid"].as_u64().expect("recorded leader pid"))
         .expect("leader pid fits a process id");
 
+    let controlled = HeldListenerProxy::start(&private_gateway, held_routes.shared_table());
+
     // The operator's own signal ends the child leader: its group is that leader,
     // so the supervisor must apply the policy instead of reporting a group that
     // still contains the exited leader.
     // SAFETY: this test signals only the exact child leader Effigy recorded.
     let sent = unsafe { nix::libc::kill(replaced_pid as i32, nix::libc::SIGTERM) };
     assert_eq!(sent, 0, "terminate the owned listener leader");
+    let deadline = Instant::now() + Duration::from_secs(30);
     let successor = wait_for_listener_generation(
         &state_path("replaced"),
         &route_table,
@@ -3499,7 +3508,7 @@ fn managed_host_listener_leader_exit_restarts_by_policy() {
         replaced["generation"]
             .as_str()
             .expect("recorded generation"),
-        Duration::from_secs(30),
+        deadline.saturating_duration_since(Instant::now()),
     );
     assert_eq!(
         successor["address"], replaced["address"],
@@ -3516,7 +3525,38 @@ fn managed_host_listener_leader_exit_restarts_by_policy() {
         &successor,
         "leader exit restart",
     );
-    let response = curl_https_response(https_address, &ca_path, replaced_domain, "/");
+    // The old witness has passed against the real publication, but the real
+    // TLS proxy still serves its withheld snapshot: publication is not serving.
+    let stale = curl_https_response_with_timeout(
+        controlled.address,
+        &ca_path,
+        replaced_domain,
+        "/",
+        deadline.saturating_duration_since(Instant::now()),
+    );
+    assert!(
+        stale.contains("503 Service Unavailable") && stale.contains("No Route"),
+        "{stale}"
+    );
+    // Use the production live-view snapshot loader/installer, then exercise
+    // the same proxy and upstream. No fabricated status or body is involved.
+    held_routes
+        .reload()
+        .expect("install committed successor snapshot");
+    wait_for_listener_https(
+        controlled.address,
+        &ca_path,
+        replaced_domain,
+        &successor,
+        deadline,
+    );
+    let response = wait_for_listener_https(
+        https_address,
+        &ca_path,
+        replaced_domain,
+        &successor,
+        deadline,
+    );
     assert!(
         response.contains("200 OK")
             && response.contains(&format!("restart-body@{}", successor["child_pid"])),
@@ -3575,6 +3615,92 @@ fn managed_host_listener_leader_exit_restarts_by_policy() {
             );
             thread::sleep(Duration::from_millis(25));
         }
+    }
+}
+
+// A real TLS proxy whose snapshot advances only when this fixture installs it.
+// The production daemon's notify watcher remains unmodified and is checked too.
+struct HeldListenerProxy {
+    address: SocketAddr,
+    stop: tokio::sync::watch::Sender<bool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl HeldListenerProxy {
+    fn start(root: &Path, routes: Arc<std::sync::RwLock<RouteTable>>) -> Self {
+        let resolver = effigy_gateway::tls::build_sni_resolver_from_dir(&root.join("certs"))
+            .expect("fixture certificates");
+        let tls = Arc::new(resolver.into_server_config());
+        let reservation = TcpListener::bind("127.0.0.1:0").expect("reserve control proxy address");
+        let address = reservation.local_addr().expect("control proxy address");
+        let (stop, shutdown) = tokio::sync::watch::channel(false);
+        drop(reservation);
+        let thread = thread::spawn(move || {
+            tokio::runtime::Runtime::new()
+                .expect("control proxy runtime")
+                .block_on(effigy_gateway::proxy::run_tls_proxy_server(
+                    address,
+                    tls,
+                    routes,
+                    Arc::new(effigy_gateway::stats::GatewayStats::new()),
+                    effigy_gateway::proxy::ProxyConfig::default(),
+                    shutdown,
+                ))
+                .expect("control proxy exits cleanly");
+        });
+        let proxy = Self {
+            address,
+            stop,
+            thread: Some(thread),
+        };
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while TcpStream::connect(address).is_err() {
+            assert!(Instant::now() < deadline, "control proxy did not bind");
+            thread::sleep(Duration::from_millis(25));
+        }
+        proxy
+    }
+}
+
+impl Drop for HeldListenerProxy {
+    fn drop(&mut self) {
+        let _ = self.stop.send(true);
+        if let Some(thread) = self.thread.take() {
+            let result = thread.join();
+            if !thread::panicking() {
+                result.expect("control proxy thread");
+            }
+        }
+    }
+}
+
+fn wait_for_listener_https(
+    address: SocketAddr,
+    ca: &Path,
+    domain: &str,
+    successor: &Value,
+    deadline: Instant,
+) -> String {
+    let expected = format!("restart-body@{}", successor["child_pid"]);
+    loop {
+        let response = curl_https_response_with_timeout(
+            address,
+            ca,
+            domain,
+            "/",
+            deadline.saturating_duration_since(Instant::now()),
+        );
+        if response.contains("200 OK") && response.contains(&expected) {
+            return response;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not serve successor {}: {response}",
+            successor["generation"]
+        );
+        thread::sleep(
+            Duration::from_millis(25).min(deadline.saturating_duration_since(Instant::now())),
+        );
     }
 }
 
@@ -4436,6 +4562,21 @@ impl Drop for ForeignListener {
 }
 
 fn curl_https_response(address: SocketAddr, ca: &Path, hostname: &str, path: &str) -> String {
+    curl_https_response_with_timeout(address, ca, hostname, path, Duration::from_secs(5))
+}
+
+fn curl_https_response_with_timeout(
+    address: SocketAddr,
+    ca: &Path,
+    hostname: &str,
+    path: &str,
+    timeout: Duration,
+) -> String {
+    assert!(!timeout.is_zero(), "HTTPS readiness deadline expired");
+    let max_time = timeout
+        .min(Duration::from_secs(5))
+        .as_secs_f64()
+        .to_string();
     let resolve = format!("{hostname}:{}:127.0.0.1", address.port());
     let url = format!("https://{hostname}:{}{path}", address.port());
     let output = Command::new("curl")
@@ -4444,7 +4585,7 @@ fn curl_https_response(address: SocketAddr, ca: &Path, hostname: &str, path: &st
             "--silent",
             "--show-error",
             "--max-time",
-            "5",
+            &max_time,
             "--noproxy",
             "*",
             "--cacert",
