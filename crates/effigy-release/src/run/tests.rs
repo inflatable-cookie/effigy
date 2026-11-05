@@ -23,6 +23,87 @@ use super::*;
 // fixtures
 // ---------------------------------------------------------------------------
 
+// Read only the report already returned by live stop. Never reinventory or
+// print observation payloads. Nextest retains this before TempDir cleanup.
+pub(super) fn trace_settlement(
+    label: &str,
+    operation: &str,
+    report: &effigy_kernel::custody::StopReport,
+) {
+    use effigy_kernel::{custody::CaptureState, observe::Observed};
+    let label = match label {
+        "release git" => "release git",
+        _ => "other",
+    };
+    let group = match &report.group {
+        Observed::Verified(..) => "verified",
+        Observed::Absent(_) => "absent",
+        Observed::Unknown(reason) => settlement_reason(reason),
+    };
+    let capture = match report.capture {
+        CaptureState::Complete => "complete",
+        CaptureState::Truncated(_) => "truncated",
+    };
+    eprintln!("release settlement: label={label}; operation={operation}; group={group}; capture={capture}; residue={}", report.residue.len());
+    for reason in &report.residue {
+        eprintln!("release settlement residue: {}", settlement_reason(reason));
+    }
+}
+
+fn settlement_reason(reason: &effigy_kernel::observe::UnknownReason) -> &'static str {
+    use effigy_kernel::observe::UnknownReason;
+    match reason {
+        UnknownReason::TimedOut { phase, .. } => {
+            if phase.starts_with("group closure of process group ") {
+                "timed-out:group-closure"
+            } else {
+                "timed-out:other"
+            }
+        }
+        UnknownReason::Busy { .. } => "busy",
+        UnknownReason::Cancelled(_) => "cancelled",
+        UnknownReason::PermissionDenied => "permission-denied",
+        UnknownReason::ToolUnavailable(_) => "tool-unavailable",
+        UnknownReason::Unparsable(_) => "unparsable",
+        UnknownReason::Inconsistent(message) => match message.as_str() {
+            "no live workload member to signal" => "inconsistent:no-live-workload-member",
+            "unproven group closure" => "inconsistent:unproven-group-closure",
+            "leader already reaped" => "inconsistent:leader-already-reaped",
+            "group still has live members" => "inconsistent:live-group",
+            "workload still has live members" => "inconsistent:live-workload",
+            _ => {
+                // Only exact known anchor facts can leave this private seam.
+                const ANCHOR_FACTS: &[&str] = &[
+                    "generation:absent",
+                    "generation:replaced",
+                    "generation:unreadable",
+                    "state:absent",
+                    "state:replaced",
+                    "state:unreadable",
+                    "state:zombie",
+                    "nonce:mismatch",
+                    "nonce:unreadable",
+                    "nonce:missing",
+                    "nonce:unparsable",
+                    "birth:boot-mismatch",
+                    "birth:birth-order-or-kind",
+                    "current-group:unreadable",
+                    "current-group:mismatch",
+                ];
+                message
+                    .strip_prefix("unproven group closure; anchor=")
+                    .and_then(|fact| ANCHOR_FACTS.iter().copied().find(|known| *known == fact))
+                    .unwrap_or("inconsistent:other")
+            }
+        },
+        UnknownReason::GuardUnavailable => "guard-unavailable",
+        UnknownReason::Injected => "injected",
+        UnknownReason::Untrusted(_) => "untrusted",
+        UnknownReason::HostAuthorityRequired => "host-authority-required",
+        UnknownReason::StoreUnreadable(_) => "store-unreadable",
+    }
+}
+
 struct Fixture {
     root: PathBuf,
     home: PathBuf,
@@ -544,6 +625,7 @@ fn a_full_run_prepares_certifies_publishes_and_writes_a_receipt() {
     let fixture = fixture("full");
     single_identity_project(&fixture);
     let mut effects = TestEffects::new(&fixture.root);
+    effects.inner.trace_settlement = true;
     effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
 
     let outcome = run(&fixture, &mut effects, ReleaseAction::Run, None);
