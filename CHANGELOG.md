@@ -918,6 +918,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Nested sequence builtins pin `--repo` to the selected catalog except the
+  forms shown to break public grammar or cwd semantics: `docs check` keeps
+  invoking-cwd paths and repository-root default scope; `bundle sync` still
+  rejects `--repo`. Other catalog-scoped builtins (`tasks`, `deps`,
+  `changelog`, `doctor`, `release`, `deploy`, `bundle inspect`) keep the pin.
+  Nested `secrets init`/`set`, bare help, and `exec` payloads are unchanged
+  (effigy#663).
+
 - Resolve ordinary catalog task secrets and the declared vault generate-hook
   join from the selected task catalog, so a child catalog's task-target keys
   and relative vault apply for both a root-prefixed selector and a child-cwd

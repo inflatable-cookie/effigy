@@ -152,8 +152,15 @@ Task-target keys, a relative vault path, and that generate-hook join belong
 to the **selected task catalog**. Prefix selection from the workspace root
 and cwd-nearest selection inside the child directory load the same catalog
 declarations and vault. Nested generate-hook builtins (`secrets init`,
-`secrets set`) keep that catalog as `--repo`. Bare help-shaped builtins
-(`docs`, `secrets`, `release`, and the same family) do not take `--repo`.
+`secrets set`) keep that catalog as `--repo`. Other nested builtins whose
+public grammar accepts `--repo` (`tasks`, `deps`, `changelog`, `doctor`,
+`release`, `deploy`, `bundle inspect`) pin the same way so a child catalog
+does not walk up to the workspace root. A stored parsed `--repo` override
+is not a license to append the flag when that would break the subcommand:
+`docs check` keeps invoking-cwd path resolution, `{repo}`/`{cwd}` expansion,
+the root-relative transition warning, and repository-root default scope;
+`bundle sync` does not accept `--repo`. Bare help-shaped builtins (`docs`,
+`secrets`, `release`, and the same family) do not take `--repo`.
 An `exec` step does not take a trailing `--repo`; that token would become
 command payload.
 Root-catalog tasks keep the root vault. Catalogs do not union parent or sibling secret sets. Isolated
