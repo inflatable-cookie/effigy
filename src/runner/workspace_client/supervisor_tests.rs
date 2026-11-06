@@ -147,17 +147,36 @@ fn guest_enrols(
         vm_boot_id: "fixture".to_owned(),
     });
     write_frame(&mut transport, &enrol).map_err(|e| stage("write Enrol", e))?;
-    match read_frame(&mut transport, Instant::now() + Duration::from_millis(400)) {
-        Err(e)
-            if matches!(
-                e.kind(),
-                io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
-            ) =>
+    // Enrol has no success frame. Only an authenticated request's actual
+    // observed response proves the host accepted it; silence proves nothing.
+    let until = Instant::now() + Duration::from_millis(400);
+    let id = effigy_kernel::run::RequestId::new([0x65; 16]);
+    let request = Frame::Request(host::Request {
+        id,
+        context_generation: Generation::new(1),
+        environment_generation: Generation::new(1),
+        session_run_id: session,
+        container_id: "fixture".to_owned(),
+        vm_boot_id: "fixture".to_owned(),
+        body: host::RequestBody::Observe(host::ObserveBody {
+            query: None,
+            op: "runs:list".to_owned(),
+            target: Some(host::Target::Host),
+            run_id: None,
+        }),
+    });
+    write_frame(&mut transport, &request).map_err(|e| stage("write enrolment observation", e))?;
+    match read_frame(&mut transport, until).map_err(|e| stage("observe enrolment", e))? {
+        Frame::Response(host::Response {
+            id: answered,
+            outcome: host::ResponseOutcome::Observed(value),
+        }) if answered == id
+            && value["schema"] == "effigy.runs.v1"
+            && value["observed"] == true =>
         {
             Ok(())
         }
-        Err(e) => Err(stage("observe enrolment", e)),
-        Ok(_) => Err("enrolment refused".into()),
+        _ => Err("enrolment observation was not accepted".into()),
     }
 }
 
