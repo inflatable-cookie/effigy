@@ -48,6 +48,23 @@ the retained logs, without changing test selection, timing, or concurrency.
 `test:qa:later-stages-wrapper` exercises the collector with owned stub
 executables and does not run repository tests or the census.
 
+The collector accepts `--start-at <canonical-selector>` and
+`--stop-after <canonical-selector>` to run an inclusive range in the existing
+stage order; either boundary may be omitted. Invalid selectors and reversed
+ranges are rejected before output setup. The final receipt lists
+`selected_stages` and `omitted_stages` separately; selected stages not reached
+after setup failure, cancellation, or unsettled children appear as
+`not_started`. It never infers success from prior output. Fresh output contains
+an `events/` directory with create-once `selection.json`, `setup.json`, one
+`stage-NN.json` after each stage settles, and `teardown.json`. Stage events
+include the exact argv, source bindings, process result, byte completeness, and
+separate stdout/stderr hashes. The final hash manifest includes event files.
+These v1 event records are durable scoped facts bound to their source input and
+selection; they do not replace the final `receipt.json` or make an interrupted
+run complete. Event publication uses a synced private temporary file and an
+exclusive hard-link into the final name, so an interrupted write cannot appear
+as a finalized record.
+
 ## Proof tiers
 
 Every case belongs to exactly one tier. Cost and review expectations follow the

@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import secrets
 import subprocess
 import sys
 import threading
@@ -163,9 +164,38 @@ def validate_destinations(output: Path, temp: Path, root: Path) -> Path:
 
 def write_json(path: Path, value: object) -> None:
     data = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "wb") as stream:
-        stream.write(data)
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.partial")
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, path)
+        temporary.unlink()
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except BaseException:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def select_stages(start_at: str | None = None, stop_after: str | None = None) -> tuple[str, ...]:
+    if start_at is not None and start_at not in STAGES:
+        raise ValueError(f"unknown start stage: {start_at}")
+    if stop_after is not None and stop_after not in STAGES:
+        raise ValueError(f"unknown stop stage: {stop_after}")
+    start = STAGES.index(start_at) if start_at is not None else 0
+    stop = STAGES.index(stop_after) if stop_after is not None else len(STAGES) - 1
+    if start > stop:
+        raise ValueError("start stage follows stop stage")
+    return STAGES[start:stop + 1]
 
 
 def capture_pipe(pipe, output, counts: dict[str, int], errors: list[str], key: str) -> None:
@@ -324,7 +354,8 @@ def command_result_ok(result: dict[str, object]) -> bool:
 
 
 def run_collector(output: Path, root: Path, temp: Path, lifecycle: Path,
-                  staged_effigy: Path, environ: dict[str, str] | None = None) -> tuple[int, dict[str, object]]:
+                  staged_effigy: Path, environ: dict[str, str] | None = None,
+                  selected: tuple[str, ...] | None = None) -> tuple[int, dict[str, object]]:
     env = dict(os.environ if environ is None else environ)
     env["TMPDIR"] = str(temp)
     env["TMP"] = str(temp)
@@ -333,6 +364,8 @@ def run_collector(output: Path, root: Path, temp: Path, lifecycle: Path,
     resolved = validate_destinations(output, temp, root)
     resolved.mkdir(mode=0o700)
     os.chmod(resolved, 0o700)
+    selected = selected if selected is not None else STAGES
+    omitted = tuple(stage for stage in STAGES if stage not in selected)
     receipt: dict[str, object] = {
         "schema": "effigy.qa-later-stages.v1",
         "diagnostic_only": True,
@@ -341,6 +374,8 @@ def run_collector(output: Path, root: Path, temp: Path, lifecycle: Path,
         "success_output": "NEXTEST_SUCCESS_OUTPUT=immediate",
         "stream_limit_bytes_each": MAX_STREAM_BYTES,
         "stage_order": list(STAGES),
+        "selected_stages": list(selected),
+        "omitted_stages": list(omitted),
         "stages": [],
         "setup": None,
         "teardown": None,
@@ -350,15 +385,26 @@ def run_collector(output: Path, root: Path, temp: Path, lifecycle: Path,
     }
     before = input_snapshot(root)
     receipt["source_before"] = before
+    events = resolved / "events"
+    events.mkdir(mode=0o700)
+    write_json(events / "selection.json", {
+        "schema": "effigy.qa-later-stages.event.v1", "event": "selection",
+        "source_before": before, "selected_stages": list(selected),
+        "omitted_stages": list(omitted),
+    })
     setup = owned_command(["sh", str(lifecycle), "setup"], root, env,
                           resolved / "setup.stdout", resolved / "setup.stderr")
     receipt["setup"] = setup
+    write_json(events / "setup.json", {
+        "schema": "effigy.qa-later-stages.event.v1", "event": "setup",
+        "result": setup, "source_binding": source_binding(root, before),
+    })
     after_setup = input_snapshot(root)
     setup_source_changed = source_binding(root, before) != source_binding(root, after_setup)
     receipt["setup_source_changed"] = setup_source_changed
     stop = not command_result_ok(setup) or setup_source_changed
     if not stop:
-        for index, selector in enumerate(STAGES, 1):
+        for index, selector in enumerate(selected, 1):
             if CANCELLED.is_set():
                 stop = True
                 break
@@ -390,10 +436,19 @@ def run_collector(output: Path, root: Path, temp: Path, lifecycle: Path,
                 "stdout": f"{prefix}.stdout",
                 "stderr": f"{prefix}.stderr",
             })
+            write_json(events / f"stage-{index:02d}.json", {
+                "schema": "effigy.qa-later-stages.event.v1", "event": "stage",
+                "selector": selector, "stage_index": STAGES.index(selector) + 1,
+                "status": status, "result": result,
+                "source_binding_start": binding_start,
+                "source_binding_end": binding_end,
+                "stdout": {"path": f"{prefix}.stdout", "sha256": sha256_file(resolved / f"{prefix}.stdout")},
+                "stderr": {"path": f"{prefix}.stderr", "sha256": sha256_file(resolved / f"{prefix}.stderr")},
+            })
             if stop:
                 break
     ran = {str(stage["selector"]) for stage in receipt["stages"]}  # type: ignore[index]
-    for selector in STAGES:
+    for selector in selected:
         if selector not in ran:
             receipt["stages"].append({"selector": selector, "status": "not_started"})
 
@@ -403,6 +458,10 @@ def run_collector(output: Path, root: Path, temp: Path, lifecycle: Path,
     teardown = owned_command(["sh", str(lifecycle), "teardown"], root, env,
                              resolved / "teardown.stdout", resolved / "teardown.stderr")
     receipt["teardown"] = teardown
+    write_json(events / "teardown.json", {
+        "schema": "effigy.qa-later-stages.event.v1", "event": "teardown",
+        "result": teardown,
+    })
     after = input_snapshot(root)
     receipt["source_after"] = after
     immutable = source_binding(root, before) == source_binding(root, after)
@@ -420,12 +479,17 @@ def run_collector(output: Path, root: Path, temp: Path, lifecycle: Path,
     receipt["not_started_stages"] = skipped
     receipt["incomplete_stages"] = incomplete
     receipt["complete_partial_census"] = (
+        not omitted and not failures and not skipped and command_result_ok(setup)
+        and command_result_ok(teardown) and immutable and not setup_source_changed
+    )
+    receipt["complete_selected_slice"] = (
         not failures and not skipped and command_result_ok(setup)
         and command_result_ok(teardown) and immutable and not setup_source_changed
     )
     summary = ["Diagnostic later-stage census (not full QA)."]
     summary.append("Stage failures: " + (", ".join(failures) if failures else "none"))
     summary.append("Not started: " + (", ".join(skipped) if skipped else "none"))
+    summary.append("Intentionally omitted: " + (", ".join(omitted) if omitted else "none"))
     summary.append("Incomplete output: " + (", ".join(incomplete) if incomplete else "none"))
     summary.append("Setup: " + ("passed" if command_result_ok(setup) and not setup_source_changed else "failed/incomplete"))
     summary.append("Teardown: " + ("passed" if command_result_ok(teardown) else "failed/incomplete"))
@@ -436,13 +500,13 @@ def run_collector(output: Path, root: Path, temp: Path, lifecycle: Path,
     os.chmod(resolved / "summary.txt", 0o600)
     print(receipt["human_summary"])
     print(f"Receipt: {resolved / 'receipt.json'}")
-    return (0 if receipt["complete_partial_census"] else 1), receipt
+    return (0 if receipt["complete_selected_slice"] else 1), receipt
 
 
 def output_hashes(directory: Path) -> dict[str, str]:
     return {
-        path.name: sha256_file(path)
-        for path in sorted(directory.iterdir())
+        path.relative_to(directory).as_posix(): sha256_file(path)
+        for path in sorted(directory.rglob("*"))
         if path.is_file() and path.name not in {"receipt.json", "hash-manifest.json"}
     }
 
@@ -450,7 +514,13 @@ def output_hashes(directory: Path) -> dict[str, str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output_dir", help="fresh absolute output directory outside checkout and TMPDIR")
+    parser.add_argument("--start-at", metavar="SELECTOR", help="first canonical stage to run")
+    parser.add_argument("--stop-after", metavar="SELECTOR", help="last canonical stage to run")
     args = parser.parse_args(argv)
+    try:
+        selected = select_stages(args.start_at, args.stop_after)
+    except ValueError as exc:
+        parser.error(str(exc))
     root = Path(__file__).resolve().parent.parent
     temp_value = os.environ.get("TMPDIR")
     if not temp_value:
@@ -462,6 +532,7 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.output_dir), root, Path(temp_value),
             root / "scripts" / "worktree-lifecycle.sh",
             root / ".local-install" / "worktree-hooks" / "effigy",
+            selected=selected,
         )
         # Keep a separately named digest manifest for reviewers and proof pinning.
         manifest = {"receipt_sha256": sha256_file(Path(args.output_dir) / "receipt.json"),
