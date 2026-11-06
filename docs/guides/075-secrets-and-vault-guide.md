@@ -267,7 +267,12 @@ publishes atomically.
 ## Use In Tasks
 
 Secrets with `targets = ["tasks"]` are injected into task processes when the
-selected shell task actually references the corresponding env names:
+selected shell task actually references the corresponding env names. Those
+declarations and the catalog's relative vault belong to the selected task
+catalog: `desktop/package:mac:preflight` from the workspace root and
+`package:mac:preflight` from `apps/bovine-desktop` use the same child
+catalog vault. A root-catalog task keeps the root vault. Parent and sibling
+secret sets are not merged.
 
 ```toml
 [tasks.migrate]

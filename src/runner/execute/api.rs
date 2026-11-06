@@ -254,6 +254,27 @@ fn merge_containers_config(
     }
 }
 
+/// Catalog that owns an inline hook invoked at `cwd`. Nested builtins
+/// (`secrets init`, `secrets set`) inherit `selection.catalog.catalog_root`
+/// as `--repo`, so a generate hook declared on a child catalog must not bind
+/// to the workspace `resolved_root`.
+fn catalog_for_inline_cwd<'a>(
+    catalogs: &'a [LoadedCatalog],
+    cwd: &Path,
+    resolved_root: &Path,
+) -> Option<&'a LoadedCatalog> {
+    catalogs
+        .iter()
+        .filter(|catalog| cwd.starts_with(&catalog.catalog_root))
+        .max_by_key(|catalog| catalog.catalog_root.as_os_str().len())
+        .or_else(|| {
+            catalogs
+                .iter()
+                .filter(|catalog| catalog.catalog_root == resolved_root)
+                .min_by_key(|catalog| catalog.depth)
+        })
+}
+
 pub(in crate::runner) fn run_inline_task_with_cwd_and_env(
     mut task: ManifestTask,
     cwd: PathBuf,
@@ -265,25 +286,25 @@ pub(in crate::runner) fn run_inline_task_with_cwd_and_env(
         args: Vec::new(),
     };
     let preflight = super::planning::build_execution_preflight(&invocation, cwd)?;
-    let root_catalog = preflight
-        .catalogs
-        .iter()
-        .filter(|catalog| catalog.catalog_root == preflight.resolved.resolved_root)
-        .min_by_key(|catalog| catalog.depth)
-        .ok_or_else(|| {
-            RunnerError::task_invocation(format!(
-                "bootstrap run could not resolve root catalog for {}",
-                preflight.resolved.resolved_root.display()
-            ))
-        })?;
+    let inline_catalog = catalog_for_inline_cwd(
+        &preflight.catalogs,
+        &preflight.invocation_cwd,
+        &preflight.resolved.resolved_root,
+    )
+    .ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "bootstrap run could not resolve catalog for {}",
+            preflight.invocation_cwd.display()
+        ))
+    })?;
 
     for (key, value) in env_overrides {
         task.env.insert(key.clone(), value.clone());
     }
     let selection = TaskSelection {
-        catalog: root_catalog,
+        catalog: inline_catalog,
         task: &task,
-        mode: CatalogSelectionMode::RootShallowest,
+        mode: CatalogSelectionMode::CwdNearest,
         evidence: vec!["inline task".to_owned()],
         surface: effigy_tasks::TaskSurface::Published,
     };
@@ -311,6 +332,29 @@ mod tests {
         depth: usize,
     ) -> LoadedCatalog {
         LoadedCatalog::for_test(alias, PathBuf::from(root), manifest, depth)
+    }
+
+    #[test]
+    fn catalog_for_inline_cwd_selects_the_child_catalog_not_the_workspace() {
+        let root = loaded_catalog("root", "/workspace", manifest_from_toml(""), 0);
+        let child = loaded_catalog(
+            "desktop",
+            "/workspace/apps/bovine-desktop",
+            manifest_from_toml(""),
+            1,
+        );
+        let catalogs = vec![root, child];
+        let selected = catalog_for_inline_cwd(
+            &catalogs,
+            Path::new("/workspace/apps/bovine-desktop"),
+            Path::new("/workspace"),
+        )
+        .expect("child catalog");
+        assert_eq!(selected.alias, "desktop");
+        let workspace =
+            catalog_for_inline_cwd(&catalogs, Path::new("/workspace"), Path::new("/workspace"))
+                .expect("workspace catalog");
+        assert_eq!(workspace.alias, "root");
     }
 
     #[test]

@@ -352,8 +352,10 @@ impl ManagedContext<'_, '_, '_> {
         if !self.secrets_required() {
             return Ok(Vec::new());
         }
+        // Session vault-once stays on `resolved_root` above. Values for this
+        // task still load from the selected catalog's declarations and vault.
         super::standard::resolve_task_secret_env(
-            &self.preflight.resolved.resolved_root,
+            super::standard::task_secret_repo_root(self.preflight, self.selection),
             &self.preflight.secret_targets,
             self.selection.task,
             true,

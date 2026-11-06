@@ -1,7 +1,7 @@
 //! One typed, ordered sequence engine. Output mode chooses sinks only.
 use super::host_alias::{host_alias_resolver, secret_env_slice};
 use super::{context::ExecutionTaskContext, preflight::ExecutionPreflight};
-use crate::runner::command_context::EmbeddedRepoOverrideMode;
+use crate::runner::command_context::{command_repo_override, EmbeddedRepoOverrideMode};
 use crate::runner::embedded_runner::{parse_embedded_command, run_embedded_task_with_output_mode};
 use crate::runner::error::RunnerError;
 use crate::runner::task_engine::{
@@ -910,6 +910,19 @@ fn resolve_task_step(
             &effigy_tasks::render_template_args(&args),
             &cwd,
         )?;
+        // Force-apply stores the catalog on commands that accept `--repo`.
+        // Bare help-shaped builtins (`docs`, `secrets`, `release`, …) do not;
+        // appending the flag there exits 2. Exec treats every token after the
+        // first positional as command payload, so a trailing `--repo` would
+        // be executed rather than parsed. Secrets init/set still pin so the
+        // child process does not walk up from cwd to the workspace.
+        let command = match (&parsed, command_repo_override(&parsed)) {
+            (Command::Exec(_), _) | (_, None) => command,
+            (_, Some(repo)) => format!(
+                "{command} --repo {}",
+                effigy_core::shell::shell_quote(&repo.display().to_string())
+            ),
+        };
         return Ok(StepAction::Builtin {
             command,
             parsed: Box::new(parsed),
@@ -1029,10 +1042,26 @@ mod tests {
     }
 
     fn classify_manifest(body: &str) -> bool {
+        classify_selector("start", body, None)
+    }
+
+    fn classify_selector(selector: &str, body: &str, child: Option<&str>) -> bool {
         let fixture = effigy_test_support::Fixture::new("q010-classification-").unwrap();
-        std::fs::write(fixture.path().join("effigy.toml"), body).unwrap();
+        if let Some(child_body) = child {
+            std::fs::create_dir_all(fixture.path().join("apps/desktop")).unwrap();
+            std::fs::write(
+                fixture.path().join("effigy.toml"),
+                format!(
+                    "[catalog]\nalias = 'root'\n[catalog.members]\ndesktop = 'apps/desktop'\n{body}"
+                ),
+            )
+            .unwrap();
+            std::fs::write(fixture.path().join("apps/desktop/effigy.toml"), child_body).unwrap();
+        } else {
+            std::fs::write(fixture.path().join("effigy.toml"), body).unwrap();
+        }
         let invocation = effigy_cli::TaskInvocation {
-            name: "start".into(),
+            name: selector.into(),
             args: Vec::new(),
         };
         let preflight =
@@ -1120,6 +1149,37 @@ mod tests {
             )),
             "a key outside the task targets never reaches the hook"
         );
+
+        let child_hook = format!(
+            "[catalog]\nalias = 'desktop'\n{hook}{start}",
+            hook = vault_generate_prelude(Some("generate = { task = 'secrets:generate-dev' }")),
+            start = start
+        );
+        assert!(
+            !classify_selector(
+                "desktop/start",
+                "[tasks.root]\nscratch = false\nrun = 'true'\n",
+                Some(&child_hook)
+            ),
+            "a selected child catalog's declared generate hook is durable, including from a root prefix"
+        );
+        let child_without_hook = format!(
+            "[catalog]\nalias = 'desktop'\n{}{start}",
+            vault_generate_prelude(None)
+        );
+        assert!(
+            classify_selector(
+                "desktop/start",
+                &format!(
+                    "{hook}[tasks.root]\nscratch = false\nsecrets = 'required'\nrun = 'true'\n",
+                    hook = vault_generate_prelude(Some(
+                        "generate = { task = 'secrets:generate-dev' }"
+                    ))
+                ),
+                Some(&child_without_hook)
+            ),
+            "a child without a generate hook is not durable just because the root catalog declares one"
+        );
     }
 
     #[test]
@@ -1146,6 +1206,300 @@ mod tests {
             Command::Container(args)
                 if args.repo_override == Some(PathBuf::from("/tmp/repo"))
         ));
+    }
+
+    #[test]
+    fn resolve_task_step_renders_secrets_builtin_against_the_selected_catalog() {
+        let root = loaded_catalog(
+            "root",
+            "/workspace",
+            manifest_from_toml("[tasks.root]\nrun = 'true'\n"),
+            0,
+        );
+        let child = loaded_catalog(
+            "desktop",
+            "/workspace/apps/bovine-desktop",
+            manifest_from_toml(
+                r#"
+[secrets]
+backend = "effigy-vault"
+[tasks.preflight]
+run = [{ task = "secrets init" }]
+"#,
+            ),
+            1,
+        );
+        let preflight = ExecutionPreflight {
+            invocation: effigy_cli::TaskInvocation {
+                name: "desktop/preflight".to_owned(),
+                args: Vec::new(),
+            },
+            invocation_cwd: PathBuf::from("/workspace"),
+            runtime_args_raw: TaskRuntimeArgs {
+                repo_override: None,
+                verbose_root: false,
+                env_schema_override: None,
+                lock_wait_ms: None,
+                passthrough: Vec::new(),
+            },
+            runtime_args_exec: TaskRuntimeArgs {
+                repo_override: None,
+                verbose_root: false,
+                env_schema_override: None,
+                lock_wait_ms: None,
+                passthrough: Vec::new(),
+            },
+            output_json: false,
+            plan: false,
+            help: false,
+            output_mode: effigy_execution::ExecutionOutputMode::Capture,
+            resolved: ResolvedTarget {
+                resolved_root: PathBuf::from("/workspace"),
+                resolution_mode: ResolutionMode::AutoNearest,
+                evidence: Vec::new(),
+                warnings: Vec::new(),
+            },
+            discovery_plan: ExecutionDiscoveryPlan {
+                invocation_cwd: PathBuf::from("/workspace"),
+                resolved_root: PathBuf::from("/workspace"),
+                selector: TaskSelector {
+                    prefix: Some("desktop".to_owned()),
+                    task_name: "preflight".to_owned(),
+                },
+                repo_override: None,
+            },
+            selector: TaskSelector {
+                prefix: Some("desktop".to_owned()),
+                task_name: "preflight".to_owned(),
+            },
+            catalogs: vec![root, child],
+            secret_targets: Vec::new(),
+            task_source: None,
+        };
+        let selection = TaskSelection {
+            catalog: &preflight.catalogs[1],
+            task: preflight.catalogs[1]
+                .manifest
+                .tasks
+                .get("preflight")
+                .expect("preflight task"),
+            mode: CatalogSelectionMode::ExplicitPrefix,
+            evidence: vec!["test".to_owned()],
+            surface: effigy_tasks::TaskSurface::Published,
+        };
+
+        let action = resolve_task_step("secrets init", &preflight, &selection)
+            .expect("resolve secrets init");
+        match action {
+            StepAction::Builtin {
+                command,
+                cwd,
+                parsed,
+            } => {
+                assert_eq!(cwd, PathBuf::from("/workspace/apps/bovine-desktop"));
+                assert!(
+                    command.contains("--repo '/workspace/apps/bovine-desktop'")
+                        || command.contains("--repo /workspace/apps/bovine-desktop"),
+                    "rendered builtin must pin --repo to the selected catalog: {command}"
+                );
+                assert!(matches!(
+                    *parsed,
+                    Command::Secrets(args)
+                        if args.repo_override == Some(PathBuf::from("/workspace/apps/bovine-desktop"))
+                ));
+            }
+            other => panic!("expected secrets builtin, got {}", other.kind()),
+        }
+    }
+
+    #[test]
+    fn resolve_task_step_does_not_pin_repo_on_bare_help_builtins() {
+        let root = loaded_catalog(
+            "root",
+            "/workspace",
+            manifest_from_toml("[tasks.root]\nrun = [{ task = 'docs' }]\n"),
+            0,
+        );
+        let preflight = ExecutionPreflight {
+            invocation: effigy_cli::TaskInvocation {
+                name: "root".to_owned(),
+                args: Vec::new(),
+            },
+            invocation_cwd: PathBuf::from("/workspace"),
+            runtime_args_raw: TaskRuntimeArgs {
+                repo_override: None,
+                verbose_root: false,
+                env_schema_override: None,
+                lock_wait_ms: None,
+                passthrough: Vec::new(),
+            },
+            runtime_args_exec: TaskRuntimeArgs {
+                repo_override: None,
+                verbose_root: false,
+                env_schema_override: None,
+                lock_wait_ms: None,
+                passthrough: Vec::new(),
+            },
+            output_json: false,
+            plan: false,
+            help: false,
+            output_mode: effigy_execution::ExecutionOutputMode::Capture,
+            resolved: ResolvedTarget {
+                resolved_root: PathBuf::from("/workspace"),
+                resolution_mode: ResolutionMode::AutoNearest,
+                evidence: Vec::new(),
+                warnings: Vec::new(),
+            },
+            discovery_plan: ExecutionDiscoveryPlan {
+                invocation_cwd: PathBuf::from("/workspace"),
+                resolved_root: PathBuf::from("/workspace"),
+                selector: TaskSelector {
+                    prefix: None,
+                    task_name: "root".to_owned(),
+                },
+                repo_override: None,
+            },
+            selector: TaskSelector {
+                prefix: None,
+                task_name: "root".to_owned(),
+            },
+            catalogs: vec![root],
+            secret_targets: Vec::new(),
+            task_source: None,
+        };
+        let selection = TaskSelection {
+            catalog: &preflight.catalogs[0],
+            task: preflight.catalogs[0]
+                .manifest
+                .tasks
+                .get("root")
+                .expect("root task"),
+            mode: CatalogSelectionMode::ExplicitPrefix,
+            evidence: vec!["test".to_owned()],
+            surface: effigy_tasks::TaskSurface::Published,
+        };
+
+        for name in [
+            "docs",
+            "secrets",
+            "release",
+            "state",
+            "deploy",
+            "service",
+            "changelog",
+        ] {
+            let action = resolve_task_step(name, &preflight, &selection)
+                .unwrap_or_else(|_| panic!("resolve `{name}`"));
+            match action {
+                StepAction::Builtin {
+                    command,
+                    cwd,
+                    parsed,
+                } => {
+                    assert_eq!(cwd, PathBuf::from("/workspace"));
+                    assert!(
+                        !command.contains("--repo"),
+                        "bare `{name}` must not append --repo: {command}"
+                    );
+                    assert!(
+                        matches!(*parsed, Command::Help(_)),
+                        "bare `{name}` parses as help"
+                    );
+                }
+                other => panic!("expected `{name}` builtin, got {}", other.kind()),
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_task_step_does_not_pin_repo_on_exec_payload() {
+        let root = loaded_catalog(
+            "root",
+            "/workspace",
+            manifest_from_toml("[tasks.root]\nrun = [{ task = 'exec true' }]\n"),
+            0,
+        );
+        let preflight = ExecutionPreflight {
+            invocation: effigy_cli::TaskInvocation {
+                name: "root".to_owned(),
+                args: Vec::new(),
+            },
+            invocation_cwd: PathBuf::from("/workspace"),
+            runtime_args_raw: TaskRuntimeArgs {
+                repo_override: None,
+                verbose_root: false,
+                env_schema_override: None,
+                lock_wait_ms: None,
+                passthrough: Vec::new(),
+            },
+            runtime_args_exec: TaskRuntimeArgs {
+                repo_override: None,
+                verbose_root: false,
+                env_schema_override: None,
+                lock_wait_ms: None,
+                passthrough: Vec::new(),
+            },
+            output_json: false,
+            plan: false,
+            help: false,
+            output_mode: effigy_execution::ExecutionOutputMode::Capture,
+            resolved: ResolvedTarget {
+                resolved_root: PathBuf::from("/workspace"),
+                resolution_mode: ResolutionMode::AutoNearest,
+                evidence: Vec::new(),
+                warnings: Vec::new(),
+            },
+            discovery_plan: ExecutionDiscoveryPlan {
+                invocation_cwd: PathBuf::from("/workspace"),
+                resolved_root: PathBuf::from("/workspace"),
+                selector: TaskSelector {
+                    prefix: None,
+                    task_name: "root".to_owned(),
+                },
+                repo_override: None,
+            },
+            selector: TaskSelector {
+                prefix: None,
+                task_name: "root".to_owned(),
+            },
+            catalogs: vec![root],
+            secret_targets: Vec::new(),
+            task_source: None,
+        };
+        let selection = TaskSelection {
+            catalog: &preflight.catalogs[0],
+            task: preflight.catalogs[0]
+                .manifest
+                .tasks
+                .get("root")
+                .expect("root task"),
+            mode: CatalogSelectionMode::ExplicitPrefix,
+            evidence: vec!["test".to_owned()],
+            surface: effigy_tasks::TaskSurface::Published,
+        };
+
+        let action =
+            resolve_task_step("exec true", &preflight, &selection).expect("resolve exec true");
+        match action {
+            StepAction::Builtin {
+                command,
+                cwd,
+                parsed,
+            } => {
+                assert_eq!(cwd, PathBuf::from("/workspace"));
+                assert!(
+                    !command.contains("--repo"),
+                    "exec payload must not include trailing --repo: {command}"
+                );
+                assert!(matches!(
+                    *parsed,
+                    Command::Exec(args)
+                        if args.command.as_slice() == ["true"]
+                            && args.repo_override == Some(PathBuf::from("/workspace"))
+                ));
+            }
+            other => panic!("expected exec builtin, got {}", other.kind()),
+        }
     }
 
     fn manifest_from_toml(body: &str) -> TaskManifest {
