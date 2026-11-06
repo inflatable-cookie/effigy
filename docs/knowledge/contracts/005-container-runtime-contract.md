@@ -1526,13 +1526,14 @@ above. The intended Paseo hook is
 retire itself. A consumer that still calls the retired `bootstrap teardown`,
 checks only running containers, or returns 0 on residue needs its own change.
 This repository's own `paseo.json` hooks call `scripts/worktree-lifecycle.sh`
-instead of an installed `effigy`. `setup` discards any staged binary, builds
-`effigy` from the checkout with `CARGO_TARGET_DIR` pinned to
-`target/worktree-hooks`, stages it at `.local-install/worktree-hooks/effigy`,
-then runs the skill `link`. `teardown` first archives this checkout's
-kernel run logs with `scripts/worktree-archive-run-logs.sh`, then runs
-`container retire --yes` and skill `unlink` with the staged binary,
-so Queue milestone cleanup exercises the lifecycle code under test. The
+instead of an installed `effigy`. `setup` discards any staged binary, runs
+`nucleus worktree prepare`, builds `effigy` from the checkout with
+`CARGO_TARGET_DIR` pinned to `target/worktree-hooks`, stages it at
+`.local-install/worktree-hooks/effigy`, then runs `nucleus worktree link`.
+`teardown` first archives this checkout's kernel run logs with
+`scripts/worktree-archive-run-logs.sh`, then runs `container retire --yes`
+with the staged binary and finally `nucleus worktree unlink`, so Queue
+milestone cleanup exercises the lifecycle code under test. The
 archive copies the available original files from only this checkout's
 `.effigy/state/runs/` (exactly `<run>/<segment>`, regular files only) into
 a fresh private `0700` directory under `/Volumes/Builds/scratch/effigy/`
@@ -1556,8 +1557,13 @@ not unlink after a retire failure. Limits: the helper compiles with raw
 setup never ran cannot be torn down by this hook. Covered by
 `test:worktree:lifecycle-hooks` (hook wiring and order) and
 `test:worktree:run-log-archive` (helper byte/manifest/bounds/refusal proof).
-`NORTHSTAR_SKILL_PATH` still overrides the
-skill location.
+Worktree setup calls `nucleus worktree prepare` before the pinned checkout
+build, then `nucleus worktree link` after the binary is staged. Teardown calls
+`nucleus worktree unlink` only after run-log archival and successful scoped
+container retirement. These lifecycle hooks require the supported `nucleus`
+CLI on `PATH`; CLI failures are surfaced and do not fall back to the retired
+Northstar skill task. The private shell harness stubs Nucleus in its fixture
+PATH and asserts the action arguments and lifecycle order.
 
 Repo-owned Compose is classified as such: cleanup uses the scoped project
 label, not a name prefix, and named volumes in those projects stay unless

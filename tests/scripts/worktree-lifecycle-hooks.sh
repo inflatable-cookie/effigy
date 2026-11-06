@@ -1,6 +1,6 @@
 #!/bin/sh
 # Fixture tests for scripts/worktree-lifecycle.sh. Everything lives under a
-# fresh mktemp root: stub cargo, stub staged effigy, and a stale PATH effigy
+# fresh mktemp root: stub cargo, Nucleus, staged effigy, and a stale PATH effigy
 # that fails the run if it is ever invoked. No real profile, registry,
 # container, checkout or fixed /tmp path is touched.
 set -u
@@ -14,7 +14,7 @@ new_fixture() {
   fx=$(mktemp -d "${TMPDIR:-/tmp}/effigy-lifecycle.XXXXXX") || exit 2
   fx=$(cd "$fx" && pwd -P)
   repo="$fx/checkout"
-  mkdir -p "$repo/scripts" "$fx/bin" "$fx/stale" "$fx/skill" "$fx/home"
+  mkdir -p "$repo/scripts" "$fx/bin" "$fx/stale" "$fx/home"
   cp "$here/scripts/worktree-lifecycle.sh" "$repo/scripts/"
   cp "$here/scripts/worktree-archive-run-logs.sh" "$repo/scripts/"
   mkdir -p "$fx/archive-base"
@@ -43,10 +43,19 @@ BIN
 chmod 0755 "\$CARGO_TARGET_DIR/debug/effigy"
 CARGO
   chmod 0755 "$fx/stale/effigy" "$fx/bin/cargo"
+  cat >"$fx/bin/nucleus" <<NUCLEUS
+#!/bin/sh
+printf 'nucleus' >>"$log"
+for arg do printf ' %s' "\$arg" >>"$log"; done
+printf '\n' >>"$log"
+[ "\${STUB_NUCLEUS_FAIL:-}" = "\${2:-}" ] && exit 8
+exit 0
+NUCLEUS
+  chmod 0755 "$fx/bin/nucleus"
   run_hook() { # mode
-    (cd "$repo" && HOME="$fx/home" NORTHSTAR_SKILL_PATH="$fx/skill" \
+    (cd "$repo" && HOME="$fx/home" \
       EFFIGY_RUN_LOG_ARCHIVE_BASE="$fx/archive-base" \
-      PATH="$fx/stale:$fx/bin:/usr/bin:/bin" sh scripts/worktree-lifecycle.sh "$1") \
+      PATH="$fx/bin:$fx/stale:/usr/bin:/bin" sh scripts/worktree-lifecycle.sh "$1") \
       >"$fx/out.log" 2>&1
   }
 }
@@ -56,12 +65,12 @@ new_fixture
 run_hook setup || exit 2
 mkdir -p "$repo/.effigy/state/runs/1"
 : >"$repo/.effigy/state/runs/1/log"
-(cd "$repo" && HOME="$fx/home" NORTHSTAR_SKILL_PATH="$fx/skill" \
-  STUB_FAIL_ON=__worktree-archive-scratch-root PATH="$fx/stale:$fx/bin:/usr/bin:/bin" \
+(cd "$repo" && HOME="$fx/home" \
+  STUB_FAIL_ON=__worktree-archive-scratch-root PATH="$fx/bin:$fx/stale:/usr/bin:/bin" \
   sh scripts/worktree-lifecycle.sh teardown) >"$fx/out.log" 2>&1; rc=$?
 [ "$rc" -ne 0 ] || fail "config failure not reported"
 grep -q 'container retire --yes' "$log" || fail "retire skipped after config failure"
-grep -q 'skill run.*unlink' "$log" || fail "unlink skipped after config failure"
+grep -q 'nucleus worktree unlink' "$log" || fail "unlink skipped after config failure"
 grep -q 'run-log archive failed' "$fx/out.log" || fail "archive error missing"
 ok "config failure preserves cleanup"
 
@@ -71,7 +80,7 @@ run_hook setup; rc=$?
 [ "$rc" -eq 0 ] || fail "setup exit $rc"
 grep -q STALE-EFFIGY "$log" && fail "setup invoked stale effigy"
 grep -q "target=$repo/target/worktree-hooks" "$log" || fail "cargo target dir not pinned"
-[ "$(grep -o 'cargo build\|link' "$log" | tr '\n' ' ')" = 'cargo build link ' ] ||
+[ "$(grep -Eo 'nucleus worktree prepare|cargo build|nucleus worktree link' "$log" | tr '\n' ' ')" = 'nucleus worktree prepare cargo build nucleus worktree link ' ] ||
   fail "setup order wrong: $(cat "$log")"
 [ -x "$repo/.local-install/worktree-hooks/effigy" ] && ok "setup stages binary + order" || fail "binary not staged"
 
@@ -82,7 +91,7 @@ run_hook teardown; rc=$?
 grep -q STALE-EFFIGY "$log" && fail "teardown invoked stale effigy"
 grep -q "worktree-archive-run-logs: status=no-state" "$fx/out.log" ||
   fail "archive step did not run first: $(cat "$fx/out.log")"
-tail -2 "$log" | tr '\n' ' ' | grep -q "container retire --yes.*unlink" && ok "teardown order, binary persisted" || fail "teardown order wrong: $(cat "$log")"
+tail -2 "$log" | tr '\n' ' ' | grep -q "container retire --yes.*nucleus worktree unlink" && ok "teardown order, binary persisted" || fail "teardown order wrong: $(cat "$log")"
 rm -rf "$fx"
 
 # 3. teardown with no staged binary fails closed, no PATH fallback.
@@ -114,10 +123,22 @@ rm -rf "$fx"
 
 # 6. link failure: nonzero.
 new_fixture
-(STUB_FAIL_ON=link; export STUB_FAIL_ON; run_hook setup); rc=$?
+(STUB_NUCLEUS_FAIL=link; export STUB_NUCLEUS_FAIL; run_hook setup); rc=$?
 [ "$rc" -ne 0 ] || fail "setup succeeded despite link failure"
 grep -q STALE-EFFIGY "$log" && fail "setup fell back to stale effigy"
 ok "link failure stops setup"
+rm -rf "$fx"
+
+# 6a. prepare failure prevents the build; a missing CLI fails clearly.
+new_fixture
+(STUB_NUCLEUS_FAIL=prepare; export STUB_NUCLEUS_FAIL; run_hook setup); rc=$?
+[ "$rc" -ne 0 ] || fail "setup succeeded despite prepare failure"
+grep -q 'cargo build' "$log" && fail "build ran after prepare failure"
+mv "$fx/bin/nucleus" "$fx/bin/nucleus.disabled"
+run_hook setup; rc=$?
+[ "$rc" -ne 0 ] || fail "setup succeeded without Nucleus"
+grep -q 'nucleus: not found\|nucleus: command not found' "$fx/out.log" || fail "missing CLI error unclear"
+ok "prepare and missing CLI fail closed"
 rm -rf "$fx"
 
 # 7. retire failure: nonzero, unlink not run.
@@ -125,8 +146,17 @@ new_fixture
 run_hook setup || fail "setup"
 (STUB_FAIL_ON="container retire"; export STUB_FAIL_ON; run_hook teardown); rc=$?
 [ "$rc" -ne 0 ] || fail "teardown succeeded despite retire failure"
-grep -q "built-effigy.*unlink" "$log" && fail "unlink ran after retire failure"
+grep -q "nucleus worktree unlink" "$log" && fail "unlink ran after retire failure"
 ok "retire failure stops unlink"
+rm -rf "$fx"
+
+# 7a. unlink failure is visible and keeps teardown non-zero.
+new_fixture
+run_hook setup || fail "setup"
+(STUB_NUCLEUS_FAIL=unlink; export STUB_NUCLEUS_FAIL; run_hook teardown); rc=$?
+[ "$rc" -ne 0 ] || fail "teardown succeeded despite unlink failure"
+grep -q 'nucleus worktree unlink failed' "$fx/out.log" || fail "unlink failure unclear"
+ok "unlink failure is reported"
 rm -rf "$fx"
 
 # 8. teardown archives this checkout's run logs before retiring, with
@@ -137,7 +167,12 @@ mkdir -p "$repo/.effigy/state/runs/7"
 printf 'failure bytes\n' >"$repo/.effigy/state/runs/7/0.stdout.0.log"
 run_hook teardown; rc=$?
 [ "$rc" -eq 0 ] || fail "teardown exit $rc"
-archived=$(ls -d "$fx/archive-base"/qa-run-logs.* 2>/dev/null | head -1)
+archived=
+for candidate in "$fx/archive-base"/qa-run-logs.*; do
+  [ -d "$candidate" ] || continue
+  archived=$candidate
+  break
+done
 [ -n "$archived" ] || fail "no archive dir under the fixture base"
 cmp -s "$repo/.effigy/state/runs/7/0.stdout.0.log" "$archived/7.0.stdout.0.log" ||
   fail "archived bytes differ"
@@ -162,7 +197,7 @@ chmod 0755 "$fx/archive-base"
 grep -q "worktree-archive-run-logs: error:" "$fx/out.log" ||
   fail "archive failure not reported: $(cat "$fx/out.log")"
 grep -q "built-effigy container retire --yes" "$log" || fail "retire skipped after archive failure"
-grep -q "built-effigy.*unlink" "$log" || fail "unlink skipped after archive failure"
+grep -q "nucleus worktree unlink" "$log" || fail "unlink skipped after archive failure"
 ok "archive failure still cleans up, teardown stays non-zero"
 rm -rf "$fx"
 
@@ -181,7 +216,7 @@ mkdir -p "$fx/archive-base"
 grep -q "worktree-archive-run-logs: status=unavailable" "$fx/out.log" ||
   fail "unavailable archive not reported: $(cat "$fx/out.log")"
 grep -q "built-effigy container retire --yes" "$log" || fail "retire skipped after unavailable archive"
-grep -q "built-effigy.*unlink" "$log" || fail "unlink skipped after unavailable archive"
+grep -q "nucleus worktree unlink" "$log" || fail "unlink skipped after unavailable archive"
 ok "unavailable archive still cleans up, teardown stays non-zero"
 rm -rf "$fx"
 
