@@ -228,10 +228,30 @@ pub fn run(entry: &str, args: &[OsString], cancel: CancelToken) {
                 if point == "ProbeWorkChecked" && !once {
                     once = true;
                     stream.write_all(b"{\"stage\":\"checked\"}\n")?;
-                    let mut resume = [0; 7];
-                    stream.read_exact(&mut resume)?;
-                    if &resume != b"resume\n" {
-                        return Err(std::io::Error::other("invalid fixture resume"));
+                    let expected = b"resume\n";
+                    let until = Instant::now() + Duration::from_secs(5);
+                    let mut received = 0;
+                    while received < expected.len() {
+                        let remaining = until
+                            .checked_duration_since(Instant::now())
+                            .filter(|remaining| !remaining.is_zero())
+                            .ok_or_else(|| std::io::Error::other("fixture resume expired"))?;
+                        stream.set_read_timeout(Some(remaining))?;
+                        let mut bytes = [0; 7];
+                        let count = match stream.read(&mut bytes[..expected.len() - received]) {
+                            Ok(0) => return Err(std::io::Error::other("fixture resume EOF")),
+                            Ok(count) => count,
+                            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                                continue
+                            }
+                            Err(error) => return Err(error),
+                        };
+                        if Instant::now() >= until
+                            || bytes[..count] != expected[received..received + count]
+                        {
+                            return Err(std::io::Error::other("invalid or expired fixture resume"));
+                        }
+                        received += count;
                     }
                 }
                 Ok(())
