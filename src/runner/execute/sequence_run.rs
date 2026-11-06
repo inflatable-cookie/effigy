@@ -1029,10 +1029,26 @@ mod tests {
     }
 
     fn classify_manifest(body: &str) -> bool {
+        classify_selector("start", body, None)
+    }
+
+    fn classify_selector(selector: &str, body: &str, child: Option<&str>) -> bool {
         let fixture = effigy_test_support::Fixture::new("q010-classification-").unwrap();
-        std::fs::write(fixture.path().join("effigy.toml"), body).unwrap();
+        if let Some(child_body) = child {
+            std::fs::create_dir_all(fixture.path().join("apps/desktop")).unwrap();
+            std::fs::write(
+                fixture.path().join("effigy.toml"),
+                format!(
+                    "[catalog]\nalias = 'root'\n[catalog.members]\ndesktop = 'apps/desktop'\n{body}"
+                ),
+            )
+            .unwrap();
+            std::fs::write(fixture.path().join("apps/desktop/effigy.toml"), child_body).unwrap();
+        } else {
+            std::fs::write(fixture.path().join("effigy.toml"), body).unwrap();
+        }
         let invocation = effigy_cli::TaskInvocation {
-            name: "start".into(),
+            name: selector.into(),
             args: Vec::new(),
         };
         let preflight =
@@ -1119,6 +1135,37 @@ mod tests {
                     .replace("targets = ['tasks']", "targets = ['containers']")
             )),
             "a key outside the task targets never reaches the hook"
+        );
+
+        let child_hook = format!(
+            "[catalog]\nalias = 'desktop'\n{hook}{start}",
+            hook = vault_generate_prelude(Some("generate = { task = 'secrets:generate-dev' }")),
+            start = start
+        );
+        assert!(
+            !classify_selector(
+                "desktop/start",
+                "[tasks.root]\nscratch = false\nrun = 'true'\n",
+                Some(&child_hook)
+            ),
+            "a selected child catalog's declared generate hook is durable, including from a root prefix"
+        );
+        let child_without_hook = format!(
+            "[catalog]\nalias = 'desktop'\n{}{start}",
+            vault_generate_prelude(None)
+        );
+        assert!(
+            classify_selector(
+                "desktop/start",
+                &format!(
+                    "{hook}[tasks.root]\nscratch = false\nsecrets = 'required'\nrun = 'true'\n",
+                    hook = vault_generate_prelude(Some(
+                        "generate = { task = 'secrets:generate-dev' }"
+                    ))
+                ),
+                Some(&child_without_hook)
+            ),
+            "a child without a generate hook is not durable just because the root catalog declares one"
         );
     }
 

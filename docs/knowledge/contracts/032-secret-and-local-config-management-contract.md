@@ -148,6 +148,18 @@ admitted durable even when its required keys are already stored. An
 undeclared durable child, such as shell code launching a named or detached
 Effigy run, still refuses before its effects.
 
+Task-target keys, a relative vault path, and that generate-hook join belong
+to the **selected task catalog**. Prefix selection from the workspace root
+and cwd-nearest selection inside the child directory load the same catalog
+declarations and vault. Nested generate-hook builtins (`secrets init`,
+`secrets set`) keep that catalog as `--repo`. Root-catalog tasks keep the
+root vault. Catalogs do not union parent or sibling secret sets. Isolated
+external skill tasks never inherit consumer secrets. Explicit task `env`
+still outranks an injected vault value. A managed session still resolves
+vault access once against the checkout root (Q-007); task-secret injection
+then reads the selected catalog's declarations and vault with that session
+access.
+
 ## Config Versus Secrets
 
 Effigy must help repos move these values out of secret storage:

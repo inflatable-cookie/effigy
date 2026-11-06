@@ -230,6 +230,16 @@ fn retired_task_cache_error(task_name: &str) -> RunnerError {
     ))
 }
 
+/// Vault declarations and the relative vault file for an ordinary local
+/// catalog task belong to that task's selected catalog. External skill
+/// sources keep the consumer root through `task_execution_root`.
+pub(in crate::runner::execute) fn task_secret_repo_root<'a>(
+    preflight: &'a ExecutionPreflight,
+    selection: &'a TaskSelection<'_>,
+) -> &'a Path {
+    preflight.task_execution_root(&selection.catalog.catalog_root)
+}
+
 fn resolve_standard_task_secrets(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
@@ -238,7 +248,7 @@ fn resolve_standard_task_secrets(
         return Ok(Vec::new());
     }
     resolve_task_secret_env(
-        &preflight.resolved.resolved_root,
+        task_secret_repo_root(preflight, selection),
         &preflight.secret_targets,
         selection.task,
         matches!(
@@ -786,7 +796,9 @@ fn resolve_task_secret_vault_path(
 /// declares. Resolving that join before admission keeps the hook's effects
 /// inside the tree class instead of refusing them after workload go
 /// (contract 052 §3.1). Only a direct-shell task resolves task secret env, and
-/// only a task-targeted key reaches the hook, so no other task widens.
+/// only a task-targeted key reaches the hook, so no other task widens. Secret
+/// scope and this join use the selected catalog's declarations and vault, not
+/// the invoking workspace root.
 pub(in crate::runner::execute) fn startup_can_run_vault_generate_hook(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
@@ -800,7 +812,8 @@ pub(in crate::runner::execute) fn startup_can_run_vault_generate_hook(
     {
         return Ok(false);
     }
-    let manifest = load_task_manifest(&preflight.resolved.resolved_root.join(TASK_MANIFEST_FILE))?;
+    let manifest =
+        load_task_manifest(&task_secret_repo_root(preflight, selection).join(TASK_MANIFEST_FILE))?;
     let Some(secrets) = manifest.secrets.as_ref() else {
         return Ok(false);
     };

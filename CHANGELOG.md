@@ -918,6 +918,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Resolve ordinary catalog task secrets and the declared vault generate-hook
+  join from the selected task catalog, so a child catalog's task-target keys
+  and relative vault apply for both a root-prefixed selector and a child-cwd
+  run. Root-catalog tasks keep the root vault; parent and sibling secret sets
+  are not merged (effigy#662).
+
 - Use the supported Nucleus CLI to prepare, link and unlink checkout worktrees
   in the developer lifecycle hooks.
 
