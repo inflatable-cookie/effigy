@@ -101,10 +101,13 @@ fn read_frame(transport: &mut TlsChannelTransport, until: Instant) -> io::Result
             }
         }
         if Instant::now() > until {
-            return Err(io::Error::other("the host did not answer the guest"));
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the host did not answer the guest",
+            ));
         }
         let mut chunk = [0u8; 4096];
-        match transport.read(&mut chunk) {
+        match transport.read_until(&mut chunk, until) {
             Ok(0) => {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
@@ -118,30 +121,22 @@ fn read_frame(transport: &mut TlsChannelTransport, until: Instant) -> io::Result
     }
 }
 
-/// What one guest saw: the host's negotiation answer, and the refusal it wrote
-/// after the guest presented the session's enrolment credential (`None` means
-/// the credential was accepted and the host is waiting for a request).
+/// Keep the failing stage, rather than turning transport failure into a missing answer.
 fn guest_enrols(
     endpoint: SocketAddr,
     pin: &Digest,
     session: RunId,
     generation: Generation,
-) -> (Option<Frame>, Option<Frame>) {
-    let mut transport =
-        match TlsChannelTransport::connect(endpoint, pin.clone(), Duration::from_secs(5)) {
-            Ok(transport) => transport,
-            Err(_) => return (None, None),
-        };
+) -> Result<(), String> {
+    let stage = |name, error: io::Error| format!("{name}: {:?}", error.kind());
+    let mut transport = TlsChannelTransport::connect(endpoint, pin.clone(), Duration::from_secs(5))
+        .map_err(|e| stage("TLS/pin", e))?;
     let deadline = Instant::now() + Duration::from_secs(10);
-    if write_frame(&mut transport, &guest_hello(session)).is_err() {
-        return (None, None);
+    write_frame(&mut transport, &guest_hello(session)).map_err(|e| stage("write Hello", e))?;
+    let hello = read_frame(&mut transport, deadline).map_err(|e| stage("read HelloOk", e))?;
+    if !matches!(hello, Frame::HelloOk(_)) {
+        return Err("negotiation refused".into());
     }
-    let hello = read_frame(&mut transport, deadline).ok();
-    if !matches!(hello, Some(Frame::HelloOk(_))) {
-        return (hello, None);
-    }
-    // The enrolment credential the retained facts installed, with the session,
-    // generations and target they were bound to.
     let enrol = Frame::Enrol(host::EnrolRequest {
         credential: host::Secret::new([0x42; 32]),
         capability: [0x24; 32],
@@ -151,13 +146,38 @@ fn guest_enrols(
         container_id: "fixture".to_owned(),
         vm_boot_id: "fixture".to_owned(),
     });
-    if write_frame(&mut transport, &enrol).is_err() {
-        return (hello, None);
+    write_frame(&mut transport, &enrol).map_err(|e| stage("write Enrol", e))?;
+    // Enrol has no success frame. Only an authenticated request's actual
+    // observed response proves the host accepted it; silence proves nothing.
+    let until = Instant::now() + Duration::from_millis(400);
+    let id = effigy_kernel::run::RequestId::new([0x65; 16]);
+    let request = Frame::Request(host::Request {
+        id,
+        context_generation: Generation::new(1),
+        environment_generation: Generation::new(1),
+        session_run_id: session,
+        container_id: "fixture".to_owned(),
+        vm_boot_id: "fixture".to_owned(),
+        body: host::RequestBody::Observe(host::ObserveBody {
+            query: None,
+            op: "runs:list".to_owned(),
+            target: Some(host::Target::Host),
+            run_id: None,
+        }),
+    });
+    write_frame(&mut transport, &request).map_err(|e| stage("write enrolment observation", e))?;
+    match read_frame(&mut transport, until).map_err(|e| stage("observe enrolment", e))? {
+        Frame::Response(host::Response {
+            id: answered,
+            outcome: host::ResponseOutcome::Observed(value),
+        }) if answered == id
+            && value["schema"] == "effigy.runs.v1"
+            && value["observed"] == true =>
+        {
+            Ok(())
+        }
+        _ => Err("enrolment observation was not accepted".into()),
     }
-    // An accepted enrolment is answered with nothing; a refused one answers once
-    // with its refusal before closing.
-    let refusal = read_frame(&mut transport, Instant::now() + Duration::from_millis(400)).ok();
-    (hello, refusal)
 }
 
 /// Select the session, hand its custody over and return: the shape of the
@@ -205,89 +225,122 @@ fn serving<'a>(
 /// once.
 #[test]
 fn a_committed_session_keeps_serving_after_the_selecting_call_returns() {
+    committed_guest_ordering(false);
+}
+
+/// The old ordering is reachable: a real pinned TLS guest accepted before the
+/// first turn is refused; a later turn cannot authorize that earlier accept.
+#[test]
+fn a_guest_accepted_before_the_first_turn_is_not_dispatched() {
+    committed_guest_ordering(true);
+}
+
+fn committed_guest_ordering(before_first_turn: bool) {
     with_serving_session(|mut supervisor, session, cx, root, observe| {
         let prepared = prepare_owned_channel(&mut supervisor, &session);
+        let accepted = prepared.acceptor.observe_accepts();
         let lease = published(&prepared);
         let endpoint = prepared
             .launch
             .endpoint()
             .expect("a bound session listener");
-
         let (mut service, committed) =
             select_and_hand_off(supervisor, &session, prepared, cx, observe, root);
-
-        // The selecting call is gone. The session's custody is not: the same
-        // session, the same committed lease, the same listener and the key.
         assert_eq!(service.session().run(), session.run());
+        assert_eq!(service.session().generation(), session.generation());
         assert_eq!(service.lease(), &committed);
         assert_eq!(service.lease(), &lease);
         assert!(service.key_held(), "the key survived the selecting call");
         assert!(
-            TcpStream::connect(endpoint).is_ok(),
-            "the published listener survived the selecting call"
-        );
-
-        // The session run serves the channel only once its owner says so.
-        assert!(
             !service.serving(),
             "nothing is served before the first turn"
         );
+        if !before_first_turn {
+            assert!(matches!(
+                service.serve_pending(&mut host::NoStreams),
+                Ok(false)
+            ));
+        }
 
         let pin = lease.pin().clone();
         let run = session.run();
         let generation = session.generation();
         let (sender, receiver) = std::sync::mpsc::channel();
         let guest = std::thread::spawn(move || {
-            let _ = sender.send(guest_enrols(endpoint, &pin, run, generation));
+            let result = guest_enrols(endpoint, &pin, run, generation);
+            eprintln!("guest before_first_turn={before_first_turn}: {result:?}");
+            let _ = sender.send(result);
         });
-        // The guest's TCP connect is already in flight; accept until its
-        // connection is the one dispatched. Only the accept waits here, not the
-        // listener's custody.
-        let until = Instant::now() + Duration::from_secs(20);
-        loop {
-            match service.serve_pending(&mut host::NoStreams) {
-                Ok(true) => break,
-                Ok(false) if Instant::now() < until => {
-                    std::thread::sleep(Duration::from_millis(2));
-                }
-                Ok(false) => panic!("the guest's connection was never accepted"),
-                Err(error) => {
-                    // The guest closes once its answer is in hand, so the
-                    // connection's own turn can end with a read failure. That
-                    // ends one connection, never the session's service.
-                    assert!(
-                        !error.is_terminal(),
-                        "an ended connection is not a terminal end: {error}"
-                    );
-                    break;
+        // Catch proof failures so both the TLS worker and guest are joined and
+        // the same session settles before an assertion is reported.
+        let proof = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let until = Instant::now() + Duration::from_secs(20);
+            let permission = accepted.recv_timeout(until.saturating_duration_since(Instant::now()));
+            assert_eq!(permission.ok(), Some(!before_first_turn));
+            if before_first_turn {
+                assert!(!service.serving());
+                assert!(matches!(
+                    service.serve_pending(&mut host::NoStreams),
+                    Ok(false)
+                ));
+            } else {
+                loop {
+                    match service.serve_pending(&mut host::NoStreams) {
+                        Ok(true) => break,
+                        Ok(false) if Instant::now() < until => {
+                            std::thread::sleep(Duration::from_millis(2));
+                        }
+                        Ok(false) => break,
+                        Err(error) => {
+                            assert!(!error.is_terminal(), "connection ended: {error}");
+                            break;
+                        }
+                    }
                 }
             }
-        }
-        let (answer, refusal) = receiver
-            .recv_timeout(Duration::from_secs(20))
-            .expect("the guest answered");
-        guest.join().expect("the guest thread ended");
-        assert!(
-            matches!(answer, Some(Frame::HelloOk(_))),
-            "the retained facts negotiated with the guest: {answer:?}"
-        );
-        assert!(
-            refusal.is_none(),
-            "the retained grant book accepted the session's enrolment credential: {refusal:?}"
-        );
-        assert!(service.serving(), "the session run serves its channel");
-        assert_eq!(service.served(), 1);
-
+            let result = receiver.recv_timeout(Duration::from_secs(20));
+            let result = result.expect("the guest answered within its existing bound");
+            if before_first_turn {
+                let failure = result.expect_err("pre-serving guest gained authority");
+                assert!(
+                    failure.starts_with("write Hello:") || failure.starts_with("read HelloOk:"),
+                    "the pinned TLS handshake completed, but Hello was not negotiated: {failure}"
+                );
+                assert!(matches!(
+                    service.serve_pending(&mut host::NoStreams),
+                    Ok(false)
+                ));
+                assert_eq!(service.served(), 0, "no pre-serving guest was dispatched");
+            } else {
+                assert_eq!(result, Ok(()), "the real guest negotiated and enrolled");
+                assert!(service.serving());
+                assert_eq!(service.served(), 1);
+            }
+        }));
+        service.stop();
+        let joined = guest.join();
+        let key_revoked = !service.key_held();
         let cleanup = cleanup(cx);
-        let retired = service
-            .retire(&cleanup, &mut NoEffects)
-            .expect("the session settles once");
+        let retired = service.retire(&cleanup, &mut NoEffects);
+        eprintln!(
+            "settled fixture: guest_joined={} session_retired={}",
+            joined.is_ok(),
+            retired.is_ok()
+        );
+        let retired = retired.expect("the session settles once");
+        assert!(key_revoked, "stop revoked the same key");
         assert_eq!(retired.session.run(), session.run());
-        assert_eq!(retired.served, 1);
+        if proof.is_ok() {
+            assert_eq!(retired.served, usize::from(!before_first_turn));
+        }
         assert!(
             TcpStream::connect(endpoint).is_err(),
-            "no listener outlives the settlement"
+            "settlement closed the listener"
         );
+        joined.expect("the guest thread ended");
+        if let Err(panic) = proof {
+            std::panic::resume_unwind(panic);
+        }
     });
 }
 
