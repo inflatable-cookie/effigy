@@ -336,9 +336,13 @@ mod tests {
 
     #[test]
     fn catalog_for_inline_cwd_selects_the_child_catalog_not_the_workspace() {
-        let empty = manifest_from_toml("");
-        let root = loaded_catalog("root", "/workspace", empty.clone(), 0);
-        let child = loaded_catalog("desktop", "/workspace/apps/bovine-desktop", empty, 1);
+        let root = loaded_catalog("root", "/workspace", manifest_from_toml(""), 0);
+        let child = loaded_catalog(
+            "desktop",
+            "/workspace/apps/bovine-desktop",
+            manifest_from_toml(""),
+            1,
+        );
         let catalogs = vec![root, child];
         let selected = catalog_for_inline_cwd(
             &catalogs,
