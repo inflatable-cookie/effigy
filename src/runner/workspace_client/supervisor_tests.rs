@@ -128,7 +128,7 @@ fn guest_enrols(
     session: RunId,
     generation: Generation,
 ) -> Result<(), String> {
-    let stage = |name, error: io::Error| format!("{name}: {:?}", error.kind());
+    let stage = |name, error: io::Error| format!("{name}: {}", error.kind());
     let mut transport = TlsChannelTransport::connect(endpoint, pin.clone(), Duration::from_secs(5))
         .map_err(|e| stage("TLS/pin", e))?;
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -268,7 +268,12 @@ fn committed_guest_ordering(before_first_turn: bool) {
         let (sender, receiver) = std::sync::mpsc::channel();
         let guest = std::thread::spawn(move || {
             let result = guest_enrols(endpoint, &pin, run, generation);
-            eprintln!("guest before_first_turn={before_first_turn}: {result:?}");
+            match &result {
+                Ok(()) => eprintln!("guest before_first_turn={before_first_turn}: succeeded"),
+                Err(error) => {
+                    eprintln!("guest before_first_turn={before_first_turn}: failed: {error}")
+                }
+            }
             let _ = sender.send(result);
         });
         // Catch proof failures so both the TLS worker and guest are joined and
