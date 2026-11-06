@@ -918,6 +918,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Use the supported Nucleus CLI to prepare, link and unlink checkout worktrees
+  in the developer lifecycle hooks.
+
 - Preserve bounded anchor verification and follow-up closure facts in custody recovery refusals, with owner-loss matrix failure evidence in captured test logs.
 
 - Bind repository JSON QA to the invoking Effigy checker so a stale PATH installation cannot misread current container-status fixtures.

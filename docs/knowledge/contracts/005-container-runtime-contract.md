@@ -1556,8 +1556,13 @@ not unlink after a retire failure. Limits: the helper compiles with raw
 setup never ran cannot be torn down by this hook. Covered by
 `test:worktree:lifecycle-hooks` (hook wiring and order) and
 `test:worktree:run-log-archive` (helper byte/manifest/bounds/refusal proof).
-`NORTHSTAR_SKILL_PATH` still overrides the
-skill location.
+Worktree setup calls `nucleus worktree prepare` before the pinned checkout
+build, then `nucleus worktree link` after the binary is staged. Teardown calls
+`nucleus worktree unlink` only after run-log archival and successful scoped
+container retirement. These lifecycle hooks require the supported `nucleus`
+CLI on `PATH`; CLI failures are surfaced and do not fall back to the retired
+Northstar skill task. The private shell harness stubs Nucleus in its fixture
+PATH and asserts the action arguments and lifecycle order.
 
 Repo-owned Compose is classified as such: cleanup uses the scoped project
 label, not a name prefix, and named volumes in those projects stay unless

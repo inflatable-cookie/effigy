@@ -5,7 +5,7 @@
 # installed one on PATH. `setup` rebuilds and stages the binary; `teardown`
 # reuses the staged binary and fails closed when it is missing.
 #
-#   worktree-lifecycle.sh setup      build, link
+#   worktree-lifecycle.sh setup      prepare, build, link
 #   worktree-lifecycle.sh teardown   archive run logs, retire container scope, unlink
 #
 # The staged binary lives under .local-install/ (gitignored) so it survives
@@ -17,15 +17,9 @@ root=$(cd "$(dirname "$0")/.." && pwd -P)
 stage_dir="$root/.local-install/worktree-hooks"
 staged="$stage_dir/effigy"
 target_dir="$root/target/worktree-hooks"
-skill_path=${NORTHSTAR_SKILL_PATH:-$HOME/.agents/skills/northstar}
-
 die() {
   echo "[error] worktree-lifecycle: $*" >&2
   exit 1
-}
-
-skill() {
-  "$staged" skill run --path "$skill_path" paseo:worktree -- "$@"
 }
 
 cd "$root"
@@ -34,6 +28,7 @@ case "${1:-}" in
 setup)
   rm -f "$staged"
   mkdir -p "$stage_dir"
+  nucleus worktree prepare || die "nucleus worktree prepare failed"
   CARGO_TARGET_DIR="$target_dir" cargo build --bin effigy ||
     die "cargo build --bin effigy failed"
   built="$target_dir/debug/effigy"
@@ -41,7 +36,7 @@ setup)
   cp "$built" "$staged.new" || die "failed to stage binary"
   chmod 0755 "$staged.new"
   mv "$staged.new" "$staged" || die "failed to activate staged binary"
-  skill link
+  nucleus worktree link || die "nucleus worktree link failed"
   ;;
 teardown)
   [ -f "$staged" ] && [ -x "$staged" ] ||
@@ -57,13 +52,13 @@ teardown)
     retire_rc=$?
   fi
   if [ "$retire_rc" -ne 0 ]; then
-    echo "[error] worktree-lifecycle: container retire failed (exit $retire_rc); skill unlink skipped" >&2
+    echo "[error] worktree-lifecycle: container retire failed (exit $retire_rc); Nucleus unlink skipped" >&2
     if [ "$archive_rc" -ne 0 ]; then
       echo "[error] worktree-lifecycle: run-log archive also failed (exit $archive_rc)" >&2
     fi
     exit "$retire_rc"
   fi
-  skill unlink
+  nucleus worktree unlink || die "nucleus worktree unlink failed"
   if [ "$archive_rc" -ne 0 ]; then
     echo "[error] worktree-lifecycle: run-log archive failed (exit $archive_rc); cleanup completed" >&2
     exit "$archive_rc"
