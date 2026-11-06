@@ -1302,7 +1302,7 @@ run = [{ task = "secrets init" }]
                         if args.repo_override == Some(PathBuf::from("/workspace/apps/bovine-desktop"))
                 ));
             }
-            other => panic!("expected secrets builtin, got {:?}", other.kind()),
+            other => panic!("expected secrets builtin, got {}", other.kind()),
         }
     }
 
