@@ -1,7 +1,7 @@
 //! One typed, ordered sequence engine. Output mode chooses sinks only.
 use super::host_alias::{host_alias_resolver, secret_env_slice};
 use super::{context::ExecutionTaskContext, preflight::ExecutionPreflight};
-use crate::runner::command_context::EmbeddedRepoOverrideMode;
+use crate::runner::command_context::{command_repo_override, EmbeddedRepoOverrideMode};
 use crate::runner::embedded_runner::{parse_embedded_command, run_embedded_task_with_output_mode};
 use crate::runner::error::RunnerError;
 use crate::runner::task_engine::{
@@ -910,13 +910,17 @@ fn resolve_task_step(
             &effigy_tasks::render_template_args(&args),
             &cwd,
         )?;
-        // The parsed command already Force-applies `--repo` to the catalog
-        // that owns this step. The child process that runs the rendered
-        // string would otherwise walk up from cwd to the workspace root.
-        let command = format!(
-            "{command} --repo {}",
-            effigy_core::shell::shell_quote(&cwd.display().to_string())
-        );
+        // Force-apply stores the catalog on commands that accept `--repo`.
+        // Bare help-shaped builtins (`docs`, `secrets`, `release`, …) do not;
+        // appending the flag there exits 2. Secrets init/set still pin so the
+        // child process does not walk up from cwd to the workspace.
+        let command = match command_repo_override(&parsed) {
+            Some(repo) => format!(
+                "{command} --repo {}",
+                effigy_core::shell::shell_quote(&repo.display().to_string())
+            ),
+            None => command,
+        };
         return Ok(StepAction::Builtin {
             command,
             parsed: Box::new(parsed),
@@ -1303,6 +1307,105 @@ run = [{ task = "secrets init" }]
                 ));
             }
             other => panic!("expected secrets builtin, got {}", other.kind()),
+        }
+    }
+
+    #[test]
+    fn resolve_task_step_does_not_pin_repo_on_bare_help_builtins() {
+        let root = loaded_catalog(
+            "root",
+            "/workspace",
+            manifest_from_toml("[tasks.root]\nrun = [{ task = 'docs' }]\n"),
+            0,
+        );
+        let preflight = ExecutionPreflight {
+            invocation: effigy_cli::TaskInvocation {
+                name: "root".to_owned(),
+                args: Vec::new(),
+            },
+            invocation_cwd: PathBuf::from("/workspace"),
+            runtime_args_raw: TaskRuntimeArgs {
+                repo_override: None,
+                verbose_root: false,
+                env_schema_override: None,
+                lock_wait_ms: None,
+                passthrough: Vec::new(),
+            },
+            runtime_args_exec: TaskRuntimeArgs {
+                repo_override: None,
+                verbose_root: false,
+                env_schema_override: None,
+                lock_wait_ms: None,
+                passthrough: Vec::new(),
+            },
+            output_json: false,
+            plan: false,
+            help: false,
+            output_mode: effigy_execution::ExecutionOutputMode::Capture,
+            resolved: ResolvedTarget {
+                resolved_root: PathBuf::from("/workspace"),
+                resolution_mode: ResolutionMode::AutoNearest,
+                evidence: Vec::new(),
+                warnings: Vec::new(),
+            },
+            discovery_plan: ExecutionDiscoveryPlan {
+                invocation_cwd: PathBuf::from("/workspace"),
+                resolved_root: PathBuf::from("/workspace"),
+                selector: TaskSelector {
+                    prefix: None,
+                    task_name: "root".to_owned(),
+                },
+                repo_override: None,
+            },
+            selector: TaskSelector {
+                prefix: None,
+                task_name: "root".to_owned(),
+            },
+            catalogs: vec![root],
+            secret_targets: Vec::new(),
+            task_source: None,
+        };
+        let selection = TaskSelection {
+            catalog: &preflight.catalogs[0],
+            task: preflight.catalogs[0]
+                .manifest
+                .tasks
+                .get("root")
+                .expect("root task"),
+            mode: CatalogSelectionMode::ExplicitPrefix,
+            evidence: vec!["test".to_owned()],
+            surface: effigy_tasks::TaskSurface::Published,
+        };
+
+        for name in [
+            "docs",
+            "secrets",
+            "release",
+            "state",
+            "deploy",
+            "service",
+            "changelog",
+        ] {
+            let action = resolve_task_step(name, &preflight, &selection)
+                .unwrap_or_else(|_| panic!("resolve `{name}`"));
+            match action {
+                StepAction::Builtin {
+                    command,
+                    cwd,
+                    parsed,
+                } => {
+                    assert_eq!(cwd, PathBuf::from("/workspace"));
+                    assert!(
+                        !command.contains("--repo"),
+                        "bare `{name}` must not append --repo: {command}"
+                    );
+                    assert!(
+                        matches!(*parsed, Command::Help(_)),
+                        "bare `{name}` parses as help"
+                    );
+                }
+                other => panic!("expected `{name}` builtin, got {}", other.kind()),
+            }
         }
     }
 

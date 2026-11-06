@@ -152,8 +152,9 @@ Task-target keys, a relative vault path, and that generate-hook join belong
 to the **selected task catalog**. Prefix selection from the workspace root
 and cwd-nearest selection inside the child directory load the same catalog
 declarations and vault. Nested generate-hook builtins (`secrets init`,
-`secrets set`) keep that catalog as `--repo`. Root-catalog tasks keep the
-root vault. Catalogs do not union parent or sibling secret sets. Isolated
+`secrets set`) keep that catalog as `--repo`. Bare help-shaped builtins
+(`docs`, `secrets`, `release`, and the same family) do not take `--repo`.
+Root-catalog tasks keep the root vault. Catalogs do not union parent or sibling secret sets. Isolated
 external skill tasks never inherit consumer secrets. Explicit task `env`
 still outranks an injected vault value. A managed session still resolves
 vault access once against the checkout root (Q-007); task-secret injection

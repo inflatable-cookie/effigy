@@ -580,7 +580,7 @@
 # `[secrets.vault].generate` hook is a durable descendant of
 # `secrets = "required"` startup. The tree classifier must see that join before
 # the task body; an undeclared late durable child still refuses before effects.
-"test:secrets:hook-admission" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh exec -- bash tests/scripts/vault-validation.sh cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --test secrets_hook_admission_cli_tests -E 'test(sequence_run::tests::declared_vault_generate_hook_selects_durability_before_task_startup) | binary(secrets_hook_admission_cli_tests)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
+"test:secrets:hook-admission" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh exec -- bash tests/scripts/vault-validation.sh cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --test secrets_hook_admission_cli_tests -E 'test(sequence_run::tests::declared_vault_generate_hook_selects_durability_before_task_startup) | test(sequence_run::tests::resolve_task_step) | binary(secrets_hook_admission_cli_tests)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 
 "check:secrets:hook-admission" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy --all-targets", timeout_ms = 900000 }] }
 "lint:secrets:hook-admission" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy --all-targets -- -D warnings", timeout_ms = 900000 }] }
