@@ -170,6 +170,9 @@ fn execute(
         crate::fault_point!(ProbeAfterGo).map_err(failure)?;
         loop {
             check(cx, "probe process")?;
+            // Scoped fixture control only; absent from ordinary/default calls.
+            #[cfg(feature = "fault-injection")]
+            crate::fault_injection::point("ProbeWorkChecked").map_err(failure)?;
             capture.drain().map_err(failure)?;
             if let Some(exit) = spawn::peek(pin.receipt.identity.pid).map_err(failure)? {
                 // Leader exit alone never proves process or stream closure.

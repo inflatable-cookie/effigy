@@ -482,3 +482,408 @@ fn probe_cleared_group_member_after_leader_exit_uses_only_available_evidence() {
         assert_eq!(snapshot(home.path()), before);
     }
 }
+
+// This control has its own custody owner: the ordinary matrix helper drops
+// unread telemetry on startup failure and cannot safely own this handshake.
+mod checked_control {
+    use super::*;
+    use std::io::{self, Read};
+    use std::net::{Shutdown, TcpStream};
+    use std::os::fd::OwnedFd;
+    use std::os::unix::net::UnixStream;
+
+    const BOUND: Duration = Duration::from_secs(5);
+    const POLL: Duration = Duration::from_millis(10);
+
+    fn error(message: &'static str) -> io::Error {
+        io::Error::other(message)
+    }
+
+    // A bounded frame stays with its custody owner even on a partial read.
+    // Socket reads block for at most one existing 10ms observation cadence.
+    fn frame(stream: &mut impl Read, pending: &mut Vec<u8>, until: Instant) -> io::Result<Value> {
+        loop {
+            if let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+                let value = serde_json::from_slice(&pending[..end])
+                    .map_err(|_| error("invalid fixture frame"))?;
+                pending.drain(..=end);
+                return Ok(value);
+            }
+            if pending.len() >= 4096 || Instant::now() >= until {
+                return Err(error("incomplete fixture frame"));
+            }
+            let mut byte = [0];
+            match stream.read(&mut byte) {
+                Ok(0) => return Err(error("fixture telemetry EOF")),
+                Ok(_) => pending.push(byte[0]),
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::WouldBlock
+                            | io::ErrorKind::TimedOut
+                            | io::ErrorKind::Interrupted
+                    ) => {}
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    fn accept_owned(listener: &TcpListener, until: Instant) -> io::Result<TcpStream> {
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => return Ok(stream),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= until {
+                        return Err(error("fixture connection missing"));
+                    }
+                    std::thread::sleep(POLL);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    fn category(value: Option<&Value>) -> &'static str {
+        let Some(value) = value else { return "none" };
+        for name in [
+            "TimedOut",
+            "Busy",
+            "Cancelled",
+            "PermissionDenied",
+            "ToolUnavailable",
+            "Unparsable",
+            "Inconsistent",
+            "GuardUnavailable",
+            "Injected",
+            "Untrusted",
+            "HostAuthorityRequired",
+            "StoreUnreadable",
+        ] {
+            if value.as_str() == Some(name) || value.get(name).is_some() {
+                return name;
+            }
+        }
+        "unrecognized"
+    }
+
+    // Unknown is never absence, including in failure cleanup.
+    fn closed(id: &ProcessIdentity) -> bool {
+        match ident::process_identity(id.pid) {
+            Observed::Absent(_) => true,
+            Observed::Verified(current, _) if current != *id => true,
+            Observed::Verified(_, _) => matches!(
+                ident::process_state(id.pid),
+                Observed::Absent(_) | Observed::Verified(ProcessState::Zombie, _)
+            ),
+            Observed::Unknown(_) => false,
+        }
+    }
+
+    fn wait_closed(id: &ProcessIdentity) -> bool {
+        let until = Instant::now() + BOUND;
+        loop {
+            if closed(id) {
+                return true;
+            }
+            if Instant::now() >= until {
+                return false;
+            }
+            std::thread::sleep(POLL);
+        }
+    }
+
+    struct Control {
+        child: Child,
+        output: UnixStream,
+        output_pending: Vec<u8>,
+        readiness: Option<Value>,
+        telemetry: TcpListener,
+        control: TcpListener,
+        announcement: Option<TcpStream>,
+        announcement_pending: Vec<u8>,
+        announcement_value: Option<Value>,
+        pause: Option<TcpStream>,
+        pause_pending: Vec<u8>,
+        observer: Option<ProcessIdentity>,
+        guard: Option<ProcessIdentity>,
+        workload: Option<ProcessIdentity>,
+        released: bool,
+        exit: Option<std::process::ExitStatus>,
+        settled: Option<bool>,
+    }
+
+    impl Control {
+        fn start(home: &std::path::Path) -> io::Result<Self> {
+            let telemetry = listener();
+            let control = listener();
+            let (output, child_socket) = UnixStream::pair()?;
+            output.set_read_timeout(Some(POLL))?;
+            output.set_write_timeout(Some(BOUND))?;
+            let input: OwnedFd = child_socket.try_clone()?.into();
+            let stdout: OwnedFd = child_socket.into();
+            let child = Command::new(fixture())
+                .arg("probe-observer")
+                .arg(home)
+                .arg("hang")
+                .arg(telemetry.local_addr()?.to_string())
+                .env(
+                    "EFFIGY_FIXTURE_PROBE_CHECKED",
+                    control.local_addr()?.to_string(),
+                )
+                .stdin(Stdio::from(input))
+                .stdout(Stdio::from(stdout))
+                .stderr(Stdio::inherit())
+                .spawn()?;
+            // No fallible operation between spawn and transfer to the owner.
+            Ok(Self {
+                child,
+                output,
+                output_pending: Vec::new(),
+                readiness: None,
+                telemetry,
+                control,
+                announcement: None,
+                announcement_pending: Vec::new(),
+                announcement_value: None,
+                pause: None,
+                pause_pending: Vec::new(),
+                observer: None,
+                guard: None,
+                workload: None,
+                released: false,
+                exit: None,
+                settled: None,
+            })
+        }
+
+        fn ready(&mut self) -> io::Result<()> {
+            if self.readiness.is_none() {
+                self.readiness = Some(frame(
+                    &mut self.output,
+                    &mut self.output_pending,
+                    Instant::now() + BOUND,
+                )?);
+            }
+            let value = self
+                .readiness
+                .as_ref()
+                .ok_or_else(|| error("no readiness"))?;
+            // Preserve each identity as soon as decoded, before another decode.
+            self.guard = Some(
+                serde_json::from_value(value["guard"].clone())
+                    .map_err(|_| error("missing guard identity"))?,
+            );
+            self.observer = Some(
+                serde_json::from_value(value["observer"].clone())
+                    .map_err(|_| error("missing observer identity"))?,
+            );
+            if self.observer.as_ref().map(|id| id.pid) != Some(self.child.id()) {
+                return Err(error("observer is not our direct child"));
+            }
+            Ok(())
+        }
+
+        fn collect_workload(&mut self, until: Instant) -> io::Result<()> {
+            if self.workload.is_some() {
+                return Ok(());
+            }
+            if self.announcement.is_none() {
+                // Store the descriptor before any mode/timeout/read failure.
+                self.announcement = Some(accept_owned(&self.telemetry, until)?);
+            }
+            let stream = self
+                .announcement
+                .as_mut()
+                .ok_or_else(|| error("missing announcement"))?;
+            stream.set_nonblocking(false)?;
+            stream.set_read_timeout(Some(POLL))?;
+            if self.announcement_value.is_none() {
+                self.announcement_value =
+                    Some(frame(stream, &mut self.announcement_pending, until)?);
+            }
+            let value = self
+                .announcement_value
+                .as_ref()
+                .ok_or_else(|| error("no announcement value"))?;
+            self.workload = Some(
+                serde_json::from_value(value.clone())
+                    .map_err(|_| error("invalid workload identity"))?,
+            );
+            Ok(())
+        }
+
+        fn pause_after_check(&mut self, until: Instant) -> io::Result<()> {
+            self.pause = Some(accept_owned(&self.control, until)?);
+            let stream = self
+                .pause
+                .as_mut()
+                .ok_or_else(|| error("missing control socket"))?;
+            // Accepted sockets inherit nonblocking on macOS. Restore blocking
+            // explicitly, then bound each read and the entire frame deadline.
+            stream.set_nonblocking(false)?;
+            stream.set_read_timeout(Some(POLL))?;
+            stream.set_write_timeout(Some(
+                until.saturating_duration_since(Instant::now()).min(BOUND),
+            ))?;
+            let value = frame(stream, &mut self.pause_pending, until)?;
+            if value != serde_json::json!({"stage": "checked"}) {
+                return Err(error("wrong boundary marker"));
+            }
+            Ok(())
+        }
+
+        fn reap(&mut self) -> io::Result<()> {
+            if self.exit.is_some() {
+                return Ok(());
+            }
+            let until = Instant::now() + BOUND;
+            loop {
+                if let Some(exit) = self.child.try_wait()? {
+                    self.exit = Some(exit);
+                    return Ok(());
+                }
+                if Instant::now() >= until {
+                    return Err(error("observer exit not observed"));
+                }
+                std::thread::sleep(POLL);
+            }
+        }
+
+        fn settle(&mut self) -> bool {
+            if let Some(settled) = self.settled {
+                return settled;
+            }
+            // Keep partial startup bytes and the decoded frame in this owner;
+            // on an early failure, drain readiness before closing the child input.
+            if self.guard.is_none() || self.observer.is_none() {
+                let recovered = self.ready().is_ok();
+                eprintln!("control cleanup: readiness_recovered={recovered}");
+            }
+            // Preserve/drain announcements on all post-go failures, before
+            // stopping any owner. Missing telemetry remains Unknown.
+            if self.released && self.workload.is_none() {
+                let collected = self.collect_workload(Instant::now() + BOUND).is_ok();
+                eprintln!("control cleanup: announcement_collected={collected}");
+            }
+            // Closing either the retained or still-pending control connection
+            // releases a paused consumer with EOF (a failed observation).
+            if self.released && self.pause.is_none() {
+                self.pause = accept_owned(&self.control, Instant::now() + BOUND).ok();
+            }
+            if let Some(stream) = &self.pause {
+                let _ = stream.shutdown(Shutdown::Both);
+            }
+            // Before go, EOF is explicitly refused by the controlled fixture.
+            let _ = self.output.shutdown(Shutdown::Write);
+            let workload_closed = match &self.workload {
+                Some(id) => {
+                    signal(id, libc::SIGKILL);
+                    wait_closed(id)
+                }
+                None => !self.released,
+            };
+            // Let the observer's primary cleanup and backup finish first.
+            if self.reap().is_err() {
+                let _ = self.child.kill(); // our unreaped direct child only
+                let _ = self.reap();
+            }
+            // Never kill backup first, or when workload closure is unproven.
+            let guard_closed = match &self.guard {
+                Some(id) if workload_closed && self.exit.is_some() => {
+                    signal(id, libc::SIGKILL);
+                    wait_closed(id)
+                }
+                Some(id) => closed(id),
+                None => false,
+            };
+            let settled = workload_closed && self.exit.is_some() && guard_closed;
+            eprintln!(
+                "control cleanup identities: observer={:?} guard={:?} workload={:?} observer_exit={:?}",
+                self.observer, self.guard, self.workload, self.exit
+            );
+            eprintln!("control cleanup: workload_closed={workload_closed} observer_reaped={} guard_closed={guard_closed} complete={settled}", self.exit.is_some());
+            self.settled = Some(settled);
+            settled
+        }
+    }
+
+    impl Drop for Control {
+        fn drop(&mut self) {
+            self.settle();
+        }
+    }
+
+    #[test]
+    fn probe_checked_observer_pause_consumes_real_guard_terminal_exit() -> io::Result<()> {
+        let home = tempfile::tempdir()?;
+        let before = snapshot(home.path());
+        let mut owner = Control::start(home.path())?;
+        owner.ready()?;
+        eprintln!(
+            "control hang/checked-pause: ready observer={:?} guard={:?}",
+            owner.observer, owner.guard
+        );
+        let start = Instant::now();
+        owner.released = true; // even a partial write retains post-go custody
+        owner.output.write_all(b"go\n")?;
+        let until = Instant::now() + BOUND;
+        owner.collect_workload(until)?;
+        eprintln!("control hang/checked-pause: announced={:?}", owner.workload);
+        owner.pause_after_check(until)?;
+        eprintln!("control hang/checked-pause: check passed; consumer held before capture/peek/group closure");
+        let gone = wait_closed(
+            owner
+                .workload
+                .as_ref()
+                .ok_or_else(|| error("no workload"))?,
+        );
+        assert!(gone, "owned workload survived");
+        assert!(
+            start.elapsed() < Duration::from_secs(3),
+            "O14 deadline plus grace"
+        );
+        eprintln!(
+            "control hang/checked-pause: workload positively closed while consumer held; release"
+        );
+        owner
+            .pause
+            .as_mut()
+            .ok_or_else(|| error("no pause"))?
+            .write_all(b"resume\n")?;
+        let result = frame(
+            &mut owner.output,
+            &mut owner.output_pending,
+            Instant::now() + BOUND,
+        )?;
+        owner.reap()?;
+        eprintln!("control hang/checked-pause: verified={} exit={} warning_count={} unknown_category={} observer_exit={:?}", result["verified"].as_bool().unwrap_or(false), result["exit"].as_i64().unwrap_or(-1), result["warnings"].as_array().map_or(0, Vec::len), category(result.get("unknown")), owner.exit);
+        assert!(
+            result["verified"].as_bool() == Some(true),
+            "not a verified terminal observation"
+        );
+        assert!(
+            result["exit"].as_i64() == Some(i64::from(128 + libc::SIGKILL)),
+            "unexpected terminal code"
+        );
+        assert!(
+            result["warnings"] == serde_json::json!([]),
+            "unexpected warning category"
+        );
+        assert!(
+            result["truncated"].as_bool() == Some(false),
+            "incomplete capture"
+        );
+        assert!(
+            result["output"].as_str() == Some(""),
+            "unexpected workload output"
+        );
+        assert!(owner
+            .exit
+            .ok_or_else(|| error("no observer exit"))?
+            .success());
+        assert!(snapshot(home.path()) == before, "O10 checked-pause");
+        assert!(owner.settle(), "current control cleanup incomplete");
+        eprintln!("control hang/checked-pause: O10 unchanged; current fixture settled");
+        Ok(())
+    }
+}

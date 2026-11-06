@@ -140,6 +140,11 @@ pub fn run(entry: &str, args: &[OsString], cancel: CancelToken) {
     // proof's budget starts when the harness releases it, never before.
     let mut line = String::new();
     std::io::stdin().lock().read_line(&mut line).unwrap();
+    // The controlled fixture must refuse EOF/partial go, including cleanup
+    // before the harness has consumed readiness. Ordinary fixture is unchanged.
+    if std::env::var_os("EFFIGY_FIXTURE_PROBE_CHECKED").is_some() && line != "go\n" {
+        return;
+    }
     let cx = op(cancel, EffectClass::Observe, Duration::from_secs(10))
         .observe()
         .unwrap()
@@ -184,7 +189,7 @@ pub fn run(entry: &str, args: &[OsString], cancel: CancelToken) {
             args[3].clone(),
         ],
     };
-    let output = cx.probe_process(ProbeCommand {
+    let command = ProbeCommand {
         argv,
         cwd: home.into(),
         env,
@@ -203,7 +208,41 @@ pub fn run(entry: &str, args: &[OsString], cancel: CancelToken) {
         } else {
             4096
         },
-    });
+    };
+    let observe = || cx.probe_process(command);
+    #[cfg(feature = "fault-injection")]
+    let output = if let Ok(address) = std::env::var("EFFIGY_FIXTURE_PROBE_CHECKED") {
+        use std::io::Read;
+        let address: std::net::SocketAddr = address.parse().unwrap();
+        assert!(address.ip().is_loopback());
+        let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(5)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut once = false;
+        effigy_kernel::fault_injection::with_hook(
+            move |point| {
+                if point == "ProbeWorkChecked" && !once {
+                    once = true;
+                    stream.write_all(b"{\"stage\":\"checked\"}\n")?;
+                    let mut resume = [0; 7];
+                    stream.read_exact(&mut resume)?;
+                    if &resume != b"resume\n" {
+                        return Err(std::io::Error::other("invalid fixture resume"));
+                    }
+                }
+                Ok(())
+            },
+            observe,
+        )
+    } else {
+        observe()
+    };
+    #[cfg(not(feature = "fault-injection"))]
+    let output = observe();
     match output {
         Observed::Verified(value, _) => println!(
             "{}",
