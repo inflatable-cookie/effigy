@@ -934,6 +934,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Distinguish unresolved release process group, residue and capture conditions in refusal messages.
 
+- Record fixed-category Git settlement refusal facts on synthetic release
+  TestEffects before fixture cleanup, including checkpoint-resume prepare
+  commits, with Run versus Resume and `--to` checkpoint labels. Test-only;
+  production output is unchanged (effigy#664).
+
 - Import cached legacy bundle bytes during planning without starting an unused
   sentinel. Fetches still require full custody, and planning keeps its original
   deadline and checkout publication gates (effigy#635).
