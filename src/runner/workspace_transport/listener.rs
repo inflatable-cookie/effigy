@@ -525,3 +525,13 @@ mod tests {
             .is_none());
     }
 }
+
+// Private proof reads must honor their own framing/observation deadline rather
+// than refreshing the transport's five-second operation budget on every read.
+#[cfg(test)]
+impl TlsChannelTransport {
+    pub(crate) fn read_until(&mut self, bytes: &mut [u8], until: Instant) -> io::Result<usize> {
+        self.stream.sock.until = until;
+        self.stream.read(bytes)
+    }
+}

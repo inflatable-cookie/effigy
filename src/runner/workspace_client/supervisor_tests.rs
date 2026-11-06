@@ -107,7 +107,7 @@ fn read_frame(transport: &mut TlsChannelTransport, until: Instant) -> io::Result
             ));
         }
         let mut chunk = [0u8; 4096];
-        match transport.read(&mut chunk) {
+        match transport.read_until(&mut chunk, until) {
             Ok(0) => {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
@@ -255,7 +255,8 @@ fn committed_guest_ordering(before_first_turn: bool) {
         // Catch proof failures so both the TLS worker and guest are joined and
         // the same session settles before an assertion is reported.
         let proof = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let permission = accepted.recv_timeout(Duration::from_secs(20));
+            let until = Instant::now() + Duration::from_secs(20);
+            let permission = accepted.recv_timeout(until.saturating_duration_since(Instant::now()));
             assert_eq!(permission.ok(), Some(!before_first_turn));
             if before_first_turn {
                 assert!(!service.serving());
@@ -264,7 +265,6 @@ fn committed_guest_ordering(before_first_turn: bool) {
                     Ok(false)
                 ));
             } else {
-                let until = Instant::now() + Duration::from_secs(20);
                 loop {
                     match service.serve_pending(&mut host::NoStreams) {
                         Ok(true) => break,
@@ -300,7 +300,7 @@ fn committed_guest_ordering(before_first_turn: bool) {
         }));
         service.stop();
         let joined = guest.join();
-        assert!(!service.key_held(), "stop revoked the same key");
+        let key_revoked = !service.key_held();
         let cleanup = cleanup(cx);
         let retired = service.retire(&cleanup, &mut NoEffects);
         eprintln!(
@@ -309,6 +309,7 @@ fn committed_guest_ordering(before_first_turn: bool) {
             retired.is_ok()
         );
         let retired = retired.expect("the session settles once");
+        assert!(key_revoked, "stop revoked the same key");
         assert_eq!(retired.session.run(), session.run());
         if proof.is_ok() {
             assert_eq!(retired.served, usize::from(!before_first_turn));
