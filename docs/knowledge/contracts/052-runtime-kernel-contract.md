@@ -4629,6 +4629,12 @@ success.
 
 ### 12.6 Q-010 acceptance proofs
 
+The machine completion integration fixture retains its iteration, stage and last
+completion observation on failure. Its owning client closes and waits within a
+bounded cleanup window; only a matching completion proves settlement, and a
+supervisor reap alone does not prove workload closure. An uncertain fixture is
+retained for diagnosis. This does not explain an earlier timeout.
+
 The following qualify the Q-010 storage and custody boundary. Every fixture
 uses a fresh `mktemp -d` HOME, state roots and independent checkouts, never the
 operator's `~/.effigy` or live gateway. Record started PIDs/process groups, stop
