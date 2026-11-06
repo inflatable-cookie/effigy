@@ -12,7 +12,7 @@ CHANGELOG validation runs through `effigy changelog validate CHANGELOG.md`, the 
 - Turn links to removed process records into plain references to Git history.
 - Record unresolved leads with Queue `lead.add`; use lanes, lane documents and `plan.set` for prioritized intent.
 
-`effigy docs check links` with no paths checks `README.md` and Markdown under `docs/` at the repository root. That default scope stays repository-root relative.
+`effigy docs check links` with no paths checks `README.md` and Markdown under `docs/` at the repository root. That default scope stays repository-root relative. A nested `{ task = "docs check ..." }` sequence step keeps `docs check` on its public grammar so the catalog directory is not treated as the repository root.
 
 An explicit path argument resolves against the invoking task's cwd. In a nested catalog whose cwd is `docs/`, `docs check links README.md knowledge/README.md` checks `docs/README.md` and `docs/knowledge/README.md`, and the report prints the resolved set (`resolved paths: docs/README.md, docs/knowledge/README.md`). A cwd outside the checkout, such as `effigy --repo <ROOT>` run from an unrelated directory, keeps resolving explicit arguments from the repository root.
 
