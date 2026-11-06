@@ -10,7 +10,7 @@ Effigy is a Rust task runner for monorepos. Its CLI and `effigy.toml` give agent
 - Open questions: `docs/knowledge/questions.md`
 - User documentation: `docs/guides/README.md`
 
-The plan (lanes, their documents and their order), leads, papercuts, brief drafts, tasks and status live in Queue. Read what's next with `plan.get` (see the `northstar` skill). The repository holds product knowledge and code.
+The plan (lanes, their documents and their order), leads, papercuts, brief drafts, tasks and status live in Queue. Read what's next with `plan.get` (see the Nucleus skill). The repository holds product knowledge and code.
 
 ## Commands
 
