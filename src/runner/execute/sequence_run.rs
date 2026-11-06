@@ -910,6 +910,13 @@ fn resolve_task_step(
             &effigy_tasks::render_template_args(&args),
             &cwd,
         )?;
+        // The parsed command already Force-applies `--repo` to the catalog
+        // that owns this step. The child process that runs the rendered
+        // string would otherwise walk up from cwd to the workspace root.
+        let command = format!(
+            "{command} --repo {}",
+            effigy_core::shell::shell_quote(&cwd.display().to_string())
+        );
         return Ok(StepAction::Builtin {
             command,
             parsed: Box::new(parsed),
@@ -1193,6 +1200,110 @@ mod tests {
             Command::Container(args)
                 if args.repo_override == Some(PathBuf::from("/tmp/repo"))
         ));
+    }
+
+    #[test]
+    fn resolve_task_step_renders_secrets_builtin_against_the_selected_catalog() {
+        let root = loaded_catalog(
+            "root",
+            "/workspace",
+            manifest_from_toml("[tasks.root]\nrun = 'true'\n"),
+            0,
+        );
+        let child = loaded_catalog(
+            "desktop",
+            "/workspace/apps/bovine-desktop",
+            manifest_from_toml(
+                r#"
+[secrets]
+backend = "effigy-vault"
+[tasks.preflight]
+run = [{ task = "secrets init" }]
+"#,
+            ),
+            1,
+        );
+        let preflight = ExecutionPreflight {
+            invocation: effigy_cli::TaskInvocation {
+                name: "desktop/preflight".to_owned(),
+                args: Vec::new(),
+            },
+            invocation_cwd: PathBuf::from("/workspace"),
+            runtime_args_raw: TaskRuntimeArgs {
+                repo_override: None,
+                verbose_root: false,
+                env_schema_override: None,
+                lock_wait_ms: None,
+                passthrough: Vec::new(),
+            },
+            runtime_args_exec: TaskRuntimeArgs {
+                repo_override: None,
+                verbose_root: false,
+                env_schema_override: None,
+                lock_wait_ms: None,
+                passthrough: Vec::new(),
+            },
+            output_json: false,
+            plan: false,
+            help: false,
+            output_mode: effigy_execution::ExecutionOutputMode::Capture,
+            resolved: ResolvedTarget {
+                resolved_root: PathBuf::from("/workspace"),
+                resolution_mode: ResolutionMode::AutoNearest,
+                evidence: Vec::new(),
+                warnings: Vec::new(),
+            },
+            discovery_plan: ExecutionDiscoveryPlan {
+                invocation_cwd: PathBuf::from("/workspace"),
+                resolved_root: PathBuf::from("/workspace"),
+                selector: TaskSelector {
+                    prefix: Some("desktop".to_owned()),
+                    task_name: "preflight".to_owned(),
+                },
+                repo_override: None,
+            },
+            selector: TaskSelector {
+                prefix: Some("desktop".to_owned()),
+                task_name: "preflight".to_owned(),
+            },
+            catalogs: vec![root, child],
+            secret_targets: Vec::new(),
+            task_source: None,
+        };
+        let selection = TaskSelection {
+            catalog: &preflight.catalogs[1],
+            task: preflight.catalogs[1]
+                .manifest
+                .tasks
+                .get("preflight")
+                .expect("preflight task"),
+            mode: CatalogSelectionMode::ExplicitPrefix,
+            evidence: vec!["test".to_owned()],
+            surface: effigy_tasks::TaskSurface::Published,
+        };
+
+        let action = resolve_task_step("secrets init", &preflight, &selection)
+            .expect("resolve secrets init");
+        match action {
+            StepAction::Builtin {
+                command,
+                cwd,
+                parsed,
+            } => {
+                assert_eq!(cwd, PathBuf::from("/workspace/apps/bovine-desktop"));
+                assert!(
+                    command.contains("--repo '/workspace/apps/bovine-desktop'")
+                        || command.contains("--repo /workspace/apps/bovine-desktop"),
+                    "rendered builtin must pin --repo to the selected catalog: {command}"
+                );
+                assert!(matches!(
+                    *parsed,
+                    Command::Secrets(args)
+                        if args.repo_override == Some(PathBuf::from("/workspace/apps/bovine-desktop"))
+                ));
+            }
+            other => panic!("expected secrets builtin, got {:?}", other.kind()),
+        }
     }
 
     fn manifest_from_toml(body: &str) -> TaskManifest {
