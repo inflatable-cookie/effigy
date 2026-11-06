@@ -912,14 +912,16 @@ fn resolve_task_step(
         )?;
         // Force-apply stores the catalog on commands that accept `--repo`.
         // Bare help-shaped builtins (`docs`, `secrets`, `release`, …) do not;
-        // appending the flag there exits 2. Secrets init/set still pin so the
+        // appending the flag there exits 2. Exec treats every token after the
+        // first positional as command payload, so a trailing `--repo` would
+        // be executed rather than parsed. Secrets init/set still pin so the
         // child process does not walk up from cwd to the workspace.
-        let command = match command_repo_override(&parsed) {
-            Some(repo) => format!(
+        let command = match (&parsed, command_repo_override(&parsed)) {
+            (Command::Exec(_), _) | (_, None) => command,
+            (_, Some(repo)) => format!(
                 "{command} --repo {}",
                 effigy_core::shell::shell_quote(&repo.display().to_string())
             ),
-            None => command,
         };
         return Ok(StepAction::Builtin {
             command,
@@ -1406,6 +1408,97 @@ run = [{ task = "secrets init" }]
                 }
                 other => panic!("expected `{name}` builtin, got {}", other.kind()),
             }
+        }
+    }
+
+    #[test]
+    fn resolve_task_step_does_not_pin_repo_on_exec_payload() {
+        let root = loaded_catalog(
+            "root",
+            "/workspace",
+            manifest_from_toml("[tasks.root]\nrun = [{ task = 'exec true' }]\n"),
+            0,
+        );
+        let preflight = ExecutionPreflight {
+            invocation: effigy_cli::TaskInvocation {
+                name: "root".to_owned(),
+                args: Vec::new(),
+            },
+            invocation_cwd: PathBuf::from("/workspace"),
+            runtime_args_raw: TaskRuntimeArgs {
+                repo_override: None,
+                verbose_root: false,
+                env_schema_override: None,
+                lock_wait_ms: None,
+                passthrough: Vec::new(),
+            },
+            runtime_args_exec: TaskRuntimeArgs {
+                repo_override: None,
+                verbose_root: false,
+                env_schema_override: None,
+                lock_wait_ms: None,
+                passthrough: Vec::new(),
+            },
+            output_json: false,
+            plan: false,
+            help: false,
+            output_mode: effigy_execution::ExecutionOutputMode::Capture,
+            resolved: ResolvedTarget {
+                resolved_root: PathBuf::from("/workspace"),
+                resolution_mode: ResolutionMode::AutoNearest,
+                evidence: Vec::new(),
+                warnings: Vec::new(),
+            },
+            discovery_plan: ExecutionDiscoveryPlan {
+                invocation_cwd: PathBuf::from("/workspace"),
+                resolved_root: PathBuf::from("/workspace"),
+                selector: TaskSelector {
+                    prefix: None,
+                    task_name: "root".to_owned(),
+                },
+                repo_override: None,
+            },
+            selector: TaskSelector {
+                prefix: None,
+                task_name: "root".to_owned(),
+            },
+            catalogs: vec![root],
+            secret_targets: Vec::new(),
+            task_source: None,
+        };
+        let selection = TaskSelection {
+            catalog: &preflight.catalogs[0],
+            task: preflight.catalogs[0]
+                .manifest
+                .tasks
+                .get("root")
+                .expect("root task"),
+            mode: CatalogSelectionMode::ExplicitPrefix,
+            evidence: vec!["test".to_owned()],
+            surface: effigy_tasks::TaskSurface::Published,
+        };
+
+        let action =
+            resolve_task_step("exec true", &preflight, &selection).expect("resolve exec true");
+        match action {
+            StepAction::Builtin {
+                command,
+                cwd,
+                parsed,
+            } => {
+                assert_eq!(cwd, PathBuf::from("/workspace"));
+                assert!(
+                    !command.contains("--repo"),
+                    "exec payload must not include trailing --repo: {command}"
+                );
+                assert!(matches!(
+                    *parsed,
+                    Command::Exec(args)
+                        if args.command.as_slice() == ["true"]
+                            && args.repo_override == Some(PathBuf::from("/workspace"))
+                ));
+            }
+            other => panic!("expected exec builtin, got {}", other.kind()),
         }
     }
 

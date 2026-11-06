@@ -154,6 +154,8 @@ and cwd-nearest selection inside the child directory load the same catalog
 declarations and vault. Nested generate-hook builtins (`secrets init`,
 `secrets set`) keep that catalog as `--repo`. Bare help-shaped builtins
 (`docs`, `secrets`, `release`, and the same family) do not take `--repo`.
+An `exec` step does not take a trailing `--repo`; that token would become
+command payload.
 Root-catalog tasks keep the root vault. Catalogs do not union parent or sibling secret sets. Isolated
 external skill tasks never inherit consumer secrets. Explicit task `env`
 still outranks an injected vault value. A managed session still resolves
