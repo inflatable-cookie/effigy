@@ -1771,6 +1771,21 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
             );
             assert!(survived, "lost anchor must grant no signal authority");
             assert!(!signalled, "refusal must deliver neither TERM nor CONT");
+        } else if mode == 3 {
+            // Recovery's observation and the later positive group_closed wait
+            // establish different facts. Lost continuity may require refusal.
+            match &result {
+                Observed::Verified(..) | Observed::Absent(_) => assert!(refusal.is_none()),
+                Observed::Unknown(UnknownReason::Inconsistent(reason)) => {
+                    assert_eq!(reason, "unproven group closure; anchor=generation:absent");
+                    let detail = refusal.as_deref().unwrap();
+                    assert!(detail.contains("refusal=anchor-verification:inconsistent"));
+                    assert!(detail.contains("closure=fallback:unproven row=anchor"));
+                }
+                _ => panic!("terminal={terminal:?} mode={mode} {result:?} refusal={refusal:?}"),
+            }
+            assert!(!survived);
+            assert!(!signalled);
         } else {
             assert!(
                 matches!(result, Observed::Verified(..) | Observed::Absent(_)),
