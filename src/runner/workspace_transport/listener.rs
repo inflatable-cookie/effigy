@@ -68,6 +68,8 @@ struct ListenerState {
     sockets: Mutex<BTreeMap<u64, TcpStream>>,
     next: AtomicU64,
     key: Arc<KeySlot>,
+    #[cfg(test)]
+    accepted: Mutex<Option<mpsc::SyncSender<bool>>>,
 }
 impl ListenerState {
     fn stop(&self) {
@@ -108,6 +110,20 @@ impl std::fmt::Debug for HostChannelAcceptor {
     }
 }
 impl HostChannelAcceptor {
+    /// Observe the real accept-time permission without changing it or blocking TLS.
+    #[cfg(test)]
+    pub(crate) fn observe_accepts(&self) -> mpsc::Receiver<bool> {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        *self
+            .state
+            .upgrade()
+            .expect("live fixture listener")
+            .accepted
+            .lock()
+            .unwrap() = Some(sender);
+        receiver
+    }
+
     pub(crate) fn accept(
         &mut self,
         launch: &SessionLaunch,
@@ -261,6 +277,8 @@ impl SessionTlsListener {
             sockets: Mutex::new(BTreeMap::new()),
             next: AtomicU64::new(1),
             key: key_slot,
+            #[cfg(test)]
+            accepted: Mutex::new(None),
         });
         // All preparation can still fail under ordinary RAII here. In
         // particular, a refused custody key must drop the bound socket and
@@ -288,6 +306,10 @@ impl SessionTlsListener {
                                 continue;
                             }
                             let serving_at_accept = worker_state.serving.load(Ordering::SeqCst);
+                            #[cfg(test)]
+                            if let Some(observer) = worker_state.accepted.lock().unwrap().as_ref() {
+                                let _ = observer.try_send(serving_at_accept);
+                            }
                             let id = worker_state.next.fetch_add(1, Ordering::Relaxed);
                             {
                                 let mut sockets = worker_state
