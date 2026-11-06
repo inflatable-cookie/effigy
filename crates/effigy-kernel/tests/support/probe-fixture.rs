@@ -140,6 +140,11 @@ pub fn run(entry: &str, args: &[OsString], cancel: CancelToken) {
     // proof's budget starts when the harness releases it, never before.
     let mut line = String::new();
     std::io::stdin().lock().read_line(&mut line).unwrap();
+    // The controlled fixture must refuse EOF/partial go, including cleanup
+    // before the harness has consumed readiness. Ordinary fixture is unchanged.
+    if std::env::var_os("EFFIGY_FIXTURE_PROBE_CHECKED").is_some() && line != "go\n" {
+        return;
+    }
     let cx = op(cancel, EffectClass::Observe, Duration::from_secs(10))
         .observe()
         .unwrap()
@@ -184,7 +189,7 @@ pub fn run(entry: &str, args: &[OsString], cancel: CancelToken) {
             args[3].clone(),
         ],
     };
-    let output = cx.probe_process(ProbeCommand {
+    let command = ProbeCommand {
         argv,
         cwd: home.into(),
         env,
@@ -203,7 +208,61 @@ pub fn run(entry: &str, args: &[OsString], cancel: CancelToken) {
         } else {
             4096
         },
-    });
+    };
+    let observe = || cx.probe_process(command);
+    #[cfg(feature = "fault-injection")]
+    let output = if let Ok(address) = std::env::var("EFFIGY_FIXTURE_PROBE_CHECKED") {
+        use std::io::Read;
+        let address: std::net::SocketAddr = address.parse().unwrap();
+        assert!(address.ip().is_loopback());
+        let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(5)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut once = false;
+        effigy_kernel::fault_injection::with_hook(
+            move |point| {
+                if point == "ProbeWorkChecked" && !once {
+                    once = true;
+                    stream.write_all(b"{\"stage\":\"checked\"}\n")?;
+                    let expected = b"resume\n";
+                    let until = Instant::now() + Duration::from_secs(5);
+                    let mut received = 0;
+                    while received < expected.len() {
+                        let remaining = until
+                            .checked_duration_since(Instant::now())
+                            .filter(|remaining| !remaining.is_zero())
+                            .ok_or_else(|| std::io::Error::other("fixture resume expired"))?;
+                        stream.set_read_timeout(Some(remaining))?;
+                        let mut bytes = [0; 7];
+                        let count = match stream.read(&mut bytes[..expected.len() - received]) {
+                            Ok(0) => return Err(std::io::Error::other("fixture resume EOF")),
+                            Ok(count) => count,
+                            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                                continue
+                            }
+                            Err(error) => return Err(error),
+                        };
+                        if Instant::now() >= until
+                            || bytes[..count] != expected[received..received + count]
+                        {
+                            return Err(std::io::Error::other("invalid or expired fixture resume"));
+                        }
+                        received += count;
+                    }
+                }
+                Ok(())
+            },
+            observe,
+        )
+    } else {
+        observe()
+    };
+    #[cfg(not(feature = "fault-injection"))]
+    let output = observe();
     match output {
         Observed::Verified(value, _) => println!(
             "{}",
