@@ -320,6 +320,16 @@
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test custody --lib -E 'test(/^custody::tests::/) | test(/^signal::tests::/) | test(/^run::lifecycle::tests::/) | binary(custody)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "handoff", run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test handoff -E 'binary(handoff)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
+# Independent leaves for the partial later-stage census. Each owns its fixture
+# build so it remains safe to run without relying on an earlier QA stage.
+"test:kernel:custody:later" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test custody --lib -E 'test(/^custody::tests::/) | test(/^signal::tests::/) | test(/^run::lifecycle::tests::/) | binary(custody)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+] }
+"test:kernel:handoff:later" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test handoff -E 'binary(handoff)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+] }
 "test:kernel:gateway-budget" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^run::machine::tests::/)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
@@ -1682,6 +1692,7 @@
 # The Q-017 gate: no fixed-label spinner can reach a command plane, and the
 # whole workspace is linted, not a chosen package list (effigy#467).
 "lint:feedback" = { visibility = "internal", group = "Maintenance", description = "Fail on any fixed-label spinner entry point in any workspace crate, and lint every workspace target.", run = [{ task = "lint:feedback:inventory" }, { run = "sh scripts/oxide-selector.sh clippy --workspace --all-targets -- -D warnings", timeout_ms = 900000 }] }
+"lint:feedback:clippy" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy --workspace --all-targets -- -D warnings", timeout_ms = 900000 }] }
 "check:feedback:compile" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-ui -p effigy-containers --all-targets", timeout_ms = 900000 }] }
 "test:feedback:inventory" = { visibility = "internal", group = "Maintenance", run = [{ run = "python3 scripts/test_feedback_inventory.py", timeout_ms = 900000 }] }
 "lint:feedback:inventory" = { visibility = "internal", group = "Maintenance", run = [{ run = "python3 scripts/check-feedback-inventory.py", timeout_ms = 900000 }] }
@@ -1721,6 +1732,8 @@
 
 # JSON contract QA
 "qa:json" = { visibility = "public", group = "Validation", description = "Validate every active JSON contract row, its envelope and its payload schema.", run = [{ task = "contracts check-json --print-selected=text" }] }
+"qa:later-stages" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", description = "Collect the canonical later QA stages as a partial diagnostic receipt; omits the default suite and is never full QA.", run = [{ run = "python3 scripts/qa-later-stages.py {args}", timeout_ms = 5400000 }] }
+"test:qa:later-stages-wrapper" = { visibility = "internal", group = "Maintenance", run = [{ run = "python3 scripts/test_qa_later_stages.py", timeout_ms = 180000 }] }
 "qa:ci:json" = { visibility = "internal", group = "Maintenance", run = [
   "effigy contracts check-json --print-selected=json",
   "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(cli_contracts_)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
