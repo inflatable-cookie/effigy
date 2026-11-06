@@ -918,12 +918,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
-- Keep nested `docs check` and `bundle sync` sequence steps on their public
-  argument grammar: a parsed catalog `--repo` override does not append that
-  flag to the rendered builtin. `docs check` still resolves explicit paths
-  from the invoking task cwd and keeps the no-argument default at the
-  repository root; `bundle sync` still rejects `--repo`. Nested `secrets
-  init`/`set` still pin `--repo` to the selected catalog (effigy#663).
+- Nested sequence builtins pin `--repo` to the selected catalog except the
+  forms shown to break public grammar or cwd semantics: `docs check` keeps
+  invoking-cwd paths and repository-root default scope; `bundle sync` still
+  rejects `--repo`. Other catalog-scoped builtins (`tasks`, `deps`,
+  `changelog`, `doctor`, `release`, `deploy`, `bundle inspect`) keep the pin.
+  Nested `secrets init`/`set`, bare help, and `exec` payloads are unchanged
+  (effigy#663).
 
 - Resolve ordinary catalog task secrets and the declared vault generate-hook
   join from the selected task catalog, so a child catalog's task-target keys

@@ -1,13 +1,13 @@
 //! One typed, ordered sequence engine. Output mode chooses sinks only.
 use super::host_alias::{host_alias_resolver, secret_env_slice};
 use super::{context::ExecutionTaskContext, preflight::ExecutionPreflight};
-use crate::runner::command_context::EmbeddedRepoOverrideMode;
+use crate::runner::command_context::{command_repo_override, EmbeddedRepoOverrideMode};
 use crate::runner::embedded_runner::{parse_embedded_command, run_embedded_task_with_output_mode};
 use crate::runner::error::RunnerError;
 use crate::runner::task_engine::{
     run_effigy_child, run_plain, CustodyWait, PlainCommand, SpawnScope, TaskRun,
 };
-use effigy_cli::{Command, SecretsSubcommand, TaskInvocation};
+use effigy_cli::{BundleSubcommand, Command, DocsSubcommand, TaskInvocation};
 use effigy_env::{resolver::ResolvedEnv, secret::SecretString};
 use effigy_kernel::outcome::WorkloadOutcome;
 use effigy_managed::{render_step_command_template, StepEnvAccumulator};
@@ -982,29 +982,32 @@ fn parse_builtin_step_command(
 }
 
 /// Nested CLI execution uses the rendered string, not the parsed `Command`.
-/// Force-apply stores a catalog on any type with a `repo_override` field;
-/// that does not mean the public subcommand accepts `--repo` or that forcing
-/// it preserves cwd semantics. Only `secrets init`/`set` pin so the child
-/// does not walk up from cwd to the workspace vault. `docs check` keeps
-/// invoking-cwd paths and repository-root default scope. `bundle sync` has
-/// no `--repo` flag. Bare help and `exec` payloads stay unpinned.
+/// Force-apply stores a catalog on any type with a `repo_override` field.
+/// Pin that catalog on the rendered argv so a nested child does not walk up
+/// to the workspace root. Exclude only the forms shown to break:
+/// - `docs check`: `--repo` replaces repo_root and drops cwd/default-scope
+/// - `bundle sync`: public grammar has no `--repo`
+/// - `exec`: a trailing `--repo` becomes command payload
+/// Bare help parses as `Command::Help` and has no override to pin.
 fn pin_selected_catalog_repo_on_rendered_builtin(parsed: &Command, command: String) -> String {
+    if rendered_builtin_omits_catalog_repo_pin(parsed) {
+        return command;
+    }
+    match command_repo_override(parsed) {
+        Some(repo) => format!(
+            "{command} --repo {}",
+            effigy_core::shell::shell_quote(&repo.display().to_string())
+        ),
+        None => command,
+    }
+}
+
+fn rendered_builtin_omits_catalog_repo_pin(parsed: &Command) -> bool {
     match parsed {
-        Command::Secrets(args)
-            if matches!(
-                args.subcommand,
-                SecretsSubcommand::Init | SecretsSubcommand::Set { .. }
-            ) =>
-        {
-            match args.repo_override.as_ref() {
-                Some(repo) => format!(
-                    "{command} --repo {}",
-                    effigy_core::shell::shell_quote(&repo.display().to_string())
-                ),
-                None => command,
-            }
-        }
-        _ => command,
+        Command::Exec(_) => true,
+        Command::Docs(args) if matches!(args.subcommand, DocsSubcommand::Check { .. }) => true,
+        Command::Bundle(args) if matches!(args.subcommand, BundleSubcommand::Sync) => true,
+        _ => false,
     }
 }
 
@@ -1656,6 +1659,110 @@ run = [{ task = "bundle sync" }]
                             "Force-apply still stores the catalog on parsed bundle; that is not a pin license"
                         );
                     }
+                }
+                other => panic!("expected `{task_ref}` builtin, got {}", other.kind()),
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_task_step_pins_repo_on_selected_catalog_builtins() {
+        let root = loaded_catalog(
+            "root",
+            "/workspace",
+            manifest_from_toml("[tasks.root]\nrun = 'true'\n"),
+            0,
+        );
+        let child = loaded_catalog(
+            "desktop",
+            "/workspace/apps/bovine-desktop",
+            manifest_from_toml("[tasks.preflight]\nrun = 'true'\n"),
+            1,
+        );
+        let preflight = ExecutionPreflight {
+            invocation: effigy_cli::TaskInvocation {
+                name: "desktop/preflight".to_owned(),
+                args: Vec::new(),
+            },
+            invocation_cwd: PathBuf::from("/workspace"),
+            runtime_args_raw: TaskRuntimeArgs {
+                repo_override: None,
+                verbose_root: false,
+                env_schema_override: None,
+                lock_wait_ms: None,
+                passthrough: Vec::new(),
+            },
+            runtime_args_exec: TaskRuntimeArgs {
+                repo_override: None,
+                verbose_root: false,
+                env_schema_override: None,
+                lock_wait_ms: None,
+                passthrough: Vec::new(),
+            },
+            output_json: false,
+            plan: false,
+            help: false,
+            output_mode: effigy_execution::ExecutionOutputMode::Capture,
+            resolved: ResolvedTarget {
+                resolved_root: PathBuf::from("/workspace"),
+                resolution_mode: ResolutionMode::AutoNearest,
+                evidence: Vec::new(),
+                warnings: Vec::new(),
+            },
+            discovery_plan: ExecutionDiscoveryPlan {
+                invocation_cwd: PathBuf::from("/workspace"),
+                resolved_root: PathBuf::from("/workspace"),
+                selector: TaskSelector {
+                    prefix: Some("desktop".to_owned()),
+                    task_name: "preflight".to_owned(),
+                },
+                repo_override: None,
+            },
+            selector: TaskSelector {
+                prefix: Some("desktop".to_owned()),
+                task_name: "preflight".to_owned(),
+            },
+            catalogs: vec![root, child],
+            secret_targets: Vec::new(),
+            task_source: None,
+        };
+        let selection = TaskSelection {
+            catalog: &preflight.catalogs[1],
+            task: preflight.catalogs[1]
+                .manifest
+                .tasks
+                .get("preflight")
+                .expect("preflight task"),
+            mode: CatalogSelectionMode::ExplicitPrefix,
+            evidence: vec!["test".to_owned()],
+            surface: effigy_tasks::TaskSurface::Published,
+        };
+        let catalog = "/workspace/apps/bovine-desktop";
+
+        for task_ref in [
+            "tasks --json",
+            "deps",
+            "changelog validate",
+            "doctor",
+            "release status",
+            "deploy model",
+            "bundle inspect",
+            "docs add-log-index run.log",
+        ] {
+            let action = resolve_task_step(task_ref, &preflight, &selection)
+                .unwrap_or_else(|_| panic!("resolve `{task_ref}`"));
+            match action {
+                StepAction::Builtin {
+                    command,
+                    cwd,
+                    parsed: _,
+                } => {
+                    assert_eq!(cwd, PathBuf::from(catalog));
+                    assert!(
+                        command.contains(&format!("--repo '{catalog}'"))
+                            || command.contains(&format!("--repo {catalog}")),
+                        "rendered `{task_ref}` must pin --repo to the selected catalog: {command}"
+                    );
                 }
                 other => panic!("expected `{task_ref}` builtin, got {}", other.kind()),
             }
