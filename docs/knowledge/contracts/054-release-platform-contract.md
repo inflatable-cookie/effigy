@@ -18,9 +18,13 @@ the result. Adapter exit codes are interpreted by the stage (a missing tag is
 an observed absence), while unknown closure refuses completion. Settlement refusals report categorical group and capture states and a residue count without exposing observation details. Workspace guests
 cannot mutate release state through the host-only release API.
 The synthetic full-run and hosted-wait proofs record the returned live stop report's
-leader/group states and residue reason categories before fixture cleanup. This
-test-only diagnostic uses fixed labels and whitelisted categories; unmatched
-payloads are reported as `other`, never printed as observation details.
+leader/group states and residue reason categories before fixture cleanup. Synthetic
+TestEffects also record those categories for a settlement refusal, including the
+checkpoint-resume fixture, with Run versus Resume action and baseline versus `--to`
+checkpoint labels bound to the refusing operation. This test-only diagnostic uses
+fixed labels and whitelisted categories; unmatched payloads are reported as `other`,
+never printed as observation details. The diagnostic establishes fidelity, not
+historical causation.
 
 ## 1. Purpose
 

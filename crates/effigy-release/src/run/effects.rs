@@ -239,6 +239,12 @@ pub struct GitEffects {
     executable: Result<Executable, String>,
     #[cfg(test)]
     pub(super) trace_settlement: bool,
+    #[cfg(test)]
+    pub(super) trace_refusals: bool,
+    #[cfg(test)]
+    pub(super) diagnostic_action: &'static str,
+    #[cfg(test)]
+    pub(super) diagnostic_checkpoint: &'static str,
 }
 
 /// How a release stage runs a task.
@@ -257,6 +263,12 @@ impl GitEffects {
             executable: Executable::current().map_err(|error| error.to_string()),
             #[cfg(test)]
             trace_settlement: false,
+            #[cfg(test)]
+            trace_refusals: false,
+            #[cfg(test)]
+            diagnostic_action: "unspecified",
+            #[cfg(test)]
+            diagnostic_checkpoint: "unspecified",
         }
     }
 
@@ -373,6 +385,7 @@ impl GitEffects {
             Some("add") => "add",
             Some("push") => "push",
             Some("reset") => "reset",
+            Some("restore") => "restore",
             _ => "other",
         };
         let spec = ProcessSpec {
@@ -419,11 +432,23 @@ impl GitEffects {
             ReleaseError::TaskInvocation(format!("release process cleanup context: {error:?}"))
         })?;
         let closed = process.stop(&cleanup);
+        let refusal = settlement_refusal(&closed);
         #[cfg(test)]
-        if self.trace_settlement {
-            super::tests::trace_settlement(label, diagnostic_operation, &closed);
+        if self.trace_settlement || (self.trace_refusals && refusal.is_some()) {
+            super::tests::trace_settlement(
+                label,
+                diagnostic_operation,
+                &closed,
+                self.diagnostic_action,
+                self.diagnostic_checkpoint,
+                if refusal.is_some() {
+                    "refused"
+                } else {
+                    "settled"
+                },
+            );
         }
-        if let Some(error) = settlement_refusal(&closed) {
+        if let Some(error) = refusal {
             return Err(error);
         }
         let (out, err) = process.take_stream_output();

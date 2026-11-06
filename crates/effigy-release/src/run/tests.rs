@@ -29,12 +29,57 @@ pub(super) fn trace_settlement(
     label: &str,
     operation: &str,
     report: &effigy_kernel::custody::StopReport,
+    action: &str,
+    checkpoint: &str,
+    outcome: &str,
 ) {
+    eprintln!(
+        "{}",
+        settlement_trace_line(label, operation, report, action, checkpoint, outcome)
+    );
+    for reason in &report.residue {
+        eprintln!("release settlement residue: {}", settlement_reason(reason));
+    }
+}
+
+fn known_category(value: &str, known: &[&'static str]) -> &'static str {
+    known
+        .iter()
+        .copied()
+        .find(|item| *item == value)
+        .unwrap_or("other")
+}
+
+fn settlement_trace_line(
+    label: &str,
+    operation: &str,
+    report: &effigy_kernel::custody::StopReport,
+    action: &str,
+    checkpoint: &str,
+    outcome: &str,
+) -> String {
     use effigy_kernel::{custody::CaptureState, observe::Observed};
-    let label = match label {
-        "release git" => "release git",
-        _ => "other",
-    };
+    let label = known_category(label, &["release git"]);
+    let operation = known_category(
+        operation,
+        &["commit", "add", "push", "reset", "restore", "other"],
+    );
+    let action = known_category(action, &["run", "resume", "other", "unspecified"]);
+    let checkpoint = known_category(
+        checkpoint,
+        &[
+            "full",
+            "validate",
+            "pre-gates",
+            "prepare",
+            "certify",
+            "publish",
+            "verify",
+            "closeout",
+            "unspecified",
+        ],
+    );
+    let outcome = known_category(outcome, &["refused", "settled"]);
     let group = match &report.group {
         Observed::Verified(..) => "verified",
         Observed::Absent(_) => "absent",
@@ -49,10 +94,10 @@ pub(super) fn trace_settlement(
         Observed::Absent(_) => "absent",
         Observed::Unknown(reason) => settlement_reason(reason),
     };
-    eprintln!("release settlement: label={label}; operation={operation}; leader={leader}; group={group}; capture={capture}; residue={}", report.residue.len());
-    for reason in &report.residue {
-        eprintln!("release settlement residue: {}", settlement_reason(reason));
-    }
+    format!(
+        "release settlement: action={action}; checkpoint={checkpoint}; label={label}; operation={operation}; leader={leader}; group={group}; capture={capture}; residue={}; outcome={outcome}",
+        report.residue.len()
+    )
 }
 
 fn settlement_reason(reason: &effigy_kernel::observe::UnknownReason) -> &'static str {
@@ -359,8 +404,13 @@ struct TestEffects {
 
 impl TestEffects {
     fn new(root: &Path) -> Self {
+        let mut inner = GitEffects::with_executable(root, custody_fixture());
+        // Refusal tracing is the TestEffects default so a checkpoint-resume
+        // Git StopReport keeps its categories after TempDir cleanup. Named
+        // full-run and hosted-wait proofs still opt into every-stop traces.
+        inner.trace_refusals = true;
         Self {
-            inner: GitEffects::with_executable(root, custody_fixture()),
+            inner,
             pushes: Vec::new(),
             commit_pushes: Vec::new(),
             push_attempts: 0,
@@ -379,6 +429,19 @@ impl TestEffects {
             hosted_evidence_bindings: Vec::new(),
             artifact_path: None,
             artifact_contents: b"certified artifact".to_vec(),
+        }
+    }
+
+    fn bind_invocation(&mut self, action: &ReleaseAction, to: Option<ReleaseStage>) {
+        self.inner.diagnostic_action = match action {
+            ReleaseAction::Run => "run",
+            ReleaseAction::Resume { .. } => "resume",
+            ReleaseAction::Approve { .. } | ReleaseAction::Decide { .. } => "other",
+        };
+        if let Some(stage) = to {
+            self.inner.diagnostic_checkpoint = stage.label();
+        } else if matches!(action, ReleaseAction::Run) {
+            self.inner.diagnostic_checkpoint = "full";
         }
     }
 }
@@ -563,6 +626,7 @@ fn run(
     action: ReleaseAction,
     to: Option<ReleaseStage>,
 ) -> ReleaseRunOutcome {
+    effects.bind_invocation(&action, to);
     run_release(&request(fixture, action, to), effects).expect("release invocation")
 }
 
@@ -2863,6 +2927,43 @@ mod settlement_tests {
             settlement_reason(&UnknownReason::PermissionDenied),
             "permission-denied"
         );
+    }
+
+    #[test]
+    fn settlement_trace_binds_phase_without_payloads() {
+        use super::settlement_trace_line;
+        let secret = "secret-adversarial-value";
+        let report = StopReport {
+            leader: Observed::Unknown(UnknownReason::Untrusted(secret.into())),
+            group: Observed::Unknown(UnknownReason::Untrusted(secret.into())),
+            capture: CaptureState::Complete,
+            signals: vec![],
+            residue: vec![UnknownReason::Untrusted(secret.into())],
+        };
+        let line = settlement_trace_line(secret, secret, &report, secret, secret, secret);
+        assert_eq!(
+            line,
+            "release settlement: action=other; checkpoint=other; label=other; operation=other; leader=untrusted; group=untrusted; capture=complete; residue=1; outcome=other"
+        );
+        assert!(!line.contains(secret));
+        let bound =
+            settlement_trace_line("release git", "commit", &report, "run", "verify", "refused");
+        assert_eq!(
+            bound,
+            "release settlement: action=run; checkpoint=verify; label=release git; operation=commit; leader=untrusted; group=untrusted; capture=complete; residue=1; outcome=refused"
+        );
+        assert!(!bound.contains(secret));
+        let restore = settlement_trace_line(
+            "release git",
+            "restore",
+            &report,
+            "resume",
+            "prepare",
+            "refused",
+        );
+        assert!(restore.contains("operation=restore"));
+        assert!(restore.contains("action=resume"));
+        assert!(restore.contains("checkpoint=prepare"));
     }
 
     #[test]
