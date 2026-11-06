@@ -3013,16 +3013,234 @@ fn custody_completed_machine_store_run_closes_sentinel_and_releases_gate() {
     let _gate = effigy_kernel::gate::Gate::acquire(&cx, &root, &[owner], Wait::FailFast).unwrap();
 }
 
+// Own the client before any further fallible fixture operation. On unwind the
+// owning pipe requests shutdown; a bounded wait retains uncertainty instead of
+// killing the sentinel or treating a reaped supervisor as workload closure.
+struct MachineFixture {
+    home: Option<tempfile::TempDir>,
+    client: Option<SupervisorClient>,
+    root: Option<StateRoot>,
+    owner: Option<ResourceId>,
+    iteration: &'static str,
+    stage: &'static str,
+    last: String,
+    settled: bool,
+    reaped: bool,
+    identity: String,
+    receipt: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+}
+impl Drop for MachineFixture {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            return;
+        }
+        eprintln!(
+            "machine fixture iteration={} stage={} last={}",
+            self.iteration, self.stage, self.last
+        );
+        eprintln!("machine fixture recorded identity: {}", self.identity);
+        if let Some(client) = &mut self.client {
+            client.close_input();
+            let cx = context();
+            let result = client.wait_recoverable(&cx.operation().child(Duration::from_secs(10)));
+            self.reaped = result.is_ok()
+                || result
+                    .as_ref()
+                    .is_err_and(|e| e.kind() == std::io::ErrorKind::UnexpectedEof);
+            eprintln!("machine fixture cleanup client wait: {result:?}; reaped={}; workload closure and settlement remain unproved by client wait", self.reaped);
+        } else if !self.reaped {
+            eprintln!(
+                "machine fixture cleanup: no returned client handle; launch/closure uncertain"
+            );
+        }
+        if !self.settled {
+            if let (Some(root), Some(owner)) = (&self.root, &self.owner) {
+                let cx = context();
+                if let Ok(observe) = cx.operation().observe() {
+                    match effigy_kernel::store::Store::read(&observe, root) {
+                        Observed::Verified(reader, _) => {
+                            let (done, fact) = machine_completion_observation(
+                                effigy_kernel::run::machine_completion(&reader, owner),
+                                id(1),
+                            );
+                            eprintln!("machine fixture cleanup observation: {fact}");
+                            self.settled = done;
+                        }
+                        Observed::Absent(proof) => {
+                            eprintln!("machine fixture cleanup store absent: {proof:?}")
+                        }
+                        Observed::Unknown(reason) => {
+                            eprintln!("machine fixture cleanup store unknown: {reason:?}")
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(receipt) = &self.receipt {
+            receipt.store(
+                self.settled && self.reaped,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
+        if self.settled {
+            eprintln!("machine fixture cleanup: exact run completion observed");
+        } else {
+            eprintln!("machine fixture cleanup: workload closure and settlement unknown");
+        }
+        if !self.settled || !self.reaped {
+            if let Some(home) = self.home.take() {
+                eprintln!("machine fixture retained at {}", home.keep().display());
+            }
+        }
+    }
+}
+
+fn machine_completion_observation(
+    observed: Observed<MachineCompletion>,
+    expected: RunId,
+) -> (bool, String) {
+    match observed {
+        Observed::Verified(completion, _) if completion.run == expected => (
+            true,
+            format!(
+                "completion verified expected={expected} returned={}",
+                completion.run
+            ),
+        ),
+        Observed::Verified(completion, _) => (
+            false,
+            format!(
+                "completion different run expected={expected} returned={}",
+                completion.run
+            ),
+        ),
+        Observed::Absent(proof) => (false, format!("completion absent: {proof:?}")),
+        Observed::Unknown(reason) => (false, format!("completion unknown: {reason:?}")),
+    }
+}
+
+#[test]
+fn custody_machine_fixture_diagnostic_controls() {
+    let expected = id(1);
+    let absent = machine_completion_observation(Observed::Absent(AbsenceProof::NoStore), expected);
+    assert!(!absent.0 && absent.1.contains("completion absent: NoStore"));
+    let unknown =
+        machine_completion_observation(Observed::Unknown(UnknownReason::Injected), expected);
+    assert!(!unknown.0 && unknown.1.contains("completion unknown: Injected"));
+    let completion = MachineCompletion {
+        run: id(2),
+        generation: Generation::new(1),
+        workload: WorkloadOutcome::Succeeded,
+        stderr_tail: String::new(),
+    };
+    let evidence = Evidence::new("control".into(), None).unwrap();
+    let different =
+        machine_completion_observation(Observed::Verified(completion, evidence), expected);
+    assert!(
+        !different.0
+            && different.1.contains(&expected.to_string())
+            && different.1.contains(&id(2).to_string())
+    );
+
+    let receipt = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let result = std::panic::catch_unwind({
+        let receipt = receipt.clone();
+        move || {
+            let mut guard = MachineFixture {
+                home: Some(home()),
+                client: None,
+                root: None,
+                owner: None,
+                iteration: "control",
+                stage: "setup",
+                last: "injected observation".into(),
+                settled: false,
+                reaped: false,
+                identity: "not observed".into(),
+                receipt: Some(receipt),
+            };
+            let cx = context();
+            let root =
+                StateRoot::machine_effects(&cx, guard.home.as_ref().unwrap().path()).unwrap();
+            let mut coordinates = invocation().spec().clone();
+            coordinates.task = TaskId::new(
+                CheckoutId::new(CheckoutKind::Machine, [0; 16]),
+                "",
+                Surface::Published,
+                "gateway",
+                None,
+            )
+            .unwrap();
+            coordinates.owner = ResourceId::gateway("fixture-machine").unwrap();
+            let invocation = ResolvedInvocation::new(coordinates).unwrap();
+            guard.root = Some(root.clone());
+            guard.owner = Some(invocation.spec().owner.clone());
+            guard.stage = "launch";
+            guard.client = Some(
+                start_detached_at(
+                    &cx,
+                    &root,
+                    &invocation,
+                    id(1),
+                    &next(),
+                    vec![spec(
+                        guard.home.as_ref().unwrap().path(),
+                        "exec /bin/sleep 30",
+                    )],
+                    &Executable::capture(&fixture()).unwrap(),
+                    ClientMode::Owning,
+                )
+                .unwrap(),
+            );
+            guard.stage = "active";
+            while !matches!(
+                guard
+                    .client
+                    .as_mut()
+                    .unwrap()
+                    .event(cx.operation())
+                    .unwrap(),
+                Event::Active
+            ) {}
+            guard.stage = "injected failure";
+            panic!("control unwind");
+        }
+    });
+    assert!(result.is_err());
+    assert!(
+        receipt.load(std::sync::atomic::Ordering::SeqCst),
+        "cleanup did not positively observe completion"
+    );
+}
+
 #[test]
 fn custody_machine_journal_routes_supervisor_requests_and_sentinel_recovery_without_legacy_writes()
 {
     for killed in [false, true] {
-        let home = home();
+        let mut fixture_guard = MachineFixture {
+            home: Some(home()),
+            client: None,
+            root: None,
+            owner: None,
+            iteration: if killed {
+                "supervisor-kill"
+            } else {
+                "normal-stop"
+            },
+            stage: "setup",
+            last: "no completion observation".into(),
+            settled: false,
+            reaped: false,
+            identity: "not observed".into(),
+            receipt: None,
+        };
+        let home_path = fixture_guard.home.as_ref().unwrap().path().to_path_buf();
         let cx = context();
-        let legacy = StateRoot::effects(&cx, home.path()).unwrap();
+        let legacy = StateRoot::effects(&cx, &home_path).unwrap();
         drop(effigy_kernel::store::Store::open(&cx, &legacy).unwrap());
         let legacy_before = std::fs::read(legacy.path().join("kernel.db")).unwrap();
-        let machine = StateRoot::machine_effects(&cx, home.path()).unwrap();
+        let machine = StateRoot::machine_effects(&cx, &home_path).unwrap();
+        fixture_guard.root = Some(machine.clone());
         let mut coordinates = invocation().spec().clone();
         coordinates.task = TaskId::new(
             CheckoutId::new(CheckoutKind::Machine, [0; 16]),
@@ -3034,21 +3252,34 @@ fn custody_machine_journal_routes_supervisor_requests_and_sentinel_recovery_with
         .unwrap();
         coordinates.owner = ResourceId::gateway("fixture-machine").unwrap();
         let invocation = ResolvedInvocation::new(coordinates).unwrap();
-        let mut client = start_detached_at(
-            &cx,
-            &machine,
-            &invocation,
-            id(1),
-            &next(),
-            vec![spec(
-                home.path(),
-                "printf machine-output; printf machine-error >&2; exec /bin/sleep 30",
-            )],
-            &Executable::capture(&fixture()).unwrap(),
-            ClientMode::Owning,
-        )
-        .unwrap();
-        while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
+        fixture_guard.owner = Some(invocation.spec().owner.clone());
+        fixture_guard.stage = "launch";
+        fixture_guard.client = Some(
+            start_detached_at(
+                &cx,
+                &machine,
+                &invocation,
+                id(1),
+                &next(),
+                vec![spec(
+                    &home_path,
+                    "printf machine-output; printf machine-error >&2; exec /bin/sleep 30",
+                )],
+                &Executable::capture(&fixture()).unwrap(),
+                ClientMode::Owning,
+            )
+            .unwrap(),
+        );
+        fixture_guard.stage = "active";
+        while !matches!(
+            fixture_guard
+                .client
+                .as_mut()
+                .unwrap()
+                .event(cx.operation())
+                .unwrap(),
+            Event::Active
+        ) {}
         if let Ok(entries) = std::fs::read_dir(machine.path().join("runs").join(id(1).to_string()))
         {
             for entry in entries {
@@ -3065,6 +3296,7 @@ fn custody_machine_journal_routes_supervisor_requests_and_sentinel_recovery_with
         if killed {
             let metadata = metadata(&cx.operation().observe().unwrap(), &machine, id(1));
             let supervisor = metadata.verified().unwrap().supervisor.as_ref().unwrap();
+            fixture_guard.identity = format!("supervisor={supervisor:?}");
             assert_eq!(
                 effigy_kernel::ident::process_identity(supervisor.pid).verified(),
                 Some(supervisor)
@@ -3076,18 +3308,34 @@ fn custody_machine_journal_routes_supervisor_requests_and_sentinel_recovery_with
                 0
             );
         } else {
-            client.stop(&cx, id(2)).unwrap();
+            fixture_guard
+                .client
+                .as_ref()
+                .unwrap()
+                .stop(&cx, id(2))
+                .unwrap();
         }
-        eventually(|| {
+        fixture_guard.stage = "completion";
+        let end = Instant::now() + Duration::from_secs(12);
+        loop {
             let observe = cx.operation().observe().unwrap();
-            let Observed::Verified(reader, _) =
-                effigy_kernel::store::Store::read(&observe, &machine)
-            else {
-                return false;
+            let (done, last) = match effigy_kernel::store::Store::read(&observe, &machine) {
+                Observed::Verified(reader, _) => machine_completion_observation(
+                    effigy_kernel::run::machine_completion(&reader, &invocation.spec().owner),
+                    id(1),
+                ),
+                Observed::Absent(proof) => (false, format!("store absent: {proof:?}")),
+                Observed::Unknown(reason) => (false, format!("store unknown: {reason:?}")),
             };
-            matches!(effigy_kernel::run::machine_completion(&reader, &invocation.spec().owner),
-                Observed::Verified(completion, _) if completion.run == id(1))
-        });
+            fixture_guard.last = last;
+            if done {
+                fixture_guard.settled = true;
+                break;
+            }
+            assert!(Instant::now() < end, "machine fixture completion deadline");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        fixture_guard.stage = "summary";
         let read = effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &machine);
         assert!(
             matches!(
@@ -3096,7 +3344,16 @@ fn custody_machine_journal_routes_supervisor_requests_and_sentinel_recovery_with
             ),
             "completed machine runs retain no history"
         );
-        let waited = client.wait(cx.operation());
+        fixture_guard.stage = "client wait";
+        let waited = fixture_guard
+            .client
+            .as_mut()
+            .unwrap()
+            .wait_recoverable(cx.operation());
+        eprintln!(
+            "machine fixture iteration={} completion={} client wait={waited:?}",
+            fixture_guard.iteration, fixture_guard.last
+        );
         if killed {
             assert_eq!(
                 waited.unwrap_err().kind(),
@@ -3105,6 +3362,9 @@ fn custody_machine_journal_routes_supervisor_requests_and_sentinel_recovery_with
         } else {
             waited.unwrap();
         }
+        fixture_guard.reaped = true;
+        fixture_guard.client.take();
+        fixture_guard.stage = "legacy database";
         assert_eq!(
             std::fs::read(legacy.path().join("kernel.db")).unwrap(),
             legacy_before
