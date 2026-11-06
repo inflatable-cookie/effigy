@@ -167,7 +167,12 @@ mkdir -p "$repo/.effigy/state/runs/7"
 printf 'failure bytes\n' >"$repo/.effigy/state/runs/7/0.stdout.0.log"
 run_hook teardown; rc=$?
 [ "$rc" -eq 0 ] || fail "teardown exit $rc"
-archived=$(ls -d "$fx/archive-base"/qa-run-logs.* 2>/dev/null | head -1)
+archived=
+for candidate in "$fx/archive-base"/qa-run-logs.*; do
+  [ -d "$candidate" ] || continue
+  archived=$candidate
+  break
+done
 [ -n "$archived" ] || fail "no archive dir under the fixture base"
 cmp -s "$repo/.effigy/state/runs/7/0.stdout.0.log" "$archived/7.0.stdout.0.log" ||
   fail "archived bytes differ"
