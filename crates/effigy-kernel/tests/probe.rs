@@ -40,6 +40,7 @@ struct Observer {
     output: BufReader<ChildStdout>,
     guard: ProcessIdentity,
     identity: ProcessIdentity,
+    exit: Option<std::process::ExitStatus>,
 }
 impl Observer {
     fn start(home: &std::path::Path, mode: &str, address: std::net::SocketAddr) -> Self {
@@ -60,6 +61,7 @@ impl Observer {
         let value: Value = serde_json::from_str(&line).unwrap();
         Self {
             child,
+            exit: None,
             input,
             output,
             guard: serde_json::from_value(value["guard"].clone()).unwrap(),
@@ -74,7 +76,11 @@ impl Observer {
         self.output.read_line(&mut line).unwrap();
         let result = serde_json::from_str(&line).unwrap();
         let until = Instant::now() + Duration::from_secs(5);
-        while self.child.try_wait().unwrap().is_none() {
+        loop {
+            if let Some(exit) = self.child.try_wait().unwrap() {
+                self.exit = Some(exit);
+                break;
+            }
             assert!(Instant::now() < until);
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -169,6 +175,14 @@ fn probe_guard_and_observer_death_matrix_has_no_owned_survivors_or_writes() {
             "observer-stop",
             "observer-term",
         ] {
+            eprintln!("matrix {mode}/{action}: starting");
+            if action == "observer-stop" {
+                // Stop after an acknowledged successful work-loop check.
+                // Backup closure can then yield a verified terminal exit,
+                // rather than the Unknown expected when the check sees expiry.
+                checked_control::matrix_stop(mode).unwrap();
+                continue;
+            }
             let home = tempfile::tempdir().unwrap();
             let before = snapshot(home.path());
             let listener = listener();
@@ -183,26 +197,41 @@ fn probe_guard_and_observer_death_matrix_has_no_owned_survivors_or_writes() {
             if mode == "descendant" {
                 wait_gone(&workload.0[0]);
             }
+            eprintln!(
+                "matrix {mode}/{action}: ready observer={:?} guard={:?} announced={:?}",
+                observer.identity, observer.guard, workload.0
+            );
             let start = Instant::now();
             match action {
                 "guard-kill" => signal(&observer.guard, libc::SIGKILL),
                 "observer-kill" => signal(&observer.identity, libc::SIGKILL),
-                "observer-stop" => signal(&observer.identity, libc::SIGSTOP),
                 "observer-term" => signal(&observer.identity, libc::SIGTERM),
                 _ => unreachable!(),
             }
             for identity in &workload.0 {
                 wait_gone(identity);
             }
+            eprintln!(
+                "matrix {mode}/{action}: announced workloads gone; elapsed={:?}",
+                start.elapsed()
+            );
             assert!(
                 start.elapsed() < Duration::from_secs(3),
                 "O14 deadline plus grace"
             );
-            if action == "observer-stop" {
-                signal(&observer.identity, libc::SIGCONT);
-            }
             if action != "observer-kill" {
-                assert!(observer.result().get("unknown").is_some());
+                let result = observer.result();
+                let warnings: Option<Vec<_>> = result["warnings"].as_array().map(|items| {
+                    items
+                        .iter()
+                        .map(|item| checked_control::category(Some(item)))
+                        .collect()
+                });
+                eprintln!("matrix {mode}/{action}: unknown_category={} verified={:?} exit={:?} warnings={warnings:?} observer_exit={:?}", checked_control::category(result.get("unknown")), result["verified"].as_bool(), result["exit"].as_i64(), observer.exit);
+                assert!(
+                    result.get("unknown").is_some(),
+                    "{mode}/{action}: expected Unknown"
+                );
             }
             assert_eq!(snapshot(home.path()), before, "O10 {mode}/{action}");
         }
@@ -543,7 +572,7 @@ mod checked_control {
         }
     }
 
-    fn category(value: Option<&Value>) -> &'static str {
+    pub(super) fn category(value: Option<&Value>) -> &'static str {
         let Some(value) = value else { return "none" };
         for name in [
             "TimedOut",
@@ -606,14 +635,15 @@ mod checked_control {
         pause_pending: Vec<u8>,
         observer: Option<ProcessIdentity>,
         guard: Option<ProcessIdentity>,
-        workload: Option<ProcessIdentity>,
+        workload: Vec<ProcessIdentity>,
+        expected_workloads: usize,
         released: bool,
         exit: Option<std::process::ExitStatus>,
         settled: Option<bool>,
     }
 
     impl Control {
-        fn start(home: &std::path::Path) -> io::Result<Self> {
+        fn start(home: &std::path::Path, mode: &str) -> io::Result<Self> {
             let telemetry = listener();
             let control = listener();
             let (output, child_socket) = UnixStream::pair()?;
@@ -624,7 +654,7 @@ mod checked_control {
             let child = Command::new(fixture())
                 .arg("probe-observer")
                 .arg(home)
-                .arg("hang")
+                .arg(mode)
                 .arg(telemetry.local_addr()?.to_string())
                 .env(
                     "EFFIGY_FIXTURE_PROBE_CHECKED",
@@ -649,7 +679,8 @@ mod checked_control {
                 pause_pending: Vec::new(),
                 observer: None,
                 guard: None,
-                workload: None,
+                workload: Vec::new(),
+                expected_workloads: if mode == "hang" { 1 } else { 2 },
                 released: false,
                 exit: None,
                 settled: None,
@@ -684,31 +715,34 @@ mod checked_control {
         }
 
         fn collect_workload(&mut self, until: Instant) -> io::Result<()> {
-            if self.workload.is_some() {
-                return Ok(());
+            while self.workload.len() < self.expected_workloads {
+                if self.announcement.is_none() {
+                    // Store the descriptor before any mode/timeout/read failure.
+                    self.announcement = Some(accept_owned(&self.telemetry, until)?);
+                }
+                let stream = self
+                    .announcement
+                    .as_mut()
+                    .ok_or_else(|| error("missing announcement"))?;
+                stream.set_nonblocking(false)?;
+                stream.set_read_timeout(Some(POLL))?;
+                if self.announcement_value.is_none() {
+                    self.announcement_value =
+                        Some(frame(stream, &mut self.announcement_pending, until)?);
+                }
+                let value = self
+                    .announcement_value
+                    .as_ref()
+                    .ok_or_else(|| error("no announcement value"))?;
+                let identity = serde_json::from_value(value.clone())
+                    .map_err(|_| error("invalid workload identity"))?;
+                self.workload.push(identity);
+                // Only release a consumed announcement after its identity is
+                // in custody. Pending later connections stay on the listener.
+                self.announcement = None;
+                self.announcement_pending.clear();
+                self.announcement_value = None;
             }
-            if self.announcement.is_none() {
-                // Store the descriptor before any mode/timeout/read failure.
-                self.announcement = Some(accept_owned(&self.telemetry, until)?);
-            }
-            let stream = self
-                .announcement
-                .as_mut()
-                .ok_or_else(|| error("missing announcement"))?;
-            stream.set_nonblocking(false)?;
-            stream.set_read_timeout(Some(POLL))?;
-            if self.announcement_value.is_none() {
-                self.announcement_value =
-                    Some(frame(stream, &mut self.announcement_pending, until)?);
-            }
-            let value = self
-                .announcement_value
-                .as_ref()
-                .ok_or_else(|| error("no announcement value"))?;
-            self.workload = Some(
-                serde_json::from_value(value.clone())
-                    .map_err(|_| error("invalid workload identity"))?,
-            );
             Ok(())
         }
 
@@ -761,7 +795,7 @@ mod checked_control {
             }
             // Preserve/drain announcements on all post-go failures, before
             // stopping any owner. Missing telemetry remains Unknown.
-            if self.released && self.workload.is_none() {
+            if self.released && self.workload.len() < self.expected_workloads {
                 let collected = self.collect_workload(Instant::now() + BOUND).is_ok();
                 eprintln!("control cleanup: announcement_collected={collected}");
             }
@@ -775,13 +809,12 @@ mod checked_control {
             }
             // Before go, EOF is explicitly refused by the controlled fixture.
             let _ = self.output.shutdown(Shutdown::Write);
-            let workload_closed = match &self.workload {
-                Some(id) => {
-                    signal(id, libc::SIGKILL);
-                    wait_closed(id)
-                }
-                None => !self.released,
-            };
+            let mut workload_closed =
+                !self.released || self.workload.len() == self.expected_workloads;
+            for id in &self.workload {
+                signal(id, libc::SIGKILL);
+                workload_closed &= wait_closed(id);
+            }
             // Let the observer's primary cleanup and backup finish first.
             if self.reap().is_err() {
                 let _ = self.child.kill(); // our unreaped direct child only
@@ -815,35 +848,78 @@ mod checked_control {
 
     #[test]
     fn probe_checked_observer_pause_consumes_real_guard_terminal_exit() -> io::Result<()> {
+        exercise("hang", false)
+    }
+
+    pub(super) fn matrix_stop(mode: &str) -> io::Result<()> {
+        exercise(mode, true)
+    }
+
+    // Both callers require this exact acknowledged boundary and terminal
+    // observation. The matrix additionally delivers real SIGSTOP/SIGCONT.
+    fn exercise(mode: &str, stop: bool) -> io::Result<()> {
         let home = tempfile::tempdir()?;
         let before = snapshot(home.path());
-        let mut owner = Control::start(home.path())?;
+        let mut owner = Control::start(home.path(), mode)?;
         owner.ready()?;
         eprintln!(
-            "control hang/checked-pause: ready observer={:?} guard={:?}",
+            "control {mode}/checked-pause: ready observer={:?} guard={:?}",
             owner.observer, owner.guard
         );
-        let start = Instant::now();
+        let go = Instant::now();
         owner.released = true; // even a partial write retains post-go custody
         owner.output.write_all(b"go\n")?;
         let until = Instant::now() + BOUND;
         owner.collect_workload(until)?;
-        eprintln!("control hang/checked-pause: announced={:?}", owner.workload);
-        owner.pause_after_check(until)?;
-        eprintln!("control hang/checked-pause: check passed; consumer held before capture/peek/group closure");
-        let gone = wait_closed(
-            owner
-                .workload
-                .as_ref()
-                .ok_or_else(|| error("no workload"))?,
+        eprintln!(
+            "control {mode}/checked-pause: announced={:?}",
+            owner.workload
         );
-        assert!(gone, "owned workload survived");
+        owner.pause_after_check(until)?;
+        eprintln!("control {mode}/checked-pause: check passed; consumer held before capture/peek/group closure");
+        if mode == "descendant" {
+            assert!(wait_closed(&owner.workload[0]), "leader did not exit");
+        }
+        let start = if stop { Instant::now() } else { go };
+        if stop {
+            let observer = owner
+                .observer
+                .as_ref()
+                .ok_or_else(|| error("no observer"))?;
+            signal(observer, libc::SIGSTOP);
+            let until = Instant::now() + BOUND;
+            loop {
+                if ident::process_identity(observer.pid).verified() == Some(observer)
+                    && matches!(
+                        ident::process_state(observer.pid),
+                        Observed::Verified(ProcessState::Stopped, _)
+                    )
+                {
+                    break;
+                }
+                assert!(Instant::now() < until, "observer stop unproven");
+                std::thread::sleep(POLL);
+            }
+            eprintln!("control {mode}/observer-stop: exact observer positively stopped after checked marker");
+        }
+        for id in &owner.workload {
+            assert!(wait_closed(id), "owned workload survived");
+        }
         assert!(
             start.elapsed() < Duration::from_secs(3),
             "O14 deadline plus grace"
         );
+        if stop {
+            signal(
+                owner
+                    .observer
+                    .as_ref()
+                    .ok_or_else(|| error("no observer"))?,
+                libc::SIGCONT,
+            );
+        }
         eprintln!(
-            "control hang/checked-pause: workload positively closed while consumer held; release"
+            "control {mode}/checked-pause: workload positively closed while consumer held; release"
         );
         owner
             .pause
@@ -862,13 +938,20 @@ mod checked_control {
                 .map(|warning| category(Some(warning)))
                 .collect()
         });
-        eprintln!("control hang/checked-pause: verified={} exit={} warning_categories={warning_categories:?} unknown_category={} observer_exit={:?}", result["verified"].as_bool().unwrap_or(false), result["exit"].as_i64().unwrap_or(-1), category(result.get("unknown")), owner.exit);
+        eprintln!("control {mode}/checked-pause: verified={} exit={} warning_categories={warning_categories:?} unknown_category={} observer_exit={:?}", result["verified"].as_bool().unwrap_or(false), result["exit"].as_i64().unwrap_or(-1), category(result.get("unknown")), owner.exit);
         assert!(
             result["verified"].as_bool() == Some(true),
             "not a verified terminal observation"
         );
+        // The descendant leader returned naturally before the selected stop;
+        // all other leaders remain alive until the guard delivers SIGKILL.
+        let expected_exit = if mode == "descendant" {
+            0
+        } else {
+            128 + libc::SIGKILL
+        };
         assert!(
-            result["exit"].as_i64() == Some(i64::from(128 + libc::SIGKILL)),
+            result["exit"].as_i64() == Some(i64::from(expected_exit)),
             "unexpected terminal code"
         );
 
@@ -887,7 +970,7 @@ mod checked_control {
             .success());
         assert!(snapshot(home.path()) == before, "O10 checked-pause");
         assert!(owner.settle(), "current control cleanup incomplete");
-        eprintln!("control hang/checked-pause: O10 unchanged; current fixture settled");
+        eprintln!("control {mode}/checked-pause: O10 unchanged; current fixture settled");
         Ok(())
     }
 }
