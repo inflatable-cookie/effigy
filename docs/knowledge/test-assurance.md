@@ -37,6 +37,17 @@ The generic `effigy test` default keeps nextest's own fail-fast behavior;
 only the `qa` step passes the flag, and focused selectors keep their explicit
 `--no-fail-fast` / `--max-fail` choices.
 
+The internal `qa:later-stages <fresh-absolute-output-dir>` selector is a
+separate partial diagnostic route for inspecting the 21 checks after that
+default suite. It omits the default suite, preserves each stage's independent
+stdout and stderr, and continues after ordinary failed checks. Its receipt
+always sets `diagnostic_only=true`, `default_suite_omitted=true`, and
+`full_qa_pass=false`; even a successful census is not full QA or a milestone
+gate. It sets `NEXTEST_SUCCESS_OUTPUT=immediate` so successful facts remain in
+the retained logs, without changing test selection, timing, or concurrency.
+`test:qa:later-stages-wrapper` exercises the collector with owned stub
+executables and does not run repository tests or the census.
+
 ## Proof tiers
 
 Every case belongs to exactly one tier. Cost and review expectations follow the
