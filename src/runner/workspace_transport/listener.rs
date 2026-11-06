@@ -429,6 +429,16 @@ impl Drop for SessionTlsListener {
     }
 }
 
+// Private proof reads must honor their own framing/observation deadline rather
+// than refreshing the transport's five-second operation budget on every read.
+#[cfg(test)]
+impl TlsChannelTransport {
+    pub(crate) fn read_until(&mut self, bytes: &mut [u8], until: Instant) -> io::Result<usize> {
+        self.stream.sock.until = until;
+        self.stream.read(bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -523,15 +533,5 @@ mod tests {
         assert!(revocable
             .choose_scheme(&[SignatureScheme::ECDSA_NISTP256_SHA256])
             .is_none());
-    }
-}
-
-// Private proof reads must honor their own framing/observation deadline rather
-// than refreshing the transport's five-second operation budget on every read.
-#[cfg(test)]
-impl TlsChannelTransport {
-    pub(crate) fn read_until(&mut self, bytes: &mut [u8], until: Instant) -> io::Result<usize> {
-        self.stream.sock.until = until;
-        self.stream.read(bytes)
     }
 }
