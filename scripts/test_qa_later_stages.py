@@ -30,6 +30,7 @@ class CollectorControls(unittest.TestCase):
         subprocess.run(["git", "init", "-q", str(self.checkout)], check=True)
         subprocess.run(["git", "-C", str(self.checkout), "config", "user.email", "test@example.invalid"], check=True)
         subprocess.run(["git", "-C", str(self.checkout), "config", "user.name", "Fixture"], check=True)
+        subprocess.run(["git", "-C", str(self.checkout), "config", "gc.auto", "0"], check=True)
         (self.checkout / "input.txt").write_text("unchanged\n", encoding="utf-8")
         subprocess.run(["git", "-C", str(self.checkout), "add", "input.txt"], check=True)
         subprocess.run(["git", "-C", str(self.checkout), "commit", "-qm", "fixture"], check=True)
@@ -64,14 +65,15 @@ class CollectorControls(unittest.TestCase):
         import shutil
         shutil.rmtree(self.fixture)
 
-    def run_wrapper(self, extra=None):
+    def run_wrapper(self, extra=None, selected=None):
         env = dict(os.environ)
         env.update({"CALL_LOG": str(self.call_log)})
         if extra:
             env.update(extra)
         with open(os.devnull, "w") as sink, contextlib.redirect_stdout(sink):
             code, receipt = qa.run_collector(
-                self.output, self.checkout, self.temp, self.lifecycle, self.effigy, env
+                self.output, self.checkout, self.temp, self.lifecycle,
+                self.effigy, env, selected=selected
             )
         return code, receipt
 
@@ -81,6 +83,8 @@ class CollectorControls(unittest.TestCase):
         calls = self.call_log.read_text(encoding="utf-8").splitlines()
         self.assertEqual(calls, ["setup", *qa.STAGES, "teardown"])
         self.assertEqual(receipt["stage_order"], list(qa.STAGES))
+        self.assertEqual(receipt["selected_stages"], list(qa.STAGES))
+        self.assertEqual(receipt["omitted_stages"], [])
         self.assertEqual(receipt["failed_stages"], [failed])
         self.assertEqual(code, 1)
         self.assertTrue(receipt["diagnostic_only"])
@@ -102,6 +106,44 @@ class CollectorControls(unittest.TestCase):
         self.assertEqual(before["files"], after["files"])
         self.assertEqual(before["index_sha256"], after["index_sha256"])
         self.assertTrue(all(s["status"] == "completed" for s in receipt["stages"]))
+
+    def test_exact_stage_range_records_selected_and_omitted_coverage(self):
+        first, last = qa.STAGES[4], qa.STAGES[5]
+        selected = qa.select_stages(first, last)
+        code, receipt = self.run_wrapper(selected=selected)
+        calls = self.call_log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(calls, ["setup", first, last, "teardown"])
+        self.assertEqual(code, 0)
+        self.assertEqual(receipt["selected_stages"], [first, last])
+        self.assertEqual(receipt["omitted_stages"], list(qa.STAGES[:4]) + list(qa.STAGES[6:]))
+        self.assertEqual([s["selector"] for s in receipt["stages"]], [first, last])
+        self.assertTrue(receipt["complete_selected_slice"])
+        self.assertFalse(receipt["complete_partial_census"])
+
+    def test_invalid_or_reversed_ranges_reject_before_collector_effects(self):
+        for start, stop, message in (("unknown", None, "unknown start"),
+                                     (qa.STAGES[2], qa.STAGES[1], "follows"),
+                                     (None, "unknown", "unknown stop")):
+            with self.assertRaisesRegex(ValueError, message):
+                qa.select_stages(start, stop)
+        self.assertFalse(self.output.exists())
+        self.assertFalse(self.call_log.exists())
+
+    def test_finalized_stage_receipt_survives_later_cancelled_stage(self):
+        selected = qa.STAGES[:2]
+        code, receipt = self.run_wrapper({"CANCEL_SELECTOR": selected[1]}, selected=selected)
+        events = self.output / "events"
+        first = json.loads((events / "stage-01.json").read_text(encoding="utf-8"))
+        self.assertEqual(first["selector"], selected[0])
+        self.assertEqual(first["status"], "completed")
+        self.assertEqual(first["result"]["returncode"], 0)
+        self.assertTrue((events / "stage-02.json").is_file())
+        self.assertEqual(receipt["selected_stages"], list(selected))
+        self.assertEqual(receipt["not_started_stages"], [])
+        self.assertEqual(code, 1)
+        self.assertTrue((events / "selection.json").is_file())
+        self.assertTrue((events / "setup.json").is_file())
+        self.assertTrue((events / "teardown.json").is_file())
 
     def test_setup_failure_starts_no_stages_and_still_attempts_teardown(self):
         code, receipt = self.run_wrapper({"FAIL_SETUP": "1"})
