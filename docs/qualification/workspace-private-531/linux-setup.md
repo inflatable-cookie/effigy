@@ -114,3 +114,53 @@ source hashes, failures and retained resources outside ephemeral Queue cleanup.
 All three backend inputs/GO-index stay **UNARMED** pending actual GOs, accepted
 placement and planner-bound aggregate execution. Consumer/install/production/
 merge authority is unchanged.
+
+## Setup adapter status (source-only, 2026-11-07)
+
+Pure controls, no effect. Files: `linux_setup.py` (probe v2 parser, Stage1 request,
+disk verifier, setup advance gate), `linux_supervisor.py` (transient SERVICE
+argv, outside-monitor samples, closure verdict), `linux-setup-probe.sh` (read-only
+v2 probe, hash bound in the manifest), `linux-setup-stages.json` (rows E3a–E9, E19),
+`linux_setup_tests.py` (injected fakes; `test:qualification:linux-setup`).
+
+- **Probe v2** requires root uid, boot ID, `running`, systemd ≥ 250, `cgroup2fs`,
+  `effigy531` absent, sshd `expiry-time` present, numeric endpoint, host key
+  fingerprint and the exact `/dev/sda2` ← `sda` ext4 root chain. Any miss refuses.
+- **Stage1** is one start, one read-only probe, one graceful stop, 600 s, no
+  snapshot, no `--kill`, 1 GiB growth cap. It takes fresh stopped/snapshot/config
+  facts and retained pre-start bytes; 684 values are never defaults.
+- **Setup rows.** Exact `prlctl exec` templates for E3a–E4 and E5b–E6a. E5a, E6,
+  E7a–E9 and E19 are `blocked` with named missing facts. The validator refuses a
+  template with a placeholder and any row past the 1200-second ceiling.
+- **Supervisor.** `systemd-run --unit=effigy-stage-<nonce> --uid=effigy531
+  --service-type=exec --property=ExitType=cgroup --property=KillMode=control-group
+  --property=RuntimeMaxSec=<n> --remain-after-exit --pipe -- <argv>`. Upstream v259
+  manuals: `--pipe` waits like `--wait`; `--wait` cannot combine with `--scope`;
+  `--collect` unloads the unit; `ExitType=cgroup` is v250. Closure credit needs an
+  outside-monitor sample for the same InvocationID and ControlGroup with
+  `populated 0`, plus a successful post-run terminal state. Otherwise unknown.
+
+Decisions taken here (reviewer checks):
+
+- **K-1** Streams come from `--pipe`, not `StandardOutput=file:`. The `file:` option
+  was not confirmed in the upstream text read, so it stays unused.
+- **K-2** Root one-shot rows (E3–E6a) get `vm-waited-exit-postobserved` credit:
+  the waited `prlctl exec` exit plus a fresh post-observation of the exact effect.
+  A process left behind by such a one-shot is not positively excluded. This is a
+  stated residual, not contained closure. The supervisor cannot be the first
+  root-owned step, since its own install needs a closed root op.
+- **K-3** Disk association fails closed. No mechanism is in the supported set. The
+  Parallels CLI reference could not be decoded from the PDF, so `--iface` and
+  `--position` remain a starting point, not proof. A size, model, path or derived
+  serial is refused.
+- **K-4** InvocationID is required observed state. The manuals read do not list it
+  as a documented unit property, so a missing value fails closed.
+- **K-5** A failed payload gets no closure credit, matching the existing contract's
+  refusal of non-zero contained exits.
+
+Still required before any activation (not in this change): a supported
+controller-to-guest disk association with fresh identifiers on both sides; a guest
+copy of the reviewed controls and module closure through a bound E19 step; a
+bounded stdin transfer route for E9; fresh E2 public key bytes and an expiry value;
+the reviewed drop-in bytes; and the root-owned supervisor install as its own bound
+effect. Each live row still needs its own GO. E10, E13k and E14 stay held as before.
