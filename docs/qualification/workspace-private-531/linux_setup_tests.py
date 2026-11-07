@@ -37,7 +37,18 @@ import preparation_resources as resources
 from linux_supervisor import Refusal
 
 NONCE = 'a' * 64
-ROW_NONCES = {'E9a': '1' * 64, 'E9b': '2' * 64, 'E19.0': '3' * 64, 'E8': '4' * 64}
+def nonce_for(row_id):
+    return hashlib.sha256(('effigy-test-nonce:' + row_id).encode()).hexdigest()
+
+
+class _Nonces(dict):
+    """Row nonces for any row id; the fixture never has to list them."""
+
+    def get(self, key, default=None):
+        return nonce_for(key)
+
+
+ROW_NONCES = {rid: nonce_for(rid) for rid in ('E9a', 'E9b', 'E9c', 'E8', 'E19.0')}
 INVOCATION = '0f1e2d3c4b5a49688777665544332211'          # systemctl prints contiguous lowercase hex
 INVOCATION_HYPHENATED = '0f1e2d3c-4b5a-4968-8777-665544332211'
 UNIT = 'effigy-stage-' + NONCE
@@ -422,6 +433,16 @@ class SupervisorCandidateChecks(unittest.TestCase):
                 show = supervisor.parse_show(post, UNIT)
                 self.assertIsNone(supervisor._eligible(BOOT, NONCE, show, pre, 1, 0)[0])
 
+    def test_populated_while_running_is_not_a_veto_and_a_failed_read_is_unknown(self):
+        pre = [{'kind': 'loaded', 'invocation_id': INVOCATION, 'active_state': 'active', 'control_group': GROUP,
+                'populated': 0}]
+        running = [{'kind': 'loaded', 'invocation_id': INVOCATION, 'active_state': 'active',
+                    'control_group': GROUP, 'populated': 1}]
+        show = supervisor.parse_show(show_text(), UNIT)
+        self.assertIsNotNone(supervisor._eligible(BOOT, NONCE, show, pre + running, 1, 0)[0])
+        failed = pre + [{'kind': 'read-failed', 'reason': 'systemctl call failed'}]
+        self.assertIsNone(supervisor._eligible(BOOT, NONCE, show, failed, 1, 0)[0])
+
     def test_release_index_bounds_what_counts_as_pre_release(self):
         pre = [{'kind': 'loaded', 'invocation_id': INVOCATION, 'active_state': 'active', 'control_group': GROUP,
                 'populated': 0}]
@@ -429,7 +450,7 @@ class SupervisorCandidateChecks(unittest.TestCase):
                       'control_group': GROUP, 'populated': 1}]
         show = supervisor.parse_show(show_text(), UNIT)
         self.assertIsNotNone(supervisor._eligible(BOOT, NONCE, show, pre, 1, 0)[0])
-        self.assertIsNone(supervisor._eligible(BOOT, NONCE, show, pre + post_veto, 1, 0)[0])
+        self.assertIsNotNone(supervisor._eligible(BOOT, NONCE, show, pre + post_veto, 1, 0)[0])
 
     def test_disconnect_stops_the_unit_and_gives_no_candidate(self):
         stage = tmpdir('sc-disc-')
@@ -504,30 +525,35 @@ class SignedReceiptChecks(unittest.TestCase):
 
     def test_signed_approved_receipt_for_this_plan_is_authenticated(self):
         entry = signed_entry(tmpdir('rcpt-ok-') / 'go.json', self.body())
-        self.assertEqual(receipts.verify_signed_receipt(entry, 'E3', 'p' * 64, signer().trust), (True, None))
+        self.assertEqual(receipts.verify_signed_receipt(entry, 'E3', 'p' * 64, signer().trust, 'a' * 40), (True, None))
 
     def test_tampered_receipt_wrong_signer_and_unsigned_refuse(self):
         root = tmpdir('rcpt-bad-')
         entry = signed_entry(root / 'go.json', self.body())
         Path(entry['path']).write_bytes(json.dumps(self.body(decision_id='D-EVIL'), sort_keys=True).encode())
         entry['sha256'] = hashlib.sha256(Path(entry['path']).read_bytes()).hexdigest()
-        ok, reason = receipts.verify_signed_receipt(entry, 'E3', 'p' * 64, signer().trust)
+        ok, reason = receipts.verify_signed_receipt(entry, 'E3', 'p' * 64, signer().trust, 'a' * 40)
         self.assertFalse(ok)
         self.assertIn('does not verify', reason)
         other = signed_entry(root / 'other.json', self.body(), key=signer().other)
-        ok, reason = receipts.verify_signed_receipt(other, 'E3', 'p' * 64, signer().trust)
+        ok, reason = receipts.verify_signed_receipt(other, 'E3', 'p' * 64, signer().trust, 'a' * 40)
         self.assertFalse(ok)
         self.assertIn('does not verify', reason)
         unsigned = {'path': other['path'], 'sha256': other['sha256']}
-        self.assertIn('unsigned', receipts.verify_signed_receipt(unsigned, 'E3', 'p' * 64, signer().trust)[1])
+        self.assertIn('unsigned', receipts.verify_signed_receipt(unsigned, 'E3', 'p' * 64, signer().trust, 'a' * 40)[1])
+
+    def test_receipt_bound_to_another_reviewed_head_refuses(self):
+        entry = signed_entry(tmpdir('rcpt-head-') / 'go.json', self.body())
+        self.assertIn('different reviewed head',
+                      receipts.verify_signed_receipt(entry, 'E3', 'p' * 64, signer().trust, 'b' * 40)[1])
 
     def test_stale_plan_wrong_gate_and_unbound_trust_refuse(self):
         root = tmpdir('rcpt-stale-')
         entry = signed_entry(root / 'go.json', self.body())
-        self.assertIn('different plan', receipts.verify_signed_receipt(entry, 'E3', 'q' * 64, signer().trust)[1])
-        self.assertIn('not an approved', receipts.verify_signed_receipt(entry, 'E4', 'p' * 64, signer().trust)[1])
+        self.assertIn('different plan', receipts.verify_signed_receipt(entry, 'E3', 'q' * 64, signer().trust, 'a' * 40)[1])
+        self.assertIn('not an approved', receipts.verify_signed_receipt(entry, 'E4', 'p' * 64, signer().trust, 'a' * 40)[1])
         bad_trust = dict(signer().trust, sha256='0' * 64)
-        self.assertIn('allowed-signers bytes differ', receipts.verify_signed_receipt(entry, 'E3', 'p' * 64, bad_trust)[1])
+        self.assertIn('allowed-signers bytes differ', receipts.verify_signed_receipt(entry, 'E3', 'p' * 64, bad_trust, 'a' * 40)[1])
 
 
 class ContainedTransferChecks(unittest.TestCase):
@@ -820,18 +846,20 @@ class Stage1Checks(unittest.TestCase):
         self.disk = self.home / 'harddisk1.hdd'
         self.disk.mkdir()
         self.top, self.base = setup.CURRENT_SNAPSHOT, BASE_GUID
+        self.top_file = 'harddisk1.hdd.0.' + setup.CURRENT_SNAPSHOT + '.hds'
+        self.base_file = 'harddisk1.hdd.0.' + BASE_GUID + '.hds'
         self.descriptor = self.write_descriptor(self.top, self.base)
         (self.disk / 'DiskDescriptor.xml').write_bytes(self.descriptor)
-        (self.disk / 'a.hds').write_bytes(b'aaaa')
-        (self.disk / 'b.hds').write_bytes(b'bb')
+        (self.disk / self.top_file).write_bytes(b'aaaa')
+        (self.disk / self.base_file).write_bytes(b'bb')
         patcher = patch.object(setup, 'PVM_HOME', str(self.home))
         patcher.start()
         self.addCleanup(patcher.stop)
         self.stage = tmpdir('stage1-')
 
     def write_descriptor(self, top, base):
-        return (f'<Disk><StorageData><Storage><Image><GUID>{top}</GUID><File>a.hds</File></Image>'
-                f'<Image><GUID>{base}</GUID><File>b.hds</File></Image></Storage></StorageData>'
+        return (f'<Disk><StorageData><Storage><Image><GUID>{top}</GUID><File>{self.top_file}</File></Image>'
+                f'<Image><GUID>{base}</GUID><File>{self.base_file}</File></Image></Storage></StorageData>'
                 f'<Snapshots><Shot><GUID>{top}</GUID><ParentGUID>{base}</ParentGUID></Shot>'
                 f'<Shot><GUID>{base}</GUID><ParentGUID>{ZERO}</ParentGUID></Shot></Snapshots></Disk>').encode()
 
@@ -879,44 +907,117 @@ class Stage1Checks(unittest.TestCase):
         with self.assertRaises(Refusal):
             setup.stage1_request(self.fresh(), self.stage)
 
+    def request(self):
+        """A fresh request and stage per check: post bytes are retained exclusively, so checks cannot share one."""
+        return setup.stage1_request(self.fresh(), tmpdir('stage1-'))
+
     def test_unchanged_post_observation_has_zero_growth(self):
-        req = setup.stage1_request(self.fresh(), self.stage)
+        req = self.request()
         self.assertEqual(setup.stage1_verify_post(req, self.after())['growth_bytes'], 0)
 
-    def test_config_descriptor_identity_snapshot_and_extent_drift_refuse(self):
-        req = setup.stage1_request(self.fresh(), self.stage)
+    def test_config_bytes_drift_refuse(self):
+        req = self.request()
         self.config.write_bytes(b'<vm><clock>2</clock></vm>')
         with self.assertRaises(Refusal):
             setup.stage1_verify_post(req, self.after())
-        self.config.write_bytes(b'<vm><clock>1</clock></vm>')
+
+    def test_snapshot_count_drift_refuses(self):
         with self.assertRaises(Refusal):
-            setup.stage1_verify_post(req, self.after(snapshot_count=35))
+            setup.stage1_verify_post(self.request(), self.after(snapshot_count=35))
+
+    def test_running_state_at_post_observe_refuses(self):
         with self.assertRaises(Refusal):
-            setup.stage1_verify_post(req, self.after(state='running'))
+            setup.stage1_verify_post(self.request(), self.after(state='running'))
+
+    def test_descriptor_drift_refuses(self):
+        req = self.request()
         (self.disk / 'DiskDescriptor.xml').write_bytes(self.descriptor + b' ')
         with self.assertRaises(Refusal):
             setup.stage1_verify_post(req, self.after())
-        (self.disk / 'DiskDescriptor.xml').write_bytes(self.descriptor)
+
+    def test_writable_top_replaced_by_a_different_extent_refuses(self):
+        req = self.request()
         (self.disk / 'a.tmp').write_bytes(b'x')
-        os.replace(self.disk / 'a.tmp', self.disk / 'a.hds')
+        os.replace(self.disk / 'a.tmp', self.disk / self.top_file)
         with self.assertRaises(Refusal):
             setup.stage1_verify_post(req, self.after())
 
-    def test_extra_extent_and_growth_cap_refuse(self):
-        req = setup.stage1_request(self.fresh(), self.stage)
+    def test_extra_extent_refuses(self):
+        req = self.request()
         (self.disk / 'extra.hds').write_bytes(b'x')
         with self.assertRaises(Refusal):
             setup.stage1_verify_post(req, self.after())
-        (self.disk / 'extra.hds').unlink()
-        (self.disk / 'a.hds').write_bytes(b'aaaa' + b'x' * 5)
+
+    def test_growth_over_the_allowance_refuses(self):
+        req = self.request()
+        (self.disk / self.top_file).write_bytes(b'aaaa' + b'x' * 5)
         with patch.object(setup, 'CONFIG_ALLOWANCE_BYTES', 3), self.assertRaises(Refusal):
             setup.stage1_verify_post(req, self.after())
 
     def test_retained_pre_start_bytes_are_checked_against_the_request(self):
-        req = setup.stage1_request(self.fresh(), self.stage)
+        req = self.request()
         Path(req['retained']['config']).write_bytes(b'tampered')
         with self.assertRaises(Refusal):
             setup.stage1_verify_post(req, self.after())
+
+    def test_post_run_bytes_are_retained_before_any_refusal(self):
+        req = self.request()
+        stage = Path(req['retained']['config']).parent
+        self.config.write_bytes(b'<vm><clock>9</clock></vm>')
+        with self.assertRaises(Refusal):
+            setup.stage1_verify_post(req, self.after())
+        self.assertEqual((stage / 'post-config.bin').read_bytes(), b'<vm><clock>9</clock></vm>')
+        self.assertTrue((stage / 'post-descriptor.xml').exists())
+
+    def test_writable_top_is_derived_from_the_descriptor_and_must_be_the_current_snapshot(self):
+        self.assertEqual(setup.derive_writable_top(self.descriptor), self.top)
+        no_name = self.descriptor.replace(self.top_file.encode(), b'other.hds')
+        with self.assertRaises(Refusal):
+            setup.derive_writable_top(no_name)
+        twice = self.descriptor.replace(self.base_file.encode(), self.top_file.encode())
+        with self.assertRaises(Refusal):
+            setup.derive_writable_top(twice)
+        moved = self.descriptor.replace(('<GUID>%s</GUID><File>%s' % (self.top, self.top_file)).encode(),
+                                        ('<GUID>%s</GUID><File>%s' % (BASE_GUID, self.top_file)).encode())
+        self.assertNotEqual(moved, self.descriptor)
+        with self.assertRaises(Refusal):
+            setup.derive_writable_top(moved)
+
+
+class PlacementMapChecks(unittest.TestCase):
+    """The placement map must cover every module, driver, GO receipt and signature, exactly."""
+
+    def setUp(self):
+        self.fx = PlanFixture()
+
+    def pairs(self):
+        modules, _ = setup.required_placements({})
+        return [{'guest_path': g, 'host_path': h, 'sha256': hashlib.sha256(Path(h).read_bytes()).hexdigest()}
+                for g, h in modules]
+
+    def test_a_complete_exact_map_has_no_gaps(self):
+        modules, _ = setup.required_placements({})
+        self.assertEqual(setup.placement_gaps(self.pairs(), modules), [])
+
+    def test_missing_unexpected_mismatched_and_unbound_placements_each_refuse(self):
+        modules, _ = setup.required_placements({})
+        good = self.pairs()
+        self.assertIn('incomplete', ' '.join(setup.placement_gaps(good[1:], modules)))
+        self.assertIn('unexpected', ' '.join(setup.placement_gaps(good + [{'guest_path': setup.BASE + '/x', 'host_path': 'y',
+                                                                         'sha256': 'z' * 64}], modules)))
+        bad_sha = [dict(good[0], sha256='0' * 64)] + good[1:]
+        self.assertIn('sha256 differs', ' '.join(setup.placement_gaps(bad_sha, modules)))
+        moved = [dict(good[0], host_path='/elsewhere')] + good[1:]
+        self.assertIn('host path differs', ' '.join(setup.placement_gaps(moved, modules)))
+        self.assertIn('not bound', ' '.join(setup.placement_gaps(None, modules)))
+
+    def test_plan_marks_every_placement_row_when_the_map_is_incomplete(self):
+        rows = {r['id']: r for r in setup.setup_plan(self.fx.facts(placements=self.pairs()[1:]))}
+        self.assertTrue(any('incomplete' in m for m in rows['E19.0']['missing']))
+
+    def test_go_receipts_and_signatures_must_be_placed_too(self):
+        rows = {r['id']: r for r in setup.setup_plan(self.fx.facts(go_placements=[]))}
+        self.assertTrue(any('not bound' in m or 'incomplete' in m for m in rows['EGO']['missing']))
 
 
 def disk_witness():
@@ -931,7 +1032,7 @@ def hard_limit_witness():
 
 
 def candidate_for(row_id):
-    nonce = ROW_NONCES[row_id]
+    nonce = nonce_for(row_id)
     return {'boot_id': BOOT, 'nonce': nonce, 'unit': supervisor.unit_name(nonce), 'invocation_id': INVOCATION,
             'control_group': '', 'observed_control_group': GROUP, 'supervisor': 'systemd-service-cgroup-v2',
             'terminal_basis': observations.UNIT_INACTIVE, 'populated': 0, 'active_state': 'inactive',
@@ -939,21 +1040,14 @@ def candidate_for(row_id):
 
 
 class PlanFixture:
-    """Complete live facts with real files, a real archive, real credentials and signed GO receipts."""
+    """Complete live facts with real files, real archives, a complete placement map and signed GO receipts."""
 
     def __init__(self):
         self.dir = tmpdir('plan-fixture-')
         self.archive = self.dir / 'archive.tar'
-        with tarfile.open(self.archive, 'w') as tar:
-            for name, data in (('dir/file.txt', b'data'), ('top.txt', b'top')):
-                info = tarfile.TarInfo(name)
-                info.size = len(data)
-                tar.addfile(info, io.BytesIO(data))
-        self.archive_sha = hashlib.sha256(self.archive.read_bytes()).hexdigest()
-        self.placement = self.dir / 'common.py'
-        self.placement.write_bytes(b'print(1)\n')
-        self.staged = self.dir / 'effigy-stage-supervisor'
-        self.staged.write_bytes(setup.SUPERVISOR_SOURCE.read_bytes())
+        self.archive_sha = self._make_archive(self.archive, (('dir/file.txt', b'data'), ('top.txt', b'top')))
+        self.archive_b = self.dir / 'archive-B.tar'
+        self.archive_b_sha = self._make_archive(self.archive_b, (('old/file.txt', b'old'),))
         self.config = self.dir / 'ssh_config'
         self.config.write_bytes(b'Host effigy-531-vault\n')
         self.config.chmod(0o600)
@@ -964,8 +1058,21 @@ class PlanFixture:
         self.counter.write_text('100')
         self.go_cache = {}
 
+    @staticmethod
+    def _make_archive(path, members):
+        with tarfile.open(path, 'w') as tar:
+            for name, data in members:
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def module_placements(self):
+        modules, _ = setup.required_placements({})
+        return [{'guest_path': g, 'host_path': h, 'sha256': hashlib.sha256(Path(h).read_bytes()).hexdigest()}
+                for g, h in modules]
+
     def base(self, **over):
-        source_sha = hashlib.sha256(setup.SUPERVISOR_SOURCE.read_bytes()).hexdigest()
         facts = {
             'probe_output': PROBE_OUTPUT, 'probe_output_sha256': hashlib.sha256(PROBE_OUTPUT.encode()).hexdigest(),
             'probe_script': PROBE_SCRIPT,
@@ -973,7 +1080,8 @@ class PlanFixture:
             'resource_accounting': {'counter_files': {'writes': str(self.counter)}, 'limits': {'writes': 10 ** 9}},
             'e2_public_key': E2_KEY,
             'authorized_keys': key_line(), 'authorized_keys_expiry': NOW + 3600, 'now': NOW,
-            'effigy531_uid': 1001, 'row_nonces': dict(ROW_NONCES),
+            'effigy531_uid': 1001, 'row_nonces': _Nonces(),
+            'expected_head': 'a' * 40,
             'go_trust': signer().trust,
             'disk_association': None,
             'hard_limit': {'mechanism': 'none-established', 'limits': [], 'enforcement': 'poll'},
@@ -982,37 +1090,44 @@ class PlanFixture:
                           'known_hosts': str(self.known),
                           'known_hosts_sha256': hashlib.sha256(self.known.read_bytes()).hexdigest()},
             'archive': {'path': str(self.archive), 'sha256': self.archive_sha},
+            'archive_b': {'path': str(self.archive_b), 'sha256': self.archive_b_sha},
             'controls_payload': ['/bin/sh', '-c', 'true', 'sh'],
-            'supervisor_installed': {'sha256': source_sha},
-            'supervisor_staged': {'path': str(self.staged), 'sha256': source_sha},
-            'placements': [{'guest_path': setup.BASE + '/driver/common.py', 'host_path': str(self.placement),
-                            'sha256': hashlib.sha256(b'print(1)\n').hexdigest()}],
+            'supervisor_installed': {'sha256': hashlib.sha256(setup.SUPERVISOR_SOURCE.read_bytes()).hexdigest()},
+            'placements': self.module_placements(),
         }
         facts.update(over)
         return facts
 
-    def receipts_for(self, digest):
+    def receipts_for(self, digest, head):
         if digest not in self.go_cache:
             go = {}
             for gate in ALL_GATES:
                 body = {'gate': gate, 'status': 'approved', 'plan_sha256': digest, 'decision_id': 'D-' + gate,
-                        'source_head': 'a' * 40}
+                        'source_head': head}
                 go[gate] = signed_entry(self.dir / ('%s-%s.json' % (gate, digest[:12])), body)
             self.go_cache[digest] = go
         return self.go_cache[digest]
 
     def facts(self, **over):
-        """Facts plus signed GO receipts bound to this exact plan digest."""
+        """Facts plus signed GO receipts bound to this exact plan digest and head, and their placements.
+
+        Explicit `go` and `go_placements` overrides win, so a test can make either one wrong on purpose.
+        """
         facts = self.base(**over)
-        facts.pop('go', None)
-        digest = setup.plan_digest(setup._rows(facts))
-        facts['go'] = self.receipts_for(digest)
+        digest = setup.plan_digest(setup._rows(facts), facts['expected_head'])
+        if 'go' not in over:
+            facts['go'] = self.receipts_for(digest, facts['expected_head'])
+        if 'go_placements' not in over:
+            _, go_pairs = setup.required_placements(facts)
+            facts['go_placements'] = [{'guest_path': g, 'host_path': h,
+                                       'sha256': hashlib.sha256(Path(h).read_bytes()).hexdigest()}
+                                      for g, h in go_pairs]
         return facts
 
     def minimal(self):
-        return self.facts(authorized_keys=None, supervisor_installed=None, supervisor_staged=None,
-                          disk_association=None, placements=None, archive=None, ssh_files=None,
-                          controls_payload=None, effigy531_uid=None)
+        return self.base(authorized_keys=None, supervisor_installed=None, disk_association=None,
+                         placements=None, archive=None, archive_b=None, ssh_files=None,
+                         controls_payload=None, effigy531_uid=None, go_placements=None)
 
 
 class PlanChecks(unittest.TestCase):
@@ -1021,6 +1136,9 @@ class PlanChecks(unittest.TestCase):
         patcher = patch.object(setup, 'ARCHIVE_SHA256', self.fx.archive_sha)
         patcher.start()
         self.addCleanup(patcher.stop)
+        patcher_b = patch.object(setup, 'ARCHIVE_B_SHA256', self.fx.archive_b_sha)
+        patcher_b.start()
+        self.addCleanup(patcher_b.stop)
 
     def test_no_go_receipt_halts_at_the_first_row(self):
         facts = self.fx.facts()
@@ -1054,9 +1172,11 @@ class PlanChecks(unittest.TestCase):
             with self.subTest(rid=rid):
                 self.assertTrue(rows[rid]['missing'])
                 self.assertEqual(rows[rid]['argv'], [])
+        # Fixed argv: no live value is missing, so only the GO receipt (absent from minimal facts) can block.
         for rid in ('E3a', 'E3b', 'E3c', 'E4', 'E4v', 'E5a', 'E5b', 'E5c', 'E6a', 'E-SUP'):
             with self.subTest(rid=rid):
-                self.assertEqual(rows[rid]['missing'], [], rid)
+                self.assertTrue(rows[rid]['argv'], rid)
+                self.assertTrue(all(m.startswith('GO ') for m in rows[rid]['missing']), rows[rid]['missing'])
 
     def test_disk_association_must_be_verified_not_just_present(self):
         rows = {r['id']: r for r in setup.setup_plan(self.fx.facts(disk_association={'mechanism': 'x'}))}
@@ -1096,14 +1216,21 @@ class PlanChecks(unittest.TestCase):
         self.assertEqual(rows['E6']['argv'], [])
 
     def test_mutating_a_placement_file_is_stale_bytes(self):
-        self.fx.placement.write_bytes(b'print(2)\n')
-        rows = {r['id']: r for r in setup.setup_plan(self.fx.facts())}
+        # A temp file, never a repo file: the placement map pins repo paths for real modules.
+        extra = self.fx.dir / 'extra.txt'
+        extra.write_bytes(b'print(1)\n')
+        item = {'guest_path': setup.BASE + '/extra.txt', 'host_path': str(extra),
+                'sha256': hashlib.sha256(b'print(1)\n').hexdigest()}
+        facts = self.fx.facts(placements=[item])
+        extra.write_bytes(b'print(2)\n')
+        rows = {r['id']: r for r in setup.setup_plan(facts)}
         self.assertTrue(any('stdin bytes differ' in m for m in rows['E19.0']['missing']))
 
     def test_request_inline_is_covered_by_the_plan_digest(self):
-        before = setup.plan_digest(setup._rows(self.fx.base()))
-        changed = self.fx.base(row_nonces=dict(ROW_NONCES, E8='5' * 64))
-        self.assertNotEqual(before, setup.plan_digest(setup._rows(changed)))
+        before = setup.plan_digest(setup._rows(self.fx.base()), 'a' * 40)
+        changed = self.fx.base(effigy531_uid=1002)
+        self.assertNotEqual(before, setup.plan_digest(setup._rows(changed), 'a' * 40))
+        self.assertNotEqual(before, setup.plan_digest(setup._rows(self.fx.base()), 'b' * 40))
 
 
 class ExecutorChecks(unittest.TestCase):
@@ -1112,6 +1239,9 @@ class ExecutorChecks(unittest.TestCase):
         patcher = patch.object(setup, 'ARCHIVE_SHA256', self.fx.archive_sha)
         patcher.start()
         self.addCleanup(patcher.stop)
+        patcher_b = patch.object(setup, 'ARCHIVE_B_SHA256', self.fx.archive_b_sha)
+        patcher_b.start()
+        self.addCleanup(patcher_b.stop)
 
     def chain(self, **over):
         return self.fx.facts(hard_limit=hard_limit_witness(), disk_association=disk_witness(), **over)
@@ -1356,9 +1486,7 @@ class ManifestChecks(unittest.TestCase):
                 self.assertEqual(plan[row['id']]['timeout_seconds'], row['timeout_seconds'])
                 self.assertEqual(plan[row['id']]['effect'], row['effect'])
                 self.assertEqual(plan[row['id']]['kind'], row['kind'])
-                if row['status'] == 'template':
-                    self.assertEqual(plan[row['id']]['missing'], [], row['id'])
-                else:
+                if row['go']:
                     self.assertTrue(plan[row['id']]['missing'], row['id'])
 
     def test_row_past_stage_ceiling_refuses(self):
@@ -1666,6 +1794,32 @@ class RealTransferFlowChecks(unittest.TestCase):
 UNIT_OF_E9A = supervisor.unit_name(ROW_NONCES['E9a'])
 
 
+class StageRootChecks(unittest.TestCase):
+    """The row stage is exactly STAGE_ROOT/<row>; its parent is created once, traversable, root-owned."""
+
+    def setUp(self):
+        self.fake = FakeSystemd().use(self)
+
+    def test_row_stage_path_is_the_reviewed_root_child(self):
+        self.assertEqual(setup._stage('E9a'), supervisor.STAGE_ROOT + '/E9a')
+        self.assertTrue(setup._stage('E19.3').endswith('/E19.3'))
+
+    def test_missing_parent_is_created_traversable_and_the_row_is_payload_owned(self):
+        stage = tmpdir('stage-parent-') / 'missing-parent' / 'row'
+        ops = LiveOps(stage)
+        result = supervisor.run_supervised(stage, request(stage, argv=['/bin/sh', '-c', 'exit 0']), ops,
+                                           lambda: 0.0, BOOT, {}, None)
+        self.assertIsNotNone(result['candidate'], result['reason'])
+        self.assertEqual(stat_mode(stage.parent), 0o711)
+        self.assertEqual(stat_mode(stage), 0o700)
+
+    def test_entry_refuses_names_that_are_not_plain_row_names(self):
+        for name in ('..', 'a b', 'x' * 40):
+            with self.subTest(name=name), self.assertRaises(Refusal):
+                supervisor.main(['--request-json', json.dumps(request(tmpdir('bad-') / name)), '--sha256',
+                                 hashlib.sha256(json.dumps(request(tmpdir('bad-') / name)).encode()).hexdigest()])
+
+
 class SupervisorInstallChecks(unittest.TestCase):
     """The root install row, run as its local shell argv: exact reviewed bytes, mode and sha."""
 
@@ -1708,12 +1862,13 @@ class InstalledSupervisorChecks(unittest.TestCase):
                        env=dict(os.environ, PATH=str(shim) + os.pathsep + os.environ.get('PATH', '')))
         self.boot = self.root / 'boot_id'
         self.boot.write_text(BOOT + '\n')
-        patcher = patch.dict(os.environ, {'EFFIGY_BOOT_ID_PATH': str(self.boot)})
+        patcher = patch.dict(os.environ, {'EFFIGY_BOOT_ID_PATH': str(self.boot),
+                                          'EFFIGY_STAGE_ROOT': str(self.root / 'stage-root')})
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def request_text(self, payload, nonce=NONCE, expected_boot=BOOT, stage=None):
-        stage = stage or self.root / 'stage'
+        stage = stage or self.root / 'stage-root' / 'row'
         req = {'nonce': nonce, 'payload_user': 'effigy531', 'payload_uid': os.geteuid(), 'cwd': CWD,
                'timeout_seconds': 10, 'argv': payload, 'stage_dir': str(stage), 'expected_boot_id': expected_boot}
         return json.dumps(req, sort_keys=True)
@@ -1763,7 +1918,14 @@ class InstalledSupervisorChecks(unittest.TestCase):
         proc = self.run_installed(wrong)
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn('boot identity differs', proc.stderr)
-        self.assertFalse((self.root / 'stage').exists(), 'a boot refusal must create no stage')
+        self.assertFalse((self.root / 'stage-root' / 'row').exists(), 'a boot refusal must create no stage')
+
+    def test_installed_entry_refuses_a_stage_outside_the_reviewed_root(self):
+        text = self.request_text(['/bin/sh', '-c', 'exit 0'], stage=self.root / 'elsewhere' / 'row')
+        proc = self.run_installed(text)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn('direct child of the reviewed stage root', proc.stderr)
+        self.assertFalse((self.root / 'elsewhere').exists())
 
 
 if __name__ == '__main__':

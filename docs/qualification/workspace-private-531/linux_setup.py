@@ -64,7 +64,15 @@ DROPIN_TEXT = ('Match User effigy531\n'
 SUPERVISOR_PATH = '/usr/local/libexec/effigy-stage-supervisor'
 SUPERVISOR_SOURCE = Path(__file__).resolve().parent / 'linux_supervisor.py'
 ARCHIVE_NAME = 'archive.tar'
-ARCHIVE_SHA256 = '03df0b512b7536467cfb44f131619543d4e561e09aee29cab71be12445bfe867'
+ARCHIVE_SHA256 = '03df0b512b7536467cfb44f131619543d4e561e09aee29cab71be12445bfe867'   # candidate H (§6.3)
+ARCHIVE_B_SHA256 = '69dfda56c8be8e46fa0c6dea5224b519cfc55f471ada2945545d17c9c53eda83'  # old source B (§6.3)
+# Repository files every guest run needs. The guest copies sit under BASE/driver with their names.
+REQUIRED_MODULE_NAMES = ('preparation_requests.py', 'preparation_stage.py', 'preparation_resources.py',
+                         'preparation_guest.py', 'preparation_controls.py', 'preparation_observations.py',
+                         'preparation_placement.py', 'preparation_archive.py', 'preparation_nextest.py',
+                         'preparation_metadata.py', 'linux_setup.py', 'linux_supervisor.py',
+                         'linux_transfer.py', 'linux_receipts.py')
+REQUIRED_DRIVER_NAMES = ('common.py', 'runtime.py', 'probe.py')
 KEY_LIFETIME_SECONDS = 86400
 PROBE = Path(__file__).resolve().parent / 'linux-setup-probe.sh'
 PROBE_SHA256 = '6bde748a456617737fb4928d347d55fa96e5a6ff0dac119ace373692ef41fc39'
@@ -176,6 +184,26 @@ def _retain(stage_dir, name, data):
     return str(Path(stage_dir) / name)
 
 
+def derive_writable_top(descriptor):
+    """The writable top is the one image whose file name names the current snapshot GUID.
+
+    The descriptor is the only source. Zero or several matches refuse, and the chain is then
+    checked by observations.inventory_extents.
+    """
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(descriptor)
+    except ET.ParseError as exc:
+        raise Refusal('invalid disk descriptor') from exc
+    token = CURRENT_SNAPSHOT.strip('{}')
+    named = [item for item in root.findall('./StorageData/Storage/Image')
+             if token in (item.findtext('File') or '') and (item.findtext('File') or '').endswith('.hds')]
+    guids = [item.findtext('GUID') for item in named]
+    if guids != [CURRENT_SNAPSHOT]:
+        raise Refusal('the writable top must be the one image named by, and identified as, the current snapshot')
+    return guids[0]
+
+
 def stage1_request(fresh, stage_dir):
     """Request for the one-start entry, bound to the registered VM home and its disk chain.
 
@@ -205,9 +233,10 @@ def stage1_request(fresh, stage_dir):
     _owned_dir(directory)
     descriptor = descriptor_path.read_bytes()
     config = config_path.read_bytes()
-    inventory = _wrap(observations.inventory_extents, descriptor, CURRENT_SNAPSHOT, str(directory.resolve()))
-    if not inventory['chain'] or inventory['chain'][0] != CURRENT_SNAPSHOT:
-        raise Refusal('descriptor top is not the registered current writable extent')
+    top = derive_writable_top(descriptor)
+    inventory = _wrap(observations.inventory_extents, descriptor, top, str(directory.resolve()))
+    if not inventory['chain'] or inventory['chain'][0] != top:
+        raise Refusal('descriptor chain does not start at the derived writable top')
     if set(inventory['chain']) - set(inventory['extents']):
         raise Refusal('chain names an extent absent from the inventory')
     stage = Path(stage_dir)
@@ -235,7 +264,7 @@ def stage1_request(fresh, stage_dir):
     return {'stage_dir': str(stage), 'vm': VM_UUID, 'home': PVM_HOME, 'steps': steps,
             'deadline_seconds': 600, 'reserve_seconds': STAGE1_RESERVE,
             'growth_cap_bytes': CONFIG_ALLOWANCE_BYTES, 'no_snapshot': True, 'no_kill': True,
-            'top_guid': CURRENT_SNAPSHOT, 'bundle_identity': bundle_identity,
+            'top_guid': top, 'bundle_identity': bundle_identity,
             'before': {'config_sha256': _sha(config), 'config_identity': config_identity,
                        'descriptor_sha256': _sha(descriptor), 'extents': inventory['extents'],
                        'chain': inventory['chain']},
@@ -244,8 +273,19 @@ def stage1_request(fresh, stage_dir):
 
 
 def stage1_verify_post(request, after):
-    """Refuse on any drift from the retained bytes, identities or the recomputed inventory."""
+    """Refuse on any drift from the retained bytes, identities or the recomputed inventory.
+
+    The post-run config and descriptor bytes are written into the stage directory first, so a
+    refusal still leaves the evidence. Each check re-reads the registered files and recomputes
+    the writable top and the inventory from the descriptor it just retained.
+    """
     before = request['before']
+    stage = Path(request['retained']['config']).parent
+    home = Path(request['home'])
+    post_config = (home / CONFIG_NAME).read_bytes()
+    post_descriptor = (home / DISK_DIR / DESCRIPTOR_NAME).read_bytes()
+    _retain(stage, 'post-config.bin', post_config)
+    _retain(stage, 'post-descriptor.xml', post_descriptor)
     retained_config = Path(request['retained']['config']).read_bytes()
     if _sha(retained_config) != before['config_sha256']:
         raise Refusal('retained pre-start config bytes do not match the request')
@@ -254,24 +294,19 @@ def stage1_verify_post(request, after):
     if (after.get('snapshot_count') != SNAPSHOT_COUNT or after.get('current_snapshot') != CURRENT_SNAPSHOT
             or after.get('clean_base_present') is not True):
         raise Refusal('snapshot tree changed')
-    home = Path(request['home'])
-    config_identity = _owned_regular(home / CONFIG_NAME)
-    bundle_identity = _owned_dir(home)
-    if config_identity != before['config_identity'] or bundle_identity != request['bundle_identity']:
+    if _owned_regular(home / CONFIG_NAME) != before['config_identity'] or _owned_dir(home) != request['bundle_identity']:
         raise Refusal('config or bundle identity changed')
-    after_config = (home / CONFIG_NAME).read_bytes()
-    _wrap(observations.compare_config, retained_config, after_config, [])
-    directory = home / DISK_DIR
-    after_descriptor = (directory / DESCRIPTOR_NAME).read_bytes()
-    if _sha(after_descriptor) != before['descriptor_sha256']:
+    _wrap(observations.compare_config, retained_config, post_config, [])
+    if _sha(post_descriptor) != before['descriptor_sha256']:
         raise Refusal('descriptor bytes changed')
-    after_inventory = _wrap(observations.inventory_extents, after_descriptor, request['top_guid'], str(directory.resolve()))
+    top = derive_writable_top(post_descriptor)
+    if top != request['top_guid']:
+        raise Refusal('writable top changed')
+    after_inventory = _wrap(observations.inventory_extents, post_descriptor, top, str((home / DISK_DIR).resolve()))
     growth = _wrap(observations.compare_extents, before['extents'], after_inventory['extents'], before['chain'],
                    cap=CONFIG_ALLOWANCE_BYTES)
     return {'growth_bytes': growth, 'config_sha256': before['config_sha256']}
 
-
-# ---------------------------------------------------------------- admission witnesses
 
 def verify_disk_association(host, guest, witness, supported=None):
     """Fail closed unless a source-verified mechanism establishes the controller-to-guest chain."""
@@ -432,12 +467,13 @@ def _row(rows, row_id, kind, argv, seconds, basis, go, expect=None, stdin=None, 
 
 
 def _stage(row_id):
-    return BASE + '/stage/' + row_id
+    return supervisor.STAGE_ROOT + '/' + row_id
 
 
 def _supervised_argv(fresh, row_id, payload_argv, cwd, timeout, transfer=False):
     """Supervisor start with the request inline. The plan digest covers the exact request bytes."""
-    nonce = (fresh.get('row_nonces') or {}).get(row_id)
+    nonces = fresh.get('row_nonces')
+    nonce = nonces.get(row_id) if isinstance(nonces, dict) else None
     uid = fresh.get('effigy531_uid')
     identity = fresh.get('identity') or {}
     if not isinstance(uid, int) or isinstance(uid, bool) or not HEX64.fullmatch(nonce or '') or not identity.get('boot_id'):
@@ -504,6 +540,16 @@ def _rows(fresh):
     _row(rows, 'E9a', 'contained-transfer', argv, 900, SUPERVISED_BASIS, 'E9', {'stdout_sha': ARCHIVE_SHA256},
          stdin=archive.get('path') if archive_ok else None, stdin_sha=ARCHIVE_SHA256, limit_bytes=TRANSFER_CAP,
          credit=credit, writer_argv=writer)
+    # E9c: the old-source B archive streams the same contained way to its own destination.
+    archive_b = fresh.get('archive_b') or {}
+    b_ok = bool(ssh_ok and archive_b.get('path') and archive_b.get('sha256') == ARCHIVE_B_SHA256)
+    dest_b = BASE + '/archive-B.tar'
+    argv, credit = _supervised_argv(fresh, 'E9c', _transfer_payload('E9c', dest_b), BASE, 900, transfer=True) \
+        if b_ok else ([], None)
+    writer = ssh_argv(cfg, writer_remote_argv(_stage('E9c') + '/' + supervisor.TRANSFER_NAME)) if b_ok else []
+    _row(rows, 'E9c', 'contained-transfer', argv, 900, SUPERVISED_BASIS, 'E9', {'stdout_sha': ARCHIVE_B_SHA256},
+         stdin=archive_b.get('path') if b_ok else None, stdin_sha=ARCHIVE_B_SHA256, limit_bytes=TRANSFER_CAP,
+         credit=credit, writer_argv=writer)
     # E9b: the extraction and its tree digest run as a supervised payload.
     argv, credit = _supervised_argv(fresh, 'E9b', ['/bin/sh', '-c', remote_extract_script(), 'sh', dest,
                                                    BASE + '/source'], BASE, 300) if archive_ok else ([], None)
@@ -514,16 +560,12 @@ def _rows(fresh):
     if not placements:
         _row(rows, 'E19', 'contained-transfer', [], 300, SUPERVISED_BASIS, 'E19', None, limit_bytes=TRANSFER_CAP)
     for index, item in enumerate(placements):
-        row_id = 'E19.' + str(index)
-        ok = bool(ssh_ok and HEX64.fullmatch(item.get('sha256', '') or '') and item.get('guest_path')
-                  and item.get('host_path') and item['guest_path'].startswith(BASE + '/'))
-        argv, credit = _supervised_argv(fresh, row_id, _transfer_payload(row_id, item.get('guest_path', '')),
-                                        BASE, 300, transfer=True) if ok else ([], None)
-        writer = ssh_argv(cfg, writer_remote_argv(_stage(row_id) + '/' + supervisor.TRANSFER_NAME)) if ok else []
-        _row(rows, row_id, 'contained-transfer', argv, 300, SUPERVISED_BASIS, 'E19',
-             {'stdout_sha': item.get('sha256')}, stdin=item.get('host_path') if ok else None,
-             stdin_sha=item.get('sha256') if ok else None, limit_bytes=TRANSFER_CAP, credit=credit,
-             writer_argv=writer)
+        _placement_row(rows, fresh, cfg, 'E19.' + str(index), item)
+    go_placements = fresh.get('go_placements') or []
+    if not go_placements:
+        _row(rows, 'EGO', 'contained-transfer', [], 300, SUPERVISED_BASIS, 'E19', None, limit_bytes=TRANSFER_CAP)
+    for index, item in enumerate(go_placements):
+        _placement_row(rows, fresh, cfg, 'EGO.' + str(index), item)
     # E8: the filesystem controls run as a supervised payload from the reviewed argv.
     payload = fresh.get('controls_payload')
     e8_ok = isinstance(payload, list) and payload and all(isinstance(a, str) and a for a in payload)
@@ -532,11 +574,73 @@ def _rows(fresh):
     return rows
 
 
-def plan_digest(rows):
-    """Digest of the plan's executable content. GO receipts bind to this value."""
+def _placement_row(rows, fresh, cfg, row_id, item):
+    """One contained transfer that places a reviewed host file at its guest path, sha256 checked on both sides."""
+    ok = bool(cfg and HEX64.fullmatch(item.get('sha256', '') or '') and item.get('guest_path')
+              and item.get('host_path') and item['guest_path'].startswith(BASE + '/'))
+    argv, credit = _supervised_argv(fresh, row_id, _transfer_payload(row_id, item.get('guest_path', '')),
+                                    BASE, 300, transfer=True) if ok else ([], None)
+    writer = ssh_argv(cfg, writer_remote_argv(_stage(row_id) + '/' + supervisor.TRANSFER_NAME)) if ok else []
+    _row(rows, row_id, 'contained-transfer', argv, 300, SUPERVISED_BASIS, 'E19',
+         {'stdout_sha': item.get('sha256')}, stdin=item.get('host_path') if ok else None,
+         stdin_sha=item.get('sha256') if ok else None, limit_bytes=TRANSFER_CAP, credit=credit, writer_argv=writer)
+
+
+def required_placements(fresh):
+    """(guest, host) pairs the placement map must cover: modules and drivers, then GO receipts,
+    signatures and the allowed-signers file. The GO pairs come from facts bound after the digest."""
+    here = Path(__file__).resolve().parent
+    modules = [(BASE + '/driver/' + name, str(here / name)) for name in REQUIRED_MODULE_NAMES + REQUIRED_DRIVER_NAMES]
+    go = []
+    for gate in sorted(fresh.get('go') or {}):
+        entry = (fresh.get('go') or {}).get(gate) or {}
+        for key in ('path', 'signature_path'):
+            if entry.get(key):
+                go.append((BASE + '/inputs/go/' + Path(entry[key]).name, entry[key]))
+    signers = (fresh.get('go_trust') or {}).get('allowed_signers')
+    if signers:
+        go.append((BASE + '/inputs/go/allowed_signers', signers))
+    return modules, go
+
+
+def placement_gaps(given, required):
+    """Reasons the bound placements differ from the required map. Empty means the map is complete and exact."""
+    if not isinstance(given, list):
+        return ['placement map not bound']
+    want = {guest: host for guest, host in required}
+    have, gaps = {}, []
+    for item in given:
+        guest = item.get('guest_path')
+        if guest in have:
+            gaps.append('duplicate placement ' + str(guest))
+        have[guest] = item
+        if guest not in want:
+            gaps.append('unexpected placement ' + str(guest))
+            continue
+        if item.get('host_path') != want[guest]:
+            gaps.append('placement host path differs from the map: ' + guest)
+        if not Path(want[guest]).is_file() or item.get('sha256') != _file_sha(want[guest]):
+            gaps.append('placement sha256 differs from the host bytes: ' + guest)
+    missing = sorted(set(want) - set(have))
+    if missing:
+        gaps.append('placement map incomplete; missing ' + ', '.join(missing[:3]) + (' ...' if len(missing) > 3 else ''))
+    return gaps
+
+
+def plan_digest(rows, expected_head):
+    """Digest of the plan's executable content, bound to the reviewed head.
+
+    GO-placement rows (EGO.*) are excluded: they carry the receipts, and the receipts sign this
+    digest. Everything else that changes what runs is included.
+    """
     body = [[r['id'], r['kind'], r['argv'], r['writer_argv'], r['timeout_seconds'], r['closure_basis'],
-             r['expect'], r['stdin_sha256'], r['limit_bytes'], r['credit']] for r in rows]
-    return _sha(json.dumps(body, sort_keys=True).encode())
+             r['expect'], r['stdin_sha256'], r['limit_bytes'], r['credit']] for r in rows
+            if not r['id'].startswith('EGO.') and r['id'] != 'EGO']
+    return _sha(json.dumps({'head': expected_head, 'rows': body}, sort_keys=True).encode())
+
+
+def _archive_bound(item, sha256):
+    return bool(item and item.get('path') and item.get('sha256') == sha256)
 
 
 def setup_plan(fresh):
@@ -546,7 +650,7 @@ def setup_plan(fresh):
     embed a live value that is absent keeps an empty argv, so no placeholder reaches a shell.
     """
     rows = _rows(fresh)
-    digest = plan_digest(rows)
+    digest = plan_digest(rows, fresh.get('expected_head'))
     gates = fresh.get('go') or {}
     trust = fresh.get('go_trust') or {}
     identity = fresh.get('identity')
@@ -567,6 +671,8 @@ def setup_plan(fresh):
         global_missing.append('identity differs from the probe bound to this plan')
     if not fresh.get('resource_accounting'):
         global_missing.append('resource accounting (counter files and limits)')
+    if not HEX40.fullmatch(fresh.get('expected_head') or ''):
+        global_missing.append('expected reviewed head (40 hex, bound into the plan digest)')
     if not isinstance(fresh.get('e2_public_key'), str):
         global_missing.append('E2 public key line')
     if not isinstance(trust, dict) or not trust.get('allowed_signers'):
@@ -597,20 +703,27 @@ def setup_plan(fresh):
                 missing.append('pinned ssh config and known_hosts with sha256')
             if row['stdin_path'] and Path(row['stdin_path']).is_file() and _file_sha(row['stdin_path']) != row['stdin_sha256']:
                 missing.append('stdin bytes differ from the bound sha256')
+        if rid == 'E9c' and not _archive_bound(fresh.get('archive_b'), ARCHIVE_B_SHA256):
+            missing.append('pinned B archive path and sha256 (' + ARCHIVE_B_SHA256[:8] + '...)')
+        if rid == 'E19' or rid.startswith('E19.'):
+            missing += placement_gaps(fresh.get('placements'), required_placements(fresh)[0])
+        if rid == 'EGO' or rid.startswith('EGO.'):
+            missing += placement_gaps(fresh.get('go_placements'), required_placements(fresh)[1])
         if rid == 'E9b' and not row['expect']:
             missing.append('pinned archive for the tree digest')
         if rid == 'E19' and not row['argv']:
             missing.append('reviewed driver, inputs, GO index and GO receipt placements')
         if rid.startswith('E19.') and not row['argv']:
             missing.append('placement with a host path, sha256 and a guest path under BASE')
-        if rid == 'E9a' and not row['argv']:
-            missing.append('pinned archive path and sha256 (03df0b51...)')
+        if rid == 'E9a' and not _archive_bound(fresh.get('archive'), ARCHIVE_SHA256):
+            missing.append('pinned archive path and sha256 (' + ARCHIVE_SHA256[:8] + '...)')
         if row['limit_bytes'] is not None:
             reason = _hard_limit_reason(fresh, row)
             if reason:
                 missing.append(reason)
         if row['go']:
-            ok, reason = verify_signed_receipt(gates.get(row['go']), row['go'], digest, trust)
+            ok, reason = verify_signed_receipt(gates.get(row['go']), row['go'], digest, trust,
+                                               fresh.get('expected_head'))
             if not ok:
                 missing.append('GO ' + row['go'] + ': ' + reason)
         row['missing'] = sorted(set(missing))

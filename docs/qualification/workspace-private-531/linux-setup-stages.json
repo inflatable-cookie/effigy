@@ -213,6 +213,23 @@
       "needs_hard_limit": true
     },
     {
+      "id": "E9c",
+      "kind": "contained-transfer",
+      "effect": "transfer",
+      "closure_basis": "supervised-contained",
+      "timeout_seconds": 900,
+      "go": "E9",
+      "status": "blocked",
+      "live_blockers": [
+        "pinned B archive path and sha256 (69dfda56...)",
+        "effigy531 uid observed after E3a",
+        "row nonce (E9c)",
+        "supervisor installed (E-SUP)",
+        "verified kernel hard limit covering the archive cap"
+      ],
+      "effect_note": "old-source B archive, contained transfer like E9a, to BASE/archive-B.tar"
+    },
+    {
       "id": "E8",
       "kind": "vm-supervised",
       "closure_basis": "supervised-contained",
@@ -240,6 +257,20 @@
       ],
       "effect": "transfer",
       "needs_hard_limit": true
+    },
+    {
+      "id": "EGO",
+      "kind": "contained-transfer",
+      "effect": "transfer",
+      "closure_basis": "supervised-contained",
+      "timeout_seconds": 300,
+      "go": "E19",
+      "status": "blocked",
+      "live_blockers": [
+        "GO receipts, their signatures and the allowed-signers file placed under BASE/inputs/go (EGO.* rows)",
+        "verified kernel hard limit covering the transfer cap"
+      ],
+      "effect_note": "GO placement rows are excluded from the plan digest because the receipts sign it"
     }
   ],
   "reconciliation": {

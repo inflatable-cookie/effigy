@@ -36,7 +36,7 @@ def run_keygen_verify(argv, stdin_bytes):
     return proc.returncode
 
 
-def verify_signed_receipt(entry, gate, plan_digest, trust, verify=run_keygen_verify):
+def verify_signed_receipt(entry, gate, plan_digest, trust, expected_head, verify=run_keygen_verify):
     """(ok, reason). Refuses with a reason; never raises for a bad receipt."""
     if not isinstance(entry, dict) or not HEX64.fullmatch(entry.get('sha256') or '') or not entry.get('path'):
         return False, 'receipt entry lacks a path or sha256'
@@ -70,4 +70,6 @@ def verify_signed_receipt(entry, gate, plan_digest, trust, verify=run_keygen_ver
         return False, 'receipt is bound to a different plan (stale)'
     if not receipt.get('decision_id') or not HEX40.fullmatch(receipt.get('source_head') or ''):
         return False, 'receipt lacks a decision id or source head'
+    if not HEX40.fullmatch(expected_head or '') or receipt.get('source_head') != expected_head:
+        return False, 'receipt is bound to a different reviewed head'
     return True, None

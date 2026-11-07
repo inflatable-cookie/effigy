@@ -69,6 +69,11 @@ PROPERTIES = 'LoadState,ActiveState,SubState,Result,ExecMainStatus,InvocationID,
 GATE_NAME = 'gate.fifo'
 TRANSFER_NAME = 'transfer.fifo'
 PAYLOAD_STDOUT_CAP = 65536
+# The only directory the installed entry creates row stages under. It is root-owned and mode 0711,
+# so the payload account can traverse to its own row directory and cannot list the others.
+STAGE_ROOT = '/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/stage'
+STAGE_ROOT_MODE = 0o711
+ROW_NAME = re.compile(r'^[A-Za-z0-9._-]{1,32}$')
 
 
 class Disconnect(Exception):
@@ -256,9 +261,8 @@ def _eligible(boot_id, nonce, show, samples, release_index, waited_exit):
         return None, 'no pre-release sample shows this InvocationID active in a cgroup'
     if len({s['control_group'] for s in active}) != 1:
         return None, 'monitor saw more than one control group for this InvocationID'
-    after = [s for s in samples[release_index:] if s.get('kind') == 'loaded' and s['invocation_id'] == invocation]
-    if any(s.get('populated') == 1 for s in after):
-        return None, 'monitor saw a live descendant after release for this InvocationID'
+    if any(s.get('kind') in ('read-failed', 'release-failed') or s.get('populated_error') for s in samples):
+        return None, 'a failed read or release occurred; closure is unknown'
     if show['active_state'] != 'inactive' or show['result'] != 'success' or show['exec_main_status'] != '0':
         return None, 'post-run terminal state is not inactive success'
     if show['control_group'] != '':
@@ -283,7 +287,10 @@ def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, mo
     """
     stage = Path(stage_dir)
     if not os.path.lexists(stage):
-        # The supervisor is root: it creates the stage for the payload account.
+        # The supervisor is root: it creates the row stage for the payload account, and its parent once.
+        if not os.path.lexists(stage.parent):
+            os.makedirs(stage.parent, 0o700)
+            os.chmod(stage.parent, STAGE_ROOT_MODE)
         os.mkdir(stage, 0o700)
         os.chown(stage, request['payload_uid'], -1)
     info = stage.lstat()
@@ -425,6 +432,11 @@ def main(argv):
                 'expected_boot_id'}
     if not required <= set(request) or set(request) - required - {'transfer'}:
         raise Refusal('unsupported request schema')
+    stage = Path(request['stage_dir'])
+    # EFFIGY_STAGE_ROOT is a test seam: the reviewed root does not exist on a development host.
+    # The installed command line never sets it, and the host checks every credit independently.
+    if str(stage.parent) != os.environ.get('EFFIGY_STAGE_ROOT', STAGE_ROOT) or not ROW_NAME.fullmatch(stage.name):
+        raise Refusal('stage must be a direct child of the reviewed stage root')
     boot_id = Path(os.environ.get('EFFIGY_BOOT_ID_PATH', BOOT_ID_PATH)).read_text().strip()
     if boot_id != request['expected_boot_id']:
         raise Refusal('boot identity differs from the request')
