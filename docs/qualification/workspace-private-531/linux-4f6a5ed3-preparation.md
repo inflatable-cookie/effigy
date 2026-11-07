@@ -555,8 +555,12 @@ it requires an admission-preserving route with those semantics and the test GO.
 That route has not been established, so E13k stays held rather than invoking
 raw component commands. E17 stays at 60 seconds. E14 has a 1,800-second planned bound and cannot be treated as a
 1,200-second command without evidence or a source-qualified decomposition;
-that exact constraint remains open. The same scrutiny applies to E10, E12 and
-E13b before their execution commands are admitted. No host SSH timeout proves
+that exact constraint remains open. E10 has the same indivisible 1,800-second
+kit bound: neither the pinned rustup bootstrap bytes nor a source-qualified
+split is established, so it remains held. E12 is split into a 900-second pull
+and a 900-second build, each with a separate intent, receipt and closure gate;
+the original total 1,800-second budget and network/storage caps still apply.
+E13b uses B's own source-defined 900-second command. No host SSH timeout proves
 that a guest process or its session has closed.
 
 The source producer's receipt records `release_triple`, `sha256`, `build_kind`,
@@ -630,6 +634,44 @@ execution manifest. Those gates remain required; an unbound request is not an
 activation. The existing 684 evidence exposes no supported link from the host
 controller/disk UID to the authenticated guest serial, so that precise
 correlation remains refused.
+
+### Executable observation controls and stage manifest
+
+`linux-preparation-stages.json` binds the exact E12 pull/build, E13a and E13b
+argv, cwd, per-command deadlines, output bounds, prerequisites, retention and
+failure dispositions. `preparation_requests.bind` builds the exact stage-runner
+request only when every named gate has a retained, hash-bound `pass` receipt
+and the caller's independent verifier accepts it; `write_request` creates that
+request exclusively and returns its SHA-256. This is an injected primitive,
+not an authenticator: no verifier for the missing guest disk correlation or
+closure is asserted here. Bind the manifest and preparation code hashes into
+each stage request, along with the exact environment, GO and fresh authenticated
+input/receipt hashes. The host admission hook must remain held until the guest
+terminal and closure are established. The file does not authorize execution;
+E10, E13k and E14 are held with their exact constraints. Other setup effects
+still require their own reviewed per-effect requests and bindings before use.
+No stage advances after a failed, missing or unknown receipt.
+
+Run `preparation_controls.py REQUEST_JSON REQUEST_SHA256` inside the appropriate
+one-use stage. The `compare-config` request names `before`, `before_sha256`,
+`after`, `after_sha256`, and `volatile_reasons` (an exact XML-path to nonempty
+justification map). Retain both original private byte streams; empty reasons
+means no field is exempt. `extent-inventory` takes `descriptor`,
+`descriptor_sha256`, independently identified `top`, and canonical `directory`;
+retain its JSON output before and after. `compare-extents` binds those two
+outputs with `before`, `before_sha256`, `after`, and `after_sha256`; it refuses
+mapping, chain or identity drift and growth above 1 GiB. `setup-readiness`
+takes fresh authenticated `system_state`, `docker_state` and `boot_id`; only
+`running` is boot complete, and active or activating Docker is not started.
+
+`filesystem-controls` runs in an empty private E8 child of the placement root;
+retain its original JSON stdout and hash. `native-placement` binds `root`,
+`uid`, the authenticated mount observation file and SHA-256, and that E8
+stdout and SHA-256. The mount observation has `source`, `target`, `fstype`,
+and numeric `device`; the control checks those against the actual root device
+and the E8 control file identity. This is a filesystem admission only: the
+separate authenticated controller-to-guest correlation remains required and
+is unavailable from 684. Never substitute a matching path or size for it.
 
 ### Exact source-qualified payloads (held)
 

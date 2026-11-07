@@ -104,13 +104,13 @@ def filesystem_controls(directory, uid):
             os.fsync(directory_fd)
         finally:
             os.close(directory_fd)
-        return {'device': os.fstat(fd).st_dev, 'inode': os.fstat(fd).st_ino,
+        return {'control_dir': str(directory), 'uid': uid, 'device': os.fstat(fd).st_dev, 'inode': os.fstat(fd).st_ino,
                 'socket_fd_transfer': True, 'lock': True, 'no_clobber': True, 'fsync': True}
     finally:
         os.close(fd)
 
 
-def placement_provenance(host, guest, correlation, verify_correlation):
+def placement_provenance(host, guest, correlation, verify_correlation, root, uid, mount, controls):
     """Require a separately authenticated controller-to-guest association.
 
     The callback is an injected verifier, not a model/size heuristic. An absent
@@ -130,6 +130,33 @@ def placement_provenance(host, guest, correlation, verify_correlation):
         raise Refusal('missing fresh authentication or host config binding')
     if correlation is None or verify_correlation(host, guest, correlation) is not True:
         raise Refusal('unsupported controller-to-guest disk correlation')
-    return {'host': expected_host, 'guest': expected_guest,
+    filesystem = validate_native_placement(root, uid, mount, controls)
+    return {'host': expected_host, 'guest': expected_guest, 'filesystem': filesystem,
             'config_sha256': host['config_sha256'], 'boot_id': guest['boot_id'],
             'ssh_host_key': guest['ssh_host_key'], 'correlation': correlation}
+
+
+def validate_native_placement(root, uid, mount, controls):
+    """Bind the actual E8 probe and placement directory to the native root mount."""
+    root = Path(root)
+    info = root.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or root.resolve() != root or info.st_uid != uid
+            or stat.S_IMODE(info.st_mode) != 0o700):
+        raise Refusal('placement root identity invalid')
+    if (mount.get('target') != '/' or mount.get('source') != '/dev/sda2'
+            or mount.get('fstype') != 'ext4' or mount.get('device') != info.st_dev):
+        raise Refusal('native root mount or device mismatch')
+    control_dir = Path(controls.get('control_dir', ''))
+    if control_dir.parent != root or controls.get('uid') != uid:
+        raise Refusal('E8 control directory is not bound to placement root')
+    control_dir_stat = control_dir.lstat()
+    source = control_dir / 'control-source'
+    source_stat = source.lstat()
+    if (not stat.S_ISDIR(control_dir_stat.st_mode) or control_dir.resolve() != control_dir
+            or control_dir_stat.st_uid != uid or stat.S_IMODE(control_dir_stat.st_mode) != 0o700
+            or not stat.S_ISREG(source_stat.st_mode) or source_stat.st_dev != info.st_dev
+            or controls.get('device') != source_stat.st_dev or controls.get('inode') != source_stat.st_ino
+            or any(controls.get(k) is not True for k in ('socket_fd_transfer', 'lock', 'no_clobber', 'fsync'))):
+        raise Refusal('E8 receipt or actual owned filesystem controls mismatch')
+    return {'root': str(root), 'device': info.st_dev, 'inode': info.st_ino,
+            'uid': uid, 'mount': mount, 'controls': controls}

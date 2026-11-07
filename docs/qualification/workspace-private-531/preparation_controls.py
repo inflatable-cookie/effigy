@@ -11,12 +11,20 @@ import preparation_archive as archive
 import preparation_nextest as nextest
 import preparation_placement as placement
 import preparation_metadata as metadata
+import preparation_observations as observations
 from preparation_stage import exclusive
 
 
 def read_json(path):
     with open(path, 'rb') as source:
         return json.load(source)
+
+
+def bound_bytes(path, expected):
+    data = Path(path).read_bytes()
+    if hashlib.sha256(data).hexdigest() != expected:
+        raise ValueError('bound input hash mismatch')
+    return data
 
 
 def main():
@@ -45,6 +53,28 @@ def main():
         result = placement.place_file(request['directory'], request['name'], data, request['sha256'], request['uid'])
     elif op == 'nextest-offline' and set(request) == {'operation', 'archive', 'directory', 'uid'}:
         result = nextest.install_prepositioned(request['archive'], request['directory'], request['uid'])
+    elif op == 'compare-config' and set(request) == {'operation', 'before', 'before_sha256', 'after', 'after_sha256', 'volatile_reasons'}:
+        reasons = request['volatile_reasons']
+        if not isinstance(reasons, dict) or any(not isinstance(v, str) or not v.strip() for v in reasons.values()):
+            raise ValueError('volatile fields need explicit reasons')
+        result = observations.compare_config(bound_bytes(request['before'], request['before_sha256']),
+                                             bound_bytes(request['after'], request['after_sha256']), list(reasons))
+        result['volatile_reasons'] = reasons
+    elif op == 'extent-inventory' and set(request) == {'operation', 'descriptor', 'descriptor_sha256', 'top', 'directory'}:
+        result = observations.inventory_extents(bound_bytes(request['descriptor'], request['descriptor_sha256']),
+                                                request['top'], request['directory'])
+    elif op == 'compare-extents' and set(request) == {'operation', 'before', 'before_sha256', 'after', 'after_sha256'}:
+        before = json.loads(bound_bytes(request['before'], request['before_sha256']))
+        after = json.loads(bound_bytes(request['after'], request['after_sha256']))
+        if before['descriptor_sha256'] != after['descriptor_sha256'] or before['chain'] != after['chain']:
+            raise ValueError('descriptor or chain changed')
+        result = {'growth_bytes': observations.compare_extents(before['extents'], after['extents'], before['chain'])}
+    elif op == 'setup-readiness' and set(request) == {'operation', 'system_state', 'docker_state', 'boot_id'}:
+        result = {'decision': observations.setup_readiness(request['system_state'], request['docker_state'], request['boot_id'])}
+    elif op == 'native-placement' and set(request) == {'operation', 'root', 'uid', 'mount', 'mount_sha256', 'controls', 'controls_sha256'}:
+        mount = json.loads(bound_bytes(request['mount'], request['mount_sha256']))
+        controls = json.loads(bound_bytes(request['controls'], request['controls_sha256']))
+        result = placement.validate_native_placement(request['root'], request['uid'], mount, controls)
     elif op == 'guest-reconcile' and set(request) == {'operation', 'process', 'process_sha256', 'receipt', 'receipt_sha256'}:
         process_bytes = Path(request['process']).read_bytes()
         receipt_bytes = Path(request['receipt']).read_bytes()
