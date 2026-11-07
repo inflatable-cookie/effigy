@@ -34,7 +34,7 @@ import linux_supervisor as supervisor
 import linux_transfer as transfers
 import preparation_observations as observations
 import preparation_resources as resources
-from preparation_stage import Refusal
+from linux_supervisor import Refusal
 
 NONCE = 'a' * 64
 ROW_NONCES = {'E9a': '1' * 64, 'E9b': '2' * 64, 'E19.0': '3' * 64, 'E8': '4' * 64}
@@ -1689,6 +1689,81 @@ class SupervisorInstallChecks(unittest.TestCase):
         argv = setup.supervisor_install_argv()
         self.assertEqual(argv[:3], [setup.PRLCTL, 'exec', setup.VM_UUID])
         self.assertIn(base64.b64encode(setup.SUPERVISOR_SOURCE.read_bytes()).decode('ascii'), argv)
+
+
+class InstalledSupervisorChecks(unittest.TestCase):
+    """The installed file runs on its own: install argv, executable bit, stdlib-only imports, real run."""
+
+    def setUp(self):
+        self.fake = FakeSystemd().use(self)
+        self.root = tmpdir('installed-sup-')
+        shim = self.root / 'bin'
+        shim.mkdir()
+        if not shutil.which('sha256sum'):
+            (shim / 'sha256sum').write_text(SHASUM_SHIM)
+            (shim / 'sha256sum').chmod(0o755)
+        self.target = self.root / 'effigy-stage-supervisor'
+        local = setup.supervisor_install_argv(path=str(self.target))[3:]
+        subprocess.run(local, capture_output=True, text=True, check=True,
+                       env=dict(os.environ, PATH=str(shim) + os.pathsep + os.environ.get('PATH', '')))
+        self.boot = self.root / 'boot_id'
+        self.boot.write_text(BOOT + '\n')
+        patcher = patch.dict(os.environ, {'EFFIGY_BOOT_ID_PATH': str(self.boot)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def request_text(self, payload, nonce=NONCE, expected_boot=BOOT, stage=None):
+        stage = stage or self.root / 'stage'
+        req = {'nonce': nonce, 'payload_user': 'effigy531', 'payload_uid': os.geteuid(), 'cwd': CWD,
+               'timeout_seconds': 10, 'argv': payload, 'stage_dir': str(stage), 'expected_boot_id': expected_boot}
+        return json.dumps(req, sort_keys=True)
+
+    def run_installed(self, text, sha=None):
+        digest = sha or hashlib.sha256(text.encode('utf-8')).hexdigest()
+        return subprocess.run([str(self.target), '--request-json', text, '--sha256', digest],
+                              capture_output=True, text=True, env=os.environ, timeout=120)
+
+    def test_installed_file_is_an_executable_with_the_reviewed_bytes(self):
+        self.assertEqual(self.target.read_bytes(), setup.SUPERVISOR_SOURCE.read_bytes())
+        self.assertEqual(stat_mode(self.target), 0o755)
+        self.assertTrue(os.access(self.target, os.X_OK))
+        self.assertEqual(self.target.read_bytes().split(b'\n', 1)[0], b'#!/usr/bin/python3 -I')
+
+    def test_installed_file_imports_only_the_standard_library(self):
+        import ast
+        tree = ast.parse(setup.SUPERVISOR_SOURCE.read_text())
+        names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names.update(alias.name.split('.')[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                names.add(node.module.split('.')[0])
+        stdlib = {'base64', 'hashlib', 'json', 'os', 're', 'stat', 'subprocess', 'sys', 'threading', 'time', 'pathlib'}
+        self.assertLessEqual(names, stdlib)
+
+    def test_mirrored_constants_match_their_sources(self):
+        self.assertEqual(supervisor.UNIT_INACTIVE, observations.UNIT_INACTIVE)
+        self.assertEqual(supervisor.Refusal, Refusal)
+
+    def test_installed_file_runs_a_real_payload_and_reports_a_candidate(self):
+        text = self.request_text(['/bin/sh', '-c', 'echo installed-ran; exit 0'])
+        proc = self.run_installed(text)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        result = json.loads(proc.stdout.strip().splitlines()[-1])
+        self.assertEqual(result['disposition'], 'exited')
+        self.assertIsNotNone(result['candidate'])
+        self.assertEqual(base64.b64decode(result['payload_stdout_b64']).decode(), 'installed-ran\n')
+
+    def test_installed_file_refuses_a_wrong_hash_and_a_wrong_boot_identity(self):
+        text = self.request_text(['/bin/sh', '-c', 'exit 0'])
+        proc = self.run_installed(text, sha='0' * 64)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn('hash mismatch', proc.stderr)
+        wrong = self.request_text(['/bin/sh', '-c', 'exit 0'], expected_boot='someone-else')
+        proc = self.run_installed(wrong)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn('boot identity differs', proc.stderr)
+        self.assertFalse((self.root / 'stage').exists(), 'a boot refusal must create no stage')
 
 
 if __name__ == '__main__':

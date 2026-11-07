@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from preparation_stage import Refusal, exclusive
+from linux_supervisor import Refusal, exclusive
 import linux_supervisor as supervisor
 import preparation_observations as observations
 import preparation_resources as resources

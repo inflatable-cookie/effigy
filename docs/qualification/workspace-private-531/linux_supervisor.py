@@ -1,3 +1,4 @@
+#!/usr/bin/python3 -I
 """Guest supervisor: transient systemd SERVICE with a gate and an outside-payload monitor.
 
 Runs as root through the VM route (`prlctl exec`), because the system manager cannot
@@ -37,9 +38,23 @@ import threading
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import preparation_observations as observations
-from preparation_stage import Refusal, exclusive
+# This file is installed alone as an executable (linux_setup.supervisor_install_argv), so it
+# imports only the standard library. Refusal and exclusive mirror preparation_stage; the
+# constant mirrors preparation_observations.UNIT_INACTIVE. A test pins both.
+UNIT_INACTIVE = 'unit-inactive-exittype-cgroup'
+
+
+class Refusal(ValueError):
+    """A refused request. Callers treat it as no evidence, never as a pass."""
+
+
+def exclusive(path, data):
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
+    fd = os.open(path, flags, 0o600)
+    with os.fdopen(fd, 'wb') as output:
+        output.write(data)
+        output.flush()
+        os.fsync(output.fileno())
 
 NONCE = re.compile(r'^[0-9a-f]{64}$')
 INVOCATION = re.compile(r'^[0-9a-f]{32}$')
@@ -226,7 +241,7 @@ def closure_receipt(boot_id, nonce, show, observed_group, waited_exit):
     return {'boot_id': boot_id, 'nonce': nonce, 'unit': unit_name(nonce),
             'invocation_id': show['invocation_id'], 'control_group': '',
             'observed_control_group': observed_group,
-            'supervisor': SUPERVISOR, 'terminal_basis': observations.UNIT_INACTIVE,
+            'supervisor': SUPERVISOR, 'terminal_basis': UNIT_INACTIVE,
             'populated': 0, 'active_state': show['active_state'], 'result': show['result'],
             'waited_exit': waited_exit}
 
@@ -410,7 +425,7 @@ def main(argv):
                 'expected_boot_id'}
     if not required <= set(request) or set(request) - required - {'transfer'}:
         raise Refusal('unsupported request schema')
-    boot_id = Path(BOOT_ID_PATH).read_text().strip()
+    boot_id = Path(os.environ.get('EFFIGY_BOOT_ID_PATH', BOOT_ID_PATH)).read_text().strip()
     if boot_id != request['expected_boot_id']:
         raise Refusal('boot identity differs from the request')
     result = run_supervised(request['stage_dir'], request, SystemdOps(_subprocess_runner), time.monotonic, boot_id, {})

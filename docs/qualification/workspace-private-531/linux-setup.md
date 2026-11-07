@@ -115,7 +115,7 @@ All three backend inputs/GO-index stay **UNARMED** pending actual GOs, accepted
 placement and planner-bound aggregate execution. Consumer/install/production/
 merge authority is unchanged.
 
-## Setup adapter status (source-only, revision 6)
+## Setup adapter status (source-only, revision 7)
 
 Pure controls, no effect. Files: `linux_setup.py` (Stage1 entry bound to the registered
 home, admission verifiers, setup plan, executor, host credit, `ssh_argv`),
@@ -143,6 +143,13 @@ checked against the plan), `linux_setup_tests.py` (112 controls, including real-
   archive or placement into it. The payload reads the FIFO and writes the destination. SSH
   exit is only the writer's precondition (exit 0). Closure comes from the supervisor
   candidate and host credit, and the payload's sha256 line is the expectation.
+- **Installed supervisor is standalone (K-15).** `linux_supervisor.py` starts with
+  `#!/usr/bin/python3 -I`, imports only the standard library, and mirrors the two
+  constants it needs from the preparation modules. A control parses its imports and
+  pins the mirrors. The install writes that one file and it runs from its installed
+  path. A boot-ID path seam (`EFFIGY_BOOT_ID_PATH`) lets the control run the installed
+  file here. It cannot forge credit, because the host compares the candidate's boot ID
+  with its own VM-route identity.
 - **Supervisor install (E-SUP).** The root row's argv embeds the reviewed
   `linux_supervisor.py` as base64 and writes it with `base64 -d`, then `chmod` and
   `sha256sum`. No staging route is needed. The executor compares the argv with the

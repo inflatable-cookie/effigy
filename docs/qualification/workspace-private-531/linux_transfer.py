@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import preparation_resources as resources
-from preparation_stage import Refusal
+from linux_supervisor import Refusal
 
 MAX_DEADLINE = 1200
 # Remote side of the writer. Polls for the FIFO, then streams stdin into it.
