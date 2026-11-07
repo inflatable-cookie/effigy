@@ -139,13 +139,13 @@ The owned transfer is:
 | --- | --- |
 | effigy#619 | Nine deferred private-apply cases, positive real production CLI and applicable #529 S1/S2/S3/S5 controls |
 | effigy#620 | SOURCE packet delivery: independently executable backend entry points, the binding schema, the read-only aggregate verifier and #627 producer recipes (no artifact production, no native window) |
-| effigy#627 | Immutable artifact production and freeze after #620 merges and integrated main QA passes: real qualification-only, ordinary and genuine old-baseline artifacts per the packet's producer recipes |
+| effigy#627 | Immutable artifact production and freeze after #620 merges and integrated main QA passes. The accepted host A–C/source-proof handoff and genuine D are delivered at H `4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02`; Recipe E/native Linux artifact production remains outstanding and is not completed by #627 or #683 |
 | effigy#621 | Full-session Colima proof with a usable owned environment, bound by both #620 source entries and #627 frozen artifacts |
 | effigy#622 | Full-session Docker Desktop proof, bound by both #620 source entries and #627 frozen artifacts |
 | effigy#623 | Full-session native Linux Docker Engine proof, bound by both #620 source entries and #627 frozen artifacts |
 | effigy#624 | One independent aggregate receipt judgment after #621–#623 through the packet's read-only verifier, on the same final candidate and artifact set |
 | effigy#625 | Actual owner-authorized Acow/CBS consumer and continuity verification after #624 |
-| effigy#626 | Reviewed production enablement after acceptance and Tom's separate release-kind final GO |
+| effigy#626 | Reviewed production enablement after all independent acceptance gates pass; the Nov. 7 standing execution approval permits progression within the approved scope, without waiving those gates or authorizing release, tag or publication |
 
 Registration grants no native authority. These are transferred obligations,
 not passing receipts or waivers.
@@ -156,6 +156,36 @@ verifier and #627 producer recipes; actual artifact production, the backend
 proofs and the aggregate judgment remain #627 and #621–#624 obligations. No
 native window, install, release, consumer activation or production switch
 follows from this source split.
+
+### Standing board execution approval — 2026-11-07
+
+Tom's exact instruction was: “Go for it. Do what you need to do to work through
+the tasks on the board without needing my go on every step, you have approval to
+get it done.” This is the answered operator ruling
+`63c338e2-1c50-435e-9783-e78e9d8558e6` v2 and answered concrete Stage1 decision
+`6715adf6-dc88-41ff-9cfa-cc483888358d` v2. It applies prospectively to the
+existing #621–#626 board work and the necessary bounded producer, preparation
+and source-fix prerequisites within the already approved product and threat
+scope. Planner-reviewed exact-stage activation may proceed under this standing
+authority without a new generic operator GO for each step.
+
+This does not alter the Nov. 3 historical ruling above; it supersedes its
+separate-final-GO requirement prospectively for task execution after all actual
+independent source, backend and consumer acceptance gates pass. Qualification
+assertions, independent review, and every technical source, resource, window,
+receipt and custody limit remain unchanged. Authorization is not proof credit,
+and grants no automatic retry, refunded native allowance, forced stop, snapshot
+restore, destructive cleanup, frontier/by-request profile, or authority over
+material decisions outside the existing board product/threat scope, data loss
+or unrelated resources. A failure or unknown result must be dispositioned
+before another occurrence. Real release, tagging and publication still require
+their own explicit authority.
+
+The accepted #627 host handoff is not Recipe E production: the #627 handoff
+delivered the A–C/source-proof material and genuine D at H above, while the
+Recipe E/native Linux platform input remains an outstanding prerequisite to
+#621–#623. #683 is readiness/preparation only; #684 owns metadata/start/stop
+only. Neither creates a Linux binary or satisfies a native proof.
 
 Q-017 (Tom, 2026-11-01) sets v0.15 workspace-client qualification to
 noninteractive Level 1. Level 2—including guest attach, detach, reconnect,

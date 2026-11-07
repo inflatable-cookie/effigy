@@ -411,9 +411,10 @@ state if `docker.service` is inactive.
 
 ## 6. Stage2 — contingent setup and build plan (prepared, NOT executed)
 
-Stage2 runs only after Stage1 is accepted and a separate Stage2 GO names its
-decision ID. Each effect below carries its numeric bound and its disposition.
-If a prerequisite is absent, the step refuses. Nothing is set up automatically.
+Stage2 runs only after Stage1 is accepted and planner-reviewed exact-stage
+activation under the standing authority is recorded with its decision ID.
+Each effect below carries its numeric bound and its disposition. If a
+prerequisite is absent, the step refuses. Nothing is set up automatically.
 
 ### 6.1 Preconditions
 
@@ -590,10 +591,13 @@ Held and unchanged: 621 (Colima), 622 (Desktop), 623 (Linux full-session),
 624 follows 623 and reads its original receipts. Nothing here grants production
 or consumer credit.
 
-**Next operator action** (asked only after the author and the retained reviewer
-both find this plan ready): approve Stage1 exactly as §5. That is one start of
-UUID `433c9e5b-c7b9-469f-9633-24b4addcd3b5`, one read-only probe, one graceful
-stop, 600 s, no snapshot, no `--kill`, no SSH. Reply with the decision ID.
+**Next action in the original kit revision:** after the author and retained
+reviewer find this plan ready, Stage1 activation is reviewed against §5. The
+Nov. 7 prospective authority note below supersedes the fresh generic operator
+GO request: planner-reviewed exact-stage activation is required, and #684 owns
+the actual Stage1 execution. Stage1 remains exactly one start of UUID
+`433c9e5b-c7b9-469f-9633-24b4addcd3b5`, one read-only probe, one graceful stop,
+600 s, no snapshot, no `--kill`, no SSH.
 
 ## 8. Retained copy, manifest and kit hash
 
@@ -630,3 +634,30 @@ Decisions taken in this kit (reviewer checks these):
 - **D-6** No `--kill` in any stage without its own GO.
 - **D-7** The guest runs selectors with the sanctioned per-selector escape from `cargo-routes.md` (`EFFIGY_OXIDE_ESCAPE=cargo <selector>`). It does not install Oxide and types no raw `cargo`. The launcher is the Recipe E artifact (H source, receipt-verified), so no build runs before the first selector. The launcher covers the H tree only (E13a, E13k). It does not apply to D (SO-5a).
 - **D-8** The kernel test run (E13k) is named as a native test effect with its own GO. It is not folded into a build step.
+
+## 10. Prospective authority note — 2026-11-07
+
+Tom's exact standing instruction is: “Go for it. Do what you need to do to
+work through the tasks on the board without needing my go on every step, you
+have approval to get it done.” It is recorded in answered operator ruling
+`63c338e2-1c50-435e-9783-e78e9d8558e6` v2 and answered concrete Stage1 decision
+`6715adf6-dc88-41ff-9cfa-cc483888358d` v2. This prospective note supplements
+the earlier kit authority and next-action language; it does not rewrite that
+historical text or authorize any execution by this preparation document.
+
+Within the existing approved board product and threat scope, a stage may be
+activated after planner review of its exact stage under the standing authority;
+a fresh generic operator GO for every step is not required. Stage1 actual
+execution remains owned by #684. This note performs no observation, start,
+stop, replay or other Stage1 action.
+
+Each native window still requires fresh GO receipt/data bound to the actual
+decision, source head, program and inputs, resource identities, budget, start
+and end bounds, one-use marker and cleanup disposition. All existing
+preconditions, refusal rules, exact argv and probe bytes, numeric bounds,
+qualification assertions and independent review remain unchanged. No automatic
+retry or refunded allowance is implied; an actual failure or unknown must be
+dispositioned before another occurrence. This approval does not permit forced
+stop, snapshot restore, destructive cleanup, data loss, use of unrelated
+resources, material decisions outside the existing board product/threat scope,
+frontier/by-request profiles, or real release, tag or publication.
