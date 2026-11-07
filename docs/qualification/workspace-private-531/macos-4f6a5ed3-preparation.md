@@ -367,29 +367,34 @@ Desktop, and no stage can run from this source.
   is unknown, so the step is `guest_unknown` and the stage stops there. A timeout, cap or monitor refusal is
   `unknown_retained`.
 - **Test seams (tests only).** `TEST_SEAM` lifts the owner refusal and the static reasons inside the
-  test process only; production defaults are off. Tests that replace predecessor verification (C3, C4, C5
+  test process only, and `simulate_guest_closure` treats a clean guest exit as closed so the loop can run
+  past guest steps (its receipts are labelled and refused by the chain verifier). Production defaults are off. Tests that replace predecessor verification (C3, C4, C5
   and C6), the C0 origin walk for C3 and C4, or the historical record (`HISTORICAL_C0`) say so.
 - **Desktop context (D2).** `host_stage_dockerfile` writes the reviewed recipe exclusively as the build
   context's `Dockerfile`, reads it back and compares it with the pin. An existing `Dockerfile` refuses:
   nothing is adopted or overwritten.
 - **Dispatch coverage (`CoverageLedgerTests`).** Every manifest step has one entry. The kinds are:
   `executed` (the adapter ran it with a real local child or the real handler, including D2's
-  `host_stage_dockerfile`), `executed_stub_chain` (the adapter ran it with the predecessor stubbed),
-  `helper_direct` (the handler ran on controlled inputs, not through a stage), and `halted_in_stage_loop`
-  (the stage loop reached it and recorded it `not_dispatched` after an unknown guest closure). C2's probe
-  and C4's build, readback and iidfile steps are `halted_in_stage_loop`. The C3 and C4 guest steps run the
-  pinned source through a local child that replaces only the `ssh` wrapper: C3 writes the recipe it read from
-  stdin byte-exact, and C4's verify re-verifies the context C3 staged. The C2 probe's argv is checked
-  separately; on this host it fails closed with no output, because it needs Linux guest facts.
-  The positive path and each unknown-closure path are separate tests. C2: a matching echo halts before the
-  probe; a mismatched echo refuses; an echo whose allowance runs out stops before the probe. C4: a clean
-  verify halts before the build; a non-zero client exit is still `guest_unknown`; a timeout stops the stage.
-  D2: the reviewed Dockerfile is staged, built and read back; a pre-existing Dockerfile refuses before the
-  build; a build whose allowance runs out stops before the readback.
+  `host_stage_dockerfile`), `executed_stub_chain` (the adapter ran it with a stubbed predecessor),
+  `helper_direct` (the handler ran on controlled inputs, not through a stage), and
+  `executed_closure_simulated` (the stage loop dispatched it under the test-only closure simulation, with its
+  exact argv, env, stdin and outputs asserted). C2's probe and every C4 step are `executed_closure_simulated`.
+  Under the simulation a guest step whose local child exits 0 is treated as closed, and every receipt it writes
+  is labelled `closure_simulated`; the chain verifier refuses such a receipt. The simulated chain is C2, then C3
+  on the genuine C2 receipt, then C4 on the genuine C3 receipt. Each link is a stub `verify_chain` returning the
+  genuine receipt, labelled as such. C3 and C4 also stub the C0 origin walk. The C3 and C4 guest steps run the
+  pinned source through a local child that replaces only the `ssh` wrapper; the C4 build writes its iidfile in
+  the guest parent, and the iidfile read returns exactly those bytes. A not_dispatched step is refusal coverage
+  only. Production coverage of the same steps: a matching C2 echo halts before the probe; a mismatched echo
+  refuses; an echo whose allowance runs out stops before the probe. A clean C4 verify halts before the build; a
+  non-zero client exit is still `guest_unknown`; a timeout stops the stage. D2: the Dockerfile is staged, built
+  and read back; a pre-existing Dockerfile refuses before the build; a build whose allowance runs out stops
+  before the readback. Static admission and the owner refusal still refuse with the simulation on.
 - **Not proven.** Native execution. Owner-verified activation. Exclusive volume creation (D1) and
   per-target removal re-observation (D4). The helper deadline across uninterruptible kernel waits
   (the residual above). The C2 probe through the stage loop: after the route echo's unknown closure
-  the adapter halts, so the probe runs only as an argv check here. C0's real run for a fresh token
+  the adapter halts. The probe and the C4 steps are dispatched only under the test-only closure simulation,
+  never in production. C0's real run for a fresh token
   is refused until the helper bounds are demonstrated; the C0 origin is exercised by a test run only, so
   the `token32` route has not run natively. The guest closure rule for multi-effect stages, which C2 needs
   before its probe can be dispatched.
@@ -412,5 +417,5 @@ Controls run through `effigy test:qualification:workspace-private:macos`
 (`macos_preparation_boundaries.py`: 104 cases, injected only, no native action). Docs run
 through `effigy qa:docs`.
 The executor runs through `effigy test:qualification:workspace-private:macos-executor`
-(`macos_stage_executor_tests.py`: 98 cases, injected local children, no native action; execution runs only under the test-only seams described in the Executor section).
+(`macos_stage_executor_tests.py`: 103 cases, injected local children, no native action; execution runs only under the test-only seams described in the Executor section).
 Its shared primitive change is covered by `effigy test:qualification:linux-preparation`.

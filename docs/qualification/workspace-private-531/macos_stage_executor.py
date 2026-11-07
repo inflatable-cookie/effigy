@@ -103,7 +103,10 @@ UNADMITTED = {
 }
 # Execution is refused in source: no owner-controlled activation mechanism exists in this repository.
 # A planner-provided mechanism must replace this default before any stage can run.
-TEST_SEAM = {'owner_activation': False, 'admit_unadmitted': False}
+# 'simulate_guest_closure' is test-only: it treats a guest step that exits 0 as closed, so the stage loop can be
+# driven past a guest step under controlled transport. Every receipt it writes says so, and the chain verifier refuses
+# such a receipt. Production leaves it off: a guest exit never closes the guest.
+TEST_SEAM = {'owner_activation': False, 'admit_unadmitted': False, 'simulate_guest_closure': False}
 OWNER_ACTIVATION_REASON = ('no owner-controlled activation mechanism exists in this repository; a file that the '
                            'same account can create and chmod grants no authority, so execution is refused')
 PINNED_SOURCE_BINDINGS = {'probe_source': 'probe', 'stage_source': 'stage', 'verify_source': 'verify'}
@@ -878,6 +881,8 @@ def step_closure(result, guest):
     if result.get('waited_exit') is None or result.get('disposition') == 'local-error':
         return 'unknown_retained'
     if guest:
+        if TEST_SEAM['simulate_guest_closure'] and result['disposition'] == 'exited' and result.get('waited_exit') == 0:
+            return 'closed'  # test-only closure simulation; production never reaches this line with the seam on
         return 'guest_unknown' if result['disposition'] in ('exited', 'failed') else 'unknown_retained'
     if result['disposition'] == 'exited':
         return 'closed'
@@ -946,6 +951,8 @@ def verify_receipt_tree(body, stage_id, key, manifest):
     and re-derives each creation receipt from the original outputs."""
     if body.get('stage') != stage_id or body.get('closure') != 'closed':
         raise Refusal(f'{stage_id} receipt is not a closed receipt of its own stage')
+    if body.get('closure_simulated'):
+        raise Refusal(f'{stage_id} receipt carries a simulated guest closure: never a chain receipt')
     if body.get('chain_key') != key:
         raise Refusal('receipt belongs to another backend chain')
     root = body['stage_root']
@@ -1318,6 +1325,7 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
             ctx['outputs'][step['id']] = dict(stdout=step_root + '/stdout', stderr=step_root + '/stderr',
                                               exit=result.get('waited_exit'), disposition=result.get('disposition'))
             steps_out.append(dict(id=step['id'], kind='exec', closure=step_closure_value, guest=resolved['guest'],
+                                  closure_simulated=bool(TEST_SEAM['simulate_guest_closure'] and resolved['guest']),
                                   argv=resolved['argv'], env_keys=sorted(resolved['env']),
                                   disposition=result.get('disposition'), waited_exit=result.get('waited_exit'),
                                   guest_closure=result.get('guest_closure'), process=result.get('process'),
@@ -1345,6 +1353,7 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
                     prior=None if go.get('prior_receipt') is None else dict(
                         stage=PRIOR[stage_id], path=go['prior_receipt']['path'], sha256=go['prior_receipt']['sha256']),
                     engine_id=ctx['engine_id'], receipts=ctx['receipts'], steps=steps_out, origin=origin,
+                    closure_simulated=bool(TEST_SEAM['simulate_guest_closure']),
                     pinned=sorted(pins.items),
                     guest_closure='unknown' if any(s.get('guest') for s in steps_out) else 'not-applicable')
         primitive.record(stage_root + '/stage-receipt.json', body)

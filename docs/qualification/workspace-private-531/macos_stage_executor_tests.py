@@ -54,6 +54,10 @@ READBACK = json.dumps({'Id': IMAGE, 'Os': 'linux', 'Architecture': 'arm64', 'Rep
 IMAGE_OBJECT = json.dumps({'Id': IMAGE, 'RepoTags': [IMAGE_NAME], 'Config': {'Labels': {'effigy.qual': TOKEN}}})
 
 
+# A routed step that runs the manifest's remote tail locally, with the pinned guest source and its real arguments.
+RUN_PINNED = object()
+
+
 def emit(text, exit_code=0, err=''):
     return 'import sys\nsys.stdout.write(%r)\nsys.stderr.write(%r)\nsys.exit(%d)\n' % (text, err, exit_code)
 
@@ -162,7 +166,8 @@ class Fixture(unittest.TestCase):
     def routed(self, routes, calls, *, before=None, after=None, clock=None):
         """Transport: each step runs a local child chosen by its step id. A step without a route fails the
         test, so a later step that must not run cannot slip through. A fake stage clock maps onto the real
-        monotonic clock the primitive reads. A route may be a callable taking the transport kwargs."""
+        monotonic clock the primitive reads. A route may be a callable taking the transport kwargs, or RUN_PINNED,
+        which runs the manifest's own remote tail locally (the pinned guest source with its real arguments)."""
         def transport(**kw):
             calls.append((kw['step'], list(kw['argv']), dict(kw['environment'])))
             if before is not None:
@@ -170,11 +175,15 @@ class Fixture(unittest.TestCase):
             if kw['step'] not in routes:
                 raise AssertionError(f"unexpected step {kw['step']}")
             route = routes[kw['step']]
-            code = route(kw) if callable(route) else route
+            if route is RUN_PINNED:
+                tail = kw['argv'][kw['argv'].index('python3'):]
+                argv = [sys.executable] + tail[1:]
+            else:
+                argv = [sys.executable, '-I', '-B', '-c', route(kw) if callable(route) else route]
             deadline = kw['deadline']
             if clock is not None:
                 deadline = time.monotonic() + (kw['deadline'] - clock())
-            result = primitive.run_stage(kw['root'], [sys.executable, '-I', '-B', '-c', code], kw['timeout'],
+            result = primitive.run_stage(kw['root'], argv, kw['timeout'],
                                          kw['output_cap'], kw['input_hashes'], guest=kw['guest'], cwd=kw['cwd'],
                                          environment=CHILD_ENV, resource_monitor=kw['monitor'],
                                          deadline=deadline, stdin_path=kw['stdin_path'],
@@ -1377,7 +1386,7 @@ class DispatchSweepTests(Fixture):
     NOT_DISPATCHED_AFTER_C4_VERIFY = ('c4-nerdctl-build-help', 'c4-check-build-help', 'c4-nerdctl-build',
                                       'c4-iidfile-read', 'c4-read-iidfile', 'c4-image-inspect', 'c4-check-image-identity')
 
-    def test_c4_positive_verifies_through_the_pinned_source_then_halts_before_the_build(self):
+    def test_production_c4_clean_verify_halts_before_the_build(self):
         receipt, calls = self.run_c4('act-c4-pos', self.tail_transport)
         self.assertEqual(receipt['closure'], 'guest_unknown')
         self.assertEqual([c[0] for c in calls], ['c4-verify-context'])
@@ -1431,6 +1440,144 @@ class DispatchSweepTests(Fixture):
             self.assertIn('stage unadmitted', str(caught.exception))
             self.assertEqual(calls, [])
             self.assertFalse(os.path.exists(self.tmp + f'/claims/act-unpin-{stage.lower()}.claim'))
+
+    # Closure simulation (test-only). The stage loop runs past each guest step: a guest exit 0 is treated as closed,
+    # and every receipt says so. Predecessor links are stubs: each stage's verify_chain returns the genuine receipt
+    # of the stage before it, which the stage then reads as its prior outputs. The C0 origin is patched in C3 and C4.
+
+    def simulated(self):
+        return mock.patch.dict(ex.TEST_SEAM, {'simulate_guest_closure': True})
+
+    def stage_file(self, stage, activation_id, relative):
+        return Path(self.stage_dir(stage, activation_id) + '/' + relative)
+
+    def test_c2_closure_simulation_dispatches_the_probe_with_exact_argv_env_and_ordering(self):
+        parent = self.guest_parent()
+        routes = {'c2-colima-status': emit('{"status":"running"}'), 'c2-route-echo': emit(prep.ROUTE_ECHO),
+                  'c2-guest-probe': emit(json.dumps({'parent': parent}))}
+        calls = []
+        stub = {'receipts': [], 'engine_id': None}
+        with self.simulated(), mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub):
+            receipt = self.execute('C2', self.routed(routes, calls), prior_ref=None, activation_id='act-sim-c2')
+        self.assertEqual(receipt['closure'], 'closed')
+        self.assertTrue(receipt['closure_simulated'])
+        self.assertEqual([c[0] for c in calls], ['c2-colima-status', 'c2-route-echo', 'c2-guest-probe'])
+        self.assert_dispatch('C2', calls, self.run_bindings())
+        probe_argv = calls[2][1]
+        self.assertEqual(probe_argv[probe_argv.index('-c') + 1], ex.GUEST_CONTEXT_PATH.read_text())
+        self.assertEqual(probe_argv[-1], 'probe')
+        self.assertEqual(calls[1][1][-1], prep.ROUTE_ECHO)  # the echo carries only the route constant
+        by_id = {x['id']: x for x in receipt['steps']}
+        self.assertEqual([x['id'] for x in receipt['steps']],
+                         ['c2-colima-status', 'c2-route-echo', 'c2-compare-route-echo', 'c2-guest-probe'])
+        self.assertEqual(by_id['c2-guest-probe']['closure'], 'closed')
+        self.assertTrue(by_id['c2-guest-probe']['closure_simulated'])
+        self.assertEqual(self.stage_file('C2', 'act-sim-c2', 'c2-guest-probe/stdout').read_text(), json.dumps({'parent': parent}))
+        self.assertEqual(self.stage_file('C2', 'act-sim-c2', 'c2-route-echo/stdout').read_bytes(), prep.ROUTE_ECHO.encode())
+
+    def test_c3_closure_simulation_stages_the_recipe_from_exact_bounded_stdin(self):
+        parent = self.guest_parent()
+        c2 = self.sim_c2_body(parent)
+        spec = ex.build_guest_spec(parent, self.T32)
+        calls, stdin_seen = [], []
+        before = lambda kw: stdin_seen.append((kw['step'], kw['stdin_path'], kw['stdin_sha256']))
+        with self.simulated(), mock.patch.object(ex, 'verify_chain', lambda *a, **k: c2), \
+                mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32):
+            receipt = self.execute('C3', self.routed({'c3-stage-context': RUN_PINNED}, calls, before=before),
+                                   prior_ref=None, activation_id='act-sim-c3')
+        self.assertEqual(receipt['closure'], 'closed')
+        self.assertEqual([c[0] for c in calls], ['c3-stage-context'])
+        self.assert_dispatch('C3', calls, dict(self.run_bindings(), guest_spec=spec, token32=self.T32))
+        self.assertEqual(calls[0][1][-1], spec)  # the guest spec is the argument the probe's parent and token32 derive
+        [(step, path, sha)] = stdin_seen
+        self.assertEqual((step, sha), ('c3-stage-context', ex.RECIPE_SHA256))
+        self.assertEqual(Path(path).read_bytes(), ex.RECIPE_PATH.read_bytes())  # the exact bytes, hash bound
+        context = json.loads(self.stage_file('C3', 'act-sim-c3', 'c3-stage-context/stdout').read_text())
+        self.assertEqual(Path(context['path'], 'Dockerfile').read_bytes(), ex.RECIPE_PATH.read_bytes())
+        self.assertEqual(context['parent']['path'], parent['path'])
+        self.assertEqual(context['path'], parent['path'] + '/effigy-531-image-' + self.T32)
+
+    def sim_c2_body(self, parent):
+        """A C2 receipt from a closure-simulated run, for use as a C3 predecessor."""
+        routes = {'c2-colima-status': emit('{"status":"running"}'), 'c2-route-echo': emit(prep.ROUTE_ECHO),
+                  'c2-guest-probe': emit(json.dumps({'parent': parent}))}
+        with self.simulated(), mock.patch.object(ex, 'verify_chain', lambda *a, **k: {'receipts': [], 'engine_id': None}):
+            receipt = self.execute('C2', self.routed(routes, []), prior_ref=None, activation_id='act-sim-c2-pred')
+        self.assertEqual(receipt['closure'], 'closed')
+        return receipt
+
+    def test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order(self):
+        parent = self.guest_parent()
+        c2 = self.sim_c2_body(parent)
+        spec = ex.build_guest_spec(parent, self.T32)
+        stdin_seen = []
+        with self.simulated(), mock.patch.object(ex, 'verify_chain', lambda *a, **k: c2), \
+                mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32):
+            c3 = self.execute('C3', self.routed({'c3-stage-context': RUN_PINNED}, []), prior_ref=None,
+                              activation_id='act-sim-c3-for-c4')
+        self.assertEqual(c3['closure'], 'closed')
+        iid = {}
+
+        def build(kw):
+            path = kw['argv'][kw['argv'].index('--iidfile') + 1]
+            Path(path).write_text(IMAGE + '\n')  # nerdctl build's own iidfile, written in the guest
+            iid['path'] = path
+            return emit('')
+
+        def read_iid(kw):
+            return emit(Path(kw['argv'][-1]).read_text())  # cat of the iidfile the build wrote
+
+        routes = {'c4-verify-context': RUN_PINNED,
+                  'c4-nerdctl-build-help': emit('usage: nerdctl build --iidfile --platform --provenance'),
+                  'c4-nerdctl-build': build, 'c4-iidfile-read': read_iid,
+                  'c4-image-inspect': emit(json.dumps([{'Id': IMAGE, 'Os': 'linux', 'Architecture': 'arm64'}]))}
+        calls = []
+        with self.simulated(), mock.patch.object(ex, 'verify_chain', lambda *a, **k: c3), \
+                mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32):
+            receipt = self.execute('C4', self.routed(routes, calls, before=lambda kw: stdin_seen.append((kw['step'], kw['stdin_path']))),
+                                   prior_ref=None, activation_id='act-sim-c4')
+        self.assertEqual(receipt['closure'], 'closed')
+        self.assertEqual([x['id'] for x in receipt['steps']], [
+            'c4-render-verify-spec', 'c4-verify-context', 'c4-nerdctl-build-help', 'c4-check-build-help',
+            'c4-nerdctl-build', 'c4-iidfile-read', 'c4-read-iidfile', 'c4-image-inspect', 'c4-check-image-identity'])
+        self.assertEqual([c[0] for c in calls], ['c4-verify-context', 'c4-nerdctl-build-help', 'c4-nerdctl-build',
+                                                 'c4-iidfile-read', 'c4-image-inspect'])
+        self.assertTrue(all(kind is None for _, kind in stdin_seen))  # the C4 commands take no stdin
+        context = json.loads(self.stage_file('C3', 'act-sim-c3-for-c4', 'c3-stage-context/stdout').read_text())
+        verify_spec = self.stage_file('C4', 'act-sim-c4', 'c4-render-verify-spec/c4-render-verify-spec.json').read_text()
+        expected = dict(self.run_bindings(), guest_spec=spec, guest_verify_spec=verify_spec,
+                        guest_context=context['path'], guest_iidfile=context['path'] + '.iid', image_id=IMAGE)
+        self.assert_dispatch('C4', calls, expected)
+        self.assertEqual(calls[2][1][calls[2][1].index('--iidfile') + 1], context['path'] + '.iid')
+        self.assertEqual(json.loads(verify_spec)['name'], 'effigy-531-image-' + self.T32)
+        by_id = {x['id']: x for x in receipt['steps']}
+        self.assertEqual(json.loads(self.stage_file('C4', 'act-sim-c4', 'c4-read-iidfile/helper.json').read_text())['result'],
+                         {'image_id': IMAGE})
+        self.assertEqual(by_id['c4-check-image-identity']['closure'], 'closed')
+        self.assertEqual(self.stage_file('C4', 'act-sim-c4', 'c4-iidfile-read/stdout').read_text(), IMAGE + '\n')
+        self.assertTrue(by_id['c4-nerdctl-build']['closure_simulated'])
+
+    def test_static_admission_and_owner_refusal_still_refuse_with_the_simulation_on(self):
+        calls = []
+        with self.simulated():
+            with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}):
+                for stage in ('C2', 'C3', 'C4'):
+                    with self.subTest(stage=stage), self.assertRaises(ex.Refusal) as caught:
+                        self.execute(stage, self.routed({}, calls), prior_ref=None, activation_id=f'act-simadm-{stage}')
+                    self.assertIn('stage unadmitted', str(caught.exception))
+            with mock.patch.dict(ex.TEST_SEAM, {'owner_activation': False}), self.assertRaises(ex.Refusal) as caught:
+                self.execute('C2', self.routed({}, calls), prior_ref=None, activation_id='act-simowner-c2')
+            self.assertIn('no owner-controlled activation mechanism', str(caught.exception))
+        self.assertEqual(calls, [])
+        self.assertFalse(os.path.exists(self.tmp + '/claims/act-simadm-C2.claim'))
+
+    def test_a_simulated_receipt_is_never_accepted_as_a_chain_predecessor(self):
+        parent = self.guest_parent()
+        self.sim_c2_body(parent)
+        path = self.stage_dir('C2', 'act-sim-c2-pred') + '/stage-receipt.json'
+        with self.assertRaises(ex.Refusal) as caught:
+            ex.verify_receipt_tree(json.loads(Path(path).read_text()), 'C2', None, ex.load_manifest())
+        self.assertIn('simulated', str(caught.exception))
 
 
 class ProgramBindingTests(Fixture):
@@ -1494,7 +1641,8 @@ class CoverageLedgerTests(unittest.TestCase):
     """Every manifest step is accounted for, with the test that exercises it and how:
     executed (the adapter ran it with a real local child or the real handler); executed_stub_chain (the adapter
     ran it, with the predecessor stubbed); helper_direct (its handler ran on controlled inputs, not through a stage);
-    halted_in_stage_loop (the stage loop reached it and recorded it not_dispatched after an unknown guest closure).
+    executed_closure_simulated (the stage loop dispatched it under the test-only closure simulation, with its exact
+    argv, env, stdin and outputs asserted). A not_dispatched step is refusal coverage only, never dispatch coverage.
     A step with no entry fails."""
 
     LEDGER = {
@@ -1508,18 +1656,18 @@ class CoverageLedgerTests(unittest.TestCase):
         'c2-colima-status': ('executed', 'DispatchSweepTests.test_c2_route_echo_is_the_first_guest_effect_and_no_source_payload_is_dispatched'),
         'c2-route-echo': ('executed', 'DispatchSweepTests.test_c2_route_echo_is_the_first_guest_effect_and_no_source_payload_is_dispatched'),
         'c2-compare-route-echo': ('executed', 'DispatchSweepTests.test_c2_comparison_runs_through_the_adapter_and_the_probe_is_recorded_not_dispatched'),
-        'c2-guest-probe': ('halted_in_stage_loop', 'DispatchSweepTests.test_c2_comparison_runs_through_the_adapter_and_the_probe_is_recorded_not_dispatched'),
-        'c3-render-guest-spec': ('executed_stub_chain', 'DispatchSweepTests.test_c3_runs_the_pinned_stage_source_with_the_reviewed_recipe_as_its_stdin_then_stops_at_the_guest'),
-        'c3-stage-context': ('executed_stub_chain', 'DispatchSweepTests.test_c3_runs_the_pinned_stage_source_with_the_reviewed_recipe_as_its_stdin_then_stops_at_the_guest'),
-        'c4-render-verify-spec': ('executed_stub_chain', 'DispatchSweepTests.test_c4_derives_its_verify_spec_from_the_c3_output_and_its_verify_runs_the_pinned_source'),
-        'c4-verify-context': ('executed_stub_chain', 'DispatchSweepTests.test_c4_derives_its_verify_spec_from_the_c3_output_and_its_verify_runs_the_pinned_source'),
-        'c4-nerdctl-build-help': ('halted_in_stage_loop', 'DispatchSweepTests.test_c4_positive_verifies_through_the_pinned_source_then_halts_before_the_build'),
-        'c4-check-build-help': ('helper_direct', 'HelperDispatchTests.test_check_build_help_needs_the_three_flags'),
-        'c4-nerdctl-build': ('halted_in_stage_loop', 'DispatchSweepTests.test_c4_positive_verifies_through_the_pinned_source_then_halts_before_the_build'),
-        'c4-iidfile-read': ('halted_in_stage_loop', 'DispatchSweepTests.test_c4_positive_verifies_through_the_pinned_source_then_halts_before_the_build'),
-        'c4-read-iidfile': ('helper_direct', 'HelperDispatchTests.test_read_iidfile_accepts_one_sha256_and_refuses_a_tag'),
-        'c4-image-inspect': ('halted_in_stage_loop', 'DispatchSweepTests.test_c4_positive_verifies_through_the_pinned_source_then_halts_before_the_build'),
-        'c4-check-image-identity': ('helper_direct', 'HelperDispatchTests.test_check_image_identity_refuses_a_different_id_and_wrong_platform'),
+        'c2-guest-probe': ('executed_closure_simulated', 'DispatchSweepTests.test_c2_closure_simulation_dispatches_the_probe_with_exact_argv_env_and_ordering'),
+        'c3-render-guest-spec': ('executed_closure_simulated', 'DispatchSweepTests.test_c3_closure_simulation_stages_the_recipe_from_exact_bounded_stdin'),
+        'c3-stage-context': ('executed_closure_simulated', 'DispatchSweepTests.test_c3_closure_simulation_stages_the_recipe_from_exact_bounded_stdin'),
+        'c4-render-verify-spec': ('executed_closure_simulated', 'DispatchSweepTests.test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order'),
+        'c4-verify-context': ('executed_closure_simulated', 'DispatchSweepTests.test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order'),
+        'c4-nerdctl-build-help': ('executed_closure_simulated', 'DispatchSweepTests.test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order'),
+        'c4-check-build-help': ('executed_closure_simulated', 'DispatchSweepTests.test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order'),
+        'c4-nerdctl-build': ('executed_closure_simulated', 'DispatchSweepTests.test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order'),
+        'c4-iidfile-read': ('executed_closure_simulated', 'DispatchSweepTests.test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order'),
+        'c4-read-iidfile': ('executed_closure_simulated', 'DispatchSweepTests.test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order'),
+        'c4-image-inspect': ('executed_closure_simulated', 'DispatchSweepTests.test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order'),
+        'c4-check-image-identity': ('executed_closure_simulated', 'DispatchSweepTests.test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order'),
         'c5-disposable-check': ('executed_stub_chain', 'DispatchSeamTests.test_c5_guest_exit_stops_as_guest_unknown_and_never_closes'),
         'c5-check-facts': ('helper_direct', 'HelperDispatchTests.test_check_runtime_facts_needs_exit_zero_and_root_facts'),
         'c6-colima-list': ('executed_stub_chain', 'DispatchSeamTests.test_c6_host_step_dispatches_under_the_recorded_roots_and_closes'),
@@ -1560,7 +1708,7 @@ class CoverageLedgerTests(unittest.TestCase):
         self.assertEqual(set(self.LEDGER), steps)
 
     def test_every_referenced_test_exists_and_the_kinds_are_known(self):
-        kinds = {'executed', 'executed_stub_chain', 'helper_direct', 'halted_in_stage_loop'}
+        kinds = {'executed', 'executed_stub_chain', 'helper_direct', 'executed_closure_simulated'}
         for step, (kind, ref) in self.LEDGER.items():
             with self.subTest(step=step):
                 self.assertIn(kind, kinds)
