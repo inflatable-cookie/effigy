@@ -1098,6 +1098,60 @@ class DispatchSweepTests(Fixture):
         self.assertEqual(receipt['closure'], 'closed')
         self.assertTrue(os.path.islink(self.bindings['control'] + '/bin/docker'))
 
+    def controlled(self):
+        """Test-only values for the unpinned slots, through the test seam. Production leaves them empty."""
+        return mock.patch.dict(ex.TEST_SEAM, {'unpinned': self.controlled_values()})
+
+    def test_c2_route_echo_is_the_first_guest_effect_and_no_source_payload_is_dispatched(self):
+        routes = {'c2-colima-status': emit('{"status":"running"}'), 'c2-route-echo': emit(prep.ROUTE_ECHO)}
+        with self.controlled():
+            receipt, calls = self.run_sweep('C2', routes)
+        self.assertEqual([c[0] for c in calls], ['c2-colima-status', 'c2-route-echo'])
+        self.assertEqual(receipt['closure'], 'guest_unknown')  # the echo's client exit stops the stage
+        self.assertEqual(calls[1][1][-1], prep.ROUTE_ECHO)     # the echo carries only the route constant
+        self.assertFalse(any('PROBE-SOURCE' in a for _, argv, _ in calls for a in argv))
+        echoed = Path(self.stage_dir('C2', 'act-sweep-c2') + '/c2-route-echo/stdout')
+        self.assertEqual(ex.h_compare_route_echo({'bindings': self.bindings, 'outputs': {'c2-route-echo': {'stdout': str(echoed)}}},
+                                                 {'inputs': ['c2-route-echo.stdout']}), {'matched': True})
+        self.assert_dispatch('C2', calls, dict(self.bindings, **self.controlled_values()))
+
+    def controlled_values(self):
+        return {'probe_source': 'print("PROBE-SOURCE")', 'stage_source': 'print("STAGE-SOURCE")',
+                'verify_source': 'print("VERIFY-SOURCE")', 'guest_spec': '{"parent":{}}',
+                'guest_verify_spec': '{"parent":{"verify":true}}',
+                'guest_context': '/home/u/effigy-531-image-' + '0' * 31 + '1',
+                'guest_iidfile': '/home/u/effigy-531-image-' + '0' * 31 + '1.iid'}
+
+    def test_c3_delivers_the_reviewed_recipe_as_hash_bound_stdin_then_stops_at_its_guest_effect(self):
+        routes = {'c3-stage-context': ("import sys,hashlib\nd=sys.stdin.buffer.read()\n"
+                                       "sys.stdout.write(hashlib.sha256(d).hexdigest()+' '+str(len(d)))\n")}
+        with self.controlled():
+            receipt, calls = self.run_sweep('C3', routes)
+        self.assertEqual(receipt['closure'], 'guest_unknown')
+        self.assertEqual([c[0] for c in calls], ['c3-stage-context'])
+        out = Path(self.stage_dir('C3', 'act-sweep-c3') + '/c3-stage-context/stdout').read_text()
+        self.assertEqual(out, f'{ex.RECIPE_SHA256} {ex.RECIPE_BYTES}')  # the child read exactly the reviewed bytes
+        self.assert_dispatch('C3', calls, dict(self.bindings, **self.controlled_values()))
+
+    def test_c4_renders_its_verify_spec_from_the_bound_value_and_stops_at_its_first_guest_effect(self):
+        routes = {'c4-verify-context': emit('{}')}
+        with self.controlled():
+            receipt, calls = self.run_sweep('C4', routes)
+        self.assertEqual(receipt['closure'], 'guest_unknown')
+        self.assertEqual([c[0] for c in calls], ['c4-verify-context'])
+        spec = Path(self.stage_dir('C4', 'act-sweep-c4') + '/c4-render-verify-spec/c4-render-verify-spec.json')
+        self.assertEqual(spec.read_text(), '{"parent":{"verify":true}}')
+
+    def test_a_helper_blocked_in_a_native_read_is_interrupted_at_its_allowance(self):
+        import time as _time
+        fifo = self.tmp + '/no-writer.fifo'
+        os.mkfifo(fifo)
+        started = _time.monotonic()
+        with self.assertRaises(ex.Refusal) as caught:
+            ex.call_bounded(lambda: open(fifo, 'rb').read(), 0.3)  # blocks in the kernel until a writer appears
+        self.assertIn('allowance', str(caught.exception))
+        self.assertLess(_time.monotonic() - started, 5)
+
     def test_c2_c3_c4_are_refused_before_claim_because_their_guest_steps_use_unpinned_sources(self):
         """Their guest probe, stage and verify sources have no reviewed pin, so the stage is refused before the
         activation is claimed and before any step runs. Their argv and env pins are checked by the plan tests."""

@@ -309,13 +309,17 @@ Desktop, and no stage can run from this source.
 - **Pins.** The evidence, claims, activation and owned directories, and for D1 to D4 the private
   Docker config and context directories, are pinned by canonical path, owner, mode 0700, device and
   inode. Each is rechecked before every step. C0 pins its roots once it creates them.
-- **Deadline and monitor.** Helpers run under a timer set to their remaining allowance; the timer's
-  handler raises inside the helper, so a helper cannot run past the stage deadline (main thread
-  only). Exec windows run through `run_stage` with the one stage-wide `Monitor` checked before and
-  after every window and every helper. A zero storage cap is enforced exactly. A failed post
-  observation is retained and stops the stage. The spawn record is taken with no subprocess, so
-  nothing blocks live monitoring; it does not read the kernel's process start time, and PID identity
-  rests on the recorded process group and the child's waited exit.
+- **Deadline and monitor.** Helpers run under a timer set to their remaining allowance. The timer's
+  handler raises inside the helper, and that interrupts a helper blocked in a native read (the test
+  blocks one on a FIFO), so the deadline holds on the helper path (main thread only). Helpers write
+  only into the stage's evidence directory and create empty owned directories; the monitor watches
+  the control root's allocated blocks, and empty directories hold none on this filesystem. So helper
+  effects cannot raise the monitored allocation, and recipe output is capped at 64 KiB. The stage-wide
+  `Monitor` is checked before and after every helper and every exec window. Exec windows run through
+  `run_stage`, which samples the monitor during the wait. A zero storage cap is enforced exactly. A
+  failed post observation is retained and stops the stage. The spawn record is taken with no
+  subprocess, so nothing blocks live monitoring. It does not read the kernel's process start time,
+  and PID identity rests on the recorded process group and the child's waited exit.
 - **Verification of a preceding receipt** is field-level. The receipt must be a closed executor
   receipt on the same chain, with the expected PRIOR stage and a genuine origin. Its claim and
   activation copy must match. Its step inventory and kinds must equal the manifest's. Each step's
@@ -335,12 +339,21 @@ Desktop, and no stage can run from this source.
   C6), a missing helper (D2's `host_stage_dockerfile`), or the historical record (`HISTORICAL_C0`)
   say so.
 - **Dispatch coverage.** The plan tests check every exec step's argv and env pins. The genuine C0
-  runs on a fresh token. C1 binds the historical record and dispatches its colima start. C0 and C1
-  refuse on each of their pinned checks. The genuine D0 to D3 chain and D4's cleanup run under the
-  test seams. C2 to C4 are refused before claim, because their guest sources are unpinned.
+  runs on a fresh token, and C1 binds the historical record and dispatches its colima start. C0 and
+  C1 each refuse on their pinned checks. Under the test seams, with test-only values for the
+  unpinned slots: C2 dispatches its host status, then its route echo, which is the first guest
+  effect; the echo's client exit ends the stage as `guest_unknown`, so the probe, which carries the
+  unpinned source, is never dispatched, and no executed argv carries a source payload. C3 delivers
+  the reviewed `runtime.Dockerfile` as hash-bound stdin, and the child reads exactly those bytes
+  before the stage stops at its guest effect. C4 renders its verify spec from the bound value and
+  stops at its first guest effect. Production has no such values, so C2 to C4 refuse before any
+  claim.
 - **Not proven.** Native execution; owner-signed activation; exclusive volume creation; per-target
-  removal re-observation; dispatch of C2 to C4 (blocked by the guest closure rule and the RecipeE
-  sources, which are outside this repository).
+  removal re-observation. C2's probe and C3's and C4's guest sources have no reviewed pin in this
+  repository: the one probe in the tree, `image_context.probe()`, is a Linux guest check with a
+  different contract, so binding it here would change the C2 contract, and that belongs to RecipeE.
+  C2 to C4 therefore stay unadmitted in production, with their dispatch proven only under the
+  test seams.
 
 ## Remaining gates
 
@@ -360,5 +373,5 @@ Controls run through `effigy test:qualification:workspace-private:macos`
 (`macos_preparation_boundaries.py`: 104 cases, injected only, no native action). Docs run
 through `effigy qa:docs`.
 The executor runs through `effigy test:qualification:workspace-private:macos-executor`
-(`macos_stage_executor_tests.py`: 74 cases, injected local children, no native action; execution runs only under the test-only seams described in the Executor section).
+(`macos_stage_executor_tests.py`: 78 cases, injected local children, no native action; execution runs only under the test-only seams described in the Executor section).
 Its shared primitive change is covered by `effigy test:qualification:linux-preparation`.

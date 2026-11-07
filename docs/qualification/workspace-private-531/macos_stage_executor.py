@@ -90,7 +90,9 @@ UNADMITTED = {
 }
 # Execution is refused in source: no owner-controlled activation mechanism exists in this repository.
 # A planner-provided mechanism must replace this default before any stage can run.
-TEST_SEAM = {'owner_activation': False, 'admit_unadmitted': False}
+# 'unpinned' holds test-only values for the unpinned slots; production leaves it empty, so a stage that
+# needs an unpinned source refuses before its claim.
+TEST_SEAM = {'owner_activation': False, 'admit_unadmitted': False, 'unpinned': {}}
 OWNER_ACTIVATION_REASON = ('no owner-controlled activation mechanism exists in this repository; a file that the '
                            'same account can create and chmod grants no authority, so execution is refused')
 GUEST_BINDING = {'c4-render-verify-spec': 'guest_verify_spec'}
@@ -1032,7 +1034,7 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
             raise Refusal(f"{step['id']}: helper {step['helper']} has no reviewed handler in this source")
     unpinned = [f"{x['id']} ({', '.join(k for k in UNPINNED_BINDINGS if f'<{k}>' in json.dumps(x))})"
                 for x in plan['steps'] if any(f'<{k}>' in json.dumps(x) for k in UNPINNED_BINDINGS)]
-    if unpinned:  # an executable or helper input with no reviewed source refuses before the claim
+    if unpinned and not TEST_SEAM['unpinned']:  # no reviewed source: refuse before the claim
         raise Refusal('steps use unpinned sources, refused before the activation is claimed: ' + ', '.join(unpinned))
     inputs = derive_inputs(manifest_path)
     now = utc_now or datetime.datetime.now(datetime.timezone.utc)
@@ -1069,6 +1071,7 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
     cap = stage.get('storage_cap_bytes', 0)
     monitor = monitor_factory({'storage': cap}, [control])
     run_bindings = {k: v for k, v in bindings.items() if k not in NOT_SUPPLIED}
+    run_bindings.update(TEST_SEAM['unpinned'])  # empty in production
     run_bindings['owned_volume_name'] = volume_name(bindings['token'], go['activation_id'])
     if stage_id in ('C5', 'D3', 'D4'):
         images = [r for r in (prior or {}).get('receipts', []) if r['kind'] == 'image']
