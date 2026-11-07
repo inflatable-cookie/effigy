@@ -11,6 +11,9 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import preparation_archive as subject
 import preparation_observations as observations
+import preparation_stage as stage
+import preparation_metadata as metadata
+import preparation_placement as placement
 
 
 class ArchiveChecks(unittest.TestCase):
@@ -90,6 +93,89 @@ class ObservationChecks(unittest.TestCase):
         terminal['boot_id'] = 'different'
         with self.assertRaises(observations.Refusal):
             observations.guest_closure(identity, terminal)
+
+
+class StageChecks(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix='stage-controls-'))
+
+    def run_script(self, script, timeout=2, cap=1024, guest=False):
+        return stage.run_stage(self.root, [sys.executable, '-c', script], timeout, cap, {}, guest)
+
+    def test_separate_streams_and_reused_intent(self):
+        result = self.run_script("import sys; print('out'); print('err', file=sys.stderr)", guest=True)
+        self.assertEqual(result['disposition'], 'exited')
+        self.assertEqual(result['guest_closure'], 'unknown')
+        self.assertEqual((self.root / 'stdout').read_bytes(), b'out\n')
+        self.assertEqual((self.root / 'stderr').read_bytes(), b'err\n')
+        with self.assertRaises(FileExistsError):
+            self.run_script('pass')
+
+    def test_timeout_and_partial_output(self):
+        result = self.run_script("import time; print('partial', flush=True); time.sleep(10)", timeout=0.2)
+        self.assertEqual(result['disposition'], 'timeout')
+        self.assertEqual((self.root / 'stdout').read_bytes(), b'partial\n')
+        self.assertIsNotNone(result['waited_exit'])
+
+    def test_output_cap(self):
+        result = self.run_script("print('x' * 50000, flush=True)", cap=32)
+        self.assertEqual(result['disposition'], 'output-cap')
+        self.assertEqual((self.root / 'stdout').stat().st_size, 32)
+
+    def test_launch_failure_spends_intent(self):
+        with self.assertRaises(FileNotFoundError):
+            stage.run_stage(self.root, ['/missing-preparation-test-command'], 1, 100, {})
+        self.assertTrue((self.root / 'intent.json').exists())
+        self.assertTrue((self.root / 'receipt.json').exists())
+
+
+class MetadataChecks(unittest.TestCase):
+    def test_derives_test_and_fixture_paths(self):
+        source = {'rust-build-meta': {'platforms': {'host': {'platform': {'triple': 'aarch64-unknown-linux-gnu'}}},
+                  'non-test-binaries': {'pkg': [{'name': 'kernel-custody-fixture', 'kind': 'bin-exe',
+                                                'path': '/build/fixture', 'build-platform': 'target'}]}},
+                  'rust-binaries': {name: {'binary-id': name, 'binary-path': '/build/' + name,
+                                           'build-platform': 'target'}
+                                    for name in ('effigy-kernel', 'effigy-kernel::custody')}}
+        mapping = {'kernel_tests': ('/build/effigy-kernel', '/frozen/kernel'),
+                   'custody_tests': ('/build/effigy-kernel::custody', '/frozen/custody'),
+                   'kernel_fixture': ('/build/fixture', '/frozen/fixture')}
+        result = metadata.derive(source, '0.9.145', mapping)
+        self.assertEqual(result['rust-binaries']['effigy-kernel']['binary-path'], '/frozen/kernel')
+        self.assertEqual(result['rust-build-meta']['non-test-binaries']['pkg'][0]['path'], '/frozen/fixture')
+        self.assertEqual(source['rust-build-meta']['non-test-binaries']['pkg'][0]['path'], '/build/fixture')
+        with self.assertRaises(metadata.Refusal):
+            metadata.derive(source, '0.9.144', mapping)
+        mapping['kernel_fixture'] = ('/wrong', '/frozen/fixture')
+        with self.assertRaises(metadata.Refusal):
+            metadata.derive(source, '0.9.145', mapping)
+
+
+class PlacementChecks(unittest.TestCase):
+    def test_actual_private_filesystem_controls(self):
+        root = Path(tempfile.mkdtemp(prefix='filesystem-controls-')).resolve()
+        result = placement.filesystem_controls(root, os.geteuid())
+        self.assertTrue(result['socket_fd_transfer'])
+        self.assertTrue(result['no_clobber'])
+        with self.assertRaises(placement.Refusal):
+            placement.filesystem_controls(root, os.geteuid())
+
+    def test_identity_empty_and_no_clobber(self):
+        root = Path(tempfile.mkdtemp(prefix='placement-controls-')).resolve()
+        target = root / 'qualification'
+        target.mkdir(mode=0o700)
+        identity = placement.empty_root(target, os.geteuid())
+        placement.verify_root(target, identity)
+        data = b'private'
+        digest = hashlib.sha256(data).hexdigest()
+        placement.place_file(root, 'driver', data, digest, os.geteuid())
+        with self.assertRaises(FileExistsError):
+            placement.place_file(root, 'driver', data, digest, os.geteuid())
+        (target / 'occupied').write_text('x')
+        with self.assertRaises(placement.Refusal):
+            placement.verify_root(target, identity)
+        with self.assertRaises(placement.Refusal):
+            placement.place_file(root, 'other', data, '0' * 64, os.geteuid())
 
 
 if __name__ == '__main__':

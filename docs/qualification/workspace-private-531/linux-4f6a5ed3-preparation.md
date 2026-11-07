@@ -448,7 +448,7 @@ E13a → E13k → E13b → E16 → E17 → E19 → E18.
 
 | # | Effect | Bound | Disposition |
 | --- | --- | --- | --- |
-| E0 | Guest: start `docker.service` only if inactive (`systemctl start docker.service`). Needed only to capture the baseline (E12) | 1 unit start; ≤ 60 s | Stays running until its owner disposition. Stop is a separate effect |
+| E0 | Guest: after positive boot-complete readiness, inspect `docker.service`; do not start it while active or activating. Start only if inactive and explicitly admitted. Capture the stable baseline at E12 | 1 unit start; ≤ 60 s | Stays running until its owner disposition. Stop is a separate effect |
 | E1 | Host: create `/Volumes/Stash/scratch/effigy/531-linux-control` mode `0700`, owned by `tom`. **Refuse if the path exists** (no adoption of historical control state) | 1 dir | Retained. Removal needs separate disposition |
 | E1b | Host: create `/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/inputs` and `/Volumes/Stash/scratch/effigy/linux-4f6a5ed3-evidence`, both mode `0700`, owned by `tom`. Refuse if either exists. `launch.py` creates each fresh evidence directory beneath the second one, and the directory must not exist yet | 2 dirs | Retained. Removal needs disposition |
 | E2 | Host: generate one ephemeral Ed25519 key, mode `0600`, inside E1. No passphrase, because `IdentityAgent none` | 1 key, expiry ≤ 24 h | Deleted at Stage2 end, or retained under owner disposition |
@@ -458,7 +458,7 @@ E13a → E13k → E13b → E16 → E17 → E19 → E18.
 | E6 | Guest: `authorized_keys` with `restrict,expiry-time=<≤24 h>` only if the Stage1 `sshd_man_expiry_time_mentions` count is non-zero. Otherwise refuse, with no weaker auth | 1 file | Expires. Removal needs separate disposition |
 | E7 | Guest: create `/Volumes/Stash/scratch/effigy` (if absent) on the **native root ext4**, then `B` (mode `0700`, owner `effigy531`). No mount, no fstab edit, no share. Inside `B`, create `source`, `qual-root`, `driver`, `inputs/go`, `frozen`, `metadata`, `docker-config`, `toolchain`, `old-823d859d`, `docker-build-ctx`, all `0700` and owned by `effigy531`. `qual-root` and `docker-config` stay empty | ≤ 13 dirs | Retained |
 | E8 | Guest: placement and filesystem controls: Unix sockets, descriptor transfer, locks, atomic no-clobber publication, fsync/readback under `B`. Helper per SO-2 | ≤ 60 s, ≤ 64 MiB writes | Faults retained |
-| E9 | Host → guest: `git archive 4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02`, pinned sha256, sent over the pinned SSH stdin per SO-1. Guest extracts into `B/source` and verifies a tree manifest against H | Archive ≤ 40 MiB (measured 31.6 MB, 2,140 tracked files); extracted ≤ 500 MiB | Retained as the frozen source root. Not a Queue checkout |
+| E9 | Host → guest: `git archive 4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02`, pinned sha256, sent over the pinned SSH stdin per SO-1. Guest extracts into `B/source` and verifies a tree manifest against H | Archive ≤ 40 MiB (measured 31,559,680 bytes, 2,134 files); extracted ≤ 500 MiB | Retained as the frozen source root. Not a Queue checkout |
 | E10 | Guest: Rust `1.97.1` (repo pin) with `rustup`, with `RUSTUP_HOME`/`CARGO_HOME` under `B/toolchain` | Download ≤ 1.5 GiB, installed ≤ 4 GiB, network allowlist (§6.3) | Retained |
 | E11 | Guest: no Oxide install (cargo-routes forbids it). Every selector in E13a and E13k runs as `EFFIGY_OXIDE_ESCAPE=cargo <E15 effigy launcher> <selector>` from `B/source`. E13b is **not** covered by E11; its route is SO-5a. Recorded need: Stage1 `oxide` absent. A contrary Stage1 record stops before E9 | 0 bytes | Recorded in the Stage2 receipt per selector |
 | E12 | Guest: runtime image. `docker pull ubuntu:22.04@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11`, then `docker build --pull=false -f B/source/docs/qualification/workspace-private-531/runtime.Dockerfile B/docker-build-ctx`, where `B/docker-build-ctx` is an empty directory (the Dockerfile has no `COPY`). Verify `/lib/ld-linux-aarch64.so.1`, `python3`, arm64. Record the image ID and the baseline inventory (`ps -a`, networks, volumes) | Pull ≤ 1 GiB; apt ≤ 300 MiB; engine disk ≤ 2 GiB | Image retained. Removal needs disposition |
@@ -506,11 +506,11 @@ that must match exactly.
 
 ### 6.3 Capacity and time bounds (Stage2 total)
 
-- Wall clock: the 22 listed step caps sum to **14,820 s**. Breakdown: E0–E8 with
+- Wall clock: the 22 listed step caps sum to **14,760 s**. Breakdown: E0–E8 with
   E1b = 540 s (E0 60, E1 60, E1b 60, E2 60, E3 60, E4 30, E5 60, E6 30, E7 60,
   E8 60); E9 900; E10 1,800; E12 1,800; E13a 3,600; E13b 1,800; E13k 1,500; E14
-  1,800; E15 300; E16 300; E17 120; E18 300; E19 60. The Stage2 total cap is
-  **18,000 s (5 h)**: 14,820 s of step caps plus 3,180 s reserve. Steps run one
+  1,800; E15 300; E16 300; E17 60; E18 300; E19 60. The Stage2 total cap is
+  **18,000 s (5 h)**: 14,760 s of step caps plus 3,240 s reserve. Steps run one
   at a time.
 - Host writes: ≤ 5 GiB (E9 archive, E14 artifact, evidence).
 - Guest writes: ≤ 40 GiB total (E10 toolchain 4 GiB, E12 engine 2 GiB, E13a and
@@ -542,7 +542,39 @@ The retained H and B archives each have 2,134 file entries, not 2,140. Their
 original bytes and hashes remain authoritative. Candidate H remains unchanged;
 this correction does not authorize execution or replace its frozen artifacts.
 
-### 6.4 Source-owner proposals (no code change in this task)
+### Stage decomposition constraints
+
+Each occurrence needs its own exclusive intent and original stdout and stderr,
+including when delivery is uncertain. A missing terminal receipt requires
+reconciliation; it does not permit replay. Reserve 120 seconds for reporting
+and at most 180 seconds for local admission in each 1,200-second stage. Each
+E13a selector is a separate stage, retaining its source-defined 900-second
+bound. E13k's 600-second helper build and 900-second nextest invocation are
+separate stages, preserving their source arguments and the test GO. E17 stays
+at 60 seconds. E14 has a 1,800-second planned bound and cannot be treated as a
+1,200-second command without evidence or a source-qualified decomposition;
+that exact constraint remains open. The same scrutiny applies to E10, E12 and
+E13b before their execution commands are admitted. No host SSH timeout proves
+that a guest process or its session has closed.
+
+The source producer's receipt records `release_triple`, `sha256`, `build_kind`,
+`binary` and `copied_binary`; it does not record ELF machine or toolchain
+identity. A real producer-owner fix must record and verify those observations
+inside the Colima build, bound to the artifact and actual build environment;
+an independent admission must instead bind equivalent real observations to that
+same producer run. A sidecar invented after the fact is insufficient.
+
+The host nextest is 0.9.145 on Darwin. The official [0.9.145 release](https://github.com/nextest-rs/nextest/releases/tag/cargo-nextest-0.9.145)
+reports its Linux aarch64 GNU archive SHA-256 as
+`0ad2815fd91a7ecec3a7e25c749b584f66729ac688fd26b2fd494f7ff94b7fd0`
+(about 10.9 MB). No archive was downloaded in this task. This release is a
+candidate pin, not an admitted installation: its GitHub artifact host is not
+in §6.3's network allowlist, and its actual bytes and native metadata schema
+have not been verified. Provisioning remains blocked pending an allowed,
+bounded route and actual byte/schema verification; neither the Darwin binary
+nor an unpinned installer is a substitute.
+
+### 6.4 Historical source-owner proposals
 
 - **SO-1 Remote source, driver and GO placement.** `launch.py` already verifies
   remote hashes (G5). It does not place the files, verify the guest source tree
