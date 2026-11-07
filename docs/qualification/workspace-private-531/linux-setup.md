@@ -115,7 +115,7 @@ All three backend inputs/GO-index stay **UNARMED** pending actual GOs, accepted
 placement and planner-bound aggregate execution. Consumer/install/production/
 merge authority is unchanged.
 
-## Setup adapter status (source-only, revision 5)
+## Setup adapter status (source-only, revision 6)
 
 Pure controls, no effect. Files: `linux_setup.py` (Stage1 entry bound to the registered
 home, admission verifiers, setup plan, executor, host credit, `ssh_argv`),
@@ -123,7 +123,7 @@ home, admission verifiers, setup plan, executor, host credit, `ssh_argv`),
 candidate producer, root entry point), `linux_transfer.py` (bounded local processes, the
 contained stdin transfer), `linux_receipts.py` (OpenSSH-signed admission receipts),
 `linux-setup-probe.sh` (read-only probe, hash bound), `linux-setup-stages.json` (ledger
-checked against the plan), `linux_setup_tests.py` (100 injected controls;
+checked against the plan), `linux_setup_tests.py` (112 controls, including real-process flows;
 `test:qualification:linux-setup`).
 
 - **Gate and positive path.** The payload is wrapped so it blocks on a FIFO in the stage
@@ -143,6 +143,17 @@ checked against the plan), `linux_setup_tests.py` (100 injected controls;
   archive or placement into it. The payload reads the FIFO and writes the destination. SSH
   exit is only the writer's precondition (exit 0). Closure comes from the supervisor
   candidate and host credit, and the payload's sha256 line is the expectation.
+- **Supervisor install (E-SUP).** The root row's argv embeds the reviewed
+  `linux_supervisor.py` as base64 and writes it with `base64 -d`, then `chmod` and
+  `sha256sum`. No staging route is needed. The executor compares the argv with the
+  recomputed one before the row runs. The install itself is still a separate GO.
+- **Real command flow.** Because systemd is absent here, `systemd-run` and `systemctl`
+  are Python stand-ins on PATH. They run the real payload as a real process group,
+  keep the unit active while the group lives (ExitType=cgroup, KillMode=control-group),
+  enforce RuntimeMaxSec, and print `systemctl show` text. The supervisor, monitor, gate,
+  transfer runner and host credit run unmodified against them. These tests show the code
+  path works end to end with real processes. They do not verify systemd's InvocationID
+  or terminal timing, which still needs a live check.
 - **Supervised payloads.** E8 (controls) and E9b (archive extraction and tree digest) run
   as supervised payloads. Their request is inline in argv, so the plan digest covers its
   exact bytes, and each has a row nonce from the facts.

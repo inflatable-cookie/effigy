@@ -7,6 +7,7 @@ Stage1 probe hashed and parsed, the registered VM home and disk chain, the E2 ke
 pinned ssh files, placement bytes, and a source-verified hard limit. A missing or
 unverifiable fact halts the plan at the row that needs it.
 """
+import base64
 import calendar
 import datetime
 import hashlib
@@ -407,6 +408,20 @@ EXPECT = {
 
 # ---------------------------------------------------------------- plan
 
+SUPERVISOR_INSTALL_SCRIPT = 'set -e; umask 022; printf "%s" "$1" | base64 -d > "$2"; chmod 0755 "$2"; sha256sum "$2"'
+
+
+def supervisor_install_argv(source=None, path=None):
+    """Root install of the reviewed supervisor. The bytes travel inside the command, so no staging route is needed.
+
+    The root VM route writes a root-owned file. The argv is the exact reviewed source, so the
+    executor can recompute and compare it before the row runs.
+    """
+    data = Path(source or SUPERVISOR_SOURCE).read_bytes()
+    return _vm('/bin/sh', '-c', SUPERVISOR_INSTALL_SCRIPT, 'sh', base64.b64encode(data).decode('ascii'),
+               path or SUPERVISOR_PATH)
+
+
 def _row(rows, row_id, kind, argv, seconds, basis, go, expect=None, stdin=None, stdin_sha=None,
          limit_bytes=None, credit=None, writer_argv=None):
     effect = {'vm-root': 'bootstrap', 'vm-supervised': 'supervised', 'contained-transfer': 'transfer'}[kind]
@@ -471,12 +486,8 @@ def _rows(fresh):
     _row(rows, 'E7a', 'vm-root', BOOTSTRAP_EXACT['E7a'], 20, VM_BASIS, 'E7', EXPECT['E7a'])
     _row(rows, 'E7b', 'vm-root', BOOTSTRAP_EXACT['E7b'], 20, VM_BASIS, 'E7', EXPECT['E7b'])
     _row(rows, 'E7c', 'vm-root', BOOTSTRAP_EXACT['E7c'], 60, VM_BASIS, 'E7', EXPECT['E7c'])
-    staged = fresh.get('supervisor_staged') or {}
-    staged_ok = bool(staged.get('path')) and staged.get('sha256') == _file_sha(SUPERVISOR_SOURCE)
-    _row(rows, 'E-SUP', 'vm-root',
-         _vm(*_sh('set -e; /usr/bin/install -m 0755 -o root -g root "$1" "$2"; sha256sum "$2"',
-                  staged.get('path', ''), SUPERVISOR_PATH)) if staged_ok else [],
-         60, VM_BASIS, 'E-SUP', {'stdout_sha': _file_sha(SUPERVISOR_SOURCE)})
+    _row(rows, 'E-SUP', 'vm-root', supervisor_install_argv(), 60, VM_BASIS, 'E-SUP',
+         {'stdout_sha': _file_sha(SUPERVISOR_SOURCE)})
     files = fresh.get('ssh_files') or {}
     cfg = files.get('config')
     ssh_ok = bool(cfg and HEX64.fullmatch(files.get('config_sha256', '') or '') and files.get('known_hosts')
@@ -567,8 +578,6 @@ def setup_plan(fresh):
             missing.append('docker group present (probe)')
         if rid == 'E6' and not row['argv']:
             missing.append('authorized_keys: ' + (row.get('key_error') or 'not bound'))
-        if rid == 'E-SUP' and not row['argv']:
-            missing.append('supervisor bytes staged in the guest and matching the reviewed source')
         if rid in ('E7a', 'E7b', 'E7c'):
             try:
                 host, guest, witness = _disk_parts(fresh.get('disk_association'))
@@ -762,6 +771,8 @@ def execute_plan(facts, runner, observe_identity, observe_terminal, stage_root, 
                 return halt('bootstrap row is not on the root-operation allowlist')
             if row['id'] in BOOTSTRAP_EXACT and row['argv'] != BOOTSTRAP_EXACT[row['id']]:
                 return halt('bootstrap argv differs from the exact reviewed operation')
+            if row['id'] == 'E-SUP' and row['argv'] != supervisor_install_argv():
+                return halt('supervisor install argv differs from the reviewed source')
         observed = observe_identity(row)
         if any(observed.get(k) != facts['identity'][k] for k in IDENTITY_KEYS):
             return halt('identity drift: VM-route re-observation differs from the plan')

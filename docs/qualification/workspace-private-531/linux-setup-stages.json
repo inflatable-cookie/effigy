@@ -175,12 +175,11 @@
       "closure_basis": "vm-waited-exit-postobserved",
       "timeout_seconds": 60,
       "go": "E-SUP",
-      "status": "blocked",
-      "live_blockers": [
-        "supervisor bytes staged in the guest (no bound staging route established)"
-      ],
+      "status": "template",
+      "live_blockers": [],
       "effect": "bootstrap",
-      "needs_hard_limit": false
+      "needs_hard_limit": false,
+      "effect_note": "argv embeds the reviewed supervisor source as base64 (no staging route); root install still a separate GO"
     },
     {
       "id": "E9a",

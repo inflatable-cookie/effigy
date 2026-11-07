@@ -8,6 +8,7 @@ files and ssh-keygen on local fixtures. No VM, SSH connection, systemd or cgroup
 touched. An injected pass is source-control evidence only and grants no activation or
 proof credit.
 """
+import base64
 import datetime
 import hashlib
 import io
@@ -1049,11 +1050,11 @@ class PlanChecks(unittest.TestCase):
 
     def test_rows_with_live_values_missing_keep_empty_argv(self):
         rows = {r['id']: r for r in setup.setup_plan(self.fx.minimal())}
-        for rid in ('E6', 'E-SUP', 'E9a', 'E9b', 'E8', 'E19'):
+        for rid in ('E6', 'E9a', 'E9b', 'E8', 'E19'):
             with self.subTest(rid=rid):
                 self.assertTrue(rows[rid]['missing'])
                 self.assertEqual(rows[rid]['argv'], [])
-        for rid in ('E3a', 'E3b', 'E3c', 'E4', 'E4v', 'E5a', 'E5b', 'E5c', 'E6a'):
+        for rid in ('E3a', 'E3b', 'E3c', 'E4', 'E4v', 'E5a', 'E5b', 'E5c', 'E6a', 'E-SUP'):
             with self.subTest(rid=rid):
                 self.assertEqual(rows[rid]['missing'], [], rid)
 
@@ -1371,6 +1372,323 @@ class ManifestChecks(unittest.TestCase):
         manifest['rows'][0]['closure_basis'] = setup.SUPERVISED_BASIS
         with self.assertRaises(Refusal):
             setup.validate_setup_manifest(manifest)
+
+
+
+# ---------------------------------------------------------------- real command flow
+#
+# systemd is not present on this host, so `systemd-run` and `systemctl` are small Python
+# stand-ins placed first on PATH. They run the real payload as a real process group, keep the
+# unit active while that group lives (ExitType=cgroup, KillMode=control-group), enforce
+# RuntimeMaxSec, and record state as `systemctl show` text. The supervisor code under test
+# runs unmodified: real subprocess calls, real gate FIFO, real monitor thread, real parsing.
+# Only the cgroup filesystem type is shimmed, because macOS `stat -f` cannot read it.
+# This is a stand-in for systemd, not systemd: real InvocationID and terminal timing are unverified.
+
+FAKE_SYSTEMD_RUN = r"""#!__PY__
+import json, os, secrets, signal, subprocess, sys, time
+args = sys.argv[1:]
+sep = args.index('--')
+flags, payload = args[:sep], args[sep + 1:]
+unit = next(f.split('=', 1)[1] for f in flags if f.startswith('--unit='))
+timeout = next(int(f.rsplit('=', 1)[1]) for f in flags if f.startswith('--property=RuntimeMaxSec='))
+state = os.environ['EFFIGY_FAKE_STATE']
+mode = os.environ.get('EFFIGY_FAKE_MODE', '')
+path = os.path.join(state, unit + '.json')
+if os.path.exists(path):
+    sys.exit(1)
+invocation = secrets.token_hex(16)
+group = '/system.slice/%s.service' % unit
+
+
+def write(**values):
+    tmp = path + '.tmp'
+    with open(tmp, 'w') as handle:
+        json.dump(values, handle)
+    os.replace(tmp, path)
+
+
+write(LoadState='loaded', ActiveState='activating' if mode == 'never-active' else 'active', SubState='running',
+      Result='success', ExecMainStatus='', InvocationID=invocation, ControlGroup=group)
+proc = subprocess.Popen(payload, stdin=subprocess.DEVNULL, start_new_session=True)
+deadline = time.time() + timeout
+result, code = 'success', None
+while True:
+    code = proc.poll()
+    try:
+        os.killpg(proc.pid, 0)
+        alive = True
+    except ProcessLookupError:
+        alive = False
+    except PermissionError:
+        alive = True
+    if code is not None and not alive:
+        break
+    if time.time() > deadline:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
+        result, code = 'timeout', 1
+        break
+    time.sleep(0.02)
+if result == 'success' and code != 0:
+    result = 'exit-code'
+if os.environ.get('EFFIGY_FAKE_COLLECT'):
+    os.remove(path)
+else:
+    write(LoadState='loaded', ActiveState='inactive', SubState='dead', Result=result,
+          ExecMainStatus='' if result == 'timeout' else str(code), InvocationID=invocation, ControlGroup='')
+sys.exit(0 if result == 'success' else 1)
+"""
+
+FAKE_SYSTEMCTL = r"""#!__PY__
+import json, os, sys
+state = os.environ['EFFIGY_FAKE_STATE']
+args = sys.argv[1:]
+KEYS = ('LoadState', 'ActiveState', 'SubState', 'Result', 'ExecMainStatus', 'InvocationID', 'ControlGroup')
+if args[:1] == ['--version']:
+    print('systemd 259 (259-1)')
+    sys.exit(0)
+if args[:1] == ['show']:
+    path = os.path.join(state, args[1] + '.json')
+    if os.path.exists(path):
+        with open(path) as handle:
+            values = json.load(handle)
+    else:
+        values = {'LoadState': 'not-found', 'ActiveState': 'inactive', 'SubState': 'dead', 'Result': 'success'}
+    for key in KEYS:
+        print('%s=%s' % (key, values.get(key, '')))
+    sys.exit(0)
+if args[:1] == ['kill']:
+    path = os.path.join(state, args[-1] + '.json')
+    if os.path.exists(path):
+        with open(path) as handle:
+            values = json.load(handle)
+        values.update(ActiveState='inactive', Result='signal', ControlGroup='')
+        with open(path, 'w') as handle:
+            json.dump(values, handle)
+    sys.exit(0)
+sys.exit(2)
+"""
+
+FAKE_STAT = """#!/bin/sh
+case "$*" in
+  *"/sys/fs/cgroup"*) echo cgroup2fs; exit 0 ;;
+esac
+exec /usr/bin/stat "$@"
+"""
+
+SUPERVISOR_DRIVER = r"""#!__PY__
+import json, sys, time
+sys.path.insert(0, __SUP__)
+import linux_supervisor as s
+req = json.loads(sys.argv[1])
+res = s.run_supervised(req['stage_dir'], req, s.SystemdOps(s._subprocess_runner), time.monotonic,
+                       req['expected_boot_id'], {}, None)
+print(json.dumps({'disposition': res['disposition'], 'candidate': res['candidate'], 'reason': res['reason'],
+                  'payload_stdout': res['payload_stdout']}))
+"""
+
+SHASUM_SHIM = "#!/bin/sh\nexec shasum -a 256 \"$@\"\n"
+
+
+class FakeSystemd:
+    """Writes the stand-ins into a fresh bin directory and returns the environment that selects them."""
+
+    def __init__(self, mode=''):
+        self.dir = tmpdir('fake-systemd-')
+        self.bin = self.dir / 'bin'
+        self.bin.mkdir()
+        self.state = self.dir / 'state'
+        self.state.mkdir()
+        for name, body in (('systemd-run', FAKE_SYSTEMD_RUN), ('systemctl', FAKE_SYSTEMCTL)):
+            (self.bin / name).write_text(body.replace('__PY__', sys.executable))
+            (self.bin / name).chmod(0o755)
+        (self.bin / 'stat').write_text(FAKE_STAT)
+        (self.bin / 'stat').chmod(0o755)
+        if not shutil.which('sha256sum'):
+            (self.bin / 'sha256sum').write_text(SHASUM_SHIM)
+            (self.bin / 'sha256sum').chmod(0o755)
+        self.driver = self.dir / 'effigy_supervisor_driver.py'
+        self.driver.write_text(SUPERVISOR_DRIVER.replace('__PY__', sys.executable)
+                               .replace('__SUP__', repr(str(Path(setup.SUPERVISOR_SOURCE).parent))))
+        self.env = {'PATH': str(self.bin) + os.pathsep + os.environ.get('PATH', ''),
+                    'EFFIGY_FAKE_STATE': str(self.state), 'EFFIGY_FAKE_MODE': mode, 'EFFIGY_FAKE_COLLECT': ''}
+
+    def use(self, test, **extra):
+        patcher = patch.dict(os.environ, dict(self.env, **extra))
+        patcher.start()
+        test.addCleanup(patcher.stop)
+        return self
+
+
+def real_show(unit):
+    """Read the unit through the stand-in systemctl, as the host observation does."""
+    out = subprocess.run(['systemctl', 'show', unit, '--property=' + supervisor.PROPERTIES],
+                         capture_output=True, text=True, check=True).stdout
+    return out
+
+
+class RealSupervisorFlowChecks(unittest.TestCase):
+    def setUp(self):
+        self.fake = FakeSystemd().use(self)
+
+    def request(self, stage, argv, timeout=10, nonce=NONCE):
+        return {'nonce': nonce, 'payload_user': 'effigy531', 'payload_uid': os.geteuid(), 'cwd': CWD,
+                'timeout_seconds': timeout, 'argv': argv, 'stage_dir': str(stage),
+                'expected_boot_id': BOOT}
+
+    def run_real(self, argv, timeout=10, nonce=NONCE, stage=None):
+        stage = stage or tmpdir('real-flow-') / 'stage'
+        req = self.request(stage, argv, timeout=timeout, nonce=nonce)
+        result = supervisor.run_supervised(stage, req, supervisor.SystemdOps(supervisor._subprocess_runner),
+                                           time.monotonic, BOOT, {}, None)
+        return result, stage
+
+    def test_positive_flow_credits_only_after_the_host_observes_the_same_unit(self):
+        marker = tmpdir('real-pos-') / 'marker'
+        result, stage = self.run_real(['/bin/sh', '-c', 'echo payload-ran; exit 0'])
+        self.assertEqual(result['disposition'], 'exited', result)
+        self.assertIsNotNone(result['candidate'], result['reason'])
+        self.assertEqual(result['candidate']['observed_control_group'], GROUP)
+        self.assertIn('payload-ran', result['payload_stdout'])
+        self.assertTrue(result['samples'])
+        self.assertTrue(any(s.get('kind') == 'loaded' and s.get('active_state') == 'active' for s in result['samples']))
+        host = setup.observation_from_show(real_show(UNIT), UNIT, BOOT, NONCE)
+        expected = {'boot_id': BOOT, 'nonce': NONCE, 'unit': UNIT, 'invocation_id': host['invocation_id'],
+                    'control_group': ''}
+        self.assertEqual(setup.host_credit(expected, result['candidate'], host), 'closed')
+        self.assertTrue((stage / supervisor.GATE_NAME).exists())
+
+    def test_payload_never_runs_before_the_gate_is_released(self):
+        marker = tmpdir('real-gate-') / 'ran'
+        self.fake.use(self, EFFIGY_FAKE_MODE='never-active')
+        result, _ = self.run_real(['/bin/sh', '-c', 'echo x > "%s"' % marker], timeout=2)
+        self.assertFalse(marker.exists(), 'payload ran without a release')
+        self.assertIsNone(result['candidate'])
+        self.assertEqual(result['disposition'], 'failed')
+
+    def test_descendant_keeps_the_real_unit_active_until_the_deadline(self):
+        result, _ = self.run_real(['/bin/sh', '-c', 'sleep 30 & exit 0'], timeout=3)
+        self.assertIsNone(result['candidate'])
+        self.assertEqual(result['show']['result'], 'timeout')
+
+    def test_failed_payload_gets_no_candidate(self):
+        result, _ = self.run_real(['/bin/sh', '-c', 'exit 3'])
+        self.assertIsNone(result['candidate'])
+        self.assertEqual(result['disposition'], 'failed')
+
+    def test_collection_race_after_the_payload_is_unknown(self):
+        self.fake.use(self, EFFIGY_FAKE_COLLECT='1')
+        result, _ = self.run_real(['/bin/sh', '-c', 'echo ok'])
+        self.assertIsNone(result['candidate'])
+        self.assertIn('vanished', result['reason'])
+
+    def test_preexisting_unit_refuses_before_the_payload_starts(self):
+        marker = tmpdir('real-preload-') / 'ran'
+        (self.fake.state / (UNIT + '.json')).write_text(json.dumps({'LoadState': 'loaded', 'ActiveState': 'inactive'}))
+        stage = tmpdir('real-preload-stage-') / 'stage'
+        with self.assertRaises(Refusal):
+            self.run_real(['/bin/sh', '-c', 'echo x > "%s"' % marker], stage=stage)
+        self.assertFalse(marker.exists())
+
+    def test_monitor_samples_real_format_text_from_the_real_stand_in(self):
+        result, _ = self.run_real(['/bin/sh', '-c', 'sleep 1; exit 0'], timeout=10)
+        loaded = [s for s in result['samples'] if s.get('kind') == 'loaded']
+        self.assertTrue(loaded)
+        self.assertTrue(all(len(s['invocation_id']) == 32 for s in loaded))
+        self.assertTrue(all(s['control_group'] == GROUP for s in loaded if s['active_state'] == 'active'))
+
+
+def real_transfer_row(root, archive, timeout=60, payload_exit=None):
+    stage = root / 'stage'
+    fifo = stage / supervisor.TRANSFER_NAME
+    dest = root / 'dest.bin'
+    script = 'cat "$1" > "$2" && %s "$2"' % SHA_CMD if payload_exit is None else 'exit %d' % payload_exit
+    payload = ['/bin/sh', '-c', script, 'sh', str(fifo), str(dest)]
+    req = {'nonce': ROW_NONCES['E9a'], 'payload_user': 'effigy531', 'payload_uid': os.geteuid(), 'cwd': CWD,
+           'timeout_seconds': timeout, 'argv': payload, 'stage_dir': str(stage), 'expected_boot_id': BOOT,
+           'transfer': True}
+    return {'kind': 'contained-transfer',
+            'argv': [sys.executable, str(FakeSystemd.last_driver), json.dumps(req)],
+            'writer_argv': transfers.writer_remote_argv(str(fifo), attempts=max(10, timeout * 5)),
+            'stdin_path': str(archive), 'timeout_seconds': timeout, 'stdin_sha256': None,
+            'credit': {'nonce': ROW_NONCES['E9a'], 'unit': supervisor.unit_name(ROW_NONCES['E9a'])}}, dest
+
+
+class RealTransferFlowChecks(unittest.TestCase):
+    """A contained transfer through the real supervisor code, the real FIFO, the real writer and host credit."""
+
+    def setUp(self):
+        self.fake = FakeSystemd().use(self)
+        FakeSystemd.last_driver = self.fake.driver
+
+    def test_contained_transfer_delivers_the_bytes_and_is_credited_by_the_host(self):
+        root = tmpdir('real-transfer-')
+        archive = root / 'archive.bin'
+        archive.write_bytes(os.urandom(300_000))
+        row, dest = real_transfer_row(root, archive, timeout=60)
+        out = setup.default_row_runner(row, None, None)
+        self.assertEqual(out['disposition'], 'exited', out)
+        self.assertEqual(out['writer_exit'], 0)
+        self.assertEqual(dest.read_bytes(), archive.read_bytes())
+        self.assertTrue(out['payload_stdout'].startswith(hashlib.sha256(archive.read_bytes()).hexdigest()))
+        self.assertIsNotNone(out['candidate'])
+        host = setup.observation_from_show(real_show(UNIT_OF_E9A), UNIT_OF_E9A, BOOT, ROW_NONCES['E9a'])
+        expected = {'boot_id': BOOT, 'nonce': ROW_NONCES['E9a'], 'unit': UNIT_OF_E9A,
+                    'invocation_id': host['invocation_id'], 'control_group': ''}
+        self.assertEqual(setup.host_credit(expected, out['candidate'], host), 'closed')
+
+    def test_a_payload_that_never_reads_the_fifo_is_bounded_by_the_row_deadline(self):
+        root = tmpdir('real-transfer-stuck-')
+        archive = root / 'archive.bin'
+        archive.write_bytes(b'x' * 1000)
+        row, dest = real_transfer_row(root, archive, timeout=3, payload_exit=0)
+        started = time.monotonic()
+        out = setup.default_row_runner(row, None, None)
+        self.assertNotEqual(out['disposition'], 'exited')
+        self.assertLess(time.monotonic() - started, 40)
+        self.assertIsNone(out['candidate'])
+
+    def test_a_failed_writer_is_never_closure(self):
+        root = tmpdir('real-transfer-writer-')
+        archive = root / 'archive.bin'
+        archive.write_bytes(b'abc')
+        row, _ = real_transfer_row(root, archive, timeout=30)
+        row['writer_argv'] = transfers.writer_remote_argv(str(root / 'absent.fifo'), attempts=3)
+        out = setup.default_row_runner(row, None, None)
+        self.assertEqual(out['writer_exit'], 9)
+        self.assertNotEqual(out['disposition'], 'exited')
+
+
+UNIT_OF_E9A = supervisor.unit_name(ROW_NONCES['E9a'])
+
+
+class SupervisorInstallChecks(unittest.TestCase):
+    """The root install row, run as its local shell argv: exact reviewed bytes, mode and sha."""
+
+    def test_install_argv_writes_the_exact_reviewed_supervisor_and_reports_its_sha(self):
+        root = tmpdir('install-')
+        shim = root / 'bin'
+        shim.mkdir()
+        if not shutil.which('sha256sum'):
+            (shim / 'sha256sum').write_text(SHASUM_SHIM)
+            (shim / 'sha256sum').chmod(0o755)
+        target = root / 'effigy-stage-supervisor'
+        argv = setup.supervisor_install_argv(path=str(target))
+        local = argv[3:]                       # drop `prlctl exec <uuid>`; run the same shell argv locally
+        env = dict(os.environ, PATH=str(shim) + os.pathsep + os.environ.get('PATH', ''))
+        out = subprocess.run(local, capture_output=True, text=True, env=env, check=True)
+        self.assertEqual(target.read_bytes(), setup.SUPERVISOR_SOURCE.read_bytes())
+        self.assertEqual(stat_mode(target), 0o755)
+        self.assertEqual(out.stdout.split()[0], hashlib.sha256(setup.SUPERVISOR_SOURCE.read_bytes()).hexdigest())
+
+    def test_install_argv_is_a_root_vm_route_command_with_the_source_embedded(self):
+        argv = setup.supervisor_install_argv()
+        self.assertEqual(argv[:3], [setup.PRLCTL, 'exec', setup.VM_UUID])
+        self.assertIn(base64.b64encode(setup.SUPERVISOR_SOURCE.read_bytes()).decode('ascii'), argv)
 
 
 if __name__ == '__main__':
