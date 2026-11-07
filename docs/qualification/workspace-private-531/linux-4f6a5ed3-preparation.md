@@ -422,33 +422,47 @@ If a prerequisite is absent, the step refuses. Nothing is set up automatically.
   cargo-routes contradiction rule stops before source transfer); storage
   correlation proven or explicitly refused.
 - SO-1 to SO-4 resolved, or the owner names the explicit manual step that
-  replaces each one. SO-5 rulings (D launcher, E13k) are required before E13b
-  and E13k run.
+  replaces each one. SO-5a (D launcher) is required before E13b. SO-5b (E13k)
+  is covered by E13k's own GO.
 - Colima `effigy-release` profile observed as aarch64 (for E14 only).
 
 ### 6.2 Effects table
 
 Guest base for every guest path below: `B = /Volumes/Stash/scratch/effigy/linux-4f6a5ed3`,
 on the guest's native root ext4 (E7). Every path below is created by this stage
-and is refused if it already exists with content.
+and is refused if it already exists with content. Host paths use the same
+spelling for the inputs directory and the GO receipt (§6.2a), and a separate
+host evidence root, `/Volumes/Stash/scratch/effigy/linux-4f6a5ed3-evidence`.
+
+**Execution order (authoritative; row labels are not order):**
+E0 → E1 → E1b → E2 → E3 → E4 → E5 → E6 → E7 → E8 → E9 → E10 → E12 → E14 → E15 →
+E13a → E13k → E13b → E16 → E17 → E19 → E18.
+
+- E14 runs before any guest selector, because E15 supplies the launcher that E11 uses.
+- E13b runs before E16, because the freeze includes the D old binary. It also
+  waits for SO-5a. Without that ruling, Stage2 stops before E16.
+- E16 freezes before E17 and E19: metadata names frozen copies, and the inputs
+  and GO index carry frozen hashes.
+- E11 is a rule that applies to E13a and E13k. It is not a step.
 
 | # | Effect | Bound | Disposition |
 | --- | --- | --- | --- |
 | E0 | Guest: start `docker.service` only if inactive (`systemctl start docker.service`). Needed only to capture the baseline (E12) | 1 unit start; ≤ 60 s | Stays running until its owner disposition. Stop is a separate effect |
 | E1 | Host: create `/Volumes/Stash/scratch/effigy/531-linux-control` mode `0700`, owned by `tom`. **Refuse if the path exists** (no adoption of historical control state) | 1 dir | Retained. Removal needs separate disposition |
+| E1b | Host: create `/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/inputs` and `/Volumes/Stash/scratch/effigy/linux-4f6a5ed3-evidence`, both mode `0700`, owned by `tom`. Refuse if either exists. `launch.py` creates each fresh evidence directory beneath the second one, and the directory must not exist yet | 2 dirs | Retained. Removal needs disposition |
 | E2 | Host: generate one ephemeral Ed25519 key, mode `0600`, inside E1. No passphrase, because `IdentityAgent none` | 1 key, expiry ≤ 24 h | Deleted at Stage2 end, or retained under owner disposition |
 | E3 | Guest: create account `effigy531`, password login locked, home `0700`, no sudo. **Refuse** if `effigy531` already exists as passwd entry, group, or home (Stage1 `effigy531_passwd_exit`/`_group_exit`/`_home`). No reuse, no key adoption, no deletion | 1 account | Retained. Removal needs separate disposition |
 | E4 | Guest: add `effigy531` to `docker` only. Verify `id -nG effigy531` shows exactly `effigy531` and `docker` | **root-equivalent**; explicit GO | Retained. Removal needs separate disposition |
 | E5 | Guest: sshd drop-in for `Match User effigy531` (`PasswordAuthentication no`, `AllowTcpForwarding no`, `X11Forwarding no`, `PermitTTY no`), then `systemctl reload ssh` after `sshd -t` passes | 1 file, 1 reload | Retained. Revert needs separate disposition |
-| E6 | Guest: `authorized_keys` with `restrict,expiry-time=<≤24 h>` only if the Stage1 `sshd_man_expiry_time_mentions` count is non-zero and the sshd_config(5) text agrees. Otherwise refuse, with no weaker auth | 1 file | Expires. Removal needs separate disposition |
+| E6 | Guest: `authorized_keys` with `restrict,expiry-time=<≤24 h>` only if the Stage1 `sshd_man_expiry_time_mentions` count is non-zero. Otherwise refuse, with no weaker auth | 1 file | Expires. Removal needs separate disposition |
 | E7 | Guest: create `/Volumes/Stash/scratch/effigy` (if absent) on the **native root ext4**, then `B` (mode `0700`, owner `effigy531`). No mount, no fstab edit, no share. Inside `B`, create `source`, `qual-root`, `driver`, `inputs/go`, `frozen`, `metadata`, `docker-config`, `toolchain`, `old-823d859d`, `docker-build-ctx`, all `0700` and owned by `effigy531`. `qual-root` and `docker-config` stay empty | ≤ 13 dirs | Retained |
 | E8 | Guest: placement and filesystem controls: Unix sockets, descriptor transfer, locks, atomic no-clobber publication, fsync/readback under `B`. Helper per SO-2 | ≤ 60 s, ≤ 64 MiB writes | Faults retained |
 | E9 | Host → guest: `git archive 4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02`, pinned sha256, sent over the pinned SSH stdin per SO-1. Guest extracts into `B/source` and verifies a tree manifest against H | Archive ≤ 40 MiB (measured 31.6 MB, 2,140 tracked files); extracted ≤ 500 MiB | Retained as the frozen source root. Not a Queue checkout |
 | E10 | Guest: Rust `1.97.1` (repo pin) with `rustup`, with `RUSTUP_HOME`/`CARGO_HOME` under `B/toolchain` | Download ≤ 1.5 GiB, installed ≤ 4 GiB, network allowlist (§6.3) | Retained |
-| E11 | Guest: no Oxide install (cargo-routes forbids it). Every selector in E13a, E13b and E13k runs as `EFFIGY_OXIDE_ESCAPE=cargo <E15 effigy launcher> <selector>` from the matching source root. Recorded need: Stage1 `oxide` absent. A contrary Stage1 record stops before E9 | 0 bytes | Recorded in the Stage2 receipt per selector |
+| E11 | Guest: no Oxide install (cargo-routes forbids it). Every selector in E13a and E13k runs as `EFFIGY_OXIDE_ESCAPE=cargo <E15 effigy launcher> <selector>` from `B/source`. E13b is **not** covered by E11; its route is SO-5a. Recorded need: Stage1 `oxide` absent. A contrary Stage1 record stops before E9 | 0 bytes | Recorded in the Stage2 receipt per selector |
 | E12 | Guest: runtime image. `docker pull ubuntu:22.04@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11`, then `docker build --pull=false -f B/source/docs/qualification/workspace-private-531/runtime.Dockerfile B/docker-build-ctx`, where `B/docker-build-ctx` is an empty directory (the Dockerfile has no `COPY`). Verify `/lib/ld-linux-aarch64.so.1`, `python3`, arm64. Record the image ID and the baseline inventory (`ps -a`, networks, volumes) | Pull ≤ 1 GiB; apt ≤ 300 MiB; engine disk ≤ 2 GiB | Image retained. Removal needs disposition |
 | E13a | Guest builds at H, each through E11: `build:runtime-storage` (A), `build:workspace:private-qualification` (B, utility), `build:workspace:private-qualification:test-inputs` (test executables, listed only), `build:workspace:private-qualification:cargo-metadata` (metadata). Each stays inside its `tasks.toml` timeout (900 s) | ≤ 3,600 s total (4 × 900 s); target dir ≤ 25 GiB; cargo registry ≤ 4 GiB under `B/toolchain` | Frozen copies (E16) kept; `target` kept as evidence |
-| E13b | Guest build of D at `823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1` in `B/old-823d859d/source` (separate tree, never inside `B/source`). Launcher and selector per SO-5a. Its `build:runtime-storage` text is read from its own `config/tasks.toml` first | ≤ 1,800 s | Frozen copy kept; tree kept as evidence |
+| E13b | Guest build of D at `823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1` in `B/old-823d859d/source` (separate tree, never inside `B/source`). **Blocked until SO-5a is ruled.** The route must not use any binary built from H. Its selector text is read from that commit's own `config/tasks.toml` first | ≤ 1,800 s | Frozen copy kept; tree kept as evidence |
 | E13k | Guest native test run: `test:workspace:private-qualification:kernel` through E11. It builds the helper (600 s) and runs nextest (900 s). **This is a native test execution with its own GO** (G11). Its test results are retained as evidence and are not proof cells | ≤ 1,500 s | Retained. A build-only route, if ruled, replaces it (SO-5b) |
 | E14 | Host: Recipe E `EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact` at clean H, Colima `effigy-release`. Separate builder GO. Verify §4.1 predicates | ≤ 1,800 s; artifact ≤ 200 MiB | Producer receipt kept |
 | E15 | Host → guest: copy E's artifact `effigy-aarch64-unknown-linux-gnu` with its `.receipt` and `.active-version` into `B/source/.effigy/linux-release/artifacts/`, byte-for-byte. Verify sha256 on both sides. The copy is also the guest `effigy` launcher for E11 (D-7) | ≤ 200 MiB | Retained |
@@ -465,7 +479,9 @@ that must match exactly.
 
 | Cell key or remote key | Guest or host path | Owner and mode | Check at Stage2 and at run |
 | --- | --- | --- | --- |
-| `source_root` | `B/source` (guest) | `effigy531`, `0700` | Tree manifest equals H (SO-1). Contains `tests/config/gateway-nextest.toml` |
+| `source_root` | `B/source` (guest) | `effigy531`, `0700` | Tree manifest equals H (SO-1). Contains `tests/config/gateway-nextest.toml`. It is an extracted archive, not a git checkout: the `source_head` check in `launch.py` runs on the host only |
+| top-level `evidence` (host, `launch.py`) | `/Volumes/Stash/scratch/effigy/linux-4f6a5ed3-evidence/<UTC-attempt>` | host `tom`, `0700`, must not exist | Fresh directory under the E1b evidence root. Its parent resolves under SCRATCH. `launch.py` creates it. It is never reused |
+| one-shot marker (guest, written by runtime `main`) | `/Volumes/Stash/scratch/effigy/531-<inputs-sha256>-linux.started.json` | guest `effigy531` | Created exclusively before the window. A failed or unknown attempt keeps it, so the same inputs cannot replay |
 | `qualification_root` | `B/qual-root` (guest), created empty | `effigy531`, `0700`, owner equal to the SSH euid | Pin path, device, inode and uid after creation. Runtime refuses any entry in it (`os.listdir`) and any alias. Never reused |
 | `remote.packet` | `B/driver` (guest) | `effigy531`, `0600`/`0400` files | `common.py`, `runtime.py`, `probe.py` sha256 equal host `PACKET` digests (launch verifies) |
 | `remote.inputs` | `B/inputs/inputs.json` (guest) | `effigy531`, `0400` | sha256 equal host input file (launch verifies) |
@@ -489,11 +505,12 @@ that must match exactly.
 
 ### 6.3 Capacity and time bounds (Stage2 total)
 
-- Wall clock: per-step caps sum to **14,700 s** (E0 60, E1 60, E2 60, E3 60, E4 30,
-  E5 60, E6 30, E7 60, E8 60, E9 900, E10 1,800, E12 1,800, E13a 3,600, E13b 1,800,
-  E13k 1,500, E14 1,800, E15 300, E16 300, E17 120, E18 300, E19 60). The Stage2
-  total cap is **18,000 s (5 h)**: 14,700 s of step caps plus 3,300 s reserve.
-  Steps run one at a time.
+- Wall clock: the 22 listed step caps sum to **14,820 s**. Breakdown: E0–E8 with
+  E1b = 540 s (E0 60, E1 60, E1b 60, E2 60, E3 60, E4 30, E5 60, E6 30, E7 60,
+  E8 60); E9 900; E10 1,800; E12 1,800; E13a 3,600; E13b 1,800; E13k 1,500; E14
+  1,800; E15 300; E16 300; E17 120; E18 300; E19 60. The Stage2 total cap is
+  **18,000 s (5 h)**: 14,820 s of step caps plus 3,180 s reserve. Steps run one
+  at a time.
 - Host writes: ≤ 5 GiB (E9 archive, E14 artifact, evidence).
 - Guest writes: ≤ 40 GiB total (E10 toolchain 4 GiB, E12 engine 2 GiB, E13a and
   E13b build trees 25 GiB, cargo registry 4 GiB, E9 source 0.5 GiB, E16 frozen
@@ -522,11 +539,17 @@ that must match exactly.
   pinned toolchain identity recorded in the receipt; refuse the default x86_64
   triple for the Linux backend. Closes G6 and G7. This is a producer defect, so
   it goes to the source owner. It is not patched in artifact execution.
-- **SO-5 Owner rulings, not code.** (a) The launcher and selector for D at
-  `823d859da`. Default: run that commit's own `sh scripts/oxide-selector.sh`
-  command text with `EFFIGY_OXIDE_ESCAPE=cargo`, from its own tree, and never
-  with H's binary. (b) E13k, the kernel test run. Default: its own GO (E13k).
-  A build-only route would replace it. Neither ruling installs Oxide.
+- **SO-5a Recipe D launcher (owner ruling, blocks E13b).** `cargo-routes.md`
+  names the escape as `EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>`. For D, the
+  old tree has no built `effigy`, and H's binary is excluded. The proposed route
+  is the old commit's own `scripts/oxide-selector.sh` with
+  `EFFIGY_OXIDE_ESCAPE=cargo`, given the arguments of that commit's
+  `build:runtime-storage` text, run from `B/old-823d859d/source`. That is not the
+  `effigy <selector>` form `cargo-routes.md` names, so it needs a ruling before
+  E13b. Until ruled, E13b does not run and Stage2 stops before E16.
+- **SO-5b Kernel helper (owner ruling).** E13k is a native test run with its own
+  GO. A build-only route for `kernel-custody-fixture` would replace it. Until then,
+  E13k is what freezes the helper. Neither ruling installs Oxide.
 - **SO-6 Native nextest metadata.** A generator for binaries metadata that
   checks the pinned nextest version's schema. It names only the frozen
   executables, and its source-root paths are the guest's. Closes G10.
@@ -579,6 +602,9 @@ stop, 600 s, no snapshot, no `--kill`, no SSH. Reply with the decision ID.
   the K document bytes, the extracted probe script, the Stage0 raw captures and
   a manifest with each sha256. Original planner files stay untouched, and earlier
   revision directories stay as history.
+- Top-level evidence output: host `/Volumes/Stash/scratch/effigy/linux-4f6a5ed3-evidence/<UTC-attempt>`
+  (fresh, §6.2a). The retained copy of each attempt's receipts goes beside it under
+  the same root, never into `l0tx7tam`.
 - K document sha256: recorded in the PR body and the manifest. It is computed
   from the committed file.
 - Probe script sha256: recorded in the manifest, computed from the extracted
@@ -602,5 +628,5 @@ Decisions taken in this kit (reviewer checks these):
 - **D-4** Stage1 uses one `prlctl exec` read-only probe script, root context required, no password. Docker daemon reads run only when the daemon is already active.
 - **D-5** Stage2 SSH uses a passphrase-less ephemeral Ed25519 key with expiry ≤ 24 h and restrictions. If expiry is unsupported, refuse.
 - **D-6** No `--kill` in any stage without its own GO.
-- **D-7** The guest runs selectors with the sanctioned per-selector escape from `cargo-routes.md` (`EFFIGY_OXIDE_ESCAPE=cargo <selector>`). It does not install Oxide and types no raw `cargo`. The launcher is the Recipe E artifact (H source, receipt-verified), so no build runs before the first selector.
+- **D-7** The guest runs selectors with the sanctioned per-selector escape from `cargo-routes.md` (`EFFIGY_OXIDE_ESCAPE=cargo <selector>`). It does not install Oxide and types no raw `cargo`. The launcher is the Recipe E artifact (H source, receipt-verified), so no build runs before the first selector. The launcher covers the H tree only (E13a, E13k). It does not apply to D (SO-5a).
 - **D-8** The kernel test run (E13k) is named as a native test effect with its own GO. It is not folded into a build step.
