@@ -302,9 +302,13 @@ container is resolved from that checkout's exact scope and service labels.
 5. **Retained kernel controls and genuine old helpers.** Run the prebuilt real
    descriptor handoff/caller-drop/owner-death controls, helper fault coverage and
    custody kill matrix under this native host. Run ordinary old-sentinel refusal
-   using the genuine older executable, and the qualification pre-workload refusal after successful genuine old-helper
-   startup, with verified cleanup. An unrelated admission/startup failure cannot
-   count as old-binary credit. A foreign copy control is
+   using the genuine older executable: the old helper must be admitted, then the
+   current parent's Discard must refuse before process intent, with verified
+   cleanup. Run the qualification pre-workload refusal after successful genuine
+   old-helper startup, with verified cleanup. An unrelated admission/startup
+   failure cannot count as old-binary credit. Neither control exercises the
+   legacy discard decoder; that is a separate unit test (see
+   `producer.md`, Recipe D). A foreign copy control is
    additional negative coverage, not old-binary credit. Actual helper death,
    uncertain closure and partial startup must preserve the landed fail-closed
    predicates. The packet never changes the ratchet baseline.
