@@ -1048,6 +1048,52 @@
         {
           "argv": [
             "/usr/local/bin/docker",
+            "info",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d1-engine-info",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 30
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "volume",
+            "inspect",
+            "--format",
+            "{{json .}}",
+            "effigy-4f6a-qual-{token}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d1-volume-absent",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 30
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
             "volume",
             "create",
             "--label",
@@ -1115,6 +1161,28 @@
       "retention": "build stream, iidfile, readback JSON, image ID",
       "seconds": 1200,
       "steps": [
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "info",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d2-engine-info",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 30
+        },
         {
           "helper": "host_stage_dockerfile",
           "id": "d2-host-stage",
@@ -1224,6 +1292,28 @@
       "retention": "cidfile, check stream and exit; facts parsed by check_runtime_facts",
       "seconds": 360,
       "steps": [
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "info",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d3-engine-info",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 30
+        },
         {
           "argv": [
             "/usr/local/bin/docker",

@@ -1,13 +1,13 @@
 """Narrow macOS (Colima + Desktop) stage executor. Source only: no native effect runs from this file.
 
-plan: pure. Resolves every manifest step of a stage to its rendered argv, pinned env,
-timeouts, caps and admission reasons. Touches no filesystem and contacts no tool.
+plan: pure. Resolves every manifest step of a stage to its rendered argv, pinned env, timeouts,
+caps, runtime preconditions and admission reasons. Touches no filesystem and contacts no tool.
 
-execute: the only effect path. Needs an owner-activated GO file whose SHA-256 the caller
-names, a fresh stage root under Stash scratch, and an injected or default transport.
-Every exec step goes through preparation_stage.run_stage (exclusive intent before spawn,
-original stdout/stderr, waited exit, process identity), and every helper through a
-named handler from HANDLERS. Anything unlisted refuses before effects.
+execute: the only effect path. Needs an owner-activated GO whose SHA-256 the caller names. The
+executor derives its own input set (program files, manifest, recipe and tool binaries), checks the
+bindings against the reviewed paths, verifies the preceding receipt chain back to its origin, and
+claims the activation durably before any effect. Each exec step goes through
+preparation_stage.run_stage; each helper through a named handler. Anything unlisted refuses.
 
 Run: python3 -I -B macos_stage_executor.py plan BINDINGS.json
      python3 -I -B macos_stage_executor.py execute STAGE ACTIVATION.json SHA256 EVIDENCE_ROOT BINDINGS.json
@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
 import sys
 import time
 
@@ -31,11 +32,18 @@ from preparation_resources import Monitor  # noqa: E402
 
 Refusal = primitive.Refusal
 MANIFEST_PATH = HERE / 'macos-4f6a5ed3-stages.json'
-# PATH for Colima: the owned bin (pinned docker symlink) comes first, so Colima's child docker
-# resolves to /usr/local/bin/docker and never to an ambient installation.
+RECIPE_PATH = HERE / 'runtime.Dockerfile'
+SCHEMA = 'macos-stage-executor-receipt/1'
+# Program files whose bytes the GO binds. Changing any of them after activation refuses.
+PROGRAM_FILES = (HERE / 'macos_stage_executor.py', HERE / 'macos_preparation.py',
+                 HERE / 'preparation_stage.py', HERE / 'preparation_resources.py')
+TOOL_PATHS = (prep.COLIMA, prep.DOCKER)
+CLAIMS_DIR = prep.STASH + '/macos-stage-claims'
+# Colima's PATH: the owned bin (pinned docker symlink) comes first, so its child docker is pinned.
 COLIMA_BASE_PATH = '/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin'
 DESKTOP_BASE_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
 DESKTOP_SOCKET = prep.DESKTOP_HOST[len('unix://'):]
+PS = '/bin/ps'
 # Recorded from the 688 C0 receipt (token 7deaf1b3): the three owned roots, by identity.
 RECORDED_TOKEN = '7deaf1b3'
 RECORDED_ROOTS = {
@@ -43,23 +51,38 @@ RECORDED_ROOTS = {
     'colima_home': dict(path=f'{prep.STASH}/mac-4f6a-7deaf1b3/c', device=16777245, inode=156479714, entries=0),
     'qualification_root': dict(path=f'{prep.STASH}/mac-4f6a-7deaf1b3/s', device=16777245, inode=156479715, entries=0),
 }
-# Recorded from 690's corrected acceptance: the engine ID that D1-D4 must observe again at D0.
+# Recorded from 690's corrected acceptance: the engine the D stages must observe again.
 RECORDED_ENGINE_ID = 'ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd'
-# Preceding stage per stage: a missing or unclosed prior receipt refuses before any effect.
 PRIOR = {'C1': 'C0', 'C2': 'C1', 'C3': 'C2', 'C4': 'C3', 'C5': 'C4', 'C6': 'C5',
          'D1': 'D0', 'D2': 'D1', 'D3': 'D2', 'D4': 'D3'}
-# Stages whose effects need a bounded payload download. A wire-byte counter is not available
-# here: filesystem growth is not wire traffic, and no pinned image size is recorded, so these
-# stay unadmitted with their exact reason.
+PATH_BINDINGS = ('control', 'colima_home', 'colima_cache_home', 'colima_docker_config', 'qualification_root',
+                 'desktop_config', 'desktop_context_dir', 'desktop_iidfile', 'desktop_cidfile')
 DOWNLOAD_UNADMITTED = ('download cap is payload bytes; wire traffic is not counted and the manifest '
                        'records no pinned image size, so a bounded prefetch cannot verify size')
-UNADMITTED = {'C1': DOWNLOAD_UNADMITTED, 'C4': DOWNLOAD_UNADMITTED, 'D2': DOWNLOAD_UNADMITTED}
-GUEST_STAGE_ROUTE = 'ssh'
-GUEST_BINDING = {'c3-render-guest-spec': 'guest_spec', 'c4-render-verify-spec': 'guest_verify_spec'}
+UNADMITTED = {
+    'C1': DOWNLOAD_UNADMITTED,
+    'C2': ('multi-effect guest stage: guest closure is unknown after the status step, so the route echo '
+           'and probe cannot run in one stage; the stage needs splitting, and its probe source has no pin'),
+    'C3': ('guest_spec must be rendered from the C2 probe receipt, and C2 is unadmitted; stage_source has no pin'),
+    'C4': DOWNLOAD_UNADMITTED,
+    'D2': DOWNLOAD_UNADMITTED,
+}
+GUEST_BINDING = {'c4-render-verify-spec': 'guest_verify_spec'}
+# Never caller-supplied. Derived ones come from the chain or this run; unpinned ones have no reviewed
+# source in this repository. The plan shows each as an explicit placeholder, and execution refuses them.
+DERIVED_BINDINGS = ('image_id', 'owned_container_ids', 'owned_image_id', 'owned_volume_name')
+UNPINNED_BINDINGS = ('probe_source', 'stage_source', 'verify_source', 'guest_spec', 'guest_verify_spec',
+                     'guest_context', 'guest_iidfile')
+NOT_SUPPLIED = DERIVED_BINDINGS + UNPINNED_BINDINGS
+PLAN_PLACEHOLDERS = {k: f'<{k}>' for k in NOT_SUPPLIED}
+# Steps whose non-zero exit is the observation itself (absence of a volume); post_check reads it.
+EXPECTED_NONZERO = frozenset({'d1-volume-absent'})
 IMAGE_ID_SETTERS = ('c4-read-iidfile', 'd2-read-iidfile')
 CLEANUP_RM = {'d4-owned-rm': 'containers', 'd4-owned-volume-rm': 'volumes', 'd4-owned-image-rm': 'images'}
 ACTIVATION_ID = re.compile(r'[A-Za-z0-9_.-]{8,64}')
 RECIPE_CAP_BYTES = 64 * 1024
+RECIPE_SHA256 = prep.RECIPE_SHA256
+RECIPE_BYTES = 474
 
 
 def sha_file(path):
@@ -90,13 +113,44 @@ def helper_handler_missing(name):
 
 
 def stage_admission(stage):
-    reasons = []
-    if stage['id'] in UNADMITTED:
-        reasons.append(UNADMITTED[stage['id']])
+    reasons = [UNADMITTED[stage['id']]] if stage['id'] in UNADMITTED else []
     for step in stage['steps']:
         if step['kind'] == 'helper' and helper_handler_missing(step['helper']):
             reasons.append(f"{step['id']}: helper {step['helper']} has no reviewed handler in this source")
     return reasons
+
+
+def validate_bindings(bindings, manifest):
+    """The bindings must be the reviewed ones for this token. Caller-chosen paths, hosts or source
+    text refuse; image IDs and owned resource names are derived at run time, never supplied."""
+    token = bindings.get('token')
+    if not isinstance(token, str) or not prep.TOKEN.fullmatch(token):
+        raise Refusal('token must be eight lowercase hex')
+    unknown = sorted(set(bindings) - set(prep.SLOTS))
+    if unknown:
+        raise Refusal('unknown binding keys: ' + ', '.join(unknown))
+    supplied = sorted(set(bindings) & set(NOT_SUPPLIED))
+    if supplied:
+        raise Refusal('not caller-supplied: ' + ', '.join(supplied))
+    paths = prep.control_paths(token)
+    for key in PATH_BINDINGS:
+        if bindings.get(key) != paths[key]:
+            raise Refusal(f'{key} differs from the reviewed path for this token')
+    if bindings.get('desktop_host') != prep.DESKTOP_HOST:
+        raise Refusal('desktop_host must be the pinned socket URL')
+    if bindings.get('check_source') != prep.CHECK_SOURCE:
+        raise Refusal('check_source must be the reviewed check program')
+    if hashlib.sha256(prep.CHECK_SOURCE.encode()).hexdigest() != manifest['binding_inputs']['check_source_sha256']:
+        raise Refusal('reviewed check program no longer matches its pin')
+    if bindings.get('route_echo') != prep.ROUTE_ECHO:
+        raise Refusal('route_echo must be the reviewed hostile constant')
+    return token
+
+
+def chain_key(bindings):
+    """Every receipt in one backend chain must share this origin: token, control root and endpoint."""
+    return canon_sha({'token': bindings['token'], 'control': bindings['control'],
+                      'desktop_host': bindings['desktop_host']})
 
 
 def step_environment(step, bindings):
@@ -126,7 +180,7 @@ def resolve_step(step, bindings):
                    inputs=[render1(x, bindings) for x in step.get('inputs', [])])
         return out
     out.update(argv=prep.render(step['argv'], bindings), env=step_environment(step, bindings),
-               guest=step['argv'][0] == prep.COLIMA and GUEST_STAGE_ROUTE in step['argv'])
+               guest=step['argv'][0] == prep.COLIMA and 'ssh' in step['argv'])
     if 'guest_deadline' in step:
         out['guest_deadline'] = step['guest_deadline']
     if 'stdin' in step:
@@ -135,9 +189,13 @@ def resolve_step(step, bindings):
 
 
 def resolve_stage(stage_id, bindings, manifest=None):
-    """Pure plan: every request, threshold, pin and admission reason. No filesystem effects."""
+    """Pure plan: every request, threshold, pin and admission reason. No filesystem effects.
+    Derived and unpinned slots render as explicit placeholders; execution never uses them."""
     manifest = manifest or load_manifest()
     stage = stage_of(manifest, stage_id)
+    validate_bindings(bindings, manifest)
+    view = dict(PLAN_PLACEHOLDERS, **bindings)
+    bindings = view
     prep.check_stage(stage)
     if 'download_cap_bytes' in stage:
         prep.check_effect_stage(stage)
@@ -153,9 +211,11 @@ def resolve_stage(stage_id, bindings, manifest=None):
 
 
 def runtime_preconditions(stage_id, bindings):
-    """What must be true at run time, checked again by execute_stage. Historical observations
-    below are bindings to re-observe, never current evidence."""
-    pre = dict(activation='owner GO, standing decision v2, single activation, exact request hash')
+    """What must be true at run time, re-checked by execute_stage. Historical observations are
+    bindings to re-observe, never current evidence."""
+    pre = dict(activation='owner GO, standing decision v2, single activation, exact request hash',
+               claim='durable exclusive claim by activation_id under the claims directory',
+               prior='closed executor receipt chain back to D0 or C0; a historical 688/690 record is not a receipt')
     if stage_id in ('C1', 'C2', 'C3', 'C4', 'C5', 'C6'):
         pre['recorded_roots'] = ({k: dict(v) for k, v in RECORDED_ROOTS.items()}
                                  if bindings.get('token') == RECORDED_TOKEN
@@ -164,8 +224,9 @@ def runtime_preconditions(stage_id, bindings):
     if stage_id in ('D1', 'D2', 'D3', 'D4'):
         pre['engine_id'] = RECORDED_ENGINE_ID
         pre['engine_id_source'] = '690 corrected acceptance: observed engine, 29.8.0 linux/aarch64'
+        pre['engine_re_observed'] = 'the stage observes docker info before its own effects and must match'
     if stage_id == 'D0':
-        pre['engine_id'] = 'observed live at D0; empty or default info template refuses'
+        pre['engine_id'] = 'observed live at D0; an empty or default info template refuses'
     return pre
 
 
@@ -226,8 +287,33 @@ def new_private_dir(path):
     fsync_dir(os.path.dirname(path))
 
 
+def write_exclusive(path, value):
+    primitive.record(path, value)
+    fsync_dir(os.path.dirname(path))
+
+
+def write_bytes_exclusive(path, data):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+    with os.fdopen(fd, 'wb') as out:
+        out.write(data)
+        out.flush()
+        os.fsync(out.fileno())
+    fsync_dir(os.path.dirname(path))
+
+
+def claim_activation(activation_id, go_sha256):
+    """Durable single-use claim, global to the claims directory: a replay in any evidence root refuses."""
+    if not os.path.lexists(CLAIMS_DIR):
+        new_private_dir(CLAIMS_DIR)
+    try:
+        write_exclusive(f'{CLAIMS_DIR}/{activation_id}.claim', dict(activation_id=activation_id, go_sha256=go_sha256))
+    except FileExistsError:
+        raise Refusal('activation already claimed: refuse, no replay or adoption')
+
+
 def ensure_colima_path(control):
-    """Owned bin with a docker symlink to the pinned binary, and the owned HOME."""
+    """Owned bin with a docker symlink to the pinned binary, and the owned HOME. Every call checks
+    an existing link's exact target, so a foreign docker never reaches a Colima child."""
     bin_dir, home = f'{control}/bin', f'{control}/h'
     for d in (bin_dir, home):
         if not os.path.lexists(d):
@@ -245,23 +331,9 @@ def ensure_colima_path(control):
     fsync_dir(bin_dir)
 
 
-def write_exclusive(path, value):
-    primitive.record(path, value)
-    fsync_dir(os.path.dirname(path))
-
-
-def write_bytes_exclusive(path, data):
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
-    with os.fdopen(fd, 'wb') as out:
-        out.write(data)
-        out.flush()
-        os.fsync(out.fileno())
-    fsync_dir(os.path.dirname(path))
-
-
 def allocated_bytes(root, exclude=('_lima',)):
-    """Real allocated bytes (st_blocks), not logical size, under one owned root. Symlinks are not
-    followed. The VM's own _lima store is excluded: its growth is bounded by the VM's --disk."""
+    """Real allocated bytes (st_blocks) under one owned root. Symlinks are not followed. The VM's
+    own _lima store is excluded: its growth is bounded by the VM's --disk, not by this root."""
     total, stack = 0, [root]
     while stack:
         path = stack.pop()
@@ -293,27 +365,37 @@ def default_monitor(limits, roots):
     return Monitor(limits, AllocatedBytes(roots))
 
 
+def start_identity(pid):
+    """Process start identity for the record: wall and monotonic time of the probe, and the
+    kernel's start time for the PID. An unavailable probe is recorded as such, never invented."""
+    observed = {'start_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                'start_monotonic': time.monotonic()}
+    try:
+        out = subprocess.run([PS, '-o', 'lstart=', '-p', str(pid)], stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, timeout=5, env={'LANG': 'C'})
+        observed['ps_lstart'] = out.stdout.decode().strip() or 'unavailable'
+    except (OSError, subprocess.SubprocessError):
+        observed['ps_lstart'] = 'unavailable'
+    return observed
+
+
 def read_ref(ctx, ref):
-    """Helper inputs name an earlier step's output ('step.stdout') or a rendered path."""
+    """Helper inputs name a step output of this stage ('step.stdout') or a bound path."""
     if ref.endswith('.stdout') and ref[:-len('.stdout')] in ctx['outputs']:
         return Path(ctx['outputs'][ref[:-len('.stdout')]]['stdout']).read_text()
     return Path(render1(ref, ctx['bindings'])).read_text()
-
-
-def step_text(ctx, step):
-    return read_ref(ctx, step['inputs'][0])
 
 
 def h_make_owned_dir(ctx, step):
     """Exclusive creation of each owned leaf. A missing parent under the same owned control root
     is created first (D0's desktop dirs sit under control/d); nothing is ever adopted."""
     made = []
+    control = ctx['bindings']['control']
     for ref in step['inputs']:
         path = render1(ref, ctx['bindings'])
-        parent = os.path.dirname(path)
-        control = ctx['bindings']['control']
         if path != control and not path.startswith(control + '/'):
             raise Refusal('owned directory must live under the owned control root')
+        parent = os.path.dirname(path)
         if not os.path.lexists(parent):
             new_private_dir(parent)
             made.append(parent)
@@ -323,8 +405,8 @@ def h_make_owned_dir(ctx, step):
 
 
 def h_claim_intent(ctx, step):
-    if not os.path.exists(ctx['stage_root'] + '/stage-claim.json'):
-        raise Refusal('stage claim missing: refuse before effects')
+    if not os.path.exists(f"{CLAIMS_DIR}/{ctx['activation_id']}.claim"):
+        raise Refusal('activation claim missing: refuse before effects')
     return {'claimed': True}
 
 
@@ -346,17 +428,27 @@ def h_compare_route_echo(ctx, step):
 
 
 def h_render_guest_spec(ctx, step):
+    """C3 stages the reviewed recipe bytes (runtime.Dockerfile: exact sha, 474 bytes) as the stdin
+    file. C4 renders its verify spec from the binding as one JSON object."""
+    if step['id'] == 'c3-render-guest-spec':
+        data = RECIPE_PATH.read_bytes()
+        if len(data) != RECIPE_BYTES or hashlib.sha256(data).hexdigest() != RECIPE_SHA256:
+            raise Refusal('recipe differs from the reviewed runtime.Dockerfile pin')
+        path = ctx['step_root'] + '/recipe.Dockerfile'
+        write_bytes_exclusive(path, data)
+        with open(path, 'rb') as readback:
+            if readback.read() != data:
+                raise Refusal('recipe readback differs from the reviewed bytes')
+        ctx['recipe'] = dict(path=path, sha256=RECIPE_SHA256, bytes=len(data))
+        return dict(ctx['recipe'])
     key = GUEST_BINDING[step['id']]
     text = ctx['bindings'][key]
     data = text.encode()
     if len(data) > RECIPE_CAP_BYTES or not isinstance(json.loads(text), dict):
         raise Refusal(f'{key} must be one JSON object within the recipe cap')
-    path = ctx['stage_root'] + f"/{step['id']}.recipe.json"
+    path = ctx['step_root'] + f"/{step['id']}.json"
     write_bytes_exclusive(path, data)
-    recipe = dict(path=path, sha256=hashlib.sha256(data).hexdigest(), bytes=len(data))
-    if key == 'guest_spec':
-        ctx['recipe'] = recipe
-    return recipe
+    return dict(path=path, sha256=hashlib.sha256(data).hexdigest(), bytes=len(data))
 
 
 def h_read_iidfile(ctx, step):
@@ -366,12 +458,12 @@ def h_read_iidfile(ctx, step):
 
 
 def h_check_image_identity(ctx, step):
-    prep.check_image_identity(step_text(ctx, step), ctx['bindings']['image_id'])
+    prep.check_image_identity(read_ref(ctx, step['inputs'][0]), ctx['bindings']['image_id'])
     return {'verified': ctx['bindings']['image_id']}
 
 
 def h_check_build_help(ctx, step):
-    prep.check_build_help(step_text(ctx, step))
+    prep.check_build_help(read_ref(ctx, step['inputs'][0]))
     return {'verified': True}
 
 
@@ -388,15 +480,16 @@ def h_read_cidfile(ctx, step):
 
 
 def h_select_cleanup_targets(ctx, step):
-    base = ctx['engine_id']
-    prep.check_engine_unchanged(read_ref(ctx, 'd0-info.stdout'), read_ref(ctx, 'd4-observe-info.stdout'))
+    """D4 selection from the chain's creation receipts and this stage's own live observations.
+    The live engine must be the chain engine, observed again here."""
+    observed = prep.engine_id_from_info(read_ref(ctx, 'd4-observe-info.stdout'))
+    if observed != ctx['engine_id']:
+        raise Refusal('engine changed since the chain engine: refuse cleanup')
     live = []
-    live += prep.live_from_observation('container', read_ref(ctx, 'd4-observe-ps.stdout'), base)
-    live += prep.live_from_observation('volume', read_ref(ctx, 'd4-observe-volume.stdout'), base)
-    live += prep.live_from_observation('image', read_ref(ctx, 'd4-observe-image.stdout'), base)
-    selection = prep.select_cleanup_targets(base, ctx['receipts'], live)
-    ctx['selection'] = selection
-    return selection
+    live += prep.live_from_observation('container', read_ref(ctx, 'd4-observe-ps.stdout'), observed)
+    live += prep.live_from_observation('volume', read_ref(ctx, 'd4-observe-volume.stdout'), observed)
+    live += prep.live_from_observation('image', read_ref(ctx, 'd4-observe-image.stdout'), observed)
+    return prep.select_cleanup_targets(observed, ctx['receipts'], live)
 
 
 # Helper handlers. Anything absent here is unadmitted with its reason (stage_admission).
@@ -416,15 +509,15 @@ HANDLERS = {
 
 
 def volume_creation_receipt(token, create_stdout, inspect_text, engine_id):
-    """D1 authority: the create result's name and the same-occurrence inspect (name, label, engine).
-    A token alone never manufactures this receipt."""
+    """D1 authority: the create result names the volume, and the same-occurrence inspect (an object,
+    as docker prints it with --format '{{json .}}') carries the exact name and label. A token alone
+    never forms this receipt, and an existing volume is refused earlier by the absence step."""
     name = f'effigy-4f6a-qual-{token}'
     if (create_stdout or '').strip() != name:
         raise Refusal('volume create did not return the expected name: no creation receipt')
-    rows = json.loads(inspect_text)
-    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
-        raise Refusal('volume inspect must name exactly one volume')
-    row = rows[0]
+    row = json.loads(inspect_text)
+    if not isinstance(row, dict):
+        raise Refusal('volume inspect must be one object per volume')
     if row.get('Name') != name or (row.get('Labels') or {}).get('effigy.qual') != token:
         raise Refusal('volume inspect does not match the created name and label')
     return dict(kind='volume', id=name, name=name, label=f'effigy.qual={token}', engine_id=engine_id)
@@ -437,8 +530,7 @@ def container_creation_receipt(token, container_id, engine_id):
 
 def image_creation_receipt(token, image_id, inspect_text, engine_id):
     name = f'effigy-4f6a-desktop-runtime:{token}'
-    rows = json.loads(inspect_text)
-    row = rows[0] if isinstance(rows, list) and len(rows) == 1 else rows
+    row = json.loads(inspect_text)
     if not isinstance(row, dict) or row.get('Id') != image_id or name not in (row.get('RepoTags') or []):
         raise Refusal('image readback does not match the built ID and name')
     return dict(kind='image', id=image_id, name=name, label=f'effigy.qual={token}', engine_id=engine_id)
@@ -473,40 +565,52 @@ def prefetch_pinned_artifact(source, destination, size, sha512):
     return dict(bytes=total, sha512=sha512)
 
 
-def step_closure(result):
-    """Only a waited exit 0 closes a host step. Deadline, cap, monitor refusal and local error
-    are kept Unknown: a killed client does not prove the VM, daemon or remote group closed."""
+def step_closure(result, guest):
+    """Only a host step with a waited exit 0 closes. A guest step that exits 0 closes the client
+    only: its remote closure stays unknown, so the stage stops there. Deadline, cap, monitor refusal
+    and local error are unknown and retained."""
     if result.get('waited_exit') is None or result.get('disposition') == 'local-error':
         return 'unknown_retained'
     if result['disposition'] == 'exited':
-        return 'closed'
+        return 'guest_unknown' if guest else 'closed'
     if result['disposition'] == 'failed':
         return 'failed_closed'
     return 'unknown_retained'
+
+
+def tool_observation(paths):
+    return {path: sha_file(path) for path in paths}
+
+
+def derive_inputs(manifest_path=MANIFEST_PATH, program_files=None, tool_paths=None):
+    """The executor's own input set: program bytes, manifest, recipe and tool binaries. Caller
+    sources and tool paths are not accepted; the GO binds exactly this set."""
+    files = list(program_files or PROGRAM_FILES) + [Path(manifest_path), RECIPE_PATH] + list(tool_paths or TOOL_PATHS)
+    out = {}
+    for path in files:
+        p = Path(path)
+        if not p.is_file():
+            raise Refusal(f'input missing: {p.name}')
+        out[str(p.resolve())] = sha_file(p)
+    return out
 
 
 def default_transport(**kw):
     return primitive.run_stage(kw['root'], kw['argv'], kw['timeout'], kw['output_cap'], kw['input_hashes'],
                                guest=kw['guest'], cwd=kw['cwd'], environment=kw['environment'],
                                resource_monitor=kw['monitor'], deadline=kw['deadline'],
-                               stdin_path=kw['stdin_path'], stdin_sha256=kw['stdin_sha256'])
+                               stdin_path=kw['stdin_path'], stdin_sha256=kw['stdin_sha256'],
+                               identity_probe=start_identity)
 
 
-def default_inputs(manifest_path=MANIFEST_PATH):
-    return {str(manifest_path.resolve()): sha_file(manifest_path),
-            str((HERE / 'macos_preparation.py').resolve()): sha_file(HERE / 'macos_preparation.py'),
-            str(Path(__file__).resolve()): sha_file(__file__),
-            str((HERE / 'preparation_stage.py').resolve()): sha_file(HERE / 'preparation_stage.py')}
-
-
-def check_activation(path, expected_sha, *, stage_id, bindings, manifest, manifest_path, inputs, now, consumed):
+def check_activation(path, expected_sha, *, stage_id, bindings, manifest, manifest_path, inputs, now):
     raw = Path(path).read_bytes()
     if hashlib.sha256(raw).hexdigest() != expected_sha:
         raise Refusal('activation request hash mismatch: refuse')
     go = json.loads(raw)
     try:
         prep.check_go(go, stage=stage_id, manifest_sha=sha_file(manifest_path), source_sha=sha_file(__file__),
-                      inputs_sha=canon_sha(inputs), now=now, consumed=consumed)
+                      inputs_sha=canon_sha(inputs), now=now, consumed=frozenset())
     except ValueError as exc:
         raise Refusal(str(exc)) from exc
     if go.get('bindings_sha256') != canon_sha(bindings):
@@ -518,42 +622,82 @@ def check_activation(path, expected_sha, *, stage_id, bindings, manifest, manife
     return go
 
 
-def check_prior(go, stage_id):
-    prior = PRIOR.get(stage_id)
-    if prior is None:
+def read_receipt(ref):
+    """Read one executor receipt by its recorded path and hash. The path must be canonical Stash."""
+    path = ref.get('path') if isinstance(ref, dict) else None
+    if not isinstance(path, str) or os.path.realpath(path) != path or not path.startswith(prep.STASH + '/'):
+        raise Refusal('prior receipt must be a canonical Stash path')
+    raw = Path(path).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != ref.get('sha256'):
+        raise Refusal('prior receipt hash mismatch: refuse')
+    body = json.loads(raw)
+    if body.get('schema') != SCHEMA:
+        raise Refusal('prior receipt is not an executor receipt')
+    return body
+
+
+def verify_receipt_tree(body, stage_id, key):
+    """A closed receipt whose every step file and stream still matches its recorded hash, and whose
+    own preceding receipt verifies in turn."""
+    if body.get('stage') != stage_id or body.get('closure') != 'closed':
+        raise Refusal(f'{stage_id} receipt is not a closed receipt of its own stage')
+    if body.get('chain_key') != key:
+        raise Refusal('receipt belongs to another backend chain')
+    for step in body['steps']:
+        if step.get('skipped'):
+            continue
+        ev = step['evidence']
+        if sha_file(ev['path']) != ev['sha256']:
+            raise Refusal(f"{step['id']}: step receipt differs from its recorded hash")
+        for name, rec in (step.get('streams') or {}).items():
+            data = Path(ev['path']).parent.joinpath(name).read_bytes()
+            if hashlib.sha256(data).hexdigest() != rec['sha256'] or len(data) != rec['bytes']:
+                raise Refusal(f"{step['id']}: {name} differs from its recorded stream hash")
+    for rec in body.get('receipts', []):
+        ev = rec['evidence']
+        if sha_file(ev['path']) != ev['sha256']:
+            raise Refusal(f"{rec['kind']} creation receipt differs from its evidence hash")
+    if body.get('prior'):
+        verify_receipt_tree(read_receipt(body['prior']), body['prior']['stage'], key)
+    return body
+
+
+def verify_chain(go, stage_id, bindings):
+    """The preceding receipt named by the GO, verified to its origin. Returns None for C0 and D0."""
+    prior_ref = PRIOR.get(stage_id)
+    if prior_ref is None:
         return None
     ref = go.get('prior_receipt')
-    if not isinstance(ref, dict) or ref.get('stage') != prior:
-        raise Refusal(f'{stage_id} needs the {prior} receipt named in its activation')
-    raw = Path(ref['path']).read_bytes()
-    if hashlib.sha256(raw).hexdigest() != ref.get('sha256'):
-        raise Refusal(f'{prior} receipt hash mismatch: refuse')
-    receipt = json.loads(raw)
-    if receipt.get('stage') != prior or receipt.get('closure') != 'closed':
-        raise Refusal(f'{prior} receipt is not a closed receipt for this stage')
-    if stage_id.startswith('D') and stage_id != 'D0' and receipt.get('engine_id') != RECORDED_ENGINE_ID:
+    if not isinstance(ref, dict) or ref.get('stage') != prior_ref:
+        raise Refusal(f'{stage_id} needs the {prior_ref} receipt named in its activation')
+    body = verify_receipt_tree(read_receipt(ref), prior_ref, chain_key(bindings))
+    if stage_id.startswith('D') and stage_id != 'D0' and body.get('engine_id') != RECORDED_ENGINE_ID:
         raise Refusal('engine changed since the recorded D0 observation: refuse')
-    return receipt
+    return body
+
+
+def write_stage_receipt(stage_root, body):
+    body = dict(body, schema=SCHEMA)
+    write_exclusive(stage_root + '/stage-receipt.json', body)
+    return body
 
 
 def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evidence_root,
                   transport=None, monitor_factory=None, clock=time.monotonic, utc_now=None,
-                  manifest_path=MANIFEST_PATH, inputs=None, consumed=frozenset(), desktop_socket=None):
-    """Run one owner-activated stage. Returns the stage receipt. Refuses before any effect when
-    the activation, bindings, prior receipt, admission, collision or recorded identity differs."""
+                  manifest_path=MANIFEST_PATH, program_files=None, tool_paths=None, desktop_socket=None):
+    """Run one owner-activated stage. Returns the stage receipt. Refuses before any effect when the
+    activation, derived inputs, bindings, preceding chain, admission, claim or collision differs."""
     transport = transport or default_transport
-    monitor_factory = monitor_factory or default_monitor
     manifest = load_manifest(manifest_path)
     plan = resolve_stage(stage_id, bindings, manifest)
     if plan['admission']:
         raise Refusal('stage unadmitted: ' + '; '.join(plan['admission']))
     stage = stage_of(manifest, stage_id)
-    inputs = inputs or default_inputs(manifest_path)
+    inputs = derive_inputs(manifest_path, program_files, tool_paths)
     now = utc_now or datetime.datetime.now(datetime.timezone.utc)
     go = check_activation(activation_path, activation_sha256, stage_id=stage_id, bindings=bindings,
-                          manifest=manifest, manifest_path=manifest_path, inputs=inputs, now=now,
-                          consumed=consumed)
-    prior = check_prior(go, stage_id)
+                          manifest=manifest, manifest_path=manifest_path, inputs=inputs, now=now)
+    prior = verify_chain(go, stage_id, bindings)
     if stage_id in ('C1', 'C2', 'C3', 'C4', 'C5', 'C6'):
         check_recorded_roots(bindings, first_use=stage_id == 'C1')
     # One absolute monotonic deadline for the whole stage, bounded by the GO window.
@@ -563,20 +707,26 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
     deadline = clock() + budget
     hard = deadline - stage['reserve_seconds']
 
-    evidence_fd = private_dir(evidence_root)
-    try:
-        stage_root = f"{evidence_root}/{stage_id}-{go['activation_id']}"
-        new_private_dir(stage_root)
-        write_exclusive(stage_root + '/stage-claim.json', dict(
-            stage=stage_id, activation_id=go['activation_id'], go_sha256=activation_sha256,
-            bindings_sha256=canon_sha(bindings), inputs=inputs, candidate_head=manifest['source_head'],
-            prior=prior and prior.get('stage'), utc=now.isoformat()))
-    finally:
-        os.close(evidence_fd)
-    # D1-D4 bind to the engine that the verified prior D0 receipt observed (690's recorded engine).
-    ctx = dict(bindings=dict(bindings), outputs={}, receipts=[], selection=None, recipe=None,
-               stage_root=stage_root, engine_id=prior.get('engine_id') if prior else None,
-               desktop_socket=desktop_socket)
+    # The evidence root is checked before the claim, so a bad root never burns an activation.
+    os.close(private_dir(evidence_root))
+    claim_activation(go['activation_id'], activation_sha256)
+    stage_root = f"{evidence_root}/{stage_id}-{go['activation_id']}"
+    new_private_dir(stage_root)
+    # Caller-supplied image and owned names are never trusted: they come from the chain or this run.
+    run_bindings = {k: v for k, v in bindings.items() if k not in NOT_SUPPLIED}
+    if stage_id in ('C5', 'D3', 'D4'):
+        images = [r for r in (prior or {}).get('receipts', []) if r['kind'] == 'image']
+        if len(images) != 1:
+            raise Refusal('image receipt missing or ambiguous in the chain')
+        run_bindings['image_id'] = images[0]['id']
+    run_bindings['owned_volume_name'] = f"effigy-4f6a-qual-{bindings['token']}"
+    engine = prior['engine_id'] if prior else None
+    ctx = dict(bindings=run_bindings, outputs={}, receipts=list((prior or {}).get('receipts', [])), selection=None,
+               recipe=None, stage_root=stage_root, engine_id=engine, desktop_socket=desktop_socket,
+               activation_id=go['activation_id'])
+    monitor_factory = monitor_factory or default_monitor
+    cap = stage.get('storage_cap_bytes', 0)
+    aggregate = 0  # stage-wide storage growth inside exec windows; each window gets only the rest
     steps_out, closure, error = [], 'closed', None
     try:
         for step in stage['steps']:
@@ -594,24 +744,33 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
                     raise Refusal(f"{step['id']}: {exc}") from exc
                 if step['helper'] == 'read_iidfile' and step['id'] in IMAGE_ID_SETTERS:
                     ctx['bindings']['image_id'] = result['image_id']
+                evidence = dict(path=step_root + '/helper.json')
+                write_exclusive(evidence['path'], dict(step=step['id'], result=result))
+                evidence['sha256'] = sha_file(evidence['path'])
                 if step['helper'] == 'read_cidfile':
-                    ctx['receipts'].append(container_creation_receipt(bindings['token'], result['container_id'], ctx['engine_id']))
+                    ctx['receipts'].append(dict(container_creation_receipt(bindings['token'], result['container_id'], ctx['engine_id']),
+                                                evidence=evidence, stage=stage_id))
                 if step['helper'] == 'select_cleanup_targets':
                     ctx['selection'] = result
+                if step['id'] == 'c4-check-image-identity':
+                    # The verified guest image: C5 reads its ID from this receipt, and only that.
+                    ctx['receipts'].append(dict(kind='image', id=ctx['bindings']['image_id'], name=None,
+                                                label=None, engine_id=None, evidence=evidence, stage=stage_id))
                 if step['id'] == 'd2-check-image-identity':
-                    ctx['receipts'].append(image_creation_receipt(bindings['token'], bindings['image_id'],
-                                                                  read_ref(ctx, 'd2-readback.stdout'), ctx['engine_id']))
-                write_exclusive(step_root + '/helper.json', dict(step=step['id'], result=result))
-                steps_out.append(dict(id=step['id'], kind='helper', closure='closed', sha256=sha_file(step_root + '/helper.json')))
+                    ctx['receipts'].append(dict(image_creation_receipt(bindings['token'], ctx['bindings']['image_id'],
+                                                                       read_ref(ctx, 'd2-readback.stdout'), ctx['engine_id']),
+                                                evidence=evidence, stage=stage_id))
+                steps_out.append(dict(id=step['id'], kind='helper', closure='closed', evidence=evidence))
                 continue
             if step['id'] in CLEANUP_RM:
                 key = CLEANUP_RM[step['id']]
                 selected = (ctx['selection'] or {}).get(key) or []
                 if not selected:
                     new_private_dir(step_root)
-                    write_exclusive(step_root + '/skip.json', dict(step=step['id'], skipped='nothing selected'))
+                    skip = step_root + '/skip.json'
+                    write_exclusive(skip, dict(step=step['id'], skipped='nothing selected'))
                     steps_out.append(dict(id=step['id'], kind='exec', closure='closed', skipped=True,
-                                          sha256=sha_file(step_root + '/skip.json')))
+                                          evidence=dict(path=skip, sha256=sha_file(skip))))
                     continue
                 if key == 'containers':
                     ctx['bindings']['owned_container_ids'] = selected
@@ -623,39 +782,44 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
             new_private_dir(step_root)
             if resolved['argv'][0] == prep.COLIMA:
                 ensure_colima_path(bindings['control'])
-            monitor = monitor_factory({'storage': stage.get('storage_cap_bytes', 0) or 1}, [bindings['control']])
-            if resolved.get('stdin') == 'recipe_file' and ctx['recipe'] is None:
-                raise Refusal(f"{step['id']}: stdin recipe was not rendered: refuse")
+            stdin_path = stdin_sha = None
+            if resolved.get('stdin') == 'recipe_file':
+                if ctx['recipe'] is None:
+                    raise Refusal(f"{step['id']}: stdin recipe was not staged: refuse")
+                stdin_path, stdin_sha = ctx['recipe']['path'], ctx['recipe']['sha256']
+            monitor = monitor_factory({'storage': max(1, cap - aggregate)}, [bindings['control']])
+            before = dict(monitor.initial)
             result = transport(root=step_root, argv=resolved['argv'], timeout=step_deadline - now_mono,
                                output_cap=step['output_cap_bytes'], input_hashes=dict(inputs),
                                guest=resolved['guest'], cwd=step_root, environment=resolved['env'],
-                               monitor=monitor, deadline=step_deadline,
-                               stdin_path=ctx['recipe']['path'] if resolved.get('stdin') == 'recipe_file' else None,
-                               stdin_sha256=ctx['recipe']['sha256'] if resolved.get('stdin') == 'recipe_file' else None)
-            step_closure_value = step_closure(result)
-            post = {}
+                               monitor=monitor, deadline=step_deadline, step=step['id'],
+                               stdin_path=stdin_path, stdin_sha256=stdin_sha)
+            step_closure_value = step_closure(result, resolved['guest'])
+            if step['id'] in EXPECTED_NONZERO and step_closure_value == 'failed_closed':
+                step_closure_value = 'closed'  # the non-zero exit is the observation; post_check reads it
+            post_refusal = None
             try:
-                post = monitor.check()
-            except Exception as exc:  # the post observation is retained even when it refuses
-                post = {'refused': str(exc)}
-            write_exclusive(step_root + '/observations.json', dict(pre=monitor.initial, post=post, maxima=monitor.maxima))
+                monitor.check()
+            except Exception as exc:  # a failed post observation stops the stage; it is retained
+                post_refusal = str(exc)
+                step_closure_value = 'unknown_retained'
+            aggregate += monitor.maxima['storage'] - monitor.initial['storage']
+            observed = dict(before=before, post=dict(monitor.last), maxima=dict(monitor.maxima),
+                            aggregate_after_step=aggregate, post_refusal=post_refusal)
+            write_exclusive(step_root + '/observations.json', observed)
+            evidence = dict(path=step_root + '/receipt.json', sha256=sha_file(step_root + '/receipt.json'))
             ctx['outputs'][step['id']] = dict(stdout=step_root + '/stdout', stderr=step_root + '/stderr',
                                               exit=result.get('waited_exit'), disposition=result.get('disposition'))
-            steps_out.append(dict(id=step['id'], kind='exec', closure=step_closure_value,
+            steps_out.append(dict(id=step['id'], kind='exec', closure=step_closure_value, guest=resolved['guest'],
                                   disposition=result.get('disposition'), waited_exit=result.get('waited_exit'),
-                                  guest=resolved['guest'], guest_closure=result.get('guest_closure'),
-                                  streams=result.get('streams'), sha256=sha_file(step_root + '/receipt.json')))
+                                  guest_closure=result.get('guest_closure'), process=result.get('process'),
+                                  streams=result.get('streams'), evidence=evidence,
+                                  observations=dict(path=step_root + '/observations.json',
+                                                    sha256=sha_file(step_root + '/observations.json'))))
             if step_closure_value != 'closed':
-                closure = 'stopped'
+                closure = 'guest_unknown' if step_closure_value == 'guest_unknown' else 'stopped'
                 break
-            if step['id'] == 'd0-info':
-                try:
-                    ctx['engine_id'] = prep.engine_id_from_info(read_ref(ctx, 'd0-info.stdout'))
-                except ValueError as exc:
-                    raise Refusal(f'd0-info: {exc}') from exc
-            if step['id'] == 'd1-volume-inspect':
-                ctx['receipts'].append(volume_creation_receipt(bindings['token'], read_ref(ctx, 'd1-volume-create.stdout'),
-                                                               read_ref(ctx, 'd1-volume-inspect.stdout'), ctx['engine_id']))
+            post_check(ctx, step['id'], stage_id, bindings, evidence)
     except Refusal as exc:
         closure, error = 'refused', str(exc)
         raise
@@ -663,15 +827,44 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
         closure, error = 'error', type(exc).__name__
         raise
     finally:
-        write_exclusive(stage_root + '/stage-receipt.json', dict(
+        write_stage_receipt(stage_root, dict(
             stage=stage_id, closure=closure, error=error, activation_id=go['activation_id'],
-            go_sha256=activation_sha256, engine_id=ctx['engine_id'], steps=steps_out,
-            receipts=ctx['receipts'], guest_closure='unknown' if any(s.get('guest') for s in steps_out) else 'not-applicable'))
+            go_sha256=activation_sha256, chain_key=chain_key(bindings), token=bindings['token'],
+            control=bindings['control'], desktop_host=bindings['desktop_host'], inputs=inputs,
+            prior=None if prior is None else dict(stage=PRIOR[stage_id], path=go['prior_receipt']['path'],
+                                                  sha256=go['prior_receipt']['sha256']),
+            engine_id=ctx['engine_id'], receipts=ctx['receipts'], steps=steps_out,
+            guest_closure='unknown' if any(s.get('guest') for s in steps_out) else 'not-applicable',
+            stage_root=stage_root))
     return json.loads(Path(stage_root + '/stage-receipt.json').read_text())
 
 
+def post_check(ctx, step_id, stage_id, bindings, evidence):
+    """Per-step checks that a closed step must pass before the next step may run."""
+    if step_id == 'd0-info':
+        try:
+            ctx['engine_id'] = prep.engine_id_from_info(read_ref(ctx, 'd0-info.stdout'))
+        except ValueError as exc:
+            raise Refusal(f'd0-info: {exc}') from exc
+    if step_id in ('d1-engine-info', 'd2-engine-info', 'd3-engine-info'):
+        try:
+            observed = prep.engine_id_from_info(read_ref(ctx, step_id + '.stdout'))
+        except ValueError as exc:
+            raise Refusal(f'{step_id}: {exc}') from exc
+        if observed != ctx['engine_id']:
+            raise Refusal(f'{step_id}: engine differs from the chain engine: refuse before effects')
+    if step_id == 'd1-volume-absent':
+        out = ctx['outputs'][step_id]
+        if out['exit'] == 0 or 'no such volume' not in Path(out['stderr']).read_text().lower():
+            raise Refusal('volume already exists or its absence is unobserved: refuse, no adoption')
+    if step_id == 'd1-volume-inspect':
+        receipt = volume_creation_receipt(bindings['token'], read_ref(ctx, 'd1-volume-create.stdout'),
+                                          read_ref(ctx, 'd1-volume-inspect.stdout'), ctx['engine_id'])
+        ctx['receipts'].append(dict(receipt, evidence=evidence, stage=stage_id))
+
+
 def main(argv):
-    if len(argv) >= 2 and argv[1] == 'plan' and len(argv) == 3:
+    if len(argv) == 3 and argv[1] == 'plan':
         bindings = json.loads(Path(argv[2]).read_text())
         manifest = load_manifest()
         plans = [resolve_stage(s['id'], bindings, manifest) for s in manifest['stages']]

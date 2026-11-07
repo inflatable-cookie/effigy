@@ -506,7 +506,7 @@ class DockerBuildAndRunFlags(unittest.TestCase):
            'python3', '-I', '-c', '{check_source}']
 
     def test_manifest_build_has_no_pull_flag_and_names_an_iidfile(self):
-        build = stage_by_id('D2')['steps'][1]['argv']
+        build = next(x for x in stage_by_id('D2')['steps'] if x['id'] == 'd2-docker-build')['argv']
         self.assertFalse(any(a.startswith('--pull') for a in build))
         self.assertIn('--iidfile', build)
         self.assertTrue(prep.check_engine_argv(build))
@@ -818,8 +818,10 @@ class Manifest(unittest.TestCase):
                 with self.subTest(step=step['id']):
                     self.assertNotIn('version', step['argv'])
                     if 'info' in step['argv']:
-                        # Engine identity reads only: the D0 baseline and the D4 re-check.
-                        self.assertIn(step['id'], ('d0-info', 'd4-observe-info'))
+                        # Engine identity reads only: the D0 baseline, a re-observation before each
+                        # D1-D3 effect, and the D4 re-check.
+                        self.assertIn(step['id'], ('d0-info', 'd1-engine-info', 'd2-engine-info',
+                                                   'd3-engine-info', 'd4-observe-info'))
 
     def test_recipe_and_check_sources_are_consistent(self):
         self.assertEqual(MANIFEST['binding_inputs']['recipe_file'].split()[-1], prep.RECIPE_SHA256)

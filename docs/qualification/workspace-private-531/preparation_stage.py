@@ -73,6 +73,12 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
     record(root / 'intent.json', {'argv': argv, 'cwd': cwd, 'environment': environment, 'timeout_seconds': timeout,
                                   'output_cap_bytes_each': output_cap, 'input_hashes': input_hashes,
                                   'guest': guest, 'stdin_sha256': stdin_sha256, 'deadline_monotonic': deadline})
+    # The intent's directory entry must be durable before anything can be spawned.
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(root_fd)
+    finally:
+        os.close(root_fd)
     child = None
     streams = {}
     stdin_file = None
