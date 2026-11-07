@@ -242,21 +242,25 @@ class PlanTests(Fixture):
         self.assertEqual(len(plans), 12)
 
     def test_admission_is_exact_and_each_refusal_is_named(self):
-        admitted = {s['id'] for s in ex.load_manifest()['stages'] if not ex.resolve_stage(s['id'], self.bindings)['admission']}
-        self.assertEqual(admitted, {'D0'})
+        plans = {s['id']: ex.resolve_stage(s['id'], self.bindings) for s in ex.load_manifest()['stages']}
+        self.assertEqual({k for k, v in plans.items() if not v['static_admission']}, {'C0', 'D0'})
+        for plan in plans.values():  # every resolved request carries the global refusal and its prerequisite
+            self.assertEqual(plan['admission'][0], ex.OWNER_ACTIVATION_REASON)
+            self.assertFalse(plan['execution']['admitted'])
+            self.assertIn('owner-controlled', plan['execution']['prerequisite'])
         self.assertTrue(any('idempotent' in r for r in ex.resolve_stage('D1', self.bindings)['admission']))
         self.assertTrue(any('re-observed per target' in r for r in ex.resolve_stage('D4', self.bindings)['admission']))
         self.assertTrue(any('predecessor D2' in r for r in ex.resolve_stage('D3', self.bindings)['admission']))
         self.assertTrue(any('predecessor C4' in r for r in ex.resolve_stage('C5', self.bindings)['admission']))
-        reasons = {sid: ex.resolve_stage(sid, self.bindings)['admission'] for sid in ('C0', 'C1', 'C2', 'C3', 'C4', 'D2')}
-        self.assertTrue(any('verify_tool_sha has no reviewed handler' in r for r in reasons['C0']))
+        reasons = {sid: ex.resolve_stage(sid, self.bindings)['static_admission'] for sid in ('C0', 'C1', 'C2', 'C3', 'C4', 'D2')}
+        self.assertEqual(reasons['C0'], [])  # C0's handlers are reviewed; its pins come from the pinned 688 record
         self.assertTrue(any('wire traffic is not counted' in r for r in reasons['C1']))
         self.assertTrue(any('multi-effect guest stage' in r for r in reasons['C2']))
         self.assertTrue(any('C2 probe receipt' in r for r in reasons['C3']))
         self.assertTrue(any('host_stage_dockerfile' in r for r in reasons['D2']) or any('download' in r for r in reasons['D2']))
 
     def test_every_helper_has_a_handler_or_an_explicit_reason(self):
-        unimplemented = {'verify_tool_sha', 'verify_tranche_summary', 'host_stage_dockerfile', 'verify_frozen_artifacts'}
+        unimplemented = {'host_stage_dockerfile', 'verify_frozen_artifacts'}
         self.assertEqual(set(ex.HANDLERS) | unimplemented, set(prep.HELPERS))
 
     def test_argv_and_env_pins_for_every_exec_step(self):
@@ -712,7 +716,7 @@ class GenuineChainTests(Fixture):
         obs = json.loads(Path(d0 + '/observations.json').read_text())
         self.assertEqual(set(obs), {'before', 'post', 'maxima', 'post_refusal'})
         self.assertIsNone(obs['post_refusal'])
-        self.assertIn('ps_lstart', json.loads(Path(d0 + '/process.json').read_text()))
+        self.assertIn('start_monotonic', json.loads(Path(d0 + '/process.json').read_text()))
         self.assertEqual(Path(d0 + '/stdout').read_text(), ENGINE_JSON)
         self.assertEqual(Path(d0 + '/stderr').read_text(), 'engine-stderr')
 
@@ -978,15 +982,109 @@ class DispatchSweepTests(Fixture):
                                    activation_id=f'act-sweep-{stage.lower()}')
         return receipt, calls
 
-    def test_c0_is_refused_before_any_claim_because_its_helpers_have_no_handler(self):
+    def test_c0_runs_on_a_fresh_token_against_the_pinned_tools_and_tranche(self):
+        self.use_historical()
+        fresh = self.make_bindings('f0f0f0f0')
+        calls = []
+        routes = {'c0-colima-start-help': emit('help')}
+        receipt = self.execute('C0', self.routed(routes, calls), prior_ref=None, activation_id='act-c0-fresh-1',
+                               bindings=fresh)
+        self.assertEqual(receipt['closure'], 'closed')
+        self.assertEqual([c[0] for c in calls], ['c0-colima-start-help'])
+        self.assertTrue(os.path.isdir(fresh['control'] + '/s'))
+        self.assertTrue(os.path.isdir(fresh['colima_home']))
+        self.assertEqual([s['id'] for s in receipt['steps']],
+                         ['c0-verify-tools', 'c0-verify-tranche', 'c0-claim-intent', 'c0-make-owned-roots',
+                          'c0-colima-start-help'])
+
+    def test_c0_refuses_on_a_tool_changed_since_the_historical_record_before_creating_roots(self):
+        self.use_historical()
+        fresh = self.make_bindings('f0f0f0f1')
+        Path(self.docker).write_bytes(b'a different docker\n')
         calls = []
         with self.assertRaises(ex.Refusal) as caught:
-            self.execute('C0', self.routed({}, calls), prior_ref=None, activation_id='act-sweep-c0')
-        self.assertIn('verify_tool_sha', str(caught.exception))
+            self.execute('C0', self.routed({}, calls), prior_ref=None, activation_id='act-c0-tool-1', bindings=fresh)
+        self.assertIn('docker differs', str(caught.exception))
         self.assertEqual(calls, [])
-        self.assertFalse(os.path.exists(self.tmp + '/claims/act-sweep-c0.claim'))
+        self.assertFalse(os.path.exists(fresh['control']))
 
-    def test_c1_dispatches_its_owned_dirs_and_zero_share_colima_start(self):
+    def use_historical(self):
+        """A fixture 688 C0 record and tranche summary, pinned by their own sha256 for this test only. The record
+        names the fixture's tool bytes and the fixture's roots, so the binding checks run for real."""
+        hist = self.tmp + '/historical'
+        os.mkdir(hist, 0o700)
+        tranche = hist + '/summary.json'
+        Path(tranche).write_bytes(b'{"tranche": "fixture"}\n')
+        tranche_sha = ex.sha_file(tranche)
+        record = dict(status='passed: fixture', token=ex.RECORDED_TOKEN, zero_share_present=True, roots_safe=True,
+                      failed_at=None,
+                      tools={'colima': {'sha256': ex.sha_file(self.colima)}, 'docker': {'sha256': ex.sha_file(self.docker)}},
+                      tranche_summary_sha256=tranche_sha,
+                      roots_final={v['path']: dict(device=v['device'], inode=v['inode'], entries=v['entries'])
+                                   for v in self.roots_at_start.values()})
+        data = (json.dumps(record, sort_keys=True, indent=2) + '\n').encode()
+        record_path = hist + '/C0.stage.json'
+        Path(record_path).write_bytes(data)
+        patches = [mock.patch.dict(ex.HISTORICAL_C0, dict(path=record_path, sha256=sha_bytes(data),
+                                                          tranche_path=tranche, tranche_sha256=tranche_sha)),
+                   mock.patch.object(ex, 'LINUX_ARTIFACT_DIR', hist)]
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.historical = dict(path=record_path, sha256=sha_bytes(data))
+        return self.historical
+
+    def test_c1_binds_the_pinned_historical_c0_by_identity_and_dispatches_its_colima_start(self):
+        hist = self.use_historical()
+        routes = {'c1-colima-start': emit('started')}
+        calls = []
+        ref = dict(stage='C0', historical=True, path=hist['path'], sha256=hist['sha256'])
+        receipt = self.execute('C1', self.routed(routes, calls), prior_ref=ref, activation_id='act-c1-hist-1')
+        self.assertEqual(receipt['prior']['stage'], 'C0')
+        receipt_calls = [c[0] for c in calls]
+        self.assertEqual(receipt_calls, ['c1-colima-start'])
+        self.assertTrue(os.path.isdir(self.bindings['colima_cache_home']))
+        self.assertEqual(receipt['closure'], 'closed')
+
+    def test_c1_refuses_a_changed_historical_record_a_changed_tool_or_a_wrong_reference(self):
+        hist = self.use_historical()
+        ref = dict(stage='C0', historical=True, path=hist['path'], sha256=hist['sha256'])
+        calls = []
+        with self.assertRaises(ex.Refusal):  # wrong pinned reference
+            self.execute('C1', self.routed({}, calls), prior_ref=dict(ref, sha256='0' * 64), activation_id='act-c1-bad-ref')
+        Path(hist['path']).write_bytes(Path(hist['path']).read_bytes() + b' ')  # the record's bytes change
+        with self.assertRaises(ex.Refusal):
+            self.execute('C1', self.routed({}, calls), prior_ref=ref, activation_id='act-c1-bad-bytes')
+        self.assertEqual(calls, [])
+
+    def test_c1_refuses_when_the_tool_differs_from_the_recorded_one(self):
+        hist = self.use_historical()
+        ref = dict(stage='C0', historical=True, path=hist['path'], sha256=hist['sha256'])
+        Path(self.colima).write_bytes(b'a different colima\n')
+        calls = []
+        with self.assertRaises(ex.Refusal) as caught:
+            self.execute('C1', self.routed({}, calls), prior_ref=ref, activation_id='act-c1-tool')
+        self.assertIn('colima differs', str(caught.exception))
+        self.assertEqual(calls, [])
+
+    def test_bounded_helper_is_interrupted_at_its_allowance(self):
+        import time as _time
+        started = _time.monotonic()
+        with self.assertRaises(ex.Refusal) as caught:
+            ex.call_bounded(lambda: [None for _ in iter(int, 1)], 0.2)  # spins until the timer fires
+        self.assertIn('allowance', str(caught.exception))
+        self.assertLess(_time.monotonic() - started, 5)
+        self.assertEqual(ex.signal.getitimer(ex.signal.ITIMER_REAL), (0.0, 0.0))
+        with self.assertRaises(ex.Refusal):
+            ex.call_bounded(lambda: None, 0)
+
+    def test_start_identity_is_a_spawn_record_with_no_subprocess(self):
+        self.assertFalse(hasattr(ex, 'subprocess'))  # the spawn record runs no subprocess
+        record = ex.start_identity(12345)
+        self.assertIn('start_monotonic', record)
+        self.assertIn('not observed', record['start_identity'])
+
+    def test_c1_dispatches_its_owned_dirs_and_zero_share_colima_start_under_a_stub(self):
         routes = {'c1-colima-start': emit('started')}
         receipt, calls = self.run_sweep('C1', routes)
         self.assertEqual([c[0] for c in calls], ['c1-colima-start'])
@@ -1025,7 +1123,7 @@ class PrimitiveTests(Fixture):
         result = primitive.run_stage(root, [sys.executable, '-I', '-c', code], 10, 1024, {}, cwd=root,
                                      environment=CHILD_ENV, identity_probe=ex.start_identity)
         self.assertEqual(Path(root + '/stdout').read_text(), 'ok')
-        self.assertIn('ps_lstart', result['process'])
+        self.assertIn('start_monotonic', result['process'])
 
     def test_streams_are_captured_independently_and_exactly(self):
         root = self.stage_dir('streams')

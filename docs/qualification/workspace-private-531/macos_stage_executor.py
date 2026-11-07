@@ -20,8 +20,9 @@ import os
 from pathlib import Path
 import re
 import stat
-import subprocess
+import signal
 import sys
+import threading
 import time
 
 HERE = Path(__file__).resolve().parent
@@ -48,7 +49,17 @@ VOLUME_PREFIX = 'effigy-4f6a-qual-'
 COLIMA_BASE_PATH = '/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin'
 DESKTOP_BASE_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
 DESKTOP_SOCKET = prep.DESKTOP_HOST[len('unix://'):]
-PS = '/bin/ps'
+LINUX_ARTIFACT_DIR = '/Volumes/Stash/scratch/effigy/linux-artifact-preparation.l0tx7tam'
+# The original 688 C0 record for token 7deaf1b3, pinned by exact sha256 with the tranche summary it names.
+# C1 may bind it (not replay it) only through historical_binding: exact bytes, recorded tools and roots.
+HISTORICAL_C0 = dict(
+    path=LINUX_ARTIFACT_DIR + '/macos-4f6a5ed3-activation-7deaf1b3/C0.stage.json',
+    sha256='15a5373ec533c517dcc780cf035c7a239fee0afa906978e5fd889c565ed2f40e',
+    tranche_path=LINUX_ARTIFACT_DIR + '/macos-metadata-rfzuiadz/summary.json',
+    tranche_sha256='cdfb7fb6c00de2efca69fe4c69fa7cd9bb7f2c2feda82ee9771868413e89f542')
+OWNER_PREREQUISITE = ('a planner-provided, owner-controlled activation mechanism that proves the owner authorised '
+                      'these exact request bytes (for example a signature by an owner key held outside this '
+                      'repository, verified before any effect); until it exists every stage refuses')
 # Recorded from the 688 C0 receipt (token 7deaf1b3): the three owned roots, by identity.
 RECORDED_TOKEN = '7deaf1b3'
 RECORDED_ROOTS = {
@@ -81,7 +92,7 @@ UNADMITTED = {
 # A planner-provided mechanism must replace this default before any stage can run.
 TEST_SEAM = {'owner_activation': False, 'admit_unadmitted': False}
 OWNER_ACTIVATION_REASON = ('no owner-controlled activation mechanism exists in this repository; a file that the '
-                           'same account can create and chmod grants no authority, so execution is unadmitted')
+                           'same account can create and chmod grants no authority, so execution is refused')
 GUEST_BINDING = {'c4-render-verify-spec': 'guest_verify_spec'}
 # Never caller-supplied. Derived ones come from the chain or this run; unpinned ones have no reviewed
 # source in this repository. The plan shows each as an explicit placeholder, and execution refuses them.
@@ -98,7 +109,6 @@ ACTIVATION_ID = re.compile(r'[A-Za-z0-9_.-]{8,64}')
 RECIPE_CAP_BYTES = 64 * 1024
 RECIPE_SHA256 = prep.RECIPE_SHA256
 RECIPE_BYTES = 474
-PROBE_CAP_SECONDS = 0.5  # the probe blocks the stage's monitor for at most this long
 
 
 class Collision(Refusal):
@@ -238,14 +248,17 @@ def resolve_stage(stage_id, bindings, manifest=None):
     if 'download_cap_bytes' in stage:
         prep.check_effect_stage(stage)
     prep.check_route_order(manifest['stages'])
+    static = stage_admission(stage)
     return dict(
         stage=stage_id, backend=stage['backend'], seconds=stage['seconds'],
         reserve_seconds=stage['reserve_seconds'], download_cap_bytes=stage.get('download_cap_bytes', 0),
         storage_cap_bytes=stage.get('storage_cap_bytes', 0), network_sources=stage.get('network_sources', []),
         retained_after_failure=stage.get('retained_after_failure', []), prior=PRIOR.get(stage_id),
+        execution=dict(admitted=False, reason=OWNER_ACTIVATION_REASON, prerequisite=OWNER_PREREQUISITE),
         preconditions=runtime_preconditions(stage_id, bindings),
         runtime_derived=RUNTIME_DERIVED,
-        admission=stage_admission(stage),
+        admission=[OWNER_ACTIVATION_REASON] + static,
+        static_admission=static,
         steps=[resolve_step(s, view) for s in stage['steps']],
     )
 
@@ -268,11 +281,19 @@ RUNTIME_DERIVED = {
 def runtime_preconditions(stage_id, bindings):
     """What must be true at run time, re-checked by execute_stage. Historical observations are
     bindings to re-observe, never current evidence."""
-    pre = dict(activation='owner-placed request in the activation directory, read-only, owned by this user, '
-                          'exact SHA-256 named by the caller, standing decision v2',
+    pre = dict(activation='refused in this repository: ' + OWNER_PREREQUISITE,
                claim='durable exclusive claim by activation_id under the claims directory',
-               prior='closed executor receipt chain back to D0 or C0; a 688 record is not a receipt',
+               prior=('closed executor receipt chain back to D0; C1 may instead bind the pinned 688 C0 record '
+                      'through historical_binding (exact sha, recorded tools and roots), never by replay'),
                identity='owned directories pinned by device and inode and rechecked before every step')
+    if stage_id == 'C0' and bindings.get('token') == RECORDED_TOKEN:
+        pre['recorded_token'] = ('refuse: the recorded token\'s C0 is historical; C1 binds the pinned 688 record, '
+                                 'and make_owned_dir would refuse the existing roots')
+    if stage_id == 'C1':
+        pre['historical_c0'] = dict(path=HISTORICAL_C0['path'], sha256=HISTORICAL_C0['sha256'],
+                                    tranche_sha256=HISTORICAL_C0['tranche_sha256'],
+                                    tools='colima and docker sha256 as the pinned record names them, checked live',
+                                    via='historical_binding: exact bytes, recorded tools and roots; never replay')
     if stage_id in ('C1', 'C2', 'C3', 'C4', 'C5', 'C6'):
         pre['recorded_roots'] = ({k: dict(v) for k, v in RECORDED_ROOTS.items()}
                                  if bindings.get('token') == RECORDED_TOKEN
@@ -295,7 +316,7 @@ def private_dir(path):
     """Open a canonical, owned, 0700, non-symlink directory under Stash scratch. The caller closes the
     descriptor. Later operations on the directory go through dir_fd, not through the path."""
     p = str(path)
-    if not p.startswith(prep.STASH + '/') or '..' in p.split('/') or os.path.realpath(p) != p:
+    if not (p == prep.STASH or p.startswith(prep.STASH + '/')) or '..' in p.split('/') or os.path.realpath(p) != p:
         raise Refusal('directory must be canonical under Stash scratch')
     info = os.lstat(p)
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
@@ -463,6 +484,8 @@ def claim_activation(activation_id, go_sha256):
 def allocated_bytes(root, exclude=('_lima',)):
     """Real allocated bytes (st_blocks) under one owned root. Symlinks are not followed. The VM's own
     _lima store is excluded: its growth is bounded by the VM's --disk, not by this root."""
+    if not os.path.lexists(root):
+        return 0
     total, stack = 0, [root]
     while stack:
         path = stack.pop()
@@ -498,20 +521,32 @@ def default_monitor(limits, roots):
     return monitor
 
 
-def start_identity(pid, timeout=PROBE_CAP_SECONDS):
-    """Process start identity for the record: the probe's wall and monotonic time and the kernel's start
-    time for the PID. The probe is bounded by the remaining allowance; a failed probe is recorded as
-    unavailable, never invented."""
-    observed = {'start_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                'start_monotonic': time.monotonic()}
+def start_identity(pid):
+    """The spawn-time record: wall and monotonic time taken right after spawn, with no subprocess (a subprocess
+    would block live monitoring). The kernel's process start time is not read; PID identity rests on the recorded
+    process group and on this child's waited exit. The record says so."""
+    return {'start_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'start_monotonic': time.monotonic(),
+            'start_identity': 'spawn-time monotonic; kernel start time not observed'}
+
+
+def call_bounded(fn, seconds):
+    """Run one in-process helper with its remaining allowance enforced by a timer. The timer's handler raises
+    inside the helper, so a helper cannot run past the stage deadline. Only the main thread can take the timer."""
+    if threading.current_thread() is not threading.main_thread():
+        raise Refusal('bounded helpers need the main thread: refuse')
+    if seconds <= 0:
+        raise Refusal('helper allowance spent before it started')
+
+    def expired(signum, frame):
+        raise Refusal('helper exceeded its remaining allowance')
+    previous = signal.signal(signal.SIGALRM, expired)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
     try:
-        out = subprocess.run([PS, '-o', 'lstart=', '-p', str(pid)], stdout=subprocess.PIPE,
-                             stderr=subprocess.DEVNULL, timeout=max(0.1, min(PROBE_CAP_SECONDS, timeout)),
-                             env={'LANG': 'C'})
-        observed['ps_lstart'] = out.stdout.decode().strip() or 'unavailable'
-    except (OSError, subprocess.SubprocessError):
-        observed['ps_lstart'] = 'unavailable'
-    return observed
+        return fn()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -647,6 +682,8 @@ HANDLERS = {
     'check_runtime_facts': h_check_runtime_facts,
     'read_cidfile': h_read_cidfile,
     'select_cleanup_targets': h_select_cleanup_targets,
+    'verify_tool_sha': lambda ctx, step: {'verified': verify_tool_sha(TOOL_PATHS)},
+    'verify_tranche_summary': lambda ctx, step: verify_tranche_summary(),
 }
 
 
@@ -904,6 +941,59 @@ def verify_creation(rec, body, manifest):
         raise Refusal(f"{rec['kind']} creation receipt differs from the one its outputs establish")
 
 
+def load_historical():
+    """The pinned 688 C0 record: exact bytes, read by descriptor, and a passed, zero-share, safe C0 for the
+    recorded token. Its bytes are checked against the pinned sha before anything is read from them."""
+    raw = read_checked_file(HISTORICAL_C0['path'], must_be_in=LINUX_ARTIFACT_DIR, read_only=False)
+    if hashlib.sha256(raw).hexdigest() != HISTORICAL_C0['sha256']:
+        raise Refusal('the 688 C0 record differs from its pinned sha256: refuse')
+    rec = json.loads(raw)
+    if (not str(rec.get('status', '')).startswith('passed') or rec.get('token') != RECORDED_TOKEN
+            or rec.get('zero_share_present') is not True or rec.get('roots_safe') is not True
+            or rec.get('failed_at') is not None):
+        raise Refusal('the 688 C0 record is not a passed, safe C0 for the recorded token: refuse')
+    return rec
+
+
+def historical_binding(bindings):
+    """C1's predecessor for the recorded token: the pinned 688 C0 record, bound by exact identity. The live tool
+    binaries must still be the recorded ones, and the recorded roots must still be the recorded identities. This
+    is a binding, not a receipt: nothing is replayed, adopted or recreated, and C1 claims its own activation."""
+    if bindings['token'] != RECORDED_TOKEN:
+        raise Refusal('the historical C0 binds only the recorded token')
+    rec = load_historical()
+    for name, path in zip(('colima', 'docker'), TOOL_PATHS):
+        if sha_file(path) != rec['tools'][name]['sha256']:
+            raise Refusal(f'{name} differs from the tool recorded by the historical C0: refuse')
+    for name, pinned in RECORDED_ROOTS.items():
+        final = rec['roots_final'].get(pinned['path'])
+        if not final or (final['device'], final['inode']) != (pinned['device'], pinned['inode']):
+            raise Refusal(f'{name}: the historical C0 does not record this root identity: refuse')
+    return dict(stage='C0', closure='closed', historical=True, path=HISTORICAL_C0['path'],
+                sha256=HISTORICAL_C0['sha256'], engine_id=None, receipts=[])
+
+
+def verify_tool_sha(paths):
+    """C0 helper: the live tool binaries equal the tools the pinned 688 C0 record names, by sha256."""
+    rec = load_historical()
+    observed = {}
+    for name, path in zip(('colima', 'docker'), paths):
+        observed[name] = sha_file(path)
+        if observed[name] != rec['tools'][name]['sha256']:
+            raise Refusal(f'{name} differs from the tool recorded by the historical C0: refuse')
+    return observed
+
+
+def verify_tranche_summary():
+    """C0 helper: the tranche summary the pinned 688 record names is present and unchanged."""
+    rec = load_historical()
+    tranche = read_checked_file(HISTORICAL_C0['tranche_path'], must_be_in=LINUX_ARTIFACT_DIR, read_only=False)
+    digest = hashlib.sha256(tranche).hexdigest()
+    if digest != HISTORICAL_C0['tranche_sha256'] or digest != rec['tranche_summary_sha256']:
+        raise Refusal('the tranche summary differs from the one the pinned C0 record names: refuse')
+    return {'sha256': digest}
+
+
 def verify_chain(go, stage_id, bindings, manifest):
     """The preceding receipt named by the activation, verified to its origin. C0 and D0 consume none."""
     prior_ref = PRIOR.get(stage_id)
@@ -912,6 +1002,10 @@ def verify_chain(go, stage_id, bindings, manifest):
     ref = go.get('prior_receipt')
     if not isinstance(ref, dict) or ref.get('stage') != prior_ref:
         raise Refusal(f'{stage_id} needs the {prior_ref} receipt named in its activation')
+    if stage_id == 'C1' and ref.get('historical') is True:
+        if ref.get('path') != HISTORICAL_C0['path'] or ref.get('sha256') != HISTORICAL_C0['sha256']:
+            raise Refusal('the historical C0 reference does not name the pinned record: refuse')
+        return historical_binding(bindings)
     body = verify_receipt_tree(read_receipt(ref), prior_ref, chain_key(bindings), manifest)
     if stage_id.startswith('D') and stage_id != 'D0' and body.get('engine_id') != RECORDED_ENGINE_ID:
         raise Refusal('engine changed since the recorded D0 observation: refuse')
@@ -930,8 +1024,8 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
         raise Refusal(OWNER_ACTIVATION_REASON)
     manifest = load_manifest(manifest_path)
     plan = resolve_stage(stage_id, bindings, manifest)
-    if plan['admission'] and not TEST_SEAM['admit_unadmitted']:
-        raise Refusal('stage unadmitted: ' + '; '.join(plan['admission']))
+    if plan['static_admission'] and not TEST_SEAM['admit_unadmitted']:
+        raise Refusal('stage unadmitted: ' + '; '.join(plan['static_admission']))
     stage = stage_of(manifest, stage_id)
     for step in stage['steps']:  # a helper with no reviewed handler refuses before the activation is claimed
         if step['kind'] == 'helper' and helper_handler_missing(step['helper']):
@@ -951,7 +1045,7 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
     control = bindings['control']
     if stage_id in ('C1', 'C2', 'C3', 'C4', 'C5', 'C6'):
         check_recorded_roots(bindings, pins, first_use=stage_id == 'C1')
-    else:
+    elif stage_id != 'C0':  # C0 creates the control root itself
         pins.pin(control)
     if stage_id.startswith('D') and stage_id != 'D0':
         # The existing private Docker config and context are pinned as directories before any effect.
@@ -1000,7 +1094,8 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
                 pins.pin(step_root)
                 ctx['step_root'] = step_root
                 try:
-                    result = HANDLERS[step['helper']](ctx, resolve_step(step, ctx['bindings']))
+                    result = call_bounded(lambda: HANDLERS[step['helper']](ctx, resolve_step(step, ctx['bindings'])),
+                                          step_deadline - clock())
                 except ValueError as exc:
                     raise Refusal(f"{step['id']}: {exc}") from exc
                 monitor.check()
@@ -1051,13 +1146,12 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
                     raise Refusal(f"{step['id']}: stdin recipe was not staged: refuse")
                 stdin_path, stdin_sha = ctx['recipe']['path'], ctx['recipe']['sha256']
             before = dict(monitor.last)
-            remaining = step_deadline - clock()
             result = transport(root=step_root, argv=resolved['argv'], timeout=step_deadline - now_mono,
                                output_cap=step['output_cap_bytes'], input_hashes=dict(inputs),
                                guest=resolved['guest'], cwd=step_root, environment=resolved['env'],
                                monitor=monitor, deadline=step_deadline, step=step['id'],
                                stdin_path=stdin_path, stdin_sha256=stdin_sha,
-                               identity_probe=lambda pid, _r=remaining: start_identity(pid, timeout=_r))
+                               identity_probe=start_identity)
             step_closure_value = step_closure(result, resolved['guest'])
             if step['id'] in EXPECTED_NONZERO and step_closure_value == 'failed_closed':
                 step_closure_value = 'closed'  # the non-zero exit is the observation; post_check reads it
