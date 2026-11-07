@@ -100,6 +100,11 @@ class Fixture(unittest.TestCase):
             self.addCleanup(patcher.stop)
         self.bindings = self.make_bindings(TOKEN)
         os.mkdir(self.bindings['control'], 0o700)
+        # Test-only seams: execution in production is refused (no owner mechanism), and stages whose
+        # production admission reasons are present run only here, with those reasons lifted.
+        seam = mock.patch.dict(ex.TEST_SEAM, {'owner_activation': True, 'admit_unadmitted': True})
+        seam.start()
+        self.addCleanup(seam.stop)
 
     def make_bindings(self, token):
         paths = prep.control_paths(token)
@@ -199,17 +204,14 @@ class Fixture(unittest.TestCase):
 
     @contextlib.contextmanager
     def lift_d2(self):
-        """D2 with its download admission lifted for this test only, and its one missing helper replaced by a
-        test handler that copies the reviewed recipe into the build context."""
+        """D2's one missing helper is replaced by a test handler that copies the reviewed recipe into the
+        build context. Admission is lifted by the fixture's test seam, not here."""
         def host_stage(ctx, step):
             target = step['inputs'][1]
             data = ex.RECIPE_PATH.read_bytes()
             Path(target).write_bytes(data)
             return {'sha256': sha_bytes(data)}
-        admission = dict(ex.UNADMITTED)
-        admission.pop('D2')
-        with mock.patch.dict(ex.UNADMITTED, admission, clear=True), \
-                mock.patch.dict(ex.HANDLERS, {'host_stage_dockerfile': host_stage}):
+        with mock.patch.dict(ex.HANDLERS, {'host_stage_dockerfile': host_stage}):
             yield
 
     def d2(self, prior, activation_id='act-d2-0001', calls=None):
@@ -241,7 +243,11 @@ class PlanTests(Fixture):
 
     def test_admission_is_exact_and_each_refusal_is_named(self):
         admitted = {s['id'] for s in ex.load_manifest()['stages'] if not ex.resolve_stage(s['id'], self.bindings)['admission']}
-        self.assertEqual(admitted, {'C5', 'C6', 'D0', 'D1', 'D3', 'D4'})
+        self.assertEqual(admitted, {'D0'})
+        self.assertTrue(any('idempotent' in r for r in ex.resolve_stage('D1', self.bindings)['admission']))
+        self.assertTrue(any('re-observed per target' in r for r in ex.resolve_stage('D4', self.bindings)['admission']))
+        self.assertTrue(any('predecessor D2' in r for r in ex.resolve_stage('D3', self.bindings)['admission']))
+        self.assertTrue(any('predecessor C4' in r for r in ex.resolve_stage('C5', self.bindings)['admission']))
         reasons = {sid: ex.resolve_stage(sid, self.bindings)['admission'] for sid in ('C0', 'C1', 'C2', 'C3', 'C4', 'D2')}
         self.assertTrue(any('verify_tool_sha has no reviewed handler' in r for r in reasons['C0']))
         self.assertTrue(any('wire traffic is not counted' in r for r in reasons['C1']))
@@ -305,6 +311,29 @@ class PlanTests(Fixture):
 
 
 class ActivationAndClaimTests(Fixture):
+    def test_execution_is_refused_without_an_owner_controlled_mechanism(self):
+        calls = []
+        path, sha = self.activation('D0', None, 'act-noowner-1')
+        with mock.patch.dict(ex.TEST_SEAM, {'owner_activation': False}):
+            with self.assertRaises(ex.Refusal) as caught:
+                ex.execute_stage('D0', self.bindings, activation_path=path, activation_sha256=sha,
+                                 evidence_root=self.evidence, transport=self.routed({}, calls), utc_now=NOW)
+        self.assertIn('no owner-controlled activation mechanism', str(caught.exception))
+        self.assertEqual(calls, [])
+        self.assertEqual(os.listdir(self.evidence), [])
+        self.assertEqual(os.listdir(self.tmp + '/claims'), [])
+
+    def test_unadmitted_d1_refuses_even_with_a_valid_predecessor_when_the_seam_is_off(self):
+        d0 = self.d0()
+        calls = []
+        path, sha = self.activation('D1', d0, 'act-d1-unadm')
+        with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}):
+            with self.assertRaises(ex.Refusal) as caught:
+                ex.execute_stage('D1', self.bindings, activation_path=path, activation_sha256=sha,
+                                 evidence_root=self.evidence, transport=self.routed({}, calls), utc_now=NOW)
+        self.assertIn('stage unadmitted', str(caught.exception))
+        self.assertEqual(calls, [])
+
     def test_activation_outside_the_owner_directory_refuses_before_effects(self):
         calls = []
         path = self.tmp + '/loose.json'
@@ -653,7 +682,9 @@ class GenuineChainTests(Fixture):
         routes = {'d0-info': emit(ENGINE_JSON), 'd0-ps': emit('')}
 
         def uncached(limits, roots):
-            return resources.Monitor(limits, ex.AllocatedBytes(roots, min_interval=0))
+            monitor = resources.Monitor({'storage': 1}, ex.AllocatedBytes(roots, min_interval=0))
+            monitor.limits = dict(limits)  # the exact requested limit, zero included
+            return monitor
         receipt = self.execute('D0', self.routed(routes, calls, after=grow), activation_id='act-growth-0001',
                                monitor_factory=uncached)
         self.assertEqual(receipt['closure'], 'stopped')  # the post observation refused; retained, not advanced
@@ -802,6 +833,60 @@ class ChainVerifierTests(Fixture):
         with self.assertRaises(ex.Refusal):
             self.execute('D3', self.routed({}, []), prior_ref=forged, activation_id='act-derive-0001')
 
+    def altered_d2(self, mutate):
+        """A genuine D2 predecessor whose volume receipt is rewritten by mutate(rec) and whose record hash is
+        recomputed: the file is self-consistent, so only field-level verification can refuse it."""
+        if not hasattr(self, '_d2_ref'):  # the genuine chain is built once; each mutation starts from its bytes
+            _, self._d2_ref = self.genuine_d2()
+            self._d2_bytes = Path(self._d2_ref['path']).read_bytes()
+        Path(self._d2_ref['path']).write_bytes(self._d2_bytes)
+        body = json.loads(self._d2_bytes)
+        rec = next(r for r in body['receipts'] if r['kind'] == 'volume')
+        mutate(rec)
+        Path(self._d2_ref['path']).write_text(json.dumps(body, sort_keys=True, indent=2) + '\n')
+        return dict(self._d2_ref, sha256=ex.sha_file(self._d2_ref['path']))
+
+    def test_a_self_consistent_altered_name_label_engine_or_kind_is_refused(self):
+        mutations = {
+            'name': lambda r: r.update(name='effigy-4f6a-qual-' + TOKEN + '-act-x'),
+            'label': lambda r: r.update(label='effigy.qual=ffffffff'),
+            'engine': lambda r: r.update(engine_id='other-engine'),
+            'kind': lambda r: r.update(kind='container'),
+        }
+        for field, mutate in mutations.items():
+            with self.subTest(field=field):
+                forged = self.altered_d2(mutate)
+                with self.assertRaises(ex.Refusal):
+                    self.execute('D3', self.routed({}, []), prior_ref=forged, activation_id='act-field-' + field)
+
+    def test_an_altered_recorded_create_argv_that_no_longer_names_the_volume_is_refused(self):
+        """The creating step's recorded argv is the source of the creation fields. A self-consistent edit to it
+        (with its stage receipt hash recomputed) must be refused by the field-level check."""
+        d2_ref = self.altered_d2(lambda rec: None)  # restores the genuine D2 bytes first
+        d1_root = self.stage_dir('D1', 'act-d1-0001')
+        receipt = json.loads(Path(d1_root + '/stage-receipt.json').read_text())
+        for step in receipt['steps']:
+            if step['id'] == 'd1-volume-create':
+                step['argv'] = [a.replace('effigy-4f6a-qual', 'effigy-other') for a in step['argv']]
+        Path(d1_root + '/stage-receipt.json').write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')
+        d2_body = json.loads(Path(d2_ref['path']).read_text())
+        d2_body['prior'] = dict(d2_body['prior'], sha256=ex.sha_file(d1_root + '/stage-receipt.json'))
+        Path(d2_ref['path']).write_text(json.dumps(d2_body, sort_keys=True, indent=2) + '\n')
+        forged = dict(d2_ref, sha256=ex.sha_file(d2_ref['path']))
+        with self.assertRaises(ex.Refusal):
+            self.execute('D3', self.routed({}, []), prior_ref=forged, activation_id='act-argv-alt-0001')
+
+    def test_a_private_docker_config_with_a_changed_mode_refuses_before_effects(self):
+        d0 = self.d0()
+        os.chmod(self.bindings['desktop_config'], 0o755)
+        calls = []
+        try:
+            with self.assertRaises(ex.Refusal):
+                self.d1(d0, calls=calls)
+        finally:
+            os.chmod(self.bindings['desktop_config'], 0o700)
+        self.assertEqual(calls, [])
+
     def test_the_wrong_preceding_stage_is_refused(self):
         d1_ref, _ = self.genuine_d2()
         with self.assertRaises(ex.Refusal):
@@ -860,6 +945,72 @@ class DispatchSeamTests(Fixture):
         self.assertEqual([c[0] for c in calls], ['c5-disposable-check'])
         self.assertEqual(receipt['steps'][-1]['closure'], 'guest_unknown')
         self.assertTrue(calls[0][1][0].endswith('colima'))
+
+
+class DispatchSweepTests(Fixture):
+    """C1 to C4 run through the adapter's entry point. Each stage's predecessor is stubbed (verify_chain), since
+    C0 and the guest stages cannot produce genuine receipts here. Local children stand in for the tools. Each
+    test checks the argv and env the adapter dispatched against the manifest, the helpers it ran, and the
+    stop at the first guest effect. C0 is refused before any claim: its two helpers have no reviewed handler."""
+
+    def setUp(self):
+        super().setUp()
+        for patcher in (mock.patch.object(ex, 'RECORDED_TOKEN', TOKEN),):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        for rel in ('/c', '/s'):  # the recorded roots exist before their identities and entry counts are read
+            os.mkdir(self.bindings['control'] + rel, 0o700)
+        roots = {}
+        for name, rel in (('control', ''), ('colima_home', '/c'), ('qualification_root', '/s')):
+            path = self.bindings['control'] + rel
+            info = os.lstat(path)
+            roots[name] = dict(path=path, device=info.st_dev, inode=info.st_ino, entries=len(os.listdir(path)))
+        patcher = mock.patch.object(ex, 'RECORDED_ROOTS', roots)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.roots_at_start = roots
+
+    def run_sweep(self, stage, routes, prior_stub=None):
+        calls = []
+        stub = prior_stub if prior_stub is not None else {'receipts': [], 'engine_id': None}
+        with mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub):
+            receipt = self.execute(stage, self.routed(routes, calls), prior_ref=None,
+                                   activation_id=f'act-sweep-{stage.lower()}')
+        return receipt, calls
+
+    def test_c0_is_refused_before_any_claim_because_its_helpers_have_no_handler(self):
+        calls = []
+        with self.assertRaises(ex.Refusal) as caught:
+            self.execute('C0', self.routed({}, calls), prior_ref=None, activation_id='act-sweep-c0')
+        self.assertIn('verify_tool_sha', str(caught.exception))
+        self.assertEqual(calls, [])
+        self.assertFalse(os.path.exists(self.tmp + '/claims/act-sweep-c0.claim'))
+
+    def test_c1_dispatches_its_owned_dirs_and_zero_share_colima_start(self):
+        routes = {'c1-colima-start': emit('started')}
+        receipt, calls = self.run_sweep('C1', routes)
+        self.assertEqual([c[0] for c in calls], ['c1-colima-start'])
+        steps = {s['id']: s for s in ex.stage_of(ex.load_manifest(), 'C1')['steps']}
+        expected = ex.resolve_step(steps['c1-colima-start'], dict(self.bindings))
+        self.assertEqual(calls[0][1], expected['argv'])
+        self.assertEqual(calls[0][2], expected['env'])
+        self.assertIn('--ssh-config=false', calls[0][1])
+        self.assertTrue(os.path.isdir(self.bindings['colima_cache_home']))
+        self.assertTrue(os.path.isdir(self.bindings['colima_docker_config']))
+        self.assertEqual(receipt['closure'], 'closed')
+        self.assertTrue(os.path.islink(self.bindings['control'] + '/bin/docker'))
+
+    def test_c2_c3_c4_are_refused_before_claim_because_their_guest_steps_use_unpinned_sources(self):
+        """Their guest probe, stage and verify sources have no reviewed pin, so the stage is refused before the
+        activation is claimed and before any step runs. Their argv and env pins are checked by the plan tests."""
+        for stage, slot in (('C2', 'probe_source'), ('C3', 'stage_source'), ('C4', 'guest_verify_spec')):
+            with self.subTest(stage=stage), self.assertRaises(ex.Refusal) as caught:
+                calls = []
+                self.execute(stage, self.routed({}, calls), prior_ref=None, activation_id=f'act-unpin-{stage.lower()}')
+            self.assertIn('unpinned', str(caught.exception))
+            self.assertIn(slot, str(caught.exception))
+            self.assertEqual(calls, [])
+            self.assertFalse(os.path.exists(self.tmp + f'/claims/act-unpin-{stage.lower()}.claim'))
 
 
 class PrimitiveTests(Fixture):

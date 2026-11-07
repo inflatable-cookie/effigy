@@ -71,8 +71,17 @@ UNADMITTED = {
            'and probe cannot run in one stage; the stage needs splitting, and its probe source has no pin'),
     'C3': ('guest_spec must be rendered from the C2 probe receipt, and C2 is unadmitted; stage_source has no pin'),
     'C4': DOWNLOAD_UNADMITTED,
+    'D1': ('docker volume create is idempotent and the volume name is observable to other clients: exclusive '
+           'creation of the activation volume cannot be established, so the stage is refused'),
     'D2': DOWNLOAD_UNADMITTED,
+    'D4': ('removal is not re-observed per target immediately before each removal, and the manifest records no '
+           'image foreign list: current exact identity cannot be established, so cleanup is refused'),
 }
+# Execution is refused in source: no owner-controlled activation mechanism exists in this repository.
+# A planner-provided mechanism must replace this default before any stage can run.
+TEST_SEAM = {'owner_activation': False, 'admit_unadmitted': False}
+OWNER_ACTIVATION_REASON = ('no owner-controlled activation mechanism exists in this repository; a file that the '
+                           'same account can create and chmod grants no authority, so execution is unadmitted')
 GUEST_BINDING = {'c4-render-verify-spec': 'guest_verify_spec'}
 # Never caller-supplied. Derived ones come from the chain or this run; unpinned ones have no reviewed
 # source in this repository. The plan shows each as an explicit placeholder, and execution refuses them.
@@ -89,7 +98,7 @@ ACTIVATION_ID = re.compile(r'[A-Za-z0-9_.-]{8,64}')
 RECIPE_CAP_BYTES = 64 * 1024
 RECIPE_SHA256 = prep.RECIPE_SHA256
 RECIPE_BYTES = 474
-PROBE_CAP_SECONDS = 5.0
+PROBE_CAP_SECONDS = 0.5  # the probe blocks the stage's monitor for at most this long
 
 
 class Collision(Refusal):
@@ -128,8 +137,22 @@ def helper_handler_missing(name):
     return name not in HANDLERS
 
 
+def stage_unadmitted_reason(stage_id):
+    """A stage's own reason, or the reason of its nearest unadmitted predecessor. A stage whose
+    predecessor cannot close is not admitted either."""
+    if stage_id in UNADMITTED:
+        return UNADMITTED[stage_id]
+    prior = PRIOR.get(stage_id)
+    if prior is not None:
+        reason = stage_unadmitted_reason(prior)
+        if reason is not None:
+            return f'predecessor {prior} is unadmitted: {reason}'
+    return None
+
+
 def stage_admission(stage):
-    reasons = [UNADMITTED[stage['id']]] if stage['id'] in UNADMITTED else []
+    own = stage_unadmitted_reason(stage['id'])
+    reasons = [own] if own is not None else []
     for step in stage['steps']:
         if step['kind'] == 'helper' and helper_handler_missing(step['helper']):
             reasons.append(f"{step['id']}: helper {step['helper']} has no reviewed handler in this source")
@@ -302,26 +325,34 @@ def create_private_dir(path):
 
 
 class Pins:
-    """Identity of every owned directory the stage uses. Recheck before each step: a directory replaced,
-    moved or turned into a link after it was pinned refuses the step."""
+    """Identity of every owned directory the stage uses: canonical path, owner, mode 0700, device and inode.
+    Each is rechecked before every step, so a replaced, moved, linked or re-moded directory refuses."""
 
     def __init__(self):
         self.items = {}
 
-    def pin(self, path):
+    @staticmethod
+    def observe(path):
+        if os.path.realpath(path) != path or not path.startswith(prep.STASH + '/'):
+            raise Refusal(f'{path}: pinned path must be canonical under Stash scratch')
         info = os.lstat(path)
-        if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or info.st_uid != os.geteuid():
-            raise Refusal(f'{path}: pinned path must be an owned directory, not a link')
-        self.items[path] = (info.st_dev, info.st_ino)
+        if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+            raise Refusal(f'{path}: pinned path must be a directory, not a link')
+        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            raise Refusal(f'{path}: pinned directory must be owned by this user and mode 0700')
+        return (info.st_dev, info.st_ino, info.st_uid, stat.S_IMODE(info.st_mode))
+
+    def pin(self, path):
+        self.items[path] = self.observe(path)
 
     def recheck(self):
-        for path, (dev, ino) in self.items.items():
+        for path, identity in self.items.items():
             try:
-                info = os.lstat(path)
+                now = self.observe(path)
             except OSError:
                 raise Refusal(f'{path}: pinned directory is gone: refuse')
-            if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or (info.st_dev, info.st_ino) != (dev, ino):
-                raise Refusal(f'{path}: pinned directory identity changed: refuse')
+            if now != identity:
+                raise Refusal(f'{path}: pinned directory identity, owner or mode changed: refuse')
 
 
 def check_recorded_roots(bindings, pins, *, first_use):
@@ -460,7 +491,11 @@ class AllocatedBytes:
 
 
 def default_monitor(limits, roots):
-    return Monitor(limits, AllocatedBytes(roots))
+    """The reviewed Monitor over real allocated bytes. Its constructor refuses a zero limit, so it is
+    built with one byte and then given the exact requested limit: a zero storage cap refuses any growth."""
+    monitor = Monitor({'storage': 1}, AllocatedBytes(roots))
+    monitor.limits = dict(limits)
+    return monitor
 
 
 def start_identity(pid, timeout=PROBE_CAP_SECONDS):
@@ -773,6 +808,8 @@ def verify_receipt_tree(body, stage_id, key, manifest):
     stage = stage_of(manifest, stage_id)
     if [s['id'] for s in body['steps']] != [s['id'] for s in stage['steps']]:
         raise Refusal(f'{stage_id}: step inventory differs from the manifest: refuse')
+    if [s['kind'] for s in body['steps']] != [s['kind'] for s in stage['steps']]:
+        raise Refusal(f'{stage_id}: step kinds differ from the manifest: refuse')
     for step in body['steps']:
         ev = step['evidence']
         if step.get('skipped'):
@@ -793,36 +830,78 @@ def verify_receipt_tree(body, stage_id, key, manifest):
                 data = read_checked_file(f"{root}/{step['id']}/{name}", must_be_in=root, read_only=False)
                 if hashlib.sha256(data).hexdigest() != rec['sha256'] or len(data) != rec['bytes']:
                     raise Refusal(f"{step['id']}: {name} differs from its recorded stream")
-    # 4. Creation receipts, re-derived from the original outputs of the stage that produced them.
+    # 4. Creation receipts: each is re-derived field by field from its producing stage's own receipt, the
+    #    step's intent and original streams, and must match the stored receipt exactly.
     for rec in body['receipts']:
-        ev = rec['evidence']
-        producer = os.path.dirname(os.path.dirname(ev['path']))  # the producing stage's root
-        if checked_sha(ev['path'], must_be_in=producer) != ev['sha256']:
-            raise Refusal(f"{rec['kind']}: creation evidence differs from its hash")
-        if rec['kind'] == 'volume':
-            act = os.path.basename(producer).split('-', 1)[1]
-            create_out = read_checked_file(producer + '/d1-volume-create/stdout', must_be_in=producer, read_only=False)
-            inspect_out = read_checked_file(os.path.dirname(ev['path']) + '/stdout', must_be_in=producer, read_only=False)
-            again = volume_creation_receipt(volume_name(body['token'], act), body['token'],
-                                            create_out.decode(), inspect_out.decode(), body['engine_id'])
-            if again['id'] != rec['id'] or rec['engine_id'] != body['engine_id']:
-                raise Refusal('volume creation receipt is not derived from its create and inspect outputs')
-        elif rec['kind'] == 'image' and rec.get('name') is None:
-            helper = json.loads(Path(ev['path']).read_text())
-            if helper['result'].get('verified') != rec['id'] or os.path.basename(os.path.dirname(ev['path'])) != 'c4-check-image-identity':
-                raise Refusal('image creation receipt is not the verified guest image')
-        elif rec['kind'] == 'image':
-            readback = read_checked_file(producer + '/d2-readback/stdout', must_be_in=producer, read_only=False).decode()
-            again = image_creation_receipt(body['token'], rec['id'], readback, rec['engine_id'])
-            if again['id'] != rec['id']:
-                raise Refusal('image creation receipt is not derived from its readback')
-        elif rec['kind'] == 'container':
-            helper = json.loads(Path(ev['path']).read_text())
-            if helper['result'].get('container_id') != rec['id']:
-                raise Refusal('container creation receipt is not the one its cidfile recorded')
-        else:
-            raise Refusal('unknown creation receipt kind')
+        verify_creation(rec, body, manifest)
     return body
+
+
+CREATION_STEP = {'volume': 'd1-volume-inspect', 'image': 'd2-check-image-identity', 'container': 'd3-read-cidfile'}
+CREATION_INTENT_STEP = {'volume': 'd1-volume-create', 'image': 'd2-docker-build', 'container': 'd3-disposable-check'}
+
+
+def verify_creation(rec, body, manifest):
+    """One creation receipt against its producer. The producing stage's receipt must be a closed receipt of
+    that stage on this chain, the producing step must be the manifest's step for this kind, and every
+    field (kind, id, name, label, engine) must equal what the original streams and intent establish."""
+    ev = rec['evidence']
+    step_id = os.path.basename(os.path.dirname(ev['path']))
+    producer = os.path.dirname(os.path.dirname(ev['path']))
+    stage_name, _, act = os.path.basename(producer).partition('-')
+    if checked_sha(ev['path'], must_be_in=producer) != ev['sha256']:
+        raise Refusal(f"{rec.get('kind')}: creation evidence differs from its hash")
+    if rec['kind'] == 'image' and rec.get('name') is None:
+        # The C4 verified guest image: its helper record must say it verified this exact ID.
+        helper = json.loads(Path(ev['path']).read_text())
+        if step_id != 'c4-check-image-identity' or helper['result'].get('verified') != rec['id']:
+            raise Refusal('image creation receipt is not the verified guest image')
+        return
+    if CREATION_STEP.get(rec['kind']) != step_id:
+        raise Refusal(f"{rec['kind']} creation receipt was not produced by its manifest step")
+    producer_body = json.loads(read_checked_file(producer + '/stage-receipt.json', must_be_in=producer, read_only=False))
+    if (producer_body.get('stage') != stage_name or producer_body.get('closure') != 'closed'
+            or producer_body.get('stage_root') != producer or producer_body.get('activation_id') != act
+            or producer_body.get('chain_key') != body['chain_key'] or producer_body.get('engine_id') != body['engine_id']):
+        raise Refusal('the producing stage is not a closed receipt of this chain and engine')
+    expected_kind = 'exec' if rec['kind'] == 'volume' else 'helper' if rec['kind'] == 'container' else 'helper'
+    manifest_steps = {x['id']: x for x in stage_of(manifest, stage_name)['steps']}
+    if manifest_steps.get(step_id, {}).get('kind') != expected_kind:
+        raise Refusal('creation step kind differs from the manifest')
+    produced_steps = {x['id']: x for x in producer_body['steps']}
+    produced = produced_steps.get(step_id, {})
+    if produced.get('kind') != expected_kind or produced.get('closure') != 'closed':
+        raise Refusal('the producing step did not close as the manifest kind')
+    if expected_kind == 'exec' and produced.get('waited_exit') != 0:
+        raise Refusal('the producing exec step did not close with waited exit 0')
+    # The argv the executor resolved for the creating step, as its stage receipt records it.
+    intent_step = CREATION_INTENT_STEP[rec['kind']]
+    argv = produced_steps.get(intent_step, {}).get('argv')
+    if not isinstance(argv, list) or produced_steps[intent_step].get('closure') != 'closed':
+        raise Refusal(f'{rec["kind"]}: the creating step has no recorded argv or did not close')
+    if rec['kind'] == 'volume':
+        name = volume_name(body['token'], act)
+        create_out = read_checked_file(f'{producer}/d1-volume-create/stdout', must_be_in=producer, read_only=False).decode()
+        inspect_out = read_checked_file(f'{producer}/d1-volume-inspect/stdout', must_be_in=producer, read_only=False).decode()
+        if name not in argv or f'effigy.qual={body["token"]}' not in argv or argv[1:3] != ['volume', 'create']:
+            raise Refusal('the create intent does not name this activation volume and label')
+        expected = volume_creation_receipt(name, body['token'], create_out, inspect_out, body['engine_id'])
+    elif rec['kind'] == 'image':
+        readback = read_checked_file(f'{producer}/d2-readback/stdout', must_be_in=producer, read_only=False).decode()
+        if '--tag' not in argv or argv[argv.index('--tag') + 1] != f"effigy-4f6a-desktop-runtime:{body['token']}":
+            raise Refusal('the build intent does not tag the reviewed image name')
+        expected = image_creation_receipt(body['token'], rec['id'], readback, body['engine_id'])
+    else:
+        helper = json.loads(Path(ev['path']).read_text())
+        if helper['result'].get('container_id') != rec['id']:
+            raise Refusal('container creation receipt is not the one its cidfile recorded')
+        name = f"effigy-4f6a-dcheck-{body['token']}"
+        if '--name' not in argv or argv[argv.index('--name') + 1] != name or '--cidfile' not in argv:
+            raise Refusal('the run intent does not name this container and its cidfile')
+        expected = container_creation_receipt(body['token'], rec['id'], body['engine_id'])
+    comparable = {k: v for k, v in rec.items() if k not in ('evidence', 'stage')}
+    if comparable != expected:
+        raise Refusal(f"{rec['kind']} creation receipt differs from the one its outputs establish")
 
 
 def verify_chain(go, stage_id, bindings, manifest):
@@ -847,11 +926,20 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
     identities or a collision differs."""
     transport = transport or default_transport
     monitor_factory = monitor_factory or default_monitor
+    if not TEST_SEAM['owner_activation']:
+        raise Refusal(OWNER_ACTIVATION_REASON)
     manifest = load_manifest(manifest_path)
     plan = resolve_stage(stage_id, bindings, manifest)
-    if plan['admission']:
+    if plan['admission'] and not TEST_SEAM['admit_unadmitted']:
         raise Refusal('stage unadmitted: ' + '; '.join(plan['admission']))
     stage = stage_of(manifest, stage_id)
+    for step in stage['steps']:  # a helper with no reviewed handler refuses before the activation is claimed
+        if step['kind'] == 'helper' and helper_handler_missing(step['helper']):
+            raise Refusal(f"{step['id']}: helper {step['helper']} has no reviewed handler in this source")
+    unpinned = [f"{x['id']} ({', '.join(k for k in UNPINNED_BINDINGS if f'<{k}>' in json.dumps(x))})"
+                for x in plan['steps'] if any(f'<{k}>' in json.dumps(x) for k in UNPINNED_BINDINGS)]
+    if unpinned:  # an executable or helper input with no reviewed source refuses before the claim
+        raise Refusal('steps use unpinned sources, refused before the activation is claimed: ' + ', '.join(unpinned))
     inputs = derive_inputs(manifest_path)
     now = utc_now or datetime.datetime.now(datetime.timezone.utc)
     os.close(private_dir(ACTIVATIONS_DIR))
@@ -865,6 +953,13 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
         check_recorded_roots(bindings, pins, first_use=stage_id == 'C1')
     else:
         pins.pin(control)
+    if stage_id.startswith('D') and stage_id != 'D0':
+        # The existing private Docker config and context are pinned as directories before any effect.
+        for key in ('desktop_config', 'desktop_context_dir'):
+            try:
+                pins.pin(bindings[key])
+            except OSError:
+                raise Refusal(f'{key}: the private Docker directory must exist and be pinned before effects')
     # One absolute monotonic deadline for the whole stage, bounded by the activation window.
     budget = min(stage['seconds'], (datetime.datetime.fromisoformat(go['expires_utc'].replace('Z', '+00:00')) - now).total_seconds())
     if budget <= stage['reserve_seconds']:
@@ -878,7 +973,7 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
     write_new_file(stage_root, 'activation.json', raw)
     # One monitor for the whole stage: one baseline and one high-water mark across helpers and windows.
     cap = stage.get('storage_cap_bytes', 0)
-    monitor = monitor_factory({'storage': cap or 1}, [control])
+    monitor = monitor_factory({'storage': cap}, [control])
     run_bindings = {k: v for k, v in bindings.items() if k not in NOT_SUPPLIED}
     run_bindings['owned_volume_name'] = volume_name(bindings['token'], go['activation_id'])
     if stage_id in ('C5', 'D3', 'D4'):
@@ -979,6 +1074,7 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
             ctx['outputs'][step['id']] = dict(stdout=step_root + '/stdout', stderr=step_root + '/stderr',
                                               exit=result.get('waited_exit'), disposition=result.get('disposition'))
             steps_out.append(dict(id=step['id'], kind='exec', closure=step_closure_value, guest=resolved['guest'],
+                                  argv=resolved['argv'], env_keys=sorted(resolved['env']),
                                   disposition=result.get('disposition'), waited_exit=result.get('waited_exit'),
                                   guest_closure=result.get('guest_closure'), process=result.get('process'),
                                   streams=result.get('streams'), evidence=evidence,
