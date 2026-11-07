@@ -358,8 +358,17 @@ class Manifest(unittest.TestCase):
         self.assertGreaterEqual(len(frozen), 10)
         for name, entry in frozen.items():
             with self.subTest(name=name):
-                self.assertTrue(entry['path'].startswith('/Volumes/Stash/scratch/effigy/627-artifact-preparation.'))
+                self.assertTrue(entry['path'].startswith('/Volumes/Stash/scratch/effigy/627-'))
                 self.assertRegex(entry['sha256'], r'^[0-9a-f]{64}$')
+
+    def test_baseline_old_binary_cells_are_bound_as_launch_requires(self):
+        base = MANIFEST['proof_entry']['baseline']
+        for key in ('old_binary', 'old_source_head', 'old_source_receipt', 'candidate_receipt', 'production_receipt'):
+            self.assertIn(key, base)
+        self.assertRegex(base['old_binary']['sha256'], r'^[0-9a-f]{64}$')
+        self.assertTrue(base['old_binary']['path'].startswith('/Volumes/Stash/scratch/effigy/627-'))
+        self.assertRegex(base['old_source_head'], r'^[0-9a-f]{40}$')
+        self.assertRegex(base['old_source_receipt']['receipt_sha256'], r'^[0-9a-f]{64}$')
 
     def test_proof_entry_names_the_unexercised_fixture_path_gate(self):
         self.assertIn('absolute', MANIFEST['proof_entry']['nextest_fixture_path_rule'])

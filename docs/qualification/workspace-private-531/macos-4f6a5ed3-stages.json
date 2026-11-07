@@ -53,6 +53,24 @@
     "macos_preparation.py": "d651b3b6b42e54e9cf11c1b0bb6bc9bde76b9ebf9db44c15b2845637e065d121"
   },
   "proof_entry": {
+    "baseline": {
+      "candidate_receipt": {
+        "receipt_sha256": "895b3cf22219571c89872d341209de8cc581f4ac36e6980e362a6c6f803d24a7"
+      },
+      "old_binary": {
+        "path": "/Volumes/Stash/scratch/effigy/627-baseline-correction.f_43nyce/producer-replacement-823d859d-r1/frozen/effigy-old-823d859d-r1",
+        "sha256": "a603c82a9c98d499ea83ea79b403127274cc87d179adcb197dd4478524b117aa"
+      },
+      "old_source_head": "823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1",
+      "old_source_receipt": {
+        "note": "627 index records the receipt hash only; the receipt file path is not in the index",
+        "path": null,
+        "receipt_sha256": "f86a1f3a03b20973a2eaa296e84c52da84e27f60438761132d7381f786e1d177"
+      },
+      "production_receipt": {
+        "receipt_sha256": "52e2c55b9ae3cffb8b5c3510af22c2066fe692dbc0e5f983fbcbb55afc146561"
+      }
+    },
     "frozen": {
       "candidate": {
         "path": "/Volumes/Stash/scratch/effigy/627-artifact-preparation.6mazyj9u/artifacts/src-4f6a5ed3/candidate/effigy-candidate-4f6a5ed3",

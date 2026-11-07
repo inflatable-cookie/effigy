@@ -101,6 +101,12 @@ verified present with its index sha256 on 2026-11-07. Bound, not run:
 - Source: head `4f6a5ed3`, tree `dcb4c791`, candidate
   `/Volumes/Stash/scratch/effigy/release-source/candidate-4f6a5ed3.xwm4pr7j`, and
   the E14 binding file sha. Identity is dev `16777245`, inode `156037736`, uid 501, 0700.
+- Baseline D (627 `baseline_D`, reused not rebuilt): `old_binary` at
+  `/Volumes/Stash/scratch/effigy/627-baseline-correction.f_43nyce/producer-replacement-823d859d-r1/frozen/effigy-old-823d859d-r1`,
+  sha256 `a603c82a…`, `old_source_head` `823d859d`, and the `old_source_receipt` hash
+  `f86a1f3a…` (the index gives no receipt path). Launch's binding record reads these
+  cells, so they are bound here and not rebuilt.
+- Receipts: candidate `895b3cf2…`, production `52e2c55b…`.
 - Frozen: production, candidate, nextest binary, kernel and custody test executables,
   kernel custody fixture, utility, cargo metadata, nextest config (`e4afe6df`) and
   derived binaries metadata (`d247ddd1`).
@@ -156,5 +162,5 @@ Gates:
 ## Validation
 
 Controls run through `effigy test:qualification:workspace-private:macos`
-(`macos_preparation_boundaries.py`: 43 cases, injected only, no native action). Docs run
+(`macos_preparation_boundaries.py`: 44 cases, injected only, no native action). Docs run
 through `effigy qa:docs`.
