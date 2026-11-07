@@ -522,6 +522,26 @@ that must match exactly.
 - Virtual disk ceiling: 128 GiB (`131072Mb`). The current `.hds` is about 5 GiB.
   The guest free space and the post-Stage1 growth decide headroom.
 
+### Retained Stage1 correction
+
+The 684 occurrence is spent: its post-state config predicate refused, and the
+retained final state was stopped. It grants no qualification credit. The
+post-state config hash was `6f891cbe748af2a2f023341c7ee1e916e9b8291de926c74e67cbf101a72d9dee`;
+the full pre-state bytes were not retained, so the change cannot be classified
+as harmless. Future comparisons need retained before and after bytes and
+protected-field checks, not inode identity alone.
+
+The changed extent was `5fbaabe3-6958-40ff-92a7-860e329aab41`, whose
+retained descriptor names `harddisk1.hdd.0.{5fbaabe3-6958-40ff-92a7-860e329aab41}.hds`
+and parent `4d475daf-8aa1-497a-9a38-355f21fcd867`; it grew 9,437,184 bytes.
+Future accounting must resolve the writable chain and all extents, retaining the
+1 GiB cap. The early probe observed `starting`, not boot completion, and does
+not establish a stable engine baseline. Guest disk correlation remains unproven.
+
+The retained H and B archives each have 2,134 file entries, not 2,140. Their
+original bytes and hashes remain authoritative. Candidate H remains unchanged;
+this correction does not authorize execution or replace its frozen artifacts.
+
 ### 6.4 Source-owner proposals (no code change in this task)
 
 - **SO-1 Remote source, driver and GO placement.** `launch.py` already verifies
