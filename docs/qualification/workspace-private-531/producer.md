@@ -89,6 +89,20 @@ A copied current executable or a shell stand-in is insufficient and refuses.
 Do not infer that a managed output remains after its lease or cleanup: freeze
 the copy before anything else builds in that fixture.
 
+The 2026-11-07 host source control settled the search for such a commit and it
+does not exist among this source's ancestors. The controls need one binary the
+current helper handshake admits *and* that cannot read the versioned discard
+envelope. Protocol 4 — the first version this source admits — postdates that
+envelope: `694d4c4eb` added `discard_v1` and `f17e0524b` raised the protocol to
+4, and the first is an ancestor of the second. So every protocol-4 ancestor
+accepts the envelope, and every earlier one — including the provisional
+`d7c3c93b`, the parent of `694d4c4eb` — is refused at admission instead of
+refusing the discard, which can never satisfy
+`custody::tests::discard_old_sentinel_refuses_before_child_exec`. The cell stays
+unresolved until the planner re-specifies it: do not build the provisional
+commit again, do not substitute a stand-in, and do not treat this packet as
+artifact-ready.
+
 ## Recipe E — Linux guest artifact
 
 The existing `workspace:linux:artifact` producer under its own separate scoped

@@ -11,8 +11,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (BACKENDS, PACKET, SCRATCH, artifact, digest, exclusive, exclusive_bytes, validate_go,
-                    open_qualification_root, qualification_path, validate_inputs)
+from common import (BACKENDS, PACKET, SCRATCH, SSH_CONTROL, artifact, digest, exclusive, exclusive_bytes,
+                    validate_go, open_qualification_root, qualification_path, validate_inputs)
 
 HEAD = '1' * 40
 
@@ -293,38 +293,59 @@ class Boundaries(unittest.TestCase):
                 with self.assertRaises(RuntimeError): common.ssh_prefix(cell)
 
     def test_setup_socket_preflight_refuses_observed_long_path_before_effects(self):
-        from setup_preflight import socket_preflight, PROFILE
+        from setup_preflight import socket_preflight, PROFILE, SCRATCH as SETUP_SCRATCH
+        # setup_preflight still binds its own historical consumed root, so these
+        # exact expected values are the ones that root produces.
         with patch('subprocess.run', side_effect=AssertionError('setup preflight ran a command')), \
              patch.object(Path, 'mkdir', side_effect=AssertionError('setup preflight created a root')):
             with self.assertRaisesRegex(RuntimeError, '120 bytes'):
-                socket_preflight(str(SCRATCH / '531-colima-control/colima'), PROFILE)
-            result = socket_preflight(str(SCRATCH / '531c/c'), PROFILE)
+                socket_preflight(str(SETUP_SCRATCH / '531-colima-control/colima'), PROFILE)
+            result = socket_preflight(str(SETUP_SCRATCH / '531c/c'), PROFILE)
             self.assertEqual(result['socket_bytes'], 101)
             self.assertEqual(result['instance'], 'colima-' + PROFILE)
             self.assertFalse(result['setup_authorized'])
             # The bound is exclusive and counts encoded bytes, not characters.
-            prefix = str(SCRATCH / '') + '/'
+            prefix = str(SETUP_SCRATCH / '') + '/'
             suffix = '/_lima/colima-' + PROFILE + '/ssh.sock.1234567890123456'
             width = 104 - len((prefix + suffix).encode())
             self.assertEqual(socket_preflight(prefix + 'x' * (width - 1), PROFILE)['socket_bytes'], 103)
             for leaf in ('x' * width, 'é' * width):
                 with self.assertRaisesRegex(RuntimeError, 'must be less than 104'):
                     socket_preflight(prefix + leaf, PROFILE)
-            for home, profile in (('relative', PROFILE), (str(SCRATCH), PROFILE),
-                                  (str(SCRATCH / 'x/../c'), PROFILE),
-                                  (str(SCRATCH / '531c/c') + '/', PROFILE),
-                                  (str(SCRATCH / '531c/c'), 'q531')):
+            for home, profile in (('relative', PROFILE), (str(SETUP_SCRATCH), PROFILE),
+                                  (str(SETUP_SCRATCH / 'x/../c'), PROFILE),
+                                  (str(SETUP_SCRATCH / '531c/c') + '/', PROFILE),
+                                  (str(SETUP_SCRATCH / '531c/c'), 'q531')):
                 with self.assertRaises(RuntimeError):
                     socket_preflight(home, profile)
 
     def test_setup_socket_preflight_refuses_symlink_ancestor(self):
+        import setup_preflight
         from setup_preflight import socket_preflight, PROFILE
+        # This run's removable scratch is not the module's historical root, so
+        # the synthetic tree hands over the bound root it checks under.
         with tempfile.TemporaryDirectory(prefix='531-setup-', dir=os.environ['TMPDIR']) as directory:
             root = Path(directory)
             (root / 'real').mkdir()
             (root / 'alias').symlink_to(root / 'real', target_is_directory=True)
-            with self.assertRaisesRegex(RuntimeError, 'aliases another path'):
+            with patch.object(setup_preflight, 'SCRATCH', root), \
+                 self.assertRaisesRegex(RuntimeError, 'aliases another path'):
                 socket_preflight(str(root / 'alias/c'), PROFILE)
+
+    def test_future_binding_is_the_canonical_removable_root(self):
+        # The consumed 531 session ran against a retired mount. Future
+        # invocations bind the current canonical removable root and derive the
+        # private SSH control directory from it, so no old root is adopted.
+        self.assertEqual(SCRATCH, Path('/Volumes/Stash/scratch/effigy'))
+        self.assertEqual(SSH_CONTROL, SCRATCH / '531-linux-control')
+        valid = inputs()['backends'][0]['qualification_root']
+        self.assertTrue(valid['path'].startswith(str(SCRATCH) + '/'))
+        self.assertEqual(str(qualification_path(valid)), valid['path'])
+        for foreign in ('/Volumes/Builds/scratch/effigy/531-unarmed-colima',
+                        str(SCRATCH) + '-retired/531', str(SCRATCH) + '/../effigy-other/531',
+                        str(SCRATCH.parent)):
+            with self.subTest(path=foreign), self.assertRaises(RuntimeError):
+                qualification_path(dict(valid, path=foreign))
 
     def test_packet_modules_parse_without_bytecode_or_effects(self):
         for path in PACKET.glob('*.py'):
