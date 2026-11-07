@@ -175,47 +175,157 @@ class RootAndEngineIdentity(unittest.TestCase):
 
 
 class CleanupAuthority(unittest.TestCase):
+    """D4 cleanup authority. Observations are real rows in the formats the stages request."""
     ENGINE = 'engine-aaaa'
+    LABEL = f'effigy.qual={TOKEN}'
+    CID = 'c' * 64
 
-    def receipt(self, **changes):
-        base = dict(kind='container', id='c' * 64, name='effigy-4f6a-dcheck-' + TOKEN,
-                    label=f'effigy.qual={TOKEN}', engine_id=self.ENGINE)
+    def receipts(self, engine=ENGINE, image_id=IMAGE_ID):
+        return prep.occurrence_receipts(TOKEN, engine, image_id, self.CID)
+
+    def image_row(self, **changes):
+        base = {'Id': IMAGE_ID, 'RepoTags': [f'effigy-4f6a-desktop-runtime:{TOKEN}'],
+                'Config': {'Labels': {'effigy.qual': TOKEN}}}
         base.update(changes)
-        return base
+        return json.dumps(base)
 
-    def live(self, **changes):
-        base = dict(kind='container', id='c' * 64, name='effigy-4f6a-dcheck-' + TOKEN,
-                    labels=[f'effigy.qual={TOKEN}'], engine_id=self.ENGINE)
+    def ps_row(self, **changes):
+        base = {'ID': self.CID, 'Names': f'effigy-4f6a-dcheck-{TOKEN}', 'Labels': f'effigy.qual={TOKEN},x=y'}
         base.update(changes)
-        return base
+        return json.dumps(base) + '\n'
 
-    def test_exact_receipt_on_this_engine_is_selected(self):
-        out = prep.select_cleanup_targets(self.ENGINE, [self.receipt()], [self.live()])
-        self.assertEqual(out['containers'], ['c' * 64])
+    def volume_row(self, **changes):
+        base = {'Name': f'effigy-4f6a-qual-{TOKEN}', 'Labels': self.LABEL, 'Driver': 'local'}
+        base.update(changes)
+        return json.dumps(base) + '\n'
+
+    def select(self, receipts=None, image=None, ps=None, volume=None, engine=ENGINE):
+        live = (prep.live_from_observation('image', image or self.image_row(), engine)
+                + prep.live_from_observation('container', ps if ps is not None else self.ps_row(), engine)
+                + prep.live_from_observation('volume', volume if volume is not None else self.volume_row(), engine))
+        return prep.select_cleanup_targets(engine, self.receipts() if receipts is None else receipts, live)
+
+    def test_each_observation_format_selects_its_own_receipt(self):
+        out = self.select()
+        self.assertEqual(out['containers'], [self.CID])
+        self.assertEqual(out['images'], [IMAGE_ID])
+        self.assertEqual(out['volumes'], [f'effigy-4f6a-qual-{TOKEN}'])
+        self.assertEqual(out['unauthorized'], [])
+
+    def test_image_observation_without_labels_cannot_be_selected(self):
+        # The image-list shape (Repository/Tag, no Config.Labels) is not an acceptable image observation.
+        image_ls_row = json.dumps({'ID': IMAGE_ID, 'Repository': 'effigy-4f6a-desktop-runtime', 'Tag': TOKEN})
+        with self.assertRaises(ValueError):
+            prep.live_from_observation('image', image_ls_row, self.ENGINE)
+        no_labels = self.image_row(Config={'Labels': None})
+        out = self.select(image=no_labels)
+        self.assertEqual(out['images'], [])
+        self.assertEqual(out['unauthorized'], [IMAGE_ID])
 
     def test_matching_label_without_this_occurrence_receipt_is_unauthorized(self):
-        out = prep.select_cleanup_targets(self.ENGINE, [], [self.live()])
-        self.assertEqual(out['containers'], [])
-        self.assertEqual(out['unauthorized'], ['c' * 64])
+        other = [r for r in self.receipts() if r['kind'] != 'image']
+        out = self.select(receipts=other)
+        self.assertEqual(out['images'], [])
+        self.assertEqual(out['unauthorized'], [IMAGE_ID])
 
-    def test_same_name_with_another_id_is_not_selected(self):
-        out = prep.select_cleanup_targets(self.ENGINE, [self.receipt(id='d' * 64)], [self.live()])
-        self.assertEqual(out['containers'], [])
-        self.assertEqual(out['unauthorized'], ['c' * 64])
+    def test_same_name_with_another_image_id_is_not_selected(self):
+        other_id = 'sha256:' + 'cd' * 32
+        out = self.select(image=self.image_row(Id=other_id))
+        self.assertEqual(out['images'], [])
+        self.assertIn(other_id, out['unauthorized'])
 
     def test_name_prefix_alone_is_never_selected(self):
-        out = prep.select_cleanup_targets(self.ENGINE, [], [self.live(labels=['user=x'], name='effigy-4f6a-x')])
+        out = self.select(ps=self.ps_row(Labels='user=x', Names='effigy-4f6a-x'))
         self.assertEqual(out['containers'], [])
-        self.assertEqual(out['unauthorized'], ['c' * 64])
+        self.assertEqual(out['unauthorized'], [self.CID])
 
     def test_foreign_engine_receipt_refuses_the_selection(self):
         with self.assertRaises(ValueError):
-            prep.select_cleanup_targets(self.ENGINE, [self.receipt(engine_id='engine-bbbb')], [self.live()])
+            self.select(receipts=self.receipts(engine='engine-bbbb'))
 
     def test_foreign_engine_resource_is_foreign_and_untouched(self):
-        out = prep.select_cleanup_targets(self.ENGINE, [self.receipt()], [self.live(engine_id='engine-bbbb')])
+        # Receipts were recorded on the baseline engine; the observed rows come from another engine.
+        live = (prep.live_from_observation('image', self.image_row(), 'engine-bbbb')
+                + prep.live_from_observation('container', self.ps_row(), 'engine-bbbb')
+                + prep.live_from_observation('volume', self.volume_row(), 'engine-bbbb'))
+        out = prep.select_cleanup_targets(self.ENGINE, self.receipts(), live)
         self.assertEqual(out['containers'], [])
-        self.assertEqual(out['foreign'], ['c' * 64])
+        self.assertEqual(out['images'], [])
+        self.assertEqual(out['volumes'], [])
+        self.assertEqual(out['foreign'], sorted([self.CID, IMAGE_ID, f'effigy-4f6a-qual-{TOKEN}']))
+
+    def test_engine_change_between_d0_and_d4_refuses_cleanup(self):
+        info = lambda engine: json.dumps({'ID': engine, 'Name': 'docker-desktop'})
+        self.assertEqual(prep.check_engine_unchanged(info('e1'), info('e1')), 'e1')
+        with self.assertRaises(ValueError):
+            prep.check_engine_unchanged(info('e1'), info('e2'))
+        with self.assertRaises(ValueError):
+            prep.engine_id_from_info('{"Name": "no id"}')
+
+    def test_receipts_are_the_names_and_labels_the_stages_set(self):
+        steps = {s['id']: s['argv'] for stage in MANIFEST['stages'] for s in stage['steps'] if 'argv' in s}
+        volume_create = steps['d1-volume-create']
+        self.assertEqual(volume_create[volume_create.index('--label') + 1], self.LABEL.replace(TOKEN, '{token}'))
+        build = steps['d2-docker-build']
+        self.assertEqual(build[build.index('--label') + 1], 'effigy.qual={token}')
+        self.assertEqual(build[build.index('--tag') + 1], 'effigy-4f6a-desktop-runtime:{token}')
+        run = steps['d3-disposable-check']
+        self.assertEqual(run[run.index('--name') + 1], 'effigy-4f6a-dcheck-{token}')
+        self.assertEqual(run[run.index('--label') + 1], 'effigy.qual={token}')
+
+    def test_d4_observes_the_image_by_authenticated_id_not_by_list(self):
+        d4 = {s['id']: s for s in stage_by_id('D4')['steps']}
+        self.assertEqual(d4['d4-observe-image']['argv'][1:4], ['image', 'inspect', '--format'])
+        self.assertEqual(d4['d4-observe-image']['argv'][-1], '{image_id}')
+        self.assertNotIn('ls', d4['d4-observe-image']['argv'])
+        self.assertIn('d4-observe-info', ' '.join(d4['d4-select-owned']['inputs']))
+
+
+class ProvenanceBinding(unittest.TestCase):
+    """nerdctl (C4) requests --provenance=mode=max; docker build (D2) disables with --provenance=false."""
+
+    def nerdctl(self, *provenance):
+        return SSH + ['timeout', '-k', '5', '840', 'sudo', '-n', 'env', 'DOCKER_CONFIG={guest_context}/docker-config',
+                      'nerdctl', 'build', '--platform', 'linux/arm64', '--iidfile', '{guest_iidfile}',
+                      '--tag', 'effigy-4f6a-runtime:r1', *provenance, '{guest_context}']
+
+    def docker(self, *provenance):
+        return [prep.DOCKER, 'build', '--platform', 'linux/arm64', '--label', 'effigy.qual={token}',
+                '--tag', 'effigy-4f6a-desktop-runtime:{token}', '--iidfile', '{desktop_iidfile}',
+                *provenance, '{desktop_context_dir}']
+
+    def test_manifest_builds_bind_their_backend_provenance(self):
+        c4 = next(s for s in stage_by_id('C4')['steps'] if s['id'] == 'c4-nerdctl-build')
+        d2 = next(s for s in stage_by_id('D2')['steps'] if s['id'] == 'd2-docker-build')
+        self.assertEqual(c4['argv'].count('--provenance=mode=max'), 1)
+        self.assertEqual(d2['argv'].count('--provenance=false'), 1)
+
+    def test_missing_provenance_refused_on_both_builds(self):
+        with self.assertRaises(ValueError):
+            prep.check_engine_argv(self.nerdctl())
+        with self.assertRaises(ValueError):
+            prep.check_engine_argv(self.docker())
+
+    def test_wrong_provenance_for_the_backend_refused(self):
+        with self.assertRaises(ValueError):
+            prep.check_engine_argv(self.nerdctl('--provenance=false'))
+        with self.assertRaises(ValueError):
+            prep.check_engine_argv(self.docker('--provenance=mode=max'))
+        with self.assertRaises(ValueError):
+            prep.check_engine_argv(self.nerdctl('--provenance=mode=min'))
+
+    def test_duplicate_provenance_refused(self):
+        with self.assertRaises(ValueError):
+            prep.check_engine_argv(self.nerdctl('--provenance=mode=max', '--provenance=false'))
+
+    def test_correct_provenance_passes(self):
+        self.assertTrue(prep.check_engine_argv(self.nerdctl('--provenance=mode=max')))
+        self.assertTrue(prep.check_engine_argv(self.docker('--provenance=false')))
+
+    def test_nerdctl_help_without_provenance_is_refused(self):
+        with self.assertRaises(ValueError) as refused:
+            prep.check_build_help('--iidfile --platform')
+        self.assertIn('--provenance', str(refused.exception))
 
 
 class GoAndDrift(unittest.TestCase):
@@ -708,7 +818,8 @@ class Manifest(unittest.TestCase):
                 with self.subTest(step=step['id']):
                     self.assertNotIn('version', step['argv'])
                     if 'info' in step['argv']:
-                        self.assertEqual(step['id'], 'd0-info')
+                        # Engine identity reads only: the D0 baseline and the D4 re-check.
+                        self.assertIn(step['id'], ('d0-info', 'd4-observe-info'))
 
     def test_recipe_and_check_sources_are_consistent(self):
         self.assertEqual(MANIFEST['binding_inputs']['recipe_file'].split()[-1], prep.RECIPE_SHA256)

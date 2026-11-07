@@ -187,11 +187,83 @@ def check_desktop_resources(resources, token, context):
     return dict(owned=sorted(owned), foreign=sorted(foreign))
 
 
+def engine_id_from_info(text):
+    """`docker info --format {{json .}}`: the engine ID that every receipt and observation binds to."""
+    data = json.loads(text)
+    require(isinstance(data, dict) and isinstance(data.get('ID'), str) and data['ID'],
+            'docker info must name the engine ID')
+    return data['ID']
+
+
+def check_engine_unchanged(baseline_info, cleanup_info):
+    """D4 runs against the same engine that D0 baselined; a changed engine ID refuses cleanup."""
+    baseline, observed = engine_id_from_info(baseline_info), engine_id_from_info(cleanup_info)
+    require(baseline == observed, 'engine changed between D0 and D4: refuse cleanup')
+    return observed
+
+
+def _labels(value):
+    """Labels from ps and volume ls formats ('k=v,k=v') or from inspect (dict or null)."""
+    if not value:
+        return []
+    if isinstance(value, dict):
+        return [f'{k}={v}' for k, v in value.items()]
+    return [part for part in value.split(',') if part]
+
+
+def _names(value):
+    """Names from ps ('a,b') or inspect RepoTags (list or null); a leading slash is stripped."""
+    if not value:
+        return []
+    items = value if isinstance(value, list) else value.split(',')
+    return [item.lstrip('/') for item in items if item]
+
+
+def live_from_observation(kind, text, engine_id):
+    """Parse one D4 observation stream into live items. The formats are the ones the stages request:
+    ps and volume ls rows (one JSON object per line), and image inspect (one object).
+    An image's names come from RepoTags, its labels from Config.Labels."""
+    items = []
+    if kind == 'image':
+        data = json.loads(text)
+        require(isinstance(data, dict) and data.get('Id'), 'image inspect must name an ID')
+        items.append(dict(kind='image', id=data['Id'], names=_names(data.get('RepoTags')),
+                          labels=_labels((data.get('Config') or {}).get('Labels')), engine_id=engine_id))
+        return items
+    for line in (text or '').splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if kind == 'volume':
+            require(row.get('Name'), 'volume row must name the volume')
+            items.append(dict(kind='volume', id=row['Name'], names=[row['Name']],
+                              labels=_labels(row.get('Labels')), engine_id=engine_id))
+        else:
+            require(row.get('ID'), 'container row must carry its ID')
+            items.append(dict(kind='container', id=row['ID'], names=_names(row.get('Names')),
+                              labels=_labels(row.get('Labels')), engine_id=engine_id))
+    return items
+
+
+def occurrence_receipts(token, engine_id, image_id, container_id):
+    """The creation receipts one occurrence can prove: the names and labels each stage sets, bound
+    to the IDs its own outputs returned. Nothing else is removable."""
+    label = f'effigy.qual={token}'
+    return [
+        dict(kind='volume', id=f'effigy-4f6a-qual-{token}', name=f'effigy-4f6a-qual-{token}',
+             label=label, engine_id=engine_id),
+        dict(kind='image', id=image_id, name=f'effigy-4f6a-desktop-runtime:{token}',
+             label=label, engine_id=engine_id),
+        dict(kind='container', id=container_id, name=f'effigy-4f6a-dcheck-{token}',
+             label=label, engine_id=engine_id),
+    ]
+
+
 def select_cleanup_targets(engine_id, receipts, live):
     """D4 cleanup authority. A live resource is removable only when this occurrence recorded its
-    creation on this engine and the exact ID, name and label still match. A label alone, a name
-    prefix, or a same-named resource with another ID is unauthorized and is never selected.
-    receipts: dict(kind, id, name, label, engine_id). live: dict(kind, id, name, labels, engine_id)."""
+    creation on this engine and the exact kind, ID, name and label still match. A label alone, a
+    name prefix, or a same-named resource with another ID is unauthorized and never selected.
+    receipts: dict(kind, id, name, label, engine_id). live: dict(kind, id, names, labels, engine_id)."""
     for receipt in receipts:
         require(receipt['kind'] in ('container', 'volume', 'image'), 'unknown receipt kind')
         require(receipt['engine_id'] == engine_id, 'creation receipt from a foreign engine: refuse')
@@ -202,11 +274,12 @@ def select_cleanup_targets(engine_id, receipts, live):
             out['foreign'].append(item['id'])
             continue
         matched = [r for r in receipts
-                   if (r['kind'], r['id'], r['name']) == (item['kind'], item['id'], item['name'])
-                   and r['label'] in item['labels']]
+                   if (r['kind'], r['id']) == (item['kind'], item['id'])
+                   and r['name'] in item['names'] and r['label'] in item['labels']]
         if matched:
             out[plural[item['kind']]].append(item['id'])
-        elif any(l.startswith('effigy.qual=') for l in item['labels']) or item['name'].startswith('effigy-4f6a-'):
+        elif any(l.startswith('effigy.qual=') for l in item['labels']) \
+                or any(n.startswith('effigy-4f6a-') for n in item['names']):
             out['unauthorized'].append(item['id'])
         else:
             out['foreign'].append(item['id'])
@@ -291,6 +364,12 @@ def check_engine_argv(argv):
                 'build platform must be linux/arm64')
         require('--iidfile' in sub and sub[sub.index('--iidfile') + 1] in ('{guest_iidfile}', '{desktop_iidfile}'),
                 'build must write the image ID to an owned iidfile')
+        # Provenance is bound in argv, one explicit form per backend. nerdctl (C4) requests the
+        # max attestation; docker build (D2) disables attestations with the boolean form.
+        expected = 'mode=max' if 'nerdctl' in argv else 'false'
+        provenance = [a for a in sub if a == '--provenance' or a.startswith('--provenance=')]
+        require(provenance == [f'--provenance={expected}'],
+                f'build provenance must be exactly --provenance={expected} for this backend')
     elif sub[0] == 'run':
         require('--pull=never' in sub, 'runtime checks use --pull=never')
         require('--rm' in sub and sub[sub.index('--network') + 1] == 'none', 'disposable check: --rm, no network')

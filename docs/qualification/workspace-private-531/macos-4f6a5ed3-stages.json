@@ -62,7 +62,7 @@
     "image_context.py": "af74047f640111907930273f7cc7a2b46eac4cb27943f0a512fccf56a1b3b322",
     "image_prepare.py": "882f9e44e7acd87e5ab94237feb7f19a452a3bbb86dd1cf208f311129847964f",
     "macos_metadata_tranche.py": "c204bfaa87c2534da05b62c5f10beda5d3196216ce40d6afffeb8dec2ef9d1a6",
-    "macos_preparation.py": "859a775a2c6410931f606a31c24c9a851a46f0a8bc301e132aebe331f804a221"
+    "macos_preparation.py": "a81e946e8ee7bc19e1bb682ee3bc7236b4ea1e879e9e357a90a04d3ea690b2dc"
   },
   "proof_entry": {
     "baseline": {
@@ -1133,6 +1133,7 @@
             "build",
             "--platform",
             "linux/arm64",
+            "--provenance=false",
             "--label",
             "effigy.qual={token}",
             "--tag",
@@ -1286,7 +1287,7 @@
     },
     {
       "backend": "desktop",
-      "closure": "post-cleanup foreign list equals the D0 foreign list; each step runs only when its selected set is non-empty and is recorded as skipped otherwise",
+      "closure": "the engine ID at cleanup equals D0; post-cleanup foreign list equals the D0 foreign list; each step runs only when its selected set is non-empty and is recorded as skipped otherwise",
       "download_cap_bytes": 0,
       "failure": "a foreign, unlabelled, unreceipted or same-name-different-ID resource is never removed; prune is not used. Foreign engine receipts refuse the whole selection.",
       "id": "D4",
@@ -1301,6 +1302,28 @@
       "retention": "observation streams, selection output, cleanup streams, before and after foreign lists",
       "seconds": 300,
       "steps": [
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "info",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d4-observe-info",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 30
+        },
         {
           "argv": [
             "/usr/local/bin/docker",
@@ -1352,10 +1375,10 @@
           "argv": [
             "/usr/local/bin/docker",
             "image",
-            "ls",
-            "--no-trunc",
+            "inspect",
             "--format",
-            "{{json .}}"
+            "{{json .}}",
+            "{image_id}"
           ],
           "env": {
             "set": {
@@ -1377,10 +1400,9 @@
           "id": "d4-select-owned",
           "inputs": [
             "d0-info.stdout",
-            "d1-volume-create.stdout",
+            "d4-observe-info.stdout",
             "d1-volume-inspect.stdout",
             "d2-read-iidfile.stdout",
-            "d2-readback.stdout",
             "d3-read-cidfile.stdout",
             "d4-observe-ps.stdout",
             "d4-observe-volume.stdout",

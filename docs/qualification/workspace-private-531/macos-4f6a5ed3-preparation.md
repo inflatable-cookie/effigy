@@ -167,8 +167,10 @@ Desktop (`desktop`), with the pinned env above:
 - **D1** owned volume `effigy-4f6a-qual-<token>`, labelled `effigy.qual=<token>`, then
   `volume inspect` as the creation receipt.
 - **D2** runtime image, 1200 s stage: stage the Dockerfile, then
-  `docker build --platform linux/arm64 --label effigy.qual=<token> --tag
+  `docker build --platform linux/arm64 --provenance=false --label effigy.qual=<token> --tag
   effigy-4f6a-desktop-runtime:<token> --iidfile {desktop_iidfile} {desktop_context_dir}`.
+  `--provenance=false` is the documented boolean form that disables attestations. It is
+  pinned so the image's provenance state is explicit, not left to the driver default.
   Host envelope 900 s, and a kill or timeout is Unknown. Then the iidfile is read, and
   `docker image inspect {image_id}` is checked for linux/arm64 and the occurrence label.
   Download cap 1 GiB; storage cap 2 GiB. Sources as C4.
@@ -176,8 +178,13 @@ Desktop (`desktop`), with the pinned env above:
   effigy.qual=<token> --name effigy-4f6a-dcheck-<token> --cidfile {desktop_cidfile}
   {image_id} python3 -I -c {check_source}`, host envelope 240 s. The cidfile is read as
   the container creation receipt, and the facts are checked.
-- **D4** cleanup by receipt only: observe ps, volume and image lists, then
-  `select_cleanup_targets` on the receipts from D0 (engine ID), D1, D2 and D3. Only exact
+- **D4** cleanup by receipt only: observe the engine ID (`docker info`), then ps, volume
+  and the image by authenticated ID (`docker image inspect {image_id}`, which carries
+  RepoTags and Config.Labels; `docker image ls` does not, so it is not used). The helper
+  refuses if the engine ID changed since D0, then selects with `occurrence_receipts`: the
+  names and labels each stage set, bound to the IDs its own outputs returned.
+  An image that cannot be inspected by its ID refuses the selection; nothing is removed
+  and the occurrence is retained. Only exact
   matches on this engine are removed, by ID. Unauthorized and foreign resources are never
   touched. Each removal runs only when its selected set is non-empty.
 
@@ -242,7 +249,9 @@ Gates:
   Installed nerdctl 2.3.1 refuses tar-stdin contexts, so no builder switch is made.
 - Desktop pins the observed endpoint with `DOCKER_HOST` and an owned empty
   `DOCKER_CONFIG`, not a context name. Desktop build and run do not use `--pull` in the form
-  r2 wrote. Build omits it and run uses `=never`.
+  r2 wrote. Build omits it and run uses `=never`. D2 pins `--provenance=false`, and C4 pins
+  `--provenance=mode=max`, one explicit form per backend. Each build argv must carry exactly
+  its form.
 - The guest name stays under the helper's `effigy-531-image-` shape. The helper
   enforces it, so the plan binds the name instead of changing the helper.
 - Route echo is `printf %s` with a hostile constant that has no redirect, pipe or
@@ -267,5 +276,5 @@ Gates:
 ## Validation
 
 Controls run through `effigy test:qualification:workspace-private:macos`
-(`macos_preparation_boundaries.py`: 94 cases, injected only, no native action). Docs run
+(`macos_preparation_boundaries.py`: 104 cases, injected only, no native action). Docs run
 through `effigy qa:docs`.
