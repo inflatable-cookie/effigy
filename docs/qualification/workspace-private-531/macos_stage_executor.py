@@ -907,6 +907,7 @@ def default_transport(**kw):
     return primitive.run_stage(kw['root'], kw['argv'], kw['timeout'], kw['output_cap'], kw['input_hashes'],
                                guest=kw['guest'], cwd=kw['cwd'], environment=kw['environment'],
                                resource_monitor=kw['monitor'], deadline=kw['deadline'],
+                               cleanup_deadline=kw['cleanup_deadline'],
                                stdin_path=kw['stdin_path'], stdin_sha256=kw['stdin_sha256'],
                                identity_probe=kw['identity_probe'])
 
@@ -1306,7 +1307,7 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
             result = transport(root=step_root, argv=resolved['argv'], timeout=step_deadline - now_mono,
                                output_cap=step['output_cap_bytes'], input_hashes=dict(inputs),
                                guest=resolved['guest'], cwd=step_root, environment=resolved['env'],
-                               monitor=monitor, deadline=step_deadline, step=step['id'],
+                               monitor=monitor, deadline=step_deadline, cleanup_deadline=deadline, step=step['id'],
                                stdin_path=stdin_path, stdin_sha256=stdin_sha,
                                identity_probe=start_identity)
             step_closure_value = step_closure(result, resolved['guest'])

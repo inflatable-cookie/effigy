@@ -120,7 +120,11 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
                 os.killpg(child.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-        while sel.get_map() or child.poll() is None:
+        while True:
+            # Do not reap the group leader while a stream remains open: the group
+            # may still need to be stopped, and a reaped PID could be reused.
+            if not sel.get_map() and child.poll() is not None:
+                break
             if resource_monitor is not None and reason is None:
                 try:
                     result['resource_usage'] = resource_monitor.check()
