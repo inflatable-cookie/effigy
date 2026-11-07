@@ -260,63 +260,85 @@ Gates:
 - `c4-nerdctl-build-help` reads flag metadata before the build. The build only starts if
   `--iidfile`, `--platform` and `--provenance` are in the guest's own help text.
 
-- The manifest gains pre-effect steps only: `d1-engine-info` and `d1-volume-absent` before the D1
-  create, and `d2-engine-info` and `d3-engine-info` before their effects. Each is an existing
-  docker argv form, and each stage budget still holds its step total under the reserve.
+- Manifest changes: pre-effect steps `d1-engine-info` and `d1-volume-absent` before the D1 create, and
+  `d2-engine-info` and `d3-engine-info` before their effects. D1's three volume argv take the
+  per-activation `{owned_volume_name}` in place of the fixed name. D4 gains `d4-post-ps` and
+  `d4-post-volume` after its removals, and its stage budget grows from 300 to 360 seconds so the
+  step total (280) still fits under the reserve. Each stage's step total stays under its budget.
 
 ## Executor (source only)
 
 `macos_stage_executor.py` is the reviewed runner. Nothing in this revision starts Colima or
 Desktop, and no stage is armed.
 
-- `plan` is pure. Each stage resolves to its rendered argv, pinned env, timeouts, caps,
-  runtime preconditions and admission reasons. Derived and unpinned slots render as explicit
-  placeholders (`<image_id>`, `<probe_source>`), so no plan shows a value that execution would use.
+- `plan` is pure. Each stage resolves to its rendered argv, pinned env, timeouts, caps, runtime
+  preconditions, runtime-derived sources and admission reasons. A derived or unpinned slot
+  renders as an explicit placeholder (`<image_id>`, `<probe_source>`) and the stage's
+  `runtime_derived` block names where execution takes it from.
 - Bindings are checked against the reviewed paths for the token, the pinned socket URL and the
-  pinned check program. Derived slots (image ID, owned names) and unpinned sources (probe, stage,
-  verify, guest specs) are refused when a caller supplies them.
-- `execute` needs an owner GO that names the SHA-256 of the activation request. The GO binds the
-  executor's own input set: program files, the manifest, `runtime.Dockerfile` and both tool
-  binaries. A changed binary refuses at the first launch, because the primitive re-hashes inputs.
-- Activation is claimed durably under `macos-stage-claims/<activation_id>.claim`, exclusively,
-  before any effect. A replay in any evidence root refuses.
-- The preceding receipt is verified to its origin. Each receipt must be an executor receipt,
-  closed, on the same token, control root and endpoint. Every step's receipt and stream files
-  must still match their recorded hashes, and the chain is checked back to D0 or C0. A 688 C0
-  record uses `status` and is not an executor receipt, so it cannot start C1.
-- One absolute stage deadline, capped by the GO window, holds the reserve for receipts. Each step
-  gets the remainder. Storage caps use one stage-wide aggregate of real allocated bytes
-  (`st_blocks`) under the owned control root, excluding the VM's `_lima` store; each exec window
-  gets only the rest of the cap.
-- Each exec step goes through `preparation_stage.run_stage`. The intent directory is fsynced
-  before spawn. The original stdout, stderr, waited exit, PID and PGID, and start identity
-  (`ps` start time) are retained with a before/post observation. A failed post observation stops
-  the stage.
-- A guest step that exits 0 closes only the client. Its remote closure is unknown, so the stage
-  ends as `guest_unknown` and never closes. Deadlines, caps and monitor refusals are unknown
-  and retained.
+  pinned check program. A caller who supplies a derived slot (image ID, owned names) or an
+  unpinned source refuses.
+- Activation: the request must be a read-only file, owned by this user, one link, in
+  `macos-stage-activations/` under the scratch root. The caller names its exact SHA-256. The file
+  is the owner's placement act. This is not a cryptographic signature: a same-user writer can place
+  a file, so the owner's placement is the authority. A copy of the exact bytes goes into the stage
+  root.
+- Inputs: the GO binds the executor's own set: program files, the manifest, `runtime.Dockerfile`
+  and both tool binaries. Every launch re-hashes the set (`run_stage`), so a changed binary refuses
+  before spawn.
+- Claims: `macos-stage-claims/<activation_id>.claim` is created exclusively under a provisioned
+  directory before any effect. A missing claims directory refuses; the executor never creates one
+  under the scratch root. A replay in any evidence root refuses.
+- Descriptors and identity: the evidence, claims and activation directories are opened by
+  descriptor, and creation uses `dir_fd`. The control root, each owned directory, and the stage
+  root are pinned by device and inode and rechecked before every step. A replaced, moved or
+  linked directory refuses the next step.
+- One monitor for the whole stage: a single `Monitor` over real allocated bytes (`st_blocks`) on
+  the owned control root, excluding the VM's `_lima` store. It is checked before and after every
+  helper and every exec window, so growth between windows counts against the same cap. Empty
+  directories allocate zero blocks on this filesystem, so owned-directory creation does not count.
+  A failed post observation is retained in the receipt and stops the stage. Helpers are in-process
+  calls: they are checked against the stage deadline after they return, not interrupted while running.
+- One absolute stage deadline, capped by the activation window, holds the reserve for receipts.
+  The process start identity probe is bounded by the step's remaining allowance.
+- Verification of a preceding receipt is complete, not just self-consistent. The receipt must be
+  an executor receipt in its own stage directory, closed, on the same token, control root and
+  endpoint. It must name the expected preceding stage (`PRIOR`), and it must reach a genuine
+  origin: D0 or C0 consume none. Its claim must exist and name its activation. Its activation copy
+  must match the GO. Its step inventory must equal the manifest's, in order. Each step's receipt and
+  both streams must match their recorded hashes. Each creation receipt is re-derived from the
+  original outputs of the stage that produced it: the volume from its create and inspect streams,
+  the image from its readback, the container from its cidfile record. A 688 C0 record uses `status`
+  and carries no executor claim, so it cannot start C1.
+- Guest: a guest exit 0 closes only the client. Its remote closure is unknown, so the stage ends as
+  `guest_unknown` and never closes.
 - Admitted: C5, C6, D0, D1, D3, D4. Unadmitted, with reasons: C0 (no reviewed handler for
-  `verify_tool_sha` or `verify_tranche_summary`); C1, C4 and D2 (the download cap is payload
-  bytes, wire traffic is not counted, and the manifest records no pinned image size, so a bounded
-  prefetch cannot verify size; D2 also has no `host_stage_dockerfile` handler); C2 (three guest
-  effects in one stage with unknown closure between them, and an unpinned probe source); C3 (its
-  guest spec must come from the C2 probe, which is unadmitted, and its stage source is unpinned).
-  Admission is static. Reachability also needs closed predecessors, so in practice only D0 and
-  D1 can close in this source; every other path is stopped by one of the reasons above.
+  `verify_tool_sha` or `verify_tranche_summary`); C1, C4 and D2 (the download cap is payload bytes,
+  wire traffic is not counted, and the manifest records no pinned image size; D2 also has no
+  `host_stage_dockerfile` handler); C2 (three guest effects in one stage with unknown closure between
+  them, and an unpinned probe source); C3 (its guest spec must come from the C2 probe, and its stage
+  source is unpinned). Admission is static. Reachability also needs closed predecessors. In practice
+  only D0 and D1 can close in this source, and C5 and C6 are reachable only through the test seam.
+- D1 volume: the name is per activation, `effigy-4f6a-qual-<token>-<activation_id>`, bound at run
+  time. The absence check names that volume, the create names it, and the same-occurrence object
+  inspect confirms the name and label. An existing volume refuses before create. `docker volume
+  create` is idempotent, so exclusivity rests on the name being derived from an activation no other
+  occurrence can hold, not on the create call itself. The residual is a same-activation actor.
+- D0 to D3 re-observe `docker info` before their effects. D1 to D4 require the chain engine to be
+  `ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd`, the engine 690 observed. An empty or default template
+  refuses.
+- D4 selects removal from the cumulative chain receipts and this stage's own live observations on
+  the re-observed engine. It removes only receipted creations whose engine, ID, name and label still
+  match. A label alone is unauthorized. After removal, `d4-post-ps` and `d4-post-volume` must show
+  no selected object and must equal the foreign list taken before removal, or the stage refuses.
+  Images have no list observation in the manifest, so their foreign list is not compared. Removal
+  binds to the immutable ID or to the activation-unique name. Between selection and each removal
+  there is no fresh per-object observation.
 - Colima children resolve `docker` to `/usr/local/bin/docker` through an owned `bin/docker` link at
   the front of `PATH`. Every Colima step re-checks the link's exact target. Desktop runs with its
   pinned socket, `DOCKER_HOST`, an owned `DOCKER_CONFIG`, no `HOME` and no `DOCKER_CONTEXT`.
 - C1 onward binds the three 688 C0 roots (token `7deaf1b3`) by device, inode, owner and mode.
-  Entry counts are checked only at C1. D0 to D3 re-observe `docker info` before their effects.
-  D1 to D4 require the chain engine to be `ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd`, the engine 690
-  observed. An empty or default `docker info` template refuses.
-- D1 creation authority is a pre-create absence observation (`volume inspect` must fail with
-  "no such volume"), then the create result, then a same-occurrence object inspect with the exact
-  name and label. A token alone never forms the receipt. An existing volume refuses before create.
-- D4 selects removal from the cumulative chain receipts and this stage's own live observations on
-  the re-observed engine. It removes only receipted creations whose engine, ID, name and label
-  still match. A label alone is unauthorized. A step with nothing selected is recorded as skipped.
-  The post-cleanup foreign-list comparison in the manifest's D4 closure is not implemented.
+  Entry counts are checked only at C1.
 - C3's recipe is the reviewed `runtime.Dockerfile` (474 bytes, `d290f70f`), staged exclusively with
   a readback. It is not the guest spec JSON.
 
@@ -338,5 +360,5 @@ Controls run through `effigy test:qualification:workspace-private:macos`
 (`macos_preparation_boundaries.py`: 104 cases, injected only, no native action). Docs run
 through `effigy qa:docs`.
 The executor runs through `effigy test:qualification:workspace-private:macos-executor`
-(`macos_stage_executor_tests.py`: 49 cases, injected local children, no native action).
+(`macos_stage_executor_tests.py`: 60 cases, injected local children, no native action; the genuine D0→D1→D2→D3→D4 chain runs with D2's admission lifted and its missing helper replaced for the test only).
 Its shared primitive change is covered by `effigy test:qualification:linux-preparation`.

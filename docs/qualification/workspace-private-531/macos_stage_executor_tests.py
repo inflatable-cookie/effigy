@@ -1,12 +1,14 @@
-"""Controls for macos_stage_executor. Local child processes and injected transports only: no
-Colima, Docker Desktop, guest, network, install or credential read. Every fixture is a fresh
-mkdtemp directory under $TMPDIR; STASH, the claims directory and the tool binaries are redirected
-into it, so no real evidence root or claim is touched.
+"""Controls for macos_stage_executor. Local child processes and injected transports only: no Colima,
+Docker Desktop, guest, network, install or credential read. Every fixture is a fresh mkdtemp directory
+under $TMPDIR. STASH, the activation and claims directories, the tool binaries and the desktop socket
+are redirected into it, so no real evidence root or claim is touched.
 
-Chain construction: D0, D1, D3 and D4 (and C6 over a fabricated C5) run through execute_stage with
-real child processes. D2 and C4 are unadmitted in source, so their receipts are built with the
-executor's own writer (write_stage_receipt over real evidence files) to exercise the downstream
-chain checks. Each fabricated receipt is labelled as such where it is used.
+The genuine chain runs through execute_stage with real child processes: D0, then D1, D2, D3 and D4.
+D2 is unadmitted in source (download), so this suite lifts that one admission for the test only and
+patches its one missing helper (host_stage_dockerfile) with a test handler that copies the reviewed
+recipe. C5 and C6 cannot be reached through a genuine chain (C4 cannot close under the guest rule), so
+their dispatch tests replace only verify_chain, and say so. The chain verifier has its own negative
+tests on genuine receipts.
 
 Run: python3 -I -B macos_stage_executor_tests.py
 """
@@ -36,24 +38,29 @@ import preparation_stage as primitive  # noqa: E402
 
 TOKEN = '0a1b2c3d'
 ENGINE = ex.RECORDED_ENGINE_ID
-NAME = 'effigy-4f6a-qual-' + TOKEN
 IMAGE = 'sha256:' + 'ab' * 32
 CID = 'a' * 64
 NOW = datetime.datetime.now(datetime.timezone.utc)
 MIB = 1024 * 1024
 CHILD_ENV = {'PATH': '/usr/bin:/bin:/usr/sbin:/sbin'}
 ENGINE_JSON = '{"ID":"%s"}' % ENGINE
-EMPTY_ENGINE_TEMPLATE = '{"ID":"","Containers":0}'
 FACTS = '{"uid":0,"python":"3.11.9","ssl":"OpenSSL 3.0","loader":"GNU C Library 2.35","coreutils":"coreutils 9"}'
-IMAGE_OBJECT = json.dumps({'Id': IMAGE, 'RepoTags': ['effigy-4f6a-desktop-runtime:' + TOKEN],
-                           'Config': {'Labels': {'effigy.qual': TOKEN}}})
-INSPECT_OBJECT = json.dumps({'Name': NAME, 'Labels': {'effigy.qual': TOKEN}})
-CREATE_CHILD = ("import os,sys\nassert os.path.exists('intent.json')\n"
-                "sys.stdout.write(%r)\n" % NAME)
+IMAGE_NAME = 'effigy-4f6a-desktop-runtime:' + TOKEN
+READBACK = json.dumps({'Id': IMAGE, 'Os': 'linux', 'Architecture': 'arm64', 'RepoTags': [IMAGE_NAME]})
+IMAGE_OBJECT = json.dumps({'Id': IMAGE, 'RepoTags': [IMAGE_NAME], 'Config': {'Labels': {'effigy.qual': TOKEN}}})
 
 
 def emit(text, exit_code=0, err=''):
     return 'import sys\nsys.stdout.write(%r)\nsys.stderr.write(%r)\nsys.exit(%d)\n' % (text, err, exit_code)
+
+
+def create_child(volume):
+    return ("import os,sys\nassert os.path.exists('intent.json')\n"
+            "sys.stdout.write(%r)\n" % volume)
+
+
+def inspect_object(volume):
+    return json.dumps({'Name': volume, 'Labels': {'effigy.qual': TOKEN}})
 
 
 def sha_bytes(data):
@@ -74,20 +81,23 @@ class Fixture(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         os.chmod(self.tmp, 0o700)
         self.evidence = self.tmp + '/evidence'
-        os.mkdir(self.evidence, 0o700)
+        self.activations = self.tmp + '/activations'
+        for d in (self.evidence, self.activations, self.tmp + '/claims'):
+            os.mkdir(d, 0o700)
         self.colima = self.tmp + '/colima'
         self.docker = self.tmp + '/docker'
         Path(self.colima).write_bytes(b'fake colima\n')
         Path(self.docker).write_bytes(b'fake docker\n')
+        self.sock = socket.socket(socket.AF_UNIX)
+        self.sock.bind(self.tmp + '/d.sock')
+        self.addCleanup(self.sock.close)
         for target, name, value in ((prep, 'STASH', self.tmp), (ex, 'CLAIMS_DIR', self.tmp + '/claims'),
+                                    (ex, 'ACTIVATIONS_DIR', self.activations),
                                     (ex, 'TOOL_PATHS', (self.colima, self.docker)),
                                     (ex, 'DESKTOP_SOCKET', self.tmp + '/d.sock')):
             patcher = mock.patch.object(target, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
-        self.sock = socket.socket(socket.AF_UNIX)
-        self.sock.bind(self.tmp + '/d.sock')
-        self.addCleanup(self.sock.close)
         self.bindings = self.make_bindings(TOKEN)
         os.mkdir(self.bindings['control'], 0o700)
 
@@ -98,68 +108,47 @@ class Fixture(unittest.TestCase):
                  route_echo=prep.ROUTE_ECHO)
         return b
 
-    def ref(self, stage, root):
-        path = root + '/stage-receipt.json'
-        return dict(stage=stage, path=path, sha256=ex.sha_file(path))
+    def ref(self, stage, activation_id):
+        root = self.stage_dir(stage, activation_id)
+        return dict(stage=stage, path=root + '/stage-receipt.json', sha256=ex.sha_file(root + '/stage-receipt.json'))
 
-    def activation(self, stage, prior_ref, activation_id, *, expires=10, issued=-1, decision=prep.DECISION,
-                   candidate=None, bindings=None):
+    def stage_dir(self, stage, activation_id):
+        return f'{self.evidence}/{stage}-{activation_id}'
+
+    def activation(self, stage, prior_ref, activation_id, *, bindings=None, expires=10, issued=-1,
+                   decision=prep.DECISION, candidate=None, inputs=None):
         manifest = ex.load_manifest()
         go = dict(decision=decision, decision_version=prep.DECISION_VERSION, stage=stage,
                   manifest_sha256=ex.sha_file(ex.MANIFEST_PATH), source_sha256=ex.sha_file(ex.__file__),
-                  inputs_sha256=ex.canon_sha(ex.derive_inputs()), activation_id=activation_id,
+                  inputs_sha256=ex.canon_sha(inputs if inputs is not None else ex.derive_inputs()),
+                  activation_id=activation_id,
                   issued_utc=(NOW + datetime.timedelta(minutes=issued)).isoformat(),
                   expires_utc=(NOW + datetime.timedelta(minutes=expires)).isoformat(),
                   scope='single-activation', candidate_head=candidate or manifest['source_head'],
                   bindings_sha256=ex.canon_sha(bindings or self.bindings))
         if prior_ref is not None:
             go['prior_receipt'] = prior_ref
-        data = json.dumps(go, sort_keys=True).encode()
-        path = self.tmp + '/%s.go.json' % activation_id
+        data = (json.dumps(go, sort_keys=True) + '\n').encode()
+        path = f'{self.activations}/{activation_id}.json'
+        if os.path.exists(path):
+            os.chmod(path, 0o600)
+            os.remove(path)
         Path(path).write_bytes(data)
+        os.chmod(path, 0o400)  # the owner's placement: read-only in the activation directory
         return path, sha_bytes(data)
 
-    def run_stage(self, stage, transport, *, prior_ref=None, activation_id='act-run-0001', clock=time.monotonic,
-                  monitor_factory=None, bindings=None):
+    def execute(self, stage, transport, *, prior_ref=None, activation_id, clock=time.monotonic,
+            monitor_factory=None, bindings=None, inputs=None):
         bindings = bindings or self.bindings
-        path, sha = self.activation(stage, prior_ref, activation_id, bindings=bindings)
+        path, sha = self.activation(stage, prior_ref, activation_id, bindings=bindings, inputs=inputs)
         return ex.execute_stage(stage, bindings, activation_path=path, activation_sha256=sha,
                                 evidence_root=self.evidence, transport=transport, clock=clock,
                                 utc_now=NOW, monitor_factory=monitor_factory)
 
-    def stage_dir(self, stage, activation_id):
-        return f'{self.evidence}/{stage}-{activation_id}'
-
-    def fabricate(self, stage, prior_ref, receipts, engine, activation_id):
-        """Test-only predecessor: a closed receipt written by the executor's own writer over real
-        evidence files. Used only where the source-unadmitted stage cannot run."""
-        root = self.stage_dir(stage, activation_id)
-        os.mkdir(root, 0o700)
-        for rec in receipts:
-            if 'evidence' not in rec:
-                path = f"{root}/{rec['kind']}.json"
-                primitive.record(path, dict(kind=rec['kind'], id=rec['id']))
-                rec['evidence'] = dict(path=path, sha256=ex.sha_file(path))
-            rec.setdefault('stage', stage)
-        body = dict(stage=stage, closure='closed', error=None, activation_id=activation_id, go_sha256='0' * 64,
-                    chain_key=ex.chain_key(self.bindings), token=TOKEN, control=self.bindings['control'],
-                    desktop_host=prep.DESKTOP_HOST, inputs={}, prior=prior_ref, engine_id=engine,
-                    receipts=receipts, steps=[], guest_closure='not-applicable', stage_root=root)
-        ex.write_stage_receipt(root, body)
-        return self.ref(stage, root)
-
-    def d0(self):
-        if not hasattr(self, '_d0'):
-            self._d0 = self.run_stage('D0', self.routed({'d0-info': emit(ENGINE_JSON), 'd0-ps': emit(''),
-                                                         'd0-network': emit(''), 'd0-volume': emit('')}, []),
-                                      activation_id='act-d0-0001')
-            self._d0_ref = self.ref('D0', self.stage_dir('D0', 'act-d0-0001'))
-        return self._d0_ref
-
     def routed(self, routes, calls, *, before=None, after=None, clock=None):
-        """Transport: each step runs a local child chosen by its step id. A step without a route fails
-        the test, so a later step that must not run cannot slip through. A fake stage clock is mapped
-        onto the real monotonic clock the primitive reads."""
+        """Transport: each step runs a local child chosen by its step id. A step without a route fails the
+        test, so a later step that must not run cannot slip through. A fake stage clock maps onto the real
+        monotonic clock the primitive reads. A route may be a callable taking the transport kwargs."""
         def transport(**kw):
             calls.append((kw['step'], list(kw['argv']), dict(kw['environment'])))
             if before is not None:
@@ -175,29 +164,72 @@ class Fixture(unittest.TestCase):
                                          kw['output_cap'], kw['input_hashes'], guest=kw['guest'], cwd=kw['cwd'],
                                          environment=CHILD_ENV, resource_monitor=kw['monitor'],
                                          deadline=deadline, stdin_path=kw['stdin_path'],
-                                         stdin_sha256=kw['stdin_sha256'], identity_probe=ex.start_identity)
+                                         stdin_sha256=kw['stdin_sha256'], identity_probe=kw['identity_probe'])
             if after is not None:
                 after(kw)
             return result
         return transport
 
-    def assert_dispatch(self, stage, calls):
-        """Every exec call ran the argv and env that the manifest resolved for its step."""
-        plan = {s['id']: s for s in ex.resolve_stage(stage, self.bindings)['steps'] if s['kind'] == 'exec'}
+    def assert_dispatch(self, stage, calls, run_bindings):
+        """Every exec call ran the argv and env that the manifest resolves for its step, under the runtime
+        bindings. Cleanup steps are checked against their selected identity, not the plan placeholder."""
+        steps = {s['id']: s for s in ex.stage_of(ex.load_manifest(), stage)['steps'] if s['kind'] == 'exec'}
         for step, argv, env in calls:
-            if step in plan:
-                self.assertEqual(argv, plan[step]['argv'], step)
-                self.assertEqual(env, plan[step]['env'], step)
+            if step in steps:
+                expected = ex.resolve_step(steps[step], run_bindings)
+                self.assertEqual(argv, expected['argv'], step)
+                self.assertEqual(env, expected['env'], step)
 
-    def recorded_roots(self):
-        roots = {}
-        for name, rel in (('control', ''), ('colima_home', '/c'), ('qualification_root', '/s')):
-            path = self.bindings['control'] + rel
-            if rel and not os.path.lexists(path):
-                os.mkdir(path, 0o700)
-            info = os.lstat(path)
-            roots[name] = dict(path=path, device=info.st_dev, inode=info.st_ino, entries=len(os.listdir(path)))
-        return roots
+    def d0(self):
+        if not hasattr(self, '_d0'):
+            routes = {'d0-info': emit(ENGINE_JSON), 'd0-ps': emit(''), 'd0-network': emit(''), 'd0-volume': emit('')}
+            calls = []
+            self._d0_receipt = self.execute('D0', self.routed(routes, calls), activation_id='act-d0-0001')
+            self._d0_calls = calls
+            self._d0 = self.ref('D0', 'act-d0-0001')
+        return self._d0
+
+    def d1(self, prior, activation_id='act-d1-0001', calls=None):
+        volume = ex.volume_name(TOKEN, activation_id)
+        routes = {'d1-engine-info': emit(ENGINE_JSON), 'd1-volume-absent': emit('', 1, 'Error: no such volume'),
+                  'd1-volume-create': create_child(volume), 'd1-volume-inspect': emit(inspect_object(volume))}
+        calls = [] if calls is None else calls
+        receipt = self.execute('D1', self.routed(routes, calls), prior_ref=prior, activation_id=activation_id)
+        return receipt, self.ref('D1', activation_id)
+
+    @contextlib.contextmanager
+    def lift_d2(self):
+        """D2 with its download admission lifted for this test only, and its one missing helper replaced by a
+        test handler that copies the reviewed recipe into the build context."""
+        def host_stage(ctx, step):
+            target = step['inputs'][1]
+            data = ex.RECIPE_PATH.read_bytes()
+            Path(target).write_bytes(data)
+            return {'sha256': sha_bytes(data)}
+        admission = dict(ex.UNADMITTED)
+        admission.pop('D2')
+        with mock.patch.dict(ex.UNADMITTED, admission, clear=True), \
+                mock.patch.dict(ex.HANDLERS, {'host_stage_dockerfile': host_stage}):
+            yield
+
+    def d2(self, prior, activation_id='act-d2-0001', calls=None):
+        def write_iid(kw):
+            Path(kw['argv'][kw['argv'].index('--iidfile') + 1]).write_text(IMAGE + '\n')
+            return emit('')
+        routes = {'d2-engine-info': emit(ENGINE_JSON), 'd2-docker-build': write_iid, 'd2-readback': emit(READBACK)}
+        calls = [] if calls is None else calls
+        with self.lift_d2():
+            receipt = self.execute('D2', self.routed(routes, calls), prior_ref=prior, activation_id=activation_id)
+        return receipt, self.ref('D2', activation_id)
+
+    def d3(self, prior, activation_id='act-d3-0001', calls=None):
+        def write_cid(kw):
+            Path(kw['argv'][kw['argv'].index('--cidfile') + 1]).write_text(CID + '\n')
+            return emit(FACTS)
+        routes = {'d3-engine-info': emit(ENGINE_JSON), 'd3-disposable-check': write_cid}
+        calls = [] if calls is None else calls
+        receipt = self.execute('D3', self.routed(routes, calls), prior_ref=prior, activation_id=activation_id)
+        return receipt, self.ref('D3', activation_id)
 
 
 class PlanTests(Fixture):
@@ -208,15 +240,14 @@ class PlanTests(Fixture):
         self.assertEqual(len(plans), 12)
 
     def test_admission_is_exact_and_each_refusal_is_named(self):
-        admitted = {s['id'] for s in ex.load_manifest()['stages']
-                    if not ex.resolve_stage(s['id'], self.bindings)['admission']}
+        admitted = {s['id'] for s in ex.load_manifest()['stages'] if not ex.resolve_stage(s['id'], self.bindings)['admission']}
         self.assertEqual(admitted, {'C5', 'C6', 'D0', 'D1', 'D3', 'D4'})
         reasons = {sid: ex.resolve_stage(sid, self.bindings)['admission'] for sid in ('C0', 'C1', 'C2', 'C3', 'C4', 'D2')}
         self.assertTrue(any('verify_tool_sha has no reviewed handler' in r for r in reasons['C0']))
         self.assertTrue(any('wire traffic is not counted' in r for r in reasons['C1']))
         self.assertTrue(any('multi-effect guest stage' in r for r in reasons['C2']))
         self.assertTrue(any('C2 probe receipt' in r for r in reasons['C3']))
-        self.assertTrue(any('host_stage_dockerfile' in r for r in reasons['D2']))
+        self.assertTrue(any('host_stage_dockerfile' in r for r in reasons['D2']) or any('download' in r for r in reasons['D2']))
 
     def test_every_helper_has_a_handler_or_an_explicit_reason(self):
         unimplemented = {'verify_tool_sha', 'verify_tranche_summary', 'host_stage_dockerfile', 'verify_frozen_artifacts'}
@@ -248,120 +279,207 @@ class PlanTests(Fixture):
             self.assertIn(flag, argv)
         self.assertEqual(argv[argv.index('--mount') + 1], 'none')
 
-    def test_bindings_must_be_the_reviewed_ones(self):
-        cases = [
-            ('desktop_host', 'unix:///tmp/other.sock'),
-            ('check_source', 'print(1)'),
-            ('control', self.tmp + '/elsewhere'),
-            ('route_echo', 'printf'),
-            ('not_a_slot', 'x'),
-            ('image_id', IMAGE),          # derived: never caller-supplied
-            ('probe_source', 'print(1)'),  # unpinned: never caller-supplied
-        ]
+    def test_plan_shows_runtime_derived_values_as_placeholders_with_their_source(self):
+        plan = ex.resolve_stage('D4', self.bindings)
+        self.assertIn('<image_id>', [a for s in plan['steps'] if s['id'] == 'd4-observe-image' for a in s['argv']])
+        self.assertIn('image_id', plan['runtime_derived'])
+        self.assertIn('d4-post-volume', [s['id'] for s in plan['steps']])
+
+    def test_bindings_must_be_the_reviewed_ones_and_derived_or_unpinned_refuse(self):
+        cases = [('desktop_host', 'unix:///tmp/other.sock'), ('check_source', 'print(1)'),
+                 ('control', self.tmp + '/elsewhere'), ('route_echo', 'printf'), ('not_a_slot', 'x'),
+                 ('image_id', IMAGE), ('owned_volume_name', 'x'), ('probe_source', 'print(1)')]
         for key, value in cases:
             with self.subTest(key=key), self.assertRaises(ex.Refusal):
-                bad = dict(self.bindings, **{key: value})
-                ex.resolve_stage('D0', bad)
-
-    def test_unknown_stage_refuses(self):
-        with self.assertRaises(ex.Refusal):
-            ex.resolve_stage('Z9', self.bindings)
+                ex.resolve_stage('D0', dict(self.bindings, **{key: value}))
 
     def test_plan_cli_writes_only_stdout(self):
-        bindings_path = self.tmp + '/bindings.json'
-        Path(bindings_path).write_text(json.dumps(self.bindings))
+        path = self.tmp + '/bindings.json'
+        Path(path).write_text(json.dumps(self.bindings))
         before = tree(self.tmp)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            self.assertEqual(ex.main(['x', 'plan', bindings_path]), 0)
+            self.assertEqual(ex.main(['x', 'plan', path]), 0)
         self.assertEqual(before, tree(self.tmp))
         self.assertEqual(len(json.loads(out.getvalue())), 12)
 
 
-class HelperTests(Fixture):
-    def test_ensure_colima_path_binds_docker_to_the_pinned_binary(self):
-        ex.ensure_colima_path(self.bindings['control'])
-        self.assertEqual(os.readlink(self.bindings['control'] + '/bin/docker'), prep.DOCKER)
-
-    def test_ensure_colima_path_refuses_a_foreign_docker_link(self):
-        os.mkdir(self.bindings['control'] + '/bin', 0o700)
-        os.mkdir(self.bindings['control'] + '/h', 0o700)
-        os.symlink('/opt/homebrew/bin/docker', self.bindings['control'] + '/bin/docker')
+class ActivationAndClaimTests(Fixture):
+    def test_activation_outside_the_owner_directory_refuses_before_effects(self):
+        calls = []
+        path = self.tmp + '/loose.json'
+        Path(path).write_text('{}')
         with self.assertRaises(ex.Refusal):
-            ex.ensure_colima_path(self.bindings['control'])
+            ex.execute_stage('D0', self.bindings, activation_path=path, activation_sha256=ex.sha_file(path),
+                             evidence_root=self.evidence, transport=self.routed({}, calls), utc_now=NOW)
+        self.assertEqual(calls, [])
+        self.assertEqual(os.listdir(self.evidence), [])
 
-    def test_recorded_roots_refuse_other_tokens_absent_or_changed_roots(self):
+    def test_writable_activation_refuses(self):
+        path, sha = self.activation('D0', None, 'act-writable-1')
+        os.chmod(path, 0o600)
         with self.assertRaises(ex.Refusal):
-            ex.check_recorded_roots(self.bindings, first_use=True)
-        with mock.patch.object(ex, 'RECORDED_TOKEN', TOKEN), mock.patch.object(
-                ex, 'RECORDED_ROOTS', {k: dict(v, path=self.tmp + '/absent-' + k) for k, v in ex.RECORDED_ROOTS.items()}):
-            with self.assertRaises(ex.Refusal):
-                ex.check_recorded_roots(self.bindings, first_use=True)
-        roots = self.recorded_roots()
-        for rec in roots.values():
-            rec['inode'] += 1
-        with mock.patch.object(ex, 'RECORDED_TOKEN', TOKEN), mock.patch.object(ex, 'RECORDED_ROOTS', roots):
-            with self.assertRaises(ex.Refusal):
-                ex.check_recorded_roots(self.bindings, first_use=False)
+            ex.execute_stage('D0', self.bindings, activation_path=path, activation_sha256=sha,
+                             evidence_root=self.evidence, transport=self.routed({}, []), utc_now=NOW)
 
-    def test_desktop_endpoint_must_be_the_pinned_socket(self):
+    def test_wrong_hash_wrong_decision_expired_or_candidate_refuse_with_no_call(self):
+        calls = []
+        cases = [dict(decision='00000000-0000-0000-0000-000000000000'), dict(expires=-5, issued=-10),
+                 dict(candidate='0' * 40)]
+        for n, kw in enumerate(cases):
+            with self.subTest(kw), self.assertRaises(ex.Refusal):
+                path, sha = self.activation('D0', None, f'act-bad-{n:02d}', **kw)
+                ex.execute_stage('D0', self.bindings, activation_path=path, activation_sha256=sha,
+                                 evidence_root=self.evidence, transport=self.routed({}, calls), utc_now=NOW)
         with self.assertRaises(ex.Refusal):
-            ex.h_verify_desktop_endpoint({'desktop_socket': self.tmp + '/other.sock'}, {})
+            path, _ = self.activation('D0', None, 'act-wrongsha-1')
+            ex.execute_stage('D0', self.bindings, activation_path=path, activation_sha256='0' * 64,
+                             evidence_root=self.evidence, transport=self.routed({}, calls), utc_now=NOW)
+        self.assertEqual(calls, [])
+        self.assertEqual(os.listdir(self.evidence), [])
 
-    def test_private_dir_refuses_symlink_and_non_private_roots(self):
-        link = self.tmp + '/link'
-        os.symlink(self.evidence, link)
+    def test_claims_directory_replaced_by_a_link_refuses_and_writes_nothing_elsewhere(self):
+        other = self.tmp + '/other-claims'
+        os.mkdir(other, 0o700)
+        os.rmdir(self.tmp + '/claims')
+        os.symlink(other, self.tmp + '/claims')
         with self.assertRaises(ex.Refusal):
-            ex.private_dir(link)
-        os.chmod(self.evidence, 0o755)
-        try:
-            with self.assertRaises(ex.Refusal):
-                ex.private_dir(self.evidence)
-        finally:
-            os.chmod(self.evidence, 0o700)
+            self.execute('D0', self.routed({}, []), activation_id='act-link-0001')
+        self.assertEqual(os.listdir(other), [])
 
-    def test_compare_route_echo_is_byte_exact_before_any_payload(self):
-        route = self.tmp + '/route.out'
-        ctx = {'bindings': self.bindings, 'outputs': {'c2-route-echo': {'stdout': route}}}
+    def test_activation_claim_refuses_replay_in_another_evidence_root(self):
+        d0 = self.d0()
+        self.d1(d0, 'act-once-0001')
+        path = f'{self.activations}/act-once-0001.json'
+        sha = ex.sha_file(path)
+        other = self.tmp + '/evidence-two'
+        os.mkdir(other, 0o700)
+        calls = []
+        with self.assertRaises(ex.Refusal):
+            ex.execute_stage('D1', self.bindings, activation_path=path, activation_sha256=sha,
+                             evidence_root=other, transport=self.routed({}, calls), utc_now=NOW)
+        self.assertEqual(calls, [])
+        self.assertEqual(os.listdir(other), [])
+
+    def test_stage_root_collision_refuses_before_any_call(self):
+        d0 = self.d0()
+        calls = []
+        os.mkdir(self.stage_dir('D1', 'act-collide-0001'), 0o700)
+        with self.assertRaises(ex.Refusal):
+            self.execute('D1', self.routed({}, calls), prior_ref=d0, activation_id='act-collide-0001')
+        self.assertEqual(calls, [])
+
+
+class HelperDispatchTests(Fixture):
+    """Each helper handler, with controlled inputs: the accepted and the refused shapes."""
+
+    def ctx(self, **extra):
+        root = tempfile.mkdtemp(prefix='step-', dir=self.tmp)
+        os.chmod(root, 0o700)
+        base = dict(bindings=self.bindings, outputs={}, step_root=root)
+        base.update(extra)
+        return base
+
+    def write(self, name, text):
+        path = self.tmp + '/' + name
+        Path(path).write_text(text)
+        return path
+
+    def test_route_echo_is_byte_exact_before_any_payload(self):
+        route = self.write('route.out', 'wrong')
+        ctx = self.ctx(outputs={'c2-route-echo': {'stdout': route}})
         step = {'inputs': ['c2-route-echo.stdout']}
-        Path(route).write_bytes(b'wrong')
         with self.assertRaises(ex.Refusal):
             ex.h_compare_route_echo(ctx, step)
         Path(route).write_bytes(prep.ROUTE_ECHO.encode())
         self.assertEqual(ex.h_compare_route_echo(ctx, step), {'matched': True})
 
-    def test_c3_stdin_is_the_reviewed_recipe_bytes_with_readback(self):
-        step_root = self.tmp + '/c3'
-        os.mkdir(step_root, 0o700)
-        ctx = {'bindings': self.bindings, 'outputs': {}, 'step_root': step_root}
-        out = ex.h_render_guest_spec(ctx, {'id': 'c3-render-guest-spec', 'inputs': []})
-        self.assertEqual(out['sha256'], ex.RECIPE_SHA256)
-        self.assertEqual(out['bytes'], ex.RECIPE_BYTES)
+    def test_recipe_stdin_is_the_reviewed_bytes_with_readback(self):
+        out = ex.h_render_guest_spec(self.ctx(), {'id': 'c3-render-guest-spec', 'inputs': []})
+        self.assertEqual((out['sha256'], out['bytes']), (ex.RECIPE_SHA256, ex.RECIPE_BYTES))
         self.assertEqual(Path(out['path']).read_bytes(), ex.RECIPE_PATH.read_bytes())
 
-    def test_volume_creation_needs_the_create_result_and_an_object_inspect(self):
-        self.assertEqual(ex.volume_creation_receipt(TOKEN, NAME + '\n', INSPECT_OBJECT, ENGINE)['id'], NAME)
-        with self.assertRaises(ex.Refusal):  # token alone: no create output
-            ex.volume_creation_receipt(TOKEN, '', INSPECT_OBJECT, ENGINE)
-        with self.assertRaises(ex.Refusal):  # docker's --format object is not a one-element array
-            ex.volume_creation_receipt(TOKEN, NAME, '[' + INSPECT_OBJECT + ']', ENGINE)
-        with self.assertRaises(ex.Refusal):  # inspect names another volume
-            ex.volume_creation_receipt(TOKEN, NAME, json.dumps({'Name': 'other', 'Labels': {'effigy.qual': TOKEN}}), ENGINE)
-        with self.assertRaises(ex.Refusal):  # label mismatch
-            ex.volume_creation_receipt(TOKEN, NAME, json.dumps({'Name': NAME, 'Labels': {}}), ENGINE)
+    def test_render_guest_spec_for_c4_needs_one_json_object(self):
+        ctx = self.ctx(bindings=dict(self.bindings, guest_verify_spec='[1]'))
+        with self.assertRaises(ex.Refusal):
+            ex.h_render_guest_spec(ctx, {'id': 'c4-render-verify-spec', 'inputs': []})
 
-    def test_empty_desktop_engine_template_is_not_observed_identity(self):
+    def test_read_iidfile_accepts_one_sha256_and_refuses_a_tag(self):
+        good = self.write('iid', IMAGE + '\n')
+        self.assertEqual(ex.h_read_iidfile(self.ctx(), {'inputs': [good]}), {'image_id': IMAGE})
+        bad = self.write('iid2', 'effigy-4f6a-desktop-runtime:latest')
         with self.assertRaises(ValueError):
-            prep.engine_id_from_info(EMPTY_ENGINE_TEMPLATE)
-        self.assertEqual(prep.engine_id_from_info(ENGINE_JSON), ENGINE)
+            ex.h_read_iidfile(self.ctx(), {'inputs': [bad]})
+
+    def test_check_image_identity_refuses_a_different_id_and_wrong_platform(self):
+        out = self.write('inspect.out', READBACK)
+        ctx = self.ctx(bindings=dict(self.bindings, image_id=IMAGE), outputs={'x': {'stdout': out}})
+        self.assertEqual(ex.h_check_image_identity(ctx, {'inputs': ['x.stdout']}), {'verified': IMAGE})
+        wrong = self.write('wrong.out', json.dumps({'Id': 'sha256:' + '0' * 64, 'Os': 'linux', 'Architecture': 'arm64'}))
+        with self.assertRaises(ValueError):
+            ex.h_check_image_identity(self.ctx(bindings=dict(self.bindings, image_id=IMAGE), outputs={'x': {'stdout': wrong}}),
+                                      {'inputs': ['x.stdout']})
+
+    def test_check_build_help_needs_the_three_flags(self):
+        ok = self.write('help.out', '--iidfile --platform --provenance')
+        self.assertEqual(ex.h_check_build_help(self.ctx(outputs={'h': {'stdout': ok}}), {'inputs': ['h.stdout']}),
+                         {'verified': True})
+        short = self.write('help2.out', '--iidfile')
+        with self.assertRaises(ValueError):
+            ex.h_check_build_help(self.ctx(outputs={'h': {'stdout': short}}), {'inputs': ['h.stdout']})
+
+    def test_check_runtime_facts_needs_exit_zero_and_root_facts(self):
+        out = self.write('facts.out', FACTS)
+        ctx = self.ctx(outputs={'c': {'stdout': out, 'exit': 0}})
+        self.assertIn('facts', ex.h_check_runtime_facts(ctx, {'inputs': ['c.stdout', 'c.exit']}))
+        ctx_bad = self.ctx(outputs={'c': {'stdout': out, 'exit': 1}})
+        with self.assertRaises(ValueError):
+            ex.h_check_runtime_facts(ctx_bad, {'inputs': ['c.stdout', 'c.exit']})
+
+    def test_read_cidfile_needs_one_container_id(self):
+        cid = self.write('cid', CID + '\n')
+        self.assertEqual(ex.h_read_cidfile(self.ctx(), {'inputs': [cid]}), {'container_id': CID})
+        bad = self.write('cid2', 'nope')
+        with self.assertRaises(ValueError):
+            ex.h_read_cidfile(self.ctx(), {'inputs': [bad]})
+
+    def test_make_owned_dir_refuses_paths_outside_the_control_root(self):
+        ctx = self.ctx()
+        with self.assertRaises(ex.Refusal):
+            ex.h_make_owned_dir(dict(ctx, pins=ex.Pins()), {'inputs': [self.tmp + '/elsewhere']})
+
+    def test_claim_intent_refuses_a_changed_claim(self):
+        claim = self.tmp + '/claims/x.claim'
+        primitive.record(claim, {'activation_id': 'x', 'go_sha256': 'y'})
+        ctx = self.ctx(claim={'path': claim, 'sha256': '0' * 64})
+        with self.assertRaises(ex.Refusal):
+            ex.h_claim_intent(ctx, {})
+
+    def test_desktop_endpoint_must_be_the_pinned_socket(self):
+        with self.assertRaises(ex.Refusal):
+            ex.h_verify_desktop_endpoint({'desktop_socket': self.tmp + '/other.sock'}, {})
+        self.assertEqual(ex.h_verify_desktop_endpoint({}, {})['socket'], self.tmp + '/d.sock')
+
+    def test_engine_template_and_volume_authority(self):
+        with self.assertRaises(ValueError):
+            prep.engine_id_from_info('{"ID":"","Containers":0}')
+        name = ex.volume_name(TOKEN, 'act-x-0001')
+        self.assertEqual(ex.volume_creation_receipt(name, TOKEN, name + '\n', inspect_object(name), ENGINE)['id'], name)
+        with self.assertRaises(ex.Refusal):  # a token alone: no create output
+            ex.volume_creation_receipt(name, TOKEN, '', inspect_object(name), ENGINE)
+        with self.assertRaises(ex.Refusal):  # docker's --format object, not a one-element array
+            ex.volume_creation_receipt(name, TOKEN, name, '[' + inspect_object(name) + ']', ENGINE)
+        with self.assertRaises(ex.Refusal):  # an inspect of another volume
+            ex.volume_creation_receipt(name, TOKEN, name, inspect_object('other'), ENGINE)
 
     def test_cleanup_selects_only_receipted_creations(self):
-        receipts = [ex.volume_creation_receipt(TOKEN, NAME, INSPECT_OBJECT, ENGINE)]
-        live = [dict(kind='volume', id=NAME, names=[NAME], labels=['effigy.qual=' + TOKEN], engine_id=ENGINE),
+        name = ex.volume_name(TOKEN, 'act-x-0001')
+        receipts = [ex.volume_creation_receipt(name, TOKEN, name, inspect_object(name), ENGINE)]
+        live = [dict(kind='volume', id=name, names=[name], labels=['effigy.qual=' + TOKEN], engine_id=ENGINE),
                 dict(kind='volume', id='effigy-4f6a-qual-other', names=['effigy-4f6a-qual-other'],
                      labels=['effigy.qual=' + TOKEN], engine_id=ENGINE)]
         out = prep.select_cleanup_targets(ENGINE, receipts, live)
-        self.assertEqual(out['volumes'], [NAME])
+        self.assertEqual(out['volumes'], [name])
         self.assertEqual(out['unauthorized'], ['effigy-4f6a-qual-other'])
 
     def test_guest_exit_is_unknown_closure_not_closed(self):
@@ -369,173 +487,116 @@ class HelperTests(Fixture):
         self.assertEqual(ex.step_closure({'disposition': 'exited', 'waited_exit': 0}, guest=False), 'closed')
         self.assertEqual(ex.step_closure({'disposition': 'timeout', 'waited_exit': -9}, guest=False), 'unknown_retained')
 
-
-class GoAndCollisionTests(Fixture):
-    def test_refusals_before_any_claim_root_or_call(self):
-        calls = []
-        d0 = self.d0()
-        path, _ = self.activation('D1', d0, 'act-wrong-sha')
+    def test_prefetch_of_a_pinned_artifact_is_exact_and_exclusive(self):
+        data = b'pinned-artifact-bytes'
+        digest = hashlib.sha512(data).hexdigest()
+        dest = self.tmp + '/artifact.raw'
+        import io as _io
+        self.assertEqual(ex.prefetch_pinned_artifact(_io.BytesIO(data), dest, len(data), digest),
+                         {'bytes': len(data), 'sha512': digest})
+        self.assertEqual(stat.S_IMODE(os.lstat(dest).st_mode), 0o600)
+        with self.assertRaises(FileExistsError):
+            ex.prefetch_pinned_artifact(_io.BytesIO(data), dest, len(data), digest)
         with self.assertRaises(ex.Refusal):
-            ex.execute_stage('D1', self.bindings, activation_path=path, activation_sha256='0' * 64,
-                             evidence_root=self.evidence, transport=self.routed({}, calls), utc_now=NOW)
-        self.assertEqual(calls, [])
-        self.assertEqual(os.listdir(self.tmp + '/claims'), ['act-d0-0001.claim'])  # only D0's claim exists
-        self.assertEqual(os.listdir(self.evidence), ['D0-act-d0-0001'])
-
-    def test_wrong_decision_expired_or_candidate_refuses(self):
-        d0 = self.d0()
-        calls = []
-        for n, kw in enumerate([dict(decision='00000000-0000-0000-0000-000000000000'),
-                                dict(expires=-5, issued=-10), dict(candidate='0' * 40)]):
-            with self.subTest(kw), self.assertRaises(ex.Refusal):
-                path, sha = self.activation('D1', d0, 'act-bad-%02d' % n, **kw)
-                ex.execute_stage('D1', self.bindings, activation_path=path, activation_sha256=sha,
-                                 evidence_root=self.evidence, transport=self.routed({}, calls), utc_now=NOW)
-        self.assertEqual(calls, [])
-
-    def test_missing_unclosed_or_foreign_engine_prior_refuses(self):
-        calls = []
-        unclosed = dict(self.d0_body_with(closure='stopped'))
-        foreign = dict(self.d0_body_with(engine_id='other'))
-        for n, prior in enumerate((None, unclosed, foreign)):
-            with self.subTest(prior=n), self.assertRaises(ex.Refusal):
-                self.run_stage('D1', self.routed({}, calls), prior_ref=prior, activation_id='act-prior-%02d' % n)
-        self.assertEqual(calls, [])
-
-    def d0_body_with(self, **changes):
-        """A D0 predecessor written with the executor's writer, changed only in the named fields."""
-        self._alt = getattr(self, '_alt', 0) + 1
-        activation_id = 'act-alt-%02d' % self._alt
-        root = self.stage_dir('D0', activation_id)
-        os.mkdir(root, 0o700)
-        body = dict(stage='D0', closure='closed', error=None, activation_id=activation_id, go_sha256='0' * 64,
-                    chain_key=ex.chain_key(self.bindings), token=TOKEN, control=self.bindings['control'],
-                    desktop_host=prep.DESKTOP_HOST, inputs={}, prior=None, engine_id=ENGINE, receipts=[],
-                    steps=[], guest_closure='not-applicable', stage_root=root)
-        body.update(changes)
-        ex.write_stage_receipt(root, body)
-        return self.ref('D0', root)
-
-    def test_activation_claim_refuses_replay_in_any_evidence_root(self):
-        d0 = self.d0()
-        calls = []
-        routes = {'d1-engine-info': emit(ENGINE_JSON), 'd1-volume-absent': emit('', 1, 'Error: no such volume'),
-                  'd1-volume-create': CREATE_CHILD, 'd1-volume-inspect': emit(INSPECT_OBJECT)}
-        self.run_stage('D1', self.routed(routes, calls), prior_ref=d0, activation_id='act-once-0001')
-        self.assertEqual(len(calls), 4)
-        other_root = self.tmp + '/evidence-two'
-        os.mkdir(other_root, 0o700)
+            ex.prefetch_pinned_artifact(_io.BytesIO(data + b'x'), self.tmp + '/big.raw', len(data), digest)
         with self.assertRaises(ex.Refusal):
-            path, sha = self.activation('D1', d0, 'act-once-0001')
-            ex.execute_stage('D1', self.bindings, activation_path=path, activation_sha256=sha,
-                             evidence_root=other_root, transport=self.routed({}, calls), utc_now=NOW)
-        self.assertEqual(len(calls), 4)  # the replay made no call
-        self.assertEqual(os.listdir(other_root), [])
+            ex.prefetch_pinned_artifact(_io.BytesIO(data), self.tmp + '/bad.raw', len(data), '0' * 128)
 
-    def test_stage_root_collision_refuses_before_any_call(self):
-        d0 = self.d0()
-        calls = []
-        os.mkdir(self.stage_dir('D1', 'act-collide-0001'), 0o700)
-        with self.assertRaises(ex.Refusal):
-            self.run_stage('D1', self.routed({}, calls), prior_ref=d0, activation_id='act-collide-0001')
-        self.assertEqual(calls, [])
-
-    def test_tool_drift_between_activation_and_launch_refuses_before_spawn(self):
-        d0 = self.d0()
-        calls = []
-
-        def replace_docker(kw):
-            Path(self.docker).write_bytes(b'a different docker binary\n')
-        routes = {'d1-engine-info': emit(ENGINE_JSON)}
-        with self.assertRaises(ex.Refusal) as caught:
-            self.run_stage('D1', self.routed(routes, calls, before=replace_docker), prior_ref=d0,
-                           activation_id='act-drift-0001')
-        self.assertIn('drift', str(caught.exception))
-        self.assertEqual([c[0] for c in calls], ['d1-engine-info'])
-        self.assertFalse(os.path.exists(self.stage_dir('D1', 'act-drift-0001') + '/d1-engine-info/process.json'))
-        self.assertEqual(json.loads(Path(self.stage_dir('D1', 'act-drift-0001') + '/stage-receipt.json').read_text())['closure'], 'refused')
+    def test_allocated_bytes_sees_real_blocks_and_skips_the_vm_store(self):
+        root = self.bindings['control']
+        os.makedirs(root + '/_lima', exist_ok=True)
+        before = ex.allocated_bytes(root)
+        Path(root + '/blob').write_bytes(b'x' * 65536)
+        grown = ex.allocated_bytes(root)
+        self.assertGreater(grown, before)
+        Path(root + '/_lima/disk').write_bytes(b'y' * 65536)
+        self.assertEqual(ex.allocated_bytes(root), grown)
+        sampler = ex.AllocatedBytes([root], min_interval=0)
+        first = sampler()['storage']
+        os.remove(root + '/blob')
+        self.assertGreaterEqual(sampler()['storage'], first)
 
 
-class StageRunTests(Fixture):
+class GenuineChainTests(Fixture):
+    """Every link is a real execution: D0, D1, D2 (admission lifted), D3, D4. Nothing is fabricated."""
+
     def test_d0_observes_the_engine_and_closes(self):
-        calls = []
-        receipt = self.run_stage('D0', self.routed({'d0-info': emit(ENGINE_JSON), 'd0-ps': emit(''),
-                                                    'd0-network': emit(''), 'd0-volume': emit('')}, calls),
-                                 activation_id='act-d0-0001')
-        self.assertEqual(receipt['closure'], 'closed')
-        self.assertEqual(receipt['engine_id'], ENGINE)
-        self.assertEqual([c[0] for c in calls], ['d0-info', 'd0-ps', 'd0-network', 'd0-volume'])
-        self.assert_dispatch('D0', calls)
+        d0 = self.d0()
+        receipt = self._d0_receipt
+        self.assertEqual((receipt['closure'], receipt['engine_id']), ('closed', ENGINE))
+        self.assertEqual([c[0] for c in self._d0_calls], ['d0-info', 'd0-ps', 'd0-network', 'd0-volume'])
+        self.assert_dispatch('D0', self._d0_calls, self.bindings)
         self.assertTrue(os.path.isdir(self.bindings['control'] + '/d/docker-config'))
+        self.assertEqual(d0['stage'], 'D0')
 
     def test_d0_empty_engine_template_refuses_and_stops(self):
         calls = []
         with self.assertRaises(ex.Refusal):
-            self.run_stage('D0', self.routed({'d0-info': emit(EMPTY_ENGINE_TEMPLATE)}, calls), activation_id='act-d0-empty')
+            self.execute('D0', self.routed({'d0-info': emit('{"ID":"","Containers":0}')}, calls), activation_id='act-d0-empty')
         self.assertEqual([c[0] for c in calls], ['d0-info'])
         self.assertEqual(json.loads(Path(self.stage_dir('D0', 'act-d0-empty') + '/stage-receipt.json').read_text())['closure'], 'refused')
 
-    def test_d1_creates_only_after_re_observing_the_engine_and_absence(self):
+    def test_d1_creates_only_after_observing_the_engine_and_the_activation_name_absent(self):
         d0 = self.d0()
         calls = []
-        routes = {'d1-engine-info': emit(ENGINE_JSON), 'd1-volume-absent': emit('', 1, 'Error: no such volume'),
-                  'd1-volume-create': CREATE_CHILD, 'd1-volume-inspect': emit(INSPECT_OBJECT)}
-        receipt = self.run_stage('D1', self.routed(routes, calls), prior_ref=d0, activation_id='act-d1-0001')
+        receipt, ref = self.d1(d0, calls=calls)
         self.assertEqual(receipt['closure'], 'closed')
         self.assertEqual([c[0] for c in calls], ['d1-engine-info', 'd1-volume-absent', 'd1-volume-create', 'd1-volume-inspect'])
-        self.assert_dispatch('D1', calls)
-        [volume] = receipt['receipts']
-        self.assertEqual((volume['kind'], volume['id'], volume['engine_id']), ('volume', NAME, ENGINE))
-        self.assertEqual(Path(self.stage_dir('D1', 'act-d1-0001') + '/d1-volume-create/stdout').read_text(), NAME)
-        self.assertTrue(os.path.exists(self.stage_dir('D1', 'act-d1-0001') + '/d1-volume-create/intent.json'))
+        volume = ex.volume_name(TOKEN, 'act-d1-0001')
+        self.assertEqual(volume, 'effigy-4f6a-qual-' + TOKEN + '-act-d1-0001')
+        self.assertIn(volume, calls[1][1])  # the absence check names this activation's volume
+        [rec] = receipt['receipts']
+        self.assertEqual((rec['kind'], rec['id'], rec['engine_id']), ('volume', volume, ENGINE))
 
-    def test_d1_existing_volume_refuses_before_create(self):
+    def test_d1_existing_activation_volume_refuses_before_create(self):
         d0 = self.d0()
         calls = []
+        routes = {'d1-engine-info': emit(ENGINE_JSON), 'd1-volume-absent': emit(inspect_object('x'))}
         with self.assertRaises(ex.Refusal):
-            self.run_stage('D1', self.routed({'d1-engine-info': emit(ENGINE_JSON), 'd1-volume-absent': emit(INSPECT_OBJECT)},
-                                             calls), prior_ref=d0, activation_id='act-d1-exists')
+            self.execute('D1', self.routed(routes, calls), prior_ref=d0, activation_id='act-d1-exists')
         self.assertEqual([c[0] for c in calls], ['d1-engine-info', 'd1-volume-absent'])
 
-    def test_d1_engine_change_refuses_before_absence_observation(self):
+    def test_d1_engine_change_refuses_before_absence(self):
         d0 = self.d0()
         calls = []
         with self.assertRaises(ex.Refusal):
-            self.run_stage('D1', self.routed({'d1-engine-info': emit('{"ID":"other-engine"}')}, calls),
-                           prior_ref=d0, activation_id='act-d1-engine')
+            self.execute('D1', self.routed({'d1-engine-info': emit('{"ID":"other"}')}, calls), prior_ref=d0,
+                     activation_id='act-d1-engine')
         self.assertEqual([c[0] for c in calls], ['d1-engine-info'])
 
-    def test_d1_array_inspect_is_refused_as_not_docker_object_form(self):
+    def test_d1_array_inspect_is_refused(self):
         d0 = self.d0()
-        calls = []
+        volume = ex.volume_name(TOKEN, 'act-d1-array')
         routes = {'d1-engine-info': emit(ENGINE_JSON), 'd1-volume-absent': emit('', 1, 'no such volume'),
-                  'd1-volume-create': CREATE_CHILD, 'd1-volume-inspect': emit('[' + INSPECT_OBJECT + ']')}
+                  'd1-volume-create': create_child(volume), 'd1-volume-inspect': emit('[' + inspect_object(volume) + ']')}
+        calls = []
         with self.assertRaises(ex.Refusal):
-            self.run_stage('D1', self.routed(routes, calls), prior_ref=d0, activation_id='act-d1-array')
+            self.execute('D1', self.routed(routes, calls), prior_ref=d0, activation_id='act-d1-array')
         self.assertEqual(calls[-1][0], 'd1-volume-inspect')
 
     def test_early_failure_keeps_custody_and_stops_later_steps(self):
         d0 = self.d0()
-        calls = []
+        volume = ex.volume_name(TOKEN, 'act-fail-0001')
         routes = {'d1-engine-info': emit(ENGINE_JSON), 'd1-volume-absent': emit('', 1, 'no such volume'),
                   'd1-volume-create': emit('', 3, 'denied')}
-        receipt = self.run_stage('D1', self.routed(routes, calls), prior_ref=d0, activation_id='act-fail-0001')
+        calls = []
+        receipt = self.execute('D1', self.routed(routes, calls), prior_ref=d0, activation_id='act-fail-0001')
         self.assertEqual(receipt['closure'], 'stopped')
         self.assertEqual(calls[-1][0], 'd1-volume-create')
         step = receipt['steps'][-1]
         self.assertEqual((step['disposition'], step['waited_exit'], step['closure']), ('failed', 3, 'failed_closed'))
         self.assertEqual(Path(self.stage_dir('D1', 'act-fail-0001') + '/d1-volume-create/stderr').read_text(), 'denied')
+        self.assertNotIn(volume, [c[1][-1] for c in calls if c[0] == 'd1-volume-inspect'])
 
     def test_deadline_is_unknown_retained_and_stops(self):
         d0 = self.d0()
-        calls = []
         routes = {'d1-engine-info': emit(ENGINE_JSON), 'd1-volume-absent': 'import time; time.sleep(30)'}
+        calls = []
         transport = self.routed(routes, calls)
 
         def short(**kw):
-            kw = dict(kw, timeout=min(kw['timeout'], 1.0))
-            return transport(**kw)
-        receipt = self.run_stage('D1', short, prior_ref=d0, activation_id='act-unknown-0001')
+            return transport(**dict(kw, timeout=min(kw['timeout'], 1.0)))
+        receipt = self.execute('D1', short, prior_ref=d0, activation_id='act-unknown-0001')
         self.assertEqual(receipt['closure'], 'stopped')
         self.assertEqual([c[0] for c in calls], ['d1-engine-info', 'd1-volume-absent'])
         self.assertEqual(receipt['steps'][-1]['closure'], 'unknown_retained')
@@ -553,153 +614,252 @@ class StageRunTests(Fixture):
         calls = []
         routes = {'d0-info': emit(ENGINE_JSON), 'd0-ps': emit(''), 'd0-network': emit(''), 'd0-volume': emit('')}
         transport = self.routed(routes, calls, before=record, after=spend, clock=lambda: clock[0])
-        receipt = self.run_stage('D0', transport, activation_id='act-clock-0001', clock=lambda: clock[0])
+        receipt = self.execute('D0', transport, activation_id='act-clock-0001', clock=lambda: clock[0])
         self.assertEqual(receipt['closure'], 'closed')
         first, second = seen[0], seen[1]
-        self.assertEqual(first[1], 60)                        # the step cap
-        self.assertAlmostEqual(second[1], 10.0)               # 360 budget - 60 reserve - 290 spent
-        self.assertEqual(second[2], 1000.0 + 360.0 - 60.0)    # one absolute deadline for the stage
+        self.assertEqual(first[1], 60)
+        self.assertAlmostEqual(second[1], 10.0)
+        self.assertEqual(second[2], 1000.0 + 360.0 - 60.0)
 
     def test_budget_spent_before_launch_refuses_without_a_call(self):
         calls = []
         ticks = iter([1000.0] + [1400.0] * 100)
         with self.assertRaises(ex.Refusal):
-            self.run_stage('D0', self.routed({}, calls), activation_id='act-late-0001', clock=lambda: next(ticks))
+            self.execute('D0', self.routed({}, calls), activation_id='act-late-0001', clock=lambda: next(ticks))
         self.assertEqual(calls, [])
 
     def test_live_counter_interrupts_inside_the_wait(self):
-        samples = iter([0, 0] + [2 * MIB] * 10000)
+        d0 = self.d0()
+        # initial sample, the loop's pre-step check, the launch check; growth past the 1 MiB cap comes next
+        samples = iter([0, 0, 0] + [2 * MIB] * 10000)
         calls = []
-        routes = {'d0-info': 'import time; time.sleep(30)', 'd0-ps': emit('')}
+        routes = {'d1-engine-info': 'import time; time.sleep(30)', 'd1-volume-absent': emit('')}
 
         def factory(limits, roots):
             return resources.Monitor(limits, lambda: {'storage': next(samples)})
-        receipt = self.run_stage('D0', self.routed(routes, calls), activation_id='act-counter-0001',
-                                 monitor_factory=factory)
+        receipt = self.execute('D1', self.routed(routes, calls), prior_ref=d0, activation_id='act-counter-0001',
+                           monitor_factory=factory)
         self.assertEqual(receipt['closure'], 'stopped')
-        self.assertEqual([c[0] for c in calls], ['d0-info'])
+        self.assertEqual([c[0] for c in calls], ['d1-engine-info'])
         self.assertEqual(receipt['steps'][-1]['disposition'], 'resource-refusal')
+
+    def test_growth_between_windows_counts_against_the_same_stage_cap(self):
+        """A file that appears in the owned control root after the first window is growth the next window
+        must see: the one stage-wide monitor refuses before the second step launches."""
+        calls = []
+
+        def grow(kw):
+            Path(self.bindings['control'] + '/grown').write_bytes(b'x' * 65536)
+        routes = {'d0-info': emit(ENGINE_JSON), 'd0-ps': emit('')}
+
+        def uncached(limits, roots):
+            return resources.Monitor(limits, ex.AllocatedBytes(roots, min_interval=0))
+        receipt = self.execute('D0', self.routed(routes, calls, after=grow), activation_id='act-growth-0001',
+                               monitor_factory=uncached)
+        self.assertEqual(receipt['closure'], 'stopped')  # the post observation refused; retained, not advanced
+        self.assertEqual([c[0] for c in calls], ['d0-info'])
+        obs = json.loads(Path(self.stage_dir('D0', 'act-growth-0001') + '/d0-info/observations.json').read_text())
+        self.assertIn('cap', obs['post_refusal'])  # the monitor's cap refusal, retained
+
+    def test_control_root_replaced_between_steps_refuses_before_the_next_step(self):
+        calls = []
+        control = self.bindings['control']
+
+        def replace(kw):
+            os.rename(control, control + '.moved')
+            os.mkdir(control, 0o700)
+        routes = {'d0-info': emit(ENGINE_JSON), 'd0-ps': emit('')}
+        with self.assertRaises(ex.Refusal):
+            self.execute('D0', self.routed(routes, calls, after=replace), activation_id='act-replace-0001')
+        self.assertEqual([c[0] for c in calls], ['d0-info'])
 
     def test_observations_identity_and_separate_streams_are_retained(self):
         calls = []
-        self.run_stage('D0', self.routed({'d0-info': emit(ENGINE_JSON, err='engine-stderr'), 'd0-ps': emit('ps-out'),
-                                          'd0-network': emit(''), 'd0-volume': emit('')}, calls),
-                       activation_id='act-obs-0001')
+        self.execute('D0', self.routed({'d0-info': emit(ENGINE_JSON, err='engine-stderr'), 'd0-ps': emit('ps-out'),
+                                    'd0-network': emit(''), 'd0-volume': emit('')}, calls), activation_id='act-obs-0001')
         d0 = self.stage_dir('D0', 'act-obs-0001') + '/d0-info'
         obs = json.loads(Path(d0 + '/observations.json').read_text())
-        self.assertEqual(set(obs), {'before', 'post', 'maxima', 'aggregate_after_step', 'post_refusal'})
+        self.assertEqual(set(obs), {'before', 'post', 'maxima', 'post_refusal'})
         self.assertIsNone(obs['post_refusal'])
-        proc = json.loads(Path(d0 + '/process.json').read_text())
-        self.assertIn('ps_lstart', proc)
+        self.assertIn('ps_lstart', json.loads(Path(d0 + '/process.json').read_text()))
         self.assertEqual(Path(d0 + '/stdout').read_text(), ENGINE_JSON)
         self.assertEqual(Path(d0 + '/stderr').read_text(), 'engine-stderr')
-        self.assertEqual(Path(self.stage_dir('D0', 'act-obs-0001') + '/d0-ps/stdout').read_text(), 'ps-out')
 
-    def test_d3_and_d4_cleanup_removes_only_receipted_creations(self):
+    def test_intent_is_visible_before_the_child_starts(self):
         d0 = self.d0()
-        d1 = self.run_stage('D1', self.routed({'d1-engine-info': emit(ENGINE_JSON),
-                                               'd1-volume-absent': emit('', 1, 'no such volume'),
-                                               'd1-volume-create': CREATE_CHILD,
-                                               'd1-volume-inspect': emit(INSPECT_OBJECT)}, []),
-                            prior_ref=d0, activation_id='act-d1-chain')
-        d1_ref = self.ref('D1', self.stage_dir('D1', 'act-d1-chain'))
-        d2_ref = self.fabricate('D2', d1_ref, [dict(d1['receipts'][0]),
-                                               dict(kind='image', id=IMAGE, name='effigy-4f6a-desktop-runtime:' + TOKEN,
-                                                    label='effigy.qual=' + TOKEN, engine_id=ENGINE)],
-                                ENGINE, 'act-d2-fab')
-        cid_file = {}
-
-        def write_cid(kw):
-            path = kw['argv'][kw['argv'].index('--cidfile') + 1]
-            Path(path).write_text(CID + '\n')
-            cid_file['path'] = path
-            return emit(FACTS)
         calls = []
-        routes = {'d3-engine-info': emit(ENGINE_JSON), 'd3-disposable-check': write_cid}
-        d3 = self.run_stage('D3', self.routed(routes, calls), prior_ref=d2_ref, activation_id='act-d3-0001')
+        routes = {'d1-engine-info': "import os,sys\nsys.stdout.write('%s' if os.path.exists('intent.json') else 'missing')\n" % ENGINE_JSON,
+                  'd1-volume-absent': emit('', 1, 'no such volume'), 'd1-volume-create': emit(''),
+                  'd1-volume-inspect': emit('')}
+        with self.assertRaises(ex.Refusal):  # the empty create output refuses at its post-check
+            self.execute('D1', self.routed(routes, calls), prior_ref=d0, activation_id='act-intent-0001')
+        self.assertEqual(Path(self.stage_dir('D1', 'act-intent-0001') + '/d1-engine-info/stdout').read_text(), ENGINE_JSON)
+
+    def test_d2_d3_d4_chain_runs_end_to_end_with_no_fabricated_receipt(self):
+        d0 = self.d0()
+        _, d1_ref = self.d1(d0)
+        d2_calls, d3_calls, d4_calls = [], [], []
+        d2, d2_ref = self.d2(d1_ref, calls=d2_calls)
+        self.assertEqual(d2['closure'], 'closed')
+        self.assertEqual([r['kind'] for r in d2['receipts']], ['volume', 'image'])
+        self.assert_dispatch('D2', d2_calls, dict(self.bindings, image_id=IMAGE, owned_volume_name=ex.volume_name(TOKEN, 'act-d1-0001')))
+        d3, d3_ref = self.d3(d2_ref, calls=d3_calls)
         self.assertEqual(d3['closure'], 'closed')
         self.assertEqual({r['kind'] for r in d3['receipts']}, {'volume', 'image', 'container'})
-        d3_ref = self.ref('D3', self.stage_dir('D3', 'act-d3-0001'))
-        ps_rows = '\n'.join([
-            json.dumps({'ID': CID, 'Names': 'effigy-4f6a-dcheck-' + TOKEN, 'Labels': 'effigy.qual=' + TOKEN}),
-            json.dumps({'ID': 'b' * 64, 'Names': 'effigy-4f6a-dcheck-other', 'Labels': 'effigy.qual=' + TOKEN}),
-            json.dumps({'ID': 'c' * 64, 'Names': 'web', 'Labels': ''})])
-        vol_rows = '\n'.join([json.dumps({'Name': NAME, 'Labels': 'effigy.qual=' + TOKEN}),
+        self.assert_dispatch('D3', d3_calls, dict(self.bindings, image_id=IMAGE))
+        volume = ex.volume_name(TOKEN, 'act-d1-0001')
+        ps_rows = '\n'.join([json.dumps({'ID': CID, 'Names': 'effigy-4f6a-dcheck-' + TOKEN, 'Labels': 'effigy.qual=' + TOKEN}),
+                             json.dumps({'ID': 'b' * 64, 'Names': 'effigy-4f6a-dcheck-other', 'Labels': 'effigy.qual=' + TOKEN}),
+                             json.dumps({'ID': 'c' * 64, 'Names': 'web', 'Labels': ''})])
+        foreign_ps = '\n'.join([json.dumps({'ID': 'b' * 64, 'Names': 'effigy-4f6a-dcheck-other', 'Labels': 'effigy.qual=' + TOKEN}),
+                                json.dumps({'ID': 'c' * 64, 'Names': 'web', 'Labels': ''})])
+        vol_rows = '\n'.join([json.dumps({'Name': volume, 'Labels': 'effigy.qual=' + TOKEN}),
                               json.dumps({'Name': 'foreign-vol', 'Labels': ''})])
-        calls = []
-        routes = {'d4-observe-info': emit(ENGINE_JSON), 'd4-observe-ps': emit(ps_rows),
-                  'd4-observe-volume': emit(vol_rows), 'd4-observe-image': emit(IMAGE_OBJECT),
-                  'd4-owned-rm': emit(''), 'd4-owned-volume-rm': emit(''), 'd4-owned-image-rm': emit('')}
-        d4 = self.run_stage('D4', self.routed(routes, calls), prior_ref=d3_ref, activation_id='act-d4-0001')
+        routes = {'d4-observe-info': emit(ENGINE_JSON), 'd4-observe-ps': emit(ps_rows), 'd4-observe-volume': emit(vol_rows),
+                  'd4-observe-image': emit(IMAGE_OBJECT), 'd4-owned-rm': emit(''), 'd4-owned-volume-rm': emit(''),
+                  'd4-owned-image-rm': emit(''), 'd4-post-ps': emit(foreign_ps), 'd4-post-volume': emit(json.dumps({'Name': 'foreign-vol', 'Labels': ''}))}
+        d4 = self.execute('D4', self.routed(routes, d4_calls), prior_ref=d3_ref, activation_id='act-d4-0001')
         self.assertEqual(d4['closure'], 'closed')
-        steps = {c[0]: c[1] for c in calls}
+        steps = {c[0]: c[1] for c in d4_calls}
         self.assertEqual(steps['d4-owned-rm'][-1], CID)
-        self.assertEqual(steps['d4-owned-volume-rm'][-1], NAME)
+        self.assertEqual(steps['d4-owned-volume-rm'][-1], volume)
         self.assertEqual(steps['d4-owned-image-rm'][-1], IMAGE)
-        self.assertFalse(any('b' * 64 in arg or 'foreign-vol' in arg or 'c' * 64 in arg for _, a, _ in calls for arg in a))
+        seen = [a for _, argv, _ in d4_calls for a in argv]
+        self.assertFalse(any(x in a for a in seen for x in ('b' * 64, 'c' * 64, 'foreign-vol')))
+
+    def test_d4_refuses_when_a_foreign_container_appears_during_cleanup(self):
+        d0 = self.d0()
+        _, d1_ref = self.d1(d0)
+        _, d2_ref = self.d2(d1_ref)
+        _, d3_ref = self.d3(d2_ref)
+        volume = ex.volume_name(TOKEN, 'act-d1-0001')
+        ps_rows = json.dumps({'ID': CID, 'Names': 'effigy-4f6a-dcheck-' + TOKEN, 'Labels': 'effigy.qual=' + TOKEN})
+        routes = {'d4-observe-info': emit(ENGINE_JSON), 'd4-observe-ps': emit(ps_rows),
+                  'd4-observe-volume': emit(json.dumps({'Name': volume, 'Labels': 'effigy.qual=' + TOKEN})),
+                  'd4-observe-image': emit(IMAGE_OBJECT), 'd4-owned-rm': emit(''), 'd4-owned-volume-rm': emit(''),
+                  'd4-owned-image-rm': emit(''),
+                  'd4-post-ps': emit(json.dumps({'ID': 'd' * 64, 'Names': 'new', 'Labels': ''})),
+                  'd4-post-volume': emit('')}
+        with self.assertRaises(ex.Refusal) as caught:
+            self.execute('D4', self.routed(routes, []), prior_ref=d3_ref, activation_id='act-d4-foreign')
+        self.assertIn('foreign list changed', str(caught.exception))
 
     def test_d4_skips_removal_when_nothing_is_receipted(self):
         d0 = self.d0()
-        d1 = self.run_stage('D1', self.routed({'d1-engine-info': emit(ENGINE_JSON),
-                                               'd1-volume-absent': emit('', 1, 'no such volume'),
-                                               'd1-volume-create': CREATE_CHILD,
-                                               'd1-volume-inspect': emit(INSPECT_OBJECT)}, []),
-                            prior_ref=d0, activation_id='act-d1-skip')
-        d1_ref = self.ref('D1', self.stage_dir('D1', 'act-d1-skip'))
-        d2_ref = self.fabricate('D2', d1_ref, [dict(d1['receipts'][0]),
-                                               dict(kind='image', id=IMAGE, name='effigy-4f6a-desktop-runtime:' + TOKEN,
-                                                    label='effigy.qual=' + TOKEN, engine_id=ENGINE)],
-                                ENGINE, 'act-d2-skip')
-        d3_ref = self.fabricate('D3', d2_ref, [dict(d1['receipts'][0]),
-                                               dict(kind='image', id=IMAGE, name='effigy-4f6a-desktop-runtime:' + TOKEN,
-                                                    label='effigy.qual=' + TOKEN, engine_id=ENGINE)],
-                                ENGINE, 'act-d3-skip')
-        calls = []
+        _, d1_ref = self.d1(d0)
+        _, d2_ref = self.d2(d1_ref)
+        _, d3_ref = self.d3(d2_ref)
         routes = {'d4-observe-info': emit(ENGINE_JSON), 'd4-observe-ps': emit(''), 'd4-observe-volume': emit(''),
-                  'd4-observe-image': emit(IMAGE_OBJECT.replace(TOKEN, 'ffffffff').replace('ab' * 32, 'cd' * 32))}
-        d4 = self.run_stage('D4', self.routed(routes, calls), prior_ref=d3_ref, activation_id='act-d4-skip')
+                  'd4-observe-image': emit(IMAGE_OBJECT.replace('ab' * 32, 'cd' * 32)),
+                  'd4-post-ps': emit(''), 'd4-post-volume': emit('')}
+        calls = []
+        d4 = self.execute('D4', self.routed(routes, calls), prior_ref=d3_ref, activation_id='act-d4-skip')
         self.assertEqual(d4['closure'], 'closed')
-        self.assertEqual([c[0] for c in calls][-1], 'd4-observe-image')
         self.assertEqual(len([s for s in d4['steps'] if s.get('skipped')]), 3)
 
-    def test_c6_host_step_runs_under_recorded_roots_and_closes(self):
-        with mock.patch.object(ex, 'RECORDED_TOKEN', TOKEN), mock.patch.object(ex, 'RECORDED_ROOTS', self.recorded_roots()):
-            c5 = self.fabricate('C5', None, [], None, 'act-c5-fab')
-            calls = []
-            receipt = self.run_stage('C6', self.routed({'c6-colima-list': emit('[]')}, calls), prior_ref=c5,
-                                     activation_id='act-c6-0001')
+
+class ChainVerifierTests(Fixture):
+    """The verifier refuses fabricated, altered or incomplete chains. Each test changes one thing in a
+    genuine chain and expects a refusal."""
+
+    def genuine_d2(self):
+        d0 = self.d0()
+        _, d1_ref = self.d1(d0)
+        receipt, d2_ref = self.d2(d1_ref)
+        return d1_ref, d2_ref
+
+    def test_a_fabricated_closed_predecessor_with_no_steps_is_refused(self):
+        _, d2_ref = self.genuine_d2()
+        body = json.loads(Path(d2_ref['path']).read_text())
+        body['steps'] = []
+        Path(d2_ref['path']).write_text(json.dumps(body, sort_keys=True, indent=2) + '\n')
+        forged = dict(d2_ref, sha256=ex.sha_file(d2_ref['path']))
+        with self.assertRaises(ex.Refusal) as caught:
+            self.execute('D3', self.routed({}, []), prior_ref=forged, activation_id='act-forge-0001')
+        self.assertIn('inventory', str(caught.exception))
+
+    def test_a_predecessor_without_its_claim_is_refused(self):
+        _, d2_ref = self.genuine_d2()
+        os.remove(json.loads(Path(d2_ref['path']).read_text())['claim']['path'])
+        with self.assertRaises(ex.Refusal):
+            self.execute('D3', self.routed({}, []), prior_ref=d2_ref, activation_id='act-noclaim-0001')
+
+    def test_altered_step_output_breaks_the_recorded_stream_hash(self):
+        _, d2_ref = self.genuine_d2()
+        out = Path(self.stage_dir('D1', 'act-d1-0001') + '/d1-volume-inspect/stdout')
+        out.write_text(inspect_object('other'))
+        with self.assertRaises(ex.Refusal):
+            self.execute('D3', self.routed({}, []), prior_ref=d2_ref, activation_id='act-altered-0001')
+
+    def test_a_creation_receipt_not_derived_from_its_outputs_is_refused(self):
+        _, d2_ref = self.genuine_d2()
+        body = json.loads(Path(d2_ref['path']).read_text())
+        rec = next(r for r in body['receipts'] if r['kind'] == 'volume')
+        # Rewrite the volume receipt's name and the stage record to match, keep the old evidence hash.
+        rec['id'] = rec['name'] = 'effigy-4f6a-qual-' + TOKEN + '-act-other'
+        Path(d2_ref['path']).write_text(json.dumps(body, sort_keys=True, indent=2) + '\n')
+        forged = dict(d2_ref, sha256=ex.sha_file(d2_ref['path']))
+        with self.assertRaises(ex.Refusal):
+            self.execute('D3', self.routed({}, []), prior_ref=forged, activation_id='act-derive-0001')
+
+    def test_the_wrong_preceding_stage_is_refused(self):
+        d1_ref, _ = self.genuine_d2()
+        with self.assertRaises(ex.Refusal):
+            self.execute('D3', self.routed({}, []), prior_ref=d1_ref, activation_id='act-wrongprior-0001')
+
+    def test_a_stopped_predecessor_cannot_be_consumed(self):
+        d0 = self.d0()
+        routes = {'d1-engine-info': emit(ENGINE_JSON), 'd1-volume-absent': emit('', 1, 'no such volume'),
+                  'd1-volume-create': emit('', 3, 'denied')}
+        self.execute('D1', self.routed(routes, []), prior_ref=d0, activation_id='act-stopped-d1')
+        stopped = self.ref('D1', 'act-stopped-d1')
+        with self.lift_d2(), self.assertRaises(ex.Refusal) as caught:
+            self.execute('D2', self.routed({}, []), prior_ref=stopped, activation_id='act-stopped-d2')
+        self.assertIn('not a closed receipt', str(caught.exception))
+
+
+class DispatchSeamTests(Fixture):
+    """C5 and C6 cannot be reached through a genuine chain: C4 cannot close under the guest rule. Their
+    dispatch is exercised with verify_chain replaced by a stub that supplies only the receipts the stage
+    reads. This is labelled dispatch, not chain verification."""
+
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(ex, 'RECORDED_TOKEN', TOKEN)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        roots = {}
+        for name, rel in (('control', ''), ('colima_home', '/c'), ('qualification_root', '/s')):
+            path = self.bindings['control'] + rel
+            if rel:
+                os.mkdir(path, 0o700)
+            info = os.lstat(path)
+            roots[name] = dict(path=path, device=info.st_dev, inode=info.st_ino, entries=len(os.listdir(path)))
+        patcher = mock.patch.object(ex, 'RECORDED_ROOTS', roots)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_c6_host_step_dispatches_under_the_recorded_roots_and_closes(self):
+        stub = {'receipts': [], 'engine_id': None}
+        calls = []
+        with mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub):
+            receipt = self.execute('C6', self.routed({'c6-colima-list': emit('[]')}, calls), prior_ref=None,
+                               activation_id='act-c6-0001')
         self.assertEqual(receipt['closure'], 'closed')
-        self.assertEqual(calls[0][0], 'c6-colima-list')
-        self.assert_dispatch('C6', calls)
+        self.assert_dispatch('C6', calls, self.bindings)
         self.assertEqual(os.readlink(self.bindings['control'] + '/bin/docker'), prep.DOCKER)
 
     def test_c5_guest_exit_stops_as_guest_unknown_and_never_closes(self):
-        with mock.patch.object(ex, 'RECORDED_TOKEN', TOKEN), mock.patch.object(ex, 'RECORDED_ROOTS', self.recorded_roots()):
-            c4 = self.fabricate('C4', None, [dict(kind='image', id=IMAGE, name=None, label=None, engine_id=None)],
-                                None, 'act-c4-fab')
-            calls = []
-            receipt = self.run_stage('C5', self.routed({'c5-disposable-check': emit('')}, calls), prior_ref=c4,
-                                     activation_id='act-c5-0001')
+        stub = {'receipts': [dict(kind='image', id=IMAGE, name=None, label=None, engine_id=None,
+                                  evidence=dict(path=self.tmp + '/x', sha256='0' * 64))], 'engine_id': None}
+        calls = []
+        with mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub):
+            receipt = self.execute('C5', self.routed({'c5-disposable-check': emit('')}, calls), prior_ref=None,
+                               activation_id='act-c5-0001')
         self.assertEqual(receipt['closure'], 'guest_unknown')
         self.assertEqual([c[0] for c in calls], ['c5-disposable-check'])
         self.assertEqual(receipt['steps'][-1]['closure'], 'guest_unknown')
-
-    def test_c2_and_c3_are_unadmitted_so_no_guest_effect_can_start(self):
-        for stage in ('C2', 'C3'):
-            with self.subTest(stage=stage), self.assertRaises(ex.Refusal):
-                self.run_stage(stage, self.routed({}, []), prior_ref=None, activation_id='act-unadm-' + stage.lower())
-
-    def test_each_exec_window_gets_the_stage_remainder_of_the_storage_cap(self):
-        calls = []
-        seen = []
-
-        def factory(limits, roots):
-            seen.append(dict(limits))
-            return resources.Monitor(limits, lambda: {'storage': 0})
-        self.run_stage('D0', self.routed({'d0-info': emit(ENGINE_JSON), 'd0-ps': emit(''),
-                                          'd0-network': emit(''), 'd0-volume': emit('')}, calls),
-                       activation_id='act-aggr-0001', monitor_factory=factory)
-        self.assertEqual(seen, [{'storage': 1}] * 4)  # no declared cap: any growth in an exec window refuses
+        self.assertTrue(calls[0][1][0].endswith('colima'))
 
 
 class PrimitiveTests(Fixture):
@@ -708,7 +868,7 @@ class PrimitiveTests(Fixture):
         os.mkdir(path, 0o700)
         return path
 
-    def test_intent_is_visible_and_durable_before_spawn(self):
+    def test_intent_file_is_durable_before_the_spawn(self):
         root = self.stage_dir('intent')
         code = "import os,sys\nsys.stdout.write('ok' if os.path.exists('intent.json') else 'missing')\n"
         result = primitive.run_stage(root, [sys.executable, '-I', '-c', code], 10, 1024, {}, cwd=root,
@@ -744,35 +904,6 @@ class PrimitiveTests(Fixture):
         result = primitive.run_stage(root, [sys.executable, '-I', '-c', 'import time; time.sleep(30)'], 60, 1024, {},
                                      environment=CHILD_ENV, deadline=time.monotonic() + 0.5)
         self.assertEqual(result['disposition'], 'timeout')
-
-    def test_prefetch_of_a_pinned_artifact_is_exact_and_exclusive(self):
-        import io as _io
-        data = b'pinned-artifact-bytes'
-        digest = hashlib.sha512(data).hexdigest()
-        dest = self.tmp + '/artifact.raw'
-        self.assertEqual(ex.prefetch_pinned_artifact(_io.BytesIO(data), dest, len(data), digest),
-                         {'bytes': len(data), 'sha512': digest})
-        self.assertEqual(stat.S_IMODE(os.lstat(dest).st_mode), 0o600)
-        with self.assertRaises(FileExistsError):
-            ex.prefetch_pinned_artifact(_io.BytesIO(data), dest, len(data), digest)
-        with self.assertRaises(ex.Refusal):
-            ex.prefetch_pinned_artifact(_io.BytesIO(data + b'x'), self.tmp + '/big.raw', len(data), digest)
-        with self.assertRaises(ex.Refusal):
-            ex.prefetch_pinned_artifact(_io.BytesIO(data), self.tmp + '/bad.raw', len(data), '0' * 128)
-
-    def test_allocated_bytes_sees_real_blocks_and_skips_the_vm_store(self):
-        root = self.bindings['control']
-        os.makedirs(root + '/_lima', exist_ok=True)
-        before = ex.allocated_bytes(root)
-        Path(root + '/blob').write_bytes(b'x' * 65536)
-        grown = ex.allocated_bytes(root)
-        self.assertGreater(grown, before)
-        Path(root + '/_lima/disk').write_bytes(b'y' * 65536)
-        self.assertEqual(ex.allocated_bytes(root), grown)
-        sampler = ex.AllocatedBytes([root], min_interval=0)
-        first = sampler()['storage']
-        os.remove(root + '/blob')
-        self.assertGreaterEqual(sampler()['storage'], first)
 
 
 if __name__ == '__main__':
