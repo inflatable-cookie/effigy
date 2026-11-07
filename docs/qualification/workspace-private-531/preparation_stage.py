@@ -170,6 +170,8 @@ def main():
     required = {'stage_dir', 'argv', 'timeout_seconds', 'output_cap_bytes', 'input_hashes', 'guest', 'cwd', 'environment', 'resources'}
     if set(request) != required:
         raise Refusal('unsupported request schema')
+    if request['guest'] is not False:
+        raise Refusal('guest requests require authenticated SSH transport')
     inputs = dict(request['input_hashes'])
     if request_path in inputs:
         raise Refusal('request must not alias a separate input')

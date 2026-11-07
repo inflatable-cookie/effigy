@@ -642,9 +642,15 @@ argv, cwd, per-command deadlines, output bounds, prerequisites, retention and
 failure dispositions. `preparation_requests.bind` builds the exact stage-runner
 request only when every named gate has a retained, hash-bound `pass` receipt
 and the caller's independent verifier accepts it; `write_request` creates that
-request exclusively and returns its SHA-256. This is an injected primitive,
-not an authenticator: no verifier for the missing guest disk correlation or
-closure is asserted here. Bind the manifest and preparation code hashes into
+request exclusively and returns its SHA-256. Host requests use only the host
+stage entry; SSH requests have a fresh 256-bit nonce and an explicit, unique
+mapping from each bound host input to its guest path, and use the guest entry
+over the authenticated SSH channel. The host stage entry refuses a guest-shaped
+request and refuses `guest=true`. The binder includes the exact manifest,
+guest and host runners, controls and supporting module hashes; pre-position and
+authenticate those mapped guest bytes before invoking the guest entry. This is
+an injected primitive, not an authenticator: no verifier for the missing guest
+disk correlation or closure is asserted here. Bind the manifest and preparation code hashes into
 each stage request, along with the exact environment, GO and fresh authenticated
 input/receipt hashes. The host admission hook must remain held until the guest
 terminal and closure are established. The file does not authorize execution;

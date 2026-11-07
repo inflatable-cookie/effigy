@@ -8,6 +8,7 @@ import tarfile
 import tempfile
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import preparation_archive as subject
@@ -18,6 +19,7 @@ import preparation_placement as placement
 import preparation_nextest as nextest
 import preparation_requests as requests
 import preparation_resources as resources
+import preparation_guest as guest_runner
 
 
 class ArchiveChecks(unittest.TestCase):
@@ -365,7 +367,7 @@ class ResourceChecks(unittest.TestCase):
 class ManifestChecks(unittest.TestCase):
     def test_request_requires_verified_receipts(self):
         root = Path(tempfile.mkdtemp(prefix='request-controls-')).resolve()
-        row = {'id': 'example', 'preconditions': ['closure'], 'argv': ['/bin/true'],
+        row = {'id': 'example', 'transport': 'host', 'preconditions': ['closure'], 'argv': ['/bin/true'],
                'cwd': '/', 'timeout_seconds': 60, 'output_cap_bytes': 1024}
         manifest = {'stages': [row], 'admission_reserve_seconds': 180,
                     'report_reserve_seconds': 120, 'max_stage_seconds_including_admission_and_report': 1200}
@@ -384,6 +386,59 @@ class ManifestChecks(unittest.TestCase):
         requests.write_request(output, result)
         with self.assertRaises(FileExistsError):
             requests.write_request(output, result)
+
+    def test_generated_guest_request_runs_only_in_guest_entry(self):
+        root = Path(tempfile.mkdtemp(prefix='guest-contract-')).resolve()
+        stage_dir = root / 'guest-stage'
+        stage_dir.mkdir(mode=0o700)
+        counter = root / 'counter'
+        counter.write_text('0')
+        manifest = {'stages': [{'id': 'fixture', 'transport': 'ssh', 'preconditions': ['auth'],
+                    'argv': [sys.executable, '-c', 'import time; time.sleep(0.1)'], 'cwd': str(root),
+                    'timeout_seconds': 2, 'output_cap_bytes': 1024}],
+                    'admission_reserve_seconds': 180, 'report_reserve_seconds': 120,
+                    'max_stage_seconds_including_admission_and_report': 1200}
+        manifest_path = root / 'manifest.json'
+        manifest_path.write_text(json.dumps(manifest))
+        receipt = root / 'auth.json'
+        receipt.write_text(json.dumps({'gate': 'auth', 'status': 'pass'}))
+        accounting = {'counter_files': {'writes': str(counter)}, 'limits': {'writes': 100}}
+        request = requests.bind(manifest, 'fixture', stage_dir, {}, {}, {'auth': receipt},
+                                lambda *_: True, accounting, manifest_path,
+                                nonce='a' * 64, guest_path=lambda path: path)
+        module_dir = Path(__file__).resolve().parent
+        for name in ('preparation_guest.py', 'preparation_controls.py', 'preparation_observations.py',
+                     'preparation_placement.py', 'preparation_archive.py', 'preparation_nextest.py', 'preparation_metadata.py'):
+            self.assertEqual(request['input_hashes'][str(module_dir / name)], hashlib.sha256((module_dir / name).read_bytes()).hexdigest())
+        tampered = dict(request, input_hashes=dict(request['input_hashes']))
+        tampered['input_hashes'][str(module_dir / 'preparation_guest.py')] = '0' * 64
+        tampered_file = root / 'tampered.json'
+        tampered_sha = requests.write_request(tampered_file, tampered)
+        with patch.object(sys, 'argv', ['preparation_guest.py', str(tampered_file), tampered_sha]):
+            with self.assertRaises(stage.Refusal):
+                guest_runner.main()
+        self.assertFalse((stage_dir / 'intent.json').exists())
+        request_file = root / 'request.json'
+        sha = requests.write_request(request_file, request)
+        with patch.object(sys, 'argv', ['preparation_stage.py', str(request_file), sha]):
+            with self.assertRaises(stage.Refusal):
+                stage.main()
+        self.assertFalse((stage_dir / 'intent.json').exists())
+        forged = dict(request)
+        forged.pop('nonce')
+        forged['guest'] = True
+        forged_file = root / 'forged.json'
+        forged_sha = requests.write_request(forged_file, forged)
+        with patch.object(sys, 'argv', ['preparation_stage.py', str(forged_file), forged_sha]):
+            with self.assertRaises(stage.Refusal):
+                stage.main()
+        self.assertFalse((stage_dir / 'intent.json').exists())
+        with patch.object(sys, 'argv', ['preparation_guest.py', str(request_file), sha]), \
+             patch.object(guest_runner, 'linux_identity', return_value={'boot_id': 'fixture', 'start_time': 1}):
+            self.assertEqual(guest_runner.main(), 0)
+        result = json.loads((stage_dir / 'receipt.json').read_text())
+        self.assertEqual(result['guest_closure'], 'unknown')
+        self.assertEqual(result['process']['nonce'], 'a' * 64)
 
     def test_e12_is_bounded_and_build_waits_for_pull_closure(self):
         manifest = json.loads((Path(__file__).resolve().parent / 'linux-preparation-stages.json').read_text())

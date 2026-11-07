@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from preparation_stage import exclusive
 
 
-def bind(manifest, stage_id, stage_dir, environment, inputs, gates, verify_gate, resource_accounting, manifest_path):
+def bind(manifest, stage_id, stage_dir, environment, inputs, gates, verify_gate, resource_accounting, manifest_path, nonce=None, guest_path=None):
     rows = [row for row in manifest['stages'] if row['id'] == stage_id]
     if len(rows) != 1:
         raise ValueError('unknown or duplicate stage')
@@ -33,7 +33,11 @@ def bind(manifest, stage_id, stage_dir, environment, inputs, gates, verify_gate,
     if json.loads(manifest_bytes) != manifest:
         raise ValueError('manifest bytes differ from reviewed manifest')
     own_dir = Path(__file__).resolve().parent
-    for path in (manifest_file, own_dir / 'preparation_requests.py', own_dir / 'preparation_stage.py', own_dir / 'preparation_resources.py'):
+    modules = ('preparation_requests.py', 'preparation_stage.py', 'preparation_resources.py',
+               'preparation_guest.py', 'preparation_controls.py', 'preparation_observations.py',
+               'preparation_placement.py', 'preparation_archive.py', 'preparation_nextest.py',
+               'preparation_metadata.py')
+    for path in (manifest_file, *(own_dir / name for name in modules)):
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         if str(path) in bound and bound[str(path)] != digest:
             raise ValueError('source or manifest hash collision')
@@ -50,10 +54,27 @@ def bind(manifest, stage_id, stage_dir, environment, inputs, gates, verify_gate,
         bound[path] = digest
     if row['timeout_seconds'] + manifest['admission_reserve_seconds'] + manifest['report_reserve_seconds'] > manifest['max_stage_seconds_including_admission_and_report']:
         raise ValueError('stage deadline exceeds total')
-    return {'stage_dir': str(stage_dir), 'argv': row['argv'], 'cwd': row['cwd'],
-            'timeout_seconds': row['timeout_seconds'], 'output_cap_bytes': row['output_cap_bytes'],
-            'input_hashes': bound, 'guest': row.get('transport', 'ssh') == 'ssh', 'environment': environment,
-            'resources': resource_accounting}
+    transport = row.get('transport', 'ssh')
+    if transport not in ('host', 'ssh'):
+        raise ValueError('unsupported transport')
+    if transport == 'ssh':
+        if not isinstance(nonce, str) or len(nonce) != 64 or any(c not in '0123456789abcdef' for c in nonce) or not callable(guest_path):
+            raise ValueError('guest nonce and explicit path mapping are required')
+        mapped = {}
+        for path, digest in bound.items():
+            remote = guest_path(path)
+            if not isinstance(remote, str) or not remote.startswith('/') or str(Path(remote)) != remote or '..' in Path(remote).parts or remote in mapped:
+                raise ValueError('unsafe or colliding guest path mapping')
+            mapped[remote] = digest
+        bound = mapped
+    result = {'stage_dir': str(stage_dir), 'argv': row['argv'], 'cwd': row['cwd'],
+              'timeout_seconds': row['timeout_seconds'], 'output_cap_bytes': row['output_cap_bytes'],
+              'input_hashes': bound, 'environment': environment, 'resources': resource_accounting}
+    if transport == 'ssh':
+        result['nonce'] = nonce
+    else:
+        result['guest'] = False
+    return result
 
 
 def write_request(path, request):
