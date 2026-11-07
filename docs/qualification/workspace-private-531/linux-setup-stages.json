@@ -55,12 +55,11 @@
       "closure_basis": "vm-waited-exit-postobserved",
       "timeout_seconds": 30,
       "go": "E4",
-      "status": "blocked",
-      "live_blockers": [
-        "Stage1 probe v2 result bound to this plan (docker group present)"
-      ],
+      "status": "template",
+      "live_blockers": [],
       "effect": "bootstrap",
-      "needs_hard_limit": false
+      "needs_hard_limit": false,
+      "effect_note": "GO E4 only; the probe is required for every row and its docker group is checked by the plan"
     },
     {
       "id": "E4v",

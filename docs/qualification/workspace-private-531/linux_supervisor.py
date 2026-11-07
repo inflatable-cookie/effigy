@@ -1,17 +1,21 @@
-"""Guest supervisor: transient systemd SERVICE with cgroup containment.
+"""Guest supervisor: transient systemd SERVICE with an outside-payload monitor.
 
-Runs as root through the VM route (`prlctl exec`), because the system manager
-cannot start a unit as another account without root. The payload runs as the
-named non-root account. Nothing here is installed or run by source checks; tests
-inject `runner`, the only route to systemctl, systemd-run and the payload.
+Runs as root through the VM route (`prlctl exec`), because the system manager cannot
+start a unit as another account without root. The payload runs as the named
+non-root account. Nothing here is installed by source checks; tests inject `ops`,
+the only route to systemctl, systemd-run and cgroupfs.
 
-Upstream basis (systemd v259 manuals, fetched 2026-11-07):
+Upstream basis (systemd v259, fetched 2026-11-07):
 - `systemd-run --pipe` waits like `--wait`; `--wait` cannot combine with `--scope`.
-- `--collect` unloads the unit after it finishes, so it is never used. Without it
-  the loaded, inactive unit keeps its Result and ExecMainStatus for inspection.
-- `ExitType=cgroup` (v250) keeps a service active while any process in its
-  cgroup has not exited; `RuntimeMaxSec=` fails the unit at its deadline.
-  Hence an inactive unit with Result=success has an empty cgroup.
+- `--collect` unloads the unit after it finishes, so it is never used. Without it a
+  finished transient service stays loaded, inactive, with Result and ExecMainStatus.
+- `ExitType=cgroup` (v250) keeps a service active while any process in its cgroup
+  has not exited; `RuntimeMaxSec=` fails the unit at its deadline.
+- systemctl prints a byte-array property such as InvocationID as contiguous lowercase
+  hex with no hyphens (bus-print-properties.c, the "y" branch).
+
+Credit is never decided here. The guest returns a candidate. The host credits closure
+(linux_setup.host_credit) only after its own VM-route observation agrees with it.
 """
 import hashlib
 import json
@@ -20,6 +24,7 @@ import re
 import stat
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -28,13 +33,19 @@ import preparation_observations as observations
 from preparation_stage import Refusal, exclusive
 
 NONCE = re.compile(r'^[0-9a-f]{64}$')
-UUID = re.compile(r'^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$')
+INVOCATION = re.compile(r'^[0-9a-f]{32}$')
 MIN_SYSTEMD = 250          # ExitType=cgroup
 MAX_TIMEOUT = 900          # per-stage ceiling in the setup manifest
 CLEANUP_RESERVE_SECONDS = 30
 FORBIDDEN_RUN_FLAGS = ('--scope', '--collect', '--user', '--no-block', '--wait')
 SUPERVISOR = 'systemd-service-cgroup-v2'
 BOOT_ID_PATH = '/proc/sys/kernel/random/boot_id'
+CGROUP_ROOT = '/sys/fs/cgroup'
+PROPERTIES = 'LoadState,ActiveState,SubState,Result,ExecMainStatus,InvocationID,ControlGroup'
+
+
+class Disconnect(Exception):
+    """The injected transport dropped before a terminal result."""
 
 
 def unit_name(nonce):
@@ -43,8 +54,16 @@ def unit_name(nonce):
     return 'effigy-stage-' + nonce
 
 
+def normalize_invocation(value):
+    """systemctl prints contiguous hex. Hyphenated UUID text is accepted and folded to 32 hex."""
+    folded = (value or '').replace('-', '').lower()
+    if not INVOCATION.fullmatch(folded):
+        raise Refusal('InvocationID is not 32 hexadecimal characters')
+    return folded
+
+
 def run_argv(nonce, payload_user, cwd, timeout, argv):
-    """Transient SERVICE argv. Scope, collect and user-manager flags are refused."""
+    """Transient SERVICE argv. Scope, collect, wait and user-manager flags are refused."""
     if not isinstance(argv, list) or not argv or any(not isinstance(x, str) or not x or '\x00' in x for x in argv):
         raise Refusal('payload argv must be a non-empty list of strings')
     if not isinstance(timeout, int) or isinstance(timeout, bool) or not 0 < timeout <= MAX_TIMEOUT:
@@ -70,8 +89,7 @@ def run_argv(nonce, payload_user, cwd, timeout, argv):
 
 
 def show_argv(unit):
-    return ['systemctl', 'show', unit,
-            '--property=LoadState,ActiveState,SubState,Result,ExecMainStatus,InvocationID,ControlGroup']
+    return ['systemctl', 'show', unit, '--property=' + PROPERTIES]
 
 
 def stop_argv(unit):
@@ -86,7 +104,7 @@ def parse_systemd_version(text):
 
 
 def parse_show(text, unit):
-    """Parse `systemctl show` key=value lines. None means the unit is not loaded."""
+    """Parse `systemctl show` output. None means the unit is not loaded (absent or collected)."""
     if text is None:
         return None
     values = {}
@@ -96,19 +114,17 @@ def parse_show(text, unit):
             values[key] = value
     if values.get('LoadState') != 'loaded':
         return None
-    invocation = values.get('InvocationID', '')
-    if not UUID.fullmatch(invocation):
-        raise Refusal('InvocationID missing or malformed')
     group = values.get('ControlGroup', '')
     if group and (not group.startswith('/') or '..' in Path(group).parts):
         raise Refusal('ControlGroup not canonical')
-    return {'unit': unit, 'invocation_id': invocation.lower(), 'control_group': group,
-            'active_state': values.get('ActiveState', ''), 'sub_state': values.get('SubState', ''),
-            'result': values.get('Result', ''), 'exec_main_status': values.get('ExecMainStatus', '')}
+    return {'unit': unit, 'invocation_id': normalize_invocation(values.get('InvocationID', '')),
+            'control_group': group, 'active_state': values.get('ActiveState', ''),
+            'sub_state': values.get('SubState', ''), 'result': values.get('Result', ''),
+            'exec_main_status': values.get('ExecMainStatus', '')}
 
 
 def parse_populated(text):
-    """cgroup.events `populated` (0/1). None means the read vanished."""
+    """cgroup.events `populated`. None means the file vanished."""
     if text is None:
         return None
     for line in text.splitlines():
@@ -121,44 +137,93 @@ def parse_populated(text):
 def events_path(control_group):
     if not control_group.startswith('/') or '..' in Path(control_group).parts:
         raise Refusal('control group not canonical')
-    return '/sys/fs/cgroup' + control_group + '/cgroup.events'
+    return CGROUP_ROOT + control_group + '/cgroup.events'
 
 
-def sample(show_text, events_text, unit):
-    """Outside-monitor observation while the unit is loaded and active.
+class Monitor:
+    """Outside-payload monitor on its own thread.
 
-    A sample can only veto credit: a live `populated 1` for the same InvocationID
-    means a descendant survived the leader. Absence of samples grants nothing.
+    Samples the unit while it is loaded: InvocationID, ControlGroup, ActiveState and
+    the cgroup's `populated` bit. A failed read is recorded as a failure, never as a
+    pass. Absence before start is normal and recorded as such.
     """
-    show = parse_show(show_text, unit)
-    if show is None or not show['control_group']:
-        return None
-    populated = parse_populated(events_text)
-    if populated is None:
-        return None
-    return {'invocation_id': show['invocation_id'], 'control_group': show['control_group'],
-            'populated': populated, 'active_state': show['active_state']}
+
+    def __init__(self, ops, unit, interval=0.05):
+        self.ops, self.unit, self.interval = ops, unit, interval
+        self.samples = []
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, name='effigy-stage-monitor', daemon=True)
+
+    def start(self):
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        self._thread.join(timeout=10)
+        if self._thread.is_alive():
+            raise Refusal('monitor thread did not stop')
+
+    def poll_once(self):
+        try:
+            show = parse_show(self.ops.show(show_argv(self.unit)), self.unit)
+        except Refusal as exc:
+            return {'kind': 'read-failed', 'reason': str(exc)}
+        if show is None:
+            return {'kind': 'absent'}
+        record = {'kind': 'loaded', 'invocation_id': show['invocation_id'], 'control_group': show['control_group'],
+                  'active_state': show['active_state'], 'populated': None}
+        if show['control_group']:
+            try:
+                record['populated'] = parse_populated(self.ops.events(events_path(show['control_group'])))
+            except Refusal as exc:
+                record['populated_error'] = str(exc)
+        return record
+
+    def _loop(self):
+        while not self._stop.is_set():
+            self.samples.append(self.poll_once())
+            self._stop.wait(self.interval)
 
 
-def closure_receipt(boot_id, nonce, show, waited_exit):
-    """Receipt for observations.verify_contained_closure, inactive terminal basis."""
+def closure_receipt(boot_id, nonce, show, observed_group, waited_exit):
+    """Candidate for the host: terminal facts plus the cgroup the monitor saw while active."""
     return {'boot_id': boot_id, 'nonce': nonce, 'unit': unit_name(nonce),
             'invocation_id': show['invocation_id'], 'control_group': '',
+            'observed_control_group': observed_group,
             'supervisor': SUPERVISOR, 'terminal_basis': observations.UNIT_INACTIVE,
             'populated': 0, 'active_state': show['active_state'], 'result': show['result'],
             'waited_exit': waited_exit}
 
 
-def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, samples):
-    """One-use supervised payload inside the guest. Intent is spent before any injected effect.
+def _eligible(boot_id, nonce, show, samples, waited_exit):
+    invocation = show['invocation_id']
+    seen = [s for s in samples if s.get('kind') == 'loaded' and s['invocation_id'] == invocation]
+    if any(s.get('populated') == 1 for s in seen):
+        return None, 'monitor saw a live descendant for this InvocationID'
+    active = [s for s in seen if s['active_state'] == 'active' and s['control_group']]
+    if not active:
+        return None, 'monitor never observed the unit active; closure is unknown'
+    groups = {s['control_group'] for s in active}
+    if len(groups) != 1:
+        return None, 'monitor saw more than one control group for this InvocationID'
+    if show['active_state'] != 'inactive' or show['result'] != 'success' or show['exec_main_status'] != '0':
+        return None, 'post-run terminal state is not inactive success'
+    if show['control_group'] != '':
+        return None, 'post-run unit still has a control group'
+    return closure_receipt(boot_id, nonce, show, groups.pop(), waited_exit), None
 
-    The guest never credits its own closure. It returns a candidate receipt when
-    the terminal shape is eligible, and the host credits it only after an
-    independent VM-route observation matches (linux_setup.host_credit). Credit
-    needs: the unit absent before start (fresh nonce), a loaded post-run unit with
-    the same new InvocationID, inactive, Result=success, ExecMainStatus=0, an
-    empty ControlGroup, and no live-populated sample vetoing it.
-    Returns {'disposition', 'candidate', 'vetoed', 'show'}; candidate is None when ineligible.
+
+def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, monitor=None):
+    """One-use supervised payload. Intent is spent before any effect.
+
+    Candidate eligibility, all required:
+    - the unit was absent before start (the nonce is fresh);
+    - the monitor saw this InvocationID loaded and active with one ControlGroup;
+    - no monitor sample for this InvocationID showed populated 1 (veto);
+    - the post-run unit is loaded with the same InvocationID, inactive, Result=success,
+      ExecMainStatus=0, and an empty ControlGroup.
+    A failed monitor read, a vanished unit or a changed InvocationID is unknown.
+    Returns {'disposition', 'candidate', 'reason', 'show', 'samples'}.
     """
     stage = Path(stage_dir)
     info = stage.lstat()
@@ -182,61 +247,53 @@ def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, sa
     seen_invocations.setdefault('nonces', set()).add(nonce)
     if parse_show(ops.show(show_argv(unit)), unit) is not None:
         raise Refusal('unit already loaded before start; nonce is not fresh')
+    monitor = monitor or Monitor(ops, unit)
     start = clock()
     deadline = start + request['timeout_seconds'] + CLEANUP_RESERVE_SECONDS
+    monitor.start()
     try:
         outcome = ops.run(argv, request['timeout_seconds'] + CLEANUP_RESERVE_SECONDS)
         disconnected = False
     except Disconnect:
         outcome = {'returncode': None, 'stdout': b'', 'stderr': b'', 'timed_out': False}
         disconnected = True
+    finally:
+        monitor.stop()
     for name in ('stdout', 'stderr'):
         exclusive(stage / name, outcome[name])
     timed_out = bool(outcome.get('timed_out')) or clock() > deadline
     if timed_out or disconnected:
         ops.stop(stop_argv(unit))
     show = parse_show(ops.show(show_argv(unit)), unit)
-    if show is not None:
-        if show['invocation_id'] in seen_invocations.get('invocations', ()):
-            raise Refusal('InvocationID reused')
-        seen_invocations.setdefault('invocations', set()).add(show['invocation_id'])
-    vetoed = show is not None and any(
-        s is not None and s['invocation_id'] == show['invocation_id'] and s['populated'] == 1 for s in samples)
+    samples = list(monitor.samples)
     disposition = 'timeout' if timed_out else ('disconnect' if disconnected else (
         'exited' if outcome['returncode'] == 0 else 'failed'))
-    candidate = None
-    if (show is not None and disposition == 'exited' and not vetoed and show['active_state'] == 'inactive'
-            and show['result'] == 'success' and show['exec_main_status'] == '0' and show['control_group'] == ''):
-        candidate = closure_receipt(boot_id, nonce, show, outcome['returncode'])
-    record = {'disposition': disposition, 'candidate': candidate, 'elapsed_seconds': clock() - start,
-              'show': show, 'vetoed': vetoed, 'samples': len(samples),
+    if disposition != 'exited':
+        candidate, reason = None, 'payload did not exit cleanly: ' + disposition
+    elif show is None:
+        candidate, reason = None, 'unit vanished before the terminal read'
+    else:
+        candidate, reason = _eligible(boot_id, nonce, show, samples, outcome['returncode'])
+        if candidate is not None and invocation_reused(seen_invocations, show['invocation_id']):
+            raise Refusal('InvocationID reused')
+    if candidate is not None:
+        seen_invocations.setdefault('invocations', set()).add(show['invocation_id'])
+    record = {'disposition': disposition, 'candidate': candidate, 'reason': reason, 'show': show,
+              'samples': samples, 'elapsed_seconds': clock() - start,
               'streams': {n: {'bytes': len(outcome[n]), 'sha256': hashlib.sha256(outcome[n]).hexdigest()}
                           for n in ('stdout', 'stderr')}}
-    exclusive(stage / 'supervisor.json', (json.dumps(record, sort_keys=True, indent=2) + '\n').encode())
-    return {'disposition': disposition, 'candidate': candidate, 'vetoed': vetoed, 'show': show}
+    exclusive(stage / 'supervisor.json', (json.dumps(record, sort_keys=True, indent=2, default=str) + '\n').encode())
+    return {'disposition': disposition, 'candidate': candidate, 'reason': reason, 'show': show, 'samples': samples}
 
 
-class Disconnect(Exception):
-    """Raised by an injected transport when the channel drops before a terminal result."""
-
-
-def _subprocess_runner(argv, timeout):
-    """Real runner: own session, deadline kills only its own process group."""
-    proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, start_new_session=True)
-    try:
-        out, err = proc.communicate(timeout=timeout)
-        return {'returncode': proc.returncode, 'stdout': out, 'stderr': err, 'timed_out': False}
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, 9)
-        out, err = proc.communicate()
-        return {'returncode': None, 'stdout': out, 'stderr': err, 'timed_out': True}
+def invocation_reused(seen_invocations, invocation):
+    return invocation in seen_invocations.get('invocations', ())
 
 
 class SystemdOps:
-    """Adapter from the injected runner to the systemd calls used above."""
+    """Adapter from an injected runner to the systemd and cgroup reads used above."""
 
-    def __init__(self, runner=_subprocess_runner):
+    def __init__(self, runner):
         self.runner = runner
 
     def _checked(self, argv, timeout=30):
@@ -249,7 +306,7 @@ class SystemdOps:
         return self._checked(['systemctl', '--version']).splitlines()[0]
 
     def cgroup2(self):
-        return self._checked(['stat', '-fc', '%T', '/sys/fs/cgroup']).strip()
+        return self._checked(['stat', '-fc', '%T', CGROUP_ROOT]).strip()
 
     def run(self, argv, timeout):
         result = self.runner(argv, timeout)
@@ -260,15 +317,33 @@ class SystemdOps:
         self.runner(argv, 30)
 
     def show(self, argv):
-        # A failed read must refuse: treating it as "absent" could start a second unit.
+        # A failed read must refuse: reading "absent" here could start a second unit.
         return self._checked(argv)
+
+    def events(self, path):
+        try:
+            return Path(path).read_text()
+        except FileNotFoundError:
+            return None
+
+
+def _subprocess_runner(argv, timeout):
+    """Real runner: own session; the deadline kills only its own process group."""
+    proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+        return {'returncode': proc.returncode, 'stdout': out, 'stderr': err, 'timed_out': False}
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, 9)
+        out, err = proc.communicate()
+        return {'returncode': None, 'stdout': out, 'stderr': err, 'timed_out': True}
 
 
 def main(argv):
     """Root entry point: `effigy-stage-supervisor --request PATH --sha256 HEX`.
 
-    Prints one JSON line with the disposition and candidate receipt. The guest
-    never credits closure; the host does, after its own VM-route observation.
+    Prints one JSON line with the disposition and the candidate. It never credits closure.
     """
     if len(argv) != 4 or argv[0] != '--request' or argv[2] != '--sha256':
         raise Refusal('usage: --request PATH --sha256 HEX')
@@ -282,8 +357,8 @@ def main(argv):
     boot_id = Path(BOOT_ID_PATH).read_text().strip()
     if boot_id != request['expected_boot_id']:
         raise Refusal('boot identity differs from the request')
-    result = run_supervised(request['stage_dir'], request, SystemdOps(), time.monotonic, boot_id, {}, [])
-    print(json.dumps(result, sort_keys=True))
+    result = run_supervised(request['stage_dir'], request, SystemdOps(_subprocess_runner), time.monotonic, boot_id, {})
+    print(json.dumps(result, sort_keys=True, default=str))
     return 0 if result['candidate'] is not None else 1
 
 
