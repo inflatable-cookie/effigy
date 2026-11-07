@@ -380,9 +380,13 @@ During v0.x, MINOR bumps may include breaking changes.
   executable as an ordinary sentinel and requires its Discard refusal before
   process intent. The provisional old source `d7c3c93b` built once through its
   own `build:runtime-storage` and then failed that control at admission
-  (helper protocol 2 against 4), and no ancestor of this source satisfies both
-  halves of Recipe D, so the genuine-old-baseline cell stays unresolved and no
-  candidate artifact is ready.
+  (helper protocol 2 against 4). Later source-level analysis bound
+  `823d859da` as a protocol-4 baseline admitted by the handshake; the control's
+  Discard refusal belongs to the current parent before process intent, while
+  legacy decoder incompatibility is a separate test. Recipe D still needs its
+  genuine older binary and proof, so no candidate artifact is ready. The
+  feature-only workspace qualification CLI fixture also binds its prepare and
+  crash scratch checks to `/Volumes/Stash/scratch/effigy`.
 
 - Independent per-backend entry points for the private workspace qualification
   packet (task effigy#620): `effigy proof:workspace:private-qualification --
