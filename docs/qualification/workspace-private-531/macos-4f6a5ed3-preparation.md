@@ -260,14 +260,45 @@ Gates:
 - `c4-nerdctl-build-help` reads flag metadata before the build. The build only starts if
   `--iidfile`, `--platform` and `--provenance` are in the guest's own help text.
 
+## Executor (source only)
+
+`macos_stage_executor.py` is the reviewed runner. Nothing in this revision starts Colima
+or Desktop, and no stage is armed.
+
+- `plan` is pure. Each stage resolves to its rendered argv, pinned env, timeouts, caps,
+  runtime preconditions and admission reasons. It touches no filesystem.
+- `execute` needs an owner GO whose SHA-256 the caller names, a fresh `<STAGE>-<activation>`
+  root under Stash scratch, and the prior closed receipt. A collision refuses before any
+  call. One absolute stage deadline, capped by the GO window, is shared by every step and
+  keeps the stage reserve for receipts.
+- Each exec step runs through `preparation_stage.run_stage`: exclusive intent before spawn,
+  original stdout and stderr, waited exit, PID and PGID, and pre and post observations. A
+  deadline, cap, monitor refusal or unknown closure stops later steps.
+- Admitted: C2, C3, C5, C6, D0, D1, D3, D4. Unadmitted, with reasons: C0 (no reviewed
+  handler for `verify_tool_sha` or `verify_tranche_summary`); C1 and C4 (the download cap is
+  payload bytes, wire traffic is not counted, and the manifest records no pinned image size
+  for a bounded prefetch); D2 (the same download gap, and `host_stage_dockerfile` has no
+  handler).
+- Storage caps use real allocated bytes (`st_blocks`) under the owned control root, as a
+  high-water mark, excluding the VM's `_lima` store. A zero cap samples with a one-byte limit.
+- Colima children resolve `docker` to `/usr/local/bin/docker` through an owned `bin/docker`
+  link at the front of `PATH`. Desktop runs with its pinned socket, `DOCKER_HOST`, an owned
+  `DOCKER_CONFIG`, no `HOME` and no `DOCKER_CONTEXT`.
+- C1 onward binds the three 688 C0 roots (token `7deaf1b3`) by device and inode. Entry
+  counts are checked only at C1. D1 to D4 require the prior D0 receipt to name engine
+  `ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd`, the one 690 observed. An empty or default
+  `docker info` template refuses.
+- D1 volume authority comes from the create result plus the same-occurrence inspect, with
+  name and label checked. A token alone never forms a receipt. D4 removes only receipted
+  creations whose engine, ID, name and label still match.
+
 ## Remaining gates
 
 - **RecipeE and 686**: G1 and G2 wait on the Linux recipe and its artifacts.
-- **Runner enforcement**: caps, guest deadlines and the owned-root byte sampler are
-  manifest-declared. The runner that enforces them is not in this repository.
-- **PATH for Colima children**: Colima resolves its child `docker` through `PATH`. C0 hashes
-  `/usr/local/bin/docker`. The runner resolves `PATH` at C1 and refuses on a different
-  `docker` binary.
+- **Native proof of the executor**: the controls are injected and local. Running any
+  admitted stage needs its own owner GO, and the executor has not run natively.
+- **Colima `docker` child**: the owned link is the enforcement. Every Colima step re-checks
+  the link's target and refuses a different one.
 - **Nerdctl `--provenance=mode=max`**: the guest `build --help` check proves the flag
   name exists, not that the `mode=max` value is accepted. The planner checks the retained
   help text at C4 activation.
@@ -278,3 +309,6 @@ Gates:
 Controls run through `effigy test:qualification:workspace-private:macos`
 (`macos_preparation_boundaries.py`: 104 cases, injected only, no native action). Docs run
 through `effigy qa:docs`.
+The executor runs through `effigy test:qualification:workspace-private:macos-executor`
+(`macos_stage_executor_tests.py`: 33 cases, injected local children, no native action).
+Its shared primitive change is covered by `effigy test:qualification:linux-preparation`.

@@ -146,6 +146,8 @@ The [macOS 4f6a5ed3 preparation](macos-4f6a5ed3-preparation.md) plans the fresh
 Colima and Docker Desktop stages as a staged manifest, each needing its own GO.
 Manifest r3 corrects the r2 Colima flags, route order, deadlines, caps and cleanup
 authority. It records only local metadata and gives no proof credit.
+The source-only executor for those stages is `macos_stage_executor.py`; see the
+preparation doc's Executor section. Nothing in it is armed.
 
 Preparation and proof requests are different admissions. Assemble one concrete
 preparation request listing each unresolved backend fact, exact permitted probe
