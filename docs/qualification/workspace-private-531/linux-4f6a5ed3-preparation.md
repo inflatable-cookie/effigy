@@ -574,6 +574,24 @@ have not been verified. Provisioning remains blocked pending an allowed,
 bounded route and actual byte/schema verification; neither the Darwin binary
 nor an unpinned installer is a substitute.
 
+The B source at `823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1` declares
+`sh scripts/oxide-selector.sh build --bin effigy` with a 900-second timeout;
+its own script SHA-256 is
+`0688176241ce10156533084399ab45ca233ff27749c2fb630432ddb3afae8455`.
+The disposition requires that exact B script and `EFFIGY_OXIDE_ESCAPE=cargo`
+when the missing-Oxide observation is freshly confirmed. Its source text and
+script were checked against B without building it.
+
+The E14 checkout is the retained clean H checkout at
+`/Volumes/Stash/scratch/effigy/release-source/candidate-4f6a5ed3.xwm4pr7j`,
+within the existing release mount. Its binding names tree
+`dcb4c79194cd6739b3737285f21c10f5bb379a3c`. H's producer script hash is
+`e076a3389d40047270d3385c2a93b8118fca577fcb7d2c26c5bddef32ddc68d2`;
+it defaults to x86_64 unless the aarch64 triple is explicit. The proposed
+`EFFIGY_ACTIVE_VERSION=0.14.1` override must be bound to the frozen H production
+version and independently recorded launcher identity, not used to fabricate a
+producer receipt. No mount expansion is authorized.
+
 ### 6.4 Historical source-owner proposals
 
 - **SO-1 Remote source, driver and GO placement.** `launch.py` already verifies

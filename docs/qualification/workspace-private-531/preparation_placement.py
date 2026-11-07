@@ -98,3 +98,28 @@ def filesystem_controls(directory, uid):
                 'socket_fd_transfer': True, 'lock': True, 'no_clobber': True, 'fsync': True}
     finally:
         os.close(fd)
+
+
+def placement_provenance(host, guest, correlation, verify_correlation):
+    """Require a separately authenticated controller-to-guest association.
+
+    The callback is an injected verifier, not a model/size heuristic. An absent
+    supported correlation mechanism is a refusal, never a synthetic match.
+    """
+    expected_host = {'vm_uuid': '433c9e5b-c7b9-469f-9633-24b4addcd3b5',
+                     'disk_uid': '44b5d35e-b053-4aae-9140-266a00bbef9a',
+                     'package': '/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm',
+                     'disk': 'harddisk1.hdd'}
+    expected_guest = {'root_device': '/dev/sda2', 'fstype': 'ext4',
+                      'root_uuid': 'd488be7b-682f-41ac-b79b-57bbf495a01d',
+                      'parent': '/dev/sda', 'model': 'harddisk1 SSD',
+                      'serial': 'BV9VAH2KP2Q4N4A04SN0', 'size': 137438953472}
+    if any(host.get(k) != v for k, v in expected_host.items()) or any(guest.get(k) != v for k, v in expected_guest.items()):
+        raise Refusal('host or guest identity drift')
+    if not host.get('config_sha256') or not guest.get('boot_id') or not guest.get('ssh_host_key'):
+        raise Refusal('missing fresh authentication or host config binding')
+    if correlation is None or verify_correlation(host, guest, correlation) is not True:
+        raise Refusal('unsupported controller-to-guest disk correlation')
+    return {'host': expected_host, 'guest': expected_guest,
+            'config_sha256': host['config_sha256'], 'boot_id': guest['boot_id'],
+            'ssh_host_key': guest['ssh_host_key'], 'correlation': correlation}

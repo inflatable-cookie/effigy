@@ -67,9 +67,52 @@ def guest_closure(intent, terminal):
     """A transport exit is not evidence of a guest process having closed."""
     if terminal is None:
         return 'unknown'
-    keys = ('nonce', 'boot_id', 'pid', 'start_time', 'session_id', 'deadline')
+    keys = ('nonce', 'boot_id', 'pid', 'start_time', 'session_id', 'deadline_monotonic')
     if any(not intent.get(k) or terminal.get(k) != intent[k] for k in keys):
         raise Refusal('guest process identity drift')
     if terminal.get('waited_exit') is None or terminal.get('session_empty') is not True:
         return 'unknown'
-    return 'closed'
+    # An empty session does not rule out a descendant that called setsid.
+    return 'unknown'
+
+
+def descriptor_chain(xml_bytes, top):
+    """Resolve an independently identified writable top; never guess the top."""
+    import re
+    try:
+        root = ET.fromstring(xml_bytes)
+        images, parents = {}, {}
+        guid_pattern = re.compile(r'^\{[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}\}$')
+        for item in root.findall('./StorageData/Storage/Image'):
+            guid, name = item.findtext('GUID'), item.findtext('File')
+            if not guid or not guid_pattern.fullmatch(guid) or not name or '/' in name or name in ('.', '..') or guid in images or name in images.values():
+                raise Refusal('invalid or duplicate descriptor image')
+            images[guid] = name
+        for item in root.findall('./Snapshots/Shot'):
+            guid, parent = item.findtext('GUID'), item.findtext('ParentGUID')
+            if not guid or guid not in images or not parent or not guid_pattern.fullmatch(parent) or guid in parents:
+                raise Refusal('invalid or duplicate descriptor parent')
+            parents[guid] = parent
+        if not images or set(images) != set(parents) or top not in images:
+            raise Refusal('descriptor inventory or top incomplete')
+        chain = []
+        current = top
+        sentinel = '{00000000-0000-0000-0000-000000000000}'
+        while current != sentinel:
+            if current not in parents or current in chain:
+                raise Refusal('descriptor chain missing or cyclic')
+            chain.append(current)
+            current = parents[current]
+        return {'files': images, 'parents': parents, 'chain': chain}
+    except ET.ParseError as exc:
+        raise Refusal('invalid disk descriptor') from exc
+
+
+def setup_readiness(system_state, docker_state, authenticated_boot_id):
+    if not authenticated_boot_id or system_state != 'running':
+        raise Refusal('guest has not positively completed boot')
+    if docker_state in ('active', 'activating'):
+        return 'do-not-start'
+    if docker_state == 'inactive':
+        return 'start-only-if-admitted'
+    raise Refusal('docker state is not a stable setup baseline')

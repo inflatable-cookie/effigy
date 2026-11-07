@@ -48,6 +48,15 @@ class ArchiveChecks(unittest.TestCase):
         with self.assertRaises(subject.Refusal):
             subject.verify_tree(directory.parent, self.manifest)
 
+    def test_private_archive_placement(self):
+        h, size = self.make_archive([('dir/file', b'data')])
+        root = self.root / 'source'
+        root.mkdir(mode=0o700)
+        subject.place_archive(self.archive, h, size, self.manifest, root.resolve(), os.geteuid())
+        self.assertEqual((root / 'dir/file').read_bytes(), b'data')
+        with self.assertRaises(subject.Refusal):
+            subject.place_archive(self.archive, h, size, self.manifest, root.resolve(), os.geteuid())
+
     def test_escape_collision_and_hash_mismatch_refuse(self):
         for entries in [[('../escape', b'data')], [('dir/file', b'data'), ('dir/file', b'data')]]:
             with self.subTest(entries=entries), self.assertRaises(subject.Refusal):
@@ -65,6 +74,13 @@ class ArchiveChecks(unittest.TestCase):
 
 
 class ObservationChecks(unittest.TestCase):
+    def test_boot_and_engine_readiness(self):
+        with self.assertRaises(observations.Refusal):
+            observations.setup_readiness('starting', 'active', 'boot')
+        self.assertEqual(observations.setup_readiness('running', 'activating', 'boot'), 'do-not-start')
+        self.assertEqual(observations.setup_readiness('running', 'active', 'boot'), 'do-not-start')
+        self.assertEqual(observations.setup_readiness('running', 'inactive', 'boot'), 'start-only-if-admitted')
+
     def test_config_only_named_volatile_text_can_change(self):
         before = b'<vm><id>one</id><clock>1</clock></vm>'
         after = b'<vm><id>one</id><clock>2</clock></vm>'
@@ -85,11 +101,25 @@ class ObservationChecks(unittest.TestCase):
         with self.assertRaises(observations.Refusal):
             observations.compare_extents(before, after, ['top', 'base'])
 
+    def test_descriptor_chain_requires_exact_top(self):
+        a = '{11111111-1111-1111-1111-111111111111}'
+        b = '{22222222-2222-2222-2222-222222222222}'
+        zero = '{00000000-0000-0000-0000-000000000000}'
+        xml = (f'<Disk><StorageData><Storage><Image><GUID>{a}</GUID><File>a.hds</File></Image>'
+               f'<Image><GUID>{b}</GUID><File>b.hds</File></Image></Storage></StorageData><Snapshots>'
+               f'<Shot><GUID>{a}</GUID><ParentGUID>{b}</ParentGUID></Shot>'
+               f'<Shot><GUID>{b}</GUID><ParentGUID>{zero}</ParentGUID></Shot></Snapshots></Disk>').encode()
+        self.assertEqual(observations.descriptor_chain(xml, a)['chain'], [a, b])
+        with self.assertRaises(observations.Refusal):
+            observations.descriptor_chain(xml, zero)
+        with self.assertRaises(observations.Refusal):
+            observations.descriptor_chain(xml.replace(b'b.hds', b'a.hds'), a)
+
     def test_unknown_and_drifting_guest_closure(self):
-        identity = dict(nonce='n', boot_id='b', pid=42, start_time=2, session_id=42, deadline=9)
+        identity = dict(nonce='n', boot_id='b', pid=42, start_time=2, session_id=42, deadline_monotonic=9)
         self.assertEqual(observations.guest_closure(identity, None), 'unknown')
         terminal = dict(identity, waited_exit=0, session_empty=True)
-        self.assertEqual(observations.guest_closure(identity, terminal), 'closed')
+        self.assertEqual(observations.guest_closure(identity, terminal), 'unknown')
         terminal['boot_id'] = 'different'
         with self.assertRaises(observations.Refusal):
             observations.guest_closure(identity, terminal)
@@ -152,6 +182,23 @@ class MetadataChecks(unittest.TestCase):
 
 
 class PlacementChecks(unittest.TestCase):
+    def test_absent_correlation_refuses_even_matching_guest(self):
+        host = dict(vm_uuid='433c9e5b-c7b9-469f-9633-24b4addcd3b5',
+                    disk_uid='44b5d35e-b053-4aae-9140-266a00bbef9a',
+                    package='/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm',
+                    disk='harddisk1.hdd', config_sha256='a' * 64)
+        guest = dict(root_device='/dev/sda2', fstype='ext4',
+                     root_uuid='d488be7b-682f-41ac-b79b-57bbf495a01d', parent='/dev/sda',
+                     model='harddisk1 SSD', serial='BV9VAH2KP2Q4N4A04SN0', size=137438953472,
+                     boot_id='boot', ssh_host_key='key')
+        with self.assertRaises(placement.Refusal):
+            placement.placement_provenance(host, guest, None, lambda *_: True)
+        self.assertEqual(placement.placement_provenance(host, guest, 'authenticated-link',
+                                                       lambda *_: True)['boot_id'], 'boot')
+        guest['serial'] = 'changed'
+        with self.assertRaises(placement.Refusal):
+            placement.placement_provenance(host, guest, 'authenticated-link', lambda *_: True)
+
     def test_actual_private_filesystem_controls(self):
         root = Path(tempfile.mkdtemp(prefix='filesystem-controls-')).resolve()
         result = placement.filesystem_controls(root, os.geteuid())

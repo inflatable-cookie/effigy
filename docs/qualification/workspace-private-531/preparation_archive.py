@@ -5,6 +5,7 @@ inputs and filesystem identity again at placement; a successful check is not a
 qualification receipt.
 """
 import hashlib
+import io
 import os
 from pathlib import Path, PurePosixPath
 import stat
@@ -41,34 +42,71 @@ def expected_files(manifest):
     return files
 
 
-def verify_archive(archive, expected_hash, expected_size, manifest):
+def verified_bytes(archive, expected_hash, expected_size, manifest):
+    if not isinstance(expected_size, int) or not 0 < expected_size <= 40 * 1024 * 1024:
+        raise Refusal('archive size outside bound')
     files = expected_files(manifest)
     with open(archive, 'rb') as source:
-        if os.fstat(source.fileno()).st_size != expected_size or digest(source) != expected_hash:
-            raise Refusal('archive size or hash mismatch')
-        source.seek(0)
-        with tarfile.open(fileobj=source, mode='r:') as tar:
-            seen, actual = set(), {}
-            for member in tar:
-                name = path_name(member.name)
-                if name in seen:
-                    raise Refusal('archive path collision: ' + name)
-                seen.add(name)
-                parents = list(PurePosixPath(name).parents)[:-1]
-                if any(str(parent) in actual for parent in parents):
-                    raise Refusal('archive parent is a file: ' + name)
-                if member.isdir():
-                    continue
-                if any(existing.startswith(name + '/') for existing in seen if existing != name):
-                    raise Refusal('archive file shadows a path: ' + name)
-                if not member.isfile():
-                    raise Refusal('unsupported archive entry: ' + name)
+        data = source.read(expected_size + 1)
+    if len(data) != expected_size or hashlib.sha256(data).hexdigest() != expected_hash:
+        raise Refusal('archive size or hash mismatch')
+    with tarfile.open(fileobj=io.BytesIO(data), mode='r:') as tar:
+        seen, actual = set(), {}
+        for member in tar:
+            name = path_name(member.name)
+            if name in seen:
+                raise Refusal('archive path collision: ' + name)
+            seen.add(name)
+            parents = list(PurePosixPath(name).parents)[:-1]
+            if any(str(parent) in actual for parent in parents):
+                raise Refusal('archive parent is a file: ' + name)
+            if member.isdir():
+                continue
+            if any(existing.startswith(name + '/') for existing in seen if existing != name):
+                raise Refusal('archive file shadows a path: ' + name)
+            if not member.isfile():
+                raise Refusal('unsupported archive entry: ' + name)
+            stream = tar.extractfile(member)
+            if stream is None:
+                raise Refusal('unreadable archive entry: ' + name)
+            actual[name] = (member.size, member.mode, digest(stream))
+        if actual != files:
+            raise Refusal('archive differs from manifest')
+    return data
+
+
+def verify_archive(archive, expected_hash, expected_size, manifest):
+    verified_bytes(archive, expected_hash, expected_size, manifest)
+
+
+def place_archive(archive, expected_hash, expected_size, manifest, root, uid):
+    """Place exact verified bytes into an empty private root, retaining failures."""
+    root = Path(root)
+    info = root.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != uid
+            or stat.S_IMODE(info.st_mode) != 0o700 or root.resolve() != root
+            or any(root.iterdir())):
+        raise Refusal('source root must be canonical, owned, private and empty')
+    data = verified_bytes(archive, expected_hash, expected_size, manifest)
+    with tarfile.open(fileobj=io.BytesIO(data), mode='r:') as tar:
+        for member in tar:
+            if member.isdir():
+                (root / member.name).mkdir(mode=0o700, parents=True, exist_ok=True)
+                continue
+            target = root / member.name
+            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+            with os.fdopen(fd, 'wb') as output:
                 stream = tar.extractfile(member)
-                if stream is None:
-                    raise Refusal('unreadable archive entry: ' + name)
-                actual[name] = (member.size, member.mode, digest(stream))
-            if actual != files:
-                raise Refusal('archive differs from manifest')
+                while True:
+                    chunk = stream.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    output.write(chunk)
+                output.flush()
+                os.fchmod(output.fileno(), member.mode)
+                os.fsync(output.fileno())
+    verify_tree(root, manifest)
 
 
 def verify_tree(root, manifest):

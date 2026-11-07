@@ -26,7 +26,7 @@ def record(path, value):
     exclusive(path, (json.dumps(value, sort_keys=True, indent=2) + '\n').encode())
 
 
-def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False):
+def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identity_probe=None, cwd=None, environment=None):
     """Spend a stage occurrence before launch. A missing receipt is unknown.
 
     The caller supplies an already private, exclusive directory and exact, reviewed
@@ -42,7 +42,18 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False):
         raise Refusal('invalid argv, deadline, or output cap')
     if not isinstance(input_hashes, dict) or any(len(v) != 64 or any(c not in '0123456789abcdef' for c in v) for v in input_hashes.values()):
         raise Refusal('input hashes must be SHA-256')
-    record(root / 'intent.json', {'argv': argv, 'timeout_seconds': timeout,
+    cwd = str(Path(cwd or os.getcwd()).resolve())
+    environment = environment if environment is not None else {k: os.environ[k] for k in ('PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG') if k in os.environ}
+    if not isinstance(environment, dict) or any(not isinstance(k, str) or not isinstance(v, str) or '=' in k or '\x00' in k + v for k, v in environment.items()):
+        raise Refusal('invalid environment')
+    def check_inputs():
+        for path, expected in input_hashes.items():
+            with open(path, 'rb') as source:
+                actual = hashlib.file_digest(source, 'sha256').hexdigest()
+            if actual != expected:
+                raise Refusal('input hash drift: ' + path)
+    check_inputs()
+    record(root / 'intent.json', {'argv': argv, 'cwd': cwd, 'environment': environment, 'timeout_seconds': timeout,
                                   'output_cap_bytes_each': output_cap, 'input_hashes': input_hashes,
                                   'guest': guest})
     child = None
@@ -52,10 +63,16 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False):
         for name in ('stdout', 'stderr'):
             fd = os.open(root / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
             streams[name] = os.fdopen(fd, 'wb')
+        check_inputs()
         start = time.monotonic()
         child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, start_new_session=True)
-        record(root / 'process.json', {'pid': child.pid, 'pgid': child.pid, 'session_id': child.pid})
+                                 stderr=subprocess.PIPE, start_new_session=True, cwd=cwd, env=environment)
+        identity = {'pid': child.pid, 'pgid': child.pid, 'session_id': child.pid,
+                    'deadline_monotonic': start + timeout}
+        if identity_probe is not None:
+            identity.update(identity_probe(child.pid))
+        record(root / 'process.json', identity)
+        result['process'] = identity
         sel = selectors.DefaultSelector()
         for name in ('stdout', 'stderr'):
             pipe = getattr(child, name)
