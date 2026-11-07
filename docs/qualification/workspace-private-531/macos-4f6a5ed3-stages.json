@@ -1048,11 +1048,57 @@
         {
           "argv": [
             "/usr/local/bin/docker",
+            "info",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d1-engine-info",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 30
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "volume",
+            "inspect",
+            "--format",
+            "{{json .}}",
+            "{owned_volume_name}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d1-volume-absent",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 30
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
             "volume",
             "create",
             "--label",
             "effigy.qual={token}",
-            "effigy-4f6a-qual-{token}"
+            "{owned_volume_name}"
           ],
           "env": {
             "set": {
@@ -1076,7 +1122,7 @@
             "inspect",
             "--format",
             "{{json .}}",
-            "effigy-4f6a-qual-{token}"
+            "{owned_volume_name}"
           ],
           "env": {
             "set": {
@@ -1115,6 +1161,28 @@
       "retention": "build stream, iidfile, readback JSON, image ID",
       "seconds": 1200,
       "steps": [
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "info",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d2-engine-info",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 30
+        },
         {
           "helper": "host_stage_dockerfile",
           "id": "d2-host-stage",
@@ -1227,6 +1295,28 @@
         {
           "argv": [
             "/usr/local/bin/docker",
+            "info",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d3-engine-info",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 30
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
             "run",
             "--pull=never",
             "--rm",
@@ -1300,7 +1390,7 @@
         "unauthorized and foreign resources, untouched"
       ],
       "retention": "observation streams, selection output, cleanup streams, before and after foreign lists",
-      "seconds": 300,
+      "seconds": 360,
       "steps": [
         {
           "argv": [
@@ -1473,6 +1563,53 @@
             ]
           },
           "id": "d4-owned-image-rm",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 30
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "ps",
+            "-a",
+            "--no-trunc",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d4-post-ps",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 30
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "volume",
+            "ls",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d4-post-volume",
           "kind": "exec",
           "output_cap_bytes": 262144,
           "retries": 0,

@@ -26,12 +26,16 @@ def record(path, value):
     exclusive(path, (json.dumps(value, sort_keys=True, indent=2) + '\n').encode())
 
 
-def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identity_probe=None, cwd=None, environment=None, resource_monitor=None):
+def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identity_probe=None, cwd=None, environment=None, resource_monitor=None, deadline=None, stdin_path=None, stdin_sha256=None):
     """Spend a stage occurrence before launch. A missing receipt is unknown.
 
     The caller supplies an already private, exclusive directory and exact, reviewed
     argv and input hashes. This primitive cannot establish guest identity or close
     a guest session; it never treats an SSH transport exit as guest closure.
+
+    deadline: optional absolute time.monotonic() cap shared by a multi-step stage; the
+    launch limit is the earlier of start + timeout and deadline. stdin_path/stdin_sha256:
+    optional hash-bound bytes delivered as the child's stdin (default: /dev/null).
     """
     root = Path(root)
     info = root.lstat()
@@ -40,12 +44,20 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
     if (not isinstance(argv, list) or not argv or (not isinstance(argv[0], str) or not argv[0] or any(not isinstance(x, str) or '\x00' in x for x in argv))
             or not 0 < timeout <= 900 or not 0 < output_cap <= 64 * 1024 * 1024):
         raise Refusal('invalid argv, deadline, or output cap')
+    if deadline is not None and deadline - time.monotonic() <= 0:
+        raise Refusal('stage deadline already passed: refuse before launch')
     if not isinstance(input_hashes, dict) or any(len(v) != 64 or any(c not in '0123456789abcdef' for c in v) for v in input_hashes.values()):
         raise Refusal('input hashes must be SHA-256')
+    if (stdin_path is None) != (stdin_sha256 is None):
+        raise Refusal('stdin needs both a path and its SHA-256')
     cwd = str(Path(cwd or os.getcwd()).resolve())
     environment = environment if environment is not None else {k: os.environ[k] for k in ('PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG') if k in os.environ}
     if not isinstance(environment, dict) or any(not isinstance(k, str) or not isinstance(v, str) or '=' in k or '\x00' in k + v for k, v in environment.items()):
         raise Refusal('invalid environment')
+    if stdin_path is not None:
+        with open(stdin_path, 'rb') as source:
+            if hashlib.sha256(source.read()).hexdigest() != stdin_sha256:
+                raise Refusal('stdin hash drift: refuse before launch')
     def check_inputs():
         for path, expected in input_hashes.items():
             with open(path, 'rb') as source:
@@ -60,20 +72,34 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
         resource_monitor.check()
     record(root / 'intent.json', {'argv': argv, 'cwd': cwd, 'environment': environment, 'timeout_seconds': timeout,
                                   'output_cap_bytes_each': output_cap, 'input_hashes': input_hashes,
-                                  'guest': guest})
+                                  'guest': guest, 'stdin_sha256': stdin_sha256, 'deadline_monotonic': deadline})
+    # The intent's directory entry must be durable before anything can be spawned.
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(root_fd)
+    finally:
+        os.close(root_fd)
     child = None
     streams = {}
+    stdin_file = None
     result = {'disposition': 'unknown', 'guest_closure': 'unknown' if guest else 'not-applicable'}
     try:
         for name in ('stdout', 'stderr'):
             fd = os.open(root / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
             streams[name] = os.fdopen(fd, 'wb')
         check_inputs()
+        if stdin_path is not None:
+            stdin_file = open(stdin_path, 'rb')
+            if hashlib.sha256(stdin_file.read()).hexdigest() != stdin_sha256:
+                raise Refusal('stdin hash drift: refuse before launch')
+            stdin_file.seek(0)
         start = time.monotonic()
-        child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, start_new_session=True, cwd=cwd, env=environment)
+        launch_limit = start + timeout if deadline is None else min(start + timeout, deadline)
+        child = subprocess.Popen(argv, stdin=stdin_file if stdin_file is not None else subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+                                 cwd=cwd, env=environment)
         identity = {'pid': child.pid, 'pgid': child.pid, 'session_id': child.pid,
-                    'deadline_monotonic': start + timeout}
+                    'deadline_monotonic': launch_limit}
         if identity_probe is not None:
             identity.update(identity_probe(child.pid))
         record(root / 'process.json', identity)
@@ -101,7 +127,7 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
                     result['resource_error'] = str(exc)
                     stop_group()
                     killed_at = time.monotonic()
-            if time.monotonic() - start >= timeout and reason is None:
+            if time.monotonic() >= launch_limit and reason is None:
                 reason = 'timeout'
                 stop_group()
                 killed_at = time.monotonic()
@@ -144,6 +170,8 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
         result.update(disposition='local-error', error=type(exc).__name__)
         raise
     finally:
+        if stdin_file is not None:
+            stdin_file.close()
         for stream in streams.values():
             stream.flush()
             os.fsync(stream.fileno())
