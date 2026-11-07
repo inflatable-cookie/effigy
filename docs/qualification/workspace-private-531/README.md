@@ -60,8 +60,11 @@ receipt naming another source head. The planner must bind the reviewed selector
 and actual input hashes through Queue's supported proof route before requesting
 execution. No selector or hash in this document is an execution approval.
 
-The actual runtime input is a private JSON artifact below
-`/Volumes/Builds/scratch/effigy/`. It is not an editable repository brief.
+The actual runtime input is a private JSON artifact below the canonical
+removable scratch `/Volumes/Stash/scratch/effigy/` that `common.py` binds for
+future invocations. It is not an editable repository brief. The consumed 531
+session's receipts and setup notes name the retired `/Volumes/Builds` mount;
+those are immutable historical records, never the current binding.
 `inputs.example.json` is a deliberately unarmed schema example; its placeholders
 are not artifact identities or receipts. Actual binary paths and SHA-256s must
 come from fresh recorded builds, not an earlier Queue cleanup record. The

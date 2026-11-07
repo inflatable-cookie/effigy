@@ -368,6 +368,22 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- Bind the private workspace qualification packet's future scratch to the
+  canonical removable root (task effigy#680): `common.py` derives `SCRATCH`,
+  and the private SSH control directory from it, at
+  `/Volumes/Stash/scratch/effigy` only — no dual-root fallback, symlink,
+  arbitrary-root option or adoption of a consumed 531 root, with every
+  identity, alias, ownership, one-shot, input-hash and source/GO binding
+  unchanged and the consumed session's `/Volumes/Builds` receipts kept as
+  immutable history. The new host source control
+  `proof:workspace:private-qualification:old-sentinel` admits a genuine older
+  executable as an ordinary sentinel and requires its Discard refusal before
+  process intent. The provisional old source `d7c3c93b` built once through its
+  own `build:runtime-storage` and then failed that control at admission
+  (helper protocol 2 against 4), and no ancestor of this source satisfies both
+  halves of Recipe D, so the genuine-old-baseline cell stays unresolved and no
+  candidate artifact is ready.
+
 - Independent per-backend entry points for the private workspace qualification
   packet (task effigy#620): `effigy proof:workspace:private-qualification --
   --backend <colima|desktop|linux>` executes exactly one backend's full session

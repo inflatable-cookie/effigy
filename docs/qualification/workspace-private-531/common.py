@@ -8,7 +8,10 @@ import stat
 import subprocess
 
 BACKENDS = ('colima', 'desktop', 'linux')
-SCRATCH = Path('/Volumes/Builds/scratch/effigy')
+# Canonical removable scratch for every future invocation; SSH_CONTROL follows it.
+# The consumed 531 session ran against the retired /Volumes/Builds mount, so its
+# receipts name that root as history. They are never re-read as this binding.
+SCRATCH = Path('/Volumes/Stash/scratch/effigy')
 SSH_CONTROL = SCRATCH / '531-linux-control'
 PACKET = Path(__file__).resolve().parent
 HEX = re.compile(r'[0-9a-f]{64}')
