@@ -4,6 +4,7 @@ Run: python3 -I -B macos_preparation_boundaries.py
 Every case feeds observations in; nothing starts, connects, writes outside a temp
 directory or reads credentials. Manifest pins are verified against the files on disk.
 """
+import ast
 import datetime
 import hashlib
 import json
@@ -18,8 +19,20 @@ import macos_metadata_tranche as tranche  # noqa: E402
 import macos_preparation as prep  # noqa: E402
 
 TOKEN = '0a1b2c3d'
+TOKEN32 = '0' * 31 + '1'
 NOW = datetime.datetime(2026, 11, 7, 21, 0, tzinfo=datetime.timezone.utc)
 MANIFEST = json.loads((HERE / 'macos-4f6a5ed3-stages.json').read_text())
+BINDINGS = dict(
+    control=prep.control_paths(TOKEN)['control'],
+    colima_home=prep.control_paths(TOKEN)['colima_home'],
+    qualification_root=prep.control_paths(TOKEN)['qualification_root'],
+    desktop_config=prep.control_paths(TOKEN)['desktop_config'],
+    desktop_context_dir=prep.control_paths(TOKEN)['desktop_context_dir'],
+    desktop_host=prep.DESKTOP_HOST, token=TOKEN, guest_spec='{"parent":{}}',
+    guest_verify_spec='{"parent":{}}', guest_context='/home/u/' + prep.guest_dir(TOKEN32),
+    probe_source='print(1)', stage_source='print(2)', verify_source='print(3)',
+    check_source=prep.CHECK_SOURCE, route_echo=prep.ROUTE_ECHO,
+    owned_container_ids=['abc123', 'def456'], owned_image_id='sha256:1234')
 
 
 def sha(path):
@@ -42,12 +55,26 @@ def check_go_now(g, **kw):
     return prep.check_go(g, **args)
 
 
+def exec_step(argv, env, timeout=60):
+    return dict(id='t', kind='exec', argv=argv, env=env, timeout_seconds=timeout, output_cap_bytes=1024, retries=0)
+
+
+COLIMA_ENV = dict(set={'COLIMA_HOME': '{colima_home}'}, unset=['LIMA_HOME', 'DOCKER_HOST', 'DOCKER_CONTEXT'])
+DOCKER_ENV = dict(set={'DOCKER_HOST': '{desktop_host}', 'DOCKER_CONFIG': '{desktop_config}'}, unset=['DOCKER_CONTEXT'])
+
+
 class PathControls(unittest.TestCase):
     def test_fresh_paths_pass_and_fit_socket_limit(self):
         paths = prep.control_paths(TOKEN)
         prep.check_paths(paths, existing=set())
         for key in ('lima_ha_socket', 'lima_ga_socket', 'docker_socket'):
             self.assertLess(len(paths[key].encode('utf-8')), prep.SOCKET_LIMIT_BYTES, key)
+
+    def test_qualification_root_is_the_only_share_and_is_distinct(self):
+        paths = prep.control_paths(TOKEN)
+        self.assertEqual(paths['qualification_root'], paths['control'] + '/s')
+        good = dict(profile=prep.PROFILE, colima_home=paths['colima_home'], shares=[paths['qualification_root']])
+        self.assertTrue(prep.check_engine(good, paths))
 
     def test_collision_refused(self):
         paths = prep.control_paths(TOKEN)
@@ -56,7 +83,7 @@ class PathControls(unittest.TestCase):
 
     def test_alias_and_builds_refused(self):
         paths = prep.control_paths(TOKEN)
-        paths['shared_root'] = '/Volumes/Builds/scratch/effigy/531-colima-qualification'
+        paths['qualification_root'] = '/Volumes/Builds/scratch/effigy/531-colima-qualification'
         with self.assertRaises(ValueError):
             prep.check_paths(paths, existing=set())
 
@@ -71,6 +98,11 @@ class PathControls(unittest.TestCase):
         with self.assertRaises(ValueError):
             prep.check_profiles([prep.PROFILE, 'effigy'])
         self.assertNotIn(prep.PROFILE, prep.PROTECTED_PROFILES)
+
+    def test_guest_dir_is_the_helper_shape_and_rejects_bad_tokens(self):
+        self.assertEqual(prep.guest_dir(TOKEN32), 'effigy-531-image-' + TOKEN32)
+        with self.assertRaises(ValueError):
+            prep.guest_dir('ABC')
 
 
 class RootAndEngineIdentity(unittest.TestCase):
@@ -100,8 +132,8 @@ class RootAndEngineIdentity(unittest.TestCase):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 prep.check_engine(dict(good, **changes), paths)
 
-    def test_desktop_resources_split_by_exact_label_and_context(self):
-        context = dict(name='desktop-linux', host='unix:///Users/tom/.docker/run/docker.sock')
+    def test_desktop_resources_split_by_exact_label_and_name_and_context(self):
+        context = dict(name='desktop-linux', host=prep.DESKTOP_HOST)
         resources = [
             dict(id='a1', name='effigy-4f6a-dcheck-0a1b2c3d', labels=[f'effigy.qual={TOKEN}']),
             dict(id='b2', name='effigy-4f6a-x', labels=['effigy.qual=ffffffff']),
@@ -113,6 +145,8 @@ class RootAndEngineIdentity(unittest.TestCase):
         self.assertEqual(out['foreign'], ['b2', 'c3', 'd4'])
         with self.assertRaises(ValueError):
             prep.check_desktop_resources(resources, TOKEN, dict(context, name='default'))
+        with self.assertRaises(ValueError):
+            prep.check_desktop_resources(resources, TOKEN, dict(context, host='unix:///tmp/other.sock'))
 
 
 class GoAndDrift(unittest.TestCase):
@@ -125,6 +159,12 @@ class GoAndDrift(unittest.TestCase):
                 check_go_now(go(), **changes)
         with self.assertRaises(ValueError):
             check_go_now(go(stage='C4'))
+
+    def test_frozen_artifact_drift_refused(self):
+        pinned = {'nextest_binary': 'a' * 64, 'kernel_fixture': 'b' * 64}
+        self.assertTrue(prep.check_proof_entry(pinned, dict(pinned)))
+        with self.assertRaises(ValueError):
+            prep.check_proof_entry(pinned, dict(pinned, kernel_fixture='c' * 64))
 
     def test_expired_and_not_yet_valid_refused(self):
         with self.assertRaises(ValueError):
@@ -154,10 +194,33 @@ class GoAndDrift(unittest.TestCase):
             prep.check_intent('intent-a', claimed={'intent-a'})
 
 
+class Rendering(unittest.TestCase):
+    def test_full_bindings_render_without_leftover_slots(self):
+        out = prep.render(['x', '--tag', 'effigy-4f6a-check-{token}', '{colima_home}'], BINDINGS)
+        self.assertEqual(out[1:], ['--tag', 'effigy-4f6a-check-' + TOKEN, BINDINGS['colima_home']])
+
+    def test_list_slot_expands_in_place(self):
+        out = prep.render(['docker', 'rm', '{owned_container_ids}'], BINDINGS)
+        self.assertEqual(out, ['docker', 'rm', 'abc123', 'def456'])
+
+    def test_docker_format_braces_are_literal(self):
+        self.assertEqual(prep.render(['docker', 'ps', '--format', '{{json .}}'], BINDINGS)[-1], '{{json .}}')
+
+    def test_unknown_and_unbound_slots_refuse(self):
+        with self.assertRaises(ValueError):
+            prep.render(['{nonsense}'], BINDINGS)
+        with self.assertRaises(ValueError):
+            prep.render(['{colima_home}'], dict(BINDINGS, colima_home=''))
+        partial = dict(BINDINGS)
+        del partial['token']
+        with self.assertRaises(ValueError):
+            prep.render(['--name', 'x-{token}'], partial)
+
+
 class StageBounds(unittest.TestCase):
     def stage(self, **changes):
-        base = dict(id='T', seconds=900, reserve_seconds=60, steps=[
-            dict(id='s1', argv=['colima', 'list'], timeout_seconds=60, output_cap_bytes=1024, retries=0)])
+        base = dict(id='T', seconds=900, reserve_seconds=60, steps=[exec_step(
+            [prep.COLIMA, 'list'], COLIMA_ENV, timeout=60)])
         base.update(changes)
         return base
 
@@ -171,15 +234,33 @@ class StageBounds(unittest.TestCase):
 
     def test_shell_string_argv_retry_cap_and_deadline_sum_refused(self):
         bad_steps = [
-            [dict(id='s', argv='colima list', timeout_seconds=60, output_cap_bytes=1, retries=0)],
-            [dict(id='s', argv=['x'], timeout_seconds=60, output_cap_bytes=1, retries=1)],
-            [dict(id='s', argv=['x'], timeout_seconds=60, output_cap_bytes=prep.OUTPUT_CAP_BYTES + 1, retries=0)],
-            [dict(id='s', argv=['x'], timeout_seconds=900, output_cap_bytes=1, retries=0),
-             dict(id='t', argv=['y'], timeout_seconds=900, output_cap_bytes=1, retries=0)],
+            [dict(exec_step([prep.COLIMA, 'list'], COLIMA_ENV), argv='colima list')],
+            [dict(exec_step([prep.COLIMA, 'list'], COLIMA_ENV), retries=1)],
+            [dict(exec_step([prep.COLIMA, 'list'], COLIMA_ENV), output_cap_bytes=prep.OUTPUT_CAP_BYTES + 1)],
+            [exec_step([prep.COLIMA, 'list'], COLIMA_ENV, timeout=900),
+             exec_step([prep.COLIMA, 'status'], COLIMA_ENV, timeout=900)],
         ]
         for steps in bad_steps:
             with self.subTest(steps=steps), self.assertRaises(ValueError):
                 prep.check_stage(self.stage(steps=steps))
+
+    def test_untyped_executable_and_unpinned_env_refused(self):
+        with self.assertRaises(ValueError):
+            prep.check_step(exec_step(['colima', 'list'], COLIMA_ENV))
+        with self.assertRaises(ValueError):
+            prep.check_step(exec_step([prep.COLIMA, 'list'], dict(set={}, unset=[])))
+        with self.assertRaises(ValueError):
+            prep.check_step(exec_step([prep.DOCKER, 'ps'], dict(set={'DOCKER_HOST': prep.DESKTOP_HOST},
+                                                               unset=['DOCKER_CONTEXT'])))
+        with self.assertRaises(ValueError):
+            prep.check_step(exec_step([prep.DOCKER, 'ps'], dict(DOCKER_ENV, unset=[])))
+
+    def test_helper_steps_name_known_actions_only(self):
+        self.assertTrue(prep.check_step(dict(id='h', kind='helper', helper='claim_intent',
+                                             timeout_seconds=5, output_cap_bytes=1, retries=0)))
+        with self.assertRaises(ValueError):
+            prep.check_step(dict(id='h', kind='helper', helper='run anything',
+                                 timeout_seconds=5, output_cap_bytes=1, retries=0))
 
 
 class ReceiptsAndClosure(unittest.TestCase):
@@ -215,7 +296,7 @@ class Manifest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(sha(HERE / name), digest)
 
-    def test_every_stage_is_bounded_and_argv_only(self):
+    def test_every_stage_is_bounded_and_pinned(self):
         self.assertEqual(MANIFEST['stage_cap_seconds'], prep.STAGE_CAP_SECONDS)
         self.assertEqual(MANIFEST['output_cap_bytes'], prep.OUTPUT_CAP_BYTES)
         for stage in MANIFEST['stages']:
@@ -223,14 +304,66 @@ class Manifest(unittest.TestCase):
                 self.assertTrue(prep.check_stage(stage))
                 self.assertTrue(stage['closure'] and stage['failure'] and stage['retention'])
 
-    def test_no_daemon_route_in_observation_argv(self):
-        bad = {'info', 'version', 'system'}
+    def test_every_exec_step_renders_fully_with_fixture_bindings(self):
         for stage in MANIFEST['stages']:
-            if stage['id'].startswith('C0') or stage['id'].startswith('C6'):
+            for step in stage['steps']:
+                if step['kind'] != 'exec':
+                    continue
+                with self.subTest(step=step['id']):
+                    argv = prep.render(step['argv'], BINDINGS)
+                    self.assertTrue(all(isinstance(a, str) and a for a in argv))
+
+    def test_desktop_steps_pin_the_observed_endpoint_and_owned_config(self):
+        for stage in MANIFEST['stages']:
+            if stage['backend'] != 'desktop':
                 continue
             for step in stage['steps']:
-                if 'docker' in step['argv'][0]:
-                    self.assertFalse(bad & set(step['argv']), step['id'])
+                if step['kind'] != 'exec':
+                    continue
+                with self.subTest(step=step['id']):
+                    self.assertEqual(step['argv'][0], prep.DOCKER)
+                    self.assertEqual(step['env']['set']['DOCKER_HOST'], '{desktop_host}')
+                    self.assertEqual(step['env']['set']['DOCKER_CONFIG'], '{desktop_config}')
+                    self.assertIn('DOCKER_CONTEXT', step['env']['unset'])
+
+    def test_colima_steps_use_the_fresh_home_and_no_inherited_lima(self):
+        for stage in MANIFEST['stages']:
+            if stage['backend'] != 'colima':
+                continue
+            for step in stage['steps']:
+                if step['kind'] != 'exec':
+                    continue
+                with self.subTest(step=step['id']):
+                    self.assertEqual(step['env']['set']['COLIMA_HOME'], '{colima_home}')
+                    self.assertIn('LIMA_HOME', step['env']['unset'])
+
+    def test_server_reads_only_in_desktop_activation_and_no_version_probe(self):
+        for stage in MANIFEST['stages']:
+            for step in stage['steps']:
+                if step['kind'] != 'exec' or step['argv'][0] != prep.DOCKER:
+                    continue
+                with self.subTest(step=step['id']):
+                    self.assertNotIn('version', step['argv'])
+                    if 'info' in step['argv']:
+                        self.assertEqual(step['id'], 'd0-info')
+
+    def test_recipe_and_check_sources_are_consistent(self):
+        self.assertEqual(MANIFEST['binding_inputs']['recipe_file'].split()[-1], prep.RECIPE_SHA256)
+        self.assertEqual(MANIFEST['binding_inputs']['check_source_sha256'],
+                         hashlib.sha256(prep.CHECK_SOURCE.encode()).hexdigest())
+        ast.parse(prep.CHECK_SOURCE)
+
+    def test_frozen_entries_have_full_sha_and_absolute_paths(self):
+        frozen = MANIFEST['proof_entry']['frozen']
+        self.assertGreaterEqual(len(frozen), 10)
+        for name, entry in frozen.items():
+            with self.subTest(name=name):
+                self.assertTrue(entry['path'].startswith('/Volumes/Stash/scratch/effigy/627-artifact-preparation.'))
+                self.assertRegex(entry['sha256'], r'^[0-9a-f]{64}$')
+
+    def test_proof_entry_names_the_unexercised_fixture_path_gate(self):
+        self.assertIn('absolute', MANIFEST['proof_entry']['nextest_fixture_path_rule'])
+        self.assertIn('G3 refuses', MANIFEST['proof_entry']['nextest_fixture_path_rule'])
 
 
 class TrancheParsers(unittest.TestCase):
