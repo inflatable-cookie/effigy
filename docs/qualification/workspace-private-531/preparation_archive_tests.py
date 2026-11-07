@@ -126,6 +126,18 @@ class ObservationChecks(unittest.TestCase):
         with self.assertRaises(observations.Refusal):
             observations.descriptor_chain(xml.replace(b'b.hds', b'a.hds'), a)
 
+    def test_contained_closure_requires_authentication_and_empty_scope(self):
+        expected = {'boot_id': 'boot', 'nonce': 'abc', 'unit': 'effigy-stage-abc', 'control_group': '/user.slice/scope'}
+        receipt = dict(expected, supervisor='systemd-cgroup-v2',
+                       populated=0, active_state='inactive', result='success', waited_exit=0)
+        self.assertEqual(observations.verify_contained_closure(expected, None, lambda _: True), 'unknown')
+        with self.assertRaises(observations.Refusal):
+            observations.verify_contained_closure(expected, receipt, lambda _: False)
+        self.assertEqual(observations.verify_contained_closure(expected, receipt, lambda _: True), 'closed')
+        self.assertEqual(observations.verify_contained_closure(expected, dict(receipt, populated=1), lambda _: True), 'unknown')
+        with self.assertRaises(observations.Refusal):
+            observations.verify_contained_closure(expected, dict(receipt, boot_id='other'), lambda _: True)
+
     def test_unknown_and_drifting_guest_closure(self):
         identity = dict(nonce='n', boot_id='b', pid=42, start_time=2, session_id=42, deadline_monotonic=9)
         self.assertEqual(observations.guest_closure(identity, None), 'unknown')

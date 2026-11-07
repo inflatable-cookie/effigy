@@ -25,7 +25,8 @@
         "native-placement",
         "E12-go",
         "stable-baseline",
-        "bound-live-network-and-engine-storage-monitor"
+        "bound-live-network-and-engine-storage-monitor",
+        "guest-closure"
       ],
       "retention": "retain image and original streams",
       "failure": "hold; reconcile guest closure; never replay uncertain intent; hold if resource telemetry is unavailable",
@@ -48,7 +49,9 @@
         "E12-pull-success-and-guest-closure",
         "empty-build-context",
         "E12-go",
-        "bound-live-network-and-engine-storage-monitor"
+        "bound-live-network-and-engine-storage-monitor",
+        "disk-correlation",
+        "guest-closure"
       ],
       "retention": "retain image ID and original streams",
       "failure": "hold; reconcile guest closure; never replay uncertain intent; hold if resource telemetry is unavailable",
@@ -67,7 +70,8 @@
         "E15-admitted-launcher",
         "E11-cargo-escape",
         "host-heavy-admission",
-        "guest-closure"
+        "guest-closure",
+        "disk-correlation"
       ],
       "retention": "retain build and streams",
       "failure": "hold; reconcile guest closure"
@@ -84,7 +88,9 @@
       "preconditions": [
         "E13a-production-success-and-guest-closure",
         "E11-cargo-escape",
-        "host-heavy-admission"
+        "host-heavy-admission",
+        "disk-correlation",
+        "guest-closure"
       ],
       "retention": "retain build and streams",
       "failure": "hold; reconcile guest closure"
@@ -102,7 +108,9 @@
         "E13a-candidate-success-and-guest-closure",
         "native-nextest-verified",
         "E11-cargo-escape",
-        "host-heavy-admission"
+        "host-heavy-admission",
+        "disk-correlation",
+        "guest-closure"
       ],
       "retention": "retain test list and streams",
       "failure": "hold; reconcile guest closure"
@@ -119,7 +127,9 @@
       "preconditions": [
         "E13a-tests-success-and-guest-closure",
         "E11-cargo-escape",
-        "host-heavy-admission"
+        "host-heavy-admission",
+        "disk-correlation",
+        "guest-closure"
       ],
       "retention": "retain metadata and streams",
       "failure": "hold; reconcile guest closure"
@@ -140,7 +150,9 @@
         "old-B-source-and-script-hashes",
         "fresh-oxide-absent",
         "E11-cargo-escape",
-        "host-heavy-admission"
+        "host-heavy-admission",
+        "disk-correlation",
+        "guest-closure"
       ],
       "retention": "retain old build and streams",
       "failure": "hold; reconcile guest closure"

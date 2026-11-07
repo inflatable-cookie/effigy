@@ -673,6 +673,19 @@ and the E8 control file identity. This is a filesystem admission only: the
 separate authenticated controller-to-guest correlation remains required and
 is unavailable from 684. Never substitute a matching path or size for it.
 
+A possible closure verifier must authenticate the guest boot, nonce, unit and
+cgroup identity and prove cgroup v2 `populated=0`, inactive state and successful
+waited exit. A process session alone cannot exclude `setsid` descendants. This
+is an injected verifier contract, not a positive receipt or an installed
+supervisor. A candidate systemd route needs source qualification: the official
+[systemd-run manual](https://www.freedesktop.org/software/systemd/man/latest/systemd-run.html)
+explicitly forbids combining `--scope` and `--wait`, and `--collect` can unload
+the unit before inspection. No such command is admitted here. If containment
+or authentication is unavailable, closure stays unknown. Disk correlation needs
+a separately authenticated byte witness at the guest-logical offset through a
+supported `.hds` reader, or a supported Parallels disk-to-VM mapping; neither is
+established by the observed descriptor UID or guest serial.
+
 ### Exact source-qualified payloads (held)
 
 These are the exact command payloads, not permission to launch them. A reviewed
