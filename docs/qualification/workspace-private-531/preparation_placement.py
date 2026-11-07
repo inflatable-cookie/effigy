@@ -63,6 +63,16 @@ def filesystem_controls(directory, uid):
         os.write(fd, b'placement-control')
         os.fsync(fd)
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        contender = os.open(directory / 'control-source', os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0))
+        try:
+            try:
+                fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                pass
+            else:
+                raise Refusal('exclusive lock did not exclude another descriptor')
+        finally:
+            os.close(contender)
         left, right = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             left.sendmsg([b'x'], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', [fd]))])

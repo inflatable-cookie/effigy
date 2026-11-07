@@ -116,3 +116,27 @@ def setup_readiness(system_state, docker_state, authenticated_boot_id):
     if docker_state == 'inactive':
         return 'start-only-if-admitted'
     raise Refusal('docker state is not a stable setup baseline')
+
+
+def inventory_extents(xml_bytes, top, directory):
+    """Account every described .hds, refusing extra, missing or substituted files."""
+    from pathlib import Path
+    import stat
+    mapping = descriptor_chain(xml_bytes, top)
+    root = Path(directory)
+    if not root.is_dir() or root.is_symlink() or root.resolve() != root:
+        raise Refusal('disk directory is not canonical')
+    files = mapping['files']
+    actual = {entry.name for entry in root.iterdir() if entry.name.endswith('.hds')}
+    if actual != set(files.values()):
+        raise Refusal('disk files do not match complete descriptor')
+    inventory = {}
+    for guid, name in files.items():
+        path = root / name
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise Refusal('extent is not an independent regular file')
+        inventory[guid] = {'path': str(path), 'device': info.st_dev, 'inode': info.st_ino,
+                           'size': info.st_size, 'parent': mapping['parents'][guid]}
+    return {'extents': inventory, 'chain': mapping['chain'],
+            'descriptor_sha256': hashlib.sha256(xml_bytes).hexdigest()}

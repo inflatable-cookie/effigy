@@ -1,6 +1,7 @@
 """Injected, local-only checks; no guest or network actions."""
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import tarfile
@@ -14,6 +15,7 @@ import preparation_observations as observations
 import preparation_stage as stage
 import preparation_metadata as metadata
 import preparation_placement as placement
+import preparation_nextest as nextest
 
 
 class ArchiveChecks(unittest.TestCase):
@@ -110,6 +112,14 @@ class ObservationChecks(unittest.TestCase):
                f'<Shot><GUID>{a}</GUID><ParentGUID>{b}</ParentGUID></Shot>'
                f'<Shot><GUID>{b}</GUID><ParentGUID>{zero}</ParentGUID></Shot></Snapshots></Disk>').encode()
         self.assertEqual(observations.descriptor_chain(xml, a)['chain'], [a, b])
+        directory = Path(tempfile.mkdtemp(prefix='extent-controls-')).resolve()
+        (directory / 'a.hds').write_bytes(b'a')
+        (directory / 'b.hds').write_bytes(b'bb')
+        inventory = observations.inventory_extents(xml, a, directory)
+        self.assertEqual(inventory['extents'][a]['size'], 1)
+        (directory / 'extra.hds').write_bytes(b'x')
+        with self.assertRaises(observations.Refusal):
+            observations.inventory_extents(xml, a, directory)
         with self.assertRaises(observations.Refusal):
             observations.descriptor_chain(xml, zero)
         with self.assertRaises(observations.Refusal):
@@ -131,6 +141,21 @@ class StageChecks(unittest.TestCase):
 
     def run_script(self, script, timeout=2, cap=1024, guest=False):
         return stage.run_stage(self.root, [sys.executable, '-c', script], timeout, cap, {}, guest)
+
+    def test_control_entry_in_one_use_stage(self):
+        qualification = self.root / 'qualification'
+        qualification.mkdir(mode=0o700)
+        stage_root = self.root / 'stage'
+        stage_root.mkdir(mode=0o700)
+        request = self.root / 'control.json'
+        request.write_text(json.dumps({'operation': 'empty-root', 'root': str(qualification.resolve()),
+                                       'uid': os.geteuid()}))
+        sha = hashlib.sha256(request.read_bytes()).hexdigest()
+        control = str(Path(__file__).resolve().parent / 'preparation_controls.py')
+        result = stage.run_stage(stage_root, [sys.executable, '-I', '-B', control, str(request), sha],
+                                 2, 4096, {str(request): sha})
+        self.assertEqual(result['disposition'], 'exited')
+        self.assertEqual(json.loads((stage_root / 'stdout').read_text())['uid'], os.geteuid())
 
     def test_separate_streams_and_reused_intent(self):
         result = self.run_script("import sys; print('out'); print('err', file=sys.stderr)", guest=True)
@@ -164,8 +189,9 @@ class MetadataChecks(unittest.TestCase):
         source = {'rust-build-meta': {'platforms': {'host': {'platform': {'triple': 'aarch64-unknown-linux-gnu'}}},
                   'non-test-binaries': {'pkg': [{'name': 'kernel-custody-fixture', 'kind': 'bin-exe',
                                                 'path': '/build/fixture', 'build-platform': 'target'}]}},
-                  'rust-binaries': {name: {'binary-id': name, 'binary-path': '/build/' + name,
-                                           'build-platform': 'target'}
+                  'rust-binaries': {name: {'binary-id': name, 'binary-name': name, 'package-id': 'pkg',
+                                           'kind': 'lib' if name == 'effigy-kernel' else 'test',
+                                           'binary-path': '/build/' + name, 'build-platform': 'target'}
                                     for name in ('effigy-kernel', 'effigy-kernel::custody')}}
         mapping = {'kernel_tests': ('/build/effigy-kernel', '/frozen/kernel'),
                    'custody_tests': ('/build/effigy-kernel::custody', '/frozen/custody'),
@@ -223,6 +249,31 @@ class PlacementChecks(unittest.TestCase):
             placement.verify_root(target, identity)
         with self.assertRaises(placement.Refusal):
             placement.place_file(root, 'other', data, '0' * 64, os.geteuid())
+
+
+class NextestProvisioningChecks(unittest.TestCase):
+    def test_pinned_shape_and_architecture(self):
+        elf = bytearray(64)
+        elf[:6] = b'\x7fELF\x02\x01'
+        elf[18:20] = (183).to_bytes(2, 'little')
+        output = io.BytesIO()
+        with tarfile.open(fileobj=output, mode='w:gz') as tar:
+            info = tarfile.TarInfo('cargo-nextest')
+            info.size = len(elf)
+            tar.addfile(info, io.BytesIO(elf))
+        data = output.getvalue()
+        self.assertEqual(nextest._admit(data, hashlib.sha256(data).hexdigest()), elf)
+        with self.assertRaises(nextest.Refusal):
+            nextest._admit(data, '0' * 64)
+        elf[18:20] = (62).to_bytes(2, 'little')
+        other = io.BytesIO()
+        with tarfile.open(fileobj=other, mode='w:gz') as tar:
+            info = tarfile.TarInfo('cargo-nextest')
+            info.size = len(elf)
+            tar.addfile(info, io.BytesIO(elf))
+        data = other.getvalue()
+        with self.assertRaises(nextest.Refusal):
+            nextest._admit(data, hashlib.sha256(data).hexdigest())
 
 
 if __name__ == '__main__':

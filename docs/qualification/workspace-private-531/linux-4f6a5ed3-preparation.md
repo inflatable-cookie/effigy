@@ -548,10 +548,12 @@ Each occurrence needs its own exclusive intent and original stdout and stderr,
 including when delivery is uncertain. A missing terminal receipt requires
 reconciliation; it does not permit replay. Reserve 120 seconds for reporting
 and at most 180 seconds for local admission in each 1,200-second stage. Each
-E13a selector is a separate stage, retaining its source-defined 900-second
-bound. E13k's 600-second helper build and 900-second nextest invocation are
-separate stages, preserving their source arguments and the test GO. E17 stays
-at 60 seconds. E14 has a 1,800-second planned bound and cannot be treated as a
+E13a selector is a separate stage, retaining its source-defined bound. E13k
+contains a 600-second helper build and a 900-second nextest invocation. Its
+selector is durable and the nextest route enters `suite_guard.py`; splitting
+it requires an admission-preserving route with those semantics and the test GO.
+That route has not been established, so E13k stays held rather than invoking
+raw component commands. E17 stays at 60 seconds. E14 has a 1,800-second planned bound and cannot be treated as a
 1,200-second command without evidence or a source-qualified decomposition;
 that exact constraint remains open. The same scrutiny applies to E10, E12 and
 E13b before their execution commands are admitted. No host SSH timeout proves
@@ -570,9 +572,15 @@ reports its Linux aarch64 GNU archive SHA-256 as
 (about 10.9 MB). No archive was downloaded in this task. This release is a
 candidate pin, not an admitted installation: its GitHub artifact host is not
 in §6.3's network allowlist, and its actual bytes and native metadata schema
-have not been verified. Provisioning remains blocked pending an allowed,
-bounded route and actual byte/schema verification; neither the Darwin binary
-nor an unpinned installer is a substitute.
+have not been verified. The offline route admits a separately pre-positioned
+archive with this exact digest, at most 20 MiB, extracts at most 100 MiB into a
+private directory, and checks ELF64 little-endian aarch64 before publication.
+Those bytes count within the existing host/guest storage and transfer caps; no
+new network host is admitted. Actual `cargo-nextest --version`, Rust 1.97.1,
+and a native metadata-schema check remain mandatory before use. Until the
+archive arrives through an already allowed, authenticated route, provisioning
+remains blocked; neither the Darwin binary nor an unpinned installer is a
+substitute.
 
 The B source at `823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1` declares
 `sh scripts/oxide-selector.sh build --bin effigy` with a 900-second timeout;
@@ -591,6 +599,77 @@ it defaults to x86_64 unless the aarch64 triple is explicit. The proposed
 `EFFIGY_ACTIVE_VERSION=0.14.1` override must be bound to the frozen H production
 version and independently recorded launcher identity, not used to fabricate a
 producer receipt. No mount expansion is authorized.
+
+### Control entry points and limits
+
+The preparation helpers are newer than H and do not alter H or its admissions.
+After a reviewer has bound a stage request, its hashes and the existing GOs,
+the host stage primitive is invoked as:
+
+```
+python3 -I -B docs/qualification/workspace-private-531/preparation_stage.py REQUEST_JSON REQUEST_SHA256
+```
+
+Each request names the exact argv, cwd, explicit environment, input hashes,
+exclusive 0700 stage directory, per-stream output cap and deadline. Inputs are
+checked before and after the intent is written. `intent.json` is exclusive and
+spends the occurrence; `process.json`, the two streams and `receipt.json` are
+retained. A missing receipt, an interrupted transport or missing guest closure
+is unknown, not permission to replay. The primitive records local process
+closure only. For guest work, invoke the bound `preparation_guest.py` under the
+pinned SSH transport; its own deadline and identity record are guest-local. Its
+terminal receipt deliberately reports guest closure unknown: a process can
+escape a session, and an independently authenticated containment/closure
+mechanism is still required before downstream work may rely on closure.
+
+`preparation_controls.py REQUEST_JSON REQUEST_SHA256` supplies the bounded local
+source, placement, empty-root, filesystem, offline nextest and metadata
+operations. Neither entry point by itself authenticates the VM, proves a
+controller-to-guest disk association, validates a GO or supplies a complete
+execution manifest. Those gates remain required; an unbound request is not an
+activation. The existing 684 evidence exposes no supported link from the host
+controller/disk UID to the authenticated guest serial, so that precise
+correlation remains refused.
+
+### Exact source-qualified payloads (held)
+
+These are the exact command payloads, not permission to launch them. A reviewed
+request must also bind fresh identities, the private environment, every input
+hash, its own stage directory, its GO and the preceding terminal/closure
+receipts. Guest payloads use `cwd=/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/source`
+and `EFFIGY_OXIDE_ESCAPE=cargo`. Their launcher is the E15 copied and verified
+H producer artifact. Run each E13a row in its own 900-second stage; the E17
+metadata derivation remains separately limited to 60 seconds.
+
+```
+/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/source/.effigy/linux-release/artifacts/effigy-aarch64-unknown-linux-gnu build:runtime-storage
+/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/source/.effigy/linux-release/artifacts/effigy-aarch64-unknown-linux-gnu build:workspace:private-qualification
+/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/source/.effigy/linux-release/artifacts/effigy-aarch64-unknown-linux-gnu build:workspace:private-qualification:test-inputs
+/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/source/.effigy/linux-release/artifacts/effigy-aarch64-unknown-linux-gnu build:workspace:private-qualification:cargo-metadata
+```
+
+The E13b payload is `sh scripts/oxide-selector.sh build --bin effigy` at
+`/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/old-823d859d/source`, with
+`EFFIGY_OXIDE_ESCAPE=cargo`, using B's own verified script and source-defined
+900-second bound. It requires the freshly verified missing-Oxide condition and
+its own stage and genuine producer receipt. E14's held payload is
+`effigy workspace:linux:artifact` at the retained clean H checkout with
+`EFFIGY_ACTIVE_VERSION=0.14.1` and
+`EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu`; its 1,800-second
+planned bound is not silently shortened or assigned to the stage primitive.
+The native and host receipt identities and exact artifact hashes do not exist
+yet and must not be invented.
+
+The two retained source archives are H SHA-256
+`03df0b512b7536467cfb44f131619543d4e561e09aee29cab71be12445bfe867`
+(31,559,680 bytes; manifest SHA-256
+`aa648d0697c6880048972e3ef06523962264f7937a8bf5c309f4a7bb3187a47c`)
+and B SHA-256
+`69dfda56c8be8e46fa0c6dea5224b519cfc55f471ada2945545d17c9c53eda83`
+(31,549,440 bytes; manifest SHA-256
+`b1d423f36c3cc800d9ed21666f443f08150ed04ab9253549e4fa944441ec7d6d`).
+The originals under `source-transfer-inputs` are retained; both manifests name
+2,134 files. Placement requires the exact bytes and empty owned roots.
 
 ### 6.4 Historical source-owner proposals
 

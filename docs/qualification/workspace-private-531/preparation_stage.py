@@ -49,7 +49,10 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
     def check_inputs():
         for path, expected in input_hashes.items():
             with open(path, 'rb') as source:
-                actual = hashlib.file_digest(source, 'sha256').hexdigest()
+                digest = hashlib.sha256()
+                for block in iter(lambda: source.read(1024 * 1024), b''):
+                    digest.update(block)
+                actual = digest.hexdigest()
             if actual != expected:
                 raise Refusal('input hash drift: ' + path)
     check_inputs()
@@ -136,3 +139,32 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
             result['streams'][name] = {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
         record(root / 'receipt.json', result)
     return result
+
+
+def main():
+    import sys
+    if len(sys.argv) != 3:
+        raise Refusal('usage: preparation_stage.py REQUEST EXPECTED_SHA256')
+    request_path = str(Path(sys.argv[1]).resolve())
+    with open(request_path, 'rb') as source:
+        raw = source.read(1024 * 1024 + 1)
+    if len(raw) > 1024 * 1024 or hashlib.sha256(raw).hexdigest() != sys.argv[2]:
+        raise Refusal('request hash mismatch or size exceeded')
+    request = json.loads(raw)
+    required = {'stage_dir', 'argv', 'timeout_seconds', 'output_cap_bytes', 'input_hashes', 'guest', 'cwd', 'environment'}
+    if set(request) != required:
+        raise Refusal('unsupported request schema')
+    inputs = dict(request['input_hashes'])
+    if request_path in inputs:
+        raise Refusal('request must not alias a separate input')
+    inputs[request_path] = sys.argv[2]
+    result = run_stage(request['stage_dir'], request['argv'], request['timeout_seconds'],
+                       request['output_cap_bytes'], inputs, request['guest'],
+                       cwd=request['cwd'], environment=request['environment'])
+    print(json.dumps(result, sort_keys=True))
+    return 0 if result['disposition'] == 'exited' else 1
+
+
+if __name__ == '__main__':
+    import sys
+    sys.exit(main())

@@ -3,6 +3,7 @@
 A process group can escape through setsid; this records terminal status but
 leaves closure unknown until independently contained descendants are accounted.
 """
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -23,9 +24,13 @@ def linux_identity(pid):
 
 
 def main():
-    if len(sys.argv) != 2:
-        raise Refusal('one exact request file required')
-    request = json.loads(Path(sys.argv[1]).read_text())
+    if len(sys.argv) != 3:
+        raise Refusal('request path and SHA-256 required')
+    request_path = str(Path(sys.argv[1]).resolve())
+    raw = Path(request_path).read_bytes()
+    if len(raw) > 1024 * 1024 or hashlib.sha256(raw).hexdigest() != sys.argv[2]:
+        raise Refusal('request hash mismatch')
+    request = json.loads(raw)
     if set(request) != {'stage_dir', 'argv', 'timeout_seconds', 'output_cap_bytes', 'input_hashes', 'nonce', 'cwd', 'environment'}:
         raise Refusal('unsupported request')
     nonce = request['nonce']
@@ -33,8 +38,12 @@ def main():
         raise Refusal('nonce must be 256-bit hexadecimal')
     def identity(pid):
         return dict(linux_identity(pid), nonce=nonce)
+    inputs = dict(request['input_hashes'])
+    if request_path in inputs:
+        raise Refusal('request aliases input')
+    inputs[request_path] = sys.argv[2]
     result = run_stage(request['stage_dir'], request['argv'], request['timeout_seconds'],
-                       request['output_cap_bytes'], request['input_hashes'],
+                       request['output_cap_bytes'], inputs,
                        guest=True, identity_probe=identity, cwd=request['cwd'],
                        environment=request['environment'])
     # A terminal exit is not a closure claim; all evidence remains in stage_dir.

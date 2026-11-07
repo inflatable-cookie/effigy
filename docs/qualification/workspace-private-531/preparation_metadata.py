@@ -28,10 +28,12 @@ def derive(metadata, version, replacements):
             item = binaries[binary_id]
             old, new = replacements[key]
             allowed = {'binary-id', 'binary-name', 'package-id', 'kind', 'binary-path', 'build-platform'}
-            if set(item) - allowed or item['binary-id'] != binary_id or item['binary-path'] != old or item['build-platform'] != 'target':
+            if set(item) != allowed or item['binary-id'] != binary_id or item['binary-path'] != old or item['build-platform'] != 'target' or item['kind'] != ('lib' if key == 'kernel_tests' else 'test'):
                 raise Refusal('test executable identity mismatch')
             item['binary-path'] = new
         non_tests = build['non-test-binaries']
+        if set(non_tests) != {binaries['effigy-kernel']['package-id']} or binaries['effigy-kernel::custody']['package-id'] != binaries['effigy-kernel']['package-id']:
+            raise Refusal('fixture package identity mismatch')
         entries = [entry for group in non_tests.values() for entry in group]
         if (len(entries) != 1 or set(entries[0]) != {'name', 'kind', 'path', 'build-platform'}
                 or entries[0]['name'] != 'kernel-custody-fixture' or entries[0]['kind'] != 'bin-exe'):
