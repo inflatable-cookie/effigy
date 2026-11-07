@@ -26,7 +26,7 @@ def record(path, value):
     exclusive(path, (json.dumps(value, sort_keys=True, indent=2) + '\n').encode())
 
 
-def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identity_probe=None, cwd=None, environment=None, resource_monitor=None, deadline=None, stdin_path=None, stdin_sha256=None):
+def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identity_probe=None, cwd=None, environment=None, resource_monitor=None, deadline=None, stdin_path=None, stdin_sha256=None, cleanup_deadline=None):
     """Spend a stage occurrence before launch. A missing receipt is unknown.
 
     The caller supplies an already private, exclusive directory and exact, reviewed
@@ -46,6 +46,8 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
         raise Refusal('invalid argv, deadline, or output cap')
     if deadline is not None and deadline - time.monotonic() <= 0:
         raise Refusal('stage deadline already passed: refuse before launch')
+    if cleanup_deadline is not None and (deadline is None or cleanup_deadline < deadline):
+        raise Refusal('cleanup deadline must include the launch deadline')
     if not isinstance(input_hashes, dict) or any(len(v) != 64 or any(c not in '0123456789abcdef' for c in v) for v in input_hashes.values()):
         raise Refusal('input hashes must be SHA-256')
     if (stdin_path is None) != (stdin_sha256 is None):
@@ -131,7 +133,8 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
                 reason = 'timeout'
                 stop_group()
                 killed_at = time.monotonic()
-            if killed_at is not None and time.monotonic() - killed_at > 1:
+            if killed_at is not None and (time.monotonic() - killed_at > 1 or
+                                          (cleanup_deadline is not None and time.monotonic() >= cleanup_deadline)):
                 for key in list(sel.get_map().values()):
                     sel.unregister(key.fileobj)
                     key.fileobj.close()
@@ -150,14 +153,18 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
                     reason = 'output-cap'
                     stop_group()
                     killed_at = time.monotonic()
-        exit_code = child.wait()
+        try:
+            exit_code = child.wait(timeout=None if cleanup_deadline is None else
+                                   max(0, cleanup_deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            exit_code = None
         if resource_monitor is not None and reason is None:
             try:
                 result['resource_usage'] = resource_monitor.check()
             except Exception as exc:
                 reason = 'resource-refusal'
                 result['resource_error'] = str(exc)
-        result.update(disposition=reason or ('exited' if exit_code == 0 else 'failed'),
+        result.update(disposition='unknown' if exit_code is None else reason or ('exited' if exit_code == 0 else 'failed'),
                       waited_exit=exit_code, elapsed_seconds=time.monotonic() - start,
                       observed_bytes=counts)
     except BaseException as exc:
@@ -166,7 +173,11 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
                 os.killpg(child.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            child.wait()
+            try:
+                child.wait(timeout=None if cleanup_deadline is None else
+                           max(0, cleanup_deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                result['waited_exit'] = None
         result.update(disposition='local-error', error=type(exc).__name__)
         raise
     finally:
