@@ -988,6 +988,7 @@ fn parse_builtin_step_command(
 /// - `docs check`: `--repo` replaces repo_root and drops cwd/default-scope
 /// - `bundle sync`: public grammar has no `--repo`
 /// - `exec`: a trailing `--repo` becomes command payload
+///
 /// Bare help parses as `Command::Help` and has no override to pin.
 fn pin_selected_catalog_repo_on_rendered_builtin(parsed: &Command, command: String) -> String {
     if rendered_builtin_omits_catalog_repo_pin(parsed) {
