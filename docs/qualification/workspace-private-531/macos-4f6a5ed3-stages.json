@@ -1,0 +1,198 @@
+{
+  "manifest": "macos-4f6a5ed3-stages-r1",
+  "status": "unarmed: source review only; every stage needs its own fresh GO",
+  "source_head": "4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02",
+  "decision": "63c338e2-1c50-435e-9783-e78e9d8558e6",
+  "decision_version": 2,
+  "stage_cap_seconds": 1200,
+  "output_cap_bytes": 262144,
+  "retries": 0,
+  "token": "<token: eight lowercase hex, minted at C0 admission>",
+  "pins": {
+    "image_context.py": "af74047f640111907930273f7cc7a2b46eac4cb27943f0a512fccf56a1b3b322",
+    "image_prepare.py": "882f9e44e7acd87e5ab94237feb7f19a452a3bbb86dd1cf208f311129847964f",
+    "macos_metadata_tranche.py": "c204bfaa87c2534da05b62c5f10beda5d3196216ce40d6afffeb8dec2ef9d1a6",
+    "macos_preparation.py": "ac414d63270a0cf7e810690b3aba1adf8cf78b34e8ad690bdf7219a5d4f16985"
+  },
+  "observed_metadata": {
+    "tranche": "macos-4f6a5ed3-metadata-r1",
+    "runner_commit": "1ccd55420",
+    "child": "linux-artifact-preparation.l0tx7tam/macos-metadata-rfzuiadz",
+    "utc": "2026-11-07T20:42:24Z..20:42:25Z",
+    "note": "local metadata only; not a native observation of a running engine"
+  },
+  "stages": [
+    {
+      "id": "C0",
+      "backend": "colima",
+      "name": "admission, no effect",
+      "seconds": 180,
+      "reserve_seconds": 60,
+      "steps": [
+        {"id": "c0-colima-start-help", "argv": ["/opt/homebrew/bin/colima", "start", "--help"], "timeout_seconds": 30, "output_cap_bytes": 262144, "retries": 0},
+        {"id": "c0-colima-hash", "argv": ["sha256 of /opt/homebrew/bin/colima == tranche sha"], "timeout_seconds": 10, "output_cap_bytes": 4096, "retries": 0}
+      ],
+      "closure": "helper-only: verify tranche sha, mint token, check control_paths/check_paths/check_profiles, write GO-bound intent",
+      "failure": "any refusal stops before C1; nothing to clean up",
+      "retention": "intent, GO copy, start --help stream, hashes under the run's private child"
+    },
+    {
+      "id": "C1",
+      "backend": "colima",
+      "name": "fresh isolated engine start",
+      "seconds": 900,
+      "reserve_seconds": 60,
+      "env": {"COLIMA_HOME": "<control>/c", "unset": ["LIMA_HOME", "DOCKER_HOST", "DOCKER_CONTEXT"]},
+      "steps": [
+        {"id": "c1-colima-start", "argv": ["/opt/homebrew/bin/colima", "start", "-p", "effigy-4f6a-qual", "--runtime", "containerd", "--vm-type", "vz", "--arch", "aarch64", "--cpu", "2", "--memory", "2", "--disk", "20", "--root-disk", "20", "--mount", "none"], "timeout_seconds": 600, "output_cap_bytes": 262144, "retries": 0}
+      ],
+      "closure": "waited exit 0 plus C2 identity check; any timeout or cap is Unknown and retained, never replayed",
+      "failure": "the zero-share form is verified at C0 from start --help; if it cannot be expressed, the only permitted share is the empty <control>/s and the GO must name it",
+      "retention": "start stream, PID, waited exit, profile YAML path only"
+    },
+    {
+      "id": "C2",
+      "backend": "colima",
+      "name": "identity and read-only guest probe",
+      "seconds": 300,
+      "reserve_seconds": 60,
+      "steps": [
+        {"id": "c2-colima-status", "argv": ["/opt/homebrew/bin/colima", "status", "-p", "effigy-4f6a-qual", "--json"], "timeout_seconds": 30, "output_cap_bytes": 262144, "retries": 0},
+        {"id": "c2-guest-probe", "argv": ["/opt/homebrew/bin/colima", "ssh", "-p", "effigy-4f6a-qual", "--", "timeout", "-k", "2", "20", "python3", "-I", "-B", "-c", "<image_prepare.probe_command source, read-only>"], "timeout_seconds": 60, "output_cap_bytes": 262144, "retries": 0}
+      ],
+      "closure": "check_engine and check_root pass; guest parent identity observed, not guessed",
+      "failure": "unreachable, changed or unknown state refuses; no start, reset or repair in this stage",
+      "retention": "status JSON, probe stream, uid/device/inode of the guest parent"
+    },
+    {
+      "id": "C3",
+      "backend": "colima",
+      "name": "stage Dockerfile by reviewed helper",
+      "seconds": 300,
+      "reserve_seconds": 60,
+      "stdin": "exact recipe bytes, sha256 d290f70febe8ce9ba4cd3cc252a9786d8ee5fc4e82a6219ec0338c884486f514",
+      "steps": [
+        {"id": "c3-stage-context", "argv": ["/opt/homebrew/bin/colima", "ssh", "-p", "effigy-4f6a-qual", "--", "timeout", "-k", "2", "20", "python3", "-I", "-B", "-c", "<image_context.stage, O_EXCL 0600 Dockerfile>"], "timeout_seconds": 120, "output_cap_bytes": 262144, "retries": 0}
+      ],
+      "closure": "receipt check_receipt passes: sha, bytes, owner, fsynced, readback",
+      "failure": "partial or missing receipt refuses; the Unknown guest directory is retained, never reused",
+      "retention": "receipt JSON, command stream"
+    },
+    {
+      "id": "C4",
+      "backend": "colima",
+      "name": "one local-path runtime image build",
+      "seconds": 1200,
+      "reserve_seconds": 120,
+      "env": {"DOCKER_CONFIG": "<uncreated child of the owned guest context>"},
+      "steps": [
+        {"id": "c4-nerdctl-build", "argv": ["/opt/homebrew/bin/colima", "ssh", "-p", "effigy-4f6a-qual", "--", "sudo", "-n", "nerdctl", "build", "--platform", "linux/arm64", "--provenance=mode=max", "--tag", "effigy-4f6a-runtime:r1", "<actual guest private context path>"], "timeout_seconds": 900, "output_cap_bytes": 262144, "retries": 0}
+      ],
+      "closure": "waited exit 0 and image ID from provenance; no check unless C4 closed",
+      "failure": "no retry; Unknown build is retained and never reaches C5",
+      "retention": "build stream, provenance file hash, image ID"
+    },
+    {
+      "id": "C5",
+      "backend": "colima",
+      "name": "one disposable check",
+      "seconds": 360,
+      "reserve_seconds": 60,
+      "steps": [
+        {"id": "c5-disposable-check", "argv": ["/opt/homebrew/bin/colima", "ssh", "-p", "effigy-4f6a-qual", "--", "sudo", "-n", "nerdctl", "run", "--pull=never", "--rm", "--network", "none", "--name", "effigy-4f6a-check-<token>", "effigy-4f6a-runtime:r1", "python3", "-I", "-c", "<check: uid 0, python/SSL, GNU loader, coreutils versions>"], "timeout_seconds": 240, "output_cap_bytes": 262144, "retries": 0}
+      ],
+      "closure": "container removed by --rm; waited exit 0 closes the stage",
+      "failure": "no retry; a leftover container with the planned name is retained, not removed by pattern",
+      "retention": "check stream and exit"
+    },
+    {
+      "id": "C6",
+      "backend": "colima",
+      "name": "retain and observe, no stop",
+      "seconds": 120,
+      "reserve_seconds": 60,
+      "steps": [
+        {"id": "c6-colima-list", "argv": ["/opt/homebrew/bin/colima", "list", "--json"], "timeout_seconds": 30, "output_cap_bytes": 262144, "retries": 0}
+      ],
+      "closure": "observation only; the running VM is retained until a separate GO covers a stop",
+      "failure": "not applicable",
+      "retention": "list stream"
+    },
+    {
+      "id": "D0",
+      "backend": "desktop",
+      "name": "admission and engine baseline (server reads, activation only)",
+      "seconds": 300,
+      "reserve_seconds": 60,
+      "steps": [
+        {"id": "d0-context", "argv": ["/usr/local/bin/docker", "context", "inspect", "desktop-linux"], "timeout_seconds": 30, "output_cap_bytes": 262144, "retries": 0},
+        {"id": "d0-ps", "argv": ["/usr/local/bin/docker", "ps", "-a", "--no-trunc", "--format", "{{json .}}"], "timeout_seconds": 60, "output_cap_bytes": 262144, "retries": 0},
+        {"id": "d0-network", "argv": ["/usr/local/bin/docker", "network", "ls", "--no-trunc", "--format", "{{json .}}"], "timeout_seconds": 60, "output_cap_bytes": 262144, "retries": 0},
+        {"id": "d0-volume", "argv": ["/usr/local/bin/docker", "volume", "ls", "--format", "{{json .}}"], "timeout_seconds": 60, "output_cap_bytes": 262144, "retries": 0}
+      ],
+      "closure": "check_desktop_resources sorts owned (exact label) from foreign; the baseline is recorded, not reset",
+      "failure": "a new Docker context is not an isolated engine: the baseline is what this stage observes, nothing more",
+      "retention": "all four streams, owned and foreign ID lists"
+    },
+    {
+      "id": "D1",
+      "backend": "desktop",
+      "name": "owned fixture volume",
+      "seconds": 300,
+      "reserve_seconds": 60,
+      "steps": [
+        {"id": "d1-volume-create", "argv": ["/usr/local/bin/docker", "volume", "create", "--label", "effigy.qual=<token>", "effigy-4f6a-qual-<token>"], "timeout_seconds": 60, "output_cap_bytes": 262144, "retries": 0}
+      ],
+      "closure": "created volume label verified against the owned set",
+      "failure": "a name collision refuses; nothing is adopted",
+      "retention": "create stream, inspect of the owned volume"
+    },
+    {
+      "id": "D2",
+      "backend": "desktop",
+      "name": "runtime image into the Desktop engine",
+      "seconds": 1200,
+      "reserve_seconds": 120,
+      "steps": [
+        {"id": "d2-host-stage", "argv": ["helper-only: O_EXCL 0600 Dockerfile under <control>/d/ctx with receipt"], "timeout_seconds": 30, "output_cap_bytes": 4096, "retries": 0},
+        {"id": "d2-docker-build", "argv": ["/usr/local/bin/docker", "build", "--pull=never", "--platform", "linux/arm64", "--label", "effigy.qual=<token>", "--tag", "effigy-4f6a-desktop-runtime:<token>", "<control>/d/ctx"], "timeout_seconds": 900, "output_cap_bytes": 262144, "retries": 0}
+      ],
+      "closure": "image ID owned by its label; the image is not a reused tag",
+      "failure": "no retry; the Dockerfile receipt must match the Colima C3 bytes",
+      "retention": "build stream, receipt, image ID"
+    },
+    {
+      "id": "D3",
+      "backend": "desktop",
+      "name": "one disposable check on Desktop",
+      "seconds": 360,
+      "reserve_seconds": 60,
+      "steps": [
+        {"id": "d3-disposable-check", "argv": ["/usr/local/bin/docker", "run", "--pull=never", "--rm", "--network", "none", "--label", "effigy.qual=<token>", "--name", "effigy-4f6a-dcheck-<token>", "effigy-4f6a-desktop-runtime:<token>", "python3", "-I", "-c", "<same check as C5>"], "timeout_seconds": 240, "output_cap_bytes": 262144, "retries": 0}
+      ],
+      "closure": "waited exit 0 and --rm removal",
+      "failure": "no retry; leftovers retained by their owned label",
+      "retention": "check stream and exit"
+    },
+    {
+      "id": "D4",
+      "backend": "desktop",
+      "name": "owned cleanup by exact ID only",
+      "seconds": 300,
+      "reserve_seconds": 60,
+      "steps": [
+        {"id": "d4-owned-rm", "argv": ["/usr/local/bin/docker", "rm", "<owned container IDs from D0/D3 only>"], "timeout_seconds": 60, "output_cap_bytes": 262144, "retries": 0},
+        {"id": "d4-owned-volume-rm", "argv": ["/usr/local/bin/docker", "volume", "rm", "effigy-4f6a-qual-<token>"], "timeout_seconds": 60, "output_cap_bytes": 262144, "retries": 0},
+        {"id": "d4-owned-image-rm", "argv": ["/usr/local/bin/docker", "image", "rm", "<owned image ID only>"], "timeout_seconds": 60, "output_cap_bytes": 262144, "retries": 0}
+      ],
+      "closure": "post-cleanup baseline equals D0 foreign list",
+      "failure": "a foreign or unlabelled ID is never removed; prune is not used",
+      "retention": "cleanup streams, before and after baselines"
+    }
+  ],
+  "gated": [
+    {"id": "G1", "name": "E14 source placement", "gate": "RecipeE and 686 Linux preparation missing; source tree dcb4c79194cd6739b3737285f21c10f5bb379a3c"},
+    {"id": "G2", "name": "artifact, sidecar and producer receipt placement", "gate": "genuine byte-identical receipt-bound placement at source_root/.effigy/linux-release/artifacts; no synthesized producer receipt"},
+    {"id": "G3", "name": "proof run", "gate": "launch.py with an exact per-backend GO; not part of this task"}
+  ]
+}
