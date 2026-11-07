@@ -10,6 +10,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import preparation_archive as subject
+import preparation_observations as observations
 
 
 class ArchiveChecks(unittest.TestCase):
@@ -58,6 +59,37 @@ class ArchiveChecks(unittest.TestCase):
         (directory / 'dir').symlink_to(self.root)
         with self.assertRaises(subject.Refusal):
             subject.verify_tree(directory, self.manifest)
+
+
+class ObservationChecks(unittest.TestCase):
+    def test_config_only_named_volatile_text_can_change(self):
+        before = b'<vm><id>one</id><clock>1</clock></vm>'
+        after = b'<vm><id>one</id><clock>2</clock></vm>'
+        path = '/vm[1]/clock[1]'
+        self.assertEqual(observations.compare_config(before, after, [path])['changed_volatile_paths'], [path])
+        with self.assertRaises(observations.Refusal):
+            observations.compare_config(before, after, [])
+        with self.assertRaises(observations.Refusal):
+            observations.compare_config(before, b'<vm><id>two</id><clock>2</clock></vm>', [path])
+
+    def test_extent_substitution_and_growth(self):
+        before = {'top': dict(path='a', parent='base', device=1, inode=2, size=10),
+                  'base': dict(path='b', parent='', device=1, inode=3, size=20)}
+        after = {key: dict(value) for key, value in before.items()}
+        after['top']['size'] += 5
+        self.assertEqual(observations.compare_extents(before, after, ['top', 'base']), 5)
+        after['top']['inode'] = 4
+        with self.assertRaises(observations.Refusal):
+            observations.compare_extents(before, after, ['top', 'base'])
+
+    def test_unknown_and_drifting_guest_closure(self):
+        identity = dict(nonce='n', boot_id='b', pid=42, start_time=2, session_id=42, deadline=9)
+        self.assertEqual(observations.guest_closure(identity, None), 'unknown')
+        terminal = dict(identity, waited_exit=0, session_empty=True)
+        self.assertEqual(observations.guest_closure(identity, terminal), 'closed')
+        terminal['boot_id'] = 'different'
+        with self.assertRaises(observations.Refusal):
+            observations.guest_closure(identity, terminal)
 
 
 if __name__ == '__main__':
