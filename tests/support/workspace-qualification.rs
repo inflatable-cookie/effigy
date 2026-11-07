@@ -1,12 +1,14 @@
 //! Uninstalled qualification fixture utility. No product execution toggle.
 use std::path::Path;
 
+const QUALIFICATION_SCRATCH: &str = "/Volumes/Stash/scratch/effigy";
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [command, path] if command == "prepare" => {
             let root = Path::new(path).canonicalize()?;
-            let scratch = Path::new("/Volumes/Builds/scratch/effigy").canonicalize()?;
+            let scratch = Path::new(QUALIFICATION_SCRATCH).canonicalize()?;
             if !root.starts_with(&scratch) || root == scratch || !root.join(".git").is_dir() || root.join(".git").is_symlink() {
                 return Err("qualification fixture must be a fresh scratch checkout".into());
             }
@@ -37,7 +39,7 @@ fn crash_selected_supervisor(path: &Path, id: &str) -> Result<(), Box<dyn std::e
     use effigy_kernel::run;
     use std::time::{Duration, Instant};
     let path = path.canonicalize()?;
-    let scratch = Path::new("/Volumes/Builds/scratch/effigy").canonicalize()?;
+    let scratch = Path::new(QUALIFICATION_SCRATCH).canonicalize()?;
     if !path.starts_with(&scratch) || path == scratch {
         return Err("foreign fixture".into());
     }
