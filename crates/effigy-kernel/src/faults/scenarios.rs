@@ -373,15 +373,20 @@ impl AnchorPin {
             // anchor retires itself (effigy#520), so a bare `kill` could reach
             // whatever the kernel gave that pid to next, and a signal return
             // would then read as evidence about a process this launch never
-            // owned. Requiring this launch's own generation keeps both the
-            // stop and the matching CONT on the pin's drop on its own evidence,
-            // or on nothing at all.
+            // owned. Checking this launch's own generation immediately before
+            // the signal narrows that to the two calls themselves, and does not
+            // close it: a retirement plus pid reuse between the check and the
+            // `kill` can still stop, and the pin's drop later continue, an
+            // unrelated process. macOS has no atomic signal-by-identity (the
+            // same documented identity-check/numeric-signal window
+            // `custody::anchor::member_signal` records), so this narrows the
+            // window and claims nothing more.
             if !world::identity_alive(&anchor) {
                 continue;
             }
-            // SAFETY: the recorded anchor of this scenario's own launch, still
-            // that launch's own generation; the signal only suspends it until
-            // settlement stops it or the pin drops.
+            // SAFETY: the recorded anchor of this scenario's own launch, its
+            // generation held immediately above; a retirement plus reuse
+            // between the two calls is not excluded.
             if unsafe { libc::kill(anchor.pid as i32, libc::SIGSTOP) } == 0 {
                 self.pids.push(anchor.pid);
             }
