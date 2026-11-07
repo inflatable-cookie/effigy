@@ -7,7 +7,9 @@ row, and a halted row never unlocks its successor.
 """
 import hashlib
 import json
+import os
 import re
+import stat
 import sys
 import time
 from pathlib import Path
@@ -16,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from preparation_stage import Refusal, exclusive
 import linux_supervisor as supervisor
 import preparation_observations as observations
+import preparation_resources as resources
 
 VM_UUID = '433c9e5b-c7b9-469f-9633-24b4addcd3b5'
 DISK_UID = '{44b5d35e-b053-4aae-9140-266a00bbef9a}'
@@ -244,39 +247,99 @@ def _vm(*argv):
     return [PRLCTL, 'exec', VM_UUID] + list(argv)
 
 
-def _row(rows, row_id, kind, argv, seconds, basis, go=None, missing=(), expect=None, stdin=None):
-    rows.append({'id': row_id, 'kind': kind, 'argv': argv, 'timeout_seconds': seconds,
-                 'closure_basis': basis, 'go': go, 'missing': list(missing), 'expect': expect,
-                 'stdin_path': stdin, 'stdin_sha256': None})
+BOOTSTRAP_IDS = frozenset({'E3a', 'E3b', 'E3c', 'E4', 'E4v', 'E5a', 'E5b', 'E5c', 'E6a', 'E6',
+                           'E7a', 'E7b', 'E7c', 'E-SUP'})
+IDENTITY_KEYS = ('vm', 'boot_id', 'host_key_fp')
+UNIT_STATE_PROPERTIES = '--property=LoadState,ActiveState,SubState,Result,ExecMainStatus,InvocationID,ControlGroup'
+
+
+def terminal_observation_argv(unit):
+    """Host-side, VM-route, read-only observation of the unit. Independent of the guest receipt."""
+    if not unit.startswith('effigy-stage-'):
+        raise Refusal('observation target must be a stage unit')
+    return _vm('/usr/bin/systemctl', 'show', unit, UNIT_STATE_PROPERTIES)
+
+
+def observation_from_show(show_text, unit, boot_id, nonce):
+    """Host observation of the terminal state, or None when the unit is not loaded."""
+    show = supervisor.parse_show(show_text, unit)
+    if show is None:
+        return None
+    return {'boot_id': boot_id, 'nonce': nonce, 'unit': unit, 'invocation_id': show['invocation_id'],
+            'active_state': show['active_state'], 'result': show['result'],
+            'exec_main_status': show['exec_main_status'], 'control_group': show['control_group']}
+
+
+def host_credit(expected, candidate, observation):
+    """Credit closure only when the guest candidate equals the host's own observation.
+
+    The guest's candidate is never authenticated by itself. `authenticate` compares
+    it field by field with the independent VM-route observation, and the 686
+    contract then checks identity, unit, supervisor and terminal basis.
+    """
+    if candidate is None or observation is None or observation.get('control_group'):
+        return 'unknown'
+
+    def authenticate(receipt):
+        return all(receipt.get(k) == observation.get(k)
+                   for k in ('boot_id', 'nonce', 'unit', 'invocation_id', 'active_state', 'result'))
+    return _wrap(observations.verify_contained_closure, expected, candidate, authenticate)
+
+
+def _private_file(path, expected_sha):
+    """Credential gate: a regular, owner-only file whose bytes match the bound hash."""
+    if not isinstance(path, str) or not path.startswith('/') or '..' in Path(path).parts:
+        raise Refusal('credential path must be absolute and canonical')
+    info = Path(path).lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_uid != os.geteuid():
+        raise Refusal('credential file must be a regular owner-only file of the operator')
+    if _sha(Path(path).read_bytes()) != expected_sha:
+        raise Refusal('credential file bytes drifted from the bound hash')
 
 
 def setup_plan(fresh):
-    """Ordered setup rows from E3a to E19, each with its exact argv and live blockers.
+    """Ordered setup rows from E3a to E19. Each row carries effect class, exact argv and live blockers.
 
-    A row whose argv needs a live fact that is absent carries that fact in `missing`
-    rather than a placeholder. The executor halts on the first row with any missing.
+    A row whose argv embeds a live value stays empty until that value is bound. A
+    row whose effect is not on the bootstrap allowlist, or that needs a supervisor,
+    stays blocked until its containment fact is bound. Plan-wide gates (identity,
+    resource accounting) are appended to every row.
     """
     gos = set(fresh.get('go', ()))
     rows = []
+    global_missing = []
+    identity = fresh.get('identity')
+    if not isinstance(identity, dict) or not all(identity.get(k) for k in IDENTITY_KEYS):
+        global_missing.append('identity (vm, boot_id, host key fingerprint)')
+    if not fresh.get('resource_accounting'):
+        global_missing.append('resource accounting (counter files and limits)')
 
     def gate(name):
         return [] if name in gos else ['GO ' + name]
 
-    _row(rows, 'E3a', 'vm-root', _vm('/usr/sbin/useradd', '--create-home', '--home-dir', HOME, '--shell', '/bin/bash', ACCOUNT),
-         60, VM_BASIS, 'E3', gate('E3'))
-    _row(rows, 'E3b', 'vm-root', _vm('/usr/sbin/usermod', '--lock', ACCOUNT), 20, VM_BASIS, 'E3', gate('E3'))
-    _row(rows, 'E3c', 'vm-root', _vm('/bin/chmod', '0700', HOME), 20, VM_BASIS, 'E3', gate('E3'))
-    _row(rows, 'E4', 'vm-root', _vm('/usr/sbin/usermod', '--append', '--groups', 'docker', ACCOUNT), 30, VM_BASIS,
-         'E4', gate('E4') + ([] if fresh.get('probe') else ['probe']))
-    _row(rows, 'E4v', 'vm-root', _vm('/usr/bin/id', '-nG', ACCOUNT), 10, VM_BASIS, None, [],
-         expect={'stdout': ACCOUNT + ' docker\n'})
-    _row(rows, 'E5a', 'vm-root', _vm('/bin/sh', '-c', 'umask 022; printf "%s" "$1" > "$2" && sha256sum "$2"',
-                                     'sh', DROPIN_TEXT, DROPIN_PATH), 30, VM_BASIS, 'E5', gate('E5'),
-         expect={'stdout_sha': _sha(DROPIN_TEXT.encode())})
-    _row(rows, 'E5b', 'vm-root', _vm('/usr/sbin/sshd', '-t'), 30, VM_BASIS, 'E5', gate('E5'))
-    _row(rows, 'E5c', 'vm-root', _vm('/usr/bin/systemctl', 'reload', 'ssh'), 30, VM_BASIS, 'E5', gate('E5'))
-    _row(rows, 'E6a', 'vm-root', _vm('/bin/sh', '-c', 'umask 077; mkdir -m 0700 "$1" && chown ' + ACCOUNT + ':' + ACCOUNT + ' "$1"',
-                                     'sh', HOME + '/.ssh'), 20, VM_BASIS, 'E6', gate('E6'))
+    def add(row_id, kind, argv, seconds, basis, go=None, missing=(), expect=None, stdin=None,
+            needs_hard_limit=False, credit=None):
+        effect = 'bootstrap' if kind == 'vm-root' else ('supervised' if kind == 'vm-supervised' else 'ssh-transfer')
+        rows.append({'id': row_id, 'kind': kind, 'effect': effect, 'argv': argv, 'timeout_seconds': seconds,
+                     'closure_basis': basis, 'go': go, 'missing': list(missing) + global_missing,
+                     'expect': expect, 'stdin_path': stdin, 'stdin_sha256': None,
+                     'needs_hard_limit': needs_hard_limit, 'credit': credit})
+
+    add('E3a', 'vm-root', _vm('/usr/sbin/useradd', '--create-home', '--home-dir', HOME, '--shell', '/bin/bash', ACCOUNT),
+        60, VM_BASIS, 'E3', gate('E3'))
+    add('E3b', 'vm-root', _vm('/usr/sbin/usermod', '--lock', ACCOUNT), 20, VM_BASIS, 'E3', gate('E3'))
+    add('E3c', 'vm-root', _vm('/bin/chmod', '0700', HOME), 20, VM_BASIS, 'E3', gate('E3'))
+    add('E4', 'vm-root', _vm('/usr/sbin/usermod', '--append', '--groups', 'docker', ACCOUNT), 30, VM_BASIS,
+        'E4', gate('E4') + ([] if fresh.get('probe') else ['Stage1 probe v2 result bound to this plan']))
+    add('E4v', 'vm-root', _vm('/usr/bin/id', '-nG', ACCOUNT), 10, VM_BASIS, None, [],
+        expect={'stdout': ACCOUNT + ' docker\n'})
+    add('E5a', 'vm-root', _vm('/bin/sh', '-c', 'umask 022; printf "%s" "$1" > "$2" && sha256sum "$2"',
+                              'sh', DROPIN_TEXT, DROPIN_PATH), 30, VM_BASIS, 'E5', gate('E5'),
+        expect={'stdout_sha': _sha(DROPIN_TEXT.encode())})
+    add('E5b', 'vm-root', _vm('/usr/sbin/sshd', '-t'), 30, VM_BASIS, 'E5', gate('E5'))
+    add('E5c', 'vm-root', _vm('/usr/bin/systemctl', 'reload', 'ssh'), 30, VM_BASIS, 'E5', gate('E5'))
+    add('E6a', 'vm-root', _vm('/bin/sh', '-c', 'umask 077; mkdir -m 0700 "$1" && chown ' + ACCOUNT + ':' + ACCOUNT + ' "$1"',
+                              'sh', HOME + '/.ssh'), 20, VM_BASIS, 'E6', gate('E6'))
     key_missing = gate('E6')
     keys = fresh.get('authorized_keys')
     now, expiry = fresh.get('now'), fresh.get('authorized_keys_expiry')
@@ -287,87 +350,144 @@ def setup_plan(fresh):
     keys_text = keys.decode('utf-8') if isinstance(keys, bytes) and keys else ''
     e6_argv = _vm('/bin/sh', '-c', 'umask 077; printf "%s" "$1" > "$2" && chown ' + ACCOUNT + ':' + ACCOUNT +
                   ' "$2" && sha256sum "$2"', 'sh', keys_text, HOME + '/.ssh/authorized_keys') if not key_missing else []
-    _row(rows, 'E6', 'vm-root', e6_argv, 30, VM_BASIS, 'E6', key_missing,
-         expect={'stdout_sha': _sha(keys)} if keys else None)
+    add('E6', 'vm-root', e6_argv, 30, VM_BASIS, 'E6', key_missing,
+        expect={'stdout_sha': _sha(keys)} if keys else None)
     disk = fresh.get('disk_association')
     disk_missing = ([] if disk else ['controller-to-guest disk association (no supported mechanism)'])
-    _row(rows, 'E7a', 'vm-root', _vm('/bin/mkdir', '-m', '0755', SCRATCH), 20, VM_BASIS, 'E7', gate('E7') + disk_missing)
-    _row(rows, 'E7b', 'vm-root', _vm('/bin/sh', '-c', 'mkdir -m 0700 "$1" && chown ' + ACCOUNT + ':' + ACCOUNT + ' "$1"',
-                                    'sh', BASE), 20, VM_BASIS, 'E7', gate('E7') + disk_missing)
+    add('E7a', 'vm-root', _vm('/bin/mkdir', '-m', '0755', SCRATCH), 20, VM_BASIS, 'E7', gate('E7') + disk_missing)
+    add('E7b', 'vm-root', _vm('/bin/sh', '-c', 'mkdir -m 0700 "$1" && chown ' + ACCOUNT + ':' + ACCOUNT + ' "$1"',
+                              'sh', BASE), 20, VM_BASIS, 'E7', gate('E7') + disk_missing)
     loop = ('set -e; cd "$1"; for d in ' + ' '.join(BASE_DIRS) + '; do mkdir -m 0700 "$d"; chown '
             + ACCOUNT + ':' + ACCOUNT + ' "$d"; done')
-    _row(rows, 'E7c', 'vm-root', _vm('/bin/sh', '-c', loop, 'sh', BASE), 60, VM_BASIS, 'E7', gate('E7') + disk_missing)
-    # Rows whose argv needs a live fact carry an empty argv until that fact is bound.
-    # The executor halts on missing facts before any argv is used.
+    add('E7c', 'vm-root', _vm('/bin/sh', '-c', loop, 'sh', BASE), 60, VM_BASIS, 'E7', gate('E7') + disk_missing)
     if not fresh.get('supervisor_installed'):
         staged = fresh.get('supervisor_staged')
-        _row(rows, 'E-SUP', 'vm-root', _vm('/usr/bin/install', '-m', '0755', '-o', 'root', '-g', 'root',
-                                           staged, SUPERVISOR_PATH) if staged else [], 60, VM_BASIS, 'E-SUP',
-             gate('E-SUP') + ([] if staged else ['supervisor bytes staged in the guest (no staging route yet established)']))
-    cfg = fresh.get('ssh_config')
+        add('E-SUP', 'vm-root', _vm('/usr/bin/install', '-m', '0755', '-o', 'root', '-g', 'root',
+                                    staged, SUPERVISOR_PATH) if staged else [], 60, VM_BASIS, 'E-SUP',
+            gate('E-SUP') + ([] if staged else ['supervisor bytes staged in the guest (no staging route yet established)']))
+    files = fresh.get('ssh_files') or {}
+    cfg = files.get('config')
+    ssh_missing = ([] if (cfg and HEX64.fullmatch(files.get('config_sha256', '') or '') and files.get('known_hosts')
+                          and HEX64.fullmatch(files.get('known_hosts_sha256', '') or ''))
+                   else ['pinned ssh config and known_hosts with sha256'])
+    containment = fresh.get('ssh_transfer_containment')
+    transfer_missing = ([] if containment else ['ssh-transfer containment ruling (stdin transfer is not a contained payload)']) \
+        + ([] if fresh.get('hard_limit') else ['independently verified hard limit (polling counters are not a quota)'])
     archive = fresh.get('archive')
     archive_ok = bool(archive and archive.get('sha256') == ARCHIVE_SHA256 and archive.get('path') and cfg)
-    archive_missing = gate('E9') + ([] if archive_ok else ['pinned archive path, sha256 and ssh config'])
-    _row(rows, 'E9a', 'ssh-transfer', ssh_argv(cfg, ['/bin/sh', '-c', 'umask 077; cat > "$1" && sha256sum "$1"',
-                                                     'sh', BASE + '/' + ARCHIVE_NAME]) if archive_ok else [],
-         900, SSH_BASIS, 'E9', archive_missing, expect={'stdout_sha': ARCHIVE_SHA256},
-         stdin=archive['path'] if archive_ok else None)
+    archive_missing = gate('E9') + ssh_missing + transfer_missing + ([] if archive_ok else ['pinned archive path and sha256'])
+    add('E9a', 'ssh-transfer', ssh_argv(cfg, ['/bin/sh', '-c', 'umask 077; cat > "$1" && sha256sum "$1"',
+                                              'sh', BASE + '/' + ARCHIVE_NAME]) if archive_ok else [],
+        900, SSH_BASIS, 'E9', archive_missing, expect={'stdout_sha': ARCHIVE_SHA256},
+        stdin=archive['path'] if archive_ok else None, needs_hard_limit=True)
     rows[-1]['stdin_sha256'] = ARCHIVE_SHA256
-    _row(rows, 'E9b', 'ssh-transfer', ssh_argv(cfg, ['/usr/bin/tar', '-xf', BASE + '/' + ARCHIVE_NAME,
-                                                     '-C', BASE + '/source']) if archive_ok else [],
-         300, SSH_BASIS, 'E9', archive_missing)
+    add('E9b', 'ssh-transfer', ssh_argv(cfg, ['/usr/bin/tar', '-xf', BASE + '/' + ARCHIVE_NAME,
+                                              '-C', BASE + '/source']) if archive_ok else [],
+        300, SSH_BASIS, 'E9', archive_missing, needs_hard_limit=True)
     controls = fresh.get('controls_request')
-    controls_ok = bool(controls and controls.get('path') and HEX64.fullmatch(controls.get('sha256', '')))
-    e8_missing = gate('E8') + ([] if controls_ok else ['controls request path and sha256'])
+    controls_ok = bool(controls and controls.get('path') and HEX64.fullmatch(controls.get('sha256', '') or '')
+                       and HEX64.fullmatch(controls.get('nonce', '') or ''))
+    e8_missing = gate('E8') + ([] if controls_ok else ['controls request path, sha256 and nonce'])
     e8_missing += [] if fresh.get('supervisor_installed') else ['supervisor installed (E-SUP)']
-    _row(rows, 'E8', 'vm-supervised', _vm(SUPERVISOR_PATH, '--request', controls['path'], '--sha256', controls['sha256'])
-         if controls_ok else [], 900, SUPERVISED_BASIS, 'E8', e8_missing)
+    e8_missing += [] if fresh.get('hard_limit') else ['independently verified hard limit (polling counters are not a quota)']
+    e8_nonce = controls.get('nonce') if controls_ok else None
+    add('E8', 'vm-supervised', _vm(SUPERVISOR_PATH, '--request', controls['path'], '--sha256', controls['sha256'])
+        if controls_ok else [], 900, SUPERVISED_BASIS, 'E8', e8_missing, needs_hard_limit=True,
+        credit={'nonce': e8_nonce, 'unit': supervisor.unit_name(e8_nonce) if e8_nonce else None})
     placements = fresh.get('placements')
     if not placements:
-        _row(rows, 'E19', 'ssh-transfer', [], 60, SSH_BASIS, 'E19',
-             gate('E19') + ['reviewed driver, inputs, GO index and GO receipt placements'])
+        add('E19', 'ssh-transfer', [], 60, SSH_BASIS, 'E19',
+            gate('E19') + ssh_missing + transfer_missing + ['reviewed driver, inputs, GO index and GO receipt placements'],
+            needs_hard_limit=True)
     else:
         for index, item in enumerate(placements):
-            ok = bool(cfg and HEX64.fullmatch(item.get('sha256', '')) and item.get('guest_path') and item.get('host_path'))
-            _row(rows, 'E19.' + str(index), 'ssh-transfer',
-                 ssh_argv(cfg, ['/bin/sh', '-c', 'umask 077; cat > "$1" && sha256sum "$1"', 'sh', item['guest_path']])
-                 if ok else [], 60, SSH_BASIS, 'E19', gate('E19') + ([] if ok else ['pinned ssh config and placement hash']),
-                 expect={'stdout_sha': item.get('sha256')}, stdin=item.get('host_path'))
+            ok = bool(cfg and HEX64.fullmatch(item.get('sha256', '') or '') and item.get('guest_path') and item.get('host_path'))
+            add('E19.' + str(index), 'ssh-transfer',
+                ssh_argv(cfg, ['/bin/sh', '-c', 'umask 077; cat > "$1" && sha256sum "$1"', 'sh', item['guest_path']])
+                if ok else [], 60, SSH_BASIS, 'E19', gate('E19') + ssh_missing + transfer_missing,
+                expect={'stdout_sha': item.get('sha256')}, stdin=item.get('host_path'), needs_hard_limit=True)
             rows[-1]['stdin_sha256'] = item.get('sha256')
     return rows
 
 
-def execute_plan(rows, runner, stage_root, clock, budget_seconds):
-    """Run rows in order. Each row spends its intent before the runner is called.
+def execute_plan(rows, facts, runner, observe_identity, observe_terminal, stage_root, clock, wall_clock, budget_seconds):
+    """Run rows in order through every gate. Each gate halts with the row id and reason.
 
-    A row with missing facts, an exhausted total budget, a reused intent or a failed
-    advance halts the plan. The halt names the row; nothing after it runs.
+    Gates, in order: missing facts; effect allowlist or containment fact; identity
+    (VM-route re-observation equals the plan's identity); credential (pinned ssh
+    files owner-only and bound, key not expired); total budget; resource accounting
+    (counter files and limits, polled before and after; a hard limit is required for
+    network or disk rows); stdin hash; one-use intent; runner; post-observation or,
+    for supervised rows, host credit from an independent observation.
     """
     started = clock()
     completed = []
     stage_root = Path(stage_root)
     for row in rows:
+        halt = lambda reason: {'completed': completed, 'halt': row['id'], 'reason': reason}
         if row['missing']:
-            return {'completed': completed, 'halt': row['id'], 'reason': 'missing: ' + '; '.join(row['missing'])}
+            return halt('missing: ' + '; '.join(row['missing']))
+        if row['effect'] == 'bootstrap' and (row['kind'] != 'vm-root' or row['id'] not in BOOTSTRAP_IDS):
+            return halt('bootstrap row is not on the root-operation allowlist')
+        if row['effect'] == 'supervised' and facts.get('supervisor_installed') is not True:
+            return halt('supervised row without an installed supervisor')
+        if row['effect'] == 'ssh-transfer' and not facts.get('ssh_transfer_containment'):
+            return halt('ssh-transfer row without a containment ruling')
+        observed = observe_identity(row)
+        if any(observed.get(k) != facts['identity'][k] for k in IDENTITY_KEYS):
+            return halt('identity drift: VM-route re-observation differs from the plan')
+        if row['kind'] == 'ssh-transfer':
+            try:
+                _private_file(facts['ssh_files']['config'], facts['ssh_files']['config_sha256'])
+                _private_file(facts['ssh_files']['known_hosts'], facts['ssh_files']['known_hosts_sha256'])
+            except Refusal as exc:
+                return halt('credential: ' + str(exc))
+            if wall_clock() >= facts['authorized_keys_expiry']:
+                return halt('credential: ephemeral key has expired')
         remaining = budget_seconds - (clock() - started)
         if row['timeout_seconds'] + STAGE_ADMISSION_RESERVE + STAGE_REPORT_RESERVE > remaining:
-            return {'completed': completed, 'halt': row['id'], 'reason': 'total budget exhausted'}
+            return halt('total budget exhausted')
+        if row['needs_hard_limit'] and not facts.get('hard_limit'):
+            return halt('hard limit unadmitted: polling counters are not a quota')
+        try:
+            monitor = resources.Monitor(facts['resource_accounting']['limits'],
+                                        resources.CounterFiles(facts['resource_accounting']['counter_files']))
+            monitor.check()
+        except (resources.Refusal, KeyError, TypeError) as exc:
+            return halt('resource accounting: ' + str(exc))
         stdin_sha = _sha(Path(row['stdin_path']).read_bytes()) if row['stdin_path'] else None
         if row['stdin_path'] and stdin_sha != row['stdin_sha256']:
-            return {'completed': completed, 'halt': row['id'], 'reason': 'stdin hash drift: no intent spent'}
+            return halt('stdin hash drift: no intent spent')
         stage = stage_root / row['id']
         stage.mkdir(mode=0o700)
         exclusive(stage / 'intent.json', (json.dumps({'id': row['id'], 'argv': row['argv'],
-                                                      'stdin_sha256': stdin_sha,
-                                                      'expect': row['expect']}, sort_keys=True, indent=2) + '\n').encode())
-        outcome = dict(runner(row, stage))
+                                                      'stdin_sha256': stdin_sha, 'expect': row['expect'],
+                                                      'credit': row['credit']}, sort_keys=True, indent=2) + '\n').encode())
+        try:
+            outcome = dict(runner(row, stage, monitor))
+            monitor.check()
+        except resources.Refusal as exc:
+            return halt('resource refusal during the row: ' + str(exc))
         for name in ('stdout', 'stderr'):
             exclusive(stage / name, outcome.get(name, b''))
+        closure, credit_note = 'unknown', None
+        if row['effect'] == 'supervised':
+            if outcome.get('candidate') is not None and row['credit']:
+                observation = observation_from_show(
+                    observe_terminal(row)['show_text'], row['credit']['unit'], observed['boot_id'], row['credit']['nonce'])
+                expected = {'boot_id': facts['identity']['boot_id'], 'nonce': row['credit']['nonce'],
+                            'unit': row['credit']['unit'], 'invocation_id': (observation or {}).get('invocation_id'),
+                            'control_group': ''}
+                try:
+                    closure = host_credit(expected, outcome['candidate'], observation)
+                except Refusal as exc:
+                    credit_note = str(exc)
         receipt = {'disposition': outcome['disposition'], 'waited_exit': outcome.get('waited_exit'),
-                   'closure': outcome.get('closure', 'unknown'), 'postobserve': _expect_met(row, outcome)}
+                   'closure': closure, 'postobserve': _expect_met(row, outcome),
+                   'credit_note': credit_note, 'candidate': outcome.get('candidate')}
         exclusive(stage / 'receipt.json', (json.dumps(receipt, sort_keys=True, indent=2) + '\n').encode())
-        if not advance_allowed(receipt, receipt['closure'], row['closure_basis']):
-            return {'completed': completed, 'halt': row['id'], 'reason': 'held: no advance credit'}
+        if not advance_allowed(receipt, closure, row['closure_basis']):
+            return halt('held: no advance credit' + (' (' + credit_note + ')' if credit_note else ''))
         completed.append(row['id'])
     return {'completed': completed, 'halt': None, 'reason': None}
 

@@ -149,13 +149,16 @@ def closure_receipt(boot_id, nonce, show, waited_exit):
             'waited_exit': waited_exit}
 
 
-def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, authenticate, samples):
-    """One-use supervised payload. Intent is spent before any injected effect.
+def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, samples):
+    """One-use supervised payload inside the guest. Intent is spent before any injected effect.
 
-    Credit needs: the unit absent before start (the nonce is fresh), a loaded
-    post-run unit with the same new InvocationID, inactive, Result=success,
-    ExecMainStatus=0, empty ControlGroup, and no live-populated sample for it.
-    Anything else is unknown. Returns (disposition, closure).
+    The guest never credits its own closure. It returns a candidate receipt when
+    the terminal shape is eligible, and the host credits it only after an
+    independent VM-route observation matches (linux_setup.host_credit). Credit
+    needs: the unit absent before start (fresh nonce), a loaded post-run unit with
+    the same new InvocationID, inactive, Result=success, ExecMainStatus=0, an
+    empty ControlGroup, and no live-populated sample vetoing it.
+    Returns {'disposition', 'candidate', 'vetoed', 'show'}; candidate is None when ineligible.
     """
     stage = Path(stage_dir)
     info = stage.lstat()
@@ -201,24 +204,16 @@ def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, au
         s is not None and s['invocation_id'] == show['invocation_id'] and s['populated'] == 1 for s in samples)
     disposition = 'timeout' if timed_out else ('disconnect' if disconnected else (
         'exited' if outcome['returncode'] == 0 else 'failed'))
-    closure = 'unknown'
+    candidate = None
     if (show is not None and disposition == 'exited' and not vetoed and show['active_state'] == 'inactive'
             and show['result'] == 'success' and show['exec_main_status'] == '0' and show['control_group'] == ''):
-        receipt = closure_receipt(boot_id, nonce, show, outcome['returncode'])
-        expected = {'boot_id': boot_id, 'nonce': nonce, 'unit': unit,
-                    'invocation_id': show['invocation_id'], 'control_group': ''}
-        try:
-            closure = observations.verify_contained_closure(expected, receipt, authenticate)
-        except observations.Refusal as exc:
-            # One refusal type for callers; the verifier's own class is not public API here.
-            raise Refusal(str(exc)) from exc
-        (stage / 'closure.json').write_bytes((json.dumps(receipt, sort_keys=True, indent=2) + '\n').encode())
-    record = {'disposition': disposition, 'closure': closure, 'elapsed_seconds': clock() - start,
+        candidate = closure_receipt(boot_id, nonce, show, outcome['returncode'])
+    record = {'disposition': disposition, 'candidate': candidate, 'elapsed_seconds': clock() - start,
               'show': show, 'vetoed': vetoed, 'samples': len(samples),
               'streams': {n: {'bytes': len(outcome[n]), 'sha256': hashlib.sha256(outcome[n]).hexdigest()}
                           for n in ('stdout', 'stderr')}}
     exclusive(stage / 'supervisor.json', (json.dumps(record, sort_keys=True, indent=2) + '\n').encode())
-    return disposition, closure
+    return {'disposition': disposition, 'candidate': candidate, 'vetoed': vetoed, 'show': show}
 
 
 class Disconnect(Exception):
@@ -272,8 +267,8 @@ class SystemdOps:
 def main(argv):
     """Root entry point: `effigy-stage-supervisor --request PATH --sha256 HEX`.
 
-    Prints one JSON line with the disposition and closure. The request hash binds
-    the exact payload, and the VM route returns the stdout to the host.
+    Prints one JSON line with the disposition and candidate receipt. The guest
+    never credits closure; the host does, after its own VM-route observation.
     """
     if len(argv) != 4 or argv[0] != '--request' or argv[2] != '--sha256':
         raise Refusal('usage: --request PATH --sha256 HEX')
@@ -287,10 +282,9 @@ def main(argv):
     boot_id = Path(BOOT_ID_PATH).read_text().strip()
     if boot_id != request['expected_boot_id']:
         raise Refusal('boot identity differs from the request')
-    disposition, closure = run_supervised(request['stage_dir'], request, SystemdOps(), time.monotonic,
-                                          boot_id, {}, lambda receipt: receipt.get('nonce') == request['nonce'], [])
-    print(json.dumps({'disposition': disposition, 'closure': closure, 'nonce': request['nonce']}, sort_keys=True))
-    return 0 if closure == 'closed' else 1
+    result = run_supervised(request['stage_dir'], request, SystemdOps(), time.monotonic, boot_id, {}, [])
+    print(json.dumps(result, sort_keys=True))
+    return 0 if result['candidate'] is not None else 1
 
 
 if __name__ == '__main__':

@@ -1,10 +1,10 @@
 """Injected controls for the Linux setup adapter and guest supervisor.
 
 Each control calls the real adapter interface (parse_probe, stage1_request,
-stage1_verify_post, run_supervised, setup_plan, execute_plan, SystemdOps) with a
-fake transport. Local-only fixtures: descriptor XML, .hds files, stdin files. No
-VM, SSH, systemd or cgroup is touched. An injected pass is source-control
-evidence only and grants no activation or proof credit.
+stage1_verify_post, run_supervised, host_credit, setup_plan, execute_plan,
+SystemdOps) with a fake transport. Local-only fixtures: descriptor XML, .hds files,
+credential and stdin files, counter files. No VM, SSH, systemd or cgroup is touched.
+An injected pass is source-control evidence only and grants no activation or proof credit.
 """
 import hashlib
 import json
@@ -28,6 +28,7 @@ NONCE = 'a' * 64
 INVOCATION = '0f1e2d3c-4b5a-4968-8777-6655443322ff'
 UNIT = 'effigy-stage-' + NONCE
 BOOT = 'boot-1234'
+HOSTKEY = 'SHA256:' + 'A' * 43
 CWD = '/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/source'
 ZERO = '{00000000-0000-0000-0000-000000000000}'
 TOP = '{11111111-1111-1111-1111-111111111111}'
@@ -44,7 +45,7 @@ def show_text(state='inactive', result='success', status='0', invocation=INVOCAT
                       f'ExecMainStatus={status}', f'InvocationID={invocation}', f'ControlGroup={group}']) + '\n'
 
 
-NOT_FOUND = show_text(load='not-found', state='inactive', result='success', status='0', group='')
+NOT_FOUND = show_text(load='not-found')
 
 
 class FakeOps:
@@ -85,19 +86,13 @@ def request(stage):
             'timeout_seconds': 60, 'argv': ['/bin/true'], 'stage_dir': str(stage)}
 
 
-def authenticate(receipt):
-    return receipt.get('nonce') == NONCE and receipt.get('terminal_basis') == observations.UNIT_INACTIVE
-
-
 def supervised(shows, **kwargs):
     stage = tmpdir('supervisor-controls-')
-    ops = FakeOps(stage, shows, **kwargs)
-    return stage, ops
+    return stage, FakeOps(stage, shows, **kwargs)
 
 
-def run_it(stage, ops, samples=(), seen=None, clock=lambda: 0.0):
-    return supervisor.run_supervised(stage, request(stage), ops, clock, BOOT, seen if seen is not None else {},
-                                     authenticate, list(samples))
+def run_it(stage, ops, samples=()):
+    return supervisor.run_supervised(stage, request(stage), ops, lambda: 0.0, BOOT, {}, list(samples))
 
 
 class SupervisorArgvChecks(unittest.TestCase):
@@ -126,10 +121,7 @@ class SupervisorArgvChecks(unittest.TestCase):
             supervisor.parse_show(show_text(group='/a/../b'), UNIT)
 
     def test_systemctl_show_failure_refuses_rather_than_reading_absent(self):
-        calls = []
-
         def runner(argv, timeout):
-            calls.append(argv)
             return {'returncode': 1, 'stdout': b'', 'stderr': b'boom', 'timed_out': False}
         with self.assertRaises(Refusal):
             supervisor.SystemdOps(runner).show(supervisor.show_argv(UNIT))
@@ -151,14 +143,17 @@ class SupervisorArgvChecks(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 15)
 
 
-class SupervisorCreditChecks(unittest.TestCase):
-    def test_real_successful_service_is_credited(self):
+class SupervisorCandidateChecks(unittest.TestCase):
+    """The guest produces a candidate only. It never credits closure itself."""
+
+    def test_successful_service_yields_a_candidate_not_a_credit(self):
         stage, ops = supervised([NOT_FOUND, show_text()])
-        disposition, closure = run_it(stage, ops)
-        self.assertEqual((disposition, closure), ('exited', 'closed'))
-        receipt = json.loads((stage / 'closure.json').read_text())
-        self.assertEqual(receipt['terminal_basis'], observations.UNIT_INACTIVE)
-        self.assertEqual(receipt['invocation_id'], INVOCATION)
+        result = run_it(stage, ops)
+        self.assertEqual(result['disposition'], 'exited')
+        self.assertEqual(result['candidate']['terminal_basis'], observations.UNIT_INACTIVE)
+        self.assertEqual(result['candidate']['invocation_id'], INVOCATION)
+        self.assertNotIn('closure', result)
+        self.assertFalse((stage / 'closure.json').exists())
 
     def test_intent_is_spent_and_pre_state_checked_before_the_payload_runs(self):
         stage, ops = supervised([NOT_FOUND, show_text()])
@@ -182,7 +177,7 @@ class SupervisorCreditChecks(unittest.TestCase):
     def test_nonce_reuse_refuses_before_effect(self):
         stage, ops = supervised([NOT_FOUND, show_text()])
         with self.assertRaises(Refusal):
-            run_it(stage, ops, seen={'nonces': {NONCE}})
+            supervisor.run_supervised(stage, request(stage), ops, lambda: 0.0, BOOT, {'nonces': {NONCE}}, [])
         self.assertEqual(ops.calls, [])
 
     def test_unsupported_systemd_and_missing_cgroup_v2_refuse_before_effect(self):
@@ -193,55 +188,57 @@ class SupervisorCreditChecks(unittest.TestCase):
             self.assertEqual(ops.calls, [])
             self.assertFalse((stage / 'intent.json').exists())
 
-    def test_surviving_descendant_is_vetoed_even_with_success_terminal(self):
+    def test_surviving_descendant_is_vetoed_even_with_a_success_terminal(self):
         stage, ops = supervised([NOT_FOUND, show_text()])
         live = supervisor.sample(show_text(state='active', group='/system.slice/x.service'), 'populated 1\n', UNIT)
-        self.assertEqual(run_it(stage, ops, samples=[live])[1], 'unknown')
+        result = run_it(stage, ops, samples=[live])
+        self.assertIsNone(result['candidate'])
+        self.assertTrue(result['vetoed'])
 
-    def test_descendant_surviving_leader_ends_as_runtime_timeout_and_stays_unknown(self):
+    def test_runtime_timeout_result_gives_no_candidate(self):
         stage, ops = supervised([NOT_FOUND, show_text(result='timeout', status='0')])
-        self.assertEqual(run_it(stage, ops)[1], 'unknown')
+        self.assertIsNone(run_it(stage, ops)['candidate'])
 
-    def test_disconnect_stops_the_unit_and_stays_unknown(self):
+    def test_disconnect_stops_the_unit_and_gives_no_candidate(self):
         stage, ops = supervised([NOT_FOUND, show_text()], disconnect=True)
-        self.assertEqual(run_it(stage, ops), ('disconnect', 'unknown'))
+        result = run_it(stage, ops)
+        self.assertEqual((result['disposition'], result['candidate']), ('disconnect', None))
         self.assertIn(('stop', supervisor.stop_argv(UNIT)), ops.calls)
 
-    def test_timeout_flag_and_deadline_both_stop_and_stay_unknown(self):
+    def test_timeout_flag_and_deadline_both_stop_and_give_no_candidate(self):
         stage, ops = supervised([NOT_FOUND, show_text()], timed_out=True)
-        self.assertEqual(run_it(stage, ops), ('timeout', 'unknown'))
+        result = run_it(stage, ops)
+        self.assertEqual((result['disposition'], result['candidate']), ('timeout', None))
         self.assertIn(('stop', supervisor.stop_argv(UNIT)), ops.calls)
         ticks = iter([0.0, 999.0, 999.0])
         stage, ops = supervised([NOT_FOUND, show_text()])
-        self.assertEqual(run_it(stage, ops, clock=lambda: next(ticks))[0], 'timeout')
+        result = supervisor.run_supervised(stage, request(stage), ops, lambda: next(ticks), BOOT, {}, [])
+        self.assertEqual(result['disposition'], 'timeout')
 
-    def test_collection_race_post_run_unit_gone_is_unknown(self):
+    def test_collection_race_post_run_unit_gone_gives_no_candidate(self):
         stage, ops = supervised([NOT_FOUND, NOT_FOUND])
-        self.assertEqual(run_it(stage, ops)[1], 'unknown')
+        self.assertIsNone(run_it(stage, ops)['candidate'])
 
-    def test_failed_payload_gets_no_credit(self):
+    def test_failed_payload_gives_no_candidate(self):
         stage, ops = supervised([NOT_FOUND, show_text(result='exit-code', status='3')], returncode=3)
-        self.assertEqual(run_it(stage, ops), ('failed', 'unknown'))
+        self.assertEqual(run_it(stage, ops)['candidate'], None)
 
-    def test_inactive_unit_still_running_or_with_control_group_is_unknown(self):
+    def test_inactive_unit_with_control_group_gives_no_candidate(self):
         stage, ops = supervised([NOT_FOUND, show_text(group='/system.slice/x.service')])
-        self.assertEqual(run_it(stage, ops)[1], 'unknown')
-
-    def test_unauthenticated_terminal_receipt_refuses(self):
-        stage, ops = supervised([NOT_FOUND, show_text()])
-        with self.assertRaises(Refusal):
-            supervisor.run_supervised(stage, request(stage), ops, lambda: 0.0, BOOT, {}, lambda r: False, [])
+        self.assertIsNone(run_it(stage, ops)['candidate'])
 
     def test_invocation_id_reuse_refuses(self):
-        stage, ops = supervised([NOT_FOUND, show_text()])
+        stage = tmpdir('supervisor-reuse-')
+        ops = FakeOps(stage, [NOT_FOUND, show_text()])
+        seen = {'invocations': {INVOCATION}}
         with self.assertRaises(Refusal):
-            run_it(stage, ops, seen={'invocations': {INVOCATION}})
+            supervisor.run_supervised(stage, request(stage), ops, lambda: 0.0, BOOT, seen, [])
 
     def test_stage_must_belong_to_the_payload_account(self):
         stage, ops = supervised([NOT_FOUND, show_text()])
         bad = dict(request(stage), payload_uid=os.geteuid() + 1)
         with self.assertRaises(Refusal):
-            supervisor.run_supervised(stage, bad, ops, lambda: 0.0, BOOT, {}, authenticate, [])
+            supervisor.run_supervised(stage, bad, ops, lambda: 0.0, BOOT, {}, [])
         self.assertEqual(ops.calls, [])
 
     def test_main_refuses_a_wrong_request_hash_before_reading_identity(self):
@@ -249,6 +246,48 @@ class SupervisorCreditChecks(unittest.TestCase):
         path.write_text(json.dumps(request(path.parent)))
         with self.assertRaises(Refusal):
             supervisor.main(['--request', str(path), '--sha256', '0' * 64])
+
+
+class HostCreditChecks(unittest.TestCase):
+    """Closure is credited only from the host's own VM-route observation of the unit."""
+
+    def candidate(self, **changes):
+        base = {'boot_id': BOOT, 'nonce': NONCE, 'unit': UNIT, 'invocation_id': INVOCATION, 'control_group': '',
+                'supervisor': 'systemd-service-cgroup-v2', 'terminal_basis': observations.UNIT_INACTIVE,
+                'populated': 0, 'active_state': 'inactive', 'result': 'success', 'waited_exit': 0}
+        base.update(changes)
+        return base
+
+    def observation(self, text=None):
+        return setup.observation_from_show(text or show_text(), UNIT, BOOT, NONCE)
+
+    def expected(self):
+        return {'boot_id': BOOT, 'nonce': NONCE, 'unit': UNIT, 'invocation_id': INVOCATION, 'control_group': ''}
+
+    def test_matching_host_observation_credits_closure(self):
+        self.assertEqual(setup.host_credit(self.expected(), self.candidate(), self.observation()), 'closed')
+
+    def test_guest_receipt_alone_is_not_credit(self):
+        self.assertEqual(setup.host_credit(self.expected(), self.candidate(), None), 'unknown')
+        self.assertEqual(setup.host_credit(self.expected(), None, self.observation()), 'unknown')
+
+    def test_mismatched_guest_receipt_is_refused(self):
+        other = self.observation(show_text(invocation='11111111-2222-4333-8444-555555555555'))
+        with self.assertRaises(Refusal):
+            setup.host_credit(self.expected(), self.candidate(), other)
+        with self.assertRaises(Refusal):
+            setup.host_credit(self.expected(), self.candidate(result='timeout'), self.observation())
+
+    def test_host_observation_with_a_live_group_or_no_unit_is_unknown(self):
+        self.assertIsNone(setup.observation_from_show(NOT_FOUND, UNIT, BOOT, NONCE))
+        live = setup.observation_from_show(show_text(group='/system.slice/x.service'), UNIT, BOOT, NONCE)
+        self.assertEqual(setup.host_credit(self.expected(), self.candidate(), live), 'unknown')
+
+    def test_terminal_observation_argv_is_a_vm_route_read_of_the_unit(self):
+        argv = setup.terminal_observation_argv(UNIT)
+        self.assertEqual(argv[:4], [setup.PRLCTL, 'exec', setup.VM_UUID, '/usr/bin/systemctl'])
+        with self.assertRaises(Refusal):
+            setup.terminal_observation_argv('not-a-stage-unit')
 
 
 class ContractBasisChecks(unittest.TestCase):
@@ -289,16 +328,6 @@ class ContractBasisChecks(unittest.TestCase):
         self.assertEqual(observations.verify_contained_closure(expected, dict(legacy, populated=1), lambda r: True), 'unknown')
         with self.assertRaises(observations.Refusal):
             observations.verify_contained_closure(expected, dict(legacy, control_group=''), lambda r: True)
-
-
-class ResourceCounterChecks(unittest.TestCase):
-    def test_counter_loss_and_cap_refuse(self):
-        values = iter([{'bytes': 10}, {'bytes': 9}])
-        with self.assertRaises(resources.Refusal):
-            resources.Monitor({'bytes': 100}, lambda: next(values)).check()
-        values = iter([{'bytes': 0}, {'bytes': 101}])
-        with self.assertRaises(resources.Refusal):
-            resources.Monitor({'bytes': 100}, lambda: next(values)).check()
 
 
 PROBE_TEXT = """uid=0
@@ -493,8 +522,18 @@ class DiskAssociationChecks(unittest.TestCase):
                 setup.verify_disk_association(host, guest, self.witness, supported)
 
 
+class ResourceCounterChecks(unittest.TestCase):
+    def test_counter_loss_and_cap_refuse(self):
+        values = iter([{'bytes': 10}, {'bytes': 9}])
+        with self.assertRaises(resources.Refusal):
+            resources.Monitor({'bytes': 100}, lambda: next(values)).check()
+        values = iter([{'bytes': 0}, {'bytes': 101}])
+        with self.assertRaises(resources.Refusal):
+            resources.Monitor({'bytes': 100}, lambda: next(values)).check()
+
+
 class PlanFixture:
-    """Complete live facts for a source-level plan. Files are real; transports are not used."""
+    """Complete live facts for a source-level plan, with real files for every credential and stdin input."""
 
     def __init__(self):
         self.dir = tmpdir('plan-fixture-')
@@ -502,17 +541,32 @@ class PlanFixture:
         self.archive.write_bytes(b'archive-bytes')
         self.placement = self.dir / 'common.py'
         self.placement.write_bytes(b'print(1)\n')
+        self.config = self.dir / 'ssh_config'
+        self.config.write_bytes(b'Host effigy-531-vault\n')
+        self.config.chmod(0o600)
+        self.known = self.dir / 'known_hosts'
+        self.known.write_bytes(b'10.211.55.8 ssh-ed25519 AAAATEST\n')
+        self.known.chmod(0o600)
+        self.counter = self.dir / 'writes.counter'
+        self.counter.write_text('100')
         self.now = 1_800_000_000
         self.keys = b'restrict,expiry-time=20270101000000 ssh-ed25519 AAAATEST effigy531@test\n'
 
     def facts(self, **changes):
         base = {
-            'go': set(ALL_GO), 'probe': parse(probe_text()), 'now': self.now,
+            'go': set(ALL_GO), 'probe': {'docker_group': 'docker'}, 'now': self.now,
+            'identity': {'vm': setup.VM_UUID, 'boot_id': BOOT, 'host_key_fp': HOSTKEY},
+            'resource_accounting': {'counter_files': {'writes': str(self.counter)}, 'limits': {'writes': 10 ** 9}},
             'authorized_keys': self.keys, 'authorized_keys_expiry': self.now + 3600,
             'disk_association': {'mechanism': 'fake-supported'},
-            'ssh_config': '/Volumes/Stash/scratch/effigy/531-linux-control/ssh_config',
+            'ssh_files': {'config': str(self.config),
+                          'config_sha256': hashlib.sha256(self.config.read_bytes()).hexdigest(),
+                          'known_hosts': str(self.known),
+                          'known_hosts_sha256': hashlib.sha256(self.known.read_bytes()).hexdigest()},
+            'ssh_transfer_containment': {'ruling': 'test-ruling'},
+            'hard_limit': {'mechanism': 'test-hard-limit'},
             'archive': {'path': str(self.archive), 'sha256': hashlib.sha256(b'archive-bytes').hexdigest()},
-            'controls_request': {'path': str(self.dir / 'controls.json'), 'sha256': 'b' * 64},
+            'controls_request': {'path': str(self.dir / 'controls.json'), 'sha256': 'b' * 64, 'nonce': NONCE},
             'supervisor_installed': True,
             'placements': [{'guest_path': setup.BASE + '/driver/common.py', 'host_path': str(self.placement),
                             'sha256': hashlib.sha256(b'print(1)\n').hexdigest()}],
@@ -523,14 +577,12 @@ class PlanFixture:
 
 class PlanChecks(unittest.TestCase):
     def test_no_go_marks_the_first_row_and_keeps_its_argv_concrete(self):
-        rows = setup.setup_plan({'go': set()})
+        rows = setup.setup_plan(PlanFixture().facts(go=set()))
         self.assertEqual(rows[0]['id'], 'E3a')
-        self.assertEqual(rows[0]['missing'], ['GO E3'])
+        self.assertIn('GO E3', rows[0]['missing'])
         self.assertEqual(rows[0]['argv'][:3], [setup.PRLCTL, 'exec', setup.VM_UUID])
 
-    def test_no_placeholder_argv_and_live_fact_rows_are_empty_until_bound(self):
-        # Rows whose argv embeds a live value stay empty until it is bound. E7a-c are
-        # concrete: their disk-association blocker is a gate on the row, not an argv value.
+    def test_no_placeholder_argv_and_live_value_rows_are_empty_until_bound(self):
         live = {'E6', 'E-SUP', 'E8', 'E9a', 'E9b', 'E19'}
         for row in setup.setup_plan({'go': set(ALL_GO)}):
             self.assertFalse(any('<' in a and '>' in a for a in row['argv']), row['id'])
@@ -538,18 +590,39 @@ class PlanChecks(unittest.TestCase):
                 self.assertEqual(row['argv'], [], row['id'])
                 self.assertTrue(row['missing'], row['id'])
 
+    def test_identity_and_resource_accounting_are_required_for_every_row(self):
+        rows = setup.setup_plan({'go': set(ALL_GO)})
+        for row in rows:
+            self.assertTrue(any('identity' in m for m in row['missing']), row['id'])
+            self.assertTrue(any('resource accounting' in m for m in row['missing']), row['id'])
+
+    def test_effect_classes_and_hard_limits_are_assigned_per_row(self):
+        rows = {r['id']: r for r in setup.setup_plan(PlanFixture().facts())}
+        self.assertEqual(rows['E3a']['effect'], 'bootstrap')
+        self.assertEqual(rows['E8']['effect'], 'supervised')
+        self.assertEqual(rows['E9a']['effect'], 'ssh-transfer')
+        self.assertTrue(rows['E9a']['needs_hard_limit'])
+        self.assertFalse(rows['E3a']['needs_hard_limit'])
+        self.assertEqual(rows['E8']['credit'], {'nonce': NONCE, 'unit': UNIT})
+
+    def test_ssh_rows_block_without_containment_ruling_or_hard_limit(self):
+        fx = PlanFixture()
+        rows = {r['id']: r for r in setup.setup_plan(fx.facts(ssh_transfer_containment=None, hard_limit=None))}
+        self.assertTrue(any('containment ruling' in m for m in rows['E9a']['missing']))
+        self.assertTrue(any('hard limit' in m for m in rows['E9a']['missing']))
+        self.assertTrue(any('hard limit' in m for m in rows['E8']['missing']))
+
     def test_full_plan_has_exact_root_and_ssh_shapes(self):
+        fx = PlanFixture()
         with patch.object(setup, 'ARCHIVE_SHA256', hashlib.sha256(b'archive-bytes').hexdigest()):
-            rows = {r['id']: r for r in setup.setup_plan(PlanFixture().facts())}
+            rows = {r['id']: r for r in setup.setup_plan(fx.facts())}
             self.assertEqual(rows['E9a']['stdin_sha256'], hashlib.sha256(b'archive-bytes').hexdigest())
         self.assertEqual(rows['E3a']['argv'][:4], [setup.PRLCTL, 'exec', setup.VM_UUID, '/usr/sbin/useradd'])
         self.assertIn('--groups', rows['E4']['argv'])
         self.assertIn(setup.DROPIN_TEXT, rows['E5a']['argv'])
-        self.assertEqual(rows['E9a']['argv'][:5], ['/usr/bin/ssh', '-F', '/Volumes/Stash/scratch/effigy/531-linux-control/ssh_config',
-                                                   setup.SSH_ALIAS, '--'])
-        loop = rows['E7c']['argv'][-3]
+        self.assertEqual(rows['E9a']['argv'][:5], ['/usr/bin/ssh', '-F', str(fx.config), setup.SSH_ALIAS, '--'])
         for name in setup.BASE_DIRS:
-            self.assertIn(name, loop)
+            self.assertIn(name, rows['E7c']['argv'][-3])
 
     def test_authorized_keys_past_24h_or_missing_refuse(self):
         fx = PlanFixture()
@@ -570,31 +643,31 @@ class PlanChecks(unittest.TestCase):
         with self.assertRaises(Refusal):
             setup.ssh_argv('/x/../cfg', ['/bin/true'])
 
-    def test_placement_hash_drift_is_refused_before_intent(self):
-        fx = PlanFixture()
-        rows = setup.setup_plan(fx.facts(placements=[{'guest_path': setup.BASE + '/x', 'host_path': str(fx.placement),
-                                                       'sha256': 'c' * 64}]))
-        calls = []
-        result = setup.execute_plan(rows[-1:], lambda row, stage: calls.append(row) or {}, tmpdir('plan-stage-'),
-                                    lambda: 0.0, 18000)
-        self.assertEqual(calls, [])
-        self.assertIn('stdin hash drift', result['reason'])
+
+def run_plan(rows, facts, runner, observe_identity=None, observe_terminal=None, budget=18000,
+             clock=None, wall_clock=None, stage_root=None):
+    identity = facts['identity']
+    return setup.execute_plan(rows, facts, runner,
+                              observe_identity or (lambda row: dict(identity)),
+                              observe_terminal or (lambda row: {'show_text': show_text()}),
+                              stage_root or tmpdir('plan-stage-'), clock or (lambda: 0.0),
+                              wall_clock or (lambda: facts['now']), budget)
 
 
-def run_plan(rows, runner, budget=18000, clock=None, stage_root=None):
-    return setup.execute_plan(rows, runner, stage_root or tmpdir('plan-stage-'), clock or (lambda: 0.0), budget)
-
-
-def ok_runner(overrides=None):
+def ok_runner(fx, overrides=None):
+    """Fake transport that answers each row as the real command would: exact stdout, exit 0, guest candidate."""
     overrides = overrides or {}
     calls = []
+    candidate = {'boot_id': BOOT, 'nonce': NONCE, 'unit': UNIT, 'invocation_id': INVOCATION, 'control_group': '',
+                 'supervisor': 'systemd-service-cgroup-v2', 'terminal_basis': observations.UNIT_INACTIVE,
+                 'populated': 0, 'active_state': 'inactive', 'result': 'success', 'waited_exit': 0}
 
-    def runner(row, stage):
+    def runner(row, stage, monitor):
         calls.append(row['id'])
         if row['id'] in overrides:
-            return overrides[row['id']]
+            return overrides[row['id']](row, stage, monitor) if callable(overrides[row['id']]) else overrides[row['id']]
         if row['kind'] == 'vm-supervised':
-            return {'disposition': 'exited', 'waited_exit': 0, 'closure': 'closed', 'stdout': b''}
+            return {'disposition': 'exited', 'waited_exit': 0, 'candidate': dict(candidate), 'stdout': b''}
         expect = row['expect'] or {}
         if 'stdout' in expect:
             out = expect['stdout']
@@ -602,69 +675,184 @@ def ok_runner(overrides=None):
             out = expect['stdout_sha'] + '  file\n'
         else:
             out = ''
-        return {'disposition': 'exited', 'waited_exit': 0, 'closure': 'unknown', 'stdout': out.encode()}
+        return {'disposition': 'exited', 'waited_exit': 0, 'candidate': None, 'stdout': out.encode()}
     runner.calls = calls
     return runner
 
 
+def full_chain(fx):
+    return setup.setup_plan(fx.facts())
+
+
 class ExecutorChecks(unittest.TestCase):
-    def test_full_chain_runs_in_plan_order_only_with_credit(self):
+    def test_full_chain_runs_in_plan_order_only_with_host_credit(self):
         fx = PlanFixture()
         with patch.object(setup, 'ARCHIVE_SHA256', hashlib.sha256(b'archive-bytes').hexdigest()):
-            rows = setup.setup_plan(fx.facts())
-            runner = ok_runner()
-            result = run_plan(rows, runner)
-        self.assertIsNone(result['halt'])
+            rows = full_chain(fx)
+            runner = ok_runner(fx)
+            result = run_plan(rows, fx.facts(), runner)
+        self.assertIsNone(result['halt'], result)
         self.assertEqual(result['completed'], [r['id'] for r in rows])
         self.assertEqual(runner.calls, [r['id'] for r in rows])
 
+    def test_identity_drift_halts_before_any_intent(self):
+        fx = PlanFixture()
+        runner = ok_runner(fx)
+        result = run_plan(full_chain(fx), fx.facts(), runner,
+                          observe_identity=lambda row: {'vm': setup.VM_UUID, 'boot_id': 'rebooted',
+                                                        'host_key_fp': HOSTKEY})
+        self.assertEqual(result['halt'], 'E3a')
+        self.assertIn('identity drift', result['reason'])
+        self.assertEqual(runner.calls, [])
+
+    def test_ssh_config_drift_or_loose_mode_halts_before_intent(self):
+        fx = PlanFixture()
+        with patch.object(setup, 'ARCHIVE_SHA256', hashlib.sha256(b'archive-bytes').hexdigest()):
+            facts = fx.facts()          # bound hashes are taken before the drift
+            rows = full_chain(fx)
+            fx.config.write_bytes(b'Host changed\n')
+            fx.config.chmod(0o600)
+            runner = ok_runner(fx)
+            result = run_plan(rows, facts, runner)
+        self.assertEqual(result['halt'], 'E9a')
+        self.assertIn('bytes drifted', result['reason'])
+        self.assertNotIn('E9a', runner.calls)
+        fx2 = PlanFixture()
+        fx2.config.chmod(0o644)
+        with patch.object(setup, 'ARCHIVE_SHA256', hashlib.sha256(b'archive-bytes').hexdigest()):
+            result = run_plan(full_chain(fx2), fx2.facts(), ok_runner(fx2))
+        self.assertEqual(result['halt'], 'E9a')
+        self.assertIn('owner-only', result['reason'])
+
+    def test_expired_ephemeral_key_halts_the_ssh_row(self):
+        fx = PlanFixture()
+        with patch.object(setup, 'ARCHIVE_SHA256', hashlib.sha256(b'archive-bytes').hexdigest()):
+            result = run_plan(full_chain(fx), fx.facts(), ok_runner(fx),
+                              wall_clock=lambda: fx.now + 3600)
+        self.assertEqual(result['halt'], 'E9a')
+        self.assertIn('expired', result['reason'])
+
+    def test_bootstrap_allowlist_refuses_an_unlisted_root_row(self):
+        fx = PlanFixture()
+        rows = full_chain(fx)
+        rogue = dict(rows[0], id='E99')
+        runner = ok_runner(fx)
+        result = run_plan([rogue], fx.facts(), runner)
+        self.assertEqual(result['halt'], 'E99')
+        self.assertIn('allowlist', result['reason'])
+        self.assertEqual(runner.calls, [])
+
+    def test_supervised_row_refuses_without_an_installed_supervisor(self):
+        fx = PlanFixture()
+        blocked = fx.facts(supervisor_installed=False)
+        rows = [r for r in setup.setup_plan(blocked) if r['id'] == 'E8']
+        result = run_plan(rows, blocked, ok_runner(fx))
+        self.assertEqual(result['halt'], 'E8')
+        self.assertIn('missing', result['reason'])
+        for row in rows:
+            row['missing'] = []     # the plan gate is bypassed on purpose; the executor gate must still refuse
+        result = run_plan(rows, fx.facts(supervisor_installed=False), ok_runner(fx))
+        self.assertEqual(result['halt'], 'E8')
+        self.assertIn('without an installed supervisor', result['reason'])
+
+    def test_ssh_row_refuses_without_a_containment_ruling_even_if_plan_is_forced(self):
+        fx = PlanFixture()
+        with patch.object(setup, 'ARCHIVE_SHA256', hashlib.sha256(b'archive-bytes').hexdigest()):
+            rows = full_chain(fx)
+            facts = fx.facts(ssh_transfer_containment=None)
+            for row in rows:
+                row['missing'] = []
+            result = run_plan([r for r in rows if r['id'] == 'E9a'], facts, ok_runner(fx))
+        self.assertEqual(result['halt'], 'E9a')
+        self.assertIn('containment', result['reason'])
+
+    def test_hard_limit_is_enforced_by_the_executor_for_network_rows(self):
+        fx = PlanFixture()
+        with patch.object(setup, 'ARCHIVE_SHA256', hashlib.sha256(b'archive-bytes').hexdigest()):
+            rows = [r for r in full_chain(fx) if r['id'] == 'E9a']
+            for row in rows:
+                row['missing'] = []
+            result = run_plan(rows, fx.facts(hard_limit=None), ok_runner(fx))
+        self.assertEqual(result['halt'], 'E9a')
+        self.assertIn('hard limit', result['reason'])
+
+    def test_counter_loss_during_a_row_halts(self):
+        fx = PlanFixture()
+        rows = [r for r in full_chain(fx) if r['id'] == 'E3a']
+
+        def shrink(row, stage, monitor):
+            fx.counter.write_text('50')
+            return {'disposition': 'exited', 'waited_exit': 0, 'candidate': None, 'stdout': b''}
+        result = run_plan(rows, fx.facts(), ok_runner(fx, {'E3a': shrink}))
+        self.assertEqual(result['halt'], 'E3a')
+        self.assertIn('resource refusal', result['reason'])
+
+    def test_counter_cap_during_a_row_halts(self):
+        fx = PlanFixture()
+        rows = [r for r in full_chain(fx) if r['id'] == 'E3a']
+        facts = fx.facts(resource_accounting={'counter_files': {'writes': str(fx.counter)}, 'limits': {'writes': 10}})
+
+        def grow(row, stage, monitor):
+            fx.counter.write_text('500')
+            return {'disposition': 'exited', 'waited_exit': 0, 'candidate': None, 'stdout': b''}
+        result = run_plan(rows, facts, ok_runner(fx, {'E3a': grow}))
+        self.assertEqual(result['halt'], 'E3a')
+        self.assertIn('resource refusal', result['reason'])
+
     def test_missing_go_halts_before_any_effect(self):
-        rows = setup.setup_plan(PlanFixture().facts(go=set()))
-        runner = ok_runner()
-        result = run_plan(rows, runner)
+        fx = PlanFixture()
+        runner = ok_runner(fx)
+        result = run_plan(setup.setup_plan(fx.facts(go=set())), fx.facts(go=set()), runner)
         self.assertEqual(result['halt'], 'E3a')
         self.assertEqual(runner.calls, [])
 
     def test_setup_failure_holds_successors(self):
-        rows = setup.setup_plan(PlanFixture().facts())
-        failed = {'disposition': 'failed', 'waited_exit': 1, 'closure': 'unknown', 'stdout': b''}
-        runner = ok_runner({'E3b': failed})
-        result = run_plan(rows, runner)
+        fx = PlanFixture()
+        failed = {'disposition': 'failed', 'waited_exit': 1, 'candidate': None, 'stdout': b''}
+        runner = ok_runner(fx, {'E3b': failed})
+        result = run_plan(full_chain(fx), fx.facts(), runner)
         self.assertEqual(result['halt'], 'E3b')
         self.assertNotIn('E3c', runner.calls)
 
     def test_wrong_post_observation_and_partial_output_hold(self):
-        rows = setup.setup_plan(PlanFixture().facts())
-        wrong_group = {'disposition': 'exited', 'waited_exit': 0, 'closure': 'unknown', 'stdout': b'effigy531\n'}
-        self.assertEqual(run_plan(rows, ok_runner({'E4v': wrong_group}))['halt'], 'E4v')
-        truncated = {'disposition': 'exited', 'waited_exit': 0, 'closure': 'unknown', 'stdout': b'abc'}
+        fx = PlanFixture()
+        wrong_group = {'disposition': 'exited', 'waited_exit': 0, 'candidate': None, 'stdout': b'effigy531\n'}
+        self.assertEqual(run_plan(full_chain(fx), fx.facts(), ok_runner(fx, {'E4v': wrong_group}))['halt'], 'E4v')
+        truncated = {'disposition': 'exited', 'waited_exit': 0, 'candidate': None, 'stdout': b'abc'}
         with patch.object(setup, 'ARCHIVE_SHA256', hashlib.sha256(b'archive-bytes').hexdigest()):
-            rows = setup.setup_plan(PlanFixture().facts())
-            result = run_plan(rows, ok_runner({'E9a': truncated}))
+            result = run_plan(full_chain(fx), fx.facts(), ok_runner(fx, {'E9a': truncated}))
         self.assertEqual(result['halt'], 'E9a')
 
-    def test_supervised_row_without_closure_credit_holds(self):
+    def test_supervised_row_without_host_observation_holds(self):
+        fx = PlanFixture()
         with patch.object(setup, 'ARCHIVE_SHA256', hashlib.sha256(b'archive-bytes').hexdigest()):
-            rows = setup.setup_plan(PlanFixture().facts())
-            unknown = {'disposition': 'exited', 'waited_exit': 0, 'closure': 'unknown', 'stdout': b''}
-            result = run_plan(rows, ok_runner({'E8': unknown}))
+            result = run_plan(full_chain(fx), fx.facts(), ok_runner(fx),
+                              observe_terminal=lambda row: {'show_text': NOT_FOUND})
         self.assertEqual(result['halt'], 'E8')
-        self.assertIn('E9b', result['completed'])
-        self.assertNotIn('E19.0', result['completed'])
+        self.assertIn('no advance credit', result['reason'])
+
+    def test_supervised_row_with_mismatched_host_observation_holds_with_reason(self):
+        fx = PlanFixture()
+        with patch.object(setup, 'ARCHIVE_SHA256', hashlib.sha256(b'archive-bytes').hexdigest()):
+            result = run_plan(full_chain(fx), fx.facts(), ok_runner(fx),
+                              observe_terminal=lambda row: {'show_text': show_text(invocation='11111111-2222-4333-8444-555555555555')})
+        self.assertEqual(result['halt'], 'E8')
+        self.assertIn('credit', result['reason'])
 
     def test_reused_intent_raises_without_effect(self):
-        rows = setup.setup_plan(PlanFixture().facts())
+        fx = PlanFixture()
+        rows = full_chain(fx)
         root = tmpdir('plan-reuse-')
         (root / 'E3a').mkdir(mode=0o700)
-        runner = ok_runner()
+        runner = ok_runner(fx)
         with self.assertRaises(FileExistsError):
-            run_plan(rows, runner, stage_root=root)
+            run_plan(rows, fx.facts(), runner, stage_root=root)
         self.assertEqual(runner.calls, [])
 
     def test_total_budget_halts_before_the_row_runs(self):
-        rows = setup.setup_plan(PlanFixture().facts())
-        runner = ok_runner()
-        result = run_plan(rows, runner, budget=100)
+        fx = PlanFixture()
+        runner = ok_runner(fx)
+        result = run_plan(full_chain(fx), fx.facts(), runner, budget=100)
         self.assertEqual(result['halt'], 'E3a')
         self.assertIn('budget', result['reason'])
         self.assertEqual(runner.calls, [])
@@ -693,12 +881,16 @@ class ManifestChecks(unittest.TestCase):
 
     def test_ledger_matches_the_executable_plan(self):
         manifest = self.manifest()
-        empty = {r['id']: r for r in setup.setup_plan({'go': set(ALL_GO)})}
+        fx = PlanFixture()
+        empty = {r['id']: r for r in setup.setup_plan({'go': set(ALL_GO),
+                                                       'identity': fx.facts()['identity'],
+                                                       'resource_accounting': fx.facts()['resource_accounting']})}
         self.assertEqual(sorted(empty), sorted(r['id'] for r in manifest['rows']))
         for row in manifest['rows']:
             with self.subTest(row=row['id']):
                 self.assertEqual(empty[row['id']]['closure_basis'], row['closure_basis'])
                 self.assertEqual(empty[row['id']]['timeout_seconds'], row['timeout_seconds'])
+                self.assertEqual(empty[row['id']]['effect'], row['effect'])
                 if row['status'] == 'template':
                     self.assertEqual(empty[row['id']]['missing'], [], row['id'])
                 else:

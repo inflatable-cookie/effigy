@@ -115,73 +115,83 @@ All three backend inputs/GO-index stay **UNARMED** pending actual GOs, accepted
 placement and planner-bound aggregate execution. Consumer/install/production/
 merge authority is unchanged.
 
-## Setup adapter status (source-only, revision 2)
+## Setup adapter status (source-only, revision 3)
 
 Pure controls, no effect. Files: `linux_setup.py` (probe v2 parser, Stage1 request
 and post-observation, fail-closed disk verifier, `setup_plan` rows, `execute_plan`
-executor, `ssh_argv`), `linux_supervisor.py` (transient SERVICE argv, supervised
-run, `SystemdOps`, root entry point), `linux-setup-probe.sh` (read-only v2 probe,
-hash bound in the manifest), `linux-setup-stages.json` (ledger; checked against
-the plan), `linux_setup_tests.py` (54 injected controls; `test:qualification:linux-setup`).
+executor with its gates, host credit, `ssh_argv`), `linux_supervisor.py`
+(transient SERVICE argv, guest-side candidate producer, `SystemdOps`, root entry
+point), `linux-setup-probe.sh` (read-only v2 probe, hash bound in the manifest),
+`linux-setup-stages.json` (ledger checked against the plan), `linux_setup_tests.py`
+(72 injected controls; `test:qualification:linux-setup`).
 
-- **Probe v2** requires root uid, boot ID, `running`, systemd ≥ 250, `cgroup2fs`,
+- **Probe v2** requires root uid, boot ID, `running`, systemd >= 250, `cgroup2fs`,
   `effigy531` absent, sshd `expiry-time` present, numeric endpoint, host key
-  fingerprint and the exact `/dev/sda2` ← `sda` ext4 root chain. Any miss refuses.
+  fingerprint and the exact `/dev/sda2` <- `sda` ext4 root chain. Any miss refuses.
 - **Stage1** is one start, one read-only probe, one graceful stop, 600 s, no
-  snapshot, no `--kill`. Pre-start it needs the retained config and descriptor bytes,
-  bundle and config identities and the complete extent inventory for the descriptor
-  top. Post-stop `stage1_verify_post` refuses on any config-byte change (no volatile
-  field is exempt), identity change, snapshot change, descriptor change, extent
-  substitution or extra extent, and growth above 1 GiB.
-- **Setup plan.** Rows E3a–E7c, E-SUP, E9a–E9b, E8 and E19 are built with exact
-  argv. A row with a missing live fact (GO, public key, expiry, disk association,
-  staged supervisor, pinned ssh config, archive, placement hash) carries that fact in
-  `missing` and an empty argv. The executor halts on the first missing row. A stdin
-  hash that differs from the bound hash halts before any intent is written.
-- **Executor.** Each row writes its intent before the injected runner is called,
-  retains streams, applies the post-observation expectation, and advances only under
-  the basis: `vm-waited-exit-postobserved` and `ssh-transfer-postobserved` need the
-  waited exit plus a post-observation; `supervised-contained` needs closure credit.
-- **Supervisor.** Root runs it through `prlctl exec`; the payload runs as `effigy531`
-  via `systemd-run --uid=effigy531 --service-type=exec --property=ExitType=cgroup
-  --property=KillMode=control-group --property=RuntimeMaxSec=<n> --remain-after-exit
-  --pipe -- <argv>`. Pre-start the unit must be absent (nonce fresh). Post-run it must
-  be loaded with the same new InvocationID, `inactive`, `Result=success`,
-  `ExecMainStatus=0` and no control group. A live `populated 1` sample for that
-  InvocationID vetoes credit. Anything else is unknown.
+  snapshot, no `--kill`. It binds retained config and descriptor bytes, bundle and
+  config identities and the full extent inventory of the descriptor top.
+  `stage1_verify_post` refuses on config-byte drift (no field is exempt), identity
+  change, snapshot change, descriptor change, extent substitution or extra extent,
+  and growth above 1 GiB.
+- **Guest supervisor.** Root runs it through `prlctl exec`; the payload runs as
+  `effigy531` via `systemd-run --uid=effigy531 --service-type=exec
+  --property=ExitType=cgroup --property=KillMode=control-group
+  --property=RuntimeMaxSec=<n> --remain-after-exit --pipe -- <argv>`. The guest
+  produces a **candidate** receipt only; it never credits closure itself.
+- **Host credit.** The host reads the unit over the VM route
+  (`systemctl show`, root, read-only). `host_credit` credits closure only when the
+  candidate's boot ID, nonce, unit, InvocationID, active state and result equal that
+  independent observation, and the 686 contract (`unit-inactive-exittype-cgroup`
+  basis, no control group on either side) holds. A guest receipt alone is unknown.
+- **Setup plan.** Rows E3a-E7c, E-SUP, E9a-E9b, E8 and E19 carry an effect class:
+  `bootstrap` (root operations on an exact allowlist, E3a-E7c and E-SUP only),
+  `supervised` (payload through the supervisor), or `ssh-transfer`. A row with a
+  live value missing keeps an empty argv.
+- **Executor gates**, in order, each halting with the row id: missing facts;
+  allowlist (bootstrap) or installed supervisor (supervised) or a containment ruling
+  (ssh-transfer); identity (VM-route re-observation equals the plan's VM, boot ID and
+  host key); credential (pinned ssh config and known_hosts are owner-only and match
+  their bound hashes; the ephemeral key has not expired); total budget; resource
+  accounting (counter files and limits polled before and after the row; counter loss
+  or cap refuses); a hard limit for network or disk rows; stdin hash; one-use intent;
+  runner; post-observation, or host credit for supervised rows.
 
 Decisions taken here (reviewer checks):
 
-- **K-1** Streams come from `--pipe`, not `StandardOutput=file:`. The `file:` option
-  was not confirmed in the upstream text read, so it stays unused.
-- **K-2** The 686 closure contract accepts a second terminal basis,
-  `unit-inactive-exittype-cgroup`. A successful real service has an empty
-  `ControlGroup` after it goes inactive, so the existing `cgroup-populated` basis
-  could never credit it. The new basis keeps the InvocationID, nonce, unit and
-  supervisor checks, and forbids a control group on either side. The existing basis
-  is unchanged.
-- **K-3** Root one-shot rows (E3a–E7c) take `vm-waited-exit-postobserved`. This is
-  not contained closure. A leftover child of such a one-shot is not positively
-  excluded. The supervisor cannot be the first root step, since its own install
-  needs a closed root op.
-- **K-4** Disk association fails closed. No mechanism is in the supported set. The
-  Parallels CLI reference could not be decoded from the PDF, so `--iface` and
-  `--position` remain a starting point. Size, model, path and derived serials are refused.
-- **K-5** InvocationID is required observed state. The manuals read do not list it as
+- **K-1** Streams come from `--pipe`, not `StandardOutput=file:`, which was not
+  confirmed in the upstream text read.
+- **K-2** The 686 contract accepts the terminal basis `unit-inactive-exittype-cgroup`
+  for loaded transient services. The existing `cgroup-populated` basis is unchanged.
+- **K-3** Closure credit is host-side only (K-12 below). The guest's receipt is a
+  candidate, never self-authenticated.
+- **K-4** Root one-shot rows E3a-E7c and E-SUP take `vm-waited-exit-postobserved`.
+  This is not contained closure; a leftover child of a one-shot is not positively
+  excluded. The allowlist limits them to fixed exact operations.
+- **K-5** Disk association fails closed. No mechanism is supported. The Parallels
+  CLI reference could not be decoded, so `--iface` and `--position` remain a
+  starting point. Size, model, path and derived serials are refused.
+- **K-6** InvocationID is required observed state. The manuals read do not list it as
   a documented unit property, so a missing value fails closed.
-- **K-6** A failed payload gets no closure credit, matching the existing contract's
-  refusal of non-zero contained exits.
-- **K-7** The root supervisor is invoked over the VM route, not SSH. A sshd
-  `ForceCommand` runs as the login account, and systemd-run cannot start a unit as
-  another account without root. The SSH rows are file placements with a remote
-  sha256 post-observation, not payload runs.
-- **K-8** A post-run unit state confirms the terminal result. It is not the same as
-  observing the cgroup empty. Positive cgroup emptiness is only a veto input.
+- **K-7** The root supervisor runs over the VM route, not SSH. An sshd `ForceCommand`
+  runs as the login account, and systemd-run cannot start a unit as another account
+  without root.
+- **K-8** Post-run unit state confirms the terminal result. It is not a direct
+  observation of an empty cgroup. A live `populated 1` sample is a veto only.
+- **K-9** Failed payloads get no candidate and so no credit.
+- **K-10** The guest request binder hashes `linux_setup.py` and `linux_supervisor.py`.
+- **K-11** ssh-transfer rows (E9a, E9b, E19) need two bound facts before they run: a
+  containment ruling for stdin transfer, which is not a contained payload, and an
+  independently verified hard limit, since polling counters are not a quota. Both
+  are absent, so these rows stay blocked.
+- **K-12** Credit is computed by the executor from the host observation, not by the
+  runner, so a runner cannot grant closure.
 
-Still required before any activation (not in this change): a supported controller-to-guest
-disk association with fresh identifiers on both sides; a staged supervisor and a bound
-staging route for it, then its root install as a separate GO; the H archive bytes at a
-pinned path, a pinned ssh config under the control root, and fresh E2 key bytes with an
-expiry; the Stage1 probe v2 result and post-observation bound to this plan; the reviewed
-driver, inputs, GO index and GO receipt placements; and each live row's own GO. E10,
-E13k and E14 stay held as before.
+Still required before any activation (not in this change): a supported
+controller-to-guest disk association with fresh identifiers on both sides; a staged
+supervisor and a bound staging route, then its root install as a separate GO; a
+containment ruling for stdin transfer and an independently verified hard limit; the H
+archive at a pinned path, the pinned ssh config and known_hosts under the control
+root, and fresh E2 key bytes with an expiry; the Stage1 probe and post-observation
+bound to this plan; the reviewed driver, inputs, GO index and GO receipt placements;
+and each live row's own GO. E10, E13k and E14 stay held as before.
