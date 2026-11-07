@@ -1,11 +1,12 @@
-"""Injected controls for the Linux setup adapter and guest supervisor.
+"""Injected controls for the Linux setup adapter, guest supervisor, contained transfer and receipts.
 
-Each control calls a real interface (run_supervised, Monitor, host_credit, stage1_request,
-stage1_verify_post, setup_plan, execute_plan, run_transfer, the admission verifiers) with
-local fixtures: a registered-home layout, a tar archive, credential and stdin files,
-counter files and GO receipts. Transports are fakes except run_transfer, which runs local
-processes. No VM, SSH, systemd or cgroup is touched. An injected pass is source-control
-evidence only and grants no activation or proof credit.
+Each control calls a real interface: run_supervised with a real gate FIFO and real local
+processes, run_contained_transfer with real FIFOs, signed receipts verified by the real
+`ssh-keygen -Y verify`, Stage1 against a registered-home layout, setup_plan and
+execute_plan. Transports are fakes; the only real effects are local processes, FIFOs,
+files and ssh-keygen on local fixtures. No VM, SSH connection, systemd or cgroup is
+touched. An injected pass is source-control evidence only and grants no activation or
+proof credit.
 """
 import datetime
 import hashlib
@@ -15,6 +16,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -22,17 +24,19 @@ import tempfile
 import threading
 import time
 import unittest
-import uuid
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import linux_receipts as receipts
 import linux_setup as setup
 import linux_supervisor as supervisor
+import linux_transfer as transfers
 import preparation_observations as observations
 import preparation_resources as resources
 from preparation_stage import Refusal
 
 NONCE = 'a' * 64
+ROW_NONCES = {'E9a': '1' * 64, 'E9b': '2' * 64, 'E19.0': '3' * 64, 'E8': '4' * 64}
 INVOCATION = '0f1e2d3c4b5a49688777665544332211'          # systemctl prints contiguous lowercase hex
 INVOCATION_HYPHENATED = '0f1e2d3c-4b5a-4968-8777-665544332211'
 UNIT = 'effigy-stage-' + NONCE
@@ -43,9 +47,10 @@ CWD = '/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/source'
 ZERO = '{00000000-0000-0000-0000-000000000000}'
 BASE_GUID = '{22222222-2222-2222-2222-222222222222}'
 NOW = 1_800_000_000
-ALL_GATES = ['E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'E19', 'E-SUP', 'SSH-CONTAIN']
+ALL_GATES = ['E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'E19', 'E-SUP']
 E2_KEY = 'ssh-ed25519 AAAATESTKEYBLOB effigy531@test'
 PROBE_SCRIPT = Path(setup.PROBE).read_text()
+SHA_CMD = 'sha256sum' if shutil.which('sha256sum') else 'shasum -a 256'
 PROBE_OUTPUT = '\n'.join([
     'uid=0', 'boot_id=' + BOOT, 'system_state=running', 'systemctl=present', 'systemd_run=present',
     'systemd_version=259', 'cgroup2=cgroup2fs', 'ssh_host_ed25519_fp=' + HOSTKEY,
@@ -71,31 +76,68 @@ NOT_FOUND = show_text(load='not-found', state='inactive', result='success', stat
 ACTIVE = show_text(state='active', result='success', status='0', group=GROUP, sub='running')
 
 
-def sample(text, populated=None):
-    """Monitor sample built from real-format show text, as the monitor's parser records it."""
-    show = supervisor.parse_show(text, UNIT)
-    if show is None:
-        return {'kind': 'absent'}
-    return {'kind': 'loaded', 'invocation_id': show['invocation_id'], 'control_group': show['control_group'],
-            'active_state': show['active_state'], 'populated': populated}
+def key_line(expiry_epoch=NOW + 3600, key=E2_KEY, options=None):
+    stamp = datetime.datetime.fromtimestamp(expiry_epoch, tz=datetime.timezone.utc).strftime('%Y%m%d%H%M%S')
+    opts = options if options is not None else 'restrict,expiry-time=' + stamp
+    return (opts + ' ' + key + '\n').encode()
 
 
-class ScriptedMonitor:
-    """Stands in for the outside monitor with a fixed sample sequence."""
+class Signer:
+    """An operator-style OpenSSH key that signs receipts. The allowed-signers file is the trust anchor."""
 
-    def __init__(self, samples):
+    def __init__(self):
+        self.dir = tmpdir('go-signer-')
+        self.key = self.dir / 'key'
+        self.other = self.dir / 'other'
+        for key in (self.key, self.other):
+            subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(key), '-C', 'go-test'],
+                           check=True, capture_output=True)
+        self.signers = self.dir / 'allowed_signers'
+        parts = Path(str(self.key) + '.pub').read_text().split()
+        self.signers.write_text('effigy-go %s %s\n' % (parts[0], parts[1]))
+        self.trust = {'allowed_signers': str(self.signers),
+                      'sha256': hashlib.sha256(self.signers.read_bytes()).hexdigest(), 'principal': 'effigy-go'}
+
+    def sign(self, path, key=None):
+        subprocess.run(['ssh-keygen', '-Y', 'sign', '-f', str(key or self.key), '-n', receipts.NAMESPACE, str(path)],
+                       check=True, capture_output=True)
+        return Path(str(path) + '.sig')
+
+
+_SIGNER = None
+
+
+def signer():
+    global _SIGNER
+    if _SIGNER is None:
+        _SIGNER = Signer()
+    return _SIGNER
+
+
+def signed_entry(path, body, key=None):
+    """Write a receipt body, sign it with the operator key, and return the bound entry."""
+    path.write_bytes(json.dumps(body, sort_keys=True).encode())
+    sig = signer().sign(path, key)
+    return {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+            'signature_path': str(sig), 'signature_sha256': hashlib.sha256(sig.read_bytes()).hexdigest()}
+
+
+class Scripted:
+    """A monitor with a fixed sample sequence and release index (used where timing is not the subject)."""
+
+    def __init__(self, samples, release_index):
         self.samples = list(samples)
-        self.started = self.stopped = False
+        self.release_index = release_index
 
     def start(self):
-        self.started = True
+        pass
 
     def stop(self):
-        self.stopped = True
+        pass
 
 
 class FakeOps:
-    """Injected supervisor transport. Records effects and checks intent-before-effect."""
+    """Injected supervisor transport for the scripted checks. Records effects."""
 
     def __init__(self, stage, shows, returncode=0, version='systemd 259 (259-1)', cgroup='cgroup2fs',
                  disconnect=False, timed_out=False):
@@ -127,6 +169,62 @@ class FakeOps:
         return self.shows.pop(0)
 
 
+class LiveOps:
+    """Gate-level transport: systemd-run runs the wrapped payload as a local process.
+
+    The unit reads ACTIVE while the payload process is alive and inactive success
+    afterwards. `events` reports populated 0, or populated 1 for a live descendant. So the
+    real monitor thread sees the unit active before the gate is released, which is the
+    production ordering.
+    """
+
+    def __init__(self, stage, never_active=False, descendant=False):
+        self.stage = Path(stage)
+        self.calls = []
+        self.running = False
+        self.started = False
+        self.never_active = never_active
+        self.descendant = descendant
+        self.post_text = None
+
+    def version(self):
+        return 'systemd 259 (259-1)'
+
+    def cgroup2(self):
+        return 'cgroup2fs'
+
+    def run(self, argv, timeout):
+        self.calls.append(('run', argv, timeout))
+        if not (self.stage / 'intent.json').exists():
+            raise AssertionError('effect before intent')
+        payload = argv[argv.index('--') + 1:]
+        self.running = True
+        self.started = True
+        try:
+            proc = subprocess.run(payload, capture_output=True, timeout=min(timeout, 4))
+            code, out, err, timed = proc.returncode, proc.stdout, proc.stderr, False
+        except subprocess.TimeoutExpired:
+            code, out, err, timed = None, b'', b'', True
+        finally:
+            self.running = False
+        self.post_text = show_text(result='success', status=str(code) if code is not None else '1')
+        return {'returncode': code, 'stdout': out, 'stderr': err, 'timed_out': timed}
+
+    def stop(self, argv):
+        self.calls.append(('stop', argv))
+
+    def show(self, argv):
+        self.calls.append(('show', argv))
+        if not self.started:
+            return NOT_FOUND
+        if self.running:
+            return NOT_FOUND if self.never_active else ACTIVE
+        return self.post_text or NOT_FOUND
+
+    def events(self, path):
+        return 'populated %d\n' % (1 if self.descendant else 0)
+
+
 def request(stage, **changes):
     base = {'nonce': NONCE, 'payload_user': 'effigy531', 'payload_uid': os.geteuid(), 'cwd': CWD,
             'timeout_seconds': 60, 'argv': ['/bin/true'], 'stage_dir': str(stage)}
@@ -134,25 +232,19 @@ def request(stage, **changes):
     return base
 
 
-def supervised(shows, monitor_samples, **kwargs):
-    stage = tmpdir('supervisor-controls-')
-    return stage, FakeOps(stage, shows, **kwargs), ScriptedMonitor(monitor_samples)
-
-
-def run_it(stage, ops, monitor, seen=None, **changes):
-    return supervisor.run_supervised(stage, request(stage, **changes), ops, lambda: 0.0, BOOT,
-                                     seen if seen is not None else {}, monitor)
-
-
 class SupervisorArgvChecks(unittest.TestCase):
     def test_transient_service_argv_has_no_scope_collect_wait_or_user_manager(self):
-        argv = supervisor.run_argv(NONCE, 'effigy531', CWD, 60, ['/bin/true'])
+        argv = supervisor.run_argv(NONCE, 'effigy531', CWD, 60, supervisor.gate_argv('/g', ['/bin/true']))
         for flag in ('--service-type=exec', '--property=ExitType=cgroup', '--property=KillMode=control-group',
                      '--property=RuntimeMaxSec=60', '--pipe', '--remain-after-exit', '--uid=effigy531'):
             self.assertIn(flag, argv)
         for flag in ('--scope', '--collect', '--user', '--wait'):
             self.assertFalse(any(a.split('=')[0] == flag for a in argv), flag)
-        self.assertEqual(argv[-2:], ['--', '/bin/true'])
+
+    def test_payload_is_gated_behind_the_fifo_release(self):
+        wrapped = supervisor.gate_argv('/stage/gate.fifo', ['/bin/true'])
+        self.assertIn('read _effigy_gate', wrapped[2])
+        self.assertEqual(wrapped[-1], '/bin/true')
 
     def test_refuses_root_payload_long_timeout_and_bad_nonce(self):
         with self.assertRaises(Refusal):
@@ -208,10 +300,29 @@ class MonitorChecks(unittest.TestCase):
         monitor.stop()
         self.assertIn('absent', [s['kind'] for s in monitor.samples])
         loaded = [s for s in monitor.samples if s['kind'] == 'loaded']
-        self.assertTrue(loaded)
         self.assertEqual(loaded[-1]['invocation_id'], INVOCATION)
         self.assertEqual(loaded[-1]['control_group'], GROUP)
         self.assertFalse(monitor._thread.is_alive())
+
+    def test_release_fires_once_on_the_first_active_sample(self):
+        released = []
+        states = [NOT_FOUND, ACTIVE, ACTIVE, ACTIVE]
+
+        class Ops:
+            def show(self, argv):
+                return states.pop(0) if len(states) > 1 else states[0]
+
+            def events(self, path):
+                return 'populated 1\n'
+        monitor = supervisor.Monitor(Ops(), UNIT, interval=0.005, on_active=lambda rec: released.append(rec))
+        monitor.start()
+        deadline = time.monotonic() + 5
+        while not released and time.monotonic() < deadline:
+            time.sleep(0.01)
+        time.sleep(0.05)
+        monitor.stop()
+        self.assertEqual(len(released), 1)
+        self.assertEqual(monitor.release_index, monitor.samples.index(released[0]) + 1)
 
     def test_failed_read_is_recorded_as_a_failure_not_a_pass(self):
         class Ops:
@@ -222,217 +333,309 @@ class MonitorChecks(unittest.TestCase):
                 return None
         self.assertEqual(supervisor.Monitor(Ops(), UNIT).poll_once()['kind'], 'read-failed')
 
-    def test_vanished_cgroup_file_is_recorded_without_populated(self):
-        class Ops:
-            def show(self, argv):
-                return ACTIVE
 
-            def events(self, path):
-                return None
-        record = supervisor.Monitor(Ops(), UNIT).poll_once()
-        self.assertEqual(record['kind'], 'loaded')
-        self.assertIsNone(record['populated'])
+def stat_mode(path):
+    return os.stat(path).st_mode & 0o777
+
+
+class GateChecks(unittest.TestCase):
+    """The real gate: a payload that blocks on the FIFO until the real monitor has seen the unit active."""
+
+    def run_it(self, ops, stage, **changes):
+        return supervisor.run_supervised(stage, request(stage, **changes), ops, lambda: 0.0, BOOT, {}, None)
+
+    def test_positive_terminal_with_an_active_sample_before_release(self):
+        stage = tmpdir('gate-ok-')
+        result = self.run_it(LiveOps(stage), stage, argv=['/bin/sh', '-c', 'echo payload-ran; exit 0'])
+        self.assertEqual(result['disposition'], 'exited', result)
+        self.assertIsNotNone(result['candidate'], result['reason'])
+        self.assertEqual(result['candidate']['observed_control_group'], GROUP)
+        self.assertIn('payload-ran', result['payload_stdout'])
+        self.assertEqual(stat_mode(stage / supervisor.GATE_NAME), 0o600)
+        self.assertTrue(stat.S_ISFIFO(os.stat(stage / supervisor.GATE_NAME).st_mode))
+
+    def test_gate_never_released_when_the_unit_is_never_seen_active(self):
+        stage = tmpdir('gate-never-')
+        result = self.run_it(LiveOps(stage, never_active=True), stage, argv=['/bin/sh', '-c', 'echo should-not-run'])
+        self.assertIsNone(result['candidate'])
+        self.assertIsNotNone(result['reason'])
+        self.assertNotIn('should-not-run', result['payload_stdout'])
+
+    def test_live_descendant_holding_the_stream_never_becomes_a_candidate(self):
+        # The leader exits but a background child keeps the stream open. ExitType=cgroup keeps the
+        # real unit active, so the run ends at its deadline and nothing is credited.
+        stage = tmpdir('gate-desc-')
+        result = self.run_it(LiveOps(stage, descendant=True), stage, argv=['/bin/sh', '-c', 'sleep 6 & exit 0'])
+        self.assertIsNone(result['candidate'])
+        self.assertEqual(result['disposition'], 'timeout')
+
+    def test_failed_payload_gets_no_candidate(self):
+        stage = tmpdir('gate-fail-')
+        result = self.run_it(LiveOps(stage), stage, argv=['/bin/sh', '-c', 'exit 3'])
+        self.assertIsNone(result['candidate'])
+        self.assertEqual(result['disposition'], 'failed')
+
+    def test_stage_directory_is_created_for_the_payload_account(self):
+        stage = tmpdir('gate-create-') / 'nested-stage'
+        result = self.run_it(LiveOps(stage), stage, argv=['/bin/sh', '-c', 'exit 0'])
+        self.assertTrue(stage.is_dir())
+        self.assertEqual(stat_mode(stage), 0o700)
+        self.assertIsNotNone(result['candidate'], result['reason'])
+
+    def test_transfer_request_needs_the_stage_transfer_fifo_in_its_argv(self):
+        stage = tmpdir('gate-transfer-')
+        ops = LiveOps(stage)
+        with self.assertRaises(Refusal):
+            self.run_it(ops, stage, argv=['/bin/true'], transfer=True)
+        self.assertEqual(ops.calls, [])
+
+    def test_transfer_fifo_is_created_with_the_gate(self):
+        stage = tmpdir('gate-tfifo-')
+        fifo = stage / supervisor.TRANSFER_NAME
+        self.run_it(LiveOps(stage), stage, argv=['/bin/sh', '-c', 'cat "%s" > /dev/null' % fifo], transfer=True)
+        self.assertTrue(stat.S_ISFIFO(os.stat(fifo).st_mode))
 
 
 class SupervisorCandidateChecks(unittest.TestCase):
-    """The guest produces a candidate only, from a monitored, active unit that ends in terminal success."""
+    """Eligibility on the post-run read, with scripted monitor samples and the release-index rule."""
 
-    def test_monitored_active_then_terminal_success_yields_a_candidate(self):
-        stage, ops, mon = supervised([NOT_FOUND, show_text()], [sample(ACTIVE, populated=0)])
-        result = run_it(stage, ops, mon)
-        self.assertEqual(result['disposition'], 'exited')
-        self.assertEqual(result['candidate']['observed_control_group'], GROUP)
-        self.assertEqual(result['candidate']['invocation_id'], INVOCATION)
-        self.assertEqual(result['candidate']['terminal_basis'], observations.UNIT_INACTIVE)
-        self.assertTrue(mon.started and mon.stopped)
-        self.assertFalse((stage / 'closure.json').exists())
-
-    def test_fast_payload_never_seen_active_gives_no_candidate(self):
-        stage, ops, mon = supervised([NOT_FOUND, show_text()], [{'kind': 'absent'}])
-        result = run_it(stage, ops, mon)
+    def test_release_must_precede_the_payload_and_an_active_sample_must_exist(self):
+        stage = tmpdir('sc-noactive-')
+        ops = FakeOps(stage, [NOT_FOUND, show_text()])
+        result = supervisor.run_supervised(stage, request(stage), ops, lambda: 0.0, BOOT, {},
+                                           Scripted([{'kind': 'absent'}], None))
         self.assertIsNone(result['candidate'])
-        self.assertIn('never observed the unit active', result['reason'])
+        self.assertIn('gate never released', result['reason'])
 
-    def test_live_descendant_seen_by_the_monitor_vetoes(self):
-        stage, ops, mon = supervised([NOT_FOUND, show_text()], [sample(ACTIVE, 0), sample(ACTIVE, 1)])
-        self.assertIsNone(run_it(stage, ops, mon)['candidate'])
+    def test_a_pre_release_sample_must_show_this_invocation_in_one_cgroup(self):
+        show = supervisor.parse_show(show_text(), UNIT)
+        other = [{'kind': 'loaded', 'invocation_id': '1' * 32, 'active_state': 'active', 'control_group': GROUP}]
+        self.assertIn('no pre-release sample', supervisor._eligible(BOOT, NONCE, show, other, 1, 0)[1])
 
-    def test_control_group_change_refuses(self):
-        other = ACTIVE.replace(GROUP, '/system.slice/other.service')
-        stage, ops, mon = supervised([NOT_FOUND, show_text()], [sample(ACTIVE, 0), sample(other, 0)])
-        self.assertIsNone(run_it(stage, ops, mon)['candidate'])
-
-    def test_invocation_changed_between_monitor_and_post_run_refuses(self):
-        other = show_text(invocation='11111111222233334444555566667777')
-        stage, ops, mon = supervised([NOT_FOUND, other], [sample(ACTIVE, 0)])
-        self.assertIsNone(run_it(stage, ops, mon)['candidate'])
-
-    def test_non_success_or_still_grouped_terminal_gives_no_candidate(self):
-        cases = [show_text(result='exit-code', status='3'), show_text(group=GROUP),
-                 show_text(result='timeout', status='0')]
-        for post in cases:
-            stage, ops, mon = supervised([NOT_FOUND, post], [sample(ACTIVE, 0)])
+    def test_post_run_terminal_facts_must_match(self):
+        pre = [{'kind': 'loaded', 'invocation_id': INVOCATION, 'active_state': 'active',
+                'control_group': GROUP, 'populated': 0}]
+        for post in (show_text(result='exit-code', status='3'), show_text(group=GROUP),
+                     show_text(result='timeout', status='0')):
             with self.subTest(post=post.splitlines()[1:4]):
-                self.assertIsNone(run_it(stage, ops, mon)['candidate'])
+                show = supervisor.parse_show(post, UNIT)
+                self.assertIsNone(supervisor._eligible(BOOT, NONCE, show, pre, 1, 0)[0])
 
-    def test_vanished_terminal_read_is_unknown(self):
-        stage, ops, mon = supervised([NOT_FOUND, NOT_FOUND], [sample(ACTIVE, 0)])
-        self.assertIsNone(run_it(stage, ops, mon)['candidate'])
+    def test_release_index_bounds_what_counts_as_pre_release(self):
+        pre = [{'kind': 'loaded', 'invocation_id': INVOCATION, 'active_state': 'active', 'control_group': GROUP,
+                'populated': 0}]
+        post_veto = [{'kind': 'loaded', 'invocation_id': INVOCATION, 'active_state': 'active',
+                      'control_group': GROUP, 'populated': 1}]
+        show = supervisor.parse_show(show_text(), UNIT)
+        self.assertIsNotNone(supervisor._eligible(BOOT, NONCE, show, pre, 1, 0)[0])
+        self.assertIsNone(supervisor._eligible(BOOT, NONCE, show, pre + post_veto, 1, 0)[0])
 
-    def test_disconnect_timeout_and_failure_stop_and_give_no_candidate(self):
-        stage, ops, mon = supervised([NOT_FOUND, show_text()], [sample(ACTIVE, 0)], disconnect=True)
-        result = run_it(stage, ops, mon)
-        self.assertEqual((result['disposition'], result['candidate']), ('disconnect', None))
+    def test_disconnect_stops_the_unit_and_gives_no_candidate(self):
+        stage = tmpdir('sc-disc-')
+        ops = FakeOps(stage, [NOT_FOUND, show_text()], disconnect=True)
+        result = supervisor.run_supervised(stage, request(stage), ops, lambda: 0.0, BOOT, {},
+                                           Scripted([{'kind': 'loaded', 'invocation_id': INVOCATION,
+                                                      'active_state': 'active', 'control_group': GROUP,
+                                                      'populated': 0}], 1))
+        self.assertIsNone(result['candidate'])
         self.assertIn(('stop', supervisor.stop_argv(UNIT)), ops.calls)
-        stage, ops, mon = supervised([NOT_FOUND, show_text()], [sample(ACTIVE, 0)], timed_out=True)
-        result = run_it(stage, ops, mon)
-        self.assertEqual((result['disposition'], result['candidate']), ('timeout', None))
-        stage, ops, mon = supervised([NOT_FOUND, show_text()], [sample(ACTIVE, 0)], returncode=3)
-        self.assertIsNone(run_it(stage, ops, mon)['candidate'])
 
-    def test_intent_is_written_and_absence_checked_before_the_payload_runs(self):
-        stage, ops, mon = supervised([NOT_FOUND, show_text()], [sample(ACTIVE, 0)])
-        run_it(stage, ops, mon)
-        self.assertEqual([c[0] for c in ops.calls], ['show', 'run', 'show'])
+    def test_intent_is_written_before_any_effect(self):
+        stage = tmpdir('sc-intent-')
+        ops = FakeOps(stage, [NOT_FOUND, show_text()])
+        supervisor.run_supervised(stage, request(stage), ops, lambda: 0.0, BOOT, {},
+                                  Scripted([{'kind': 'loaded', 'invocation_id': INVOCATION,
+                                             'active_state': 'active', 'control_group': GROUP, 'populated': 0}], 1))
+        self.assertEqual(ops.calls[0][0], 'show')
         self.assertTrue((stage / 'intent.json').exists())
 
-    def test_loaded_unit_before_start_refuses_without_effect(self):
-        stage, ops, mon = supervised([show_text()], [sample(ACTIVE, 0)])
-        with self.assertRaises(Refusal):
-            run_it(stage, ops, mon)
-        self.assertNotIn('run', [c[0] for c in ops.calls])
-
-    def test_reused_intent_refuses_without_effect(self):
-        stage, ops, mon = supervised([NOT_FOUND, show_text()], [sample(ACTIVE, 0)])
+    def test_reused_intent_or_nonce_refuses_before_effect(self):
+        stage = tmpdir('sc-reuse-')
+        ops = FakeOps(stage, [NOT_FOUND, show_text()])
         (stage / 'intent.json').write_text('{}')
         with self.assertRaises(FileExistsError):
-            run_it(stage, ops, mon)
+            supervisor.run_supervised(stage, request(stage), ops, lambda: 0.0, BOOT, {}, Scripted([], None))
         self.assertEqual(ops.calls, [])
-
-    def test_nonce_reuse_refuses_before_effect(self):
-        stage, ops, mon = supervised([NOT_FOUND, show_text()], [sample(ACTIVE, 0)])
+        stage2 = tmpdir('sc-nonce-')
+        ops2 = FakeOps(stage2, [NOT_FOUND, show_text()])
         with self.assertRaises(Refusal):
-            run_it(stage, ops, mon, seen={'nonces': {NONCE}})
-        self.assertEqual(ops.calls, [])
+            supervisor.run_supervised(stage2, request(stage2), ops2, lambda: 0.0, BOOT, {'nonces': {NONCE}},
+                                      Scripted([], None))
+        self.assertEqual(ops2.calls, [])
 
     def test_unsupported_systemd_and_missing_cgroup_v2_refuse_before_effect(self):
         for kwargs in ({'version': 'systemd 249 (249-1)'}, {'cgroup': 'tmpfs'}):
-            stage, ops, mon = supervised([NOT_FOUND, show_text()], [sample(ACTIVE, 0)], **kwargs)
+            stage = tmpdir('sc-old-')
+            ops = FakeOps(stage, [NOT_FOUND, show_text()], **kwargs)
             with self.subTest(kwargs=kwargs), self.assertRaises(Refusal):
-                run_it(stage, ops, mon)
+                supervisor.run_supervised(stage, request(stage), ops, lambda: 0.0, BOOT, {}, Scripted([], None))
             self.assertEqual(ops.calls, [])
-            self.assertFalse((stage / 'intent.json').exists())
 
-    def test_invocation_id_reuse_refuses(self):
-        stage, ops, mon = supervised([NOT_FOUND, show_text()], [sample(ACTIVE, 0)])
+    def test_loaded_unit_before_start_refuses_without_effect(self):
+        stage = tmpdir('sc-loaded-')
+        ops = FakeOps(stage, [show_text()])
         with self.assertRaises(Refusal):
-            run_it(stage, ops, mon, seen={'invocations': {INVOCATION}})
+            supervisor.run_supervised(stage, request(stage), ops, lambda: 0.0, BOOT, {}, Scripted([], None))
+        self.assertNotIn('run', [c[0] for c in ops.calls])
 
     def test_stage_must_belong_to_the_payload_account(self):
-        stage, ops, mon = supervised([NOT_FOUND, show_text()], [sample(ACTIVE, 0)])
+        stage = tmpdir('sc-owner-')
+        ops = FakeOps(stage, [NOT_FOUND, show_text()])
         with self.assertRaises(Refusal):
             supervisor.run_supervised(stage, request(stage, payload_uid=os.geteuid() + 1), ops, lambda: 0.0,
-                                      BOOT, {}, mon)
+                                      BOOT, {}, Scripted([], None))
         self.assertEqual(ops.calls, [])
 
     def test_main_refuses_a_wrong_request_hash_before_reading_identity(self):
-        path = tmpdir('supervisor-main-') / 'request.json'
-        path.write_text(json.dumps(request(path.parent)))
+        text = json.dumps(request(tmpdir('supervisor-main-')))
         with self.assertRaises(Refusal):
-            supervisor.main(['--request', str(path), '--sha256', '0' * 64])
+            supervisor.main(['--request-json', text, '--sha256', '0' * 64])
 
 
-class HostCreditChecks(unittest.TestCase):
-    """Closure is credited only from the host's own VM-route observation of the unit."""
+class SignedReceiptChecks(unittest.TestCase):
+    """Receipts are authenticated by `ssh-keygen -Y verify` against the bound allowed-signers file."""
 
-    def candidate(self, **changes):
-        base = {'boot_id': BOOT, 'nonce': NONCE, 'unit': UNIT, 'invocation_id': INVOCATION, 'control_group': '',
-                'observed_control_group': GROUP, 'supervisor': 'systemd-service-cgroup-v2',
-                'terminal_basis': observations.UNIT_INACTIVE, 'populated': 0, 'active_state': 'inactive',
-                'result': 'success', 'waited_exit': 0}
+    def body(self, **changes):
+        base = {'gate': 'E3', 'status': 'approved', 'plan_sha256': 'p' * 64, 'decision_id': 'D-1',
+                'source_head': 'a' * 40}
         base.update(changes)
         return base
 
-    def observation(self, text=None):
-        return setup.observation_from_show(text or show_text(), UNIT, BOOT, NONCE)
+    def test_signed_approved_receipt_for_this_plan_is_authenticated(self):
+        entry = signed_entry(tmpdir('rcpt-ok-') / 'go.json', self.body())
+        self.assertEqual(receipts.verify_signed_receipt(entry, 'E3', 'p' * 64, signer().trust), (True, None))
 
-    def expected(self):
-        return {'boot_id': BOOT, 'nonce': NONCE, 'unit': UNIT, 'invocation_id': INVOCATION, 'control_group': ''}
+    def test_tampered_receipt_wrong_signer_and_unsigned_refuse(self):
+        root = tmpdir('rcpt-bad-')
+        entry = signed_entry(root / 'go.json', self.body())
+        Path(entry['path']).write_bytes(json.dumps(self.body(decision_id='D-EVIL'), sort_keys=True).encode())
+        entry['sha256'] = hashlib.sha256(Path(entry['path']).read_bytes()).hexdigest()
+        ok, reason = receipts.verify_signed_receipt(entry, 'E3', 'p' * 64, signer().trust)
+        self.assertFalse(ok)
+        self.assertIn('does not verify', reason)
+        other = signed_entry(root / 'other.json', self.body(), key=signer().other)
+        ok, reason = receipts.verify_signed_receipt(other, 'E3', 'p' * 64, signer().trust)
+        self.assertFalse(ok)
+        self.assertIn('does not verify', reason)
+        unsigned = {'path': other['path'], 'sha256': other['sha256']}
+        self.assertIn('unsigned', receipts.verify_signed_receipt(unsigned, 'E3', 'p' * 64, signer().trust)[1])
 
-    def test_matching_host_observation_credits_closure(self):
-        self.assertEqual(setup.host_credit(self.expected(), self.candidate(), self.observation()), 'closed')
-
-    def test_guest_candidate_alone_is_not_credit(self):
-        self.assertEqual(setup.host_credit(self.expected(), self.candidate(), None), 'unknown')
-        self.assertEqual(setup.host_credit(self.expected(), None, self.observation()), 'unknown')
-
-    def test_candidate_without_monitored_cgroup_is_unknown(self):
-        self.assertEqual(setup.host_credit(self.expected(), self.candidate(observed_control_group=''),
-                                           self.observation()), 'unknown')
-
-    def test_mismatched_candidate_is_refused(self):
-        other = self.observation(show_text(invocation='11111111222233334444555566667777'))
-        with self.assertRaises(Refusal):
-            setup.host_credit(self.expected(), self.candidate(), other)
-        with self.assertRaises(Refusal):
-            setup.host_credit(self.expected(), self.candidate(result='timeout'), self.observation())
-
-    def test_host_observation_with_a_live_group_or_no_unit_is_unknown(self):
-        self.assertIsNone(setup.observation_from_show(NOT_FOUND, UNIT, BOOT, NONCE))
-        live = setup.observation_from_show(ACTIVE, UNIT, BOOT, NONCE)
-        self.assertEqual(setup.host_credit(self.expected(), self.candidate(), live), 'unknown')
-
-    def test_terminal_observation_argv_is_a_vm_route_read_of_the_unit(self):
-        argv = setup.terminal_observation_argv(UNIT)
-        self.assertEqual(argv[:4], [setup.PRLCTL, 'exec', setup.VM_UUID, '/usr/bin/systemctl'])
-        with self.assertRaises(Refusal):
-            setup.terminal_observation_argv('not-a-stage-unit')
+    def test_stale_plan_wrong_gate_and_unbound_trust_refuse(self):
+        root = tmpdir('rcpt-stale-')
+        entry = signed_entry(root / 'go.json', self.body())
+        self.assertIn('different plan', receipts.verify_signed_receipt(entry, 'E3', 'q' * 64, signer().trust)[1])
+        self.assertIn('not an approved', receipts.verify_signed_receipt(entry, 'E4', 'p' * 64, signer().trust)[1])
+        bad_trust = dict(signer().trust, sha256='0' * 64)
+        self.assertIn('allowed-signers bytes differ', receipts.verify_signed_receipt(entry, 'E3', 'p' * 64, bad_trust)[1])
 
 
-class ResourceCounterChecks(unittest.TestCase):
-    def test_counter_loss_and_cap_refuse(self):
-        values = iter([{'bytes': 10}, {'bytes': 9}])
-        with self.assertRaises(resources.Refusal):
-            resources.Monitor({'bytes': 100}, lambda: next(values)).check()
-        values = iter([{'bytes': 0}, {'bytes': 101}])
-        with self.assertRaises(resources.Refusal):
-            resources.Monitor({'bytes': 100}, lambda: next(values)).check()
+class ContainedTransferChecks(unittest.TestCase):
+    """Real FIFOs and real processes. The supervisor and the SSH writer are local stand-ins."""
+
+    def stand_in_supervisor(self, root, payload_src, sleep=0.0, junk=0):
+        """A process that creates the stage FIFO, runs the payload, and prints the result line."""
+        fifo = root / 'transfer.fifo'
+        lines = [
+            'import os, json, subprocess, time',
+            'fifo = %r' % str(fifo),
+            'if not os.path.exists(fifo): os.mkfifo(fifo)',
+            'time.sleep(%r)' % sleep,
+            'p = subprocess.run(["/bin/sh", "-c", %r, "sh", fifo, %r], capture_output=True)' % (
+                payload_src, str(root / 'dest.bin')),
+        ]
+        if junk:
+            lines.append('print("x" * %d)' % junk)
+        lines.append('print(json.dumps({"disposition": "exited", "candidate": {"nonce": "n"}, '
+                     '"payload_stdout": p.stdout.decode()}))')
+        return [sys.executable, '-c', '\n'.join(lines)]
+
+    def test_writer_waits_for_the_fifo_and_the_payload_receives_the_exact_bytes(self):
+        root = tmpdir('contained-ok-')
+        data = root / 'archive.bin'
+        data.write_bytes(os.urandom(200_000))
+        writer = transfers.writer_remote_argv(str(root / 'transfer.fifo'), attempts=300)
+        sup = self.stand_in_supervisor(root, 'cat "$1" > "$2" && %s "$2"' % SHA_CMD, sleep=0.3)
+        res = transfers.run_contained_transfer(sup, writer, str(data), 30, 1 << 22)
+        self.assertEqual(res['disposition'], 'exited', res)
+        self.assertEqual((root / 'dest.bin').read_bytes(), data.read_bytes())
+        self.assertEqual(res['writer_exit'], 0)
+        self.assertTrue(res['payload_stdout'].startswith(hashlib.sha256(data.read_bytes()).hexdigest()))
+        self.assertIsNotNone(res['candidate'])
+
+    def test_missing_fifo_is_a_writer_failure_not_closure(self):
+        root = tmpdir('contained-nofifo-')
+        data = root / 'archive.bin'
+        data.write_bytes(b'x')
+        sup = [sys.executable, '-c', 'import time; time.sleep(0.2)']
+        res = transfers.run_contained_transfer(sup, transfers.writer_remote_argv(str(root / 'absent.fifo'), attempts=3),
+                                               str(data), 20, 1 << 20)
+        self.assertEqual(res['writer_exit'], 9)
+        self.assertEqual(res['disposition'], 'writer-failed')
+
+    def test_output_past_the_cap_is_refused_as_partial(self):
+        root = tmpdir('contained-cap-')
+        data = root / 'archive.bin'
+        data.write_bytes(b'abc')
+        sup = self.stand_in_supervisor(root, 'cat "$1" > "$2" && %s "$2"' % SHA_CMD, junk=5000)
+        res = transfers.run_contained_transfer(sup, transfers.writer_remote_argv(str(root / 'transfer.fifo'), attempts=100),
+                                               str(data), 20, 100)
+        self.assertEqual(res['disposition'], 'output-cap')
+
+    def test_deadline_kills_both_processes(self):
+        root = tmpdir('contained-deadline-')
+        data = root / 'archive.bin'
+        data.write_bytes(b'abc')
+        sup = [sys.executable, '-c', 'import time; time.sleep(60)']
+        started = time.monotonic()
+        res = transfers.run_contained_transfer(sup, transfers.writer_remote_argv(str(root / 'transfer.fifo'), attempts=600),
+                                               str(data), 2, 1 << 20)
+        self.assertEqual(res['disposition'], 'timeout')
+        self.assertLess(time.monotonic() - started, 30)
+
+    def test_parse_supervisor_result_requires_a_json_last_line(self):
+        self.assertIsNone(transfers.parse_supervisor_result(b'not json'))
+        self.assertEqual(transfers.parse_supervisor_result(b'noise\n{"a": 1}\n'), {'a': 1})
 
 
 class RunTransferChecks(unittest.TestCase):
-    """Real local processes: stdin from a file, capped streams, live counters, group kill."""
-
     def test_stdin_is_delivered_and_the_waited_exit_is_recorded(self):
         root = tmpdir('transfer-')
         data = root / 'in.bin'
         data.write_bytes(b'payload-bytes')
         code = 'import sys,hashlib;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
-        out = setup.run_transfer([sys.executable, '-c', code], str(data), 20, 4096)
+        out = transfers.run_transfer([sys.executable, '-c', code], str(data), 20, 4096)
         self.assertEqual((out['disposition'], out['waited_exit']), ('exited', 0))
         self.assertEqual(out['stdout'].decode().strip(), hashlib.sha256(b'payload-bytes').hexdigest())
 
-    def test_nonzero_exit_is_failed_not_exited(self):
-        out = setup.run_transfer([sys.executable, '-c', 'import sys; sys.exit(3)'], None, 20, 4096)
-        self.assertEqual((out['disposition'], out['waited_exit']), ('failed', 3))
-
-    def test_deadline_kills_the_group_and_is_a_timeout(self):
-        started = time.monotonic()
-        out = setup.run_transfer([sys.executable, '-c', 'import time; time.sleep(60)'], None, 1, 4096)
-        self.assertEqual(out['disposition'], 'timeout')
-        self.assertLess(time.monotonic() - started, 20)
-
-    def test_output_past_the_cap_is_refused_as_partial(self):
-        out = setup.run_transfer([sys.executable, '-c', 'print("x" * 20000)'], None, 20, 100)
-        self.assertEqual(out['disposition'], 'output-cap')
-
-    def test_counter_growth_during_the_process_refuses(self):
+    def test_nonzero_exit_is_failed_and_counter_growth_refuses(self):
+        self.assertEqual(transfers.run_transfer([sys.executable, '-c', 'import sys; sys.exit(3)'], None, 20, 4096)['disposition'],
+                         'failed')
         root = tmpdir('transfer-counter-')
         counter = root / 'writes'
         counter.write_text('0')
         code = 'import time,pathlib; time.sleep(0.3); pathlib.Path(%r).write_text("999"); time.sleep(30)' % str(counter)
         monitor = resources.Monitor({'writes': 10}, resources.CounterFiles({'writes': str(counter)}))
-        out = setup.run_transfer([sys.executable, '-c', code], None, 20, 4096, monitor)
+        out = transfers.run_transfer([sys.executable, '-c', code], None, 20, 4096, monitor)
         self.assertEqual(out['disposition'], 'resource-refusal')
+
+
+class DefaultRowRunnerChecks(unittest.TestCase):
+    def row(self, kind, code):
+        return {'kind': kind, 'argv': [sys.executable, '-c', code], 'timeout_seconds': 20, 'stdin_path': None,
+                'writer_argv': []}
+
+    def test_supervised_candidate_is_parsed_from_the_result_line(self):
+        code = ('import json; print(json.dumps({"disposition": "exited", "candidate": {"nonce": "x"}, '
+                '"payload_stdout": "ok\\n"}))')
+        out = setup.default_row_runner(self.row('vm-supervised', code), None, None)
+        self.assertEqual(out['disposition'], 'exited')
+        self.assertEqual((out['candidate'], out['payload_stdout']), ({'nonce': 'x'}, 'ok\n'))
+
+    def test_failed_exit_or_unparseable_output_gives_no_candidate(self):
+        out = setup.default_row_runner(self.row('vm-supervised', 'import sys; sys.exit(2)'), None, None)
+        self.assertIsNone(out['candidate'])
+        out = setup.default_row_runner(self.row('vm-supervised', 'print("not json")'), None, None)
+        self.assertEqual(out['disposition'], 'failed')
 
 
 class DiskAndHardLimitChecks(unittest.TestCase):
@@ -473,41 +676,83 @@ class DiskAndHardLimitChecks(unittest.TestCase):
             setup.verify_hard_limit(dict(ok, enforcement='poll'), setup.TRANSFER_CAP, supported)
 
 
-class GateReceiptChecks(unittest.TestCase):
-    def receipt(self, root, **changes):
-        body = {'gate': 'E3', 'status': 'approved', 'plan_sha256': 'p' * 64, 'decision_id': 'D-1',
-                'source_head': 'a' * 40}
-        body.update(changes)
-        path = root / ('go-' + uuid.uuid4().hex + '.json')
-        path.write_bytes(json.dumps(body, sort_keys=True).encode())
-        return {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+class HostCreditChecks(unittest.TestCase):
+    def candidate(self, **changes):
+        base = {'boot_id': BOOT, 'nonce': NONCE, 'unit': UNIT, 'invocation_id': INVOCATION, 'control_group': '',
+                'observed_control_group': GROUP, 'supervisor': 'systemd-service-cgroup-v2',
+                'terminal_basis': observations.UNIT_INACTIVE, 'populated': 0, 'active_state': 'inactive',
+                'result': 'success', 'waited_exit': 0}
+        base.update(changes)
+        return base
 
-    def test_bound_approved_receipt_passes(self):
-        self.assertEqual(setup.verify_gate_receipt(self.receipt(tmpdir('go-ok-')), 'E3', 'p' * 64), (True, None))
+    def observation(self, text=None):
+        return setup.observation_from_show(text or show_text(), UNIT, BOOT, NONCE)
 
-    def test_stale_wrong_gate_unapproved_and_fabricated_receipts_refuse(self):
-        root = tmpdir('go-cases-')
-        cases = [
-            (self.receipt(root, plan_sha256='q' * 64), 'E3', 'p' * 64, 'different plan'),
-            (self.receipt(root), 'E4', 'p' * 64, 'not an approved'),
-            (self.receipt(root, status='pending'), 'E3', 'p' * 64, 'not an approved'),
-            (self.receipt(root, decision_id=''), 'E3', 'p' * 64, 'decision id'),
-            (self.receipt(root, source_head='zz'), 'E3', 'p' * 64, 'decision id'),
-            (None, 'E3', 'p' * 64, 'lacks'),
-            ({'path': self.receipt(root)['path'], 'sha256': '0' * 64}, 'E3', 'p' * 64, 'bytes differ'),
-            ({'path': str(root / 'missing.json'), 'sha256': '0' * 64}, 'E3', 'p' * 64, 'unreadable'),
-        ]
-        for entry, gate, digest, fragment in cases:
-            with self.subTest(fragment=fragment):
-                ok, reason = setup.verify_gate_receipt(entry, gate, digest)
-                self.assertFalse(ok)
-                self.assertIn(fragment, reason)
+    def expected(self):
+        return {'boot_id': BOOT, 'nonce': NONCE, 'unit': UNIT, 'invocation_id': INVOCATION, 'control_group': ''}
+
+    def test_matching_host_observation_credits_closure(self):
+        self.assertEqual(setup.host_credit(self.expected(), self.candidate(), self.observation()), 'closed')
+
+    def test_guest_candidate_alone_is_not_credit(self):
+        self.assertEqual(setup.host_credit(self.expected(), self.candidate(), None), 'unknown')
+        self.assertEqual(setup.host_credit(self.expected(), None, self.observation()), 'unknown')
+
+    def test_candidate_without_monitored_cgroup_is_unknown(self):
+        self.assertEqual(setup.host_credit(self.expected(), self.candidate(observed_control_group=''),
+                                           self.observation()), 'unknown')
+
+    def test_mismatched_candidate_is_refused(self):
+        other = self.observation(show_text(invocation='11111111222233334444555566667777'))
+        with self.assertRaises(Refusal):
+            setup.host_credit(self.expected(), self.candidate(), other)
+        with self.assertRaises(Refusal):
+            setup.host_credit(self.expected(), self.candidate(result='timeout'), self.observation())
+
+    def test_terminal_observation_argv_is_a_vm_route_read_of_the_unit(self):
+        argv = setup.terminal_observation_argv(UNIT)
+        self.assertEqual(argv[:4], [setup.PRLCTL, 'exec', setup.VM_UUID, '/usr/bin/systemctl'])
+        with self.assertRaises(Refusal):
+            setup.terminal_observation_argv('not-a-stage-unit')
 
 
-def key_line(expiry_epoch=NOW + 3600, key=E2_KEY, options=None):
-    stamp = datetime.datetime.fromtimestamp(expiry_epoch, tz=datetime.timezone.utc).strftime('%Y%m%d%H%M%S')
-    opts = options if options is not None else 'restrict,expiry-time=' + stamp
-    return (opts + ' ' + key + '\n').encode()
+class ResourceCounterChecks(unittest.TestCase):
+    def test_counter_loss_and_cap_refuse(self):
+        values = iter([{'bytes': 10}, {'bytes': 9}])
+        with self.assertRaises(resources.Refusal):
+            resources.Monitor({'bytes': 100}, lambda: next(values)).check()
+        values = iter([{'bytes': 0}, {'bytes': 101}])
+        with self.assertRaises(resources.Refusal):
+            resources.Monitor({'bytes': 100}, lambda: next(values)).check()
+
+
+class ProbeChecks(unittest.TestCase):
+    def parse(self, text):
+        digest = hashlib.sha256(text.encode()).hexdigest()
+        return setup.parse_probe(text, digest, digest)
+
+    def test_valid_probe_output_parses(self):
+        self.assertEqual(self.parse(PROBE_OUTPUT)['systemd_version'], '259')
+
+    def test_probe_hash_mismatch_and_duplicates_refuse(self):
+        with self.assertRaises(Refusal):
+            setup.parse_probe(PROBE_OUTPUT, 'a' * 64, 'b' * 64)
+        with self.assertRaises(Refusal):
+            self.parse(PROBE_OUTPUT + 'uid=0\n')
+
+    def test_each_refusal_condition(self):
+        def change(key, value):
+            return '\n'.join(line if not line.startswith(key + '=') else key + '=' + value
+                             for line in PROBE_OUTPUT.splitlines()) + '\n'
+        cases = {'non-root': change('uid', '1000'), 'early boot': change('system_state', 'starting'),
+                 'old systemd': change('systemd_version', '249'), 'no cgroup v2': change('cgroup2', 'tmpfs'),
+                 'effigy531 exists': change('effigy531_passwd_exit', '0'),
+                 'no expiry-time': change('sshd_expiry_time_mentions', '0'),
+                 'wrong root': change('root_source', '/dev/sdb2'),
+                 'hostname endpoint': change('ssh_listen_ipv4', 'guest.local')}
+        for name, text in cases.items():
+            with self.subTest(name), self.assertRaises(Refusal):
+                self.parse(text)
 
 
 class AuthorizedKeyChecks(unittest.TestCase):
@@ -612,7 +857,6 @@ class Stage1Checks(unittest.TestCase):
         self.assertEqual(req['before']['chain'][0], setup.CURRENT_SNAPSHOT)
         self.assertTrue(Path(req['retained']['config']).exists())
         self.assertEqual(sum(s['seconds'] for s in req['steps']), 480)
-        self.assertEqual(req['growth_cap_bytes'], 1024 ** 3)
         self.assertEqual(req['steps'][4]['argv'][-1], PROBE_SCRIPT)
 
     def test_unregistered_home_uuid_or_probe_script_refuse(self):
@@ -674,57 +918,27 @@ class Stage1Checks(unittest.TestCase):
             setup.stage1_verify_post(req, self.after())
 
 
-class DefaultRowRunnerChecks(unittest.TestCase):
-    """The production row runner returns the supervisor's candidate only from a successful exit."""
-
-    def row(self, code):
-        return {'kind': 'vm-supervised', 'argv': [sys.executable, '-c', code], 'timeout_seconds': 20,
-                'stdin_path': None}
-
-    def test_candidate_is_parsed_from_the_supervisor_json_line(self):
-        code = 'import json; print(json.dumps({"disposition": "exited", "candidate": {"nonce": "x"}}))'
-        out = setup.default_row_runner(self.row(code), None, None)
-        self.assertEqual(out['disposition'], 'exited')
-        self.assertEqual(out['candidate'], {'nonce': 'x'})
-
-    def test_failed_exit_or_unparseable_output_gives_no_candidate(self):
-        out = setup.default_row_runner(self.row('import sys; sys.exit(2)'), None, None)
-        self.assertIsNone(out['candidate'])
-        out = setup.default_row_runner(self.row('print("not json")'), None, None)
-        self.assertIsNone(out['candidate'])
+def disk_witness():
+    host = {'uuid': setup.VM_UUID, 'disk_uid': setup.DISK_UID, 'controller': 'sata', 'position': 0, 'serial': 'S1'}
+    guest = {'path': '/dev/sda', 'size': setup.ROOT_BYTES, 'serial': 'S1'}
+    return {'mechanism': 'test-disk', 'host': host, 'guest': guest}
 
 
-class ProbeChecks(unittest.TestCase):
-    def parse(self, text):
-        digest = hashlib.sha256(text.encode()).hexdigest()
-        return setup.parse_probe(text, digest, digest)
+def hard_limit_witness():
+    return {'mechanism': 'test-limit', 'limits': [setup.TRANSFER_CAP, setup.EXTRACT_CAP, setup.PAYLOAD_CAP],
+            'enforcement': 'kernel'}
 
-    def test_valid_probe_output_parses(self):
-        self.assertEqual(self.parse(PROBE_OUTPUT)['systemd_version'], '259')
 
-    def test_probe_hash_mismatch_and_duplicates_refuse(self):
-        with self.assertRaises(Refusal):
-            setup.parse_probe(PROBE_OUTPUT, 'a' * 64, 'b' * 64)
-        with self.assertRaises(Refusal):
-            self.parse(PROBE_OUTPUT + 'uid=0\n')
-
-    def test_each_refusal_condition(self):
-        def change(key, value):
-            return '\n'.join(line if not line.startswith(key + '=') else key + '=' + value
-                             for line in PROBE_OUTPUT.splitlines()) + '\n'
-        cases = {'non-root': change('uid', '1000'), 'early boot': change('system_state', 'starting'),
-                 'old systemd': change('systemd_version', '249'), 'no cgroup v2': change('cgroup2', 'tmpfs'),
-                 'effigy531 exists': change('effigy531_passwd_exit', '0'),
-                 'no expiry-time': change('sshd_expiry_time_mentions', '0'),
-                 'wrong root': change('root_source', '/dev/sdb2'),
-                 'hostname endpoint': change('ssh_listen_ipv4', 'guest.local')}
-        for name, text in cases.items():
-            with self.subTest(name), self.assertRaises(Refusal):
-                self.parse(text)
+def candidate_for(row_id):
+    nonce = ROW_NONCES[row_id]
+    return {'boot_id': BOOT, 'nonce': nonce, 'unit': supervisor.unit_name(nonce), 'invocation_id': INVOCATION,
+            'control_group': '', 'observed_control_group': GROUP, 'supervisor': 'systemd-service-cgroup-v2',
+            'terminal_basis': observations.UNIT_INACTIVE, 'populated': 0, 'active_state': 'inactive',
+            'result': 'success', 'waited_exit': 0}
 
 
 class PlanFixture:
-    """Complete live facts, with real files for every credential, placement, archive and GO receipt."""
+    """Complete live facts with real files, a real archive, real credentials and signed GO receipts."""
 
     def __init__(self):
         self.dir = tmpdir('plan-fixture-')
@@ -747,6 +961,7 @@ class PlanFixture:
         self.known.chmod(0o600)
         self.counter = self.dir / 'writes.counter'
         self.counter.write_text('100')
+        self.go_cache = {}
 
     def base(self, **over):
         source_sha = hashlib.sha256(setup.SUPERVISOR_SOURCE.read_bytes()).hexdigest()
@@ -757,6 +972,8 @@ class PlanFixture:
             'resource_accounting': {'counter_files': {'writes': str(self.counter)}, 'limits': {'writes': 10 ** 9}},
             'e2_public_key': E2_KEY,
             'authorized_keys': key_line(), 'authorized_keys_expiry': NOW + 3600, 'now': NOW,
+            'effigy531_uid': 1001, 'row_nonces': dict(ROW_NONCES),
+            'go_trust': signer().trust,
             'disk_association': None,
             'hard_limit': {'mechanism': 'none-established', 'limits': [], 'enforcement': 'poll'},
             'ssh_files': {'config': str(self.config),
@@ -764,7 +981,7 @@ class PlanFixture:
                           'known_hosts': str(self.known),
                           'known_hosts_sha256': hashlib.sha256(self.known.read_bytes()).hexdigest()},
             'archive': {'path': str(self.archive), 'sha256': self.archive_sha},
-            'controls_request': {'path': str(self.dir / 'controls.json'), 'sha256': 'b' * 64, 'nonce': NONCE},
+            'controls_payload': ['/bin/sh', '-c', 'true', 'sh'],
             'supervisor_installed': {'sha256': source_sha},
             'supervisor_staged': {'path': str(self.staged), 'sha256': source_sha},
             'placements': [{'guest_path': setup.BASE + '/driver/common.py', 'host_path': str(self.placement),
@@ -773,88 +990,28 @@ class PlanFixture:
         facts.update(over)
         return facts
 
+    def receipts_for(self, digest):
+        if digest not in self.go_cache:
+            go = {}
+            for gate in ALL_GATES:
+                body = {'gate': gate, 'status': 'approved', 'plan_sha256': digest, 'decision_id': 'D-' + gate,
+                        'source_head': 'a' * 40}
+                go[gate] = signed_entry(self.dir / ('%s-%s.json' % (gate, digest[:12])), body)
+            self.go_cache[digest] = go
+        return self.go_cache[digest]
+
     def facts(self, **over):
-        """Facts plus GO receipts and the SSH containment receipt, bound to this exact plan digest."""
+        """Facts plus signed GO receipts bound to this exact plan digest."""
         facts = self.base(**over)
         facts.pop('go', None)
-        facts.pop('ssh_transfer_containment', None)
         digest = setup.plan_digest(setup._rows(facts))
-        go = {}
-        for gate in ALL_GATES:
-            path = self.dir / (gate + '.json')
-            body = {'gate': gate, 'status': 'approved', 'plan_sha256': digest, 'decision_id': 'D-' + gate,
-                    'source_head': 'a' * 40}
-            path.write_bytes(json.dumps(body, sort_keys=True).encode())
-            go[gate] = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
-        facts['go'] = {k: v for k, v in go.items() if k != 'SSH-CONTAIN'}
-        facts['ssh_transfer_containment'] = go['SSH-CONTAIN']
+        facts['go'] = self.receipts_for(digest)
         return facts
 
     def minimal(self):
         return self.facts(authorized_keys=None, supervisor_installed=None, supervisor_staged=None,
                           disk_association=None, placements=None, archive=None, ssh_files=None,
-                          controls_request=None, ssh_transfer_containment=None)
-
-
-def disk_witness():
-    host = {'uuid': setup.VM_UUID, 'disk_uid': setup.DISK_UID, 'controller': 'sata', 'position': 0, 'serial': 'S1'}
-    guest = {'path': '/dev/sda', 'size': setup.ROOT_BYTES, 'serial': 'S1'}
-    return {'mechanism': 'test-disk', 'host': host, 'guest': guest}
-
-
-def hard_limit_witness():
-    return {'mechanism': 'test-limit', 'limits': [setup.TRANSFER_CAP, setup.EXTRACT_CAP, setup.PAYLOAD_CAP],
-            'enforcement': 'kernel'}
-
-
-CANNED = {'E3a': 'effigy531:x:1001:1001::/home/effigy531:/bin/bash\n',
-          'E3b': 'effigy531 L 01/15/2027 0 99999 7 -1\n'}
-
-
-def ok_runner(overrides=None):
-    """Fake transport: exact expected stdout, exit 0, and a guest candidate for the supervised row."""
-    overrides = overrides or {}
-    calls = []
-
-    def runner(row, stage, monitor):
-        calls.append(row['id'])
-        if row['id'] in overrides:
-            value = overrides[row['id']]
-            return value(row, stage, monitor) if callable(value) else value
-        if row['kind'] == 'vm-supervised':
-            cand = {'boot_id': BOOT, 'nonce': NONCE, 'unit': UNIT, 'invocation_id': INVOCATION, 'control_group': '',
-                    'observed_control_group': GROUP, 'supervisor': 'systemd-service-cgroup-v2',
-                    'terminal_basis': observations.UNIT_INACTIVE, 'populated': 0, 'active_state': 'inactive',
-                    'result': 'success', 'waited_exit': 0}
-            return {'disposition': 'exited', 'waited_exit': 0, 'candidate': cand, 'stdout': b'', 'stderr': b''}
-        expect = row['expect'] or {}
-        if 'stdout' in expect:
-            out = expect['stdout']
-        elif 'stdout_regex' in expect:
-            out = CANNED[row['id']]
-        elif 'stdout_sha' in expect:
-            out = expect['stdout_sha'] + '  file\n'
-        else:
-            out = ''
-        return {'disposition': 'exited', 'waited_exit': 0, 'candidate': None, 'stdout': out.encode(), 'stderr': b''}
-    runner.calls = calls
-    return runner
-
-
-def execute(facts, runner=None, observe_identity=None, observe_terminal=None, wall_clock=None, clock=None,
-            budget=18000, stage_root=None):
-    identity = facts['identity']
-    return setup.execute_plan(facts, runner or ok_runner(),
-                              observe_identity or (lambda row: dict(identity)),
-                              observe_terminal or (lambda row: {'show_text': show_text()}),
-                              stage_root or tmpdir('plan-stage-'), clock or (lambda: 0.0),
-                              wall_clock or (lambda: NOW), budget)
-
-
-def full_chain_patches(fx):
-    return (patch.object(setup, 'ARCHIVE_SHA256', fx.archive_sha),
-            patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', frozenset({'test-disk'})),
-            patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({'test-limit'})))
+                          controls_payload=None, effigy531_uid=None)
 
 
 class PlanChecks(unittest.TestCase):
@@ -883,13 +1040,16 @@ class PlanChecks(unittest.TestCase):
                                               probe_output_sha256=hashlib.sha256(bad.encode()).hexdigest()))
         self.assertTrue(all(r['missing'] for r in rows))
 
-    def test_unbound_probe_output_refuses(self):
-        rows = setup.setup_plan(self.fx.facts(probe_output_sha256='0' * 64))
-        self.assertTrue(any('probe' in m for m in rows[0]['missing']))
+    def test_unknown_payload_uid_or_nonce_keeps_payload_argv_empty(self):
+        rows = {r['id']: r for r in setup.setup_plan(self.fx.facts(effigy531_uid=None))}
+        for rid in ('E9a', 'E9b', 'E8'):
+            with self.subTest(rid=rid):
+                self.assertEqual(rows[rid]['argv'], [])
+                self.assertTrue(rows[rid]['missing'])
 
     def test_rows_with_live_values_missing_keep_empty_argv(self):
         rows = {r['id']: r for r in setup.setup_plan(self.fx.minimal())}
-        for rid in ('E6', 'E9a', 'E9b', 'E8', 'E19', 'E-SUP'):
+        for rid in ('E6', 'E-SUP', 'E9a', 'E9b', 'E8', 'E19'):
             with self.subTest(rid=rid):
                 self.assertTrue(rows[rid]['missing'])
                 self.assertEqual(rows[rid]['argv'], [])
@@ -902,38 +1062,31 @@ class PlanChecks(unittest.TestCase):
         self.assertTrue(rows['E7a']['missing'])
         self.assertTrue(rows['E7c']['missing'])
 
-    def test_hard_limit_must_cover_each_row_and_is_unset_by_default(self):
+    def test_hard_limit_must_cover_each_payload_row_and_is_unset_by_default(self):
         rows = {r['id']: r for r in setup.setup_plan(self.fx.facts())}
         self.assertTrue(any('hard-limit' in m or 'quota' in m for m in rows['E9a']['missing']))
         with patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({'test-limit'})), \
-                patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', frozenset({'test-disk'})), \
-                patch.object(setup, 'ARCHIVE_SHA256', self.fx.archive_sha):
+                patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', frozenset({'test-disk'})):
             rows = {r['id']: r for r in setup.setup_plan(self.fx.facts(hard_limit=hard_limit_witness(),
                                                                        disk_association=disk_witness()))}
         for rid in ('E9a', 'E9b', 'E8', 'E19.0'):
             with self.subTest(rid=rid):
                 self.assertEqual(rows[rid]['missing'], [], rid)
 
-    def test_ssh_rows_need_a_containment_receipt_bound_to_the_plan(self):
-        facts = self.fx.facts()
-        facts['ssh_transfer_containment'] = {'path': str(self.fx.dir / 'nothing.json'), 'sha256': '0' * 64}
-        rows = {r['id']: r for r in setup.setup_plan(facts)}
-        self.assertTrue(any('containment' in m for m in rows['E9a']['missing']))
-
-    def test_plan_has_exact_root_and_ssh_shapes(self):
-        with patch.object(setup, 'ARCHIVE_SHA256', self.fx.archive_sha):
-            rows = {r['id']: r for r in setup.setup_plan(self.fx.facts())}
-            self.assertEqual(rows['E9a']['stdin_sha256'], setup.ARCHIVE_SHA256)
+    def test_plan_has_exact_root_and_contained_shapes(self):
+        rows = {r['id']: r for r in setup.setup_plan(self.fx.facts())}
         self.assertEqual(rows['E3a']['argv'], setup.BOOTSTRAP_EXACT['E3a'])
         self.assertIn('--append', ' '.join(rows['E4']['argv']))
         self.assertIn(setup.DROPIN_TEXT, rows['E5a']['argv'])
-        self.assertEqual(rows['E9a']['argv'][:5], ['/usr/bin/ssh', '-F', str(self.fx.config), setup.SSH_ALIAS, '--'])
+        self.assertEqual(rows['E9a']['kind'], 'contained-transfer')
+        self.assertEqual(rows['E9a']['argv'][:2], [setup.PRLCTL, 'exec'])
+        self.assertIn('--request-json', rows['E9a']['argv'])
+        self.assertEqual(rows['E9a']['writer_argv'][:5], ['/usr/bin/ssh', '-F', str(self.fx.config), setup.SSH_ALIAS, '--'])
+        self.assertIn(supervisor.TRANSFER_NAME, shlex.join(rows['E9a']['writer_argv']))
 
-    def test_every_non_supervised_row_carries_an_expectation(self):
-        with patch.object(setup, 'ARCHIVE_SHA256', self.fx.archive_sha):
-            rows = setup.setup_plan(self.fx.facts())
-        for row in rows:
-            if row['kind'] != 'vm-supervised':
+    def test_every_non_payload_row_carries_an_expectation(self):
+        for row in setup.setup_plan(self.fx.facts()):
+            if row['effect'] == 'bootstrap' or row['kind'] == 'contained-transfer':
                 self.assertIsNotNone(row['expect'], row['id'])
 
     def test_malformed_authorized_key_leaves_e6_blocked(self):
@@ -946,6 +1099,11 @@ class PlanChecks(unittest.TestCase):
         rows = {r['id']: r for r in setup.setup_plan(self.fx.facts())}
         self.assertTrue(any('stdin bytes differ' in m for m in rows['E19.0']['missing']))
 
+    def test_request_inline_is_covered_by_the_plan_digest(self):
+        before = setup.plan_digest(setup._rows(self.fx.base()))
+        changed = self.fx.base(row_nonces=dict(ROW_NONCES, E8='5' * 64))
+        self.assertNotEqual(before, setup.plan_digest(setup._rows(changed)))
+
 
 class ExecutorChecks(unittest.TestCase):
     def setUp(self):
@@ -954,16 +1112,24 @@ class ExecutorChecks(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def test_full_chain_runs_in_order_and_supervised_row_is_host_credited(self):
-        p1, p2, p3 = full_chain_patches(self.fx)
-        with p1, p2, p3:
-            facts = self.fx.facts(hard_limit=hard_limit_witness(), disk_association=disk_witness())
+    def chain(self, **over):
+        return self.fx.facts(hard_limit=hard_limit_witness(), disk_association=disk_witness(), **over)
+
+    def supported(self):
+        return (patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', frozenset({'test-disk'})),
+                patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({'test-limit'})))
+
+    def test_full_chain_runs_in_order_with_contained_and_host_credited_payloads(self):
+        p1, p2 = self.supported()
+        with p1, p2:
+            facts = self.chain()
+            ids = [r['id'] for r in setup.setup_plan(facts)]
             runner = ok_runner()
             result = execute(facts, runner)
-            ids = [r['id'] for r in setup.setup_plan(facts)]
         self.assertIsNone(result['halt'], result)
         self.assertEqual(result['completed'], ids)
         self.assertEqual(runner.calls, ids)
+        self.assertIn('E9a', result['completed'])
         self.assertIn('E8', result['completed'])
 
     def test_identity_drift_halts_before_any_intent(self):
@@ -989,61 +1155,81 @@ class ExecutorChecks(unittest.TestCase):
         self.assertEqual(runner.calls, [])
 
     def test_ssh_config_drift_or_loose_mode_halts_before_intent(self):
-        p1, p2, p3 = full_chain_patches(self.fx)
-        with p1, p2, p3:
-            facts = self.fx.facts(hard_limit=hard_limit_witness(), disk_association=disk_witness())
+        p1, p2 = self.supported()
+        with p1, p2:
+            facts = self.chain()
             self.fx.config.write_bytes(b'Host changed\n')
             self.fx.config.chmod(0o600)
             runner = ok_runner()
             result = execute(facts, runner)
         self.assertEqual(result['halt'], 'E9a')
-        self.assertIn('credential', result['reason'])
+        self.assertIn('bytes drifted', result['reason'])
         self.assertNotIn('E9a', runner.calls)
         fx2 = PlanFixture()
         fx2.config.chmod(0o644)
-        p1, p2, p3 = full_chain_patches(fx2)
-        with p1, p2, p3:
-            result = execute(fx2.facts(hard_limit=hard_limit_witness(), disk_association=disk_witness()), ok_runner())
+        with patch.object(setup, 'ARCHIVE_SHA256', fx2.archive_sha):
+            p1, p2 = self.supported()
+            with p1, p2:
+                result = execute(fx2.facts(hard_limit=hard_limit_witness(), disk_association=disk_witness()),
+                                 ok_runner())
         self.assertEqual(result['halt'], 'E9a')
         self.assertIn('owner-only', result['reason'])
 
-    def test_expired_ephemeral_key_halts_the_ssh_row(self):
-        p1, p2, p3 = full_chain_patches(self.fx)
-        with p1, p2, p3:
-            facts = self.fx.facts(hard_limit=hard_limit_witness(), disk_association=disk_witness())
-            result = execute(facts, ok_runner(), wall_clock=lambda: NOW + 3600)
+    def test_expired_ephemeral_key_halts_the_transfer_row(self):
+        p1, p2 = self.supported()
+        with p1, p2:
+            result = execute(self.chain(), ok_runner(), wall_clock=lambda: NOW + 3600)
         self.assertEqual(result['halt'], 'E9a')
         self.assertIn('expired', result['reason'])
 
     def test_supervised_row_needs_the_supervisor_installed_from_source(self):
-        def e_sup_installs(row, stage, monitor):
-            return {'disposition': 'exited', 'waited_exit': 0, 'candidate': None,
-                    'stdout': (hashlib.sha256(setup.SUPERVISOR_SOURCE.read_bytes()).hexdigest() + '  f\n').encode(),
-                    'stderr': b''}
-        p1, p2, p3 = full_chain_patches(self.fx)
-        with p1, p2, p3:
-            facts = self.fx.facts(supervisor_installed=None, hard_limit=hard_limit_witness(),
-                                  disk_association=disk_witness())
-            rows = {r['id']: r for r in setup.setup_plan(facts)}
-            self.assertTrue(any('supervisor installed' in m for m in rows['E8']['missing']))
-            result = execute(facts, ok_runner({'E-SUP': e_sup_installs}))
-        self.assertEqual(result['halt'], 'E8')
-        self.assertIn('supervisor installed', result['reason'])
+        p1, p2 = self.supported()
+        with p1, p2:
+            rows = {r['id']: r for r in setup.setup_plan(self.chain(supervisor_installed=None))}
+        self.assertTrue(any('supervisor installed' in m for m in rows['E8']['missing']))
 
-    def test_stale_containment_receipt_halts_the_ssh_row_before_intent(self):
-        p1, p2, p3 = full_chain_patches(self.fx)
-        with p1, p2, p3:
-            facts = self.fx.facts(hard_limit=hard_limit_witness(), disk_association=disk_witness())
-            facts['ssh_transfer_containment'] = {'path': facts['ssh_transfer_containment']['path'], 'sha256': '0' * 64}
-            runner = ok_runner()
-            result = execute(facts, runner)
+    def test_writer_exit_nonzero_holds_the_transfer(self):
+        p1, p2 = self.supported()
+        bad = {'disposition': 'writer-failed', 'waited_exit': 0, 'writer_exit': 9, 'candidate': None,
+               'payload_stdout': '', 'stdout': b'', 'stderr': b''}
+        with p1, p2:
+            result = execute(self.chain(), ok_runner({'E9a': bad}))
         self.assertEqual(result['halt'], 'E9a')
-        self.assertIn('containment', result['reason'])
-        self.assertNotIn('E9a', runner.calls)
+        self.assertIn('no advance credit', result['reason'])
 
-    def test_polling_only_hard_limit_halts_network_rows(self):
-        with patch.object(setup, 'ARCHIVE_SHA256', self.fx.archive_sha), \
-                patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', frozenset({'test-disk'})):
+    def test_payload_expectation_is_judged_on_payload_stdout(self):
+        p1, p2 = self.supported()
+        truncated = {'disposition': 'exited', 'waited_exit': 0, 'writer_exit': 0, 'candidate': candidate_for('E9a'),
+                     'payload_stdout': 'abc', 'stdout': b'', 'stderr': b''}
+        with p1, p2:
+            result = execute(self.chain(), ok_runner({'E9a': truncated}))
+        self.assertEqual(result['halt'], 'E9a')
+
+    def test_tree_digest_mismatch_holds_the_extraction(self):
+        p1, p2 = self.supported()
+        wrong = {'disposition': 'exited', 'waited_exit': 0, 'candidate': candidate_for('E9b'),
+                 'payload_stdout': '0' * 64 + '  x\n', 'stdout': b'', 'stderr': b''}
+        with p1, p2:
+            result = execute(self.chain(), ok_runner({'E9b': wrong}))
+        self.assertEqual(result['halt'], 'E9b')
+
+    def test_supervised_row_without_a_terminal_host_observation_holds(self):
+        p1, p2 = self.supported()
+        with p1, p2:
+            result = execute(self.chain(), ok_runner(), observe_terminal=lambda row: {'show_text': NOT_FOUND})
+        self.assertEqual(result['halt'], 'E9a')
+        self.assertIn('no advance credit', result['reason'])
+
+    def test_mismatched_host_observation_holds_with_reason(self):
+        p1, p2 = self.supported()
+        with p1, p2:
+            result = execute(self.chain(), ok_runner(), observe_terminal=lambda row: {
+                'show_text': show_text(invocation='11111111222233334444555566667777')})
+        self.assertEqual(result['halt'], 'E9a')
+        self.assertIn('credit', result['reason'])
+
+    def test_polling_only_hard_limit_halts_the_network_row(self):
+        with patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', frozenset({'test-disk'})):
             result = execute(self.fx.facts(disk_association=disk_witness()), ok_runner())
         self.assertEqual(result['halt'], 'E9a')
         self.assertIn('hard-limit', result['reason'])
@@ -1076,40 +1262,6 @@ class ExecutorChecks(unittest.TestCase):
         wrong = {'disposition': 'exited', 'waited_exit': 0, 'candidate': None, 'stdout': b'effigy531\n', 'stderr': b''}
         self.assertEqual(execute(self.fx.facts(), ok_runner({'E4v': wrong}))['halt'], 'E4v')
 
-    def test_partial_output_on_a_transfer_holds(self):
-        truncated = {'disposition': 'exited', 'waited_exit': 0, 'candidate': None, 'stdout': b'abc', 'stderr': b''}
-        p1, p2, p3 = full_chain_patches(self.fx)
-        with p1, p2, p3:
-            facts = self.fx.facts(hard_limit=hard_limit_witness(), disk_association=disk_witness())
-            result = execute(facts, ok_runner({'E9a': truncated}))
-        self.assertEqual(result['halt'], 'E9a')
-
-    def test_tree_digest_mismatch_holds_the_extraction(self):
-        wrong = {'disposition': 'exited', 'waited_exit': 0, 'candidate': None,
-                 'stdout': ('0' * 64 + '\n').encode(), 'stderr': b''}
-        p1, p2, p3 = full_chain_patches(self.fx)
-        with p1, p2, p3:
-            facts = self.fx.facts(hard_limit=hard_limit_witness(), disk_association=disk_witness())
-            result = execute(facts, ok_runner({'E9b': wrong}))
-        self.assertEqual(result['halt'], 'E9b')
-
-    def test_supervised_row_without_a_terminal_host_observation_holds(self):
-        p1, p2, p3 = full_chain_patches(self.fx)
-        with p1, p2, p3:
-            facts = self.fx.facts(hard_limit=hard_limit_witness(), disk_association=disk_witness())
-            result = execute(facts, ok_runner(), observe_terminal=lambda row: {'show_text': NOT_FOUND})
-        self.assertEqual(result['halt'], 'E8')
-        self.assertIn('no advance credit', result['reason'])
-
-    def test_supervised_row_with_mismatched_host_observation_holds_with_reason(self):
-        p1, p2, p3 = full_chain_patches(self.fx)
-        with p1, p2, p3:
-            facts = self.fx.facts(hard_limit=hard_limit_witness(), disk_association=disk_witness())
-            result = execute(facts, ok_runner(), observe_terminal=lambda row: {
-                'show_text': show_text(invocation='11111111222233334444555566667777')})
-        self.assertEqual(result['halt'], 'E8')
-        self.assertIn('credit', result['reason'])
-
     def test_reused_intent_raises_without_effect(self):
         root = tmpdir('plan-reuse-')
         (root / 'E3a').mkdir(mode=0o700)
@@ -1125,16 +1277,62 @@ class ExecutorChecks(unittest.TestCase):
         self.assertIn('budget', result['reason'])
         self.assertEqual(runner.calls, [])
 
-    def test_absent_expectation_never_passes_a_non_supervised_row(self):
-        self.assertFalse(setup._expect_met({'kind': 'ssh-transfer', 'expect': None}, {'stdout': b''}))
-        self.assertTrue(setup._expect_met({'kind': 'vm-supervised', 'expect': None}, {}))
+    def test_absent_expectation_never_passes_a_bootstrap_row(self):
+        self.assertFalse(setup._expect_met({'effect': 'bootstrap', 'expect': None}, {'stdout': b''}))
+        self.assertTrue(setup._expect_met({'effect': 'supervised', 'expect': None}, {'payload_stdout': ''}))
 
     def test_advance_gate_per_basis(self):
         clean = {'disposition': 'exited', 'waited_exit': 0, 'postobserve': True}
         self.assertTrue(setup.advance_allowed(clean, 'unknown', setup.VM_BASIS))
-        self.assertFalse(setup.advance_allowed(dict(clean, postobserve=False), 'unknown', setup.SSH_BASIS))
+        self.assertFalse(setup.advance_allowed(dict(clean, postobserve=False), 'unknown', setup.VM_BASIS))
         self.assertFalse(setup.advance_allowed(clean, 'unknown', setup.SUPERVISED_BASIS))
         self.assertTrue(setup.advance_allowed(clean, 'closed', setup.SUPERVISED_BASIS))
+        self.assertFalse(setup.advance_allowed(dict(clean, writer_exit=9), 'closed', setup.SUPERVISED_BASIS))
+
+
+CANNED = {'E3a': 'effigy531:x:1001:1001::/home/effigy531:/bin/bash\n',
+          'E3b': 'effigy531 L 01/15/2027 0 99999 7 -1\n'}
+
+
+def ok_runner(overrides=None):
+    """Fake transport: exact expected output, exit 0, and a host-matchable candidate for payload rows."""
+    overrides = overrides or {}
+    calls = []
+
+    def runner(row, stage, monitor):
+        calls.append(row['id'])
+        if row['id'] in overrides:
+            value = overrides[row['id']]
+            return value(row, stage, monitor) if callable(value) else value
+        expect = row['expect'] or {}
+        if row['effect'] in ('supervised', 'transfer'):
+            payload = expect['stdout_sha'] + '  file\n' if 'stdout_sha' in expect else ''
+            out = {'disposition': 'exited', 'waited_exit': 0, 'candidate': candidate_for(row['id']),
+                   'payload_stdout': payload, 'stdout': b'', 'stderr': b''}
+            if row['kind'] == 'contained-transfer':
+                out['writer_exit'] = 0
+            return out
+        if 'stdout' in expect:
+            text = expect['stdout']
+        elif 'stdout_regex' in expect:
+            text = CANNED[row['id']]
+        elif 'stdout_sha' in expect:
+            text = expect['stdout_sha'] + '  file\n'
+        else:
+            text = ''
+        return {'disposition': 'exited', 'waited_exit': 0, 'candidate': None, 'stdout': text.encode(), 'stderr': b''}
+    runner.calls = calls
+    return runner
+
+
+def execute(facts, runner=None, observe_identity=None, observe_terminal=None, wall_clock=None, clock=None,
+            budget=18000, stage_root=None):
+    identity = facts['identity']
+    return setup.execute_plan(facts, runner or ok_runner(),
+                              observe_identity or (lambda row: dict(identity)),
+                              observe_terminal or (lambda row: {'show_text': show_text()}),
+                              stage_root or tmpdir('plan-stage-'), clock or (lambda: 0.0),
+                              wall_clock or (lambda: NOW), budget)
 
 
 class ManifestChecks(unittest.TestCase):
@@ -1156,6 +1354,7 @@ class ManifestChecks(unittest.TestCase):
                 self.assertEqual(plan[row['id']]['closure_basis'], row['closure_basis'])
                 self.assertEqual(plan[row['id']]['timeout_seconds'], row['timeout_seconds'])
                 self.assertEqual(plan[row['id']]['effect'], row['effect'])
+                self.assertEqual(plan[row['id']]['kind'], row['kind'])
                 if row['status'] == 'template':
                     self.assertEqual(plan[row['id']]['missing'], [], row['id'])
                 else:
@@ -1169,7 +1368,7 @@ class ManifestChecks(unittest.TestCase):
 
     def test_kind_and_basis_must_agree(self):
         manifest = self.manifest()
-        manifest['rows'][0]['closure_basis'] = setup.SSH_BASIS
+        manifest['rows'][0]['closure_basis'] = setup.SUPERVISED_BASIS
         with self.assertRaises(Refusal):
             setup.validate_setup_manifest(manifest)
 

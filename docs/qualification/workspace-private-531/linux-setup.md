@@ -115,80 +115,77 @@ All three backend inputs/GO-index stay **UNARMED** pending actual GOs, accepted
 placement and planner-bound aggregate execution. Consumer/install/production/
 merge authority is unchanged.
 
-## Setup adapter status (source-only, revision 4)
+## Setup adapter status (source-only, revision 5)
 
 Pure controls, no effect. Files: `linux_setup.py` (Stage1 entry bound to the registered
-home, admission verifiers, setup plan, transfer runner, executor, host credit,
-`ssh_argv`), `linux_supervisor.py` (transient SERVICE argv, outside-payload monitor,
-guest candidate producer, `SystemdOps`, root entry point), `linux-setup-probe.sh`
-(read-only probe, hash bound), `linux-setup-stages.json` (ledger checked against the
-plan), `linux_setup_tests.py` (95 injected controls; `test:qualification:linux-setup`).
+home, admission verifiers, setup plan, executor, host credit, `ssh_argv`),
+`linux_supervisor.py` (transient SERVICE argv, gate, outside-payload monitor, guest
+candidate producer, root entry point), `linux_transfer.py` (bounded local processes, the
+contained stdin transfer), `linux_receipts.py` (OpenSSH-signed admission receipts),
+`linux-setup-probe.sh` (read-only probe, hash bound), `linux-setup-stages.json` (ledger
+checked against the plan), `linux_setup_tests.py` (100 injected controls;
+`test:qualification:linux-setup`).
 
-- **Supervisor lifecycle.** `systemd-run --uid=effigy531 --service-type=exec
-  --property=ExitType=cgroup --property=KillMode=control-group
-  --property=RuntimeMaxSec=<n> --remain-after-exit --pipe -- <argv>`. A threaded monitor
-  samples `systemctl show` (InvocationID, ControlGroup, ActiveState) and the cgroup's
-  `populated` bit while the unit is loaded. InvocationID is parsed as contiguous hex,
-  the form systemctl prints (bus-print-properties.c, the byte-array branch); a
-  hyphenated value folds to the same 32 hex. Candidate eligibility: unit absent before
-  start; the monitor saw this InvocationID active with one ControlGroup; no sample with
-  `populated 1`; post-run loaded, same InvocationID, inactive, Result=success,
-  ExecMainStatus=0, empty ControlGroup. A failed read, vanished unit or changed
-  InvocationID is unknown.
-- **Host credit.** The host reads the unit over the VM route and credits closure only
-  when the candidate equals that observation (boot ID, nonce, unit, InvocationID,
-  active state, result), through the 686 `unit-inactive-exittype-cgroup` basis.
-- **Stage1.** One start, one read-only probe, one graceful stop, 600 s, no snapshot,
-  no `--kill`. The request reads the registered home itself: config, descriptor and
-  extent inventory are recomputed from `PVM_HOME/config.pvs` and
-  `harddisk1.hdd`, never supplied as bytes. The probe script must hash to the reviewed
+- **Gate and positive path.** The payload is wrapped so it blocks on a FIFO in the stage
+  directory before running. The outside monitor samples the unit while it is loaded and
+  releases the gate on the first sample that shows it active in a cgroup. The unit is
+  therefore provably active, with a control group, before the payload does any work. A
+  payload never observed active is never released and ends at its RuntimeMaxSec deadline,
+  which is unknown. Candidate eligibility needs a pre-release active sample for this
+  InvocationID in one cgroup, no populated=1 sample after release, and a post-run loaded
+  unit with the same InvocationID, inactive, Result=success, ExecMainStatus=0 and an empty
+  ControlGroup. InvocationID is parsed as the contiguous hex systemctl prints.
+- **Host credit.** The host reads the unit over the VM route and credits closure only when
+  the candidate equals that observation (boot ID, nonce, unit, InvocationID, active state,
+  result), through the 686 `unit-inactive-exittype-cgroup` basis.
+- **Contained transfer.** A transfer row starts the supervisor (`prlctl exec`, request
+  inline) and, at once, an SSH writer that waits for the stage FIFO and streams the
+  archive or placement into it. The payload reads the FIFO and writes the destination. SSH
+  exit is only the writer's precondition (exit 0). Closure comes from the supervisor
+  candidate and host credit, and the payload's sha256 line is the expectation.
+- **Supervised payloads.** E8 (controls) and E9b (archive extraction and tree digest) run
+  as supervised payloads. Their request is inline in argv, so the plan digest covers its
+  exact bytes, and each has a row nonce from the facts.
+- **Receipts.** GO and admission receipts are OpenSSH signatures (`ssh-keygen -Y verify`,
+  namespace `effigy-go-receipt`) checked against an allowed-signers file bound by sha256.
+  Each receipt must name its gate, be approved, and be bound to this plan digest. Tampered,
+  wrong-signer, unsigned and stale receipts refuse. The trust anchor is an operator key.
+- **Stage1.** One start, one read-only probe, one graceful stop, 600 s, no snapshot, no
+  `--kill`. The request reads the registered home itself. Config, descriptor and extent
+  inventory are recomputed from `PVM_HOME`, and the probe script must hash to the reviewed
   value. Post-stop, `stage1_verify_post` refuses on drift in config bytes, identities,
   descriptor, extents, snapshot tree or growth above 1 GiB.
-- **Admission.** The plan is rebuilt from facts by the executor, never from a caller's
-  rows. Gates:
-  - the probe output is hash-bound and parsed: `effigy531` absent (E3 account/home
-    absence), the docker group present (E4), a verified root chain and host key;
-  - GO receipts are files bound by sha256 to their gate and to the exact plan digest
-    (stale plan, wrong gate, unapproved or fabricated receipts refuse);
-  - E6 accepts only one restricted ssh-ed25519 line whose key is the E2 key, whose
-    embedded expiry equals the bound expiry, and which expires within 24 hours;
-  - disk association must pass `verify_disk_association` with a supported mechanism;
-  - a hard limit must pass `verify_hard_limit`: kernel-enforced and covering the row's
-    cap. Polling counters never qualify;
-  - the bootstrap allowlist is by row id and exact argv (`BOOTSTRAP_EXACT`), and the
-    E-SUP and E6 argv embed bound values only.
-- **Transfers.** `run_transfer` runs a local process (ssh or prlctl) with stdin from a
-  bound file, capped streams, a live counter monitor and a group kill at the deadline.
-  Exit status is the waited result, never closure. The remote command is one quoted
-  string (`ssh_argv`, `shlex.join`). E9b extracts the archive and prints the sha256 of
-  its sorted per-file digests. The host computes the same digest from the tar, and the
-  control runs the remote script locally to check that they agree.
-- **Expectations.** Every non-supervised row requires an expectation (exact stdout, a
-  regex, or a sha256). An absent expectation never passes.
+- **Admission.** The executor rebuilds the plan from facts, never from a caller's rows.
+  Gates: the probe output is hash-bound (E3 account absence, E4 docker group); GO receipts
+  are signed and plan-bound; E6 accepts only one restricted ssh-ed25519 line for the E2 key
+  with the bound expiry within 24 hours; disk association and hard limits pass source-
+  verified verifiers (none established yet, so they refuse); bootstrap rows match exact
+  argv; payload rows need the effigy531 uid observed after E3a and their row nonce.
 
 Decisions taken here (reviewer checks):
 
-- **K-1** Streams come from `--pipe`, not `StandardOutput=file:`, which was not
-  confirmed in the upstream text read.
+- **K-1** Streams come from `--pipe`, not `StandardOutput=file:`, which was not confirmed.
 - **K-2** The 686 contract accepts `unit-inactive-exittype-cgroup` for loaded transient
-  services. The existing `cgroup-populated` basis is unchanged, with its own control.
-- **K-3** Closure credit is host-side only. The guest candidate is never
-  self-authenticated, and the runner cannot grant credit.
-- **K-4** Root one-shot rows (E3a-E7c, E-SUP) take `vm-waited-exit-postobserved`, with
-  an exact expectation per row. Not contained closure; a leftover child of a one-shot is
-  not positively excluded.
-- **K-5** Disk association and hard limits fail closed. Neither has a source-verified
-  mechanism yet. The Parallels reference could not be decoded; polling counters are not
-  quotas.
-- **K-6** InvocationID is required observed state. The manuals read do not list it as a
-  documented unit property, so a missing value fails closed.
-- **K-7** The root supervisor and E8 run over the VM route (`prlctl exec`). An sshd
-  `ForceCommand` runs as the login account, and systemd-run cannot start a unit as
-  another account without root. SSH carries file placement and the tree extraction, not
-  the root-supervised payload. This is a design boundary the planner may want to rule on.
-- **K-8** A failed payload gets no candidate and so no credit.
+  services. The `cgroup-populated` basis is unchanged, with its own control.
+- **K-3** Closure credit is host-side only. The guest candidate is never self-authenticated.
+- **K-4** Root one-shot rows (E3a-E7c, E-SUP) take `vm-waited-exit-postobserved` with an
+  exact expectation. Not contained closure; a leftover child of a one-shot is not excluded.
+- **K-5** Disk association and hard limits fail closed. No source-verified mechanism yet.
+  Polling counters are not quotas.
+- **K-6** InvocationID is required observed state; a missing value fails closed.
+- **K-7** The root supervisor and the payloads run over the VM route (`prlctl exec`), not
+  SSH. An sshd `ForceCommand` runs as the login account, and systemd-run cannot start a
+  unit as another account without root. SSH carries the stdin into the FIFO only. The
+  planner may want to rule on this boundary.
+- **K-8** A failed payload, or one with no candidate, gets no credit.
 - **K-9** The guest request binder hashes `linux_setup.py` and `linux_supervisor.py`.
-- **K-10** ssh-transfer rows need a containment receipt bound to the plan digest, and a
-  verified hard limit. Neither is established, so E9a, E9b, E19 and E8 stay blocked.
+- **K-10** Admission receipts are OpenSSH signatures, so a receipt is authenticated by an
+  operator-held key and not by a path or hash alone.
+- **K-11** The gate makes the positive path reachable for any payload duration: the
+  release happens only after the monitor has observed the unit active.
+- **K-12** The SSH containment ruling is removed. A transfer is contained by being a
+  supervised payload with host credit, so no truthy ruling can stand in for closure.
+- **K-13** Network and disk rows need a source-verified kernel hard limit. Polling counters
+  never qualify, so E8, E9a, E9b and E19 stay blocked until one exists.
 
-Still required before any activation (not in this change): a source-verified controller-to-guest disk association with fresh identifiers on both sides; a source-verified kernel hard-limit mechanism; the VM-route identity re-observation and the terminal-state observation wired to the real route; the staged supervisor and its root install as a separate GO; the containment receipt for stdin transfer; the H archive at its pinned path with the pinned ssh config and known_hosts under the control root; the E2 key line and its expiry; the Stage1 probe script and output bound to this plan; the reviewed placements; and each live row's own GO. The positive closure path is exercised here only by injected timelines. It still needs a live systemd check of the real InvocationID and terminal sequence. E10, E13k and E14 stay held as before.
+Still required before any activation (not in this change): a source-verified controller-to-guest disk association with fresh identifiers on both sides; a source-verified kernel hard-limit mechanism; the VM-route identity re-observation and terminal-state observation wired to the real route; the staged supervisor and its root install as a separate GO; the operator's signing key and allowed-signers file, with signed GO receipts for each gate; the H archive at its pinned path with the pinned ssh config and known_hosts under the control root; the E2 key line and expiry; the Stage1 probe script and output bound to this plan; the reviewed placements; the controls payload argv; and each live row's own GO. The gate, the positive path and the contained transfer are exercised here with real local processes and FIFOs, but not with real systemd, real prlctl or a real SSH server. A live systemd check of the InvocationID and terminal sequence is still needed. E10, E13k and E14 stay held as before.

@@ -2,7 +2,7 @@
   "schema": "effigy.linux-setup-manifest.v1",
   "source_candidate": "4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02",
   "vm": "433c9e5b-c7b9-469f-9633-24b4addcd3b5",
-  "generated_from": "linux_setup.setup_plan({'go': all gates}); ids, kinds, bases and timeouts must match it (linux_setup_tests ManifestChecks)",
+  "generated_from": "linux_setup.setup_plan({'go': signed receipts, ...}) over minimal live facts; ids, kinds, bases and timeouts must match it (linux_setup_tests ManifestChecks)",
   "probe": {
     "path": "linux-setup-probe.sh",
     "sha256": "6bde748a456617737fb4928d347d55fa96e5a6ff0dac119ace373692ef41fc39"
@@ -11,9 +11,9 @@
   "report_reserve_seconds": 120,
   "stage_ceiling_seconds": 1200,
   "kinds": {
-    "vm-root": "one root operation through prlctl exec; advance needs the waited exit and a post-observation of its exact effect",
-    "ssh-transfer": "one authenticated ssh stdin transfer or command as the payload account; advance needs the waited exit and a remote sha256 post-observation. The ssh exit alone is not closure",
-    "vm-supervised": "payload run by the root supervisor through prlctl exec; advance needs closure credit from linux_supervisor.run_supervised (inactive terminal basis, same InvocationID, no live-populated veto)"
+    "vm-root": "one root operation through prlctl exec, exact argv and expectation; advance needs the waited exit and the expectation on its stdout",
+    "vm-supervised": "payload run by the root supervisor through prlctl exec with its request inline (plan digest covers it); advance needs host-credited closure and the expectation on the payload stdout",
+    "contained-transfer": "supervisor start plus SSH writer at once; the payload reads the stage FIFO the writer fills; advance needs host-credited closure, the payload expectation and writer exit 0. SSH exit is never closure"
   },
   "rows": [
     {
@@ -124,8 +124,8 @@
       "go": "E6",
       "status": "blocked",
       "live_blockers": [
-        "E2 public key bytes (sha256 bound)",
-        "expiry-time within 24 hours of the activation clock"
+        "E2 public key line and bytes",
+        "expiry within 24 hours of the activation clock"
       ],
       "effect": "bootstrap",
       "needs_hard_limit": false
@@ -138,7 +138,7 @@
       "go": "E7",
       "status": "blocked",
       "live_blockers": [
-        "controller-to-guest disk association (linux_setup.verify_disk_association has no supported mechanism)"
+        "controller-to-guest disk association (no source-verified mechanism yet)"
       ],
       "effect": "bootstrap",
       "needs_hard_limit": false
@@ -151,8 +151,7 @@
       "go": "E7",
       "status": "blocked",
       "live_blockers": [
-        "controller-to-guest disk association",
-        "E7a closed"
+        "controller-to-guest disk association (no source-verified mechanism yet)"
       ],
       "effect": "bootstrap",
       "needs_hard_limit": false
@@ -165,8 +164,7 @@
       "go": "E7",
       "status": "blocked",
       "live_blockers": [
-        "controller-to-guest disk association",
-        "E7b closed"
+        "controller-to-guest disk association (no source-verified mechanism yet)"
       ],
       "effect": "bootstrap",
       "needs_hard_limit": false
@@ -179,38 +177,40 @@
       "go": "E-SUP",
       "status": "blocked",
       "live_blockers": [
-        "supervisor bytes staged inside the guest (no bound staging route established)"
+        "supervisor bytes staged in the guest (no bound staging route established)"
       ],
       "effect": "bootstrap",
       "needs_hard_limit": false
     },
     {
       "id": "E9a",
-      "kind": "ssh-transfer",
-      "closure_basis": "ssh-transfer-postobserved",
+      "kind": "contained-transfer",
+      "closure_basis": "supervised-contained",
       "timeout_seconds": 900,
       "go": "E9",
       "status": "blocked",
       "live_blockers": [
-        "pinned archive path and sha256 (03df0b51...)",
-        "pinned ssh config under the control root"
+        "pinned archive path, sha256 and ssh config",
+        "effigy531 uid observed after E3a",
+        "row nonce (E9a)",
+        "supervisor installed (E-SUP)",
+        "verified kernel hard limit covering the archive cap"
       ],
-      "effect": "ssh-transfer",
+      "effect": "transfer",
       "needs_hard_limit": true
     },
     {
       "id": "E9b",
-      "kind": "ssh-transfer",
-      "closure_basis": "ssh-transfer-postobserved",
+      "kind": "vm-supervised",
+      "closure_basis": "supervised-contained",
       "timeout_seconds": 300,
       "go": "E9",
       "status": "blocked",
       "live_blockers": [
-        "E9a closed",
-        "pinned archive path and sha256",
-        "pinned ssh config"
+        "E9a closed with a host-credited closure and writer exit 0",
+        "verified kernel hard limit covering the extraction cap"
       ],
-      "effect": "ssh-transfer",
+      "effect": "supervised",
       "needs_hard_limit": true
     },
     {
@@ -221,23 +221,25 @@
       "go": "E8",
       "status": "blocked",
       "live_blockers": [
-        "controls request path and sha256",
-        "supervisor installed (E-SUP)"
+        "controls payload argv and a row nonce",
+        "supervisor installed (E-SUP)",
+        "verified kernel hard limit covering the payload cap"
       ],
       "effect": "supervised",
       "needs_hard_limit": true
     },
     {
       "id": "E19",
-      "kind": "ssh-transfer",
-      "closure_basis": "ssh-transfer-postobserved",
-      "timeout_seconds": 60,
+      "kind": "contained-transfer",
+      "closure_basis": "supervised-contained",
+      "timeout_seconds": 300,
       "go": "E19",
       "status": "blocked",
       "live_blockers": [
-        "reviewed driver, inputs, GO index and GO receipt placements (one row per file)"
+        "reviewed driver, inputs, GO index and GO receipt placements",
+        "verified kernel hard limit covering the transfer cap"
       ],
-      "effect": "ssh-transfer",
+      "effect": "transfer",
       "needs_hard_limit": true
     }
   ],

@@ -143,7 +143,7 @@ The [Linux 4f6a5ed3 preparation kit](linux-4f6a5ed3-preparation.md) plans the
 Stash-hosted Ubuntu VM's Stage1 read-only probe, Stage2 setup and Recipe E route.
 It is preparation only; it arms nothing.
 The Linux setup adapter (`linux_setup.py`, `linux_supervisor.py`, `linux-setup-probe.sh`,
-`linux-setup-stages.json`) holds the v2 probe parser, Stage1 request, setup rows
+`linux-setup-stages.json`, `linux_transfer.py`, `linux_receipts.py`) holds the v2 probe parser, Stage1 request, setup rows
 E3–E9/E19 and the guest supervisor. It is source-only: `test:qualification:linux-setup`
 checks it with injected transports and performs no VM, SSH, account or systemd effect.
 The [macOS 4f6a5ed3 preparation](macos-4f6a5ed3-preparation.md) plans the fresh
