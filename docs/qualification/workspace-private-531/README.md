@@ -139,6 +139,9 @@ native filesystem and Vault-backing provenance; it prefers native ext4 only afte
 an explicit accepted chain, without assuming shared-folder custody semantics.
 Linux SSH uses a pinned private `-F` config and pinned public known-hosts artifact;
 no global config edit, alternate transport or credential sharing is introduced.
+The [Linux 4f6a5ed3 preparation kit](linux-4f6a5ed3-preparation.md) plans the
+Stash-hosted Ubuntu VM's Stage1 read-only probe, Stage2 setup and Recipe E route.
+It is preparation only; it arms nothing.
 
 Preparation and proof requests are different admissions. Assemble one concrete
 preparation request listing each unresolved backend fact, exact permitted probe
