@@ -89,19 +89,40 @@ A copied current executable or a shell stand-in is insufficient and refuses.
 Do not infer that a managed output remains after its lease or cleanup: freeze
 the copy before anything else builds in that fixture.
 
-The 2026-11-07 host source control settled the search for such a commit and it
-does not exist among this source's ancestors. The controls need one binary the
-current helper handshake admits *and* that cannot read the versioned discard
-envelope. Protocol 4 — the first version this source admits — postdates that
-envelope: `694d4c4eb` added `discard_v1` and `f17e0524b` raised the protocol to
-4, and the first is an ancestor of the second. So every protocol-4 ancestor
-accepts the envelope, and every earlier one — including the provisional
-`d7c3c93b`, the parent of `694d4c4eb` — is refused at admission instead of
-refusing the discard, which can never satisfy
-`custody::tests::discard_old_sentinel_refuses_before_child_exec`. The cell stays
-unresolved until the planner re-specifies it: do not build the provisional
-commit again, do not substitute a stand-in, and do not treat this packet as
-artifact-ready.
+What the sentinel control actually checks. The provisional `d7c3c93b` speaks
+helper protocol 2, so this source's protocol-4 handshake refuses it at ordinary
+admission. That is a fact about that commit only. It does not show that no
+ancestor can satisfy the control: a protocol-4 ancestor such as `823d859da`
+(`HELPER_PROTOCOL = 4`, kernel code identical to the current source) is admitted
+by the same handshake at source level; only the run decides admission. For
+`custody::tests::discard_old_sentinel_refuses_before_child_exec`:
+
+- It admits the named older executable as the run's sentinel through
+  `Run::begin`. Admission failure fails the test. It is not a pass.
+- It calls the current `Custody::spawn` with `Terminal::Discard`.
+  `spawn_inner_retained` refuses a Discard without qualification before any
+  process intent, fork or helper consultation. The refusal belongs to the
+  current parent. The test does not show the old helper reading a discard
+  envelope.
+- It asserts that no process effect was recorded and that no child marker
+  exists.
+- It does not prove legacy decoder incompatibility. That is
+  `custody::tests::discard_receipt_is_not_accepted_by_the_legacy_reader`, a
+  separate test that needs no old binary.
+
+The qualification fixture's `private-qualification-old` mode is a different
+control. It needs the same genuine helper admitted successfully first, then
+qualifies the creator, sentinel and backup image identities
+(`run/checkout_custody.rs`, `supervise/image_identity.rs`). Its pass is
+image-identity evidence, not the sentinel refusal.
+
+Recipe D therefore needs one genuine older binary that this source's handshake
+admits and that is built by its own source's covering selector. The
+source-ancestry search does not decide it; the admission and refusal results
+do. `823d859da` is the bound old source for this cell. Nothing here claims it
+predates `discard_v1`. The cell is not artifact-ready and carries no native
+credit until the frozen binary and its proof are recorded. Do not build the
+provisional commit again, and do not substitute a stand-in.
 
 ## Recipe E — Linux guest artifact
 
