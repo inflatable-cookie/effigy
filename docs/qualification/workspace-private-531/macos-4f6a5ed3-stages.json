@@ -1,0 +1,977 @@
+{
+  "binding_inputs": {
+    "check_source_sha256": "4aaf8e3fbf63e92ae4fd7b88c2b23b8ee291ad96f584aff99f3045e3306892c2",
+    "desktop_host": "unix:///Users/tom/.docker/run/docker.sock",
+    "recipe_file": "docs/qualification/workspace-private-531/runtime.Dockerfile sha256 d290f70febe8ce9ba4cd3cc252a9786d8ee5fc4e82a6219ec0338c884486f514",
+    "route_echo": "a \"b\" 'c' $HOME {x}\nd",
+    "token": "eight lowercase hex, minted at C0 admission",
+    "token32": "32 lowercase hex, minted at C0 admission, names the guest context via guest_dir()"
+  },
+  "decision": "63c338e2-1c50-435e-9783-e78e9d8558e6",
+  "decision_version": 2,
+  "gated": [
+    {
+      "gate": "Copy of the exact candidate tree, or a single read-only share of only the candidate directory. Planner picks at G1 activation; not activatable here. Identity and tree bound above.",
+      "id": "G1",
+      "name": "E14 source placement"
+    },
+    {
+      "gate": "Byte-identical copies of the frozen artifacts under <source_root>/.effigy/linux-release/artifacts with receipts matching frozen sha256; no synthesized producer receipt; RecipeE and 686 missing.",
+      "id": "G2",
+      "name": "artifact, sidecar and producer receipt placement"
+    },
+    {
+      "gate": "launch.py with an exact per-backend GO after G1, G2 and the nextest fixture path proof. Not part of this task.",
+      "id": "G3",
+      "name": "proof run"
+    }
+  ],
+  "helpers": [
+    "claim_intent",
+    "compare_route_echo",
+    "host_stage_dockerfile",
+    "make_owned_dir",
+    "render_guest_spec",
+    "verify_desktop_endpoint",
+    "verify_frozen_artifacts",
+    "verify_tool_sha",
+    "verify_tranche_summary"
+  ],
+  "manifest": "macos-4f6a5ed3-stages-r2",
+  "observed_metadata": {
+    "child": "linux-artifact-preparation.l0tx7tam/macos-metadata-rfzuiadz",
+    "note": "local metadata only; not a running-engine or guest observation",
+    "runner_commit": "1ccd55420",
+    "tranche": "macos-4f6a5ed3-metadata-r1",
+    "utc": "2026-11-07T20:42:24Z..20:42:25Z"
+  },
+  "output_cap_bytes": 262144,
+  "pins": {
+    "image_context.py": "af74047f640111907930273f7cc7a2b46eac4cb27943f0a512fccf56a1b3b322",
+    "image_prepare.py": "882f9e44e7acd87e5ab94237feb7f19a452a3bbb86dd1cf208f311129847964f",
+    "macos_metadata_tranche.py": "c204bfaa87c2534da05b62c5f10beda5d3196216ce40d6afffeb8dec2ef9d1a6",
+    "macos_preparation.py": "d651b3b6b42e54e9cf11c1b0bb6bc9bde76b9ebf9db44c15b2845637e065d121"
+  },
+  "proof_entry": {
+    "baseline": {
+      "candidate_receipt": {
+        "receipt_sha256": "895b3cf22219571c89872d341209de8cc581f4ac36e6980e362a6c6f803d24a7"
+      },
+      "old_binary": {
+        "path": "/Volumes/Stash/scratch/effigy/627-baseline-correction.f_43nyce/producer-replacement-823d859d-r1/frozen/effigy-old-823d859d-r1",
+        "sha256": "a603c82a9c98d499ea83ea79b403127274cc87d179adcb197dd4478524b117aa"
+      },
+      "old_source_head": "823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1",
+      "old_source_receipt": {
+        "note": "627 index records the receipt hash only; the receipt file path is not in the index",
+        "path": null,
+        "receipt_sha256": "f86a1f3a03b20973a2eaa296e84c52da84e27f60438761132d7381f786e1d177"
+      },
+      "production_receipt": {
+        "receipt_sha256": "52e2c55b9ae3cffb8b5c3510af22c2066fe692dbc0e5f983fbcbb55afc146561"
+      }
+    },
+    "frozen": {
+      "candidate": {
+        "path": "/Volumes/Stash/scratch/effigy/627-artifact-preparation.6mazyj9u/artifacts/src-4f6a5ed3/candidate/effigy-candidate-4f6a5ed3",
+        "sha256": "e8b2a209fd4578edb4cf14b3a403f493099afcf4e0bd9670e7b3f3ff292dd7a7"
+      },
+      "cargo_metadata_src": {
+        "path": "/Volumes/Stash/scratch/effigy/627-artifact-preparation.6mazyj9u/artifacts/src-4f6a5ed3/cargo_metadata_src/stdout.txt-cargo_metadata_src-4f6a5ed3",
+        "sha256": "9fc1e65b12689549133a112e51a98693667271a21c9500ed4f814b1af00bc940"
+      },
+      "custody_tests": {
+        "path": "/Volumes/Stash/scratch/effigy/627-artifact-preparation.6mazyj9u/artifacts/src-4f6a5ed3/custody_tests/custody-5be7302f7e1eb5c7-custody_tests-4f6a5ed3",
+        "sha256": "a9cd62bd8f0a5bbd4ac2587c8fb57a0f344c9df8b837fc75afdb8b8a407f7cf8"
+      },
+      "derived_binaries_metadata": {
+        "path": "/Volumes/Stash/scratch/effigy/627-artifact-preparation.6mazyj9u/artifacts/src-4f6a5ed3/metadata/binaries-metadata-4f6a5ed3.json",
+        "sha256": "d247ddd1ae5cf536b836a4af6a7fe58d94b1e962d32b23c9b9a4e9019272aa63"
+      },
+      "kernel_fixture": {
+        "path": "/Volumes/Stash/scratch/effigy/627-artifact-preparation.6mazyj9u/artifacts/src-4f6a5ed3/kernel_fixture/kernel-custody-fixture-kernel_fixture-4f6a5ed3",
+        "sha256": "e2efd5ecea4245c71f86d25d087399d2551fadd02684a9f08753c20636469adc"
+      },
+      "kernel_tests": {
+        "path": "/Volumes/Stash/scratch/effigy/627-artifact-preparation.6mazyj9u/artifacts/src-4f6a5ed3/kernel_tests/effigy_kernel-010b11320b486dcd-kernel_tests-4f6a5ed3",
+        "sha256": "a4b188bd5d1c334c5bdefe5ff8b852e7a5a6402f3ccd96671176a295ac8f6ee7"
+      },
+      "nextest_binary": {
+        "path": "/Volumes/Stash/scratch/effigy/627-artifact-preparation.6mazyj9u/artifacts/src-4f6a5ed3/nextest_binary/cargo-nextest-nextest_binary-4f6a5ed3",
+        "sha256": "397065d8ae921e384dd087289e545d6428e1a42451db2bb25b36a08d0c254113"
+      },
+      "nextest_config": {
+        "path": "/Volumes/Stash/scratch/effigy/627-artifact-preparation.6mazyj9u/artifacts/src-4f6a5ed3/config/gateway-nextest-4f6a5ed3.toml",
+        "sha256": "e4afe6dfc49a00f4d457c45fd1de70a00fd035353e0660f63f1f4487674185c9"
+      },
+      "production": {
+        "path": "/Volumes/Stash/scratch/effigy/627-artifact-preparation.6mazyj9u/artifacts/src-4f6a5ed3/production/effigy-production-4f6a5ed3",
+        "sha256": "45ec085988b0effc2b449177ec68c1904997f071d618059c41cf19dae6ccd069"
+      },
+      "utility": {
+        "path": "/Volumes/Stash/scratch/effigy/627-artifact-preparation.6mazyj9u/artifacts/src-4f6a5ed3/utility/workspace-qualification-fixture-utility-4f6a5ed3",
+        "sha256": "23832b1aaae2b8b4c8ec4d69ead1bf1096c1b20e751848d0bc28a1b2f23ff1b0"
+      }
+    },
+    "nextest_fixture_path_rule": "kernel-custody-fixture is an absolute frozen copy in non-test-binaries; nextest joins build-directory with path and an absolute path replaces the join. Unexercised by 627. G3 refuses until a metadata-only probe in the qualification root proves the handling; the guest path is the identical absolute path or a planner-approved rewrite, never an assumed join.",
+    "note": "Frozen 627 artifacts; every file verified present with the index sha256 on 2026-11-07. Bound, not run.",
+    "qualification_root": "{control}/s, empty, 0700, identity from C0 and re-observed at C2",
+    "source": {
+      "binding_file_sha256": "bb58da952453f1ecd48bee59050b8878aee6c7c5d6535a9cb0c4ffdd1e84ea94",
+      "candidate_path": "/Volumes/Stash/scratch/effigy/release-source/candidate-4f6a5ed3.xwm4pr7j",
+      "dev": 16777245,
+      "head": "4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02",
+      "inode": 156037736,
+      "mode": "0700",
+      "tree": "dcb4c79194cd6739b3737285f21c10f5bb379a3c",
+      "uid": 501
+    }
+  },
+  "retries": 0,
+  "slots": [
+    "check_source",
+    "colima_home",
+    "control",
+    "desktop_config",
+    "desktop_context_dir",
+    "desktop_host",
+    "guest_context",
+    "guest_spec",
+    "guest_verify_spec",
+    "owned_container_ids",
+    "owned_image_id",
+    "probe_source",
+    "qualification_root",
+    "route_echo",
+    "stage_source",
+    "token",
+    "verify_source"
+  ],
+  "source_head": "4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02",
+  "stage_cap_seconds": 1200,
+  "stages": [
+    {
+      "backend": "colima",
+      "closure": "tool hashes equal the tranche; the zero-share --mount none form appears in start --help; roots created 0700, empty, identity recorded",
+      "failure": "any refusal stops before C1; the created empty roots are retained, not removed by pattern",
+      "id": "C0",
+      "name": "admission and make owned roots, no engine effect",
+      "reserve_seconds": 60,
+      "retention": "intent, tool hashes, roots identity, start --help stream",
+      "seconds": 300,
+      "steps": [
+        {
+          "helper": "verify_tool_sha",
+          "id": "c0-verify-tools",
+          "inputs": [
+            "colima=/opt/homebrew/bin/colima",
+            "docker=/usr/local/bin/docker"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 30
+        },
+        {
+          "helper": "verify_tranche_summary",
+          "id": "c0-verify-tranche",
+          "inputs": [
+            "macos-metadata-rfzuiadz/summary.json"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 30
+        },
+        {
+          "helper": "claim_intent",
+          "id": "c0-claim-intent",
+          "inputs": [
+            "macos-4f6a5ed3-{token}-C0"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 10
+        },
+        {
+          "helper": "make_owned_dir",
+          "id": "c0-make-owned-roots",
+          "inputs": [
+            "{control}",
+            "{colima_home}",
+            "{qualification_root}"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 30
+        },
+        {
+          "argv": [
+            "/opt/homebrew/bin/colima",
+            "start",
+            "--help"
+          ],
+          "env": {
+            "set": {
+              "COLIMA_HOME": "{colima_home}"
+            },
+            "unset": [
+              "LIMA_HOME",
+              "DOCKER_HOST",
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "c0-colima-start-help",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 30
+        }
+      ]
+    },
+    {
+      "backend": "colima",
+      "closure": "waited exit 0 closes; a deadline or cap is Unknown and retained, never replayed; C2 identity follows",
+      "failure": "no retry; if --mount none is not expressible the only share is the empty qualification root and the GO must name it",
+      "id": "C1",
+      "name": "fresh isolated engine start",
+      "reserve_seconds": 60,
+      "retention": "start stream, PID, waited exit, profile YAML path only",
+      "seconds": 900,
+      "steps": [
+        {
+          "argv": [
+            "/opt/homebrew/bin/colima",
+            "start",
+            "-p",
+            "effigy-4f6a-qual",
+            "--runtime",
+            "containerd",
+            "--vm-type",
+            "vz",
+            "--arch",
+            "aarch64",
+            "--cpu",
+            "2",
+            "--memory",
+            "2",
+            "--disk",
+            "20",
+            "--root-disk",
+            "20",
+            "--mount",
+            "none"
+          ],
+          "env": {
+            "set": {
+              "COLIMA_HOME": "{colima_home}"
+            },
+            "unset": [
+              "LIMA_HOME",
+              "DOCKER_HOST",
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "c1-colima-start",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 600
+        }
+      ]
+    },
+    {
+      "backend": "colima",
+      "closure": "check_engine and check_root pass; the guest parent binding comes from the probe, never a guessed user; the route echo equals the hostile constant byte-for-byte",
+      "failure": "unreachable, changed or unknown state refuses; no start, reset or repair here; a route-echo mismatch refuses before any spec reaches the guest",
+      "id": "C2",
+      "name": "identity, route echo and guest parent probe",
+      "reserve_seconds": 60,
+      "retention": "status JSON, probe stream, parent binding, route-echo stream",
+      "seconds": 300,
+      "steps": [
+        {
+          "argv": [
+            "/opt/homebrew/bin/colima",
+            "status",
+            "-p",
+            "effigy-4f6a-qual",
+            "--json"
+          ],
+          "env": {
+            "set": {
+              "COLIMA_HOME": "{colima_home}"
+            },
+            "unset": [
+              "LIMA_HOME",
+              "DOCKER_HOST",
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "c2-colima-status",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 30
+        },
+        {
+          "argv": [
+            "/opt/homebrew/bin/colima",
+            "ssh",
+            "-p",
+            "effigy-4f6a-qual",
+            "--",
+            "timeout",
+            "-k",
+            "2",
+            "20",
+            "python3",
+            "-I",
+            "-B",
+            "-c",
+            "{probe_source}",
+            "probe"
+          ],
+          "env": {
+            "set": {
+              "COLIMA_HOME": "{colima_home}"
+            },
+            "unset": [
+              "LIMA_HOME",
+              "DOCKER_HOST",
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "c2-guest-probe",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 60
+        },
+        {
+          "argv": [
+            "/opt/homebrew/bin/colima",
+            "ssh",
+            "-p",
+            "effigy-4f6a-qual",
+            "--",
+            "python3",
+            "-I",
+            "-B",
+            "-c",
+            "import sys; sys.stdout.write(sys.argv[1])",
+            "{route_echo}"
+          ],
+          "env": {
+            "set": {
+              "COLIMA_HOME": "{colima_home}"
+            },
+            "unset": [
+              "LIMA_HOME",
+              "DOCKER_HOST",
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "c2-route-echo",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 60
+        },
+        {
+          "helper": "compare_route_echo",
+          "id": "c2-compare-route-echo",
+          "inputs": [
+            "c2-route-echo.stdout"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 10
+        }
+      ]
+    },
+    {
+      "backend": "colima",
+      "closure": "the helper receipt equals the recipe: sha d290f70f, 474 bytes, mode 0600, fsynced, readback equal",
+      "failure": "missing or partial receipt refuses; the Unknown guest directory is retained and never reused",
+      "id": "C3",
+      "name": "stage the reviewed Dockerfile by the existing helper",
+      "reserve_seconds": 60,
+      "retention": "receipt JSON, stage stream, recipe file sha256",
+      "seconds": 300,
+      "steps": [
+        {
+          "helper": "render_guest_spec",
+          "id": "c3-render-guest-spec",
+          "inputs": [
+            "c2-guest-probe.stdout",
+            "mode=stage",
+            "token32"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 10
+        },
+        {
+          "argv": [
+            "/opt/homebrew/bin/colima",
+            "ssh",
+            "-p",
+            "effigy-4f6a-qual",
+            "--",
+            "timeout",
+            "-k",
+            "2",
+            "20",
+            "python3",
+            "-I",
+            "-B",
+            "-c",
+            "{stage_source}",
+            "stage",
+            "{guest_spec}"
+          ],
+          "env": {
+            "set": {
+              "COLIMA_HOME": "{colima_home}"
+            },
+            "unset": [
+              "LIMA_HOME",
+              "DOCKER_HOST",
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "c3-stage-context",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "stdin": "recipe_file",
+          "timeout_seconds": 120
+        }
+      ]
+    },
+    {
+      "backend": "colima",
+      "closure": "verify receipt equals the stage receipt, then build waited exit 0 with the image ID from provenance; C5 needs both",
+      "failure": "no retry; an Unknown build is retained and never reaches C5",
+      "id": "C4",
+      "name": "one local-path runtime image build",
+      "reserve_seconds": 120,
+      "retention": "verify and build streams, provenance file hash, image ID",
+      "seconds": 1200,
+      "steps": [
+        {
+          "helper": "render_guest_spec",
+          "id": "c4-render-verify-spec",
+          "inputs": [
+            "c3-stage-context.stdout",
+            "mode=verify"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 10
+        },
+        {
+          "argv": [
+            "/opt/homebrew/bin/colima",
+            "ssh",
+            "-p",
+            "effigy-4f6a-qual",
+            "--",
+            "timeout",
+            "-k",
+            "2",
+            "20",
+            "python3",
+            "-I",
+            "-B",
+            "-c",
+            "{verify_source}",
+            "verify",
+            "{guest_verify_spec}"
+          ],
+          "env": {
+            "set": {
+              "COLIMA_HOME": "{colima_home}"
+            },
+            "unset": [
+              "LIMA_HOME",
+              "DOCKER_HOST",
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "c4-verify-context",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 60
+        },
+        {
+          "argv": [
+            "/opt/homebrew/bin/colima",
+            "ssh",
+            "-p",
+            "effigy-4f6a-qual",
+            "--",
+            "sudo",
+            "-n",
+            "env",
+            "DOCKER_CONFIG={guest_context}/docker-config",
+            "nerdctl",
+            "build",
+            "--platform",
+            "linux/arm64",
+            "--provenance=mode=max",
+            "--tag",
+            "effigy-4f6a-runtime:r1",
+            "{guest_context}"
+          ],
+          "env": {
+            "set": {
+              "COLIMA_HOME": "{colima_home}"
+            },
+            "unset": [
+              "LIMA_HOME",
+              "DOCKER_HOST",
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "c4-nerdctl-build",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 900
+        }
+      ]
+    },
+    {
+      "backend": "colima",
+      "closure": "waited exit 0 with --rm removal; uid 0 and the loader/coreutils/python/SSL facts are recorded",
+      "failure": "no retry; a leftover with the planned name is retained, not removed by pattern",
+      "id": "C5",
+      "name": "one disposable check",
+      "reserve_seconds": 60,
+      "retention": "check stream and exit",
+      "seconds": 360,
+      "steps": [
+        {
+          "argv": [
+            "/opt/homebrew/bin/colima",
+            "ssh",
+            "-p",
+            "effigy-4f6a-qual",
+            "--",
+            "sudo",
+            "-n",
+            "nerdctl",
+            "run",
+            "--pull=never",
+            "--rm",
+            "--network",
+            "none",
+            "--name",
+            "effigy-4f6a-check-{token}",
+            "effigy-4f6a-runtime:r1",
+            "python3",
+            "-I",
+            "-c",
+            "{check_source}"
+          ],
+          "env": {
+            "set": {
+              "COLIMA_HOME": "{colima_home}"
+            },
+            "unset": [
+              "LIMA_HOME",
+              "DOCKER_HOST",
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "c5-disposable-check",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 240
+        }
+      ]
+    },
+    {
+      "backend": "colima",
+      "closure": "observation only; a running VM is retained until a separate GO covers a stop",
+      "failure": "not applicable",
+      "id": "C6",
+      "name": "retain and observe, no stop",
+      "reserve_seconds": 60,
+      "retention": "list stream",
+      "seconds": 120,
+      "steps": [
+        {
+          "argv": [
+            "/opt/homebrew/bin/colima",
+            "list",
+            "--json"
+          ],
+          "env": {
+            "set": {
+              "COLIMA_HOME": "{colima_home}"
+            },
+            "unset": [
+              "LIMA_HOME",
+              "DOCKER_HOST",
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "c6-colima-list",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 30
+        }
+      ]
+    },
+    {
+      "backend": "desktop",
+      "closure": "the endpoint equals the tranche and DOCKER_CONTEXT is unset; docker info gives the engine ID for the GO; the owned/foreign split is recorded",
+      "failure": "a new Docker context is not an isolated engine: D0 records the baseline only; no reset, prune or credential read",
+      "id": "D0",
+      "name": "Desktop endpoint and baseline (server reads, activation only)",
+      "reserve_seconds": 60,
+      "retention": "all streams, engine ID, owned and foreign ID lists",
+      "seconds": 360,
+      "steps": [
+        {
+          "helper": "make_owned_dir",
+          "id": "d0-make-owned-dirs",
+          "inputs": [
+            "{desktop_config}",
+            "{desktop_context_dir}"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 10
+        },
+        {
+          "helper": "verify_desktop_endpoint",
+          "id": "d0-verify-endpoint",
+          "inputs": [
+            "macos-metadata-rfzuiadz/summary.json"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 10
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "info",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d0-info",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 60
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "ps",
+            "-a",
+            "--no-trunc",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d0-ps",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 60
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "network",
+            "ls",
+            "--no-trunc",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d0-network",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 60
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "volume",
+            "ls",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d0-volume",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 60
+        }
+      ]
+    },
+    {
+      "backend": "desktop",
+      "closure": "created volume carries the exact label and name",
+      "failure": "a name collision refuses; nothing is adopted",
+      "id": "D1",
+      "name": "owned fixture volume",
+      "reserve_seconds": 60,
+      "retention": "create stream, inspect of the owned volume",
+      "seconds": 300,
+      "steps": [
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "volume",
+            "create",
+            "--label",
+            "effigy.qual={token}",
+            "effigy-4f6a-qual-{token}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d1-volume-create",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 60
+        }
+      ]
+    },
+    {
+      "backend": "desktop",
+      "closure": "image owned by label; the Dockerfile receipt equals the C3 recipe bytes",
+      "failure": "no retry; a receipt mismatch refuses before build",
+      "id": "D2",
+      "name": "runtime image into the Desktop engine",
+      "reserve_seconds": 120,
+      "retention": "build stream, receipt, image ID",
+      "seconds": 1200,
+      "steps": [
+        {
+          "helper": "host_stage_dockerfile",
+          "id": "d2-host-stage",
+          "inputs": [
+            "recipe_file",
+            "{desktop_context_dir}/Dockerfile"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 30
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "build",
+            "--pull=never",
+            "--platform",
+            "linux/arm64",
+            "--label",
+            "effigy.qual={token}",
+            "--tag",
+            "effigy-4f6a-desktop-runtime:{token}",
+            "{desktop_context_dir}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d2-docker-build",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 900
+        }
+      ]
+    },
+    {
+      "backend": "desktop",
+      "closure": "waited exit 0 and --rm removal",
+      "failure": "no retry; leftovers are retained by their owned label",
+      "id": "D3",
+      "name": "one disposable check on Desktop",
+      "reserve_seconds": 60,
+      "retention": "check stream and exit",
+      "seconds": 360,
+      "steps": [
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "run",
+            "--pull=never",
+            "--rm",
+            "--network",
+            "none",
+            "--label",
+            "effigy.qual={token}",
+            "--name",
+            "effigy-4f6a-dcheck-{token}",
+            "effigy-4f6a-desktop-runtime:{token}",
+            "python3",
+            "-I",
+            "-c",
+            "{check_source}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d3-disposable-check",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 240
+        }
+      ]
+    },
+    {
+      "backend": "desktop",
+      "closure": "post-cleanup foreign list equals the D0 foreign list; each step runs only when its owned set is non-empty and is recorded as skipped otherwise",
+      "failure": "a foreign or unlabelled ID is never removed; prune is not used",
+      "id": "D4",
+      "name": "owned cleanup by exact ID only",
+      "reserve_seconds": 60,
+      "retention": "cleanup streams, before and after baselines",
+      "seconds": 300,
+      "steps": [
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "rm",
+            "{owned_container_ids}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d4-owned-rm",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 60
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "volume",
+            "rm",
+            "effigy-4f6a-qual-{token}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d4-owned-volume-rm",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 60
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "image",
+            "rm",
+            "{owned_image_id}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d4-owned-image-rm",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 60
+        }
+      ]
+    }
+  ],
+  "status": "unarmed: review of the complete stage plan only; every stage needs its own fresh GO"
+}
