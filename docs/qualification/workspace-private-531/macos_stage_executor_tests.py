@@ -36,10 +36,6 @@ import macos_stage_executor as ex  # noqa: E402
 import preparation_resources as resources  # noqa: E402
 import preparation_stage as primitive  # noqa: E402
 
-# AF_UNIX paths are limited to 104 bytes, so the socket's directory must be short. Use the Builds scratch when it is
-# mounted, else the Stash scratch root; never TMPDIR, which the retained run directory makes long.
-SOCKET_BASE = next((d for d in ('/Volumes/Builds/scratch/effigy', '/Volumes/Stash/scratch/effigy')
-                    if os.path.isdir(d)), None)
 TOKEN = '0a1b2c3d'
 ENGINE = ex.RECORDED_ENGINE_ID
 IMAGE = 'sha256:' + 'ab' * 32
@@ -96,11 +92,11 @@ class Fixture(unittest.TestCase):
         self.docker = self.tmp + '/docker'
         Path(self.colima).write_bytes(b'fake colima\n')
         Path(self.docker).write_bytes(b'fake docker\n')
-        # AF_UNIX paths are limited to 104 bytes: the socket lives in a short scratch directory of its own.
-        self.sock_dir = tempfile.mkdtemp(prefix='m531-', dir=SOCKET_BASE)
-        self.addCleanup(shutil.rmtree, self.sock_dir, True)
-        os.chmod(self.sock_dir, 0o700)
-        self.socket_path = self.sock_dir + '/d.sock'
+        # The socket lives in this fixture's own directory under TMPDIR (a fresh child, removed with the fixture).
+        # AF_UNIX paths are limited to 104 bytes; a long TMPDIR fails here, loudly, rather than binding elsewhere.
+        self.socket_path = self.tmp + '/d.sock'
+        if len(self.socket_path.encode()) > 103:
+            raise AssertionError(f'TMPDIR is too long for an AF_UNIX socket path: {self.socket_path}')
         self.sock = socket.socket(socket.AF_UNIX)
         self.sock.bind(self.socket_path)
         self.addCleanup(self.sock.close)
