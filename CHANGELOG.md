@@ -1624,6 +1624,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- Release process settlement refusals include bounded, payload-free diagnostic categories.
+
 - Worktree QA log archives follow the configured user scratch root for future teardowns.
 
 - Focus the compiler-feedback inventory tests on distinct detector claims: the

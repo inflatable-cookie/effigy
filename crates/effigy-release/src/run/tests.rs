@@ -101,57 +101,7 @@ fn settlement_trace_line(
 }
 
 fn settlement_reason(reason: &effigy_kernel::observe::UnknownReason) -> &'static str {
-    use effigy_kernel::observe::UnknownReason;
-    match reason {
-        UnknownReason::TimedOut { phase, .. } => {
-            if phase.starts_with("group closure of process group ") {
-                "timed-out:group-closure"
-            } else {
-                "timed-out:other"
-            }
-        }
-        UnknownReason::Busy { .. } => "busy",
-        UnknownReason::Cancelled(_) => "cancelled",
-        UnknownReason::PermissionDenied => "permission-denied",
-        UnknownReason::ToolUnavailable(_) => "tool-unavailable",
-        UnknownReason::Unparsable(_) => "unparsable",
-        UnknownReason::Inconsistent(message) => match message.as_str() {
-            "no live workload member to signal" => "inconsistent:no-live-workload-member",
-            "unproven group closure" => "inconsistent:unproven-group-closure",
-            "leader already reaped" => "inconsistent:leader-already-reaped",
-            "group still has live members" => "inconsistent:live-group",
-            "workload still has live members" => "inconsistent:live-workload",
-            _ => {
-                // Only exact known anchor facts can leave this private seam.
-                const ANCHOR_FACTS: &[&str] = &[
-                    "generation:absent",
-                    "generation:replaced",
-                    "generation:unreadable",
-                    "state:absent",
-                    "state:replaced",
-                    "state:unreadable",
-                    "state:zombie",
-                    "nonce:mismatch",
-                    "nonce:unreadable",
-                    "nonce:missing",
-                    "nonce:unparsable",
-                    "birth:boot-mismatch",
-                    "birth:birth-order-or-kind",
-                    "current-group:unreadable",
-                    "current-group:mismatch",
-                ];
-                message
-                    .strip_prefix("unproven group closure; anchor=")
-                    .and_then(|fact| ANCHOR_FACTS.iter().copied().find(|known| *known == fact))
-                    .unwrap_or("inconsistent:other")
-            }
-        },
-        UnknownReason::GuardUnavailable => "guard-unavailable",
-        UnknownReason::Injected => "injected",
-        UnknownReason::Untrusted(_) => "untrusted",
-        UnknownReason::HostAuthorityRequired => "host-authority-required",
-        UnknownReason::StoreUnreadable(_) => "store-unreadable",
-    }
+    super::effects::reason_category(reason)
 }
 
 struct Fixture {
@@ -2967,6 +2917,29 @@ mod settlement_tests {
     }
 
     #[test]
+    fn refusal_operation_attribution_is_fixed_and_bounded() {
+        use super::super::effects::refusal_operation;
+        use std::ffi::OsString;
+        let argv = |operation: &str| ["git", "-C", "secret-path", operation].map(OsString::from);
+        assert_eq!(
+            refusal_operation("release git", &argv("symbolic-ref")),
+            "symbolic-ref"
+        );
+        assert_eq!(
+            refusal_operation("release git", &argv("rev-parse")),
+            "rev-parse"
+        );
+        assert_eq!(
+            refusal_operation("release task", &argv("symbolic-ref")),
+            "other"
+        );
+        assert_eq!(
+            refusal_operation("release git", &argv("secret-operation")),
+            "other"
+        );
+    }
+
+    #[test]
     fn settlement_refusal_matrix_and_redaction() {
         for group in 0..3 {
             for residue in 0..2 {
@@ -2994,7 +2967,7 @@ mod settlement_tests {
                             vec![]
                         },
                     };
-                    let result = settlement_refusal(&report);
+                    let result = settlement_refusal(&report, "symbolic-ref");
                     assert_eq!(result.is_none(), group != 2 && residue == 0 && !truncated);
                     if let Some(error) = result {
                         let text = error.to_string();
@@ -3010,6 +2983,8 @@ mod settlement_tests {
                         } else {
                             "capture: complete"
                         }));
+                        assert!(text.contains("stage=validate; operation=symbolic-ref"));
+                        assert!(text.contains("leader=injected"));
                         assert!(!text.contains(secret));
                     }
                 }
