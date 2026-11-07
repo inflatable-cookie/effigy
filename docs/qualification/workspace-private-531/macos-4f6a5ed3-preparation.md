@@ -286,7 +286,7 @@ Desktop, and no stage can run from this source.
     records no pinned image size.
   - C2: a multi-effect guest stage. The guest closure is unknown after the route echo, so the probe
     is not reachable through this adapter.
-  - C3: `guest_spec` derives from the C2 probe output and a `token32` minted at C0 admission.
+  - C3: `guest_spec` derives from the C2 probe output and the `token32` that C0 mints.
   - D1: `docker volume create` is idempotent and the name is observable, so exclusive creation
     cannot be established.
   - D4: no per-target re-observation before removal, and no image foreign list.
@@ -295,7 +295,10 @@ Desktop, and no stage can run from this source.
   against the sha256 the pinned 688 C0 record names) and `verify_tranche_summary` (the tranche
   summary against the sha the same record names). C0 creates its own roots under the scratch root
   and refuses on any collision. For the recorded token it refuses: that C0 is historical, and C1
-  binds it. C0 is statically refused by the helper residual above.
+  binds it. C0 is statically refused by the helper residual above. Each claimed C0 activation mints one
+  `token32` (32 lowercase hex), written exclusively as `token32.json` and recorded by hash in the receipt
+  as `origin`. It is the chain's origin: `origin_token32` reads it back from the verified C0 receipt before
+  C3 and C4 claim. A historical C0 minted none, so C3 and C4 refuse for the recorded token.
 - **C1 binds the pinned 688 C0 record, by identity.** The record is
   `macos-4f6a5ed3-activation-7deaf1b3/C0.stage.json` (sha256 `15a5373e…`) and its tranche summary
   (`macos-metadata-rfzuiadz/summary.json`, sha256 `cdfb7fb6…`). C1 accepts it only when the bytes
@@ -308,7 +311,7 @@ Desktop, and no stage can run from this source.
   static admission reasons. Derived and unpinned slots render as explicit placeholders.
 - **Bindings.** Checked against the reviewed paths for the token, the pinned socket URL and the
   pinned check program. A caller who supplies a derived slot or an unpinned source refuses.
-- **Inputs.** The executor's own set (program files, manifest, `runtime.Dockerfile`, tool binaries)
+- **Inputs.** The executor's own set (program files, including the pinned guest helper, the manifest, `runtime.Dockerfile`, tool binaries)
   is bound by the activation and re-hashed by `run_stage` before every launch.
 - **Claims.** `macos-stage-claims/<activation_id>.claim`, exclusive, under a provisioned directory.
   A missing directory refuses. The executor never creates one under the scratch root.
@@ -348,38 +351,48 @@ Desktop, and no stage can run from this source.
   `macos_guest_context.py` (sha256 `713cb10e…`) as `python3 -I -B -c <source> <mode> <spec>`. It is a
   copy of the historical `image_context.py` (sha256 `af74047f…`, unchanged), with one contract
   change: `stage` also reports the parent binding, so the C4 verify spec derives from the C3 output.
-  The executor reads the source from the pinned file and refuses a changed one.
-- **Derived specs.** `build_guest_spec` derives C3's spec from the C2 probe's parent binding, a
-  32-hex `token32`, and the recipe hash. `build_verify_spec` derives C4's spec from the C3 stage
-  output. Neither spec is caller-supplied. `token32` is minted at C0 admission, which this source
-  refuses, so `guest_spec`, `guest_context` and `guest_iidfile` stay unresolved in the plan.
+  The executor reads the source from the pinned file and refuses a changed one. The file is also one of
+  the bound program files: the GO commits to its bytes, so a change after activation refuses before any
+  dispatch as an input drift. The pin is the content check; the binding is what the activation commits to.
+- **Derived specs.** `render_guest_spec` builds C3's spec with `build_guest_spec` from the C2 probe's
+  parent binding, the chain's `token32` and the recipe hash. In C4 it builds the verify spec with
+  `build_verify_spec` from the C3 output; the spec's context must carry the same `token32`. The context
+  path becomes `guest_context`, and `guest_iidfile` is that path with `.iid` appended. None of these is
+  caller-supplied: the plan shows placeholders, and the run derives the values from the chain. C0 is
+  refused here, so in this source they are never derived.
 - **Colima and Desktop.** Colima children resolve `docker` to `/usr/local/bin/docker` through an owned
   `bin/docker` link at the front of `PATH`, re-checked on every Colima step. Desktop runs with its
   pinned socket, `DOCKER_HOST`, an owned `DOCKER_CONFIG`, no `HOME` and no `DOCKER_CONTEXT`.
-- **Guest.** A guest exit 0 closes only the client. The stage ends as `guest_unknown`.
+- **Guest.** Any waited exit of a guest step, zero or not, is its client's exit. The guest's own closure
+  is unknown, so the step is `guest_unknown` and the stage stops there. A timeout, cap or monitor refusal is
+  `unknown_retained`.
 - **Test seams (tests only).** `TEST_SEAM` lifts the owner refusal and the static reasons inside the
-  test process only; production defaults are off. Tests that replace predecessor verification (C5,
-  C6), a missing helper (D2's `host_stage_dockerfile`), or the historical record (`HISTORICAL_C0`)
-  say so.
+  test process only; production defaults are off. Tests that replace predecessor verification (C3, C4, C5
+  and C6), the C0 origin walk for C3 and C4, or the historical record (`HISTORICAL_C0`) say so.
+- **Desktop context (D2).** `host_stage_dockerfile` writes the reviewed recipe exclusively as the build
+  context's `Dockerfile`, reads it back and compares it with the pin. An existing `Dockerfile` refuses:
+  nothing is adopted or overwritten.
 - **Dispatch coverage (`CoverageLedgerTests`).** Every manifest step has one entry. The kinds are:
-  `executed` (the adapter ran it with a real local child or the real handler), `executed_stub_chain`
-  (the adapter ran it with the predecessor stubbed), `executed_test_handler` (a test handler stands in
-  for a missing one: D2's `host_stage_dockerfile`), `helper_direct` (the handler ran on controlled inputs,
-  not through a stage), and `argv_only` (the argv and env pins were rendered and checked, and the step
-  was not run through a stage). The C2 probe is `argv_only`: its pinned source is rendered into the
-  argv, and the same tail was run locally on this host, where it fails closed with no output, because
-  it needs Linux guest facts. The guest steps of C3 and C4 run the pinned source through a local child that
-  replaces only the `ssh` wrapper: the C3 stage writes the recipe it read from stdin byte-exact, and
-  the C4 verify re-verifies the context C3 staged. Each stops at its guest effect, `guest_unknown`.
-  In the C2 route echo, the comparison runs after the echo and before any payload. A mismatch refuses
-  the stage, and the probe is recorded as `not_dispatched`.
+  `executed` (the adapter ran it with a real local child or the real handler, including D2's
+  `host_stage_dockerfile`), `executed_stub_chain` (the adapter ran it with the predecessor stubbed),
+  `helper_direct` (the handler ran on controlled inputs, not through a stage), and `halted_in_stage_loop`
+  (the stage loop reached it and recorded it `not_dispatched` after an unknown guest closure). C2's probe
+  and C4's build, readback and iidfile steps are `halted_in_stage_loop`. The C3 and C4 guest steps run the
+  pinned source through a local child that replaces only the `ssh` wrapper: C3 writes the recipe it read from
+  stdin byte-exact, and C4's verify re-verifies the context C3 staged. The C2 probe's argv is checked
+  separately; on this host it fails closed with no output, because it needs Linux guest facts.
+  The positive path and each unknown-closure path are separate tests. C2: a matching echo halts before the
+  probe; a mismatched echo refuses; an echo whose allowance runs out stops before the probe. C4: a clean
+  verify halts before the build; a non-zero client exit is still `guest_unknown`; a timeout stops the stage.
+  D2: the reviewed Dockerfile is staged, built and read back; a pre-existing Dockerfile refuses before the
+  build; a build whose allowance runs out stops before the readback.
 - **Not proven.** Native execution. Owner-verified activation. Exclusive volume creation (D1) and
   per-target removal re-observation (D4). The helper deadline across uninterruptible kernel waits
   (the residual above). The C2 probe through the stage loop: after the route echo's unknown closure
   the adapter halts, so the probe runs only as an argv check here. C0's real run for a fresh token
-  is refused until the helper bounds are demonstrated. The `token32` source for C3 and C4 (C0
-  admission). The guest closure rule for multi-effect stages, which C2 needs before its probe can
-  be dispatched.
+  is refused until the helper bounds are demonstrated; the C0 origin is exercised by a test run only, so
+  the `token32` route has not run natively. The guest closure rule for multi-effect stages, which C2 needs
+  before its probe can be dispatched.
 
 ## Remaining gates
 
@@ -399,5 +412,5 @@ Controls run through `effigy test:qualification:workspace-private:macos`
 (`macos_preparation_boundaries.py`: 104 cases, injected only, no native action). Docs run
 through `effigy qa:docs`.
 The executor runs through `effigy test:qualification:workspace-private:macos-executor`
-(`macos_stage_executor_tests.py`: 85 cases, injected local children, no native action; execution runs only under the test-only seams described in the Executor section).
+(`macos_stage_executor_tests.py`: 98 cases, injected local children, no native action; execution runs only under the test-only seams described in the Executor section).
 Its shared primitive change is covered by `effigy test:qualification:linux-preparation`.
