@@ -144,7 +144,8 @@ Stash-hosted Ubuntu VM's Stage1 read-only probe, Stage2 setup and Recipe E route
 It is preparation only; it arms nothing.
 The [macOS 4f6a5ed3 preparation](macos-4f6a5ed3-preparation.md) plans the fresh
 Colima and Docker Desktop stages as a staged manifest, each needing its own GO.
-It records only local metadata and gives no proof credit.
+Manifest r3 corrects the r2 Colima flags, route order, deadlines, caps and cleanup
+authority. It records only local metadata and gives no proof credit.
 
 Preparation and proof requests are different admissions. Assemble one concrete
 preparation request listing each unresolved backend fact, exact permitted probe
