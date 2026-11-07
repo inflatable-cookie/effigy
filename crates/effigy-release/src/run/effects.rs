@@ -69,6 +69,7 @@ pub enum HostedEvidence {
 
 pub(super) fn settlement_refusal(
     report: &effigy_kernel::custody::StopReport,
+    operation: &str,
 ) -> Option<ReleaseError> {
     use effigy_kernel::{custody::CaptureState, observe::Observed};
     let group_unknown = !matches!(report.group, Observed::Verified(..) | Observed::Absent(_));
@@ -76,12 +77,107 @@ pub(super) fn settlement_refusal(
     if !group_unknown && report.residue.is_empty() && !capture_truncated {
         return None;
     }
+    let residues = report
+        .residue
+        .iter()
+        .take(8)
+        .map(reason_category)
+        .collect::<Vec<_>>()
+        .join(",");
+    let operation = match operation {
+        "symbolic-ref" => "symbolic-ref",
+        "rev-parse" => "rev-parse",
+        _ => "other",
+    };
+    let stage = if operation == "symbolic-ref" {
+        "validate"
+    } else {
+        "unspecified"
+    };
     Some(ReleaseError::TaskInvocation(format!(
-        "release process closure or capture is unresolved (group: {}; residue count: {}; capture: {})",
+        "release process closure or capture is unresolved (group: {}; residue count: {}; capture: {}); diagnostic: stage={stage}; operation={operation}; leader={}; group={}; residue=[{residues}]; residue-more={}",
         if group_unknown { "unknown" } else { "settled" },
         report.residue.len(),
         if capture_truncated { "truncated" } else { "complete" },
+        observation_category(&report.leader),
+        observation_category(&report.group),
+        report.residue.len().saturating_sub(8),
     )))
+}
+
+fn observation_category<T>(value: &effigy_kernel::observe::Observed<T>) -> &'static str {
+    use effigy_kernel::observe::Observed;
+    match value {
+        Observed::Verified(..) => "verified",
+        Observed::Absent(_) => "absent",
+        Observed::Unknown(reason) => reason_category(reason),
+    }
+}
+
+// Only static categories leave the custody report; payloads may contain secrets.
+pub(super) fn reason_category(reason: &effigy_kernel::observe::UnknownReason) -> &'static str {
+    use effigy_kernel::observe::UnknownReason as Reason;
+    match reason {
+        Reason::TimedOut { phase, .. } => {
+            if phase.starts_with("group closure of process group ") {
+                "timed-out:group-closure"
+            } else {
+                "timed-out:other"
+            }
+        }
+        Reason::Busy { .. } => "busy",
+        Reason::Cancelled(_) => "cancelled",
+        Reason::PermissionDenied => "permission-denied",
+        Reason::ToolUnavailable(_) => "tool-unavailable",
+        Reason::Unparsable(_) => "unparsable",
+        Reason::Inconsistent(message) => match message.as_str() {
+            "no live workload member to signal" => "inconsistent:no-live-workload-member",
+            "unproven group closure" => "inconsistent:unproven-group-closure",
+            "leader already reaped" => "inconsistent:leader-already-reaped",
+            "group still has live members" => "inconsistent:live-group",
+            "workload still has live members" => "inconsistent:live-workload",
+            _ => {
+                // Only exact known anchor facts can leave this private seam.
+                const ANCHOR_FACTS: &[&str] = &[
+                    "generation:absent",
+                    "generation:replaced",
+                    "generation:unreadable",
+                    "state:absent",
+                    "state:replaced",
+                    "state:unreadable",
+                    "state:zombie",
+                    "nonce:mismatch",
+                    "nonce:unreadable",
+                    "nonce:missing",
+                    "nonce:unparsable",
+                    "birth:boot-mismatch",
+                    "birth:birth-order-or-kind",
+                    "current-group:unreadable",
+                    "current-group:mismatch",
+                ];
+                message
+                    .strip_prefix("unproven group closure; anchor=")
+                    .and_then(|fact| ANCHOR_FACTS.iter().copied().find(|known| *known == fact))
+                    .unwrap_or("inconsistent:other")
+            }
+        },
+        Reason::GuardUnavailable => "guard-unavailable",
+        Reason::Injected => "injected",
+        Reason::Untrusted(_) => "untrusted",
+        Reason::HostAuthorityRequired => "host-authority-required",
+        Reason::StoreUnreadable(_) => "store-unreadable",
+    }
+}
+
+pub(super) fn refusal_operation(label: &str, argv: &[OsString]) -> &'static str {
+    if label != "release git" {
+        return "other";
+    }
+    match argv.get(3).and_then(|arg| arg.to_str()) {
+        Some("symbolic-ref") => "symbolic-ref",
+        Some("rev-parse") => "rev-parse",
+        _ => "other",
+    }
 }
 
 fn command_error(context: &str, output: &std::process::Output) -> ReleaseError {
@@ -388,6 +484,7 @@ impl GitEffects {
             Some("restore") => "restore",
             _ => "other",
         };
+        let refusal_operation = refusal_operation(label, &argv);
         let spec = ProcessSpec {
             argv,
             cwd: cwd.into(),
@@ -432,7 +529,7 @@ impl GitEffects {
             ReleaseError::TaskInvocation(format!("release process cleanup context: {error:?}"))
         })?;
         let closed = process.stop(&cleanup);
-        let refusal = settlement_refusal(&closed);
+        let refusal = settlement_refusal(&closed, refusal_operation);
         #[cfg(test)]
         if self.trace_settlement || (self.trace_refusals && refusal.is_some()) {
             super::tests::trace_settlement(

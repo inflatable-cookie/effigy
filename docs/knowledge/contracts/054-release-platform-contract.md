@@ -15,7 +15,7 @@ Q-010 process custody: Git operations, hosted evidence lookups and stage tasks r
 checkout run explicitly. Before launch, the run registers its sentinel and each
 process receipt; closure and bounded output are verified before a stage consumes
 the result. Adapter exit codes are interpreted by the stage (a missing tag is
-an observed absence), while unknown closure refuses completion. Settlement refusals report categorical group and capture states and a residue count without exposing observation details. Workspace guests
+an observed absence), while unknown closure refuses completion. Settlement refusals report categorical group and capture states and a residue count. A bounded diagnostic appends fixed operation and stage labels, leader and group categories, and up to eight residue reason categories with an omitted count; it never exposes observation payloads. The symbolic-ref operation identifies validate; other stages are unspecified. Workspace guests
 cannot mutate release state through the host-only release API.
 The synthetic full-run and hosted-wait proofs record the returned live stop report's
 leader/group states and residue reason categories before fixture cleanup. Synthetic
