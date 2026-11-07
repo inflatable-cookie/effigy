@@ -76,11 +76,21 @@ PATH_BINDINGS = ('control', 'colima_home', 'colima_cache_home', 'colima_docker_c
                  'desktop_config', 'desktop_context_dir', 'desktop_iidfile', 'desktop_cidfile')
 DOWNLOAD_UNADMITTED = ('download cap is payload bytes; wire traffic is not counted and the manifest '
                        'records no pinned image size, so a bounded prefetch cannot verify size')
+# The helper residual: helpers run under a timer that interrupts Python-level work and interruptible system
+# calls only, so an uninterruptible kernel wait is not bounded; and the stage monitor is sampled at helper
+# boundaries, not during a helper. The shared deadline and the live storage threshold are therefore not
+# enforced across helpers. Every stage whose helpers run is statically refused with this residual.
+HELPER_RESIDUAL_REASON = ('helpers are bounded only for interruptible work (an uninterruptible kernel wait is not '
+                          'bounded) and the storage monitor is sampled at helper boundaries, so the shared deadline '
+                          'and the live storage threshold are not enforced across helpers')
 UNADMITTED = {
+    'C0': HELPER_RESIDUAL_REASON + '; C0 is refused until those bounds are demonstrated',
+    'D0': HELPER_RESIDUAL_REASON + '; D0 is refused until those bounds are demonstrated',
     'C1': DOWNLOAD_UNADMITTED,
-    'C2': ('multi-effect guest stage: guest closure is unknown after the status step, so the route echo '
-           'and probe cannot run in one stage; the stage needs splitting, and its probe source has no pin'),
-    'C3': ('guest_spec must be rendered from the C2 probe receipt, and C2 is unadmitted; stage_source has no pin'),
+    'C2': ('multi-effect guest stage: the guest closure is unknown after the route echo, so the probe is not '
+           'reachable through this adapter; the probe source itself is pinned (macos_guest_context.py)'),
+    'C3': ('guest_spec is derived from the C2 probe output and a token32 minted at C0 admission; C0 is refused '
+           'and C2 is unadmitted'),
     'C4': DOWNLOAD_UNADMITTED,
     'D1': ('docker volume create is idempotent and the volume name is observable to other clients: exclusive '
            'creation of the activation volume cannot be established, so the stage is refused'),
@@ -95,14 +105,47 @@ UNADMITTED = {
 TEST_SEAM = {'owner_activation': False, 'admit_unadmitted': False, 'unpinned': {}}
 OWNER_ACTIVATION_REASON = ('no owner-controlled activation mechanism exists in this repository; a file that the '
                            'same account can create and chmod grants no authority, so execution is refused')
-GUEST_BINDING = {'c4-render-verify-spec': 'guest_verify_spec'}
-# Never caller-supplied. Derived ones come from the chain or this run; unpinned ones have no reviewed
-# source in this repository. The plan shows each as an explicit placeholder, and execution refuses them.
+# The guest helper that the C2 probe, C3 stage and C4 verify argv run in the guest. Pinned by sha256.
+GUEST_CONTEXT_PATH = HERE / 'macos_guest_context.py'
+GUEST_CONTEXT_SHA256 = '713cb10ea8ce2d5c15422650b3aa8abfe45ef5de1b0fa885219b70d3cab0f873'
+PINNED_SOURCE_BINDINGS = {'probe_source': 'probe', 'stage_source': 'stage', 'verify_source': 'verify'}
+# Never caller-supplied. Derived ones come from the chain or this run; pinned sources come from the pinned
+# guest helper; unpinned ones are derived from values this repository cannot produce (a C0-minted token32).
 DERIVED_BINDINGS = ('image_id', 'owned_container_ids', 'owned_image_id', 'owned_volume_name')
-UNPINNED_BINDINGS = ('probe_source', 'stage_source', 'verify_source', 'guest_spec', 'guest_verify_spec',
-                     'guest_context', 'guest_iidfile')
-NOT_SUPPLIED = DERIVED_BINDINGS + UNPINNED_BINDINGS
+UNPINNED_BINDINGS = ('guest_spec', 'guest_verify_spec', 'guest_context', 'guest_iidfile')
+NOT_SUPPLIED = DERIVED_BINDINGS + UNPINNED_BINDINGS + tuple(PINNED_SOURCE_BINDINGS)
 PLAN_PLACEHOLDERS = {k: f'<{k}>' for k in NOT_SUPPLIED}
+
+
+def guest_source_bindings():
+    """The three guest sources, read from the pinned helper. A changed file refuses: the sha must equal the pin."""
+    raw = GUEST_CONTEXT_PATH.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != GUEST_CONTEXT_SHA256:
+        raise Refusal('the pinned guest helper differs from its sha256: refuse')
+    text = raw.decode()
+    return {slot: text for slot in PINNED_SOURCE_BINDINGS}
+
+
+def build_guest_spec(probe_parent, token32):
+    """C3's guest spec: the parent binding the C2 probe observed, the fresh context name, the recipe hash."""
+    if not re.fullmatch(r'[0-9a-f]{32}', str(token32)):
+        raise Refusal('token32 must be 32 lowercase hex')
+    if not isinstance(probe_parent, dict) or set(probe_parent) != {'path', 'device', 'inode', 'uid'}:
+        raise Refusal('the C2 probe must report the guest parent binding')
+    return json.dumps(dict(parent=probe_parent, name=f'effigy-531-image-{token32}',
+                           sha256=RECIPE_SHA256), sort_keys=True)
+
+
+def build_verify_spec(stage_stdout):
+    """C4's verify spec, derived from the C3 stage output: the parent it reported, the context name, the context."""
+    result = json.loads(stage_stdout)
+    if not isinstance(result, dict) or not isinstance(result.get('parent'), dict):
+        raise Refusal('the C3 stage must report the parent binding')
+    parent = result.pop('parent')
+    name = Path(result['path']).name
+    if not re.fullmatch(r'effigy-531-image-[0-9a-f]{32}', name) or result['path'] != parent['path'] + '/' + name:
+        raise Refusal('the C3 stage must report its own context under the parent')
+    return json.dumps(dict(parent=parent, name=name, context=result), sort_keys=True)
 # Steps whose non-zero exit is the observation itself (absence of a volume); post_check reads it.
 EXPECTED_NONZERO = frozenset({'d1-volume-absent'})
 IMAGE_ID_SETTERS = ('c4-read-iidfile', 'd2-read-iidfile')
@@ -246,6 +289,7 @@ def resolve_stage(stage_id, bindings, manifest=None):
     stage = stage_of(manifest, stage_id)
     validate_bindings(bindings, manifest)
     view = dict(PLAN_PLACEHOLDERS, **bindings)
+    view.update(guest_source_bindings())
     prep.check_stage(stage)
     if 'download_cap_bytes' in stage:
         prep.check_effect_stage(stage)
@@ -270,13 +314,14 @@ RUNTIME_DERIVED = {
     'owned_container_ids': 'D4 selection: receipted creations whose live engine, ID, name and label match',
     'owned_image_id': 'D4 selection, as for containers',
     'owned_volume_name': f'{VOLUME_PREFIX}<token>-<activation_id>: per activation, bound at D1',
-    'probe_source': 'unpinned: no reviewed probe source in this repository; C2 stays unadmitted',
-    'stage_source': 'unpinned: no reviewed stage source in this repository; C3 stays unadmitted',
-    'verify_source': 'unpinned: no reviewed verify source in this repository',
-    'guest_spec': 'unpinned: rendered from the C2 probe receipt, which is not admitted',
-    'guest_verify_spec': 'unpinned: rendered from the C4 guest probe, which is not admitted',
-    'guest_context': 'unpinned: derived from token32, which is minted at C0 admission',
-    'guest_iidfile': 'unpinned: derived from token32, as for guest_context',
+    'probe_source': 'pinned: macos_guest_context.py probe (sha256 pinned in macos_stage_executor.py)',
+    'stage_source': 'pinned: macos_guest_context.py stage (same pin)',
+    'verify_source': 'pinned: macos_guest_context.py verify (same pin)',
+    'guest_spec': 'derived by build_guest_spec from the C2 probe output and a token32 minted at C0 admission; '
+                  'C0 is refused, so not derivable here',
+    'guest_verify_spec': 'derived by build_verify_spec from the C3 stage output (C3 is unadmitted here)',
+    'guest_context': 'derived from token32, minted at C0 admission (C0 is refused here)',
+    'guest_iidfile': 'derived from token32, as for guest_context',
 }
 
 
@@ -558,10 +603,22 @@ def call_bounded(fn, seconds):
 # ---------------------------------------------------------------------------------------------------
 
 def read_ref(ctx, ref):
-    """Helper inputs name a step output of this stage ('step.stdout') or a bound path."""
+    """Helper inputs name a step output of this stage ('step.stdout'), a step output of the verified
+    predecessor ('step.stdout' in prior_outputs), or a bound path."""
     if ref.endswith('.stdout') and ref[:-len('.stdout')] in ctx['outputs']:
         return Path(ctx['outputs'][ref[:-len('.stdout')]]['stdout']).read_text()
+    if ref in ctx.get('prior_outputs', {}):
+        return Path(ctx['prior_outputs'][ref]).read_text()
     return Path(render1(ref, ctx['bindings'])).read_text()
+
+
+def prior_output_paths(prior):
+    """The exec steps' stdout paths of a verified predecessor. Each stream's hash was checked when the
+    predecessor was verified, so a helper may read these as that stage's original output."""
+    if prior is None:
+        return {}
+    return {f"{x['id']}.stdout": f"{prior['stage_root']}/{x['id']}/stdout"
+            for x in prior.get('steps', []) if x.get('kind') == 'exec' and not x.get('skipped')}
 
 
 def h_make_owned_dir(ctx, step):
@@ -609,8 +666,9 @@ def h_compare_route_echo(ctx, step):
 
 
 def h_render_guest_spec(ctx, step):
-    """C3 stages the reviewed recipe bytes (runtime.Dockerfile: exact sha, 474 bytes) as the stdin file.
-    C4 renders its verify spec from the binding as one JSON object."""
+    """C3 stages the reviewed recipe bytes (runtime.Dockerfile: exact sha, 474 bytes) as its stdin file, and
+    derives its guest spec from the C2 probe output and token32. C4 derives its verify spec from the C3 stage
+    output. Each derived spec is written exclusively into this step's directory."""
     if step['id'] == 'c3-render-guest-spec':
         data = RECIPE_PATH.read_bytes()
         if len(data) != RECIPE_BYTES or hashlib.sha256(data).hexdigest() != RECIPE_SHA256:
@@ -619,14 +677,20 @@ def h_render_guest_spec(ctx, step):
         if Path(path).read_bytes() != data:
             raise Refusal('recipe readback differs from the reviewed bytes')
         ctx['recipe'] = dict(path=path, sha256=RECIPE_SHA256, bytes=len(data))
-        return dict(ctx['recipe'])
-    key = GUEST_BINDING[step['id']]
-    text = ctx['bindings'][key]
-    data = text.encode()
-    if len(data) > RECIPE_CAP_BYTES or not isinstance(json.loads(text), dict):
-        raise Refusal(f'{key} must be one JSON object within the recipe cap')
-    path = write_new_file(ctx['step_root'], f"{step['id']}.json", data)
-    return dict(path=path, sha256=hashlib.sha256(data).hexdigest(), bytes=len(data))
+        if 'guest_spec' not in ctx['bindings']:
+            probe = json.loads(read_ref(ctx, 'c2-guest-probe.stdout'))
+            spec = build_guest_spec(probe.get('parent'), ctx['bindings'].get('token32', ''))
+            ctx['bindings']['guest_spec'] = spec
+        return dict(ctx['recipe'], spec_sha256=hashlib.sha256(ctx['bindings']['guest_spec'].encode()).hexdigest())
+    if step['id'] == 'c4-render-verify-spec':
+        spec = build_verify_spec(read_ref(ctx, 'c3-stage-context.stdout'))
+        ctx['bindings']['guest_verify_spec'] = spec
+        data = spec.encode()
+        if len(data) > RECIPE_CAP_BYTES:
+            raise Refusal('the verify spec exceeds the recipe cap')
+        path = write_new_file(ctx['step_root'], f"{step['id']}.json", data)
+        return dict(path=path, sha256=hashlib.sha256(data).hexdigest(), bytes=len(data))
+    raise Refusal(f"{step['id']}: no guest spec rule")
 
 
 def h_read_iidfile(ctx, step):
@@ -1079,6 +1143,7 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
     cap = stage.get('storage_cap_bytes', 0)
     monitor = monitor_factory({'storage': cap}, [control])
     run_bindings = {k: v for k, v in bindings.items() if k not in NOT_SUPPLIED}
+    run_bindings.update(guest_source_bindings())
     run_bindings.update(TEST_SEAM['unpinned'])  # empty in production
     run_bindings['owned_volume_name'] = volume_name(bindings['token'], go['activation_id'])
     if stage_id in ('C5', 'D3', 'D4'):
@@ -1089,7 +1154,8 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
     engine = prior['engine_id'] if prior else None
     ctx = dict(bindings=run_bindings, outputs={}, receipts=list((prior or {}).get('receipts', [])), selection=None,
                recipe=None, stage_root=stage_root, engine_id=engine, desktop_socket=desktop_socket,
-               activation_id=go['activation_id'], claim=claim, pins=pins, pre_foreign=None)
+               activation_id=go['activation_id'], claim=claim, pins=pins, pre_foreign=None,
+               prior_outputs=prior_output_paths(prior))
     steps_out, closure, error = [], 'closed', None
     halted = False  # set when a guest step's closure is unknown: later effects stop, pure host reads may run
     try:
