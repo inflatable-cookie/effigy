@@ -8,6 +8,7 @@ use crate::custody::{Custody, Lifetime, OwnedProcess, ProcessReceipt, ProcessSpe
 use crate::fault::Point;
 use crate::gate::{Gate, Wait};
 use crate::id::*;
+use crate::ident::ProcessIdentity;
 use crate::observe::{AbsenceProof, UnknownReason};
 use crate::outcome::{RequiredObligation, WorkloadOutcome};
 use crate::root::StateRoot;
@@ -368,12 +369,27 @@ pub(super) struct AnchorPin {
 impl AnchorPin {
     pub(super) fn pin(&mut self, processes: &[OwnedProcess]) {
         for anchor in processes.iter().filter_map(|process| process.anchor()) {
-            self.pids.push(anchor.pid);
-            // SAFETY: the recorded anchor of this scenario's own launch; the
-            // signal only suspends it until settlement stops it or the pin
-            // drops. A reused pid inside one scenario run is not a real
-            // window, and every other harness kill works on recorded pids.
-            unsafe { libc::kill(anchor.pid as i32, libc::SIGSTOP) };
+            // A recorded pid is not yet a live anchor. Once the group closes the
+            // anchor retires itself (effigy#520), so a bare `kill` could reach
+            // whatever the kernel gave that pid to next, and a signal return
+            // would then read as evidence about a process this launch never
+            // owned. Checking this launch's own generation immediately before
+            // the signal narrows that to the two calls themselves, and does not
+            // close it: a retirement plus pid reuse between the check and the
+            // `kill` can still stop, and the pin's drop later continue, an
+            // unrelated process. macOS has no atomic signal-by-identity (the
+            // same documented identity-check/numeric-signal window
+            // `custody::anchor::member_signal` records), so this narrows the
+            // window and claims nothing more.
+            if !world::identity_alive(&anchor) {
+                continue;
+            }
+            // SAFETY: the recorded anchor of this scenario's own launch, its
+            // generation held immediately above; a retirement plus reuse
+            // between the two calls is not excluded.
+            if unsafe { libc::kill(anchor.pid as i32, libc::SIGSTOP) } == 0 {
+                self.pids.push(anchor.pid);
+            }
         }
     }
 }
@@ -1593,9 +1609,88 @@ fn faults_recovery_budget_settles_a_slow_release_the_injected_budget_refuses() {
         .expect("the recovery budget settles the same releases");
 }
 
-/// One custody launch whose workload exits at once, settled under an armed
-/// `AnchorStop`. Returns whether the point delivered.
-fn anchor_stop_delivery(home: &Home, pin: bool) -> bool {
+/// Positive pin evidence: this launch's *recorded* anchor generation is alive
+/// and the kernel reads it `Stopped`. A `kill` return is not evidence. Once the
+/// group closes the anchor retires itself (effigy#520), so a pin can arrive
+/// after it is gone, and this launch's recorded pid may then belong to another
+/// process.
+fn anchor_positively_stopped(anchor: &ProcessIdentity) -> bool {
+    world::identity_alive(anchor)
+        && matches!(
+            crate::ident::process_state(anchor.pid),
+            Observed::Verified(crate::ident::ProcessState::Stopped, _)
+        )
+}
+
+/// One owned workload whose stdin the owner keeps (`Terminal::Pipe`), so the
+/// test holds it at a private barrier and releases it with one byte: no poll,
+/// no sleep, no extra budget, and the release works whether or not the workload
+/// has reached its `read` yet. The hold is custody of this launch only, and it
+/// releases on `Drop`, so an assertion that fails above the hold cannot strand a
+/// workload, its group and its anchor behind a blocked `read`.
+struct Held {
+    process: Option<OwnedProcess>,
+}
+impl Held {
+    fn new(process: OwnedProcess) -> Self {
+        Self {
+            process: Some(process),
+        }
+    }
+    fn process(&self) -> &OwnedProcess {
+        self.process.as_ref().expect("held workload")
+    }
+    /// Release the held workload and hand back the launch's own handle.
+    fn release(mut self) -> OwnedProcess {
+        self.send().expect("release the held workload");
+        self.process.take().expect("held workload")
+    }
+    fn send(&mut self) -> std::io::Result<()> {
+        let Some(process) = self.process.as_ref() else {
+            return Ok(());
+        };
+        match process.write_stdin(b"\n", Instant::now() + Duration::from_secs(1)) {
+            // A workload that already exited closed its own read end: the hold
+            // is finished, not failed.
+            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+            other => other,
+        }
+    }
+}
+impl Drop for Held {
+    fn drop(&mut self) {
+        // Best effort while unwinding: the assertion that failed already names
+        // the truth, and a second panic here would abort the test process.
+        let _ = self.send();
+    }
+}
+
+/// How this launch earns the pin premise before settlement: the original
+/// fast-exit workload, a held workload released unpinned, or a held workload
+/// whose recorded anchor is positively stopped before the release.
+#[derive(Clone, Copy)]
+enum Lead {
+    /// `exit 0` exactly as the original (effigy#666) occurrence had it: the
+    /// workload is gone as it starts, so nothing keeps the anchor alive while a
+    /// pin would run.
+    FastExit,
+    /// Held, released unpinned: the anchor retires itself (effigy#520).
+    Natural,
+    /// Held until its recorded anchor is positively stopped, then released.
+    Pinned,
+}
+impl Lead {
+    fn held(self) -> bool {
+        !matches!(self, Self::FastExit)
+    }
+    fn pinned(self) -> bool {
+        matches!(self, Self::Pinned)
+    }
+}
+
+/// One custody launch, released only as far as `lead` allows, settled under an
+/// armed `AnchorStop`. Returns whether the point delivered.
+fn anchor_stop_delivery(home: &Home, lead: Lead) -> bool {
     let path = home.home();
     let cx = mutate();
     let root = StateRoot::effects(&cx, &path).expect("root");
@@ -1610,28 +1705,49 @@ fn anchor_stop_delivery(home: &Home, pin: bool) -> bool {
         &mut fake,
     )
     .expect("begin");
-    let specs = vec![workload(&path, "exit 0", finite())];
-    let mut processes = Custody::spawn_all(&mut run, specs, &cx).expect("spawn");
-    let anchor = processes[0].anchor().expect("recorded anchor");
+    let body = if lead.held() { "read -r _" } else { "exit 0" };
+    let mut spec = workload(&path, body, finite());
+    // The owner keeps the workload's stdin: that pipe is the private barrier.
+    spec.terminal = Terminal::Pipe;
+    let mut launched = Custody::spawn_all(&mut run, vec![spec], &cx).expect("spawn");
+    let held = Held::new(launched.pop().expect("one workload"));
+    let anchor = held.process().anchor().expect("recorded anchor");
     let mut anchors = AnchorPin::default();
-    if pin {
-        anchors.pin(&processes);
-        // The pin is the state the discriminator proves: the recorded identity
-        // sits stopped until settlement stops it.
-        wait_until("pinned anchor stopped", Duration::from_secs(2), || {
-            matches!(
-                crate::ident::process_state(anchor.pid),
-                Observed::Verified(crate::ident::ProcessState::Stopped, _)
-            )
-        });
+    match lead {
+        Lead::Pinned => {
+            anchors.pin(std::slice::from_ref(held.process()));
+            // The pin, not the test's hope, is the state the discriminator
+            // proves: the recorded identity sits stopped until settlement stops
+            // it. The workload still holds the group open here, so the anchor
+            // cannot have retired itself (effigy#520) out from under the pin.
+            wait_until("pinned anchor stopped", Duration::from_secs(2), || {
+                anchor_positively_stopped(&anchor)
+            });
+        }
+        Lead::FastExit => {
+            // The original premise, established instead of raced: the group
+            // closed with the workload, so the anchor retires itself within one
+            // poll of that closure. Wait past the bound, then pin what is left
+            // and refuse to read the attempt as evidence.
+            wait_until("fast-exit anchor retired", Duration::from_secs(5), || {
+                !world::identity_alive(&anchor)
+            });
+            anchors.pin(std::slice::from_ref(held.process()));
+            assert!(
+                !anchor_positively_stopped(&anchor),
+                "a retired anchor cannot be positive stopped evidence"
+            );
+        }
+        Lead::Natural => {}
     }
-    let exit = match processes[0].wait(&cx.operation().child(Duration::from_secs(1))) {
+    let mut process = held.release();
+    let exit = match process.wait(&cx.operation().child(Duration::from_secs(1))) {
         Observed::Verified(exit, _) => exit,
         other => panic!("workload exit: {other:?}"),
     };
-    processes[0].complete(&mut run, exit).expect("complete");
+    process.complete(&mut run, exit).expect("complete");
     run.finish(WorkloadOutcome::Succeeded).expect("finish");
-    if pin {
+    if lead.pinned() {
         // Past the anchor's poll bound a free-running anchor would be gone;
         // the pinned one must still sit at its settlement boundary.
         std::thread::sleep(Duration::from_millis(1200));
@@ -1656,16 +1772,29 @@ fn anchor_stop_delivery(home: &Home, pin: bool) -> bool {
 /// `AnchorStop` nor `AnchorStopped` — the original failure, reproduced
 /// deterministically by waiting past the anchor's poll bound — while the pin
 /// holds the recorded anchor at that boundary and delivery is deterministic.
+///
+/// effigy#678: the pinned half launched a workload that exited as it started,
+/// so the pin raced effigy#520's self-retirement of the anchor. Under later-stage
+/// load it arrived after the anchor was gone; the `kill` return said nothing
+/// about this launch and `bounded wait expired: pinned anchor stopped` failed.
+/// The workload is now held at its own stdin and released only once the pin is
+/// positive evidence, and the original premise is the first arm below — an
+/// observed control, not a race the test hopes to win.
 #[test]
 fn faults_anchor_retirement_delivery_is_pinned_to_settlement() {
-    let first = home();
+    let fast = home();
     assert!(
-        !anchor_stop_delivery(&first, false),
+        !anchor_stop_delivery(&fast, Lead::FastExit),
+        "a fast-exit launch has no anchor left to pin, so it cannot deliver at AnchorStop"
+    );
+    let natural = home();
+    assert!(
+        !anchor_stop_delivery(&natural, Lead::Natural),
         "a self-retired anchor must not deliver at AnchorStop"
     );
-    let second = home();
+    let pinned = home();
     assert!(
-        anchor_stop_delivery(&second, true),
+        anchor_stop_delivery(&pinned, Lead::Pinned),
         "the pinned anchor must deliver at AnchorStop"
     );
 }

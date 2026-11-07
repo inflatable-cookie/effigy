@@ -71,7 +71,23 @@ group closing — legitimately, before settlement reaches it — and the require
 settlement still stops it last by identity, and recovery stops it the same way,
 so the pin freezes exactly the boundary the points observe; dropping it
 continues the anchors, so an abandoned run still leaves no anchor behind. The
-recovery step's rerun settles on the recovery budget, not the one-second
+pin checks the launch's own recorded generation immediately before it stops and
+records a pid: a bare state observation, like a bare `kill` return, says nothing
+once the anchor has retired and the kernel has given its pid to another process
+(effigy#678). The check and the signal are separate calls, so a retirement plus
+reuse between them is narrowed, not excluded.
+The one pinned proof that has to be positive about its own premise —
+`faults_anchor_retirement_delivery_is_pinned_to_settlement` — holds its workload
+at the launch's own owner-written stdin until the recorded anchor reads
+`Stopped`, then releases it. That workload exit is what makes the pin a premise
+rather than a race: a workload that exits as it starts closes its group at once,
+so the anchor can retire itself (effigy#520) before a pin runs, and the stop
+proof then has nothing of this launch's to observe. The test's first arm keeps
+that old premise as an observed control. The source mechanism is that ordering;
+the later-stage occurrence of `bounded wait expired: pinned anchor stopped` at
+effigy#666 is consistent with it under load, but no retained record identifies
+what that run's pin actually reached.
+The recovery step's rerun settles on the recovery budget, not the one-second
 injected-scenario budget a faulted settle waits out (effigy#618).
 The six fault shards rotate the starting shard at each traced crossing. With
 six fault types, plain modulo assigned every Stall and its parent-side
