@@ -947,7 +947,9 @@ class DispatchSeamTests(Fixture):
                                activation_id='act-c5-0001')
         self.assertEqual(receipt['closure'], 'guest_unknown')
         self.assertEqual([c[0] for c in calls], ['c5-disposable-check'])
-        self.assertEqual(receipt['steps'][-1]['closure'], 'guest_unknown')
+        by_id = {x['id']: x for x in receipt['steps']}
+        self.assertEqual(by_id['c5-disposable-check']['closure'], 'guest_unknown')
+        self.assertEqual(by_id['c5-check-facts']['closure'], 'not_dispatched')  # facts are not read from an unknown run
         self.assertTrue(calls[0][1][0].endswith('colima'))
 
 
@@ -1121,6 +1123,30 @@ class DispatchSweepTests(Fixture):
                 'guest_verify_spec': '{"parent":{"verify":true}}',
                 'guest_context': '/home/u/effigy-531-image-' + '0' * 31 + '1',
                 'guest_iidfile': '/home/u/effigy-531-image-' + '0' * 31 + '1.iid'}
+
+    def test_c2_comparison_runs_through_the_adapter_and_the_probe_is_recorded_not_dispatched(self):
+        routes = {'c2-colima-status': emit('{"status":"running"}'), 'c2-route-echo': emit(prep.ROUTE_ECHO)}
+        with self.controlled():
+            receipt, calls = self.run_sweep('C2', routes)
+        self.assertEqual(receipt['closure'], 'guest_unknown')
+        by_id = {x['id']: x for x in receipt['steps']}
+        self.assertEqual(by_id['c2-compare-route-echo']['kind'], 'helper')
+        self.assertEqual(by_id['c2-compare-route-echo']['closure'], 'closed')  # a pure read, after the unknown echo
+        self.assertEqual(by_id['c2-guest-probe']['closure'], 'not_dispatched')  # the effect never ran
+        self.assertNotIn('c2-guest-probe', [c[0] for c in calls])
+        result = json.loads(Path(self.stage_dir('C2', 'act-sweep-c2') + '/c2-compare-route-echo/helper.json').read_text())
+        self.assertEqual(result['result'], {'matched': True})
+
+    def test_c2_refuses_a_route_echo_that_does_not_match_before_any_payload(self):
+        routes = {'c2-colima-status': emit('{"status":"running"}'), 'c2-route-echo': emit('wrong echo')}
+        with self.controlled():
+            with self.assertRaises(ex.Refusal) as caught:
+                self.run_sweep('C2', routes)
+        self.assertIn('route echo mismatch', str(caught.exception))
+        # the echo is the only guest effect; the probe never reaches dispatch
+        receipts = json.loads(Path(self.stage_dir('C2', 'act-sweep-c2') + '/stage-receipt.json').read_text())
+        self.assertEqual(receipts['closure'], 'refused')
+        self.assertNotIn('c2-guest-probe', [x['id'] for x in receipts['steps'] if x.get('closure') == 'closed'])
 
     def test_c3_delivers_the_reviewed_recipe_as_hash_bound_stdin_then_stops_at_its_guest_effect(self):
         routes = {'c3-stage-context': ("import sys,hashlib\nd=sys.stdin.buffer.read()\n"

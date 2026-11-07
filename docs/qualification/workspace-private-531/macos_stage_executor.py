@@ -533,8 +533,10 @@ def start_identity(pid):
 
 
 def call_bounded(fn, seconds):
-    """Run one in-process helper with its remaining allowance enforced by a timer. The timer's handler raises
-    inside the helper, so a helper cannot run past the stage deadline. Only the main thread can take the timer."""
+    """Run one in-process helper under a timer set to its remaining allowance. The handler raises inside the helper,
+    which interrupts Python-level work and interruptible system calls. It does not interrupt an uninterruptible
+    kernel wait: that residual is not bounded here, and the adapter claims no deadline for it. Only the main thread
+    can take the timer."""
     if threading.current_thread() is not threading.main_thread():
         raise Refusal('bounded helpers need the main thread: refuse')
     if seconds <= 0:
@@ -670,6 +672,12 @@ def h_select_cleanup_targets(ctx, step):
                               volumes=sorted(v['id'] for v in volumes if v['id'] not in selection['volumes']))
     return selection
 
+
+# The only helper that may run after a guest closure is unknown: the C2 route-echo comparison. It reads the
+# echo's captured bytes and checks them against the reviewed constant before any payload could be sent. Every
+# other helper either reads a guest step's output (which is not evidence once the closure is unknown) or is an
+# effect, so it is recorded as not dispatched.
+HALT_SAFE_HELPERS = frozenset({'compare_route_echo'})
 
 # Helper handlers. Anything absent here is unadmitted with its reason (stage_admission).
 HANDLERS = {
@@ -1083,9 +1091,13 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
                recipe=None, stage_root=stage_root, engine_id=engine, desktop_socket=desktop_socket,
                activation_id=go['activation_id'], claim=claim, pins=pins, pre_foreign=None)
     steps_out, closure, error = [], 'closed', None
+    halted = False  # set when a guest step's closure is unknown: later effects stop, pure host reads may run
     try:
         for step in stage['steps']:
             step_root = f"{stage_root}/{step['id']}"
+            if halted and not (step['kind'] == 'helper' and step['helper'] in HALT_SAFE_HELPERS):
+                steps_out.append(dict(id=step['id'], kind=step['kind'], closure='not_dispatched'))
+                continue
             pins.recheck()
             monitor.check()  # live: growth between windows and by helpers counts against the same cap
             now_mono = clock()
@@ -1176,10 +1188,15 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
                                   guest_closure=result.get('guest_closure'), process=result.get('process'),
                                   streams=result.get('streams'), evidence=evidence,
                                   observations=dict(path=observations, sha256=checked_sha(observations, must_be_in=stage_root))))
+            if step_closure_value == 'guest_unknown':
+                halted = True  # the client's exit proves nothing about the guest: no further effects
+                continue
             if step_closure_value != 'closed':
-                closure = 'guest_unknown' if step_closure_value == 'guest_unknown' else 'stopped'
+                closure = 'stopped'
                 break
             post_check(ctx, step['id'], stage_id, bindings, evidence)
+        if halted and closure == 'closed':
+            closure = 'guest_unknown'
     except Refusal as exc:
         closure, error = 'refused', str(exc)
         raise
