@@ -2,6 +2,7 @@
   "schema": "effigy.linux-setup-manifest.v1",
   "source_candidate": "4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02",
   "vm": "433c9e5b-c7b9-469f-9633-24b4addcd3b5",
+  "generated_from": "linux_setup.setup_plan({'go': all gates}); ids, kinds, bases and timeouts must match it (linux_setup_tests ManifestChecks)",
   "probe": {
     "path": "linux-setup-probe.sh",
     "sha256": "6bde748a456617737fb4928d347d55fa96e5a6ff0dac119ace373692ef41fc39"
@@ -9,191 +10,40 @@
   "admission_reserve_seconds": 180,
   "report_reserve_seconds": 120,
   "stage_ceiling_seconds": 1200,
-  "closure_policy": {
-    "vm-waited-exit-postobserved": "Synchronous one-shot root operation through prlctl exec. Credit needs the waited exit and a fresh post-observation of its exact effect. Its child processes are not positively excluded; this basis is a recorded decision for the reviewer and is not contained closure.",
-    "supervised-contained": "Payload runs as a transient systemd SERVICE through linux_supervisor.run_supervised. Credit needs a positive cgroup-empty or inactive terminal fact bound to the boot ID, nonce and InvocationID."
+  "kinds": {
+    "vm-root": "one root operation through prlctl exec; advance needs the waited exit and a post-observation of its exact effect",
+    "ssh-transfer": "one authenticated ssh stdin transfer or command as the payload account; advance needs the waited exit and a remote sha256 post-observation. The ssh exit alone is not closure",
+    "vm-supervised": "payload run by the root supervisor through prlctl exec; advance needs closure credit from linux_supervisor.run_supervised (inactive terminal basis, same InvocationID, no live-populated veto)"
   },
   "rows": [
-    {
-      "id": "E3a",
-      "effect": "create account effigy531, home 0700 via --create-home, no sudo",
-      "transport": "vm-root",
-      "argv": ["/usr/local/bin/prlctl", "exec", "433c9e5b-c7b9-469f-9633-24b4addcd3b5", "/usr/sbin/useradd", "--create-home", "--home-dir", "/home/effigy531", "--shell", "/bin/bash", "effigy531"],
-      "timeout_seconds": 60,
-      "preconditions": ["probe-v2-effigy531-absent", "E3-go", "vm-route-root", "stage1-terminal-stopped"],
-      "closure_basis": "vm-waited-exit-postobserved",
-      "status": "request-template",
-      "failure": "hold; post-observe passwd, group and home; never retry an uncertain create"
-    },
-    {
-      "id": "E3b",
-      "effect": "lock password login for effigy531",
-      "transport": "vm-root",
-      "argv": ["/usr/local/bin/prlctl", "exec", "433c9e5b-c7b9-469f-9633-24b4addcd3b5", "/usr/sbin/usermod", "--lock", "effigy531"],
-      "timeout_seconds": 20,
-      "preconditions": ["E3a-closed"],
-      "closure_basis": "vm-waited-exit-postobserved",
-      "status": "request-template",
-      "failure": "hold; account exists unlocked; reconcile before E4"
-    },
-    {
-      "id": "E3c",
-      "effect": "home directory mode 0700",
-      "transport": "vm-root",
-      "argv": ["/usr/local/bin/prlctl", "exec", "433c9e5b-c7b9-469f-9633-24b4addcd3b5", "/bin/chmod", "0700", "/home/effigy531"],
-      "timeout_seconds": 20,
-      "preconditions": ["E3a-closed"],
-      "closure_basis": "vm-waited-exit-postobserved",
-      "status": "request-template",
-      "failure": "hold; reconcile home mode"
-    },
-    {
-      "id": "E4",
-      "effect": "add effigy531 to docker only (root-equivalent, explicit GO)",
-      "transport": "vm-root",
-      "argv": ["/usr/local/bin/prlctl", "exec", "433c9e5b-c7b9-469f-9633-24b4addcd3b5", "/usr/sbin/usermod", "--append", "--groups", "docker", "effigy531"],
-      "timeout_seconds": 30,
-      "preconditions": ["E3c-closed", "E4-go-root-equivalent", "probe-docker-group-present"],
-      "closure_basis": "vm-waited-exit-postobserved",
-      "status": "request-template",
-      "failure": "hold; id -nG must show exactly effigy531 and docker"
-    },
-    {
-      "id": "E4v",
-      "effect": "observe exact group set after E4 (read-only)",
-      "transport": "vm-root",
-      "argv": ["/usr/local/bin/prlctl", "exec", "433c9e5b-c7b9-469f-9633-24b4addcd3b5", "/usr/bin/id", "-nG", "effigy531"],
-      "timeout_seconds": 10,
-      "preconditions": ["E4-closed"],
-      "closure_basis": "vm-waited-exit-postobserved",
-      "status": "request-template",
-      "failure": "hold; group set differs"
-    },
-    {
-      "id": "E5a",
-      "effect": "install exact sshd drop-in bytes (Match User effigy531)",
-      "transport": "vm-root",
-      "argv": ["/usr/local/bin/prlctl", "exec", "433c9e5b-c7b9-469f-9633-24b4addcd3b5", "/usr/bin/install", "-m", "0644", "-o", "root", "-g", "root", "<STAGED_DROPIN_PATH>", "/etc/ssh/sshd_config.d/50-effigy531.conf"],
-      "timeout_seconds": 30,
-      "preconditions": ["E4v-closed", "E5-go", "drop-in-bytes-sha256-bound-via-place-file"],
-      "closure_basis": "vm-waited-exit-postobserved",
-      "status": "blocked",
-      "missing": ["exact drop-in bytes staged inside the guest with a bound sha256 (no guest staging route is established)", "fresh E5 GO"],
-      "failure": "hold; remove nothing without disposition"
-    },
-    {
-      "id": "E5b",
-      "effect": "syntax-check the whole sshd configuration before reload",
-      "transport": "vm-root",
-      "argv": ["/usr/local/bin/prlctl", "exec", "433c9e5b-c7b9-469f-9633-24b4addcd3b5", "/usr/sbin/sshd", "-t"],
-      "timeout_seconds": 30,
-      "preconditions": ["E5a-closed"],
-      "closure_basis": "vm-waited-exit-postobserved",
-      "status": "request-template",
-      "failure": "hold; do not reload"
-    },
-    {
-      "id": "E5c",
-      "effect": "reload ssh after a passing syntax check",
-      "transport": "vm-root",
-      "argv": ["/usr/local/bin/prlctl", "exec", "433c9e5b-c7b9-469f-9633-24b4addcd3b5", "/usr/bin/systemctl", "reload", "ssh"],
-      "timeout_seconds": 30,
-      "preconditions": ["E5b-closed-passing"],
-      "closure_basis": "vm-waited-exit-postobserved",
-      "status": "request-template",
-      "failure": "hold; restore only by separate disposition"
-    },
-    {
-      "id": "E6a",
-      "effect": "create effigy531 .ssh directory 0700",
-      "transport": "vm-root",
-      "argv": ["/usr/local/bin/prlctl", "exec", "433c9e5b-c7b9-469f-9633-24b4addcd3b5", "/usr/bin/install", "-d", "-m", "0700", "-o", "effigy531", "-g", "effigy531", "/home/effigy531/.ssh"],
-      "timeout_seconds": 20,
-      "preconditions": ["E3c-closed"],
-      "closure_basis": "vm-waited-exit-postobserved",
-      "status": "request-template",
-      "failure": "hold"
-    },
-    {
-      "id": "E6",
-      "effect": "authorized_keys with restrict,expiry-time<=24h only",
-      "transport": "vm-root",
-      "argv": ["/usr/local/bin/prlctl", "exec", "433c9e5b-c7b9-469f-9633-24b4addcd3b5", "/usr/bin/install", "-m", "0600", "-o", "effigy531", "-g", "effigy531", "<STAGED_AUTHORIZED_KEYS>", "/home/effigy531/.ssh/authorized_keys"],
-      "timeout_seconds": 30,
-      "preconditions": ["E6a-closed", "sshd_expiry_time_mentions>0 from probe", "E2-public-key-sha256-bound", "E6-go"],
-      "closure_basis": "vm-waited-exit-postobserved",
-      "status": "blocked",
-      "missing": ["E2 public key bytes staged in the guest with a bound sha256", "absolute expiry-time value at activation (<=24h)"],
-      "failure": "expires; removal needs separate disposition"
-    },
-    {
-      "id": "E7a",
-      "effect": "create the scratch parent on the native root (no mount, no fstab, no share)",
-      "transport": "vm-root",
-      "argv": ["/usr/local/bin/prlctl", "exec", "433c9e5b-c7b9-469f-9633-24b4addcd3b5", "/bin/mkdir", "-m", "0755", "/Volumes/Stash/scratch/effigy"],
-      "timeout_seconds": 20,
-      "preconditions": ["E6-closed", "native-root-mount-observed", "disk-association-verified"],
-      "closure_basis": "vm-waited-exit-postobserved",
-      "status": "blocked",
-      "missing": ["controller-to-guest disk association (linux_setup.verify_disk_association has no supported mechanism yet)"],
-      "failure": "refuse if the path exists"
-    },
-    {
-      "id": "E7b",
-      "effect": "create the owned 0700 base B on the native root",
-      "transport": "vm-root",
-      "argv": ["/usr/local/bin/prlctl", "exec", "433c9e5b-c7b9-469f-9633-24b4addcd3b5", "/usr/bin/install", "-d", "-m", "0700", "-o", "effigy531", "-g", "effigy531", "/Volumes/Stash/scratch/effigy/linux-4f6a5ed3"],
-      "timeout_seconds": 20,
-      "preconditions": ["E7a-closed"],
-      "closure_basis": "vm-waited-exit-postobserved",
-      "status": "blocked",
-      "missing": ["E7a result", "disk association", "the 13 B subdirectories of §6.2 E7, to be bound at activation"],
-      "failure": "refuse if the path exists"
-    },
-    {
-      "id": "E8",
-      "effect": "placement and filesystem controls in an empty private child of B",
-      "transport": "vm-root",
-      "argv": ["/usr/local/bin/prlctl", "exec", "433c9e5b-c7b9-469f-9633-24b4addcd3b5", "/usr/bin/python3", "-I", "-B", "<GUEST_PREPARATION_CONTROLS>", "<REQUEST_JSON>", "<REQUEST_SHA256>"],
-      "timeout_seconds": 60,
-      "preconditions": ["E7b-closed", "guest controls bytes placed and hash-verified (E19)"],
-      "closure_basis": "vm-waited-exit-postobserved",
-      "status": "blocked",
-      "missing": ["guest copy of preparation_controls.py and its module closure, placed by a bound E19 step", "E7b result"],
-      "failure": "faults retained; no retry"
-    },
-    {
-      "id": "E9",
-      "effect": "git archive of H over the pinned SSH transport into B/source",
-      "transport": "ssh",
-      "argv": ["/usr/bin/ssh", "-F", "<PINNED_SSH_CONFIG>", "effigy-531-vault", "--", "<GUEST_EXTRACT_COMMAND>"],
-      "timeout_seconds": 900,
-      "preconditions": ["E8-closed-passing", "pinned ssh_config and known_hosts hash-bound", "bounded transfer route"],
-      "closure_basis": "supervised-contained",
-      "status": "blocked",
-      "missing": ["stdin transfer: stage primitive uses stdin=DEVNULL; bounded_copy route not yet wired to the SSH stage", "pinned ssh_config and known_hosts (control root)", "the archive is 31,559,680 bytes, 2,134 files, sha256 03df0b51..., whose bytes must be re-verified"],
-      "failure": "hold; reconcile partial extraction"
-    },
-    {
-      "id": "E19",
-      "effect": "pre-position the reviewed driver, inputs, GO index and GO receipt in B with sha256 verified on both sides",
-      "transport": "ssh",
-      "argv": ["/usr/bin/ssh", "-F", "<PINNED_SSH_CONFIG>", "effigy-531-vault", "--", "<GUEST_PLACE_COMMAND>"],
-      "timeout_seconds": 60,
-      "preconditions": ["E9-closed-passing", "E19-go", "fresh GO receipt and GO index bytes"],
-      "closure_basis": "supervised-contained",
-      "status": "blocked",
-      "missing": ["reviewed inputs.json, go-index.json and GO receipt bytes", "fresh GO receipt identities", "transfer route as E9"],
-      "failure": "hold; reconcile partial placement"
-    }
+    {"id": "E3a", "kind": "vm-root", "closure_basis": "vm-waited-exit-postobserved", "timeout_seconds": 60, "go": "E3", "status": "template", "live_blockers": [], "effect": "useradd effigy531 with home /home/effigy531, locked by E3b, home mode by E3c"},
+    {"id": "E3b", "kind": "vm-root", "closure_basis": "vm-waited-exit-postobserved", "timeout_seconds": 20, "go": "E3", "status": "template", "live_blockers": [], "effect": "usermod --lock effigy531"},
+    {"id": "E3c", "kind": "vm-root", "closure_basis": "vm-waited-exit-postobserved", "timeout_seconds": 20, "go": "E3", "status": "template", "live_blockers": [], "effect": "chmod 0700 /home/effigy531"},
+    {"id": "E4", "kind": "vm-root", "closure_basis": "vm-waited-exit-postobserved", "timeout_seconds": 30, "go": "E4", "status": "blocked", "live_blockers": ["Stage1 probe v2 result bound to this plan (docker group present)"], "effect": "usermod --append --groups docker effigy531 (root-equivalent; explicit GO)"},
+    {"id": "E4v", "kind": "vm-root", "closure_basis": "vm-waited-exit-postobserved", "timeout_seconds": 10, "go": null, "status": "template", "live_blockers": [], "effect": "id -nG effigy531 must print exactly 'effigy531 docker'"},
+    {"id": "E5a", "kind": "vm-root", "closure_basis": "vm-waited-exit-postobserved", "timeout_seconds": 30, "go": "E5", "status": "template", "live_blockers": [], "effect": "write the reviewed Match User drop-in bytes; sha256 post-observed"},
+    {"id": "E5b", "kind": "vm-root", "closure_basis": "vm-waited-exit-postobserved", "timeout_seconds": 30, "go": "E5", "status": "template", "live_blockers": [], "effect": "sshd -t syntax check before any reload"},
+    {"id": "E5c", "kind": "vm-root", "closure_basis": "vm-waited-exit-postobserved", "timeout_seconds": 30, "go": "E5", "status": "template", "live_blockers": [], "effect": "systemctl reload ssh"},
+    {"id": "E6a", "kind": "vm-root", "closure_basis": "vm-waited-exit-postobserved", "timeout_seconds": 20, "go": "E6", "status": "template", "live_blockers": [], "effect": "mkdir 0700 /home/effigy531/.ssh owned by effigy531"},
+    {"id": "E6", "kind": "vm-root", "closure_basis": "vm-waited-exit-postobserved", "timeout_seconds": 30, "go": "E6", "status": "blocked", "live_blockers": ["E2 public key bytes (sha256 bound)", "expiry-time within 24 hours of the activation clock"], "effect": "authorized_keys with restrict and expiry-time only"},
+    {"id": "E7a", "kind": "vm-root", "closure_basis": "vm-waited-exit-postobserved", "timeout_seconds": 20, "go": "E7", "status": "blocked", "live_blockers": ["controller-to-guest disk association (linux_setup.verify_disk_association has no supported mechanism)"], "effect": "mkdir /Volumes/Stash/scratch/effigy on the native root; refuses if present"},
+    {"id": "E7b", "kind": "vm-root", "closure_basis": "vm-waited-exit-postobserved", "timeout_seconds": 20, "go": "E7", "status": "blocked", "live_blockers": ["controller-to-guest disk association", "E7a closed"], "effect": "mkdir 0700 base B owned by effigy531; refuses if present"},
+    {"id": "E7c", "kind": "vm-root", "closure_basis": "vm-waited-exit-postobserved", "timeout_seconds": 60, "go": "E7", "status": "blocked", "live_blockers": ["controller-to-guest disk association", "E7b closed"], "effect": "11 private directories under B, each 0700 owned by effigy531"},
+    {"id": "E-SUP", "kind": "vm-root", "closure_basis": "vm-waited-exit-postobserved", "timeout_seconds": 60, "go": "E-SUP", "status": "blocked", "live_blockers": ["supervisor bytes staged inside the guest (no bound staging route established)"], "effect": "install the root-owned supervisor; omitted from the plan once supervisor_installed is bound"},
+    {"id": "E9a", "kind": "ssh-transfer", "closure_basis": "ssh-transfer-postobserved", "timeout_seconds": 900, "go": "E9", "status": "blocked", "live_blockers": ["pinned archive path and sha256 (03df0b51...)", "pinned ssh config under the control root"], "effect": "stream the H archive over the pinned ssh stdin into B; remote sha256 post-observed"},
+    {"id": "E9b", "kind": "ssh-transfer", "closure_basis": "ssh-transfer-postobserved", "timeout_seconds": 300, "go": "E9", "status": "blocked", "live_blockers": ["E9a closed", "pinned archive path and sha256", "pinned ssh config"], "effect": "tar -xf the archive into B/source"},
+    {"id": "E8", "kind": "vm-supervised", "closure_basis": "supervised-contained", "timeout_seconds": 900, "go": "E8", "status": "blocked", "live_blockers": ["controls request path and sha256", "supervisor installed (E-SUP)"], "effect": "preparation_controls filesystem-controls inside the empty private child of B"},
+    {"id": "E19", "kind": "ssh-transfer", "closure_basis": "ssh-transfer-postobserved", "timeout_seconds": 60, "go": "E19", "status": "blocked", "live_blockers": ["reviewed driver, inputs, GO index and GO receipt placements (one row per file)"], "effect": "place each reviewed file into B with sha256 checked on both sides"}
   ],
   "reconciliation": {
-    "templates": ["E3a", "E3b", "E3c", "E4", "E4v", "E5b", "E5c", "E6a"],
-    "blocked_on_fresh_facts": ["E5a", "E6", "E7a", "E7b", "E8", "E9", "E19"],
+    "templates": ["E3a", "E3b", "E3c", "E4v", "E5a", "E5b", "E5c", "E6a"],
+    "blocked_on_live_facts": ["E4", "E6", "E7a", "E7b", "E7c", "E-SUP", "E9a", "E9b", "E8", "E19"],
     "fresh_runtime_prerequisites": [
       "Stage1 probe v2 accepted with root uid, boot_id, running state, systemd >= 250, cgroup2fs, effigy531 absent, sshd expiry-time support and the root chain",
+      "Stage1 post-observation: stopped state, retained before/after config bytes with no drift, bundle and config identities, full extent inventory, growth at most 1 GiB",
       "a supported controller-to-guest disk association (none established; the Parallels CLI reference was not decodable)",
-      "a guest copy of the reviewed controls and a supervisor, neither installed here"
+      "a staged supervisor and a bound staging route for it, then the root install as its own GO",
+      "a bounded ssh stdin route with the pinned config and the H archive bytes present"
     ],
     "held_outside_this_manifest": ["E10 (Rust provisioning, 1800 s indivisible)", "E13k (native test run, 1500 s)", "E14 (Colima producer, 1800 s)"],
     "long_route_measurement": "Measurement 692 does not authorise a long stage or prove closure; the 1200-second stage ceiling is unchanged."

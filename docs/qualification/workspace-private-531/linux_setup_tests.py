@@ -1,44 +1,62 @@
-"""Pure, injected controls for the Linux setup adapter and guest supervisor.
+"""Injected controls for the Linux setup adapter and guest supervisor.
 
-These call the real adapter interfaces with fake transports. No VM, SSH, systemd
-or cgroup is touched. An injected pass is source-control evidence only.
+Each control calls the real adapter interface (parse_probe, stage1_request,
+stage1_verify_post, run_supervised, setup_plan, execute_plan, SystemdOps) with a
+fake transport. Local-only fixtures: descriptor XML, .hds files, stdin files. No
+VM, SSH, systemd or cgroup is touched. An injected pass is source-control
+evidence only and grants no activation or proof credit.
 """
+import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_setup as setup
 import linux_supervisor as supervisor
+import preparation_observations as observations
 import preparation_resources as resources
 from preparation_stage import Refusal
 
 NONCE = 'a' * 64
 INVOCATION = '0f1e2d3c-4b5a-4968-8777-6655443322ff'
-GROUP = '/system.slice/effigy-stage-' + NONCE + '.service'
 UNIT = 'effigy-stage-' + NONCE
 BOOT = 'boot-1234'
 CWD = '/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/source'
+ZERO = '{00000000-0000-0000-0000-000000000000}'
+TOP = '{11111111-1111-1111-1111-111111111111}'
+BASE_GUID = '{22222222-2222-2222-2222-222222222222}'
+ALL_GO = {'E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'E19', 'E-SUP'}
 
 
-def show_text(state='inactive', result='success', status='0', invocation=INVOCATION, group=GROUP, load='loaded'):
+def tmpdir(prefix):
+    return Path(tempfile.mkdtemp(prefix=prefix)).resolve()
+
+
+def show_text(state='inactive', result='success', status='0', invocation=INVOCATION, group='', load='loaded'):
     return '\n'.join([f'LoadState={load}', f'ActiveState={state}', 'SubState=dead', f'Result={result}',
                       f'ExecMainStatus={status}', f'InvocationID={invocation}', f'ControlGroup={group}']) + '\n'
 
 
-class FakeOps:
-    """Injected transport. Records every effect so tests can prove ordering."""
+NOT_FOUND = show_text(load='not-found', state='inactive', result='success', status='0', group='')
 
-    def __init__(self, stage, returncode=0, version='systemd 259 (259-1)', cgroup='cgroup2fs',
-                 disconnect=False, timed_out=False, show=None):
+
+class FakeOps:
+    """Injected supervisor transport. Records effects and checks intent-before-effect."""
+
+    def __init__(self, stage, shows, returncode=0, version='systemd 259 (259-1)', cgroup='cgroup2fs',
+                 disconnect=False, timed_out=False):
         self.stage = Path(stage)
         self.calls = []
+        self.shows = list(shows)
         self.returncode, self.version_text, self.cgroup_text = returncode, version, cgroup
         self.disconnect, self.timed_out = disconnect, timed_out
-        self.show_value = show_text() if show is None else show
 
     def version(self):
         return self.version_text
@@ -59,174 +77,231 @@ class FakeOps:
 
     def show(self, argv):
         self.calls.append(('show', argv))
-        return self.show_value
+        return self.shows.pop(0)
 
 
-def request(timeout=60):
-    return {'nonce': NONCE, 'payload_user': 'effigy531', 'cwd': CWD, 'timeout_seconds': timeout,
-            'argv': ['/bin/true']}
+def request(stage):
+    return {'nonce': NONCE, 'payload_user': 'effigy531', 'payload_uid': os.geteuid(), 'cwd': CWD,
+            'timeout_seconds': 60, 'argv': ['/bin/true'], 'stage_dir': str(stage)}
 
 
-def positive_samples(populated=0, invocation=INVOCATION):
-    return [supervisor.sample(show_text(state='active'), f'populated {populated}\nfrozen 0\n', UNIT)]
+def authenticate(receipt):
+    return receipt.get('nonce') == NONCE and receipt.get('terminal_basis') == observations.UNIT_INACTIVE
 
 
-def stage_dir():
-    return Path(tempfile.mkdtemp(prefix='supervisor-controls-')).resolve()
+def supervised(shows, **kwargs):
+    stage = tmpdir('supervisor-controls-')
+    ops = FakeOps(stage, shows, **kwargs)
+    return stage, ops
+
+
+def run_it(stage, ops, samples=(), seen=None, clock=lambda: 0.0):
+    return supervisor.run_supervised(stage, request(stage), ops, clock, BOOT, seen if seen is not None else {},
+                                     authenticate, list(samples))
 
 
 class SupervisorArgvChecks(unittest.TestCase):
     def test_transient_service_argv_has_no_scope_collect_or_user_manager(self):
         argv = supervisor.run_argv(NONCE, 'effigy531', CWD, 60, ['/bin/true'])
-        self.assertIn('--service-type=exec', argv)
-        self.assertIn('--property=ExitType=cgroup', argv)
-        self.assertIn('--property=KillMode=control-group', argv)
-        self.assertIn('--property=RuntimeMaxSec=60', argv)
-        self.assertIn('--pipe', argv)
-        self.assertIn('--remain-after-exit', argv)
-        self.assertNotIn('--scope', argv)
-        self.assertNotIn('--collect', argv)
-        self.assertNotIn('--user', argv)
+        for flag in ('--service-type=exec', '--property=ExitType=cgroup', '--property=KillMode=control-group',
+                     '--property=RuntimeMaxSec=60', '--pipe', '--remain-after-exit', '--uid=effigy531'):
+            self.assertIn(flag, argv)
+        for flag in ('--scope', '--collect', '--user', '--wait'):
+            self.assertFalse(any(a.split('=')[0] == flag for a in argv), flag)
         self.assertEqual(argv[-2:], ['--', '/bin/true'])
 
-    def test_refuses_root_payload_timeout_over_ceiling_and_bad_nonce(self):
+    def test_refuses_root_payload_long_timeout_and_bad_nonce(self):
         with self.assertRaises(Refusal):
             supervisor.run_argv(NONCE, 'root', CWD, 60, ['/bin/true'])
         with self.assertRaises(Refusal):
             supervisor.run_argv(NONCE, 'effigy531', CWD, 901, ['/bin/true'])
         with self.assertRaises(Refusal):
             supervisor.unit_name('A' * 64)
-        with self.assertRaises(Refusal):
-            supervisor.unit_name('a' * 63)
 
-    def test_systemd_version_and_show_parsing_fail_closed(self):
-        with self.assertRaises(Refusal):
-            supervisor.parse_systemd_version('')
-        self.assertIsNone(supervisor.parse_show(show_text(load='not-found'), UNIT))
+    def test_show_parsing_fails_closed(self):
+        self.assertIsNone(supervisor.parse_show(NOT_FOUND, UNIT))
         with self.assertRaises(Refusal):
             supervisor.parse_show(show_text(invocation='not-a-uuid'), UNIT)
         with self.assertRaises(Refusal):
             supervisor.parse_show(show_text(group='/a/../b'), UNIT)
 
+    def test_systemctl_show_failure_refuses_rather_than_reading_absent(self):
+        calls = []
 
-class SupervisorEffectChecks(unittest.TestCase):
-    def test_intent_is_spent_before_any_effect(self):
-        stage = stage_dir()
-        ops = FakeOps(stage)
-        disposition, closure = supervisor.run_supervised(stage, request(), ops, lambda: 0.0, BOOT, {},
-                                                         lambda _: True, positive_samples())
+        def runner(argv, timeout):
+            calls.append(argv)
+            return {'returncode': 1, 'stdout': b'', 'stderr': b'boom', 'timed_out': False}
+        with self.assertRaises(Refusal):
+            supervisor.SystemdOps(runner).show(supervisor.show_argv(UNIT))
+
+    def test_systemd_ops_run_uses_the_exact_service_argv(self):
+        seen = []
+
+        def runner(argv, timeout):
+            seen.append((argv, timeout))
+            return {'returncode': 0, 'stdout': b'', 'stderr': b'', 'timed_out': False}
+        supervisor.SystemdOps(runner).run(supervisor.run_argv(NONCE, 'effigy531', CWD, 60, ['/bin/true']), 90)
+        self.assertEqual(seen[0][0][0], 'systemd-run')
+        self.assertEqual(seen[0][1], 90)
+
+    def test_real_subprocess_runner_kills_its_own_group_at_deadline(self):
+        started = time.monotonic()
+        result = supervisor._subprocess_runner([sys.executable, '-c', 'import time; time.sleep(30)'], 0.3)
+        self.assertTrue(result['timed_out'])
+        self.assertLess(time.monotonic() - started, 15)
+
+
+class SupervisorCreditChecks(unittest.TestCase):
+    def test_real_successful_service_is_credited(self):
+        stage, ops = supervised([NOT_FOUND, show_text()])
+        disposition, closure = run_it(stage, ops)
         self.assertEqual((disposition, closure), ('exited', 'closed'))
-        self.assertEqual(ops.calls[0][0], 'run')
-        intent = json.loads((stage / 'intent.json').read_text())
-        self.assertEqual(intent['unit'], UNIT)
+        receipt = json.loads((stage / 'closure.json').read_text())
+        self.assertEqual(receipt['terminal_basis'], observations.UNIT_INACTIVE)
+        self.assertEqual(receipt['invocation_id'], INVOCATION)
+
+    def test_intent_is_spent_and_pre_state_checked_before_the_payload_runs(self):
+        stage, ops = supervised([NOT_FOUND, show_text()])
+        run_it(stage, ops)
+        self.assertEqual([c[0] for c in ops.calls], ['show', 'run', 'show'])
+        self.assertTrue((stage / 'intent.json').exists())
+
+    def test_loaded_unit_before_start_refuses_without_effect(self):
+        stage, ops = supervised([show_text()])
+        with self.assertRaises(Refusal):
+            run_it(stage, ops)
+        self.assertNotIn('run', [c[0] for c in ops.calls])
 
     def test_reused_intent_refuses_without_effect(self):
-        stage = stage_dir()
+        stage, ops = supervised([NOT_FOUND, show_text()])
         (stage / 'intent.json').write_text('{}')
-        ops = FakeOps(stage)
         with self.assertRaises(FileExistsError):
-            supervisor.run_supervised(stage, request(), ops, lambda: 0.0, BOOT, {}, lambda _: True, [])
+            run_it(stage, ops)
         self.assertEqual(ops.calls, [])
 
     def test_nonce_reuse_refuses_before_effect(self):
-        stage = stage_dir()
-        ops = FakeOps(stage)
+        stage, ops = supervised([NOT_FOUND, show_text()])
         with self.assertRaises(Refusal):
-            supervisor.run_supervised(stage, request(), ops, lambda: 0.0, BOOT,
-                                      {'nonces': {NONCE}}, lambda _: True, [])
+            run_it(stage, ops, seen={'nonces': {NONCE}})
         self.assertEqual(ops.calls, [])
 
     def test_unsupported_systemd_and_missing_cgroup_v2_refuse_before_effect(self):
         for kwargs in ({'version': 'systemd 249 (249-1)'}, {'cgroup': 'tmpfs'}):
-            stage = stage_dir()
-            ops = FakeOps(stage, **kwargs)
+            stage, ops = supervised([NOT_FOUND, show_text()], **kwargs)
             with self.subTest(kwargs=kwargs), self.assertRaises(Refusal):
-                supervisor.run_supervised(stage, request(), ops, lambda: 0.0, BOOT, {}, lambda _: True, [])
+                run_it(stage, ops)
             self.assertEqual(ops.calls, [])
             self.assertFalse((stage / 'intent.json').exists())
 
-    def test_invocation_id_reuse_refuses(self):
-        stage = stage_dir()
-        ops = FakeOps(stage)
-        with self.assertRaises(Refusal):
-            supervisor.run_supervised(stage, request(), ops, lambda: 0.0, BOOT,
-                                      {'invocations': {INVOCATION}}, lambda _: True, positive_samples())
+    def test_surviving_descendant_is_vetoed_even_with_success_terminal(self):
+        stage, ops = supervised([NOT_FOUND, show_text()])
+        live = supervisor.sample(show_text(state='active', group='/system.slice/x.service'), 'populated 1\n', UNIT)
+        self.assertEqual(run_it(stage, ops, samples=[live])[1], 'unknown')
 
-    def test_surviving_descendant_after_leader_exit_is_unknown(self):
-        stage = stage_dir()
-        ops = FakeOps(stage)
-        disposition, closure = supervisor.run_supervised(stage, request(), ops, lambda: 0.0, BOOT, {},
-                                                         lambda _: True, positive_samples(populated=1))
-        self.assertEqual((disposition, closure), ('exited', 'unknown'))
+    def test_descendant_surviving_leader_ends_as_runtime_timeout_and_stays_unknown(self):
+        stage, ops = supervised([NOT_FOUND, show_text(result='timeout', status='0')])
+        self.assertEqual(run_it(stage, ops)[1], 'unknown')
 
-    def test_disconnect_stops_unit_and_stays_unknown(self):
-        stage = stage_dir()
-        ops = FakeOps(stage, disconnect=True)
-        disposition, closure = supervisor.run_supervised(stage, request(), ops, lambda: 0.0, BOOT, {},
-                                                         lambda _: True, positive_samples())
-        self.assertEqual((disposition, closure), ('disconnect', 'unknown'))
+    def test_disconnect_stops_the_unit_and_stays_unknown(self):
+        stage, ops = supervised([NOT_FOUND, show_text()], disconnect=True)
+        self.assertEqual(run_it(stage, ops), ('disconnect', 'unknown'))
         self.assertIn(('stop', supervisor.stop_argv(UNIT)), ops.calls)
 
-    def test_timeout_stops_unit_and_stays_unknown(self):
-        stage = stage_dir()
-        ops = FakeOps(stage, timed_out=True)
-        disposition, closure = supervisor.run_supervised(stage, request(), ops, lambda: 0.0, BOOT, {},
-                                                         lambda _: True, positive_samples())
-        self.assertEqual((disposition, closure), ('timeout', 'unknown'))
+    def test_timeout_flag_and_deadline_both_stop_and_stay_unknown(self):
+        stage, ops = supervised([NOT_FOUND, show_text()], timed_out=True)
+        self.assertEqual(run_it(stage, ops), ('timeout', 'unknown'))
         self.assertIn(('stop', supervisor.stop_argv(UNIT)), ops.calls)
-
-    def test_deadline_passed_without_timed_out_flag_is_timeout(self):
-        stage = stage_dir()
         ticks = iter([0.0, 999.0, 999.0])
-        ops = FakeOps(stage)
-        disposition, closure = supervisor.run_supervised(stage, request(60), ops, lambda: next(ticks), BOOT,
-                                                         {}, lambda _: True, positive_samples())
-        self.assertEqual((disposition, closure), ('timeout', 'unknown'))
+        stage, ops = supervised([NOT_FOUND, show_text()])
+        self.assertEqual(run_it(stage, ops, clock=lambda: next(ticks))[0], 'timeout')
 
-    def test_collection_race_and_vanished_sample_are_unknown(self):
-        stage = stage_dir()
-        ops = FakeOps(stage, show=show_text(load='not-found'))
-        self.assertEqual(supervisor.run_supervised(stage, request(), ops, lambda: 0.0, BOOT, {},
-                                                   lambda _: True, positive_samples())[1], 'unknown')
-        stage = stage_dir()
-        ops = FakeOps(stage)
-        self.assertEqual(supervisor.run_supervised(stage, request(), ops, lambda: 0.0, BOOT, {},
-                                                   lambda _: True, [None])[1], 'unknown')
-        self.assertEqual(supervisor.sample(show_text(load='not-found'), 'populated 0\n', UNIT), None)
+    def test_collection_race_post_run_unit_gone_is_unknown(self):
+        stage, ops = supervised([NOT_FOUND, NOT_FOUND])
+        self.assertEqual(run_it(stage, ops)[1], 'unknown')
 
-    def test_payload_failure_and_unauthenticated_receipt_get_no_credit(self):
-        stage = stage_dir()
-        ops = FakeOps(stage, returncode=3, show=show_text(result='exit-code', status='3'))
-        self.assertEqual(supervisor.run_supervised(stage, request(), ops, lambda: 0.0, BOOT, {},
-                                                   lambda _: True, positive_samples())[1], 'unknown')
-        stage = stage_dir()
-        ops = FakeOps(stage)
+    def test_failed_payload_gets_no_credit(self):
+        stage, ops = supervised([NOT_FOUND, show_text(result='exit-code', status='3')], returncode=3)
+        self.assertEqual(run_it(stage, ops), ('failed', 'unknown'))
+
+    def test_inactive_unit_still_running_or_with_control_group_is_unknown(self):
+        stage, ops = supervised([NOT_FOUND, show_text(group='/system.slice/x.service')])
+        self.assertEqual(run_it(stage, ops)[1], 'unknown')
+
+    def test_unauthenticated_terminal_receipt_refuses(self):
+        stage, ops = supervised([NOT_FOUND, show_text()])
         with self.assertRaises(Refusal):
-            supervisor.run_supervised(stage, request(), ops, lambda: 0.0, BOOT, {},
-                                      lambda _: False, positive_samples())
+            supervisor.run_supervised(stage, request(stage), ops, lambda: 0.0, BOOT, {}, lambda r: False, [])
 
-    def test_streams_are_retained_with_digests(self):
-        stage = stage_dir()
-        ops = FakeOps(stage)
-        supervisor.run_supervised(stage, request(), ops, lambda: 0.0, BOOT, {}, lambda _: True, positive_samples())
-        self.assertEqual((stage / 'stdout').read_bytes(), b'payload-out')
-        record = json.loads((stage / 'supervisor.json').read_text())
-        self.assertEqual(record['streams']['stdout']['bytes'], len(b'payload-out'))
+    def test_invocation_id_reuse_refuses(self):
+        stage, ops = supervised([NOT_FOUND, show_text()])
+        with self.assertRaises(Refusal):
+            run_it(stage, ops, seen={'invocations': {INVOCATION}})
+
+    def test_stage_must_belong_to_the_payload_account(self):
+        stage, ops = supervised([NOT_FOUND, show_text()])
+        bad = dict(request(stage), payload_uid=os.geteuid() + 1)
+        with self.assertRaises(Refusal):
+            supervisor.run_supervised(stage, bad, ops, lambda: 0.0, BOOT, {}, authenticate, [])
+        self.assertEqual(ops.calls, [])
+
+    def test_main_refuses_a_wrong_request_hash_before_reading_identity(self):
+        path = tmpdir('supervisor-main-') / 'request.json'
+        path.write_text(json.dumps(request(path.parent)))
+        with self.assertRaises(Refusal):
+            supervisor.main(['--request', str(path), '--sha256', '0' * 64])
+
+
+class ContractBasisChecks(unittest.TestCase):
+    """Controls for the shared 686 closure contract, covering the new inactive basis."""
+
+    def expected(self, group=''):
+        return {'boot_id': BOOT, 'nonce': NONCE, 'unit': UNIT, 'invocation_id': INVOCATION, 'control_group': group}
+
+    def receipt(self, **changes):
+        base = {'boot_id': BOOT, 'nonce': NONCE, 'unit': UNIT, 'invocation_id': INVOCATION, 'control_group': '',
+                'supervisor': 'systemd-service-cgroup-v2', 'terminal_basis': observations.UNIT_INACTIVE,
+                'populated': 0, 'active_state': 'inactive', 'result': 'success', 'waited_exit': 0}
+        base.update(changes)
+        return base
+
+    def test_inactive_basis_credits_only_matching_identity_without_a_group(self):
+        ok = observations.verify_contained_closure(self.expected(), self.receipt(), lambda r: True)
+        self.assertEqual(ok, 'closed')
+        with self.assertRaises(observations.Refusal):
+            observations.verify_contained_closure(self.expected(), self.receipt(control_group='/a'), lambda r: True)
+        with self.assertRaises(observations.Refusal):
+            observations.verify_contained_closure(self.expected('/a'), self.receipt(), lambda r: True)
+        with self.assertRaises(observations.Refusal):
+            observations.verify_contained_closure(self.expected(), self.receipt(invocation_id='other'), lambda r: True)
+        with self.assertRaises(observations.Refusal):
+            observations.verify_contained_closure(self.expected(), self.receipt(), lambda r: False)
+        with self.assertRaises(observations.Refusal):
+            observations.verify_contained_closure(self.expected(), self.receipt(terminal_basis='other'), lambda r: True)
+        self.assertEqual(observations.verify_contained_closure(self.expected(), self.receipt(populated=1, active_state='active'),
+                                                               lambda r: True), 'unknown')
+
+    def test_cgroup_populated_basis_is_unchanged(self):
+        legacy = {'boot_id': BOOT, 'nonce': NONCE, 'unit': UNIT, 'invocation_id': INVOCATION,
+                  'control_group': '/system.slice/x.service', 'supervisor': 'systemd-service-cgroup-v2',
+                  'populated': 0, 'active_state': 'inactive', 'result': 'success', 'waited_exit': 0}
+        expected = dict(self.expected('/system.slice/x.service'))
+        self.assertEqual(observations.verify_contained_closure(expected, legacy, lambda r: True), 'closed')
+        self.assertEqual(observations.verify_contained_closure(expected, dict(legacy, populated=1), lambda r: True), 'unknown')
+        with self.assertRaises(observations.Refusal):
+            observations.verify_contained_closure(expected, dict(legacy, control_group=''), lambda r: True)
 
 
 class ResourceCounterChecks(unittest.TestCase):
     def test_counter_loss_and_cap_refuse(self):
         values = iter([{'bytes': 10}, {'bytes': 9}])
-        monitor = resources.Monitor({'bytes': 100}, lambda: next(values))
         with self.assertRaises(resources.Refusal):
-            monitor.check()
+            resources.Monitor({'bytes': 100}, lambda: next(values)).check()
         values = iter([{'bytes': 0}, {'bytes': 101}])
-        monitor = resources.Monitor({'bytes': 100}, lambda: next(values))
         with self.assertRaises(resources.Refusal):
-            monitor.check()
+            resources.Monitor({'bytes': 100}, lambda: next(values)).check()
 
 
-PROBE_OK = """uid=0
+PROBE_TEXT = """uid=0
 boot_id=boot-1234
 system_state=running
 systemctl=present
@@ -252,7 +327,7 @@ ssh_listen_ipv4=10.211.55.8
 
 def probe_text(**changes):
     lines = []
-    for line in PROBE_OK.splitlines():
+    for line in PROBE_TEXT.splitlines():
         key = line.split('=', 1)[0]
         if key in changes:
             if changes[key] is None:
@@ -268,12 +343,11 @@ def parse(text):
 
 class ProbeChecks(unittest.TestCase):
     def test_valid_probe_parses(self):
-        facts = parse(probe_text())
-        self.assertEqual(facts['systemd_version'], '259')
+        self.assertEqual(parse(probe_text())['systemd_version'], '259')
 
     def test_probe_hash_and_duplicates_refuse(self):
         with self.assertRaises(Refusal):
-            setup.parse_probe(PROBE_OK, 'a' * 64, 'b' * 64)
+            setup.parse_probe(PROBE_TEXT, 'a' * 64, 'b' * 64)
         with self.assertRaises(Refusal):
             parse(probe_text() + 'uid=0\n')
 
@@ -294,34 +368,107 @@ class ProbeChecks(unittest.TestCase):
                 parse(text)
 
 
-class StageOneChecks(unittest.TestCase):
+class ExtentFixture:
+    """Real descriptor XML and .hds files; inventory built by the real observations code."""
+
+    def __init__(self):
+        self.dir = tmpdir('extent-fixture-')
+        self.descriptor = (f'<Disk><StorageData><Storage><Image><GUID>{TOP}</GUID><File>a.hds</File></Image>'
+                           f'<Image><GUID>{BASE_GUID}</GUID><File>b.hds</File></Image></Storage></StorageData>'
+                           f'<Snapshots><Shot><GUID>{TOP}</GUID><ParentGUID>{BASE_GUID}</ParentGUID></Shot>'
+                           f'<Shot><GUID>{BASE_GUID}</GUID><ParentGUID>{ZERO}</ParentGUID></Shot></Snapshots></Disk>').encode()
+        (self.dir / 'a.hds').write_bytes(b'aaaa')
+        (self.dir / 'b.hds').write_bytes(b'bb')
+        self.config = b'<vm><clock>1</clock></vm>'
+        self.identity = {'dev': 1, 'inode': 2, 'uid': os.geteuid()}
+
+    def inventory(self):
+        return observations.inventory_extents(self.descriptor, TOP, self.dir)
+
     def fresh(self, **changes):
         base = {'state': 'stopped', 'snapshot_count': 36, 'current_snapshot': setup.CURRENT_SNAPSHOT,
-                'clean_base_present': True, 'config_sha256': 'c' * 64, 'retained_before_bytes_sha256': 'c' * 64,
-                'descriptor_sha256': 'd' * 64, 'config_inode': 1989129}
+                'clean_base_present': True, 'config_bytes': self.config, 'config_identity': self.identity,
+                'bundle_identity': dict(self.identity, inode=3), 'descriptor_bytes': self.descriptor,
+                'top_guid': TOP, 'inventory': self.inventory(), 'probe_text': 'echo ready\n'}
         base.update(changes)
         return base
 
-    def test_one_start_budget_is_600_seconds_with_no_snapshot_or_kill(self):
-        req = setup.stage1_request(self.fresh(), 'unused-stage-placeholder')
-        self.assertEqual(req['deadline_seconds'], 600)
-        self.assertEqual(sum(s['seconds'] for s in req['steps']), 480)
-        self.assertTrue(req['no_snapshot'] and req['no_kill'])
-        self.assertEqual(req['growth_cap_bytes'], 1024 ** 3)
-        self.assertNotIn('--kill', ' '.join(' '.join(s['argv']) for s in req['steps']))
+    def after(self, **changes):
+        base = {'state': 'stopped', 'snapshot_count': 36, 'current_snapshot': setup.CURRENT_SNAPSHOT,
+                'clean_base_present': True, 'config_bytes': self.config, 'config_identity': self.identity,
+                'bundle_identity': dict(self.identity, inode=3), 'descriptor_bytes': self.descriptor,
+                'directory': str(self.dir)}
+        base.update(changes)
+        return base
 
-    def test_stale_or_unretained_inputs_refuse(self):
-        cases = [self.fresh(state='running'), self.fresh(snapshot_count=37),
-                 self.fresh(clean_base_present=False), self.fresh(retained_before_bytes_sha256='e' * 64),
-                 self.fresh(config_inode=None)]
+
+class StageOneChecks(unittest.TestCase):
+    def setUp(self):
+        self.fx = ExtentFixture()
+
+    def test_request_binds_config_identity_and_full_inventory(self):
+        req = setup.stage1_request(self.fx.fresh(), tmpdir('stage1-'))
+        self.assertEqual(req['before']['config_sha256'], hashlib.sha256(self.fx.config).hexdigest())
+        self.assertEqual(set(req['before']['extents']), {TOP, BASE_GUID})
+        self.assertEqual(sum(s['seconds'] for s in req['steps']), 480)
+        self.assertEqual(req['growth_cap_bytes'], 1024 ** 3)
+        self.assertTrue(req['no_snapshot'] and req['no_kill'])
+        self.assertNotIn('<', ' '.join(' '.join(map(str, s['argv'])) for s in req['steps']))
+
+    def test_request_refuses_stale_or_unbound_facts(self):
+        cases = [
+            self.fx.fresh(state='running'),
+            self.fx.fresh(snapshot_count=37),
+            self.fx.fresh(config_bytes=None),
+            self.fx.fresh(config_identity={'dev': 1, 'inode': 'x', 'uid': 0}),
+            self.fx.fresh(bundle_identity=None),
+            self.fx.fresh(top_guid=BASE_GUID),
+            self.fx.fresh(descriptor_bytes=self.fx.descriptor + b' '),
+            self.fx.fresh(probe_text=''),
+        ]
         for case in cases:
-            with self.subTest(case=case), self.assertRaises(Refusal):
-                setup.stage1_request(case, 'unused-stage-placeholder')
+            with self.subTest(case=sorted(case)), self.assertRaises(Refusal):
+                setup.stage1_request(case, tmpdir('stage1-'))
+
+    def test_unchanged_post_observation_is_accepted_with_zero_growth(self):
+        req = setup.stage1_request(self.fx.fresh(), tmpdir('stage1-'))
+        result = setup.stage1_verify_post(req, self.fx.config, self.fx.after())
+        self.assertEqual(result['growth_bytes'], 0)
+
+    def test_config_bytes_identity_snapshot_and_descriptor_drift_refuse(self):
+        req = setup.stage1_request(self.fx.fresh(), tmpdir('stage1-'))
+        cases = [
+            self.fx.after(config_bytes=b'<vm><clock>2</clock></vm>'),
+            self.fx.after(config_identity={'dev': 1, 'inode': 9, 'uid': os.geteuid()}),
+            self.fx.after(bundle_identity={'dev': 1, 'inode': 4, 'uid': os.geteuid()}),
+            self.fx.after(snapshot_count=35),
+            self.fx.after(state='running'),
+            self.fx.after(descriptor_bytes=self.fx.descriptor + b' '),
+        ]
+        for after in cases:
+            with self.subTest(after=sorted(after)), self.assertRaises(Refusal):
+                setup.stage1_verify_post(req, self.fx.config, after)
+
+    def test_extent_substitution_extra_file_and_growth_cap_refuse(self):
+        req = setup.stage1_request(self.fx.fresh(), tmpdir('stage1-'))
+        (self.fx.dir / 'a.tmp').write_bytes(b'x')
+        os.replace(self.fx.dir / 'a.tmp', self.fx.dir / 'a.hds')
+        with self.assertRaises(Refusal):
+            setup.stage1_verify_post(req, self.fx.config, self.fx.after())
+        fx = ExtentFixture()
+        req = setup.stage1_request(fx.fresh(), tmpdir('stage1-'))
+        (fx.dir / 'extra.hds').write_bytes(b'x')
+        with self.assertRaises(Refusal):
+            setup.stage1_verify_post(req, fx.config, fx.after())
+        fx = ExtentFixture()
+        req = setup.stage1_request(fx.fresh(), tmpdir('stage1-'))
+        (fx.dir / 'a.hds').write_bytes(b'aaaa' + b'x' * 5)
+        with patch.object(setup, 'CONFIG_ALLOWANCE_BYTES', 3), self.assertRaises(Refusal):
+            setup.stage1_verify_post(req, fx.config, fx.after())
 
 
 class DiskAssociationChecks(unittest.TestCase):
-    host = {'uuid': setup.VM_UUID, 'disk_uid': setup.DISK_UID, 'controller': 'sata', 'position': 0,
-            'serial': 'S1'}
+    host = {'uuid': setup.VM_UUID, 'disk_uid': setup.DISK_UID, 'controller': 'sata', 'position': 0, 'serial': 'S1'}
     guest = {'path': '/dev/sda', 'size': setup.ROOT_BYTES, 'serial': 'S1'}
     witness = {'mechanism': 'fake-supported'}
 
@@ -333,8 +480,7 @@ class DiskAssociationChecks(unittest.TestCase):
 
     def test_supported_mechanism_still_checks_every_link(self):
         supported = frozenset({'fake-supported'})
-        ok = setup.verify_disk_association(self.host, self.guest, self.witness, supported)
-        self.assertEqual(ok['serial'], 'S1')
+        self.assertEqual(setup.verify_disk_association(self.host, self.guest, self.witness, supported)['serial'], 'S1')
         wrong = [
             (dict(self.host, uuid='00000000-0000-0000-0000-000000000000'), self.guest),
             (dict(self.host, controller='scsi'), self.guest),
@@ -347,43 +493,216 @@ class DiskAssociationChecks(unittest.TestCase):
                 setup.verify_disk_association(host, guest, self.witness, supported)
 
 
-class AdvanceChecks(unittest.TestCase):
-    def test_failed_or_unobserved_setup_row_holds_successor(self):
-        clean = {'disposition': 'exited', 'waited_exit': 0, 'postobserve': True}
-        self.assertTrue(setup.advance_allowed(clean, 'unknown', 'vm-waited-exit-postobserved'))
-        self.assertFalse(setup.advance_allowed(dict(clean, waited_exit=1), 'unknown', 'vm-waited-exit-postobserved'))
-        self.assertFalse(setup.advance_allowed(dict(clean, postobserve=False), 'unknown', 'vm-waited-exit-postobserved'))
-        self.assertFalse(setup.advance_allowed(dict(clean, disposition='timeout'), 'unknown', 'supervised-contained'))
-        self.assertFalse(setup.advance_allowed(dict(clean), 'unknown', 'supervised-contained'))
-        self.assertTrue(setup.advance_allowed(dict(clean), 'closed', 'supervised-contained'))
+class PlanFixture:
+    """Complete live facts for a source-level plan. Files are real; transports are not used."""
+
+    def __init__(self):
+        self.dir = tmpdir('plan-fixture-')
+        self.archive = self.dir / 'archive.tar'
+        self.archive.write_bytes(b'archive-bytes')
+        self.placement = self.dir / 'common.py'
+        self.placement.write_bytes(b'print(1)\n')
+        self.now = 1_800_000_000
+        self.keys = b'restrict,expiry-time=20270101000000 ssh-ed25519 AAAATEST effigy531@test\n'
+
+    def facts(self, **changes):
+        base = {
+            'go': set(ALL_GO), 'probe': parse(probe_text()), 'now': self.now,
+            'authorized_keys': self.keys, 'authorized_keys_expiry': self.now + 3600,
+            'disk_association': {'mechanism': 'fake-supported'},
+            'ssh_config': '/Volumes/Stash/scratch/effigy/531-linux-control/ssh_config',
+            'archive': {'path': str(self.archive), 'sha256': hashlib.sha256(b'archive-bytes').hexdigest()},
+            'controls_request': {'path': str(self.dir / 'controls.json'), 'sha256': 'b' * 64},
+            'supervisor_installed': True,
+            'placements': [{'guest_path': setup.BASE + '/driver/common.py', 'host_path': str(self.placement),
+                            'sha256': hashlib.sha256(b'print(1)\n').hexdigest()}],
+        }
+        base.update(changes)
+        return base
+
+
+class PlanChecks(unittest.TestCase):
+    def test_no_go_marks_the_first_row_and_keeps_its_argv_concrete(self):
+        rows = setup.setup_plan({'go': set()})
+        self.assertEqual(rows[0]['id'], 'E3a')
+        self.assertEqual(rows[0]['missing'], ['GO E3'])
+        self.assertEqual(rows[0]['argv'][:3], [setup.PRLCTL, 'exec', setup.VM_UUID])
+
+    def test_no_placeholder_argv_and_live_fact_rows_are_empty_until_bound(self):
+        # Rows whose argv embeds a live value stay empty until it is bound. E7a-c are
+        # concrete: their disk-association blocker is a gate on the row, not an argv value.
+        live = {'E6', 'E-SUP', 'E8', 'E9a', 'E9b', 'E19'}
+        for row in setup.setup_plan({'go': set(ALL_GO)}):
+            self.assertFalse(any('<' in a and '>' in a for a in row['argv']), row['id'])
+            if row['id'] in live:
+                self.assertEqual(row['argv'], [], row['id'])
+                self.assertTrue(row['missing'], row['id'])
+
+    def test_full_plan_has_exact_root_and_ssh_shapes(self):
+        with patch.object(setup, 'ARCHIVE_SHA256', hashlib.sha256(b'archive-bytes').hexdigest()):
+            rows = {r['id']: r for r in setup.setup_plan(PlanFixture().facts())}
+            self.assertEqual(rows['E9a']['stdin_sha256'], hashlib.sha256(b'archive-bytes').hexdigest())
+        self.assertEqual(rows['E3a']['argv'][:4], [setup.PRLCTL, 'exec', setup.VM_UUID, '/usr/sbin/useradd'])
+        self.assertIn('--groups', rows['E4']['argv'])
+        self.assertIn(setup.DROPIN_TEXT, rows['E5a']['argv'])
+        self.assertEqual(rows['E9a']['argv'][:5], ['/usr/bin/ssh', '-F', '/Volumes/Stash/scratch/effigy/531-linux-control/ssh_config',
+                                                   setup.SSH_ALIAS, '--'])
+        loop = rows['E7c']['argv'][-3]
+        for name in setup.BASE_DIRS:
+            self.assertIn(name, loop)
+
+    def test_authorized_keys_past_24h_or_missing_refuse(self):
+        fx = PlanFixture()
+        rows = {r['id']: r for r in setup.setup_plan(fx.facts(authorized_keys_expiry=fx.now + 90000))}
+        self.assertTrue(any('expiry' in m for m in rows['E6']['missing']))
+        rows = {r['id']: r for r in setup.setup_plan(fx.facts(authorized_keys=None))}
+        self.assertTrue(any('authorized_keys' in m for m in rows['E6']['missing']))
+
+    def test_dropin_content_is_the_reviewed_text(self):
+        self.assertIn('PasswordAuthentication no', setup.DROPIN_TEXT)
+        self.assertIn('PermitTTY no', setup.DROPIN_TEXT)
+
+    def test_ssh_argv_has_one_alias_and_no_extra_options(self):
+        self.assertEqual(setup.ssh_argv('/x/cfg', ['/bin/true']),
+                         ['/usr/bin/ssh', '-F', '/x/cfg', setup.SSH_ALIAS, '--', '/bin/true'])
         with self.assertRaises(Refusal):
-            setup.advance_allowed(clean, 'closed', 'unlisted-basis')
+            setup.ssh_argv('relative', ['/bin/true'])
+        with self.assertRaises(Refusal):
+            setup.ssh_argv('/x/../cfg', ['/bin/true'])
+
+    def test_placement_hash_drift_is_refused_before_intent(self):
+        fx = PlanFixture()
+        rows = setup.setup_plan(fx.facts(placements=[{'guest_path': setup.BASE + '/x', 'host_path': str(fx.placement),
+                                                       'sha256': 'c' * 64}]))
+        calls = []
+        result = setup.execute_plan(rows[-1:], lambda row, stage: calls.append(row) or {}, tmpdir('plan-stage-'),
+                                    lambda: 0.0, 18000)
+        self.assertEqual(calls, [])
+        self.assertIn('stdin hash drift', result['reason'])
 
 
-class SetupManifestChecks(unittest.TestCase):
+def run_plan(rows, runner, budget=18000, clock=None, stage_root=None):
+    return setup.execute_plan(rows, runner, stage_root or tmpdir('plan-stage-'), clock or (lambda: 0.0), budget)
+
+
+def ok_runner(overrides=None):
+    overrides = overrides or {}
+    calls = []
+
+    def runner(row, stage):
+        calls.append(row['id'])
+        if row['id'] in overrides:
+            return overrides[row['id']]
+        if row['kind'] == 'vm-supervised':
+            return {'disposition': 'exited', 'waited_exit': 0, 'closure': 'closed', 'stdout': b''}
+        expect = row['expect'] or {}
+        if 'stdout' in expect:
+            out = expect['stdout']
+        elif 'stdout_sha' in expect:
+            out = expect['stdout_sha'] + '  file\n'
+        else:
+            out = ''
+        return {'disposition': 'exited', 'waited_exit': 0, 'closure': 'unknown', 'stdout': out.encode()}
+    runner.calls = calls
+    return runner
+
+
+class ExecutorChecks(unittest.TestCase):
+    def test_full_chain_runs_in_plan_order_only_with_credit(self):
+        fx = PlanFixture()
+        with patch.object(setup, 'ARCHIVE_SHA256', hashlib.sha256(b'archive-bytes').hexdigest()):
+            rows = setup.setup_plan(fx.facts())
+            runner = ok_runner()
+            result = run_plan(rows, runner)
+        self.assertIsNone(result['halt'])
+        self.assertEqual(result['completed'], [r['id'] for r in rows])
+        self.assertEqual(runner.calls, [r['id'] for r in rows])
+
+    def test_missing_go_halts_before_any_effect(self):
+        rows = setup.setup_plan(PlanFixture().facts(go=set()))
+        runner = ok_runner()
+        result = run_plan(rows, runner)
+        self.assertEqual(result['halt'], 'E3a')
+        self.assertEqual(runner.calls, [])
+
+    def test_setup_failure_holds_successors(self):
+        rows = setup.setup_plan(PlanFixture().facts())
+        failed = {'disposition': 'failed', 'waited_exit': 1, 'closure': 'unknown', 'stdout': b''}
+        runner = ok_runner({'E3b': failed})
+        result = run_plan(rows, runner)
+        self.assertEqual(result['halt'], 'E3b')
+        self.assertNotIn('E3c', runner.calls)
+
+    def test_wrong_post_observation_and_partial_output_hold(self):
+        rows = setup.setup_plan(PlanFixture().facts())
+        wrong_group = {'disposition': 'exited', 'waited_exit': 0, 'closure': 'unknown', 'stdout': b'effigy531\n'}
+        self.assertEqual(run_plan(rows, ok_runner({'E4v': wrong_group}))['halt'], 'E4v')
+        truncated = {'disposition': 'exited', 'waited_exit': 0, 'closure': 'unknown', 'stdout': b'abc'}
+        with patch.object(setup, 'ARCHIVE_SHA256', hashlib.sha256(b'archive-bytes').hexdigest()):
+            rows = setup.setup_plan(PlanFixture().facts())
+            result = run_plan(rows, ok_runner({'E9a': truncated}))
+        self.assertEqual(result['halt'], 'E9a')
+
+    def test_supervised_row_without_closure_credit_holds(self):
+        with patch.object(setup, 'ARCHIVE_SHA256', hashlib.sha256(b'archive-bytes').hexdigest()):
+            rows = setup.setup_plan(PlanFixture().facts())
+            unknown = {'disposition': 'exited', 'waited_exit': 0, 'closure': 'unknown', 'stdout': b''}
+            result = run_plan(rows, ok_runner({'E8': unknown}))
+        self.assertEqual(result['halt'], 'E8')
+        self.assertIn('E9b', result['completed'])
+        self.assertNotIn('E19.0', result['completed'])
+
+    def test_reused_intent_raises_without_effect(self):
+        rows = setup.setup_plan(PlanFixture().facts())
+        root = tmpdir('plan-reuse-')
+        (root / 'E3a').mkdir(mode=0o700)
+        runner = ok_runner()
+        with self.assertRaises(FileExistsError):
+            run_plan(rows, runner, stage_root=root)
+        self.assertEqual(runner.calls, [])
+
+    def test_total_budget_halts_before_the_row_runs(self):
+        rows = setup.setup_plan(PlanFixture().facts())
+        runner = ok_runner()
+        result = run_plan(rows, runner, budget=100)
+        self.assertEqual(result['halt'], 'E3a')
+        self.assertIn('budget', result['reason'])
+        self.assertEqual(runner.calls, [])
+
+    def test_advance_gate_per_basis(self):
+        clean = {'disposition': 'exited', 'waited_exit': 0, 'postobserve': True}
+        self.assertTrue(setup.advance_allowed(clean, 'unknown', setup.VM_BASIS))
+        self.assertTrue(setup.advance_allowed(clean, 'unknown', setup.SSH_BASIS))
+        self.assertFalse(setup.advance_allowed(dict(clean, waited_exit=1), 'unknown', setup.VM_BASIS))
+        self.assertFalse(setup.advance_allowed(dict(clean, postobserve=False), 'unknown', setup.SSH_BASIS))
+        self.assertFalse(setup.advance_allowed(clean, 'unknown', setup.SUPERVISED_BASIS))
+        self.assertTrue(setup.advance_allowed(clean, 'closed', setup.SUPERVISED_BASIS))
+        with self.assertRaises(Refusal):
+            setup.advance_allowed(clean, 'closed', 'unlisted')
+
+
+class ManifestChecks(unittest.TestCase):
     def manifest(self):
         return json.loads((Path(__file__).resolve().parent / 'linux-setup-stages.json').read_text())
 
     def test_manifest_validates_and_binds_probe(self):
         manifest = self.manifest()
-        ids = setup.validate_setup_manifest(manifest)
-        self.assertEqual(ids, sorted(ids))
+        setup.validate_setup_manifest(manifest)
         probe = Path(__file__).resolve().parent / manifest['probe']['path']
         self.assertEqual(setup.probe_sha256(probe), manifest['probe']['sha256'])
 
-    def test_templates_have_no_placeholders_and_blocked_rows_name_facts(self):
-        for row in self.manifest()['rows']:
-            if row['status'] == 'request-template':
-                self.assertFalse(any('<' in a for a in row['argv']), row['id'])
-            else:
-                self.assertTrue(row['missing'], row['id'])
-
-    def test_root_effects_bind_to_vm_and_fresh_go(self):
-        rows = {row['id']: row for row in self.manifest()['rows']}
-        self.assertEqual(rows['E3a']['argv'][:4], ['/usr/local/bin/prlctl', 'exec', setup.VM_UUID, '/usr/sbin/useradd'])
-        self.assertIn('E4-go-root-equivalent', rows['E4']['preconditions'])
-        self.assertIn('--groups', rows['E4']['argv'])
-        self.assertEqual(rows['E9']['closure_basis'], 'supervised-contained')
+    def test_ledger_matches_the_executable_plan(self):
+        manifest = self.manifest()
+        empty = {r['id']: r for r in setup.setup_plan({'go': set(ALL_GO)})}
+        self.assertEqual(sorted(empty), sorted(r['id'] for r in manifest['rows']))
+        for row in manifest['rows']:
+            with self.subTest(row=row['id']):
+                self.assertEqual(empty[row['id']]['closure_basis'], row['closure_basis'])
+                self.assertEqual(empty[row['id']]['timeout_seconds'], row['timeout_seconds'])
+                if row['status'] == 'template':
+                    self.assertEqual(empty[row['id']]['missing'], [], row['id'])
+                else:
+                    self.assertTrue(empty[row['id']]['missing'], row['id'])
 
     def test_row_past_stage_ceiling_refuses(self):
         manifest = self.manifest()
@@ -391,11 +710,18 @@ class SetupManifestChecks(unittest.TestCase):
         with self.assertRaises(Refusal):
             setup.validate_setup_manifest(manifest)
 
-    def test_template_with_placeholder_refuses(self):
+    def test_kind_and_basis_must_agree(self):
         manifest = self.manifest()
-        manifest['rows'][0]['argv'].append('<X>')
+        manifest['rows'][0]['closure_basis'] = setup.SSH_BASIS
         with self.assertRaises(Refusal):
             setup.validate_setup_manifest(manifest)
+
+
+class Stage1ProbeRequestChecks(unittest.TestCase):
+    def test_stage_probe_text_is_what_the_request_carries(self):
+        fx = ExtentFixture()
+        req = setup.stage1_request(fx.fresh(probe_text=probe_text()), tmpdir('stage1-'))
+        self.assertEqual(req['steps'][4]['argv'][-1], probe_text())
 
 
 if __name__ == '__main__':

@@ -1,23 +1,26 @@
-"""Guest supervisor adapter: transient systemd SERVICE with cgroup containment.
+"""Guest supervisor: transient systemd SERVICE with cgroup containment.
 
-Source-control only. Nothing here installs a supervisor, starts a unit or talks
-to a guest. Callers inject `ops`, the only route to systemd, cgroupfs and the
-payload. Upstream basis (systemd v259 manuals, fetched 2026-11-07):
+Runs as root through the VM route (`prlctl exec`), because the system manager
+cannot start a unit as another account without root. The payload runs as the
+named non-root account. Nothing here is installed or run by source checks; tests
+inject `runner`, the only route to systemctl, systemd-run and the payload.
 
+Upstream basis (systemd v259 manuals, fetched 2026-11-07):
 - `systemd-run --pipe` waits like `--wait`; `--wait` cannot combine with `--scope`.
-- `--collect` unloads the unit after it finishes, so it is never used.
+- `--collect` unloads the unit after it finishes, so it is never used. Without it
+  the loaded, inactive unit keeps its Result and ExecMainStatus for inspection.
 - `ExitType=cgroup` (v250) keeps a service active while any process in its
   cgroup has not exited; `RuntimeMaxSec=` fails the unit at its deadline.
-
-The unit's InvocationID is required as observed state. It is not confirmed as a
-documented unit property in the manuals read, so a missing value fails closed.
+  Hence an inactive unit with Result=success has an empty cgroup.
 """
 import hashlib
 import json
 import os
 import re
 import stat
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -31,11 +34,7 @@ MAX_TIMEOUT = 900          # per-stage ceiling in the setup manifest
 CLEANUP_RESERVE_SECONDS = 30
 FORBIDDEN_RUN_FLAGS = ('--scope', '--collect', '--user', '--no-block', '--wait')
 SUPERVISOR = 'systemd-service-cgroup-v2'
-CGROUP_ROOT = '/sys/fs/cgroup'
-
-
-class Disconnect(Exception):
-    """Raised by an injected transport when the channel drops before a terminal result."""
+BOOT_ID_PATH = '/proc/sys/kernel/random/boot_id'
 
 
 def unit_name(nonce):
@@ -87,7 +86,7 @@ def parse_systemd_version(text):
 
 
 def parse_show(text, unit):
-    """Parse `systemctl show` key=value lines. A missing unit is unknown, not a pass."""
+    """Parse `systemctl show` key=value lines. None means the unit is not loaded."""
     if text is None:
         return None
     values = {}
@@ -109,7 +108,7 @@ def parse_show(text, unit):
 
 
 def parse_populated(text):
-    """cgroup.events `populated` (0/1). Unreadable or absent means unknown."""
+    """cgroup.events `populated` (0/1). None means the read vanished."""
     if text is None:
         return None
     for line in text.splitlines():
@@ -122,15 +121,14 @@ def parse_populated(text):
 def events_path(control_group):
     if not control_group.startswith('/') or '..' in Path(control_group).parts:
         raise Refusal('control group not canonical')
-    return CGROUP_ROOT + control_group + '/cgroup.events'
+    return '/sys/fs/cgroup' + control_group + '/cgroup.events'
 
 
 def sample(show_text, events_text, unit):
-    """One outside-monitor observation of the unit while it is loaded.
+    """Outside-monitor observation while the unit is loaded and active.
 
-    ExitType=cgroup removes the cgroup as the unit stops, so the only positive
-    empty fact is a sample taken while InvocationID and ControlGroup still hold.
-    A vanished unit or cgroup gives None, which is unknown, never a pass.
+    A sample can only veto credit: a live `populated 1` for the same InvocationID
+    means a descendant survived the leader. Absence of samples grants nothing.
     """
     show = parse_show(show_text, unit)
     if show is None or not show['control_group']:
@@ -142,33 +140,28 @@ def sample(show_text, events_text, unit):
             'populated': populated, 'active_state': show['active_state']}
 
 
-def closure_receipt(boot_id, nonce, show, positive_sample, waited_exit):
-    """Receipt shape for observations.verify_contained_closure.
-
-    Credit needs a positive sample (populated 0) for the same InvocationID and
-    ControlGroup, plus the post-run terminal state of that same unit.
-    """
+def closure_receipt(boot_id, nonce, show, waited_exit):
+    """Receipt for observations.verify_contained_closure, inactive terminal basis."""
     return {'boot_id': boot_id, 'nonce': nonce, 'unit': unit_name(nonce),
-            'invocation_id': show['invocation_id'], 'control_group': positive_sample['control_group'],
-            'supervisor': SUPERVISOR, 'populated': positive_sample['populated'],
-            'active_state': show['active_state'], 'result': show['result'],
+            'invocation_id': show['invocation_id'], 'control_group': '',
+            'supervisor': SUPERVISOR, 'terminal_basis': observations.UNIT_INACTIVE,
+            'populated': 0, 'active_state': show['active_state'], 'result': show['result'],
             'waited_exit': waited_exit}
 
 
 def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, authenticate, samples):
     """One-use supervised payload. Intent is spent before any injected effect.
 
-    `ops` provides: version() -> str, cgroup2() -> str, run(argv, timeout) ->
-    dict(returncode, stdout, stderr, timed_out) or raises Disconnect, stop(argv),
-    show(argv) -> text or None. `samples` is the list the caller's outside
-    monitor filled with sample() results while the unit ran; it is read here,
-    never refilled. Returns (disposition, closure), closure 'closed' or 'unknown'.
+    Credit needs: the unit absent before start (the nonce is fresh), a loaded
+    post-run unit with the same new InvocationID, inactive, Result=success,
+    ExecMainStatus=0, empty ControlGroup, and no live-populated sample for it.
+    Anything else is unknown. Returns (disposition, closure).
     """
     stage = Path(stage_dir)
     info = stage.lstat()
-    if (not stat.S_ISDIR(info.st_mode) or stage.is_symlink() or info.st_uid != os.geteuid()
+    if (not stat.S_ISDIR(info.st_mode) or stage.is_symlink() or info.st_uid != request['payload_uid']
             or stat.S_IMODE(info.st_mode) != 0o700):
-        raise Refusal('stage directory must be owned and mode 0700')
+        raise Refusal('stage directory must be owned by the payload account and mode 0700')
     if not isinstance(boot_id, str) or not boot_id:
         raise Refusal('boot identity required before supervised start')
     nonce = request['nonce']
@@ -184,10 +177,12 @@ def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, au
               'cleanup_reserve_seconds': CLEANUP_RESERVE_SECONDS}
     exclusive(stage / 'intent.json', (json.dumps(intent, sort_keys=True, indent=2) + '\n').encode())
     seen_invocations.setdefault('nonces', set()).add(nonce)
+    if parse_show(ops.show(show_argv(unit)), unit) is not None:
+        raise Refusal('unit already loaded before start; nonce is not fresh')
     start = clock()
     deadline = start + request['timeout_seconds'] + CLEANUP_RESERVE_SECONDS
     try:
-        outcome = ops.run(argv, request['timeout_seconds'])
+        outcome = ops.run(argv, request['timeout_seconds'] + CLEANUP_RESERVE_SECONDS)
         disconnected = False
     except Disconnect:
         outcome = {'returncode': None, 'stdout': b'', 'stderr': b'', 'timed_out': False}
@@ -202,27 +197,101 @@ def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, au
         if show['invocation_id'] in seen_invocations.get('invocations', ()):
             raise Refusal('InvocationID reused')
         seen_invocations.setdefault('invocations', set()).add(show['invocation_id'])
+    vetoed = show is not None and any(
+        s is not None and s['invocation_id'] == show['invocation_id'] and s['populated'] == 1 for s in samples)
     disposition = 'timeout' if timed_out else ('disconnect' if disconnected else (
         'exited' if outcome['returncode'] == 0 else 'failed'))
-    positive = None
-    if show is not None and disposition == 'exited' and show['result'] == 'success' and show['exec_main_status'] == '0':
-        positive = [s for s in samples if s is not None and s['invocation_id'] == show['invocation_id']
-                    and s['populated'] == 0 and s['control_group']]
-    if positive:
-        receipt = closure_receipt(boot_id, nonce, show, positive[-1], outcome['returncode'])
+    closure = 'unknown'
+    if (show is not None and disposition == 'exited' and not vetoed and show['active_state'] == 'inactive'
+            and show['result'] == 'success' and show['exec_main_status'] == '0' and show['control_group'] == ''):
+        receipt = closure_receipt(boot_id, nonce, show, outcome['returncode'])
         expected = {'boot_id': boot_id, 'nonce': nonce, 'unit': unit,
-                    'invocation_id': show['invocation_id'], 'control_group': positive[-1]['control_group']}
+                    'invocation_id': show['invocation_id'], 'control_group': ''}
         try:
             closure = observations.verify_contained_closure(expected, receipt, authenticate)
         except observations.Refusal as exc:
             # One refusal type for callers; the verifier's own class is not public API here.
             raise Refusal(str(exc)) from exc
         (stage / 'closure.json').write_bytes((json.dumps(receipt, sort_keys=True, indent=2) + '\n').encode())
-    else:
-        closure = 'unknown'
     record = {'disposition': disposition, 'closure': closure, 'elapsed_seconds': clock() - start,
-              'show': show, 'samples': len(samples),
+              'show': show, 'vetoed': vetoed, 'samples': len(samples),
               'streams': {n: {'bytes': len(outcome[n]), 'sha256': hashlib.sha256(outcome[n]).hexdigest()}
                           for n in ('stdout', 'stderr')}}
     exclusive(stage / 'supervisor.json', (json.dumps(record, sort_keys=True, indent=2) + '\n').encode())
     return disposition, closure
+
+
+class Disconnect(Exception):
+    """Raised by an injected transport when the channel drops before a terminal result."""
+
+
+def _subprocess_runner(argv, timeout):
+    """Real runner: own session, deadline kills only its own process group."""
+    proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+        return {'returncode': proc.returncode, 'stdout': out, 'stderr': err, 'timed_out': False}
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, 9)
+        out, err = proc.communicate()
+        return {'returncode': None, 'stdout': out, 'stderr': err, 'timed_out': True}
+
+
+class SystemdOps:
+    """Adapter from the injected runner to the systemd calls used above."""
+
+    def __init__(self, runner=_subprocess_runner):
+        self.runner = runner
+
+    def _checked(self, argv, timeout=30):
+        result = self.runner(argv, timeout)
+        if result['returncode'] != 0 or result.get('timed_out'):
+            raise Refusal('systemctl call failed: ' + ' '.join(argv[:2]))
+        return result['stdout'].decode('utf-8', 'replace')
+
+    def version(self):
+        return self._checked(['systemctl', '--version']).splitlines()[0]
+
+    def cgroup2(self):
+        return self._checked(['stat', '-fc', '%T', '/sys/fs/cgroup']).strip()
+
+    def run(self, argv, timeout):
+        result = self.runner(argv, timeout)
+        return {'returncode': result['returncode'], 'stdout': result['stdout'],
+                'stderr': result['stderr'], 'timed_out': bool(result.get('timed_out'))}
+
+    def stop(self, argv):
+        self.runner(argv, 30)
+
+    def show(self, argv):
+        # A failed read must refuse: treating it as "absent" could start a second unit.
+        return self._checked(argv)
+
+
+def main(argv):
+    """Root entry point: `effigy-stage-supervisor --request PATH --sha256 HEX`.
+
+    Prints one JSON line with the disposition and closure. The request hash binds
+    the exact payload, and the VM route returns the stdout to the host.
+    """
+    if len(argv) != 4 or argv[0] != '--request' or argv[2] != '--sha256':
+        raise Refusal('usage: --request PATH --sha256 HEX')
+    raw = Path(argv[1]).read_bytes()
+    if len(raw) > 1024 * 1024 or hashlib.sha256(raw).hexdigest() != argv[3]:
+        raise Refusal('request hash mismatch')
+    request = json.loads(raw)
+    required = {'nonce', 'payload_user', 'payload_uid', 'cwd', 'timeout_seconds', 'argv', 'stage_dir', 'expected_boot_id'}
+    if set(request) != required:
+        raise Refusal('unsupported request schema')
+    boot_id = Path(BOOT_ID_PATH).read_text().strip()
+    if boot_id != request['expected_boot_id']:
+        raise Refusal('boot identity differs from the request')
+    disposition, closure = run_supervised(request['stage_dir'], request, SystemdOps(), time.monotonic,
+                                          boot_id, {}, lambda receipt: receipt.get('nonce') == request['nonce'], [])
+    print(json.dumps({'disposition': disposition, 'closure': closure, 'nonce': request['nonce']}, sort_keys=True))
+    return 0 if closure == 'closed' else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))
