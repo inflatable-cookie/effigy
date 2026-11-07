@@ -650,7 +650,28 @@ input/receipt hashes. The host admission hook must remain held until the guest
 terminal and closure are established. The file does not authorize execution;
 E10, E13k and E14 are held with their exact constraints. Other setup effects
 still require their own reviewed per-effect requests and bindings before use.
-No stage advances after a failed, missing or unknown receipt.
+No stage advances after a failed, missing or unknown receipt. The manifest's
+`sequence` enumerates E0 through E19 in the accepted order, with separate
+E1b and E12 occurrences. A `request-template` has exact argv and bindable
+gates; an `unavailable` row names the missing receipt, bytes or source/runtime
+constraint and cannot be materialised as a request. It is not execution-ready.
+E0 is a conditional start only after fresh boot-complete and inactive-service
+observations; do not bind that request when Docker is activating or active.
+
+`preparation_resources.Monitor` reads explicitly bound monotonic byte counters,
+refuses missing or replaced counters and interrupts the owned process group on
+cap or telemetry failure. Guest requests require explicit counter paths and
+limits, retained with their stage request. This is a polling stop, not a hard
+quota: counters can advance between samples and an SSH disconnect is not guest
+closure. Before network or storage effects, independently verified hard limits
+must enforce the original byte caps and a supervisor outside the payload cgroup
+must retain the final usage and closure receipts. No such hard-limit or
+supervisor capability is assumed. Until then the relevant manifest gates stay
+closed. The existing runtime deadline remains separate and is not shortened.
+`bounded_copy` also enforces a hard per-transfer byte ceiling before writing each
+chunk, retaining any partial output as spent evidence. It covers only transfers
+that actually pass through it; it does not constrain Docker or rustup network
+traffic, so it cannot replace the independent hard-limit gate for those tools.
 
 Run `preparation_controls.py REQUEST_JSON REQUEST_SHA256` inside the appropriate
 one-use stage. The `compare-config` request names `before`, `before_sha256`,
@@ -685,6 +706,30 @@ or authentication is unavailable, closure stays unknown. Disk correlation needs
 a separately authenticated byte witness at the guest-logical offset through a
 supported `.hds` reader, or a supported Parallels disk-to-VM mapping; neither is
 established by the observed descriptor UID or guest serial.
+
+### Candidate service containment (not activated)
+
+Systemd v259 documents transient service `--pipe` as waiting for termination;
+`Type=exec` waits for successful exec, `ExitType=cgroup` (introduced in v250)
+keeps the service active while any process remains, `RuntimeMaxSec` sets a
+runtime deadline, and `KillMode=control-group` covers the unit's cgroup on
+stop. Sources: [systemd-run v259](https://raw.githubusercontent.com/systemd/systemd/v259/man/systemd-run.xml),
+[systemd.service v259](https://raw.githubusercontent.com/systemd/systemd/v259/man/systemd.service.xml),
+and [systemd.kill v259](https://raw.githubusercontent.com/systemd/systemd/v259/man/systemd.kill.xml).
+These describe upstream behavior, not the guest's installed capabilities.
+
+A narrowly bound root-owned supervisor proposal would accept only a reviewed
+request hash and single-use nonce, use a transient **service** with
+`Type=exec`, `ExitType=cgroup`, `KillMode=control-group`, and the original
+per-stage `RuntimeMaxSec`, running the payload as `effigy531` without granting
+that account general sudo. A monitor outside the payload cgroup must retain the
+actual boot ID, unit `InvocationID`, control-group identity, original streams,
+waited result and positive cgroup-empty/inactive observations before the unit or
+its cgroup can disappear. A missing or collected observation is unknown. No
+root-owned service, policy, privilege or user manager is provisioned in this
+preparation task; the guest's systemd version, permission and cgroup capability
+must be freshly authenticated before such a proposal can be activated. SSH
+remains the proof transport. No positive closure follows from this proposal.
 
 ### Exact source-qualified payloads (held)
 

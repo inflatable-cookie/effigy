@@ -10,6 +10,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from preparation_stage import run_stage, Refusal
+from preparation_resources import CounterFiles, Monitor
 
 
 def linux_identity(pid):
@@ -31,7 +32,7 @@ def main():
     if len(raw) > 1024 * 1024 or hashlib.sha256(raw).hexdigest() != sys.argv[2]:
         raise Refusal('request hash mismatch')
     request = json.loads(raw)
-    if set(request) != {'stage_dir', 'argv', 'timeout_seconds', 'output_cap_bytes', 'input_hashes', 'nonce', 'cwd', 'environment'}:
+    if set(request) != {'stage_dir', 'argv', 'timeout_seconds', 'output_cap_bytes', 'input_hashes', 'nonce', 'cwd', 'environment', 'resources'}:
         raise Refusal('unsupported request')
     nonce = request['nonce']
     if not isinstance(nonce, str) or len(nonce) != 64 or any(c not in '0123456789abcdef' for c in nonce):
@@ -42,10 +43,14 @@ def main():
     if request_path in inputs:
         raise Refusal('request aliases input')
     inputs[request_path] = sys.argv[2]
+    resource = request['resources']
+    if not isinstance(resource, dict) or set(resource) != {'counter_files', 'limits'}:
+        raise Refusal('explicit resource accounting required')
+    monitor = Monitor(resource['limits'], CounterFiles(resource['counter_files']))
     result = run_stage(request['stage_dir'], request['argv'], request['timeout_seconds'],
                        request['output_cap_bytes'], inputs,
                        guest=True, identity_probe=identity, cwd=request['cwd'],
-                       environment=request['environment'])
+                       environment=request['environment'], resource_monitor=monitor)
     # A terminal exit is not a closure claim; all evidence remains in stage_dir.
     return 0 if result['disposition'] == 'exited' else 1
 

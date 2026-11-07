@@ -17,6 +17,7 @@ import preparation_metadata as metadata
 import preparation_placement as placement
 import preparation_nextest as nextest
 import preparation_requests as requests
+import preparation_resources as resources
 
 
 class ArchiveChecks(unittest.TestCase):
@@ -127,8 +128,8 @@ class ObservationChecks(unittest.TestCase):
             observations.descriptor_chain(xml.replace(b'b.hds', b'a.hds'), a)
 
     def test_contained_closure_requires_authentication_and_empty_scope(self):
-        expected = {'boot_id': 'boot', 'nonce': 'abc', 'unit': 'effigy-stage-abc', 'control_group': '/user.slice/scope'}
-        receipt = dict(expected, supervisor='systemd-cgroup-v2',
+        expected = {'boot_id': 'boot', 'nonce': 'abc', 'unit': 'effigy-stage-abc', 'control_group': '/user.slice/scope', 'invocation_id': 'instance'}
+        receipt = dict(expected, supervisor='systemd-service-cgroup-v2',
                        populated=0, active_state='inactive', result='success', waited_exit=0)
         self.assertEqual(observations.verify_contained_closure(expected, None, lambda _: True), 'unknown')
         with self.assertRaises(observations.Refusal):
@@ -211,6 +212,12 @@ class StageChecks(unittest.TestCase):
         result = self.run_script("print('x' * 50000, flush=True)", cap=32)
         self.assertEqual(result['disposition'], 'output-cap')
         self.assertEqual((self.root / 'stdout').stat().st_size, 32)
+
+    def test_empty_argument_is_preserved(self):
+        result = stage.run_stage(self.root, [sys.executable, '-c', 'import sys; print(repr(sys.argv[1]))', ''],
+                                 2, 1024, {})
+        self.assertEqual(result['disposition'], 'exited')
+        self.assertEqual((self.root / 'stdout').read_bytes(), b"''\n")
 
     def test_launch_failure_spends_intent(self):
         with self.assertRaises(FileNotFoundError):
@@ -305,6 +312,56 @@ class PlacementChecks(unittest.TestCase):
             placement.place_file(root, 'other', data, '0' * 64, os.geteuid())
 
 
+class ResourceChecks(unittest.TestCase):
+    def test_limits_and_unknown_refuse(self):
+        values = iter([{'writes': 10}, {'writes': 14}, {'writes': 21}])
+        monitor = resources.Monitor({'writes': 10}, lambda: next(values))
+        self.assertEqual(monitor.check(), {'writes': 4})
+        with self.assertRaises(resources.Refusal):
+            monitor.check()
+        with self.assertRaises(resources.Refusal):
+            resources.Monitor({'writes': 10}, lambda: {})
+        values = iter([{'writes': 10}, {'writes': 9}])
+        monitor = resources.Monitor({'writes': 10}, lambda: next(values))
+        with self.assertRaises(resources.Refusal):
+            monitor.check()
+
+    def test_transfer_cap_retains_partial_and_refuses_reuse(self):
+        root = Path(tempfile.mkdtemp(prefix='transfer-controls-')).resolve()
+        target = root / 'archive'
+        with self.assertRaises(resources.Refusal):
+            resources.bounded_copy(io.BytesIO(b'abcdef'), target, 3)
+        self.assertEqual(target.read_bytes(), b'abc')
+        with self.assertRaises(FileExistsError):
+            resources.bounded_copy(io.BytesIO(b'abc'), target, 3)
+        success = resources.bounded_copy(io.BytesIO(b'abc'), root / 'ok', 3)
+        self.assertEqual(success['bytes'], 3)
+
+    def test_counter_file_identity_and_format(self):
+        root = Path(tempfile.mkdtemp(prefix='resource-counter-')).resolve()
+        counter = root / 'counter'
+        counter.write_text('5\n')
+        sample = resources.CounterFiles({'network': str(counter)})
+        self.assertEqual(sample(), {'network': 5})
+        counter.write_text('bad')
+        with self.assertRaises(resources.Refusal):
+            sample()
+        replacement = root / 'replacement'
+        replacement.write_text('8')
+        os.replace(replacement, counter)
+        with self.assertRaises(resources.Refusal):
+            sample()
+
+    def test_monitor_refusal_stops_owned_process(self):
+        root = Path(tempfile.mkdtemp(prefix='resource-stage-')).resolve()
+        values = iter([{'network': 0}, {'network': 0}, {'network': 2}])
+        monitor = resources.Monitor({'network': 1}, lambda: next(values))
+        result = stage.run_stage(root, [sys.executable, '-c', 'import time; time.sleep(10)'],
+                                 2, 1024, {}, resource_monitor=monitor)
+        self.assertEqual(result['disposition'], 'resource-refusal')
+        self.assertIsNotNone(result['waited_exit'])
+
+
 class ManifestChecks(unittest.TestCase):
     def test_request_requires_verified_receipts(self):
         root = Path(tempfile.mkdtemp(prefix='request-controls-')).resolve()
@@ -312,14 +369,16 @@ class ManifestChecks(unittest.TestCase):
                'cwd': '/', 'timeout_seconds': 60, 'output_cap_bytes': 1024}
         manifest = {'stages': [row], 'admission_reserve_seconds': 180,
                     'report_reserve_seconds': 120, 'max_stage_seconds_including_admission_and_report': 1200}
+        manifest_path = root / 'manifest.json'
+        manifest_path.write_text(json.dumps(manifest))
         receipt = root / 'closure.json'
         receipt.write_text(json.dumps({'gate': 'closure', 'status': 'unknown'}))
         with self.assertRaises(ValueError):
-            requests.bind(manifest, 'example', root, {}, {}, {'closure': receipt}, lambda *_: True)
+            requests.bind(manifest, 'example', root, {}, {}, {'closure': receipt}, lambda *_: True, {'counter_files': {'writes': '/counter'}, 'limits': {'writes': 10}}, manifest_path)
         receipt.write_text(json.dumps({'gate': 'closure', 'status': 'pass'}))
         with self.assertRaises(ValueError):
-            requests.bind(manifest, 'example', root, {}, {}, {'closure': receipt}, lambda *_: False)
-        result = requests.bind(manifest, 'example', root, {}, {}, {'closure': receipt}, lambda *_: True)
+            requests.bind(manifest, 'example', root, {}, {}, {'closure': receipt}, lambda *_: False, {'counter_files': {'writes': '/counter'}, 'limits': {'writes': 10}}, manifest_path)
+        result = requests.bind(manifest, 'example', root, {}, {}, {'closure': receipt}, lambda *_: True, {'counter_files': {'writes': '/counter'}, 'limits': {'writes': 10}}, manifest_path)
         self.assertEqual(result['argv'], ['/bin/true'])
         output = root / 'request.json'
         requests.write_request(output, result)
@@ -329,6 +388,11 @@ class ManifestChecks(unittest.TestCase):
     def test_e12_is_bounded_and_build_waits_for_pull_closure(self):
         manifest = json.loads((Path(__file__).resolve().parent / 'linux-preparation-stages.json').read_text())
         stages = {entry['id']: entry for entry in manifest['stages']}
+        ledger = {entry['id']: entry for entry in manifest['sequence']}
+        self.assertEqual(set(ledger), {'E0', 'E1', 'E1b-base', 'E1b-inputs', 'E1b-evidence', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'E10', 'E12-pull', 'E12-build', 'E14', 'E15', 'E13a-production', 'E13a-candidate', 'E13a-tests', 'E13a-metadata', 'E13k', 'E13b-old', 'E16', 'E17', 'E19', 'E18'})
+        self.assertTrue(all(row['status'] == 'request-template' or row.get('constraint') for row in ledger.values()))
+        self.assertEqual(ledger['E17']['bound_seconds'], 60)
+        self.assertEqual(sum(ledger[k]['bound_seconds'] for k in ('E1b-base', 'E1b-inputs', 'E1b-evidence')), 60)
         pull, build = stages['E12-pull'], stages['E12-build']
         self.assertEqual(pull['timeout_seconds'] + build['timeout_seconds'], 1800)
         self.assertEqual(pull['argv'][:2], ['docker', 'pull'])

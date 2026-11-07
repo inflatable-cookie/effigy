@@ -26,7 +26,7 @@ def record(path, value):
     exclusive(path, (json.dumps(value, sort_keys=True, indent=2) + '\n').encode())
 
 
-def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identity_probe=None, cwd=None, environment=None):
+def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identity_probe=None, cwd=None, environment=None, resource_monitor=None):
     """Spend a stage occurrence before launch. A missing receipt is unknown.
 
     The caller supplies an already private, exclusive directory and exact, reviewed
@@ -37,7 +37,7 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
     info = root.lstat()
     if not root.is_dir() or root.is_symlink() or info.st_uid != os.geteuid() or info.st_mode & 0o777 != 0o700:
         raise Refusal('stage directory must be owned and mode 0700')
-    if (not isinstance(argv, list) or not argv or any(not isinstance(x, str) or not x or '\x00' in x for x in argv)
+    if (not isinstance(argv, list) or not argv or (not isinstance(argv[0], str) or not argv[0] or any(not isinstance(x, str) or '\x00' in x for x in argv))
             or not 0 < timeout <= 900 or not 0 < output_cap <= 64 * 1024 * 1024):
         raise Refusal('invalid argv, deadline, or output cap')
     if not isinstance(input_hashes, dict) or any(len(v) != 64 or any(c not in '0123456789abcdef' for c in v) for v in input_hashes.values()):
@@ -56,6 +56,8 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
             if actual != expected:
                 raise Refusal('input hash drift: ' + path)
     check_inputs()
+    if resource_monitor is not None:
+        resource_monitor.check()
     record(root / 'intent.json', {'argv': argv, 'cwd': cwd, 'environment': environment, 'timeout_seconds': timeout,
                                   'output_cap_bytes_each': output_cap, 'input_hashes': input_hashes,
                                   'guest': guest})
@@ -91,6 +93,14 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
             except ProcessLookupError:
                 pass
         while sel.get_map() or child.poll() is None:
+            if resource_monitor is not None and reason is None:
+                try:
+                    result['resource_usage'] = resource_monitor.check()
+                except Exception as exc:
+                    reason = 'resource-refusal'
+                    result['resource_error'] = str(exc)
+                    stop_group()
+                    killed_at = time.monotonic()
             if time.monotonic() - start >= timeout and reason is None:
                 reason = 'timeout'
                 stop_group()
@@ -115,6 +125,12 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
                     stop_group()
                     killed_at = time.monotonic()
         exit_code = child.wait()
+        if resource_monitor is not None and reason is None:
+            try:
+                result['resource_usage'] = resource_monitor.check()
+            except Exception as exc:
+                reason = 'resource-refusal'
+                result['resource_error'] = str(exc)
         result.update(disposition=reason or ('exited' if exit_code == 0 else 'failed'),
                       waited_exit=exit_code, elapsed_seconds=time.monotonic() - start,
                       observed_bytes=counts)
@@ -151,16 +167,23 @@ def main():
     if len(raw) > 1024 * 1024 or hashlib.sha256(raw).hexdigest() != sys.argv[2]:
         raise Refusal('request hash mismatch or size exceeded')
     request = json.loads(raw)
-    required = {'stage_dir', 'argv', 'timeout_seconds', 'output_cap_bytes', 'input_hashes', 'guest', 'cwd', 'environment'}
+    required = {'stage_dir', 'argv', 'timeout_seconds', 'output_cap_bytes', 'input_hashes', 'guest', 'cwd', 'environment', 'resources'}
     if set(request) != required:
         raise Refusal('unsupported request schema')
     inputs = dict(request['input_hashes'])
     if request_path in inputs:
         raise Refusal('request must not alias a separate input')
     inputs[request_path] = sys.argv[2]
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from preparation_resources import CounterFiles, Monitor
+    resource = request['resources']
+    if not isinstance(resource, dict) or set(resource) != {'counter_files', 'limits'}:
+        raise Refusal('explicit resource accounting required')
+    monitor = Monitor(resource['limits'], CounterFiles(resource['counter_files']))
     result = run_stage(request['stage_dir'], request['argv'], request['timeout_seconds'],
                        request['output_cap_bytes'], inputs, request['guest'],
-                       cwd=request['cwd'], environment=request['environment'])
+                       cwd=request['cwd'], environment=request['environment'], resource_monitor=monitor)
     print(json.dumps(result, sort_keys=True))
     return 0 if result['disposition'] == 'exited' else 1
 

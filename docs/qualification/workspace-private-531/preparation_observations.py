@@ -148,11 +148,11 @@ def verify_contained_closure(expected, receipt, authenticate):
         return 'unknown'
     if authenticate(receipt) is not True:
         raise Refusal('closure receipt is not authenticated')
-    if any(not expected.get(k) or receipt.get(k) != expected[k] for k in ('boot_id', 'nonce', 'unit', 'control_group')):
+    if any(not expected.get(k) or receipt.get(k) != expected[k] for k in ('boot_id', 'nonce', 'unit', 'invocation_id', 'control_group')):
         raise Refusal('closure identity drift')
     if expected['unit'] != 'effigy-stage-' + expected['nonce']:
         raise Refusal('closure unit does not match nonce')
-    if receipt.get('supervisor') != 'systemd-cgroup-v2':
+    if receipt.get('supervisor') != 'systemd-service-cgroup-v2':
         raise Refusal('unsupported closure supervisor')
     if not receipt.get('control_group') or receipt.get('populated') not in (0, 1):
         return 'unknown'

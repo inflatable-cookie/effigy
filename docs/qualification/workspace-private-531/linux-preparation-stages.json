@@ -9,6 +9,146 @@
   "host_write_bytes_cap": 5368709120,
   "stages": [
     {
+      "id": "E0",
+      "cwd": "/",
+      "argv": [
+        "systemctl",
+        "start",
+        "docker.service"
+      ],
+      "timeout_seconds": 60,
+      "transport": "ssh",
+      "preconditions": [
+        "authenticated-ssh",
+        "boot-complete",
+        "docker-inactive",
+        "E0-go",
+        "guest-closure",
+        "disk-correlation",
+        "authenticated-hard-resource-limits",
+        "bound-live-resource-monitor"
+      ],
+      "retention": "service retained for separately authorised disposition",
+      "failure": "hold; reconcile guest closure and service state",
+      "output_cap_bytes": 16384
+    },
+    {
+      "id": "E1",
+      "cwd": "/Volumes/Stash/scratch/effigy",
+      "argv": [
+        "mkdir",
+        "-m",
+        "700",
+        "/Volumes/Stash/scratch/effigy/531-linux-control"
+      ],
+      "timeout_seconds": 60,
+      "transport": "host",
+      "preconditions": [
+        "host-parent-identity",
+        "control-path-absent",
+        "E1-go",
+        "authenticated-hard-resource-limits",
+        "bound-live-resource-monitor"
+      ],
+      "retention": "retain private control directory",
+      "failure": "hold and reconcile path identity",
+      "output_cap_bytes": 16384
+    },
+    {
+      "id": "E1b-base",
+      "cwd": "/Volumes/Stash/scratch/effigy",
+      "argv": [
+        "mkdir",
+        "-m",
+        "700",
+        "/Volumes/Stash/scratch/effigy/linux-4f6a5ed3"
+      ],
+      "timeout_seconds": 20,
+      "transport": "host",
+      "preconditions": [
+        "host-parent-identity",
+        "host-base-absent",
+        "E1b-go",
+        "E1-success",
+        "authenticated-hard-resource-limits",
+        "bound-live-resource-monitor"
+      ],
+      "retention": "retain host base directory",
+      "failure": "hold and reconcile path identity",
+      "output_cap_bytes": 16384
+    },
+    {
+      "id": "E1b-inputs",
+      "cwd": "/Volumes/Stash/scratch/effigy",
+      "argv": [
+        "mkdir",
+        "-m",
+        "700",
+        "/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/inputs"
+      ],
+      "timeout_seconds": 20,
+      "transport": "host",
+      "preconditions": [
+        "E1b-base-success",
+        "host-inputs-absent",
+        "E1b-go",
+        "authenticated-hard-resource-limits",
+        "bound-live-resource-monitor"
+      ],
+      "retention": "retain host input directory",
+      "failure": "hold and reconcile path identity",
+      "output_cap_bytes": 16384
+    },
+    {
+      "id": "E1b-evidence",
+      "cwd": "/Volumes/Stash/scratch/effigy",
+      "argv": [
+        "mkdir",
+        "-m",
+        "700",
+        "/Volumes/Stash/scratch/effigy/linux-4f6a5ed3-evidence"
+      ],
+      "timeout_seconds": 20,
+      "transport": "host",
+      "preconditions": [
+        "host-parent-identity",
+        "evidence-path-absent",
+        "E1b-inputs-success",
+        "E1b-go",
+        "authenticated-hard-resource-limits",
+        "bound-live-resource-monitor"
+      ],
+      "retention": "retain host evidence directory",
+      "failure": "hold and reconcile path identity",
+      "output_cap_bytes": 16384
+    },
+    {
+      "id": "E2",
+      "cwd": "/Volumes/Stash/scratch/effigy/531-linux-control",
+      "argv": [
+        "ssh-keygen",
+        "-q",
+        "-t",
+        "ed25519",
+        "-N",
+        "",
+        "-f",
+        "/Volumes/Stash/scratch/effigy/531-linux-control/id_ed25519"
+      ],
+      "timeout_seconds": 60,
+      "output_cap_bytes": 16384,
+      "transport": "host",
+      "preconditions": [
+        "E1-success",
+        "E2-private-and-public-paths-absent",
+        "E2-go",
+        "authenticated-hard-resource-limits",
+        "bound-live-resource-monitor"
+      ],
+      "retention": "private key retained only until separately authorised disposition, maximum 24 hours",
+      "failure": "retain partial key files and refuse replay until reconciled"
+    },
+    {
       "id": "E12-pull",
       "cwd": "/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/source",
       "argv": [
@@ -26,7 +166,9 @@
         "E12-go",
         "stable-baseline",
         "bound-live-network-and-engine-storage-monitor",
-        "guest-closure"
+        "guest-closure",
+        "authenticated-hard-resource-limits",
+        "bound-live-resource-monitor"
       ],
       "retention": "retain image and original streams",
       "failure": "hold; reconcile guest closure; never replay uncertain intent; hold if resource telemetry is unavailable",
@@ -51,7 +193,9 @@
         "E12-go",
         "bound-live-network-and-engine-storage-monitor",
         "disk-correlation",
-        "guest-closure"
+        "guest-closure",
+        "authenticated-hard-resource-limits",
+        "bound-live-resource-monitor"
       ],
       "retention": "retain image ID and original streams",
       "failure": "hold; reconcile guest closure; never replay uncertain intent; hold if resource telemetry is unavailable",
@@ -71,7 +215,9 @@
         "E11-cargo-escape",
         "host-heavy-admission",
         "guest-closure",
-        "disk-correlation"
+        "disk-correlation",
+        "authenticated-hard-resource-limits",
+        "bound-live-resource-monitor"
       ],
       "retention": "retain build and streams",
       "failure": "hold; reconcile guest closure"
@@ -90,7 +236,9 @@
         "E11-cargo-escape",
         "host-heavy-admission",
         "disk-correlation",
-        "guest-closure"
+        "guest-closure",
+        "authenticated-hard-resource-limits",
+        "bound-live-resource-monitor"
       ],
       "retention": "retain build and streams",
       "failure": "hold; reconcile guest closure"
@@ -110,7 +258,9 @@
         "E11-cargo-escape",
         "host-heavy-admission",
         "disk-correlation",
-        "guest-closure"
+        "guest-closure",
+        "authenticated-hard-resource-limits",
+        "bound-live-resource-monitor"
       ],
       "retention": "retain test list and streams",
       "failure": "hold; reconcile guest closure"
@@ -129,7 +279,9 @@
         "E11-cargo-escape",
         "host-heavy-admission",
         "disk-correlation",
-        "guest-closure"
+        "guest-closure",
+        "authenticated-hard-resource-limits",
+        "bound-live-resource-monitor"
       ],
       "retention": "retain metadata and streams",
       "failure": "hold; reconcile guest closure"
@@ -152,7 +304,9 @@
         "E11-cargo-escape",
         "host-heavy-admission",
         "disk-correlation",
-        "guest-closure"
+        "guest-closure",
+        "authenticated-hard-resource-limits",
+        "bound-live-resource-monitor"
       ],
       "retention": "retain old build and streams",
       "failure": "hold; reconcile guest closure"
@@ -163,5 +317,162 @@
     "E13k": "The durable 600+900 second selector has no step resume; separate heavy leaf selectors and genuine host admission through remote completion need a reviewed implementation and guest closure.",
     "E14": "The genuine Colima producer has a 1800-second kit bound and no evidenced admission-preserving split; retain its full bound and do not run under the 1200-second stage primitive."
   },
-  "engine_storage_bytes_cap": 2147483648
+  "engine_storage_bytes_cap": 2147483648,
+  "sequence": [
+    {
+      "id": "E0",
+      "bound_seconds": 60,
+      "status": "request-template"
+    },
+    {
+      "id": "E1",
+      "bound_seconds": 60,
+      "status": "request-template"
+    },
+    {
+      "id": "E1b-base",
+      "bound_seconds": 20,
+      "status": "request-template"
+    },
+    {
+      "id": "E1b-inputs",
+      "bound_seconds": 20,
+      "status": "request-template"
+    },
+    {
+      "id": "E1b-evidence",
+      "bound_seconds": 20,
+      "status": "request-template"
+    },
+    {
+      "id": "E2",
+      "bound_seconds": 60,
+      "status": "request-template"
+    },
+    {
+      "id": "E3",
+      "bound_seconds": 60,
+      "status": "unavailable",
+      "constraint": "Fresh authenticated account, group and home absence and exact account-creation GO required."
+    },
+    {
+      "id": "E4",
+      "bound_seconds": 30,
+      "status": "unavailable",
+      "constraint": "E3 terminal and closure plus fresh account/group identity required."
+    },
+    {
+      "id": "E5",
+      "bound_seconds": 60,
+      "status": "unavailable",
+      "constraint": "Fresh sshd configuration, exact private drop-in bytes, syntax-check and reload admission required."
+    },
+    {
+      "id": "E6",
+      "bound_seconds": 30,
+      "status": "unavailable",
+      "constraint": "Fresh host key, E2 public key, expiry-time capability and exact key bytes required."
+    },
+    {
+      "id": "E7",
+      "bound_seconds": 60,
+      "status": "unavailable",
+      "constraint": "Authenticated native mount and independently witnessed controller-to-guest disk correlation are required."
+    },
+    {
+      "id": "E8",
+      "bound_seconds": 60,
+      "status": "unavailable",
+      "constraint": "E7 owned root identity and a fresh empty control directory are required."
+    },
+    {
+      "id": "E9",
+      "bound_seconds": 900,
+      "status": "unavailable",
+      "constraint": "E8 filesystem admission and exact private transfer request and authenticated SSH are required."
+    },
+    {
+      "id": "E10",
+      "bound_seconds": 1800,
+      "status": "unavailable",
+      "constraint": "Rust 1.97.1 provisioning was budgeted as one 1800-second step; neither a pinned rustup bootstrap nor a source-qualified bounded split is established. Do not silently reduce this acceptance window."
+    },
+    {
+      "id": "E12-pull",
+      "bound_seconds": 900,
+      "status": "request-template"
+    },
+    {
+      "id": "E12-build",
+      "bound_seconds": 900,
+      "status": "request-template"
+    },
+    {
+      "id": "E14",
+      "bound_seconds": 1800,
+      "status": "unavailable",
+      "constraint": "The genuine Colima producer has a 1800-second kit bound and no evidenced admission-preserving split; retain its full bound and do not run under the 1200-second stage primitive."
+    },
+    {
+      "id": "E15",
+      "bound_seconds": 300,
+      "status": "unavailable",
+      "constraint": "Genuine E14 aarch64 artifact, source-qualified toolchain identity and producer receipt do not yet exist."
+    },
+    {
+      "id": "E13a-production",
+      "bound_seconds": 900,
+      "status": "request-template"
+    },
+    {
+      "id": "E13a-candidate",
+      "bound_seconds": 900,
+      "status": "request-template"
+    },
+    {
+      "id": "E13a-tests",
+      "bound_seconds": 900,
+      "status": "request-template"
+    },
+    {
+      "id": "E13a-metadata",
+      "bound_seconds": 900,
+      "status": "request-template"
+    },
+    {
+      "id": "E13k",
+      "bound_seconds": 1500,
+      "status": "unavailable",
+      "constraint": "The durable 600+900 second selector has no step resume; separate heavy leaf selectors and genuine host admission through remote completion need a reviewed implementation and guest closure."
+    },
+    {
+      "id": "E13b-old",
+      "bound_seconds": 900,
+      "status": "request-template"
+    },
+    {
+      "id": "E16",
+      "bound_seconds": 300,
+      "status": "unavailable",
+      "constraint": "Actual source-bound build outputs, modes and hashes are not yet available for the exclusive freeze request."
+    },
+    {
+      "id": "E17",
+      "bound_seconds": 60,
+      "status": "unavailable",
+      "constraint": "Native nextest schema, metadata and frozen executable identities are not yet available."
+    },
+    {
+      "id": "E19",
+      "bound_seconds": 60,
+      "status": "unavailable",
+      "constraint": "Exact reviewed inputs, GO index, GO receipt and driver hashes are not yet available for placement."
+    },
+    {
+      "id": "E18",
+      "bound_seconds": 300,
+      "status": "unavailable",
+      "constraint": "Only actual recorded resource identities and their approved dispositions may be acted on; no deletion inferred."
+    }
+  ]
 }
