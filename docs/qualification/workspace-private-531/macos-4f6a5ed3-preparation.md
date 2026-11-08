@@ -336,8 +336,12 @@ The context is read before and after readiness. Startup is refused unless it is 
 `desktop-linux`, because [Docker documents that Desktop selects that context at startup](https://docs.docker.com/desktop/setup/install/mac-permission-requirements/).
 The already-ready path skips startup and requires the selection to remain unchanged. Neither check
 prevents concurrent external changes. The fixed launcher opens only `/Applications/Docker.app`;
-its exit does not establish readiness. The owned socket and a matching engine response do. Drift,
-missing telemetry, failed commands and exhausted reserve stop before D1.
+its exit does not establish readiness. An initial bounded engine read makes the startup decision:
+a matching engine skips startup, while only the two recognised local connection errors permit a
+separately claimed start, including when the socket exists but refuses connections. Other failures
+and changed engine facts refuse. Nested helper timers preserve the earlier outer deadline. The owned
+socket and a matching engine response establish readiness. Drift, missing telemetry, unexpected
+failed commands and exhausted reserve stop before D1.
 
 The held, no-alias Desktop disk is sampled before, during and after the operation against a 512 MiB
 allocated-growth threshold, alongside the private-root monitor. Samples are not a hard filesystem

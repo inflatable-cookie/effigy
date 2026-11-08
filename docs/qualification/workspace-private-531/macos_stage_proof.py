@@ -294,7 +294,12 @@ def execute_ready(request, request_sha):
 
         sample()
         before_context = context('context-before')
-        if not socket_present():
+        socket_present()  # Reject an aliased or foreign endpoint, but let the bounded read decide readiness.
+        info_argv = [executor.prep.DOCKER, 'info', '--format', '{{json .}}']
+        info_env = {'PATH': executor.DESKTOP_BASE_PATH, 'LANG': 'C',
+                    'DOCKER_CONFIG': bindings['desktop_config'], 'DOCKER_HOST': bindings['desktop_host']}
+        info = child('engine-before', info_argv, info_env, retry_endpoint=True)
+        if info is None:
             if before_context != 'desktop-linux':
                 raise executor.Refusal('startup refused: default context is not desktop-linux')
             if executor.call_bounded(lambda: app_inputs(sample_app), hard - time.monotonic()) != request['app_inputs']:
@@ -313,15 +318,12 @@ def execute_ready(request, request_sha):
         else:
             receipt['startup'] = 'skipped'
         attempt = 0
-        while True:
+        while info is None:
             if not socket_present():
                 raise executor.Refusal('Desktop endpoint disappeared before readiness read')
             attempt += 1
             name = 'engine-info' if attempt == 1 else 'engine-info-%04d' % attempt
-            info = child(name, [executor.prep.DOCKER, 'info', '--format', '{{json .}}'],
-                         {'PATH': executor.DESKTOP_BASE_PATH, 'LANG': 'C',
-                          'DOCKER_CONFIG': bindings['desktop_config'], 'DOCKER_HOST': bindings['desktop_host']},
-                         retry_endpoint=receipt['startup'] == 'launched')
+            info = child(name, info_argv, info_env, retry_endpoint=True)
             if info is not None:
                 break
             remaining = hard - time.monotonic()

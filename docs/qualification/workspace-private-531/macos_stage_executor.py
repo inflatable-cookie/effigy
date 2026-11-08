@@ -783,13 +783,18 @@ def call_bounded(fn, seconds):
 
     def expired(signum, frame):
         raise Refusal('helper exceeded its remaining allowance')
+    started = time.monotonic()
+    prior_delay, prior_interval = signal.setitimer(signal.ITIMER_REAL, 0)
     previous = signal.signal(signal.SIGALRM, expired)
-    signal.setitimer(signal.ITIMER_REAL, seconds)
+    signal.setitimer(signal.ITIMER_REAL, min(seconds, prior_delay) if prior_delay else seconds)
     try:
         return fn()
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
+        if prior_delay:
+            remaining = prior_delay - (time.monotonic() - started)
+            signal.setitimer(signal.ITIMER_REAL, max(remaining, 0.000001), prior_interval)
 
 
 # ---------------------------------------------------------------------------------------------------

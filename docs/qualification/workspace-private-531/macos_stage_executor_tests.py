@@ -1617,6 +1617,28 @@ class DispatchSweepTests(Fixture):
         with self.assertRaises(ex.Refusal):
             ex.call_bounded(lambda: None, 0)
 
+    def test_nested_helper_preserves_outer_deadline(self):
+        def outer():
+            ex.call_bounded(lambda: time.sleep(0.05), 1)
+            time.sleep(1)
+        started = time.monotonic()
+        with self.assertRaises(ex.Refusal):
+            ex.call_bounded(outer, 0.2)
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual(ex.signal.getitimer(ex.signal.ITIMER_REAL), (0.0, 0.0))
+
+    def test_caught_inner_timeout_still_preserves_outer_deadline(self):
+        def outer():
+            try:
+                ex.call_bounded(lambda: time.sleep(1), 0.05)
+            except ex.Refusal:
+                pass
+            time.sleep(1)
+        started = time.monotonic()
+        with self.assertRaises(ex.Refusal):
+            ex.call_bounded(outer, 0.2)
+        self.assertLess(time.monotonic() - started, 1)
+
     def test_start_identity_is_a_spawn_record_with_no_subprocess(self):
         self.assertFalse(hasattr(ex, 'subprocess'))  # the spawn record runs no subprocess
         with mock.patch.object(os, 'getpgid', return_value=12345), mock.patch.object(os, 'getsid', return_value=12345):
@@ -3224,7 +3246,11 @@ class DesktopReadyTests(Fixture):
         return code, json.loads(out.getvalue()), d1calls
 
     def routes(self):
+        error = ('failed to connect to the docker API at ' + prep.DESKTOP_HOST +
+                 '; check if the path is correct and if the daemon is running: dial unix ' +
+                 self.socket_path + ': connect: no such file or directory\n')
         return {'context-before': emit('desktop-linux\n'), 'context-after': emit('desktop-linux\n'),
+                'engine-before': emit(ENGINE_JSON) if os.path.lexists(self.socket_path) else emit('', 1, error),
                 'engine-info': emit(ENGINE_JSON)}
 
     def test_ready_skips_start_and_d1_receipt_is_simulation(self):
@@ -3234,7 +3260,7 @@ class DesktopReadyTests(Fixture):
         self.assertEqual(code, 0)
         self.assertEqual(receipt['closure'], 'closed')
         self.assertTrue(receipt['closure_simulated'])
-        self.assertEqual([x[0] for x in calls], ['context-before', 'engine-info', 'context-after'])
+        self.assertEqual([x[0] for x in calls], ['context-before', 'engine-before', 'context-after'])
         self.assertEqual([x[0] for x in d1calls], ['d1-engine-info', 'd1-label-absent',
                                                    'd1-volume-create', 'd1-volume-inspect'])
         with self.assertRaisesRegex(ex.Refusal, 'simulated'):
@@ -3256,6 +3282,7 @@ class DesktopReadyTests(Fixture):
         calls = []
         code, _, d1calls = self.entry(request, routes, calls)
         self.assertEqual(code, 0)
+        self.assertLess([x[0] for x in calls].index('engine-before'), [x[0] for x in calls].index('app-start'))
         self.assertEqual([x[0] for x in calls].count('app-start'), 1)
         self.assertTrue(d1calls)
         self.assertTrue(os.path.exists(self.tmp + '/claims/start-ready-start-0001.claim'))
@@ -3276,14 +3303,36 @@ class DesktopReadyTests(Fixture):
         self.assertIn('engine-info-0002', [x[0] for x in calls])
         self.assertTrue(d1calls)
 
+    def test_existing_socket_with_refused_connection_starts_once(self):
+        request = self.request('ready-refused-0001')
+        error = ('failed to connect to the docker API at ' + prep.DESKTOP_HOST +
+                 '; check if the path is correct and if the daemon is running: dial unix ' +
+                 self.socket_path + ': connect: connection refused\n')
+        routes = dict(self.routes(), **{'engine-before': emit('', 1, error), 'app-start': emit('')})
+        calls = []
+        code, _, d1calls = self.entry(request, routes, calls)
+        self.assertEqual(code, 0)
+        self.assertLess([x[0] for x in calls].index('engine-before'), [x[0] for x in calls].index('app-start'))
+        self.assertEqual([x[0] for x in calls].count('app-start'), 1)
+        self.assertTrue(d1calls)
+
     def test_context_change_and_bad_engine_stop_before_d1(self):
         for name, override in [('context', {'context-after': emit('other\n')}),
-                               ('engine', {'engine-info': emit('{"ID":"other"}')})]:
+                               ('engine', {'engine-before': emit('{"ID":"other"}')})]:
             request = self.request('ready-' + name + '-0001')
             calls = []
             with self.assertRaises(ex.Refusal):
                 self.entry(request, dict(self.routes(), **override), calls)
             self.assertFalse(os.path.exists(self.evidence + '/D1-' + request['d1']['activation_id']))
+            self.assertNotIn('app-start', [x[0] for x in calls])
+
+    def test_unexpected_read_failure_never_starts_desktop(self):
+        request = self.request('ready-read-failure-0001')
+        calls = []
+        with self.assertRaises(ex.Refusal):
+            self.entry(request, dict(self.routes(), **{'engine-before': emit('', 1, 'unexpected error\n')}), calls)
+        self.assertNotIn('app-start', [x[0] for x in calls])
+        self.assertFalse(os.path.exists(self.evidence + '/D1-' + request['d1']['activation_id']))
 
     def test_wrong_context_and_launch_failure_stop_before_d1(self):
         os.unlink(self.socket_path)
