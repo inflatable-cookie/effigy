@@ -1,5 +1,6 @@
 """Local fixture tests; no real VM, network or engine commands."""
 import contextlib
+import errno
 import hashlib
 import importlib
 import io
@@ -380,6 +381,210 @@ class MetadataAccountingTests(unittest.TestCase):
         self.assertEqual((root / 'before-config').read_bytes(), b'original')
         self.assertEqual(set(facts), {'config'})
         self.assertEqual(len(errors), 1)
+
+    def test_extent_counters_missing_or_decreasing_refuse(self):
+        leaf = {'path': '/leaf', 'device': 1, 'inode': 2, 'guid': GUID_A, 'parent': ZERO,
+                'logical': 4, 'allocated': 4}
+        before = {'leaf': leaf}
+        missing = {'leaf': {key: value for key, value in leaf.items() if key != 'allocated'}}
+        with self.assertRaisesRegex(Refusal, 'counter missing or decreased'):
+            diagnostic.extent_growth(before, missing)
+        with self.assertRaisesRegex(Refusal, 'counter missing or decreased'):
+            diagnostic.extent_growth(before, {'leaf': dict(leaf, logical=3)})
+
+
+class Listing:
+    """A scandir result: the entries a hook chose to list, as the walk's context manager."""
+    def __init__(self, entries):
+        self.entries = entries
+
+    def __enter__(self):
+        return iter(self.entries)
+
+    def __exit__(self, *exc):
+        return False
+
+
+class ProtectedSampleTests(unittest.TestCase):
+    """The descriptor and extents are verified once per sample; a moved listing is retried and kept."""
+
+    def monitor(self):
+        root, disk, xml = disk_fixture()
+        return root, disk, xml, diagnostic.ExtentMonitor(root, disk, xml, diagnostic.inventory(disk, xml))
+
+    def seam(self, hook):
+        """Route the package walk's listing of the disk directory through hook(path, real_scandir).
+
+        inventory lists with listdir, so the disk directory's scandir is only the package walk.
+        """
+        real = os.scandir
+
+        def scan(path):
+            if Path(path).name != 'disk':
+                return real(path)
+            return hook(path, real)
+        return patch.object(diagnostic.os, 'scandir', scan)
+
+    def test_listed_descriptor_completes_without_a_second_lookup(self):
+        root, disk, xml, monitor = self.monitor()
+        descriptor = disk / 'DiskDescriptor.xml'
+
+        def removed_after_listing(path, real):
+            # The 717 shape: listed, then gone before a second pathname lookup would have run.
+            with real(path) as scan:
+                entries = list(scan)
+            descriptor.unlink()
+            return Listing(entries)
+
+        with self.seam(removed_after_listing):
+            result = monitor.check()
+        self.assertEqual(result['attempts'], 1)
+        self.assertEqual(monitor.observation_failures, [])
+        # The next sample verifies the descriptor itself, so its absence refuses with errno kept.
+        with self.assertRaises(diagnostic.ObservationRefusal) as caught:
+            monitor.check()
+        self.assertEqual(caught.exception.observation['errno'], errno.ENOENT)
+        self.assertEqual(caught.exception.observation['phase'], 'descriptor-verify')
+        self.assertEqual([failure['attempt'] for failure in monitor.observation_failures], [1, 2])
+
+    def test_moved_listing_repeats_once_and_retains_the_failure(self):
+        root, disk, xml, monitor = self.monitor()
+        descriptor = disk / 'DiskDescriptor.xml'
+        moved = []
+
+        def replaced_once(path, real):
+            if not moved:
+                moved.append(True)
+                temporary = disk / 'DiskDescriptor.xml.tmp'
+                temporary.write_bytes(xml)
+                os.replace(temporary, descriptor)
+            return real(path)
+
+        with self.seam(replaced_once):
+            result = monitor.check()
+        self.assertEqual(result['attempts'], 2)
+        self.assertEqual(len(monitor.observation_failures), 1)
+        failure = monitor.observation_failures[0]
+        self.assertEqual((failure['phase'], failure['operation'], failure['attempt']),
+                         ('package-walk', 'listing', 1))
+        self.assertEqual(failure['path'], str(descriptor))
+        self.assertIsNone(failure['errno'])
+        self.assertEqual(len(monitor.identity_events), 1)
+        self.assertTrue(monitor.identity_events[0]['content_identical'])
+
+    def test_persistently_moved_identity_refuses_after_the_bounded_repeat(self):
+        root, disk, xml, monitor = self.monitor()
+        descriptor = disk / 'DiskDescriptor.xml'
+
+        def always_replaced(path, real):
+            temporary = disk / 'DiskDescriptor.xml.tmp'
+            temporary.write_bytes(xml)
+            os.replace(temporary, descriptor)
+            return real(path)
+
+        with self.seam(always_replaced), self.assertRaisesRegex(
+                diagnostic.ObservationRefusal, 'identity moved before the listing'):
+            monitor.check()
+        self.assertEqual([failure['attempt'] for failure in monitor.observation_failures], [1, 2])
+
+    def test_absent_listing_refuses_after_the_bounded_repeat(self):
+        root, disk, xml, monitor = self.monitor()
+
+        def hidden(path, real):
+            with real(path) as scan:
+                return Listing([entry for entry in scan if entry.name != 'DiskDescriptor.xml'])
+
+        with self.seam(hidden), self.assertRaisesRegex(
+                diagnostic.ObservationRefusal, 'absent from the package listing'):
+            monitor.check()
+        self.assertEqual([(f['phase'], f['operation'], f['attempt']) for f in monitor.observation_failures],
+                         [('package-walk', 'listing', 1), ('package-walk', 'listing', 2)])
+
+    def test_absent_before_protected_verification_keeps_the_errno(self):
+        root, disk, xml, monitor = self.monitor()
+        (disk / 'DiskDescriptor.xml').unlink()
+        with self.assertRaises(diagnostic.ObservationRefusal) as caught:
+            monitor.check()
+        self.assertEqual((caught.exception.observation['phase'], caught.exception.observation['operation'],
+                          caught.exception.observation['errno']), ('descriptor-verify', 'lstat', errno.ENOENT))
+        self.assertIn('No such file', str(caught.exception))
+        self.assertEqual(len(monitor.observation_failures), 2)
+
+    def test_persistent_unreadability_refuses_with_errno(self):
+        if os.geteuid() == 0:
+            self.skipTest('an owner-mode refusal needs a non-root owner')
+        root, disk, xml, monitor = self.monitor()
+        descriptor = disk / 'DiskDescriptor.xml'
+        descriptor.chmod(0)
+        try:
+            with self.assertRaises(diagnostic.ObservationRefusal) as caught:
+                monitor.check()
+        finally:
+            descriptor.chmod(0o600)
+        self.assertEqual((caught.exception.observation['operation'], caught.exception.observation['errno']),
+                         ('open', errno.EACCES))
+
+    def test_changed_descriptor_bytes_refuse_without_a_repeat(self):
+        root, disk, xml, monitor = self.monitor()
+        (disk / 'DiskDescriptor.xml').write_bytes(b'<Disk/>')
+        with self.assertRaisesRegex(Refusal, 'descriptor content changed'):
+            monitor.check()
+        self.assertEqual(monitor.observation_failures, [])
+
+    def test_symlink_hardlink_and_foreign_descriptor_refuse(self):
+        root, disk, xml, monitor = self.monitor()
+        descriptor = disk / 'DiskDescriptor.xml'
+        descriptor.unlink()
+        descriptor.symlink_to(disk / 'a.hds')
+        with self.assertRaisesRegex(Refusal, 'not a regular file'):
+            monitor.check()
+
+        root, disk, xml, monitor = self.monitor()
+        os.link(disk / 'DiskDescriptor.xml', root / 'alias')
+        with self.assertRaisesRegex(Refusal, 'aliased file'):
+            monitor.check()
+
+        root, disk, xml, monitor = self.monitor()
+        with patch.object(diagnostic.os, 'geteuid', return_value=os.geteuid() + 1):
+            with self.assertRaisesRegex(Refusal, 'foreign-owned'):
+                monitor.check()
+
+    def test_descriptor_replaced_by_a_symlink_after_verification_refuses(self):
+        root, disk, xml, monitor = self.monitor()
+        descriptor = disk / 'DiskDescriptor.xml'
+
+        def symlinked(path, real):
+            descriptor.unlink()
+            descriptor.symlink_to(disk / 'a.hds')
+            return real(path)
+
+        with self.seam(symlinked), self.assertRaisesRegex(Refusal, 'not a regular entry'):
+            monitor.check()
+        self.assertEqual(monitor.observation_failures, [])
+
+    def test_forged_and_stale_protected_observations_refuse(self):
+        root = fixture()
+        (root / 'plain').write_bytes(b'x')
+        with self.assertRaisesRegex(Refusal, 'forged or stale'):
+            diagnostic.package_sample(root, {str(root / 'plain'): {'inode': (root / 'plain').stat().st_ino}})
+        with self.assertRaisesRegex(Refusal, 'not issued by the monitor'):
+            diagnostic.Witness(object(), {})
+        with self.assertRaisesRegex(Refusal, 'absent from the package listing'):
+            diagnostic.package_sample(root, diagnostic.Witness(diagnostic._ISSUER, {str(root / 'ghost'): {'inode': 1}}))
+        witness = diagnostic.Witness(diagnostic._ISSUER, {})
+        diagnostic.package_sample(root, witness)
+        with self.assertRaisesRegex(Refusal, 'forged or stale'):
+            diagnostic.package_sample(root, witness)
+
+    def test_lookup_failures_keep_operation_path_and_errno(self):
+        root = fixture()
+        with self.assertRaises(diagnostic.ObservationRefusal) as caught:
+            diagnostic.lstat(root / 'missing')
+        observation = caught.exception.observation
+        self.assertEqual((observation['phase'], observation['operation'], observation['errno']),
+                         ('package-walk', 'lstat', errno.ENOENT))
+        self.assertEqual(observation['path'], str(root / 'missing'))
+        self.assertIn('No such file', str(caught.exception))
 
 
 PROGRAM = '''#!/usr/bin/python3

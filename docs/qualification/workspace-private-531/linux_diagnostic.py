@@ -14,6 +14,34 @@ import preparation_observations as observations
 
 CAP = 1024 ** 3
 COUNTERS = ('logical', 'allocated')
+# One live sample may repeat once when a protected object's listing or identity moved between
+# its observation and the package walk. A persistent failure refuses; both attempts are retained.
+ATTEMPTS = 2
+_ISSUER = object()
+
+
+class ObservationRefusal(Refusal):
+    """A failed live observation, kept with its phase, operation, path and errno."""
+
+    def __init__(self, message, phase, operation, path, error=None):
+        code = getattr(error, 'errno', None)
+        self.observation = {'phase': phase, 'operation': operation, 'path': str(path), 'errno': code,
+                            'strerror': None if code is None else os.strerror(code)}
+        suffix = '' if code is None else ' (errno %d %s)' % (code, self.observation['strerror'])
+        super().__init__('%s: %s%s' % (message, path, suffix))
+
+
+class Witness:
+    """Protected objects observed by one live sample, consumed by that sample's package walk.
+
+    Only ExtentMonitor issues one, so a plain mapping, a witness built without the issuer or a
+    witness from an earlier sample is not an observation of this sample and refuses.
+    """
+    def __init__(self, issuer, entries):
+        if issuer is not _ISSUER:
+            raise Refusal('protected observation was not issued by the monitor')
+        self.entries = entries
+        self.consumed = False
 
 
 def retain_originals(root, sources, prefix):
@@ -70,7 +98,10 @@ def inventory(directory, descriptor):
     result, identities = {}, set()
     for name in sorted(names):
         path = root / name
-        info = path.lstat()
+        try:
+            info = path.lstat()
+        except OSError as exc:
+            raise ObservationRefusal('extent unreadable', 'extent-verify', 'lstat', path, exc) from exc
         ident = (info.st_dev, info.st_ino)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or ident in identities:
             raise Refusal('extent alias or non-regular file')
@@ -105,53 +136,74 @@ def lstat(path):
     try:
         return Path(path).lstat()
     except OSError as exc:
-        raise Refusal('package entry unreadable: ' + str(path)) from exc
+        raise ObservationRefusal('package entry unreadable', 'package-walk', 'lstat', path, exc) from exc
 
 
-def package_sample(root, exclude=frozenset()):
-    """Sample every owned regular package file; extents and the descriptor are excluded.
+def package_sample(root, protected=None):
+    """Sample every owned regular package file; protected objects are listed, not looked up again.
 
-    The exclusion only separates stable objects (charged by extent inventory and
-    descriptor bytes) from ancillary metadata. Nothing is skipped silently: a
-    symlink, a non-regular entry, a hardlink or alias, a foreign owner or an
-    entry that cannot be read is a refusal, including for an excluded path.
+    A protected object (the descriptor and every extent) was observed by this same sample, and
+    its witness is consumed here once. Its directory entry must list as a regular entry with the
+    observed inode, which the listing reports without a second path lookup. Every other entry is
+    lstat-ed: a symlink, a non-regular entry, a hardlink or alias, a foreign owner or an entry that
+    cannot be read is a refusal.
     """
     root = Path(root)
     if root.resolve() != root or root.is_symlink() or not root.is_dir():
         raise Refusal('package is not canonical')
-    exclude = frozenset(exclude)
+    if protected is None:
+        protected = Witness(_ISSUER, {})
+    if not isinstance(protected, Witness) or protected.consumed:
+        raise Refusal('protected observation is forged or stale')
+    protected.consumed = True
+    expected, listed = protected.entries, set()
     seen, result = set(), {}
-
-    def unreadable(error):
-        raise Refusal('package directory unreadable: ' + str(error))
-
-    for directory, dirs, files in os.walk(root, followlinks=False, onerror=unreadable):
-        for name in dirs + files:
-            path = Path(directory) / name
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        try:
+            with os.scandir(directory) as scan:
+                entries = list(scan)
+        except OSError as exc:
+            raise ObservationRefusal('package directory unreadable', 'package-walk', 'scandir', directory, exc) from exc
+        for entry in entries:
+            path = Path(directory) / entry.name
+            key = str(path)
+            if key in expected:
+                if not entry.is_file(follow_symlinks=False):
+                    raise Refusal('protected object is not a regular entry: ' + key)
+                if entry.inode() != expected[key]['inode']:
+                    raise ObservationRefusal('protected object identity moved before the listing',
+                                             'package-walk', 'listing', path)
+                listed.add(key)
+                continue
             info = lstat(path)
             if stat.S_ISLNK(info.st_mode):
-                raise Refusal('package contains a symlink: ' + str(path))
+                raise Refusal('package contains a symlink: ' + key)
             if stat.S_ISDIR(info.st_mode):
+                pending.append(path)
                 continue
             if not stat.S_ISREG(info.st_mode):
-                raise Refusal('package contains a non-regular file: ' + str(path))
+                raise Refusal('package contains a non-regular file: ' + key)
             if info.st_nlink != 1:
-                raise Refusal('package contains an aliased file: ' + str(path))
+                raise Refusal('package contains an aliased file: ' + key)
             if info.st_uid != os.geteuid():
-                raise Refusal('package contains a foreign-owned file: ' + str(path))
+                raise Refusal('package contains a foreign-owned file: ' + key)
             for field in ('st_size', 'st_blocks'):
                 if type(getattr(info, field)) is not int or getattr(info, field) < 0:
-                    raise Refusal('package counter unreadable: ' + str(path))
-            if str(path) in exclude:
-                continue
+                    raise Refusal('package counter unreadable: ' + key)
             ident = (info.st_dev, info.st_ino)
             if ident in seen:
-                raise Refusal('package file alias: ' + str(path))
+                raise Refusal('package file alias: ' + key)
             seen.add(ident)
             result[str(path.relative_to(root))] = {'device': info.st_dev, 'inode': info.st_ino,
                                                    'uid': info.st_uid,
                                                    'logical': info.st_size,
                                                    'allocated': info.st_blocks * 512}
+    missing = sorted(set(expected) - listed)
+    if missing:
+        raise ObservationRefusal('protected object absent from the package listing',
+                                 'package-walk', 'listing', missing[0])
     return result
 
 
@@ -248,11 +300,12 @@ class ExtentMonitor:
         self.identities = [(p.lstat().st_dev, p.lstat().st_ino) for p in (self.package, self.disk)]
         self.initial = initial
         self.last = initial
-        self.exclude = frozenset({str(self.disk / name) for name in initial} | {str(self.descriptor_path)})
         self.descriptor_identity = self.descriptor_facts()
         self.identity_events = []
+        self.observation_failures = []
         self.ancillary = AncillaryAccount()
-        self.ancillary.observe(package_sample(self.package, self.exclude))
+        self.package_initial = {key: 0 for key in COUNTERS}
+        self._observe()
         # The first sample is the baseline the charge is measured against, not an event.
         self.ancillary.events.clear()
         self.package_initial = dict(self.ancillary.held)
@@ -261,7 +314,8 @@ class ExtentMonitor:
         try:
             info = self.descriptor_path.lstat()
         except OSError as exc:
-            raise Refusal('descriptor unreadable during observation') from exc
+            raise ObservationRefusal('descriptor unreadable during observation', 'descriptor-verify',
+                                     'lstat', self.descriptor_path, exc) from exc
         if not stat.S_ISREG(info.st_mode):
             raise Refusal('descriptor is not a regular file during observation')
         if info.st_nlink != 1:
@@ -274,21 +328,17 @@ class ExtentMonitor:
         try:
             fd = os.open(self.descriptor_path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
         except OSError as exc:
-            raise Refusal('descriptor unreadable during observation') from exc
+            raise ObservationRefusal('descriptor unreadable during observation', 'descriptor-verify',
+                                     'open', self.descriptor_path, exc) from exc
         with os.fdopen(fd, 'rb') as source:
             opened = os.fstat(source.fileno())
             if (opened.st_dev, opened.st_ino) != (facts['device'], facts['inode']):
-                raise Refusal('descriptor identity changed while reading')
+                raise ObservationRefusal('descriptor identity changed while reading', 'descriptor-verify',
+                                         'fstat', self.descriptor_path)
             return source.read()
 
-    def check(self):
-        try:
-            stable = all((p.lstat().st_dev, p.lstat().st_ino) == identity and p.resolve() == p
-                         for p, identity in zip((self.package, self.disk), self.identities))
-        except OSError as exc:
-            raise Refusal('package or disk unreadable during observation') from exc
-        if not stable:
-            raise Refusal('package or disk identity changed')
+    def _sample(self):
+        """One genuine sample: descriptor bytes and extents first, then the package listing."""
         descriptor = self.descriptor_facts()
         content = self.descriptor_bytes(descriptor)
         if descriptor != self.descriptor_identity:
@@ -301,12 +351,36 @@ class ExtentMonitor:
         current = inventory(self.disk, self.descriptor)
         growth = extent_growth(self.initial, current)
         extent_growth(self.last, current)
+        entries = {str(self.descriptor_path): {'inode': descriptor['inode']}}
+        entries.update({str(self.disk / name): {'inode': row['inode']} for name, row in current.items()})
+        sample = package_sample(self.package, Witness(_ISSUER, entries))
         self.last = current
-        held = self.ancillary.observe(package_sample(self.package, self.exclude))
+        return {'extents': growth, 'held': self.ancillary.observe(sample)}
+
+    def _observe(self):
+        """Repeat a sample once when a protected object moved under it; keep every failed attempt."""
+        for attempt in range(1, ATTEMPTS + 1):
+            try:
+                return self._sample(), attempt
+            except ObservationRefusal as exc:
+                self.observation_failures.append(dict(exc.observation, attempt=attempt))
+                if attempt == ATTEMPTS:
+                    raise
+
+    def check(self):
+        try:
+            stable = all((p.lstat().st_dev, p.lstat().st_ino) == identity and p.resolve() == p
+                         for p, identity in zip((self.package, self.disk), self.identities))
+        except OSError as exc:
+            raise Refusal('package or disk unreadable during observation') from exc
+        if not stable:
+            raise Refusal('package or disk identity changed')
+        sampled, attempts = self._observe()
+        held = sampled['held']
         charged = {key: held['held'][key] - self.package_initial[key] for key in COUNTERS}
         if any(value > CAP for value in charged.values()):
             raise Refusal('observed ancillary metadata growth exceeds cap')
-        return {'extents': growth, 'package': charged,
+        return {'extents': sampled['extents'], 'package': charged,
                 'metadata': {'objects': held['objects'], 'incarnations': held['incarnations'],
                              'events': held['events'], 'held': held['held']},
-                'descriptor_identity_events': len(self.identity_events)}
+                'descriptor_identity_events': len(self.identity_events), 'attempts': attempts}

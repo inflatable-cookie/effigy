@@ -275,6 +275,7 @@ def execute(request, request_path, request_hash):
                'stop_eligibility': 'unknown', 'findings': [],
                'metadata_accounting': 'sampled conservative charges; not a hard quota',
                'metadata_differences': [], 'identity_events': [], 'metadata_events': [],
+               'observation_failures': [],
                'repository_identity': request['repository'], 'machine_identity': request['machine'],
                'checkout_root': str(REPO_ROOT), 'runtime_inputs': runtime}
     serial = 0
@@ -500,6 +501,8 @@ def execute(request, request_path, request_hash):
                 outcome['findings'].append('final accounting: ' + str(exc))
             outcome['metadata_events'] = monitor.ancillary.events
             outcome['identity_events'].extend(monitor.identity_events)
+            # Every failed live attempt stays here with its phase, operation, path and errno.
+            outcome['observation_failures'] = monitor.observation_failures
         outcome['finished_at'] = time.time()
         outcome['probe_sha256'] = setup.PROBE_SHA256
         stage.record(destination / 'outcome.json', outcome)
