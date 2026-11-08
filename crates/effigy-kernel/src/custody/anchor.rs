@@ -160,7 +160,7 @@ fn member_signal_recorded(
     refusal: &Cell<Option<VerificationFailure>>,
 ) -> Observed<SignalDelivered> {
     platform::signal_checked(member, signal, || {
-        #[cfg(test)]
+        #[cfg(all(test, feature = "fault-injection"))]
         if member.pid == anchor.pid {
             if let Some(decision) = seam::authority(anchor.pid) {
                 return decision;
@@ -204,7 +204,7 @@ pub(super) fn refused_by_retirement(
 /// Test seam for the one window the anchor can retire inside a kill: after its
 /// generation read succeeds and before the authority check re-reads it. Only
 /// the next authority check for the armed anchor is affected.
-#[cfg(test)]
+#[cfg(all(test, feature = "fault-injection"))]
 pub(crate) mod seam {
     use super::*;
     use std::cell::Cell;
