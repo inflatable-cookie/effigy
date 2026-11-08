@@ -30,7 +30,9 @@ def retain_originals(root, sources, prefix):
                 if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
                     raise Refusal('original identity changed while opening')
                 data = source_file.read()
-                if os.fstat(source_file.fileno()).st_size != len(data):
+                final = os.fstat(source_file.fileno())
+                if (final.st_size != len(data) or (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns) !=
+                        (final.st_size, final.st_mtime_ns, final.st_ctime_ns)):
                     raise Refusal('original changed while reading')
             exclusive(Path(root) / (prefix + '-' + name), data)
             facts[name] = {'sha256': hashlib.sha256(data).hexdigest(),
@@ -68,7 +70,7 @@ def inventory(directory, descriptor):
         path = root / name
         info = path.lstat()
         ident = (info.st_dev, info.st_ino)
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or ident in identities:
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or ident in identities:
             raise Refusal('extent alias or non-regular file')
         identities.add(ident)
         guid = next(g for g, file in mapping['files'].items() if file == name)
@@ -132,6 +134,7 @@ class ExtentMonitor:
         self.initial = initial
         self.last = initial
         self.package_last = package_counters(package)
+        self.package_initial = {key: sum(row[key] for row in self.package_last.values()) for key in ('logical', 'allocated')}
         self.package_growth = {'logical': 0, 'allocated': 0}
 
     def check(self):

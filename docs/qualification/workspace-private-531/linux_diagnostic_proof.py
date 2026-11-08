@@ -223,6 +223,7 @@ def execute(request, request_path, request_hash):
         extents = diagnostic.inventory(disk, descriptor)
         outcome['before_extents'] = extents
         monitor = diagnostic.ExtentMonitor(home, disk, descriptor, extents)
+        outcome['before_package'] = monitor.package_initial
         result, raw = call(['list', '--info', setup.VM_UUID, '--json'], 10, 65536, start_end)
         if not good(result):
             raise stage.Refusal('pre-observation failed')
@@ -319,6 +320,7 @@ def execute(request, request_path, request_hash):
             if monitor:
                 outcome['final_growth'] = monitor.check()
                 outcome['post_extents'] = monitor.last
+                outcome['post_package'] = {key: sum(row[key] for row in monitor.package_last.values()) for key in ('logical', 'allocated')}
         except Exception as exc:
             outcome['findings'].append('final accounting: ' + str(exc))
         outcome['finished_at'] = time.time()
