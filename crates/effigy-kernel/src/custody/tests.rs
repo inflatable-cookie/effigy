@@ -4510,6 +4510,36 @@ fn live_anchor_refused_kill_still_refuses_closure() {
 }
 
 #[test]
+fn only_the_authority_refusal_of_an_exited_anchor_is_passed_over() {
+    use crate::ident::ProcessState;
+    let authority = UnknownReason::Inconsistent(platform::MEMBER_UNVERIFIED.into());
+    let evidence = || Evidence::new("test".into(), None).unwrap();
+    let exited = [
+        Observed::Absent(AbsenceProof::NoSuchProcess { pid: 1 }),
+        Observed::Verified(ProcessState::Zombie, evidence()),
+    ];
+    for state in &exited {
+        assert!(anchor::refused_by_retired_anchor(&authority, state));
+    }
+    for live in [ProcessState::Active, ProcessState::Stopped] {
+        assert!(!anchor::refused_by_retired_anchor(
+            &authority,
+            &Observed::Verified(live, evidence())
+        ));
+    }
+    let other_refusals = [
+        UnknownReason::PermissionDenied,
+        UnknownReason::Inconsistent("unrelated refusal".into()),
+        UnknownReason::TimedOut {
+            phase: "group closure".into(),
+        },
+    ];
+    for other in other_refusals {
+        assert!(!anchor::refused_by_retired_anchor(&other, &exited[0]));
+    }
+}
+
+#[test]
 fn only_exited_anchors_count_as_retired() {
     use crate::ident::ProcessState;
     let unknown = || Observed::Unknown(UnknownReason::Injected);

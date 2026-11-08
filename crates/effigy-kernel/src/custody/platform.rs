@@ -49,6 +49,8 @@ fn group_exists(pgid: u32) -> Observed<()> {
         Observed::Unknown(unknown(e))
     }
 }
+/// The refusal a signal gets when its member's authority check fails.
+pub(crate) const MEMBER_UNVERIFIED: &str = "member generation unverified";
 pub(crate) fn owner_signal(receipt: &ProcessReceipt, signal: i32) -> Observed<SignalDelivered> {
     // Caller holds its unreaped direct leader. The group number remains pinned.
     numeric(receipt.pgid, true, signal)
@@ -459,7 +461,7 @@ pub(super) fn signal_checked(
         Observed::Unknown(reason) => return Observed::Unknown(reason),
     }
     if !authority() {
-        return Observed::Unknown(unknown("member generation unverified"));
+        return Observed::Unknown(unknown(MEMBER_UNVERIFIED));
     }
     #[cfg(target_os = "linux")]
     {

@@ -165,6 +165,17 @@ pub(super) fn retired(state: &Observed<ProcessState>) -> bool {
     )
 }
 
+/// Whether a refused anchor kill may be passed over: only the authority refusal,
+/// and only once a fresh observation shows the anchor retired. Every other
+/// refusal, and this refusal while the anchor is still live, stays a refusal.
+pub(super) fn refused_by_retired_anchor(
+    reason: &UnknownReason,
+    state: &Observed<ProcessState>,
+) -> bool {
+    matches!(reason, UnknownReason::Inconsistent(message) if message == platform::MEMBER_UNVERIFIED)
+        && retired(state)
+}
+
 /// Test seam for the one window the anchor can retire inside a kill: after its
 /// generation read succeeds and before the authority check re-reads it. Only
 /// the next authority check for the armed anchor is affected.
@@ -307,7 +318,7 @@ pub(super) fn stop(
             // can exit between the liveness check above and this kill. A refused
             // kill of a retired anchor has nothing left to kill. Closure is still
             // proven below from the group, never from the anchor's exit.
-            if !retired(&ident::process_state(anchor.pid)) {
+            if !refused_by_retired_anchor(&reason, &ident::process_state(anchor.pid)) {
                 return Observed::Unknown(reason);
             }
         }
