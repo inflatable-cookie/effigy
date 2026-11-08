@@ -21,6 +21,8 @@ import macos_preparation as prep  # noqa: E402
 TOKEN = '0a1b2c3d'
 TOKEN32 = '0' * 31 + '1'
 IMAGE_ID = 'sha256:' + 'ab' * 32
+# The D1 volume name is the engine's own 64-hex name, printed by the create; the tests use a fixed stand-in.
+VOLUME = 'e5' * 32
 NOW = datetime.datetime(2026, 11, 7, 21, 0, tzinfo=datetime.timezone.utc)
 MANIFEST = json.loads((HERE / 'macos-4f6a5ed3-stages.json').read_text())
 # Canonical sha256 of the r2 C0 and D0 stage objects. r3 keeps them byte-identical.
@@ -45,7 +47,7 @@ BINDINGS = dict(
     probe_source='print(1)', stage_source='print(2)', verify_source='print(3)',
     check_source=prep.CHECK_SOURCE, route_echo=prep.ROUTE_ECHO, image_id=IMAGE_ID,
     owned_container_ids=['abc123', 'def456'], owned_image_id=IMAGE_ID,
-    owned_volume_name='effigy-4f6a-qual-' + TOKEN)
+    owned_volume_name=VOLUME)
 
 
 def sha(path):
@@ -181,7 +183,7 @@ class CleanupAuthority(unittest.TestCase):
     CID = 'c' * 64
 
     def receipts(self, engine=ENGINE, image_id=IMAGE_ID):
-        return prep.occurrence_receipts(TOKEN, engine, image_id, self.CID)
+        return prep.occurrence_receipts(TOKEN, engine, VOLUME, image_id, self.CID)
 
     def image_row(self, **changes):
         base = {'Id': IMAGE_ID, 'RepoTags': [f'effigy-4f6a-desktop-runtime:{TOKEN}'],
@@ -195,7 +197,7 @@ class CleanupAuthority(unittest.TestCase):
         return json.dumps(base) + '\n'
 
     def volume_row(self, **changes):
-        base = {'Name': f'effigy-4f6a-qual-{TOKEN}', 'Labels': self.LABEL, 'Driver': 'local'}
+        base = {'Name': VOLUME, 'Labels': self.LABEL, 'Driver': 'local'}
         base.update(changes)
         return json.dumps(base) + '\n'
 
@@ -209,7 +211,7 @@ class CleanupAuthority(unittest.TestCase):
         out = self.select()
         self.assertEqual(out['containers'], [self.CID])
         self.assertEqual(out['images'], [IMAGE_ID])
-        self.assertEqual(out['volumes'], [f'effigy-4f6a-qual-{TOKEN}'])
+        self.assertEqual(out['volumes'], [VOLUME])
         self.assertEqual(out['unauthorized'], [])
 
     def test_image_observation_without_labels_cannot_be_selected(self):
@@ -252,7 +254,7 @@ class CleanupAuthority(unittest.TestCase):
         self.assertEqual(out['containers'], [])
         self.assertEqual(out['images'], [])
         self.assertEqual(out['volumes'], [])
-        self.assertEqual(out['foreign'], sorted([self.CID, IMAGE_ID, f'effigy-4f6a-qual-{TOKEN}']))
+        self.assertEqual(out['foreign'], sorted([self.CID, IMAGE_ID, VOLUME]))
 
     def test_engine_change_between_d0_and_d4_refuses_cleanup(self):
         info = lambda engine: json.dumps({'ID': engine, 'Name': 'docker-desktop'})
@@ -757,8 +759,9 @@ class Readiness(unittest.TestCase):
 
     def test_supersession_records_the_r2_hashes(self):
         sup = MANIFEST['supersedes']
-        self.assertEqual(sup['macos_preparation_sha256'],
+        self.assertEqual(sup['r2']['macos_preparation_sha256'],
                          'd651b3b6b42e54e9cf11c1b0bb6bc9bde76b9ebf9db44c15b2845637e065d121')
+        self.assertEqual(sup['manifest'], 'macos-4f6a5ed3-stages-r3')
         self.assertEqual(sup['readiness_stage_sha256'], READINESS_SHA256)
 
 
@@ -821,7 +824,8 @@ class Manifest(unittest.TestCase):
                         # Engine identity reads only: the D0 baseline, a re-observation before each
                         # D1-D3 effect, and the D4 re-check.
                         self.assertIn(step['id'], ('d0-info', 'd1-engine-info', 'd2-engine-info',
-                                                   'd3-engine-info', 'd4-observe-info'))
+                                                   'd3-engine-info', 'd4-observe-info', 'd4-container-info',
+                                                   'd4-volume-info', 'd4-image-info'))
 
     def test_recipe_and_check_sources_are_consistent(self):
         self.assertEqual(MANIFEST['binding_inputs']['recipe_file'].split()[-1], prep.RECIPE_SHA256)
@@ -871,6 +875,84 @@ class TrancheParsers(unittest.TestCase):
                           'arch': 'aarch64', 'disk': 100, 'address': '1.2.3.4'}) + '\n'
         out = tranche.extract_colima_profiles(raw)
         self.assertEqual(out, [{'name': 'effigy', 'status': 'Stopped', 'runtime': 'containerd', 'arch': 'aarch64'}])
+
+
+class CreationAndTargetControls(unittest.TestCase):
+    """D1 creation output and D4 per-target identity, as pure controls. Every drift or missing fact refuses."""
+    NAME = 'ab' * 32
+    LABEL = {'effigy.qual': TOKEN}
+
+    def volume_inspect(self, **changes):
+        base = {'Name': self.NAME, 'Driver': 'local', 'Scope': 'local', 'Mountpoint': '/d/_data',
+                'CreatedAt': '2026-11-08T09:20:01Z', 'Labels': dict(self.LABEL)}
+        base.update(changes)
+        return json.dumps(base)
+
+    def volume_receipt(self):
+        return dict(kind='volume', id=self.NAME, name=self.NAME, label='effigy.qual=' + TOKEN, engine_id='e',
+                    driver='local', scope='local', mountpoint='/d/_data', created_at='2026-11-08T09:20:01Z',
+                    labels=dict(self.LABEL))
+
+    def test_create_must_print_exactly_one_engine_name_line(self):
+        self.assertEqual(prep.read_created_volume(self.NAME + '\n'), self.NAME)
+        for text in ('', self.NAME, self.NAME + '\n' + self.NAME + '\n', 'effigy-4f6a-qual-x\n',
+                     self.NAME.upper() + '\n', self.NAME + ' x\n', self.NAME[:-1] + '\n'):
+            with self.subTest(text=text[:20]), self.assertRaises(ValueError):
+                prep.read_created_volume(text)
+
+    def test_image_inventory_is_complete_and_normalised(self):
+        bare, prefixed = 'c' * 64, 'sha256:' + 'c' * 64
+        text = json.dumps({'ID': bare}) + '\n' + json.dumps({'ID': prefixed}) + '\n' + json.dumps({'ID': 'd' * 64}) + '\n'
+        self.assertEqual(prep.image_inventory(text), sorted([prefixed, 'sha256:' + 'd' * 64]))
+        self.assertEqual(prep.image_inventory(''), [])
+        for bad in ('{"Repository":"x"}', '{"ID":"short"}'):
+            with self.subTest(row=bad), self.assertRaises(ValueError):
+                prep.image_inventory(bad + '\n')
+
+    def test_volume_target_refuses_every_drifted_immutable_fact(self):
+        receipt = self.volume_receipt()
+        self.assertEqual(prep.check_cleanup_target('volume', self.volume_inspect(), receipt, TOKEN)['name'], self.NAME)
+        drifts = {'CreatedAt': '2026-11-09T00:00:00Z', 'Mountpoint': '/other/_data', 'Driver': 'other',
+                  'Labels': {'effigy.qual': 'someone-else'}, 'Name': 'ab' * 31 + 'ba'}
+        for key, value in drifts.items():
+            with self.subTest(fact=key), self.assertRaises(ValueError):
+                prep.check_cleanup_target('volume', self.volume_inspect(**{key: value}), receipt, TOKEN)
+        with self.subTest(fact='missing'), self.assertRaises(ValueError):
+            prep.check_cleanup_target('volume', self.volume_inspect(Mountpoint=None), receipt, TOKEN)
+
+    def test_image_and_container_targets_refuse_a_replacement(self):
+        image = 'sha256:' + 'ab' * 32
+        receipt = dict(kind='image', id=image, name='effigy-4f6a-desktop-runtime:' + TOKEN, label='effigy.qual=' + TOKEN,
+                       engine_id='e', repo_tags=['effigy-4f6a-desktop-runtime:' + TOKEN], created='2026-11-08T09:20:00Z',
+                       os='linux', architecture='arm64', labels=dict(self.LABEL))
+        good = json.dumps({'Id': image, 'RepoTags': ['effigy-4f6a-desktop-runtime:' + TOKEN], 'Created': '2026-11-08T09:20:00Z',
+                           'Os': 'linux', 'Architecture': 'arm64', 'Config': {'Labels': dict(self.LABEL)}})
+        prep.check_cleanup_target('image', good, receipt, TOKEN)
+        for changes in ({'Id': 'sha256:' + 'cd' * 32}, {'Created': '2026-11-09T00:00:00Z'}, {'RepoTags': []},
+                        {'Config': {'Labels': {}}}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                prep.check_cleanup_target('image', json.dumps(dict(json.loads(good), **changes)), receipt, TOKEN)
+        container = dict(kind='container', id='c' * 64, name='effigy-4f6a-dcheck-' + TOKEN, label='effigy.qual=' + TOKEN,
+                         engine_id='e')
+        ok = json.dumps({'Id': 'c' * 64, 'Name': '/effigy-4f6a-dcheck-' + TOKEN, 'Config': {'Labels': dict(self.LABEL)}})
+        prep.check_cleanup_target('container', ok, container, TOKEN)
+        with self.assertRaises(ValueError):
+            prep.check_cleanup_target('container', json.dumps({'Id': 'c' * 64, 'Name': '/effigy-4f6a-dcheck-' + TOKEN,
+                                                               'Config': {'Labels': {}}}), container, TOKEN)
+
+    def test_engine_argv_contract_names_only_the_receipted_forms(self):
+        D = prep.DOCKER
+        ok = [D, 'volume', 'create', '--label', 'effigy.qual={token}']
+        prep.check_engine_argv(ok)
+        for bad in ([D, 'volume', 'create', '--label', 'effigy.qual={token}', 'effigy-x'],
+                    [D, 'volume', 'rm', '-f', '{owned_volume_name}'],
+                    [D, 'rm', '-f', '{owned_container_ids}'],
+                    [D, 'image', 'rm', '--force', '{owned_image_id}'],
+                    [D, 'image', 'ls', '--format', '{{json .}}'],
+                    [D, 'system', 'prune', '-f'],
+                    [D, 'volume', 'prune', '-f']):
+            with self.subTest(argv=bad[1:]), self.assertRaises(ValueError):
+                prep.check_engine_argv(bad)
 
 
 if __name__ == '__main__':
