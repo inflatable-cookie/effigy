@@ -497,34 +497,13 @@ esac
         host
     }
 
-    fn handoff(
-        &self,
-        host: &Path,
-        bounded: bool,
-    ) -> Result<PathBuf, crate::runner::error::RunnerError> {
-        let policy = test_policy();
-        let origin = std::time::Instant::now();
-        let mut budget = BoundedCommandBudget::new(
-            origin,
-            origin + std::time::Duration::from_secs(60),
-            16384,
-            16384,
-        );
-        if bounded {
-            ensure_local_linux_workspace_effigy_artifact_bounded(
-                host,
-                &self.root,
-                LinuxWorkspaceTarget::X86_64Gnu,
-                &policy,
-                &mut budget,
-            )
-        } else {
-            ensure_local_linux_workspace_effigy_artifact(
-                host,
-                &self.root,
-                LinuxWorkspaceTarget::X86_64Gnu,
-            )
-        }
+    fn handoff(&self, host: &Path) -> Result<PathBuf, crate::runner::error::RunnerError> {
+        ensure_local_linux_workspace_effigy_artifact(
+            host,
+            &self.root,
+            LinuxWorkspaceTarget::X86_64Gnu,
+        )
+        .map(|bound| bound.artifact)
     }
 
     fn mode(&self, mode: &str) {
@@ -866,58 +845,51 @@ fn concurrent_caller_and_expired_binding_have_no_effect() {
 }
 
 #[test]
-fn both_handoffs_automatically_build_through_changed_input_partial_recovery() {
+fn handoff_automatically_builds_through_changed_input_partial_recovery() {
     let _lock = crate::contract_test_support::lock_test();
-    for bounded in [false, true] {
-        let fixture = Fixture::new(true, true, "docker");
-        let host = fixture.host();
-        let artifact = fixture
-            .root
-            .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
-        write_linux_artifact(&artifact, "old-bytes", Some(STALE_IDENTITY));
-        let result = fixture.handoff(&host, bounded);
-        assert_eq!(
-            result.unwrap_or_else(|error| panic!("bounded={bounded}: {error}")),
-            artifact
-        );
-        let expected = workspace_effigy_local_install_identity(&host).unwrap();
-        assert!(linux_workspace_effigy_artifact_is_current(
-            &artifact,
-            LinuxWorkspaceTarget::X86_64Gnu,
-            &expected
-        ));
-        fixture.assert_preserved();
-    }
+    let fixture = Fixture::new(true, true, "docker");
+    let host = fixture.host();
+    let artifact = fixture
+        .root
+        .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "old-bytes", Some(STALE_IDENTITY));
+    let result = fixture.handoff(&host);
+    assert_eq!(result.unwrap_or_else(|error| panic!("{error}")), artifact);
+    let expected = workspace_effigy_local_install_identity(&host).unwrap();
+    assert!(linux_workspace_effigy_artifact_is_current(
+        &artifact,
+        LinuxWorkspaceTarget::X86_64Gnu,
+        &expected
+    ));
+    fixture.assert_preserved();
 }
 
 #[test]
 fn recovery_cannot_publish_failed_wrong_target_or_unchanged_old_output() {
     let _lock = crate::contract_test_support::lock_test();
-    for bounded in [false, true] {
-        for mode in [
-            "build_fail",
-            "interrupted",
-            "no_output",
-            "wrong_target",
-            "list_fail",
-            "inspect_fail",
-        ] {
-            let fixture = Fixture::new(true, true, "docker");
-            fixture.mode(mode);
-            let host = fixture.host();
-            let artifact = fixture
-                .root
-                .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
-            write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
-            fixture.handoff(&host, bounded).expect_err(mode);
-            assert_eq!(
-                read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact))
-                    .as_deref(),
-                Some(STALE_IDENTITY),
-                "bounded={bounded}, mode={mode}"
-            );
-            fixture.assert_preserved();
-        }
+    for mode in [
+        "build_fail",
+        "interrupted",
+        "no_output",
+        "wrong_target",
+        "list_fail",
+        "inspect_fail",
+    ] {
+        let fixture = Fixture::new(true, true, "docker");
+        fixture.mode(mode);
+        let host = fixture.host();
+        let artifact = fixture
+            .root
+            .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+        write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
+        fixture.handoff(&host).expect_err(mode);
+        assert_eq!(
+            read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact))
+                .as_deref(),
+            Some(STALE_IDENTITY),
+            "mode={mode}"
+        );
+        fixture.assert_preserved();
     }
 }
 
@@ -1130,76 +1102,72 @@ mod managed_namespace {
 }
 
 #[test]
-fn both_handoffs_migrate_the_authentic_legacy_namespace_without_manual_commands() {
+fn handoff_migrates_the_authentic_legacy_namespace_without_manual_commands() {
     let _lock = crate::contract_test_support::lock_test();
     for backend in ["colima", "docker"] {
-        for bounded in [false, true] {
-            let mut fixture = Fixture::new(false, false, backend);
-            fixture.retain_legacy("native");
-            let host = fixture.host();
-            let artifact = fixture
-                .root
-                .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
-            write_linux_artifact(&artifact, "stale 5d source bytes", Some(STALE_IDENTITY));
-            assert_eq!(fixture.handoff(&host, bounded).unwrap(), artifact);
-            let expected = workspace_effigy_local_install_identity(&host).unwrap();
-            assert!(linux_workspace_effigy_artifact_is_current(
-                &artifact,
-                LinuxWorkspaceTarget::X86_64Gnu,
-                &expected
-            ));
-            assert_eq!(fixture.activation_count(), 1);
-            fixture.assert_preserved();
-        }
+        let mut fixture = Fixture::new(false, false, backend);
+        fixture.retain_legacy("native");
+        let host = fixture.host();
+        let artifact = fixture
+            .root
+            .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+        write_linux_artifact(&artifact, "stale 5d source bytes", Some(STALE_IDENTITY));
+        assert_eq!(fixture.handoff(&host).unwrap(), artifact);
+        let expected = workspace_effigy_local_install_identity(&host).unwrap();
+        assert!(linux_workspace_effigy_artifact_is_current(
+            &artifact,
+            LinuxWorkspaceTarget::X86_64Gnu,
+            &expected
+        ));
+        assert_eq!(fixture.activation_count(), 1);
+        fixture.assert_preserved();
     }
 }
 
 #[test]
 fn migration_failures_never_accept_stale_output_and_reuse_the_new_builder_on_retry() {
     let _lock = crate::contract_test_support::lock_test();
-    for bounded in [false, true] {
-        for mode in [
-            "up_fail",
-            "up_bad_labels",
-            "up_inspect_fail",
-            "build_fail",
-            "no_output",
-            "wrong_target",
-            "list_fail",
-        ] {
-            let mut fixture = Fixture::new(false, false, "colima");
-            fixture.retain_legacy("native");
-            fixture.mode(mode);
-            let host = fixture.host();
-            let artifact = fixture
-                .root
-                .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
-            write_linux_artifact(&artifact, "stale 5d source bytes", Some(STALE_IDENTITY));
-            fixture.handoff(&host, bounded).expect_err(mode);
+    for mode in [
+        "up_fail",
+        "up_bad_labels",
+        "up_inspect_fail",
+        "build_fail",
+        "no_output",
+        "wrong_target",
+        "list_fail",
+    ] {
+        let mut fixture = Fixture::new(false, false, "colima");
+        fixture.retain_legacy("native");
+        fixture.mode(mode);
+        let host = fixture.host();
+        let artifact = fixture
+            .root
+            .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+        write_linux_artifact(&artifact, "stale 5d source bytes", Some(STALE_IDENTITY));
+        fixture.handoff(&host).expect_err(mode);
+        assert_eq!(
+            read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact))
+                .as_deref(),
+            Some(STALE_IDENTITY),
+            "mode={mode}"
+        );
+        if matches!(mode, "up_bad_labels" | "up_inspect_fail") {
+            assert!(!fixture.root.join("state/build-effect").exists(), "{mode}");
+        }
+        fixture.assert_preserved();
+        // A real build failure retains a strictly owned new builder for retry.
+        if mode == "build_fail" {
+            let identity = std::fs::read(fixture.root.join("state/identity.json")).unwrap();
+            fixture.mode("retry");
+            fixture
+                .handoff(&host)
+                .expect("retry requires no reset or manual engine operation");
+            assert_eq!(fixture.activation_count(), 1);
             assert_eq!(
-                read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact))
-                    .as_deref(),
-                Some(STALE_IDENTITY),
-                "bounded={bounded}, mode={mode}"
+                std::fs::read(fixture.root.join("state/identity.json")).unwrap(),
+                identity
             );
-            if matches!(mode, "up_bad_labels" | "up_inspect_fail") {
-                assert!(!fixture.root.join("state/build-effect").exists(), "{mode}");
-            }
             fixture.assert_preserved();
-            // A real build failure retains a strictly owned new builder for retry.
-            if mode == "build_fail" {
-                let identity = std::fs::read(fixture.root.join("state/identity.json")).unwrap();
-                fixture.mode("retry");
-                fixture
-                    .handoff(&host, bounded)
-                    .expect("retry requires no reset or manual engine operation");
-                assert_eq!(fixture.activation_count(), 1);
-                assert_eq!(
-                    std::fs::read(fixture.root.join("state/identity.json")).unwrap(),
-                    identity
-                );
-                fixture.assert_preserved();
-            }
         }
     }
 }

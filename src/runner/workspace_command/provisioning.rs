@@ -30,9 +30,6 @@ use crate::runner::workspace_client::context::{
     ENROL_ROOT, HOST_REPREPARE_COMMAND,
 };
 
-#[cfg(test)]
-use crate::runner::exec_command::BoundedCaptureFailure;
-
 use super::RunnerError;
 
 const CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH_PREFIX: &str = "/tmp/effigy-host";
@@ -51,10 +48,8 @@ static WORKSPACE_EFFIGY_STAGING_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// One identity probe reads four short `/proc` fields and two `ls` lines.
 const WORKSPACE_IDENTITY_STDOUT_BYTES: u64 = 64 * 1024;
 const WORKSPACE_IDENTITY_STDERR_BYTES: u64 = 8 * 1024;
-#[cfg(test)]
 const LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(300);
-#[cfg(test)]
 const LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_POLL_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(500);
 
@@ -66,11 +61,14 @@ pub(in crate::runner) enum LinuxWorkspaceTarget {
     Aarch64Musl,
 }
 
-/// Where a Prepare may find the produced guest artifact (§8.9).
+/// Where a host Prepare gets its guest artifact (§8.9). The policy selects a
+/// source; the host's provenance decides what `Auto` may use.
 ///
-/// No variant builds one: `Local` consumes this checkout's produced artifact or
-/// refuses, `Download` takes the release artifact, and `Auto` prefers the local
-/// one and falls back to a current release download.
+/// `Auto` builds the artifact in a development host's own checkout, once per
+/// stale identity, and downloads the matching release asset on a release host.
+/// `Local` names a checkout explicitly and builds there. `Download` takes the
+/// release asset, and refuses on a development host, whose release would be a
+/// substitute. None of these builds during publication or task entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LinuxWorkspaceArtifactSource {
     Auto,
@@ -538,13 +536,16 @@ pub(super) fn publish_workspace_guest(
     if operator_workspace_for_policy(repo_root, policy)?.is_none() {
         return Ok(None);
     }
+    // The artifact is acquired before the activation run opens: a build or a
+    // download is long, and the publication below only consumes what is ready.
+    let artifact = prepare_workspace_artifact(repo_root, policy)?;
     let ctx = crate::runner::environment::context(repo_root)?;
     let env = crate::runner::environment::env_ref(policy)?;
     let mut prepared = None;
     effigy_containers::environment::activate_with(&ctx, &env, &[], |run| {
-        prepared = publish_workspace_guest_in(repo_root, policy, run).map_err(|error| {
-            effigy_containers::environment::EnvError::Invalid(error.to_string())
-        })?;
+        prepared = publish_workspace_guest_in(repo_root, policy, run, artifact.as_ref()).map_err(
+            |error| effigy_containers::environment::EnvError::Invalid(error.to_string()),
+        )?;
         Ok(())
     })
     .map_err(crate::runner::environment::error)?;
@@ -557,6 +558,7 @@ pub(super) fn publish_workspace_guest_in(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     run: &mut effigy_containers::environment::EnvRun<'_>,
+    artifact: Option<&HostWorkspaceArtifact>,
 ) -> Result<Option<PreparedWorkspaceGuest>, RunnerError> {
     if std::env::var_os("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF").is_some() {
         return Ok(None);
@@ -564,6 +566,11 @@ pub(super) fn publish_workspace_guest_in(
     let Some(operator_workspace) = operator_workspace_for_policy(repo_root, policy)? else {
         return Ok(None);
     };
+    let artifact = artifact.ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "the workspace guest artifact was not prepared before activation; run `{HOST_REPREPARE_COMMAND}` on the host"
+        ))
+    })?;
     let expected = effigy_containers::environment::EnvRef::for_policy(policy)
         .map_err(crate::runner::environment::error)?;
     if run.fence().resource != expected.resource {
@@ -573,10 +580,11 @@ pub(super) fn publish_workspace_guest_in(
     }
     let mut prepared = None;
     run.publish_guest_with(|fence| {
-        let result = publish_workspace_guest_effect(repo_root, policy, operator_workspace, fence)
-            .map_err(|error| {
-            effigy_containers::environment::BackendError::Uncertain(error.to_string())
-        })?;
+        let result =
+            publish_workspace_guest_effect(repo_root, policy, operator_workspace, artifact, fence)
+                .map_err(|error| {
+                    effigy_containers::environment::BackendError::Uncertain(error.to_string())
+                })?;
         let receipt = effigy_kernel::run::GuestPublicationReceipt {
             environment: fence.clone(),
             container_id: result.activation.container.container_id.clone(),
@@ -595,6 +603,7 @@ fn publish_workspace_guest_effect(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     operator_workspace: OperatorWorkspace,
+    artifact: &HostWorkspaceArtifact,
     fence: &effigy_kernel::run::Fence,
 ) -> Result<PreparedWorkspaceGuest, RunnerError> {
     let mut guest = ComposeWorkspaceGuest::unbounded(repo_root, policy)?;
@@ -616,11 +625,10 @@ fn publish_workspace_guest_effect(
     );
     progress.finish_clear();
     let target = LinuxWorkspaceTarget::from_image(&bound.platform, &bound.libc)?;
-    let (artifact, artifact_install_identity) =
-        produced_linux_workspace_effigy_artifact(repo_root, target)?;
+    check_acquired_artifact(artifact, target)?;
     prepare_workspace_guest(
         &mut guest,
-        &artifact,
+        &artifact.artifact,
         target,
         WorkspacePrepareFacts {
             repo_root,
@@ -647,7 +655,7 @@ fn publish_workspace_guest_effect(
             // This owner-run fence is the generation activation will publish,
             // never a second read of an already-settled activation.
             environment: fence.clone(),
-            artifact_install_identity,
+            artifact_install_identity: Some(artifact.install_identity.clone()),
         },
     )?
     .ok_or_else(|| RunnerError::task_invocation("declared workspace publication returned no guest"))
@@ -668,7 +676,8 @@ pub(super) fn ensure_workspace_provisioning_ready(
 /// published context is bound to.
 ///
 /// This is not a Prepare. It never downloads, builds or reinstalls the guest
-/// (§8.9); a workspace without a prepared context, or with one that pins
+/// (§8.9), and it runs no producer; the host Prepare acquired the artifact
+/// beforehand. A workspace without a prepared context, or with one that pins
 /// another version, container, VM boot or environment generation, refuses and
 /// names the host re-prepare command. A hybrid environment (no declared
 /// operator workspace) has no guest and provisions none.
@@ -1091,6 +1100,36 @@ pub(in crate::runner) fn verify_guest_artifact_until(
     })
 }
 
+/// An in-memory comparison rejects unchanged output. This digest never becomes
+/// an install identity or provenance receipt, and current reuse does not hash.
+fn linux_workspace_artifact_digest(
+    artifact_path: &Path,
+    mut within_deadline: impl FnMut() -> bool,
+) -> std::io::Result<Option<[u8; 32]>> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut file = match std::fs::File::open(artifact_path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut digest = Sha256::new();
+    let mut bytes = [0; 64 * 1024];
+    loop {
+        if !within_deadline() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "artifact inspection deadline expired",
+            ));
+        }
+        let read = file.read(&mut bytes)?;
+        if read == 0 {
+            return Ok(Some(digest.finalize().into()));
+        }
+        digest.update(&bytes[..read]);
+    }
+}
+
 /// Each target's producer receipt lives beside its own binary, so producing
 /// another target cannot invalidate a still-current local artifact.
 pub(in crate::runner) fn workspace_artifact_receipt_path(artifact: &Path) -> PathBuf {
@@ -1329,8 +1368,9 @@ pub(in crate::runner) fn operator_workspace_until(
 }
 
 /// The produced artifact this host already holds, found within one absolute
-/// deadline. Finding it reads the artifact's version and receipt sidecars, so it
-/// is bounded like any other publication read, and it never downloads.
+/// deadline. Finding it reads the artifact's version, identity and receipt
+/// sidecars, so it is bounded like any other publication read. It never builds
+/// or downloads.
 pub(in crate::runner) fn held_linux_workspace_effigy_artifact_until(
     repo_root: PathBuf,
     target: LinuxWorkspaceTarget,
@@ -2258,256 +2298,442 @@ impl Drop for StagedHostFile {
         }
     }
 }
-/// Consume the version-locked guest artifact this host may hand to a workspace
-/// (§8.2, §8.9).
+
+/// Where a Prepare gets its Linux guest artifact (§8.9).
 ///
-/// Prepare never builds a guest artifact from an Effigy checkout at consumer
-/// runtime: it consumes bytes a release download or an explicit `effigy
-/// workspace:linux:artifact` already produced, or refuses naming that command.
-/// The bytes are authenticated against the producer receipt before publication.
-/// The artifact this host already holds and can authenticate for one family.
-///
-/// This is [`produced_linux_workspace_effigy_artifact`] with the network path
-/// removed: a current local artifact, or an already-current release cache. A
-/// host that would have to download one is refused with the re-prepare command,
-/// because the reserved publication's one absolute deadline cannot bound an HTTP
-/// transfer and an unbounded external call is not allowed on that path.
+/// A checkout-built development host builds its artifact in that checkout, once
+/// per stale identity. A published release host downloads the matching GitHub
+/// asset. Nothing else selects a source build: a checkout that merely sits nearby
+/// is not evidence of development.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum ArtifactPlan {
+    Build { checkout: PathBuf },
+    Download,
+}
+
+/// The host facts that decide the [`ArtifactPlan`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HostProvenance {
+    /// Installed by `install:local` or built in a checkout's `target/` tree.
+    Checkout(PathBuf),
+    /// Stamped as a `+local.` build whose checkout cannot be proven.
+    UnprovenLocal,
+    /// A published release or a plain install.
+    Release,
+}
+
+/// The host's guest artifact for one target, ready for publication.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) struct HostWorkspaceArtifact {
+    pub(in crate::runner) target: LinuxWorkspaceTarget,
+    pub(in crate::runner) artifact: PathBuf,
+    /// The install identity the bytes are current for: the checkout identity for
+    /// a development build, the release identity for a download.
+    pub(in crate::runner) install_identity: String,
+}
+
+/// The produced artifact this host already holds, found without building or
+/// downloading. The reserved publication's deadline cannot bound either, so a
+/// host whose artifact is missing or stale refuses here and names the host
+/// preparation that produces it.
 pub(in crate::runner) fn held_linux_workspace_effigy_artifact(
     repo_root: &Path,
     target: LinuxWorkspaceTarget,
 ) -> Result<PathBuf, RunnerError> {
-    let release_identity = workspace_effigy_release_install_identity();
-    let rebuild = format!(
-        "`EFFIGY_LINUX_RELEASE_TRIPLE={triple} effigy workspace:linux:artifact` on the host, or \
-         set `{env}=download` and re-run the host prepare once to populate the release cache",
-        triple = target.release_triple(),
-        env = EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
-    );
-    if configured_linux_workspace_artifact_source()? != LinuxWorkspaceArtifactSource::Download {
-        if let Some(effigy_repo_root) = resolve_local_effigy_repo_root(repo_root)? {
-            let artifact = effigy_repo_root.join(target.artifact_relative_path());
-            if produced_linux_workspace_artifact_is_current(&artifact, target) {
-                return Ok(artifact);
-            }
-        }
-    }
-    let cache = linux_workspace_effigy_cache_path(target)?;
-    if linux_workspace_release_cache_is_current(&cache, &release_identity) {
-        return Ok(cache);
+    let host_binary = std::env::current_exe().map_err(RunnerError::Cwd)?;
+    let cwd = current_working_dir()?;
+    let source = configured_linux_workspace_artifact_source()?;
+    let (artifact, identity) = match artifact_plan(&host_binary, repo_root, cwd.as_path(), source)?
+    {
+        ArtifactPlan::Build { checkout } => (
+            checkout.join(target.artifact_relative_path()),
+            local_artifact_identity(&host_binary, &checkout)?,
+        ),
+        ArtifactPlan::Download => (
+            linux_workspace_effigy_cache_path(target)?,
+            workspace_effigy_release_install_identity(),
+        ),
+    };
+    if linux_workspace_effigy_artifact_is_current(&artifact, target, &identity) {
+        return Ok(artifact);
     }
     Err(RunnerError::task_invocation(format!(
         "no current produced linux workspace artifact for `{}` is held on this host, and the \
-         reserved publication does not download inside its deadline; run {rebuild}",
+         reserved publication neither builds nor downloads inside its deadline; run `{HOST_REPREPARE_COMMAND}` \
+         on the host first",
         target.release_triple(),
     )))
 }
 
-pub(in crate::runner) fn produced_linux_workspace_effigy_artifact(
-    repo_root: &Path,
-    target: LinuxWorkspaceTarget,
-) -> Result<(PathBuf, Option<String>), RunnerError> {
-    let source = configured_linux_workspace_artifact_source()?;
-    let release_identity = workspace_effigy_release_install_identity();
-    let rebuild = format!(
-        "`EFFIGY_LINUX_RELEASE_TRIPLE={triple} effigy workspace:linux:artifact` on the host, or \
-         set `{env}=download` to download the published release artifact",
-        triple = target.release_triple(),
-        env = EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
-    );
-    if source != LinuxWorkspaceArtifactSource::Download {
-        if let Some(effigy_repo_root) = resolve_local_effigy_repo_root(repo_root)? {
-            let artifact = effigy_repo_root.join(target.artifact_relative_path());
-            if produced_linux_workspace_artifact_is_current(&artifact, target) {
-                let host_binary = std::env::current_exe().map_err(RunnerError::Cwd)?;
-                let anchor = resolve_local_workspace_effigy_freshness_anchor(
-                    &host_binary,
-                    &effigy_repo_root,
-                );
-                return Ok((
-                    artifact,
-                    Some(workspace_effigy_local_install_identity(&anchor)?),
-                ));
-            }
-            // `local` means this checkout's artifact or nothing: a stale one is
-            // never silently replaced by a download.
-            if source == LinuxWorkspaceArtifactSource::Local {
-                return Err(RunnerError::task_invocation(format!(
-                    "no produced linux workspace artifact for `{}` is current at `{}` (a stale \
-                     artifact is not consumed); run {rebuild}",
-                    target.release_triple(),
-                    artifact.display(),
-                )));
-            }
-        }
-    }
-    // A release download is the other produced artifact: the cache is reused
-    // only when its identity sidecar names this release, and fresh bytes must
-    // match the checksum the release publishes beside them.
-    let cache = linux_workspace_effigy_cache_path(target)?;
-    if source == LinuxWorkspaceArtifactSource::Download
-        || linux_workspace_release_cache_is_current(&cache, &release_identity)
-    {
-        let artifact = ensure_downloaded_linux_workspace_effigy_artifact(target)?;
-        return Ok((artifact, Some(release_identity)));
-    }
-    Err(RunnerError::task_invocation(format!(
-        "no produced linux workspace artifact for `{}` is available on this host (no local Effigy \
-         artifact and no current release download at `{}`); run {rebuild}",
-        target.release_triple(),
-        cache.display(),
-    )))
-}
-
-/// Whether a local artifact is already produced for this exact host version and
-/// target. The bytes are authenticated by [`verify_guest_artifact`].
-pub(super) fn produced_linux_workspace_artifact_is_current(
-    artifact_path: &Path,
-    target: LinuxWorkspaceTarget,
-) -> bool {
-    artifact_path.is_file()
-        && read_trimmed_identity_file(&workspace_effigy_active_version_file(artifact_path))
-            .as_deref()
-            == Some(effigy_core::build_info::active_version().as_str())
-        && linux_workspace_effigy_artifact_receipt_matches_target(artifact_path, target)
-}
-
-#[cfg(test)]
-pub(super) fn ensure_linux_workspace_effigy_artifact(
-    workspace_repo_root: &Path,
-    target: LinuxWorkspaceTarget,
-) -> Result<PathBuf, RunnerError> {
-    let host_binary = std::env::current_exe().map_err(RunnerError::Cwd)?;
-    match configured_linux_workspace_artifact_source()? {
-        LinuxWorkspaceArtifactSource::Download => {
-            return ensure_downloaded_linux_workspace_effigy_artifact(target);
-        }
-        LinuxWorkspaceArtifactSource::Local | LinuxWorkspaceArtifactSource::Auto => {}
-    }
-    if let Some(effigy_repo_root) = resolve_local_effigy_repo_root(workspace_repo_root)? {
-        persist_effigy_source_repo_root(&effigy_repo_root)?;
-        return ensure_local_linux_workspace_effigy_artifact(
-            &host_binary,
-            &effigy_repo_root,
-            target,
-        );
-    }
-
-    ensure_downloaded_linux_workspace_effigy_artifact(target)
-}
-
-/// Bounded artifact acquisition and its rehearsals.
+/// Acquire the guest artifact a workspace Prepare will publish (§8.9).
 ///
-/// The bounded entry path (`exec`) now verifies the pinned guest instead of
-/// acquiring one, so these have no product caller: they remain the rehearsal
-/// proofs for the artifact builder's deadline and freshness behaviour.
-#[cfg(test)]
-pub(super) fn ensure_local_linux_workspace_effigy_artifact_bounded(
-    host_binary: &Path,
-    effigy_repo_root: &Path,
-    target: LinuxWorkspaceTarget,
+/// This runs on the host before any activation run opens, so a long producer
+/// build or a download never sits inside the publication's reservation. Hybrid
+/// mode has no guest and acquires nothing.
+pub(in crate::runner) fn prepare_workspace_artifact(
+    repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    budget: &mut BoundedCommandBudget,
-) -> Result<PathBuf, RunnerError> {
-    let artifact_path = effigy_repo_root.join(target.artifact_relative_path());
-    let freshness_anchor =
-        resolve_local_workspace_effigy_freshness_anchor(host_binary, effigy_repo_root);
-    let install_identity = workspace_effigy_local_install_identity(&freshness_anchor)?;
+) -> Result<Option<HostWorkspaceArtifact>, RunnerError> {
+    prepare_workspace_artifact_with(repo_root, policy, &ArtifactHost::current()?, || {
+        let mut guest = ComposeWorkspaceGuest::unbounded(repo_root, policy)?;
+        guest.probe_container_identity()
+    })
+}
 
-    if !linux_workspace_artifact_lock_path(effigy_repo_root).exists()
-        && linux_workspace_effigy_artifact_is_current(&artifact_path, target, &install_identity)
-    {
-        return bind_verified_linux_workspace_effigy_artifact(&artifact_path, &install_identity);
+/// The host facts an artifact acquisition reads: the running executable, which
+/// selects provenance, the directory discovery starts from, and the source policy.
+#[derive(Debug, Clone)]
+pub(super) struct ArtifactHost {
+    pub(super) binary: PathBuf,
+    pub(super) cwd: PathBuf,
+    pub(super) source: LinuxWorkspaceArtifactSource,
+}
+
+impl ArtifactHost {
+    pub(super) fn current() -> Result<Self, RunnerError> {
+        Ok(Self {
+            binary: std::env::current_exe().map_err(RunnerError::Cwd)?,
+            cwd: current_working_dir()?,
+            source: configured_linux_workspace_artifact_source()?,
+        })
     }
-    if wait_for_in_progress_linux_workspace_artifact_build_bounded(
-        effigy_repo_root,
-        &install_identity,
-        &artifact_path,
+}
+
+/// Host Prepare's artifact step (§8.9). The container-mode boundary comes first,
+/// then the probed image picks the target family, then acquisition runs on this
+/// host. A hybrid environment never probes or acquires.
+pub(super) fn prepare_workspace_artifact_with(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    host: &ArtifactHost,
+    probe: impl FnOnce() -> Result<WorkspaceContainerIdentity, RunnerError>,
+) -> Result<Option<HostWorkspaceArtifact>, RunnerError> {
+    if std::env::var_os("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF").is_some() {
+        return Ok(None);
+    }
+    if operator_workspace_for_policy(repo_root, policy)?.is_none() {
+        return Ok(None);
+    }
+    let image = probe()?;
+    let target = LinuxWorkspaceTarget::from_image(&image.platform, &image.libc)?;
+    acquire_linux_workspace_effigy_artifact_with(
+        &host.binary,
+        repo_root,
+        &host.cwd,
+        host.source,
         target,
-        policy,
-        budget,
-    )? {
-        return bind_verified_linux_workspace_effigy_artifact(&artifact_path, &install_identity);
+    )
+    .map(Some)
+}
+
+/// Publication consumes an acquired artifact only for the image family it was
+/// acquired for, and only while its bytes still carry the identity they were
+/// bound to. It never builds or downloads in its place.
+pub(super) fn check_acquired_artifact(
+    artifact: &HostWorkspaceArtifact,
+    target: LinuxWorkspaceTarget,
+) -> Result<(), RunnerError> {
+    if target != artifact.target {
+        return Err(RunnerError::task_invocation(format!(
+            "workspace image changed after its guest artifact was prepared (`{}` now, `{}` prepared); run `{HOST_REPREPARE_COMMAND}` on the host",
+            target.release_triple(),
+            artifact.target.release_triple(),
+        )));
     }
+    if !linux_workspace_effigy_artifact_is_current(
+        &artifact.artifact,
+        target,
+        &artifact.install_identity,
+    ) {
+        return Err(RunnerError::task_invocation(format!(
+            "linux workspace artifact `{}` changed after it was prepared; run `{HOST_REPREPARE_COMMAND}` on the host",
+            artifact.artifact.display(),
+        )));
+    }
+    Ok(())
+}
+
+/// The acquisition seam: a development plan builds or reuses the checkout's
+/// artifact, a download plan reuses or fetches the matching release asset.
+pub(super) fn acquire_linux_workspace_effigy_artifact_with(
+    host_binary: &Path,
+    workspace_repo_root: &Path,
+    cwd: &Path,
+    source: LinuxWorkspaceArtifactSource,
+    target: LinuxWorkspaceTarget,
+) -> Result<HostWorkspaceArtifact, RunnerError> {
+    match artifact_plan(host_binary, workspace_repo_root, cwd, source)? {
+        ArtifactPlan::Build { checkout } => {
+            ensure_local_linux_workspace_effigy_artifact(host_binary, &checkout, target)
+        }
+        ArtifactPlan::Download => Ok(HostWorkspaceArtifact {
+            target,
+            artifact: ensure_downloaded_linux_workspace_effigy_artifact(target)?,
+            install_identity: workspace_effigy_release_install_identity(),
+        }),
+    }
+}
+
+/// Decide where the artifact comes from. `local` names a checkout explicitly
+/// and builds there. `download` and `auto` follow the host's provenance, and a
+/// local build never substitutes the published release for itself.
+pub(super) fn artifact_plan(
+    host_binary: &Path,
+    workspace_repo_root: &Path,
+    cwd: &Path,
+    source: LinuxWorkspaceArtifactSource,
+) -> Result<ArtifactPlan, RunnerError> {
+    match (source, host_provenance(host_binary)) {
+        (LinuxWorkspaceArtifactSource::Local, _) => {
+            let checkout = resolve_local_effigy_repo_root_from_paths(
+                workspace_repo_root,
+                host_binary.parent(),
+                Some(cwd),
+            )
+            .ok_or_else(|| {
+                RunnerError::task_invocation(format!(
+                    "{EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV}=local found no Effigy checkout to \
+                     build the workspace artifact from; run from that checkout, or use `auto` or \
+                     `download`"
+                ))
+            })?;
+            Ok(ArtifactPlan::Build { checkout })
+        }
+        (LinuxWorkspaceArtifactSource::Auto, HostProvenance::Checkout(checkout)) => {
+            Ok(ArtifactPlan::Build { checkout })
+        }
+        (
+            LinuxWorkspaceArtifactSource::Auto | LinuxWorkspaceArtifactSource::Download,
+            HostProvenance::Release,
+        ) => Ok(ArtifactPlan::Download),
+        (LinuxWorkspaceArtifactSource::Download, HostProvenance::Checkout(_)) => {
+            Err(RunnerError::task_invocation(format!(
+                "{EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV}=download would substitute the published \
+                 release for this local Effigy build, which has no release artifact; use `auto` \
+                 to build this checkout's artifact, or `local`"
+            )))
+        }
+        (
+            LinuxWorkspaceArtifactSource::Auto | LinuxWorkspaceArtifactSource::Download,
+            HostProvenance::UnprovenLocal,
+        ) => Err(RunnerError::task_invocation(
+            "this local Effigy build has no provable checkout, so no workspace artifact can be \
+             built for it, and the published release is not its artifact; run `effigy \
+             install:local` from its checkout",
+        )),
+    }
+}
+
+/// The provenance of the running host, from its executable's location and its
+/// install stamp. Nearby checkouts are not provenance.
+fn host_provenance(host_binary: &Path) -> HostProvenance {
+    if let Some(checkout) =
+        checkout_of_local_install(host_binary).or_else(|| checkout_of_build_tree(host_binary))
+    {
+        return HostProvenance::Checkout(checkout);
+    }
+    let stamped = read_trimmed_identity_file(&workspace_effigy_active_version_file(host_binary));
+    if stamped.is_some_and(|version| version.contains("+local.")) {
+        return HostProvenance::UnprovenLocal;
+    }
+    HostProvenance::Release
+}
+
+/// `<checkout>/.local-install/bin/effigy`, the path `install:local` activates.
+fn checkout_of_local_install(host_binary: &Path) -> Option<PathBuf> {
+    let bin = host_binary.parent()?;
+    let install = bin.parent()?;
+    if !path_named(bin, "bin") || !path_named(install, ".local-install") {
+        return None;
+    }
+    let checkout = install.parent()?;
+    looks_like_effigy_repo_root(checkout).then(|| checkout.to_path_buf())
+}
+
+/// `<checkout>/target/{debug,release}/effigy`, a checkout's own build output.
+fn checkout_of_build_tree(host_binary: &Path) -> Option<PathBuf> {
+    let profile = host_binary.parent()?;
+    let target = profile.parent()?;
+    let checkout = target.parent()?;
+    let profile_is_build = path_named(profile, "debug") || path_named(profile, "release");
+    if !profile_is_build || !path_named(target, "target") {
+        return None;
+    }
+    looks_like_effigy_repo_root(checkout).then(|| checkout.to_path_buf())
+}
+
+fn path_named(path: &Path, name: &str) -> bool {
+    path.file_name().is_some_and(|file| file == name)
+}
+
+fn local_artifact_identity(host_binary: &Path, checkout: &Path) -> Result<String, RunnerError> {
+    workspace_effigy_local_install_identity(&resolve_local_workspace_effigy_freshness_anchor(
+        host_binary,
+        checkout,
+    ))
+}
+
+/// Build or reuse this checkout's artifact for the running host (§8.9).
+///
+/// Only an artifact bound to the current host identity is handed off. A missing
+/// or stale one runs the producer once. Concurrent callers share that run through
+/// a per-target lock, and a waiter finds the output current when it gets the lock.
+pub(super) fn ensure_local_linux_workspace_effigy_artifact(
+    host_binary: &Path,
+    checkout: &Path,
+    target: LinuxWorkspaceTarget,
+) -> Result<HostWorkspaceArtifact, RunnerError> {
+    let artifact = checkout.join(target.artifact_relative_path());
+    let identity = local_artifact_identity(host_binary, checkout)?;
+    if linux_workspace_effigy_artifact_is_current(&artifact, target, &identity) {
+        return bind_verified_linux_workspace_effigy_artifact(target, &artifact, &identity);
+    }
+    let _build = ArtifactFileLock::acquire(
+        &linux_workspace_artifact_lock_path(checkout, target),
+        &format!(
+            "linux workspace artifact build for `{}` in `{}`",
+            target.release_triple(),
+            checkout.display()
+        ),
+    )?;
+    if linux_workspace_effigy_artifact_is_current(&artifact, target, &identity) {
+        return bind_verified_linux_workspace_effigy_artifact(target, &artifact, &identity);
+    }
+    // Bytes already built for this exact version may come back unchanged from a
+    // no-op rebuild; they are this build's output. Touched bytes from another
+    // version, or unchanged bytes that were not current, are refused.
+    let previous_digest = linux_workspace_artifact_digest(&artifact, || true).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "cannot inspect previous workspace artifact output: {error}"
+        ))
+    })?;
+    let previous_was_current_version =
+        read_trimmed_identity_file(&workspace_effigy_active_version_file(&artifact)).as_deref()
+            == Some(effigy_core::build_info::active_version().as_str());
     super::emit_workspace_info(
         "building linux effigy artifact for workspace container access",
         false,
     );
-    let previous_digest = linux_workspace_artifact_digest_bounded(&artifact_path, policy, budget)?;
     let started = std::time::SystemTime::now();
-    let built = run_linux_workspace_effigy_artifact_build_bounded(
-        host_binary,
-        effigy_repo_root,
-        target,
-        policy,
-        budget,
+    if let Err(error) = run_linux_workspace_effigy_artifact_build(host_binary, checkout, target) {
+        // A failed producer is named with what is stale, so the refusal says why
+        // nothing was handed off and what to run.
+        return Err(RunnerError::task_invocation(format!(
+            "{error}; {}",
+            describe_linux_workspace_artifact_refusal(&artifact, target, &identity, checkout),
+        )));
+    }
+    let produced = linux_workspace_artifact_produced_since(&artifact, target, started)
+        && linux_workspace_artifact_digest(&artifact, || true).is_ok_and(|digest| {
+            digest.is_some() && (digest != previous_digest || previous_was_current_version)
+        });
+    if !produced {
+        return Err(RunnerError::task_invocation(format!(
+            "linux workspace artifact build succeeded but did not produce a current artifact\n{}",
+            describe_linux_workspace_artifact_refusal(&artifact, target, &identity, checkout),
+        )));
+    }
+    bind_verified_linux_workspace_effigy_artifact(target, &artifact, &identity)
+}
+
+/// Bind the active-version and install-identity sidecars to an artifact that is
+/// current, or that a supported build or download just produced. The sidecars
+/// are never written for stale bytes.
+fn bind_verified_linux_workspace_effigy_artifact(
+    target: LinuxWorkspaceTarget,
+    artifact_path: &Path,
+    install_identity: &str,
+) -> Result<HostWorkspaceArtifact, RunnerError> {
+    ensure_workspace_effigy_active_version_file(
+        artifact_path,
+        &effigy_core::build_info::active_version(),
     )?;
-    if built
-        && linux_workspace_artifact_produced_since(&artifact_path, target, started)
-        && linux_workspace_artifact_digest_bounded(&artifact_path, policy, budget)?
-            .is_some_and(|digest| Some(digest) != previous_digest)
-    {
-        return bind_verified_linux_workspace_effigy_artifact(&artifact_path, &install_identity);
-    }
-    if !built
-        && wait_for_in_progress_linux_workspace_artifact_build_bounded(
-            effigy_repo_root,
-            &install_identity,
-            &artifact_path,
-            target,
-            policy,
-            budget,
-        )?
-    {
-        return bind_verified_linux_workspace_effigy_artifact(&artifact_path, &install_identity);
-    }
-    // Bounded errors carry only static text, so the mismatch is named by target
-    // and the rebuild command rather than by local paths or identities.
-    Err(bounded_phase_error(
-        policy,
-        policy.primary_service.as_str(),
-        budget,
-        BoundedCommandPhase::WorkspacePreparation,
-        "workspace_preparation_failed",
-        match (built, target) {
-            (true, LinuxWorkspaceTarget::X86_64Gnu) => {
-                "bounded container command build left no current workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-gnu effigy workspace:linux:artifact"
-            }
-            (true, LinuxWorkspaceTarget::Aarch64Gnu) => {
-                "bounded container command build left no current workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact"
-            }
-            (true, LinuxWorkspaceTarget::X86_64Musl) => {
-                "bounded container command build left no current workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-musl effigy workspace:linux:artifact"
-            }
-            (true, LinuxWorkspaceTarget::Aarch64Musl) => {
-                "bounded container command build left no current workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-musl effigy workspace:linux:artifact"
-            }
-            (false, LinuxWorkspaceTarget::X86_64Gnu) => {
-                "bounded container command could not refresh the stale workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-gnu effigy workspace:linux:artifact"
-            }
-            (false, LinuxWorkspaceTarget::Aarch64Gnu) => {
-                "bounded container command could not refresh the stale workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact"
-            }
-            (false, LinuxWorkspaceTarget::X86_64Musl) => {
-                "bounded container command could not refresh the stale workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-musl effigy workspace:linux:artifact"
-            }
-            (false, LinuxWorkspaceTarget::Aarch64Musl) => {
-                "bounded container command could not refresh the stale workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-musl effigy workspace:linux:artifact"
-            }
-        },
-        None,
+    ensure_workspace_effigy_install_identity_file(artifact_path, install_identity)?;
+    Ok(HostWorkspaceArtifact {
+        target,
+        artifact: artifact_path.to_path_buf(),
+        install_identity: install_identity.to_owned(),
+    })
+}
+
+/// The per-target build lock beside a checkout's artifact. Each target has its
+/// own lock, so one family's build never waits on another's.
+pub(super) fn linux_workspace_artifact_lock_path(
+    effigy_repo_root: &Path,
+    target: LinuxWorkspaceTarget,
+) -> PathBuf {
+    effigy_repo_root.join(".effigy/locks").join(format!(
+        "workspace-linux-artifact-{}.lock",
+        target.release_triple()
     ))
 }
 
-pub(super) fn resolve_local_effigy_repo_root(
-    workspace_repo_root: &Path,
-) -> Result<Option<PathBuf>, RunnerError> {
-    let current_exe = std::env::current_exe().map_err(RunnerError::Cwd)?;
-    let cwd = current_working_dir()?;
-    Ok(resolve_local_effigy_repo_root_from_paths(
-        workspace_repo_root,
-        current_exe.parent(),
-        Some(cwd.as_path()),
-    ))
+/// An exclusive lock on one artifact path. Holding the open file is the lock, so
+/// it releases on drop and on process exit; a waiter that gives up never holds it.
+struct ArtifactFileLock {
+    _held: std::fs::File,
+}
+
+impl ArtifactFileLock {
+    fn acquire(path: &Path, what: &str) -> Result<Self, RunnerError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "cannot create lock directory `{}` for {what}: {error}",
+                    parent.display()
+                ))
+            })?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path)
+            .map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "cannot open lock `{}` for {what}: {error}",
+                    path.display()
+                ))
+            })?;
+        let deadline = std::time::Instant::now() + artifact_lock_wait_timeout();
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(Self { _held: file }),
+                Err(std::fs::TryLockError::WouldBlock) => {}
+                Err(std::fs::TryLockError::Error(error)) => {
+                    return Err(RunnerError::task_invocation(format!(
+                        "cannot lock `{}` for {what}: {error}",
+                        path.display()
+                    )))
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(RunnerError::task_invocation(format!(
+                    "timed out waiting for another {what} to finish; lock `{}` is still held",
+                    path.display()
+                )));
+            }
+            std::thread::sleep(LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_POLL_INTERVAL);
+        }
+    }
+}
+
+/// How long a waiter blocks on another preparation's lock before it gives up.
+fn artifact_lock_wait_timeout() -> std::time::Duration {
+    #[cfg(test)]
+    {
+        if let Some(wait) = ARTIFACT_LOCK_WAIT.with(std::cell::Cell::get) {
+            return wait;
+        }
+    }
+    LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_TIMEOUT
+}
+
+// Tests shorten the lock wait to exercise the give-up path without sleeping.
+#[cfg(test)]
+thread_local! {
+    pub(super) static ARTIFACT_LOCK_WAIT: std::cell::Cell<Option<std::time::Duration>> =
+        const { std::cell::Cell::new(None) };
 }
 
 pub(super) fn resolve_local_effigy_repo_root_from_paths(
@@ -2624,117 +2850,9 @@ pub(super) fn looks_like_effigy_repo_root(path: &Path) -> bool {
         && path.join("config/containers.toml").is_file()
 }
 
-#[cfg(test)]
-pub(super) fn ensure_local_linux_workspace_effigy_artifact(
-    host_binary: &Path,
-    effigy_repo_root: &Path,
-    target: LinuxWorkspaceTarget,
-) -> Result<PathBuf, RunnerError> {
-    let artifact_path = effigy_repo_root.join(target.artifact_relative_path());
-    let freshness_anchor =
-        resolve_local_workspace_effigy_freshness_anchor(host_binary, effigy_repo_root);
-    let install_identity = workspace_effigy_local_install_identity(&freshness_anchor)?;
-
-    // Only an artifact bound to the current host identity is handed off. Stale,
-    // unknown, or wrong-target bytes are never reused to avoid a rebuild.
-    if !linux_workspace_artifact_lock_path(effigy_repo_root).exists()
-        && linux_workspace_effigy_artifact_is_current(&artifact_path, target, &install_identity)
-    {
-        return bind_verified_linux_workspace_effigy_artifact(&artifact_path, &install_identity);
-    }
-    if wait_for_in_progress_linux_workspace_artifact_build(
-        effigy_repo_root,
-        &install_identity,
-        &artifact_path,
-        target,
-    )? {
-        return bind_verified_linux_workspace_effigy_artifact(&artifact_path, &install_identity);
-    }
-    super::emit_workspace_info(
-        "building linux effigy artifact for workspace container access",
-        false,
-    );
-    let previous_digest =
-        linux_workspace_artifact_digest(&artifact_path, || true).map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "cannot inspect previous workspace artifact output: {error}"
-            ))
-        })?;
-    // Bytes already built for this exact version (for example by a direct
-    // `workspace:linux:artifact`, which writes no install identity) may come
-    // back unchanged from a no-op rebuild; they are the current build's output.
-    // Touched bytes from another version stay refused.
-    let previous_was_current_version =
-        read_trimmed_identity_file(&workspace_effigy_active_version_file(&artifact_path))
-            .as_deref()
-            == Some(effigy_core::build_info::active_version().as_str());
-    let started = std::time::SystemTime::now();
-    match run_linux_workspace_effigy_artifact_build(host_binary, effigy_repo_root, target) {
-        Ok(())
-            if linux_workspace_artifact_produced_since(&artifact_path, target, started)
-                && linux_workspace_artifact_digest(&artifact_path, || true).is_ok_and(
-                    |digest| {
-                        digest.is_some()
-                            && (digest != previous_digest || previous_was_current_version)
-                    },
-                ) =>
-        {
-            bind_verified_linux_workspace_effigy_artifact(&artifact_path, &install_identity)
-        }
-        Ok(()) => Err(RunnerError::task_invocation(format!(
-            "linux workspace artifact build succeeded but did not produce a current artifact\n{}",
-            describe_linux_workspace_artifact_refusal(
-                &artifact_path,
-                target,
-                &install_identity,
-                effigy_repo_root,
-            )
-        ))),
-        Err(error) => {
-            if wait_for_in_progress_linux_workspace_artifact_build(
-                effigy_repo_root,
-                &install_identity,
-                &artifact_path,
-                target,
-            )? {
-                return bind_verified_linux_workspace_effigy_artifact(
-                    &artifact_path,
-                    &install_identity,
-                );
-            }
-            Err(linux_workspace_artifact_offline_hint(
-                error,
-                &describe_linux_workspace_artifact_refusal(
-                    &artifact_path,
-                    target,
-                    &install_identity,
-                    effigy_repo_root,
-                ),
-            ))
-        }
-    }
-}
-
-/// Bind the active-version and install-identity sidecars to a verified artifact.
-/// Callers must have proven the artifact current, or that a supported build or
-/// download just produced it; the sidecars are never written for stale bytes.
-#[cfg(test)]
-fn bind_verified_linux_workspace_effigy_artifact(
-    artifact_path: &Path,
-    install_identity: &str,
-) -> Result<PathBuf, RunnerError> {
-    ensure_workspace_effigy_active_version_file(
-        artifact_path,
-        &effigy_core::build_info::active_version(),
-    )?;
-    ensure_workspace_effigy_install_identity_file(artifact_path, install_identity)?;
-    Ok(artifact_path.to_path_buf())
-}
-
 /// A prepared artifact is current only when its bytes are bound to the expected
 /// host identity by the identity sidecar and its rehearsal receipt names the
 /// target. Timestamps and the presence of the file alone do not qualify.
-#[cfg(test)]
 pub(super) fn linux_workspace_effigy_artifact_is_current(
     artifact_path: &Path,
     target: LinuxWorkspaceTarget,
@@ -2750,77 +2868,8 @@ pub(super) fn linux_workspace_effigy_artifact_is_current(
             == Some(expected_identity.trim())
 }
 
-/// An in-memory comparison rejects unchanged output. This digest never becomes
-/// an install identity or provenance receipt, and current reuse does not hash.
-fn linux_workspace_artifact_digest(
-    artifact_path: &Path,
-    mut within_deadline: impl FnMut() -> bool,
-) -> std::io::Result<Option<[u8; 32]>> {
-    use sha2::{Digest, Sha256};
-    use std::io::Read;
-    let mut file = match std::fs::File::open(artifact_path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    let mut digest = Sha256::new();
-    let mut bytes = [0; 64 * 1024];
-    loop {
-        if !within_deadline() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "artifact inspection deadline expired",
-            ));
-        }
-        let read = file.read(&mut bytes)?;
-        if read == 0 {
-            return Ok(Some(digest.finalize().into()));
-        }
-        digest.update(&bytes[..read]);
-    }
-}
-
-/// Bounded artifact acquisition and its rehearsals.
-///
-/// The bounded entry path (`exec`) now verifies the pinned guest instead of
-/// acquiring one, so these have no product caller: they remain the rehearsal
-/// proofs for the artifact builder's deadline and freshness behaviour.
-#[cfg(test)]
-fn linux_workspace_artifact_digest_bounded(
-    artifact_path: &Path,
-    policy: &EffectiveContainerPolicy,
-    budget: &BoundedCommandBudget,
-) -> Result<Option<[u8; 32]>, RunnerError> {
-    linux_workspace_artifact_digest(artifact_path, || budget.remaining_time().is_some()).map_err(
-        |error| {
-            if error.kind() == std::io::ErrorKind::TimedOut {
-                bounded_failure_error(
-                    policy,
-                    &policy.primary_service,
-                    budget,
-                    budget.boundary_refusal(
-                        BoundedCommandPhase::WorkspacePreparation,
-                        BoundedCaptureFailure::Deadline,
-                    ),
-                )
-            } else {
-                bounded_phase_error(
-                    policy,
-                    &policy.primary_service,
-                    budget,
-                    BoundedCommandPhase::WorkspacePreparation,
-                    "workspace_preparation_failed",
-                    "bounded container command could not inspect workspace artifact output",
-                    None,
-                )
-            }
-        },
-    )
-}
-
 /// A successful build only counts when it rewrote the artifact and its receipt
 /// for this target. An exit status alone can leave older output in place.
-#[cfg(test)]
 pub(super) fn linux_workspace_artifact_produced_since(
     artifact_path: &Path,
     target: LinuxWorkspaceTarget,
@@ -2845,7 +2894,6 @@ pub(super) fn read_trimmed_identity_file(path: &Path) -> Option<String> {
 
 /// Name what is stale and the supported rebuild. Reports host and artifact
 /// versions and identities, with `unknown` where a sidecar is absent.
-#[cfg(test)]
 pub(super) fn describe_linux_workspace_artifact_refusal(
     artifact_path: &Path,
     target: LinuxWorkspaceTarget,
@@ -2870,107 +2918,6 @@ pub(super) fn describe_linux_workspace_artifact_refusal(
         host = effigy_core::build_info::active_version(),
         root = effigy_repo_root.display(),
     )
-}
-
-#[cfg(test)]
-pub(super) fn linux_workspace_artifact_offline_hint(
-    error: RunnerError,
-    refusal: &str,
-) -> RunnerError {
-    RunnerError::task_invocation(format!(
-        "{error}; {refusal}. A rebuild needs Docker Hub for `ubuntu:22.04` / `effigy-linux-release-builder`: pre-load those images for an offline rebuild, run the rebuild command above when Hub is reachable, or set `{EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV}=download` to use a GitHub release binary for this version"
-    ))
-}
-
-#[cfg(test)]
-pub(super) fn linux_workspace_artifact_lock_path(effigy_repo_root: &Path) -> PathBuf {
-    effigy_repo_root
-        .join(".effigy/locks")
-        .join("task-workspace-linux-artifact.lock")
-}
-
-#[cfg(test)]
-pub(super) fn wait_for_in_progress_linux_workspace_artifact_build(
-    effigy_repo_root: &Path,
-    expected_identity: &str,
-    artifact_path: &Path,
-    target: LinuxWorkspaceTarget,
-) -> Result<bool, RunnerError> {
-    let lock_path = linux_workspace_artifact_lock_path(effigy_repo_root);
-    if !lock_path.exists() {
-        return Ok(false);
-    }
-    let deadline = std::time::Instant::now() + LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_TIMEOUT;
-    loop {
-        if std::time::Instant::now() >= deadline {
-            return Err(RunnerError::task_invocation(format!(
-                "timed out waiting for in-progress linux workspace artifact build in `{}` to finish; lock `{}` is still present",
-                effigy_repo_root.display(),
-                lock_path.display()
-            )));
-        }
-        if !lock_path.exists() {
-            return Ok(linux_workspace_effigy_artifact_is_current(
-                artifact_path,
-                target,
-                expected_identity,
-            ));
-        }
-        std::thread::sleep(LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_POLL_INTERVAL);
-    }
-}
-
-/// Bounded artifact acquisition and its rehearsals.
-///
-/// The bounded entry path (`exec`) now verifies the pinned guest instead of
-/// acquiring one, so these have no product caller: they remain the rehearsal
-/// proofs for the artifact builder's deadline and freshness behaviour.
-#[cfg(test)]
-fn wait_for_in_progress_linux_workspace_artifact_build_bounded(
-    effigy_repo_root: &Path,
-    expected_identity: &str,
-    artifact_path: &Path,
-    target: LinuxWorkspaceTarget,
-    policy: &EffectiveContainerPolicy,
-    budget: &mut BoundedCommandBudget,
-) -> Result<bool, RunnerError> {
-    let lock_path = linux_workspace_artifact_lock_path(effigy_repo_root);
-    if !lock_path.exists() {
-        return Ok(false);
-    }
-    let wait_deadline = std::time::Instant::now() + LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_TIMEOUT;
-    loop {
-        let Some(remaining) = budget.remaining_time() else {
-            return Err(bounded_failure_error(
-                policy,
-                policy.primary_service.as_str(),
-                budget,
-                budget.boundary_refusal(
-                    BoundedCommandPhase::WorkspacePreparation,
-                    BoundedCaptureFailure::Deadline,
-                ),
-            ));
-        };
-        if std::time::Instant::now() >= wait_deadline {
-            return Err(bounded_phase_error(
-                policy,
-                policy.primary_service.as_str(),
-                budget,
-                BoundedCommandPhase::WorkspacePreparation,
-                "workspace_preparation_timeout",
-                "bounded container command timed out waiting for workspace artifact preparation",
-                None,
-            ));
-        }
-        if !lock_path.exists() {
-            return Ok(linux_workspace_effigy_artifact_is_current(
-                artifact_path,
-                target,
-                expected_identity,
-            ));
-        }
-        std::thread::sleep(remaining.min(LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_POLL_INTERVAL));
-    }
 }
 
 pub(super) fn resolve_local_workspace_effigy_freshness_anchor(
@@ -3003,15 +2950,8 @@ pub(super) fn ensure_downloaded_linux_workspace_effigy_artifact(
 ) -> Result<PathBuf, RunnerError> {
     let cache_path = linux_workspace_effigy_cache_path(target)?;
     let install_identity = workspace_effigy_release_install_identity();
-    if linux_workspace_release_cache_is_current(&cache_path, &install_identity)
-        && verify_guest_artifact(&cache_path, target).is_ok()
-    {
-        ensure_workspace_effigy_active_version_file(
-            &cache_path,
-            &effigy_core::build_info::active_version(),
-        )?;
-        ensure_workspace_effigy_install_identity_file(&cache_path, &install_identity)?;
-        return Ok(cache_path);
+    if let Some(cached) = current_release_cache(&cache_path, target, &install_identity)? {
+        return Ok(cached);
     }
 
     let parent = cache_path.parent().ok_or_else(|| {
@@ -3026,6 +2966,18 @@ pub(super) fn ensure_downloaded_linux_workspace_effigy_artifact(
             parent.display()
         ))
     })?;
+    // One fetch per cache: a concurrent preparation waits here, then reuses the
+    // bytes the first one verified and published, instead of racing its rename.
+    let _fetch = ArtifactFileLock::acquire(
+        &cache_path.with_extension("lock"),
+        &format!(
+            "linux workspace release download of `{}`",
+            target.release_triple()
+        ),
+    )?;
+    if let Some(cached) = current_release_cache(&cache_path, target, &install_identity)? {
+        return Ok(cached);
+    }
 
     let url = linux_workspace_effigy_release_url(target);
     super::emit_workspace_info(
@@ -3062,6 +3014,26 @@ pub(super) fn ensure_downloaded_linux_workspace_effigy_artifact(
     result.map(|()| cache_path)
 }
 
+/// The cached release artifact when its identity and receipt are current and its
+/// bytes verify. Binds the sidecars to the verified bytes; never stamps stale ones.
+fn current_release_cache(
+    cache_path: &Path,
+    target: LinuxWorkspaceTarget,
+    install_identity: &str,
+) -> Result<Option<PathBuf>, RunnerError> {
+    if !linux_workspace_release_cache_is_current(cache_path, install_identity)
+        || verify_guest_artifact(cache_path, target).is_err()
+    {
+        return Ok(None);
+    }
+    ensure_workspace_effigy_active_version_file(
+        cache_path,
+        &effigy_core::build_info::active_version(),
+    )?;
+    ensure_workspace_effigy_install_identity_file(cache_path, install_identity)?;
+    Ok(Some(cache_path.to_path_buf()))
+}
+
 /// Write the producer receipt an artifact is authenticated against.
 fn write_workspace_artifact_receipt(
     artifact: &Path,
@@ -3075,12 +3047,19 @@ fn write_workspace_artifact_receipt(
         "release_triple={triple}\nsha256={hex}\nbuild_kind={build_kind}\n",
         triple = target.release_triple(),
     );
-    std::fs::write(&path, body).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to write linux workspace artifact receipt `{}`: {error}",
-            path.display()
-        ))
-    })
+    // Written beside and renamed over the receipt, so a reader never sees a
+    // half-written receipt that could name the wrong digest.
+    let mut staged = path.as_os_str().to_owned();
+    staged.push(".new");
+    let staged = PathBuf::from(staged);
+    std::fs::write(&staged, body)
+        .and_then(|()| std::fs::rename(&staged, &path))
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to write linux workspace artifact receipt `{}`: {error}",
+                path.display()
+            ))
+        })
 }
 
 pub(in crate::runner) fn workspace_effigy_active_version_file(binary: &Path) -> PathBuf {
@@ -3204,16 +3183,11 @@ pub(super) fn download_linux_workspace_effigy_release(
                 "failed to initialize release download client for `{url}`: {error}"
             ))
         })?;
-    let bytes = client
-        .get(url)
-        .send()
-        .and_then(|response| response.error_for_status())
-        .and_then(|response| response.bytes())
-        .map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "failed to download linux effigy release artifact from `{url}`: {error}"
-            ))
-        })?;
+    let bytes = release_get(&client, url).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to download linux effigy release artifact from `{url}`: {error}"
+        ))
+    })?;
     progress.now_waiting_for(format!("GET `{url}{RELEASE_CHECKSUM_SUFFIX}`"));
     progress.update("fetching linux effigy release checksum", None, None);
     let expected = published_release_checksum(&client, url)?;
@@ -3264,6 +3238,54 @@ pub(super) fn download_linux_workspace_effigy_release(
     Ok(digest)
 }
 
+/// One GET of a published release asset: its body, or the transport's refusal.
+#[cfg(not(test))]
+fn release_get(client: &reqwest::blocking::Client, url: &str) -> Result<Vec<u8>, String> {
+    client
+        .get(url)
+        .send()
+        .and_then(|response| response.error_for_status())
+        .and_then(|response| response.bytes())
+        .map(|bytes| bytes.to_vec())
+        .map_err(|error| error.to_string())
+}
+
+// Tests serve release bodies from this table, so no download reaches the
+// network. A URL the table does not name refuses like a failed transport.
+#[cfg(test)]
+thread_local! {
+    pub(super) static RELEASE_FIXTURES: std::cell::RefCell<BTreeMap<String, Vec<u8>>> =
+        std::cell::RefCell::new(BTreeMap::new());
+}
+
+#[cfg(test)]
+fn release_get(_client: &reqwest::blocking::Client, url: &str) -> Result<Vec<u8>, String> {
+    // The checksum sidecar is a second GET of the same download, not a fetch.
+    if !url.ends_with(RELEASE_CHECKSUM_SUFFIX) {
+        RELEASE_FETCHES.with(|fetches| fetches.set(fetches.get() + 1));
+    }
+    let delay = RELEASE_FETCH_DELAY.with(std::cell::Cell::get);
+    if !delay.is_zero() {
+        std::thread::sleep(delay);
+    }
+    RELEASE_FIXTURES.with(|fixtures| {
+        fixtures
+            .borrow()
+            .get(url)
+            .cloned()
+            .ok_or_else(|| format!("no test release fixture serves `{url}`"))
+    })
+}
+
+// Test-only transport accounting: how many asset GETs this thread issued, and how long
+// each takes, so a concurrency test can observe duplicate fetches.
+#[cfg(test)]
+thread_local! {
+    pub(super) static RELEASE_FETCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static RELEASE_FETCH_DELAY: std::cell::Cell<std::time::Duration> =
+        const { std::cell::Cell::new(std::time::Duration::ZERO) };
+}
+
 /// The checksum a release publishes beside an artifact (`<asset>.sha256`).
 ///
 /// A release without one cannot be authenticated, so the download refuses
@@ -3273,11 +3295,7 @@ fn published_release_checksum(
     url: &str,
 ) -> Result<String, RunnerError> {
     let checksum_url = format!("{url}{RELEASE_CHECKSUM_SUFFIX}");
-    let body = client
-        .get(&checksum_url)
-        .send()
-        .and_then(|response| response.error_for_status())
-        .and_then(|response| response.text())
+    let body = release_get(client, &checksum_url)
         .map_err(|error| {
             RunnerError::task_invocation(format!(
                 "the release publishes no checksum at `{checksum_url}` ({error}); the workspace \
@@ -3285,6 +3303,13 @@ fn published_release_checksum(
                  `effigy workspace:linux:artifact`, or publish a checksum beside the release \
                  artifact"
             ))
+        })
+        .and_then(|bytes| {
+            String::from_utf8(bytes).map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "the published checksum at `{checksum_url}` is not text: {error}"
+                ))
+            })
         })?;
     body.split_whitespace()
         .find(|token| token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit()))
@@ -3308,7 +3333,6 @@ pub(super) fn linux_workspace_effigy_artifact_receipt_matches_target(
         .any(|line| line.trim() == format!("release_triple={}", target.release_triple()))
 }
 
-#[cfg(test)]
 pub(super) fn run_linux_workspace_effigy_artifact_build(
     host_binary: &Path,
     effigy_repo_root: &Path,
@@ -3336,51 +3360,6 @@ pub(super) fn run_linux_workspace_effigy_artifact_build(
         effigy_repo_root.display(),
         status
     )))
-}
-
-/// Bounded artifact acquisition and its rehearsals.
-///
-/// The bounded entry path (`exec`) now verifies the pinned guest instead of
-/// acquiring one, so these have no product caller: they remain the rehearsal
-/// proofs for the artifact builder's deadline and freshness behaviour.
-#[cfg(test)]
-fn run_linux_workspace_effigy_artifact_build_bounded(
-    host_binary: &Path,
-    effigy_repo_root: &Path,
-    target: LinuxWorkspaceTarget,
-    policy: &EffectiveContainerPolicy,
-    budget: &mut BoundedCommandBudget,
-) -> Result<bool, RunnerError> {
-    let args = [OsString::from("workspace:linux:artifact")];
-    // This bounded release build is Effigy's own child invocation. It inherits
-    // no session access and no passphrase: it resolves its own access exactly
-    // as a top-level invocation does (effigy#338).
-    let env = vec![(
-        OsString::from("EFFIGY_LINUX_RELEASE_TRIPLE"),
-        OsString::from(target.release_triple()),
-    )];
-    let output = budget
-        .run_command(
-            effigy_repo_root,
-            host_binary.as_os_str(),
-            &args,
-            None,
-            &env,
-            BoundedCommandPhase::WorkspacePreparation,
-        )
-        .map_err(|failure| {
-            bounded_failure_error(policy, policy.primary_service.as_str(), budget, failure)
-        })?;
-    #[cfg(test)]
-    if !output.status.success() {
-        // The public bounded error intentionally omits captured bytes. Keep
-        // private fixture failures diagnosable without changing that surface.
-        eprintln!(
-            "private artifact build stderr: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(output.status.success())
 }
 
 #[cfg(test)]

@@ -188,10 +188,13 @@ drift checks remain in force. No VM recovery or broad cleanup is added.
 The builder remains detached after success or failure, preserving its cache
 volumes and completed artifacts for retry. Its original image may be unable to
 compile newer source; a failed build then remains a failure and grants no
-artifact identity. The maintained task and the consumer Prepare both keep their
-receipt, target, digest and freshness checks; Prepare itself consumes a produced
-artifact and never builds one. Source selection and release-cache eligibility
-are specified in [052 §8.9](052-runtime-kernel-contract.md#89-binary-provisioning); local install identity is not the produced-artifact freshness predicate.
+artifact identity. The maintained task and the host Prepare both keep their
+receipt, target, digest and freshness checks. The host Prepare runs this task
+for a development host, once per stale artifact, before publication starts;
+publication never runs it. A development artifact is current only while the
+host's install identity matches the one it was bound to, so a same-version
+incremental rebuild makes it stale. Source selection and release-cache
+eligibility are specified in [052 §8.9](052-runtime-kernel-contract.md#89-binary-provisioning).
 
 The maintained Linux builder uses the stable private Compose project base
 `effigy-artifact-builder-v1`, with the ordinary checkout/worktree scope suffix.

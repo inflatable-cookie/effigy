@@ -3,10 +3,8 @@ use effigy_secrets::SecretValue;
 use std::ffi::{OsStr, OsString};
 use std::io::{IsTerminal, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-#[cfg(test)]
 use std::os::unix::process::CommandExt;
 use std::path::Path;
-#[cfg(test)]
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
@@ -383,10 +381,8 @@ pub(in crate::runner) fn take_child_grant() -> Option<ChildGrant> {
 /// Hand a grant to a plain `Command` child. The descriptor stays open until
 /// the `Command` drops, so the child always finds it at spawn time.
 ///
-/// The host's own child launch is `workspace:linux:artifact`, which resolves
-/// its access as a top-level invocation. The consumer-side build this seam
-/// served is now a rehearsal proof, so it compiles with the tests that use it.
-#[cfg(test)]
+/// The host's own artifact producer, `workspace:linux:artifact`, reads its
+/// access from this descriptor, never from its environment or argv.
 pub(in crate::runner) fn grant_command(command: &mut Command) {
     let Some(grant) = take_child_grant() else {
         return;
@@ -396,7 +392,6 @@ pub(in crate::runner) fn grant_command(command: &mut Command) {
 
 /// [`grant_command`] for a grant the caller already took, so a proof can pin
 /// the descriptor the child receives.
-#[cfg(test)]
 fn grant_command_with(command: &mut Command, reader: OwnedFd) {
     command.env(SECRET_GRANT_ENV, "1");
     let slot = reader.as_raw_fd();

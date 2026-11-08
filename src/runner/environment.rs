@@ -391,9 +391,17 @@ pub(in crate::runner) fn activate(
         .chain(requested_holder().iter())
         .map(|run| (*run, mode))
         .collect::<Vec<_>>();
+    // The guest artifact is acquired before the activation run opens (§8.9).
+    let artifact =
+        super::workspace_command::prepare_workspace_artifact(&bring_up.repo_root, policy)?;
     engine::activate_with(&ctx, &bring_up.env, &holders, |run| {
-        super::workspace_command::publish_workspace_guest_in(&bring_up.repo_root, policy, run)
-            .map_err(|error| EnvError::Invalid(error.to_string()))
+        super::workspace_command::publish_workspace_guest_in(
+            &bring_up.repo_root,
+            policy,
+            run,
+            artifact.as_ref(),
+        )
+        .map_err(|error| EnvError::Invalid(error.to_string()))
     })
     .map_err(error)
 }
