@@ -486,11 +486,11 @@ class FixedHelperTests(Fixture):
                 os.chmod(request_path, 0o400)
                 with self.subTest(field=field), self.assertRaises(ex.Refusal):
                     proof.main(['proof', request_path, ex.sha_file(request_path)])
-            unsupported = dict(request, stage='C1')
+            unsupported = dict(request, stage='C2')  # C2 stays outside the proof entry
             request_path = self.tmp + '/proof-unadmitted'
             Path(request_path).write_text(json.dumps(unsupported, sort_keys=True))
             os.chmod(request_path, 0o400)
-            with self.assertRaisesRegex(ex.Refusal, 'only admitted C0, D0 or D1'):
+            with self.assertRaisesRegex(ex.Refusal, 'supports only C0, D0, D1 or C1'):
                 proof.main(['proof', request_path, ex.sha_file(request_path)])
             oversized = self.tmp + '/proof-oversized'
             Path(oversized).write_bytes(b'x' * 65537)
