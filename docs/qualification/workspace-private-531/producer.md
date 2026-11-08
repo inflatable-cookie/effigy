@@ -138,24 +138,87 @@ the artifact and never blesses bytes with new sidecars.
 
 The exact-bound source entry is `linux_recipe_e_proof.py`
 (`qualification:linux:recipe-e-proof-only`, controls
-`test:qualification:linux-recipe-e`). It binds the current clean checkout,
-reviewed preparation/program/config/tool hashes, the host binary and its
-sidecar (not `EFFIGY_ACTIVE_VERSION`), policy identity
-`workspace_source=staged` plus `checkout_scoped_identity=true`, the Stash
-release-source mount, and one inventory observation of profile
-`effigy-release` as aarch64. Frozen H (`4f6a5ed3`) cannot use staging or
-checkout-scoped identity and is refused as a candidate; 627 stays historical.
-A later parent binds new candidate C after remaining critical source and green
-QA. Nested helpers take the remaining E14 allowance (absolute clock 1800s
-including cleanup reserve) through `preparation_stage.run_stage`. Bound head,
-clean tree, runtime inputs and machine identities are rechecked after the
-producer returns, before the checker. Uncertain closure stays Unknown and
-spent: no retry, no shared-profile stop. Toolchain identity is SO-4 missing
-until a supported owned-builder exec exists. Kit §6.3 host writes ≤5 GiB (E9
-archive, E14 artifact, evidence) stay unresolved: the producer has no
-host-write telemetry and sampling is not a hard quota. Production execute
-refuses that prerequisite before the claim; fixtures stay on the simulation
-seam. This task produces reviewed source only.
+`test:qualification:linux-recipe-e`). It binds three roles separately:
+
+- **Preparation K** (the checkout holding the entry): the entry's own program
+  closure (`linux_recipe_e_proof.py`, `preparation_stage.py`,
+  `preparation_resources.py`) and K's head. K may hold newer source-only helpers
+  than C.
+- **Candidate C** (`candidate.root`, `candidate.head`, `candidate.tree`): a clean
+  canonical checkout whose `config/tasks.toml`, `config/containers.toml` and
+  the producer script hashes are pinned. The producer runs with cwd at C.
+  Policy identity `workspace_source=staged` plus `checkout_scoped_identity=true`
+  is read from C; the Stash release-source mount must exist. Frozen H
+  (`4f6a5ed3`) is refused as K and as C. 627 stays historical.
+- **Host binary**: C's `.local-install/bin/effigy` by hash, its
+  `effigy.active-version` sidecar (not `EFFIGY_ACTIVE_VERSION`, not PATH), and a
+  source receipt `effigy.source-receipt` naming C's head, tree, the binary's
+  SHA-256, the same active version, `build_kind=install-local`, `dirty=false`
+  and empty features. An unrelated, stale, forged or missing receipt refuses.
+  No shell launcher is treated as this binary.
+
+Tool identity: the literal `/opt/homebrew/bin/colima` alias is accepted only
+when its realpath matches `/opt/homebrew/Cellar/colima/<version>/bin/colima`.
+The request pins the literal alias and the canonical target with its bytes;
+execute dispatches the canonical target and refuses any alias drift.
+
+Every binding is recomputed from the request's pinned heads and roles before
+any effect and again after the producer returns, before the retained copy and
+before the checker. Drift refuses as `request bindings drifted: <keys>`. The
+checker streams the artifact (200 MiB cap) without reading it whole, refuses
+symlinks and non-regular files, and copies retained bytes through a capped
+transfer that keeps a partial file on refusal.
+
+Nested helpers take the remaining E14 allowance (absolute clock 1800s including
+cleanup reserve) through `preparation_stage.run_stage`. The producer runs with
+`EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING=1`, a restriction-only switch. The build
+helper then calls `verify_runtime_backend_no_change` instead of
+`ensure_runtime_backend_running_report`. That route reuses only a profile that is
+already running, has Effigy's managed settings, and answers its readiness probe
+without a unit start. Any other state refuses before a start, create, restart,
+settings write, unit start or builder-container replacement. Ordinary acquisition
+is unchanged when the switch is absent. Any other switch value refuses.
+
+The observed `effigy-release` row must be `Running` (arch aarch64/arm64, runtime
+`containerd`) before the producer. It is observed again after the producer, and any
+change refuses before the artifact is checked. Uncertain closure stays Unknown and
+spent: no retry, no shared-profile stop. Toolchain identity is SO-4 missing until a
+supported owned-builder exec exists.
+
+Stage2 budget is pinned in the request as `budget`: `e9_reserved_bytes` and
+`e9_actual_bytes` (planner-supplied, `plan ... E9_RESERVED E9_ACTUAL`), with
+`e14_reserved_bytes` and `headroom_bytes = 5 GiB - (E9 reserved + E14 reserved)`.
+Actual above reservation, a non-integer argument, or an over-budget value refuses
+at plan time. Drift refuses as `request bindings drifted: budget`.
+`E14_RESERVATION` covers the retained artifact (200 MiB), receipt (64 KiB), sidecar
+(4 KiB) and the capped evidence streams for the two Colima inventory observations and
+the producer. Staging,
+render and cargo target writes are not reserved, so headroom bounds only the writers
+named there.
+
+The host source receipt is written by the maintained `install:local` producer
+(`scripts/build-local-bin.rhai`) beside the sidecar. It names the activated bytes
+(after signing), the checkout HEAD and tree, the active version, `build_kind=install-local`,
+empty features and `dirty` (`true` for a dirty or non-git checkout). Recipe E refuses
+a receipt whose binary, source, sidecar or dirty flag does not match. The install
+test checks this against git and the binary hash (`test:install:local`).
+
+Still refused in production before the claim (fixtures stay on the simulation seam):
+
+- **SO-host-write.** Kit §6.3 host writes ≤5 GiB (E9 archive, E14 artifact,
+  evidence) are a Stage2-wide premise. The per-writer metric map is
+  `HOST_WRITE_WRITERS` in the entry: staging/render/source and the cargo target
+  under C are retained allocated bytes by directory walk, which is not
+  cumulative writes and has no bound; artifact copy-back and evidence are
+  cumulative host bytes through capped transfers. No writer is interruptible at a
+  cap with positive closure; `run_stage` sampling is not a hard quota. Planner
+  proposal: set `CARGO_TARGET_DIR` inside the VM instead of
+  `/workspace/.effigy/linux-release/target`. Host-written surfaces then become the
+  staged source closure (measurable from its manifest), the 200 MiB capped copy and
+  the capped evidence streams. Cost: cargo target moves to the Colima VM disk, a
+  shared-profile setting that needs planner or Tom sign-off.
+
+This task produces reviewed source only.
 
 ## Per-platform identity facts each cell must carry
 

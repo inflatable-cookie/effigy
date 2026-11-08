@@ -618,6 +618,42 @@ rc=$?
 [ "$rc" -ne 0 ] && ok "helper refuses an unknown subcommand" || fail "bare helper invocation exited 0"
 check_contains "helper top-level usage is reported" "$out" "usage: local-codesign.sh select | sign <ID> <BINARY>"
 
+# ---- 23. source receipt names the activated bytes and the checkout ----------
+receipt_field() { # file key
+  sed -n "s/^$2=//p" "$1" | head -n 1
+}
+new_fixture
+printf '.effigy/\n.local-install/\ntarget/\n' >"$repo/.gitignore"
+git -C "$repo" init -q
+git -C "$repo" -c user.name=fixture -c user.email=fixture@invalid add -A
+git -C "$repo" -c user.name=fixture -c user.email=fixture@invalid commit -q -m fixture
+run_install
+rc=$?
+check_eq "git-backed install exits 0" "$rc" 0
+receipt="$repo/.local-install/bin/effigy.source-receipt"
+check_eq "receipt names the checkout HEAD" "$(receipt_field "$receipt" source_head)" "$(git -C "$repo" rev-parse HEAD)"
+check_eq "receipt names the checkout tree" "$(receipt_field "$receipt" source_tree)" "$(git -C "$repo" rev-parse 'HEAD^{tree}')"
+check_eq "receipt names the activated binary bytes" "$(receipt_field "$receipt" binary_sha256)" "$(file_hash "$active")"
+check_eq "receipt names the active version it ships with" "$(receipt_field "$receipt" active_version)" "$(cat "$active_version")"
+check_eq "receipt records install-local provenance" "$(receipt_field "$receipt" build_kind)" "install-local"
+check_eq "receipt records default features" "$(receipt_field "$receipt" features)" ""
+check_eq "clean checkout records dirty=false" "$(receipt_field "$receipt" dirty)" "false"
+[ -n "$(receipt_field "$receipt" completed_at)" ] && ok "receipt records a completion time" || fail "receipt has no completion time"
+[ -e "$receipt.new" ] && fail "install left a staged source receipt" || ok "install consumes the staged source receipt"
+printf 'untracked\n' >"$repo/untracked-note.txt"
+run_install
+check_eq "dirty checkout install still exits 0" "$?" 0
+check_eq "dirty checkout records dirty=true" "$(receipt_field "$receipt" dirty)" "true"
+check_eq "dirty receipt still names the binary it activated" "$(receipt_field "$receipt" binary_sha256)" "$(file_hash "$active")"
+
+# ---- 24. without git the install still succeeds, with an unverifiable receipt -
+new_fixture
+run_install
+check_eq "install without git exits 0" "$?" 0
+receipt="$repo/.local-install/bin/effigy.source-receipt"
+check_eq "install without git names no source head" "$(receipt_field "$receipt" source_head)" ""
+check_eq "install without git records dirty=true" "$(receipt_field "$receipt" dirty)" "true"
+
 echo
 if [ "$fails" -eq 0 ]; then
   echo "all install:local fixture checks passed"

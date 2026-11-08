@@ -32,6 +32,22 @@ fn builder_retained(policy: &effigy_containers::EffectiveContainerPolicy) -> boo
     environment::record(policy).is_some_and(|record| record.active())
 }
 
+/// Restriction-only switch set by the Recipe E entry. `1` makes this build reuse
+/// the already running, already configured profile and refuse every start,
+/// create, restart, settings rewrite or unit start. Absence keeps ordinary
+/// acquisition. Any other value refuses, so the switch can never widen authority.
+const NO_CHANGE_ENV: &str = "EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING";
+
+fn no_change_requested(raw: Option<&str>) -> Result<bool, RunnerError> {
+    match raw {
+        None => Ok(false),
+        Some("1") => Ok(true),
+        Some(other) => Err(RunnerError::task_invocation(format!(
+            "{NO_CHANGE_ENV} must be `1` when set, not `{other}`"
+        ))),
+    }
+}
+
 pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(), RunnerError> {
     // The maintained task already holds its ordinary task lock. This shared
     // operation lock also serializes callers using the helper from another
@@ -105,9 +121,13 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     // and restart it when its managed settings drifted. A runtime inventory
     // cannot even run against a missing profile, so this comes before the first
     // one (effigy#316).
-    let runtime =
+    let no_change = no_change_requested(std::env::var(NO_CHANGE_ENV).ok().as_deref())?;
+    let runtime = if no_change {
+        effigy_containers::exec::verify_runtime_backend_no_change(&policy, repo_root)
+    } else {
         effigy_containers::exec::ensure_runtime_backend_running_report(&policy, repo_root)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    }
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     // Preserve the existing runtime drift guard; this operation grants no
     // authority to change backend, profile or the owned builder's generation.
     let mut deadline = Instant::now() + Duration::from_secs(15);
@@ -138,6 +158,11 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     if rows.is_empty() {
         if retained.is_some() {
             return Err(RunnerError::task_invocation("workspace artifact builder record has no matching container; retained state was not removed or adopted"));
+        }
+        if no_change {
+            return Err(RunnerError::task_invocation(
+                "no-change workspace artifact build refuses to create the builder container; the profile must already hold it",
+            ));
         }
         // No recovery is needed on first activation. Use the maintained
         // lifecycle path and its existing readiness/deadline/ownership checks.
@@ -196,6 +221,11 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
                 .unwrap_or_else(|_| repo_root.to_path_buf());
             if observed.source != checkout {
                 return Err(error);
+            }
+            if no_change {
+                return Err(RunnerError::task_invocation(
+                    "no-change workspace artifact build refuses to replace the owned builder container for its staged bind",
+                ));
             }
             // The transition replaces only the identity observed above. Listing
             // and inspection are repeated right before it, so a builder that
@@ -394,4 +424,21 @@ echo source-closure-verified
     Err(RunnerError::task_invocation(format!(
         "the Linux builder's /workspace does not carry the {expected_files} staged source files this build recorded ({cause}); nothing was compiled"
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::no_change_requested;
+
+    #[test]
+    fn no_change_switch_only_narrows_and_refuses_unknown_values() {
+        assert!(!no_change_requested(None).expect("absent keeps acquisition"));
+        assert!(no_change_requested(Some("1")).expect("exact one"));
+        for raw in ["", "0", "true", " 1", "yes"] {
+            assert!(
+                no_change_requested(Some(raw)).is_err(),
+                "{raw:?} must refuse"
+            );
+        }
+    }
 }

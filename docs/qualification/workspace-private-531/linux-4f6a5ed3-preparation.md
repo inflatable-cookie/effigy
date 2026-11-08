@@ -236,8 +236,10 @@ those kit predicates on a later native occurrence: one exclusive claim, one
 `colima list --json` inventory observation selecting only `effigy-release`,
 then `effigy workspace:linux:artifact` with the aarch64 triple and no
 `EFFIGY_ACTIVE_VERSION`. Bound head, clean tree, runtime inputs and machine
-identities are rechecked after the producer returns. Candidate H and H's
-unstaged global builder policy refuse. Sampling is not a VM quota. Owned-builder
+identities are rechecked after the producer returns. Preparation K, candidate C
+(head, tree, config, producer) and the C host binary with its source receipt are
+bound separately; the producer runs with cwd at C (see `producer.md`). Candidate
+H and H's unstaged global builder policy refuse. Sampling is not a VM quota. Owned-builder
 `cargo -V`/`rustc -Vv` is not a supported E14 interface, so toolchain identity
 stays SO-4 missing. Kit §6.3 host writes ≤5 GiB (E9 archive, E14 artifact,
 evidence) are a Stage2-wide premise this entry cannot enforce: the producer has
