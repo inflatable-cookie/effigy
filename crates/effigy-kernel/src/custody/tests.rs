@@ -4569,7 +4569,7 @@ fn milestone_130acca8_only_exited_anchors_count_as_retired() {
 /// Stop a leader that has already exited, with its anchor pinned so the anchor
 /// cannot retire before the stop observes it. The seam decides only the
 /// anchor's kill; the signal phase and the group loop run for real.
-fn exited_leader_stop(retire_anchor: bool) -> (StopReport, ProcessIdentity) {
+fn exited_leader_stop(retire_anchor: bool) -> (StopReport, AnchorFixture) {
     let home = home();
     let cx = cx();
     let root = StateRoot::effects(&cx, home.path()).unwrap();
@@ -4589,6 +4589,8 @@ fn exited_leader_stop(retire_anchor: bool) -> (StopReport, ProcessIdentity) {
     )
     .unwrap();
     let anchor = child.anchor().expect("recorded anchor");
+    // Owned before the anchor is pinned, so a failed assertion still stops it.
+    let fixture = AnchorFixture(vec![anchor.clone()]);
     // SAFETY: the pid is an anchor this test launched and still owns.
     unsafe { libc::kill(anchor.pid as i32, libc::SIGSTOP) };
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -4604,7 +4606,7 @@ fn exited_leader_stop(retire_anchor: bool) -> (StopReport, ProcessIdentity) {
     anchor::seam::arm(anchor.pid, action);
     let report = child.stop(&cx.operation().cleanup(Duration::from_secs(30)).unwrap());
     anchor::seam::disarm();
-    (report, anchor)
+    (report, fixture)
 }
 
 // Causal control: the refused kill of a live anchor, through a real stop, yields
@@ -4614,8 +4616,7 @@ fn exited_leader_stop(retire_anchor: bool) -> (StopReport, ProcessIdentity) {
 // occurrence's raw reason, which was never retained.
 #[test]
 fn milestone_130acca8_refused_anchor_kill_reproduces_the_recorded_residue_shape() {
-    let (report, anchor) = exited_leader_stop(false);
-    let _fixture = AnchorFixture(vec![anchor]);
+    let (report, _fixture) = exited_leader_stop(false);
     assert!(
         matches!(report.leader, Observed::Verified(..)),
         "the recorded leader is verified: {report:?}"
@@ -4653,14 +4654,22 @@ fn milestone_130acca8_refused_anchor_kill_reproduces_the_recorded_residue_shape(
 // recorded cause.
 #[test]
 fn milestone_130acca8_retired_anchor_kill_closes_the_recorded_shape() {
-    let (report, anchor) = exited_leader_stop(true);
-    let _fixture = AnchorFixture(vec![anchor]);
+    let (report, _fixture) = exited_leader_stop(true);
     assert!(
         matches!(report.group, Observed::Verified(..) | Observed::Absent(_)),
         "a retired anchor leaves a closed group: {report:?}"
     );
     assert!(report.residue.is_empty(), "{report:?}");
     assert!(report.leader.verified().is_some(), "{report:?}");
+}
+
+/// A child this test started; killed and reaped however the test ends.
+struct ChildGuard(Child);
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }
 
 // Regression control: a member whose own group is not the anchored group is
@@ -4671,13 +4680,15 @@ fn milestone_130acca8_retired_anchor_kill_closes_the_recorded_shape() {
 #[test]
 fn milestone_130acca8_member_that_left_the_group_is_refused_before_signal() {
     let (_child, r, anchor, _fixture) = anchored_group_with_pinned_anchor();
-    let mut member = Command::new("/bin/sleep")
-        .arg("30")
-        .spawn()
-        .expect("member");
-    let identity = fixture_identity(member.id());
+    let mut member = ChildGuard(
+        Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("member"),
+    );
+    let identity = fixture_identity(member.0.id());
     assert_ne!(
-        unsafe { libc::getpgid(member.id() as i32) },
+        unsafe { libc::getpgid(member.0.id() as i32) },
         r.pgid as i32,
         "the member is outside the anchored group"
     );
@@ -4691,9 +4702,7 @@ fn milestone_130acca8_member_that_left_the_group_is_refused_before_signal() {
         "a member outside the group is refused: {refused:?}"
     );
     assert!(
-        member.try_wait().expect("member status").is_none(),
+        member.0.try_wait().expect("member status").is_none(),
         "the refused member is not signalled"
     );
-    member.kill().expect("stop the member");
-    member.wait().expect("reap the member");
 }
