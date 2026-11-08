@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from linux_supervisor import Refusal, exclusive
 import linux_supervisor as supervisor
 import preparation_observations as observations
+import linux_disk_identity as identity
 import preparation_resources as resources
 import linux_receipts
 import linux_transfer as transfers
@@ -95,7 +96,7 @@ PAYLOAD_CAP = 64 * 1024 * 1024             # E8 filesystem controls (brief: <= 6
 # Mechanisms that have been source-verified. Empty: none is established yet.
 SUPPORTED_DISK_MECHANISMS = frozenset()
 SUPPORTED_HARD_LIMITS = frozenset()
-SUPPORTED_TOP_MECHANISMS = frozenset()     # independent writable-top observation; none established yet
+SUPPORTED_TOP_MECHANISMS = frozenset({identity.MECHANISM})   # the only implemented top selection: descriptor metadata
 CANDIDATE_H_HEAD = '4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02'   # source-bound candidate H, distinct from K
 # External anchors: the preparation head K, candidate H, the probe transcript sha and the allowed-signers
 # sha. They come from the proof-entry activation (#694), never from the facts object. Unset means every
@@ -196,28 +197,22 @@ def _retain(stage_dir, name, data):
 
 
 def verify_writable_top(observation, descriptor, supported=None):
-    """The writable top is an independently observed image. A file name never names it.
+    """The writable top is selected from the exact descriptor bytes, never from the caller.
 
-    The observation must come from a supported mechanism; none is established yet, so every
-    observation refuses and the association is never reached. The observed GUID must be an
-    image of the descriptor and the leaf of its chain: no snapshot may name it as parent.
+    The selection (linux_disk_identity.select_top) is the only source. An observation must name the
+    same mechanism, GUID and complete result digest, or it is stale or fabricated and refuses. A file
+    name, a bare GUID or a mechanism string is not evidence on its own.
     """
-    import xml.etree.ElementTree as ET
     mechanisms = SUPPORTED_TOP_MECHANISMS if supported is None else supported
     if not isinstance(observation, dict) or observation.get('mechanism') not in mechanisms:
         raise Refusal('writable-top observation mechanism is not supported; the association is refused')
     try:
-        root = ET.fromstring(descriptor)
-    except ET.ParseError as exc:
-        raise Refusal('invalid disk descriptor') from exc
-    guid = observation.get('guid')
-    images = {item.findtext('GUID') for item in root.findall('./StorageData/Storage/Image')}
-    parents = {shot.findtext('ParentGUID') for shot in root.findall('./Snapshots/Shot')}
-    if not isinstance(guid, str) or guid not in images:
-        raise Refusal('observed writable top is not an image of the descriptor')
-    if guid in parents:
-        raise Refusal('observed writable top is not the leaf of the snapshot chain')
-    return guid
+        selection = identity.select_top(descriptor)
+    except identity.Refusal as exc:
+        raise Refusal('writable top is not selectable from the descriptor: ' + str(exc)) from exc
+    if observation.get('guid') != selection['top_guid'] or observation.get('result_digest') != selection['digest']:
+        raise Refusal('writable-top observation differs from the descriptor bytes; stale or fabricated')
+    return selection
 
 
 def _retained_original(source, stage, name, failed):
@@ -235,9 +230,9 @@ def stage1_request(fresh, stage_dir, top_observation=None):
     """Request for the one-start entry, bound to the registered VM home and its disk chain.
 
     Config bytes and descriptor bytes are read here from the registered home and each is retained
-    on its own, so a failure to read one does not discard the other. The writable top is an
-    independently observed image (verify_writable_top). Callers supply observations, never bytes or
-    inventories. The probe text must hash to the reviewed probe.
+    on its own, so a failure to read one does not discard the other. The writable top is
+    selected from the descriptor bytes (verify_writable_top). Callers supply observations, never bytes
+    or inventories. The probe text must hash to the reviewed probe.
     """
     if fresh.get('home') != PVM_HOME or fresh.get('uuid') != VM_UUID:
         raise Refusal('VM home or UUID is not the registered one')
@@ -268,8 +263,11 @@ def stage1_request(fresh, stage_dir, top_observation=None):
     descriptor = _retained_original(descriptor_path, stage, 'before-descriptor.xml', failed)
     if failed:
         raise Refusal('original not retained: ' + '; '.join(failed) + ' (the other original is retained)')
-    top = verify_writable_top(top_observation, descriptor)
+    selection = verify_writable_top(top_observation, descriptor)
+    top = selection['top_guid']
     inventory = _wrap(observations.inventory_extents, descriptor, top, str(directory.resolve()))
+    if inventory['descriptor_sha256'] != selection['descriptor_sha256'] or inventory['chain'] != selection['chain']:
+        raise Refusal('disk inventory differs from the descriptor selection')
     if not inventory['chain'] or inventory['chain'][0] != top:
         raise Refusal('descriptor chain does not start at the observed writable top')
     if set(inventory['chain']) - set(inventory['extents']):
@@ -298,7 +296,8 @@ def stage1_request(fresh, stage_dir, top_observation=None):
             'top_guid': top, 'top_observation': top_observation, 'bundle_identity': bundle_identity,
             'before': {'config_sha256': _sha(config), 'config_identity': config_identity,
                        'descriptor_sha256': _sha(descriptor), 'extents': inventory['extents'],
-                       'chain': inventory['chain'], 'top_guid': top},
+                       'chain': inventory['chain'], 'top_guid': top,
+                       'top_selection_digest': selection['digest']},
             'retained': {'config': str(stage / 'before-config.bin'),
                          'descriptor': str(stage / 'before-descriptor.xml')}}
 
@@ -331,8 +330,9 @@ def stage1_verify_post(request, after):
     _wrap(observations.compare_config, retained_config, post_config, [])
     if _sha(post_descriptor) != before['descriptor_sha256']:
         raise Refusal('descriptor bytes changed')
-    top = verify_writable_top(request['top_observation'], post_descriptor)
-    if top != request['top_guid']:
+    selection = verify_writable_top(request['top_observation'], post_descriptor)
+    top = selection['top_guid']
+    if top != request['top_guid'] or selection['digest'] != before['top_selection_digest']:
         raise Refusal('writable top changed')
     after_inventory = _wrap(observations.inventory_extents, post_descriptor, top, str((home / DISK_DIR).resolve()))
     growth = _wrap(observations.compare_extents, before['extents'], after_inventory['extents'], before['chain'],

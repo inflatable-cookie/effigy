@@ -192,7 +192,7 @@ checked against the plan), `linux_setup_tests.py` (161 controls, including real-
   inventory are recomputed from `PVM_HOME`, and the probe script must hash to the reviewed
   value. Post-stop, `stage1_verify_post` refuses on drift in config bytes, identities,
   descriptor, extents, snapshot tree or growth above 1 GiB. Post-run bytes are retained into the stage before any check, and the
-  writable top is an observed image, never a file name (K-25).
+  writable top is selected from the exact descriptor bytes, never a file name (K-25).
 - **Stage root (revision 8).** Row stages are direct children of the reviewed root
   `/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/stage`. The root is created mode 0711 and
   owned by root. Each row directory is mode 0700 and owned by the payload account. The
@@ -212,8 +212,11 @@ checked against the plan), `linux_setup_tests.py` (161 controls, including real-
   payloads reach the root supervisor over pinned SSH through one sudo rule, installed
   by the E-SUDO row (K-23). Anchors: the preparation head, candidate H, probe transcript
   sha and signer pin come from `EXTERNAL_ANCHORS` and never from facts (K-24). Writable
-  top: the file-name derivation is removed; a top needs an observation from a supported
-  mechanism, and none is established, so Stage1 refuses before any effect (K-25). Custody:
+  top (K-25): the file-name derivation is removed. `linux_disk_identity.py` selects the top
+  from the descriptor bytes under the Parallels Disk Format below. Stage1 and post-run
+  verification re-derive it and refuse any caller observation whose GUID or complete
+  result digest differs, so a stale or fabricated value cannot pass and no caller can add a
+  mechanism. Custody:
   the stage parent is canonical, held by descriptor, not writable by others, and rows are
   created through it and never reused (K-26). BASE is root-owned 0755; archives sit under
   `inputs/`; the GO index is placed and hash-checked (K-27).
@@ -268,7 +271,8 @@ and [kill semantics](https://raw.githubusercontent.com/systemd/systemd/v259/man/
 The stand-in now waits in active(exited) until stop, matching the reviewed wait loop.
 Installed systemd capabilities and that lifecycle still need fresh native binding.
 
-Still unavailable: supported writable-top and controller-to-guest association,
+Writable-top selection is source-implemented as metadata only; no live observation producer
+runs, so Stage1 still refuses before any effect. Still unavailable: controller-to-guest association,
 source-verified kernel hard limits, fresh signed Stage1 evidence, exact activation
 anchors and root installation authorization. No VM, SSH, account, service, build,
 proof or production effect ran here. E10/E13k/E14 stay held; measurement692 grants
@@ -290,3 +294,36 @@ The observation retains pre- and post-config and descriptor bytes independently 
 Retained content hashes and metadata identities are reported separately. A descriptor replaced with identical bytes is an identity event, not a content-change claim; a config whose bytes changed (for example the network adapter UUID Parallels rewrites on boot) is recorded as a diagnostic observation and is not setup compatibility. A complete positively executed start, probe and graceful stop may therefore deliver a bounded diagnostic handoff with recorded nonfatal metadata differences. Ownership, source or input drift, snapshot or extent inventory, unreadable counters, growth beyond the sampled ceiling and command or terminal failures stay fatal, and no difference grants setup, placement, association or hard-quota credit. Writable-top, guest association and readiness remain unknown.
 
 Once a start launcher is recorded as spawned for the verified VM, cleanup observes that same VM's own state inside the existing operational deadline instead of sending a stop while Parallels still reports `starting` (which is refused and closes nothing). It waits in a bounded window for eligible `running` state before the one graceful stop; a VM already observed `stopped` is recorded without claiming any stop command and is reported as a finding, because a successful handoff needs a positively executed graceful stop; an unobserved or non-terminal state stays unknown and no stop is sent. A later `stopped` observation establishes terminal state only and never repairs a timed-out or killed stop client. Launcher exit alone does not establish VM state. If the operational budget cannot fit the windows, the limitation is recorded and the retained originals still run. The separately signed fresh Stage1/setup admission and its supported-mechanism gates remain required and unchanged.
+
+## Writable top selection (K-25, source-only)
+
+Spec: QEMU "Parallels Disk Format" (`https://www.qemu.org/docs/master/interop/prl-xml.html`), read
+2026-11-08. Pin: rendered text sha256 `33036524…`, page HTML sha256 `fe1560d0…` (QEMU 11.1.50 docs).
+The brief's pinned v7.2.9 `docs/interop/prl-xml.txt` could not be fetched (404 from raw and the
+GitHub API; no v7.2 tags visible), so this pin is master's bytes. Gap: pin v7.2.9 or a tagged revision.
+
+`linux_disk_identity.py` selects the top from the descriptor bytes:
+
+- Explicit `Snapshots/TopGUID` is the top. The predefined `{5fbaabe3-…}` names it only when TopGUID
+  is absent; with an explicit TopGUID it is an ordinary image.
+- An explicit TopGUID that is empty, padded, malformed, duplicated, not an image or not a leaf
+  refuses. It never falls back to the predefined GUID.
+- BackupID `{704718e1-…}` cannot be the top.
+- One Storage, Start 0, End = Disk_size, Padding 0, Cylinders×Heads×Sectors = Disk_size, positive
+  Blocksize. Padding 1 and split storage refuse as outside the specification.
+- Types `Plain` (root only) or `Compressed`. Every overlay must be Compressed.
+- Image and Shot GUIDs one-to-one; one root; every image reaches it; no cycle; no dangling parent;
+  File names are plain `.hds` names with no separators, aliases or case-only duplicates.
+- Unspecified nodes and attributes are neither interpreted nor rejected; they do not change the
+  selection. Input is bounded at 1 MiB; DTD and entity declarations refuse.
+- `preparation_observations.descriptor_chain` is the reference validator; the selection must agree.
+
+Stage1 and post-run verification re-derive the selection and refuse a caller observation whose GUID
+or complete `result_digest` differs. Only `parallels-descriptor-selection-v1` is supported.
+
+Not established by metadata selection: image-body readability, header or Blocksize-to-cluster
+compatibility, encryption, guest or disk correlation, and setup proof. Encryption and Miscellaneous
+nodes stay uninterpreted; reading any body needs its own source.
+
+Retained-719 control: the before-descriptor (sha256 `974876…`) is not present in this worktree or the
+Stash/Builds scratch trees, so the local control (`EFFIGY_LINUX_719_DESCRIPTOR`) did not run here.
