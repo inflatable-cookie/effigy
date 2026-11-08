@@ -223,7 +223,12 @@ Decisions for the current adapter:
   rule. The SSH root entry accepts only `--approved-request <digest>`, opens that
   root-owned0600 record and spends both its digest and nonce exclusively before effects. Guest supplied
   hashes cannot grant authority. Every root row access uses a held directory fd;
-  payloads cannot replace root-owned stage rows or root stream paths.
+  payloads cannot replace root-owned stage rows or root stream paths. The gate remains
+  supervisor-owned0444; only its private, non-inherited pre-opened writer fd can
+  release it. The payload can read but cannot write or chmod the gate. Invalid
+  release lines and EOF refuse execution. Newly created object modes are set and
+  verified through held descriptors, independently of inherited umask (077/027
+  covered); existing parent checks are never relaxed.
 - The request binds the explicit guest input/hash map, resource counters, SSH file
   hashes, expiry, VM boot identity and payload argv. Host request retention reuses
   the 686 request writer. Placements and streams retain their independent hashes.

@@ -61,6 +61,7 @@ def exclusive(path, data):
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
     fd = os.open(path, flags, 0o600)
     with os.fdopen(fd, 'wb') as output:
+        _set_mode(output.fileno(), 0o600, stat.S_ISREG)
         output.write(data)
         output.flush()
         os.fsync(output.fileno())
@@ -109,7 +110,7 @@ def normalize_invocation(value):
 
 def gate_argv(gate, payload_argv):
     """Block on the gate FIFO, then exec the payload. The payload runs only after release."""
-    return ['/bin/sh', '-c', 'read _effigy_gate < "$1"; shift; exec "$@"', 'sh', gate] + list(payload_argv)
+    return ['/bin/sh', '-c', 'IFS= read -r _effigy_gate < "$1" && [ "$_effigy_gate" = go ] || exit 125; shift; exec "$@"', 'sh', gate] + list(payload_argv)
 
 
 def run_argv(nonce, payload_user, cwd, timeout, argv):
@@ -345,23 +346,40 @@ def hold_stage_parent(parent, owner):
     return fd
 
 
+def _set_mode(fd, mode, kind):
+    """Set only newly created objects through custody, then verify the held inode."""
+    info = os.fstat(fd)
+    if info.st_uid != os.geteuid() or not kind(info.st_mode):
+        raise Refusal('new object must remain supervisor-owned with its intended type')
+    os.fchmod(fd, mode)
+    info = os.fstat(fd)
+    if info.st_uid != os.geteuid() or not kind(info.st_mode) or stat.S_IMODE(info.st_mode) != mode:
+        raise Refusal('held object mode or ownership differs')
+
+
 def create_row(parent_fd, name, uid):
-    """Root retains row ownership; the payload owns only FIFO endpoints, never the directory."""
+    """Root retains row and gate ownership; the payload owns only the transfer FIFO."""
     try:
         os.mkdir(name, 0o711, dir_fd=parent_fd)
     except FileExistsError as exc:
         raise Refusal('row stage already exists; a stage is never reused') from exc
     fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
     info = os.fstat(fd)
-    if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o711:
+    if info.st_uid != os.geteuid() or not stat.S_ISDIR(info.st_mode):
         os.close(fd)
-        raise Refusal('row stage must remain supervisor-owned, mode 0711')
-    return fd
+        raise Refusal('row stage must remain supervisor-owned')
+    try:
+        _set_mode(fd, 0o711, stat.S_ISDIR)
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 def _row_write(row_fd, name, data):
     fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=row_fd)
     with os.fdopen(fd, 'wb') as output:
+        _set_mode(output.fileno(), 0o600, stat.S_ISREG)
         output.write(data)
         output.flush()
         os.fsync(output.fileno())
@@ -386,19 +404,33 @@ def _make_fifo(row_fd, name, uid):
     try:
         if not stat.S_ISFIFO(os.fstat(fd).st_mode):
             raise Refusal('payload endpoint is not a FIFO')
+        _set_mode(fd, 0o600, stat.S_ISFIFO)
         os.fchown(fd, uid, -1)
+        if os.fstat(fd).st_uid != uid or stat.S_IMODE(os.fstat(fd).st_mode) != 0o600:
+            raise Refusal('transfer FIFO owner or mode differs')
     finally:
         os.close(fd)
 
 
-def _release_row_gate(row_fd):
+def _make_gate(row_fd):
+    # Never chown the gate to the payload. Open the sole writer capability while
+    # private, then remove every pathname write bit. Popen closes this fd in children.
+    _make_fifo(row_fd, GATE_NAME, os.geteuid())
     fd = os.open(GATE_NAME, os.O_RDWR | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=row_fd)
     try:
-        if not stat.S_ISFIFO(os.fstat(fd).st_mode):
-            raise Refusal('gate endpoint is not a FIFO')
-        os.write(fd, b'go\n')
-    finally:
+        _set_mode(fd, 0o444, stat.S_ISFIFO)
+        os.set_inheritable(fd, False)
+        return fd
+    except BaseException:
         os.close(fd)
+        raise
+
+
+def _release_row_gate(fd):
+    info = os.fstat(fd)
+    if not stat.S_ISFIFO(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o444:
+        raise Refusal('gate custody or mode differs')
+    os.write(fd, b'go\n')
 
 
 def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, monitor=None, stage_owner=STAGE_OWNER):
@@ -442,6 +474,11 @@ def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, mo
         ancestor_fd = hold_stage_parent(stage.parent.parent, stage_owner)
         try:
             os.mkdir(stage.parent.name, STAGE_ROOT_MODE, dir_fd=ancestor_fd)
+            created_fd = os.open(stage.parent.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=ancestor_fd)
+            try:
+                _set_mode(created_fd, STAGE_ROOT_MODE, stat.S_ISDIR)
+            finally:
+                os.close(created_fd)
         finally:
             os.close(ancestor_fd)
     parent_fd = hold_stage_parent(stage.parent, stage_owner)
@@ -462,10 +499,18 @@ def _run_held(stage, request, ops, clock, boot_id, seen_invocations, monitor, un
     seen_invocations.setdefault('nonces', set()).add(nonce)
     if parse_show(ops.show(show_argv(unit)), unit) is not None:
         raise Refusal('unit already loaded before start; nonce is not fresh')
-    _make_fifo(row_fd, GATE_NAME, request['payload_uid'])
+    gate_fd = _make_gate(row_fd)
+    try:
+        return _run_gated(stage, request, ops, clock, boot_id, seen_invocations, monitor, unit, gate, argv, intent, row_fd, gate_fd)
+    finally:
+        os.close(gate_fd)
+
+
+def _run_gated(stage, request, ops, clock, boot_id, seen_invocations, monitor, unit, gate, argv, intent, row_fd, gate_fd):
+    nonce = request['nonce']
     if request.get('transfer'):
         _make_fifo(row_fd, TRANSFER_NAME, request['payload_uid'])
-    monitor = monitor or Monitor(ops, unit, on_active=lambda record: _release_row_gate(row_fd),
+    monitor = monitor or Monitor(ops, unit, on_active=lambda record: _release_row_gate(gate_fd),
                                  payload_timeout=request['timeout_seconds'], clock=clock)
     start = clock()
     deadline = start + request['timeout_seconds'] + GATE_RESERVE_SECONDS + CLEANUP_RESERVE_SECONDS

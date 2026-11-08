@@ -377,7 +377,7 @@ class GateChecks(unittest.TestCase):
         self.assertIsNotNone(result['candidate'], result['reason'])
         self.assertEqual(result['candidate']['observed_control_group'], GROUP)
         self.assertIn('payload-ran', result['payload_stdout'])
-        self.assertEqual(stat_mode(stage / supervisor.GATE_NAME), 0o600)
+        self.assertEqual(stat_mode(stage / supervisor.GATE_NAME), 0o444)
         self.assertTrue(stat.S_ISFIFO(os.stat(stage / supervisor.GATE_NAME).st_mode))
 
     def test_gate_never_released_when_the_unit_is_never_seen_active(self):
@@ -2359,6 +2359,92 @@ class OriginalStreamChecks(unittest.TestCase):
                 self.assertEqual(base64.b64decode(result['payload_stdout_b64']), data)
                 self.assertEqual(base64.b64decode(result['payload_stderr_b64']), b'\xfe')
             self.assertEqual((stage / 'stdout').read_bytes(), data)
+
+
+class GateCustodyAndUmaskChecks(unittest.TestCase):
+    def test_unauthorized_writer_cannot_release_actual_gate_before_monitor_verification(self):
+        # Host fixture runs as an unprivileged uid. Production FIFO ownership stays
+        # root, so the payload also cannot chmod it or change its containing row.
+        self.assertNotEqual(os.geteuid(), 0, 'this writer control requires an unprivileged test host')
+        root = tmpdir('gate-custody-')
+        row = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        gate_fd = supervisor._make_gate(row)
+        marker = root / 'payload-started'
+        gate = root / supervisor.GATE_NAME
+        child = subprocess.Popen(supervisor.gate_argv(str(gate), ['/bin/sh', '-c', 'printf started > "$1"', 'sh', str(marker)]))
+        verified = threading.Event()
+        released = threading.Event()
+        class Ops:
+            def show(self, argv): return ACTIVE if verified.is_set() else NOT_FOUND
+            def events(self, path): return 'populated 1\n'
+        def release(record):
+            self.assertTrue(verified.is_set())
+            supervisor._release_row_gate(gate_fd)
+            released.set()
+        monitor = supervisor.Monitor(Ops(), UNIT, interval=0.005, on_active=release)
+        monitor.start()
+        try:
+            attack = subprocess.run([sys.executable, '-c',
+                'import os,sys\ntry: os.open(sys.argv[1], os.O_WRONLY | os.O_NONBLOCK)\nexcept PermissionError: print("denied"); sys.exit(0)\nsys.exit(9)',
+                str(gate)], capture_output=True, timeout=5)
+            self.assertEqual(attack.returncode, 0, attack.stderr)
+            self.assertEqual(attack.stdout, b'denied\n')
+            self.assertFalse(marker.exists())
+            self.assertIsNone(child.poll())
+            self.assertFalse(released.is_set())
+            self.assertEqual(os.stat(gate).st_uid, os.geteuid())
+            self.assertEqual(stat_mode(gate), 0o444)
+            verified.set()
+            self.assertTrue(released.wait(5))
+            self.assertEqual(child.wait(timeout=5), 0)
+            self.assertEqual(marker.read_text(), 'started')
+        finally:
+            monitor.stop()
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
+            os.close(gate_fd)
+            os.close(row)
+
+    def test_invalid_release_line_never_executes_payload(self):
+        root = tmpdir('invalid-gate-')
+        row = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        gate_fd = supervisor._make_gate(row)
+        marker = root / 'payload-started'
+        try:
+            child = subprocess.Popen(supervisor.gate_argv(str(root / supervisor.GATE_NAME),
+                ['/bin/sh', '-c', 'touch "$1"', 'sh', str(marker)]))
+            try:
+                os.write(gate_fd, b'wrong\n')
+                self.assertEqual(child.wait(timeout=5), 125)
+                self.assertFalse(marker.exists())
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=5)
+        finally:
+            os.close(gate_fd)
+            os.close(row)
+
+    def test_held_modes_are_exact_under_077_and_027(self):
+        for mask in (0o077, 0o027):
+            with self.subTest(umask=oct(mask)):
+                previous = os.umask(mask)
+                try:
+                    stage = tmpdir('restrictive-umask-') / 'new-parent' / 'row'
+                    result = supervised(stage, request(stage, argv=['/bin/true']), LiveOps(stage),
+                                        lambda: 0.0, BOOT, {})
+                    self.assertIsNotNone(result['candidate'], result['reason'])
+                    self.assertEqual(stat_mode(stage.parent), 0o711)
+                    self.assertEqual(stat_mode(stage), 0o711)
+                    self.assertEqual(stat_mode(stage / supervisor.GATE_NAME), 0o444)
+                    self.assertEqual(stat_mode(stage / 'intent.json'), 0o600)
+                    row = os.open(stage, os.O_RDONLY | os.O_DIRECTORY)
+                    try:
+                        supervisor._make_fifo(row, supervisor.TRANSFER_NAME, os.geteuid())
+                    finally: os.close(row)
+                    self.assertEqual(stat_mode(stage / supervisor.TRANSFER_NAME), 0o600)
+                finally: os.umask(previous)
 
 
 class ExactApprovalAndCustodyChecks(unittest.TestCase):
