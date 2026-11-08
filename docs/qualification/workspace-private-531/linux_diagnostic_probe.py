@@ -94,7 +94,16 @@ LIMITS = {
     'rlimit_fsize': 'a per-file size limit is not a filesystem allocation quota',
     'sampling_and_post_growth': 'sampled counters and post-growth checks are not an allocation quota',
     'filesystem_features': 'a feature bit is a documented capability of this filesystem, not a bound',
+    'partition_removable': ('not applicable: the kernel exposes removable on whole disks only; a parent '
+                            'disk value is never a partition fact'),
 }
+
+# Why a partition's removable flag is not applicable, and the legacy token's meaning. Both are facts
+# about the attribute, not about the device; neither grants any association or setup credit.
+PARTITION_REMOVABLE_BASIS = ('not applicable: the kernel exposes removable on whole disks only '
+                             '(block/genhd.c disk_attrs; block/partitions/core.c part_attrs)')
+LEGACY_PARTITION_REMOVABLE_BASIS = ('unavailable: the legacy probe read the whole-disk attribute from a '
+                                    'partition and recorded invalid; no value is inferred from the parent')
 
 # ----------------------------------------------------------------- fixed read routes
 
@@ -118,8 +127,12 @@ for d in /sys/class/block/*; do
   case $z in ''|*[!0-9]*) z=invalid;; esac
   r=$(cat "/sys/class/block/$n/ro" 2>/dev/null) || r=
   case $r in 0|1) ;; *) r=invalid;; esac
-  m=$(cat "/sys/class/block/$n/removable" 2>/dev/null) || m=
-  case $m in 0|1) ;; *) m=invalid;; esac
+  # removable is a whole-disk attribute (block/genhd.c disk_attrs); block/partitions/core.c part_attrs
+  # has none. A partition records na and is not read, because a parent's property is not a child's.
+  if [ "$p" = 1 ]; then m=na; else
+    m=$(cat "/sys/class/block/$n/removable" 2>/dev/null) || m=
+    case $m in 0|1) ;; *) m=invalid;; esac
+  fi
   s=$(readlink -f "/sys/class/block/$n" 2>/dev/null) || s=
   case $s in /sys/devices/*|/sys/module/*) ;; *) s=invalid;; esac
   case $s in *[!A-Za-z0-9._:/+@-]*) s=invalid;; esac
@@ -432,7 +445,10 @@ def _attribute(row):
 
 # ----------------------------------------------------------------- route parsers
 
-def parse_block_sysfs(raw):
+def parse_block_sysfs(raw, legacy_partition_removable=False):
+    """Decode the block inventory. The legacy schema (route script before the partition change)
+    recorded invalid for a partition's absent removable file; that token is accepted only when the
+    caller names the legacy schema, so the live route never accepts it."""
     rows = _decode(raw)
     blocks, attributes, encoding = {}, {}, None
     for row in rows:
@@ -452,14 +468,25 @@ def parse_block_sysfs(raw):
                 raise Bad(MALFORMED, 'invalid or duplicate block name')
             if not MAJMIN.match(majmin) or not BINARY.match(partition) or not COUNT.match(size):
                 raise Bad(MALFORMED, 'block record carries an invalid identity or counter')
-            if not BINARY.match(ro) or not BINARY.match(removable):
+            if not BINARY.match(ro):
+                raise Bad(MALFORMED, 'block record carries an invalid flag')
+            if partition == '1':
+                if removable == 'na':
+                    flag = {'status': 'not-applicable', 'basis': PARTITION_REMOVABLE_BASIS}
+                elif legacy_partition_removable and removable == 'invalid':
+                    flag = {'status': 'unavailable', 'basis': LEGACY_PARTITION_REMOVABLE_BASIS}
+                else:
+                    raise Bad(MALFORMED, 'partition record carries a removable flag the kernel does not expose')
+            elif BINARY.match(removable):
+                flag = int(removable)
+            else:
                 raise Bad(MALFORMED, 'block record carries an invalid flag')
             if syspath != 'invalid' and not SYSFS_PATH.match(syspath):
                 raise Bad(MALFORMED, 'block record carries an invalid sysfs path')
             if len(blocks) >= MAX_BLOCKS:
                 raise Bad(MALFORMED, 'the block inventory exceeds the fixed schema')
             blocks[name] = {'name': name, 'maj_min': majmin, 'partition': int(partition),
-                            'sectors': int(size), 'read_only': int(ro), 'removable': int(removable),
+                            'sectors': int(size), 'read_only': int(ro), 'removable': flag,
                             'syspath': syspath}
             continue
         if kind == 'attr':
@@ -849,8 +876,15 @@ PARSERS = {'block-sysfs': parse_block_sysfs, 'block-lsblk': parse_lsblk, 'mounti
 
 # ----------------------------------------------------------------- per-read supervision
 
-def decode(route, result, raw):
-    """One read's status and facts; a broken read never becomes a positive observation."""
+def _parse(route, raw, legacy_partition_removable):
+    if route['id'] == 'block-sysfs':
+        return parse_block_sysfs(raw, legacy_partition_removable=legacy_partition_removable)
+    return PARSERS[route['id']](raw)
+
+
+def decode(route, result, raw, legacy_partition_removable=False):
+    """One read's status and facts; a broken read never becomes a positive observation. The legacy
+    flag is only for replaying retained originals of the earlier block script."""
     disposition, code = result.get('disposition'), result.get('waited_exit')
     if disposition == 'output-cap':
         return MALFORMED, {}, ['output exceeded the fixed read cap']
@@ -879,16 +913,16 @@ def decode(route, result, raw):
     if code not in (0, None):
         reasons = ['the fixed read exited ' + str(code)]
         try:
-            return FAILED, PARSERS[route['id']](raw), reasons
+            return FAILED, _parse(route, raw, legacy_partition_removable), reasons
         except Bad:
             return FAILED, {}, reasons
     try:
-        return OBSERVED, PARSERS[route['id']](raw), []
+        return OBSERVED, _parse(route, raw, legacy_partition_removable), []
     except Bad as exc:
         return exc.status, {}, [exc.reason]
 
 
-def observe(run, retain, guard, deadline, budget=BUDGET_SECONDS):
+def observe(run, retain, guard, deadline, budget=BUDGET_SECONDS, legacy_partition_removable=False):
     """Run every fixed read inside one shared window; nothing here repairs a failed read."""
     end = time.monotonic() + budget
     rows = []
@@ -923,7 +957,7 @@ def observe(run, retain, guard, deadline, budget=BUDGET_SECONDS):
         else:
             retained_error = None
         try:
-            status, facts, reasons = decode(route, result, raw)
+            status, facts, reasons = decode(route, result, raw, legacy_partition_removable)
         except Exception as exc:                                  # a decoder bug is not a fact
             status, facts, reasons = MALFORMED, {}, ['the read could not be decoded: ' + str(exc)]
         if retained_error is not None:
@@ -944,8 +978,9 @@ def facts_of(rows, route_id):
     return {}
 
 
-def _root_facts(mounts, filesystem, block):
-    """The root mount, its block device and that device's own sysfs ancestry."""
+def _root_facts(mounts, filesystem, block, inventory):
+    """The root mount, its block device and that device's own sysfs ancestry. The inventory status
+    keeps an unavailable block inventory apart from an observed inventory that lacks the root."""
     root = {'status': 'unknown', 'reasons': []}
     mount = mounts.get('root')
     if mount:
@@ -988,14 +1023,17 @@ def _root_facts(mounts, filesystem, block):
         if record['controller_kind'] in ('virtual', 'unknown'):
             root['reasons'].append('the root controller is ' + record['controller_kind'] +
                                    ' and this schema cannot resolve it to one controller')
+    elif device is not None and inventory == OBSERVED:
+        root['reasons'].append('the root device is absent from the observed block inventory')
     elif device is not None:
-        root['reasons'].append('the root device is absent from the block inventory')
+        root['reasons'].append('the block inventory is ' + inventory + ', so the root ancestry is unknown')
     if mount and block.get('parent_unresolved'):
         root['reasons'].append('the block inventory has unresolved parents')
     if mount is None:
         root['reasons'].append('no root mount was observed')
     if root['reasons']:
-        root['status'] = 'ambiguous' if 'device' in root else 'unknown'
+        # Only an observed inventory can show ambiguity; an unavailable one shows nothing either way.
+        root['status'] = 'ambiguous' if 'device' in root and inventory == OBSERVED else 'unknown'
     else:
         root['status'] = 'resolved'
     return root
@@ -1015,6 +1053,7 @@ def _disk_facts(block):
     for record in block.get('partitions', []):
         partitions.append({'name': record['name'], 'maj_min': record['maj_min'],
                            'parent': record['parent'], 'bytes': record['sectors'] * 512,
+                           'read_only': record['read_only'], 'removable': record['removable'],
                            'syspath': record['syspath'], 'controller_kind': record['controller_kind']})
     return disks, partitions
 
@@ -1035,6 +1074,13 @@ def _inventory_agreement(block, lsblk):
     return {'status': 'differs' if reasons else 'agrees', 'reasons': reasons}
 
 
+def status_of(rows, route_id):
+    for row in rows:
+        if row['id'] == route_id:
+            return row['status']
+    return NOT_ATTEMPTED
+
+
 def correlate(rows):
     """Every writer-bound capability fact as an observation, with missing parts left unknown."""
     block = facts_of(rows, 'block-sysfs')
@@ -1044,7 +1090,7 @@ def correlate(rows):
     uuids = facts_of(rows, 'device-uuids')
     capabilities = facts_of(rows, 'capabilities')
     groups = facts_of(rows, 'cgroup-units')
-    root = _root_facts(mounts, filesystem, block)
+    root = _root_facts(mounts, filesystem, block, status_of(rows, 'block-sysfs'))
     disks, partitions = _disk_facts(block)
     ancestry = set(root.get('ancestry', []))
     additional_disks = [disk for disk in disks if disk['name'] not in ancestry]
@@ -1099,6 +1145,12 @@ def summarize(rows):
         if row['status'] in INCOMPLETE:
             detail = '; '.join(row['reasons']) or 'no reason recorded'
             findings.append('writer-bound observation %s: %s (%s)' % (row['id'], row['status'], detail))
+    # A property the read did not return, or returned unusable, stays a visible finding: the complete
+    # flag never reads as eligible while a cgroup limit is unknown or invalid.
+    for unit, record in facts.get('control_groups', {}).get('units', {}).items():
+        for key, prop in record.get('properties', {}).items():
+            if prop['status'] in ('invalid', 'unobserved'):
+                findings.append('writer-bound observation cgroup-units: %s %s is %s' % (unit, key, prop['status']))
     agreement = facts.get('inventory_agreement', {})
     if agreement.get('status') == 'differs':
         findings.append('writer-bound observation: block inventories differ (' +

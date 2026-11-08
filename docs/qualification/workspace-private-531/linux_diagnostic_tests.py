@@ -825,8 +825,74 @@ EXT4_FEATURES = ('has_journal', 'ext_attr', 'resize_inode', 'dir_index', 'filety
                  'metadata_csum', 'project', 'quota')
 
 
-def block_record(name, majmin, partition, sectors, syspath):
-    return 'block %s %s %d %d 0 0 %s\n' % (name, majmin, partition, sectors, syspath)
+def block_record(name, majmin, partition, sectors, syspath, removable=None):
+    # The live script writes na for a partition (the kernel has no removable there) and 0 or 1 for a disk.
+    if removable is None:
+        removable = 'na' if partition else '0'
+    return 'block %s %s %d %d 0 %s %s\n' % (name, majmin, partition, sectors, removable, syspath)
+
+
+# The retained 747 block-sysfs original (sha256 9a114a69...), written as the legacy script emitted it:
+# a partition's absent removable file recorded as invalid. Replayed only with the legacy selector.
+LEGACY_747_SHA256 = '9a114a6970a668854829d54b49ac56e1265ba0d500e4a1e720fab410e8701fc0'
+LEGACY_747_BLOCK_SYSFS = (
+    'encoding hex\n'
+    'block loop0 7:0 0 8 1 0 /sys/devices/virtual/block/loop0\n'
+    'attr loop0 serial missing\n'
+    'attr loop0 model missing\n'
+    'attr loop0 vendor missing\n'
+    'block loop1 7:1 0 126688 1 0 /sys/devices/virtual/block/loop1\n'
+    'attr loop1 serial missing\n'
+    'attr loop1 model missing\n'
+    'attr loop1 vendor missing\n'
+    'block loop10 7:10 0 0 0 0 /sys/devices/virtual/block/loop10\n'
+    'attr loop10 serial missing\n'
+    'attr loop10 model missing\n'
+    'attr loop10 vendor missing\n'
+    'block loop2 7:2 0 126640 1 0 /sys/devices/virtual/block/loop2\n'
+    'attr loop2 serial missing\n'
+    'attr loop2 model missing\n'
+    'attr loop2 vendor missing\n'
+    'block loop3 7:3 0 501888 1 0 /sys/devices/virtual/block/loop3\n'
+    'attr loop3 serial missing\n'
+    'attr loop3 model missing\n'
+    'attr loop3 vendor missing\n'
+    'block loop4 7:4 0 1132440 1 0 /sys/devices/virtual/block/loop4\n'
+    'attr loop4 serial missing\n'
+    'attr loop4 model missing\n'
+    'attr loop4 vendor missing\n'
+    'block loop5 7:5 0 187776 1 0 /sys/devices/virtual/block/loop5\n'
+    'attr loop5 serial missing\n'
+    'attr loop5 model missing\n'
+    'attr loop5 vendor missing\n'
+    'block loop6 7:6 0 385528 1 0 /sys/devices/virtual/block/loop6\n'
+    'attr loop6 serial missing\n'
+    'attr loop6 model missing\n'
+    'attr loop6 vendor missing\n'
+    'block loop7 7:7 0 22408 1 0 /sys/devices/virtual/block/loop7\n'
+    'attr loop7 serial missing\n'
+    'attr loop7 model missing\n'
+    'attr loop7 vendor missing\n'
+    'block loop8 7:8 0 88824 1 0 /sys/devices/virtual/block/loop8\n'
+    'attr loop8 serial missing\n'
+    'attr loop8 model missing\n'
+    'attr loop8 vendor missing\n'
+    'block loop9 7:9 0 79128 1 0 /sys/devices/virtual/block/loop9\n'
+    'attr loop9 serial missing\n'
+    'attr loop9 model missing\n'
+    'attr loop9 vendor missing\n'
+    'block sda 8:0 0 268435456 0 0 /sys/devices/platform/PRL4010:00/ata1/host0/target0:0:0/0:0:0:0/block/sda\n'
+    'attr sda serial missing\n'
+    'attr sda model hex:686172646469736b31205353442020200a\n'
+    'attr sda vendor hex:41544120202020200a\n'
+    'block sda1 8:1 1 2201600 0 invalid /sys/devices/platform/PRL4010:00/ata1/host0/target0:0:0/0:0:0:0/block/sda/sda1\n'
+    'block sda2 8:2 1 266231775 0 invalid /sys/devices/platform/PRL4010:00/ata1/host0/target0:0:0/0:0:0:0/block/sda/sda2\n'
+    'block sr0 11:0 0 2097151 1 1 /sys/devices/platform/PRL4010:00/ata2/host1/target1:0:0/1:0:0:0/block/sr0\n'
+    'attr sr0 serial missing\n'
+    'attr sr0 model hex:5669727475616c204456442d524f4d200a\n'
+    'attr sr0 vendor hex:20202020202020200a\n'
+)
+
 
 
 def attribute(name, field, value):
@@ -967,6 +1033,50 @@ def route_text(outputs=None):
             for name, (code, raw) in outputs.items()}
 
 
+NO_QUOTA_FEATURES = tuple(feature for feature in EXT4_FEATURES if feature not in ('project', 'quota'))
+# The retained 747 control-group read: CPUWeight decoded invalid and the IO properties never returned.
+CGROUP_747 = (b'file cgroup.controllers cpuset cpu io memory hugetlb pids rdma misc dmem\n'
+              b'file cgroup.subtree_control cpuset cpu io memory pids\n'
+              b'unit system.slice present\n'
+              b'property system.slice CPUWeight invalid\n'
+              b'property system.slice MemoryHigh infinity\n'
+              b'property system.slice MemoryMax infinity\n'
+              b'property system.slice MemorySwapMax infinity\n'
+              b'property system.slice TasksMax infinity\n'
+              b'unit user.slice present\n'
+              b'property user.slice CPUWeight invalid\n'
+              b'property user.slice MemoryHigh infinity\n'
+              b'property user.slice MemoryMax infinity\n'
+              b'property user.slice MemorySwapMax infinity\n'
+              b'property user.slice TasksMax infinity\n')
+
+
+def sda_lsblk():
+    """The 747 guest's lsblk shape: eleven loop devices, sda with sda1 and sda2, and sr0 (15 nodes)."""
+    loops = [lsblk_node('loop%d' % number, '7:%d' % number, kind='loop', size=4096 * (number + 1),
+                        fstype='squashfs') for number in range(11)]
+    disk = lsblk_node('sda', '8:0', kind='disk', size=268435456 * 512, children=[
+        lsblk_node('sda1', '8:1', 'sda', size=2201600 * 512),
+        lsblk_node('sda2', '8:2', 'sda', size=266231775 * 512, fstype='ext4', uuid=ROOT_UUID, mountpoint='/')])
+    rom = lsblk_node('sr0', '11:0', kind='rom', size=2097151 * 512)
+    return lsblk_route(loops + [disk, rom])
+
+
+def sda_outputs(block_sysfs, lsblk=None, cgroup=CGROUP_747):
+    """The 747 guest's read shape: an ext4 root on sda2 without project or quota features."""
+    return observation_outputs(**{
+        'block-sysfs': (0, block_sysfs),
+        'block-lsblk': (0, sda_lsblk() if lsblk is None else lsblk),
+        'mountinfo': (0, mountinfo_route('22 1 8:2 / / rw,relatime shared:1 - ext4 /dev/sda2 '
+                                         'rw,errors=remount-ro',
+                                         '23 22 0:5 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw')),
+        'filesystem': (0, filesystem_route(majmin='8:2', device='sda2', features=NO_QUOTA_FEATURES)),
+        'device-uuids': (0, ('dir by-uuid present\ndir by-partuuid present\n'
+                             'entry by-uuid %s sda2\nentry by-partuuid %s sda2\n' % (ROOT_UUID, PART_UUID)).encode()),
+        'cgroup-units': (0, cgroup),
+    })
+
+
 def statuses(result):
     return {row['id']: row['status'] for row in result['routes']}
 
@@ -974,7 +1084,8 @@ def statuses(result):
 class WriterBoundObservationTests(unittest.TestCase):
     """Every fixed read route and its full parser; observations only, never gate credit."""
 
-    def observe(self, outputs=None, budget=None, deadline=10 ** 9, retain_error=False, run_error=None):
+    def observe(self, outputs=None, budget=None, deadline=10 ** 9, retain_error=False, run_error=None,
+                legacy=False):
         outputs = observation_outputs() if outputs is None else outputs
         calls, retained = [], {}
 
@@ -1001,7 +1112,8 @@ class WriterBoundObservationTests(unittest.TestCase):
             return 'observation-%s.raw' % name
 
         result = guest_probe.observe(run, retain, lambda: None, deadline,
-                                     guest_probe.BUDGET_SECONDS if budget is None else budget)
+                                     guest_probe.BUDGET_SECONDS if budget is None else budget,
+                                     legacy_partition_removable=legacy)
         return result, calls, retained
 
     def test_every_route_runs_once_with_its_reviewed_argv(self):
@@ -1159,6 +1271,188 @@ class WriterBoundObservationTests(unittest.TestCase):
         result, _, _ = self.observe(observation_outputs(**{'block-sysfs': (0, broken)}))
         self.assertEqual(statuses(result)['block-sysfs'], guest_probe.MALFORMED)
         self.assertFalse(result['complete'])
+
+    def test_retained_747_inventory_is_refused_by_the_live_schema(self):
+        raw = ''.join(LEGACY_747_BLOCK_SYSFS).encode()
+        self.assertEqual(hashlib.sha256(raw).hexdigest(), LEGACY_747_SHA256)
+        result, _, retained = self.observe(sda_outputs(raw))
+        self.assertEqual(statuses(result)['block-sysfs'], guest_probe.MALFORMED)
+        self.assertEqual(retained['block-sysfs'], raw)
+        root = result['facts']['root']
+        self.assertEqual(root['status'], 'unknown')
+        self.assertIn('the block inventory is malformed, so the root ancestry is unknown', root['reasons'])
+        self.assertNotIn('the root device is absent from the observed block inventory', root['reasons'])
+        self.assertFalse(result['complete'])
+        self.assertTrue(any('partition record carries a removable flag' in finding
+                            for finding in result['findings']))
+
+    def test_retained_747_inventory_replays_under_the_legacy_selector(self):
+        raw = ''.join(LEGACY_747_BLOCK_SYSFS).encode()
+        result, _, _ = self.observe(sda_outputs(raw), legacy=True)
+        self.assertEqual(statuses(result)['block-sysfs'], guest_probe.OBSERVED)
+        facts = result['facts']
+        root = facts['root']
+        self.assertEqual((root['status'], root['device'], root['ancestry']), ('resolved', 'sda2', ['sda2', 'sda']))
+        self.assertEqual((root['fstype'], root['source'], root['filesystem_uuid']), ('ext4', '/dev/sda2', ROOT_UUID))
+        self.assertEqual(root['controller_kind'], 'scsi')
+        self.assertEqual(facts['root_uuids']['status'], 'observed')
+        partitions = {part['name']: part for part in facts['partitions']}
+        self.assertEqual(partitions['sda2']['removable'], {'status': 'unavailable',
+                                                          'basis': guest_probe.LEGACY_PARTITION_REMOVABLE_BASIS})
+        self.assertEqual(partitions['sda2']['read_only'], 0)
+        self.assertEqual(partitions['sda1']['parent'], 'sda')
+        disks = {disk['name']: disk for disk in facts['disks']}
+        self.assertEqual(disks['sda']['removable'], 0)
+        self.assertEqual(disks['sda']['serial'], {'status': 'missing'})
+        self.assertEqual(disks['sda']['model']['text'], 'harddisk1 SSD   \n')
+        self.assertEqual(disks['sr0']['removable'], 1)
+        self.assertEqual(sorted(disk['name'] for disk in facts['additional_disks']),
+                         sorted(['loop%d' % number for number in range(11)] + ['sr0']))
+        self.assertEqual([part['name'] for part in facts['additional_partitions']], ['sda1'])
+        self.assertEqual((facts['block_inventory']['count'], facts['lsblk_inventory']['count']), (15, 15))
+        self.assertEqual(facts['inventory_agreement']['status'], 'agrees')
+        self.assertEqual(facts['filesystem_features']['project_feature'], 'absent')
+        self.assertEqual(facts['filesystem_features']['quota_feature'], 'absent')
+        self.assertEqual(set(facts['quota_tools'].values()), {'absent'})
+        # The 747 control-group read is complete as bytes but not as facts: CPUWeight is invalid and the
+        # IO properties were never returned, so the observation stays incomplete and says so.
+        properties = facts['control_groups']['units']['system.slice']['properties']
+        self.assertEqual(properties['CPUWeight'], {'status': 'invalid'})
+        self.assertEqual(properties['IOReadBandwidthMax'], {'status': 'unobserved'})
+        self.assertFalse(result['complete'])
+        self.assertTrue(result['observation_eligibility'].startswith('incomplete'))
+        self.assertIn('writer-bound observation cgroup-units: system.slice CPUWeight is invalid',
+                      result['findings'])
+        self.assertIn('writer-bound observation cgroup-units: user.slice IOWriteIOPSMax is unobserved',
+                      result['findings'])
+
+    def test_legacy_selector_accepts_only_the_partition_token(self):
+        legacy_partition = block_sysfs([block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda'),
+                                        block_record('vda1', '254:1', 1, 1048576, VIRTIO + '/block/vda/vda1',
+                                                     removable='invalid')])
+        self.assertEqual(statuses(self.observe(sda_outputs(legacy_partition))[0])['block-sysfs'],
+                         guest_probe.MALFORMED)
+        result, _, _ = self.observe(sda_outputs(legacy_partition), legacy=True)
+        self.assertEqual(statuses(result)['block-sysfs'], guest_probe.OBSERVED)
+        # A whole disk never takes the legacy token, and a partition never takes a disk value.
+        disk_invalid = block_sysfs([block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda',
+                                                 removable='invalid')])
+        result, _, _ = self.observe(sda_outputs(disk_invalid), legacy=True)
+        self.assertEqual(statuses(result)['block-sysfs'], guest_probe.MALFORMED)
+        partition_zero = block_sysfs([block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda'),
+                                      block_record('vda1', '254:1', 1, 1048576, VIRTIO + '/block/vda/vda1',
+                                                   removable='0')])
+        for legacy in (False, True):
+            result, _, _ = self.observe(sda_outputs(partition_zero), legacy=legacy)
+            self.assertEqual(statuses(result)['block-sysfs'], guest_probe.MALFORMED)
+
+    def test_partition_without_removable_keeps_identity_and_ancestry(self):
+        result, _, _ = self.observe()
+        self.assertEqual(statuses(result)['block-sysfs'], guest_probe.OBSERVED)
+        partition = result['facts']['additional_partitions'][0]
+        self.assertEqual(partition['name'], 'vda1')
+        self.assertEqual(partition['removable'], {'status': 'not-applicable',
+                                                  'basis': guest_probe.PARTITION_REMOVABLE_BASIS})
+        self.assertEqual(partition['parent'], 'vda')
+        self.assertEqual(result['facts']['disks'][0]['removable'], 0)
+        self.assertEqual(result['facts']['root']['ancestry'], ['vda2', 'vda'])
+
+    def test_malformed_block_records_refuse_the_inventory(self):
+        cases = {
+            'whole disk without a removable flag': block_sysfs([
+                block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda', removable='invalid'),
+                block_record('vda2', '254:2', 1, 267386880, VIRTIO + '/block/vda/vda2')]),
+            'whole disk with a partition token': block_sysfs([
+                block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda', removable='na'),
+                block_record('vda2', '254:2', 1, 267386880, VIRTIO + '/block/vda/vda2')]),
+            'partition with a disk flag': block_sysfs([
+                block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda'),
+                block_record('vda2', '254:2', 1, 267386880, VIRTIO + '/block/vda/vda2', removable='1')]),
+            'partition with an invalid token and the live schema': block_sysfs([
+                block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda'),
+                block_record('vda2', '254:2', 1, 267386880, VIRTIO + '/block/vda/vda2', removable='invalid')]),
+            'non-numeric counter': b'encoding hex\nblock vda 254:0 0 2x 0 0 ' + VIRTIO.encode() + b'/block/vda\n',
+            'syspath outside sysfs': block_sysfs([
+                block_record('vda', '254:0', 0, 268435456, '/tmp/vda'),
+                block_record('vda2', '254:2', 1, 267386880, VIRTIO + '/block/vda/vda2')]),
+            'read-only flag out of range': b'encoding hex\nblock vda 254:0 0 2 7 0 ' + VIRTIO.encode() + b'/block/vda\n',
+        }
+        for name, raw in cases.items():
+            with self.subTest(case=name):
+                result, _, _ = self.observe(observation_outputs(**{'block-sysfs': (0, raw)}))
+                self.assertEqual(statuses(result)['block-sysfs'], guest_probe.MALFORMED)
+                self.assertEqual(result['facts']['root']['status'], 'unknown')
+                self.assertFalse(result['complete'])
+
+    def test_inventory_status_separates_unavailable_from_observed_absence(self):
+        malformed = block_sysfs([block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda'),
+                                 'shell rm -rf /\n'])
+        result, _, _ = self.observe(observation_outputs(**{'block-sysfs': (0, malformed)}))
+        self.assertEqual(result['facts']['root']['status'], 'unknown')
+        self.assertTrue(result['observation_eligibility'].startswith('incomplete'))
+        result, _, _ = self.observe(observation_outputs(**{'block-sysfs': (1, b'')}))
+        self.assertEqual(statuses(result)['block-sysfs'], guest_probe.FAILED)
+        self.assertEqual(result['facts']['root']['status'], 'unknown')
+        self.assertIn('the block inventory is failed, so the root ancestry is unknown',
+                      result['facts']['root']['reasons'])
+        self.assertFalse(result['complete'])
+        # An observed inventory that lacks the root device is a real absence and stays ambiguous.
+        absent_root = block_sysfs([block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda'),
+                                   block_record('vdb', '254:16', 0, 20971520, VIRTIO + '/block/vdb')])
+        result, _, _ = self.observe(observation_outputs(**{'block-sysfs': (0, absent_root)}))
+        self.assertEqual(statuses(result)['block-sysfs'], guest_probe.OBSERVED)
+        self.assertEqual(result['facts']['root']['status'], 'ambiguous')
+        self.assertIn('the root device is absent from the observed block inventory',
+                      result['facts']['root']['reasons'])
+        self.assertTrue(result['observation_eligibility'].startswith('not eligible'))
+
+    def test_real_block_script_decodes_partitions_without_removable(self):
+        """The reviewed block script runs against a sysfs tree shaped like the 747 guest."""
+        tree = fixture()
+        devices = tree / 'sys' / 'devices'
+        disk = devices / 'platform' / 'PRL4010:00' / 'ata1' / 'host0' / 'target0:0:0' / '0:0:0:0' / 'block' / 'sda'
+        virtual = devices / 'virtual' / 'block' / 'loop0'
+        for path, values in ((disk, {'dev': '8:0', 'size': '268435456', 'ro': '0', 'removable': '0'}),
+                             (disk / 'sda1', {'dev': '8:1', 'size': '2201600', 'ro': '0', 'partition': '1'}),
+                             (disk / 'sda2', {'dev': '8:2', 'size': '266231775', 'ro': '1', 'partition': '1'}),
+                             (virtual, {'dev': '7:0', 'size': '8', 'ro': '1', 'removable': '0'})):
+            path.mkdir(parents=True)
+            for name, value in values.items():
+                (path / name).write_text(value + '\n')
+        (disk / 'device').mkdir()
+        (disk / 'device' / 'model').write_text('harddisk1 SSD\n')
+        (disk / 'device' / 'vendor').write_text('ATA     \n')
+        classes = tree / 'sys' / 'class' / 'block'
+        classes.mkdir(parents=True)
+        for path in (disk, disk / 'sda1', disk / 'sda2', virtual):
+            os.symlink(path, classes / path.name)
+        route = next(item for item in guest_probe.ROUTES if item['id'] == 'block-sysfs')
+
+        def run_script():
+            # The fixed script names /sys; only the fixture's root is swapped in, and the prefix is
+            # removed from the output so the decoder sees the real sysfs paths.
+            script = guest_probe.BLOCK_SYSFS.replace('/sys/', str(tree) + '/sys/')
+            run = subprocess.run(['/bin/sh', '-c', script], capture_output=True, timeout=60,
+                                 env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'})
+            self.assertEqual(run.returncode, 0, run.stderr)
+            return run.stdout.replace(str(tree).encode(), b'')
+
+        raw = run_script()
+        status, facts, reasons = guest_probe.decode(route, {'disposition': 'exited', 'waited_exit': 0}, raw)
+        self.assertEqual((status, reasons), (guest_probe.OBSERVED, []), raw)
+        self.assertEqual(facts['blocks']['sda1']['removable'],
+                         {'status': 'not-applicable', 'basis': guest_probe.PARTITION_REMOVABLE_BASIS})
+        self.assertEqual(facts['blocks']['sda2']['read_only'], 1)
+        self.assertEqual(facts['blocks']['sda']['removable'], 0)
+        self.assertEqual(facts['blocks']['loop0']['removable'], 0)
+        disks = {disk['name']: disk for disk in facts['disks']}
+        self.assertEqual(disks['sda']['serial'], {'status': 'missing'})
+        self.assertEqual(disks['sda']['model']['text'], 'harddisk1 SSD\n')
+        # A whole disk whose removable file is absent is a malformed inventory, never a guessed flag.
+        (disk / 'removable').unlink()
+        status, facts, reasons = guest_probe.decode(route, {'disposition': 'exited', 'waited_exit': 0},
+                                                    run_script())
+        self.assertEqual((status, reasons), (guest_probe.MALFORMED, ['block record carries an invalid flag']))
 
     def test_real_probe_scripts_decode_their_own_output(self):
         """The reviewed scripts are run for real, so no fixture invents a record they never emit."""
