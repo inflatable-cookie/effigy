@@ -45,7 +45,7 @@ def _tag_sequence(path):
 
 
 def _nonneg_int(text):
-    return isinstance(text, str) and text.isdigit()
+    return isinstance(text, str) and text.isascii() and text.isdigit()
 
 
 def _classify_leaf(path, old, new, has_children):
@@ -96,6 +96,8 @@ def config_transitions(before, after):
         compare(root_a, root_b, '/' + root_a.tag + '[1]')
     except ET.ParseError as exc:
         raise observations.Refusal('invalid config XML') from exc
+    except (LookupError, UnicodeError, ValueError) as exc:
+        raise observations.Refusal('malformed config XML') from exc
     return {'before_sha256': hashlib.sha256(before).hexdigest(),
             'after_sha256': hashlib.sha256(after).hexdigest(),
             'changes': changes,
@@ -136,7 +138,7 @@ def binding_reasons(fresh, anchors, trust, head, vm, growth_cap):
                                               Path(retained['post_config']).read_bytes())
         if post.get('post_config_sha256') != transition['after_sha256']:
             reasons.append('Stage1 post-run config hash differs from retained post bytes')
-    except (observations.Refusal, OSError, KeyError, TypeError) as exc:
+    except (observations.Refusal, OSError, KeyError, TypeError, ValueError, LookupError, UnicodeError) as exc:
         reasons.append('Stage1 post-run config transition: ' + str(exc))
     if post.get('post_descriptor_sha256') != before.get('descriptor_sha256'):
         reasons.append('Stage1 post-run descriptor differs from the original')

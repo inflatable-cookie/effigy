@@ -338,7 +338,10 @@ def stage1_verify_post(request, after):
     if _owned_regular(home / CONFIG_NAME) != before['config_identity'] or _owned_dir(home) != request['bundle_identity']:
         raise Refusal('config or bundle identity changed')
     import linux_stage1
-    transition = _wrap(linux_stage1.compare_protected_config, retained_config, post_config)
+    try:
+        transition = linux_stage1.compare_protected_config(retained_config, post_config)
+    except (observations.Refusal, ValueError, LookupError, UnicodeError) as exc:
+        raise Refusal(str(exc)) from exc
     if _sha(post_descriptor) != before['descriptor_sha256']:
         raise Refusal('descriptor bytes changed')
     selection = verify_writable_top(request['top_observation'], post_descriptor)
@@ -414,21 +417,29 @@ def stage1_run(request, after, transport, clock=time.monotonic, started_at=None,
     """Execute the bound Stage1 request through one injected transport. Never a VM activation.
 
     Readiness is systemd 259 `is-system-running --wait` with a host remaining-absolute
-    deadline including reserve. A transport exit is not VM closure. Readiness failure
-    skips the probe and still attempts graceful stop. Post-state is always verified.
+    deadline including reserve. Occurrence identity is required and the probe must
+    match that same boot and VM. A transport exit is not VM closure. A launched start
+    that fails still attempts graceful stop. Readiness failure skips the probe and
+    still attempts graceful stop. Post-state is always verified.
     """
     if not callable(transport):
         raise Refusal('Stage1 run requires an injected transport; this adapter does not activate a VM')
+    if (not isinstance(identity, dict) or identity.get('vm') != VM_UUID
+            or not all(identity.get(k) for k in IDENTITY_KEYS)):
+        raise Refusal('Stage1 run requires this occurrence identity for the registered VM')
     started_at = clock() if started_at is None else started_at
     deadline = started_at + request['deadline_seconds']
     reserve = request['reserve_seconds']
     readiness = None
     readiness_error = None
+    start_error = None
     stop_error = None
     probe_error = None
     probe_facts = None
     for step in request['steps']:
         remaining = deadline - clock()
+        if step['id'] in ('S1.3', 'S1.4') and start_error is not None:
+            continue
         if step['id'] == 'S1.4' and readiness != 'running':
             continue
         if step['id'] == 'S1.3':
@@ -440,6 +451,10 @@ def stage1_run(request, after, transport, clock=time.monotonic, started_at=None,
             if timeout <= 0:
                 raise Refusal('Stage1 %s timeout is not positive' % step['id'])
         result = transport(step['argv'], timeout, step.get('output_cap', 1024))
+        if step['id'] == 'S1.2':
+            if result.get('disposition') != 'exited' or result.get('waited_exit') != 0:
+                start_error = Refusal('Stage1 start did not complete; client exit is not VM closure')
+            continue
         if step['id'] == 'S1.3':
             try:
                 readiness = stage1_accept_readiness(result)
@@ -456,7 +471,7 @@ def stage1_run(request, after, transport, clock=time.monotonic, started_at=None,
                             'host_key_fp': probe_facts['ssh_host_ed25519_fp']}
                 if observed['vm'] != VM_UUID:
                     raise Refusal('Stage1 probe VM is not the registered VM')
-                if identity is not None and identity != observed:
+                if any(identity.get(k) != observed[k] for k in IDENTITY_KEYS):
                     raise Refusal('Stage1 probe boot or VM differs from this occurrence')
             except Refusal as exc:
                 probe_error = exc
@@ -474,11 +489,15 @@ def stage1_run(request, after, transport, clock=time.monotonic, started_at=None,
     except Refusal as exc:
         if stop_error is not None:
             raise stop_error from exc
+        if start_error is not None:
+            raise start_error from exc
         if readiness_error is not None:
             raise readiness_error from exc
         raise
     if stop_error is not None:
         raise stop_error
+    if start_error is not None:
+        raise start_error
     if readiness_error is not None:
         raise readiness_error
     if probe_error is not None:

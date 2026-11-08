@@ -1004,6 +1004,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Close four Stage1 admission holes found in review of PR 826 (effigy#732).
+  `stage1_run` now requires occurrence identity before any step, so a wrong-boot
+  probe cannot pass by omitting identity; a launched start that times out or
+  returns nonzero still attempts the graceful stop and retains post-state;
+  Unicode numeric lookalikes (`²`, `①`) and unknown XML encodings refuse as
+  malformed config instead of raising; the genuine 719 replay skips when the
+  private evidence is absent.
+
 - Keep managed panes bounded when a tab starts Effigy itself (effigy#729). The
   pane fact is `EFFIGY_MANAGED_PANE=1`, outside the `EFFIGY_INTERNAL_` namespace
   that Effigy's child environment and consumer wrappers scrub, so a nested child
