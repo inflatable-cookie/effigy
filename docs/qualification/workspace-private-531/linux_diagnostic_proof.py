@@ -178,6 +178,7 @@ def execute(request, request_path, request_hash):
                'hard_quota': 'not established', 'vm_terminal': 'unknown',
                'launcher_closure_is_vm_closure': False, 'start_count': 0, 'findings': []}
     serial = 0
+    start_launched = False
     monitor = None
     inputs = dict(request['inputs'])
     inputs[request_path] = request_hash
@@ -195,17 +196,33 @@ def execute(request, request_path, request_hash):
     stop_monitor = StopMonitor()
 
     def call(args, limit, cap, end, track=True):
-        nonlocal serial
+        nonlocal serial, start_launched
         if private_root(str(root)) != request['root_identity']:
             raise stage.Refusal('evidence root identity changed')
         serial += 1
         step = destination / ('step-%03d' % serial)
         step.mkdir(mode=0o700)
-        result = stage.run_stage(step, [request['program']] + args, limit, cap, inputs,
-                                 guest=bool(args and args[0] == 'exec'),
-                                 cwd=str(HERE), environment={'PATH': '/usr/bin:/bin', 'LANG': 'C'},
-                                 resource_monitor=monitor if track else (stop_monitor if monitor else None), deadline=end,
-                                 cleanup_deadline=operational_end)
+        try:
+            result = stage.run_stage(step, [request['program']] + args, limit, cap, inputs,
+                                     guest=bool(args and args[0] == 'exec'),
+                                     cwd=str(HERE), environment={'PATH': '/usr/bin:/bin', 'LANG': 'C'},
+                                     resource_monitor=monitor if track else (stop_monitor if monitor else None), deadline=end,
+                                     cleanup_deadline=operational_end)
+        except Exception:
+            # The primitive retains a receipt even if it raises after spawning. A
+            # recorded process is evidence that this exact start was launched.
+            if args == ['start', setup.VM_UUID]:
+                try:
+                    receipt = json.loads((step / 'receipt.json').read_bytes())
+                    if receipt.get('process'):
+                        start_launched = True
+                        outcome['start'] = receipt
+                except (OSError, ValueError, AttributeError):
+                    pass
+            raise
+        if args == ['start', setup.VM_UUID]:
+            start_launched = bool(result.get('process'))
+            outcome['start'] = result
         return result, (step / 'stdout').read_bytes()
 
     def pause(end, track=True):
@@ -218,7 +235,6 @@ def execute(request, request_path, request_hash):
     def good(result):
         return result.get('disposition') == 'exited' and result.get('waited_exit') == 0
 
-    owned_start = False
     home = Path(setup.PVM_HOME)
     disk = home / setup.DISK_DIR
     files = {'config': home / setup.CONFIG_NAME, 'descriptor': disk / setup.DESCRIPTOR_NAME}
@@ -246,11 +262,8 @@ def execute(request, request_path, request_hash):
         check_snapshots(raw)
         outcome['start_count'] = 1
         result, _ = call(['start', setup.VM_UUID], 145, 16384, start_end)
-        outcome['start'] = result
-        owned_start = result.get('waited_exit') == 0
         if not good(result):
             raise stage.Refusal('start result is not a positively owned successful start')
-        owned_start = True
         running = False
         while time.monotonic() < start_end:
             result, raw = call(['list', '--info', setup.VM_UUID, '--json'], 10, 65536, start_end)
@@ -284,7 +297,7 @@ def execute(request, request_path, request_hash):
     except Exception as exc:
         outcome['findings'].append(type(exc).__name__ + ': ' + str(exc))
     finally:
-        if owned_start:
+        if start_launched:
             try:
                 result, _ = call(['stop', setup.VM_UUID], 120, 16384, operational_end, track=False)
                 outcome['stop'] = result
@@ -312,6 +325,8 @@ def execute(request, request_path, request_hash):
                 check_snapshots(raw)
             except Exception as exc:
                 outcome['findings'].append('post snapshots: ' + str(exc))
+        elif outcome['start_count']:
+            outcome['findings'].append('start launch not confirmed; terminal VM state unknown and stop not attempted')
         post, errors = diagnostic.retain_originals(destination, files, 'post')
         outcome['post'] = post
         outcome['findings'].extend(errors)

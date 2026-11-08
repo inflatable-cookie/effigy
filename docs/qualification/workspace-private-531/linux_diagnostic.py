@@ -112,7 +112,7 @@ def package_counters(root):
                 raise Refusal('package contains a symlink')
             if stat.S_ISDIR(info.st_mode):
                 continue
-            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or info.st_size > 16 * 1024 * 1024:
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid():
                 raise Refusal('package contains an unaccountable file')
             ident = (info.st_dev, info.st_ino)
             if ident in seen:

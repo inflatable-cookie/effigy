@@ -46,7 +46,21 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaises(Refusal):
             diagnostic.inventory(root, xml)
 
+    def test_large_sparse_extent_is_accounted(self):
+        root = fixture()
+        disk = root / 'disk'
+        disk.mkdir()
+        xml = descriptor([(GUID_A, 'large.hds')])
+        (disk / 'DiskDescriptor.xml').write_bytes(xml)
+        with (disk / 'large.hds').open('wb') as extent:
+            extent.truncate(17 * 1024 * 1024)
+        inventory = diagnostic.inventory(disk, xml)
+        monitor = diagnostic.ExtentMonitor(root, disk, xml, inventory)
+        self.assertEqual(monitor.package_initial['logical'], len(xml) + 17 * 1024 * 1024)
+        self.assertEqual(monitor.check()['extents']['logical'], 0)
+
     def test_setup_top_mechanism_remains_refused(self):
+        self.assertEqual(proof.setup.SUPPORTED_TOP_MECHANISMS, frozenset())
         with self.assertRaises(proof.setup.Refusal):
             proof.setup.verify_writable_top({'mechanism': 'unknown'}, b'<Disk/>')
 
@@ -86,7 +100,8 @@ class EntryTests(unittest.TestCase):
         disk.mkdir(parents=True)
         (home / 'config.pvs').write_bytes(b'config')
         (disk / 'DiskDescriptor.xml').write_bytes(descriptor([(GUID_A, 'a.hds'), (GUID_B, 'b.hds')]))
-        (disk / 'a.hds').write_bytes(b'extent')
+        with (disk / 'a.hds').open('wb') as extent:
+            extent.truncate(17 * 1024 * 1024)
         (disk / 'b.hds').write_bytes(b'extent')
         scenario = root / 'scenario'
         scenario.write_text('complete')
@@ -104,7 +119,7 @@ class EntryTests(unittest.TestCase):
                            'mode=Path(' + repr(str(scenario)) + ').read_text()\n'
                            'log=Path(' + repr(str(log)) + ')\n'
                            "with log.open('a') as f: f.write(a[0]+'\\n')\n"
-                           "if a[0]=='start': p.write_text('running')\n"
+                           "if a[0]=='start':\n p.write_text('running')\n if mode=='start_accounting': Path(" + repr(str(home / 'config.pvs')) + " ).unlink(); time.sleep(1)\n"
                            "elif a[0]=='stop':\n if mode=='stop_fail': sys.exit(1)\n p.write_text('stopped')\n"
                            "elif a[0]=='snapshot-list': print('{}' if mode=='wrong_snapshot' else " + repr(json.dumps(snapshot)) + ")\n"
                            "elif a[0]=='list':\n vm['State']=p.read_text()\n if mode=='wrong_home': vm['Home']='/wrong/'\n if mode=='wrong_uuid': vm['ID']='wrong'\n print(json.dumps([vm]))\n"
@@ -129,6 +144,14 @@ class EntryTests(unittest.TestCase):
         with patch.object(proof, 'SCRATCH', str(root)), patch.object(proof, 'PRLCTL', str(program)), \
              patch.object(proof, 'SNAPSHOT_SHA', snapshot_sha), patch.object(proof.setup, 'PVM_HOME', str(home)), \
              patch.object(proof.subprocess, 'check_output', side_effect=git):
+            changed_root = root / 'changed-root'
+            changed_root.mkdir(mode=0o700)
+            root_request = proof.plan(str(changed_root), 'root-drift', head)
+            changed_root.rename(root / 'old-root')
+            changed_root.mkdir(mode=0o700)
+            with self.assertRaises(Refusal):
+                proof.execute(root_request, str(root / 'no-request'), '0' * 64)
+            self.assertFalse((changed_root / 'linux-diagnostic-root-drift.claim').exists())
             request = proof.plan(str(evidence), 'fixture01', head)
             with self.assertRaises(Refusal):
                 proof.plan(str(root.parent), 'outside01', head)
@@ -154,11 +177,12 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(state.read_text(), 'stopped')
             result = json.loads((evidence / 'linux-diagnostic-fixture01' / 'outcome.json').read_text())
             self.assertEqual(result['start_count'], 1)
+            self.assertEqual(result['before_extents']['a.hds']['logical'], 17 * 1024 * 1024)
             self.assertEqual(result['writable_top'], 'unknown')
             self.assertEqual(result['placement'], 'not evaluated')
             with self.assertRaises(Refusal):
                 proof.main(['proof', str(path), digest])
-            for index, mode in enumerate(('wrong_home', 'wrong_uuid', 'wrong_snapshot', 'partial', 'stop_fail', 'growth', 'config_change', 'descriptor_change', 'extent_missing', 'extent_replaced', 'config_missing', 'descriptor_missing', 'descriptor_replaced', 'config_replaced', 'early_boot', 'timeout', 'stop_unknown'), 2):
+            for index, mode in enumerate(('wrong_home', 'wrong_uuid', 'wrong_snapshot', 'partial', 'stop_fail', 'growth', 'config_change', 'descriptor_change', 'extent_missing', 'extent_replaced', 'config_missing', 'descriptor_missing', 'descriptor_replaced', 'config_replaced', 'early_boot', 'timeout', 'stop_unknown', 'start_accounting', 'start_exception', 'start_prelaunch'), 2):
                 scenario.write_text(mode)
                 state.write_text('stopped')
                 (home / 'config.pvs').write_bytes(b'config')
@@ -173,6 +197,11 @@ class EntryTests(unittest.TestCase):
                 expected = 0 if mode in ('growth', 'early_boot') else 1
                 original_run = proof.stage.run_stage
                 def bounded(*args, **kwargs):
+                    if mode == 'start_prelaunch' and args[1][1:2] == ['start']:
+                        raise Refusal('refused before spawn')
+                    if mode == 'start_exception' and args[1][1:2] == ['start']:
+                        original_run(*args, **kwargs)
+                        raise Refusal('failure after launcher receipt')
                     if mode == 'stop_unknown' and args[1][1:2] == ['list'] and 'stop' in log.read_text().splitlines():
                         raise Refusal('terminal observation unavailable')
                     if mode == 'timeout' and args[1][1:2] == ['exec'] and '-c' in args[1]:
@@ -182,11 +211,25 @@ class EntryTests(unittest.TestCase):
                     self.assertEqual(proof.main(['proof', str(item_path), hashlib.sha256(item_raw).hexdigest()]), expected)
                 result = json.loads((evidence / ('linux-diagnostic-fixture%02d' % index) / 'outcome.json').read_text())
                 calls = log.read_text().splitlines()
-                if mode in ('wrong_home', 'wrong_uuid', 'wrong_snapshot'):
+                self.assertEqual(result['writable_top'], 'unknown')
+                self.assertEqual(result['placement'], 'not evaluated')
+                if mode in ('wrong_home', 'wrong_uuid', 'wrong_snapshot', 'start_prelaunch'):
                     self.assertNotIn('start', calls)
                 else:
                     self.assertEqual(calls.count('start'), 1)
                     self.assertEqual(calls.count('stop'), 1)
+                if mode == 'start_prelaunch':
+                    self.assertNotIn('stop', calls)
+                    self.assertEqual(result['vm_terminal'], 'unknown')
+                    self.assertTrue(any('stop not attempted' in finding for finding in result['findings']))
+                if mode == 'start_exception':
+                    self.assertEqual(result['start']['waited_exit'], 0)
+                    self.assertEqual(result['vm_terminal'], 'stopped')
+                if mode == 'start_accounting':
+                    self.assertEqual(result['start']['disposition'], 'resource-refusal')
+                    self.assertNotEqual(result['start']['waited_exit'], 0)
+                    self.assertEqual(result['vm_terminal'], 'stopped')
+                    self.assertEqual(result['stop']['waited_exit'], 0)
                 if mode == 'early_boot':
                     self.assertGreaterEqual(calls.count('exec'), 3)
                 if mode == 'timeout':
