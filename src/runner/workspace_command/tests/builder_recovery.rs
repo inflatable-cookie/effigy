@@ -181,6 +181,14 @@ if cmd == 'exec':
         stray = pathlib.Path(bound) / '.effigy/state/objects'
         stray.mkdir(parents=True, exist_ok=True)
         (stray / 'ab').write_text('build output outside the declared export')
+    if mode == 'write_and_remove':
+        # The v2 case: bytes written through the writable host bind and removed
+        # again before the after-probe runs. Nothing is left for a census to see.
+        import shutil as _shutil
+        transient = pathlib.Path(bound) / '.effigy/linux-release/target/transient'
+        transient.parent.mkdir(parents=True, exist_ok=True)
+        transient.write_bytes(b'x' * (4 * 1024 * 1024))
+        _shutil.rmtree(pathlib.Path(bound) / '.effigy/linux-release/target')
     binary = artifacts / ('effigy-' + triple)
     binary.write_text('fresh current source output ' + mode)
     version = '0.0.0-other-host' if mode == 'wrong_version' else os.environ['EFFIGY_RECOVERY_VERSION']
@@ -1796,6 +1804,32 @@ fn the_after_census_refuses_build_output_outside_the_declared_export() {
         );
         fixture.assert_preserved();
     }
+}
+
+/// The v2 control: a write through the writable host bind that is removed again
+/// before the after-probe runs leaves no residual, so the census — however strict
+/// — cannot see it and this build still publishes its record. That is precisely
+/// why no post-build census is a cumulative bound on the bound source, and why
+/// the Recipe E entry keeps the SO-host-write refusal in production until real
+/// pre-write containment exists (see producer.md). Delete this control when that
+/// containment lands and the refusal is replaced by it.
+#[test]
+fn a_write_removed_before_the_after_probe_is_invisible_to_the_census() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(false, false, "docker");
+    fixture.stage().expect("a staged source plan");
+    fixture.mode("write_and_remove");
+    fixture
+        .task()
+        .expect("the build succeeds: the removed write left no residual");
+    let artifact = fixture
+        .root
+        .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    assert!(
+        artifact.is_file(),
+        "the occurrence published its artifact: the census had nothing to refuse"
+    );
+    fixture.assert_preserved();
 }
 
 /// A writer that is still open when the build returns is not closure, whichever

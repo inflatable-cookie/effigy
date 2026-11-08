@@ -8,25 +8,23 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
-- Bound the Linux artifact builder's host writes (effigy#743). Cargo
-  intermediates are the build's own fixed private tree on the builder's
-  writable layer instead of a directory inside the checkout the release profile
-  shares into the VM, so the build's only host bind is no longer an uncapped
-  writer. The staged source closure refuses above a declared 512 MiB before the
-  first write, the artifact export and its copy-back are refused above their
-  per-file caps (200 MiB / 64 KiB / 4 KiB) before the copy, and a successful
-  build publishes one `effigy.builder-write-boundary.v1` record of what it
-  observed through the container's own view — contained mounts, the closure
-  census, the bound source's build-output tree (only the declared export, so a
-  compiler still writing the obsolete `linux-release/target` into the bind
-  refuses by name), the export names and sizes, closed writers and a settled
-  tree. The
-  Recipe E source entry binds every field and carries the observed bytes under
-  the Stage2 5 GiB premise with E9; a producer that publishes no record, or one
-  that leaves a writer open, refuses before the claim. The build tree's VM-side
-  storage is disclosed with its cap, free-space floor and backing-disk
-  implication rather than counted as a host write, and no profile, mount or
-  disk setting changes.
+- Prepare, and keep refused, the Linux artifact builder's host-write boundary
+  (effigy#743). Cargo intermediates now build in the builder's own fixed private
+  tree on its writable layer instead of inside the checkout the release profile
+  shares into the VM, and every writer that leaves something behind is bounded and
+  observed: the staged closure refuses above 512 MiB before its first write, the
+  export and its copy-back are refused above 200 MiB / 64 KiB / 4 KiB before the
+  copy, and a successful build publishes one `effigy.builder-write-boundary.v1`
+  record of the container's own view — contained mounts, the closure census, the
+  bound source's build-output tree (only the declared export, so a compiler still
+  writing the obsolete `linux-release/target` refuses by name), closed writers and
+  a settled tree. The build tree's VM-side storage is disclosed with its cap,
+  free-space floor and backing-disk implication rather than counted as a host
+  write. SO-host-write itself stays refused: the source bind is still writable, a
+  write removed before any observation leaves nothing to count, so production
+  execute refuses before the claim and the record claims no bound. The smallest
+  supported way to close it (read-only source plus one narrow export bind through
+  the maintained builder) is written down in `producer.md`.
 
 - Secure existing gateway stdout/stderr logs to owner-only mode on the held
   descriptor before appending or giving them to the daemon child. Existing bytes

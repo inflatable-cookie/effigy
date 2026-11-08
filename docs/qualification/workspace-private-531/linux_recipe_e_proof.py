@@ -82,26 +82,31 @@ REQUIRED_POLICY = {
 # stand in as production predecessor evidence.
 TEST_SEAM = {'simulation': False}
 # Kit §6.3 ≤5 GiB is a Stage2-wide host-write premise (E9 archive, E14 artifact,
-# evidence). Recipe E's host writers are finite by construction and each is
-# observed through the container's own view; execute binds the producer's
-# published record to this declaration and carries the totals under the premise
-# with E9. The build's cargo tree is deliberately *not* counted here: it is
-# VM-side storage, disclosed as such, never zero and never a host-write figure.
+# evidence). The build's source bind stays writable: this task may not change the
+# profile's mount set, so the compiler keeps one writable host surface and no
+# supported cumulative writer counter exists for it. A compiler can therefore
+# write and remove, or write and restore, bytes inside that bind before any
+# observation, and nothing a post-build census sees can bound what it wrote. The
+# declared caps, the container-local cargo tree and both censuses bound what is
+# *left behind*; that is an observation, never a cumulative bound. Production
+# execute refuses this prerequisite before the claim, exactly as it did before the
+# container-local tree landed; a later occurrence that gains real pre-write
+# containment (see producer.md, "SO-host-write") consumes the same record.
 HOST_WRITE = {
-    'status': 'bounded',
+    'status': 'missing',
     'cap_bytes': HOST_WRITE_CAP,
     'reason': (
-        'SO-host-write closed for Recipe E: cargo intermediates are the builder\'s own '
-        'container-local tree, never the shared host bind. The host writers are the staged '
-        'source closure (pre-write cap), the three declared export files written once '
-        'through the one shared mount, the copy-back into the checkout (per-file caps '
-        'checked at the writer) and the capped evidence streams'
+        'SO-host-write: kit §6.3 host writes ≤5 GiB (E9 archive, E14 artifact, evidence) is a '
+        'Stage2-wide premise. Recipe E compiles into a shared host bind that this task may not make '
+        'read-only, and no cumulative writer counter exists for it, so a compiler can write and '
+        'remove or restore bytes inside that bind before any observation. Per-file caps and the '
+        'before/after censuses bound only what is left behind; a post-build census is not a '
+        'cumulative bound and cannot charge or refuse a removed write'
     ),
 }
-# Each E14 host writer, its path, the metric it can truthfully report and the
-# bound that applies before its writes. No metric substitutes for another:
-# cumulative bytes written, retained allocation inside the VM and per-file caps
-# are different claims.
+# Each E14 host writer, its path and the metric it can truthfully report. The
+# last row is the one that still refuses: the writable bind's residual census is
+# an observation, not a bound on the bytes written through it.
 HOST_WRITE_WRITERS = (
     {'writer': 'staging/render/source', 'path': 'STASH_SOURCE_MOUNT (host, checkout-scoped)',
      'metric': 'cumulative bytes written (content-addressed closure, each file once)',
@@ -115,7 +120,13 @@ HOST_WRITE_WRITERS = (
     {'writer': 'evidence', 'path': 'linux-recipe-e-<activation>/ (host)',
      'metric': 'cumulative bytes via capped stream writes',
      'bound': '2*PRODUCER_OUTPUT_CAP + 4*OBSERVE_CAP per occurrence (producer once, two Colima inventories)'},
+    {'writer': 'other writes through the writable source bind', 'path': '/workspace (host, the profile\'s shared mount)',
+     'metric': 'none: a removed or restored write leaves no residual to count',
+     'bound': 'none — production execute refuses this prerequisite before the claim'},
 )
+# E14 reserves the staged closure, the export and its copy-back, and the capped
+# evidence streams: producer stdout/stderr once, Colima inventory before and after
+# the producer. Intent, process and receipt JSON are small and unreserved.
 # E14 reserves the staged closure, the export and its copy-back, and the capped
 # evidence streams: producer stdout/stderr once, Colima inventory before and after
 # the producer. Intent, process and receipt JSON are small and unreserved.
@@ -596,6 +607,8 @@ def stage2_headroom(e9_reserved, e9_actual, e14_reserved, cap=HOST_WRITE_CAP):
 def execute(request, request_path, request_hash):
     launched_at = time.time()
     deadline = time.monotonic() + DURATION
+    if not TEST_SEAM['simulation'] and HOST_WRITE['status'] == 'missing':
+        raise stage.Refusal(HOST_WRITE['reason'])
     actual, runtime = bound_inputs(request)
     if time.monotonic() >= deadline - RESERVE:
         raise stage.Refusal('blocked producer clock')
@@ -863,7 +876,14 @@ def verify_boundary(value, request):
 
 
 def host_write_boundary(value, budget, artifact_size):
-    """The occurrence's host writes, carried under the Stage2 premise with E9."""
+    """What the occurrence observed about its writers, never a claim of a bound.
+
+    The declared writers are charged under the Stage2 premise with E9, and the
+    writable source bind's residuals are reported as what they are. The status
+    stays the prerequisite's own `missing`: a post-build census cannot bound a
+    write that was removed before it, so nothing here may be read as a hard or
+    scoped write guarantee.
+    """
     export = value['export']
     observed = (value['staged']['bytes'] + export['binary_bytes'] + export['receipt_bytes']
                 + export['sidecar_bytes'] + value['copy_back']['bytes']
@@ -878,6 +898,12 @@ def host_write_boundary(value, budget, artifact_size):
     tree = value['build_tree']
     return {
         'status': HOST_WRITE['status'],
+        'guarantee': 'none',
+        'scope': (
+            'observed residuals of the declared writers only: the writable source bind is not '
+            'bounded by a post-build census, because a removed or restored write leaves nothing '
+            'to count'
+        ),
         'cap_bytes': HOST_WRITE_CAP,
         'reason': HOST_WRITE['reason'],
         'e9_reserved_bytes': budget['e9_reserved_bytes'],

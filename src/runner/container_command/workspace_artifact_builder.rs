@@ -625,6 +625,11 @@ fn run_builder_script(
 /// build-tree cost is stated as what it is — VM-side storage — and never as a
 /// host-write count: releasing it returns filesystem space, not necessarily the
 /// Colima backing file's allocation.
+///
+/// `scope` says what the record is not: the source bind stays writable in this
+/// task, and a writer that removes or restores what it wrote leaves no residual
+/// for this census. The record therefore reports residuals and never a bound on
+/// that surface, which is why the Recipe E entry keeps refusing it in production.
 #[allow(clippy::too_many_arguments)]
 fn boundary_marker(
     triple: &str,
@@ -638,6 +643,10 @@ fn boundary_marker(
 ) -> String {
     let marker = serde_json::json!({
         "schema": BOUNDARY_SCHEMA,
+        // What this record is and is not. It reports the writers it observed; it
+        // does not bound the writable source bind, because a write removed or
+        // restored before any observation leaves nothing to count.
+        "scope": "observed residuals only: not a cumulative bound on the writable source bind",
         "target": triple,
         "no_change": {
             "switch": NO_CHANGE_ENV,
@@ -1328,6 +1337,12 @@ mod tests {
         ))
         .expect("record parses");
         assert_eq!(marker["schema"], "effigy.builder-write-boundary.v1");
+        assert!(
+            marker["scope"]
+                .as_str()
+                .is_some_and(|text| text.contains("not a cumulative bound")),
+            "{marker}"
+        );
         assert_eq!(
             marker["no_change"]["switch"],
             "EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING"

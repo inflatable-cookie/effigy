@@ -205,9 +205,19 @@ test checks this against git and the binary hash (`test:install:local`).
 
 ### The host-write boundary (effigy#743)
 
-SO-host-write is closed for Recipe E by construction, not by sampling. Each host
-writer has a declared metric and a bound that applies before its writes, and the
-occurrence publishes what it observed:
+**SO-host-write is still refused in production.** Recipe E compiles into a host
+bind this task may not make read-only, and no supported cumulative writer counter
+exists for it, so a compiler can write and remove — or write and restore — bytes
+inside that bind before any observation. Per-file caps and the before/after
+censuses bound what is *left behind*; they are not a cumulative bound and cannot
+charge a removed write. Production execute therefore refuses this prerequisite
+before the claim and never dispatches the producer, exactly as it did before the
+container-local tree landed. Everything below is what *is* demonstrated and what a
+later occurrence consumes; none of it is a hard or scoped write guarantee for the
+writable bind.
+
+Each host writer has a declared metric and, where one really applies, a bound
+that applies before its writes:
 
 | writer | path | metric | bound |
 | --- | --- | --- | --- |
@@ -215,6 +225,7 @@ occurrence publishes what it observed:
 | cargo tree | `/var/tmp/effigy-artifact-build` on the builder's writable layer | VM-side retained bytes; not a host bind and not a cumulative count | `BUILD_TREE_CAP` 25 GiB retained, `BUILD_TREE_HEADROOM` free floor, VM filesystem ENOSPC |
 | artifact export and copy-back | `.effigy/linux-release/artifacts` in the shared mount, then the host copy into the checkout | cumulative bytes: three declared names, each written once, at or below their per-file caps | 200 MiB / 64 KiB / 4 KiB checked before the copy |
 | evidence | `linux-recipe-e-<activation>/` | cumulative bytes via capped stream writes | `2*PRODUCER_OUTPUT_CAP + 4*OBSERVE_CAP` |
+| other writes through the writable source bind | `/workspace` (the profile's shared mount) | none: a removed or restored write leaves no residual to count | none — production execute refuses this prerequisite before the claim |
 
 Cargo intermediates are the build's own private tree inside the exact
 checkout-owned builder. It is a fixed path on the container's writable layer:
@@ -229,8 +240,11 @@ profile whose disk is below the declared floor. No limit is invented or raised
 here.
 
 The source bind itself stays writable: this change alters no Colima profile,
-mount, disk, shared-service or foreign-resource declaration. Containment is
-established and verified instead of assumed:
+mount, disk, shared-service or foreign-resource declaration. What the build leaves
+behind is established and verified instead of assumed (the v2 write-and-remove
+case is covered by two controls: `a_write_removed_before_the_after_probe_is_invisible_to_the_census`
+shows the census cannot see it, and `test_write_and_remove_cannot_produce_a_bounded_record`
+shows the record it yields claims no bound while production refuses):
 
 - before compiling, a probe through the builder's own view (`/proc/self/mountinfo`,
   the container's `du`/`df`) requires nothing mounted below `/workspace`, no
@@ -278,6 +292,44 @@ The cargo tree's cost is VM-side storage on the Colima disk file, so it is a
 physical host-storage implication, not a host-bind write. A later occurrence
 that wants the tree's bytes accounted as a host write would need a writer-side
 interruptible counter; none is claimed here.
+
+### The one remaining guarantee, and the smallest supported way to get it
+
+Missing guarantee: a finite, enforced bound on the bytes written through the
+build's writable host bind — including bytes written and removed inside the same
+occurrence. Nothing in the supported surface provides that today: the bind's
+writability comes from the environment's mount declaration, and the only
+supported way to narrow it is a mount-set change.
+
+Smallest supported proposal (one later, independently bound occurrence):
+
+1. Declare the builder's source bind read-only and add one narrow writable bind of
+   the owned artifact export directory: `mounts = ["./:/workspace:ro",
+   "./.effigy/linux-release/artifacts:/workspace/.effigy/linux-release/artifacts"]`,
+   with the staged-source rewrite (`apply_workspace_source_policy`) also pointing
+   the export bind at the owned stage child (`<stage_root>/export`), so the VM can
+   reach it in both a staged and a checkout bind.
+2. Teach the maintained builder proof to accept a read-only `/workspace` and to
+   verify the read-only/one-export mount shape through the container's own view
+   (`workspace_builder_source_bind` currently requires `RW=true` at `/workspace`,
+   and `builder_cache_volumes_are_owned` counts exactly one bind plus two
+   volumes).
+3. Read the artifact back from the export bind in `restore_produced_artifact`
+   instead of from the staged source tree, keeping the original receipt, sidecar
+   and copy-back formats and per-file caps unchanged.
+
+Effects and capacity: one mount option and one additional bind of a directory
+Effigy already owns; no Colima profile, VM disk/size, shared service, foreign
+resource or privilege change. The bind's only writable surface becomes that one
+directory, whose three declared names are already capped at 200 MiB / 64 KiB /
+4 KiB, and the kernel refuses everything else — which is what makes a
+write-and-remove through the source bind impossible rather than unobserved.
+Implementation cost: the declaration field plus its render rewrite, the builder
+verifier changes, the copy-back read path and their fixtures — about the size of
+this task's builder work — plus one preparatory maintained activation (the
+no-change E14 route must refuse a builder that does not yet carry the new
+declaration, so the replacement is a separate occurrence). Until that lands, the
+refusal above stands and no claim of a hard or scoped write guarantee is made.
 
 This task produces reviewed source only.
 
