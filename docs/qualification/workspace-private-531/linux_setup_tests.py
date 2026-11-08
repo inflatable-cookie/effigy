@@ -269,7 +269,8 @@ class SupervisorArgvChecks(unittest.TestCase):
 
     def test_payload_is_gated_behind_the_fifo_release(self):
         wrapped = supervisor.gate_argv('/stage/gate.fifo', ['/bin/true'])
-        self.assertIn('read _effigy_gate', wrapped[2])
+        self.assertIn('read -r _effigy_gate', wrapped[2])
+        self.assertIn('[ "$_effigy_gate" = go ] || exit 125', wrapped[2])
         self.assertEqual(wrapped[-1], '/bin/true')
 
     def test_refuses_root_payload_long_timeout_and_bad_nonce(self):
@@ -2432,7 +2433,7 @@ class GateCustodyAndUmaskChecks(unittest.TestCase):
                 previous = os.umask(mask)
                 try:
                     stage = tmpdir('restrictive-umask-') / 'new-parent' / 'row'
-                    result = supervised(stage, request(stage, argv=['/bin/true']), LiveOps(stage),
+                    result = supervised(stage, request(stage, argv=['/bin/sh', '-c', 'exit 0']), LiveOps(stage),
                                         lambda: 0.0, BOOT, {})
                     self.assertIsNotNone(result['candidate'], result['reason'])
                     self.assertEqual(stat_mode(stage.parent), 0o711)
