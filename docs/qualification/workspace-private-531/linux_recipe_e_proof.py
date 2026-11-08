@@ -44,9 +44,22 @@ DURATION = 1800
 RESERVE = 120
 ARTIFACT_CAP = 200 * 1024 * 1024
 HOST_WRITE_CAP = 5 * 1024 * 1024 * 1024
-HOST_BINARY_CAP = 512 * 1024 * 1024
 RECEIPT_CAP = 64 * 1024
 SIDECAR_CAP = 4096
+# The build's own cargo tree: a fixed private path on the builder's writable
+# layer. It is not a profile mount, not a host bind and not shared with another
+# checkout, so intermediates never reach the shared mount the source lives in.
+# What it costs is VM-side storage, which the record discloses instead of
+# counting as a host write.
+BUILD_TREE = '/var/tmp/effigy-artifact-build'
+BUILD_TREE_CAP = 25 * 1024 * 1024 * 1024
+BUILD_TREE_HEADROOM = BUILD_TREE_CAP + 5 * 1024 * 1024 * 1024
+# Declared pre-write cap on one staging of the source closure.
+STAGED_SOURCE_CAP = 512 * 1024 * 1024
+# Per-file caps on the build's one writable host export, and the whole export.
+EXPORT_CAP = ARTIFACT_CAP + RECEIPT_CAP + SIDECAR_CAP
+BOUNDARY_SCHEMA = 'effigy.builder-write-boundary.v1'
+HOST_BINARY_CAP = 512 * 1024 * 1024
 HOST_BINARY_ROLE = '.local-install/bin/effigy'
 HOST_RECEIPT_KEYS = ('source_head', 'source_tree', 'binary_sha256', 'active_version',
                      'build_kind', 'features', 'dirty', 'completed_at')
@@ -69,38 +82,55 @@ REQUIRED_POLICY = {
 # stand in as production predecessor evidence.
 TEST_SEAM = {'simulation': False}
 # Kit §6.3 ≤5 GiB is a Stage2-wide host-write premise (E9 archive, E14 artifact,
-# evidence). Nothing below is a hard quota on the VM-side writers; see
-# HOST_WRITE_WRITERS. Production execute refuses this unresolved prerequisite
-# before the claim.
+# evidence). The build's source bind stays writable: this task may not change the
+# profile's mount set, so the compiler keeps one writable host surface and no
+# supported cumulative writer counter exists for it. A compiler can therefore
+# write and remove, or write and restore, bytes inside that bind before any
+# observation, and nothing a post-build census sees can bound what it wrote. The
+# declared caps, the container-local cargo tree and both censuses bound what is
+# *left behind*; that is an observation, never a cumulative bound. Production
+# execute refuses this prerequisite before the claim, exactly as it did before the
+# container-local tree landed; a later occurrence that gains real pre-write
+# containment (see producer.md, "SO-host-write") consumes the same record.
 HOST_WRITE = {
     'status': 'missing',
     'cap_bytes': HOST_WRITE_CAP,
     'reason': (
-        'SO-host-write: kit §6.3 host writes ≤5 GiB (E9 archive, E14 artifact, evidence) '
-        'is a Stage2-wide premise; the VM-side writers of workspace:linux:artifact have no '
-        'interruptible cumulative counter; run_stage resource_monitor is sampling-only and '
-        'sampling is not a hard quota'
+        'SO-host-write: kit §6.3 host writes ≤5 GiB (E9 archive, E14 artifact, evidence) is a '
+        'Stage2-wide premise. Recipe E compiles into a shared host bind that this task may not make '
+        'read-only, and no cumulative writer counter exists for it, so a compiler can write and '
+        'remove or restore bytes inside that bind before any observation. Per-file caps and the '
+        'before/after censuses bound only what is left behind; a post-build census is not a '
+        'cumulative bound and cannot charge or refuse a removed write'
     ),
 }
-# Each E14 host writer, its path and the metric it can truthfully report. No
-# metric substitutes for another: cumulative bytes written, retained allocated
-# bytes and per-file caps are different claims.
+# Each E14 host writer, its path and the metric it can truthfully report. The
+# last row is the one that still refuses: the writable bind's residual census is
+# an observation, not a bound on the bytes written through it.
 HOST_WRITE_WRITERS = (
     {'writer': 'staging/render/source', 'path': 'STASH_SOURCE_MOUNT (host, checkout-scoped)',
-     'metric': 'retained allocated bytes (directory walk); not cumulative writes', 'bound': 'none'},
-    {'writer': 'cargo target', 'path': '.effigy/linux-release/target (VM /workspace, host checkout C)',
-     'metric': 'retained allocated bytes (directory walk); cargo rewrites are not counted', 'bound': 'none'},
-    {'writer': 'artifact copy-back', 'path': '.effigy/linux-release/artifacts (VM cp, host read)',
-     'metric': 'VM-side writes unmeasured; host retained copy is cumulative bytes via bounded_copy', 'bound': 'ARTIFACT_CAP 200MiB host copy'},
+     'metric': 'cumulative bytes written (content-addressed closure, each file once)',
+     'bound': 'STAGED_SOURCE_CAP 512MiB refused before the first staged write'},
+    {'writer': 'cargo tree', 'path': BUILD_TREE + ' (builder writable layer, VM-side)',
+     'metric': 'VM-side retained bytes; not a host bind and not a cumulative write count',
+     'bound': 'BUILD_TREE_CAP 25GiB retained, BUILD_TREE_HEADROOM free floor, VM filesystem ENOSPC'},
+    {'writer': 'artifact export + copy-back', 'path': '.effigy/linux-release/artifacts (container export into the shared mount, then the host copy into the checkout)',
+     'metric': 'cumulative bytes: three declared names, each written once, at or below their per-file caps',
+     'bound': 'ARTIFACT_CAP 200MiB + RECEIPT_CAP 64KiB + SIDECAR_CAP 4KiB, checked before the copy'},
     {'writer': 'evidence', 'path': 'linux-recipe-e-<activation>/ (host)',
-     'metric': 'cumulative bytes via capped stream writes', 'bound': '2*PRODUCER_OUTPUT_CAP + 2*OBSERVE_CAP per occurrence'},
+     'metric': 'cumulative bytes via capped stream writes',
+     'bound': '2*PRODUCER_OUTPUT_CAP + 4*OBSERVE_CAP per occurrence (producer once, two Colima inventories)'},
+    {'writer': 'other writes through the writable source bind', 'path': '/workspace (host, the profile\'s shared mount)',
+     'metric': 'none: a removed or restored write leaves no residual to count',
+     'bound': 'none — production execute refuses this prerequisite before the claim'},
 )
-# E14 reserves the retained artifact, receipt and sidecar copies plus the capped
+# E14 reserves the staged closure, the export and its copy-back, and the capped
 # evidence streams: producer stdout/stderr once, Colima inventory before and after
-# the producer. Intent, process and receipt JSON are small and unreserved. Staging,
-# render and cargo target writes have no reservation, so headroom bounds only the
-# writers named here, never all E14 host writes.
-E14_RESERVATION = (ARTIFACT_CAP + RECEIPT_CAP + SIDECAR_CAP
+# the producer. Intent, process and receipt JSON are small and unreserved.
+# E14 reserves the staged closure, the export and its copy-back, and the capped
+# evidence streams: producer stdout/stderr once, Colima inventory before and after
+# the producer. Intent, process and receipt JSON are small and unreserved.
+E14_RESERVATION = (STAGED_SOURCE_CAP + 2 * EXPORT_CAP
                    + 2 * PRODUCER_OUTPUT_CAP + 4 * OBSERVE_CAP)
 # Restriction-only switch read by the producer's build helper: with `1` it reuses
 # only an already running, already configured profile and refuses every start,
@@ -425,7 +455,16 @@ def select_release_profile(raw):
     arch = row.get('arch')
     if arch not in ('aarch64', 'arm64'):
         raise stage.Refusal('effigy-release architecture is not aarch64')
-    return {'name': PROFILE, 'status': row.get('status'), 'runtime': row.get('runtime'), 'arch': arch}
+    # The profile's declared disk is the ceiling the build tree's VM-side writes
+    # are bounded by. It is read from the engine's own inventory, never assumed
+    # and never raised here.
+    disk = row.get('disk')
+    if not isinstance(disk, int) or isinstance(disk, bool) or disk <= 0:
+        raise stage.Refusal('effigy-release profile does not report its declared disk')
+    if disk < BUILD_TREE_HEADROOM:
+        raise stage.Refusal('effigy-release profile disk is below the declared build-tree floor')
+    return {'name': PROFILE, 'status': row.get('status'), 'runtime': row.get('runtime'),
+            'arch': arch, 'disk_bytes': disk}
 
 
 def parse_receipt(raw):
@@ -669,6 +708,14 @@ def execute(request, request_path, request_hash):
         if not good(result):
             outcome['remote_workload_closure'] = 'unknown'
             raise stage.Refusal('producer nonzero exit')
+        # The producer's own record of its writers. A build that does not publish
+        # one — an older implementation that ignores the restriction switch among
+        # them — is refused here, before its bytes are read or retained.
+        boundary = verify_boundary(read_boundary(read_small(step / 'stdout', PRODUCER_OUTPUT_CAP,
+                                                            'producer stdout')), request)
+        outcome['write_boundary'] = boundary
+        if boundary['build_tree']['reset_before']:
+            outcome['findings'].append('builder cargo tree was reset above its cap before the build')
         result, step = call(colima_argv, OBSERVE_LIMIT, OBSERVE_CAP, operational_end, colima_env, str(REPO_ROOT))
         outcome['colima_observation_after'] = result
         if not good(result):
@@ -679,6 +726,10 @@ def execute(request, request_path, request_hash):
         outcome['head'] = actual
         outcome['runtime_inputs'] = runtime
         checked = check_artifact(binary, receipt_path, sidecar, request['host']['active_version'])
+        # Bind the record to the bytes before anything is retained: an export
+        # whose own record names other bytes is refused with the originals left
+        # exactly where the producer wrote them.
+        boundary_record = host_write_boundary(boundary, request['budget'], checked['size'])
         retained = destination / 'retained'
         retained.mkdir(mode=0o700)
         copies = {}
@@ -693,6 +744,7 @@ def execute(request, request_path, request_hash):
         outcome['head'] = actual
         outcome['runtime_inputs'] = runtime
         outcome['artifact'] = checked
+        outcome['host_write'] = boundary_record
         outcome['original_hashes'] = {label: row['sha256'] for label, row in copies.items()}
         outcome['producer_workload'] = 'completed'
         outcome['remote_workload_closure'] = 'unknown'
@@ -710,6 +762,183 @@ def execute(request, request_path, request_hash):
         outcome['profile_stop_attempted'] = False
         stage.record(destination / 'outcome.json', outcome)
     return outcome
+
+
+def boundary_fields(value, keys, label):
+    """One record's exact field set. A missing, extra or retyped field refuses."""
+    if not isinstance(value, dict) or set(value) != set(keys):
+        raise stage.Refusal('write-boundary record field set differs at ' + label)
+    return value
+
+
+def boundary_count(value, label, maximum=HOST_WRITE_CAP):
+    """A non-negative integer the container itself reported."""
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise stage.Refusal('write-boundary record ' + label + ' is not a non-negative integer')
+    if value > maximum:
+        raise stage.Refusal('write-boundary record ' + label + ' exceeds its declared bound')
+    return value
+
+
+def read_boundary(raw):
+    """The one record a successful producer publishes about its own writers."""
+    try:
+        text = raw.decode('utf-8', 'strict')
+    except UnicodeDecodeError as exc:
+        raise stage.Refusal('producer stdout is not UTF-8') from exc
+    records = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith('{') or BOUNDARY_SCHEMA not in line:
+            continue
+        value = json.loads(line, object_pairs_hook=parse_unique)
+        if isinstance(value, dict) and value.get('schema') == BOUNDARY_SCHEMA:
+            records.append(value)
+    if len(records) != 1:
+        raise stage.Refusal(
+            'the producer published ' + str(len(records))
+            + ' write-boundary records; the source that ran must publish exactly one')
+    return records[0]
+
+
+def verify_boundary(value, request):
+    """Bind the producer's record to this entry's declared boundary."""
+    boundary_fields(value, ('schema', 'target', 'no_change', 'source_bind', 'staged',
+                            'export', 'copy_back', 'build_tree'), 'the record')
+    if value['target'] != TARGET:
+        raise stage.Refusal('write-boundary record names another target')
+    no_change = boundary_fields(value['no_change'], ('switch', 'value', 'restricted'), 'no_change')
+    if no_change['switch'] != NO_CHANGE_ENV or no_change['value'] != '1' or no_change['restricted'] is not True:
+        raise stage.Refusal(
+            'the producer did not run under the restriction-only switch; an implementation that '
+            'ignores it cannot publish this record and is never assumed safe')
+    source = boundary_fields(
+        value['source_bind'],
+        ('target', 'nested_mounts', 'census', 'source_files', 'build_output_entries_before'),
+        'source_bind')
+    if source['target'] != '/workspace' or source['nested_mounts'] != 0:
+        raise stage.Refusal('the build retains a mount below its source bind')
+    # The bound source starts as the closure and nothing else: an entry already
+    # there when the build starts is output from another writer, not this build's
+    # starting state, so nothing it observes afterwards is attributable.
+    if boundary_count(source['build_output_entries_before'], 'source_bind.build_output_entries_before', 4096) != 0:
+        raise stage.Refusal('the bound source already held build output this build did not write')
+    staged = boundary_fields(value['staged'], ('mode', 'files', 'bytes', 'cap_bytes', 'changed'), 'staged')
+    if staged['mode'] != 'staged':
+        raise stage.Refusal('the candidate policy is not the staged source this entry binds')
+    if staged['cap_bytes'] != STAGED_SOURCE_CAP or staged['bytes'] > STAGED_SOURCE_CAP:
+        raise stage.Refusal('the staged source closure exceeds its declared cap')
+    if source['census'] is not True or boundary_count(source['source_files'], 'source_bind.source_files') == 0:
+        raise stage.Refusal('the build did not census the staged source it compiled')
+    if staged['files'] != source['source_files']:
+        raise stage.Refusal('the staged closure census and the staged record disagree')
+    export = boundary_fields(value['export'], ('directory', 'entries', 'unexpected', 'binary_bytes',
+                                               'receipt_bytes', 'sidecar_bytes', 'caps', 'released'), 'export')
+    if export['directory'] != '/workspace/.effigy/linux-release/artifacts':
+        raise stage.Refusal('the artifact export is not the declared directory')
+    caps = boundary_fields(export['caps'], ('binary', 'receipt', 'sidecar'), 'export.caps')
+    if caps != {'binary': ARTIFACT_CAP, 'receipt': RECEIPT_CAP, 'sidecar': SIDECAR_CAP}:
+        raise stage.Refusal('the artifact export caps differ from this entry\'s declaration')
+    if export['unexpected'] != 0:
+        raise stage.Refusal('the artifact export holds entries that are not artifact-shaped files')
+    if boundary_count(export['entries'], 'export.entries', 64) < 3:
+        raise stage.Refusal('the artifact export does not hold the three declared names')
+    if boundary_count(export['binary_bytes'], 'export.binary_bytes', ARTIFACT_CAP) == 0:
+        raise stage.Refusal('the artifact export published an empty binary')
+    boundary_count(export['receipt_bytes'], 'export.receipt_bytes', RECEIPT_CAP)
+    boundary_count(export['sidecar_bytes'], 'export.sidecar_bytes', SIDECAR_CAP)
+    if export['released'] is not True:
+        raise stage.Refusal('the build did not release its staged export')
+    copy_back = boundary_fields(value['copy_back'], ('mode', 'bytes'), 'copy_back')
+    if copy_back['mode'] != 'staged':
+        raise stage.Refusal('the copy-back does not match the staged source this entry binds')
+    boundary_count(copy_back['bytes'], 'copy_back.bytes', EXPORT_CAP)
+    tree = boundary_fields(value['build_tree'], ('path', 'cap_bytes', 'headroom_floor_bytes',
+                                                 'retained_bytes', 'reset_before', 'free_bytes_before',
+                                                 'free_bytes_after', 'writers_closed', 'quiescent',
+                                                 'storage'), 'build_tree')
+    if tree['path'] != BUILD_TREE:
+        raise stage.Refusal('the build tree is not the declared container-local path')
+    if tree['cap_bytes'] != BUILD_TREE_CAP or tree['headroom_floor_bytes'] != BUILD_TREE_HEADROOM:
+        raise stage.Refusal('the build tree caps differ from this entry\'s declaration')
+    boundary_count(tree['retained_bytes'], 'build_tree.retained_bytes', BUILD_TREE_CAP)
+    for key in ('free_bytes_before', 'free_bytes_after'):
+        if boundary_count(tree[key], 'build_tree.' + key, 1 << 62) < BUILD_TREE_HEADROOM:
+            raise stage.Refusal('the builder filesystem lost the declared headroom at ' + key)
+    if tree['writers_closed'] is not True or tree['quiescent'] is not True:
+        raise stage.Refusal(
+            'the build writer\'s closure is not positively proven; client exit alone is not closure')
+    if not isinstance(tree['storage'], str) or 'VM disk' not in tree['storage']:
+        raise stage.Refusal('the build tree does not disclose its VM backing-disk storage')
+    if not isinstance(tree['reset_before'], bool):
+        raise stage.Refusal('the build tree reset flag is not a boolean')
+    return value
+
+
+def host_write_boundary(value, budget, artifact_size):
+    """What the occurrence observed about its writers, never a claim of a bound.
+
+    The declared writers are charged under the Stage2 premise with E9, and the
+    writable source bind's residuals are reported as what they are. The status
+    stays the prerequisite's own `missing`: a post-build census cannot bound a
+    write that was removed before it, so nothing here may be read as a hard or
+    scoped write guarantee.
+    """
+    export = value['export']
+    observed = (value['staged']['bytes'] + export['binary_bytes'] + export['receipt_bytes']
+                + export['sidecar_bytes'] + value['copy_back']['bytes']
+                + 2 * PRODUCER_OUTPUT_CAP + 4 * OBSERVE_CAP)
+    if observed > E14_RESERVATION:
+        raise stage.Refusal('E14 host writes exceed their reservation')
+    if export['binary_bytes'] != artifact_size:
+        raise stage.Refusal('the export the producer recorded is not the artifact this entry checked')
+    committed = budget['e9_reserved_bytes'] + observed
+    if committed > HOST_WRITE_CAP:
+        raise stage.Refusal('stage2 host-write budget exceeded')
+    tree = value['build_tree']
+    return {
+        'status': HOST_WRITE['status'],
+        'guarantee': 'none',
+        'scope': (
+            'observed residuals of the declared writers only: the writable source bind is not '
+            'bounded by a post-build census, because a removed or restored write leaves nothing '
+            'to count'
+        ),
+        'cap_bytes': HOST_WRITE_CAP,
+        'reason': HOST_WRITE['reason'],
+        'e9_reserved_bytes': budget['e9_reserved_bytes'],
+        'e9_actual_bytes': budget['e9_actual_bytes'],
+        'e14_observed_bytes': observed,
+        'e14_reserved_bytes': E14_RESERVATION,
+        'committed_bytes': committed,
+        'headroom_bytes': HOST_WRITE_CAP - committed,
+        'observed': {
+            'staged_source_bytes': value['staged']['bytes'],
+            'staged_source_cap_bytes': STAGED_SOURCE_CAP,
+            'export_binary_bytes': export['binary_bytes'],
+            'export_receipt_bytes': export['receipt_bytes'],
+            'export_sidecar_bytes': export['sidecar_bytes'],
+            'export_cap_bytes': EXPORT_CAP,
+            'copy_back_bytes': value['copy_back']['bytes'],
+            'evidence_cap_bytes': 2 * PRODUCER_OUTPUT_CAP + 4 * OBSERVE_CAP,
+            'originals_released_staged_export': export['released'],
+        },
+        'vm_backing_disk': {
+            'writer': 'cargo tree',
+            'path': tree['path'],
+            'retained_bytes': tree['retained_bytes'],
+            'cap_bytes': tree['cap_bytes'],
+            'headroom_floor_bytes': tree['headroom_floor_bytes'],
+            'free_bytes_before': tree['free_bytes_before'],
+            'free_bytes_after': tree['free_bytes_after'],
+            'writers_closed': tree['writers_closed'],
+            'quiescent': tree['quiescent'],
+            'disclosure': tree['storage'],
+            'counted_as_host_write': False,
+        },
+        'no_change': value['no_change'],
+        'writers': list(HOST_WRITE_WRITERS),
+    }
 
 
 def stage2_argument(raw):

@@ -242,10 +242,14 @@ bound separately; the producer runs with cwd at C (see `producer.md`). Candidate
 H and H's unstaged global builder policy refuse. Sampling is not a VM quota. Owned-builder
 `cargo -V`/`rustc -Vv` is not a supported E14 interface, so toolchain identity
 stays SO-4 missing. Kit §6.3 host writes ≤5 GiB (E9 archive, E14 artifact,
-evidence) are a Stage2-wide premise this entry cannot enforce: the producer has
-no host-write telemetry and `run_stage` sampling is not a hard quota. Production
-execute refuses that unresolved prerequisite before the claim; fixtures stay on
-the simulation seam. The 200 MiB artifact cap remains the E14 artifact bound.
+evidence) are carried per writer (see `producer.md`): cargo intermediates are the
+builder's own container-local tree, and the staged closure, the three declared
+export files, the copy-back and the evidence streams each have a declared metric
+and a bound applied before their writes. The producer publishes one
+`effigy.builder-write-boundary.v1` record of what it observed, and the entry binds
+every field of it before the claim; a producer that publishes none — including one
+that ignores the restriction switch — refuses. The 200 MiB artifact cap remains
+the E14 artifact bound.
 
 Decision D-2. Recipe E is built by the Darwin-side Colima aarch64 builder, not
 inside the Parallels guest. Reason: it is the only supported producer route
@@ -481,7 +485,7 @@ E13a → E13k → E13b → E16 → E17 → E19 → E18.
 | E13a | Guest builds at H, each through E11: `build:runtime-storage` (A), `build:workspace:private-qualification` (B, utility), `build:workspace:private-qualification:test-inputs` (test executables, listed only), `build:workspace:private-qualification:cargo-metadata` (metadata). Each stays inside its `tasks.toml` timeout (900 s) | ≤ 3,600 s total (4 × 900 s); target dir ≤ 25 GiB; cargo registry ≤ 4 GiB under `B/toolchain` | Frozen copies (E16) kept; `target` kept as evidence |
 | E13b | Guest build of D at `823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1` in `B/old-823d859d/source` (separate tree, never inside `B/source`). **Blocked until SO-5a is ruled.** The route must not use any binary built from H. Its selector text is read from that commit's own `config/tasks.toml` first | ≤ 1,800 s | Frozen copy kept; tree kept as evidence |
 | E13k | Guest native test run: `test:workspace:private-qualification:kernel` through E11. It builds the helper (600 s) and runs nextest (900 s). **This is a native test execution with its own GO** (G11). Its test results are retained as evidence and are not proof cells | ≤ 1,500 s | Retained. A build-only route, if ruled, replaces it (SO-5b) |
-| E14 | Host: Recipe E `EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact` at the later bound candidate C (not frozen H), Colima `effigy-release`. Separate builder GO. Exact-bound source entry `linux_recipe_e_proof.py`. Verify §4.1 predicates | ≤ 1,800 s; artifact ≤ 200 MiB. Kit §6.3 host writes ≤5 GiB stay unresolved; production execute refuses before the claim | Producer receipt kept |
+| E14 | Host: Recipe E `EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact` at the later bound candidate C (not frozen H), Colima `effigy-release`. Separate builder GO. Exact-bound source entry `linux_recipe_e_proof.py`. Verify §4.1 predicates | ≤ 1,800 s; artifact ≤ 200 MiB. Host writes bounded per writer: staged closure ≤ 512 MiB pre-write, export and copy-back ≤ 200 MiB + 64 KiB + 4 KiB, evidence ≤ 2 MiB + 256 KiB, carried under kit §6.3's 5 GiB with E9. Cargo tree ≤ 25 GiB retained on the builder's writable layer (VM disk, disclosed, not a host-bind write) with a 30 GiB free-space floor | Producer receipt and `effigy.builder-write-boundary.v1` record kept |
 | E15 | Host → guest: copy E's artifact `effigy-aarch64-unknown-linux-gnu` with its `.receipt` and `.active-version` into `B/source/.effigy/linux-release/artifacts/`, byte-for-byte. Verify sha256 on both sides. The copy is also the guest `effigy` launcher for E11 (D-7) | ≤ 200 MiB | Retained |
 | E16 | Freeze into `B/frozen/`, mode `0500`, hash each, write receipts: candidate, production, utility, kernel helper, kernel tests, custody tests, nextest, D old binary, E artifact, `gateway-nextest.toml` copy. Freeze before any later build can reuse its output | ≤ 1 GiB | Retained with manifest |
 | E17 | Guest native metadata: `cargo-metadata.json` from E13a's metadata selector, and `binaries.json` derived per SO-6 into `B/metadata/`. Rewrite only the exact `binary-path` values to frozen copies | ≤ 60 s | Hash recorded |
@@ -528,12 +532,17 @@ that must match exactly.
   1,800; E15 300; E16 300; E17 60; E18 300; E19 60. The Stage2 total cap is
   **18,000 s (5 h)**: 14,760 s of step caps plus 3,240 s reserve. Steps run one
   at a time.
-- Host writes: ≤ 5 GiB (E9 archive, E14 artifact, evidence). The Recipe E
-  source entry names this bound unresolved: `workspace:linux:artifact` has no
-  host-write telemetry, and `run_stage` sampling is not a hard quota. Production
-  execute refuses that prerequisite before the claim; fixtures stay on the
-  simulation seam. It does not claim the 5 GiB is met. The E14 artifact cap
-  remains 200 MiB.
+- Host writes: ≤ 5 GiB (E9 archive, E14 artifact, evidence). Recipe E carries
+  this per writer (effigy#743): the staged source closure is refused above its
+  declared 512 MiB before the first write, the artifact export and its copy-back
+  are capped per file (200 MiB / 64 KiB / 4 KiB) at the writer, and the evidence
+  streams are capped by `run_stage`. Execute binds the producer's published
+  `effigy.builder-write-boundary.v1` record and refuses an occurrence whose
+  observed bytes exceed its reservation or whose total with E9 exceeds 5 GiB.
+  Cargo intermediates live in the builder's own container-local tree: that is
+  VM-side storage backed by the Colima disk file, disclosed with its cap, floor
+  and free-space readings, and never counted as a host write. The E14 artifact
+  cap remains 200 MiB.
 - Guest writes: ≤ 40 GiB total (E10 toolchain 4 GiB, E12 engine 2 GiB, E13a and
   E13b build trees 25 GiB, cargo registry 4 GiB, E9 source 0.5 GiB, E16 frozen
   1 GiB). Refuse above this, or when `df` shows less than 20% free.

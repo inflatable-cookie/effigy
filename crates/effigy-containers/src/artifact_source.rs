@@ -38,6 +38,25 @@ pub const STAGE_SCHEMA: &str = "effigy.builder-source-stage.v1";
 /// local secret files and the build's own output. They are excluded by rule and
 /// recorded as excluded, never copied and never claimed.
 pub const STAGE_EXCLUDED_PREFIXES: [&str; 3] = [".effigy/", ".env", ".git/"];
+/// Declared pre-write cap on the bytes one staging of the closure writes into
+/// the profile's shared host mount (effigy#743).
+///
+/// The closure is content-addressed and read from this checkout, so its total
+/// size is known before the first staged file is written: staging refuses a
+/// closure above this cap instead of writing it and reporting afterwards. The
+/// metric is cumulative bytes written — every staged file is written once —
+/// never the directory's retained allocation.
+pub const STAGED_SOURCE_CAP_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Declared per-file caps on the artifact build's one writable host export
+/// (effigy#743): the produced binary, its producer receipt and its active-version
+/// sidecar. The build checks them before it writes into the shared mount and the
+/// copy-back refuses to read or publish a file above its cap.
+pub const ARTIFACT_BINARY_CAP_BYTES: u64 = 200 * 1024 * 1024;
+pub const ARTIFACT_RECEIPT_CAP_BYTES: u64 = 64 * 1024;
+pub const ARTIFACT_SIDECAR_CAP_BYTES: u64 = 4 * 1024;
+/// The one directory inside `/workspace` the build exports into.
+pub const ARTIFACT_EXPORT_DIR: &str = ".effigy/linux-release/artifacts";
 
 /// How an environment declares its `/workspace` source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

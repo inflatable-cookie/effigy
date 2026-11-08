@@ -26,6 +26,9 @@ CHECKOUT_MODULES = tuple(sorted(path.stem for path in SOURCE_DIR.glob('*.py')))
 TARGET = 'aarch64-unknown-linux-gnu'
 HOST_VERSION = 'fixture-host-version'
 PLAN_BUDGET = (1024 * 1024, 512 * 1024)
+# The staged closure the fixture producer records. The count is the fixture's own;
+# the entry only requires that the record and the census agree and are non-zero.
+SOURCE_FILES = 7
 
 
 def fixture():
@@ -97,17 +100,31 @@ with log.open('a') as handle:
 if sys.argv[1:] != ['list', '--json']:
     sys.exit(9)
 kind = mode.read_text().strip()
+disk = 1073741824 if kind == 'small_disk' else 322122547200
+
+
+def row(status='Running', arch='aarch64', reported=disk):
+    value = {'name': 'effigy-release', 'status': status, 'arch': arch, 'runtime': 'containerd'}
+    if reported is not None:
+        value['disk'] = reported
+    return json.dumps(value)
+
+
 if kind == 'wrong_arch':
-    print(json.dumps({'name': 'effigy-release', 'status': 'Running', 'arch': 'x86_64', 'runtime': 'containerd'}))
+    print(row(arch='x86_64'))
 elif kind == 'stopped':
-    print(json.dumps({'name': 'effigy-release', 'status': 'Stopped', 'arch': 'aarch64', 'runtime': 'containerd'}))
+    print(row(status='Stopped'))
+elif kind == 'no_disk':
+    print(row(reported=None))
+elif kind == 'small_disk':
+    print(row())
 elif kind == 'missing_profile':
     print(json.dumps({'name': 'effigy', 'status': 'Running', 'arch': 'aarch64', 'runtime': 'containerd'}))
 elif kind == 'colima_fail':
     sys.exit(1)
 else:
     print(json.dumps({'name': 'effigy', 'status': 'Running', 'arch': 'aarch64'}))
-    print(json.dumps({'name': 'effigy-release', 'status': 'Running', 'arch': 'aarch64', 'runtime': 'containerd'}))
+    print(row())
 '''
 
 EFFIGY_PROGRAM = '''#!/usr/bin/python3
@@ -136,6 +153,15 @@ if kind == 'dirty_source':
 if kind == 'host_drift':
     self_path = Path(os.path.realpath(sys.argv[0]))
     self_path.write_bytes(self_path.read_bytes() + b'\\n# drift\\n')
+if kind == 'write_and_remove':
+    # A compiler that keeps writing into the shared bind and removes the bytes
+    # again: nothing is left for a post-build census to see.
+    import shutil as _shutil
+    transient = Path(os.getcwd()) / '.effigy/linux-release/target/transient'
+    transient.parent.mkdir(parents=True, exist_ok=True)
+    transient.write_bytes(b'x' * (4 * 1024 * 1024))
+    _shutil.rmtree(Path(os.getcwd()) / '.effigy/linux-release/target')
+    Path(%(removed)r).write_text('wrote and removed 4 MiB inside the bind\\n')
 artifacts = Path(os.getcwd()) / '.effigy/linux-release/artifacts'
 artifacts.mkdir(parents=True)
 name = 'effigy-aarch64-unknown-linux-gnu'
@@ -151,7 +177,7 @@ digest = hashlib.sha256(binary.read_bytes()).hexdigest()
 triple = 'x86_64-unknown-linux-gnu' if kind == 'wrong_target' else 'aarch64-unknown-linux-gnu'
 sha_value = ('0' * 64) if kind == 'sha_mismatch' else digest
 receipt = '\\n'.join([
-    'binary=/workspace/.effigy/linux-release/target/' + triple + '/release/effigy',
+    'binary=/var/tmp/effigy-artifact-build/target/' + triple + '/release/effigy',
     'copied_binary=/workspace/.effigy/linux-release/artifacts/' + name,
     'release_triple=' + triple,
     'sha256=' + sha_value,
@@ -161,6 +187,82 @@ receipt = '\\n'.join([
 (artifacts / (name + '.receipt')).write_text(receipt)
 version = 'other-version' if kind == 'version_mismatch' else %(version)r
 (artifacts / (name + '.active-version')).write_text(version + '\\n')
+
+
+# The maintained producer publishes one record of its own writers. The fixture
+# publishes the same record shape, so the entry's binding runs against a real
+# record rather than a flipped status.
+def boundary():
+    if kind == 'no_marker':
+        return None
+    value = {
+        'schema': %(schema)r,
+        'target': triple,
+        'no_change': {'switch': 'EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING',
+                      'value': os.environ.get('EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING'),
+                      'restricted': True},
+        'source_bind': {'target': '/workspace', 'nested_mounts': 0, 'census': True,
+                        'source_files': %(source_files)d,
+                        'build_output_entries_before': 0},
+        'staged': {'mode': 'staged', 'files': %(source_files)d, 'bytes': 4096,
+                   'cap_bytes': %(staged_cap)d, 'changed': True},
+        'export': {'directory': '/workspace/.effigy/linux-release/artifacts',
+                   'entries': 3, 'unexpected': 0,
+                   'binary_bytes': binary.stat().st_size,
+                   'receipt_bytes': (artifacts / (name + '.receipt')).stat().st_size,
+                   'sidecar_bytes': (artifacts / (name + '.active-version')).stat().st_size,
+                   'caps': {'binary': %(artifact_cap)d, 'receipt': 65536, 'sidecar': 4096},
+                   'released': True},
+        'copy_back': {'mode': 'staged', 'bytes': 1024},
+        'build_tree': {'path': %(tree)r, 'cap_bytes': %(tree_cap)d,
+                       'headroom_floor_bytes': %(headroom)d,
+                       'retained_bytes': 1024, 'reset_before': False,
+                       'free_bytes_before': %(headroom)d + 1024,
+                       'free_bytes_after': %(headroom)d + 1024,
+                       'writers_closed': True, 'quiescent': True,
+                       'storage': 'builder-writable-layer (Colima VM disk); cleanup releases filesystem space, not backing-file allocation'},
+    }
+    if kind == 'unstaged':
+        value['staged']['mode'] = 'checkout'
+    if kind == 'unrestricted':
+        value['no_change']['value'] = None
+        value['no_change']['restricted'] = False
+    if kind == 'nested_mount':
+        value['source_bind']['nested_mounts'] = 1
+    if kind == 'no_census':
+        value['source_bind']['census'] = False
+    if kind == 'dirty_bind':
+        value['source_bind']['build_output_entries_before'] = 4
+    if kind == 'open_writer':
+        value['build_tree']['writers_closed'] = False
+    if kind == 'unstable_tree':
+        value['build_tree']['quiescent'] = False
+    if kind == 'over_cap':
+        value['export']['binary_bytes'] = %(artifact_cap)d + 1
+    if kind == 'foreign_caps':
+        value['export']['caps']['binary'] = %(artifact_cap)d + 1
+    if kind == 'unexpected_export':
+        value['export']['unexpected'] = 1
+    if kind == 'unreleased':
+        value['export']['released'] = False
+    if kind == 'low_headroom':
+        value['build_tree']['free_bytes_after'] = 1024
+    if kind == 'drifted_tree':
+        value['build_tree']['path'] = '/workspace/.effigy/linux-release/target'
+    if kind == 'missing_field':
+        value.pop('copy_back')
+    if kind == 'extra_field':
+        value['prior_receipt'] = {'sha256': '0' * 64}
+    if kind == 'other_export_size':
+        value['export']['binary_bytes'] = max(0, binary.stat().st_size - 1)
+    return json.dumps(value)
+
+
+record = boundary()
+if record is not None:
+    print(record)
+    if kind == 'two_markers':
+        print(record)
 '''
 
 
@@ -169,14 +271,39 @@ def file_sha(path):
 
 
 class PredicateTests(unittest.TestCase):
-    def test_production_seam_refuses_fixture_predecessor_use(self):
+    def test_declared_boundary_and_fixture_seam(self):
         self.assertFalse(proof.TEST_SEAM['simulation'])
+        # The prerequisite is refused, not waived: the writable source bind has no
+        # cumulative writer counter, so no census can bound a removed write.
         self.assertEqual(proof.HOST_WRITE['status'], 'missing')
         self.assertEqual(proof.HOST_WRITE['cap_bytes'], 5 * 1024 * 1024 * 1024)
-        self.assertIn('§6.3', proof.HOST_WRITE['reason'])
+        self.assertIn('cumulative writer counter', proof.HOST_WRITE['reason'])
+        self.assertIn('not a cumulative bound', proof.HOST_WRITE['reason'])
         self.assertEqual(proof.NO_CHANGE_ENV, 'EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING')
-        self.assertEqual(proof.E14_RESERVATION, proof.ARTIFACT_CAP + 64 * 1024 + 4096
+        self.assertEqual(proof.BUILD_TREE, '/var/tmp/effigy-artifact-build')
+        self.assertNotIn('/workspace', proof.BUILD_TREE)
+        self.assertEqual(proof.EXPORT_CAP, proof.ARTIFACT_CAP + proof.RECEIPT_CAP + proof.SIDECAR_CAP)
+        self.assertEqual(proof.E14_RESERVATION,
+                         proof.STAGED_SOURCE_CAP + 2 * proof.EXPORT_CAP
                          + 2 * proof.PRODUCER_OUTPUT_CAP + 4 * proof.OBSERVE_CAP)
+        self.assertLess(proof.E14_RESERVATION, proof.HOST_WRITE_CAP)
+        # Every declared host writer names a metric and a bound; the VM-side
+        # writer says so instead of claiming a host-write count.
+        writers = {row['writer']: row for row in proof.HOST_WRITE_WRITERS}
+        self.assertEqual(set(writers), {'staging/render/source', 'cargo tree',
+                                        'artifact export + copy-back', 'evidence',
+                                        'other writes through the writable source bind'})
+        for row in writers.values():
+            self.assertTrue(row['metric'] and row['bound'], row)
+        self.assertIn('VM-side', writers['cargo tree']['metric'])
+        self.assertEqual(writers['evidence']['bound'],
+                         '2*PRODUCER_OUTPUT_CAP + 4*OBSERVE_CAP per occurrence '
+                         '(producer once, two Colima inventories)')
+        # The unbounded surface says so instead of borrowing another writer's cap.
+        unbounded = writers['other writes through the writable source bind']
+        self.assertIn('none', unbounded['metric'])
+        self.assertTrue(unbounded['bound'].startswith('none'))
+        self.assertIn('refuses this prerequisite before the claim', unbounded['bound'])
 
     def test_elf_and_receipt_predicates(self):
         good = elf_bytes()
@@ -199,15 +326,26 @@ class PredicateTests(unittest.TestCase):
         with self.assertRaisesRegex(Refusal, 'missing sha256'):
             proof.parse_receipt(b'binary=/a\ncopied_binary=/b\nrelease_triple=t\nbuild_kind=workspace-artifact\ncompleted_at=t\n')
 
-    def test_profile_selection_ignores_other_rows(self):
+    def test_profile_selection_ignores_other_rows_and_requires_its_disk(self):
+        disk = 322122547200
         raw = (json.dumps({'name': 'effigy', 'arch': 'aarch64'}) + '\n'
                + json.dumps({'name': 'effigy-release', 'arch': 'arm64', 'status': 'Running',
-                             'runtime': 'containerd'}) + '\n')
-        self.assertEqual(proof.select_release_profile(raw.encode())['arch'], 'arm64')
+                             'runtime': 'containerd', 'disk': disk}) + '\n')
+        selected = proof.select_release_profile(raw.encode())
+        self.assertEqual(selected['arch'], 'arm64')
+        self.assertEqual(selected['disk_bytes'], disk)
         with self.assertRaisesRegex(Refusal, 'incomplete'):
             proof.select_release_profile(json.dumps({'name': 'effigy', 'arch': 'aarch64'}).encode())
         with self.assertRaisesRegex(Refusal, 'not aarch64'):
-            proof.select_release_profile(json.dumps({'name': 'effigy-release', 'arch': 'x86_64', 'status': 'Running'}).encode())
+            proof.select_release_profile(json.dumps(
+                {'name': 'effigy-release', 'arch': 'x86_64', 'status': 'Running', 'disk': disk}).encode())
+        with self.assertRaisesRegex(Refusal, 'declared disk'):
+            proof.select_release_profile(json.dumps(
+                {'name': 'effigy-release', 'arch': 'aarch64', 'status': 'Running'}).encode())
+        with self.assertRaisesRegex(Refusal, 'below the declared build-tree floor'):
+            proof.select_release_profile(json.dumps(
+                {'name': 'effigy-release', 'arch': 'aarch64', 'status': 'Running',
+                 'disk': 1024 ** 3}).encode())
 
     def test_unactivated_main_refuses(self):
         with self.assertRaisesRegex(Refusal, 'proof entry requires a request'):
@@ -292,6 +430,11 @@ class EntryTests(unittest.TestCase):
         self.effigy.write_text(EFFIGY_PROGRAM % {
             'log': str(self.log), 'mode': str(self.mode), 'payload': str(self.payload),
             'violation': str(self.violation), 'cap': proof.ARTIFACT_CAP, 'version': HOST_VERSION,
+            'schema': proof.BOUNDARY_SCHEMA, 'source_files': SOURCE_FILES,
+            'staged_cap': proof.STAGED_SOURCE_CAP, 'artifact_cap': proof.ARTIFACT_CAP,
+            'tree': proof.BUILD_TREE, 'tree_cap': proof.BUILD_TREE_CAP,
+            'headroom': proof.BUILD_TREE_HEADROOM,
+            'removed': str(self.base / 'write-and-remove.removed'),
         })
         self.effigy.chmod(0o700)
         self.write_host_metadata()
@@ -349,6 +492,11 @@ class EntryTests(unittest.TestCase):
     def destination(self, activation):
         return self.evidence / ('linux-recipe-e-' + activation)
 
+    def reset_candidate_artifacts(self):
+        artifacts = self.candidate / '.effigy'
+        if artifacts.exists():
+            shutil.rmtree(artifacts)
+
     def calls(self):
         if not self.log.exists() or not self.log.read_text().strip():
             return []
@@ -390,13 +538,44 @@ class EntryTests(unittest.TestCase):
         self.assertTrue(result['policy']['checkout_scoped_identity'])
         self.assertFalse(self.violation.exists())
         self.assertEqual(result['host_write']['status'], 'missing')
+        self.assertEqual(result['host_write']['guarantee'], 'none')
         self.assertEqual(result['host_write']['cap_bytes'], proof.HOST_WRITE_CAP)
-        self.assertIn('not a hard quota', result['host_write']['reason'])
+        self.assertIn('cumulative writer counter', result['host_write']['reason'])
+        self.assertIn('not bounded by a post-build census', result['host_write']['scope'])
         self.assertEqual(result['producer_environment'][proof.NO_CHANGE_ENV], '1')
         self.assertEqual(result['budget']['headroom_bytes'],
                          proof.HOST_WRITE_CAP - PLAN_BUDGET[0] - proof.E14_RESERVATION)
         self.assertEqual({row['writer'] for row in result['host_write_writers']},
-                         {'staging/render/source', 'cargo target', 'artifact copy-back', 'evidence'})
+                         {'staging/render/source', 'cargo tree',
+                          'artifact export + copy-back', 'evidence',
+                          'other writes through the writable source bind'})
+        # The producer's own record, bound to this entry's declaration.
+        boundary = result['write_boundary']
+        self.assertEqual(boundary['schema'], proof.BOUNDARY_SCHEMA)
+        self.assertEqual(boundary['target'], TARGET)
+        self.assertEqual(boundary['no_change']['value'], '1')
+        self.assertTrue(boundary['no_change']['restricted'])
+        self.assertEqual(boundary['build_tree']['path'], proof.BUILD_TREE)
+        # The host writes are counted; the VM-side tree is disclosed, not counted.
+        observed = result['host_write']['observed']
+        self.assertEqual(observed['export_binary_bytes'], result['artifact']['size'])
+        self.assertEqual(observed['staged_source_bytes'],
+                         boundary['staged']['bytes'])
+        self.assertEqual(result['host_write']['e14_observed_bytes'],
+                         observed['staged_source_bytes'] + observed['export_binary_bytes']
+                         + observed['export_receipt_bytes'] + observed['export_sidecar_bytes']
+                         + observed['copy_back_bytes']
+                         + 2 * proof.PRODUCER_OUTPUT_CAP + 4 * proof.OBSERVE_CAP)
+        self.assertEqual(result['host_write']['committed_bytes'],
+                         PLAN_BUDGET[0] + result['host_write']['e14_observed_bytes'])
+        self.assertEqual(result['host_write']['headroom_bytes'],
+                         proof.HOST_WRITE_CAP - result['host_write']['committed_bytes'])
+        vm = result['host_write']['vm_backing_disk']
+        self.assertFalse(vm['counted_as_host_write'])
+        self.assertEqual(vm['path'], proof.BUILD_TREE)
+        self.assertTrue(vm['writers_closed'])
+        self.assertIn('VM disk', vm['disclosure'])
+        self.assertEqual(result['colima_profile']['disk_bytes'], 322122547200)
         self.assertNotIn('resource_usage', result.get('producer', {}))
         steps = sorted(self.destination('complete01').glob('step-*'))
         self.assertEqual(len(steps), 3)
@@ -572,10 +751,10 @@ class EntryTests(unittest.TestCase):
 
     def test_checker_refusals(self):
         cases = {
-            'zero': (b'', 'artifact is empty'),
+            'zero': (b'', 'published an empty binary'),
             'wrong_elf': (b'not-an-elf-image' + b'\0' * 80, 'ELF magic'),
             'sha_mismatch': (elf_bytes(), 'receipt SHA mismatch'),
-            'wrong_target': (elf_bytes(), 'receipt target differs'),
+            'wrong_target': (elf_bytes(), 'names another target'),
             'version_mismatch': (elf_bytes(), 'active-version sidecar'),
         }
         for index, (mode, (payload, message)) in enumerate(cases.items()):
@@ -598,8 +777,79 @@ class EntryTests(unittest.TestCase):
         code, _, printed = self.run_main('oversize01')
         self.assertEqual(code, 1)
         result = json.loads(printed)
-        self.assertTrue(any('200MiB' in item for item in result['findings']), result['findings'])
+        # The record itself reports more bytes than the declared cap, so the
+        # export is refused before anything is read back or retained.
+        self.assertTrue(any('exceeds its declared bound' in item for item in result['findings']),
+                        result['findings'])
         self.assertFalse((self.destination('oversize01') / 'retained').exists())
+
+    def test_the_published_record_refuses_every_departure_from_the_boundary(self):
+        """Each writer's containment is checked against the record, not the argv."""
+        cases = {
+            'two_markers': 'must publish exactly one',
+            'unstaged': 'not the staged source',
+            'unrestricted': 'restriction-only switch',
+            'nested_mount': 'mount below its source bind',
+            'no_census': 'did not census the staged source',
+            'dirty_bind': 'already held build output',
+            'open_writer': 'closure is not positively proven',
+            'unstable_tree': 'closure is not positively proven',
+            'over_cap': 'exceeds its declared bound',
+            'foreign_caps': 'caps differ',
+            'unexpected_export': 'not artifact-shaped',
+            'unreleased': 'did not release its staged export',
+            'low_headroom': 'declared headroom',
+            'drifted_tree': 'not the declared container-local path',
+            'missing_field': 'field set differs',
+            'extra_field': 'field set differs',
+            'other_export_size': 'not the artifact this entry checked',
+        }
+        for index, (mode, message) in enumerate(cases.items()):
+            with self.subTest(mode=mode):
+                self.log.write_text('')
+                self.payload.write_bytes(elf_bytes())
+                self.mode.write_text(mode)
+                self.reset_candidate_artifacts()
+                activation = 'bnd%02d' % index
+                code, _, printed = self.run_main(activation)
+                self.assertEqual(code, 1, printed)
+                result = json.loads(printed)
+                self.assertTrue(any(message in item for item in result['findings']),
+                                (mode, result['findings']))
+                # Only the size cross-check runs after the artifact itself was
+                # read; every other departure refuses before it.
+                if mode != 'other_export_size':
+                    self.assertNotIn('artifact', result)
+                self.assertFalse((self.destination(activation) / 'retained').exists())
+                self.assertFalse(result['profile_stop_attempted'])
+
+    def test_the_release_profile_must_report_its_disk(self):
+        for mode, message in (('no_disk', 'declared disk'), ('small_disk', 'build-tree floor')):
+            with self.subTest(mode=mode):
+                self.log.write_text('')
+                self.mode.write_text(mode)
+                self.reset_candidate_artifacts()
+                code, _, printed = self.run_main(mode + '01')
+                self.assertEqual(code, 1)
+                result = json.loads(printed)
+                self.assertTrue(any(message in item for item in result['findings']),
+                                result['findings'])
+                self.assertNotIn('producer_argv', result)
+
+    def test_the_checker_refuses_an_oversize_artifact_directly(self):
+        base = fixture()
+        binary = base / 'artifact'
+        binary.write_bytes(b'')
+        with binary.open('r+b') as handle:
+            handle.truncate(proof.ARTIFACT_CAP + 1)
+        receipt = base / 'artifact.receipt'
+        receipt.write_text('binary=/a\ncopied_binary=/b\nrelease_triple=' + TARGET
+                           + '\nsha256=' + '0' * 64 + '\nbuild_kind=workspace-artifact'
+                           + '\ncompleted_at=t\n')
+        sidecar = base / 'artifact.active-version'
+        sidecar.write_text('v\n')
+        with self.assertRaisesRegex(Refusal, '200MiB'):
+            proof.check_artifact(binary, receipt, sidecar, 'v')
 
     def test_wrong_colima_architecture_and_missing_profile(self):
         for mode, message in (('wrong_arch', 'not aarch64'), ('missing_profile', 'incomplete')):
@@ -687,21 +937,60 @@ class EntryTests(unittest.TestCase):
                 self.entry.execute(request, str(self.root / 'request-zerocap.json'), '0' * 64)
         self.assertFalse((self.evidence / 'linux-recipe-e-zerocap.claim').exists())
 
-    def test_production_refuses_unresolved_prerequisites_before_claim(self):
-        cases = (({}, 'SO-host-write'),)
-        for index, (overrides, message) in enumerate(cases):
-            activation = 'hostwrite%d' % index
-            with contextlib.ExitStack() as stack:
-                stack.enter_context(self.bound_entry())
-                stack.enter_context(patch.dict(self.entry.TEST_SEAM, {'simulation': False}))
-                for name, values in overrides.items():
-                    stack.enter_context(patch.dict(getattr(self.entry, name), values))
+    def test_a_production_occurrence_refuses_before_the_claim(self):
+        """SO-host-write keeps production refused, whatever the producer would publish.
+
+        The writable source bind has no cumulative writer counter, so a compiler
+        could write and remove bytes before any observation. Nothing downstream —
+        not a valid boundary record, not a clean census — may turn that into a
+        production occurrence, so execute refuses before the claim and before the
+        producer is ever dispatched.
+        """
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(self.bound_entry())
+            stack.enter_context(patch.dict(self.entry.TEST_SEAM, {'simulation': False}))
+            for index, mode in enumerate(('complete', 'no_marker', 'write_and_remove')):
+                self.log.write_text('')
+                self.mode.write_text(mode)
+                self.reset_candidate_artifacts()
+                activation = 'prod%02d' % index
                 request = dict(self.entry.plan(str(self.evidence), activation, self.head,
                                                str(self.candidate), self.candidate_head, *PLAN_BUDGET))
-                with self.assertRaisesRegex(self.entry.stage.Refusal, message):
-                    self.entry.execute(request, str(self.root / ('request-%s.json' % activation)), '0' * 64)
-            self.assertFalse((self.evidence / ('linux-recipe-e-%s.claim' % activation)).exists())
-        self.assertEqual(self.calls(), [])
+                path, digest = self.write_request(activation, request)
+                with contextlib.redirect_stdout(io.StringIO()), \
+                     self.assertRaisesRegex(self.entry.stage.Refusal, 'SO-host-write'):
+                    self.entry.main(['proof', str(path), digest])
+                # No effect at all: no claim, no producer dispatch, no retention.
+                self.assertFalse((self.evidence / ('linux-recipe-e-%s.claim' % activation)).exists())
+                self.assertFalse(self.destination(activation).exists())
+                self.assertEqual(self.calls(), [])
+        self.assertFalse(self.candidate.joinpath('.effigy/linux-release/artifacts').exists())
+
+    def test_write_and_remove_cannot_produce_a_bounded_record(self):
+        """The write-and-remove control the retained refusal stands on.
+
+        A producer that writes into the writable bind and removes the bytes before
+        returning leaves nothing for a post-build census to see: the record and the
+        outcome are identical to a clean build. That is exactly why the occurrence
+        may never be read as a bounded host write, and why production refuses.
+        """
+        self.mode.write_text('write_and_remove')
+        code, _, printed = self.run_main('wr01')
+        self.assertEqual(code, 0, printed)
+        result = json.loads(printed)
+        self.assertEqual(result['findings'], [])
+        # The census saw only residuals; it cannot see what was removed.
+        self.assertEqual(result['write_boundary']['source_bind']['nested_mounts'], 0)
+        self.assertEqual(result['write_boundary']['export']['unexpected'], 0)
+        self.assertEqual(result['host_write']['status'], 'missing')
+        self.assertEqual(result['host_write']['guarantee'], 'none')
+        self.assertIn('removed or restored', result['host_write']['scope'])
+        self.assertIn('remove or restore', result['host_write']['reason'])
+        self.assertEqual(result['host_write']['observed']['export_binary_bytes'],
+                         result['artifact']['size'])
+        # The control's own evidence: the removed write left no residual behind.
+        removed = self.base / 'write-and-remove.removed'
+        self.assertTrue(removed.exists(), 'the fixture wrote and removed bytes')
 
     def test_stopped_profile_refuses_before_the_producer(self):
         self.mode.write_text('stopped')
