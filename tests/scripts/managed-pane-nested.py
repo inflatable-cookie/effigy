@@ -10,9 +10,12 @@ no spinner redraw frames, and the failure readable.
 
 The shape runs twice against the same binary: at a wide terminal and at a
 narrow one, because a pane's width is the child's width and a frame pile is
-worse there. A concurrent non-Effigy tab proves unrelated output and colour
-survive, and the same binary is also run standalone (live progress must still
-animate) and piped/`--json` (contracts unchanged).
+worse there. A concurrent non-Effigy tab proves unrelated output survives: its
+plain lines reach the canonical log and, once that tab is selected, its red
+line renders as red SGR on the screen stream. The fixture also stops a running
+client on purpose (SIGTERM, clean exit, no forced kill), and runs the same
+binary standalone (live progress must still animate) and piped/`--json`
+(contracts unchanged).
 
 Usage: managed-pane-nested.py <effigy-binary> [<evidence-dir>]
 
@@ -24,6 +27,7 @@ import fcntl
 import json
 import os
 import pty
+import re
 import select
 import signal
 import struct
@@ -74,6 +78,13 @@ print("nested-middle", flush=True)
 print("nested-long:" + "x" * 300, flush=True)
 size = subprocess.run(["stty", "size"], capture_output=True, text=True)
 print("nested-size:" + size.stdout.strip(), flush=True)
+'''
+
+CANCEL_MANIFEST = '''[tasks.dev]
+mode = "tui"
+concurrent = [
+  { name = "hold", run = "printf 'cancel-ready\\n'; sleep 120", start = 1 },
+]
 '''
 
 MANIFEST = '''[tasks.dev]
@@ -149,7 +160,25 @@ def pane_log(logs, needle):
     return found
 
 
-def measure(services, adjacent, rows, cols):
+# A red foreground in any of the forms a renderer may choose: basic, bright or
+# an indexed 256-colour red.
+RED_SGR = re.compile(rb"\x1b\[(?:31|91|38;5;(?:1|9))(?:;[0-9]+)*m")
+
+
+def adjacent_colour(raw):
+    """Whether the adjacent tab's red line renders as red SGR on screen.
+
+    The TUI draws only the selected tab, so the fixture selects the adjacent
+    tab before reading this. The canonical log stays plain beside it.
+    """
+    at = raw.find(b"Vite error")
+    if at < 0:
+        return False, -1
+    return bool(RED_SGR.search(raw[max(0, at - 48) : at])), at
+
+
+def measure(services, adjacent, raw, rows, cols):
+    coloured, at = adjacent_colour(raw)
     lines = services.splitlines()
     return {
         "nested_header": b"EFFIGY" in services,
@@ -171,24 +200,32 @@ def measure(services, adjacent, rows, cols):
         and b"adjacent-after\n" in adjacent
         and adjacent.index(b"adjacent-before\n") < adjacent.index(b"adjacent-after\n"),
         "adjacent_plain": b"Vite error" in adjacent and b"\x1b" not in adjacent,
+        "adjacent_rendered": at >= 0,
+        "adjacent_coloured": coloured,
     }
 
 
 def stop(client, master, raw):
-    """Stop the client this fixture started, by its own PID."""
+    """Stop the client this fixture started, by its own PID.
+
+    Returns `(exit, signalled, escalated)`: whether this fixture asked the
+    client to stop, and whether the client needed a forced kill after that.
+    """
     if client.poll() is not None:
-        return client.returncode
+        return client.returncode, False, False
     client.send_signal(signal.SIGTERM)
     deadline = time.monotonic() + 30
     while client.poll() is None and time.monotonic() < deadline:
         drain(master, raw)
+    escalated = False
     if client.poll() is None:
+        escalated = True
         os.killpg(client.pid, signal.SIGKILL)
         client.wait(timeout=15)
-    return client.returncode
+    return client.returncode, True, escalated
 
 
-def scenario_base(temp, label):
+def scenario_base(temp, label, manifest=MANIFEST):
     """A scenario's own checkout and state home: the wide and narrow runs must
     not read or tear down each other's run records."""
     base = temp / label
@@ -202,11 +239,14 @@ def scenario_base(temp, label):
         ("long-line.py", LONG_LINE),
     ):
         (root / script).write_text(text)
+    # Colour stays live: the pane renders the adjacent producer's red line as
+    # SGR while the canonical log keeps the plain text beside it.
     env = {key: value for key, value in os.environ.items() if not key.startswith("EFFIGY_")}
-    env.update(HOME=str(home), TERM="xterm-256color", NO_COLOR="1")
+    env.update(HOME=str(home), TERM="xterm-256color")
     env.pop("CI", None)
+    env.pop("NO_COLOR", None)
     (root / "effigy.toml").write_text(
-        MANIFEST.replace("__WRAPPER__", str(root / "scrub-wrapper.py"))
+        manifest.replace("__WRAPPER__", str(root / "scrub-wrapper.py"))
         .replace("__ADJACENT__", str(root / "adjacent.py"))
         .replace("__LONG_LINE__", str(root / "long-line.py"))
         .replace("__BINARY__", binary)
@@ -240,12 +280,22 @@ def pane_scenario(temp, label, cols, rows, evidence_dir):
                 adjacent = pane_log(logs, b"[fixture] adjacent-tab")
                 break
             time.sleep(0.05)
+        # The TUI draws only the selected tab, so select the adjacent one: its
+        # red SGR line must reach the rendered screen beside the plain log.
+        os.write(master, b"\x1b[C")
+        settle = time.monotonic() + 3
+        while time.monotonic() < settle and b"Vite error" not in raw:
+            drain(master, raw)
+        time.sleep(0.3)
+        drain(master, raw)
     finally:
-        exited = stop(client, master, raw)
+        exited, signalled, escalated = stop(client, master, raw)
         os.close(master)
-    summary = measure(services, adjacent, rows, cols)
+    summary = measure(services, adjacent, bytes(raw), rows, cols)
     summary["terminal"] = {"cols": cols, "rows": rows}
     summary["client_exit"] = exited
+    summary["client_signalled"] = signalled
+    summary["kill_escalated"] = escalated
     if evidence_dir:
         (evidence_dir).mkdir(parents=True, exist_ok=True)
         (evidence_dir / "raw-pty.bin").write_bytes(bytes(raw))
@@ -253,6 +303,50 @@ def pane_scenario(temp, label, cols, rows, evidence_dir):
         (evidence_dir / "adjacent-pane.log").write_bytes(adjacent)
         (evidence_dir / "pane-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     return summary, services, adjacent
+
+
+def cancel_scenario(temp, evidence_dir):
+    """A client this fixture stops on purpose: SIGTERM, a clean exit, no kill.
+
+    The failure scenarios cannot assert this deterministically (the failed
+    workload may end the session first), so this holds one workload and stops
+    the client while it is running.
+    """
+    base, root, env = scenario_base(temp, "cancel", CANCEL_MANIFEST)
+    client, master = start(["dev"], root, env, 120, 40)
+    raw = bytearray()
+    started = False
+    try:
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            drain(master, raw)
+            if pane_log(list(base.rglob("*.stdout.*.log")), b"cancel-ready"):
+                started = True
+                break
+            assert client.poll() is None, (client.returncode, bytes(raw[-4000:]))
+            time.sleep(0.05)
+        assert started, bytes(raw[-4000:])
+        exit_code, signalled, escalated = stop(client, master, raw)
+    finally:
+        if client.poll() is None:
+            os.killpg(client.pid, signal.SIGKILL)
+            client.wait(timeout=15)
+        os.close(master)
+    summary = {
+        "client_exit": exit_code,
+        "client_signalled": signalled,
+        "kill_escalated": escalated,
+        "workload_started": started,
+    }
+    if evidence_dir:
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        (evidence_dir / "raw-pty.bin").write_bytes(bytes(raw))
+        (evidence_dir / "pane-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    assert summary["workload_started"], summary
+    assert summary["client_signalled"], summary
+    assert not summary["kill_escalated"], summary
+    assert summary["client_exit"] == 0, summary
+    return summary
 
 
 def assert_bounded(label, summary, services, adjacent):
@@ -285,10 +379,17 @@ def assert_bounded(label, summary, services, adjacent):
     assert summary["error_line"], detail
     assert b"[error]" in services and b"exit code 3" in services, detail
     assert b"\r" not in services, detail
-    # The concurrent non-Effigy tab is untouched: ordered lines, plain capture,
-    # with the rich stream proved on the PTY side.
+    # The concurrent non-Effigy tab is untouched and still rich: its ordered
+    # lines reach the canonical log as plain text, and selecting it renders the
+    # red line as red SGR on the screen stream.
     assert summary["adjacent_ordered"], (label, adjacent)
     assert summary["adjacent_plain"], (label, adjacent)
+    assert summary["adjacent_rendered"], (label, summary)
+    assert summary["adjacent_coloured"], (label, summary)
+    # The failed workload may end the session before this fixture asks it to
+    # stop, so only the forced kill is forbidden here; the dedicated cancel
+    # scenario asserts the clean stop itself.
+    assert not summary["kill_escalated"], (label, summary)
 
 
 def run_standalone(root, env):
@@ -368,6 +469,11 @@ try:
     results = {"wide": wide, "narrow": narrow}
     assert_bounded("wide", wide, wide_services, wide_adjacent)
     assert_bounded("narrow", narrow, narrow_services, narrow_adjacent)
+
+    # Cancellation: a running client stops cleanly on this fixture's SIGTERM.
+    results["cancel"] = cancel_scenario(
+        temp, (evidence / "cancel") if evidence else None
+    )
 
     # The same binary keeps live progress on a real terminal, and keeps the
     # piped and `--json` contracts, beside the panes that are bounded.
