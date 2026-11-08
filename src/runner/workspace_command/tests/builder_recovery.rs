@@ -2386,3 +2386,64 @@ fn record_digest_after_recovery(
     );
     record.closure
 }
+
+/// A mode-only change in the caller is a changed input: the staged copy must
+/// carry the new executable bit, not just the same bytes.
+#[test]
+fn staged_source_refreshes_a_mode_only_change() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(false, false, "docker");
+    let plan = fixture.stage().expect("a staged source plan");
+    let relative = "scripts/build.rhai";
+    fixture
+        .task()
+        .expect("the first build stages the tracked source");
+    let staged = plan.source.join(relative);
+    let before = effigy_containers::artifact_source::StageManifest::read(&plan)
+        .unwrap()
+        .files
+        .get(relative)
+        .unwrap()
+        .clone();
+    assert!(
+        !before.executable,
+        "the fixture tracks this file non-executable"
+    );
+    assert_eq!(
+        std::fs::metadata(&staged).unwrap().permissions().mode() & 0o111,
+        0,
+        "the staged copy starts non-executable"
+    );
+
+    // Same bytes, new mode, recorded in the index the closure reads.
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(
+        fixture.root.join(relative),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let status = std::process::Command::new("git")
+        .args(["add", relative])
+        .current_dir(&fixture.root)
+        .status()
+        .expect("private git fixture");
+    assert!(status.success());
+
+    fixture
+        .task()
+        .expect("the mode-only change is staged by the next automatic run");
+    let after = effigy_containers::artifact_source::StageManifest::read(&plan)
+        .unwrap()
+        .files
+        .get(relative)
+        .unwrap()
+        .clone();
+    assert_eq!(after.sha256, before.sha256, "the bytes are unchanged");
+    assert!(after.executable, "the record carries the new mode");
+    assert_ne!(
+        std::fs::metadata(&staged).unwrap().permissions().mode() & 0o111,
+        0,
+        "the staged copy carries the new executable bit"
+    );
+    fixture.assert_preserved();
+}

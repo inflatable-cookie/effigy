@@ -208,6 +208,13 @@ fn verify_staged(plan: &StagePlan, manifest: &StageManifest) -> Result<(), Runne
                 path.display()
             )));
         }
+        if is_executable(&metadata) != expected.executable {
+            return Err(refusal(format!(
+                "staged source `{}` does not carry the executable mode this build recorded (recorded executable: {}); nothing was bound",
+                path.display(),
+                expected.executable
+            )));
+        }
     }
     let accounted = manifest.files.len();
     let found = count_source_files(&plan.source, "")?;
@@ -295,7 +302,9 @@ fn ensure_owned_directory(directory: &Path) -> Result<(), RunnerError> {
     Ok(())
 }
 
-/// Whether the staged path already carries exactly the closure's bytes.
+/// Whether the staged path already carries exactly the closure's entry: the
+/// same bytes and the same executable bit. A mode-only change in the caller is a
+/// changed input, so bytes alone are not enough.
 fn staged_file_matches(path: &Path, file: &StagedFile) -> bool {
     let Ok(metadata) = std::fs::symlink_metadata(path) else {
         return false;
@@ -303,9 +312,26 @@ fn staged_file_matches(path: &Path, file: &StagedFile) -> bool {
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return false;
     }
+    if is_executable(&metadata) != file.executable {
+        return false;
+    }
     std::fs::read(path)
         .map(|bytes| sha256_hex(&bytes) == file.sha256)
         .unwrap_or(false)
+}
+
+/// Whether this staged entry carries an executable bit for its owner classes.
+fn is_executable(metadata: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        false
+    }
 }
 
 /// Publish the binding record atomically beside the staged trees.
@@ -719,6 +745,13 @@ pub(in crate::runner) fn verify_source_unchanged(
     plan: &StagePlan,
     staged: &StagedSource,
 ) -> Result<(), RunnerError> {
+    // Only a complete record describes written bytes; a pending one is
+    // ownership evidence and must never authorize a publication.
+    staged
+        .manifest
+        .clone()
+        .require_complete()
+        .map_err(refusal)?;
     let current = workspace_closure(&staged.manifest.caller)?;
     if current.digest != staged.manifest.closure {
         return Err(refusal(format!(

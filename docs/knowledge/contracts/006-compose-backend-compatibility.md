@@ -216,10 +216,13 @@ this checkout's own record rather than an unowned tree. That early record is
 `pending`: it proves ownership and claims no closure, a reader that needs the
 staged source refuses it, and only a `complete` record — written after every
 file and the inventory were verified — describes written bytes. Recovery never
-trusts the record for content: a staged file is rewritten whenever its bytes no
-longer carry the closure's digest, so an interruption during an incremental
-refresh (a pending record naming newer digests while the tree still holds older
-bytes) is completed by the next run instead of refusing forever. The same record
+trusts the record for content: a staged file is rewritten whenever its bytes or
+its executable bit no longer carry the closure's entry — a mode-only change in
+the caller is a changed input, not a reuse — so an interruption during an
+incremental refresh (a pending record naming newer digests while the tree still
+holds older bytes) is completed by the next run instead of refusing forever, and
+the whole-closure verification checks each staged file's mode as well as its
+digest. The same record
 carries the Compose render generation staged beside the source, and render
 staging shares the one ownership rule.
 

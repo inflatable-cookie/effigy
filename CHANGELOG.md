@@ -407,9 +407,10 @@ During v0.x, MINOR bumps may include breaking changes.
   first staged file lands as a `pending` record that proves ownership without
   claiming a closure, and the record becomes `complete` only once every file and
   its inventory were verified. Recovery never trusts the record for content: a
-  staged file is rewritten whenever its bytes no longer carry the closure's
-  digest, so an interruption during an incremental refresh is completed by the
-  next run instead of refusing forever. A caller or staged-tree edit during the
+  staged file is rewritten whenever its bytes or its executable bit no longer
+  carry the closure's entry, so a mode-only change in the caller is restaged
+  rather than reused, and an interruption during an incremental refresh is
+  completed by the next run instead of refusing forever. A caller or staged-tree edit during the
   build publishes nothing: the caller's current closure and the staged tree are
   re-proved against the compiled digest before any byte is copied back. The
   environment declares it with the new `workspace_source = "staged"` container

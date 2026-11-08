@@ -75,6 +75,13 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
         Some(plan) => {
             check_interruption()?;
             let staged = workspace_artifact_source::stage(repo_root, &policy, &plan)?;
+            // The staged source is this build's evidence: it must be a record
+            // whose closure was written and verified, never a pending one.
+            staged
+                .manifest
+                .clone()
+                .require_complete()
+                .map_err(RunnerError::task_invocation)?;
             if staged.changed {
                 eprintln!(
                     "[info] staged this checkout's source for the Linux builder at `{}`",
