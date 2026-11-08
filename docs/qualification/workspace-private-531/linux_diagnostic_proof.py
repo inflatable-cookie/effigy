@@ -48,7 +48,7 @@ FINAL_RESERVE = 15
 SOURCES = ('linux_diagnostic_proof.py', 'linux_diagnostic.py', 'linux_setup.py',
            'linux_supervisor.py', 'linux_transfer.py', 'linux_receipts.py',
            'preparation_stage.py', 'preparation_resources.py', 'preparation_observations.py',
-           'preparation_requests.py', 'linux-setup-probe.sh')
+           'preparation_requests.py', 'linux_disk_identity.py', 'linux-setup-probe.sh')
 
 
 def sha(path):

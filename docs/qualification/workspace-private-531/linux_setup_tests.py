@@ -31,6 +31,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_receipts as receipts
 import linux_setup as setup
+import linux_disk_identity as identity
 import linux_supervisor as supervisor
 import linux_transfer as transfers
 import preparation_observations as observations
@@ -876,17 +877,23 @@ class Stage1Checks(unittest.TestCase):
         patcher = patch.object(setup, 'PVM_HOME', str(self.home))
         patcher.start()
         self.addCleanup(patcher.stop)
-        top_patcher = patch.object(setup, 'SUPPORTED_TOP_MECHANISMS', frozenset({'test-top'}))
-        top_patcher.start()
-        self.addCleanup(top_patcher.stop)
-        self.obs = {'mechanism': 'test-top', 'guid': setup.CURRENT_SNAPSHOT}
+        self.obs = identity.observation(self.descriptor)
         self.stage = tmpdir('stage1-')
 
-    def write_descriptor(self, top, base):
-        return (f'<Disk><StorageData><Storage><Image><GUID>{top}</GUID><File>{self.top_file}</File></Image>'
-                f'<Image><GUID>{base}</GUID><File>{self.base_file}</File></Image></Storage></StorageData>'
-                f'<Snapshots><Shot><GUID>{top}</GUID><ParentGUID>{base}</ParentGUID></Shot>'
-                f'<Shot><GUID>{base}</GUID><ParentGUID>{ZERO}</ParentGUID></Shot></Snapshots></Disk>').encode()
+    def write_descriptor(self, top, base, explicit=True):
+        # The documented shape: one Storage, Padding 0, an explicit TopGUID and a compressed overlay.
+        geometry = ('<Disk_Parameters><Disk_size>268435456</Disk_size><Cylinders>524288</Cylinders>'
+                    f'<Heads>16</Heads><Sectors>32</Sectors><Padding>0</Padding><UID>{setup.DISK_UID}</UID>'
+                    '</Disk_Parameters>')
+        storage = ('<StorageData><Storage><Start>0</Start><End>268435456</End><Blocksize>2048</Blocksize>'
+                   f'<Image><GUID>{top}</GUID><Type>Compressed</Type><File>{self.top_file}</File></Image>'
+                   f'<Image><GUID>{base}</GUID><Type>Compressed</Type><File>{self.base_file}</File></Image>'
+                   '</Storage></StorageData>')
+        named = f'<TopGUID>{top}</TopGUID>' if explicit else ''
+        snapshots = (f'<Snapshots>{named}<Shot><GUID>{top}</GUID><ParentGUID>{base}</ParentGUID></Shot>'
+                     f'<Shot><GUID>{base}</GUID><ParentGUID>{ZERO}</ParentGUID></Shot></Snapshots>')
+        return ('<Parallels_disk_image Version="1.0">' + geometry + storage + snapshots
+                + '</Parallels_disk_image>').encode()
 
     def fresh(self, **changes):
         def ident(path):
@@ -985,6 +992,12 @@ class Stage1Checks(unittest.TestCase):
         with self.assertRaises(Refusal):
             setup.stage1_verify_post(req, self.after())
 
+    def test_post_run_refuses_a_request_without_its_selection_digest(self):
+        req = self.request()
+        del req['before']['top_selection_digest']
+        with self.assertRaises(Refusal):
+            setup.stage1_verify_post(req, self.after())
+
     def test_post_run_bytes_are_retained_before_any_refusal(self):
         req = self.request()
         stage = Path(req['retained']['config']).parent
@@ -1002,20 +1015,19 @@ class Stage1Checks(unittest.TestCase):
         # The descriptor still names the current snapshot in a file name. An observation of the base
         # image is the parent of that snapshot, so it is not the leaf and refuses.
         with self.assertRaises(Refusal):
-            setup.verify_writable_top({'mechanism': 'test-top', 'guid': BASE_GUID}, self.descriptor,
-                                      supported={'test-top'})
+            setup.verify_writable_top(dict(self.obs, guid=BASE_GUID), self.descriptor)
 
     def test_observed_top_must_be_an_image_of_the_descriptor_and_the_leaf(self):
-        self.assertEqual(setup.verify_writable_top(self.obs, self.descriptor, supported={'test-top'}), self.top)
+        self.assertEqual(setup.verify_writable_top(self.obs, self.descriptor)['top_guid'], self.top)
         with self.assertRaises(Refusal):
-            setup.verify_writable_top({'mechanism': 'test-top', 'guid': ZERO}, self.descriptor, supported={'test-top'})
+            setup.verify_writable_top(dict(self.obs, guid=ZERO), self.descriptor)
         with self.assertRaises(Refusal):
-            setup.verify_writable_top({'mechanism': 'other', 'guid': self.top}, self.descriptor, supported={'test-top'})
+            setup.verify_writable_top(dict(self.obs, mechanism='other'), self.descriptor)
 
     def test_negative_real_shape_base_observation_refuses_the_association(self):
         # Shaped like the reviewed snapshot tree: the observed image is a parent of the current snapshot.
-        with patch.object(setup, 'SUPPORTED_TOP_MECHANISMS', frozenset({'test-top'})), self.assertRaises(Refusal):
-            setup.stage1_request(self.fresh(), tmpdir('stage1-'), {'mechanism': 'test-top', 'guid': BASE_GUID})
+        with self.assertRaises(Refusal):
+            setup.stage1_request(self.fresh(), tmpdir('stage1-'), dict(self.obs, guid=BASE_GUID))
 
     def test_each_original_is_retained_on_its_own_when_the_other_cannot_be_read(self):
         stage = tmpdir('stage1-')

@@ -144,7 +144,7 @@ Stash-hosted Ubuntu VM's Stage1 read-only probe, Stage2 setup and Recipe E route
 It is preparation only; it arms nothing.
 The Linux setup adapter (`linux_setup.py`, `linux_supervisor.py`, `linux-setup-probe.sh`,
 `linux-setup-stages.json`, `linux_transfer.py`, `linux_receipts.py`,
-`linux_stage1.py`, `linux_observation_caller.py`) holds the v2 probe parser, Stage1 request, setup rows
+`linux_stage1.py`, `linux_observation_caller.py`, `linux_disk_identity.py`) holds the v2 probe parser, the documented Parallels writable-top selection, Stage1 request, setup rows
 E3–E9/E19 and the guest supervisor. Exact root requests and nonces are one-use;
 Stage1 requires a separately signed fresh occurrence with retained post-state.
 The actual observation caller binds VM identity and SSH terminal observations.

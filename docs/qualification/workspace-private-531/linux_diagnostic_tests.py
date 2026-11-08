@@ -119,8 +119,8 @@ class InventoryTests(unittest.TestCase):
         (disk / 'notes.txt').write_bytes(b'note')
         self.assertEqual(monitor.check()['package']['logical'], len(b'note'))
 
-    def test_setup_top_mechanism_remains_refused(self):
-        self.assertEqual(proof.setup.SUPPORTED_TOP_MECHANISMS, frozenset())
+    def test_setup_top_mechanism_is_only_the_descriptor_selection(self):
+        self.assertEqual(proof.setup.SUPPORTED_TOP_MECHANISMS, frozenset({'parallels-descriptor-selection-v1'}))
         with self.assertRaises(proof.setup.Refusal):
             proof.setup.verify_writable_top({'mechanism': 'unknown'}, b'<Disk/>')
 
