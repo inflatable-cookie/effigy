@@ -228,6 +228,14 @@ These keep their disposition under the gate, with current evidence.
 | `crates/effigy-manifest/src/bundles/source/progress.rs` | Supplies the `SourceProgress` Started/Finished events the bundle command projects (`bundle_command.rs:380`); it constructs no step | no step |
 | `crates/effigy-ui` and TUI spinner constructors | One sink remains (`steps.rs` `start_bar`); the renderer's `spinner` path is deleted | removed |
 
+Compose progress parsing accepts the runtime's prefixed image/container/service
+forms and bare one-token service names. A recognized lifecycle word after a
+multi-token subject is ordinary runtime output, not a step; this prevents
+changing BuildKit and package-manager messages from accumulating false rows.
+The regression lines reconstruct the reported screenshot shape because its raw
+runtime stream was not retained. The output watcher still captures and exposes
+unrecognized lines through its existing diagnostics.
+
 ## Fake-clock frame coverage
 
 Every plane proves its frames on a fake clock: the same operation's frames move

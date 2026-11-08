@@ -1,5 +1,5 @@
 use super::{ComposeSteps, TimedStep};
-use crate::exec::ComposeStepEvent;
+use crate::exec::{parse_compose_step_event, ComposeStepEvent};
 use effigy_ui::steps::ProgressSource;
 
 #[test]
@@ -175,6 +175,35 @@ fn image_build_and_container_steps_stay_distinct() {
         subject: "demo-web-1".to_owned(),
     });
     assert_eq!(steps.touched(), 3);
+}
+
+#[test]
+fn reconstructed_build_lines_do_not_accumulate_fake_steps() {
+    // The first line reconstructs screenshot text; the remaining changing
+    // build rows model the same class of output. Raw runtime output was not
+    // retained, so these are parser regressions, not captured fixtures.
+    let lines = [
+        "#10 31.29 invoke-rc.d: policy-rc.d denied execution of start.",
+        "#13 [web build 7/9] compiling source files",
+        "#13 [web build 8/9] generated source files",
+        "#13 [web build 9/9] final source files built",
+        "web Building",
+        "web Built",
+        "Container demo-web-dev-web-1 Starting",
+        "Container demo-web-dev-web-1 Started",
+    ];
+    let (_, rendered) = effigy_ui::steps::capture_lines(|| {
+        let mut steps = ComposeSteps::new("demo-web-dev");
+        for line in lines {
+            if let Some(event) = parse_compose_step_event(line) {
+                steps.observe(&event);
+            }
+        }
+        assert_eq!(steps.touched(), 2, "one build and one container step");
+    });
+    assert_eq!(rendered.len(), 2, "{rendered:?}");
+    assert!(rendered.iter().any(|line| line.starts_with("✓ built web (")));
+    assert!(rendered.iter().any(|line| line.starts_with("✓ started web (")));
 }
 
 #[test]
