@@ -187,6 +187,27 @@ Recipe E/native Linux platform input remains an outstanding prerequisite to
 #621–#623. #683 is readiness/preparation only; #684 owns metadata/start/stop
 only. Neither creates a Linux binary or satisfies a native proof.
 
+### Qualification-sequence proof-only authority — 2026-11-08
+
+Tom's exact words, relayed by Nucleus planner `10a6187a` (message
+`060147e1-9527-4010-870f-bc59a6617a15`, 2026-11-08): “I've answered the effigy
+decision - they don't need to keep asking me for approval for the next step!”
+
+Within this qualification sequence, a proof-only brief whose only purpose is
+another approval omits `requiresOperatorGo`, and Nucleus dispatches one
+source-immutable executor without a fresh generic operator GO for each stage.
+The planner still binds the exact reviewed commit and request, input, tool and
+resource identities, the one-use occurrence, and budgets and cleanup. Existing
+technical refusal gates and independent receipt review remain. Future
+proof-only briefs also omit worker preference fields (Nucleus ruling
+`7e17f273`). Historical `requiresOperatorGo` briefs and results are not
+rewritten.
+
+This is a scope-bounded clarification. It grants no proof waiver, refunded
+native allowance, unrestricted cleanup, release, tag or publication, new
+frontier or by-request profile, or product or threat-scope change. #706 remains
+failed with its actual successful evidence and is not replayed.
+
 Q-017 (Tom, 2026-11-01) sets v0.15 workspace-client qualification to
 noninteractive Level 1. Level 2—including guest attach, detach, reconnect,
 terminal input and resize, shared-lock tasks, pause and the remainder of the

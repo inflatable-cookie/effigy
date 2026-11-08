@@ -26,7 +26,12 @@ MODULE_ROLE = HERE.relative_to(REPO_ROOT).as_posix()
 MANIFEST_ROLE = 'config/tasks.toml'
 GIT = '/usr/bin/git'
 SCRATCH = '/Volumes/Stash/scratch/effigy'
-PRLCTL = '/usr/local/bin/prlctl'
+# /usr/local/bin/prlctl is a symlink to the vendor parallels_wrapper, which selects its tool from
+# basename($0) and exits 9 for its own name. The fixed route launches the bundle CLI directly with
+# the same argv[0] that the wrapper execs; no wrapper bootstrap (inittool2, Parallels Service) runs.
+PRLCTL_ALIAS = '/usr/local/bin/prlctl'
+PRLCTL = '/Applications/Parallels Desktop.app/Contents/MacOS/prlctl'
+PRLCTL_SHA256 = '2f61a1c60db2d51591fb8479a248a982a81658f136f1501a94733b7a81731c57'
 SNAPSHOT_SHA = 'd21610ba279b4faf2d7a62c87ef8f1050943fc9c072a04c71ce4d0c953e3ad'
 PROBE_KEYS = frozenset('uid boot_id system_state systemctl systemd_run systemd_version cgroup2 ssh_host_ed25519_fp sshd_expiry_time_mentions effigy531_passwd_exit effigy531_group_exit effigy531_home docker_group root_source root_fstype root_uuid root_parent root_serial root_model root_size ssh_listen_ipv4'.split())
 DURATION = 600
@@ -110,9 +115,11 @@ def plan(root, activation_id, head):
         raise stage.Refusal('preparation head must differ from candidate H')
     identity = private_root(root)
     repository = repository_identity()
-    program = os.path.realpath(PRLCTL)
-    if not os.path.isabs(program) or not os.path.isfile(program):
-        raise stage.Refusal('Parallels program unavailable')
+    program = PRLCTL
+    if not os.path.isabs(program) or os.path.realpath(program) != program or not os.path.isfile(program):
+        raise stage.Refusal('Parallels CLI is not at its canonical bundle path')
+    if digest(program, 'Parallels CLI') != PRLCTL_SHA256:
+        raise stage.Refusal('Parallels CLI differs from the reviewed build')
     interpreter = os.path.realpath(sys.executable)
     if os.path.realpath(GIT) != GIT:
         raise stage.Refusal('git is not at its canonical path')
