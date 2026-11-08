@@ -290,7 +290,16 @@ Gates:
 - **Preparing a D0 binding without native effects.** From the exact merged preparation checkout, choose
   a fresh eight-hex token. Create a read-only bindings JSON under the preparation root using
   `macos_preparation.control_paths(token)` filtered to `SLOTS`, plus `desktop_host=DESKTOP_HOST`,
-  `token`, `check_source=CHECK_SOURCE`, and `route_echo=ROUTE_ECHO`. Run
+  `token`, `check_source=CHECK_SOURCE`, and `route_echo=ROUTE_ECHO`. For example, after checking
+  `a19b3c4d` is fresh and selecting a private preparation directory, make that file with:
+
+  ```sh
+  python3 -I -B -c 'import json,sys; sys.path.insert(0,"docs/qualification/workspace-private-531"); import macos_preparation as p; t="a19b3c4d"; b={k:v for k,v in p.control_paths(t).items() if k in p.SLOTS}; b.update(desktop_host=p.DESKTOP_HOST,token=t,check_source=p.CHECK_SOURCE,route_echo=p.ROUTE_ECHO); print(json.dumps(b,sort_keys=True))' > /Volumes/Stash/scratch/effigy/linux-artifact-preparation.l0tx7tam/bindings-a19b3c4d.json
+  chmod 400 /Volumes/Stash/scratch/effigy/linux-artifact-preparation.l0tx7tam/bindings-a19b3c4d.json
+  effigy qualification:macos:proof-only -- plan D0 /Volumes/Stash/scratch/effigy/linux-artifact-preparation.l0tx7tam/bindings-a19b3c4d.json
+  ```
+
+  The paths and token are examples to be checked for collisions, not a reservation. Run
   `effigy qualification:macos:proof-only -- plan D0 /absolute/path/to/bindings.json`.
   This only reads the checkout, interpreter and pinned tool files; it prints the stable `inputs`,
   hashes, candidate head and bindings hash, and creates no roots, claims or activation. Copy those

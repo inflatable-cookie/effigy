@@ -1952,6 +1952,9 @@ class StableProofTests(Fixture):
             other, second = ex.stable_input_manifest()
             self.assertEqual(identity, other)
             self.assertNotEqual(first, second)
+            for name, inputs in (('first-map.json', first), ('second-map.json', second)):
+                Path(self.tmp, name).write_text(json.dumps(inputs, sort_keys=True))
+                self.assertEqual(json.loads(Path(self.tmp, name).read_text()), inputs)
             request = {key: data[key] for key in ('stage', 'bindings', 'inputs', 'inputs_sha256',
                                                    'manifest_sha256', 'source_sha256')}
             request.update(activation_path=activation, activation_sha256=sha, evidence_root=self.evidence)
@@ -1986,6 +1989,12 @@ class StableProofTests(Fixture):
                         proof.main(['proof', path, ex.sha_file(path)])
                     effect.assert_not_called()
                     self.assertEqual(os.listdir(self.tmp + '/claims'), [])
+                duplicate = self.tmp + '/duplicate-request.json'
+                Path(duplicate).write_text('{"stage":"D0","stage":"D0"}')
+                os.chmod(duplicate, 0o400)
+                with mock.patch.object(ex, '_execute_stage') as effect, self.assertRaisesRegex(ex.Refusal, 'duplicate'):
+                    proof.main(['proof', duplicate, ex.sha_file(duplicate)])
+                effect.assert_not_called()
                 for key in ('missing', 'extra', 'traversal'):
                     altered = json.loads(json.dumps(request))
                     repo = altered['inputs']['repository']
