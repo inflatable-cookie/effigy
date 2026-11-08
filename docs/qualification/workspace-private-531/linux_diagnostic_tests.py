@@ -142,6 +142,41 @@ def row(inode, logical, allocated=None):
             'allocated': logical if allocated is None else allocated}
 
 
+class Sampled:
+    """A stat-shaped observation with one field injected.
+
+    An unprivileged fixture cannot create a file with another owner, so this is the scan's only
+    stat seam: it carries the real kernel facts and replaces one of them, which is what the walk
+    would have observed had the entry changed hands.
+    """
+    FIELDS = ('st_mode', 'st_dev', 'st_ino', 'st_uid', 'st_nlink', 'st_size', 'st_blocks')
+
+    def __init__(self, real, **changes):
+        for name in self.FIELDS:
+            setattr(self, name, getattr(real, name))
+        for name, value in changes.items():
+            setattr(self, 'st_' + name, value)
+
+
+@contextlib.contextmanager
+def injected_stat(name, **changes):
+    """Inject one observed field when the package walk looks up one named entry."""
+    real = diagnostic.lstat
+
+    def observed(path):
+        info = real(path)
+        return Sampled(info, **changes) if Path(path).name == name else info
+
+    with patch.object(diagnostic, 'lstat', observed):
+        yield
+
+
+def observed_package(root, disk, xml, **kwargs):
+    """The narrow read-only inventory mode the diagnostic entry uses for incidental metadata."""
+    return diagnostic.ExtentMonitor(root, disk, xml, diagnostic.inventory(disk, xml),
+                                    ancillary_ownership=diagnostic.OBSERVED, **kwargs)
+
+
 class MetadataAccountingTests(unittest.TestCase):
     """Ancillary metadata replacement is charged, never silently skipped or silently blamed."""
 
@@ -251,6 +286,154 @@ class MetadataAccountingTests(unittest.TestCase):
             with self.assertRaisesRegex(Refusal, 'package entry unreadable'):
                 diagnostic.package_sample(root)
 
+    def test_observed_mode_refuses_aliases_and_non_regular_entries(self):
+        """The narrow mode is a charge rule only: an unaccountable entry still refuses."""
+        root = fixture()
+        (root / 'plain').write_bytes(b'x')
+        (root / 'link').symlink_to(root / 'plain')
+        with self.assertRaisesRegex(Refusal, 'symlink'):
+            diagnostic.package_sample(root, None, diagnostic.OBSERVED)
+        (root / 'link').unlink()
+        os.link(root / 'plain', root / 'alias')
+        with self.assertRaisesRegex(Refusal, 'aliased file'):
+            diagnostic.package_sample(root, None, diagnostic.OBSERVED)
+        (root / 'alias').unlink()
+        os.mkfifo(root / 'fifo')
+        with self.assertRaisesRegex(Refusal, 'non-regular file'):
+            diagnostic.package_sample(root, None, diagnostic.OBSERVED)
+        (root / 'fifo').unlink()
+        with patch.object(diagnostic, 'lstat', side_effect=Refusal('package entry unreadable')):
+            with self.assertRaisesRegex(Refusal, 'package entry unreadable'):
+                diagnostic.package_sample(root, None, diagnostic.OBSERVED)
+        with self.assertRaisesRegex(Refusal, 'unsupported ancillary ownership mode'):
+            diagnostic.package_sample(root, None, 'guess')
+
+    def test_observed_mode_refuses_a_cross_device_entry(self):
+        root, disk, xml = disk_fixture()
+        (root / 'other-device').write_bytes(b'x')
+        monitor = observed_package(root, disk, xml)
+        with injected_stat('other-device', dev=diagnostic.os.lstat(root).st_dev + 1):
+            with self.assertRaisesRegex(Refusal, 'crosses a device boundary'):
+                monitor.check()
+
+    def test_foreign_metadata_is_charged_and_never_promoted_to_custody(self):
+        """The 745 refusal shape: an incidental file owned by another uid.
+
+        The kernel stat supplies the byte charge and the observed owner. Nothing is read, no
+        mode or content changes, and the same package still refuses in the default strict mode.
+        """
+        root, disk, xml = disk_fixture()
+        config = root / 'config.pvs'
+        config.write_bytes(b'config')
+        foreign = os.geteuid() + 1
+        monitor = observed_package(root, disk, xml, bound=[config])
+        self.assertEqual(monitor.check()['package'], {'logical': 0, 'allocated': 0})
+        incidental = root / 'config.pvs.e13c235b'
+        incidental.write_bytes(b'incidental-metadata')
+        incidental.chmod(0o640)
+        before = incidental.lstat()
+        with injected_stat(incidental.name, uid=foreign):
+            charged = monitor.check()
+        after = incidental.lstat()
+        self.assertEqual((incidental.read_bytes(), after.st_mode & 0o777),
+                         (b'incidental-metadata', before.st_mode & 0o777))
+        self.assertEqual(after.st_uid, before.st_uid)
+        self.assertEqual(charged['package'], {'logical': len(b'incidental-metadata'),
+                                              'allocated': before.st_blocks * 512})
+        self.assertEqual(charged['ancillary_ownership'], diagnostic.OBSERVED)
+        appeared = monitor.ancillary.events[-1]
+        self.assertEqual((appeared['kind'], appeared['path']), ('appeared', incidental.name))
+        current = appeared['current']
+        self.assertEqual((current['uid'], current['custody']),
+                         (foreign, diagnostic.CUSTODY_FOREIGN))
+        self.assertEqual((current['device'], current['inode']),
+                         (before.st_dev, before.st_ino))
+        self.assertEqual((current['logical'], current['allocated']),
+                         (before.st_size, before.st_blocks * 512))
+        self.assertEqual((charged['metadata']['owners'], charged['metadata']['foreign_owned']),
+                         (sorted([os.geteuid(), foreign]), 1))
+        # The same bytes stay a custody refusal for every strict caller.
+        strict = diagnostic.ExtentMonitor(root, disk, xml, diagnostic.inventory(disk, xml))
+        with injected_stat(incidental.name, uid=foreign):
+            with self.assertRaisesRegex(Refusal, 'foreign-owned'):
+                strict.check()
+
+    def test_foreign_metadata_keeps_every_incarnation_and_owner_event(self):
+        root, disk, xml = disk_fixture()
+        foreign = os.geteuid() + 1
+        incidental = root / 'config.pvs.rotated'
+        incidental.write_bytes(b'first')
+        monitor = observed_package(root, disk, xml)
+        self.assertEqual(monitor.package_initial['logical'], len(b'first'))
+        with injected_stat(incidental.name, uid=foreign):
+            result = monitor.check()
+        self.assertEqual(result['metadata']['foreign_owned'], 1)
+        owner_event = monitor.ancillary.events[-1]
+        self.assertEqual((owner_event['kind'], owner_event['previous']['uid']),
+                         ('owner-changed', os.geteuid()))
+        self.assertEqual((owner_event['current']['uid'], owner_event['current']['custody']),
+                         (foreign, diagnostic.CUSTODY_FOREIGN))
+        # A replacement by a larger incarnation of the same path is charged again in full.
+        temporary = root / 'config.pvs.rotated.tmp'
+        temporary.write_bytes(b'second-incarnation')
+        os.replace(temporary, incidental)
+        with injected_stat(incidental.name, uid=foreign):
+            replaced = monitor.check()
+        self.assertEqual(replaced['metadata']['incarnations'], 2)
+        self.assertEqual([event['kind'] for event in monitor.ancillary.events],
+                         ['owner-changed', 'replaced'])
+        # The appeared incarnation was charged at the baseline, and the replacement is charged in
+        # full on top of it: the held total keeps every incarnation.
+        self.assertEqual(replaced['package']['logical'], len(b'second-incarnation'))
+        self.assertEqual(replaced['metadata']['held']['logical'],
+                         len(b'first') + len(b'second-incarnation'))
+        incidental.unlink()
+        gone = monitor.check()
+        self.assertEqual([event['kind'] for event in monitor.ancillary.events][-1], 'disappeared')
+        self.assertEqual(gone['metadata']['held']['logical'],
+                         len(b'first') + len(b'second-incarnation'))
+        self.assertEqual(gone['metadata']['objects'], 0)
+
+    def test_foreign_metadata_refusal_keeps_the_observed_identity(self):
+        """A refusal must not discard the fact that explains it."""
+        root, disk, xml = disk_fixture()
+        incidental = root / 'config.pvs.e13c235b'
+        incidental.write_bytes(b'incidental')
+        incidental.chmod(0o600)
+        info = incidental.lstat()
+        foreign = os.geteuid() + 1
+        monitor = diagnostic.ExtentMonitor(root, disk, xml, diagnostic.inventory(disk, xml))
+        with injected_stat(incidental.name, uid=foreign):
+            with self.assertRaises(diagnostic.CustodyRefusal) as caught:
+                monitor.check()
+        self.assertIn('foreign-owned', str(caught.exception))
+        observation = caught.exception.observation
+        self.assertEqual((observation['phase'], observation['operation'],
+                          observation['relative'], observation['errno']),
+                         ('package-walk', 'lstat', incidental.name, None))
+        self.assertEqual((observation['device'], observation['inode'], observation['uid']),
+                         (info.st_dev, info.st_ino, foreign))
+        self.assertEqual((observation['mode'], observation['nlink'], observation['type']),
+                         (0o600, 1, 'regular'))
+        self.assertEqual((observation['logical'], observation['allocated']),
+                         (info.st_size, info.st_blocks * 512))
+        # A definitive refusal is recorded once with its facts and is not retried.
+        self.assertEqual([failure['attempt'] for failure in monitor.observation_failures], [1])
+        self.assertEqual(monitor.observation_failures[0]['uid'], foreign)
+
+    def test_bound_input_owner_mismatch_still_refuses_in_observed_mode(self):
+        root, disk, xml = disk_fixture()
+        config = root / 'config.pvs'
+        config.write_bytes(b'config')
+        monitor = observed_package(root, disk, xml, bound=[config])
+        with injected_stat(config.name, uid=os.geteuid() + 1):
+            with self.assertRaisesRegex(Refusal, 'foreign-owned'):
+                monitor.check()
+        # A descriptor-named extent is bound by its own verification in every mode.
+        with patch.object(diagnostic.os, 'geteuid', return_value=os.geteuid() + 1):
+            with self.assertRaisesRegex(Refusal, 'extent alias or non-regular file'):
+                diagnostic.inventory(disk, xml)
+
     def test_extent_and_root_identity_stay_fatal(self):
         root, disk, xml = disk_fixture()
         monitor = diagnostic.ExtentMonitor(root, disk, xml, diagnostic.inventory(disk, xml))
@@ -319,6 +502,10 @@ class MetadataAccountingTests(unittest.TestCase):
         self.assertLessEqual(proof.RUN_WAIT + proof.READY_WAIT, proof.DURATION - 2 * proof.RESERVE)
         self.assertLessEqual(proof.STATE_WAIT + proof.STOP_OBSERVE + proof.FINAL_RESERVE,
                              proof.DURATION - proof.RESERVE)
+        # Transport retries, the systemd wait and the first boot-id read share one readiness
+        # window: the per-attempt limit and floor cannot extend it.
+        self.assertLessEqual(proof.TRANSPORT_WAIT, proof.READY_WAIT)
+        self.assertLess(proof.TRANSPORT_FLOOR, proof.READY_WAIT)
 
     def test_retained_snapshot_bytes_bind_complete_canonical_inventory(self):
         raw = (SOURCE_DIR / 'fixtures' / 'retained-snapshot-list.json').read_bytes()
@@ -376,6 +563,33 @@ class MetadataAccountingTests(unittest.TestCase):
                 proof.check_probe(changed)
         with self.assertRaises(Refusal):
             proof.check_boot_id(b'11111111-2222-3333-4444-555555555555\nextra\n')
+
+    def test_transport_is_proved_only_by_the_exact_sentinel(self):
+        ready = {'disposition': 'exited', 'waited_exit': 0}
+        self.assertEqual(proof.classify_transport(
+            ready, b'linux-diagnostic-transport-ready\n', b''), 'ready')
+        # The exact 745 step-005 stderr is the one retryable shape: empty stdout, a nonzero
+        # waited exit, and this source-qualified Parallels session refusal.
+        self.assertEqual(len(proof.TRANSPORT_UNAVAILABLE), 186)
+        self.assertEqual(hashlib.sha256(proof.TRANSPORT_UNAVAILABLE).hexdigest(),
+                         'eb32a763e139394434311247ab0eceaefb923123285632bcc29b6d4b631efd80')
+        refused = {'disposition': 'failed', 'waited_exit': 255}
+        self.assertEqual(proof.classify_transport(
+            refused, b'', proof.TRANSPORT_UNAVAILABLE + b'\n'), 'unavailable')
+        for result, stdout, stderr in (
+                (ready, b'ready\n', b''),
+                (ready, b'linux-diagnostic-transport-ready\nextra\n', b''),
+                (ready, b'linux-diagnostic-transport-ready\n', b'warning\n'),
+                (refused, b'linux-diagnostic-transport-ready\n',
+                 proof.TRANSPORT_UNAVAILABLE + b'\n'),
+                (refused, b'partial', proof.TRANSPORT_UNAVAILABLE + b'\n'),
+                ({'disposition': 'timeout', 'waited_exit': -9}, b'', b''),
+                ({'disposition': 'failed', 'waited_exit': None}, b'',
+                 proof.TRANSPORT_UNAVAILABLE),
+                ({'disposition': 'failed', 'waited_exit': 3}, b'', b'other error\n')):
+            with self.subTest(result=result, stdout=stdout, stderr=stderr):
+                with self.assertRaises(Refusal):
+                    proof.classify_transport(result, stdout, stderr)
 
     def test_extent_loss_and_growth_cap_refuse(self):
         before = {'leaf': {'path': '/leaf', 'device': 1, 'inode': 2, 'logical': 1, 'allocated': 1}}
@@ -1342,8 +1556,23 @@ elif args[0] == 'exec' and args[2:4] == ['/bin/cat', '/proc/sys/kernel/random/bo
         print('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')
     else:
         print('11111111-2222-3333-4444-555555555555')
+elif args[0] == 'exec' and args[2:4] == ['/bin/echo', %(sentinel)r]:
+    if mode == 'transport_refused' or (mode == 'transport_retry'
+                                       and not (root / 'transport-ready').exists()):
+        (root / 'transport-ready').write_text('1')
+        print(%(transport_refusal)r, file=sys.stderr, end='')
+        sys.exit(255)
+    if mode == 'transport_error':
+        print('parallels: unexpected transport error', file=sys.stderr)
+        sys.exit(3)
+    if mode == 'transport_wrong_output':
+        print('ready')
+        sys.exit(0)
+    print(%(sentinel)r)
 elif args[0] == 'exec':
     script = args[-1] if len(args) > 4 else ''
+    if mode == 'foreign_metadata':
+        (home / 'config.pvs.e13c235b').write_bytes(b'incidental-metadata')
     for name in routes:
         if ('# effigy-linux-observation: ' + name) in script:
             code, out = mode_routes.get(mode, {}).get(name, routes[name])
@@ -1396,6 +1625,10 @@ class EntryTests(unittest.TestCase):
         ('stop_timeout', 1, 1),
         ('growth', 0, 1),
         ('never_ready', 1, 1),
+        ('transport_retry', 0, 1),
+        ('transport_refused', 1, 1),
+        ('transport_error', 1, 1),
+        ('transport_wrong_output', 1, 1),
         ('readiness_starting', 1, 1),
         ('readiness_degraded', 1, 1),
         ('readiness_failed', 1, 1),
@@ -1405,6 +1638,7 @@ class EntryTests(unittest.TestCase):
         ('boot_drift_before_probe', 1, 1),
         ('boot_drift_routes', 1, 1),
         ('metadata_rotation', 0, 1),
+        ('foreign_metadata', 0, 1),
         ('config_change', 0, 1),
         ('config_replaced', 0, 1),
         ('config_missing', 1, 1),
@@ -1452,6 +1686,9 @@ class EntryTests(unittest.TestCase):
                                       'vm': vm, 'snapshot': json.dumps(snapshot),
                                       'probe': probe_output, 'starting_probe': starting_probe,
                                       'cap': diagnostic.CAP,
+                                      'sentinel': proof.TRANSPORT_SENTINEL,
+                                      'transport_refusal':
+                                          (proof.TRANSPORT_UNAVAILABLE + b'\n').decode(),
                                       'routes': route_text(),
                                       'mode_routes': {'writer_bound_absent': route_text(ABSENT_ROUTES),
                                                       'writer_bound_malformed': route_text(MALFORMED_ROUTES)}})
@@ -1466,8 +1703,9 @@ class EntryTests(unittest.TestCase):
             (disk / 'a.hds').write_bytes(b'a')
             (disk / 'b.hds').write_bytes(b'extent')
             (home / 'config.pvs.backup').write_bytes(b'original-backup')
+            (home / 'config.pvs.e13c235b').unlink(missing_ok=True)
             for leftover in ('config.pvs.backup.tmp', 'starting-lists', 'boot-reads',
-                             'stop-while-starting'):
+                             'transport-ready', 'stop-while-starting'):
                 (root / leftover).unlink(missing_ok=True)
             log.write_text('')
 
@@ -1514,7 +1752,7 @@ class EntryTests(unittest.TestCase):
                 self.assertEqual(proof.main(['proof', str(path), digest]), 0)
             self.assertEqual(state.read_text(), 'stopped')
             result = json.loads((evidence / 'linux-diagnostic-fixture01' / 'outcome.json').read_text())
-            self.assertEqual(result['schema'], 'linux-diagnostic-observation-v5')
+            self.assertEqual(result['schema'], 'linux-diagnostic-observation-v6')
             self.assertEqual(result['start_count'], 1)
             self.assertEqual(result['stop_count'], 1)
             self.assertEqual(result['stop_eligibility'], 'running')
@@ -1522,6 +1760,11 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(result['writable_top'], 'unknown')
             self.assertEqual(result['placement'], 'not evaluated')
             self.assertEqual(result['findings'], [])
+            self.assertEqual(result['transport']['status'], 'ready')
+            self.assertEqual([row['classification'] for row in result['transport']['attempts']],
+                             ['ready'])
+            self.assertEqual(result['ancillary_ownership'],
+                             'observed (stat only); no trusted input or ownership claim')
             self.assertEqual(result['readiness'], 'running')
             self.assertEqual(result['boot_binding'], {
                 'status': 'same boot observed',
@@ -1582,6 +1825,7 @@ class EntryTests(unittest.TestCase):
             with patch.object(proof.stage, 'run_stage', side_effect=bounded), \
                  patch.object(proof, 'PAUSE', 0.05), patch.object(proof, 'RUN_WAIT', 0.6), \
                  patch.object(proof, 'READY_WAIT', 1), patch.object(proof, 'STATE_WAIT', 6), \
+                 patch.object(proof, 'TRANSPORT_FLOOR', 0.3), \
                  patch.object(proof, 'STOP_OBSERVE', 1):
                 for index, (mode, expected, stops) in enumerate(self.MODES, 2):
                     with self.subTest(mode=mode):
@@ -1591,7 +1835,11 @@ class EntryTests(unittest.TestCase):
                         item_raw = json.dumps(item).encode()
                         item_path.write_bytes(item_raw)
                         item_path.chmod(0o400)
-                        with contextlib.redirect_stdout(io.StringIO()):
+                        # The 745 refusal shape, injected at the scan's stat seam: an incidental
+                        # package file owned by another uid mid-occurrence.
+                        injection = (injected_stat('config.pvs.e13c235b', uid=os.geteuid() + 1)
+                                     if mode == 'foreign_metadata' else contextlib.nullcontext())
+                        with injection, contextlib.redirect_stdout(io.StringIO()):
                             self.assertEqual(proof.main(['proof', str(item_path),
                                                          hashlib.sha256(item_raw).hexdigest()]), expected)
                         result = json.loads((evidence / ('linux-diagnostic-fixture%02d' % index)
@@ -1660,6 +1908,23 @@ class EntryTests(unittest.TestCase):
                             self.assertEqual(result['vm_terminal'], 'stopped')
                             self.assertTrue(any('graceful stop did not complete' in finding
                                                 for finding in result['findings']))
+                        if mode == 'foreign_metadata':
+                            # The same bytes are charged with an observed owner and written into
+                            # the outcome ledger; they confer no input or ownership authority.
+                            self.assertEqual(result['findings'], [])
+                            self.assertEqual(result['ancillary_ownership'],
+                                             'observed (stat only); no trusted input or ownership claim')
+                            self.assertEqual([row['kind'] for row in result['metadata_events']],
+                                             ['appeared'])
+                            event = result['metadata_events'][0]
+                            self.assertEqual((event['path'], event['current']['uid']),
+                                             ('config.pvs.e13c235b', os.geteuid() + 1))
+                            self.assertEqual(event['current']['custody'], 'observed-foreign')
+                            self.assertEqual(event['current']['logical'], len(b'incidental-metadata'))
+                            self.assertGreaterEqual(result['post_metadata']['logical'],
+                                                    len(b'incidental-metadata'))
+                            self.assertIn('config', result['post'])
+                            self.assertIn('descriptor', result['post'])
                         if mode == 'metadata_rotation':
                             replaced = [event for event in result['metadata_events']
                                         if event['kind'] == 'replaced']
@@ -1671,17 +1936,90 @@ class EntryTests(unittest.TestCase):
                                                  for finding in result['findings']))
                         if mode == 'growth':
                             self.assertEqual(result['final_growth']['extents']['logical'], 5)
+                        if mode == 'extent_symlink':
+                            # A bound input that is a symlink refuses, and its observed identity is
+                            # recorded even though no live sample recorded the refusal.
+                            self.assertEqual(result['start_count'], 0)
+                            self.assertEqual(result['stop_count'], 0)
+                            self.assertTrue(any('extent alias or non-regular file' in finding
+                                                for finding in result['findings']))
+                            failure = result['observation_failures']
+                            self.assertEqual(len(failure), 1)
+                            self.assertEqual((failure[0]['phase'], failure[0]['operation'],
+                                              failure[0]['relative'], failure[0]['type']),
+                                             ('extent-verify', 'lstat', 'a.hds', 'symlink'))
+                            self.assertIsNotNone(failure[0]['inode'])
+                            self.assertIsNotNone(failure[0]['mode'])
                         if mode == 'never_ready':
                             self.assertTrue(any('readiness refused' in finding
                                                 for finding in result['findings']))
+                        destination = evidence / ('linux-diagnostic-fixture%02d' % index)
+
+                        def step_argv():
+                            return [(path.name, json.loads((path / 'intent.json').read_text())['argv'])
+                                    for path in sorted(destination.glob('step-*'))]
+
+                        if mode == 'transport_retry':
+                            # One transient session refusal, then the exact echo sentinel, then
+                            # systemd readiness and the same-boot routes inside one deadline.
+                            self.assertEqual(result['transport']['status'], 'ready')
+                            attempts = result['transport']['attempts']
+                            self.assertEqual([row['classification'] for row in attempts],
+                                             ['unavailable', 'ready'])
+                            self.assertEqual((attempts[0]['waited_exit'],
+                                              attempts[0]['stdout']['bytes']), (255, 0))
+                            first = destination / attempts[0]['step']
+                            self.assertEqual((first / 'stderr').read_bytes(),
+                                             proof.TRANSPORT_UNAVAILABLE + b'\n')
+                            self.assertEqual(hashlib.sha256((first / 'stderr').read_bytes()).hexdigest(),
+                                             attempts[0]['stderr']['sha256'])
+                            self.assertEqual(hashlib.sha256((first / 'stdout').read_bytes()).hexdigest(),
+                                             attempts[0]['stdout']['sha256'])
+                            self.assertEqual((first / 'receipt.json').is_file(), True)
+                            steps = step_argv()
+                            echoes = [name for name, argv in steps if '/bin/echo' in argv]
+                            systemd = [name for name, argv in steps if '/usr/bin/systemctl' in argv]
+                            self.assertEqual((len(echoes), len(systemd)), (2, 1))
+                            self.assertLess(echoes[-1], systemd[0])
+                            self.assertEqual(result['readiness'], 'running')
+                            self.assertEqual(result['findings'], [])
+                            self.assertIn('config', result['post'])
+                        if mode in ('transport_refused', 'transport_error',
+                                    'transport_wrong_output'):
+                            # A non-transient answer or an exhausted shared deadline refuses with
+                            # no later route: systemd, probe and writer reads never run.
+                            self.assertFalse(result.get('probe'))
+                            self.assertFalse(result.get('readiness_observation'))
+                            self.assertEqual(result['transport']['status'],
+                                             'exhausted' if mode == 'transport_refused'
+                                             else 'refused')
+                            self.assertTrue(any('guest transport' in finding
+                                                for finding in result['findings']))
+                            self.assertFalse([name for name, argv in step_argv()
+                                              if '/usr/bin/systemctl' in argv])
+                            self.assertFalse(any('observation-' in path.name
+                                                 for path in destination.iterdir()))
+                            self.assertEqual(result['stop_count'], 1)
+                            self.assertIn('config', result['post'])
+                            if mode == 'transport_refused':
+                                self.assertTrue(all(row['classification'] == 'unavailable'
+                                                    for row in result['transport']['attempts']))
+                                self.assertGreater(len(result['transport']['attempts']), 1)
+                            else:
+                                self.assertEqual(
+                                    [row['classification'] for row in
+                                     result['transport']['attempts']], ['refused'])
                         if mode.startswith('readiness_') or mode == 'never_ready':
                             self.assertFalse(result.get('probe'))
                             self.assertFalse(any('observation-' in path.name
-                                                 for path in (evidence / ('linux-diagnostic-fixture%02d' % index)).iterdir()))
+                                                 for path in destination.iterdir()))
                             self.assertEqual(result['stop_count'], 1)
-                            self.assertEqual(calls.count('exec'), 1)
-                            self.assertTrue((evidence / ('linux-diagnostic-fixture%02d' % index)
-                                             / 'step-005' / 'stdout').is_file())
+                            # One exact transport sentinel plus the one systemd wait.
+                            self.assertEqual(calls.count('exec'), 2)
+                            reads = [path for path, argv in step_argv()
+                                     if '/usr/bin/systemctl' in argv]
+                            self.assertEqual(len(reads), 1)
+                            self.assertTrue((destination / reads[0] / 'stdout').is_file())
                             self.assertIn('config', result['post'])
                         if mode == 'probe_starting':
                             self.assertTrue(any('probe did not observe systemd running' in finding
@@ -1841,6 +2179,8 @@ class CheckoutBindingTests(unittest.TestCase):
             "    vm['State'] = state.read_text()",
             "    print(json.dumps([vm]))",
             "elif args[0] == 'exec' and args[2:5] == ['/usr/bin/systemctl', 'is-system-running', '--wait']: print('running')",
+            "elif args[0] == 'exec' and args[2:4] == ['/bin/echo', %r]: print(%r)" % (
+                proof.TRANSPORT_SENTINEL, proof.TRANSPORT_SENTINEL),
             "elif args[0] == 'exec' and args[2:4] == ['/bin/cat', '/proc/sys/kernel/random/boot_id']: print('11111111-2222-3333-4444-555555555555')",
             "elif args[0] == 'exec':",
             "    script = args[-1] if len(args) > 4 else ''",
@@ -1909,13 +2249,14 @@ class CheckoutBindingTests(unittest.TestCase):
         calls = [json.loads(line) for line in self.log.read_text().splitlines()]
         self.assertEqual([call[1] for call in calls],
                          ['list', 'snapshot-list', 'start', 'list'] +
-                         ['exec'] * (5 + len(guest_probe.route_ids())) +
+                         ['exec'] * (6 + len(guest_probe.route_ids())) +
                          ['list', 'stop', 'list', 'snapshot-list'])
-        self.assertEqual(calls[4][3:6], ['/usr/bin/systemctl', 'is-system-running', '--wait'])
-        self.assertEqual(calls[5][3:5], ['/bin/cat', '/proc/sys/kernel/random/boot_id'])
-        self.assertEqual(calls[6][3:5], ['/bin/sh', '-c'])
-        self.assertEqual(calls[7][3:5], ['/bin/cat', '/proc/sys/kernel/random/boot_id'])
-        self.assertEqual(calls[8 + len(guest_probe.route_ids())][3:5],
+        self.assertEqual(calls[4][3:6], ['/bin/echo', proof.TRANSPORT_SENTINEL])
+        self.assertEqual(calls[5][3:6], ['/usr/bin/systemctl', 'is-system-running', '--wait'])
+        self.assertEqual(calls[6][3:5], ['/bin/cat', '/proc/sys/kernel/random/boot_id'])
+        self.assertEqual(calls[7][3:5], ['/bin/sh', '-c'])
+        self.assertEqual(calls[8][3:5], ['/bin/cat', '/proc/sys/kernel/random/boot_id'])
+        self.assertEqual(calls[9 + len(guest_probe.route_ids())][3:5],
                          ['/bin/cat', '/proc/sys/kernel/random/boot_id'])
         self.assertTrue(all(call[0] == str(self.program) for call in calls))
         self.assertIn([str(self.program), 'start', proof.setup.VM_UUID], calls)

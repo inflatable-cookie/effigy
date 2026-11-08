@@ -36,6 +36,18 @@ PRLCTL_SHA256 = '2f61a1c60db2d51591fb8479a248a982a81658f136f1501a94733b7a81731c5
 SNAPSHOT_SHA = 'd21610ba279b4faf2d7a62c87ef8f1050943fc8b6c072a04c71ce4d0c953e3ad'
 PROBE_KEYS = frozenset('uid boot_id system_state systemctl systemd_run systemd_version cgroup2 ssh_host_ed25519_fp sshd_expiry_time_mentions effigy531_passwd_exit effigy531_group_exit effigy531_home docker_group root_source root_fstype root_uuid root_parent root_serial root_model root_size ssh_listen_ipv4'.split())
 BOOT_ID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+# A guest session is proved only by this exact echo sentinel, and the only retryable answer is
+# the source-qualified Parallels refusal observed at step 005 of the 745 occurrence: the VM is
+# running but the host cannot open a session yet (waited exit 255, empty stdout, this stderr).
+# A wrong sentinel, a nonterminal client, a different stream or any unknown error refuses.
+TRANSPORT_SENTINEL = 'linux-diagnostic-transport-ready'
+TRANSPORT_UNAVAILABLE = (b'Unable to open new session in this virtual machine. Make sure your '
+                         b'virtual machine has finished booting, runs the latest version of '
+                         b'Parallels Tools, and is not isolated from the host OS.')
+TRANSPORT_WAIT = 20
+# A transport attempt starts only when this much of the one shared readiness window remains, so an
+# exhausted window is a named exhaustion instead of a client killed by the shared deadline.
+TRANSPORT_FLOOR = 5
 DURATION = 600
 RESERVE = 120
 # Cleanup is bounded inside the same operational deadline: one window to observe this bound VM's
@@ -251,6 +263,28 @@ def check_boot_id(raw):
     return value[:-1]
 
 
+def classify_transport(result, stdout, stderr):
+    """Classify one bounded guest-session probe as `ready` or `unavailable`.
+
+    A successful exact sentinel with a waited exit 0 and no stderr proves transport only. The
+    retryable `unavailable` answer is the exact 745 Parallels session refusal with empty stdout
+    and a nonzero waited exit; the observed exit code is kept. Everything else — a wrong or
+    partial sentinel, a timeout or unknown disposition, extra stderr — refuses instead of being
+    retried, so an unrecognised transport error never becomes a readiness claim.
+    """
+    if (result.get('disposition') == 'exited' and result.get('waited_exit') == 0
+            and not stderr and stdout == (TRANSPORT_SENTINEL + '\n').encode()):
+        return 'ready'
+    if (result.get('disposition') == 'failed' and isinstance(result.get('waited_exit'), int)
+            and result['waited_exit'] != 0 and not stdout
+            and stderr.rstrip(b'\n') == TRANSPORT_UNAVAILABLE):
+        return 'unavailable'
+    raise stage.Refusal(
+        'guest transport probe is neither the exact sentinel nor the source-qualified session '
+        'refusal: disposition=%s waited_exit=%s stdout_bytes=%d stderr_bytes=%d'
+        % (result.get('disposition'), result.get('waited_exit'), len(stdout), len(stderr)))
+
+
 def execute(request, request_path, request_hash):
     launched_at = time.time()
     deadline = time.monotonic() + DURATION
@@ -284,10 +318,12 @@ def execute(request, request_path, request_hash):
     destination.mkdir(mode=0o700)
     operational_end = deadline - RESERVE
     start_end = operational_end - 120
-    outcome = {'schema': 'linux-diagnostic-observation-v5', 'request_sha256': request_hash,
+    outcome = {'schema': 'linux-diagnostic-observation-v6', 'request_sha256': request_hash,
                'head': actual, 'candidate_h': setup.CANDIDATE_H_HEAD, 'launched_at': launched_at,
                'writable_top': 'unknown', 'guest_association': 'unknown',
                'readiness': 'not evaluated', 'readiness_observation': None,
+               'transport': {'sentinel': TRANSPORT_SENTINEL, 'status': 'not attempted',
+                             'attempts': []},
                'boot_binding': {'status': 'not established', 'boot_id': None,
                                 'route_window_start': None, 'route_window_end': None},
                'placement': 'not evaluated',
@@ -295,6 +331,7 @@ def execute(request, request_path, request_hash):
                'launcher_closure_is_vm_closure': False, 'start_count': 0, 'stop_count': 0,
                'stop_eligibility': 'unknown', 'findings': [],
                'metadata_accounting': 'sampled conservative charges; not a hard quota',
+               'ancillary_ownership': 'observed (stat only); no trusted input or ownership claim',
                'metadata_differences': [], 'identity_events': [], 'metadata_events': [],
                'observation_failures': [],
                'guest_writer_bound': {'schema': 'linux-writer-bound-observation-v1',
@@ -359,6 +396,11 @@ def execute(request, request_path, request_hash):
                 (monitor if track else stop_monitor).check()
             time.sleep(min(0.25, PAUSE, max(0, until - time.monotonic())))
 
+    def result_streams():
+        """The stdout/stderr originals the last `call` retained, read back as evidence."""
+        step = destination / ('step-%03d' % serial)
+        return {name: (step / name).read_bytes() for name in ('stdout', 'stderr')}
+
     def good(result):
         return result.get('disposition') == 'exited' and result.get('waited_exit') == 0
 
@@ -377,7 +419,9 @@ def execute(request, request_path, request_hash):
         descriptor = (destination / 'before-descriptor').read_bytes()
         extents = diagnostic.inventory(disk, descriptor)
         outcome['before_extents'] = extents
-        monitor = diagnostic.ExtentMonitor(home, disk, descriptor, extents)
+        monitor = diagnostic.ExtentMonitor(home, disk, descriptor, extents,
+                                           bound=[files['config']],
+                                           ancillary_ownership=diagnostic.OBSERVED)
         outcome['before_metadata'] = monitor.package_initial
         result, raw = call(['list', '--info', setup.VM_UUID, '--json'], 10, 65536, start_end)
         if not good(result):
@@ -405,9 +449,36 @@ def execute(request, request_path, request_hash):
             pause(run_end)
         if not running:
             raise stage.Refusal('running observation unknown')
-        # One absolute readiness window covers systemd's wait and the first boot-id
-        # read; no retry or per-call deadline can extend the 600s occurrence.
+        # One absolute readiness window covers guest transport, systemd's wait and the first
+        # boot-id read; no retry or per-call deadline can extend the 600s occurrence.
         ready_end = min(start_end, time.monotonic() + READY_WAIT)
+        while ready_end - time.monotonic() >= TRANSPORT_FLOOR:
+            result, raw = call(['exec', setup.VM_UUID, '/bin/echo', TRANSPORT_SENTINEL],
+                               min(TRANSPORT_WAIT, ready_end - time.monotonic()), 2048, ready_end)
+            streams = result_streams()
+            attempt = {'step': 'step-%03d' % serial, 'disposition': result.get('disposition'),
+                       'waited_exit': result.get('waited_exit'),
+                       'elapsed_seconds': result.get('elapsed_seconds'),
+                       'stdout': {'bytes': len(raw),
+                                  'sha256': hashlib.sha256(raw).hexdigest()},
+                       'stderr': {'bytes': len(streams['stderr']),
+                                  'sha256': hashlib.sha256(streams['stderr']).hexdigest()}}
+            try:
+                kind = classify_transport(result, raw, streams['stderr'])
+            except stage.Refusal:
+                outcome['transport']['attempts'].append(dict(attempt, classification='refused'))
+                outcome['transport']['status'] = 'refused'
+                raise
+            outcome['transport']['attempts'].append(dict(attempt, classification=kind))
+            if kind == 'ready':
+                outcome['transport']['status'] = 'ready'
+                break
+            pause(ready_end)
+        if outcome['transport']['status'] != 'ready':
+            outcome['transport']['status'] = 'exhausted'
+            raise stage.Refusal(
+                'guest transport readiness unknown: %d attempt(s) in the one shared readiness '
+                'deadline without the exact echo sentinel' % len(outcome['transport']['attempts']))
         result, raw = call(['exec', setup.VM_UUID, '/usr/bin/systemctl', 'is-system-running', '--wait'],
                            READY_WAIT, 1024, ready_end)
         outcome['readiness_observation'] = result
@@ -467,6 +538,14 @@ def execute(request, request_path, request_hash):
         outcome['guest_writer_bound'] = writer_bound
         outcome['findings'].extend(writer_bound['findings'])
     except Exception as exc:
+        observation = getattr(exc, 'observation', None)
+        if observation is not None and not any(
+                tuple(row.get(key) for key in ('phase', 'operation', 'path', 'errno'))
+                == tuple(observation.get(key) for key in ('phase', 'operation', 'path', 'errno'))
+                for row in (monitor.observation_failures if monitor else [])):
+            # A refusal that names an object keeps that object's observed identity even when no
+            # live sample recorded it: the fact that explains the refusal is evidence.
+            outcome['observation_failures'].append(dict(observation, attempt=0))
         outcome['findings'].append(type(exc).__name__ + ': ' + str(exc))
     finally:
         if start_launched:
@@ -572,7 +651,8 @@ def execute(request, request_path, request_hash):
             outcome['metadata_events'] = monitor.ancillary.events
             outcome['identity_events'].extend(monitor.identity_events)
             # Every failed live attempt stays here with its phase, operation, path and errno.
-            outcome['observation_failures'] = monitor.observation_failures
+            if monitor.observation_failures:
+                outcome['observation_failures'] = monitor.observation_failures
         outcome['finished_at'] = time.time()
         outcome['probe_sha256'] = setup.PROBE_SHA256
         stage.record(destination / 'outcome.json', outcome)

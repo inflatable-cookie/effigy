@@ -28,6 +28,16 @@ During v0.x, MINOR bumps may include breaking changes.
   the facts stay observations and grant no setup, disk, hard-limit, association or trust credit
   (effigy#740).
 
+- Wait for the guest session before systemd readiness in that proof-only Linux diagnostic
+  occurrence: one fixed bounded read-only echo sentinel proves transport first, only the exact
+  Parallels session refusal observed in the 745 run is retried inside the same readiness window,
+  and transport retries, the one systemd wait and the first boot-ID read share that window with no
+  extra start or extended budget. Ancillary metadata keeps an observed owner instead of only
+  refusing it: the kernel's stat of a regular non-aliased file supplies its byte charge and owner
+  without granting it input, config, extent or ownership authority, while bound inputs and the
+  strict default still refuse and every refusal retains the complete observed stat identity
+  (effigy#746).
+
 - Allow a pinned macOS proof request to start its bounded stage window at the externally approved launch (effigy#696).
 
 - Keep macOS proof input bindings stable across equivalent pinned checkouts (effigy#695).
