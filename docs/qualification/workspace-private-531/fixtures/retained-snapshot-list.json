@@ -1,0 +1,290 @@
+{
+	"{a4b2b55c-875e-40a3-82f2-3dc3351d8339}": {
+	"name": "clean-base",
+	"date": "2026-10-27 20:40:57",
+	"state": "poweroff",
+	"current": false,
+	"parent": ""
+}
+,
+	"{f8b78288-7c50-4d6e-bbf1-fac45bc9f273}": {
+	"name": "prewarm-entry-20261028",
+	"date": "2026-10-28 14:04:39",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{a4b2b55c-875e-40a3-82f2-3dc3351d8339}"
+}
+,
+	"{1910c8d2-7261-4059-b8e5-d6a2447d57b9}": {
+	"name": "prewarm-exit-e9b0556-20261028",
+	"date": "2026-10-28 14:09:56",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{f8b78288-7c50-4d6e-bbf1-fac45bc9f273}"
+}
+,
+	"{7d3e6e0d-607a-46fa-8852-6b35db5ab62c}": {
+	"name": "effigy-l1-exploratory-entry-20261028",
+	"date": "2026-10-28 17:42:24",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{1910c8d2-7261-4059-b8e5-d6a2447d57b9}"
+}
+,
+	"{d45b3846-b86e-4f49-afc0-f448c4ec800e}": {
+	"name": "effigy-l1-exploratory-exit-before-resume-20261028",
+	"date": "2026-10-28 17:48:24",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{7d3e6e0d-607a-46fa-8852-6b35db5ab62c}"
+}
+,
+	"{b77d1fbf-e60b-41f5-a32d-fb285d3b7d71}": {
+	"name": "effigy-l1-exploratory-resume-entry-20261028",
+	"date": "2026-10-28 17:48:58",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{d45b3846-b86e-4f49-afc0-f448c4ec800e}"
+}
+,
+	"{bc84e330-2ac6-4009-acb9-3b79332c3384}": {
+	"name": "effigy-l1-exploratory-compile-block-exit-20261028",
+	"date": "2026-10-28 17:56:32",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{b77d1fbf-e60b-41f5-a32d-fb285d3b7d71}"
+}
+,
+	"{a6b0e831-afa1-4179-aad9-91e297e58014}": {
+	"name": "effigy-449-native-compile-entry-20261028",
+	"date": "2026-10-28 20:46:24",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{bc84e330-2ac6-4009-acb9-3b79332c3384}"
+}
+,
+	"{365bc2f0-d601-49bf-9a3d-33997b5a333f}": {
+	"name": "effigy-449-native-compile-exit-20261028",
+	"date": "2026-10-28 20:50:01",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{a6b0e831-afa1-4179-aad9-91e297e58014}"
+}
+,
+	"{1ee33c03-8f8f-4cea-a825-0070e8df251b}": {
+	"name": "effigy-l1-operator-entry-20261028-2105",
+	"date": "2026-10-28 21:12:16",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{365bc2f0-d601-49bf-9a3d-33997b5a333f}"
+}
+,
+	"{8ccbdfe4-4fd8-42b4-8402-11b694b6e8f9}": {
+	"name": "effigy-l1-operator-failure-20261028-2115",
+	"date": "2026-10-28 21:18:45",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{1ee33c03-8f8f-4cea-a825-0070e8df251b}"
+}
+,
+	"{22d5e876-e652-494c-93d1-a1a483e66ece}": {
+	"name": "effigy-451-entry-20261029-1300z",
+	"date": "2026-10-29 12:59:26",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{1ee33c03-8f8f-4cea-a825-0070e8df251b}"
+}
+,
+	"{1d154272-c88b-4a6d-89b7-fc42e6697653}": {
+	"name": "effigy-451-exit-20261029-1320z",
+	"date": "2026-10-29 13:14:13",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{22d5e876-e652-494c-93d1-a1a483e66ece}"
+}
+,
+	"{90ff1853-563e-423e-81e5-68c1b8828b85}": {
+	"name": "effigy-473-entry-20261029-1433z",
+	"date": "2026-10-29 14:33:20",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{1d154272-c88b-4a6d-89b7-fc42e6697653}"
+}
+,
+	"{68e7e6e3-d9ce-4935-9e62-18e4f6f16f81}": {
+	"name": "effigy-473-exit-20261029-1440z",
+	"date": "2026-10-29 14:41:13",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{90ff1853-563e-423e-81e5-68c1b8828b85}"
+}
+,
+	"{33bb9447-5caf-406c-90a7-7c48bbccff61}": {
+	"name": "effigy-476-proof-entry-20261031-1234z",
+	"date": "2026-10-31 12:34:46",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{90ff1853-563e-423e-81e5-68c1b8828b85}"
+}
+,
+	"{e16cb22b-cf85-468a-8cc2-af1719d50754}": {
+	"name": "effigy-476-setup-refusal-20261031",
+	"date": "2026-10-31 12:45:25",
+	"state": "poweron",
+	"current": false,
+	"parent": "{33bb9447-5caf-406c-90a7-7c48bbccff61}"
+}
+,
+	"{c1a80a32-6ab0-485a-af7a-398dd7b67a72}": {
+	"name": "effigy-476-failure-exit-20261031",
+	"date": "2026-10-31 12:49:50",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{e16cb22b-cf85-468a-8cc2-af1719d50754}"
+}
+,
+	"{0f1ad39c-b49d-4f1d-a18c-4d9919526ecb}": {
+	"name": "effigy-476-v2-entry-20261031",
+	"date": "2026-10-31 12:51:44",
+	"state": "poweron",
+	"current": false,
+	"parent": "{90ff1853-563e-423e-81e5-68c1b8828b85}"
+}
+,
+	"{fd847a76-380a-43cf-91ef-f7153707f0d9}": {
+	"name": "effigy-476-v2-setup-failure-20261031",
+	"date": "2026-10-31 13:01:42",
+	"state": "poweron",
+	"current": false,
+	"parent": "{0f1ad39c-b49d-4f1d-a18c-4d9919526ecb}"
+}
+,
+	"{7d95a88a-18df-4760-8e46-6476b6b08d70}": {
+	"name": "effigy-476-v2-failure-exit-20261031",
+	"date": "2026-10-31 13:04:10",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{fd847a76-380a-43cf-91ef-f7153707f0d9}"
+}
+,
+	"{edb0e66f-c0a9-4139-8e34-0de8adba2211}": {
+	"name": "effigy-476-615503ee-packet-defect3-exit",
+	"date": "2026-10-31 14:27:00",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{0f1ad39c-b49d-4f1d-a18c-4d9919526ecb}"
+}
+,
+	"{16cee685-93d5-4783-bb1f-2734644a0630}": {
+	"name": "effigy-476-615503ee-packet-r2-missing-oxide-exit",
+	"date": "2026-10-31 14:31:37",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{90ff1853-563e-423e-81e5-68c1b8828b85}"
+}
+,
+	"{1164ddbc-df14-4d0e-8098-02b5882aa5b9}": {
+	"name": "effigy-476-615503ee-r3-sudo-rs-refusal-exit",
+	"date": "2026-10-31 14:39:04",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{90ff1853-563e-423e-81e5-68c1b8828b85}"
+}
+,
+	"{9248502a-2a45-462f-a62c-3e582361a7a8}": {
+	"name": "effigy-476-615503ee-r4-capability-precondition-exit",
+	"date": "2026-10-31 14:47:14",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{90ff1853-563e-423e-81e5-68c1b8828b85}"
+}
+,
+	"{4102d7ce-2edf-487c-9895-fd7a62d24837}": {
+	"name": "effigy-476-615503ee-r5-exit",
+	"date": "2026-10-31 15:08:46",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{90ff1853-563e-423e-81e5-68c1b8828b85}"
+}
+,
+	"{d6b887ef-8b40-44ac-a8ba-6b1ffd17df64}": {
+	"name": "effigy-476-615503ee-r6-success-exit",
+	"date": "2026-10-31 15:17:50",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{4102d7ce-2edf-487c-9895-fd7a62d24837}"
+}
+,
+	"{5049f515-1de4-4fe9-a7f2-439293f7d8f9}": {
+	"name": "effigy-476-entry-20261031-1231z",
+	"date": "2026-10-31 12:31:33",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{a4b2b55c-875e-40a3-82f2-3dc3351d8339}"
+}
+,
+	"{07fc2413-69da-4209-8585-e0818a104f03}": {
+	"name": "golden-ubuntu-base-523",
+	"date": "2026-11-01 12:23:57",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{a4b2b55c-875e-40a3-82f2-3dc3351d8339}"
+}
+,
+	"{929e3707-21ba-4809-983b-3cbba80da87b}": {
+	"name": "effigy-520-exit-cfa082-lint-failure",
+	"date": "2026-11-01 12:35:09",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{07fc2413-69da-4209-8585-e0818a104f03}"
+}
+,
+	"{27df9002-8ec3-4a25-b2de-a6fc1b61a032}": {
+	"name": "effigy-520-lint-sweep-exit-279501",
+	"date": "2026-11-01 12:47:30",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{07fc2413-69da-4209-8585-e0818a104f03}"
+}
+,
+	"{4b3cb82c-d590-4023-9bac-7c13319e0f66}": {
+	"name": "effigy-520-r7-exit-20261101",
+	"date": "2026-11-01 13:17:44",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{07fc2413-69da-4209-8585-e0818a104f03}"
+}
+,
+	"{f43ee466-ee0e-4680-8115-571b367ecd0d}": {
+	"name": "effigy-520-r8-exit-20261101",
+	"date": "2026-11-01 13:38:25",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{07fc2413-69da-4209-8585-e0818a104f03}"
+}
+,
+	"{9565acda-e540-4879-a568-fd907af1bf2f}": {
+	"name": "effigy-520-r9-exit-20261101",
+	"date": "2026-11-01 14:07:07",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{07fc2413-69da-4209-8585-e0818a104f03}"
+}
+,
+	"{1b522ff5-5c56-4255-b4f4-f297e69b45c7}": {
+	"name": "effigy-520-r10-exit-6692de14",
+	"date": "2026-11-01 16:47:44",
+	"state": "poweroff",
+	"current": false,
+	"parent": "{07fc2413-69da-4209-8585-e0818a104f03}"
+}
+,
+	"{4d475daf-8aa1-497a-9a38-355f21fcd867}": {
+	"name": "effigy-520-r13-exit-427540b",
+	"date": "2026-11-01 18:21:26",
+	"state": "poweroff",
+	"current": true,
+	"parent": "{07fc2413-69da-4209-8585-e0818a104f03}"
+}
+
+}

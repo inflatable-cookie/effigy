@@ -1,0 +1,38 @@
+[
+  {
+    "ID": "433c9e5b-c7b9-469f-9633-24b4addcd3b5",
+    "State": "stopped",
+    "Home": "/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm/",
+    "Home path": "/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm/config.pvs",
+    "Hardware": {
+      "hdd0": {
+        "enabled": true,
+        "image": "/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm/harddisk1.hdd"
+      }
+    }
+  },
+  {
+    "ID": "433c9e5b-c7b9-469f-9633-24b4addcd3b5",
+    "State": "running",
+    "Home": "/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm/",
+    "Home path": "/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm/config.pvs",
+    "Hardware": {
+      "hdd0": {
+        "enabled": true,
+        "image": "/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm/harddisk1.hdd"
+      }
+    }
+  },
+  {
+    "ID": "433c9e5b-c7b9-469f-9633-24b4addcd3b5",
+    "State": "stopped",
+    "Home": "/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm/",
+    "Home path": "/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm/config.pvs",
+    "Hardware": {
+      "hdd0": {
+        "enabled": true,
+        "image": "/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm/harddisk1.hdd"
+      }
+    }
+  }
+]

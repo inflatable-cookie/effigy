@@ -5,6 +5,24 @@ fresh Queue-bound stage needs exact operator effects, numeric time/storage bound
 and disposition. Keep the reviewed **SSH** transport; Parallels authenticates
 preparation facts, not a replacement proof transport.
 
+## Fixed diagnostic snapshot binding
+
+`linux_diagnostic_proof.py` binds admission to the canonical JSON digest of the
+complete registered snapshot list. The retained 7,911-byte list has raw SHA-256
+`b0af61c3dbe419c45d33d54e61261670b11eb4cd803e39bf267b6424d4833a21`; parsing
+its 36 entries and encoding sorted compact JSON gives the authoritative pin
+`d21610ba279b4faf2d7a62c87ef8f1050943fc8b6c072a04c71ce4d0c953e3ad`. The raw
+stream digest is not the admission pin. The earlier 62-character value was
+malformed and could never equal a SHA-256 digest.
+
+Focused controls use the retained snapshot-list bytes directly, accept JSON
+formatting and key-order changes after canonicalization, and refuse duplicate
+keys or changed inventory. Retained registered-VM metadata is replayed through
+`check_vm` in stopped/running/stopped states; only the identity, home and disk
+fields consumed by that checker are fixture-controlled. This fixes source
+admission only: the prior native observation remains refused/spent, and this
+change supplies no native proof credit or execution authority.
+
 ## Evidence and unresolved facts
 
 The `b1a9018c` v2 readiness turn observed the selected UUID
