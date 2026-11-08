@@ -86,6 +86,13 @@ STAGE1_STEPS = [
     ('S1.6', 30, 'post-observe'),
 ]
 STAGE1_RESERVE = 120
+# systemd 259 systemctl is-system-running: exit 0 only for running. --wait blocks through
+# initializing/starting and then prints a later state (running or degraded).
+STAGE1_READINESS_ARGV = ('/usr/bin/systemctl', 'is-system-running', '--wait')
+STAGE1_SYSTEM_STATES = frozenset({
+    'initializing', 'starting', 'running', 'degraded', 'maintenance',
+    'stopping', 'offline', 'unknown',
+})
 TRANSFER_CAP = 40 * 1024 * 1024            # E9 archive and E19 placements (brief: archive <= 40 MiB)
 EXTRACT_CAP = 500 * 1024 * 1024            # E9b extracted source (brief: extracted <= 500 MiB)
 PAYLOAD_CAP = 64 * 1024 * 1024             # E8 filesystem controls (brief: <= 64 MiB writes)
@@ -280,8 +287,9 @@ def stage1_request(fresh, stage_dir, top_observation=None):
         {'id': 'S1.1b', 'seconds': 10, 'argv': [prlctl, 'snapshot-list', VM_UUID, '--json'], 'output_cap': 262144},
         {'id': 'S1.2', 'seconds': 145, 'argv': [prlctl, 'start', VM_UUID], 'output_cap': 16384,
          'then': 'poll S1.1 every 5 s until State=running'},
-        {'id': 'S1.3', 'seconds': 90, 'argv': [prlctl, 'exec', VM_UUID, '/bin/echo', 'ready'], 'output_cap': 1024,
-         'then': 'retry every 5 s until stdout is exactly ready'},
+        {'id': 'S1.3', 'seconds': 90,
+         'argv': [prlctl, 'exec', VM_UUID] + list(STAGE1_READINESS_ARGV), 'output_cap': 1024,
+         'then': 'host remaining absolute deadline minus reserve; accept exactly running/exit 0'},
         {'id': 'S1.4', 'seconds': 75, 'argv': [prlctl, 'exec', VM_UUID, '/bin/sh', '-c', probe_script],
          'output_cap': 262144, 'stderr_cap': 16384},
         {'id': 'S1.5', 'seconds': 120, 'argv': [prlctl, 'stop', VM_UUID], 'output_cap': 16384,
@@ -293,6 +301,7 @@ def stage1_request(fresh, stage_dir, top_observation=None):
             'deadline_seconds': 600, 'reserve_seconds': STAGE1_RESERVE,
             'growth_cap_bytes': CONFIG_ALLOWANCE_BYTES, 'no_snapshot': True, 'no_kill': True,
             'top_guid': top, 'top_observation': top_observation, 'bundle_identity': bundle_identity,
+            'probe_sha256': PROBE_SHA256,
             'before': {'config_sha256': _sha(config), 'config_identity': config_identity,
                        'descriptor_sha256': _sha(descriptor), 'extents': inventory['extents'],
                        'chain': inventory['chain'], 'top_guid': top,
@@ -302,8 +311,10 @@ def stage1_request(fresh, stage_dir, top_observation=None):
 
 
 def stage1_verify_post(request, after):
-    """Refuse on any drift from the retained bytes, identities, the observed top or the recomputed inventory.
+    """Refuse on drift from retained originals, identities, the observed top or the recomputed inventory.
 
+    Config is compared semantically: structure, order, attributes and tails stay exact. Only
+    individually reviewed leaf transitions may change; originals and hashes are preserved.
     The post-run config and descriptor bytes are retained into the stage before any check, each on
     its own, so a refusal still leaves the evidence. The writable top is re-observed on the post
     descriptor; a file name is never used.
@@ -326,7 +337,8 @@ def stage1_verify_post(request, after):
         raise Refusal('snapshot tree changed')
     if _owned_regular(home / CONFIG_NAME) != before['config_identity'] or _owned_dir(home) != request['bundle_identity']:
         raise Refusal('config or bundle identity changed')
-    _wrap(observations.compare_config, retained_config, post_config, [])
+    import linux_stage1
+    transition = _wrap(linux_stage1.compare_protected_config, retained_config, post_config)
     if _sha(post_descriptor) != before['descriptor_sha256']:
         raise Refusal('descriptor bytes changed')
     selection = verify_writable_top(request['top_observation'], post_descriptor)
@@ -338,7 +350,144 @@ def stage1_verify_post(request, after):
                    cap=CONFIG_ALLOWANCE_BYTES)
     return {'growth_bytes': growth, 'config_sha256': before['config_sha256'],
             'post_config_sha256': _sha(post_config), 'post_descriptor_sha256': _sha(post_descriptor),
-            'extents': after_inventory['extents'], 'chain': after_inventory['chain']}
+            'extents': after_inventory['extents'], 'chain': after_inventory['chain'],
+            'changed_volatile_paths': transition['changed_volatile_paths'],
+            'config_changes': transition['changes']}
+
+
+def stage1_readiness_timeout(step_seconds, remaining_absolute, reserve_seconds):
+    """Host timeout for S1.3: never extend the step, never consume the report reserve."""
+    for name, value in (('step', step_seconds), ('remaining', remaining_absolute),
+                        ('reserve', reserve_seconds)):
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+            raise Refusal('Stage1 readiness %s deadline is not a remaining absolute budget' % name)
+    usable = remaining_absolute - reserve_seconds
+    if usable <= 0:
+        raise Refusal('Stage1 readiness has no remaining budget including reserve')
+    timeout = min(step_seconds, usable)
+    if timeout <= 0:
+        raise Refusal('Stage1 readiness timeout is not positive')
+    return timeout
+
+
+def stage1_accept_readiness(result):
+    """Accept exactly running/exit 0. Degraded, unknown, transport, nonzero or missing refuse."""
+    if not isinstance(result, dict):
+        raise Refusal('Stage1 readiness terminal facts are missing')
+    disposition = result.get('disposition')
+    waited = result.get('waited_exit')
+    stdout = result.get('stdout')
+    if disposition == 'timeout':
+        raise Refusal('Stage1 readiness timed out before a terminal systemd state')
+    if disposition not in ('exited', 'failed'):
+        raise Refusal('Stage1 readiness transport did not produce a terminal fact: ' + str(disposition))
+    if stdout is None:
+        raise Refusal('Stage1 readiness stdout is missing')
+    if isinstance(stdout, bytes):
+        try:
+            text = stdout.decode('utf-8', 'strict').strip()
+        except UnicodeDecodeError as exc:
+            raise Refusal('Stage1 readiness stdout is not UTF-8') from exc
+    else:
+        text = str(stdout).strip()
+    if text not in STAGE1_SYSTEM_STATES:
+        raise Refusal('Stage1 readiness printed an unknown systemd state: ' + text)
+    if text != 'running' or waited != 0 or disposition != 'exited':
+        raise Refusal('Stage1 readiness is not running/exit 0; observed state=%s waited_exit=%s disposition=%s'
+                      % (text, waited, disposition))
+    return text
+
+
+def _stage1_stdout_text(result, name):
+    stdout = result.get('stdout')
+    if stdout is None:
+        raise Refusal('Stage1 %s stdout is missing' % name)
+    if isinstance(stdout, bytes):
+        try:
+            return stdout.decode('utf-8', 'strict')
+        except UnicodeDecodeError as exc:
+            raise Refusal('Stage1 %s stdout is not UTF-8' % name) from exc
+    return str(stdout)
+
+
+def stage1_run(request, after, transport, clock=time.monotonic, started_at=None, identity=None):
+    """Execute the bound Stage1 request through one injected transport. Never a VM activation.
+
+    Readiness is systemd 259 `is-system-running --wait` with a host remaining-absolute
+    deadline including reserve. A transport exit is not VM closure. Readiness failure
+    skips the probe and still attempts graceful stop. Post-state is always verified.
+    """
+    if not callable(transport):
+        raise Refusal('Stage1 run requires an injected transport; this adapter does not activate a VM')
+    started_at = clock() if started_at is None else started_at
+    deadline = started_at + request['deadline_seconds']
+    reserve = request['reserve_seconds']
+    readiness = None
+    readiness_error = None
+    stop_error = None
+    probe_error = None
+    probe_facts = None
+    for step in request['steps']:
+        remaining = deadline - clock()
+        if step['id'] == 'S1.4' and readiness != 'running':
+            continue
+        if step['id'] == 'S1.3':
+            timeout = stage1_readiness_timeout(step['seconds'], remaining, reserve)
+        else:
+            if remaining <= 0:
+                raise Refusal('Stage1 %s has no remaining absolute deadline' % step['id'])
+            timeout = min(step['seconds'], remaining)
+            if timeout <= 0:
+                raise Refusal('Stage1 %s timeout is not positive' % step['id'])
+        result = transport(step['argv'], timeout, step.get('output_cap', 1024))
+        if step['id'] == 'S1.3':
+            try:
+                readiness = stage1_accept_readiness(result)
+            except Refusal as exc:
+                readiness_error = exc
+            continue
+        if step['id'] == 'S1.4':
+            try:
+                if result.get('disposition') != 'exited' or result.get('waited_exit') != 0:
+                    raise Refusal('Stage1 probe transport did not complete')
+                probe_facts = parse_probe(_stage1_stdout_text(result, 'probe'),
+                                          request.get('probe_sha256') or PROBE_SHA256, PROBE_SHA256)
+                observed = {'vm': request['vm'], 'boot_id': probe_facts['boot_id'],
+                            'host_key_fp': probe_facts['ssh_host_ed25519_fp']}
+                if observed['vm'] != VM_UUID:
+                    raise Refusal('Stage1 probe VM is not the registered VM')
+                if identity is not None and identity != observed:
+                    raise Refusal('Stage1 probe boot or VM differs from this occurrence')
+            except Refusal as exc:
+                probe_error = exc
+            continue
+        if step['id'] == 'S1.5':
+            if result.get('disposition') == 'timeout':
+                stop_error = Refusal('Stage1 graceful stop timed out; client exit is not VM closure')
+            elif result.get('disposition') != 'exited' or result.get('waited_exit') != 0:
+                stop_error = Refusal('Stage1 graceful stop did not complete; client exit is not VM closure')
+            continue
+        if result.get('disposition') != 'exited' or result.get('waited_exit') != 0:
+            raise Refusal('Stage1 %s transport did not complete' % step['id'])
+    try:
+        post = stage1_verify_post(request, after)
+    except Refusal as exc:
+        if stop_error is not None:
+            raise stop_error from exc
+        if readiness_error is not None:
+            raise readiness_error from exc
+        raise
+    if stop_error is not None:
+        raise stop_error
+    if readiness_error is not None:
+        raise readiness_error
+    if probe_error is not None:
+        raise probe_error
+    if readiness != 'running' or probe_facts is None:
+        raise Refusal('Stage1 probe was not run on a running boot')
+    post['readiness'] = readiness
+    post['probe'] = probe_facts
+    return post
 
 
 def verify_disk_association(host, guest, witness, supported=None):

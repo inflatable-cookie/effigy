@@ -382,6 +382,23 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- Prepare boot-complete Linux Stage1 readiness and protected config transition
+  admission (effigy#732). Stage1 S1.3 now requests systemd 259
+  `systemctl is-system-running --wait` with a host remaining-absolute deadline
+  that keeps the 120 s reserve; only `running`/exit 0 admits, and degraded,
+  unknown, timeout, transport, nonzero or missing terminal facts refuse. After
+  wait, the reviewed probe must match the same boot and VM. Post-stop config
+  comparison is semantic: structure, order, attributes and tails stay exact,
+  originals and hashes are retained, and only source-reviewed leaf rules may
+  change — `Identification/VmUptimeInSeconds` and
+  `UsbConnectHistory/USBPort/Timestamp` when both values are non-negative
+  integers and the later value is not smaller. A `NetworkAdapter/VMNetUuid`
+  rewrite stays unadmitted because the published Parallels NetworkAdapter
+  schema does not define that field or say whether a rewrite is a per-session
+  diagnostic or a virtual-network identity change; a syntactically valid UUID
+  is not a harmless transition. Source controls only: no VM, SSH, account or
+  service effect.
+
 - Stage the development Linux artifact builder's source through the release
   profile's own supported host mount (effigy#715). A normal incremental
   `install:local` from a checkout the `effigy-release` profile does not share
