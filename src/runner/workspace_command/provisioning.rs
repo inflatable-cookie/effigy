@@ -3255,7 +3255,7 @@ fn release_get(client: &reqwest::blocking::Client, url: &str) -> Result<Vec<u8>,
 #[cfg(test)]
 thread_local! {
     pub(super) static RELEASE_FIXTURES: std::cell::RefCell<BTreeMap<String, Vec<u8>>> =
-        std::cell::RefCell::new(BTreeMap::new());
+        const { std::cell::RefCell::new(BTreeMap::new()) };
 }
 
 #[cfg(test)]
