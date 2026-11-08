@@ -987,6 +987,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Recover this checkout's own never-started Linux builder (`Created`, empty inspect status)
+  through the maintained activation when the staged source replaces its old direct bind,
+  instead of refusing automatic artifact acquisition on the missing `State.Status`. The
+  running parser keeps its refusal; the never-started shape is proven separately.
 - Admit the borrowing environment's generated `data_from` volumes to the
   Colima nerdctl mount-budget preflight (effigy#730). Preflight now models the
   one supported external volume definition —

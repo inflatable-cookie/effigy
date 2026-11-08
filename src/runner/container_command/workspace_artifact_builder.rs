@@ -15,9 +15,8 @@ use std::time::{Duration, Instant};
 
 use effigy_containers::exec::{
     list_compose_containers_for_policy_including_stopped_with_deadline,
-    list_running_compose_containers_for_policy_with_deadline,
-    observed_workspace_artifact_builder_source, verify_workspace_artifact_builder,
-    verify_workspace_artifact_builder_declaration,
+    list_running_compose_containers_for_policy_with_deadline, observed_workspace_artifact_builder,
+    verify_workspace_artifact_builder, verify_workspace_artifact_builder_declaration,
 };
 use effigy_containers::{load_container_policy, ContainerAction};
 
@@ -180,17 +179,30 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
         // maintained activation replaces exactly this checkout's container with
         // the staged bind; it is never adopted, exec'd or hand-removed.
         Err(error) if staged.is_some() => {
-            let Ok(observed) =
-                observed_workspace_artifact_builder_source(repo_root, &policy, &row, deadline)
-            else {
-                return Err(error);
-            };
+            // A never-started builder's refusal names its own cause; the strict
+            // running refusal would only repeat the missing `State.Status`.
+            let observed =
+                match observed_workspace_artifact_builder(repo_root, &policy, &row, deadline) {
+                    Ok(observed) => observed,
+                    Err(refusal)
+                        if effigy_containers::exec::compose_status_is_created(&row.status) =>
+                    {
+                        return Err(RunnerError::from(refusal));
+                    }
+                    Err(_) => return Err(error),
+                };
             let checkout = effigy_core::worktree_scope::checkout_root(repo_root)
                 .canonicalize()
                 .unwrap_or_else(|_| repo_root.to_path_buf());
-            if observed != checkout {
+            if observed.source != checkout {
                 return Err(error);
             }
+            // The transition replaces only the identity observed above. Listing
+            // and inspection are repeated right before it, so a builder that
+            // started, was replaced or changed identity during the wait is never
+            // the one the lifecycle acts on.
+            check_interruption()?;
+            confirm_transition_target(repo_root, &policy, &observed)?;
             check_interruption()?;
             super::lifecycle::run_container_up(
                 repo_root,
@@ -282,6 +294,34 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
             &triple,
             &effigy_core::build_info::active_version(),
         )?;
+    }
+    Ok(())
+}
+
+/// Repeat the inventory and identity observation the transition relies on: one
+/// owned builder, with the same full ID, source and never-started state.
+fn confirm_transition_target(
+    repo_root: &Path,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+    observed: &effigy_containers::exec::ObservedWorkspaceArtifactBuilder,
+) -> Result<(), RunnerError> {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut rows = list_compose_containers_for_policy_including_stopped_with_deadline(
+        repo_root,
+        policy,
+        Some(deadline),
+    )?;
+    let [row] = rows.as_mut_slice() else {
+        return Err(RunnerError::task_invocation(
+            "workspace artifact builder inventory changed before the transition; no transition attempted",
+        ));
+    };
+    let current = observed_workspace_artifact_builder(repo_root, policy, row, deadline)
+        .map_err(RunnerError::from)?;
+    if &current != observed {
+        return Err(RunnerError::task_invocation(
+            "workspace artifact builder identity changed before the transition; no transition attempted",
+        ));
     }
     Ok(())
 }
