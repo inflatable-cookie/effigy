@@ -987,6 +987,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Publish and verify SHA-256 sidecars for all four release binaries, including
+  Linux assets, so cold-cache workspace acquisition can verify the binary it
+  downloads. The Linux build workflow also uses the maintained GLIBC check
+  script while keeping its 2.35 floor.
+
 - Keep managed panes bounded when a tab starts Effigy itself (effigy#729). The
   pane fact is `EFFIGY_MANAGED_PANE=1`, outside the `EFFIGY_INTERNAL_` namespace
   that Effigy's child environment and consumer wrappers scrub, so a nested child

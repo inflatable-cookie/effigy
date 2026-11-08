@@ -3161,9 +3161,14 @@ pub(super) fn linux_workspace_effigy_cache_path(
 }
 
 pub(super) fn linux_workspace_effigy_release_url(target: LinuxWorkspaceTarget) -> String {
+    #[cfg(test)]
+    let base = RELEASE_FIXTURE_BASE_URL
+        .with(|base| base.borrow().clone())
+        .unwrap_or_else(|| EFFIGY_RELEASE_REPO_BASE_URL.to_owned());
+    #[cfg(not(test))]
+    let base = EFFIGY_RELEASE_REPO_BASE_URL.to_owned();
     format!(
-        "{}/releases/download/v{}/effigy-{}",
-        EFFIGY_RELEASE_REPO_BASE_URL,
+        "{base}/releases/download/v{}/effigy-{}",
         env!("CARGO_PKG_VERSION"),
         target.release_triple()
     )
@@ -3254,15 +3259,26 @@ fn release_get(client: &reqwest::blocking::Client, url: &str) -> Result<Vec<u8>,
 // network. A URL the table does not name refuses like a failed transport.
 #[cfg(test)]
 thread_local! {
+    pub(super) static RELEASE_FIXTURE_BASE_URL: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
     pub(super) static RELEASE_FIXTURES: std::cell::RefCell<BTreeMap<String, Vec<u8>>> =
         const { std::cell::RefCell::new(BTreeMap::new()) };
 }
 
 #[cfg(test)]
-fn release_get(_client: &reqwest::blocking::Client, url: &str) -> Result<Vec<u8>, String> {
+fn release_get(client: &reqwest::blocking::Client, url: &str) -> Result<Vec<u8>, String> {
     // The checksum sidecar is a second GET of the same download, not a fetch.
     if !url.ends_with(RELEASE_CHECKSUM_SUFFIX) {
         RELEASE_FETCHES.with(|fetches| fetches.set(fetches.get() + 1));
+    }
+    if url.starts_with("http://127.0.0.1:") {
+        return client
+            .get(url)
+            .send()
+            .and_then(|response| response.error_for_status())
+            .and_then(|response| response.bytes())
+            .map(|bytes| bytes.to_vec())
+            .map_err(|error| error.to_string());
     }
     let delay = RELEASE_FETCH_DELAY.with(std::cell::Cell::get);
     if !delay.is_zero() {
@@ -3311,14 +3327,28 @@ fn published_release_checksum(
                 ))
             })
         })?;
-    body.split_whitespace()
-        .find(|token| token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        .map(|token| token.to_ascii_lowercase())
-        .ok_or_else(|| {
-            RunnerError::task_invocation(format!(
-                "the published checksum at `{checksum_url}` names no SHA-256 digest"
-            ))
-        })
+    let asset = url.rsplit('/').next().unwrap_or_default();
+    let line = body.strip_suffix('\n').ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "the published checksum at `{checksum_url}` is not one newline-terminated asset line"
+        ))
+    })?;
+    let (digest, named_asset) = line.split_once("  ").ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "the published checksum at `{checksum_url}` does not use the release sidecar format"
+        ))
+    })?;
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        || named_asset != asset
+    {
+        return Err(RunnerError::task_invocation(format!(
+            "the published checksum at `{checksum_url}` does not name `{asset}` with a lowercase SHA-256 digest"
+        )));
+    }
+    Ok(digest.to_owned())
 }
 
 pub(super) fn linux_workspace_effigy_artifact_receipt_matches_target(

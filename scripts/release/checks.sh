@@ -209,15 +209,10 @@ case "$verb" in
     grep -q '^on:' "$workflow" || fail "release-binaries.yml has no trigger block"
     grep -q 'workflow_dispatch:' "$workflow" || fail "release-binaries.yml must stay explicitly dispatched, not triggered by a tag push"
     grep -q 'git cat-file -t "refs/tags/\$RELEASE_TAG"' "$workflow" || fail "release-binaries.yml must keep the annotated-tag check"
-    if ! grep -Eq 'release (check-binary|:check-binary)|scripts/release/checks\.sh check-binary' "$workflow"; then
-      fail "release-binaries.yml lost its Linux GLIBC guard; restore a check-binary step before the release"
-    fi
-    if grep -q 'release check-binary' "$workflow"; then
-      printf '%s\n' \
-        "[warn] .github/workflows/release-binaries.yml still runs the retired \`effigy release check-binary\`." \
-        "[warn] Change that step to ./scripts/release/checks.sh check-binary ./effigy-\${{ matrix.target }} --glibc-floor 2.35" \
-        "[warn] before publishing: a workflow edit needs operator authority, and until it lands the binary workflow stops at that step." >&2
-    fi
+    grep -Fq 'if: contains(matrix.target, '\''unknown-linux-gnu'\'')' "$workflow" \
+      || fail "release-binaries.yml must keep the GLIBC check limited to Linux targets"
+    grep -Fq './scripts/release/checks.sh check-binary ./effigy-${{ matrix.target }} --glibc-floor 2.35' "$workflow" \
+      || fail "release-binaries.yml must use the maintained GLIBC check with floor 2.35"
     ok "release metadata for v$version"
     ;;
 
@@ -433,7 +428,7 @@ case "$verb" in
       printf '# Effigy %s release closeout\n\n' "$tag"
       printf 'Recorded: %s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       printf '## Release assets\n\n'
-      for asset in effigy-aarch64-apple-darwin effigy-aarch64-unknown-linux-gnu effigy-x86_64-apple-darwin effigy-x86_64-unknown-linux-gnu; do
+      for asset in effigy-aarch64-apple-darwin effigy-aarch64-unknown-linux-gnu effigy-x86_64-apple-darwin effigy-x86_64-unknown-linux-gnu effigy-aarch64-apple-darwin.sha256 effigy-aarch64-unknown-linux-gnu.sha256 effigy-x86_64-apple-darwin.sha256 effigy-x86_64-unknown-linux-gnu.sha256; do
         if [ -s "$artifacts_dir/$asset" ]; then
           printf -- '- `%s` sha256 `%s`\n' "$asset" "$(sha256_of "$artifacts_dir/$asset")"
         else
@@ -482,15 +477,15 @@ case "$verb" in
     command -v gh >/dev/null 2>&1 || fail "gh is required to probe the GitHub Release"
     if assets=$(gh release view "$tag" --json assets --jq '.assets[].name' 2>/dev/null); then
       missing=0
-      for asset in effigy-aarch64-apple-darwin effigy-aarch64-unknown-linux-gnu effigy-x86_64-apple-darwin effigy-x86_64-unknown-linux-gnu; do
+      for asset in effigy-aarch64-apple-darwin effigy-aarch64-unknown-linux-gnu effigy-x86_64-apple-darwin effigy-x86_64-unknown-linux-gnu effigy-aarch64-apple-darwin.sha256 effigy-aarch64-unknown-linux-gnu.sha256 effigy-x86_64-apple-darwin.sha256 effigy-x86_64-unknown-linux-gnu.sha256; do
         printf '%s\n' "$assets" | grep -qx "$asset" || missing=1
       done
       if [ "$missing" = 0 ]; then
-        ok "release $tag already publishes every binary asset"
+        ok "release $tag already publishes every binary and checksum asset"
         write_release_output true "github-release:https://github.com/inflatable-cookie/effigy/releases/tag/$tag"
         exit 0
       fi
-      ok "release $tag exists without every binary asset"
+      ok "release $tag exists without every required asset"
       write_release_output false
       exit 0
     fi
@@ -528,10 +523,10 @@ case "$verb" in
     command -v gh >/dev/null 2>&1 || fail "gh is required to verify the GitHub Release"
     assets=$(gh release view "$tag" --json assets --jq '.assets[].name') \
       || fail "GitHub Release $tag is missing"
-    for asset in effigy-aarch64-apple-darwin effigy-aarch64-unknown-linux-gnu effigy-x86_64-apple-darwin effigy-x86_64-unknown-linux-gnu effigy-aarch64-apple-darwin.sha256 effigy-x86_64-apple-darwin.sha256; do
+    for asset in effigy-aarch64-apple-darwin effigy-aarch64-unknown-linux-gnu effigy-x86_64-apple-darwin effigy-x86_64-unknown-linux-gnu effigy-aarch64-apple-darwin.sha256 effigy-aarch64-unknown-linux-gnu.sha256 effigy-x86_64-apple-darwin.sha256 effigy-x86_64-unknown-linux-gnu.sha256; do
       printf '%s\n' "$assets" | grep -qx "$asset" || fail "GitHub Release $tag is missing asset $asset"
     done
-    ok "GitHub Release $tag publishes every binary and macOS checksum asset"
+    ok "GitHub Release $tag publishes every binary and checksum asset"
     if [ "$skip_homebrew" = true ]; then
       printf '[warn] Homebrew tap check skipped by --skip-homebrew; record why\n' >&2
     else
