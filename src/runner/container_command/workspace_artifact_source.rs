@@ -82,7 +82,9 @@ pub(in crate::runner) fn stage(
         source: plan.source.clone(),
         closure: closure.digest.clone(),
         source_staged: true,
-        render_digest: previous.as_ref().and_then(|record| record.render_digest.clone()),
+        render_digest: previous
+            .as_ref()
+            .and_then(|record| record.render_digest.clone()),
         head: closure.head.clone(),
         files: closure.files.clone(),
         submodules: closure.submodules.clone(),

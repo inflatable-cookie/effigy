@@ -245,11 +245,7 @@ pub fn stage_compose_render(
         &policy.project_name,
         &policy.profile,
         effigy_core::worktree_scope::load(&policy.repo_root)
-            .map_err(|error| {
-                refusal(format!(
-                    "cannot resolve this checkout's run scope: {error}"
-                ))
-            })?
+            .map_err(|error| refusal(format!("cannot resolve this checkout's run scope: {error}")))?
             .as_deref(),
     )?;
     ensure_owned_stage_directory(&plan, &plan.stage_root, &binding)?;

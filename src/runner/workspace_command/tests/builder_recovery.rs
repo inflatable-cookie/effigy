@@ -723,7 +723,13 @@ esac
             directory.join("builder-source-stage.receipt.json"),
             serde_json::to_vec_pretty(&receipt).unwrap_or_default(),
         );
-        for stream in ["calls", "timing", "colima-calls", "last-up-compose", "build-source"] {
+        for stream in [
+            "calls",
+            "timing",
+            "colima-calls",
+            "last-up-compose",
+            "build-source",
+        ] {
             let source = self.root.join("state").join(stream);
             if let Ok(bytes) = std::fs::read(&source) {
                 let _ = std::fs::write(directory.join(stream), bytes);
@@ -1889,14 +1895,18 @@ fn staged_source_refuses_a_preexisting_unowned_stage_and_preserves_it() {
     std::fs::create_dir_all(plan.source.join("src")).unwrap();
     std::fs::write(&foreign_file, "unowned source bytes\n").unwrap();
     std::fs::write(plan.source.join("src/lib.rs"), "unowned\n").unwrap();
-    let render = plan.stage_root.join("render/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+    let render = plan
+        .stage_root
+        .join("render/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
     std::fs::create_dir_all(&render).unwrap();
     std::fs::write(render.join("compose.yml"), "unowned render\n").unwrap();
     let artifact = fixture
         .root
         .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
     write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
-    let error = fixture.task().expect_err("unrecorded staged content is not adopted");
+    let error = fixture
+        .task()
+        .expect_err("unrecorded staged content is not adopted");
     assert!(
         error.contains("carries no binding record") || error.contains("did not record"),
         "{error}"
@@ -1932,7 +1942,9 @@ fn staged_source_refuses_an_alias_above_its_owned_child() {
     std::fs::write(outside.join("kept"), "not ours\n").unwrap();
     let owned_parent = plan.stage_root.parent().unwrap().to_path_buf();
     std::os::unix::fs::symlink(&outside, &owned_parent).unwrap();
-    let error = fixture.task().expect_err("an aliased child is not followed");
+    let error = fixture
+        .task()
+        .expect_err("an aliased child is not followed");
     assert!(
         error.contains("link this checkout did not create"),
         "{error}"
@@ -1961,7 +1973,9 @@ fn staged_source_cleanup_never_follows_an_alias_out_of_its_directory() {
     let fixture = Fixture::staged(false, false, "docker");
     let plan = fixture.stage().expect("a staged source plan");
     // The first automatic build records the child as this checkout's.
-    fixture.task().expect("the automatic build stages the tracked source");
+    fixture
+        .task()
+        .expect("the automatic build stages the tracked source");
     let outside = fixture.root.join("state/outside-source");
     std::fs::create_dir_all(&outside).unwrap();
     std::fs::write(outside.join("kept"), "not ours to remove\n").unwrap();
@@ -2276,15 +2290,12 @@ fn staged_source_refuses_an_edit_made_while_snapshotting() {
     let error = fixture
         .task()
         .expect_err("a source edit during the snapshot publishes nothing");
-    assert!(
-        error.contains("changed while it was staged"),
-        "{error}"
-    );
+    assert!(error.contains("changed while it was staged"), "{error}");
     assert_eq!(std::fs::read_to_string(&artifact).unwrap(), "stale bytes");
     assert!(!fixture.root.join("state/build-effect").exists());
     assert!(
-        !plan.manifest.exists() ||
-            effigy_containers::artifact_source::StageManifest::read(&plan).is_ok(),
+        !plan.manifest.exists()
+            || effigy_containers::artifact_source::StageManifest::read(&plan).is_ok(),
         "no half-written record is left behind"
     );
     fixture.assert_preserved();
