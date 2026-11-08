@@ -1,0 +1,36 @@
+{
+  "source": "effigy#712 retained originals and planner verification (linux-observation-proof-r2.ufbqxw0p); derived shape only: no config bytes, credentials or private values are copied. Byte hashes are the retained public descriptors of the observed files.",
+  "descriptor": {
+    "content_sha256_before": "974876501b91274d3e433d19f7ee5347fa23f5562b6062c8ccb8c8be194c09a0",
+    "content_sha256_after": "974876501b91274d3e433d19f7ee5347fa23f5562b6062c8ccb8c8be194c09a0",
+    "device": 16777245,
+    "inode_before": 1993213,
+    "inode_after": 1993596,
+    "size": 16717,
+    "classification": "byte-identical atomic replacement: an identity event, not a content change"
+  },
+  "config": {
+    "content_sha256_before": "6f891cbe748af2a2f023341c7ee1e916e9b8291de926c74e67cbf101a72d9dee",
+    "content_sha256_after": "e8f4783a8a1e47803b694401d3fa3b9236572a3ea59bf4d221bb6b43f06753ec",
+    "device": 16777245,
+    "inode_before": 1989129,
+    "inode_after": 1989129,
+    "size": 28303,
+    "classification": "changed diagnostics only; the private XML comparison found one NetworkAdapter/VMNetUuid value"
+  },
+  "ancillary_event": {
+    "path": "config.pvs.backup",
+    "failure": "package file identity changed",
+    "classification": "owned ancillary metadata replaced while the VM started"
+  },
+  "start_client": {
+    "disposition": "resource-refusal",
+    "waited_exit": -9,
+    "stdout": "Starting the VM"
+  },
+  "stop_client": {
+    "disposition": "failed",
+    "waited_exit": 255,
+    "classification": "stop sent while the VM was reported starting; it closed nothing"
+  }
+}

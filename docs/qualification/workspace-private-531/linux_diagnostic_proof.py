@@ -36,6 +36,15 @@ SNAPSHOT_SHA = 'd21610ba279b4faf2d7a62c87ef8f1050943fc8b6c072a04c71ce4d0c953e3ad
 PROBE_KEYS = frozenset('uid boot_id system_state systemctl systemd_run systemd_version cgroup2 ssh_host_ed25519_fp sshd_expiry_time_mentions effigy531_passwd_exit effigy531_group_exit effigy531_home docker_group root_source root_fstype root_uuid root_parent root_serial root_model root_size ssh_listen_ipv4'.split())
 DURATION = 600
 RESERVE = 120
+# Cleanup is bounded inside the same operational deadline: one window to observe this bound VM's
+# own eligible running state before the one graceful stop, one window to observe its terminal
+# state afterwards, and a final reserve kept for these originals. No window adds budget.
+PAUSE = 5
+STATE_WAIT = 120
+RUN_WAIT = 180
+READY_WAIT = 120
+STOP_OBSERVE = 60
+FINAL_RESERVE = 15
 SOURCES = ('linux_diagnostic_proof.py', 'linux_diagnostic.py', 'linux_setup.py',
            'linux_supervisor.py', 'linux_transfer.py', 'linux_receipts.py',
            'preparation_stage.py', 'preparation_resources.py', 'preparation_observations.py',
@@ -181,6 +190,33 @@ def check_snapshots(raw):
     return data
 
 
+def compare_originals(outcome, before, post):
+    """Separate retained content hashes from metadata identities.
+
+    A byte-identical replacement is an identity event, never a content-change
+    claim; a changed config is a diagnostic observation and not setup
+    compatibility. Descriptor bytes are the extent-inventory binding, so a
+    descriptor content change stays fatal.
+    """
+    for name in ('config', 'descriptor'):
+        old, new = before.get(name), post.get(name)
+        if old is None or new is None:
+            continue
+        if (old['device'], old['inode']) != (new['device'], new['inode']):
+            outcome['identity_events'].append({
+                'object': name, 'source': 'retained-originals',
+                'content_identical': old['sha256'] == new['sha256'],
+                'previous': {key: old[key] for key in ('device', 'inode', 'uid', 'size')},
+                'current': {key: new[key] for key in ('device', 'inode', 'uid', 'size')}})
+        if old['sha256'] == new['sha256']:
+            continue
+        if name == 'descriptor':
+            outcome['findings'].append('descriptor content changed during observation')
+        else:
+            outcome['metadata_differences'].append(
+                'config bytes changed during observation: diagnostic observation, not setup compatibility')
+
+
 def check_probe(raw):
     try:
         lines = raw.decode('utf-8', 'strict').splitlines()
@@ -230,12 +266,15 @@ def execute(request, request_path, request_hash):
     destination.mkdir(mode=0o700)
     operational_end = deadline - RESERVE
     start_end = operational_end - 120
-    outcome = {'schema': 'linux-diagnostic-observation-v2', 'request_sha256': request_hash,
+    outcome = {'schema': 'linux-diagnostic-observation-v3', 'request_sha256': request_hash,
                'head': actual, 'candidate_h': setup.CANDIDATE_H_HEAD, 'launched_at': launched_at,
                'writable_top': 'unknown', 'guest_association': 'unknown',
                'readiness': 'not evaluated', 'placement': 'not evaluated',
                'hard_quota': 'not established', 'vm_terminal': 'unknown',
-               'launcher_closure_is_vm_closure': False, 'start_count': 0, 'findings': [],
+               'launcher_closure_is_vm_closure': False, 'start_count': 0, 'stop_count': 0,
+               'stop_eligibility': 'unknown', 'findings': [],
+               'metadata_accounting': 'sampled conservative charges; not a hard quota',
+               'metadata_differences': [], 'identity_events': [], 'metadata_events': [],
                'repository_identity': request['repository'], 'machine_identity': request['machine'],
                'checkout_root': str(REPO_ROOT), 'runtime_inputs': runtime}
     serial = 0
@@ -286,11 +325,11 @@ def execute(request, request_path, request_hash):
         return result, (step / 'stdout').read_bytes()
 
     def pause(end, track=True):
-        until = min(end, time.monotonic() + 5)
+        until = min(end, time.monotonic() + PAUSE)
         while time.monotonic() < until:
             if monitor is not None:
                 (monitor if track else stop_monitor).check()
-            time.sleep(min(0.25, max(0, until - time.monotonic())))
+            time.sleep(min(0.25, PAUSE, max(0, until - time.monotonic())))
 
     def good(result):
         return result.get('disposition') == 'exited' and result.get('waited_exit') == 0
@@ -311,7 +350,7 @@ def execute(request, request_path, request_hash):
         extents = diagnostic.inventory(disk, descriptor)
         outcome['before_extents'] = extents
         monitor = diagnostic.ExtentMonitor(home, disk, descriptor, extents)
-        outcome['before_package'] = monitor.package_initial
+        outcome['before_metadata'] = monitor.package_initial
         result, raw = call(['list', '--info', setup.VM_UUID, '--json'], 10, 65536, start_end)
         if not good(result):
             raise stage.Refusal('pre-observation failed')
@@ -325,7 +364,8 @@ def execute(request, request_path, request_hash):
         if not good(result):
             raise stage.Refusal('start result is not a positively owned successful start')
         running = False
-        while time.monotonic() < start_end:
+        run_end = min(start_end, time.monotonic() + RUN_WAIT)
+        while time.monotonic() < run_end:
             result, raw = call(['list', '--info', setup.VM_UUID, '--json'], 10, 65536, start_end)
             if good(result):
                 try:
@@ -334,16 +374,17 @@ def execute(request, request_path, request_hash):
                     break
                 except stage.Refusal:
                     pass
-            pause(start_end)
+            pause(run_end)
         if not running:
             raise stage.Refusal('running observation unknown')
         ready = False
-        while time.monotonic() < start_end:
+        ready_end = min(start_end, time.monotonic() + READY_WAIT)
+        while time.monotonic() < ready_end:
             result, raw = call(['exec', setup.VM_UUID, '/bin/echo', 'ready'], 20, 1024, start_end)
             if good(result) and raw == b'ready\n':
                 ready = True
                 break
-            pause(start_end)
+            pause(ready_end)
         if not ready:
             raise stage.Refusal('bootstrap transport readiness unknown')
         probe = (HERE / 'linux-setup-probe.sh').read_text()
@@ -358,14 +399,51 @@ def execute(request, request_path, request_hash):
         outcome['findings'].append(type(exc).__name__ + ': ' + str(exc))
     finally:
         if start_launched:
+            # A stop sent while Parallels still reports this VM starting is refused and
+            # closes nothing (the actual 712 failure). Observe this same bound VM's own
+            # state first, inside the existing operational deadline, and send the one
+            # graceful stop only when eligible running state is positively observed.
+            eligible = False
+            state_end = min(operational_end - STOP_OBSERVE - FINAL_RESERVE,
+                            time.monotonic() + STATE_WAIT)
+            budget = state_end > time.monotonic()
             try:
-                result, _ = call(['stop', setup.VM_UUID], 120, 16384, operational_end, track=False)
-                outcome['stop'] = result
-                if not good(result):
-                    outcome['findings'].append('graceful stop did not complete successfully')
-                if good(result):
-                    while time.monotonic() < operational_end:
-                        result, raw = call(['list', '--info', setup.VM_UUID, '--json'], 10, 65536, operational_end, track=False)
+                while time.monotonic() < state_end:
+                    result, raw = call(['list', '--info', setup.VM_UUID, '--json'], 10, 65536, state_end, track=False)
+                    if good(result):
+                        try:
+                            check_vm(raw, 'running')
+                            eligible = True
+                            break
+                        except stage.Refusal:
+                            try:
+                                check_vm(raw, 'stopped')
+                                outcome['vm_terminal'] = 'stopped'
+                                outcome['stop'] = {'command': 'not sent', 'observed': 'stopped'}
+                                break
+                            except stage.Refusal:
+                                pass
+                    pause(state_end, track=False)
+            except Exception as exc:
+                outcome['findings'].append('pre-stop state observation: ' + str(exc))
+            outcome['stop_eligibility'] = 'running' if eligible else (
+                'stopped' if outcome['vm_terminal'] == 'stopped' else 'unknown')
+            if eligible:
+                try:
+                    outcome['stop_count'] = 1
+                    result, _ = call(['stop', setup.VM_UUID], 120, 16384, operational_end, track=False)
+                    outcome['stop'] = result
+                    if not good(result):
+                        outcome['findings'].append('graceful stop did not complete successfully')
+                except Exception as exc:
+                    outcome['findings'].append('stop observation: ' + str(exc))
+                # Waited command facts stay separate from eventual state: a later stopped
+                # observation establishes terminal state only, never a closed stop client
+                # or a repaired observation.
+                terminal_end = min(operational_end - FINAL_RESERVE, time.monotonic() + STOP_OBSERVE)
+                try:
+                    while time.monotonic() < terminal_end:
+                        result, raw = call(['list', '--info', setup.VM_UUID, '--json'], 10, 65536, terminal_end, track=False)
                         if good(result):
                             try:
                                 check_vm(raw, 'stopped')
@@ -373,9 +451,18 @@ def execute(request, request_path, request_hash):
                                 break
                             except stage.Refusal:
                                 pass
-                        pause(operational_end, track=False)
-            except Exception as exc:
-                outcome['findings'].append('stop observation: ' + str(exc))
+                        pause(terminal_end, track=False)
+                except Exception as exc:
+                    outcome['findings'].append('terminal state observation: ' + str(exc))
+            elif outcome['vm_terminal'] == 'stopped':
+                outcome['metadata_differences'].append(
+                    'bound VM was already stopped; no graceful stop command was sent')
+            elif budget:
+                outcome['findings'].append(
+                    'eligible running state not observed in the cleanup window; graceful stop not attempted')
+            else:
+                outcome['findings'].append(
+                    'no cleanup budget remained for an eligible running observation; graceful stop not attempted')
             if outcome['vm_terminal'] != 'stopped':
                 outcome['findings'].append('terminal VM state unknown')
             try:
@@ -395,21 +482,21 @@ def execute(request, request_path, request_hash):
                 outcome['post_extents'] = diagnostic.inventory(disk, (destination / 'post-descriptor').read_bytes())
         except Exception as exc:
             outcome['findings'].append('post inventory: ' + str(exc))
-        for name in ('config', 'descriptor'):
-            if name in outcome.get('before', {}) and name in post and outcome['before'][name] != post[name]:
-                outcome['findings'].append(name + ' changed')
+        compare_originals(outcome, outcome.get('before', {}), post)
         try:
             if outcome.get('package_identity') != setup._owned_dir(home) or outcome.get('disk_identity') != setup._owned_dir(disk):
                 outcome['findings'].append('package or disk identity changed')
         except Exception as exc:
             outcome['findings'].append('package identity: ' + str(exc))
-        try:
-            if monitor:
+        if monitor:
+            try:
                 outcome['final_growth'] = monitor.check()
                 outcome['post_extents'] = monitor.last
-                outcome['post_package'] = {key: sum(row[key] for row in monitor.package_last.values()) for key in ('logical', 'allocated')}
-        except Exception as exc:
-            outcome['findings'].append('final accounting: ' + str(exc))
+                outcome['post_metadata'] = dict(monitor.ancillary.held)
+            except Exception as exc:
+                outcome['findings'].append('final accounting: ' + str(exc))
+            outcome['metadata_events'] = monitor.ancillary.events
+            outcome['identity_events'].extend(monitor.identity_events)
         outcome['finished_at'] = time.time()
         outcome['probe_sha256'] = setup.PROBE_SHA256
         stage.record(destination / 'outcome.json', outcome)
