@@ -35,6 +35,7 @@ PRLCTL = '/Applications/Parallels Desktop.app/Contents/MacOS/prlctl'
 PRLCTL_SHA256 = '2f61a1c60db2d51591fb8479a248a982a81658f136f1501a94733b7a81731c57'
 SNAPSHOT_SHA = 'd21610ba279b4faf2d7a62c87ef8f1050943fc8b6c072a04c71ce4d0c953e3ad'
 PROBE_KEYS = frozenset('uid boot_id system_state systemctl systemd_run systemd_version cgroup2 ssh_host_ed25519_fp sshd_expiry_time_mentions effigy531_passwd_exit effigy531_group_exit effigy531_home docker_group root_source root_fstype root_uuid root_parent root_serial root_model root_size ssh_listen_ipv4'.split())
+BOOT_ID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 DURATION = 600
 RESERVE = 120
 # Cleanup is bounded inside the same operational deadline: one window to observe this bound VM's
@@ -233,7 +234,21 @@ def check_probe(raw):
         fields[key] = value
     if set(fields) != PROBE_KEYS or not raw.endswith(b'\n'):
         raise stage.Refusal('probe output is partial')
+    if fields['system_state'] != 'running':
+        raise stage.Refusal('probe did not observe systemd running')
+    if not BOOT_ID.fullmatch(fields['boot_id']):
+        raise stage.Refusal('probe boot identity is missing or malformed')
     return fields
+
+
+def check_boot_id(raw):
+    try:
+        value = raw.decode('ascii', 'strict')
+    except UnicodeDecodeError as exc:
+        raise stage.Refusal('boot identity is not ASCII') from exc
+    if not value.endswith('\n') or not BOOT_ID.fullmatch(value[:-1]):
+        raise stage.Refusal('boot identity is missing or malformed')
+    return value[:-1]
 
 
 def execute(request, request_path, request_hash):
@@ -269,10 +284,13 @@ def execute(request, request_path, request_hash):
     destination.mkdir(mode=0o700)
     operational_end = deadline - RESERVE
     start_end = operational_end - 120
-    outcome = {'schema': 'linux-diagnostic-observation-v4', 'request_sha256': request_hash,
+    outcome = {'schema': 'linux-diagnostic-observation-v5', 'request_sha256': request_hash,
                'head': actual, 'candidate_h': setup.CANDIDATE_H_HEAD, 'launched_at': launched_at,
                'writable_top': 'unknown', 'guest_association': 'unknown',
-               'readiness': 'not evaluated', 'placement': 'not evaluated',
+               'readiness': 'not evaluated', 'readiness_observation': None,
+               'boot_binding': {'status': 'not established', 'boot_id': None,
+                                'route_window_start': None, 'route_window_end': None},
+               'placement': 'not evaluated',
                'hard_quota': 'not established', 'vm_terminal': 'unknown',
                'launcher_closure_is_vm_closure': False, 'start_count': 0, 'stop_count': 0,
                'stop_eligibility': 'unknown', 'findings': [],
@@ -387,16 +405,25 @@ def execute(request, request_path, request_hash):
             pause(run_end)
         if not running:
             raise stage.Refusal('running observation unknown')
-        ready = False
+        # One absolute readiness window covers systemd's wait and the first boot-id
+        # read; no retry or per-call deadline can extend the 600s occurrence.
         ready_end = min(start_end, time.monotonic() + READY_WAIT)
-        while time.monotonic() < ready_end:
-            result, raw = call(['exec', setup.VM_UUID, '/bin/echo', 'ready'], 20, 1024, start_end)
-            if good(result) and raw == b'ready\n':
-                ready = True
-                break
-            pause(ready_end)
-        if not ready:
-            raise stage.Refusal('bootstrap transport readiness unknown')
+        result, raw = call(['exec', setup.VM_UUID, '/usr/bin/systemctl', 'is-system-running', '--wait'],
+                           READY_WAIT, 1024, ready_end)
+        outcome['readiness_observation'] = result
+        try:
+            outcome['readiness'] = setup.stage1_accept_readiness(
+                dict(result, stdout=raw))
+        except setup.Refusal as exc:
+            raise stage.Refusal('systemd boot readiness refused: ' + str(exc)) from exc
+        if raw != b'running\n' or not good(result):
+            raise stage.Refusal('systemd boot readiness output is not exact running/exit 0')
+        boot_result, boot_raw = call(['exec', setup.VM_UUID, '/bin/cat',
+                                      '/proc/sys/kernel/random/boot_id'], 5, 256, ready_end)
+        if not good(boot_result):
+            raise stage.Refusal('boot identity after readiness was not positively observed')
+        boot_id = check_boot_id(boot_raw)
+        outcome['boot_binding']['boot_id'] = boot_id
         probe = (HERE / 'linux-setup-probe.sh').read_text()
         if hashlib.sha256(probe.encode()).hexdigest() != setup.PROBE_SHA256:
             raise stage.Refusal('probe drift')
@@ -405,6 +432,8 @@ def execute(request, request_path, request_hash):
         if not good(result):
             raise stage.Refusal('probe incomplete')
         outcome['probe_fields'] = check_probe(raw)
+        if outcome['probe_fields']['boot_id'] != boot_id:
+            raise stage.Refusal('probe boot identity differs from readiness')
         # The writer-bound capability reads share this boot-complete occurrence and its
         # deadlines. They are observations only: no field here feeds writable_top,
         # guest_association, readiness, placement, hard_quota or any setup gate.
@@ -417,9 +446,23 @@ def execute(request, request_path, request_hash):
             stage.exclusive(path, data)
             return path.name
 
+        before_routes_result, before_routes_raw = call(
+            ['exec', setup.VM_UUID, '/bin/cat', '/proc/sys/kernel/random/boot_id'], 5, 256, start_end)
+        if not good(before_routes_result) or check_boot_id(before_routes_raw) != boot_id:
+            raise stage.Refusal('boot identity before writer routes differs from readiness')
+        outcome['boot_binding']['route_window_start'] = boot_id
         writer_bound = guest_probe.observe(
             lambda argv, limit, cap, end: call(['exec', setup.VM_UUID] + argv, limit, cap, end),
             retain_observation, guard, start_end)
+        after_routes_result, after_routes_raw = call(
+            ['exec', setup.VM_UUID, '/bin/cat', '/proc/sys/kernel/random/boot_id'], 5, 256, start_end)
+        if not good(after_routes_result) or check_boot_id(after_routes_raw) != boot_id:
+            writer_bound['complete'] = False
+            writer_bound['findings'].append('boot identity changed during writer route window')
+            outcome['findings'].append('writer route window boot identity differs from readiness')
+        else:
+            outcome['boot_binding']['route_window_end'] = boot_id
+            outcome['boot_binding']['status'] = 'same boot observed'
         writer_bound['status'] = 'observed' if writer_bound['complete'] else 'partial'
         outcome['guest_writer_bound'] = writer_bound
         outcome['findings'].extend(writer_bound['findings'])

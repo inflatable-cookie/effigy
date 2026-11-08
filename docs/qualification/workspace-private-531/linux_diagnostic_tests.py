@@ -364,6 +364,19 @@ class MetadataAccountingTests(unittest.TestCase):
         with self.assertRaises(Refusal):
             proof.check_snapshots(b'{}')
 
+    def test_probe_requires_running_and_a_well_formed_boot_identity(self):
+        raw = b''.join(key.encode() + b'=' + (b'running' if key == 'system_state' else
+                       b'11111111-2222-3333-4444-555555555555' if key == 'boot_id' else b'unknown') + b'\n'
+                       for key in sorted(proof.PROBE_KEYS))
+        self.assertEqual(proof.check_probe(raw)['system_state'], 'running')
+        for field, old, value in (('system_state', b'running', b'starting'),
+                                  ('boot_id', b'11111111-2222-3333-4444-555555555555', b'unknown')):
+            changed = raw.replace(field.encode() + b'=' + old, field.encode() + b'=' + value)
+            with self.subTest(field=field), self.assertRaises(Refusal):
+                proof.check_probe(changed)
+        with self.assertRaises(Refusal):
+            proof.check_boot_id(b'11111111-2222-3333-4444-555555555555\nextra\n')
+
     def test_extent_loss_and_growth_cap_refuse(self):
         before = {'leaf': {'path': '/leaf', 'device': 1, 'inode': 2, 'logical': 1, 'allocated': 1}}
         with self.assertRaises(Refusal):
@@ -1312,13 +1325,23 @@ elif args[0] == 'list':
     if mode == 'wrong_uuid':
         vm['ID'] = 'wrong'
     print(json.dumps([vm]))
-elif args[0] == 'exec' and args[-1] == 'ready':
-    if mode == 'early_boot' and not (root / 'ready-attempt').exists():
-        (root / 'ready-attempt').write_text('1')
-        sys.exit(1)
-    if mode == 'never_ready':
-        sys.exit(1)
-    print('ready')
+elif args[0] == 'exec' and args[2:5] == ['/usr/bin/systemctl', 'is-system-running', '--wait']:
+    if mode == 'readiness_timeout': time.sleep(2)
+    if mode == 'readiness_degraded': print('degraded'); sys.exit(1)
+    if mode == 'readiness_starting': print('starting'); sys.exit(1)
+    if mode == 'readiness_malformed': print('running\\nextra'); sys.exit(0)
+    if mode in ('never_ready', 'readiness_failed'): print('unknown'); sys.exit(1)
+    print('running')
+elif args[0] == 'exec' and args[2:4] == ['/bin/cat', '/proc/sys/kernel/random/boot_id']:
+    counter = root / 'boot-reads'
+    seen = int(counter.read_text()) if counter.exists() else 0
+    counter.write_text(str(seen + 1))
+    if mode == 'boot_drift_before_probe' and seen >= 0:
+        print('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')
+    elif mode == 'boot_drift_routes' and seen >= 2:
+        print('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')
+    else:
+        print('11111111-2222-3333-4444-555555555555')
 elif args[0] == 'exec':
     script = args[-1] if len(args) > 4 else ''
     for name in routes:
@@ -1344,7 +1367,9 @@ elif args[0] == 'exec':
         (disk / 'b.hds').unlink()
     if mode == 'extent_replaced':
         touch(disk / 'b.hds', b'replacement')
-    if mode == 'timeout':
+    if mode == 'probe_starting':
+        print(%(starting_probe)r, end='')
+    elif mode == 'timeout':
         print('uid=0', flush=True)
         time.sleep(2)
     elif mode == 'partial':
@@ -1370,8 +1395,15 @@ class EntryTests(unittest.TestCase):
         ('stop_unknown', 1, 1),
         ('stop_timeout', 1, 1),
         ('growth', 0, 1),
-        ('early_boot', 0, 1),
         ('never_ready', 1, 1),
+        ('readiness_starting', 1, 1),
+        ('readiness_degraded', 1, 1),
+        ('readiness_failed', 1, 1),
+        ('readiness_malformed', 1, 1),
+        ('readiness_timeout', 1, 1),
+        ('probe_starting', 1, 1),
+        ('boot_drift_before_probe', 1, 1),
+        ('boot_drift_routes', 1, 1),
         ('metadata_rotation', 0, 1),
         ('config_change', 0, 1),
         ('config_replaced', 0, 1),
@@ -1411,11 +1443,15 @@ class EntryTests(unittest.TestCase):
               'Home path': str(home / 'config.pvs'),
               'Hardware': {'hdd0': {'enabled': True, 'image': str(disk)}}}
         program = root / 'fake-prlctl'
-        probe_output = ''.join(key + '=unknown\n' for key in sorted(proof.PROBE_KEYS))
+        probe_output = ''.join(key + '=' + ('running' if key == 'system_state' else
+                                            '11111111-2222-3333-4444-555555555555' if key == 'boot_id' else 'unknown') + '\n'
+                              for key in sorted(proof.PROBE_KEYS))
+        starting_probe = probe_output.replace('system_state=running', 'system_state=starting')
         program.write_text(PROGRAM % {'state': str(state), 'log': str(log), 'scenario': str(scenario),
                                       'root': str(root), 'home': str(home), 'disk': str(disk),
                                       'vm': vm, 'snapshot': json.dumps(snapshot),
-                                      'probe': probe_output, 'cap': diagnostic.CAP,
+                                      'probe': probe_output, 'starting_probe': starting_probe,
+                                      'cap': diagnostic.CAP,
                                       'routes': route_text(),
                                       'mode_routes': {'writer_bound_absent': route_text(ABSENT_ROUTES),
                                                       'writer_bound_malformed': route_text(MALFORMED_ROUTES)}})
@@ -1430,7 +1466,7 @@ class EntryTests(unittest.TestCase):
             (disk / 'a.hds').write_bytes(b'a')
             (disk / 'b.hds').write_bytes(b'extent')
             (home / 'config.pvs.backup').write_bytes(b'original-backup')
-            for leftover in ('config.pvs.backup.tmp', 'starting-lists', 'ready-attempt',
+            for leftover in ('config.pvs.backup.tmp', 'starting-lists', 'boot-reads',
                              'stop-while-starting'):
                 (root / leftover).unlink(missing_ok=True)
             log.write_text('')
@@ -1478,7 +1514,7 @@ class EntryTests(unittest.TestCase):
                 self.assertEqual(proof.main(['proof', str(path), digest]), 0)
             self.assertEqual(state.read_text(), 'stopped')
             result = json.loads((evidence / 'linux-diagnostic-fixture01' / 'outcome.json').read_text())
-            self.assertEqual(result['schema'], 'linux-diagnostic-observation-v4')
+            self.assertEqual(result['schema'], 'linux-diagnostic-observation-v5')
             self.assertEqual(result['start_count'], 1)
             self.assertEqual(result['stop_count'], 1)
             self.assertEqual(result['stop_eligibility'], 'running')
@@ -1486,6 +1522,13 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(result['writable_top'], 'unknown')
             self.assertEqual(result['placement'], 'not evaluated')
             self.assertEqual(result['findings'], [])
+            self.assertEqual(result['readiness'], 'running')
+            self.assertEqual(result['boot_binding'], {
+                'status': 'same boot observed',
+                'boot_id': '11111111-2222-3333-4444-555555555555',
+                'route_window_start': '11111111-2222-3333-4444-555555555555',
+                'route_window_end': '11111111-2222-3333-4444-555555555555'})
+            self.assertEqual(result['probe_fields']['system_state'], 'running')
             writer_bound = result['guest_writer_bound']
             self.assertEqual(writer_bound['schema'], 'linux-writer-bound-observation-v1')
             self.assertEqual(writer_bound['status'], 'observed')
@@ -1524,6 +1567,9 @@ class EntryTests(unittest.TestCase):
                 if argv[1:2] == ['start'] and scenario.read_text() == 'start_exception':
                     original_run(*args, **kwargs)
                     raise Refusal('failure after launcher receipt')
+                if (argv[1:2] == ['exec'] and '/usr/bin/systemctl' in argv
+                        and scenario.read_text() == 'readiness_timeout'):
+                    args = (args[0], argv, 0.2) + args[3:]
                 if (argv[1:2] == ['list'] and scenario.read_text() == 'stop_unknown'
                         and 'stop' in log.read_text().splitlines()):
                     raise Refusal('terminal observation unavailable')
@@ -1625,12 +1671,27 @@ class EntryTests(unittest.TestCase):
                                                  for finding in result['findings']))
                         if mode == 'growth':
                             self.assertEqual(result['final_growth']['extents']['logical'], 5)
-                        if mode == 'early_boot':
-                            self.assertGreaterEqual(calls.count('exec'), 3)
-                            self.assertEqual(result['findings'], [])
                         if mode == 'never_ready':
-                            self.assertTrue(any('readiness unknown' in finding
+                            self.assertTrue(any('readiness refused' in finding
                                                 for finding in result['findings']))
+                        if mode.startswith('readiness_') or mode == 'never_ready':
+                            self.assertFalse(result.get('probe'))
+                            self.assertFalse(any('observation-' in path.name
+                                                 for path in (evidence / ('linux-diagnostic-fixture%02d' % index)).iterdir()))
+                            self.assertEqual(result['stop_count'], 1)
+                            self.assertEqual(calls.count('exec'), 1)
+                            self.assertTrue((evidence / ('linux-diagnostic-fixture%02d' % index)
+                                             / 'step-005' / 'stdout').is_file())
+                            self.assertIn('config', result['post'])
+                        if mode == 'probe_starting':
+                            self.assertTrue(any('probe did not observe systemd running' in finding
+                                                for finding in result['findings']))
+                            self.assertEqual(result['stop_count'], 1)
+                            self.assertIn('config', result['post'])
+                        if mode.startswith('boot_drift_'):
+                            self.assertTrue(any('boot identity' in finding for finding in result['findings']))
+                            self.assertEqual(result['stop_count'], 1)
+                            self.assertIn('config', result['post'])
                         if mode == 'config_change':
                             self.assertEqual(result['findings'], [])
                             self.assertTrue(any('config bytes changed' in difference
@@ -1756,7 +1817,9 @@ class CheckoutBindingTests(unittest.TestCase):
         vm = {'ID': proof.setup.VM_UUID, 'State': 'stopped', 'Home': str(self.home) + '/',
               'Home path': str(self.home / 'config.pvs'),
               'Hardware': {'hdd0': {'enabled': True, 'image': str(self.disk)}}}
-        probe = ''.join(key + '=unknown\n' for key in sorted(proof.PROBE_KEYS))
+        probe = ''.join(key + '=' + ('running' if key == 'system_state' else
+                                     '11111111-2222-3333-4444-555555555555' if key == 'boot_id' else 'unknown') + '\n'
+                       for key in sorted(proof.PROBE_KEYS))
         # Installed shape: the bundle CLI is a distinct executable; /usr/local/bin/prlctl is an alias
         # to the vendor-shaped wrapper below. The fixed route launches the bundle CLI directly.
         self.bundle = self.base / 'Parallels Desktop.app' / 'Contents' / 'MacOS'
@@ -1777,7 +1840,8 @@ class CheckoutBindingTests(unittest.TestCase):
             "elif args[0] == 'list':",
             "    vm['State'] = state.read_text()",
             "    print(json.dumps([vm]))",
-            "elif args[0] == 'exec' and args[-1] == 'ready': print('ready')",
+            "elif args[0] == 'exec' and args[2:5] == ['/usr/bin/systemctl', 'is-system-running', '--wait']: print('running')",
+            "elif args[0] == 'exec' and args[2:4] == ['/bin/cat', '/proc/sys/kernel/random/boot_id']: print('11111111-2222-3333-4444-555555555555')",
             "elif args[0] == 'exec':",
             "    script = args[-1] if len(args) > 4 else ''",
             "    for name in routes:",
@@ -1844,9 +1908,15 @@ class CheckoutBindingTests(unittest.TestCase):
         self.assertEqual(result['findings'], [])
         calls = [json.loads(line) for line in self.log.read_text().splitlines()]
         self.assertEqual([call[1] for call in calls],
-                         ['list', 'snapshot-list', 'start', 'list', 'exec', 'exec'] +
-                         ['exec'] * len(guest_probe.route_ids()) +
+                         ['list', 'snapshot-list', 'start', 'list'] +
+                         ['exec'] * (5 + len(guest_probe.route_ids())) +
                          ['list', 'stop', 'list', 'snapshot-list'])
+        self.assertEqual(calls[4][3:6], ['/usr/bin/systemctl', 'is-system-running', '--wait'])
+        self.assertEqual(calls[5][3:5], ['/bin/cat', '/proc/sys/kernel/random/boot_id'])
+        self.assertEqual(calls[6][3:5], ['/bin/sh', '-c'])
+        self.assertEqual(calls[7][3:5], ['/bin/cat', '/proc/sys/kernel/random/boot_id'])
+        self.assertEqual(calls[8 + len(guest_probe.route_ids())][3:5],
+                         ['/bin/cat', '/proc/sys/kernel/random/boot_id'])
         self.assertTrue(all(call[0] == str(self.program) for call in calls))
         self.assertIn([str(self.program), 'start', proof.setup.VM_UUID], calls)
         steps = sorted(self.destination('checkout01').glob('step-*'))
