@@ -129,10 +129,17 @@ run = ["printf 'child-before\\\\n'; sleep 2; printf 'child-after\\\\n'"]
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["ok"] is True
     assert b"Started:" not in result.stderr
-    pane_env = dict(env, EFFIGY_INTERNAL_MANAGED_PANE="1")
-    result = subprocess.run([binary, "--json", "nested"], cwd=root, env=pane_env, capture_output=True, timeout=30)
-    assert result.returncode == 0 and json.loads(result.stdout)["ok"] is True
-    assert b"Started:" not in result.stderr
-    result = subprocess.run([binary, "dev", "--headless"], cwd=root, env=env, capture_output=True, timeout=30)
+    # `--json` is silent in a pane under either spelling of the pane fact: the
+    # marker an inherited environment carries, and the first one Effigy wrote.
+    for marker in ("EFFIGY_MANAGED_PANE", "EFFIGY_INTERNAL_MANAGED_PANE"):
+        pane_env = dict(env, **{marker: "1"})
+        result = subprocess.run([binary, "--json", "nested"], cwd=root, env=pane_env, capture_output=True, timeout=30)
+        assert result.returncode == 0 and json.loads(result.stdout)["ok"] is True, (marker, result.stderr)
+        assert b"Started:" not in result.stderr, (marker, result.stderr)
+    result = subprocess.run([binary, "dev", "--headless"], cwd=root, env=env, capture_output=True, timeout=60)
     assert result.returncode == 0, (result.stdout, result.stderr)
-    assert b"Started: running nested" not in result.stdout + result.stderr
+    headless = result.stdout + result.stderr
+    # A workload's child sits in a pane whichever front end renders the run:
+    # bounded start/finish lines, never spinner frames (effigy#729).
+    assert b"Started: running nested" in headless, headless
+    assert headless.count(b"elapsed") <= 3, headless

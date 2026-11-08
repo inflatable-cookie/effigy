@@ -325,6 +325,14 @@ fn run_up(
     for (key, value) in &plan.up_env {
         env.insert(OsString::from(key), EnvValue::Plain(OsString::from(value)));
     }
+    // `up` writes into the run's own output log, which is a pane: a nested
+    // Effigy there (the environment's own bring-up) draws bounded lines rather
+    // than spinner frames, and its host processes inherit the same fact
+    // (effigy#729).
+    env.insert(
+        OsString::from(effigy_ui::steps::MANAGED_PANE_ENV),
+        EnvValue::Plain(OsString::from("1")),
+    );
     env.insert(
         crate::runner::managed_color::CAPABILITY.into(),
         EnvValue::Plain(if ansi_front { "1" } else { "0" }.into()),

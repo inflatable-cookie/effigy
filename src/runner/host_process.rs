@@ -1976,6 +1976,9 @@ fn nonsecret_host_environment(name: &str) -> bool {
             | "FORCE_COLOR"
             | "EFFIGY_MANAGED_TUI"
             | "EFFIGY_MANAGED_HEADLESS"
+            // A host process's own output is followed as plain lines from its
+            // log, so a nested Effigy there is in a pane too (effigy#729).
+            | "EFFIGY_MANAGED_PANE"
             | "EFFIGY_MANAGED_PANE_ANSI"
             | "EFFIGY_COLOR"
             | "ANSI_COLORS_DISABLED"

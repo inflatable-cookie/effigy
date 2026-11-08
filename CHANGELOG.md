@@ -987,6 +987,20 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Keep a Services-style managed pane bounded when the tab's own program starts
+  Effigy with the internal namespace scrubbed (effigy#729). The pane fact is now
+  `EFFIGY_MANAGED_PANE=1`, outside `EFFIGY_INTERNAL_`, so a nested Effigy child
+  inherits it through Effigy's own child environment and through consumer
+  wrappers such as the shipped bundle's `profile_env.py`: the pane shows one
+  `Started:`/`✓`/`✗` line per step, no CLI banner, no staircase of live frames
+  and no repeated wait, and the failure stays readable. Every process a managed
+  run starts writes into a captured, line-oriented log - the TUI panes, the
+  `--headless` relay, the run's own output and a host process's log - so all of
+  them mark their children, whatever the front end; the environment's `up`
+  command and inherited host processes carry the same fact. A standalone
+  terminal still draws live spinner frames, and piped or `--json` output is
+  unchanged. The old `EFFIGY_INTERNAL_MANAGED_PANE` spelling is still honoured.
+
 - Avoid a false cleanup failure when a custody anchor retires during its final
   stop, while retaining independent workload group checks and positive group
   closure (effigy#709).

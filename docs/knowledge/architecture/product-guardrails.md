@@ -49,9 +49,20 @@ when the real cause was two named services failing their health checks.
   `waiting for web to report healthy (attempt 4, last: HTTP 404)` or
   `fetching bundle decodelabs`. The label changes as the work moves on, and
   each step ends with a one-line success or failure. Spinners write to stderr
-  and never appear in `--json`, piped or non-terminal output. A managed TUI
-  owns its screen: nested Effigy processes in its panes use plain start and
-  finish lines without banners or spinner redraws.
+  and never appear in `--json`, piped or non-terminal output. A terminal a
+  person watches is the only place a spinner is correct. Every process a
+  managed run starts writes into a captured, line-oriented log: the TUI panes,
+  the `--headless` relay, the run's own output and a host process's log. Each
+  of those children carries the pane fact `EFFIGY_MANAGED_PANE=1`, so a nested
+  Effigy process inside it writes plain `Started:`/`✓`/`✗` lines with no banner
+  and no spinner redraws, and so do the Effigy processes that child starts. The
+  fact sits outside the `EFFIGY_INTERNAL_` namespace because that prefix is
+  exactly what Effigy's own child environment and consumer wrappers (the
+  shipped bundle's `profile_env.py`) scrub: a marker they cannot drop is what
+  keeps the pane bounded rather than a staircase of stale frames (effigy#729).
+  The first spelling, `EFFIGY_INTERNAL_MANAGED_PANE=1`, is still honoured. The
+  pane fact is presentation only: it never carries session, vault or listener
+  authority.
 - **Managed producer colour belongs behind custody.** Tom reversed the v0.16
   colour deferral on 2026-10-30: Cargo/Oxide colour in ANSI-capable managed
   panes is a v0.15 requirement. The canonical host log must contain only
