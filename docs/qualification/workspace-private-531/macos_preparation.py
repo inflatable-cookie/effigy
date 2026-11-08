@@ -58,6 +58,7 @@ HELPERS = frozenset({
     'render_guest_spec', 'compare_route_echo', 'host_stage_dockerfile', 'verify_desktop_endpoint',
     'verify_frozen_artifacts', 'check_build_help', 'read_iidfile', 'check_image_identity',
     'check_runtime_facts', 'select_cleanup_targets', 'read_cidfile', 'check_cleanup_target',
+    'prefetch_colima_image',
 })
 # Hostile on purpose. Every character class the sources use (quotes, $, braces, glob, parens,
 # semicolon, backslash, equals, newline) is present, and nothing that can redirect, pipe or
@@ -66,6 +67,10 @@ ROUTE_ECHO = 'a "b" \'c\' $HOME {x} * ; ( ) \\ = \nd'
 COLIMA_IMAGE_URL = ('https://github.com/abiosoft/colima-core/releases/download/v0.10.4/'
                     'ubuntu-24.04-minimal-cloudimg-arm64-containerd.raw.gz')
 COLIMA_IMAGE_SHA512 = ('86fd0879941f890b72ad54709cd28d0b9c31638b3ba0201d3abd11eaadc0e87079b908af05de939d9cceb1d338ec3827efc73e81b9c6716148048ab91c7f9286')
+# Exact payload size of that asset, from the colima-core v0.10.4 GitHub release metadata (queried 2026-11-08).
+# Colima pins only the sha512. The sha512 matches the release's .sha512sum sidecar and colima v0.10.3's embedded list.
+COLIMA_IMAGE_BYTES = 446992920
+COLIMA_IMAGE_NAME = COLIMA_IMAGE_URL.rsplit('/', 1)[1]
 BASE_IMAGE = 'docker.io/library/ubuntu@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11'
 PORTS_ARCHIVE = 'http://ports.ubuntu.com/ubuntu-ports'
 OFFICIAL_SOURCE_PREFIXES = (

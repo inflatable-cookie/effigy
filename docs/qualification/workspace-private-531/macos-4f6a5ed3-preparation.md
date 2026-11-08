@@ -1,11 +1,37 @@
 # macOS 4f6a5ed3 preparation: Colima and Desktop stages
 
 Preparation only. It arms nothing and gives no proof credit. The executable plan is
-[macos-4f6a5ed3-stages.json](macos-4f6a5ed3-stages.json), manifest revision r3. Each stage
+[macos-4f6a5ed3-stages.json](macos-4f6a5ed3-stages.json), manifest revision r5 (r5 section below). Each stage
 needs its own fresh GO under standing decision `63c338e2-1c50-435e-9783-e78e9d8558e6` v2,
 naming the stage, the manifest, source and input hashes, the engine identity and a window
 of at most 1200 seconds. The standing decision is not a blanket authority, and no GO is
 recorded here.
+
+## Revision r5 (supersedes r4 for C1; manifest `macos-4f6a5ed3-stages-r5`)
+
+C1 is the one download stage whose only fetch is pinned and sized, so it is admitted. Upstream metadata gives the image size.
+Colima v0.10.3 caches the image by URL and trusts an existing cache file without a hash check, so the cache is not used.
+Instead the fixed `c1-prefetch-colima-image` helper fetches the one reviewed URL into the owned, empty
+`{colima_cache_home}/effigy-image/` directory and starts Colima with `--disk-image`. Colima checks that file against the
+same sha512 at use (`limautil.DownloadImage` / `downloader.SHA.ValidateFile`; `colima start --help` lists the flag).
+
+Source qualification (2026-11-08, public metadata only; no image or payload downloaded):
+
+- Size `446992920` bytes: GitHub release asset `size` for colima-core v0.10.4 (`gh api repos/abiosoft/colima-core/releases/tags/v0.10.4`).
+- sha512 `86fd0879…` equals the release `.sha512sum` sidecar (184 bytes) and colima v0.10.3 `embedded/images/images.txt`
+  (arm64 containerd line).
+- Release metadata also gives a sha256 digest (`3389c283…`). It is recorded here and not pinned: the pinned identity is sha512.
+
+Metric. `download_cap_bytes` counts payload bytes the runner itself writes. HTTP headers, redirect bodies and the TLS
+wire are not counted and not claimed. The bound is exact: the transfer must be `Content-Length` = the pinned size with
+identity encoding and no chunking, the write loop refuses at size+1, and a live monitor checkpoint runs per chunk.
+The C1 cap is lowered to the exact size. Redirects follow only to `github.com`, `objects.githubusercontent.com` or
+`release-assets.githubusercontent.com` over HTTPS, at most three hops. A partial file is retained, never used or reused,
+and an existing name, including a symlink, is a collision.
+
+C4 and D2 are not admitted. Their base-image pull and in-build apt fetches happen inside the engine build, so the runner
+sees no payload bytes and nothing bounds them. The one proposal, not implemented, is in the Static admission list below.
+C2 still needs its own remote-closure prerequisite before C3, C5, D3 and D4 can be reached.
 
 ## Revision r4 (supersedes r3 for D1 and D4)
 
@@ -144,14 +170,13 @@ Colima (`colima`):
 
 - **C0** admission (unchanged from r2): tool hashes against the tranche, tranche summary
   check, intent claim, owned roots created 0700 and empty, `colima start --help`.
-- **C1** start, 900 s stage, 600 s command. `c1-make-owned-dirs` creates the cache and
-  Docker config, then `colima start -p effigy-4f6a-qual --runtime containerd --vm-type vz
-  --arch aarch64 --cpus 2 --memory 2 --disk 20 --root-disk 20 --mount none --ssh-config=false
-  --activate=false`. Download cap 2 GiB; storage cap 8 GiB. Source: Colima's own embedded
-  image list for arm64 containerd, `https://github.com/abiosoft/colima-core/releases/download/v0.10.4/ubuntu-24.04-minimal-cloudimg-arm64-containerd.raw.gz`,
-  sha512 `86fd0879…` (Colima verifies the digest on download). Colima does not pin the
-  raw image size, so the planner takes the size from release metadata at activation and
-  may lower the cap only with that number.
+- **C1** start, 900 s stage: `c1-make-owned-dirs` (cache, Docker config and `effigy-image`), then
+  `c1-prefetch-colima-image` (210 s, the pinned image, see r5), then `colima start -p effigy-4f6a-qual --runtime containerd
+  --vm-type vz --arch aarch64 --cpus 2 --memory 2 --disk 20 --root-disk 20 --mount none --disk-image {image}
+  --ssh-config=false --activate=false` (600 s). The step budget is 30 + 210 + 600 = 840 s, the stage cap less the 60 s
+  reserve. Download cap 446992920 bytes (the exact pinned size); storage cap 8 GiB. Source:
+  `https://github.com/abiosoft/colima-core/releases/download/v0.10.4/ubuntu-24.04-minimal-cloudimg-arm64-containerd.raw.gz`,
+  sha512 `86fd0879…`.
 - **C2** identity, 300 s stage: `colima status -p effigy-4f6a-qual --json`,
   `printf %s <route echo>` and the byte comparison, then the guest parent probe. Nothing
   else crosses the route until the comparison passes.
@@ -421,14 +446,19 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
   no native proof credit.
 - **Static admission.** C0 and D0 have no remaining static helper refusal. Their actual execution still
   needs the external proof-only precondition and all runtime checks. Other stages remain refused:
-  - C1, C4 and D2: the download cap is payload bytes, wire traffic is not counted, and the manifest
-    records no pinned image size.
+  - C1: admitted statically (r5). Its one fetch is the pinned Colima image through the prefetch helper, with the exact
+    size and sha512. Ordinary execution still refuses. It is in the proof entry (`PROOF_STAGES`) as a plain proof request
+    only; its window recipe is refused, since the window recipe is not reviewed for C1.
+  - C4 and D2: refused. The engine build fetches the base image and apt packages, which the runner cannot observe or bound.
+    ONE proposal, not implemented: pin an exact-size base OCI archive and an offline apt bundle, fetch and hash each as the
+    Colima image is, load them through a fixed step, and build with no network. Effects: a new recipe hash, a new build argv,
+    two new pinned artifacts and a fresh GO. It changes no existing refusal.
   - C2: a multi-effect guest stage. The guest closure is unknown after the route echo, so the probe
     is not reachable through this adapter.
   - C3: `guest_spec` derives from the C2 probe output and the `token32` that C0 mints.
   - D1 is statically admitted (r4). Its ordinary execution still refuses at the owner mechanism; its
     proof-only window names the original D0 receipt (see Executor).
-  - D4: its per-target contract is source-qualified, but its predecessor D3 needs D2 (download cap),
+  - D4: its per-target contract is source-qualified, but its predecessor D3 needs D2 (engine-side network),
     so D4 cannot run until D2 and D3 qualify.
   - D3, C5 and C6: unadmitted because their predecessor is.
 - **C0 (fresh tokens).** Its handlers are `verify_tool_sha` (the live colima and docker binaries

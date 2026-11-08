@@ -29,6 +29,7 @@ import linux_supervisor as supervisor
 import preparation_observations as observations
 import linux_disk_identity as identity
 import linux_allocation_bound as allocation
+import linux_disk_association as disk_association
 import preparation_resources as resources
 import linux_receipts
 import linux_transfer as transfers
@@ -510,23 +511,10 @@ def stage1_run(request, after, transport, clock=time.monotonic, started_at=None,
     return post
 
 
-def verify_disk_association(host, guest, witness, supported=None):
-    """Fail closed unless a source-verified mechanism establishes the controller-to-guest chain."""
+def verify_disk_association(facts, supported=None):
+    """Fail closed unless every linux_disk_association premise passes; an empty gate refuses everything."""
     supported = SUPPORTED_DISK_MECHANISMS if supported is None else supported
-    mechanism = witness.get('mechanism') if isinstance(witness, dict) else None
-    if mechanism not in supported:
-        raise Refusal('unsupported controller-to-guest disk association; next observation: '
-                      'a host-reported serial or UID for the hdd0 controller entry, and '
-                      'lsblk SERIAL for the parent of /dev/sda2, both fresh')
-    if host.get('uuid') != VM_UUID or host.get('disk_uid') != DISK_UID:
-        raise Refusal('wrong VM or disk identity')
-    if host.get('controller') != 'sata' or host.get('position') != 0:
-        raise Refusal('wrong controller position')
-    if guest.get('path') != '/dev/sda' or guest.get('size') != ROOT_BYTES:
-        raise Refusal('guest parent disk differs')
-    if not host.get('serial') or host.get('serial') != guest.get('serial'):
-        raise Refusal('host-reported serial does not match the guest block serial')
-    return {'mechanism': mechanism, 'vm': VM_UUID, 'disk_uid': DISK_UID, 'serial': guest['serial']}
+    return disk_association.verify(facts, supported)
 
 
 def verify_hard_limit(witness, limit_bytes, supported=None, facts=None):
@@ -970,8 +958,7 @@ def setup_plan(fresh):
             missing.append('authorized_keys: ' + (row.get('key_error') or 'not bound'))
         if rid in ('E7a', 'E7b', 'E7c'):
             try:
-                host, guest, witness = _disk_parts(fresh.get('disk_association'))
-                verify_disk_association(host, guest, witness)
+                verify_disk_association(fresh.get('disk_association'))
             except Refusal as exc:
                 missing.append(str(exc))
         if row['kind'] in ('vm-supervised', 'contained-transfer'):
@@ -1027,11 +1014,6 @@ def _hard_limit_reason(fresh, row):
     except Refusal as exc:
         return str(exc)
     return None
-
-
-def _disk_parts(witness):
-    witness = witness or {}
-    return witness.get('host') or {}, witness.get('guest') or {}, witness
 
 
 def advance_allowed(receipt, closure, basis):
