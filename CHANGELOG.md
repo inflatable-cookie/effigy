@@ -1025,6 +1025,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Bind the private Colima Recipe E entry to three roles: preparation source,
+  a clean candidate checkout the producer runs in, and that checkout's own host
+  binary with a source receipt. The Homebrew Colima alias is accepted only
+  through its allowlisted Cellar target, and the artifact check streams under
+  its cap. Native launch still refuses the unresolved host-write, shared-profile
+  no-change and E9 budget prerequisites before the claim (effigy#741).
 - Load a private gateway's TLS certificates when the daemon applies a committed
   route snapshot, so a missed cert-directory notification cannot leave a
   published HTTPS route answering `tlsv1 alert access denied` (effigy#737,
