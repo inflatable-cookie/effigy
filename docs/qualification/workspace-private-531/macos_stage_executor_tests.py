@@ -2486,6 +2486,35 @@ class FreshChainRootTests(Fixture):
         self.assertEqual(set(pins.items), {control})  # the refusal came from the first root, before any other pin
         self.assertEqual(open_descriptors(), before)  # every descriptor the check opened was closed exactly once
 
+    def test_hold_refuses_a_mismatched_pin_as_a_refusal_and_keeps_descriptor_accounting(self):
+        """Review 5815996833: Pins.hold's refusal path is production code (the fixed-helper anchors and created
+        directories), so it is pinned here. A pre-pinned foreign identity refuses as Refusal with no OSError, takes
+        no second descriptor and leaks none; a matching pin still holds, so the refusal is the mismatch itself."""
+        self.use_historical({})
+        bindings, _, _ = self.run_c0('f0f0f0c9', 'fresh-c0-0009b')
+        control = bindings['control']
+        foreign = (0, 0, os.geteuid(), 0o700)
+
+        def open_descriptors():
+            return len(os.listdir('/dev/fd'))
+
+        before = open_descriptors()
+        pins = ex.Pins()
+        self.addCleanup(pins.close)
+        pins.items[control] = foreign
+        with self.assertRaisesRegex(ex.Refusal, 'held directory differs from its pin'):
+            pins.hold(control)
+        self.assertEqual(pins.held, {})
+        self.assertEqual(pins.items[control], foreign)
+        self.assertEqual(open_descriptors(), before)  # hold's own descriptor was closed exactly once
+
+        del pins.items[control]  # with no conflicting pin the same hold succeeds and holds one descriptor
+        pins.hold(control)
+        self.assertIn(control, pins.held)
+        pins.close()
+        self.assertEqual(pins.held, {})
+        self.assertEqual(open_descriptors(), before)
+
     def test_a_tampered_c0_creation_record_refuses_where_the_field_is_read(self):
         """A self-consistent edit of the C0 creation helper's record re-records every hash the receipt names, so
         only the field-level binding can refuse it. The live roots are untouched and never adopted."""
