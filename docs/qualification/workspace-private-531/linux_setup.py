@@ -1000,7 +1000,7 @@ def default_row_runner(row, stage, monitor):
     candidate and payload stdout come from the supervisor's JSON line. The writer's exit is
     returned for the executor's precondition check.
     """
-    if row['credit'] and row['credit'].get('request_json'):
+    if row.get('credit') and row['credit'].get('request_json'):
         approval = transfers.run_transfer(approval_install_argv(row), None, 30, OUTPUT_CAP, monitor)
         for stream in ('stdout', 'stderr'):
             exclusive(Path(stage) / ('approval.' + stream), approval[stream])
@@ -1109,7 +1109,7 @@ def execute_plan(facts, runner, observe_identity, observe_terminal, stage_root, 
                                                       'writer_argv': row['writer_argv'], 'stdin_sha256': stdin_sha,
                                                       'expect': row['expect'], 'credit': row['credit']},
                                                      sort_keys=True, indent=2) + '\n').encode())
-        if row['credit'] and row['credit'].get('request_json'):
+        if row.get('credit') and row['credit'].get('request_json'):
             preparation_requests.write_request(stage / 'mapped-request.json', json.loads(row['credit']['request_json']))
         try:
             outcome = dict(runner(row, stage, monitor))

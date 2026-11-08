@@ -2302,7 +2302,7 @@ class InstalledSupervisorChecks(unittest.TestCase):
                 names.update(alias.name.split('.')[0] for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.level == 0:
                 names.add(node.module.split('.')[0])
-        stdlib = {'base64', 'hashlib', 'json', 'os', 'pwd', 're', 'stat', 'subprocess', 'sys', 'threading', 'time', 'pathlib'}
+        stdlib = {'ctypes', 'base64', 'hashlib', 'json', 'os', 'pwd', 're', 'stat', 'subprocess', 'sys', 'threading', 'time', 'pathlib'}
         self.assertLessEqual(names, stdlib)
 
     def test_mirrored_constants_match_their_sources(self):

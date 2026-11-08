@@ -368,8 +368,27 @@ def _row_write(row_fd, name, data):
 
 
 def _make_fifo(row_fd, name, uid):
-    os.mkfifo(name, 0o600, dir_fd=row_fd)
-    os.chown(name, uid, -1, dir_fd=row_fd, follow_symlinks=False)
+    if os.geteuid() != 0 and uid != os.geteuid():
+        raise Refusal('unprivileged supervisor cannot assign another payload uid')
+    if os.mkfifo in os.supports_dir_fd:
+        os.mkfifo(name, 0o600, dir_fd=row_fd)
+    else:
+        # CPython on macOS omits mkfifo(dir_fd), although libc supports mkfifoat.
+        # Keep fd custody in source controls too; never fall back to a pathname.
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        make = libc.mkfifoat
+        make.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        make.restype = ctypes.c_int
+        if make(row_fd, os.fsencode(name), 0o600) != 0:
+            raise OSError(ctypes.get_errno(), 'mkfifoat failed')
+    fd = os.open(name, os.O_RDWR | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=row_fd)
+    try:
+        if not stat.S_ISFIFO(os.fstat(fd).st_mode):
+            raise Refusal('payload endpoint is not a FIFO')
+        os.fchown(fd, uid, -1)
+    finally:
+        os.close(fd)
 
 
 def _release_row_gate(row_fd):
