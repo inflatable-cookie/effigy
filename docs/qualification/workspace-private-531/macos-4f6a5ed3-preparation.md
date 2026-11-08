@@ -268,20 +268,25 @@ Gates:
 
 ## Executor (source only)
 
-`macos_stage_executor.py` is the reviewed runner. Nothing in this revision starts Colima or
-Desktop, and no stage can run from this source.
+`macos_stage_executor.py` is the stage runner. This source preparation starts no native backend.
 
-- **Execution is refused, globally.** Every resolved request carries
-  `execution.admitted = false` and the reason: no owner-controlled activation mechanism exists in
-  this repository. A file the same account can create and chmod grants no authority. The
-  prerequisite is a planner-provided mechanism that proves the owner authorised the exact request
-  bytes, verified before any effect. Until it exists, `execute_stage` refuses every stage before
-  any effect.
-- **Static admission in source: none.** Every stage is refused in production, first by the global
-  owner-activation refusal and then by its own static reason:
-  - C0 and D0: the helper residual. Their helpers are bounded only for interruptible work (an
-    uninterruptible kernel wait is not bounded), and the storage monitor is sampled at helper
-    boundaries, so the shared deadline and the live threshold are not enforced across helpers.
+- **Activation.** The ordinary `execute_stage` entry refuses. The separate
+  `qualification:macos:proof-only -- REQUEST SHA256` entry is only for an actual Nucleus proof-only
+  launch at the pinned commit and inputs, after native operator GO. Nucleus must record that execution;
+  the program cannot independently establish its provenance against another process of the same user.
+  A request file grants no authority. The entry checks its bindings and makes an exclusive input-hash claim.
+- **Prospective proof binding.** A later Nucleus qualification must pin the accepted commit, this exact
+  selector and the SHA-256 of the read-only request. The request has exactly `stage`, `activation_path`,
+  `activation_sha256`, `bindings`, `evidence_root`, `inputs_sha256`, `manifest_sha256` and
+  `source_sha256`. `inputs_sha256` is the canonical hash of the derived file-to-SHA-256 map, including
+  the proof and helper sources, selector manifests, interpreter, recipe and both tools. The planner still
+  needs a fresh token and private roots, exact request and activation bytes and their hashes, current
+  tool hashes and an expiry window. The operator question must name the selected stage's native effects
+  (both claim and create private files and directories; C0 invokes Colima's start help, while D0 reads
+  the Desktop endpoint and engine inventory). No question,
+  GO or proof execution is created by this source task.
+- **Static admission.** C0 and D0 have no remaining static helper refusal. Their actual execution still
+  needs the external proof-only precondition and all runtime checks. Other stages remain refused:
   - C1, C4 and D2: the download cap is payload bytes, wire traffic is not counted, and the manifest
     records no pinned image size.
   - C2: a multi-effect guest stage. The guest closure is unknown after the route echo, so the probe
@@ -295,7 +300,7 @@ Desktop, and no stage can run from this source.
   against the sha256 the pinned 688 C0 record names) and `verify_tranche_summary` (the tranche
   summary against the sha the same record names). C0 creates its own roots under the scratch root
   and refuses on any collision. For the recorded token it refuses: that C0 is historical, and C1
-  binds it. C0 is statically refused by the helper residual above. Each claimed C0 activation mints one
+  binds it. Each claimed C0 activation mints one
   `token32` (32 lowercase hex), written exclusively as `token32.json` and recorded by hash in the receipt
   as `origin`. It is the chain's origin: `origin_token32` reads it back from the verified C0 receipt before
   C3 and C4 claim. A historical C0 minted none, so C3 and C4 refuse for the recorded token.
@@ -311,29 +316,20 @@ Desktop, and no stage can run from this source.
   static admission reasons. Derived and unpinned slots render as explicit placeholders.
 - **Bindings.** Checked against the reviewed paths for the token, the pinned socket URL and the
   pinned check program. A caller who supplies a derived slot or an unpinned source refuses.
-- **Inputs.** The executor's own set (program files, including the pinned guest helper, the manifest, `runtime.Dockerfile`, tool binaries)
-  is bound by the activation and re-hashed by `run_stage` before every launch.
+- **Inputs.** Program files, selector configuration, manifest, interpreter, recipe and tool binaries
+  are bound by the activation. The fixed helper checks its input hashes before and after its work.
 - **Claims.** `macos-stage-claims/<activation_id>.claim`, exclusive, under a provisioned directory.
   A missing directory refuses. The executor never creates one under the scratch root.
 - **Pins.** The evidence, claims, activation and owned directories, and for D1 to D4 the private
   Docker config and context directories, are pinned by canonical path, owner, mode 0700, device and
   inode. Each is rechecked before every step. C0 pins its roots once it creates them.
-- **Deadline (helpers).** Each helper runs under a timer set to its remaining allowance. The
-  handler raises inside the helper, which interrupts Python-level work and interruptible system
-  calls; a FIFO read blocked in the kernel was interrupted in the test. The timer does not interrupt
-  an uninterruptible kernel wait, and the adapter does not bound one. That is a stated residual, not
-  an enforced guarantee. Exec windows are bounded by `run_stage`'s wait loop, which enforces the
-  remaining allowance and the output cap. Helpers are timer-bounded only, with that residual.
-- **Monitor (helpers and windows).** The stage-wide `Monitor` is sampled before and after every
-  helper and every exec window. It is not sampled during a helper. Helpers that write to the
-  control root create owned directories only. Directory allocation on the monitored filesystem is
-  not assumed to be zero: an allocation is observed at the helper's post-check and refuses before any
-  later effect, so it is a window-granularity bound, not a live one. Helpers that write the stage's
-  evidence are outside the control root and capped by their own sizes (the recipe at 64 KiB). A zero
-  storage cap is enforced exactly at each window. A failed post observation is retained and stops the
-  stage. The spawn record is taken with no subprocess, so nothing blocks live monitoring. It does not
-  read the kernel's process start time, and PID identity rests on the recorded process group and the
-  child's waited exit.
+- **Helper supervision.** C0 and D0 use a fixed child entry through the shared stage supervisor.
+  The parent samples the same absolute deadline and live counter while the child runs, including a
+  zero limit. A cap, timeout, lost counter or invalid result stops the stage. Polling is observation,
+  not a physical quota. The parent verifies and holds created directory descriptors and records both
+  original streams, the observed process group, spawn time and waited exit. Cleanup waits only through
+  the stage reserve; an unreaped child remains unknown with its identity recorded. An uninterruptible
+  kernel wait is not promised to terminate. Later-stage helpers remain behind their existing refusals.
 - **After an unknown guest closure.** A guest step whose closure is unknown halts later effects. The
   only helper that may still run is the C2 route-echo comparison, a read of the captured bytes against
   the reviewed constant before any payload. Every later step is recorded as `not_dispatched`.
@@ -358,8 +354,8 @@ Desktop, and no stage can run from this source.
   parent binding, the chain's `token32` and the recipe hash. In C4 it builds the verify spec with
   `build_verify_spec` from the C3 output; the spec's context must carry the same `token32`. The context
   path becomes `guest_context`, and `guest_iidfile` is that path with `.iid` appended. None of these is
-  caller-supplied: the plan shows placeholders, and the run derives the values from the chain. C0 is
-  refused here, so in this source they are never derived.
+  caller-supplied: the plan shows placeholders, and the run derives the values from the chain. C2
+  remains unadmitted, so these paths are not activated by this source change.
 - **Colima and Desktop.** Colima children resolve `docker` to `/usr/local/bin/docker` through an owned
   `bin/docker` link at the front of `PATH`, re-checked on every Colima step. Desktop runs with its
   pinned socket, `DOCKER_HOST`, an owned `DOCKER_CONFIG`, no `HOME` and no `DOCKER_CONTEXT`.
@@ -390,12 +386,11 @@ Desktop, and no stage can run from this source.
   non-zero client exit is still `guest_unknown`; a timeout stops the stage. D2: the Dockerfile is staged, built
   and read back; a pre-existing Dockerfile refuses before the build; a build whose allowance runs out stops
   before the readback. Static admission and the owner refusal still refuse with the simulation on.
-- **Not proven.** Native execution. Owner-verified activation. Exclusive volume creation (D1) and
-  per-target removal re-observation (D4). The helper deadline across uninterruptible kernel waits
-  (the residual above). The C2 probe through the stage loop: after the route echo's unknown closure
+- **Not proven.** Native execution or an actual Nucleus proof execution and native GO. Exclusive volume
+  creation (D1) and per-target removal re-observation (D4). Termination of an uninterruptible kernel wait.
+  The C2 probe through the stage loop: after the route echo's unknown closure
   the adapter halts. The probe and the C4 steps are dispatched only under the test-only closure simulation,
-  never in production. C0's real run for a fresh token
-  is refused until the helper bounds are demonstrated; the C0 origin is exercised by a test run only, so
+  never in production. The C0 origin is exercised by a test run only, so
   the `token32` route has not run natively. The guest closure rule for multi-effect stages, which C2 needs
   before its probe can be dispatched.
 

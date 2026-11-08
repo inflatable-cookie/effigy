@@ -4,11 +4,10 @@ plan: pure. Resolves every manifest step of a stage to its rendered argv, pinned
 runtime preconditions and admission reasons. Touches no filesystem and contacts no tool. Derived slots
 render as explicit placeholders that execution never uses; the run derives them from the chain.
 
-execute: the only effect path. Needs an activation request placed read-only in the owner activation
-directory, whose SHA-256 the caller names. Before any effect it derives the input set (program files,
-manifest, recipe, tool binaries), pins the owned directories it will use by identity, verifies the
-preceding receipt chain to its origin, and claims the activation durably. One stage-wide monitor covers
-every helper and every exec window. Each exec step goes through preparation_stage.run_stage.
+execute: the ordinary entry refuses. The separate proof-only entry requires an externally activated
+Nucleus execution at pinned inputs after native GO; an activation request file grants no authority.
+It derives and verifies inputs, pins directories, verifies the receipt chain and claims durably.
+C0/D0 helpers and exec windows use one stage-wide monitor through preparation_stage.run_stage.
 
 Run: python3 -I -B macos_stage_executor.py plan BINDINGS.json
      python3 -I -B macos_stage_executor.py execute STAGE ACTIVATION.json SHA256 EVIDENCE_ROOT BINDINGS.json
@@ -38,13 +37,16 @@ RECIPE_PATH = HERE / 'runtime.Dockerfile'
 SCHEMA = 'macos-stage-executor-receipt/2'
 # The guest helper that the C2 probe, C3 stage and C4 verify argv run in the guest. Pinned by sha256.
 GUEST_CONTEXT_PATH = HERE / 'macos_guest_context.py'
+HELPER_PATH = HERE / 'macos_stage_helper.py'
+PROOF_PATH = HERE / 'macos_stage_proof.py'
+REPO_ROOT = HERE.parents[2]
 GUEST_CONTEXT_SHA256 = '713cb10ea8ce2d5c15422650b3aa8abfe45ef5de1b0fa885219b70d3cab0f873'
 # Program files whose bytes the GO binds. Changing any of them after activation refuses before dispatch.
 PROGRAM_FILES = (HERE / 'macos_stage_executor.py', HERE / 'macos_preparation.py',
-                 HERE / 'preparation_stage.py', HERE / 'preparation_resources.py', GUEST_CONTEXT_PATH)
+                 HERE / 'preparation_stage.py', HERE / 'preparation_resources.py', GUEST_CONTEXT_PATH, HELPER_PATH,
+                 PROOF_PATH)
 TOOL_PATHS = (prep.COLIMA, prep.DOCKER)
-# Owner-placed activation requests: a file here, read-only and owned by this user, is the activation act,
-# and the caller names its exact bytes by SHA-256.
+# Read-only, hash-bound requests carry scope, not authority; activation is an external Nucleus precondition.
 ACTIVATIONS_DIR = prep.STASH + '/macos-stage-activations'
 CLAIMS_DIR = prep.STASH + '/macos-stage-claims'
 VOLUME_PREFIX = 'effigy-4f6a-qual-'
@@ -60,9 +62,12 @@ HISTORICAL_C0 = dict(
     sha256='15a5373ec533c517dcc780cf035c7a239fee0afa906978e5fd889c565ed2f40e',
     tranche_path=LINUX_ARTIFACT_DIR + '/macos-metadata-rfzuiadz/summary.json',
     tranche_sha256='cdfb7fb6c00de2efca69fe4c69fa7cd9bb7f2c2feda82ee9771868413e89f542')
-OWNER_PREREQUISITE = ('a planner-provided, owner-controlled activation mechanism that proves the owner authorised '
-                      'these exact request bytes (for example a signature by an owner key held outside this '
-                      'repository, verified before any effect); until it exists every stage refuses')
+HISTORICAL_TOOL_HASHES = {
+    'colima': '55278419bd4288e4ab11eb30be13f5e655f3886c0979b68e435df910dbc9bbdf',
+    'docker': '4fb51be4a4e9389b942ecbf52901a962bdccdaa38275e6de4d353df33981d600',
+}
+OWNER_PREREQUISITE = ('an owner-controlled Nucleus proof-only execution at the pinned commit and inputs, '
+                      'after native operator GO; the program cannot independently prove that launch provenance')
 # Recorded from the 688 C0 receipt (token 7deaf1b3): the three owned roots, by identity.
 RECORDED_TOKEN = '7deaf1b3'
 RECORDED_ROOTS = {
@@ -79,21 +84,12 @@ PATH_BINDINGS = ('control', 'colima_home', 'colima_cache_home', 'colima_docker_c
                  'desktop_config', 'desktop_context_dir', 'desktop_iidfile', 'desktop_cidfile')
 DOWNLOAD_UNADMITTED = ('download cap is payload bytes; wire traffic is not counted and the manifest '
                        'records no pinned image size, so a bounded prefetch cannot verify size')
-# The helper residual: helpers run under a timer that interrupts Python-level work and interruptible system
-# calls only, so an uninterruptible kernel wait is not bounded; and the stage monitor is sampled at helper
-# boundaries, not during a helper. The shared deadline and the live storage threshold are therefore not
-# enforced across helpers. Every stage whose helpers run is statically refused with this residual.
-HELPER_RESIDUAL_REASON = ('helpers are bounded only for interruptible work (an uninterruptible kernel wait is not '
-                          'bounded) and the storage monitor is sampled at helper boundaries, so the shared deadline '
-                          'and the live storage threshold are not enforced across helpers')
 UNADMITTED = {
-    'C0': HELPER_RESIDUAL_REASON + '; C0 is refused until those bounds are demonstrated',
-    'D0': HELPER_RESIDUAL_REASON + '; D0 is refused until those bounds are demonstrated',
     'C1': DOWNLOAD_UNADMITTED,
     'C2': ('multi-effect guest stage: the guest closure is unknown after the route echo, so the probe is not '
            'reachable through this adapter; the probe source itself is pinned (macos_guest_context.py)'),
-    'C3': ('guest_spec is derived from the C2 probe output and the token32 that the C0 origin mints; C0 is refused '
-           'and C2 is unadmitted'),
+    'C3': ('guest_spec is derived from the C2 probe output and the token32 that the C0 origin mints; '
+           'C2 is unadmitted'),
     'C4': DOWNLOAD_UNADMITTED,
     'D1': ('docker volume create is idempotent and the volume name is observable to other clients: exclusive '
            'creation of the activation volume cannot be established, so the stage is refused'),
@@ -101,13 +97,12 @@ UNADMITTED = {
     'D4': ('removal is not re-observed per target immediately before each removal, and the manifest records no '
            'image foreign list: current exact identity cannot be established, so cleanup is refused'),
 }
-# Execution is refused in source: no owner-controlled activation mechanism exists in this repository.
-# A planner-provided mechanism must replace this default before any stage can run.
+# Ordinary execution stays refused; the separate proof entry has an external Nucleus launch precondition.
 # 'simulate_guest_closure' is test-only: it treats a guest step that exits 0 as closed, so the stage loop can be
 # driven past a guest step under controlled transport. Every receipt it writes says so, and the chain verifier refuses
 # such a receipt. Production leaves it off: a guest exit never closes the guest.
 TEST_SEAM = {'owner_activation': False, 'admit_unadmitted': False, 'simulate_guest_closure': False}
-OWNER_ACTIVATION_REASON = ('no owner-controlled activation mechanism exists in this repository; a file that the '
+OWNER_ACTIVATION_REASON = ('no owner-controlled activation mechanism exists in the ordinary entry; a file that the '
                            'same account can create and chmod grants no authority, so execution is refused')
 PINNED_SOURCE_BINDINGS = {'probe_source': 'probe', 'stage_source': 'stage', 'verify_source': 'verify'}
 # Never caller-supplied. Each is produced by this run or by the verified chain: the guest specs and context names
@@ -353,7 +348,7 @@ RUNTIME_DERIVED = {
 def runtime_preconditions(stage_id, bindings):
     """What must be true at run time, re-checked by execute_stage. Historical observations are
     bindings to re-observe, never current evidence."""
-    pre = dict(activation='refused in this repository: ' + OWNER_PREREQUISITE,
+    pre = dict(activation='ordinary entry refused; proof-only entry requires ' + OWNER_PREREQUISITE,
                claim='durable exclusive claim by activation_id under the claims directory',
                prior=('closed executor receipt chain back to D0; C1 may instead bind the pinned 688 C0 record '
                       'through historical_binding (exact sha, recorded tools and roots), never by replay'),
@@ -426,10 +421,11 @@ class Pins:
 
     def __init__(self):
         self.items = {}
+        self.held = {}
 
     @staticmethod
     def observe(path):
-        if os.path.realpath(path) != path or not path.startswith(prep.STASH + '/'):
+        if os.path.realpath(path) != path or not (path == prep.STASH or path.startswith(prep.STASH + '/')):
             raise Refusal(f'{path}: pinned path must be canonical under Stash scratch')
         info = os.lstat(path)
         if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
@@ -449,6 +445,28 @@ class Pins:
                 raise Refusal(f'{path}: pinned directory is gone: refuse')
             if now != identity:
                 raise Refusal(f'{path}: pinned directory identity, owner or mode changed: refuse')
+            if path in self.held:
+                info = os.fstat(self.held[path])
+                if (info.st_dev, info.st_ino, info.st_uid, stat.S_IMODE(info.st_mode)) != identity:
+                    raise Refusal(f'{path}: held descriptor changed: refuse')
+
+    def hold(self, path):
+        fd = private_dir(path)
+        info = os.fstat(fd)
+        identity = (info.st_dev, info.st_ino, info.st_uid, stat.S_IMODE(info.st_mode))
+        if path in self.items and self.items[path] != identity:
+            os.close(fd)
+            raise Refusal(f'{path}: held directory differs from its pin')
+        if path in self.held:
+            os.close(fd)
+        else:
+            self.held[path] = fd
+        self.items[path] = identity
+
+    def close(self):
+        for fd in self.held.values():
+            os.close(fd)
+        self.held.clear()
 
 
 def check_recorded_roots(bindings, pins, *, first_use):
@@ -600,7 +618,11 @@ def start_identity(pid):
     """The spawn-time record: wall and monotonic time taken right after spawn, with no subprocess (a subprocess
     would block live monitoring). The kernel's process start time is not read; PID identity rests on the recorded
     process group and on this child's waited exit. The record says so."""
-    return {'start_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    pgid, session_id = os.getpgid(pid), os.getsid(pid)
+    if pgid != pid or session_id != pid:
+        raise Refusal('spawned child is not the expected group and session leader')
+    return {'pgid': pgid, 'session_id': session_id,
+            'start_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'start_monotonic': time.monotonic(),
             'start_identity': 'spawn-time monotonic; kernel start time not observed'}
 
@@ -895,7 +917,8 @@ def derive_inputs(manifest_path=MANIFEST_PATH):
     """The executor's own input set: program bytes, manifest, recipe and tool binaries. Nothing here is
     caller-supplied; the GO binds exactly this set and each launch re-hashes it."""
     out = {}
-    for path in list(PROGRAM_FILES) + [Path(manifest_path), RECIPE_PATH] + list(TOOL_PATHS):
+    for path in (list(PROGRAM_FILES) + [Path(manifest_path), RECIPE_PATH, Path(sys.executable),
+                                       REPO_ROOT / 'effigy.toml', REPO_ROOT / 'config/tasks.toml'] + list(TOOL_PATHS)):
         p = Path(path)
         if not p.is_file():
             raise Refusal(f'input missing: {p.name}')
@@ -910,6 +933,108 @@ def default_transport(**kw):
                                cleanup_deadline=kw['cleanup_deadline'],
                                stdin_path=kw['stdin_path'], stdin_sha256=kw['stdin_sha256'],
                                identity_probe=kw['identity_probe'])
+
+
+def run_fixed_helper(stage_id, step, ctx, inputs, manifest_path, monitor, step_deadline, deadline):
+    """Supervise a fixed C0/D0 helper, retaining its original streams and process receipt."""
+    directory_step = step['id'] in ('c0-make-owned-roots', 'd0-make-owned-dirs')
+    anchor = (os.path.dirname(ctx['bindings']['control']) if stage_id == 'C0'
+              else ctx['bindings']['control']) if directory_step else None
+    anchor_fd, identity, expected = -1, None, []
+    if directory_step:
+        ctx['pins'].hold(anchor)
+        anchor_fd = ctx['pins'].held[anchor]
+        identity = list(ctx['pins'].items[anchor])
+        for ref in step['inputs']:
+            target = render1(ref, ctx['bindings'])
+            relative = os.path.relpath(target, anchor)
+            parts = relative.split(os.sep)
+            if any(part in ('', '.', '..') for part in parts):
+                raise Refusal('helper target escapes its held ancestor')
+            for n in range(1, len(parts) + 1):
+                path = os.path.join(anchor, *parts[:n])
+                if path not in expected:
+                    if os.path.lexists(path):
+                        raise Refusal(f'{path}: helper directory already exists')
+                    expected.append(path)
+    endpoint = ctx.get('desktop_socket') or DESKTOP_SOCKET
+    if endpoint != DESKTOP_SOCKET:
+        raise Refusal('desktop endpoint must be the pinned socket path')
+    helper_inputs = dict(inputs)
+    if stage_id == 'C0':
+        helper_inputs[HISTORICAL_C0['path']] = HISTORICAL_C0['sha256']
+        helper_inputs[HISTORICAL_C0['tranche_path']] = HISTORICAL_C0['tranche_sha256']
+    request = dict(stage=stage_id, step=step['id'], bindings=ctx['bindings'], inputs=helper_inputs,
+                   claim=ctx['claim'], anchor=anchor, anchor_fd=anchor_fd, anchor_identity=identity,
+                   endpoint=endpoint, manifest_path=str(Path(manifest_path).resolve()),
+                   historical=HISTORICAL_C0, historical_root=LINUX_ARTIFACT_DIR,
+                   historical_token=RECORDED_TOKEN, tool_paths=list(TOOL_PATHS))
+    request_path = write_json_new(ctx['step_root'], 'helper-request.json', request)
+    request_sha = checked_sha(request_path, must_be_in=ctx['step_root'])
+    bound = dict(helper_inputs)
+    bound[request_path] = request_sha
+    remaining = step_deadline - time.monotonic()
+    if remaining <= 0:
+        raise Refusal('helper allowance spent before launch')
+    try:
+        receipt = primitive.run_stage(ctx['step_root'], [sys.executable, '-I', '-B', str(HELPER_PATH),
+                                      request_path, request_sha], remaining, step['output_cap_bytes'], bound,
+                                      cwd=ctx['step_root'], environment={'PATH': '/usr/bin:/bin:/usr/sbin:/sbin'},
+                                      resource_monitor=monitor, deadline=step_deadline, cleanup_deadline=deadline,
+                                      identity_probe=start_identity, pass_fds=(anchor_fd,) if directory_step else (),
+                                      verify_in_fixed_helper=True)
+    except Exception:
+        receipt_path = Path(ctx['step_root'], 'receipt.json')
+        if not receipt_path.is_file():
+            raise
+        return None, json.loads(receipt_path.read_text())
+    if receipt['disposition'] != 'exited' or receipt.get('waited_exit') != 0:
+        return None, receipt
+    try:
+        output = json.loads(Path(ctx['step_root'], 'stdout').read_bytes())
+        if (not isinstance(output, dict) or set(output) != {'result', 'inputs_sha256'}
+                or output['inputs_sha256'] != canon_sha(helper_inputs)):
+            raise ValueError('helper output or input bindings differ')
+        result = output['result']
+        if not isinstance(result, dict):
+            raise ValueError('helper result is not an object')
+        if directory_step:
+            created = result.get('created')
+            if not isinstance(created, list) or [item['path'] for item in created] != expected:
+                raise ValueError('created directory inventory differs')
+            for item in created:
+                path = item['path']
+                ctx['pins'].hold(path)
+                if list(ctx['pins'].items[path]) != item['identity']:
+                    raise ValueError('created directory identity differs')
+                expected_entries = sorted(os.path.basename(child) for child in expected if os.path.dirname(child) == path)
+                if sorted(os.listdir(ctx['pins'].held[path])) != expected_entries:
+                    raise ValueError('created directory entries differ')
+        elif step['id'] == 'c0-claim-intent':
+            if result != {'sha256': ctx['claim']['sha256']}:
+                raise ValueError('claim hash differs')
+        elif step['id'] == 'c0-verify-tranche':
+            if result != {'sha256': HISTORICAL_C0['tranche_sha256']}:
+                raise ValueError('tranche hash differs')
+        elif step['id'] == 'd0-verify-endpoint':
+            info = os.lstat(endpoint)
+            if (result != {'socket': endpoint, 'device': info.st_dev, 'inode': info.st_ino}
+                    or not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.geteuid()):
+                raise ValueError('endpoint identity differs')
+        elif step['id'] == 'c0-verify-tools':
+            verified = result.get('verified')
+            if (verified != HISTORICAL_TOOL_HASHES or
+                    verified != {name: inputs[str(Path(path).resolve())]
+                                 for name, path in zip(('colima', 'docker'), TOOL_PATHS)}):
+                raise ValueError('tool hashes differ')
+        monitor.check()
+        ctx['pins'].recheck()
+        if time.monotonic() > step_deadline:
+            raise ValueError('helper exceeded its deadline')
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        receipt['validation_error'] = str(exc)
+        return None, receipt
+    return result, receipt
 
 
 def check_activation(raw, expected_sha, *, stage_id, bindings, manifest, manifest_path, inputs, now):
@@ -1014,6 +1139,25 @@ def verify_receipt_tree(body, stage_id, key, manifest):
                 data = read_checked_file(f"{root}/{step['id']}/{name}", must_be_in=root, read_only=False)
                 if hashlib.sha256(data).hexdigest() != rec['sha256'] or len(data) != rec['bytes']:
                     raise Refusal(f"{step['id']}: {name} differs from its recorded stream")
+        elif stage_id in ('C0', 'D0') and not (TEST_SEAM['admit_unadmitted'] and 'helper_receipt' not in step):
+            child = step.get('helper_receipt')
+            if (not isinstance(child, dict) or child.get('path') != f"{root}/{step['id']}/receipt.json"
+                    or checked_sha(child['path'], must_be_in=root) != child.get('sha256')):
+                raise Refusal(f"{step['id']}: fixed helper receipt missing or changed")
+            recorded = json.loads(read_checked_file(child['path'], must_be_in=root, read_only=False))
+            if (recorded.get('disposition') != 'exited' or recorded.get('waited_exit') != 0
+                    or recorded.get('process') != step.get('process') or step.get('waited_exit') != 0
+                    or recorded.get('streams') != step.get('streams')):
+                raise Refusal(f"{step['id']}: fixed helper lacks a waited exit and custody")
+            for name in ('stdout', 'stderr'):
+                data = read_checked_file(f"{root}/{step['id']}/{name}", must_be_in=root, read_only=False)
+                rec = step['streams'][name]
+                if hashlib.sha256(data).hexdigest() != rec['sha256'] or len(data) != rec['bytes']:
+                    raise Refusal(f"{step['id']}: helper {name} changed")
+            output = json.loads(read_checked_file(f"{root}/{step['id']}/stdout", must_be_in=root, read_only=False))
+            helper = json.loads(read_checked_file(ev['path'], must_be_in=root, read_only=False))
+            if helper != {'step': step['id'], 'result': output.get('result')}:
+                raise Refusal(f"{step['id']}: helper result differs from its original output")
     # 4. Creation receipts: each is re-derived field by field from its producing stage's own receipt, the
     #    step's intent and original streams, and must match the stored receipt exactly.
     for rec in body['receipts']:
@@ -1159,7 +1303,14 @@ def verify_chain(go, stage_id, bindings, manifest):
     return body
 
 
-def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evidence_root,
+def execute_stage(stage_id, bindings, **kwargs):
+    """Ordinary entry remains unactivated; the existing seam is for controlled tests only."""
+    if not TEST_SEAM['owner_activation']:
+        raise Refusal(OWNER_ACTIVATION_REASON)
+    return _execute_stage(stage_id, bindings, **kwargs)
+
+
+def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evidence_root,
                   transport=None, monitor_factory=None, clock=time.monotonic, utc_now=None,
                   manifest_path=MANIFEST_PATH, desktop_socket=None):
     """Run one owner-placed stage. Returns the stage receipt. Refuses before any effect when the
@@ -1167,8 +1318,6 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
     identities or a collision differs."""
     transport = transport or default_transport
     monitor_factory = monitor_factory or default_monitor
-    if not TEST_SEAM['owner_activation']:
-        raise Refusal(OWNER_ACTIVATION_REASON)
     manifest = load_manifest(manifest_path)
     plan = resolve_stage(stage_id, bindings, manifest)
     if plan['static_admission'] and not TEST_SEAM['admit_unadmitted']:
@@ -1251,11 +1400,27 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
                 create_private_dir(step_root)
                 pins.pin(step_root)
                 ctx['step_root'] = step_root
-                try:
-                    result = call_bounded(lambda: HANDLERS[step['helper']](ctx, resolve_step(step, ctx['bindings'])),
-                                          step_deadline - clock())
-                except ValueError as exc:
-                    raise Refusal(f"{step['id']}: {exc}") from exc
+                child_receipt = None
+                if stage_id in ('C0', 'D0') and not TEST_SEAM['admit_unadmitted']:
+                    result, child_receipt = run_fixed_helper(stage_id, step, ctx, inputs, manifest_path,
+                                                             monitor, step_deadline, deadline)
+                    if result is None:
+                        steps_out.append(dict(id=step['id'], kind='helper', closure='unknown_retained',
+                                              process=child_receipt.get('process'),
+                                              disposition=child_receipt.get('disposition'),
+                                              validation_error=child_receipt.get('validation_error'),
+                                              waited_exit=child_receipt.get('waited_exit'),
+                                              evidence=dict(path=step_root + '/receipt.json',
+                                                            sha256=checked_sha(step_root + '/receipt.json',
+                                                                               must_be_in=stage_root))))
+                        closure = 'stopped'
+                        break
+                else:
+                    try:
+                        result = call_bounded(lambda: HANDLERS[step['helper']](ctx, resolve_step(step, ctx['bindings'])),
+                                              step_deadline - clock())
+                    except ValueError as exc:
+                        raise Refusal(f"{step['id']}: {exc}") from exc
                 monitor.check()
                 if clock() > step_deadline:
                     raise Refusal(f"{step['id']}: helper ran past its allowance")
@@ -1275,7 +1440,13 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
                     ctx['receipts'].append(dict(image_creation_receipt(bindings['token'], ctx['bindings']['image_id'],
                                                                        read_ref(ctx, 'd2-readback.stdout'), ctx['engine_id']),
                                                 evidence=evidence))
-                steps_out.append(dict(id=step['id'], kind='helper', closure='closed', evidence=evidence))
+                item = dict(id=step['id'], kind='helper', closure='closed', evidence=evidence)
+                if child_receipt is not None:
+                    item.update(process=child_receipt.get('process'), waited_exit=child_receipt.get('waited_exit'),
+                                streams=child_receipt.get('streams'),
+                                helper_receipt=dict(path=step_root + '/receipt.json',
+                                                    sha256=checked_sha(step_root + '/receipt.json', must_be_in=stage_root)))
+                steps_out.append(item)
                 continue
             if step['id'] in CLEANUP_RM:
                 key = CLEANUP_RM[step['id']]
@@ -1357,10 +1528,15 @@ def execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evi
                     closure_simulated=bool(TEST_SEAM['simulate_guest_closure']),
                     pinned=sorted(pins.items),
                     guest_closure='unknown' if any(s.get('guest') for s in steps_out) else 'not-applicable')
-        primitive.record(stage_root + '/stage-receipt.json', body)
-        dfd = private_dir(stage_root)
-        os.fsync(dfd)
-        os.close(dfd)
+        try:
+            primitive.record(stage_root + '/stage-receipt.json', body)
+            dfd = private_dir(stage_root)
+            try:
+                os.fsync(dfd)
+            finally:
+                os.close(dfd)
+        finally:
+            pins.close()
     return json.loads(Path(stage_root + '/stage-receipt.json').read_text())
 
 

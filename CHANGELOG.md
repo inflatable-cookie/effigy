@@ -8,6 +8,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Supervise macOS preparation helpers against the stage deadline and live storage counter, retaining
+  an unknown result if a child cannot be reaped. Native execution still requires a separately activated
+  Nucleus proof and operator GO (effigy#694).
+
 - Keep copied database seed payloads inside the owned `.effigy/local/db-seeds`
   staging root: target labels are percent-encoded into the staged file name
   instead of being joined onto the staging root raw, so an absolute or

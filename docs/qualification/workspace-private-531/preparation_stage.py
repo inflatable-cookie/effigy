@@ -26,7 +26,7 @@ def record(path, value):
     exclusive(path, (json.dumps(value, sort_keys=True, indent=2) + '\n').encode())
 
 
-def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identity_probe=None, cwd=None, environment=None, resource_monitor=None, deadline=None, stdin_path=None, stdin_sha256=None, cleanup_deadline=None):
+def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identity_probe=None, cwd=None, environment=None, resource_monitor=None, deadline=None, stdin_path=None, stdin_sha256=None, cleanup_deadline=None, pass_fds=(), verify_in_fixed_helper=False):
     """Spend a stage occurrence before launch. A missing receipt is unknown.
 
     The caller supplies an already private, exclusive directory and exact, reviewed
@@ -52,6 +52,14 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
         raise Refusal('input hashes must be SHA-256')
     if (stdin_path is None) != (stdin_sha256 is None):
         raise Refusal('stdin needs both a path and its SHA-256')
+    if verify_in_fixed_helper:
+        import sys
+        helper = str(Path(__file__).resolve().with_name('macos_stage_helper.py'))
+        if (len(argv) != 6 or os.path.realpath(argv[0]) != os.path.realpath(sys.executable)
+                or argv[1:4] != ['-I', '-B', helper] or helper not in input_hashes
+                or argv[4] not in input_hashes or input_hashes[argv[4]] != argv[5]
+                or guest or stdin_path is not None):
+            raise Refusal('deferred input checking is restricted to the fixed macOS helper')
     cwd = str(Path(cwd or os.getcwd()).resolve())
     environment = environment if environment is not None else {k: os.environ[k] for k in ('PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG') if k in os.environ}
     if not isinstance(environment, dict) or any(not isinstance(k, str) or not isinstance(v, str) or '=' in k or '\x00' in k + v for k, v in environment.items()):
@@ -69,7 +77,8 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
                 actual = digest.hexdigest()
             if actual != expected:
                 raise Refusal('input hash drift: ' + path)
-    check_inputs()
+    if not verify_in_fixed_helper:
+        check_inputs()
     if resource_monitor is not None:
         resource_monitor.check()
     record(root / 'intent.json', {'argv': argv, 'cwd': cwd, 'environment': environment, 'timeout_seconds': timeout,
@@ -89,7 +98,8 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
         for name in ('stdout', 'stderr'):
             fd = os.open(root / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
             streams[name] = os.fdopen(fd, 'wb')
-        check_inputs()
+        if not verify_in_fixed_helper:
+            check_inputs()
         if stdin_path is not None:
             stdin_file = open(stdin_path, 'rb')
             if hashlib.sha256(stdin_file.read()).hexdigest() != stdin_sha256:
@@ -99,13 +109,13 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
         launch_limit = start + timeout if deadline is None else min(start + timeout, deadline)
         child = subprocess.Popen(argv, stdin=stdin_file if stdin_file is not None else subprocess.DEVNULL,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
-                                 cwd=cwd, env=environment)
+                                 cwd=cwd, env=environment, pass_fds=pass_fds)
         identity = {'pid': child.pid, 'pgid': child.pid, 'session_id': child.pid,
                     'deadline_monotonic': launch_limit}
+        result['process'] = identity
         if identity_probe is not None:
             identity.update(identity_probe(child.pid))
         record(root / 'process.json', identity)
-        result['process'] = identity
         sel = selectors.DefaultSelector()
         for name in ('stdout', 'stderr'):
             pipe = getattr(child, name)
@@ -143,7 +153,10 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
                     sel.unregister(key.fileobj)
                     key.fileobj.close()
                 break
-            for key, _ in sel.select(0.05):
+            wait = 0.05
+            if killed_at is not None and cleanup_deadline is not None:
+                wait = min(wait, max(0, cleanup_deadline - time.monotonic()))
+            for key, _ in sel.select(wait):
                 data = os.read(key.fileobj.fileno(), 65536)
                 if not data:
                     sel.unregister(key.fileobj)
@@ -178,11 +191,14 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
             except ProcessLookupError:
                 pass
             try:
-                child.wait(timeout=None if cleanup_deadline is None else
-                           max(0, cleanup_deadline - time.monotonic()))
+                result['waited_exit'] = child.wait(timeout=None if cleanup_deadline is None else
+                                                   max(0, cleanup_deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
                 result['waited_exit'] = None
-        result.update(disposition='local-error', error=type(exc).__name__)
+        elif child is not None:
+            result['waited_exit'] = child.returncode
+        result.update(disposition='unknown' if child is not None and result.get('waited_exit') is None
+                      else 'local-error', error=type(exc).__name__)
         raise
     finally:
         if stdin_file is not None:

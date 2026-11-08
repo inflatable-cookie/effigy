@@ -238,6 +238,12 @@ class StageChecks(unittest.TestCase):
             for child in children:
                 real_wait(child, timeout=5)
 
+    def test_deferred_input_checks_refuse_an_arbitrary_child(self):
+        with self.assertRaises(stage.Refusal):
+            stage.run_stage(self.root, [sys.executable, '-c', 'pass'], 1, 1024, {},
+                            verify_in_fixed_helper=True)
+        self.assertFalse((self.root / 'intent.json').exists())
+
     def test_output_cap(self):
         result = self.run_script("print('x' * 50000, flush=True)", cap=32)
         self.assertEqual(result['disposition'], 'output-cap')

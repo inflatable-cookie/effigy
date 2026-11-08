@@ -33,6 +33,7 @@ sys.path.insert(0, str(HERE))
 
 import macos_preparation as prep  # noqa: E402
 import macos_stage_executor as ex  # noqa: E402
+import macos_stage_proof as proof  # noqa: E402
 import preparation_resources as resources  # noqa: E402
 import preparation_stage as primitive  # noqa: E402
 
@@ -251,6 +252,322 @@ class Fixture(unittest.TestCase):
         return receipt, self.ref('D3', activation_id)
 
 
+class FixedHelperTests(Fixture):
+    def admitted_d0(self, activation_id, transport, monitor_factory=None):
+        admitted = dict(ex.UNADMITTED)
+        admitted.pop('D0', None)
+        with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}), \
+             mock.patch.object(ex, 'UNADMITTED', admitted):
+            return self.execute('D0', transport, activation_id=activation_id, monitor_factory=monitor_factory)
+
+    @staticmethod
+    def quiet_monitor(limits, roots):
+        return resources.Monitor({'storage': 1}, lambda: {'storage': 0})
+
+    def test_real_d0_helpers_run_under_the_stage_supervisor(self):
+        routes = {'d0-info': emit(ENGINE_JSON), 'd0-ps': emit(''),
+                  'd0-network': emit(''), 'd0-volume': emit('')}
+        calls = []
+
+        def monitor_factory(limits, roots):
+            return resources.Monitor({'storage': 1}, lambda: {'storage': 0})
+
+        admitted = dict(ex.UNADMITTED)
+        admitted.pop('D0', None)
+        with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}), \
+             mock.patch.object(ex, 'UNADMITTED', admitted):
+            receipt = self.execute('D0', self.routed(routes, calls), activation_id='fixed-helper-d0',
+                                   monitor_factory=monitor_factory)
+        self.assertEqual(receipt['closure'], 'closed', receipt)
+        for step in receipt['steps'][:2]:
+            root = Path(receipt['stage_root'], step['id'])
+            child = json.loads((root / 'receipt.json').read_text())
+            self.assertEqual(child['disposition'], 'exited')
+            self.assertEqual(child['waited_exit'], 0)
+            self.assertGreater(child['process']['pid'], 0)
+            self.assertTrue((root / 'stdout').is_file())
+            self.assertTrue((root / 'stderr').is_file())
+
+    def test_live_zero_cap_stops_a_helper_blocked_on_a_fifo(self):
+        calls = []
+        spawned = []
+        real_popen = primitive.subprocess.Popen
+        fifo = self.colima
+
+        def launch(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            spawned.append(child.pid)
+            os.rename(fifo, fifo + '.original')
+            os.mkfifo(fifo, 0o600)
+            return child
+
+        def sample():
+            if not spawned:
+                return {'storage': 0}
+            try:
+                fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+            except OSError:
+                return {'storage': 0}
+            os.close(fd)
+            return {'storage': 1}
+
+        def monitor_factory(limits, roots):
+            monitor = resources.Monitor({'storage': 1}, sample)
+            monitor.limits = {'storage': 0}
+            return monitor
+
+        admitted = dict(ex.UNADMITTED)
+        admitted.pop('D0', None)
+        with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}), \
+             mock.patch.object(ex, 'UNADMITTED', admitted), \
+             mock.patch.object(primitive.subprocess, 'Popen', side_effect=launch):
+            receipt = self.execute('D0', self.routed({}, calls), activation_id='fixed-blocked-d0',
+                                   monitor_factory=monitor_factory)
+        self.assertEqual(receipt['closure'], 'stopped')
+        self.assertEqual(calls, [])
+        self.assertEqual([item['id'] for item in receipt['steps']], ['d0-make-owned-dirs'])
+        step = receipt['steps'][0]
+        self.assertEqual(step['closure'], 'unknown_retained')
+        self.assertEqual(step['disposition'], 'resource-refusal')
+        self.assertEqual(step['process']['pid'], spawned[0])
+        self.assertIsNotNone(step['waited_exit'])
+
+    def test_nonzero_cap_stops_a_helper_blocked_on_a_fifo(self):
+        calls, children, writers = [], [], []
+        real_popen = primitive.subprocess.Popen
+
+        def launch(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            os.rename(self.colima, self.colima + '.original')
+            os.mkfifo(self.colima, 0o600)
+            return child
+
+        def sample():
+            if children and not writers:
+                try:
+                    writers.append(os.open(self.colima, os.O_WRONLY | os.O_NONBLOCK))
+                except OSError:
+                    return {'storage': 0}
+            return {'storage': 2 if writers else 0}
+
+        try:
+            with mock.patch.object(primitive.subprocess, 'Popen', side_effect=launch):
+                receipt = self.admitted_d0('fixed-nonzero-cap', self.routed({}, calls),
+                                           lambda limits, roots: resources.Monitor({'storage': 1}, sample))
+            self.assertTrue(writers, 'the child reached the FIFO')
+            self.assertEqual(receipt['closure'], 'stopped')
+            self.assertEqual(receipt['steps'][0]['disposition'], 'resource-refusal')
+            self.assertIsNotNone(receipt['steps'][0]['waited_exit'])
+            self.assertEqual(calls, [])
+            self.assertEqual([item['id'] for item in receipt['steps']], ['d0-make-owned-dirs'])
+        finally:
+            for fd in writers:
+                os.close(fd)
+
+    def test_simulated_external_proof_entry_binds_and_claims_once(self):
+        path, activation_sha = self.activation('D0', None, 'proof-stage-0001')
+        inputs = ex.derive_inputs()
+        request = {'stage': 'D0', 'activation_path': path, 'activation_sha256': activation_sha,
+                   'bindings': self.bindings, 'evidence_root': self.evidence,
+                   'inputs_sha256': ex.canon_sha(inputs), 'manifest_sha256': ex.sha_file(ex.MANIFEST_PATH),
+                   'source_sha256': ex.sha_file(ex.__file__)}
+        request_path = self.tmp + '/proof-request.json'
+        Path(request_path).write_text(json.dumps(request, sort_keys=True))
+        os.chmod(request_path, 0o400)
+        digest = ex.sha_file(request_path)
+        admitted = dict(ex.UNADMITTED)
+        admitted.pop('D0', None)
+        with mock.patch.object(ex, 'UNADMITTED', admitted), \
+             mock.patch.object(ex, '_execute_stage', return_value={'closure': 'closed'}) as stage_call, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(proof.main(['proof', request_path, digest]), 0)
+            with self.assertRaisesRegex(ex.Refusal, 'already claimed'):
+                proof.main(['proof', request_path, digest])
+            with self.assertRaisesRegex(ex.Refusal, 'hash or size'):
+                proof.main(['proof', request_path, '0' * 64])
+        self.assertEqual(stage_call.call_count, 1)
+
+    def test_simulated_external_proof_refuses_changed_bindings_before_claim(self):
+        path, activation_sha = self.activation('D0', None, 'proof-binding-0001')
+        inputs = ex.derive_inputs()
+        request = {'stage': 'D0', 'activation_path': path, 'activation_sha256': activation_sha,
+                   'bindings': self.bindings, 'evidence_root': self.evidence,
+                   'inputs_sha256': ex.canon_sha(inputs), 'manifest_sha256': ex.sha_file(ex.MANIFEST_PATH),
+                   'source_sha256': ex.sha_file(ex.__file__)}
+        admitted = dict(ex.UNADMITTED)
+        admitted.pop('D0', None)
+        with mock.patch.object(ex, 'UNADMITTED', admitted), \
+             mock.patch.object(ex, '_execute_stage') as stage_call:
+            for field in ('inputs_sha256', 'manifest_sha256', 'source_sha256', 'activation_sha256'):
+                altered = dict(request, **{field: '0' * 64})
+                request_path = self.tmp + '/proof-' + field
+                Path(request_path).write_text(json.dumps(altered, sort_keys=True))
+                os.chmod(request_path, 0o400)
+                with self.subTest(field=field), self.assertRaises(ex.Refusal):
+                    proof.main(['proof', request_path, ex.sha_file(request_path)])
+            unsupported = dict(request, stage='C1')
+            request_path = self.tmp + '/proof-unadmitted'
+            Path(request_path).write_text(json.dumps(unsupported, sort_keys=True))
+            os.chmod(request_path, 0o400)
+            with self.assertRaisesRegex(ex.Refusal, 'only admitted C0 or D0'):
+                proof.main(['proof', request_path, ex.sha_file(request_path)])
+            self.assertEqual(os.listdir(self.tmp + '/claims'), [])
+            stage_call.assert_not_called()
+
+    def test_malformed_oversized_and_nonzero_children_stop_dispatch(self):
+        # Inject adversarial child output at the process boundary; the adapter,
+        # supervisor, stage loop and fixed dispatch remain the production path.
+        scripts = ("print('not-json')", "print('x' * 10000)", "raise SystemExit(7)")
+        real_popen = primitive.subprocess.Popen
+        for index, script in enumerate(scripts):
+            with self.subTest(script=script):
+                calls = []
+
+                def launch(*args, **kwargs):
+                    return real_popen([sys.executable, '-I', '-B', '-c', script], **kwargs)
+
+                with mock.patch.object(primitive.subprocess, 'Popen', side_effect=launch):
+                    receipt = self.admitted_d0('fixed-invalid-%d' % index, self.routed({}, calls), self.quiet_monitor)
+                self.assertEqual(receipt['closure'], 'stopped')
+                self.assertEqual(calls, [])
+                self.assertEqual(receipt['steps'][0]['closure'], 'unknown_retained')
+                self.assertIsNotNone(receipt['steps'][0]['waited_exit'])
+
+    def test_replaced_control_root_stops_after_the_fixed_helper(self):
+        calls = []
+        real_popen = primitive.subprocess.Popen
+        control = self.bindings['control']
+
+        def launch(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            os.rename(control, control + '.moved')
+            os.mkdir(control, 0o700)
+            return child
+
+        with mock.patch.object(primitive.subprocess, 'Popen', side_effect=launch):
+            receipt = self.admitted_d0('fixed-root-drift', self.routed({}, calls), self.quiet_monitor)
+        self.assertEqual(receipt['closure'], 'stopped')
+        self.assertEqual(calls, [])
+        self.assertEqual(receipt['steps'][0]['closure'], 'unknown_retained')
+
+    def test_input_drift_stops_the_fixed_helper(self):
+        calls = []
+        real_popen = primitive.subprocess.Popen
+
+        def launch(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            os.rename(self.colima, self.colima + '.original')
+            Path(self.colima).write_bytes(b'changed after launch')
+            return child
+
+        with mock.patch.object(primitive.subprocess, 'Popen', side_effect=launch):
+            receipt = self.admitted_d0('fixed-input-drift', self.routed({}, calls), self.quiet_monitor)
+        self.assertEqual(receipt['closure'], 'stopped')
+        self.assertEqual(calls, [])
+        self.assertEqual(receipt['steps'][0]['closure'], 'unknown_retained')
+
+    def test_blocked_helper_exhausts_the_stage_budget_before_reserve(self):
+        calls, writers = [], []
+        real_popen = primitive.subprocess.Popen
+        ticks = []
+
+        def launch(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            os.rename(self.colima, self.colima + '.original')
+            os.mkfifo(self.colima, 0o600)
+            return child
+
+        def sample():
+            if not writers and os.path.exists(self.colima + '.original'):
+                try:
+                    writers.append(os.open(self.colima, os.O_WRONLY | os.O_NONBLOCK))
+                except OSError:
+                    pass
+            return {'storage': 0}
+
+        def clock():
+            now = time.monotonic()
+            if not ticks:
+                ticks.append(True)
+                return now - 360 + 60 + 0.6
+            return now
+
+        admitted = dict(ex.UNADMITTED)
+        admitted.pop('D0', None)
+        try:
+            with mock.patch.object(primitive.subprocess, 'Popen', side_effect=launch), \
+                 mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}), \
+                 mock.patch.object(ex, 'UNADMITTED', admitted):
+                receipt = self.execute('D0', self.routed({}, calls), activation_id='fixed-deadline', clock=clock,
+                                       monitor_factory=lambda limits, roots: resources.Monitor({'storage': 1}, sample))
+            self.assertTrue(writers, 'the child reached the FIFO')
+            self.assertEqual(receipt['closure'], 'stopped')
+            self.assertEqual(receipt['steps'][0]['disposition'], 'timeout')
+            self.assertIsNotNone(receipt['steps'][0]['waited_exit'])
+            self.assertEqual(calls, [])
+            self.assertEqual([item['id'] for item in receipt['steps']], ['d0-make-owned-dirs'])
+        finally:
+            for fd in writers:
+                os.close(fd)
+
+    def counter_loss_case(self, unreapable):
+        calls, writers, children = [], [], []
+        real_popen = primitive.subprocess.Popen
+        real_wait = real_popen.wait
+
+        def launch(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            os.rename(self.colima, self.colima + '.original')
+            os.mkfifo(self.colima, 0o600)
+            return child
+
+        def sample():
+            if children and not writers:
+                try:
+                    writers.append(os.open(self.colima, os.O_WRONLY | os.O_NONBLOCK))
+                except OSError:
+                    return {'storage': 0}
+            if writers:
+                raise ValueError('simulated counter loss')
+            return {'storage': 0}
+
+        def no_wait(child, timeout=None):
+            raise primitive.subprocess.TimeoutExpired(child.args, timeout)
+
+        try:
+            with contextlib.ExitStack() as stack:
+                if unreapable:
+                    stack.enter_context(mock.patch.object(real_popen, 'wait', no_wait))
+                stack.enter_context(mock.patch.object(primitive.subprocess, 'Popen', side_effect=launch))
+                receipt = self.admitted_d0('fixed-counter-loss', self.routed({}, calls),
+                                           lambda limits, roots: resources.Monitor({'storage': 1}, sample))
+            self.assertTrue(writers, 'the child reached the FIFO')
+            self.assertEqual(receipt['closure'], 'stopped')
+            step = receipt['steps'][0]
+            self.assertEqual(step['closure'], 'unknown_retained')
+            self.assertEqual(step['process']['pid'], children[0].pid)
+            if unreapable:
+                self.assertEqual(step['disposition'], 'unknown')
+                self.assertIsNone(step['waited_exit'])
+            else:
+                self.assertEqual(step['disposition'], 'resource-refusal')
+                self.assertIsNotNone(step['waited_exit'])
+            self.assertEqual(calls, [])
+        finally:
+            for fd in writers:
+                os.close(fd)
+            for child in children:
+                real_wait(child, timeout=5)
+
+    def test_counter_loss_while_fixed_helper_is_blocked(self):
+        self.counter_loss_case(False)
+
+    def test_simulated_unreapable_fixed_helper_stays_unknown(self):
+        self.counter_loss_case(True)
+
+
 class PlanTests(Fixture):
     def test_plan_is_pure_and_writes_nothing(self):
         before = tree(self.tmp)
@@ -260,14 +577,11 @@ class PlanTests(Fixture):
 
     def test_admission_is_exact_and_each_refusal_is_named(self):
         plans = {s['id']: ex.resolve_stage(s['id'], self.bindings) for s in ex.load_manifest()['stages']}
-        self.assertEqual({k for k, v in plans.items() if not v['static_admission']}, set())  # nothing is admitted
+        self.assertEqual({k for k, v in plans.items() if not v['static_admission']}, {'C0', 'D0'})
         for plan in plans.values():  # every resolved request carries the global refusal and its prerequisite
             self.assertEqual(plan['admission'][0], ex.OWNER_ACTIVATION_REASON)
             self.assertFalse(plan['execution']['admitted'])
             self.assertIn('owner-controlled', plan['execution']['prerequisite'])
-        for sid in ('C0', 'D0'):  # the helper residual is a static refusal, with its exact limitation
-            self.assertTrue(any('uninterruptible' in r for r in plans[sid]['static_admission']), sid)
-            self.assertTrue(any('storage monitor is sampled at helper boundaries' in r for r in plans[sid]['static_admission']))
         self.assertTrue(any('idempotent' in r for r in plans['D1']['static_admission']))
         self.assertTrue(any('re-observed per target' in r for r in plans['D4']['static_admission']))
         self.assertTrue(any('predecessor D2' in r for r in plans['D3']['static_admission']))
@@ -1104,6 +1418,29 @@ class DispatchSweepTests(Fixture):
                          ['c0-verify-tools', 'c0-verify-tranche', 'c0-claim-intent',
                           'c0-make-owned-roots', 'c0-colima-start-help'])
 
+    def test_fixed_c0_helpers_use_the_real_supervised_dispatch(self):
+        self.use_historical()
+        fresh = self.make_bindings('f0f0f0a1')
+        calls = []
+        admitted = dict(ex.UNADMITTED)
+        admitted.pop('C0', None)
+        hashes = {'colima': ex.sha_file(self.colima), 'docker': ex.sha_file(self.docker)}
+        with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}), \
+             mock.patch.object(ex, 'UNADMITTED', admitted), \
+             mock.patch.object(ex, 'HISTORICAL_TOOL_HASHES', hashes):
+            receipt = self.execute('C0', self.routed({'c0-colima-start-help': emit('help')}, calls),
+                                   activation_id='fixed-c0', bindings=fresh,
+                                   monitor_factory=FixedHelperTests.quiet_monitor)
+        failure = receipt['steps'][-1] if receipt['steps'] else {}
+        stderr = Path(receipt['stage_root'], failure.get('id', ''), 'stderr')
+        self.assertEqual(receipt['closure'], 'closed', (receipt, stderr.read_text() if stderr.exists() else ''))
+        self.assertEqual([s['id'] for s in receipt['steps'][:4]],
+                         ['c0-verify-tools', 'c0-verify-tranche', 'c0-claim-intent', 'c0-make-owned-roots'])
+        for step in receipt['steps'][:4]:
+            self.assertEqual(step['waited_exit'], 0)
+            self.assertIn('helper_receipt', step)
+        self.assertEqual([entry[0] for entry in calls], ['c0-colima-start-help'])
+
     def test_origin_token32_is_the_c0_mint_read_from_its_verified_receipt_and_refuses_other_chains(self):
         self.use_historical()
         fresh = self.make_bindings('f0f0f0f2')
@@ -1220,7 +1557,8 @@ class DispatchSweepTests(Fixture):
 
     def test_start_identity_is_a_spawn_record_with_no_subprocess(self):
         self.assertFalse(hasattr(ex, 'subprocess'))  # the spawn record runs no subprocess
-        record = ex.start_identity(12345)
+        with mock.patch.object(os, 'getpgid', return_value=12345), mock.patch.object(os, 'getsid', return_value=12345):
+            record = ex.start_identity(12345)
         self.assertIn('start_monotonic', record)
         self.assertIn('not observed', record['start_identity'])
 
