@@ -278,13 +278,36 @@ Gates:
 - **Prospective proof binding.** A later Nucleus qualification must pin the accepted commit, this exact
   selector and the SHA-256 of the read-only request. The request has exactly `stage`, `activation_path`,
   `activation_sha256`, `bindings`, `evidence_root`, `inputs_sha256`, `manifest_sha256` and
-  `source_sha256`. `inputs_sha256` is the canonical hash of the derived file-to-SHA-256 map, including
-  the proof and helper sources, selector manifests, interpreter, recipe and both tools. The planner still
+  `source_sha256`, plus `inputs`. `inputs_sha256` is the canonical hash of `inputs`: exact reviewed
+  repository-relative paths and content hashes, plus canonical machine paths and hashes for the interpreter
+  and both tools. The executor independently derives and compares the entire set before claiming. It retains
+  the actual canonical runtime input map in the stage receipt and rehashes it before each launch. The planner still
   needs a fresh token and private roots, exact request and activation bytes and their hashes, current
   tool hashes and an expiry window. The operator question must name the selected stage's native effects
   (both claim and create private files and directories; C0 invokes Colima's start help, while D0 reads
   the Desktop endpoint and engine inventory). No question,
   GO or proof execution is created by this source task.
+- **Preparing a D0 binding without native effects.** From the exact merged preparation checkout, choose
+  a fresh eight-hex token. Create a read-only bindings JSON under the preparation root using
+  `macos_preparation.control_paths(token)` filtered to `SLOTS`, plus `desktop_host=DESKTOP_HOST`,
+  `token`, `check_source=CHECK_SOURCE`, and `route_echo=ROUTE_ECHO`. Run
+  `effigy qualification:macos:proof-only -- plan D0 /absolute/path/to/bindings.json`.
+  This only reads the checkout, interpreter and pinned tool files; it prints the stable `inputs`,
+  hashes, candidate head and bindings hash, and creates no roots, claims or activation. Copy those
+  exact fields into the request and activation: the request uses `stage`, `bindings`, `inputs`,
+  `inputs_sha256`, `manifest_sha256`, `source_sha256`, `activation_path`, `activation_sha256`, and
+  `evidence_root`. The activation uses the printed hashes, `candidate_head` and `bindings_sha256`,
+  plus `decision`, `decision_version`, `stage`, a unique `activation_id`, `issued_utc`, `expires_utc`,
+  and `scope: single-activation` as checked by `macos_preparation.check_go`. Hash the read-only
+  activation first, then place that hash in the read-only request and hash the request. The future
+  selector is `qualification:macos:proof-only -- /absolute/path/to/request.json REQUEST_SHA256`;
+  neither file names the future checkout. The pinned candidate head remains H; Nucleus separately pins
+  the exact merged preparation commit K and selector/request hashes and records the real operator answer.
+  D0 requires its token's control directory to exist privately, its `d/docker-config` and `d/ctx`
+  paths to be absent, a private evidence root and private activation and claims directories under the
+  configured scratch root. The Desktop endpoint, engine identity, tool bytes, all input rechecks,
+  one-use claims and other runtime gates still apply. A real operator GO and Nucleus proof-only launch
+  remain necessary; this plan grants neither.
 - **Static admission.** C0 and D0 have no remaining static helper refusal. Their actual execution still
   needs the external proof-only precondition and all runtime checks. Other stages remain refused:
   - C1, C4 and D2: the download cap is payload bytes, wire traffic is not counted, and the manifest

@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+- Keep macOS proof input bindings stable across equivalent pinned checkouts.
+
 ### Security
 
 - Supervise macOS preparation helpers against the stage deadline and live storage counter, retaining

@@ -135,7 +135,7 @@ class Fixture(unittest.TestCase):
         manifest = ex.load_manifest()
         go = dict(decision=decision, decision_version=prep.DECISION_VERSION, stage=stage,
                   manifest_sha256=ex.sha_file(ex.MANIFEST_PATH), source_sha256=ex.sha_file(ex.__file__),
-                  inputs_sha256=ex.canon_sha(inputs if inputs is not None else ex.derive_inputs()),
+                  inputs_sha256=ex.canon_sha(inputs if inputs is not None else ex.stable_input_manifest()[0]),
                   activation_id=activation_id,
                   issued_utc=(NOW + datetime.timedelta(minutes=issued)).isoformat(),
                   expires_utc=(NOW + datetime.timedelta(minutes=expires)).isoformat(),
@@ -371,10 +371,10 @@ class FixedHelperTests(Fixture):
 
     def test_simulated_external_proof_entry_binds_and_claims_once(self):
         path, activation_sha = self.activation('D0', None, 'proof-stage-0001')
-        inputs = ex.derive_inputs()
+        inputs = ex.stable_input_manifest()[0]
         request = {'stage': 'D0', 'activation_path': path, 'activation_sha256': activation_sha,
                    'bindings': self.bindings, 'evidence_root': self.evidence,
-                   'inputs_sha256': ex.canon_sha(inputs), 'manifest_sha256': ex.sha_file(ex.MANIFEST_PATH),
+                   'inputs': inputs, 'inputs_sha256': ex.canon_sha(inputs), 'manifest_sha256': ex.sha_file(ex.MANIFEST_PATH),
                    'source_sha256': ex.sha_file(ex.__file__)}
         request_path = self.tmp + '/proof-request.json'
         Path(request_path).write_text(json.dumps(request, sort_keys=True))
@@ -394,10 +394,10 @@ class FixedHelperTests(Fixture):
 
     def test_simulated_external_proof_refuses_changed_bindings_before_claim(self):
         path, activation_sha = self.activation('D0', None, 'proof-binding-0001')
-        inputs = ex.derive_inputs()
+        inputs = ex.stable_input_manifest()[0]
         request = {'stage': 'D0', 'activation_path': path, 'activation_sha256': activation_sha,
                    'bindings': self.bindings, 'evidence_root': self.evidence,
-                   'inputs_sha256': ex.canon_sha(inputs), 'manifest_sha256': ex.sha_file(ex.MANIFEST_PATH),
+                   'inputs': inputs, 'inputs_sha256': ex.canon_sha(inputs), 'manifest_sha256': ex.sha_file(ex.MANIFEST_PATH),
                    'source_sha256': ex.sha_file(ex.__file__)}
         admitted = dict(ex.UNADMITTED)
         admitted.pop('D0', None)
@@ -1923,6 +1923,107 @@ class DispatchSweepTests(Fixture):
         self.assertIn('simulated', str(caught.exception))
 
 
+@contextlib.contextmanager
+def copied_checkout(parent, name):
+    root = Path(parent) / name
+    old_root = ex.REPO_ROOT
+    sources = list(ex.PROGRAM_FILES) + [ex.MANIFEST_PATH, ex.RECIPE_PATH,
+                                         old_root / 'effigy.toml', old_root / 'config/tasks.toml']
+    for source in sources:
+        target = root / source.relative_to(old_root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+    with contextlib.ExitStack() as stack:
+        for attr in ('PROGRAM_FILES', 'MANIFEST_PATH', 'RECIPE_PATH', 'GUEST_CONTEXT_PATH'):
+            value = getattr(ex, attr)
+            mapped = tuple(root / p.relative_to(old_root) for p in value) if isinstance(value, tuple) else root / value.relative_to(old_root)
+            stack.enter_context(mock.patch.object(ex, attr, mapped))
+        stack.enter_context(mock.patch.object(ex, 'REPO_ROOT', root))
+        yield root
+
+
+class StableProofTests(Fixture):
+    def test_two_checkouts_bind_same_request_and_retain_distinct_maps(self):
+        with copied_checkout(self.tmp, 'first'):
+            identity, first = ex.stable_input_manifest()
+            activation, sha = self.activation('D0', None, 'cross-checkout', inputs=identity)
+            data = proof.prospective('D0', self.bindings)
+        with copied_checkout(self.tmp, 'second'):
+            other, second = ex.stable_input_manifest()
+            self.assertEqual(identity, other)
+            self.assertNotEqual(first, second)
+            request = {key: data[key] for key in ('stage', 'bindings', 'inputs', 'inputs_sha256',
+                                                   'manifest_sha256', 'source_sha256')}
+            request.update(activation_path=activation, activation_sha256=sha, evidence_root=self.evidence)
+            path = self.tmp + '/cross-request.json'
+            Path(path).write_text(json.dumps(request, sort_keys=True))
+            os.chmod(path, 0o400)
+            with mock.patch.object(ex, '_execute_stage', return_value={'closure': 'closed'}) as effect, \
+                 contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(proof.main(['proof', path, ex.sha_file(path)]), 0)
+                with self.assertRaises(ex.Refusal):
+                    proof.main(['proof', path, ex.sha_file(path)])
+                effect.assert_called_once()
+
+    def test_changed_inputs_and_declared_manifest_refuse_before_effect(self):
+        with copied_checkout(self.tmp, 'changed') as root:
+            interpreter = Path(self.tmp) / 'python-fixture'
+            interpreter.write_bytes(b'interpreter')
+            with mock.patch.object(ex.sys, 'executable', str(interpreter)):
+                identity, _ = ex.stable_input_manifest()
+                activation, sha = self.activation('D0', None, 'drift-binding', inputs=identity)
+                data = proof.prospective('D0', self.bindings)
+                request = {key: data[key] for key in ('stage', 'bindings', 'inputs', 'inputs_sha256',
+                                                       'manifest_sha256', 'source_sha256')}
+                request.update(activation_path=activation, activation_sha256=sha, evidence_root=self.evidence)
+                path = self.tmp + '/drift-request.json'
+                def refused(value):
+                    if os.path.exists(path):
+                        os.chmod(path, 0o600)
+                    Path(path).write_text(json.dumps(value, sort_keys=True))
+                    os.chmod(path, 0o400)
+                    with mock.patch.object(ex, '_execute_stage') as effect, self.assertRaises(ex.Refusal):
+                        proof.main(['proof', path, ex.sha_file(path)])
+                    effect.assert_not_called()
+                    self.assertEqual(os.listdir(self.tmp + '/claims'), [])
+                for key in ('missing', 'extra', 'traversal'):
+                    altered = json.loads(json.dumps(request))
+                    repo = altered['inputs']['repository']
+                    if key == 'missing':
+                        repo.pop(next(iter(repo)))
+                    elif key == 'extra':
+                        repo['extra'] = '0' * 64
+                    else:
+                        repo['../escape'] = repo.pop(next(iter(repo)))
+                    refused(altered)
+                paths = [ex.PROGRAM_FILES[0], root / 'effigy.toml', ex.MANIFEST_PATH,
+                         ex.RECIPE_PATH, Path(self.colima), interpreter]
+                for changed in paths:
+                    original = changed.read_bytes()
+                    changed.write_bytes(original + b'\n')
+                    try:
+                        refused(request)
+                    finally:
+                        changed.write_bytes(original)
+
+    def test_declared_set_alias_escape_and_drift_refuse(self):
+        with copied_checkout(self.tmp, 'inputs') as root:
+            identity, _ = ex.stable_input_manifest()
+            programs = ex.PROGRAM_FILES
+            for altered in (programs[:-1], programs + (programs[0],),
+                            (root / 'wrong.py',) + programs[1:]):
+                with mock.patch.object(ex, 'PROGRAM_FILES', altered), self.assertRaises(ex.Refusal):
+                    ex.stable_input_manifest()
+            target = programs[0]
+            target.unlink()
+            target.symlink_to(self.colima)
+            with self.assertRaises(ex.Refusal):
+                ex.stable_input_manifest()
+            target.unlink()
+            target.write_bytes(b'changed')
+            self.assertNotEqual(identity, ex.stable_input_manifest()[0])
+
+
 class ProgramBindingTests(Fixture):
     """The guest helper is a bound program file. The GO commits to the bytes the executor's input set derives, so a
     change after binding refuses before any dispatch. The pin is the reviewed content check; the binding is what
@@ -1933,23 +2034,20 @@ class ProgramBindingTests(Fixture):
         self.assertEqual(ex.derive_inputs()[str(ex.GUEST_CONTEXT_PATH.resolve())], ex.GUEST_CONTEXT_SHA256)
 
     def test_a_change_to_the_guest_helper_after_binding_refuses_before_dispatch(self):
-        copy = Path(self.tmp + '/macos_guest_context.py')
-        copy.write_bytes(ex.GUEST_CONTEXT_PATH.read_bytes())
-        programs = tuple(copy if p == ex.GUEST_CONTEXT_PATH else p for p in ex.PROGRAM_FILES)
-        with mock.patch.object(ex, 'GUEST_CONTEXT_PATH', copy), mock.patch.object(ex, 'PROGRAM_FILES', programs):
-            path, sha = self.activation('C2', None, 'act-drift-0001', inputs=ex.derive_inputs())
+        with copied_checkout(self.tmp, 'drift') as root:
+            identity, _ = ex.stable_input_manifest()
+            path, sha = self.activation('C2', None, 'act-drift-0001', inputs=identity)
+            copy = root / ex.GUEST_CONTEXT_PATH.relative_to(root)
             drifted = copy.read_bytes() + b'\n'
             copy.write_bytes(drifted)
             calls = []
-            # The pin is moved to the drifted bytes, so only the GO's input binding can refuse.
             with mock.patch.object(ex, 'GUEST_CONTEXT_SHA256', hashlib.sha256(drifted).hexdigest()):
-                with self.assertRaises(ex.Refusal) as caught:
+                with self.assertRaises(ex.Refusal):
                     ex.execute_stage('C2', self.bindings, activation_path=path, activation_sha256=sha,
-                                     evidence_root=self.evidence, transport=self.routed({}, calls), utc_now=NOW)
-        self.assertIn('input drift', str(caught.exception))
-        self.assertEqual(calls, [])
-        self.assertEqual(os.listdir(self.evidence), [])
-        self.assertFalse(os.path.exists(self.tmp + '/claims/act-drift-0001.claim'))
+                                     evidence_root=self.evidence, manifest_path=ex.MANIFEST_PATH,
+                                     transport=self.routed({}, calls), utc_now=NOW)
+            self.assertEqual(calls, [])
+            self.assertFalse(os.path.exists(self.tmp + '/claims/act-drift-0001.claim'))
 
     def test_a_changed_pin_refuses_before_any_plan_or_dispatch(self):
         with mock.patch.object(ex, 'GUEST_CONTEXT_SHA256', '0' * 64):

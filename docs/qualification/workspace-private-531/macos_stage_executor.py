@@ -929,16 +929,28 @@ def derive_inputs(manifest_path=MANIFEST_PATH):
     return out
 
 
-def stable_input_manifest(manifest_path=MANIFEST_PATH):
+def stable_input_manifest(manifest_path=None):
     """Bind repository inputs by their exact relative paths and machine inputs by canonical paths.
 
     Return the prospective identity and the separately resolved runtime map. Reject aliases
     before building either map so two declared roles cannot collapse into one entry.
     """
+    manifest_path = manifest_path or MANIFEST_PATH
     root = REPO_ROOT.resolve(strict=True)
     repo_paths = list(PROGRAM_FILES) + [Path(manifest_path), RECIPE_PATH,
                                         REPO_ROOT / 'effigy.toml', REPO_ROOT / 'config/tasks.toml']
     machine_paths = [Path(sys.executable)] + list(map(Path, TOOL_PATHS))
+    expected = {f'docs/qualification/workspace-private-531/{name}' for name in (
+        'macos_stage_executor.py', 'macos_preparation.py', 'preparation_stage.py',
+        'preparation_resources.py', 'macos_guest_context.py', 'macos_stage_helper.py',
+        'macos_stage_proof.py', 'macos-4f6a5ed3-stages.json', 'runtime.Dockerfile')}
+    expected.update(('effigy.toml', 'config/tasks.toml'))
+    try:
+        declared = [Path(path).relative_to(REPO_ROOT).as_posix() for path in repo_paths]
+    except ValueError as exc:
+        raise Refusal('repository input outside checkout') from exc
+    if len(declared) != len(expected) or set(declared) != expected:
+        raise Refusal('repository input set differs from reviewed roles')
     repo, machine, runtime = {}, {}, {}
     for path in repo_paths:
         path = Path(path)
@@ -1373,12 +1385,12 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
     for step in stage['steps']:  # a helper with no reviewed handler refuses before the activation is claimed
         if step['kind'] == 'helper' and helper_handler_missing(step['helper']):
             raise Refusal(f"{step['id']}: helper {step['helper']} has no reviewed handler in this source")
-    inputs = derive_inputs(manifest_path)
+    identity, inputs = stable_input_manifest(manifest_path)
     now = utc_now or datetime.datetime.now(datetime.timezone.utc)
     os.close(private_dir(ACTIVATIONS_DIR))
     raw = read_checked_file(activation_path, must_be_in=ACTIVATIONS_DIR, read_only=True)
     go = check_activation(raw, activation_sha256, stage_id=stage_id, bindings=bindings, manifest=manifest,
-                          manifest_path=manifest_path, inputs=inputs, now=now)
+                          manifest_path=manifest_path, inputs=identity, now=now)
     prior = verify_chain(go, stage_id, bindings, manifest)
     # The guest stages take their token32 from the verified C0 origin, before the claim: a chain without one refuses.
     token32 = origin_token32(prior, bindings['token']) if stage_id in ('C3', 'C4') else None
