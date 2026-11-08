@@ -32,7 +32,7 @@ SCRATCH = '/Volumes/Stash/scratch/effigy'
 PRLCTL_ALIAS = '/usr/local/bin/prlctl'
 PRLCTL = '/Applications/Parallels Desktop.app/Contents/MacOS/prlctl'
 PRLCTL_SHA256 = '2f61a1c60db2d51591fb8479a248a982a81658f136f1501a94733b7a81731c57'
-SNAPSHOT_SHA = 'd21610ba279b4faf2d7a62c87ef8f1050943fc9c072a04c71ce4d0c953e3ad'
+SNAPSHOT_SHA = 'd21610ba279b4faf2d7a62c87ef8f1050943fc8b6c072a04c71ce4d0c953e3ad'
 PROBE_KEYS = frozenset('uid boot_id system_state systemctl systemd_run systemd_version cgroup2 ssh_host_ed25519_fp sshd_expiry_time_mentions effigy531_passwd_exit effigy531_group_exit effigy531_home docker_group root_source root_fstype root_uuid root_parent root_serial root_model root_size ssh_listen_ipv4'.split())
 DURATION = 600
 RESERVE = 120
@@ -109,6 +109,8 @@ def plan(root, activation_id, head):
     same reviewed commit validates at any clean detached path. execute resolves the roles in
     its own checkout and passes the actual paths and hashes to every launch.
     """
+    if not re.fullmatch(r'[0-9a-f]{64}', SNAPSHOT_SHA):
+        raise stage.Refusal('built-in snapshot digest is malformed')
     if not re.fullmatch(r'[A-Za-z0-9_-]{8,64}', activation_id):
         raise stage.Refusal('invalid activation id')
     if not re.fullmatch(r'[0-9a-f]{40}', head) or head == setup.CANDIDATE_H_HEAD:

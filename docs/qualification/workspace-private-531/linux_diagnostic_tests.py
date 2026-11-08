@@ -119,6 +119,44 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaises(proof.setup.Refusal):
             proof.setup.verify_writable_top({'mechanism': 'unknown'}, b'<Disk/>')
 
+    def test_retained_snapshot_bytes_bind_complete_canonical_inventory(self):
+        raw = (SOURCE_DIR / 'fixtures' / 'retained-snapshot-list.json').read_bytes()
+        self.assertEqual(len(raw), 7911)
+        self.assertEqual(hashlib.sha256(raw).hexdigest(),
+                         'b0af61c3dbe419c45d33d54e61261670b11eb4cd803e39bf267b6424d4833a21')
+        data = json.loads(raw)
+        self.assertEqual(len(data), 36)
+        canonical_sha = hashlib.sha256(proof.canonical(data)).hexdigest()
+        self.assertEqual(canonical_sha,
+                         'd21610ba279b4faf2d7a62c87ef8f1050943fc8b6c072a04c71ce4d0c953e3ad')
+        self.assertNotEqual(canonical_sha,
+                           'd21610ba279b4faf2d7a62c87ef8f1050943fc9c072a04c71ce4d0c953e3ad')
+        self.assertEqual(proof.check_snapshots(raw), data)
+        reformatted = json.dumps(dict(reversed(list(data.items()))), indent=2).encode()
+        self.assertEqual(proof.check_snapshots(reformatted), data)
+        changed = dict(data)
+        changed['unexpected'] = {'current': False}
+        with self.assertRaisesRegex(Refusal, 'snapshot inventory differs'):
+            proof.check_snapshots(json.dumps(changed).encode())
+        duplicate = b'{"item":1,"item":1}'
+        with self.assertRaisesRegex(Refusal, 'duplicate JSON key'):
+            proof.check_snapshots(duplicate)
+
+    def test_retained_vm_state_metadata_matches_registered_vm_binding(self):
+        records = json.loads((SOURCE_DIR / 'fixtures' / 'retained-vm-states.json').read_text())
+        self.assertEqual([record['State'] for record in records], ['stopped', 'running', 'stopped'])
+        with patch.object(proof.setup, 'PVM_HOME', '/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm'):
+            for record in records:
+                self.assertEqual(proof.check_vm(json.dumps([record]).encode(), record['State']), record)
+            changed = dict(records[0], Home=records[0]['Home'] + 'changed')
+            with self.assertRaisesRegex(Refusal, 'VM UUID, home or state differs'):
+                proof.check_vm(json.dumps([changed]).encode(), 'stopped')
+
+    def test_plan_refuses_malformed_builtin_snapshot_digest_before_root_access(self):
+        with patch.object(proof, 'SNAPSHOT_SHA', 'f' * 62):
+            with self.assertRaisesRegex(Refusal, 'built-in snapshot digest is malformed'):
+                proof.plan('/not-a-real-root', 'fixture01', '0' * 40)
+
     def test_partial_probe_and_snapshot_drift_refuse(self):
         with self.assertRaises(Refusal):
             proof.check_probe(b'uid=0\n')
