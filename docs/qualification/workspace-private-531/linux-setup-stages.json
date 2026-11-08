@@ -1,0 +1,325 @@
+{
+  "schema": "effigy.linux-setup-manifest.v1",
+  "source_candidate": "4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02",
+  "vm": "433c9e5b-c7b9-469f-9633-24b4addcd3b5",
+  "generated_from": "linux_setup.setup_plan({'go': signed receipts, ...}) over minimal live facts; ids, kinds, bases and timeouts must match it (linux_setup_tests ManifestChecks)",
+  "probe": {
+    "path": "linux-setup-probe.sh",
+    "sha256": "6bde748a456617737fb4928d347d55fa96e5a6ff0dac119ace373692ef41fc39"
+  },
+  "admission_reserve_seconds": 180,
+  "report_reserve_seconds": 120,
+  "stage_ceiling_seconds": 1200,
+  "kinds": {
+    "vm-root": "one root operation through prlctl exec, exact argv and expectation; advance needs the waited exit and the expectation on its stdout",
+    "vm-supervised": "payload run over pinned SSH by the root supervisor using an exact provisioned one-use request digest (plan GO covers the complete mapped request); advance needs host-credited closure and the expectation on the payload stdout",
+    "contained-transfer": "supervisor start plus SSH writer at once; the payload reads the stage FIFO the writer fills; advance needs host-credited closure, the payload expectation and writer exit 0. SSH exit is never closure"
+  },
+  "rows": [
+    {
+      "id": "E3a",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 60,
+      "go": "E3",
+      "status": "template",
+      "live_blockers": [],
+      "effect": "bootstrap",
+      "needs_hard_limit": false
+    },
+    {
+      "id": "E3b",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 20,
+      "go": "E3",
+      "status": "template",
+      "live_blockers": [],
+      "effect": "bootstrap",
+      "needs_hard_limit": false
+    },
+    {
+      "id": "E3c",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 20,
+      "go": "E3",
+      "status": "template",
+      "live_blockers": [],
+      "effect": "bootstrap",
+      "needs_hard_limit": false
+    },
+    {
+      "id": "E4",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 30,
+      "go": "E4",
+      "status": "template",
+      "live_blockers": [],
+      "effect": "bootstrap",
+      "needs_hard_limit": false,
+      "effect_note": "GO E4 only; the probe is required for every row and its docker group is checked by the plan"
+    },
+    {
+      "id": "E4v",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 10,
+      "go": null,
+      "status": "template",
+      "live_blockers": [],
+      "effect": "bootstrap",
+      "needs_hard_limit": false
+    },
+    {
+      "id": "E5a",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 30,
+      "go": "E5",
+      "status": "template",
+      "live_blockers": [],
+      "effect": "bootstrap",
+      "needs_hard_limit": false
+    },
+    {
+      "id": "E5b",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 30,
+      "go": "E5",
+      "status": "template",
+      "live_blockers": [],
+      "effect": "bootstrap",
+      "needs_hard_limit": false
+    },
+    {
+      "id": "E5c",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 30,
+      "go": "E5",
+      "status": "template",
+      "live_blockers": [],
+      "effect": "bootstrap",
+      "needs_hard_limit": false
+    },
+    {
+      "id": "E6a",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 20,
+      "go": "E6",
+      "status": "template",
+      "live_blockers": [],
+      "effect": "bootstrap",
+      "needs_hard_limit": false
+    },
+    {
+      "id": "E6",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 30,
+      "go": "E6",
+      "status": "blocked",
+      "live_blockers": [
+        "E2 public key line and bytes",
+        "expiry within 24 hours of the activation clock"
+      ],
+      "effect": "bootstrap",
+      "needs_hard_limit": false
+    },
+    {
+      "id": "E7a",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 20,
+      "go": "E7",
+      "status": "blocked",
+      "live_blockers": [
+        "controller-to-guest disk association (no source-verified mechanism yet)"
+      ],
+      "effect": "bootstrap",
+      "needs_hard_limit": false
+    },
+    {
+      "id": "E7b",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 20,
+      "go": "E7",
+      "status": "blocked",
+      "live_blockers": [
+        "controller-to-guest disk association (no source-verified mechanism yet)"
+      ],
+      "effect": "bootstrap",
+      "needs_hard_limit": false
+    },
+    {
+      "id": "E7c",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 60,
+      "go": "E7",
+      "status": "blocked",
+      "live_blockers": [
+        "controller-to-guest disk association (no source-verified mechanism yet)"
+      ],
+      "effect": "bootstrap",
+      "needs_hard_limit": false
+    },
+    {
+      "id": "E-SUP",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 60,
+      "go": "E-SUP",
+      "status": "template",
+      "live_blockers": [],
+      "effect": "bootstrap",
+      "needs_hard_limit": false,
+      "effect_note": "argv embeds the reviewed supervisor source as base64 (no staging route); root install still a separate GO"
+    },
+    {
+      "id": "E-SUDO",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 30,
+      "go": "E-SUP",
+      "status": "template",
+      "live_blockers": [],
+      "effect": "bootstrap",
+      "needs_hard_limit": false,
+      "effect_note": "no general sudo grant; each admitted row provisions a root-owned exact one-use request and exact digest sudo rule via the VM root route after host intent; visudo-checked"
+    },
+    {
+      "id": "E9a",
+      "kind": "contained-transfer",
+      "closure_basis": "supervised-contained",
+      "timeout_seconds": 900,
+      "go": "E9",
+      "status": "blocked",
+      "live_blockers": [
+        "pinned archive path, sha256 and ssh config",
+        "effigy531 uid observed after E3a",
+        "row nonce (E9a)",
+        "supervisor installed (E-SUP)",
+        "verified kernel hard limit covering the archive cap"
+      ],
+      "effect": "transfer",
+      "needs_hard_limit": true
+    },
+    {
+      "id": "E9b",
+      "kind": "vm-supervised",
+      "closure_basis": "supervised-contained",
+      "timeout_seconds": 300,
+      "go": "E9",
+      "status": "blocked",
+      "live_blockers": [
+        "E9a closed with a host-credited closure and writer exit 0",
+        "verified kernel hard limit covering the extraction cap"
+      ],
+      "effect": "supervised",
+      "needs_hard_limit": true
+    },
+    {
+      "id": "E9c",
+      "kind": "contained-transfer",
+      "effect": "transfer",
+      "closure_basis": "supervised-contained",
+      "timeout_seconds": 900,
+      "go": "E9",
+      "status": "blocked",
+      "live_blockers": [
+        "pinned B archive path and sha256 (69dfda56...)",
+        "effigy531 uid observed after E3a",
+        "row nonce (E9c)",
+        "supervisor installed (E-SUP)",
+        "verified kernel hard limit covering the archive cap"
+      ],
+      "effect_note": "old-source B archive, contained transfer like E9a, to BASE/archive-B.tar"
+    },
+    {
+      "id": "E8",
+      "kind": "vm-supervised",
+      "closure_basis": "supervised-contained",
+      "timeout_seconds": 900,
+      "go": "E8",
+      "status": "blocked",
+      "live_blockers": [
+        "controls payload argv and a row nonce",
+        "supervisor installed (E-SUP)",
+        "verified kernel hard limit covering the payload cap"
+      ],
+      "effect": "supervised",
+      "needs_hard_limit": true
+    },
+    {
+      "id": "E19",
+      "kind": "contained-transfer",
+      "closure_basis": "supervised-contained",
+      "timeout_seconds": 300,
+      "go": "E19",
+      "status": "blocked",
+      "live_blockers": [
+        "reviewed driver, inputs, GO index and GO receipt placements",
+        "verified kernel hard limit covering the transfer cap"
+      ],
+      "effect": "transfer",
+      "needs_hard_limit": true
+    },
+    {
+      "id": "EGO",
+      "kind": "contained-transfer",
+      "effect": "transfer",
+      "closure_basis": "supervised-contained",
+      "timeout_seconds": 300,
+      "go": "E19",
+      "status": "blocked",
+      "live_blockers": [
+        "GO receipts, their signatures and the allowed-signers file placed under BASE/inputs/go (EGO.* rows)",
+        "verified kernel hard limit covering the transfer cap"
+      ],
+      "effect_note": "GO placement rows are excluded from the plan digest because the receipts sign it"
+    }
+  ],
+  "reconciliation": {
+    "templates": [
+      "E3a",
+      "E3b",
+      "E3c",
+      "E4v",
+      "E5a",
+      "E5b",
+      "E5c",
+      "E6a"
+    ],
+    "blocked_on_live_facts": [
+      "E4",
+      "E6",
+      "E7a",
+      "E7b",
+      "E7c",
+      "E-SUP",
+      "E9a",
+      "E9b",
+      "E8",
+      "E19"
+    ],
+    "fresh_runtime_prerequisites": [
+      "Stage1 probe v2 accepted with root uid, boot_id, running state, systemd >= 250, cgroup2fs, effigy531 absent, sshd expiry-time support and the root chain",
+      "Stage1 post-observation: stopped state, retained before/after config bytes with no drift, bundle and config identities, full extent inventory, growth at most 1 GiB",
+      "a supported controller-to-guest disk association (none established; the Parallels CLI reference was not decodable)",
+      "the exact source-embedded supervisor install as its own GO, then per-row exact approval provisioning after all host gates",
+      "a bounded ssh stdin route with the pinned config and the H archive bytes present"
+    ],
+    "held_outside_this_manifest": [
+      "E10 (Rust provisioning, 1800 s indivisible)",
+      "E13k (native test run, 1500 s)",
+      "E14 (Colima producer, 1800 s)"
+    ],
+    "long_route_measurement": "Measurement 692 does not authorise a long stage or prove closure; the 1200-second stage ceiling is unchanged."
+  }
+}

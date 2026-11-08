@@ -57,7 +57,7 @@ HELPERS = frozenset({
     'verify_tool_sha', 'verify_tranche_summary', 'claim_intent', 'make_owned_dir',
     'render_guest_spec', 'compare_route_echo', 'host_stage_dockerfile', 'verify_desktop_endpoint',
     'verify_frozen_artifacts', 'check_build_help', 'read_iidfile', 'check_image_identity',
-    'check_runtime_facts', 'select_cleanup_targets', 'read_cidfile',
+    'check_runtime_facts', 'select_cleanup_targets', 'read_cidfile', 'check_cleanup_target',
 })
 # Hostile on purpose. Every character class the sources use (quotes, $, braces, glob, parens,
 # semicolon, backslash, equals, newline) is present, and nothing that can redirect, pipe or
@@ -245,17 +245,84 @@ def live_from_observation(kind, text, engine_id):
     return items
 
 
-def occurrence_receipts(token, engine_id, image_id, container_id):
-    """The creation receipts one occurrence can prove: the names and labels each stage sets, bound
-    to the IDs its own outputs returned. Nothing else is removable."""
+def read_created_volume(stdout):
+    """`docker volume create` without a name prints the engine-generated volume name (64 hex) on one line.
+    Anything else (empty, two lines, a caller-chosen name, a tag or a missing newline) refuses: no receipt."""
+    require(isinstance(stdout, str) and re.fullmatch(r'[0-9a-f]{64}\n', stdout) is not None,
+            'volume create must print exactly one engine-generated name line')
+    return stdout[:-1]
+
+
+def normalise_image_id(value):
+    """Image IDs compare in the sha256:<64 hex> form. Bare 64-hex (an untruncated list column) gains the prefix."""
+    if re.fullmatch(r'[0-9a-f]{64}', value or ''):
+        return 'sha256:' + value
+    require(IMAGE_ID.fullmatch(value or ''), 'image row must carry a full image ID')
+    return value
+
+
+def image_inventory(text):
+    """The complete image inventory from `docker image ls --all --no-trunc`: one row per tag, the set of IDs.
+    Foreign images are compared before and after cleanup, so the inventory must be complete and well formed."""
+    ids = set()
+    for line in (text or '').splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        require(isinstance(row, dict) and row.get('ID'), 'image inventory row must carry its ID')
+        ids.add(normalise_image_id(row['ID']))
+    return sorted(ids)
+
+
+def fresh_target_facts(kind, inspect_text, token):
+    """The immutable facts one exact inspect carries, in the same shape the creation receipt keeps them."""
+    data = json.loads(inspect_text or '')
+    require(isinstance(data, dict), f'{kind} inspect must be one object for the exact target')
+    if kind == 'volume':
+        return dict(name=data.get('Name'), driver=data.get('Driver'), scope=data.get('Scope'),
+                    mountpoint=data.get('Mountpoint'), created_at=data.get('CreatedAt'),
+                    labels=dict(sorted((data.get('Labels') or {}).items())))
+    labels = dict(sorted(((data.get('Config') or {}).get('Labels') or {}).items()))
+    if kind == 'image':
+        return dict(id=normalise_image_id(data.get('Id')), repo_tags=sorted(data.get('RepoTags') or []),
+                    created=data.get('Created'), os=data.get('Os'), architecture=data.get('Architecture'),
+                    labels=labels)
+    require(f'effigy.qual={token}' in [f'{k}={v}' for k, v in labels.items()], 'container lost its effigy.qual label')
+    return dict(id=data.get('Id'), name=str(data.get('Name') or '').lstrip('/'))
+
+
+def check_cleanup_target(kind, inspect_text, receipt, token):
+    """One exact target, freshly inspected immediately before its own removal, against the creation receipt that
+    produced it. Every immutable fact the receipt keeps must equal the fresh one, and a missing fact refuses. A
+    lost label, a changed ID, a different creation time or a same-name replacement refuses. Pure."""
+    require(receipt['kind'] == kind, 'cleanup target receipt has another kind')
+    fresh = fresh_target_facts(kind, inspect_text, token)
+    if kind == 'volume':
+        recorded = {k: receipt.get(k) for k in ('name', 'driver', 'scope', 'mountpoint', 'created_at', 'labels')}
+        require(f'effigy.qual={token}' in [f'{k}={v}' for k, v in recorded['labels'].items()],
+                'receipt does not carry this occurrence label')
+    elif kind == 'image':
+        recorded = dict(id=receipt['id'], repo_tags=sorted(receipt.get('repo_tags') or []),
+                        created=receipt.get('created'), os=receipt.get('os'),
+                        architecture=receipt.get('architecture'), labels=receipt.get('labels'))
+        require(receipt['name'] in recorded['repo_tags'], 'receipt does not carry its reviewed name')
+    else:
+        recorded = dict(id=receipt['id'], name=receipt['name'])
+    require(all(v is not None for v in recorded.values()), 'receipt fact missing: refuse')
+    if kind == 'volume':
+        require(fresh['name'] == receipt['name'], 'volume name differs from its creation receipt')
+    require(fresh == recorded, f'{kind} differs from its creation receipt: drift or replacement, refuse')
+    return fresh
+
+
+def occurrence_receipts(token, engine_id, volume_name, image_id, container_id):
+    """The creation receipts one occurrence can prove: each stage's own name and label, bound to the IDs its own
+    outputs returned. volume_name is the engine-generated name the D1 create printed, never a caller choice."""
     label = f'effigy.qual={token}'
     return [
-        dict(kind='volume', id=f'effigy-4f6a-qual-{token}', name=f'effigy-4f6a-qual-{token}',
-             label=label, engine_id=engine_id),
-        dict(kind='image', id=image_id, name=f'effigy-4f6a-desktop-runtime:{token}',
-             label=label, engine_id=engine_id),
-        dict(kind='container', id=container_id, name=f'effigy-4f6a-dcheck-{token}',
-             label=label, engine_id=engine_id),
+        dict(kind='volume', id=volume_name, name=volume_name, label=label, engine_id=engine_id),
+        dict(kind='image', id=image_id, name=f'effigy-4f6a-desktop-runtime:{token}', label=label, engine_id=engine_id),
+        dict(kind='container', id=container_id, name=f'effigy-4f6a-dcheck-{token}', label=label, engine_id=engine_id),
     ]
 
 
@@ -357,6 +424,8 @@ def check_engine_argv(argv):
     require(sub, 'engine subcommand required')
     if '--help' in sub:
         return True
+    require(not any(a in ('-f', '--force') for a in sub) and 'prune' not in sub,
+            'force deletion and prune are never used')
     if sub[0] == 'build':
         require(not any(a == '--pull' or a.startswith('--pull') for a in sub),
                 'build --pull is boolean: no --pull form is used, --pull=never is refused')
@@ -376,7 +445,24 @@ def check_engine_argv(argv):
         require(sub.index('python3') >= 1 and sub[sub.index('python3') - 1] == '{image_id}',
                 'runtime check must name the authenticated image ID, not a tag')
     elif sub[:2] == ['image', 'inspect']:
-        require(sub[-1] == '{image_id}', 'inspect by the authenticated image ID only')
+        require(sub[-1] in ('{image_id}', '{owned_image_id}'), 'inspect by the authenticated image ID only')
+    elif sub[:2] == ['image', 'ls']:
+        require('--all' in sub and '--no-trunc' in sub, 'the image inventory is complete: --all --no-trunc')
+    elif sub[:2] == ['image', 'rm']:
+        require(sub == ['image', 'rm', '{owned_image_id}'], 'image removal names one receipted ID')
+    elif sub[:2] == ['volume', 'create']:
+        require(sub == ['volume', 'create', '--label', 'effigy.qual={token}'],
+                'volume create takes no name: the engine generates it and prints it')
+    elif sub[:2] == ['volume', 'inspect']:
+        require(sub[-1] == '{owned_volume_name}', 'volume inspect names the engine-generated volume only')
+    elif sub[:2] == ['volume', 'ls']:
+        require('label=effigy.qual={token}' in sub or '--format' in sub, 'volume listing is a read-only observation')
+    elif sub[:2] == ['volume', 'rm']:
+        require(sub == ['volume', 'rm', '{owned_volume_name}'], 'volume removal names one receipted volume')
+    elif sub[:2] == ['container', 'inspect']:
+        require(sub[-1] == '{owned_container_ids}', 'container inspect names the one receipted container')
+    elif sub[0] == 'rm':
+        require(sub == ['rm', '{owned_container_ids}'], 'container removal names only the receipted container')
     return True
 
 

@@ -151,6 +151,25 @@ fn prose_and_log_lines_are_not_steps() {
 }
 
 #[test]
+fn reconstructed_build_output_with_lifecycle_words_is_not_progress() {
+    // Reconstructed from the reported screenshot; raw runtime output was not
+    // retained. Build and package-manager text often ends in these words.
+    for line in [
+        "#10 31.29 invoke-rc.d: policy-rc.d denied execution of start.",
+        "#13 [web build 7/9] compiling source files",
+        "#13 [web build 8/9] generated source files",
+        "#13 [web build 9/9] final source files built",
+        "#14 0.42 package setup complete; services started",
+    ] {
+        assert_eq!(
+            parse_compose_step_event(line),
+            None,
+            "reconstructed build output `{line}` is not a Compose step"
+        );
+    }
+}
+
+#[test]
 fn a_container_name_reduces_to_its_service() {
     assert_eq!(
         service_from_container_name("demo-web-dev", "demo-web-dev-db-1"),

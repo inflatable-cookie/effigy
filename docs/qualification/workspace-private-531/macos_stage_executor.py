@@ -49,7 +49,6 @@ TOOL_PATHS = (prep.COLIMA, prep.DOCKER)
 # Read-only, hash-bound requests carry scope, not authority; activation is an external Nucleus precondition.
 ACTIVATIONS_DIR = prep.STASH + '/macos-stage-activations'
 CLAIMS_DIR = prep.STASH + '/macos-stage-claims'
-VOLUME_PREFIX = 'effigy-4f6a-qual-'
 # Colima's PATH: the owned bin (pinned docker symlink) comes first, so its child docker is pinned.
 COLIMA_BASE_PATH = '/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin'
 DESKTOP_BASE_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
@@ -96,11 +95,10 @@ UNADMITTED = {
     'C3': ('guest_spec is derived from the C2 probe output and the token32 that the C0 origin mints; '
            'C2 is unadmitted'),
     'C4': DOWNLOAD_UNADMITTED,
-    'D1': ('docker volume create is idempotent and the volume name is observable to other clients: exclusive '
-           'creation of the activation volume cannot be established, so the stage is refused'),
     'D2': DOWNLOAD_UNADMITTED,
-    'D4': ('removal is not re-observed per target immediately before each removal, and the manifest records no '
-           'image foreign list: current exact identity cannot be established, so cleanup is refused'),
+    'D4': ('D4 cleanup is source-qualified (per-target engine and inspect checks, complete image inventory), but '
+           'its predecessor D3 needs D2, whose download cap is payload bytes with no pinned image size: '
+           'D4 cannot run until D2 and D3 qualify'),
 }
 # Ordinary execution stays refused; the separate proof entry has an external Nucleus launch precondition.
 # 'simulate_guest_closure' is test-only: it treats a guest step that exits 0 as closed, so the stage loop can be
@@ -177,10 +175,17 @@ def origin_token32(body, token):
     return origin['token32']
 
 
-# Steps whose non-zero exit is the observation itself (absence of a volume); post_check reads it.
-EXPECTED_NONZERO = frozenset({'d1-volume-absent'})
 IMAGE_ID_SETTERS = ('c4-read-iidfile', 'd2-read-iidfile')
-CLEANUP_RM = {'d4-owned-rm': 'containers', 'd4-owned-volume-rm': 'volumes', 'd4-owned-image-rm': 'images'}
+# Each removal class: its own fresh observation, exact inspect, per-target check and removal. Only steps of a class
+# that selected one receipted target run; the others are recorded as skipped.
+CLEANUP_CLASS = {'d4-container-info': 'containers', 'd4-container-inspect': 'containers',
+                 'd4-container-check': 'containers', 'd4-owned-rm': 'containers',
+                 'd4-volume-info': 'volumes', 'd4-volume-inspect': 'volumes',
+                 'd4-volume-check': 'volumes', 'd4-owned-volume-rm': 'volumes',
+                 'd4-image-info': 'images', 'd4-image-inspect': 'images',
+                 'd4-image-check': 'images', 'd4-owned-image-rm': 'images'}
+CLEANUP_SLOT = {'containers': 'owned_container_ids', 'volumes': 'owned_volume_name', 'images': 'owned_image_id'}
+CHECK_KIND = {'d4-container-check': 'container', 'd4-volume-check': 'volume', 'd4-image-check': 'image'}
 ACTIVATION_ID = re.compile(r'[A-Za-z0-9_.-]{8,64}')
 RECIPE_CAP_BYTES = 64 * 1024
 RECIPE_SHA256 = prep.RECIPE_SHA256
@@ -212,11 +217,6 @@ def stage_of(manifest, stage_id):
 
 def render1(text, bindings):
     return prep.render([text], bindings)[0]
-
-
-def volume_name(token, activation_id):
-    """The D1 volume name is per activation: no other occurrence can name it, so none can adopt it."""
-    return f'{VOLUME_PREFIX}{token}-{activation_id}'
 
 
 def helper_handler_missing(name):
@@ -344,7 +344,8 @@ RUNTIME_DERIVED = {
     'image_id': 'the image receipt of the preceding chain (D2 readback, verified against its iidfile)',
     'owned_container_ids': 'D4 selection: receipted creations whose live engine, ID, name and label match',
     'owned_image_id': 'D4 selection, as for containers',
-    'owned_volume_name': f'{VOLUME_PREFIX}<token>-<activation_id>: per activation, bound at D1',
+    'owned_volume_name': 'the engine-generated name that the D1 create printed (64 hex), read back from its stdout; '
+                         'then the D4 receipted volume name',
     'probe_source': 'pinned: macos_guest_context.py probe (sha256 pinned in macos_stage_executor.py)',
     'stage_source': 'pinned: macos_guest_context.py stage (same pin)',
     'verify_source': 'pinned: macos_guest_context.py verify (same pin)',
@@ -384,6 +385,9 @@ def runtime_preconditions(stage_id, bindings):
                                       'recorded: path shape, device, inode, uid, 0700 mode, first-use entries')
         pre['recorded_roots_source'] = ('688 C0 receipt, token 7deaf1b3 (roots_final), for the recorded token only; '
                                         "otherwise the chain's own verified C0 creation record")
+    if stage_id == 'D1':
+        pre['d0_identities'] = ('the control root and the two Docker directories must carry the identities the verified '
+                                'original D0 chain recorded; the predecessor receipt is named by the activation (prior_receipt)')
     if stage_id in ('D1', 'D2', 'D3', 'D4'):
         pre['engine_id'] = RECORDED_ENGINE_ID
         pre['engine_id_source'] = '690 corrected acceptance: observed engine, 29.8.0 linux/aarch64'
@@ -947,9 +951,34 @@ def h_select_cleanup_targets(ctx, step):
     volumes = prep.live_from_observation('volume', read_ref(ctx, 'd4-observe-volume.stdout'), observed)
     images = prep.live_from_observation('image', read_ref(ctx, 'd4-observe-image.stdout'), observed)
     selection = prep.select_cleanup_targets(observed, ctx['receipts'], containers + volumes + images)
+    inventory = prep.image_inventory(read_ref(ctx, 'd4-observe-images.stdout'))
+    if not set(selection['images']) <= set(inventory):
+        raise Refusal('the selected image is absent from the complete image inventory: refuse')
     ctx['pre_foreign'] = dict(containers=sorted(c['id'] for c in containers if c['id'] not in selection['containers']),
-                              volumes=sorted(v['id'] for v in volumes if v['id'] not in selection['volumes']))
+                              volumes=sorted(v['id'] for v in volumes if v['id'] not in selection['volumes']),
+                              images=sorted(i for i in inventory if i not in selection['images']))
     return selection
+
+
+def h_check_cleanup_target(ctx, step):
+    """Immediately before one removal. This class's own fresh engine observation must be the chain engine, and its
+    exact target's fresh inspect must match the one creation receipt that produced it. Drift, a missing fact, a foreign
+    label or a same-name replacement refuses before the removal runs."""
+    kind = CHECK_KIND[step['id']]
+    cls = {'container': 'containers', 'volume': 'volumes', 'image': 'images'}[kind]
+    observed = prep.engine_id_from_info(read_ref(ctx, f'd4-{kind}-info.stdout'))
+    if observed != ctx['engine_id']:
+        raise Refusal(f'{step["id"]}: engine changed before this removal: refuse')
+    target = ctx['bindings'][CLEANUP_SLOT[cls]]
+    target = target[0] if isinstance(target, list) else target
+    matches = [r for r in ctx['receipts'] if r['kind'] == kind and r['id'] == target and r['engine_id'] == observed]
+    if len(matches) != 1:
+        raise Refusal(f'{step["id"]}: no single creation receipt names this target: refuse')
+    try:
+        facts = prep.check_cleanup_target(kind, read_ref(ctx, f'd4-{kind}-inspect.stdout'), matches[0], ctx['bindings']['token'])
+    except ValueError as exc:
+        raise Refusal(f'{step["id"]}: {exc}') from exc
+    return dict(kind=kind, target=target, engine_id=observed, facts=facts)
 
 
 # The only helper that may run after a guest closure is unknown: the C2 route-echo comparison. It reads the
@@ -972,6 +1001,7 @@ HANDLERS = {
     'check_runtime_facts': h_check_runtime_facts,
     'read_cidfile': h_read_cidfile,
     'select_cleanup_targets': h_select_cleanup_targets,
+    'check_cleanup_target': h_check_cleanup_target,
     'verify_tool_sha': lambda ctx, step: {'verified': verify_tool_sha(TOOL_PATHS)},
     'verify_tranche_summary': lambda ctx, step: verify_tranche_summary(),
 }
@@ -981,17 +1011,24 @@ HANDLERS = {
 # Creation receipts. Each is derived from the original outputs of the stage that produced it.
 # ---------------------------------------------------------------------------------------------------
 
-def volume_creation_receipt(name, token, create_stdout, inspect_text, engine_id):
-    """D1 authority: the create result names this activation's volume, and the same-occurrence inspect
-    (docker's --format object) carries the exact name and label. A token alone never forms it."""
-    if (create_stdout or '').strip() != name:
-        raise Refusal('volume create did not return the expected name: no creation receipt')
-    row = json.loads(inspect_text)
+def volume_creation_receipt(create_stdout, token, inspect_text, engine_id):
+    """D1 authority: the engine-generated name the create printed (exactly one 64-hex line), and the inspect of that
+    name, which must carry the same name and this occurrence's label. The API returns no 'created' flag, so the
+    receipt rests on the engine's own generated name plus the label absence observed before the create. A
+    caller-chosen name, a label alone, or a create whose output is not one name never forms a receipt."""
+    try:
+        name = prep.read_created_volume(create_stdout)
+        row = json.loads(inspect_text or '')
+    except ValueError as exc:
+        raise Refusal(f'volume create or inspect output: {exc}') from exc
     if not isinstance(row, dict):
         raise Refusal('volume inspect must be one object per volume')
-    if row.get('Name') != name or (row.get('Labels') or {}).get('effigy.qual') != token:
+    labels = dict(sorted((row.get('Labels') or {}).items()))
+    if row.get('Name') != name or labels.get('effigy.qual') != token:
         raise Refusal('volume inspect does not match the created name and label')
-    return dict(kind='volume', id=name, name=name, label=f'effigy.qual={token}', engine_id=engine_id)
+    return dict(kind='volume', id=name, name=name, label=f'effigy.qual={token}', engine_id=engine_id,
+                driver=row.get('Driver'), scope=row.get('Scope'), mountpoint=row.get('Mountpoint'),
+                created_at=row.get('CreatedAt'), labels=labels)
 
 
 def container_creation_receipt(token, container_id, engine_id):
@@ -1004,7 +1041,12 @@ def image_creation_receipt(token, image_id, inspect_text, engine_id):
     row = json.loads(inspect_text)
     if not isinstance(row, dict) or row.get('Id') != image_id or name not in (row.get('RepoTags') or []):
         raise Refusal('image readback does not match the built ID and name')
-    return dict(kind='image', id=image_id, name=name, label=f'effigy.qual={token}', engine_id=engine_id)
+    labels = dict(sorted(((row.get('Config') or {}).get('Labels') or {}).items()))
+    if labels.get('effigy.qual') != token:
+        raise Refusal('image readback lacks this occurrence label')
+    return dict(kind='image', id=image_id, name=name, label=f'effigy.qual={token}', engine_id=engine_id,
+                repo_tags=sorted(row.get('RepoTags') or []), created=row.get('Created'), os=row.get('Os'),
+                architecture=row.get('Architecture'), labels=labels)
 
 
 def prefetch_pinned_artifact(source, destination, size, sha512):
@@ -1318,7 +1360,7 @@ def verify_receipt_tree(body, stage_id, key, manifest):
     for step in body['steps']:
         ev = step['evidence']
         if step.get('skipped'):
-            if step['id'] not in CLEANUP_RM:
+            if step['id'] not in CLEANUP_CLASS:
                 raise Refusal(f"{step['id']}: only cleanup steps may be skipped")
             if checked_sha(ev['path'], must_be_in=root) != ev['sha256']:
                 raise Refusal(f"{step['id']}: skip record differs from its hash")
@@ -1328,7 +1370,7 @@ def verify_receipt_tree(body, stage_id, key, manifest):
         if checked_sha(ev['path'], must_be_in=root) != ev['sha256']:
             raise Refusal(f"{step['id']}: step receipt differs from its recorded hash")
         if step['kind'] == 'exec':
-            if step.get('waited_exit') != 0 and step['id'] not in EXPECTED_NONZERO:
+            if step.get('waited_exit') != 0:
                 raise Refusal(f"{step['id']}: closed without a waited exit 0")
             for name in ('stdout', 'stderr'):
                 rec = step['streams'][name]
@@ -1404,12 +1446,11 @@ def verify_creation(rec, body, manifest):
     if not isinstance(argv, list) or produced_steps[intent_step].get('closure') != 'closed':
         raise Refusal(f'{rec["kind"]}: the creating step has no recorded argv or did not close')
     if rec['kind'] == 'volume':
-        name = volume_name(body['token'], act)
+        if argv != [prep.DOCKER, 'volume', 'create', '--label', f'effigy.qual={body["token"]}']:
+            raise Refusal('the create intent is not the engine-named create of this occurrence')
         create_out = read_checked_file(f'{producer}/d1-volume-create/stdout', must_be_in=producer, read_only=False).decode()
         inspect_out = read_checked_file(f'{producer}/d1-volume-inspect/stdout', must_be_in=producer, read_only=False).decode()
-        if name not in argv or f'effigy.qual={body["token"]}' not in argv or argv[1:3] != ['volume', 'create']:
-            raise Refusal('the create intent does not name this activation volume and label')
-        expected = volume_creation_receipt(name, body['token'], create_out, inspect_out, body['engine_id'])
+        expected = volume_creation_receipt(create_out, body['token'], inspect_out, body['engine_id'])
     elif rec['kind'] == 'image':
         readback = read_checked_file(f'{producer}/d2-readback/stdout', must_be_in=producer, read_only=False).decode()
         if '--tag' not in argv or argv[argv.index('--tag') + 1] != f"effigy-4f6a-desktop-runtime:{body['token']}":
@@ -1544,6 +1585,8 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                 pins.pin(bindings[key])
             except OSError:
                 raise Refusal(f'{key}: the private Docker directory must exist and be pinned before effects')
+    if stage_id == 'D1':
+        check_d0_identities(prior, bindings, pins)  # the roots the original D0 chain created, before any effect
     # One absolute monotonic deadline for the whole stage, bounded by the activation window.
     budget = min(stage['seconds'], (datetime.datetime.fromisoformat(go['expires_utc'].replace('Z', '+00:00')) - now).total_seconds())
     if budget <= stage['reserve_seconds']:
@@ -1567,7 +1610,6 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
     run_bindings.update(guest_source_bindings())
     if token32 is not None:
         run_bindings['token32'] = token32
-    run_bindings['owned_volume_name'] = volume_name(bindings['token'], go['activation_id'])
     if stage_id in ('C5', 'D3', 'D4'):
         images = [r for r in (prior or {}).get('receipts', []) if r['kind'] == 'image']
         if len(images) != 1:
@@ -1592,6 +1634,19 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
             step_deadline = min(now_mono + step['timeout_seconds'], hard)
             if step_deadline <= now_mono:
                 raise Refusal(f"{step['id']}: stage budget spent before launch")
+            cls = CLEANUP_CLASS.get(step['id'])
+            if cls is not None:
+                selected = (ctx['selection'] or {}).get(cls) or []
+                if not selected:
+                    create_private_dir(step_root)
+                    pins.pin(step_root)
+                    skip = write_json_new(step_root, 'skip.json', dict(step=step['id'], skipped='nothing selected'))
+                    steps_out.append(dict(id=step['id'], kind=step['kind'], closure='closed', skipped=True,
+                                          evidence=dict(path=skip, sha256=checked_sha(skip, must_be_in=stage_root))))
+                    continue
+                if len(selected) != 1:
+                    raise Refusal(f"{step['id']}: a class removes one receipted target, not {len(selected)}")
+                ctx['bindings'][CLEANUP_SLOT[cls]] = selected if cls == 'containers' else selected[0]
             if step['kind'] == 'helper':
                 create_private_dir(step_root)
                 pins.pin(step_root)
@@ -1644,22 +1699,6 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                                                     sha256=checked_sha(step_root + '/receipt.json', must_be_in=stage_root)))
                 steps_out.append(item)
                 continue
-            if step['id'] in CLEANUP_RM:
-                key = CLEANUP_RM[step['id']]
-                selected = (ctx['selection'] or {}).get(key) or []
-                if not selected:
-                    create_private_dir(step_root)
-                    pins.pin(step_root)
-                    skip = write_json_new(step_root, 'skip.json', dict(step=step['id'], skipped='nothing selected'))
-                    steps_out.append(dict(id=step['id'], kind='exec', closure='closed', skipped=True,
-                                          evidence=dict(path=skip, sha256=checked_sha(skip, must_be_in=stage_root))))
-                    continue
-                if key == 'containers':
-                    ctx['bindings']['owned_container_ids'] = selected
-                elif key == 'volumes':
-                    ctx['bindings']['owned_volume_name'] = selected[0]
-                else:
-                    ctx['bindings']['owned_image_id'] = selected[0]
             resolved = resolve_step(step, ctx['bindings'])
             create_private_dir(step_root)
             pins.pin(step_root)
@@ -1678,8 +1717,6 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                                stdin_path=stdin_path, stdin_sha256=stdin_sha,
                                identity_probe=start_identity)
             step_closure_value = step_closure(result, resolved['guest'])
-            if step['id'] in EXPECTED_NONZERO and step_closure_value == 'failed_closed':
-                step_closure_value = 'closed'  # the non-zero exit is the observation; post_check reads it
             post_refusal = None
             try:
                 monitor.check()
@@ -1750,30 +1787,65 @@ def post_check(ctx, step_id, stage_id, bindings, evidence):
             raise Refusal(f'{step_id}: {exc}') from exc
         if observed != ctx['engine_id']:
             raise Refusal(f'{step_id}: engine differs from the chain engine: refuse before effects')
-    if step_id == 'd1-volume-absent':
-        out = ctx['outputs'][step_id]
-        if out['exit'] == 0 or 'no such volume' not in Path(out['stderr']).read_text().lower():
-            raise Refusal('the activation volume already exists or its absence is unobserved: refuse, no adoption')
+    if step_id == 'd1-label-absent' and read_ref(ctx, 'd1-label-absent.stdout').strip():
+        raise Refusal('a volume with this occurrence label already exists: refuse, no adoption')
+    if step_id == 'd1-volume-create':
+        try:
+            ctx['bindings']['owned_volume_name'] = prep.read_created_volume(read_ref(ctx, 'd1-volume-create.stdout'))
+        except ValueError as exc:
+            raise Refusal(f'd1-volume-create: {exc}') from exc
     if step_id == 'd1-volume-inspect':
-        receipt = volume_creation_receipt(ctx['bindings']['owned_volume_name'], bindings['token'],
-                                          read_ref(ctx, 'd1-volume-create.stdout'),
+        receipt = volume_creation_receipt(read_ref(ctx, 'd1-volume-create.stdout'), bindings['token'],
                                           read_ref(ctx, 'd1-volume-inspect.stdout'), ctx['engine_id'])
         ctx['receipts'].append(dict(receipt, evidence=evidence))
-    if step_id == 'd4-post-volume':
+    if step_id == 'd4-post-images':
         post_cleanup_compare(ctx)
 
 
 def post_cleanup_compare(ctx):
-    """The foreign list after cleanup equals the foreign list before it, and no selected object remains."""
+    """After cleanup: no selected object remains, and the container, volume and complete image foreign lists equal the
+    lists observed before the first removal. A changed foreign list refuses; the observation is retained."""
     selection = ctx['selection'] or {}
-    removed_c, removed_v = set(selection.get('containers') or []), set(selection.get('volumes') or [])
+    removed = dict(containers=set(selection.get('containers') or []), volumes=set(selection.get('volumes') or []),
+                   images=set(selection.get('images') or []))
     engine = ctx['engine_id']
-    post_c = sorted(c['id'] for c in prep.live_from_observation('container', read_ref(ctx, 'd4-post-ps.stdout'), engine))
-    post_v = sorted(v['id'] for v in prep.live_from_observation('volume', read_ref(ctx, 'd4-post-volume.stdout'), engine))
-    if set(post_c) & removed_c or set(post_v) & removed_v:
+    post = dict(containers=sorted(c['id'] for c in prep.live_from_observation('container', read_ref(ctx, 'd4-post-ps.stdout'), engine)),
+                volumes=sorted(v['id'] for v in prep.live_from_observation('volume', read_ref(ctx, 'd4-post-volume.stdout'), engine)),
+                images=prep.image_inventory(read_ref(ctx, 'd4-post-images.stdout')))
+    if any(set(post[key]) & removed[key] for key in removed):
         raise Refusal('a selected object is still present after cleanup: refuse')
-    if post_c != ctx['pre_foreign']['containers'] or post_v != ctx['pre_foreign']['volumes']:
+    if any(post[key] != ctx['pre_foreign'][key] for key in ('containers', 'volumes', 'images')):
         raise Refusal('foreign list changed across cleanup: refuse, the observation is retained')
+
+
+def d0_identities(prior, bindings):
+    """The identities the original D0 chain recorded for the roots D1 uses, read from the verified D0 receipt tree and
+    never from a re-observation: the control root from the D0 helper request (its anchor identity, bound by the
+    helper's recorded input hash), and the two Docker directories from the D0 helper's created inventory."""
+    root = prior['stage_root']
+    step_root = root + '/d0-make-owned-dirs'
+    request_path = step_root + '/helper-request.json'
+    request = json.loads(read_checked_file(request_path, must_be_in=root, read_only=False))
+    intent = json.loads(read_checked_file(step_root + '/intent.json', must_be_in=root, read_only=False))
+    if (intent.get('input_hashes') or {}).get(request_path) != checked_sha(request_path, must_be_in=root):
+        raise Refusal('the D0 helper request differs from its recorded input hash: refuse')
+    if request.get('anchor') != bindings['control']:
+        raise Refusal('the D0 helper anchor is not this chain control root: refuse')
+    helper = json.loads(read_checked_file(step_root + '/helper.json', must_be_in=root, read_only=False))
+    created = {item['path']: tuple(item['identity']) for item in helper['result']['created']}
+    out = {bindings['control']: tuple(request['anchor_identity'])}
+    for key in ('desktop_config', 'desktop_context_dir'):
+        if bindings[key] not in created:
+            raise Refusal(f'{key}: not in the D0 created inventory: refuse')
+        out[bindings[key]] = created[bindings[key]]
+    return out
+
+
+def check_d0_identities(prior, bindings, pins):
+    """Each root D1 pins must have the identity the original D0 chain recorded. A replaced root refuses before any effect."""
+    for path, identity in d0_identities(prior, bindings).items():
+        if pins.items.get(path) != identity:
+            raise Refusal(f'{path}: differs from the identity the original D0 chain recorded: refuse')
 
 
 def main(argv):

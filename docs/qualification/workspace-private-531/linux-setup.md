@@ -114,3 +114,144 @@ source hashes, failures and retained resources outside ephemeral Queue cleanup.
 All three backend inputs/GO-index stay **UNARMED** pending actual GOs, accepted
 placement and planner-bound aggregate execution. Consumer/install/production/
 merge authority is unchanged.
+
+## Setup adapter status (source-only, revision 9)
+
+Pure controls, no effect. Files: `linux_setup.py` (Stage1 entry bound to the registered
+home, admission verifiers, setup plan, executor, host credit, `ssh_argv`),
+`linux_supervisor.py` (transient SERVICE argv, gate, outside-payload monitor, guest
+candidate producer, root entry point), `linux_transfer.py` (bounded local processes, the
+contained stdin transfer), `linux_receipts.py` (OpenSSH-signed admission receipts),
+`linux-setup-probe.sh` (read-only probe, hash bound), `linux-setup-stages.json` (ledger
+checked against the plan), `linux_setup_tests.py` (161 controls, including real-process flows;
+`test:qualification:linux-setup`).
+
+- **Gate and positive path.** The payload is wrapped so it blocks on a FIFO in the stage
+  directory before running. The outside monitor samples the unit while it is loaded and
+  releases the gate on the first sample that shows it active in a cgroup. The unit is
+  therefore provably active, with a control group, before the payload does any work. A
+  payload never observed active is never released and ends at its RuntimeMaxSec deadline,
+  which is unknown. Candidate eligibility needs a pre-release active sample for this
+  InvocationID in one cgroup, no failed read or release sample, and a post-run loaded
+  unit with the same InvocationID, active(exited) under RemainAfterExit, Result=success, ExecMainStatus=0 and an empty
+  ControlGroup. A populated=1 sample while the unit runs is no veto (K-16). InvocationID is
+  parsed as the contiguous hex systemctl prints.
+- **Host credit.** The host reads the unit over the VM route and credits closure only when
+  the candidate equals that observation (boot ID, nonce, unit, InvocationID, active state,
+  result), through the 686 `unit-exited-exittype-cgroup` basis (K-22).
+- **Contained transfer.** A transfer row starts the supervisor over pinned SSH (`sudo -n` of the one installed program, request
+  inline) and, at once, an SSH writer that waits for the stage FIFO and streams the
+  archive or placement into it. The payload reads the FIFO and writes the destination. SSH
+  exit is only the writer's precondition (exit 0). Closure comes from the supervisor
+  candidate and host credit, and the payload's sha256 line is the expectation.
+- **Installed supervisor is standalone (K-15).** `linux_supervisor.py` starts with
+  `#!/usr/bin/python3 -I`, imports only the standard library, and mirrors the two
+  constants it needs from the preparation modules. A control parses its imports and
+  pins the mirrors. The install writes that one file and it runs from its installed
+  path. A boot-ID path seam (`EFFIGY_BOOT_ID_PATH`) lets the control run the installed
+  file here. It cannot forge credit, because the host compares the candidate's boot ID
+  with its own VM-route identity.
+- **Supervisor install (E-SUP).** The root row's argv embeds the reviewed
+  `linux_supervisor.py` as base64 and writes it with `base64 -d`, then `chmod` and
+  `sha256sum`. No staging route is needed. The executor compares the argv with the
+  recomputed one before the row runs. The install itself is still a separate GO.
+- **Real command flow.** Because systemd is absent here, `systemd-run` and `systemctl`
+  are Python stand-ins on PATH. They run the real payload as a real process group,
+  keep the unit active while the group lives (ExitType=cgroup, KillMode=control-group),
+  enforce RuntimeMaxSec, and print `systemctl show` text. The supervisor, monitor, gate,
+  transfer runner and host credit run unmodified against them. These tests show the code
+  path works end to end with real processes. They do not verify systemd's InvocationID
+  or terminal timing, which still needs a live check.
+- **Supervised payloads.** E8 (controls) and E9b (archive extraction and tree digest) run
+  as supervised payloads. Their request is inline in argv, so the plan digest covers its
+  exact bytes, and each has a row nonce from the facts.
+- **Receipts.** GO and admission receipts are OpenSSH signatures (`ssh-keygen -Y verify`,
+  namespace `effigy-go-receipt`) checked against an allowed-signers file bound by sha256.
+  Each receipt must name its gate, be approved, and be bound to this plan digest. Tampered,
+  wrong-signer, unsigned and stale receipts refuse. The trust anchor is an operator key.
+- **Stage1.** One start, one read-only probe, one graceful stop, 600 s, no snapshot, no
+  `--kill`. The request reads the registered home itself. Config, descriptor and extent
+  inventory are recomputed from `PVM_HOME`, and the probe script must hash to the reviewed
+  value. Post-stop, `stage1_verify_post` refuses on drift in config bytes, identities,
+  descriptor, extents, snapshot tree or growth above 1 GiB. Post-run bytes are retained into the stage before any check, and the
+  writable top is an observed image, never a file name (K-25).
+- **Stage root (revision 8).** Row stages are direct children of the reviewed root
+  `/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/stage`. The root is created mode 0711 and
+  owned by root. Each row directory is mode 0700 and owned by the payload account. The
+  entry refuses any other parent or a name outside `[A-Za-z0-9._-]{1,32}`.
+- **Lifetime (revision 8).** Eligibility no longer vetoes a populated=1 sample while the
+  unit runs. Only failed reads, failed releases and a post-run state other than loaded,
+  inactive, success, status 0 and an empty cgroup stay Unknown.
+- **Head and trust binding (revision 8).** The plan digest covers the reviewed head and
+  the executable rows. Receipts must name that head and that digest. The EGO rows are
+  left out because the receipts sign the digest.
+- **Placement map (revision 8).** Every module, driver, GO receipt, GO signature and the
+  allowed-signers file needs exactly one placement with a pinned host path and sha256.
+  Missing, unexpected, duplicate and mismatched entries each refuse. The B archive (E9c)
+  uses the same contained transfer as the H archive (E9a).
+- **Revision 9 changes.** Lifecycle: RemainAfterExit=yes stays, so the terminal state is
+  active(exited), and the host stops the unit after credit (K-22). Transport: supervised
+  payloads reach the root supervisor over pinned SSH through one sudo rule, installed
+  by the E-SUDO row (K-23). Anchors: the preparation head, candidate H, probe transcript
+  sha and signer pin come from `EXTERNAL_ANCHORS` and never from facts (K-24). Writable
+  top: the file-name derivation is removed; a top needs an observation from a supported
+  mechanism, and none is established, so Stage1 refuses before any effect (K-25). Custody:
+  the stage parent is canonical, held by descriptor, not writable by others, and rows are
+  created through it and never reused (K-26). BASE is root-owned 0755; archives sit under
+  `inputs/`; the GO index is placed and hash-checked (K-27).
+- **Admission.** The executor rebuilds the plan from facts, never from a caller's rows.
+  Gates: the probe output is hash-bound (E3 account absence, E4 docker group); GO receipts
+  are signed and plan-bound; E6 accepts only one restricted ssh-ed25519 line for the E2 key
+  with the bound expiry within 24 hours; disk association and hard limits pass source-
+  verified verifiers (none established yet, so they refuse); bootstrap rows match exact
+  argv; payload rows need the effigy531 uid observed after E3a and their row nonce.
+
+Decisions for the current adapter:
+
+- The outside-payload monitor observes the gate-held cgroup and InvocationID before
+  release. After positive active(exited), success/status zero and empty cgroup, it
+  stops the empty service so `systemd-run --pipe` can return. Credit requires the
+  same loaded InvocationID inactive/dead, empty cgroup and waited exit zero. A
+  collected unit, disconnect, failed read or partial stream remains Unknown.
+- The full payload deadline starts at gate release. Gate setup uses 30 seconds of
+  admission reserve; cleanup and waited transport use the existing report reserve.
+  RuntimeMaxSec includes the gate reserve. Payload bounds stay 900/300 seconds and
+  total stages stay within 1200 seconds; polling is never a hard quota.
+- E-SUDO installs no general grant. After host GO, identity, credential, resources,
+  hard-limit and one-use intent checks, the VM root route installs exact request
+  bytes under root-owned0700 `/var/lib/effigy531-approved` and one exact digest sudo
+  rule. The SSH root entry accepts only `--approved-request <digest>`, opens that
+  root-owned0600 record and spends both its digest and nonce exclusively before effects. Guest supplied
+  hashes cannot grant authority. Every root row access uses a held directory fd;
+  payloads cannot replace root-owned stage rows or root stream paths. The gate remains
+  supervisor-owned0444; only its private, non-inherited pre-opened writer fd can
+  release it. The payload can read but cannot write or chmod the gate. Invalid
+  release lines and EOF refuse execution. Newly created object modes are set and
+  verified through held descriptors, independently of inherited umask (077/027
+  covered); existing parent checks are never relaxed.
+- The request binds the explicit guest input/hash map, resource counters, SSH file
+  hashes, expiry, VM boot identity and payload argv. Host request retention reuses
+  the 686 request writer. Placements and streams retain their independent hashes.
+- `linux_observation_caller.execute` is the actual caller: bounded VM-route public
+  boot/key identity, then pinned authenticated SSH boot plus systemctl terminal
+  observation. It retains separate request/stdout/stderr/waited exit evidence.
+  Callback interfaces remain injection seams for source controls only. Every SSH
+  payload, including E8/E9b, checks the isolated config, private key, pinned host
+  key, numeric probe endpoint and expiry before spending its intent.
+- Stage1 admission authenticates a separate signed occurrence from the reviewed
+  proof-entry activation boundary: nonce/time window, waited one-start/graceful
+  stop, probe/identity and all retained before/after bytes and extent inventories.
+  Complete post-state enters the signed setup-plan digest. A setup GO cannot
+  substitute for an observation receipt. Activation anchors are unset in source.
+
+The lifecycle is source-qualified against [systemd-run v259 implementation](https://raw.githubusercontent.com/systemd/systemd/v259/src/run/run.c),
+[service semantics](https://raw.githubusercontent.com/systemd/systemd/v259/man/systemd.service.xml)
+and [kill semantics](https://raw.githubusercontent.com/systemd/systemd/v259/man/systemd.kill.xml).
+The stand-in now waits in active(exited) until stop, matching the reviewed wait loop.
+Installed systemd capabilities and that lifecycle still need fresh native binding.
+
+Still unavailable: supported writable-top and controller-to-guest association,
+source-verified kernel hard limits, fresh signed Stage1 evidence, exact activation
+anchors and root installation authorization. No VM, SSH, account, service, build,
+proof or production effect ran here. E10/E13k/E14 stay held; measurement692 grants
+no longer stage. Source controls confer no native proof credit.

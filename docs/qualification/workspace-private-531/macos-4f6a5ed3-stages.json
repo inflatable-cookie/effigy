@@ -34,6 +34,7 @@
   ],
   "helpers": [
     "check_build_help",
+    "check_cleanup_target",
     "check_image_identity",
     "check_runtime_facts",
     "claim_intent",
@@ -49,7 +50,7 @@
     "verify_tool_sha",
     "verify_tranche_summary"
   ],
-  "manifest": "macos-4f6a5ed3-stages-r3",
+  "manifest": "macos-4f6a5ed3-stages-r4",
   "observed_metadata": {
     "child": "linux-artifact-preparation.l0tx7tam/macos-metadata-rfzuiadz",
     "note": "local metadata only; not a running-engine or guest observation",
@@ -62,7 +63,7 @@
     "image_context.py": "af74047f640111907930273f7cc7a2b46eac4cb27943f0a512fccf56a1b3b322",
     "image_prepare.py": "882f9e44e7acd87e5ab94237feb7f19a452a3bbb86dd1cf208f311129847964f",
     "macos_metadata_tranche.py": "c204bfaa87c2534da05b62c5f10beda5d3196216ce40d6afffeb8dec2ef9d1a6",
-    "macos_preparation.py": "a81e946e8ee7bc19e1bb682ee3bc7236b4ea1e879e9e357a90a04d3ea690b2dc"
+    "macos_preparation.py": "cb0c1ea75e08d53a0c281a8000d82810a3336e47bbe5078f15e14e886f573fe2"
   },
   "proof_entry": {
     "baseline": {
@@ -1030,19 +1031,19 @@
     },
     {
       "backend": "desktop",
-      "closure": "the created volume carries the exact name and label; its inspect is the creation receipt that D4 needs",
+      "closure": "the create prints exactly one engine-generated 64-hex name line, and the inspect of that name carries the occurrence label and the same name; that inspect with the create stream is the creation receipt that D4 needs",
       "download_cap_bytes": 0,
-      "failure": "a name collision refuses; nothing is adopted",
+      "failure": "a label already present, a create whose stdout is not exactly one engine-generated name, a missing or failed inspect, or an inspect that does not match refuses; nothing is adopted or named by the caller",
       "id": "D1",
-      "name": "owned fixture volume",
+      "name": "owned fixture volume, named by the engine",
       "network_sources": [
         "none"
       ],
       "reserve_seconds": 60,
       "retained_after_failure": [
-        "owned volume effigy-4f6a-qual-<token>, label effigy.qual=<token>, removed only by D4 with a receipt"
+        "a volume created by the engine under a random name with label effigy.qual=<token>; it has no creation receipt unless its inspect closed, so D4 never removes it"
       ],
-      "retention": "create stream, inspect of the owned volume",
+      "retention": "label observation stream, create stream (the engine-generated name), inspect of that volume",
       "seconds": 300,
       "steps": [
         {
@@ -1071,10 +1072,11 @@
           "argv": [
             "/usr/local/bin/docker",
             "volume",
-            "inspect",
+            "ls",
+            "--filter",
+            "label=effigy.qual={token}",
             "--format",
-            "{{json .}}",
-            "{owned_volume_name}"
+            "{{json .}}"
           ],
           "env": {
             "set": {
@@ -1085,7 +1087,7 @@
               "DOCKER_CONTEXT"
             ]
           },
-          "id": "d1-volume-absent",
+          "id": "d1-label-absent",
           "kind": "exec",
           "output_cap_bytes": 262144,
           "retries": 0,
@@ -1097,8 +1099,7 @@
             "volume",
             "create",
             "--label",
-            "effigy.qual={token}",
-            "{owned_volume_name}"
+            "effigy.qual={token}"
           ],
           "env": {
             "set": {
@@ -1377,9 +1378,9 @@
     },
     {
       "backend": "desktop",
-      "closure": "the engine ID at cleanup equals D0; post-cleanup foreign list equals the D0 foreign list; each step runs only when its selected set is non-empty and is recorded as skipped otherwise",
+      "closure": "the engine ID at cleanup equals D0; each removal runs only after a fresh engine observation and a fresh inspect of its exact target matches that target's creation receipt; the post-cleanup container, volume and complete image inventories equal the pre-cleanup foreign lists; each class runs only when its selected set holds one receipted target",
       "download_cap_bytes": 0,
-      "failure": "a foreign, unlabelled, unreceipted or same-name-different-ID resource is never removed; prune is not used. Foreign engine receipts refuse the whole selection.",
+      "failure": "a foreign, unlabelled, unreceipted, same-name-different-ID or drifted resource is never removed; a missing or failed per-target inspect refuses; prune and force are not used. Foreign engine receipts refuse the whole selection",
       "id": "D4",
       "name": "owned cleanup by creation receipt only",
       "network_sources": [
@@ -1389,8 +1390,8 @@
       "retained_after_failure": [
         "unauthorized and foreign resources, untouched"
       ],
-      "retention": "observation streams, selection output, cleanup streams, before and after foreign lists",
-      "seconds": 360,
+      "retention": "observation streams, selection output, per-target engine and inspect streams and checks, cleanup streams, before and after container, volume and image foreign lists",
+      "seconds": 600,
       "steps": [
         {
           "argv": [
@@ -1465,6 +1466,31 @@
           "argv": [
             "/usr/local/bin/docker",
             "image",
+            "ls",
+            "--all",
+            "--no-trunc",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d4-observe-images",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 30
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "image",
             "inspect",
             "--format",
             "{{json .}}",
@@ -1489,14 +1515,68 @@
           "helper": "select_cleanup_targets",
           "id": "d4-select-owned",
           "inputs": [
-            "d0-info.stdout",
             "d4-observe-info.stdout",
-            "d1-volume-inspect.stdout",
-            "d2-read-iidfile.stdout",
-            "d3-read-cidfile.stdout",
             "d4-observe-ps.stdout",
             "d4-observe-volume.stdout",
+            "d4-observe-images.stdout",
             "d4-observe-image.stdout"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 10
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "info",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d4-container-info",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 15
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "container",
+            "inspect",
+            "--format",
+            "{{json .}}",
+            "{owned_container_ids}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d4-container-inspect",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 15
+        },
+        {
+          "helper": "check_cleanup_target",
+          "id": "d4-container-check",
+          "inputs": [
+            "d4-container-inspect.stdout"
           ],
           "kind": "helper",
           "output_cap_bytes": 4096,
@@ -1527,6 +1607,63 @@
         {
           "argv": [
             "/usr/local/bin/docker",
+            "info",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d4-volume-info",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 15
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "volume",
+            "inspect",
+            "--format",
+            "{{json .}}",
+            "{owned_volume_name}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d4-volume-inspect",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 15
+        },
+        {
+          "helper": "check_cleanup_target",
+          "id": "d4-volume-check",
+          "inputs": [
+            "d4-volume-inspect.stdout"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 10
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
             "volume",
             "rm",
             "{owned_volume_name}"
@@ -1545,6 +1682,63 @@
           "output_cap_bytes": 262144,
           "retries": 0,
           "timeout_seconds": 30
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "info",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d4-image-info",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 15
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "image",
+            "inspect",
+            "--format",
+            "{{json .}}",
+            "{owned_image_id}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d4-image-inspect",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 15
+        },
+        {
+          "helper": "check_cleanup_target",
+          "id": "d4-image-check",
+          "inputs": [
+            "d4-image-inspect.stdout"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 10
         },
         {
           "argv": [
@@ -1614,6 +1808,31 @@
           "output_cap_bytes": 262144,
           "retries": 0,
           "timeout_seconds": 30
+        },
+        {
+          "argv": [
+            "/usr/local/bin/docker",
+            "image",
+            "ls",
+            "--all",
+            "--no-trunc",
+            "--format",
+            "{{json .}}"
+          ],
+          "env": {
+            "set": {
+              "DOCKER_CONFIG": "{desktop_config}",
+              "DOCKER_HOST": "{desktop_host}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "d4-post-images",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 30
         }
       ],
       "storage_cap_bytes": 0
@@ -1621,10 +1840,14 @@
   ],
   "status": "unarmed: review of the complete stage plan only; every stage needs its own fresh GO",
   "supersedes": {
-    "macos_preparation_sha256": "d651b3b6b42e54e9cf11c1b0bb6bc9bde76b9ebf9db44c15b2845637e065d121",
-    "manifest": "macos-4f6a5ed3-stages-r2",
-    "manifest_file_sha256": "50d6f46cf260d0a5f5b7cbe9d4709cca2d423e63ebbc769cb27dcc91ec4833c2",
-    "note": "C0 and D0 are byte-identical to r2 and readiness-check at the r2 manifest hash. Other stages bind to r3 only.",
+    "manifest": "macos-4f6a5ed3-stages-r3",
+    "manifest_file_sha256": "ddcc5b923a10ac2aeaf3a01a2500c49fd6085e6a5aa122c3280318546dcfd667",
+    "note": "r4 changes D1 (engine-generated volume name, label-absence observation, no caller-named create) and D4 (per-target engine and inspect checks before each removal, complete image inventory before and after). C0 and D0 are byte-identical to r2 and r3 and readiness-check at the r2 pins.",
+    "r2": {
+      "macos_preparation_sha256": "d651b3b6b42e54e9cf11c1b0bb6bc9bde76b9ebf9db44c15b2845637e065d121",
+      "manifest": "macos-4f6a5ed3-stages-r2",
+      "manifest_file_sha256": "50d6f46cf260d0a5f5b7cbe9d4709cca2d423e63ebbc769cb27dcc91ec4833c2"
+    },
     "readiness_stage_sha256": {
       "C0": "5eec2ae2d70e2b1cfc3bd01d9d3eb190439b4f327e19f9ebbfadcdcffa1f2bae",
       "D0": "91bad78ace3fe277b17b069d32d59a95cc97448b6c8df77dd3ab4f513cfeedbd"

@@ -193,7 +193,10 @@ pub fn parse_compose_step_event(line: &str) -> Option<ComposeStepEvent> {
     let (subject, verb) = collapsed.rsplit_once(' ')?;
     let verb = normalize_verb(verb)?;
     let subject = strip_subject_prefix(subject.trim());
-    if subject.is_empty() {
+    // Compose subjects are single image, service or container names. Requiring
+    // that shape keeps build output such as `#10 ... denied execution of
+    // start.` from becoming a new live step for every changing log line.
+    if subject.is_empty() || subject.split_whitespace().count() != 1 {
         return None;
     }
     let subject = subject.to_owned();

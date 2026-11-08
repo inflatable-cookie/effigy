@@ -142,21 +142,45 @@ def inventory_extents(xml_bytes, top, directory):
             'descriptor_sha256': hashlib.sha256(xml_bytes).hexdigest()}
 
 
+CGROUP_POPULATED = 'cgroup-populated'
+UNIT_INACTIVE = 'unit-inactive-exittype-cgroup'
+UNIT_EXITED = 'unit-exited-exittype-cgroup'
+
+
 def verify_contained_closure(expected, receipt, authenticate):
-    """Accept only an authenticated, identity-bound cgroup containment receipt."""
+    """Accept only an authenticated, identity-bound containment receipt.
+
+    Three terminal bases are accepted. `cgroup-populated` needs a positive
+    populated=0 read of a live control group. `unit-inactive-exittype-cgroup`
+    is an inactive loaded unit with Result=success and no control group.
+    `unit-exited-exittype-cgroup` is the state RemainAfterExit=yes leaves behind:
+    active(exited) with Result=success, status 0 and no control group. The two
+    unit bases each need an empty control group in both expected and receipt.
+    """
     if receipt is None:
         return 'unknown'
     if authenticate(receipt) is not True:
         raise Refusal('closure receipt is not authenticated')
-    if any(not expected.get(k) or receipt.get(k) != expected[k] for k in ('boot_id', 'nonce', 'unit', 'invocation_id', 'control_group')):
+    basis = receipt.get('terminal_basis', CGROUP_POPULATED)
+    if basis not in (CGROUP_POPULATED, UNIT_INACTIVE, UNIT_EXITED):
+        raise Refusal('unsupported terminal basis')
+    keys = ('boot_id', 'nonce', 'unit', 'invocation_id') + (('control_group',) if basis == CGROUP_POPULATED else ())
+    if any(not expected.get(k) or receipt.get(k) != expected[k] for k in keys):
         raise Refusal('closure identity drift')
+    if basis in (UNIT_INACTIVE, UNIT_EXITED) and (receipt.get('control_group') or expected.get('control_group')):
+        raise Refusal('unit terminal basis must carry no control group')
     if expected['unit'] != 'effigy-stage-' + expected['nonce']:
         raise Refusal('closure unit does not match nonce')
     if receipt.get('supervisor') != 'systemd-service-cgroup-v2':
         raise Refusal('unsupported closure supervisor')
-    if not receipt.get('control_group') or receipt.get('populated') not in (0, 1):
+    if basis == CGROUP_POPULATED and (not receipt.get('control_group') or receipt.get('populated') not in (0, 1)):
         return 'unknown'
-    if receipt.get('populated') != 0 or receipt.get('active_state') != 'inactive':
+    if basis == UNIT_EXITED:
+        if receipt.get('active_state') != 'active' or receipt.get('sub_state') != 'exited':
+            return 'unknown'
+    elif receipt.get('active_state') != 'inactive':
+        return 'unknown'
+    if receipt.get('populated') != 0:
         return 'unknown'
     if receipt.get('result') != 'success' or receipt.get('waited_exit') != 0:
         raise Refusal('contained stage did not succeed')
