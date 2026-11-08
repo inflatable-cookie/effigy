@@ -466,31 +466,34 @@ class Pins:
                     raise Refusal(f'{path}: held descriptor changed: refuse')
 
     def adopt(self, path, fd):
-        """Pin an already-opened no-follow directory descriptor. The descriptor's own identity is what the pin
-        records, so no path observation can intervene between a caller's comparison and the pin. The caller opened
-        the descriptor; this takes ownership of it on success and closes it on refusal."""
-        try:
-            if os.path.realpath(path) != path or not (path == prep.STASH or path.startswith(prep.STASH + '/')):
-                raise Refusal(f'{path}: pinned path must be canonical under Stash scratch')
-            info = os.fstat(fd)
-            if not stat.S_ISDIR(info.st_mode):
-                raise Refusal(f'{path}: pinned path must be a directory, not a link')
-            if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
-                raise Refusal(f'{path}: pinned directory must be owned by this user and mode 0700')
-            identity = (info.st_dev, info.st_ino, info.st_uid, stat.S_IMODE(info.st_mode))
-            if path in self.items and self.items[path] != identity:
-                raise Refusal(f'{path}: held directory differs from its pin')
-        except BaseException:
-            os.close(fd)
-            raise
+        """Pin an already-opened no-follow directory descriptor: its own fstat identity is what the pin records, so
+        no path observation can intervene between a caller's comparison and the pin. The descriptor has one owner
+        at a time: the caller keeps it when this refuses and hands it over when this returns. Only a successful
+        adopt holds the descriptor (or closes a duplicate of an already-held path); a refusal never closes it, so
+        a caller that closes its own descriptor on the way out closes it exactly once."""
+        if os.path.realpath(path) != path or not (path == prep.STASH or path.startswith(prep.STASH + '/')):
+            raise Refusal(f'{path}: pinned path must be canonical under Stash scratch')
+        info = os.fstat(fd)
+        if not stat.S_ISDIR(info.st_mode):
+            raise Refusal(f'{path}: pinned path must be a directory, not a link')
+        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            raise Refusal(f'{path}: pinned directory must be owned by this user and mode 0700')
+        identity = (info.st_dev, info.st_ino, info.st_uid, stat.S_IMODE(info.st_mode))
+        if path in self.items and self.items[path] != identity:
+            raise Refusal(f'{path}: held directory differs from its pin')
         if path in self.held:
             os.close(fd)
-        else:
-            self.held[path] = fd
+            return
+        self.held[path] = fd
         self.items[path] = identity
 
     def hold(self, path):
-        self.adopt(path, private_dir(path))
+        fd = private_dir(path)
+        try:
+            self.adopt(path, fd)
+        except BaseException:
+            os.close(fd)  # adopt refuses without taking ownership, so this is the one close
+            raise
 
     def close(self):
         for fd in self.held.values():

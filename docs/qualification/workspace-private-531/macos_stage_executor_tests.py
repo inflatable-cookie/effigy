@@ -2447,6 +2447,45 @@ class FreshChainRootTests(Fixture):
         self.assertEqual(calls, [])
         self.assertFalse(os.path.lexists(other['control'] + '/cache'))  # C1's own creation never ran
 
+    def test_a_conflicting_pin_refuses_as_a_refusal_and_never_closes_the_callers_descriptor(self):
+        """Review 5815984482: adopt must not close a descriptor it refuses, or the caller's own close becomes a
+        second close and a drift refusal surfaces as OSError. The same conflict on the check path raises Refusal,
+        leaves nothing held, and leaks no descriptor."""
+        self.use_historical({})
+        bindings, c0, _ = self.run_c0('f0f0f0c8', 'fresh-c0-0008b')
+        body = self.c0_body(c0)
+        manifest = ex.load_manifest()
+        control = bindings['control']
+        foreign = (0, 0, os.geteuid(), 0o700)  # a conflicting pin, as a drift would leave it
+
+        def open_descriptors():
+            return len(os.listdir('/dev/fd'))
+
+        before = open_descriptors()
+        pins = ex.Pins()
+        self.addCleanup(pins.close)
+        pins.items[control] = foreign
+        fd = os.open(control, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            with self.assertRaisesRegex(ex.Refusal, 'held directory differs from its pin'):
+                pins.adopt(control, fd)
+            self.assertNotIn(control, pins.held)
+            self.assertEqual(pins.items[control], foreign)
+            os.close(fd)  # the caller keeps ownership: exactly one close, and it must not raise EBADF
+            fd = None
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+        pins = ex.Pins()
+        self.addCleanup(pins.close)
+        pins.items[control] = foreign
+        with self.assertRaisesRegex(ex.Refusal, 'held directory differs from its pin'):
+            ex.check_recorded_roots(body, bindings, pins, first_use=True, manifest=manifest)
+        self.assertEqual(pins.held, {})
+        self.assertEqual(set(pins.items), {control})  # the refusal came from the first root, before any other pin
+        self.assertEqual(open_descriptors(), before)  # every descriptor the check opened was closed exactly once
+
     def test_a_tampered_c0_creation_record_refuses_where_the_field_is_read(self):
         """A self-consistent edit of the C0 creation helper's record re-records every hash the receipt names, so
         only the field-level binding can refuse it. The live roots are untouched and never adopted."""
