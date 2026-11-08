@@ -61,33 +61,38 @@ pub(in crate::runner) fn stage(
         scope.as_deref(),
     )?;
     let caller = binding.caller.clone();
-    ensure_owned_stage_directory(plan, &plan.stage_root)?;
-    let previous = match std::fs::symlink_metadata(&plan.manifest) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-            return Err(refusal(format!(
-                "staged source record `{}` is not a regular file; this checkout's staged source is unproven",
-                plan.manifest.display()
-            )))
-        }
-        Ok(_) => {
-            let record = StageManifest::read(plan).map_err(refusal)?;
-            record
-                .verify_binding(plan, &binding)
-                .map_err(|reason| refusal(format!("{reason}; it is not rewritten or reused")))?;
-            Some(record)
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => {
-            return Err(refusal(format!(
-                "cannot read staged source record `{}`: {error}",
-                plan.manifest.display()
-            )))
-        }
-    };
-
+    // Ownership is proved before anything is created, written or removed: this
+    // checkout's own record, or a child with nothing in it to adopt. A real
+    // directory at the derived path proves nothing on its own.
+    let previous = prove_owned_child(repo_root, plan, &binding)?;
     let closure = workspace_closure(&caller)?;
+    // Only now, with ownership proved, is the owned leaf created: it is this
+    // producer's child, not an existing directory this checkout never recorded.
+    ensure_owned_stage_directory(plan, &plan.stage_root, &binding)?;
     let mut changed = false;
-    let bound = ensure_owned_stage_directory(plan, &plan.source)?;
+    // Record the binding before the first byte lands, so an interrupted run
+    // leaves this checkout's own record instead of an unrecorded tree that a
+    // later run would have to guess about.
+    let staged_manifest = StageManifest {
+        schema: STAGE_SCHEMA.to_owned(),
+        caller: caller.clone(),
+        scope: binding.scope.clone(),
+        project: binding.project.clone(),
+        profile: binding.profile.clone(),
+        source: plan.source.clone(),
+        closure: closure.digest.clone(),
+        source_staged: true,
+        render_digest: previous.as_ref().and_then(|record| record.render_digest.clone()),
+        head: closure.head.clone(),
+        files: closure.files.clone(),
+        submodules: closure.submodules.clone(),
+        excluded: STAGE_EXCLUDED_PREFIXES
+            .iter()
+            .map(|prefix| (*prefix).to_owned())
+            .collect(),
+    };
+    write_manifest(plan, &staged_manifest)?;
+    let bound = ensure_owned_stage_directory(plan, &plan.source, &binding)?;
     // Write the closure, then remove what it no longer names. The staged tree is
     // this checkout's own build source, so a deleted or renamed file must not
     // survive as stale input.
@@ -123,34 +128,15 @@ pub(in crate::runner) fn stage(
     }
     changed |= remove_unaccounted(&plan.source, &closure.files)?;
 
-    let manifest = StageManifest {
-        schema: STAGE_SCHEMA.to_owned(),
-        caller,
-        scope: scope.clone(),
-        project: policy.project_name.clone(),
-        profile: policy.profile.clone(),
-        source: plan.source.clone(),
-        closure: closure.digest.clone(),
-        head: closure.head.clone(),
-        files: closure.files,
-        submodules: closure.submodules,
-        excluded: STAGE_EXCLUDED_PREFIXES
-            .iter()
-            .map(|prefix| (*prefix).to_owned())
-            .collect(),
-    };
-    // A closure digest that did not change still rewrites the record when the
-    // record itself moved (a scope or project spelling), so the binding on disk
-    // always describes this environment.
+    let manifest = staged_manifest;
+    // A record written ahead of the files keeps this checkout's ownership; a
+    // later run completes whatever an interruption left unfinished.
     if previous.as_ref() != Some(&manifest) {
-        write_file_atomically(
-            &plan.manifest,
-            &serde_json::to_vec_pretty(&manifest)
-                .map_err(|error| refusal(format!("cannot render the stage record: {error}")))?,
-            false,
-        )?;
         changed = true;
     }
+    // `caller` is carried by the record written above; the closure's own copies
+    // are consumed here.
+    let _ = &caller;
     // The inventory names every staged file and its digest inside the bound
     // tree, so the container can prove the whole closure itself rather than two
     // sentinels. It is written last: a crash leaves a closure without a usable
@@ -299,6 +285,77 @@ fn ensure_owned_directory(directory: &Path) -> Result<(), RunnerError> {
         )));
     }
     Ok(())
+}
+
+/// Publish the binding record atomically beside the staged trees.
+fn write_manifest(plan: &StagePlan, record: &StageManifest) -> Result<(), RunnerError> {
+    let body = serde_json::to_vec_pretty(record)
+        .map_err(|error| refusal(format!("cannot render the stage record: {error}")))?;
+    write_file_atomically(&plan.manifest, &body, false)
+}
+
+/// Read this checkout's own binding record for the staged child, or prove that
+/// the child holds nothing to adopt. Anything else refuses before any mutation.
+fn prove_owned_child(
+    repo_root: &Path,
+    plan: &StagePlan,
+    binding: &StageBinding,
+) -> Result<Option<StageManifest>, RunnerError> {
+    let entries = match std::fs::read_dir(&plan.stage_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(refusal(format!(
+                "cannot read the staged child `{}`: {error}",
+                plan.stage_root.display()
+            )))
+        }
+    };
+    let mut any = false;
+    for entry in entries {
+        entry.map_err(|error| {
+            refusal(format!(
+                "cannot read the staged child `{}`: {error}",
+                plan.stage_root.display()
+            ))
+        })?;
+        any = true;
+        break;
+    }
+    if !any {
+        return Ok(None);
+    }
+    match std::fs::symlink_metadata(&plan.manifest) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            Err(refusal(format!(
+                "staged source record `{}` is not a regular file; the staged child `{}` is not written, cleaned or adopted",
+                plan.manifest.display(),
+                plan.stage_root.display()
+            )))
+        }
+        Ok(_) => {
+            let record = StageManifest::read(plan).map_err(|error| {
+                refusal(format!(
+                    "{error}; the staged child `{}` already holds entries this checkout did not record, so it is not written, cleaned or adopted",
+                    plan.stage_root.display()
+                ))
+            })?;
+            record
+                .verify_binding(plan, binding)
+                .map_err(|reason| refusal(format!("{reason}; it is not written, cleaned or adopted")))?;
+            let _ = repo_root;
+            Ok(Some(record))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(refusal(format!(
+            "the staged child `{}` already holds entries but carries no binding record for checkout `{}`; it is not written, cleaned or adopted",
+            plan.stage_root.display(),
+            binding.caller.display()
+        ))),
+        Err(error) => Err(refusal(format!(
+            "cannot read staged source record `{}`: {error}",
+            plan.manifest.display()
+        ))),
+    }
 }
 
 /// Create the staged directories between the bound root and `target`, one

@@ -202,6 +202,20 @@ from the profile's own configuration, which it reads and never writes:
   ambiguous profile config is refused by name rather than guessed at, and no
   mount, profile setting or VM is ever added or changed.
 
+The owned child is never guessed at. Before anything below the mount is
+created, written or removed, the producer proves ownership: either the child's
+`stage.json` record names this canonical checkout, its scope, project and
+profile, or the child does not exist yet (or is an empty directory) and this
+producer creates it. A directory at the derived path is not proof, so a child
+that already holds entries without this checkout's record refuses whole —
+nothing in it is written, cleaned, adopted or published — and so does a record
+belonging to another checkout, scope, project or profile. A pre-existing link or
+file in the owned chain is refused rather than followed, unlinked or replaced.
+The record is written before the first file lands, so an interrupted run leaves
+this checkout's own record and a later run completes it; the same record carries
+the Compose render generation staged beside the source, and render staging
+shares the one ownership rule.
+
 The staged closure is the checkout's tracked working tree — every path
 `git ls-files` reports, read from the working tree so uncommitted development
 edits are part of the build — with a digest per file and one digest over the

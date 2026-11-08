@@ -237,7 +237,26 @@ pub fn stage_compose_render(
     }
     let digest = render.closure.digest().to_owned();
     let directory = plan.render_directory(&digest);
-    write_render_closure(&plan, &directory, &render.closure)?;
+    // Ownership first: the caller binding must own this staged child (or the
+    // child must be absent/empty) before a render file is written or an older
+    // generation is removed.
+    let binding = StageBinding::resolve(
+        &policy.repo_root,
+        &policy.project_name,
+        &policy.profile,
+        effigy_core::worktree_scope::load(&policy.repo_root)
+            .map_err(|error| {
+                refusal(format!(
+                    "cannot resolve this checkout's run scope: {error}"
+                ))
+            })?
+            .as_deref(),
+    )?;
+    ensure_owned_stage_directory(&plan, &plan.stage_root, &binding)?;
+    // Record who owns the child before writing into it, so an interrupted run
+    // leaves this checkout's own record rather than an unrecorded tree.
+    record_render_staging(&plan, &binding, &digest)?;
+    write_render_closure(&plan, &directory, &binding, &render.closure)?;
     // One generation at a time: the render is content-addressed and the current
     // digest names the files every activation and exec of this environment use.
     prune_other_render_generations(&plan, &digest)?;
@@ -280,10 +299,11 @@ pub fn stage_compose_render(
 fn write_render_closure(
     plan: &StagePlan,
     directory: &Path,
+    binding: &StageBinding,
     closure: &effigy_kernel::objects::Closure,
 ) -> Result<(), ContainerPolicyError> {
-    ensure_owned_stage_directory(plan, &plan.stage_root.join(STAGE_RENDER_DIR))?;
-    ensure_owned_stage_directory(plan, directory)?;
+    ensure_owned_stage_directory(plan, &plan.stage_root.join(STAGE_RENDER_DIR), binding)?;
+    ensure_owned_stage_directory(plan, directory, binding)?;
     for (name, bytes) in closure.files() {
         let relative = Path::new(name);
         if relative.is_absolute()
@@ -297,7 +317,7 @@ fn write_render_closure(
         }
         let target = directory.join(relative);
         if let Some(parent) = target.parent() {
-            ensure_owned_stage_directory(plan, parent)?;
+            ensure_owned_stage_directory(plan, parent, binding)?;
         }
         match std::fs::symlink_metadata(&target) {
             Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
@@ -340,6 +360,83 @@ fn write_render_closure(
             ))
         })?;
     }
+    Ok(())
+}
+
+/// Write or refresh this checkout's binding record for the staged child before
+/// any render file lands in it.
+///
+/// A record that already carries the source closure keeps it: render staging
+/// never overwrites the closure a build recorded. A record that only carried an
+/// older render is updated to the generation being staged now.
+fn record_render_staging(
+    plan: &StagePlan,
+    binding: &StageBinding,
+    digest: &str,
+) -> Result<(), ContainerPolicyError> {
+    let existing = match std::fs::symlink_metadata(&plan.manifest) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(refusal(format!(
+                "staged source record `{}` is not a regular file; this checkout's staged child is unproven",
+                plan.manifest.display()
+            )))
+        }
+        Ok(_) => {
+            let record = StageManifest::read(plan).map_err(refusal)?;
+            record
+                .verify_binding(plan, binding)
+                .map_err(|reason| refusal(format!("{reason}; it is not written or adopted")))?;
+            Some(record)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(refusal(format!(
+                "cannot read staged source record `{}`: {error}",
+                plan.manifest.display()
+            )))
+        }
+    };
+    let mut record = existing.unwrap_or_else(|| StageManifest {
+        schema: STAGE_SCHEMA.to_owned(),
+        caller: binding.caller.clone(),
+        scope: binding.scope.clone(),
+        project: binding.project.clone(),
+        profile: binding.profile.clone(),
+        source: plan.source.clone(),
+        closure: String::new(),
+        source_staged: false,
+        render_digest: None,
+        head: None,
+        files: BTreeMap::new(),
+        submodules: BTreeMap::new(),
+        excluded: Vec::new(),
+    });
+    if record.render_digest.as_deref() == Some(digest) {
+        return Ok(());
+    }
+    record.render_digest = Some(digest.to_owned());
+    write_manifest(plan, &record)
+}
+
+/// Publish the record atomically beside the staged trees.
+fn write_manifest(plan: &StagePlan, record: &StageManifest) -> Result<(), ContainerPolicyError> {
+    let body = serde_json::to_vec_pretty(record)
+        .map_err(|error| refusal(format!("cannot render the staged source record: {error}")))?;
+    let temporary = plan
+        .manifest
+        .with_extension(format!("staging-{}", std::process::id()));
+    std::fs::write(&temporary, &body).map_err(|error| {
+        refusal(format!(
+            "cannot write the staged source record `{}`: {error}",
+            temporary.display()
+        ))
+    })?;
+    std::fs::rename(&temporary, &plan.manifest).map_err(|error| {
+        refusal(format!(
+            "cannot publish the staged source record `{}`: {error}",
+            plan.manifest.display()
+        ))
+    })?;
     Ok(())
 }
 
@@ -397,8 +494,13 @@ fn prune_other_render_generations(
 pub fn ensure_owned_stage_directory(
     plan: &StagePlan,
     directory: &Path,
+    binding: &StageBinding,
 ) -> Result<PathBuf, ContainerPolicyError> {
     let mount = real_directory_of_its_own(&plan.mount_root, "the profile's shared mount")?;
+    // Ownership is proved before anything below the mount is created, replaced
+    // or removed: either this checkout's record is already there and names it, or
+    // the owned child does not exist yet (or is empty) and this call creates it.
+    prove_stage_ownership(plan, binding)?;
     let relative = directory.strip_prefix(&plan.mount_root).map_err(|_| {
         refusal(format!(
             "the staged directory `{}` is not below the profile's mount `{}`",
@@ -435,23 +537,73 @@ pub fn ensure_owned_stage_directory(
     Ok(observed)
 }
 
+/// Prove this environment owns the staged child before any mutation.
+///
+/// A directory at the derived project path is not proof: anyone can create one.
+/// Ownership is this checkout's own binding record, or the absence of anything
+/// to adopt (the child does not exist, or is an empty directory this producer
+/// creates). Anything else — the record belongs to another checkout, scope,
+/// project or profile, is unreadable, or is missing while the child already
+/// holds entries — refuses before a single write, unlink or removal.
+pub fn prove_stage_ownership(
+    plan: &StagePlan,
+    binding: &StageBinding,
+) -> Result<(), ContainerPolicyError> {
+    let entries = match std::fs::read_dir(&plan.stage_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(refusal(format!(
+                "cannot read the staged child `{}`: {error}",
+                plan.stage_root.display()
+            )))
+        }
+    };
+    let mut any = false;
+    for entry in entries {
+        entry.map_err(|error| {
+            refusal(format!(
+                "cannot read the staged child `{}`: {error}",
+                plan.stage_root.display()
+            ))
+        })?;
+        any = true;
+        break;
+    }
+    if !any {
+        // An empty directory carries nothing to adopt; this producer owns it.
+        return Ok(());
+    }
+    let record = StageManifest::read(plan).map_err(|error| {
+        refusal(format!(
+            "{error}; the staged child `{}` already holds entries this checkout did not record, so it is not written, cleaned or adopted",
+            plan.stage_root.display()
+        ))
+    })?;
+    record
+        .verify_binding(plan, binding)
+        .map_err(|reason| refusal(format!("{reason}; it is not written, cleaned or adopted")))?;
+    Ok(())
+}
+
 /// One directory that is real and of its own: an existing alias is unlinked, an
 /// existing non-directory is replaced, and the result is verified on disk.
 fn ensure_real_directory(directory: &Path) -> Result<(), ContainerPolicyError> {
     match std::fs::symlink_metadata(directory) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-            std::fs::remove_file(directory).map_err(|error| {
-                refusal(format!(
-                    "cannot replace the unowned staged entry `{}`: {error}",
-                    directory.display()
-                ))
-            })?;
-            std::fs::create_dir(directory).map_err(|error| {
-                refusal(format!(
-                    "cannot create the staged directory `{}`: {error}",
-                    directory.display()
-                ))
-            })?;
+        // A pre-existing entry that is not the directory this producer owns is
+        // refused before it is touched. Nothing here is ever unlinked, replaced
+        // or written through: ownership is proved by the binding record first.
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(refusal(format!(
+                "the staged path `{}` is a link this checkout did not create; it is not followed, replaced or adopted",
+                directory.display()
+            )))
+        }
+        Ok(metadata) if !metadata.is_dir() => {
+            return Err(refusal(format!(
+                "the staged path `{}` is a file this checkout did not create; it is not replaced or adopted",
+                directory.display()
+            )))
         }
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -534,8 +686,17 @@ pub struct StageManifest {
     pub profile: String,
     /// The directory bound at `/workspace`.
     pub source: PathBuf,
-    /// Digest over the ordered `path sha256` inventory.
+    /// Digest over the ordered `path sha256` inventory. Empty while only the
+    /// Compose render has been staged: the source closure is not established
+    /// yet, and no reader may treat the record as a source binding.
     pub closure: String,
+    /// Whether the source closure in this record has been staged. A record that
+    /// only carries the Compose render has `false` and an empty closure.
+    #[serde(default)]
+    pub source_staged: bool,
+    /// The Compose render generation staged beside the source, if any.
+    #[serde(default)]
+    pub render_digest: Option<String>,
     /// The caller's `HEAD` when the closure was recorded, as evidence only:
     /// the closure is the working tree's content, committed or not.
     pub head: Option<String>,
@@ -720,6 +881,8 @@ mod tests {
             profile: "effigy-release".to_owned(),
             source: plan.source.clone(),
             closure: "a".repeat(64),
+            source_staged: true,
+            render_digest: None,
             head: None,
             files: BTreeMap::new(),
             submodules: BTreeMap::new(),

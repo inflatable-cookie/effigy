@@ -397,7 +397,11 @@ During v0.x, MINOR bumps may include breaking changes.
   and an unreadable tracked path all refuse by name before compiling, while a
   link planted in the staged tree, or between the profile's mount and the owned
   child, is unlinked rather than followed out of it, and nothing outside the
-  owned child is created or removed. A caller or staged-tree edit during the
+  owned child is created or removed. A staged child that already holds entries
+  without this checkout's own binding record is refused whole — nothing in it is
+  written, cleaned, adopted or published — and the record is written before the
+  first staged file lands, so an interrupted run is completed rather than
+  guessed at. A caller or staged-tree edit during the
   build publishes nothing: the caller's current closure and the staged tree are
   re-proved against the compiled digest before any byte is copied back. The
   environment declares it with the new `workspace_source = "staged"` container
