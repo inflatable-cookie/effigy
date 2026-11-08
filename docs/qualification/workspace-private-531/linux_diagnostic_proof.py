@@ -21,6 +21,10 @@ import linux_diagnostic as diagnostic
 import linux_setup as setup
 import preparation_stage as stage
 
+REPO_ROOT = HERE.parents[2]
+MODULE_ROLE = HERE.relative_to(REPO_ROOT).as_posix()
+MANIFEST_ROLE = 'config/tasks.toml'
+GIT = '/usr/bin/git'
 SCRATCH = '/Volumes/Stash/scratch/effigy'
 PRLCTL = '/usr/local/bin/prlctl'
 SNAPSHOT_SHA = 'd21610ba279b4faf2d7a62c87ef8f1050943fc9c072a04c71ce4d0c953e3ad'
@@ -50,35 +54,77 @@ def private_root(path):
     return [info.st_dev, info.st_ino, info.st_uid, stat.S_IMODE(info.st_mode)]
 
 
+def digest(path, role):
+    try:
+        return sha(path)
+    except OSError as exc:
+        raise stage.Refusal('input unavailable: ' + role) from exc
+
+
+def repository_identity():
+    """Checkout-owned inputs by repository-relative role and exact SHA-256. No checkout path is stored."""
+    names = sorted(set(SOURCES) | set(setup.REQUIRED_MODULE_NAMES))
+    roles = {MODULE_ROLE + '/' + name: digest(HERE / name, name) for name in names}
+    roles[MANIFEST_ROLE] = digest(REPO_ROOT / MANIFEST_ROLE, MANIFEST_ROLE)
+    if roles[MODULE_ROLE + '/linux-setup-probe.sh'] != setup.PROBE_SHA256:
+        raise stage.Refusal('reviewed probe differs')
+    return roles
+
+
+def runtime_inputs(repository):
+    """Resolve the reviewed roles against this checkout. Aliases, escapes, missing and drifted inputs refuse."""
+    root = REPO_ROOT.resolve(strict=True)
+    runtime = {}
+    for role, expected in repository.items():
+        relative = Path(role)
+        if relative.is_absolute() or any(part in ('', '.', '..') for part in relative.parts):
+            raise stage.Refusal('invalid repository role')
+        try:
+            resolved = (REPO_ROOT / relative).resolve(strict=True)
+        except OSError as exc:
+            raise stage.Refusal('repository input missing: ' + role) from exc
+        if resolved != root / relative or not resolved.is_file() or sha(resolved) != expected:
+            raise stage.Refusal('repository input differs: ' + role)
+        runtime[str(resolved)] = expected
+    return runtime
+
+
+def machine_identity(program, interpreter, effigy):
+    """Machine tools keep their canonical paths; the same canonical path must hash the same."""
+    paths = [program, interpreter, GIT, effigy]
+    if len(set(paths)) != len(paths):
+        raise stage.Refusal('machine input alias')
+    return {path: digest(path, path) for path in paths}
+
+
 def plan(root, activation_id, head):
-    """Read-only prospective bindings; this is not activation authority."""
+    """Read-only prospective bindings; this is not activation authority.
+
+    Checkout-owned inputs are identified by repository-relative role and content hash, so the
+    same reviewed commit validates at any clean detached path. execute resolves the roles in
+    its own checkout and passes the actual paths and hashes to every launch.
+    """
     if not re.fullmatch(r'[A-Za-z0-9_-]{8,64}', activation_id):
         raise stage.Refusal('invalid activation id')
     if not re.fullmatch(r'[0-9a-f]{40}', head) or head == setup.CANDIDATE_H_HEAD:
         raise stage.Refusal('preparation head must differ from candidate H')
     identity = private_root(root)
-    names = set(SOURCES) | set(setup.REQUIRED_MODULE_NAMES)
-    inputs = {str(HERE / name): sha(HERE / name) for name in sorted(names)}
-    if inputs[str(HERE / 'linux-setup-probe.sh')] != setup.PROBE_SHA256:
-        raise stage.Refusal('reviewed probe differs')
+    repository = repository_identity()
     program = os.path.realpath(PRLCTL)
     if not os.path.isabs(program) or not os.path.isfile(program):
         raise stage.Refusal('Parallels program unavailable')
-    inputs[program] = sha(program)
     interpreter = os.path.realpath(sys.executable)
-    inputs[interpreter] = sha(interpreter)
-    inputs['/usr/bin/git'] = sha('/usr/bin/git')
+    if os.path.realpath(GIT) != GIT:
+        raise stage.Refusal('git is not at its canonical path')
     effigy = shutil.which('effigy')
     if not effigy:
         raise stage.Refusal('installed Effigy unavailable')
     effigy = os.path.realpath(effigy)
-    inputs[effigy] = sha(effigy)
-    manifest = HERE.parents[2] / 'config' / 'tasks.toml'
-    inputs[str(manifest)] = sha(manifest)
-    return {'schema': 'linux-diagnostic-window-v1', 'head': head,
+    return {'schema': 'linux-diagnostic-window-v2', 'head': head,
             'candidate_h': setup.CANDIDATE_H_HEAD, 'root': root, 'root_identity': identity,
             'activation_id': activation_id, 'duration_seconds': DURATION,
-            'inputs': inputs, 'program': program, 'interpreter': interpreter,
+            'repository': repository, 'machine': machine_identity(program, interpreter, effigy),
+            'program': program, 'interpreter': interpreter,
             'snapshot_sha256': SNAPSHOT_SHA, 'effigy': effigy}
 
 
@@ -147,13 +193,17 @@ def execute(request, request_path, request_hash):
     deadline = time.monotonic() + DURATION
     if request != plan(request['root'], request['activation_id'], request['head']):
         raise stage.Refusal('request bindings drifted')
-    git = '/usr/bin/git'
-    actual = subprocess.check_output([git, '-C', str(HERE), 'rev-parse', 'HEAD'], timeout=10).decode().strip()
-    clean = subprocess.check_output([git, '-C', str(HERE), 'status', '--porcelain'], timeout=10)
+    actual = subprocess.check_output([GIT, '-C', str(HERE), 'rev-parse', 'HEAD'], timeout=10).decode().strip()
+    clean = subprocess.check_output([GIT, '-C', str(HERE), 'status', '--porcelain'], timeout=10)
     if clean:
         raise stage.Refusal('preparation checkout is not clean')
     if actual != request['head']:
         raise stage.Refusal('preparation head drifted')
+    runtime = runtime_inputs(request['repository'])
+    if set(runtime) & set(request['machine']):
+        raise stage.Refusal('input alias between checkout and machine')
+    inputs = dict(runtime)
+    inputs.update(request['machine'])
     if time.monotonic() >= deadline - RESERVE - 120:
         raise stage.Refusal('insufficient time to start and reserve graceful stop')
     root = Path(request['root'])
@@ -171,16 +221,17 @@ def execute(request, request_path, request_hash):
     destination.mkdir(mode=0o700)
     operational_end = deadline - RESERVE
     start_end = operational_end - 120
-    outcome = {'schema': 'linux-diagnostic-observation-v1', 'request_sha256': request_hash,
+    outcome = {'schema': 'linux-diagnostic-observation-v2', 'request_sha256': request_hash,
                'head': actual, 'candidate_h': setup.CANDIDATE_H_HEAD, 'launched_at': launched_at,
                'writable_top': 'unknown', 'guest_association': 'unknown',
                'readiness': 'not evaluated', 'placement': 'not evaluated',
                'hard_quota': 'not established', 'vm_terminal': 'unknown',
-               'launcher_closure_is_vm_closure': False, 'start_count': 0, 'findings': []}
+               'launcher_closure_is_vm_closure': False, 'start_count': 0, 'findings': [],
+               'repository_identity': request['repository'], 'machine_identity': request['machine'],
+               'checkout_root': str(REPO_ROOT), 'runtime_inputs': runtime}
     serial = 0
     start_launched = False
     monitor = None
-    inputs = dict(request['inputs'])
     inputs[request_path] = request_hash
 
     class StopMonitor:
