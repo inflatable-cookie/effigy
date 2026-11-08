@@ -153,8 +153,9 @@ producer returns, before the checker. Uncertain closure stays Unknown and
 spent: no retry, no shared-profile stop. Toolchain identity is SO-4 missing
 until a supported owned-builder exec exists. Kit §6.3 host writes ≤5 GiB (E9
 archive, E14 artifact, evidence) stay unresolved: the producer has no
-host-write telemetry and sampling is not a hard quota. This task produces
-reviewed source only.
+host-write telemetry and sampling is not a hard quota. Production execute
+refuses that prerequisite before the claim; fixtures stay on the simulation
+seam. This task produces reviewed source only.
 
 ## Per-platform identity facts each cell must carry
 

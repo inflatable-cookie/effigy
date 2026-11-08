@@ -52,8 +52,9 @@ REQUIRED_POLICY = {
 TEST_SEAM = {'simulation': False}
 # Kit §6.3 ≤5 GiB is a Stage2-wide host-write premise (E9 archive, E14 artifact,
 # evidence). workspace:linux:artifact has no host-write telemetry; run_stage
-# resource_monitor is sampling-only; sampling is not a hard quota. Named
-# unresolved — do not claim the bound is met.
+# resource_monitor is sampling-only; sampling is not a hard quota. Production
+# execute refuses this unresolved prerequisite before the claim. Fixtures stay
+# on the simulation seam.
 HOST_WRITE = {
     'status': 'missing',
     'cap_bytes': HOST_WRITE_CAP,
@@ -369,6 +370,8 @@ def execute(request, request_path, request_hash):
         raise stage.Refusal('blocked producer clock')
     if not 0 < PRODUCER_OUTPUT_CAP <= 64 * 1024 * 1024 or not 0 < OBSERVE_CAP <= 64 * 1024 * 1024:
         raise stage.Refusal('zero output cap')
+    if not TEST_SEAM['simulation'] and HOST_WRITE['status'] == 'missing':
+        raise stage.Refusal(HOST_WRITE['reason'])
     root = Path(request['root'])
     claim = root / ('linux-recipe-e-' + request['activation_id'] + '.claim')
     destination = root / ('linux-recipe-e-' + request['activation_id'])

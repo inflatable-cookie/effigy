@@ -503,6 +503,14 @@ class EntryTests(unittest.TestCase):
                 self.entry.execute(request, str(self.root / 'request-zerocap.json'), '0' * 64)
         self.assertFalse((self.evidence / 'linux-recipe-e-zerocap.claim').exists())
 
+    def test_production_refuses_unresolved_host_write_before_claim(self):
+        with self.bound_entry(), patch.dict(self.entry.TEST_SEAM, {'simulation': False}):
+            request = dict(self.entry.plan(str(self.evidence), 'hostwrite', self.head))
+            with self.assertRaisesRegex(self.entry.stage.Refusal, 'SO-host-write'):
+                self.entry.execute(request, str(self.root / 'request-hostwrite.json'), '0' * 64)
+        self.assertFalse((self.evidence / 'linux-recipe-e-hostwrite.claim').exists())
+        self.assertEqual(self.calls(), [])
+
     def test_remaining_allowance_reaches_nested_helpers(self):
         seen = []
         original = self.entry.stage.run_stage

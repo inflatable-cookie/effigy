@@ -142,7 +142,10 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
         killed_at = None
 
         def stop_group():
-            # Darwin killpg on an exited unreaped leader is EPERM; ESRCH is ProcessLookupError.
+            # Darwin: killpg on a zombie group leader with no live members raises
+            # EPERM (PermissionError); ESRCH is ProcessLookupError. Both mean the
+            # group is gone. A zombie leader with a live grandchild still accepts
+            # killpg and SIGKILL reaches the remaining members.
             try:
                 os.killpg(child.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):

@@ -197,7 +197,7 @@ native proof does not rebuild it or bless bytes with new sidecars. The Darwin
 Colima exact-bound source entry is `linux_recipe_e_proof.py`
 (`test:qualification:linux-recipe-e`); it does not run the producer. Bound
 inputs are rechecked after the producer; kit §6.3 host writes ≤5 GiB stay a
-named unresolved refusal. All ad-hoc
+named unresolved refusal that production execute refuses before the claim. All ad-hoc
 files, logs and source fixtures stay on removable scratch. Linux must have positively proven approved Vault/removable backing at the same
 canonical scratch path. The proposed native-ext4 placement needs an explicit
 accepted host/guest provenance chain; a path prefix or filesystem name alone is
