@@ -655,11 +655,11 @@ def capabilities_route(present=('lsblk', 'findmnt', 'blkid', 'dumpe2fs', 'tune2f
     lines = []
     for tool in guest_probe.CAPABILITY_TOOLS:
         lines.append('tool %s %s' % (tool, '/usr/bin/' + tool if tool in present else 'absent'))
-    for tool, version in (('lsblk', 'lsblk from util-linux 2.39.3'),
-                          ('findmnt', 'findmnt from util-linux 2.39.3'),
-                          ('dumpe2fs', 'dumpe2fs 1.47.0')):
+    for tool, stream, version in (('lsblk', 'stdout', 'lsblk from util-linux 2.39.3'),
+                                  ('findmnt', 'stdout', 'findmnt from util-linux 2.39.3'),
+                                  ('dumpe2fs', 'stderr', 'dumpe2fs 1.47.0')):
         if tool in present:
-            lines.append('version %s %s' % (tool, version))
+            lines.append('version %s %s %s' % (tool, stream, version))
     return ('\n'.join(lines) + '\n').encode()
 
 
@@ -972,7 +972,7 @@ class WriterBoundObservationTests(unittest.TestCase):
         (tools / 'lsblk').write_text('#!/bin/sh\n[ "$1" = --version ] || exit 1\n'
                                      'echo "lsblk from util-linux 2.39.3"\n')
         (tools / 'dumpe2fs').write_text('#!/bin/sh\n[ "$1" = -V ] || exit 1\n'
-                                        'echo "dumpe2fs 1.47.0"\n')
+                                        'echo "dumpe2fs 1.47.0" >&2\n')
         for name in ('lsblk', 'dumpe2fs'):
             (tools / name).chmod(0o700)
         run = subprocess.run(['/bin/sh', '-c', guest_probe.CAPABILITIES], capture_output=True, timeout=60,
@@ -982,8 +982,10 @@ class WriterBoundObservationTests(unittest.TestCase):
         status, facts, reasons = guest_probe.decode(
             route, {'disposition': 'exited', 'waited_exit': 0}, run.stdout)
         self.assertEqual((status, reasons), (guest_probe.OBSERVED, []))
-        self.assertEqual(facts['versions'], {'lsblk': 'lsblk from util-linux 2.39.3',
-                                             'dumpe2fs': 'dumpe2fs 1.47.0'})
+        self.assertEqual(facts['versions'], {
+            'lsblk': {'status': 'observed', 'stream': 'stdout',
+                      'text': 'lsblk from util-linux 2.39.3'},
+            'dumpe2fs': {'status': 'observed', 'stream': 'stderr', 'text': 'dumpe2fs 1.47.0'}})
         self.assertEqual(facts['quota_tools']['repquota'], 'absent')
         self.assertEqual(facts['tools']['lsblk'], str(tools / 'lsblk'))
 
