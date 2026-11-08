@@ -318,6 +318,13 @@ pub struct ManifestContainerConfig {
     /// token. Contradicts `share_runtime_identity`.
     #[serde(default)]
     pub checkout_scoped_identity: bool,
+    /// Where this environment's `/workspace` source comes from. `checkout`, the
+    /// default, binds this checkout's own host path. `staged` binds the
+    /// checkout's staged source closure under the runtime profile's writable
+    /// host mount whenever that profile does not share the checkout's path, so
+    /// a builder the VM could not reach never compiles an empty directory.
+    #[serde(default)]
+    pub workspace_source: Option<String>,
     /// Borrow this environment's service data volumes from another
     /// environment: services present in both environments with the same
     /// catalog entry mount the target environment's named volumes, so the

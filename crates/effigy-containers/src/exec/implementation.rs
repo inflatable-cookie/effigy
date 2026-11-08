@@ -645,6 +645,7 @@ mod legacy_admission_tests {
             ports_declared_explicitly: false,
             declared_mounts: vec![],
             declared_media_mounts: vec![],
+            workspace_source: crate::artifact_source::WorkspaceSource::Checkout,
             pull_production_hook: None,
             health_check: None,
             health_timeout_secs: 60,
@@ -825,10 +826,13 @@ mod legacy_admission_tests {
             "80b63d97762b5a4858fe316356c54ac41007ddb19309a88028cf1b41a8613cce"
         );
         assert_eq!(binding.scope, None);
-        assert!(super::workspace_builder_source_bind_is_owned(
-            &checkout,
-            record.get("Mounts").and_then(|value| value.as_array())
-        ));
+        assert_eq!(
+            super::workspace_builder_source_bind(
+                record.get("Mounts").and_then(|value| value.as_array())
+            )
+            .as_deref(),
+            Some(checkout.as_path())
+        );
         assert!(super::workspace_builder_has_no_published_ports(Some(
             &record
         )));
@@ -860,10 +864,13 @@ mod legacy_admission_tests {
             error.to_string().contains("does not match owned project"),
             "{error}"
         );
-        assert!(!super::workspace_builder_source_bind_is_owned(
-            &checkout,
-            record.get("Mounts").and_then(|value| value.as_array())
-        ));
+        assert_eq!(
+            super::workspace_builder_source_bind(
+                record.get("Mounts").and_then(|value| value.as_array())
+            )
+            .as_deref(),
+            Some(foreign.as_path())
+        );
     }
 
     #[test]
@@ -1001,61 +1008,42 @@ pub fn verify_workspace_artifact_builder(
     row: &RunningComposeContainer,
     deadline: Instant,
 ) -> Result<VerifiedComposeContainer, ContainerExecError> {
-    let ownership = OwnershipContext::resolve(repo_root, policy)?;
-    let remaining =
-        super::process::remaining_until_deadline(deadline, "inspect workspace builder")?;
-    let output = run_runtime_command_capture_for_policy_with_absolute_deadline(
-        repo_root,
-        policy,
-        &inspect_owned_binding_args(row),
-        "inspect workspace builder",
-        deadline,
-        remaining,
-    )?;
-    let mut binding = ownership.verify_inspected(repo_root, policy, row, &output.stdout)?;
-    let raw: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|error| {
-        ContainerExecError::refused(
-            "inspect workspace builder",
-            format!("inspect output is not JSON: {error}"),
-        )
-    })?;
-    let record = raw.as_array().and_then(|records| records.first());
-    let checkout = record
-        .and_then(|record| record.pointer("/Config/Labels/com.effigy.checkout"))
-        .and_then(|value| value.as_str());
-    let bind_matches = workspace_builder_source_bind_is_owned(
-        &ownership.canonical,
-        record
-            .and_then(|record| record.get("Mounts"))
-            .and_then(|value| value.as_array()),
-    );
-    let no_ports = workspace_builder_has_no_published_ports(record);
-    // Scoped checkout labels locate the owner, while Compose may name its
-    // immutable render directory. A supplied working directory must still
-    // belong to this checkout or one of its retained render generations.
-    let working_dir_matches = builder_working_directory_is_owned(
-        &ownership.canonical,
-        record.and_then(|record| {
-            record.pointer("/Config/Labels/com.docker.compose.project.working_dir")
-        }),
-    );
-    if !ownership.owns(checkout, binding.scope.as_deref())
+    let inspected = inspect_workspace_artifact_builder(repo_root, policy, row, deadline)?;
+    let ownership = inspected.ownership;
+    let observed = inspected.workspace_source.clone();
+    let expected = expected_workspace_source(&ownership.canonical, policy)?;
+    let mut binding = inspected.binding;
+    let checkout = inspected.checkout;
+    let bind_matches = observed.as_deref() == Some(expected.as_path());
+    let no_ports = inspected.no_ports;
+    let working_dir_matches = inspected.working_dir_matches;
+    if !ownership.owns(checkout.as_deref(), binding.scope.as_deref())
         || !bind_matches
         || !no_ports
         || !working_dir_matches
     {
         let mut mismatched = Vec::new();
-        if !ownership.owns(checkout, binding.scope.as_deref()) {
-            mismatched.push("checkout/scope labels");
+        if !ownership.owns(checkout.as_deref(), binding.scope.as_deref()) {
+            mismatched.push("checkout/scope labels".to_owned());
         }
         if !bind_matches {
-            mismatched.push("one writable /workspace source bind");
+            mismatched.push(match observed.as_deref() {
+                Some(observed) => format!(
+                    "one writable `/workspace` source bind at `{}` (observed `{}`)",
+                    expected.display(),
+                    observed.display()
+                ),
+                None => format!(
+                    "one writable `/workspace` source bind at `{}`",
+                    expected.display()
+                ),
+            });
         }
         if !no_ports {
-            mismatched.push("no published ports");
+            mismatched.push("no published ports".to_owned());
         }
         if !working_dir_matches {
-            mismatched.push("an owned Compose working directory");
+            mismatched.push("an owned Compose working directory".to_owned());
         }
         return Err(ContainerExecError::refused(
             "inspect workspace builder",
@@ -1071,41 +1059,162 @@ pub fn verify_workspace_artifact_builder(
     Ok(binding)
 }
 
-/// The builder's source bind: exactly one writable bind of `canonical` at
-/// `/workspace`, with nothing mounted below it. A name, label or volume never
-/// substitutes for it, so a builder belonging to another checkout's source is
-/// refused even when both share a project spelling.
-fn workspace_builder_source_bind_is_owned(
-    canonical: &Path,
-    mounts: Option<&Vec<serde_json::Value>>,
-) -> bool {
+/// The exact `/workspace` source one otherwise-owned retained builder binds.
+///
+/// It authorizes nothing on its own: the artifact producer uses it only to tell
+/// a builder retained from the pre-staging declaration apart from a foreign,
+/// replaced or unreadable one, so the maintained activation can replace the
+/// builder this checkout owns instead of adopting it.
+pub fn observed_workspace_artifact_builder_source(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    row: &RunningComposeContainer,
+    deadline: Instant,
+) -> Result<PathBuf, ContainerExecError> {
+    let inspected = inspect_workspace_artifact_builder(repo_root, policy, row, deadline)?;
+    let ownership = inspected.ownership;
+    if !ownership.owns(
+        inspected.checkout.as_deref(),
+        inspected.binding.scope.as_deref(),
+    ) || !inspected.no_ports
+        || !inspected.working_dir_matches
+    {
+        return Err(ContainerExecError::refused(
+            "inspect workspace builder",
+            "workspace builder identity is not this checkout's own; its source bind is not adopted",
+        ));
+    }
+    inspected.workspace_source.ok_or_else(|| {
+        ContainerExecError::refused(
+            "inspect workspace builder",
+            "workspace builder binds no single writable `/workspace` source",
+        )
+    })
+}
+
+struct InspectedWorkspaceBuilder {
+    ownership: OwnershipContext,
+    binding: VerifiedComposeContainer,
+    checkout: Option<String>,
+    workspace_source: Option<PathBuf>,
+    no_ports: bool,
+    working_dir_matches: bool,
+}
+
+/// One strict inspection of a retained builder's full identity, plus the exact
+/// source its `/workspace` bind resolves to. The caller decides what that source
+/// must be; this never follows a name, a label or an unresolved path.
+fn inspect_workspace_artifact_builder(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    row: &RunningComposeContainer,
+    deadline: Instant,
+) -> Result<InspectedWorkspaceBuilder, ContainerExecError> {
+    let ownership = OwnershipContext::resolve(repo_root, policy)?;
+    let remaining =
+        super::process::remaining_until_deadline(deadline, "inspect workspace builder")?;
+    let output = run_runtime_command_capture_for_policy_with_absolute_deadline(
+        repo_root,
+        policy,
+        &inspect_owned_binding_args(row),
+        "inspect workspace builder",
+        deadline,
+        remaining,
+    )?;
+    let binding = ownership.verify_inspected(repo_root, policy, row, &output.stdout)?;
+    let raw: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|error| {
+        ContainerExecError::refused(
+            "inspect workspace builder",
+            format!("inspect output is not JSON: {error}"),
+        )
+    })?;
+    let record = raw.as_array().and_then(|records| records.first());
+    let checkout = record
+        .and_then(|record| record.pointer("/Config/Labels/com.effigy.checkout"))
+        .and_then(|value| value.as_str())
+        .map(str::to_owned);
+    let mounts = record
+        .and_then(|record| record.get("Mounts"))
+        .and_then(|value| value.as_array());
+    let workspace_source = workspace_builder_source_bind(mounts);
+    let no_ports = workspace_builder_has_no_published_ports(record);
+    // Scoped checkout labels locate the owner, while Compose may name its
+    // immutable render directory. A supplied working directory must still
+    // belong to this checkout or one of its retained render generations.
+    let working_dir_matches = builder_working_directory_is_owned(
+        &ownership.canonical,
+        record.and_then(|record| {
+            record.pointer("/Config/Labels/com.docker.compose.project.working_dir")
+        }),
+    );
+    Ok(InspectedWorkspaceBuilder {
+        ownership,
+        binding,
+        checkout,
+        workspace_source,
+        no_ports,
+        working_dir_matches,
+    })
+}
+
+/// The one writable `/workspace` source the builder's mounts resolve to, with
+/// nothing mounted below it. A name, label or volume never substitutes for it,
+/// so a builder belonging to another checkout's source (or one bound to a VM
+/// directory that does not exist on the host) is never adopted.
+fn workspace_builder_source_bind(mounts: Option<&Vec<serde_json::Value>>) -> Option<PathBuf> {
+    let mounts = mounts?;
     let workspace_mounts = mounts
-        .into_iter()
-        .flatten()
+        .iter()
         .filter(|mount| {
             mount.get("Destination").and_then(|value| value.as_str()) == Some("/workspace")
         })
         .collect::<Vec<_>>();
-    let shadowed = mounts.into_iter().flatten().any(|mount| {
+    let shadowed = mounts.iter().any(|mount| {
         mount
             .get("Destination")
             .and_then(|value| value.as_str())
             .is_some_and(|destination| destination.starts_with("/workspace/"))
     });
-    !shadowed
-        && match workspace_mounts.as_slice() {
-            [mount] => {
-                mount.get("Type").and_then(|value| value.as_str()) == Some("bind")
-                    && mount.get("RW").and_then(|value| value.as_bool()) == Some(true)
-                    && mount
-                        .get("Source")
-                        .and_then(|value| value.as_str())
-                        .and_then(|value| Path::new(value).canonicalize().ok())
-                        .as_deref()
-                        == Some(canonical)
-            }
-            _ => false,
-        }
+    if shadowed {
+        return None;
+    }
+    let [mount] = workspace_mounts.as_slice() else {
+        return None;
+    };
+    if mount.get("Type").and_then(|value| value.as_str()) != Some("bind")
+        || mount.get("RW").and_then(|value| value.as_bool()) != Some(true)
+    {
+        return None;
+    }
+    mount
+        .get("Source")
+        .and_then(|value| value.as_str())
+        .and_then(|value| Path::new(value).canonicalize().ok())
+}
+
+/// Where this environment's builder source must be: the canonical checkout, or
+/// the checkout's owned staged source when the runtime profile cannot reach the
+/// checkout's own host path (effigy#715). Both the render and this proof resolve
+/// the same plan, so a render cannot bind a source the proof would not accept.
+pub fn expected_workspace_source(
+    canonical_checkout: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<PathBuf, ContainerExecError> {
+    let stage = crate::artifact_source::policy_stage(policy).map_err(|error| {
+        ContainerExecError::refused("resolve workspace builder source", error.to_string())
+    })?;
+    let Some(plan) = stage else {
+        return Ok(canonical_checkout.to_path_buf());
+    };
+    plan.source.canonicalize().map_err(|error| {
+        ContainerExecError::refused(
+            "resolve workspace builder source",
+            format!(
+                "the owned staged source `{}` this checkout binds is not readable: {error}",
+                plan.source.display()
+            ),
+        )
+    })
 }
 
 /// The builder declares no route, so an inspected record with published

@@ -58,6 +58,8 @@ pub struct EffectiveContainerPolicy {
     pub ports_declared_explicitly: bool,
     pub declared_mounts: Vec<String>,
     pub declared_media_mounts: Vec<String>,
+    /// Where this environment's `/workspace` source comes from (effigy#715).
+    pub workspace_source: crate::artifact_source::WorkspaceSource,
     pub pull_production_hook: Option<String>,
     pub health_check: Option<String>,
     pub health_timeout_secs: u64,
@@ -318,6 +320,7 @@ pub(crate) fn test_policy(repo_root: &std::path::Path) -> EffectiveContainerPoli
         ports_declared_explicitly: false,
         declared_mounts: vec![],
         declared_media_mounts: vec![],
+        workspace_source: crate::artifact_source::WorkspaceSource::Checkout,
         pull_production_hook: None,
         health_check: None,
         health_timeout_secs: 60,

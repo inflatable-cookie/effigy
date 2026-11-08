@@ -1,3 +1,4 @@
+pub mod artifact_source;
 pub mod backend;
 mod catalog_sources;
 pub mod colima;
@@ -16,6 +17,10 @@ mod runtime;
 pub mod session;
 mod workspace;
 
+pub use artifact_source::{
+    policy_stage, resolve_stage, StageBinding, StageManifest, StagePlan, StagedFile,
+    WorkspaceSource,
+};
 pub use effigy_core::host_alias::HostAlias;
 pub use manager::*;
 pub use ops::{

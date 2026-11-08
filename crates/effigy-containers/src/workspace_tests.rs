@@ -356,6 +356,7 @@ mod host_git_mount_tests {
         services.insert("workspace".to_owned(), service);
         ManifestContainerConfig {
             checkout_scoped_identity: false,
+            workspace_source: None,
             share_runtime_identity: false,
             driver: None,
             startup: None,

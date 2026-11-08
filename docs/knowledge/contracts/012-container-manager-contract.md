@@ -170,7 +170,12 @@ an owned running source-bound builder. Its stable private project base is
 `effigy-artifact-builder-v1` with a checkout-scoped suffix: the scope generation
 token for a runtime-scoped checkout, and a canonical-checkout digest (`-co-`)
 for an unmarked primary checkout. Each exact source checkout therefore owns one
-builder project on a host, and repeated builds in it reuse that project. The
+builder project on a host, and repeated builds in it reuse that project. Its
+`/workspace` source is the checkout itself where the release profile shares that
+host path, and the checkout's staged source closure under the profile's writable
+mount otherwise; the
+[backend compatibility contract](006-compose-backend-compatibility.md) owns that
+closure, its binding record and copy-back. The
 one-time namespace migration creates a new labelled builder and leaves legacy
 `effigy-linux-release` containers, admissions and caches untouched; ambiguous
 legacy objects are never adopted or executed. Later upgrades reuse the same

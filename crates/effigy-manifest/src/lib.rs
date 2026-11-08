@@ -433,6 +433,16 @@ impl TaskManifest {
                         ),
                     });
                 }
+                if let Some(source) = container.workspace_source.as_deref() {
+                    if !matches!(source.trim(), "checkout" | "staged") {
+                        return Err(ManifestError::Compose {
+                            path: manifest_path.to_path_buf(),
+                            detail: format!(
+                                "[containers.{container_name}].workspace_source must be `checkout` or `staged`; got `{source}`"
+                            ),
+                        });
+                    }
+                }
                 if let Some(dns) = container.dns.as_ref() {
                     validate_dns_routes(manifest_path, container_name, dns)?;
                 }

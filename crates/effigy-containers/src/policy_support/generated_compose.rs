@@ -535,6 +535,13 @@ pub(crate) fn resolve_compose_source(
         config,
         &mut compose_document,
     )?;
+    apply_workspace_source_policy(
+        repo_root,
+        container_name,
+        config,
+        project_name,
+        &mut compose_document,
+    )?;
     // The checkout label, fence and generation name the checkout that owns
     // this environment's journal. A nested catalog directory with no Git
     // metadata of its own is part of the enclosing checkout (contract 052
@@ -1321,6 +1328,82 @@ fn apply_generated_compose_host_mount_policy(
     Ok(())
 }
 
+/// Point every generated `/workspace` bind at the checkout's staged source when
+/// the environment declares `workspace_source = "staged"` and the runtime
+/// profile cannot reach the checkout's own host path (effigy#715).
+///
+/// The rest of the render keeps the caller checkout: its project identity,
+/// labels, working directory, caches and artifact directories are unchanged.
+/// Only the source the builder compiles comes from the owned staged directory,
+/// and that directory is named by the same plan the exec-side bind verifier
+/// recomputes, so a render can never bind something the proof does not expect.
+fn apply_workspace_source_policy(
+    repo_root: &Path,
+    container_name: &str,
+    config: &ManifestContainerConfig,
+    project_name: &str,
+    compose_document: &mut GeneratedComposeDocument,
+) -> Result<(), ContainerPolicyError> {
+    let declared = match config.workspace_source.as_deref().map(str::trim) {
+        Some("staged") => crate::artifact_source::WorkspaceSource::Staged,
+        Some("checkout") | None => return Ok(()),
+        Some(other) => {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "container `{container_name}` declares `workspace_source = \"{other}\"`, which is neither `checkout` nor `staged`"
+            )))
+        }
+    };
+    let profile = config
+        .profile
+        .as_deref()
+        .map(str::trim)
+        .filter(|profile| !profile.is_empty())
+        .unwrap_or(crate::DEFAULT_COLIMA_PROFILE);
+    let Some(plan) =
+        crate::artifact_source::resolve_stage(repo_root, profile, project_name, declared)?
+    else {
+        return Ok(());
+    };
+    let checkout = repo_root.display().to_string();
+    let canonical_checkout = repo_root
+        .canonicalize()
+        .unwrap_or_else(|_| repo_root.to_path_buf());
+    let source = plan.source.display().to_string();
+    let mut bound = 0usize;
+    for service in compose_document.services.values_mut() {
+        let Some(volumes) = service.volumes.as_mut() else {
+            continue;
+        };
+        for entry in volumes.iter_mut() {
+            let GeneratedComposeVolume::String(raw) = entry else {
+                continue;
+            };
+            let Some((raw_source, rest)) = raw.split_once(':') else {
+                continue;
+            };
+            let destination = rest.split(':').next().unwrap_or(rest).trim();
+            let source_is_checkout = {
+                let source = Path::new(raw_source.trim());
+                raw_source.trim() == checkout
+                    || source
+                        .canonicalize()
+                        .is_ok_and(|source| source == canonical_checkout)
+            };
+            if !source_is_checkout || destination != "/workspace" {
+                continue;
+            }
+            *raw = format!("{source}:{rest}");
+            bound += 1;
+        }
+    }
+    if bound == 0 {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` declares `workspace_source = \"staged\"`, but no generated service binds this checkout at `/workspace`; the staged source has nothing to replace"
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn parse_media_mount(
     repo_root: &Path,
     container_name: &str,
@@ -1815,6 +1898,137 @@ services:
         assert!(matches!(
             &volumes[2],
             GeneratedComposeVolume::String(raw) if raw == "/tmp/shared:/var/www/shared"
+        ));
+    }
+
+    /// The release profile shares one writable mount and the checkout is outside
+    /// it, so the declared `/workspace` bind is the checkout's staged source
+    /// closure, while the rest of the render keeps the caller checkout
+    /// (effigy#715). Inside a shared mount, or with no readable profile, the
+    /// checkout's own path stays bound.
+    #[test]
+    fn a_declared_staged_workspace_source_replaces_only_the_workspace_bind() {
+        let _lock = crate::test_env_lock();
+        let home = tempfile::tempdir().expect("private home");
+        let checkout = tempfile::tempdir().expect("private checkout");
+        let mount = home.path().join("release-source");
+        std::fs::create_dir_all(&mount).expect("mount");
+        std::fs::create_dir_all(home.path().join(".colima/effigy-release")).expect("profile");
+        std::fs::write(
+            home.path().join(".colima/effigy-release/colima.yaml"),
+            format!(
+                "mounts:\n  - location: {}\n    writable: true\n",
+                mount.display()
+            ),
+        )
+        .expect("profile config");
+        let checkout = checkout.path().canonicalize().expect("canonical checkout");
+        let previous = std::env::var_os("HOME");
+        std::env::set_var("HOME", home.path());
+        struct Restore(Option<std::ffi::OsString>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("HOME", value),
+                    None => std::env::remove_var("HOME"),
+                }
+            }
+        }
+        let _restore = Restore(previous);
+
+        let raw = format!(
+            "services:\n  builder:\n    volumes:\n      - '{}:/workspace'\n      - '{}:/cache'\n",
+            checkout.display(),
+            checkout.display()
+        );
+        let mut config: ManifestContainerConfig = toml::from_str(
+            "project_name = 'effigy-artifact-builder-v1'\nprofile = 'effigy-release'\nworkspace_source = 'staged'\n",
+        )
+        .expect("declaration");
+        let mut document = GeneratedComposeDocument::parse("project", "staged source test", &raw)
+            .expect("compose");
+
+        apply_workspace_source_policy(
+            &checkout,
+            "linux-release",
+            &config,
+            "project",
+            &mut document,
+        )
+        .expect("staged source policy");
+        let plan = crate::artifact_source::resolve_stage(
+            &checkout,
+            "effigy-release",
+            "project",
+            crate::artifact_source::WorkspaceSource::Staged,
+        )
+        .expect("stage plan")
+        .expect("the profile does not reach this checkout");
+        let volumes = document.services["builder"]
+            .volumes
+            .clone()
+            .expect("volumes");
+        assert!(matches!(
+            &volumes[0],
+            GeneratedComposeVolume::String(raw)
+                if raw == &format!("{}:/workspace", plan.source.display())
+        ));
+        assert!(
+            matches!(
+                &volumes[1],
+                GeneratedComposeVolume::String(raw) if raw.starts_with(&checkout.display().to_string())
+            ),
+            "every other bind keeps the caller checkout: {volumes:?}"
+        );
+
+        // A profile that reaches the checkout binds the checkout itself.
+        std::fs::create_dir_all(home.path().join(".colima/effigy-release")).expect("profile");
+        std::fs::write(
+            home.path().join(".colima/effigy-release/colima.yaml"),
+            format!(
+                "mounts:\n  - location: {}\n    writable: true\n",
+                checkout.parent().expect("checkout parent").display()
+            ),
+        )
+        .expect("profile config");
+        let mut document =
+            GeneratedComposeDocument::parse("project", "shared source", &raw).expect("compose");
+        apply_workspace_source_policy(
+            &checkout,
+            "linux-release",
+            &config,
+            "project",
+            &mut document,
+        )
+        .expect("shared source policy");
+        let volumes = document.services["builder"]
+            .volumes
+            .clone()
+            .expect("volumes");
+        assert!(matches!(
+            &volumes[0],
+            GeneratedComposeVolume::String(raw) if raw.starts_with(&checkout.display().to_string())
+        ));
+
+        // The default declaration never consults the profile at all.
+        config.workspace_source = None;
+        let mut document =
+            GeneratedComposeDocument::parse("project", "default source", &raw).expect("compose");
+        apply_workspace_source_policy(
+            &checkout,
+            "linux-release",
+            &config,
+            "project",
+            &mut document,
+        )
+        .expect("default source policy");
+        let volumes = document.services["builder"]
+            .volumes
+            .clone()
+            .expect("volumes");
+        assert!(matches!(
+            &volumes[0],
+            GeneratedComposeVolume::String(raw) if raw.starts_with(&checkout.display().to_string())
         ));
     }
 }

@@ -486,6 +486,70 @@ fn colima_profile_config_path(profile: &str) -> Result<PathBuf, String> {
         .join("colima.yaml"))
 }
 
+/// One host directory a Colima profile's own configuration shares into its VM.
+///
+/// The location is the host path exactly as the profile spells it, because the
+/// VM mounts it at that same guest path. Effigy reads this to learn which host
+/// paths the profile actually reaches; it never writes, adds or removes one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColimaProfileMount {
+    pub location: PathBuf,
+    pub writable: bool,
+}
+
+/// Whether the profile config is unknown (absent, unreadable or unparsable) or
+/// names the shares it was written with. An unknown profile is never read as
+/// "shares nothing": the caller keeps its existing bind instead.
+pub fn colima_profile_mounts(profile: &str) -> Option<Vec<ColimaProfileMount>> {
+    let path = colima_profile_config_path(profile).ok()?;
+    let config = fs::read_to_string(path).ok()?;
+    colima_profile_mounts_in_config(&config)
+}
+
+pub fn colima_profile_mounts_in_config(config: &str) -> Option<Vec<ColimaProfileMount>> {
+    let parsed = serde_yaml::from_str::<Value>(config).ok()?;
+    let Some(entries) = parsed.get("mounts") else {
+        return Some(Vec::new());
+    };
+    let entries = entries.as_sequence()?;
+    let mut mounts = Vec::with_capacity(entries.len());
+    for entry in entries {
+        mounts.push(colima_profile_mount(entry)?);
+    }
+    Some(mounts)
+}
+
+/// One `mounts:` entry. Colima persists the mapping form
+/// (`{location, writable}`); Lima's short `location[:flags]` spelling carries
+/// the same two facts. A guest path other than the host path is refused rather
+/// than guessed at, because Effigy addresses the staged source by host path.
+fn colima_profile_mount(entry: &Value) -> Option<ColimaProfileMount> {
+    if let Some(raw) = entry.as_str() {
+        let (location, flags) = raw.split_once(':').unwrap_or((raw, ""));
+        let location = location.trim();
+        if location.is_empty() {
+            return None;
+        }
+        return Some(ColimaProfileMount {
+            location: PathBuf::from(location),
+            writable: flags.split(',').any(|flag| flag.trim() == "w"),
+        });
+    }
+    let location = entry.get("location")?.as_str()?.trim();
+    if location.is_empty() {
+        return None;
+    }
+    if let Some(mount_point) = entry.get("mountPoint").and_then(Value::as_str) {
+        if mount_point.trim() != location {
+            return None;
+        }
+    }
+    Some(ColimaProfileMount {
+        location: PathBuf::from(location),
+        writable: entry.get("writable").and_then(Value::as_bool) == Some(true),
+    })
+}
+
 fn upsert_effigy_swap_provision(root: &mut Mapping, swap_gib: u64) {
     let provision_key = Value::String("provision".to_owned());
     let provision = root

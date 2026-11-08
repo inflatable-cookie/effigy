@@ -654,6 +654,12 @@ fn build_effective_policy(
         ports_declared_explicitly: !host.ports.is_empty(),
         declared_mounts: resolved_host_mounts,
         declared_media_mounts: data.media,
+        // An unreadable spelling is refused by manifest validation; anything
+        // else that is not `staged` keeps the checkout's own path.
+        workspace_source: match config.workspace_source.as_deref().map(str::trim) {
+            Some("staged") => crate::artifact_source::WorkspaceSource::Staged,
+            _ => crate::artifact_source::WorkspaceSource::Checkout,
+        },
         pull_production_hook: data.pull_production,
         health_check: health.check,
         health_timeout_secs: health.timeout_secs.unwrap_or(DEFAULT_HEALTH_TIMEOUT_SECS),

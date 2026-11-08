@@ -183,6 +183,11 @@ volumes = [
 For Effigy-defined catalogs (`workspace-rust-bun`, `php-fpm`, `node`), import
 from the workspace catalog crate rather than redefining.
 
+`workspace_source = "staged"` binds the checkout's staged source closure under
+the runtime profile's writable host mount when that profile does not share the
+checkout's own path (the private Linux artifact builder declares it);
+`checkout_scoped_identity = true` gives every checkout its own Compose project.
+
 ## `[bootstrap]`
 
 The one command for downloading and starting someone else's project

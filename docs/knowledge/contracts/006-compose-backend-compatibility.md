@@ -185,6 +185,51 @@ retained admission with no container refuses; a first activation with neither
 container nor admission uses the ordinary container manager. Existing runtime
 drift checks remain in force. No VM recovery or broad cleanup is added.
 
+### The builder's source when the profile cannot reach the checkout
+
+A VM sees only the host paths its Colima profile shares. A development checkout
+outside every shared mount therefore has no source a bind can carry: the
+container runtime creates an empty directory for the inaccessible path and the
+build compiles nothing. The maintained `linux-release` environment declares
+`workspace_source = "staged"` (effigy#715), and the producer resolves the source
+from the profile's own configuration, which it reads and never writes:
+
+- A writable profile mount that contains the checkout keeps the checkout's own
+  path as the source. Nothing is staged and nothing changes.
+- Otherwise the only existing writable profile mount hosts one owned child for
+  this checkout: `<mount>/effigy-builder-source/<project>/source`, bound at
+  `/workspace`, with its binding record beside it. An absent, unreadable or
+  ambiguous profile config is refused by name rather than guessed at, and no
+  mount, profile setting or VM is ever added or changed.
+
+The staged closure is the checkout's tracked working tree — every path
+`git ls-files` reports, read from the working tree so uncommitted development
+edits are part of the build — with a digest per file and one digest over the
+ordered inventory. It is never a recursive copy: Effigy's own `.effigy` state,
+local secret files, ignored and untracked paths and submodule contents are
+excluded by rule and recorded as excluded; submodule pins are recorded as
+evidence, and a symlink or an unreadable tracked path refuses with its concrete
+cause. `stage.json` records the canonical checkout, its scope, project and
+profile, the closure digest, the caller's `HEAD` and every file digest, so the
+producer can name exactly which caller inputs it snapshotted. A record naming
+another checkout, scope or project is refused before any write.
+
+Ordinary incremental builds keep one staged directory, so the caller's project
+identity and the builder's cargo target stay stable, while changed source is
+refreshed in place and source that is no longer tracked is removed. Before
+compiling, the build asks the container, through its verified immutable ID,
+which digests its `/workspace` carries; anything other than the recorded
+closure — an empty auto-created VM directory, another source, a missing file —
+refuses by name instead of becoming a build error. Only bytes the build's own
+producer receipt blesses for the requested target and the host's version are
+copied back into the checkout's artifact directory, atomically and in the order
+the existing freshness checks read them.
+
+A builder retained from the pre-staging declaration binds the checkout's own
+unreachable path. The maintained activation replaces exactly that checkout's
+container with the staged bind once; the builder is never adopted, exec'd,
+hand-removed or relabelled, and a builder bound to another source still refuses.
+
 The builder remains detached after success or failure, preserving its cache
 volumes and completed artifacts for retry. Its original image may be unable to
 compile newer source; a failed build then remains a failure and grants no

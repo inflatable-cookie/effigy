@@ -277,6 +277,7 @@ mod tests {
             ports_declared_explicitly: true,
             declared_mounts: vec![],
             declared_media_mounts: vec![],
+            workspace_source: effigy_containers::artifact_source::WorkspaceSource::Checkout,
             pull_production_hook: None,
             health_check: None,
             health_timeout_secs: 60,

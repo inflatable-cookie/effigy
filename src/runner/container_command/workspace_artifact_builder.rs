@@ -1,6 +1,13 @@
 //! Execution-only recovery for Effigy's private, source-bound Linux builder.
 //! A retained builder keeps its original admission. No stack is readmitted,
 //! stopped or recreated; every build targets a freshly verified immutable ID.
+//!
+//! The one thing the build does refresh is the source it compiles. A VM reaches
+//! only the host paths its Colima profile shares, so a development checkout
+//! outside every shared mount binds its own staged source closure under the
+//! profile's writable mount (effigy#715). The closure is staged before anything
+//! renders or activates, proven through the container's own bind before the
+//! build, and only the verified artifact bytes are copied back to the caller.
 
 use std::ffi::OsString;
 use std::path::Path;
@@ -8,7 +15,8 @@ use std::time::{Duration, Instant};
 
 use effigy_containers::exec::{
     list_compose_containers_for_policy_including_stopped_with_deadline,
-    list_running_compose_containers_for_policy_with_deadline, verify_workspace_artifact_builder,
+    list_running_compose_containers_for_policy_with_deadline,
+    observed_workspace_artifact_builder_source, verify_workspace_artifact_builder,
     verify_workspace_artifact_builder_declaration,
 };
 use effigy_containers::{load_container_policy, ContainerAction};
@@ -16,6 +24,8 @@ use effigy_containers::{load_container_policy, ContainerAction};
 use crate::runner::environment;
 use crate::runner::error::RunnerError;
 use crate::runner::task_engine::TaskRun;
+
+use super::workspace_artifact_source;
 
 /// Whether the builder's environment is recorded as retained: its record
 /// published `active`, so an existing container is the one it describes.
@@ -57,6 +67,24 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     verify_workspace_artifact_builder_declaration(&policy)?;
     effigy_containers::validate_container_policy(repo_root, &policy)?;
     effigy_containers::validate_compose_backend_runtime(repo_root, &policy)?;
+    // Stage this checkout's source closure before anything renders, activates
+    // or inspects: the bind the render names must already carry the bytes the
+    // build will compile. A checkout inside a mount the profile shares needs no
+    // staging and binds its own path, exactly as before.
+    let staged = match effigy_containers::artifact_source::policy_stage(&policy)? {
+        Some(plan) => {
+            check_interruption()?;
+            let staged = workspace_artifact_source::stage(repo_root, &policy, &plan)?;
+            if staged.changed {
+                eprintln!(
+                    "[info] staged this checkout's source for the Linux builder at `{}`",
+                    plan.source.display()
+                );
+            }
+            Some((plan, staged))
+        }
+        None => None,
+    };
     // Checkout identity and the external custody lease participate in render
     // labels. Establish them before taking the execution-only source snapshot;
     // this does not publish or replace the retained environment generation.
@@ -122,15 +150,63 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
             Some(deadline),
         )?;
     }
-    let [row] = rows.as_slice() else {
+    if rows.len() != 1 {
         return Err(RunnerError::task_invocation("workspace artifact builder inventory must contain exactly one owned builder; no build attempted"));
-    };
+    }
+    let row = rows.remove(0);
     if row.service.as_deref() != Some("builder") || row.oneoff {
         return Err(RunnerError::task_invocation(
             "workspace artifact builder service identity is unverified",
         ));
     }
-    let binding = verify_workspace_artifact_builder(repo_root, &policy, row, deadline)?;
+    let binding = match verify_workspace_artifact_builder(repo_root, &policy, &row, deadline)
+        .map_err(RunnerError::from)
+    {
+        Ok(binding) => binding,
+        // A builder retained from the pre-staging declaration binds this
+        // checkout's own host path, which the profile cannot reach. The
+        // maintained activation replaces exactly this checkout's container with
+        // the staged bind; it is never adopted, exec'd or hand-removed.
+        Err(error) if staged.is_some() => {
+            let Ok(observed) =
+                observed_workspace_artifact_builder_source(repo_root, &policy, &row, deadline)
+            else {
+                return Err(error);
+            };
+            let checkout = effigy_core::worktree_scope::checkout_root(repo_root)
+                .canonicalize()
+                .unwrap_or_else(|_| repo_root.to_path_buf());
+            if observed != checkout {
+                return Err(error);
+            }
+            check_interruption()?;
+            super::lifecycle::run_container_up(
+                repo_root,
+                Some("linux-release"),
+                super::UpSelection::Direct,
+                false,
+                true,
+                false,
+                effigy_containers::environment::Retention::Persistent,
+                &[],
+            )?;
+            policy = load_container_policy(repo_root, Some("linux-release"))?;
+            retained = builder_retained(&policy).then_some(());
+            deadline = Instant::now() + Duration::from_secs(15);
+            let mut replanned = list_compose_containers_for_policy_including_stopped_with_deadline(
+                repo_root,
+                &policy,
+                Some(deadline),
+            )?;
+            let [replanned] = replanned.as_mut_slice() else {
+                return Err(RunnerError::task_invocation(
+                    "workspace artifact builder inventory after source staging must contain exactly one owned builder; no build attempted",
+                ));
+            };
+            verify_workspace_artifact_builder(repo_root, &policy, replanned, deadline)?
+        }
+        Err(error) => return Err(error),
+    };
     let mut args = ["exec", "-T", "-w", "/workspace", "builder"]
         .map(OsString::from)
         .to_vec();
@@ -155,6 +231,14 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
             "workspace artifact builder environment changed before build; no exec attempted",
         ));
     }
+    // Prove the bind carries this build's source through the container's own
+    // view before compiling: an empty VM directory auto-created for an
+    // unreachable host path, or a bind of some other source, fails here by name
+    // instead of as a build error.
+    if let Some((_, staged)) = &staged {
+        check_interruption()?;
+        verify_staged_source_in_builder(repo_root, &policy, &binding, staged)?;
+    }
     check_interruption()?;
     let output = crate::runner::exec_command::run_verified_compose_exec_plan(
         &policy, &plan, &binding, false, None, None,
@@ -165,6 +249,86 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
             "linux workspace artifact build failed with status {}; builder and original admission retained for retry",
             output.status
         )));
+    }
+    // The build wrote its artifact into the staged source. Only bytes its own
+    // producer receipt blesses for this target and version reach the caller.
+    if let Some((plan, _)) = &staged {
+        check_interruption()?;
+        let triple = std::env::var("EFFIGY_LINUX_RELEASE_TRIPLE")
+            .ok()
+            .map(|triple| triple.trim().to_owned())
+            .filter(|triple| !triple.is_empty())
+            .unwrap_or_else(|| "x86_64-unknown-linux-gnu".to_owned());
+        workspace_artifact_source::restore_produced_artifact(
+            plan,
+            repo_root,
+            &triple,
+            &effigy_core::build_info::active_version(),
+        )?;
+    }
+    Ok(())
+}
+
+/// Ask the builder, through its verified immutable ID, which bytes its
+/// `/workspace` carries. The answer must be exactly the staged closure this
+/// build recorded.
+fn verify_staged_source_in_builder(
+    repo_root: &Path,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+    binding: &effigy_containers::exec::VerifiedComposeContainer,
+    staged: &workspace_artifact_source::StagedSource,
+) -> Result<(), RunnerError> {
+    let mut expected = Vec::new();
+    for sentinel in ["Cargo.toml", "Cargo.lock"] {
+        if let Some(file) = staged.manifest.files.get(sentinel) {
+            expected.push((sentinel, file.sha256.clone()));
+        }
+    }
+    if expected.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "the staged source records no build sentinel, so the builder's bind cannot be proven",
+        ));
+    }
+    let mut script = String::from("set -eu; cd /workspace; ");
+    for (path, _) in &expected {
+        script.push_str(&format!(
+            "test -f {path}; sha256sum {path} | cut -d' ' -f1; ",
+            path = effigy_core::shell::shell_quote(path)
+        ));
+    }
+    let mut args = ["exec", "-T", "-w", "/workspace", "builder"]
+        .map(OsString::from)
+        .to_vec();
+    args.extend(["sh".to_owned(), "-lc".to_owned(), script].map(OsString::from));
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
+        repo_root,
+        policy,
+        args,
+        ContainerAction::Exec,
+        "workspace artifact source probe",
+    )?;
+    let output = crate::runner::exec_command::run_verified_compose_exec_plan(
+        policy, &plan, binding, true, None, None,
+    )?;
+    if !output.status.success() {
+        return Err(RunnerError::task_invocation(format!(
+            "the Linux builder cannot read the staged source it was given at /workspace (status {}); nothing was compiled",
+            output.status
+        )));
+    }
+    let reported = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    for (index, (path, digest)) in expected.iter().enumerate() {
+        if reported.get(index) != Some(digest) {
+            return Err(RunnerError::task_invocation(format!(
+                "the Linux builder's /workspace does not carry the staged `{path}` this build recorded (reported `{}`, expected `{digest}`); nothing was compiled",
+                reported.get(index).map(String::as_str).unwrap_or("nothing")
+            )));
+        }
     }
     Ok(())
 }
