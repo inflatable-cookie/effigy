@@ -586,9 +586,16 @@ def consume_approved_request(digest, root=AUTH_ROOT, owner=0):
         if len(raw) > 1024 * 1024 or hashlib.sha256(raw).hexdigest() != digest:
             raise Refusal('approved request bytes differ from digest')
         try:
+            approved_nonce = json.loads(raw).get('nonce')
+        except (ValueError, AttributeError) as exc:
+            raise Refusal('approved request is not a nonce-bound object') from exc
+        if not isinstance(approved_nonce, str) or not NONCE.fullmatch(approved_nonce):
+            raise Refusal('approved request nonce must be 64 hex')
+        try:
             _row_write(parent, digest + '.spent', digest.encode())
+            _row_write(parent, 'nonce-' + approved_nonce + '.spent', digest.encode())
         except FileExistsError as exc:
-            raise Refusal('approved request already spent') from exc
+            raise Refusal('approved request or nonce already spent') from exc
         os.fsync(parent)
         return raw
     finally:

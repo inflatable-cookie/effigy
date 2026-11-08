@@ -12,7 +12,7 @@
   "stage_ceiling_seconds": 1200,
   "kinds": {
     "vm-root": "one root operation through prlctl exec, exact argv and expectation; advance needs the waited exit and the expectation on its stdout",
-    "vm-supervised": "payload run by the root supervisor through prlctl exec with its request inline (plan digest covers it); advance needs host-credited closure and the expectation on the payload stdout",
+    "vm-supervised": "payload run over pinned SSH by the root supervisor using an exact provisioned one-use request digest (plan GO covers the complete mapped request); advance needs host-credited closure and the expectation on the payload stdout",
     "contained-transfer": "supervisor start plus SSH writer at once; the payload reads the stage FIFO the writer fills; advance needs host-credited closure, the payload expectation and writer exit 0. SSH exit is never closure"
   },
   "rows": [
@@ -191,7 +191,7 @@
       "live_blockers": [],
       "effect": "bootstrap",
       "needs_hard_limit": false,
-      "effect_note": "narrow sudo rule: effigy531 may run only the root supervisor, for the payload account; visudo-checked"
+      "effect_note": "no general sudo grant; each admitted row provisions a root-owned exact one-use request and exact digest sudo rule via the VM root route after host intent; visudo-checked"
     },
     {
       "id": "E9a",
@@ -312,7 +312,7 @@
       "Stage1 probe v2 accepted with root uid, boot_id, running state, systemd >= 250, cgroup2fs, effigy531 absent, sshd expiry-time support and the root chain",
       "Stage1 post-observation: stopped state, retained before/after config bytes with no drift, bundle and config identities, full extent inventory, growth at most 1 GiB",
       "a supported controller-to-guest disk association (none established; the Parallels CLI reference was not decodable)",
-      "a staged supervisor and a bound staging route for it, then the root install as its own GO",
+      "the exact source-embedded supervisor install as its own GO, then per-row exact approval provisioning after all host gates",
       "a bounded ssh stdin route with the pinned config and the H archive bytes present"
     ],
     "held_outside_this_manifest": [

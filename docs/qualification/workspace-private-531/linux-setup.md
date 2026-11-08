@@ -221,7 +221,7 @@ Decisions for the current adapter:
   hard-limit and one-use intent checks, the VM root route installs exact request
   bytes under root-owned0700 `/var/lib/effigy531-approved` and one exact digest sudo
   rule. The SSH root entry accepts only `--approved-request <digest>`, opens that
-  root-owned0600 record and spends it exclusively before effects. Guest supplied
+  root-owned0600 record and spends both its digest and nonce exclusively before effects. Guest supplied
   hashes cannot grant authority. Every root row access uses a held directory fd;
   payloads cannot replace root-owned stage rows or root stream paths.
 - The request binds the explicit guest input/hash map, resource counters, SSH file

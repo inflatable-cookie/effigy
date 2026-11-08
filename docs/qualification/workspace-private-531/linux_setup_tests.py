@@ -2362,7 +2362,8 @@ class OriginalStreamChecks(unittest.TestCase):
 
 
 class ExactApprovalAndCustodyChecks(unittest.TestCase):
-    def approval(self, raw=b'{"exact":true}'):
+    def approval(self, raw=None):
+        raw = raw or json.dumps({'nonce': NONCE}).encode()
         root = tmpdir('exact-approval-')
         root.chmod(0o700)
         digest = hashlib.sha256(raw).hexdigest()
@@ -2377,6 +2378,17 @@ class ExactApprovalAndCustodyChecks(unittest.TestCase):
         self.assertTrue((root / (digest + '.spent')).exists())
         with self.assertRaises(Refusal):
             supervisor.consume_approved_request(digest, str(root), os.geteuid())
+
+    def test_nonce_cannot_be_reused_by_a_distinct_approved_request(self):
+        root, digest, _ = self.approval()
+        supervisor.consume_approved_request(digest, str(root), os.geteuid())
+        raw = json.dumps({'nonce': NONCE, 'argv': ['/bin/false']}).encode()
+        other = hashlib.sha256(raw).hexdigest()
+        target = root / (other + '.json')
+        target.write_bytes(raw)
+        target.chmod(0o600)
+        with self.assertRaises(Refusal):
+            supervisor.consume_approved_request(other, str(root), os.geteuid())
 
     def test_self_hash_without_provisioned_approval_cannot_authorize(self):
         root = tmpdir('absent-approval-')
