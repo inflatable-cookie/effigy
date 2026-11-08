@@ -182,6 +182,18 @@ def execute(request, request_path, request_hash):
     inputs = dict(request['inputs'])
     inputs[request_path] = request_hash
 
+    class StopMonitor:
+        def check(self):
+            try:
+                return monitor.check()
+            except Exception as exc:
+                finding = 'stop accounting: ' + str(exc)
+                if finding not in outcome['findings']:
+                    outcome['findings'].append(finding)
+                return {'status': 'unknown'}
+
+    stop_monitor = StopMonitor()
+
     def call(args, limit, cap, end, track=True):
         nonlocal serial
         if private_root(str(root)) != request['root_identity']:
@@ -192,15 +204,15 @@ def execute(request, request_path, request_hash):
         result = stage.run_stage(step, [request['program']] + args, limit, cap, inputs,
                                  guest=bool(args and args[0] == 'exec'),
                                  cwd=str(HERE), environment={'PATH': '/usr/bin:/bin', 'LANG': 'C'},
-                                 resource_monitor=monitor if track else None, deadline=end,
+                                 resource_monitor=monitor if track else (stop_monitor if monitor else None), deadline=end,
                                  cleanup_deadline=operational_end)
         return result, (step / 'stdout').read_bytes()
 
     def pause(end, track=True):
         until = min(end, time.monotonic() + 5)
         while time.monotonic() < until:
-            if track and monitor is not None:
-                monitor.check()
+            if monitor is not None:
+                (monitor if track else stop_monitor).check()
             time.sleep(min(0.25, max(0, until - time.monotonic())))
 
     def good(result):

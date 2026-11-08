@@ -158,7 +158,7 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(result['placement'], 'not evaluated')
             with self.assertRaises(Refusal):
                 proof.main(['proof', str(path), digest])
-            for index, mode in enumerate(('wrong_home', 'wrong_uuid', 'wrong_snapshot', 'partial', 'stop_fail', 'growth', 'config_change', 'descriptor_change', 'extent_missing', 'extent_replaced', 'config_missing', 'descriptor_missing', 'descriptor_replaced', 'config_replaced', 'early_boot', 'timeout'), 2):
+            for index, mode in enumerate(('wrong_home', 'wrong_uuid', 'wrong_snapshot', 'partial', 'stop_fail', 'growth', 'config_change', 'descriptor_change', 'extent_missing', 'extent_replaced', 'config_missing', 'descriptor_missing', 'descriptor_replaced', 'config_replaced', 'early_boot', 'timeout', 'stop_unknown'), 2):
                 scenario.write_text(mode)
                 state.write_text('stopped')
                 (home / 'config.pvs').write_bytes(b'config')
@@ -173,6 +173,8 @@ class EntryTests(unittest.TestCase):
                 expected = 0 if mode in ('growth', 'early_boot') else 1
                 original_run = proof.stage.run_stage
                 def bounded(*args, **kwargs):
+                    if mode == 'stop_unknown' and args[1][1:2] == ['list'] and 'stop' in log.read_text().splitlines():
+                        raise Refusal('terminal observation unavailable')
                     if mode == 'timeout' and args[1][1:2] == ['exec'] and '-c' in args[1]:
                         args = (args[0], args[1], 0.2, *args[3:])
                     return original_run(*args, **kwargs)
@@ -194,6 +196,9 @@ class EntryTests(unittest.TestCase):
                     self.assertIn('descriptor', result['post'])
                 if mode == 'growth':
                     self.assertEqual(result['final_growth']['extents']['logical'], 5)
+                if mode == 'stop_unknown':
+                    self.assertEqual(result['stop']['waited_exit'], 0)
+                    self.assertEqual(result['vm_terminal'], 'unknown')
                 if mode == 'stop_fail':
                     self.assertEqual(result['vm_terminal'], 'unknown')
                 if mode == 'partial':
