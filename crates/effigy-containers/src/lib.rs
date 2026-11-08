@@ -19,7 +19,7 @@ mod workspace;
 
 pub use artifact_source::{
     ensure_owned_stage_directory, policy_stage, resolve_stage, stage_compose_render, StageBinding,
-    StageManifest, StagePlan, StagedFile, WorkspaceSource,
+    StageManifest, StagePlan, StageState, StagedFile, WorkspaceSource,
 };
 pub use effigy_core::host_alias::HostAlias;
 pub use manager::*;

@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use effigy_containers::artifact_source::{
-    ensure_owned_stage_directory, StageBinding, StageManifest, StagePlan, StagedFile,
+    ensure_owned_stage_directory, StageBinding, StageManifest, StagePlan, StageState, StagedFile,
     STAGE_EXCLUDED_PREFIXES, STAGE_INVENTORY_FILE, STAGE_SCHEMA,
 };
 
@@ -82,6 +82,11 @@ pub(in crate::runner) fn stage(
         source: plan.source.clone(),
         closure: closure.digest.clone(),
         source_staged: true,
+        // Written before the first file so an interrupted run leaves this
+        // checkout's own record. It claims no closure until every file and the
+        // inventory are on disk, so a crash here is recoverable rather than a
+        // record that describes bytes nobody wrote.
+        state: StageState::Pending,
         render_digest: previous
             .as_ref()
             .and_then(|record| record.render_digest.clone()),
@@ -100,12 +105,10 @@ pub(in crate::runner) fn stage(
     // survive as stale input.
     for (relative, file) in &closure.files {
         let target = plan.source.join(relative);
-        let unchanged = previous
-            .as_ref()
-            .and_then(|record| record.files.get(relative))
-            .is_some_and(|staged| staged == file)
-            && target.is_file();
-        if unchanged {
+        // The staged bytes decide, never a record: after an interrupted run the
+        // record can describe a closure the tree does not carry, and trusting it
+        // would leave that file stale forever.
+        if staged_file_matches(&target, file) {
             continue;
         }
         let source = caller.join(relative);
@@ -130,7 +133,7 @@ pub(in crate::runner) fn stage(
     }
     changed |= remove_unaccounted(&plan.source, &closure.files)?;
 
-    let manifest = staged_manifest;
+    let mut manifest = staged_manifest;
     // A record written ahead of the files keeps this checkout's ownership; a
     // later run completes whatever an interruption left unfinished.
     if previous.as_ref() != Some(&manifest) {
@@ -152,6 +155,9 @@ pub(in crate::runner) fn stage(
     // Prove the whole staged closure from disk, not just the sentinels: every
     // recorded digest, no unaccounted file, and the recorded digest count.
     verify_staged(plan, &manifest)?;
+    // Only now does the record claim the closure.
+    manifest.state = StageState::Complete;
+    write_manifest(plan, &manifest)?;
     Ok(StagedSource {
         manifest,
         changed,
@@ -287,6 +293,19 @@ fn ensure_owned_directory(directory: &Path) -> Result<(), RunnerError> {
         )));
     }
     Ok(())
+}
+
+/// Whether the staged path already carries exactly the closure's bytes.
+fn staged_file_matches(path: &Path, file: &StagedFile) -> bool {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return false;
+    }
+    std::fs::read(path)
+        .map(|bytes| sha256_hex(&bytes) == file.sha256)
+        .unwrap_or(false)
 }
 
 /// Publish the binding record atomically beside the staged trees.

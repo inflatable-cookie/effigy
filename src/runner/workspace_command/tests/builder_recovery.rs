@@ -2300,3 +2300,89 @@ fn staged_source_refuses_an_edit_made_while_snapshotting() {
     );
     fixture.assert_preserved();
 }
+
+/// Publishing the record before the files must stay recoverable: an interrupted
+/// incremental stage leaves a pending record that may name bytes the tree does
+/// not carry, and the next automatic run completes it instead of refusing
+/// forever.
+#[test]
+fn an_interrupted_incremental_stage_is_completed_by_the_next_run() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(false, false, "docker");
+    let plan = fixture.stage().expect("a staged source plan");
+    fixture.task().expect("the first build records the child");
+    let record = effigy_containers::artifact_source::StageManifest::read(&plan).unwrap();
+    let relative = "Cargo.toml";
+    let staged = plan.source.join(relative);
+
+    // The interruption: the caller's file was edited and the pending record was
+    // published, but the staged copy still carries the older bytes.
+    std::fs::write(fixture.root.join(relative), "[workspace]\n# edited\n").unwrap();
+    let edited_digest = effigy_core::git_source::sha256_hex(b"[workspace]\n# edited\n");
+    let mut pending = record.clone();
+    pending.state = effigy_containers::artifact_source::StageState::Pending;
+    pending.files.get_mut(relative).unwrap().sha256 = edited_digest.clone();
+    pending.closure = "f".repeat(64);
+    std::fs::write(&plan.manifest, serde_json::to_vec_pretty(&pending).unwrap()).unwrap();
+    assert_ne!(
+        effigy_core::git_source::sha256_hex(&std::fs::read(&staged).unwrap()),
+        edited_digest,
+        "the staged copy is stale, exactly as an interrupted run leaves it"
+    );
+    fixture
+        .task()
+        .expect("the next run completes the interrupted stage");
+    assert_eq!(
+        effigy_core::git_source::sha256_hex(&std::fs::read(&staged).unwrap()),
+        edited_digest,
+        "the staged copy carries the caller's edited bytes"
+    );
+    let recovered = effigy_containers::artifact_source::StageManifest::read(&plan).unwrap();
+    assert_eq!(
+        recovered.state,
+        effigy_containers::artifact_source::StageState::Complete
+    );
+    assert_eq!(
+        recovered.closure,
+        record_digest_after_recovery(&fixture, &plan)
+    );
+
+    // The second interruption names no changed source at all: the staged bytes
+    // were damaged, and the same run must repair them from the record.
+    std::fs::write(&staged, "damaged staged bytes\n").unwrap();
+    let mut pending = recovered.clone();
+    pending.state = effigy_containers::artifact_source::StageState::Pending;
+    std::fs::write(&plan.manifest, serde_json::to_vec_pretty(&pending).unwrap()).unwrap();
+    fixture
+        .task()
+        .expect("the next run repairs a damaged staged file");
+    assert_eq!(
+        std::fs::read(&staged).unwrap(),
+        std::fs::read(fixture.root.join(relative)).unwrap()
+    );
+    fixture.assert_preserved();
+}
+
+/// The closure digest the producer derives for this fixture's current source.
+fn record_digest_after_recovery(
+    fixture: &Fixture,
+    plan: &effigy_containers::artifact_source::StagePlan,
+) -> String {
+    // The record names every staged file; re-hash the staged bytes and the
+    // caller's tracked set the same way the producer does.
+    let record = effigy_containers::artifact_source::StageManifest::read(plan).unwrap();
+    for (relative, file) in &record.files {
+        assert_eq!(
+            effigy_core::git_source::sha256_hex(
+                &std::fs::read(plan.source.join(relative)).unwrap()
+            ),
+            file.sha256,
+            "{relative}"
+        );
+    }
+    assert_eq!(
+        std::fs::read(plan.source.join("Cargo.toml")).unwrap(),
+        std::fs::read(fixture.root.join("Cargo.toml")).unwrap()
+    );
+    record.closure
+}

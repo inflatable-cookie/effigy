@@ -401,6 +401,7 @@ fn record_render_staging(
         source: plan.source.clone(),
         closure: String::new(),
         source_staged: false,
+        state: StageState::Pending,
         render_digest: None,
         head: None,
         files: BTreeMap::new(),
@@ -690,6 +691,14 @@ pub struct StageManifest {
     /// only carries the Compose render has `false` and an empty closure.
     #[serde(default)]
     pub source_staged: bool,
+    /// Whether the closure this record names has been written and verified.
+    ///
+    /// A `pending` record proves who owns the child (it is written before the
+    /// first file so an interrupted run is never an unowned tree) but never
+    /// claims a closure: a reader that needs the staged source refuses a pending
+    /// record, and the next run rewrites whatever the interruption left.
+    #[serde(default)]
+    pub state: StageState,
     /// The Compose render generation staged beside the source, if any.
     #[serde(default)]
     pub render_digest: Option<String>,
@@ -704,7 +713,31 @@ pub struct StageManifest {
     pub excluded: Vec<String>,
 }
 
+/// Whether a staged-source record describes written bytes or intent only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StageState {
+    /// The record was written before its files: ownership is proved, the closure
+    /// is not.
+    Pending,
+    /// Every file the record names was written and verified.
+    #[default]
+    Complete,
+}
+
 impl StageManifest {
+    /// A record whose closure is written and verified. A pending record proves
+    /// ownership only, so a reader that needs the staged source refuses it.
+    pub fn require_complete(self) -> Result<Self, String> {
+        if self.state == StageState::Pending {
+            return Err(format!(
+                "the staged source record for `{}` is pending, so the closure it names was never fully written",
+                self.source.display()
+            ));
+        }
+        Ok(self)
+    }
+
     /// The record must describe this exact caller, scope and project, and the
     /// plan's own directory. Anything else is another checkout's staged source.
     pub fn verify_binding(&self, plan: &StagePlan, expected: &StageBinding) -> Result<(), String> {
@@ -878,6 +911,7 @@ mod tests {
             source: plan.source.clone(),
             closure: "a".repeat(64),
             source_staged: true,
+            state: StageState::Complete,
             render_digest: None,
             head: None,
             files: BTreeMap::new(),
@@ -923,5 +957,30 @@ mod tests {
             .verify_binding(&plan, &expected)
             .expect_err("another schema")
             .contains("schema"));
+    }
+
+    /// A record written before its files proves ownership only: a reader that
+    /// needs the staged source refuses it instead of trusting a closure nobody
+    /// wrote.
+    #[test]
+    fn a_pending_record_never_claims_a_staged_closure() {
+        let plan = StagePlan::under(Path::new("/mnt/release-source"), "app-dev");
+        let mut record = manifest(Path::new("/work/app"), &plan);
+        record.state = StageState::Pending;
+        let error = record
+            .clone()
+            .require_complete()
+            .expect_err("a pending record is not staged evidence");
+        assert!(error.contains("pending"), "{error}");
+        record.state = StageState::Complete;
+        record
+            .require_complete()
+            .expect("a complete record names written bytes");
+        // A record written by an older build parses as complete: the field is
+        // additive and never reinterprets existing evidence.
+        let mut legacy = serde_json::to_value(manifest(Path::new("/work/app"), &plan)).unwrap();
+        legacy.as_object_mut().unwrap().remove("state");
+        let parsed: StageManifest = serde_json::from_value(legacy).unwrap();
+        assert_eq!(parsed.state, StageState::Complete);
     }
 }

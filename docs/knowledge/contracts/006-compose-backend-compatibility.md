@@ -212,9 +212,16 @@ nothing in it is written, cleaned, adopted or published — and so does a record
 belonging to another checkout, scope, project or profile. A pre-existing link or
 file in the owned chain is refused rather than followed, unlinked or replaced.
 The record is written before the first file lands, so an interrupted run leaves
-this checkout's own record and a later run completes it; the same record carries
-the Compose render generation staged beside the source, and render staging
-shares the one ownership rule.
+this checkout's own record rather than an unowned tree. That early record is
+`pending`: it proves ownership and claims no closure, a reader that needs the
+staged source refuses it, and only a `complete` record — written after every
+file and the inventory were verified — describes written bytes. Recovery never
+trusts the record for content: a staged file is rewritten whenever its bytes no
+longer carry the closure's digest, so an interruption during an incremental
+refresh (a pending record naming newer digests while the tree still holds older
+bytes) is completed by the next run instead of refusing forever. The same record
+carries the Compose render generation staged beside the source, and render
+staging shares the one ownership rule.
 
 The staged closure is the checkout's tracked working tree — every path
 `git ls-files` reports, read from the working tree so uncommitted development
