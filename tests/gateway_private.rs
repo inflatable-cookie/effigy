@@ -2384,6 +2384,21 @@ fn start_managed_listener_gateway(
     foreign_ca: &Path,
     gateway_cleanup: &mut GatewayCleanup<'_>,
 ) -> (PathBuf, SocketAddr) {
+    let (private_gateway, https_address, _) =
+        start_managed_listener_gateway_addresses(fixture, effects, foreign_ca, gateway_cleanup);
+    (private_gateway, https_address)
+}
+
+/// The same private gateway including the plain-HTTP proxy address. That
+/// listener serves the daemon's own `/_effigy/routes` view, which is the
+/// publication the daemon has actually consumed - the fact a proof needs when
+/// the store (written first) is not enough evidence that the proxy serves it.
+fn start_managed_listener_gateway_addresses(
+    fixture: &Path,
+    effects: &HostEffectSentinels,
+    foreign_ca: &Path,
+    gateway_cleanup: &mut GatewayCleanup<'_>,
+) -> (PathBuf, SocketAddr, SocketAddr) {
     let private_gateway = private_root(fixture, "managed-listener-gateway");
     let tls = run_gateway(
         &private_gateway,
@@ -2411,7 +2426,8 @@ fn start_managed_listener_gateway(
     );
     let gateway_json = parse_json_success(gateway);
     let https_address = socket_field(&gateway_json, "https_addr");
-    (private_gateway, https_address)
+    let proxy_address = socket_field(&gateway_json, "proxy_addr");
+    (private_gateway, https_address, proxy_address)
 }
 
 /// Identical declared listener hosts in the primary checkout and two linked
@@ -3729,6 +3745,319 @@ impl Drop for HeldListenerProxy {
     }
 }
 
+/// One fixed HTTP response from a real loopback upstream.
+struct CannedUpstream {
+    address: SocketAddr,
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl CannedUpstream {
+    fn start(body: &'static str) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("canned upstream address");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking canned upstream");
+        let address = listener.local_addr().expect("canned upstream address");
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread = {
+            let stop = Arc::clone(&stop);
+            thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((mut stream, _)) => {
+                            let _ = stream.set_nonblocking(false);
+                            let mut request = [0u8; 4096];
+                            let _ = stream.read(&mut request);
+                            let response = format!(
+                                "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                                body.len()
+                            );
+                            let _ = stream.write_all(response.as_bytes());
+                            let _ = stream.shutdown(Shutdown::Both);
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            })
+        };
+        Self {
+            address,
+            stop,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for CannedUpstream {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// A real TLS proxy - the production acceptor, proxy server and live route
+/// snapshot loader - whose consumed route snapshot and SNI certificates this
+/// fixture installs. That lets a proof hold exactly what the gateway daemon
+/// consumes asynchronously: the route it has applied and the certificate its
+/// resolver has loaded.
+struct ControlledTlsProxy {
+    address: SocketAddr,
+    routes: Arc<effigy_gateway::routes::LiveRouteTable>,
+    resolver: Arc<effigy_gateway::tls::SniCertResolver>,
+    stop: tokio::sync::watch::Sender<bool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl ControlledTlsProxy {
+    fn start(root: &Path) -> Self {
+        let certs_dir = root.join("certs");
+        let resolver = Arc::new(
+            effigy_gateway::tls::build_sni_resolver_from_dir(&certs_dir)
+                .expect("fixture certificate resolver"),
+        );
+        let server_config = Arc::new(effigy_gateway::tls::server_config_from_resolver(
+            Arc::clone(&resolver),
+        ));
+        let routes = Arc::new(
+            effigy_gateway::routes::LiveRouteTable::new(root.join("routes.json"))
+                .expect("consumed route snapshot"),
+        );
+        let table = routes.shared_table();
+        let reservation =
+            TcpListener::bind("127.0.0.1:0").expect("reserve controlled proxy address");
+        let address = reservation.local_addr().expect("controlled proxy address");
+        drop(reservation);
+        let (stop, shutdown) = tokio::sync::watch::channel(false);
+        let thread = thread::spawn(move || {
+            tokio::runtime::Runtime::new()
+                .expect("controlled proxy runtime")
+                .block_on(effigy_gateway::proxy::run_tls_proxy_server(
+                    address,
+                    server_config,
+                    table,
+                    Arc::new(effigy_gateway::stats::GatewayStats::new()),
+                    effigy_gateway::proxy::ProxyConfig::default(),
+                    shutdown,
+                ))
+                .expect("controlled proxy exits cleanly");
+        });
+        let proxy = Self {
+            address,
+            routes,
+            resolver,
+            stop,
+            thread: Some(thread),
+        };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while TcpStream::connect(address).is_err() {
+            assert!(Instant::now() < deadline, "controlled proxy did not bind");
+            thread::sleep(Duration::from_millis(25));
+        }
+        proxy
+    }
+
+    /// Install the published store snapshot the way the daemon's watcher does.
+    fn consume_published_route(&self) {
+        self.routes
+            .reload()
+            .expect("install the published route snapshot");
+    }
+}
+
+impl Drop for ControlledTlsProxy {
+    fn drop(&mut self) {
+        let _ = self.stop.send(true);
+        if let Some(thread) = self.thread.take() {
+            let result = thread.join();
+            if !thread::panicking() {
+                result.expect("controlled proxy thread");
+            }
+        }
+    }
+}
+
+/// QA 130acca8's probe failures, made deterministic: a route publication and a
+/// certificate exist before the gateway daemon has consumed either, so a probe
+/// can observe `503 No Route` or a TLS `access_denied` alert first. The waits
+/// must follow that evidence - the production route snapshot loader, TLS
+/// acceptor and certificate producer are the real ones - and only the wanted
+/// verified response ends them.
+#[test]
+fn milestone_130acca8_https_waits_poll_through_a_missing_certificate_and_an_unconsumed_route() {
+    let fixture = effigy_test_support::Fixture::new("milestone-130acca8-waits-").unwrap();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let foreign_ca = fixture.path().join("foreign-ca");
+    private_directory(&foreign_ca);
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let root = private_root(fixture.path(), "gateway");
+    parse_json_success(run_gateway(
+        &root,
+        "setup-tls",
+        &effects,
+        Some(&foreign_ca),
+        &[],
+    ));
+    gateway_cleanup.track(&root);
+    let ca_path = root.join("ca/rootCA.pem");
+    let certs_dir = root.join("certs");
+
+    let domain = "milestone-130acca8.host.test";
+    let body = "controlled-body";
+    let generation = serde_json::json!({ "child_pid": 4242u32, "generation": "milestone" });
+    let upstream = CannedUpstream::start("controlled-body@4242");
+    save_private_routes(&root, &[(domain, upstream.address, true)]);
+    let proxy = ControlledTlsProxy::start(&root);
+
+    // The fixture's private certificate producer is the real one; it runs in
+    // this process, so its explicit override and effect files are inherited.
+    let _env = env_test_support::EnvGuard::set_many(&[
+        (
+            "EFFIGY_GATEWAY_MKCERT_BIN",
+            Some(effects.private_mkcert.as_os_str()),
+        ),
+        ("EFFECT_LOG", Some(effects.log.as_os_str())),
+        ("MKCERT_CALLS", Some(effects.mkcert_calls.as_os_str())),
+        ("FOREIGN_CAROOT", Some(foreign_ca.as_os_str())),
+    ]);
+
+    // Phase 1: the daemon consumed the route, but its SNI resolver has no
+    // certificate for the domain yet. Every probe until the certificate loads
+    // answers with a TLS `access_denied` alert - exactly what the milestone's
+    // `wait_for_listener_https` aborted on instead of polling through.
+    proxy.consume_published_route();
+    assert!(!certs_dir.join(format!("{domain}.pem")).exists());
+    let producer = {
+        let certs_dir = certs_dir.clone();
+        let private_root = root.clone();
+        let domain = domain.to_owned();
+        let resolver = Arc::clone(&proxy.resolver);
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(300));
+            effigy_gateway::tls::TlsConfig::new(certs_dir.clone())
+                .with_ca_root(private_root.join("ca"))
+                .generate_cert(&domain)
+                .expect("private certificate producer");
+            let loaded = effigy_gateway::tls::sync_sni_resolver_from_dir(&resolver, &certs_dir)
+                .expect("load the produced certificate");
+            assert!(
+                loaded >= 1 && certs_dir.join(format!("{domain}.pem")).is_file(),
+                "the produced certificate must load"
+            );
+        })
+    };
+    let response = wait_for_listener_https(
+        proxy.address,
+        &ca_path,
+        domain,
+        &generation,
+        body,
+        listener_readiness_deadline(),
+    );
+    producer.join().expect("certificate producer");
+    assert!(
+        response.contains(&format!("{body}@4242")),
+        "the wait must return the verified generation body: {response}"
+    );
+
+    // Phase 2: the store publishes a route while the daemon's consumed snapshot
+    // still has none. Consumption is held beyond the hidden five-second window
+    // the fixtures used to assume and well inside the declared budget.
+    let unconsumed = "milestone-130acca8-unconsumed.host.test";
+    let unconsumed_body = "unconsumed-body";
+    let second_upstream = CannedUpstream::start(unconsumed_body);
+    effigy_gateway::tls::TlsConfig::new(certs_dir.clone())
+        .with_ca_root(root.join("ca"))
+        .generate_cert(unconsumed)
+        .expect("private certificate producer");
+    let loaded = effigy_gateway::tls::sync_sni_resolver_from_dir(&proxy.resolver, &certs_dir)
+        .expect("load the produced certificate");
+    assert!(
+        loaded >= 2 && certs_dir.join(format!("{unconsumed}.pem")).is_file(),
+        "both certificates load"
+    );
+    save_private_routes(
+        &root,
+        &[
+            (domain, upstream.address, true),
+            (unconsumed, second_upstream.address, true),
+        ],
+    );
+    let published = RouteTable::load(&root.join("routes.json")).expect("published routes");
+    assert!(
+        published.lookup(unconsumed).is_some(),
+        "the store publishes the route before the daemon consumes it"
+    );
+    assert!(
+        proxy.routes.read().lookup(unconsumed).is_none(),
+        "the daemon's consumed snapshot still has no such route"
+    );
+    let releaser = {
+        let routes = Arc::clone(&proxy.routes);
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(6));
+            routes.reload().expect("install the published snapshot");
+        })
+    };
+    let started = Instant::now();
+    let response = wait_for_verified_https(
+        proxy.address,
+        &ca_path,
+        unconsumed,
+        "/",
+        listener_readiness_deadline(),
+        false,
+        |body| body == unconsumed_body,
+    );
+    releaser.join().expect("route consumer");
+    assert_eq!(response, unconsumed_body);
+    assert!(
+        started.elapsed() >= Duration::from_secs(6),
+        "the wait returned before the daemon consumed the route: {:?}",
+        started.elapsed()
+    );
+
+    // Phase 3: against the real gateway daemon, the live view is the
+    // consumption evidence the listener proofs wait for. An unpublished route is
+    // absent; the same store publication appears once the daemon applies it.
+    let (daemon_root, _https, proxy_address) = start_managed_listener_gateway_addresses(
+        fixture.path(),
+        &effects,
+        &foreign_ca,
+        &mut gateway_cleanup,
+    );
+    let live_domain = "milestone-130acca8-live.host.test";
+    let early = gateway_live_routes(proxy_address).expect("daemon live route view");
+    assert!(
+        live_route_target(&early, live_domain).is_none(),
+        "an unpublished route is never in the daemon's live view: {early}"
+    );
+    let target = upstream.address.to_string();
+    save_private_routes(&daemon_root, &[(live_domain, upstream.address, false)]);
+    let consumed = wait_for_gateway_route(
+        proxy_address,
+        live_domain,
+        Some(&target),
+        listener_readiness_deadline(),
+    );
+    assert_eq!(
+        live_route_target(&consumed, live_domain),
+        Some(Some(target)),
+        "the daemon's live view names the consumed route: {consumed}"
+    );
+}
+
+/// Wait for the generation's exact body over verified HTTPS inside `deadline`.
+/// The route and its certificate are published before the gateway daemon has
+/// consumed them: until the daemon's SNI resolver loads the new certificate, a
+/// client handshake receives a TLS `access_denied` alert (effigy QA 130acca8).
+/// That alert is a not-ready observation the wait polls through; only the
+/// wanted verified response ends it.
 fn wait_for_listener_https(
     address: SocketAddr,
     ca: &Path,
@@ -3741,30 +4070,12 @@ fn wait_for_listener_https(
         .as_u64()
         .expect("listener child pid");
     let expected = format!("{body}@{pid}");
-    loop {
-        let response = curl_https_response_with_timeout(
-            address,
-            ca,
-            domain,
-            "/",
-            deadline.saturating_duration_since(Instant::now()),
-        );
-        if response.starts_with("HTTP/1.1 200 OK\r\n")
+    wait_for_verified_https(address, ca, domain, "/", deadline, true, |response| {
+        response.starts_with("HTTP/1.1 200 OK\r\n")
             && response
                 .split_once("\r\n\r\n")
                 .is_some_and(|(_, body)| body == expected)
-        {
-            return response;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "gateway did not serve generation {} with body {expected:?}: {response}",
-            generation["generation"]
-        );
-        thread::sleep(
-            Duration::from_millis(25).min(deadline.saturating_duration_since(Instant::now())),
-        );
-    }
+    })
 }
 
 fn private_root(parent: &Path, name: &str) -> PathBuf {
@@ -4629,8 +4940,81 @@ impl Drop for ForeignListener {
     }
 }
 
-fn curl_https_response(address: SocketAddr, ca: &Path, hostname: &str, path: &str) -> String {
-    curl_https_response_with_timeout(address, ca, hostname, path, Duration::from_secs(5))
+/// One verified HTTPS probe's whole answer. A probe that has not succeeded is
+/// evidence a wait keeps polling, not a test failure: publication is consumed
+/// by the gateway daemon asynchronously, and a missing SNI certificate answers
+/// the handshake with a TLS `access_denied` alert while an unconsumed route
+/// answers `503 No Route` (effigy QA 130acca8).
+struct HttpsProbe {
+    success: bool,
+    stdout: String,
+    stderr: String,
+}
+
+/// The listener readiness budget the managed-listener fixtures declare in the
+/// manifests they write (`listener.readiness.timeout_secs`). A published route
+/// reaches the gateway daemon asynchronously, so a proof waits for that
+/// observation inside the same declared budget instead of assuming a successful
+/// first probe or a hidden five-second window.
+const MANAGED_LISTENER_READY_BUDGET: Duration = Duration::from_secs(30);
+
+fn listener_readiness_deadline() -> Instant {
+    Instant::now() + MANAGED_LISTENER_READY_BUDGET
+}
+
+fn probe_https(
+    address: SocketAddr,
+    ca: &Path,
+    hostname: &str,
+    path: &str,
+    timeout: Duration,
+    fail_on_status: bool,
+    include_headers: bool,
+) -> HttpsProbe {
+    let max_time = timeout
+        .max(Duration::from_millis(50))
+        .min(Duration::from_secs(5))
+        .as_secs_f64()
+        .to_string();
+    let resolve = format!("{hostname}:{}:127.0.0.1", address.port());
+    let url = format!("https://{hostname}:{}{path}", address.port());
+    let mut command = Command::new("curl");
+    command.args([
+        "--silent",
+        "--show-error",
+        "--max-time",
+        &max_time,
+        "--noproxy",
+        "*",
+    ]);
+    if include_headers {
+        command.arg("--include");
+    }
+    if fail_on_status {
+        command.arg("--fail");
+    }
+    let output = command
+        .arg("--cacert")
+        .arg(ca)
+        .arg("--resolve")
+        .arg(resolve)
+        .arg(url)
+        .output()
+        .expect("run HTTPS response probe");
+    HttpsProbe {
+        success: output.status.success(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+    }
+}
+
+/// The gateway's own diagnostic record beside a private root, for a failure
+/// message that names what the daemon recorded instead of only the probe.
+fn gateway_diagnostics(ca: &Path) -> String {
+    ca.parent()
+        .and_then(Path::parent)
+        .and_then(|root| fs::read_to_string(root.join("gateway.stderr.log")).ok())
+        .unwrap_or_else(|| "private gateway diagnostics unavailable".to_owned())
 }
 
 fn curl_https_response_with_timeout(
@@ -4641,39 +5025,141 @@ fn curl_https_response_with_timeout(
     timeout: Duration,
 ) -> String {
     assert!(!timeout.is_zero(), "HTTPS readiness deadline expired");
-    let max_time = timeout
-        .min(Duration::from_secs(5))
-        .as_secs_f64()
-        .to_string();
-    let resolve = format!("{hostname}:{}:127.0.0.1", address.port());
-    let url = format!("https://{hostname}:{}{path}", address.port());
+    let probe = probe_https(address, ca, hostname, path, timeout, false, true);
+    assert!(
+        probe.success || !probe.stdout.is_empty(),
+        "HTTPS response probe failed: {}; gateway={}",
+        probe.stderr,
+        gateway_diagnostics(ca)
+    );
+    probe.stdout
+}
+
+/// Wait for a verified HTTPS response that `wanted` accepts, polling through a
+/// handshake the daemon cannot serve yet (a TLS alert for a certificate its SNI
+/// resolver has not loaded) and through a route it has not consumed. The
+/// deadline is the caller's readiness budget: a probe that never reaches the
+/// wanted response fails there, naming the last probe and the daemon record.
+fn wait_for_verified_https(
+    address: SocketAddr,
+    ca: &Path,
+    hostname: &str,
+    path: &str,
+    deadline: Instant,
+    include_headers: bool,
+    wanted: impl Fn(&str) -> bool,
+) -> String {
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let probe = probe_https(
+            address,
+            ca,
+            hostname,
+            path,
+            remaining,
+            true,
+            include_headers,
+        );
+        if probe.success && wanted(&probe.stdout) {
+            return probe.stdout;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "verified HTTPS request to {hostname} never reached the wanted response inside the \
+                 listener readiness budget: last probe stderr {:?}, last response {:?}; gateway={}",
+                probe.stderr,
+                probe
+                    .stdout
+                    .lines()
+                    .take(6)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                gateway_diagnostics(ca)
+            );
+        }
+        thread::sleep(Duration::from_millis(25).min(remaining));
+    }
+}
+
+/// The gateway daemon's own live route table, read over the plain-HTTP proxy
+/// it reported. `/_effigy/routes` is served from the daemon's applied snapshot,
+/// so it distinguishes "published in the store" from "the proxy serves it".
+fn gateway_live_routes(proxy: SocketAddr) -> Result<Value, String> {
     let output = Command::new("curl")
         .args([
-            "--include",
             "--silent",
             "--show-error",
+            "--fail",
             "--max-time",
-            &max_time,
+            "2",
             "--noproxy",
             "*",
-            "--cacert",
         ])
-        .arg(ca)
-        .arg("--resolve")
-        .arg(resolve)
-        .arg(url)
+        .arg(format!("http://127.0.0.1:{}/_effigy/routes", proxy.port()))
         .output()
-        .expect("run HTTPS response probe");
-    assert!(
-        output.status.success() || !output.stdout.is_empty(),
-        "HTTPS response probe failed: {}; gateway={}",
-        String::from_utf8_lossy(&output.stderr),
-        ca.parent()
-            .and_then(Path::parent)
-            .and_then(|root| fs::read_to_string(root.join("gateway.stderr.log")).ok())
-            .unwrap_or_default()
-    );
-    String::from_utf8_lossy(&output.stdout).into_owned()
+        .expect("read the gateway daemon's live route view");
+    if !output.status.success() {
+        return Err(format!(
+            "live route view unavailable: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("live route view is not JSON: {error}"))
+}
+
+fn live_route_target(view: &Value, domain: &str) -> Option<Option<String>> {
+    view["routes"].as_array()?.iter().find_map(|route| {
+        (route["domain"].as_str() == Some(domain))
+            .then(|| route["target"].as_str().map(str::to_owned))
+    })
+}
+
+/// Wait until the gateway daemon's live table names `domain` (and `target`,
+/// when the caller knows it). A store read is publication evidence, not
+/// consumption evidence; the daemon consumes asynchronously and answers 503
+/// until it has. Observed consumption within `deadline` is the only success.
+fn wait_for_gateway_route(
+    proxy: SocketAddr,
+    domain: &str,
+    target: Option<&str>,
+    deadline: Instant,
+) -> Value {
+    let wanted = |view: &Value| match live_route_target(view, domain) {
+        Some(live) => target.is_none_or(|target| live.as_deref() == Some(target)),
+        None => false,
+    };
+    loop {
+        let last = match gateway_live_routes(proxy) {
+            Ok(view) if wanted(&view) => return view,
+            Ok(view) => format!(
+                "the daemon's live view has no matching route yet: {}",
+                view["routes"].as_array().map_or_else(
+                    || "<no routes array>".to_owned(),
+                    |routes| {
+                        routes
+                            .iter()
+                            .map(|route| {
+                                format!(
+                                    "{} -> {:?}",
+                                    route["domain"].as_str().unwrap_or("<unnamed>"),
+                                    route["target"].as_str()
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }
+                )
+            ),
+            Err(error) => error,
+        };
+        assert!(
+            Instant::now() < deadline,
+            "the gateway daemon never consumed the publication of {domain} inside the listener \
+             readiness budget: {last}"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
 }
 
 fn curl_websocket_for_hostname(address: SocketAddr, ca: &Path, hostname: &str) -> String {
@@ -4955,43 +5441,20 @@ fn socket_field(payload: &Value, field: &str) -> SocketAddr {
         .unwrap_or_else(|error| panic!("invalid {field} in {payload}: {error}"))
 }
 
+/// A verified HTTPS request inside the managed listener readiness budget. The
+/// route a caller proved published in the store is consumed by the gateway
+/// daemon asynchronously, so this waits for the response it can verify instead
+/// of failing the proof on a probe the daemon cannot serve yet.
 fn curl_https(address: SocketAddr, ca: &Path, hostname: &str, path: &str) -> String {
-    let resolve = format!("{hostname}:{}:127.0.0.1", address.port());
-    let url = format!("https://{hostname}:{}{path}", address.port());
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let last_error = loop {
-        let output = Command::new("curl")
-            .args([
-                "--silent",
-                "--show-error",
-                "--fail",
-                "--noproxy",
-                "*",
-                "--cacert",
-            ])
-            .arg(ca)
-            .arg("--resolve")
-            .arg(&resolve)
-            .arg(&url)
-            .output()
-            .expect("run certificate-verifying curl");
-        if output.status.success() {
-            return String::from_utf8(output.stdout).expect("UTF-8 response body");
-        }
-        let error = String::from_utf8_lossy(&output.stderr).into_owned();
-        if Instant::now() >= deadline {
-            break error;
-        }
-        thread::sleep(Duration::from_millis(25));
-    };
-    panic!(
-        "verified HTTPS request failed for {hostname}: {last_error}; response={}; private_gateway_stderr={}",
-        curl_https_response(address, ca, hostname, path),
-        ca.parent()
-            .and_then(Path::parent)
-            .and_then(|root| fs::read_to_string(root.join("gateway.stderr.log")).ok())
-            .unwrap_or_else(|| "private gateway diagnostics unavailable".to_owned())
-    );
+    wait_for_verified_https(
+        address,
+        ca,
+        hostname,
+        path,
+        listener_readiness_deadline(),
+        false,
+        |_| true,
+    )
 }
 
 fn assert_curl_verification_failure(address: SocketAddr, ca: &Path, hostname: &str) {
@@ -5012,7 +5475,7 @@ fn assert_curl_verification_failure(address: SocketAddr, ca: &Path, hostname: &s
 }
 
 fn wait_for_https_body(address: SocketAddr, ca: &Path, expected: &str) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = listener_readiness_deadline();
     loop {
         if curl_https(address, ca, "localhost", "/") == expected {
             return;
@@ -6508,7 +6971,8 @@ fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
 
     let home = fixture.path().join("home");
     private_directory(&home);
-    let guest_adapter = write_switch_fake_guest(fixture.path(), &home);
+    let guest_adapter = write_switch_fake_guest(fixture.path());
+    let local_host = seed_local_effigy_host(fixture.path());
     let foreign_ca = fixture.path().join("foreign-ca");
     private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
@@ -6692,13 +7156,15 @@ fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
     };
 
     let container = |env: &str| {
-        let mut command = Command::new(EFFIGY);
+        // This run's own build, at the checkout-shaped private host where the
+        // local guest artifact and its producer receipts live.
+        let mut command = Command::new(&local_host.binary);
         command
             .env("FAKE_OWNED_STATE", &state)
             .env("FAKE_GUEST_ADAPTER", &guest_adapter)
             .env("FAKE_GUEST_ROOT", fixture.path().join("guest"))
             .env_remove("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF")
-            .env("EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE", "download")
+            .env("EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE", "local")
             .args(["container", env])
             .current_dir(&checkout)
             .env("HOME", &cleanup.home)
@@ -6865,7 +7331,8 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
     let short_home =
         effigy_test_support::Fixture::short_home("e235g.").expect("short private home");
     let home = short_home.path().to_path_buf();
-    let guest_adapter = write_switch_fake_guest(fixture.path(), &home);
+    let guest_adapter = write_switch_fake_guest(fixture.path());
+    let local_host = seed_local_effigy_host(fixture.path());
     // Managed process commands run through `sh -lc`, whose login profile
     // reorders PATH behind the developer's real docker; the fixture home's
     // profile pins the sentinel docker first for every spawned shell.
@@ -7056,7 +7523,7 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
             .env("FAKE_GUEST_ADAPTER", &guest_adapter)
             .env("FAKE_GUEST_ROOT", fixture.path().join("guest"))
             .env_remove("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF")
-            .env("EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE", "download")
+            .env("EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE", "local")
             .current_dir(&checkout)
             .env("HOME", &cleanup.home)
             .env("EFFIGY_TEST_CONTAINERS_HOME", cleanup.home.join(".effigy"))
@@ -7098,7 +7565,9 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
     let managed_err = managed_out
         .try_clone()
         .expect("clone managed supervisor output file");
-    let mut managed = Command::new(EFFIGY);
+    // The run's own build at the checkout-shaped private host, whose local
+    // guest artifact and producer receipts this lifecycle acquires.
+    let mut managed = Command::new(&local_host.binary);
     managed.args(["dev:container", "--headless"]);
     managed_env(&mut managed);
     managed.env("EFFIGY_DEBUG_ADMISSION_REFUSAL", "1");
@@ -8445,39 +8914,94 @@ exit 0
     }
 }
 
-/// A private guest store for the scoped handover cases. Preparation
-/// publishes real context bytes and verifies their digests; the fake never
-/// executes the guest artifact or writes to host paths named by guest scripts.
-fn write_switch_fake_guest(root: &Path, home: &Path) -> PathBuf {
+/// The checkout-shaped private host whose build is this run's Effigy, with the
+/// Linux guest artifact a local producer wrote and the receipts that authenticate
+/// it.
+///
+/// The workspace handoff takes the guest artifact from the local checkout on a
+/// development host; it refuses to substitute the published release for a local
+/// build (effigy#701). A hard link (a copy when the volumes differ) at
+/// `<root>/target/debug/effigy` makes this run's own build look exactly like a
+/// developer checkout's build output, so provenance is genuine and nothing is
+/// downloaded. The artifact bytes are never executed - the private guest adapter
+/// stands in for the guest - and its receipt names the target and the digest of
+/// those exact bytes, as the real producer writes them.
+struct LocalEffigyHost {
+    binary: PathBuf,
+}
+
+const LOCAL_GUEST_TARGET: &str = "x86_64-unknown-linux-gnu";
+
+fn seed_local_effigy_host(fixture: &Path) -> LocalEffigyHost {
     use sha2::{Digest, Sha256};
 
-    let version = effigy_core::build_info::active_version();
-    let triple = "x86_64-unknown-linux-gnu";
-    let artifact = home
-        .join(".effigy/workspace-bin/linux")
-        .join(triple)
-        .join(format!("v{}", env!("CARGO_PKG_VERSION")))
-        .join(format!("effigy-{triple}"));
+    let root = fixture.join("effigy-local-host");
+    fs::create_dir_all(root.join("config")).expect("local host config directory");
+    fs::create_dir_all(root.join("target/debug")).expect("local host build directory");
+    // The markers a checkout carries, so discovery resolves this private root
+    // instead of the developer's real checkout behind the test binary.
+    fs::write(root.join("effigy.toml"), "").expect("local host manifest");
+    fs::write(root.join("config/tasks.toml"), "").expect("local host tasks");
+    fs::write(root.join("config/containers.toml"), "").expect("local host containers");
+    let binary = root.join("target/debug/effigy");
+    if fs::hard_link(EFFIGY, &binary).is_err() {
+        // Separate volumes cannot share an inode; a copy is the same build.
+        fs::copy(EFFIGY, &binary).expect("copy this run's Effigy build into the private host");
+    }
+
+    // The local artifact's install identity is its freshness anchor's size and
+    // modification time, exactly what `workspace_effigy_local_install_identity`
+    // records. The anchor is this private host's `target/debug/effigy`: there is
+    // no `.local-install` install here.
+    let anchor = fs::metadata(&binary).expect("local host build metadata");
+    let modified = anchor
+        .modified()
+        .expect("local host build mtime")
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("local host build mtime after the epoch")
+        .as_nanos();
+    let identity = format!(
+        "local:v{}:{}:{}",
+        effigy_core::build_info::active_version(),
+        anchor.len(),
+        modified
+    );
+    let artifact = root
+        .join(".effigy/linux-release/artifacts")
+        .join(format!("effigy-{LOCAL_GUEST_TARGET}"));
     fs::create_dir_all(artifact.parent().expect("private artifact parent"))
-        .expect("private artifact cache");
-    let bytes = b"private fake guest executable, never executed\n";
+        .expect("private local artifact directory");
+    let bytes = b"private local guest artifact, never executed\n";
     let digest = Sha256::digest(bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    fs::write(&artifact, bytes).expect("fake guest artifact");
-    fs::write(artifact.with_extension("active-version"), &version).expect("artifact version");
+    fs::write(&artifact, bytes).expect("private local guest artifact");
     fs::write(
-        artifact.with_extension("install-identity"),
-        format!("release:v{version}"),
+        artifact.with_extension("active-version"),
+        effigy_core::build_info::active_version(),
     )
-    .expect("artifact install identity");
+    .expect("local artifact version");
+    fs::write(artifact.with_extension("install-identity"), &identity)
+        .expect("local artifact install identity");
     fs::write(
         artifact.with_extension("receipt"),
-        format!("release_triple={triple}\nsha256={digest}\n"),
+        format!("release_triple={LOCAL_GUEST_TARGET}\nsha256={digest}\nbuild_kind=local\n"),
     )
-    .expect("artifact digest receipt");
+    .expect("local artifact producer receipt");
+    LocalEffigyHost { binary }
+}
 
+/// A private guest store for the scoped handover cases. Preparation
+/// publishes real context bytes and verifies their digests; the fake never
+/// executes the guest artifact or writes to host paths named by guest scripts.
+///
+/// The artifact it is handed is [`seed_local_effigy_host`]'s: a local
+/// development host's own build, never the published release. This fixture used
+/// to seed a release-shaped cache and force `download`; a local Effigy build
+/// refusing that substitute is product truth (effigy#701), so the fixture
+/// acquires the artifact from a private local checkout instead.
+fn write_switch_fake_guest(root: &Path) -> PathBuf {
     let adapter = root.join("guest-adapter.py");
     fs::create_dir(root.join("guest")).expect("private guest store");
     fs::write(

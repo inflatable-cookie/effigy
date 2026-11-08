@@ -174,6 +174,59 @@ child; recorded liveness proves nothing about such writers, and QA
 918de4a0's DirectoryNotEmpty removal shows the gap without naming the racer
 (effigy#617).
 
+## Gateway publication and readiness
+
+A managed listener's route is published to the endpoint store before the
+gateway daemon consumes it, and its certificate is written before the daemon's
+SNI resolver loads it. Both steps are asynchronous, so a proof that reads the
+store or the listener state has not proven the proxy serves the route. QA
+130acca8 surfaced both observations in real private fixtures: a handshake
+answered with the TLS `access_denied` alert rustls sends when the SNI resolver
+resolves no certificate, and `503 No Route` while the daemon still served its
+previous snapshot. Both are not-ready observations.
+
+The gateway-private probes therefore follow evidence instead of a first probe
+or a hidden window. `wait_for_listener_https` and `curl_https` poll through a
+handshake the daemon cannot serve yet inside the listener readiness budget the
+fixture's own manifest declares (`readiness.timeout_secs`); only the wanted
+verified response ends them, and a timeout names the last probe, the last
+response and the gateway's own record. The adapterless fixtures first wait for
+the daemon's applied publication through `GET /_effigy/routes` on the plain
+HTTP proxy `gateway up` reports - the same live snapshot the proxy routes from -
+so a store read is never mistaken for consumption. A proof that reads the store
+before the daemon applies it, or forces its own snapshot, is testing publication
+rather than readiness.
+
+`milestone_130acca8_https_waits_poll_through_a_missing_certificate_and_an_unconsumed_route`
+holds each producer behind the wait with the real route snapshot loader, TLS
+acceptor and private certificate producer: a certificate the resolver has not
+loaded, and a route the consumer has not installed past the five-second window
+the fixtures used to assume. Each wait must reach the verified response, and the
+same control reads an unpublished route as absent from a real daemon's live view
+before the publication appears there.
+
+A server that double-forks and calls `setsid` has left every recorded process
+group, so the generation sweep can never name it. The double-fork proof records
+that server's own published PID together with the live boot and start identity
+while it is alive, and closes it by that identity both on the success path and
+on an unwinding proof, reporting the terminal absence it observed. QA 130acca8
+leaked exactly such a server from this fixture when the proof panicked before
+its own stop. A PID whose start identity has changed is someone else's and is
+left alone; the negative control
+`milestone_130acca8_double_fork_server_cleanup_leaves_a_foreign_identity_alone`
+pins that.
+
+The container workspace handoff fixtures (the scoped-clone switch, the managed
+clone lifecycle) acquire their Linux guest artifact from a private
+checkout-shaped host: this run's own build hard-linked at
+`<root>/target/debug/effigy`, the artifact and its producer receipt (target,
+digest, `build_kind=local`) beside it, and the artifact source set to `local`.
+They no longer seed a release-shaped cache and force `download`: a local Effigy
+build refusing the published release as its substitute is product truth
+(effigy#701), covered by `artifact_acquisition`. The artifact bytes are never
+executed - the private guest adapter stands in for the guest - and the fixture
+still exercises the real stack-to-listener switch and its ownership assertions.
+
 ## The fixture CLI environment
 
 A fixture's `effigy` CLI processes never inherit the ambient coding-agent and

@@ -212,6 +212,9 @@ struct AdapterlessSetup {
     foreign_ca: PathBuf,
     private_gateway: PathBuf,
     https_address: SocketAddr,
+    /// The daemon's plain-HTTP proxy, whose `/_effigy/routes` view is the
+    /// publication it has actually applied.
+    proxy_address: SocketAddr,
     ca_path: PathBuf,
     docker_log: PathBuf,
     /// Stops the fixture's recorded generations if this process is killed.
@@ -230,8 +233,13 @@ impl AdapterlessSetup {
             .expect("sentinel PATH directory");
         let docker_log = fixture.path().join("docker-fixture.log");
         write_fake_docker(&docker_dir.join("docker"));
-        let (private_gateway, https_address) =
-            start_managed_listener_gateway(fixture.path(), effects, foreign_ca, gateway_cleanup);
+        let (private_gateway, https_address, proxy_address) =
+            start_managed_listener_gateway_addresses(
+                fixture.path(),
+                effects,
+                foreign_ca,
+                gateway_cleanup,
+            );
         let ca_path = private_gateway.join("ca/rootCA.pem");
         let watchdog = fixture_sweep::spawn_watchdog(fixture.path());
         Self {
@@ -239,10 +247,35 @@ impl AdapterlessSetup {
             foreign_ca: foreign_ca.to_path_buf(),
             private_gateway,
             https_address,
+            proxy_address,
             ca_path,
             docker_log,
             watchdog,
         }
+    }
+
+    /// The gateway daemon has consumed this listener's publication and serves
+    /// it over verified TLS. The store is written before the daemon applies it,
+    /// so a proof that only read the store could still be answered `503 No
+    /// Route`; and a certificate the daemon's SNI resolver has not loaded yet
+    /// answers the handshake with a TLS `access_denied` alert (effigy QA
+    /// 130acca8). Both are waited for inside the listener readiness budget the
+    /// fixture's manifest declares, and neither ends the wait as success.
+    fn verified_https(&self, domain: &str) -> String {
+        self.verified_https_within(domain, "/", listener_readiness_deadline())
+    }
+
+    fn verified_https_within(&self, domain: &str, path: &str, deadline: Instant) -> String {
+        wait_for_gateway_route(self.proxy_address, domain, None, deadline);
+        wait_for_verified_https(
+            self.https_address,
+            &self.ca_path,
+            domain,
+            path,
+            deadline,
+            false,
+            |_| true,
+        )
     }
 
     fn cleanup(
@@ -359,7 +392,7 @@ fn managed_host_adapterless_listener_publishes_a_plain_servers_route_and_restart
             .is_some_and(|route| route.target.as_deref() == Some(address.to_string().as_str())),
         "the plain server's route must reach its reserved address"
     );
-    let body = curl_https(setup.https_address, &setup.ca_path, domain, "/");
+    let body = setup.verified_https(domain);
     assert!(
         body.contains("Directory listing"),
         "the plain python server did not answer through the published route: {body}"
@@ -388,7 +421,7 @@ fn managed_host_adapterless_listener_publishes_a_plain_servers_route_and_restart
         Some(address.to_string().as_str()),
         "a restart keeps the reserved listener endpoint"
     );
-    let restarted_body = curl_https(setup.https_address, &setup.ca_path, domain, "/");
+    let restarted_body = setup.verified_https(domain);
     assert!(
         restarted_body.contains("Directory listing"),
         "the successor generation serves the same published route: {restarted_body}"
@@ -638,7 +671,7 @@ fn managed_host_listener_is_ready_after_a_compile_with_short_lived_children() {
             .is_some_and(|route| route.target.as_deref() == Some(address)),
         "the route reaches the reserved address"
     );
-    let body = curl_https(setup.https_address, &setup.ca_path, domain, "/");
+    let body = setup.verified_https(domain);
     assert!(body.contains("compiled"), "{body}");
 
     let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
@@ -684,7 +717,7 @@ fn managed_host_listener_watch_mode_respawn_keeps_the_route_served() {
         Duration::from_secs(10),
     );
     thread::sleep(Duration::from_secs(4));
-    let body = curl_https(setup.https_address, &setup.ca_path, domain, "/");
+    let body = setup.verified_https(domain);
     assert!(body.contains("Directory listing"), "{body}");
     let after = read_json_file(&state_path);
     assert_eq!(after["status"], "ready", "{after}");
@@ -700,6 +733,169 @@ fn managed_host_listener_watch_mode_respawn_keeps_the_route_served() {
 
     let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
     assert_success(down);
+}
+
+/// The double-fork server script: the middle process leaves the generation's
+/// session and process group on purpose, and the serving grandchild publishes
+/// its own PID before it listens. `server.pid` is that grandchild, which no
+/// recorded group can name afterwards.
+fn double_fork_server_script(body: &str) -> String {
+    format!(
+        "{}\nif os.fork() == 0:\n    os.setsid()\n    if os.fork() == 0:\n        open('server.pid', 'w').write(str(os.getpid()))\n        http.server.HTTPServer((host, int(port)), Handler).serve_forever()\n    os._exit(0)\nos._exit(0)\n",
+        plain_server(body)
+    )
+}
+
+/// How long a recorded process may take to disappear once signalled.
+const DOUBLE_FORK_EXIT_BUDGET: Duration = Duration::from_secs(10);
+
+/// One process a fixture started outside every recorded generation, with the
+/// live boot and start identity it held while serving.
+#[derive(Clone, Debug)]
+struct RecordedProcess {
+    pid: u32,
+    boot: String,
+    start: GatewayStartIdentity,
+}
+
+/// The terminal facts of one owned-identity close.
+struct ClosedProcess {
+    closed: bool,
+    terminal: String,
+}
+
+/// Close a process by the identity the fixture recorded while it was alive.
+/// A PID that no longer holds that boot and start identity is someone else's
+/// (the kernel reused it), so it is never signalled; only a process that still
+/// holds its own recorded identity is ended, and the wait reports the exact
+/// terminal observation instead of claiming an exit it did not see.
+fn close_recorded_process(recorded: &RecordedProcess) -> ClosedProcess {
+    let holds_now = read_live_process_identity(recorded.pid).is_ok_and(|live| {
+        live.boot_identity == recorded.boot && live.start_identity == recorded.start
+    });
+    if !holds_now {
+        return ClosedProcess {
+            closed: false,
+            terminal: format!(
+                "pid {} no longer holds its recorded start identity; left alone",
+                recorded.pid
+            ),
+        };
+    }
+    let _ = nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(recorded.pid as i32),
+        nix::sys::signal::Signal::SIGKILL,
+    );
+    let deadline = Instant::now() + DOUBLE_FORK_EXIT_BUDGET;
+    while pid_alive(recorded.pid) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    let closed = !pid_alive(recorded.pid);
+    ClosedProcess {
+        closed,
+        terminal: if closed {
+            format!(
+                "pid {} (start identity {:?}) is absent after the owned SIGKILL",
+                recorded.pid, recorded.start
+            )
+        } else {
+            format!(
+                "pid {} still names a live process after the owned SIGKILL",
+                recorded.pid
+            )
+        },
+    }
+}
+
+/// A server the managed command started outside the listener generation's
+/// process group: it double-forked and called `setsid`, so neither the recorded
+/// leader's group nor the fixture sweep can name it (QA 130acca8 leaked exactly
+/// such a server when the proof panicked before its own stop).
+///
+/// This guard records the PID its server publishes while that process is alive,
+/// together with the live boot and start identity, and closes it by that identity
+/// on the success path and on an unwinding or failing proof alike. A PID the
+/// kernel reused is a different identity and is never signalled.
+struct DoubleForkServer {
+    state: Arc<std::sync::Mutex<Option<RecordedProcess>>>,
+    stop: Arc<AtomicBool>,
+    watcher: Option<JoinHandle<()>>,
+}
+
+impl DoubleForkServer {
+    /// Start recording the server whose PID appears in `pid_file`.
+    fn watch(pid_file: &Path) -> Self {
+        let state = Arc::new(std::sync::Mutex::new(None));
+        let stop = Arc::new(AtomicBool::new(false));
+        let watcher = {
+            let state = Arc::clone(&state);
+            let stop = Arc::clone(&stop);
+            let pid_file = pid_file.to_path_buf();
+            thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    if let Some(pid) = fs::read_to_string(&pid_file)
+                        .ok()
+                        .and_then(|text| text.trim().parse::<u32>().ok())
+                    {
+                        if let Ok(live) = read_live_process_identity(pid) {
+                            let mut recorded = state.lock().expect("recorded server state");
+                            if recorded.is_none() {
+                                *recorded = Some(RecordedProcess {
+                                    pid,
+                                    boot: live.boot_identity,
+                                    start: live.start_identity,
+                                });
+                                return;
+                            }
+                        }
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+            })
+        };
+        Self {
+            state,
+            stop,
+            watcher: Some(watcher),
+        }
+    }
+
+    /// Wait until the published PID was recorded while its process lived, so
+    /// the proof knows exactly which process it owns.
+    fn wait_recorded(&self, budget: Duration) -> RecordedProcess {
+        let deadline = Instant::now() + budget;
+        loop {
+            if let Some(recorded) = self.state.lock().expect("recorded server state").clone() {
+                return recorded;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the double-fork server never published a PID whose live identity could be recorded"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Close the recorded server by its identity and report the terminal fact.
+    fn close(&mut self) -> Option<ClosedProcess> {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(watcher) = self.watcher.take() {
+            let _ = watcher.join();
+        }
+        let recorded = self.state.lock().expect("recorded server state").clone()?;
+        let closed = close_recorded_process(&recorded);
+        eprintln!("double-fork fixture teardown: {}", closed.terminal);
+        Some(closed)
+    }
+}
+
+impl Drop for DoubleForkServer {
+    fn drop(&mut self) {
+        // The same owned close runs on an unwinding proof: this is the only
+        // cleanup a double-forked server ever gets, because no recorded group
+        // contains it and the fixture sweep must leave an unrecorded PID alone.
+        let _ = self.close();
+    }
 }
 
 /// A server that double-forks before it serves is outside the child's process
@@ -722,14 +918,14 @@ fn managed_host_listener_double_forked_server_is_ready() {
     let checkout = adapterless_environment(setup.fixture.path(), profile, &manifest);
     fs::write(
         checkout.join("server.py"),
-        format!(
-            "{}\nif os.fork() == 0:\n    os.setsid()\n    if os.fork() == 0:\n        open('server.pid', 'w').write(str(os.getpid()))\n        http.server.HTTPServer((host, int(port)), Handler).serve_forever()\n    os._exit(0)\nos._exit(0)\n",
-            plain_server("double-forked")
-        ),
+        double_fork_server_script("double-forked"),
     )
     .expect("fixture server script");
     let cleanup = setup.cleanup(&effects, &checkout, profile);
     let state_path = listener_state_path(&checkout, profile, LISTENER_NAME);
+    // Record the server's live identity before any probe runs, so this proof
+    // (and its unwinding path) owns the exact process and never a reused PID.
+    let mut server = DoubleForkServer::watch(&checkout.join("server.pid"));
 
     let report = parse_json_success(run_container_cli(
         &checkout,
@@ -742,21 +938,121 @@ fn managed_host_listener_double_forked_server_is_ready() {
     );
     let state = read_json_file(&state_path);
     assert_eq!(state["status"], "ready", "{state}");
-    let body = curl_https(setup.https_address, &setup.ca_path, domain, "/");
+    let recorded = server.wait_recorded(Duration::from_secs(10));
+    let body = setup.verified_https(domain);
     assert!(body.contains("double-forked"), "{body}");
 
     // The server left the listener's process group on purpose, so `down` cannot
     // settle while it still holds the reserved port (it waits out the shutdown
-    // grace, about 35s). The proof ends that server by the PID it recorded.
-    let server = wait_for_pid(&checkout.join("server.pid"));
-    nix::sys::signal::kill(
-        nix::unistd::Pid::from_raw(server as i32),
-        nix::sys::signal::Signal::SIGKILL,
-    )
-    .expect("stop the double-forked server this proof started");
+    // grace, about 35s). The proof ends that server by the identity it recorded:
+    // success and failure take the same path.
+    let closed = server.close().expect("the double-fork server was recorded");
+    assert!(
+        closed.closed,
+        "the owned double-fork server must be absent before `down`: {}",
+        closed.terminal
+    );
+    assert!(
+        !pid_alive(recorded.pid),
+        "the recorded double-fork server is gone before `down`"
+    );
 
     let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
     assert_success(down);
+}
+
+/// The failure path: a proof that panics after the double-fork server published
+/// its PID must still close that server by its recorded identity, through the
+/// same real script and no `effigy` stack. This is the QA 130acca8 leak: the
+/// server had left every recorded group, so only its own identity could end it.
+#[test]
+fn milestone_130acca8_double_fork_server_cleanup_stops_the_recorded_server_when_the_proof_panics() {
+    let fixture = effigy_test_support::Fixture::new("milestone-130acca8-double-fork-").unwrap();
+    let checkout = fixture.path().join("checkout");
+    fs::create_dir(&checkout).expect("panic-path checkout");
+    fs::write(
+        checkout.join("server.py"),
+        double_fork_server_script("panic-path"),
+    )
+    .expect("fixture server script");
+    let mut launcher = Command::new("python3")
+        .arg("server.py")
+        .current_dir(&checkout)
+        .env("EFFIGY_MANAGED_HOST_LISTENER_BIND", "127.0.0.1:0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start the fixture double-fork server");
+    let launcher_pid = launcher.id();
+    let server = DoubleForkServer::watch(&checkout.join("server.pid"));
+    let recorded = server.wait_recorded(Duration::from_secs(10));
+    // The server's own session and group prove the sweep has no group window
+    // that could name it.
+    assert!(
+        !fixture_sweep::process_group_members(launcher_pid).contains(&recorded.pid),
+        "the double-fork server must leave the launcher's group"
+    );
+
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _server = server;
+        panic!("deliberate proof failure after the double-fork server was recorded");
+    }));
+    assert!(unwound.is_err(), "the deliberate failure must unwind");
+    launcher
+        .wait()
+        .expect("reap the launcher that double-forked");
+
+    let deadline = Instant::now() + DOUBLE_FORK_EXIT_BUDGET;
+    while pid_alive(recorded.pid) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    let stopped = !pid_alive(recorded.pid);
+    if !stopped {
+        // Backstop for a failing proof: this test started that server.
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(recorded.pid as i32),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
+    assert!(
+        stopped,
+        "an unwinding proof must close its recorded double-fork server (pid {})",
+        recorded.pid
+    );
+}
+
+/// Negative control: a record whose PID no longer holds the recorded boot and
+/// start identity names someone else's process. The owned close must leave it
+/// running; this test then stops the sleeper it started itself.
+#[test]
+fn milestone_130acca8_double_fork_server_cleanup_leaves_a_foreign_identity_alone() {
+    let mut sleeper = spawn_owned_sleeper();
+    let live = read_live_process_identity(sleeper.id()).expect("sleeper identity");
+    let stale = match live.start_identity {
+        GatewayStartIdentity::Linux { .. } => GatewayStartIdentity::Linux { start_ticks: 0 },
+        GatewayStartIdentity::Macos { .. } => GatewayStartIdentity::Macos {
+            start_seconds: 0,
+            start_microseconds: 0,
+        },
+    };
+    let recorded = RecordedProcess {
+        pid: sleeper.id(),
+        boot: live.boot_identity,
+        start: stale,
+    };
+    let closed = close_recorded_process(&recorded);
+    assert!(
+        !closed.closed,
+        "a foreign start identity is not this fixture's to signal: {}",
+        closed.terminal
+    );
+    assert!(
+        pid_alive(sleeper.id()),
+        "the process whose identity changed is still running"
+    );
+    sleeper.kill().expect("stop our own sleeper");
+    sleeper.wait().expect("reap our own sleeper");
 }
 
 /// A few seconds during which the reserved port does not answer withdraw
@@ -819,7 +1115,7 @@ fn managed_host_listener_probe_miss_does_not_restart_the_child() {
     );
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        let body = curl_https(setup.https_address, &setup.ca_path, domain, "/");
+        let body = setup.verified_https(domain);
         if body.contains("steady") {
             break;
         }
@@ -967,10 +1263,7 @@ fn managed_host_listener_republishes_its_route_when_the_port_answers_again() {
         .read_exact(&mut admission)
         .expect("outage admission boundary");
     assert_eq!(&admission, b"i");
-    assert_eq!(
-        curl_https(setup.https_address, &setup.ca_path, domain, "/"),
-        "answered again"
-    );
+    assert_eq!(setup.verified_https(domain), "answered again");
 
     control
         .write_all(b"x")
@@ -1046,7 +1339,7 @@ fn managed_host_listener_republishes_its_route_when_the_port_answers_again() {
     wait_for_file_contains(&log_path, "route republished", Duration::from_secs(10));
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        let body = curl_https(setup.https_address, &setup.ca_path, domain, "/");
+        let body = setup.verified_https(domain);
         if body.contains("answered again") {
             break;
         }
@@ -1310,7 +1603,7 @@ fn managed_host_listener_retries_a_failed_republication_while_the_port_answers()
     assert_eq!(republished["child_pid"], child_pid, "{republished}");
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        let body = curl_https(setup.https_address, &setup.ca_path, domain, "/");
+        let body = setup.verified_https(domain);
         if body.contains("republished after a store failure") {
             break;
         }
@@ -1381,7 +1674,7 @@ fn managed_host_listener_adapter_env_is_supplied_and_the_report_is_never_read() 
             .is_some_and(|route| route.target.as_deref() == Some(address)),
         "the adapter's route reaches its reserved address"
     );
-    let body = curl_https(setup.https_address, &setup.ca_path, domain, "/");
+    let body = setup.verified_https(domain);
     assert!(body.contains("adapter"), "{body}");
 
     // The report the adapter wrote names this generation and its own address;
