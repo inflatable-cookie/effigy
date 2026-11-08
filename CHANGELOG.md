@@ -6,13 +6,6 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
-### Fixed
-
-- Accept Compose progress only when its image, service or container subject is
-  a single supported name token. BuildKit and package-manager output that ends
-  in words such as `start` or `built` stays in the captured runtime output and
-  no longer opens a new live row for each log line (effigy#700).
-
 ### Security
 
 - Allow a pinned macOS proof request to start its bounded stage window at the externally approved launch (effigy#696).
@@ -952,6 +945,11 @@ During v0.x, MINOR bumps may include breaking changes.
   name, such as an extra empty directory.
 
 ### Fixed
+
+- Accept Compose progress only when its image, service or container subject is
+  a single supported name token. BuildKit and package-manager output that ends
+  in words such as `start` or `built` stays in the captured runtime output and
+  no longer opens a new live row for each log line (effigy#700).
 
 - Nested sequence builtins pin `--repo` to the selected catalog except the
   forms shown to break public grammar or cwd semantics: `docs check` keeps

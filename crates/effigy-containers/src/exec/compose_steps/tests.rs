@@ -202,8 +202,12 @@ fn reconstructed_build_lines_do_not_accumulate_fake_steps() {
         assert_eq!(steps.touched(), 2, "one build and one container step");
     });
     assert_eq!(rendered.len(), 2, "{rendered:?}");
-    assert!(rendered.iter().any(|line| line.starts_with("✓ built web (")));
-    assert!(rendered.iter().any(|line| line.starts_with("✓ started web (")));
+    assert!(rendered
+        .iter()
+        .any(|line| line.starts_with("✓ built web (")));
+    assert!(rendered
+        .iter()
+        .any(|line| line.starts_with("✓ started web (")));
 }
 
 #[test]
