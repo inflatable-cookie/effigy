@@ -812,11 +812,6 @@ fn own_managed_run(
     context: &mut ManagedContext<'_, '_, '_>,
     mut plan: effigy_managed::ManagedTaskPlan,
 ) -> Result<Option<String>, RunnerError> {
-    // Every process this run starts writes into a captured, line-oriented log
-    // - a TUI pane, or the `--headless` text relay - so each one is a pane for
-    // the children inside it. The front end decides only who renders those
-    // lines (effigy#729).
-    let pane_feedback = true;
     let preflight = context.preflight;
     let selection = context.selection;
     let token = owner
@@ -956,7 +951,11 @@ fn own_managed_run(
         Ok(plan)
     };
     // Rendered after the environment's own Prepare published its generation,
-    // so a container-routed command never names the one it removed.
+    // so a container-routed command never names the one it removed. Every
+    // process this run starts writes into a captured, line-oriented log - a TUI
+    // pane, or the `--headless` text relay - so each one is a pane for the
+    // children inside it; the front end decides only who renders those lines
+    // (effigy#729).
     let workloads = |_: &mut TaskRun, plan: effigy_managed::ManagedTaskPlan| {
         managed_workloads(
             context,
@@ -964,7 +963,7 @@ fn own_managed_run(
             &secrets,
             &token,
             container_repo_root.as_deref(),
-            pane_feedback,
+            true,
         )
     };
     managed_run::own(owner, owned, prepare, workloads)

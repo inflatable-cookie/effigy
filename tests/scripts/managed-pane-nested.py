@@ -363,7 +363,8 @@ def assert_bounded(label, summary, services, adjacent):
     assert summary["failed_lines"] == 1, detail
     assert b"EFFIGY" not in services, detail
     assert summary["frame_lines"] <= 8, detail
-    # A frame line is a start line here, so none may carry stale indentation.
+    # The pane's wait lines are its start lines here, so none may carry the
+    # stale indentation a redrawn frame pile leaves behind.
     frame_lines = [line for line in lines if b"elapsed" in line]
     assert frame_lines and all(not line.startswith(b" ") for line in frame_lines), detail
     assert summary["wait_step_lines"] <= 4, detail
@@ -459,6 +460,7 @@ def remove_tree(path):
 
 temp = Path(tempfile.mkdtemp(prefix="enested."))
 results = {}
+removed = False
 try:
     wide, wide_services, wide_adjacent = pane_scenario(
         temp, "wide", 120, 40, (evidence / "wide") if evidence else None
@@ -488,6 +490,10 @@ try:
     leaked = wait_until_quiet(temp, time.monotonic() + 30)
     assert not leaked, leaked
 finally:
-    remove_tree(temp)
-assert not temp.exists(), temp
+    # Remove this fixture's own directory only once nothing writes into it; a
+    # leaked process keeps its directory so the next reader can inspect it.
+    if not wait_until_quiet(temp, time.monotonic() + 10):
+        remove_tree(temp)
+        removed = True
+assert removed, temp
 print(json.dumps(results, indent=2))
