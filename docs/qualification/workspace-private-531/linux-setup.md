@@ -255,3 +255,12 @@ source-verified kernel hard limits, fresh signed Stage1 evidence, exact activati
 anchors and root installation authorization. No VM, SSH, account, service, build,
 proof or production effect ran here. E10/E13k/E14 stay held; measurement692 grants
 no longer stage. Source controls confer no native proof credit.
+
+
+### Diagnostic observation preparation
+
+The separate `qualification:linux:diagnostic-proof-only` entry prepares an observation handoff, not setup or placement admission. A future execution requires an actual Nucleus proof-only launch at the clean pinned preparation head, after a native operator GO; this source work grants no GO. The entry cannot authenticate Nucleus provenance against another process of the same user. A request or caller environment alone is not authority.
+
+A prospective request is printed by `effigy qualification:linux:diagnostic-proof-only -- plan ROOT ACTIVATION_ID HEAD`. Provision an owned canonical 0700 root under Stash scratch first. Save the exact JSON as an owned read-only request, hash it, and bind those bytes and inputs to the later Nucleus launch. The proof selector accepts only that request path and hash. It claims the activation exclusively, keeps a 600-second absolute budget including a 120-second report reserve, and records command streams and waited exits. The fixed probe is read-only; neither a successful transport nor the observation receipt qualifies Linux readiness.
+
+The observation retains pre- and post-config and descriptor bytes independently and accounts all descriptor extents without naming a writable top. It records observed package growth, which is not a hard quota. Changed or unavailable facts remain findings; writable-top and guest association remain unknown. A positively owned start gets only the budgeted graceful stop, with uncertainty left unknown. The separately signed fresh Stage1/setup admission and its supported-mechanism gates remain required and unchanged.
