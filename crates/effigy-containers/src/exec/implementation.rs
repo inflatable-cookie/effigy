@@ -666,6 +666,7 @@ mod legacy_admission_tests {
             declared: BTreeSet::from(["app".to_owned()]),
             canonical: checkout.to_path_buf(),
             scope_token: None,
+            staged_render: None,
         }
     }
 
@@ -803,6 +804,7 @@ mod legacy_admission_tests {
             declared: BTreeSet::from(["builder".to_owned()]),
             canonical: checkout.to_path_buf(),
             scope_token: None,
+            staged_render: None,
         }
     }
 
@@ -1140,9 +1142,14 @@ fn inspect_workspace_artifact_builder(
     let no_ports = workspace_builder_has_no_published_ports(record);
     // Scoped checkout labels locate the owner, while Compose may name its
     // immutable render directory. A supplied working directory must still
-    // belong to this checkout or one of its retained render generations.
+    // belong to this checkout, one of its retained render generations, or the
+    // checkout's own staged render that the profile can reach.
+    let staged = crate::artifact_source::policy_stage(policy).map_err(|error| {
+        ContainerExecError::refused("resolve workspace builder source", error.to_string())
+    })?;
     let working_dir_matches = builder_working_directory_is_owned(
         &ownership.canonical,
+        staged.as_ref(),
         record.and_then(|record| {
             record.pointer("/Config/Labels/com.docker.compose.project.working_dir")
         }),
@@ -1227,7 +1234,11 @@ fn workspace_builder_has_no_published_ports(record: Option<&serde_json::Value>) 
         .is_some_and(|ports| ports.is_empty())
 }
 
-fn builder_working_directory_is_owned(checkout: &Path, label: Option<&serde_json::Value>) -> bool {
+fn builder_working_directory_is_owned(
+    checkout: &Path,
+    staged: Option<&crate::artifact_source::StagePlan>,
+    label: Option<&serde_json::Value>,
+) -> bool {
     let Some(label) = label else { return true };
     let Some(path) = label
         .as_str()
@@ -1236,6 +1247,9 @@ fn builder_working_directory_is_owned(checkout: &Path, label: Option<&serde_json
         return false;
     };
     if path == checkout {
+        return true;
+    }
+    if staged.is_some_and(|plan| plan.owns_staged_render_directory(&path)) {
         return true;
     }
     if !path.is_dir() {
@@ -1483,6 +1497,10 @@ pub struct OwnershipContext {
     declared: BTreeSet<String>,
     canonical: std::path::PathBuf,
     scope_token: Option<String>,
+    /// The checkout's own staged Compose render, when this environment stages
+    /// one under the runtime profile's mount (effigy#715). A Compose container
+    /// started from it reports that directory as its project working directory.
+    staged_render: Option<crate::artifact_source::StagePlan>,
 }
 
 impl OwnershipContext {
@@ -1516,10 +1534,14 @@ impl OwnershipContext {
                 command: "verify selected scope token".to_owned(),
                 error,
             })?;
+        let staged_render = crate::artifact_source::policy_stage(policy).map_err(|error| {
+            ContainerExecError::refused("resolve owned Compose render", error.to_string())
+        })?;
         Ok(Self {
             declared,
             canonical,
             scope_token,
+            staged_render,
         })
     }
 
@@ -1556,11 +1578,17 @@ impl OwnershipContext {
             (Some(token), Some(value)) => !token.trim().is_empty() && value == token.trim(),
             _ => false,
         };
-        scope_matches
-            && checkout
-                .and_then(|path| Path::new(path).canonicalize().ok())
+        if !scope_matches {
+            return false;
+        }
+        let Some(path) = checkout.and_then(|path| Path::new(path).canonicalize().ok()) else {
+            return false;
+        };
+        path == self.canonical
+            || self
+                .staged_render
                 .as_ref()
-                == Some(&self.canonical)
+                .is_some_and(|plan| plan.owns_staged_render_directory(&path))
     }
 
     /// Verify every full-ID project row before teardown, including stopped

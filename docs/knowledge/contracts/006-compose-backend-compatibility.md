@@ -214,16 +214,31 @@ profile, the closure digest, the caller's `HEAD` and every file digest, so the
 producer can name exactly which caller inputs it snapshotted. A record naming
 another checkout, scope or project is refused before any write.
 
+A profile that cannot reach the checkout also cannot reach the Compose inputs:
+the render lives under the checkout's `.effigy/state/objects` and a
+`colima nerdctl -- compose` client reads `-f` files and the project directory
+from inside the VM. The same owned child therefore also carries the published
+render closure at `<stage>/render/<render-digest>`, byte-for-byte, and every
+activation and exec of that environment names those files. The render digest is
+unchanged, so admission, records and generation reuse are unaffected; one
+generation is kept at a time, and a superseded generation is removed as a
+directory or a link, never through one.
+
 Ordinary incremental builds keep one staged directory, so the caller's project
 identity and the builder's cargo target stay stable, while changed source is
-refreshed in place and source that is no longer tracked is removed. Before
+refreshed in place and source that is no longer tracked is removed. Staging and
+cleanup treat a link as an entry, never as a path to follow: a link in the
+staged tree is unlinked, its target is untouched, and a tracked directory that
+a stale alias occupies becomes the real directory the closure names. Before
 compiling, the build asks the container, through its verified immutable ID,
-which digests its `/workspace` carries; anything other than the recorded
-closure — an empty auto-created VM directory, another source, a missing file —
-refuses by name instead of becoming a build error. Only bytes the build's own
-producer receipt blesses for the requested target and the host's version are
-copied back into the checkout's artifact directory, atomically and in the order
-the existing freshness checks read them.
+whether `/workspace` carries the whole closure: the inventory inside the bound
+tree must carry the digest this build recorded, every listed file must match
+its digest, and the source-file count must equal the recorded count. An empty
+auto-created VM directory, another source, a changed or missing file and an
+unaccounted extra file all refuse by name instead of becoming a build error.
+Only bytes the build's own producer receipt blesses for the requested target
+and the host's version are copied back into the checkout's artifact directory,
+atomically and in the order the existing freshness checks read them.
 
 A builder retained from the pre-staging declaration binds the checkout's own
 unreachable path. The maintained activation replaces exactly that checkout's

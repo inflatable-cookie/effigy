@@ -205,7 +205,14 @@ fn creation_policy(
     publish(&resolved.0)?;
     stage(CreationPolicyStage::MountSources);
     super::mounts::prepare_container_mount_sources(&resolved.0)?;
-    Ok(resolved)
+    // A Compose client that runs inside the VM reads the inputs from the VM, so
+    // an environment whose checkout the profile cannot reach Compose-stages its
+    // published render into the owned mount (effigy#715). Every policy that
+    // reaches Compose through this entry gets the same staged paths, and the
+    // render digest is unchanged, so admission and records are unaffected.
+    let (mut policy, decisions) = resolved;
+    crate::artifact_source::stage_compose_render(&mut policy)?;
+    Ok((policy, decisions))
 }
 
 pub fn prepare_container_policy(

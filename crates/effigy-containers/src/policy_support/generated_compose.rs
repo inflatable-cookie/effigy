@@ -2031,4 +2031,91 @@ services:
             GeneratedComposeVolume::String(raw) if raw.starts_with(&checkout.display().to_string())
         ));
     }
+
+    /// The Compose inputs a VM-hosted client reads are staged into the owned
+    /// render directory, and the ownership check accepts exactly that directory
+    /// (effigy#715). This is the activation half of staged source: without it an
+    /// activation would still hand the VM a path under the checkout's own
+    /// `.effigy/state/objects`, which the release profile cannot reach.
+    #[test]
+    fn staged_compose_render_moves_the_inputs_into_the_owned_stage() {
+        let _lock = crate::test_env_lock();
+        let home = tempfile::tempdir().expect("private home");
+        let checkout = tempfile::tempdir().expect("private checkout");
+        let checkout = checkout.path().canonicalize().expect("canonical checkout");
+        let mount = home.path().join("release-source");
+        std::fs::create_dir_all(&mount).expect("mount");
+        std::fs::create_dir_all(home.path().join(".colima/effigy-release")).expect("profile");
+        std::fs::write(
+            home.path().join(".colima/effigy-release/colima.yaml"),
+            format!(
+                "mounts:\n  - location: {}\n    writable: true\n",
+                mount.display()
+            ),
+        )
+        .expect("profile config");
+        let previous = std::env::var_os("HOME");
+        std::env::set_var("HOME", home.path());
+        struct Restore(Option<std::ffi::OsString>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("HOME", value),
+                    None => std::env::remove_var("HOME"),
+                }
+            }
+        }
+        let _restore = Restore(previous);
+
+        let object = checkout.join(".effigy/state/objects/aa");
+        let compose_name = "checkout/.effigy/runtime/compose/stack.generated.compose.yml";
+        let override_name = "checkout/.effigy/runtime/dns/stack.compose.override.yml";
+        let files = std::collections::BTreeMap::from([
+            (
+                compose_name.to_owned(),
+                b"services:\n  app:\n    image: example\n".to_vec(),
+            ),
+            (override_name.to_owned(), b"services: {}\n".to_vec()),
+        ]);
+        let closure = effigy_kernel::objects::Closure::new(files).expect("closure");
+        let mut policy = crate::policy::model::test_policy(&checkout);
+        policy.name = "linux-release".to_owned();
+        policy.profile = "effigy-release".to_owned();
+        policy.project_name = "effigy-artifact-builder-v1-co-0123456789ab".to_owned();
+        policy.workspace_source = crate::artifact_source::WorkspaceSource::Staged;
+        policy.compose_files = vec![object.join(compose_name), object.join(override_name)];
+        policy.render = Some(crate::policy::render::Rendered {
+            closure: closure.clone(),
+            path: object.clone(),
+            shared: Vec::new(),
+            request: crate::policy::render::Request::Named(None),
+        });
+
+        let staged = crate::artifact_source::stage_compose_render(&mut policy)
+            .expect("staged render")
+            .expect("the profile does not reach this checkout");
+        assert_eq!(staged, policy.render.as_ref().unwrap().path);
+        assert!(staged.starts_with(&mount), "{}", staged.display());
+        for file in &policy.compose_files {
+            assert!(file.starts_with(&staged), "{}", file.display());
+            assert!(file.is_file(), "{}", file.display());
+        }
+        // The project directory Compose reports is the checkout's own staged
+        // render generation, never another environment's or the checkout's
+        // unreachable object directory.
+        let project_directory = policy.compose_files[0].parent().expect("parent");
+        let plan = crate::artifact_source::policy_stage(&policy)
+            .expect("plan")
+            .expect("staged");
+        assert!(plan.owns_staged_render_directory(project_directory));
+        assert!(!plan.owns_staged_render_directory(&object));
+        assert!(!plan.owns_staged_render_directory(
+            &checkout.join(".effigy/state/objects/bb/checkout/.effigy/runtime/compose")
+        ));
+        // Repeating it is idempotent and keeps the same generation.
+        let again = crate::artifact_source::stage_compose_render(&mut policy)
+            .expect("repeated staged render")
+            .expect("staged");
+        assert_eq!(again, staged);
+    }
 }

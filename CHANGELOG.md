@@ -385,14 +385,17 @@ During v0.x, MINOR bumps may include breaking changes.
   `workspace:linux:artifact` task snapshots the checkout's tracked working tree
   (uncommitted edits included, Effigy state, secret files, ignored/untracked
   paths and submodule contents excluded by rule) into an owned
-  `effigy-release`-profile child, binds that directory at `/workspace`, proves
-  through the container that the bound bytes are the recorded closure, and
-  copies only receipt-blessed artifact bytes, target and active version back
-  into the checkout atomically. The checkout's project identity, caches and
+  `effigy-release`-profile child, stages the published Compose inputs beside it
+  so the VM-hosted client can read them, binds that directory at `/workspace`,
+  proves through the container that the bound bytes are the whole recorded
+  closure (digest inventory plus source-file count), and copies only
+  receipt-blessed artifact bytes, target and active version back into the
+  checkout atomically. The checkout's project identity, caches and
   builder stay stable across incremental builds; changed source and deleted
   paths are refreshed in place; another checkout's staged source, an empty
   runtime-created directory, a missing or ambiguous profile mount, a symlink
-  and an unreadable tracked path all refuse by name before compiling. The
+  and an unreadable tracked path all refuse by name before compiling, while a
+  link planted in the staged tree is unlinked rather than followed out of it. The
   environment declares it with the new `workspace_source = "staged"` container
   option, which the private Linux builder sets; no VM, profile setting or mount
   is added or changed, and a release host still downloads.

@@ -26,6 +26,12 @@ pub const STAGE_ROOT_DIR: &str = "effigy-builder-source";
 pub const STAGE_SOURCE_DIR: &str = "source";
 /// The binding record beside the staged source, outside the bound tree.
 pub const STAGE_MANIFEST_FILE: &str = "stage.json";
+/// The owned directory one published Compose render generation is staged in, so
+/// a Compose client running inside the VM can read the files it is given.
+pub const STAGE_RENDER_DIR: &str = "render";
+/// The digest inventory inside the bound tree. It lists every staged file and
+/// its digest, so the container can prove the whole closure itself.
+pub const STAGE_INVENTORY_FILE: &str = ".effigy-builder-source.inventory";
 /// Schema of that record. A record naming another schema is not this one.
 pub const STAGE_SCHEMA: &str = "effigy.builder-source-stage.v1";
 /// The path components a staged closure never carries: Effigy's private state,
@@ -67,6 +73,37 @@ pub struct StagePlan {
 }
 
 impl StagePlan {
+    /// The owned directory that holds one published render generation's files.
+    pub fn render_directory(&self, digest: &str) -> PathBuf {
+        self.stage_root.join(STAGE_RENDER_DIR).join(digest)
+    }
+
+    /// The digest inventory of the bound closure, inside the bound tree.
+    pub fn inventory(&self) -> PathBuf {
+        self.source.join(STAGE_INVENTORY_FILE)
+    }
+
+    /// Whether `path` is a Compose project directory of this checkout's own
+    /// staged render: a digest generation of the owned render directory. A
+    /// Compose container started from the staged render reports this as its
+    /// working directory, and it is never another checkout's or another
+    /// environment's.
+    pub fn owns_staged_render_directory(&self, path: &Path) -> bool {
+        let Ok(relative) = path.strip_prefix(self.stage_root.join(STAGE_RENDER_DIR)) else {
+            return false;
+        };
+        let Some(generation) = relative
+            .components()
+            .next()
+            .and_then(|part| part.as_os_str().to_str())
+        else {
+            return false;
+        };
+        path.is_dir()
+            && generation.len() == 64
+            && generation.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }
+
     fn under(mount_root: &Path, project_name: &str) -> Self {
         let stage_root = mount_root.join(STAGE_ROOT_DIR).join(project_name.trim());
         Self {
@@ -163,6 +200,221 @@ pub fn policy_stage(
         &policy.project_name,
         policy.workspace_source,
     )
+}
+
+/// Move this environment's Compose inputs into the owned stage so the client
+/// that runs inside the VM can read them.
+///
+/// A `colima nerdctl -- compose` client reads `-f` files and the project
+/// directory from inside the VM. Render objects live under the checkout's
+/// `.effigy/state/objects`, which a profile that shares only its own mount
+/// cannot reach, so a staged source alone would still fail before the build.
+/// The published closure's own bytes are written into
+/// `<stage>/render/<digest>`, the compose files are repointed there, and the
+/// rest of the policy (project identity, labels, world-readable paths, bind
+/// sources) is untouched. Nothing is published to the environment generation:
+/// the digest is unchanged, so admission, records and reuse are unaffected.
+///
+/// `None` means nothing was staged: the environment does not declare staging,
+/// or the profile reaches the checkout, and today's paths stay in force.
+pub fn stage_compose_render(
+    policy: &mut EffectiveContainerPolicy,
+) -> Result<Option<PathBuf>, ContainerPolicyError> {
+    let Some(plan) = policy_stage(policy)? else {
+        return Ok(None);
+    };
+    let Some(render) = policy.render.clone() else {
+        return Err(refusal(format!(
+            "container `{}` declares `workspace_source = \"staged\"`, but its Compose inputs are not a rendered closure; a staged source requires the generated render",
+            policy.name
+        )));
+    };
+    if !render.shared.is_empty() {
+        return Err(refusal(format!(
+            "container `{}` declares `workspace_source = \"staged\"` with shared services; a staged Compose render cannot carry a shared render",
+            policy.name
+        )));
+    }
+    let digest = render.closure.digest().to_owned();
+    let directory = plan.render_directory(&digest);
+    write_render_closure(&plan, &directory, &render.closure)?;
+    // One generation at a time: the render is content-addressed and the current
+    // digest names the files every activation and exec of this environment use.
+    prune_other_render_generations(&plan, &digest)?;
+    let mut compose_files = Vec::with_capacity(render.closure.files().len().max(1));
+    for file in &policy.compose_files {
+        let relative = file.strip_prefix(&render.path).map_err(|_| {
+            refusal(format!(
+                "container `{}` has a Compose input `{}` outside its rendered closure `{}`",
+                policy.name,
+                file.display(),
+                render.path.display()
+            ))
+        })?;
+        let staged = directory.join(relative);
+        if !staged.is_file() {
+            return Err(refusal(format!(
+                "staged Compose input `{}` is missing from the owned render `{}`",
+                staged.display(),
+                directory.display()
+            )));
+        }
+        compose_files.push(staged);
+    }
+    if compose_files.is_empty() {
+        return Err(refusal(format!(
+            "container `{}` declares `workspace_source = \"staged\"` with no Compose input to stage",
+            policy.name
+        )));
+    }
+    policy.compose_files = compose_files;
+    if let Some(render) = policy.render.as_mut() {
+        render.path = directory.clone();
+    }
+    Ok(Some(directory))
+}
+
+/// Write the render closure's bytes into the owned directory, then prove the
+/// directory carries them. An existing file with other bytes is refused rather
+/// than replaced: the digest names exactly one generation.
+fn write_render_closure(
+    plan: &StagePlan,
+    directory: &Path,
+    closure: &effigy_kernel::objects::Closure,
+) -> Result<(), ContainerPolicyError> {
+    ensure_owned_directory(&plan.stage_root.join(STAGE_RENDER_DIR))?;
+    ensure_owned_directory(directory)?;
+    for (name, bytes) in closure.files() {
+        let relative = Path::new(name);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(refusal(format!(
+                "staged Compose render name `{name}` escapes the owned render directory"
+            )));
+        }
+        let target = directory.join(relative);
+        ensure_owned_directory(target.parent().unwrap_or(directory))?;
+        match std::fs::symlink_metadata(&target) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                std::fs::remove_file(&target).map_err(|error| {
+                    refusal(format!(
+                        "cannot replace the unowned staged Compose input `{}`: {error}",
+                        target.display()
+                    ))
+                })?;
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(refusal(format!(
+                    "cannot inspect the staged Compose input `{}`: {error}",
+                    target.display()
+                )))
+            }
+        }
+        if let Ok(existing) = std::fs::read(&target) {
+            if existing == *bytes {
+                continue;
+            }
+            return Err(refusal(format!(
+                "staged Compose input `{}` already carries other bytes; the render generation is not reused",
+                target.display()
+            )));
+        }
+        let temporary = target.with_extension(format!("staging-{}", std::process::id()));
+        std::fs::write(&temporary, bytes).map_err(|error| {
+            refusal(format!(
+                "cannot write the staged Compose input `{}`: {error}",
+                temporary.display()
+            ))
+        })?;
+        std::fs::rename(&temporary, &target).map_err(|error| {
+            refusal(format!(
+                "cannot publish the staged Compose input `{}`: {error}",
+                target.display()
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+/// Keep exactly the generation this environment binds now.
+fn prune_other_render_generations(
+    plan: &StagePlan,
+    current: &str,
+) -> Result<(), ContainerPolicyError> {
+    let root = plan.stage_root.join(STAGE_RENDER_DIR);
+    let entries = match std::fs::read_dir(&root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(refusal(format!(
+                "cannot read the owned render directory `{}`: {error}",
+                root.display()
+            )))
+        }
+    };
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            refusal(format!(
+                "cannot read the owned render directory `{}`: {error}",
+                root.display()
+            ))
+        })?;
+        if entry.file_name().to_string_lossy() == current {
+            continue;
+        }
+        // A link is removed as a link. Recursion never follows one, so a stale
+        // alias cannot point this cleanup outside the owned directory.
+        match entry.file_type() {
+            Ok(file_type) if file_type.is_dir() => std::fs::remove_dir_all(entry.path()),
+            _ => std::fs::remove_file(entry.path()),
+        }
+        .map_err(|error| {
+            refusal(format!(
+                "cannot remove the superseded staged render `{}`: {error}",
+                entry.path().display()
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+/// Create one owned directory, refusing to follow a link that already sits in
+/// its place. Cleanup and staging never traverse an alias.
+fn ensure_owned_directory(directory: &Path) -> Result<(), ContainerPolicyError> {
+    if let Ok(metadata) = std::fs::symlink_metadata(directory) {
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            std::fs::remove_file(directory).map_err(|error| {
+                refusal(format!(
+                    "cannot replace the unowned staged directory `{}`: {error}",
+                    directory.display()
+                ))
+            })?;
+        }
+    }
+    std::fs::create_dir_all(directory).map_err(|error| {
+        refusal(format!(
+            "cannot create the staged directory `{}`: {error}",
+            directory.display()
+        ))
+    })?;
+    let metadata = std::fs::symlink_metadata(directory).map_err(|error| {
+        refusal(format!(
+            "cannot inspect the staged directory `{}`: {error}",
+            directory.display()
+        ))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(refusal(format!(
+            "the staged directory `{}` is not a directory of its own",
+            directory.display()
+        )));
+    }
+    Ok(())
 }
 
 /// The file a staged closure staged for one repo-relative path.

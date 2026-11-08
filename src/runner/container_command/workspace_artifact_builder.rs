@@ -89,6 +89,11 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     // labels. Establish them before taking the execution-only source snapshot;
     // this does not publish or replace the retained environment generation.
     policy = effigy_containers::policy::render::prepare_inputs(&policy)?;
+    // The Compose client runs inside the VM for this backend, so its inputs must
+    // be inside the mount too: the published render closure is staged beside the
+    // source and every Compose plan below names those files. The render digest is
+    // unchanged, so this neither publishes nor supersedes the environment.
+    effigy_containers::artifact_source::stage_compose_render(&mut policy)?;
     // The builder's profile is a managed Colima profile like any other
     // environment: create it when the user deleted it, start it when stopped
     // and restart it when its managed settings drifted. A runtime inventory
@@ -269,33 +274,44 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     Ok(())
 }
 
-/// Ask the builder, through its verified immutable ID, which bytes its
-/// `/workspace` carries. The answer must be exactly the staged closure this
-/// build recorded.
+/// Ask the builder, through its verified immutable ID, whether its `/workspace`
+/// carries exactly the staged closure this build recorded.
+///
+/// The container reads the inventory that lives inside the bound tree, checks
+/// the inventory's own digest (known here), verifies every listed file's digest
+/// and counts the source files it can see. An empty VM directory, a bind of some
+/// other source, a changed or missing file and an unaccounted extra file all
+/// fail by name before anything is compiled.
 fn verify_staged_source_in_builder(
     repo_root: &Path,
     policy: &effigy_containers::EffectiveContainerPolicy,
     binding: &effigy_containers::exec::VerifiedComposeContainer,
     staged: &workspace_artifact_source::StagedSource,
 ) -> Result<(), RunnerError> {
-    let mut expected = Vec::new();
-    for sentinel in ["Cargo.toml", "Cargo.lock"] {
-        if let Some(file) = staged.manifest.files.get(sentinel) {
-            expected.push((sentinel, file.sha256.clone()));
-        }
-    }
-    if expected.is_empty() {
-        return Err(RunnerError::task_invocation(
-            "the staged source records no build sentinel, so the builder's bind cannot be proven",
-        ));
-    }
-    let mut script = String::from("set -eu; cd /workspace; ");
-    for (path, _) in &expected {
-        script.push_str(&format!(
-            "test -f {path}; sha256sum {path} | cut -d' ' -f1; ",
-            path = effigy_core::shell::shell_quote(path)
-        ));
-    }
+    let expected_files = staged.manifest.files.len();
+    let script = format!(
+        r#"set -eu
+cd /workspace
+inventory={inventory}
+[ -f "$inventory" ] || {{ echo "missing-inventory"; exit 41; }}
+[ "$(sha256sum "$inventory" | cut -d' ' -f1)" = {inventory_digest} ] || {{ echo "inventory-mismatch"; exit 42; }}
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  sum=$(printf '%s' "$line" | cut -d' ' -f1)
+  path=$(printf '%s' "$line" | cut -d' ' -f3-)
+  got=$(sha256sum -- "$path" | cut -d' ' -f1)
+  [ "$got" = "$sum" ] || {{ echo "digest-mismatch $path"; exit 43; }}
+done < "$inventory"
+count=$(find . -path ./.effigy -prune -o -path "./$inventory" -prune -o -type f -print | wc -l | tr -d ' ')
+[ "$count" = {expected_files} ] || {{ echo "file-count $count"; exit 44; }}
+echo source-closure-verified
+"#,
+        inventory = effigy_core::shell::shell_quote(
+            effigy_containers::artifact_source::STAGE_INVENTORY_FILE
+        ),
+        inventory_digest = effigy_core::shell::shell_quote(&staged.inventory_digest),
+        expected_files = expected_files,
+    );
     let mut args = ["exec", "-T", "-w", "/workspace", "builder"]
         .map(OsString::from)
         .to_vec();
@@ -310,25 +326,20 @@ fn verify_staged_source_in_builder(
     let output = crate::runner::exec_command::run_verified_compose_exec_plan(
         policy, &plan, binding, true, None, None,
     )?;
-    if !output.status.success() {
-        return Err(RunnerError::task_invocation(format!(
-            "the Linux builder cannot read the staged source it was given at /workspace (status {}); nothing was compiled",
-            output.status
-        )));
+    let reported = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if output.status.success() && reported == "source-closure-verified" {
+        return Ok(());
     }
-    let reported = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    for (index, (path, digest)) in expected.iter().enumerate() {
-        if reported.get(index) != Some(digest) {
-            return Err(RunnerError::task_invocation(format!(
-                "the Linux builder's /workspace does not carry the staged `{path}` this build recorded (reported `{}`, expected `{digest}`); nothing was compiled",
-                reported.get(index).map(String::as_str).unwrap_or("nothing")
-            )));
-        }
-    }
-    Ok(())
+    let cause = if reported.is_empty() {
+        format!("status {}", output.status)
+    } else {
+        format!(
+            "status {}: {}",
+            output.status,
+            reported.lines().next().unwrap_or_default()
+        )
+    };
+    Err(RunnerError::task_invocation(format!(
+        "the Linux builder's /workspace does not carry the {expected_files} staged source files this build recorded ({cause}); nothing was compiled"
+    )))
 }

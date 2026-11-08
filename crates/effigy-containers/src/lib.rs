@@ -18,8 +18,8 @@ pub mod session;
 mod workspace;
 
 pub use artifact_source::{
-    policy_stage, resolve_stage, StageBinding, StageManifest, StagePlan, StagedFile,
-    WorkspaceSource,
+    policy_stage, resolve_stage, stage_compose_render, StageBinding, StageManifest, StagePlan,
+    StagedFile, WorkspaceSource,
 };
 pub use effigy_core::host_alias::HostAlias;
 pub use manager::*;

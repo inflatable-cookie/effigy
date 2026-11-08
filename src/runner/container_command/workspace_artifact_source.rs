@@ -18,7 +18,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use effigy_containers::artifact_source::{
-    StageBinding, StageManifest, StagePlan, StagedFile, STAGE_EXCLUDED_PREFIXES, STAGE_SCHEMA,
+    StageBinding, StageManifest, StagePlan, StagedFile, STAGE_EXCLUDED_PREFIXES,
+    STAGE_INVENTORY_FILE, STAGE_SCHEMA,
 };
 
 use crate::runner::error::RunnerError;
@@ -30,6 +31,9 @@ pub(in crate::runner) struct StagedSource {
     /// Whether this staging wrote or removed anything. An unchanged closure
     /// keeps the builder's warm cargo target and needs no rewrite.
     pub changed: bool,
+    /// Digest of the inventory file inside the bound tree, and the number of
+    /// source files it lists. The container proves both before compiling.
+    pub inventory_digest: String,
 }
 
 fn refusal(reason: impl std::fmt::Display) -> RunnerError {
@@ -57,12 +61,7 @@ pub(in crate::runner) fn stage(
         scope.as_deref(),
     )?;
     let caller = binding.caller.clone();
-    std::fs::create_dir_all(&plan.stage_root).map_err(|error| {
-        refusal(format!(
-            "cannot create the owned staged source directory `{}`: {error}",
-            plan.stage_root.display()
-        ))
-    })?;
+    ensure_owned_directory(&plan.stage_root)?;
     let previous = match std::fs::symlink_metadata(&plan.manifest) {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err(refusal(format!(
@@ -88,7 +87,7 @@ pub(in crate::runner) fn stage(
 
     let closure = workspace_closure(&caller)?;
     let mut changed = false;
-    prepare_source_directory(plan)?;
+    ensure_owned_directory(&plan.source)?;
     // Write the closure, then remove what it no longer names. The staged tree is
     // this checkout's own build source, so a deleted or renamed file must not
     // survive as stale input.
@@ -116,13 +115,9 @@ pub(in crate::runner) fn stage(
             )));
         }
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                refusal(format!(
-                    "cannot create staged source directory `{}`: {error}",
-                    parent.display()
-                ))
-            })?;
+            ensure_owned_directory_chain(&plan.source, parent)?;
         }
+        replace_unowned_entry(&target)?;
         write_file_atomically(&target, &bytes, file.executable)?;
         changed = true;
     }
@@ -156,19 +151,57 @@ pub(in crate::runner) fn stage(
         )?;
         changed = true;
     }
+    // The inventory names every staged file and its digest inside the bound
+    // tree, so the container can prove the whole closure itself rather than two
+    // sentinels. It is written last: a crash leaves a closure without a usable
+    // inventory rather than an inventory that describes absent bytes.
+    let inventory = inventory_bytes(&manifest);
+    replace_unowned_entry(&plan.inventory())?;
+    if std::fs::read(plan.inventory()).ok().as_deref() != Some(inventory.as_slice()) {
+        write_file_atomically(&plan.inventory(), &inventory, false)?;
+        changed = true;
+    }
+    // Prove the whole staged closure from disk, not just the sentinels: every
+    // recorded digest, no unaccounted file, and the recorded digest count.
     verify_staged(plan, &manifest)?;
-    Ok(StagedSource { manifest, changed })
+    Ok(StagedSource {
+        manifest,
+        changed,
+        inventory_digest: sha256_hex(&inventory),
+    })
 }
 
-/// The staged tree must still carry the bytes the record names. The whole tree
-/// is not rehashed: the sentinels a build always compiles decide, and the guest
-/// re-proves them through the real bind before the build starts.
+/// The inventory the container reads: one `sha256  path` line per staged file,
+/// in path order, exactly as `sha256sum` prints them.
+fn inventory_bytes(manifest: &StageManifest) -> Vec<u8> {
+    let mut body = String::new();
+    for (relative, file) in &manifest.files {
+        body.push_str(&file.sha256);
+        body.push_str("  ");
+        body.push_str(relative);
+        body.push('\n');
+    }
+    body.into_bytes()
+}
+
+/// The staged tree must carry exactly the bytes the record names. Every file is
+/// hashed and the tree is walked for unaccounted source, so a stale, missing or
+/// aliased input is refused here rather than compiled.
 fn verify_staged(plan: &StagePlan, manifest: &StageManifest) -> Result<(), RunnerError> {
-    for sentinel in ["Cargo.toml", "Cargo.lock"] {
-        let Some(expected) = manifest.files.get(sentinel) else {
-            continue;
-        };
-        let path = plan.source.join(sentinel);
+    for (relative, expected) in &manifest.files {
+        let path = plan.source.join(relative);
+        let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
+            refusal(format!(
+                "staged source `{}` is missing or unreadable: {error}",
+                path.display()
+            ))
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(refusal(format!(
+                "staged source `{}` is not a regular file; the closure is unproven",
+                path.display()
+            )));
+        }
         let bytes = std::fs::read(&path).map_err(|error| {
             refusal(format!(
                 "staged source `{}` is unreadable: {error}",
@@ -182,66 +215,149 @@ fn verify_staged(plan: &StagePlan, manifest: &StageManifest) -> Result<(), Runne
             )));
         }
     }
-    Ok(())
-}
-
-/// A staged source root is written where nothing but the bound tree has lived:
-/// the plan always names a dedicated directory, so an unexpected entry means
-/// this environment's ownership is unproven.
-fn prepare_source_directory(plan: &StagePlan) -> Result<(), RunnerError> {
-    std::fs::create_dir_all(&plan.source).map_err(|error| {
-        refusal(format!(
-            "cannot create the staged source `{}`: {error}",
+    let accounted = manifest.files.len();
+    let found = count_source_files(&plan.source, "")?;
+    if found != accounted {
+        return Err(refusal(format!(
+            "the staged source `{}` carries {found} files, not the {accounted} this build recorded; nothing was bound",
             plan.source.display()
-        ))
-    })?;
+        )));
+    }
     Ok(())
 }
 
-fn remove_unaccounted(
-    source: &Path,
-    files: &BTreeMap<String, StagedFile>,
-) -> Result<bool, RunnerError> {
-    let mut removed = false;
-    for entry in std::fs::read_dir(source).map_err(|error| {
+/// Every staged source file, excluding the build's own `.effigy` output and the
+/// inventory itself. Links are counted as entries and never followed.
+fn count_source_files(directory: &Path, prefix: &str) -> Result<usize, RunnerError> {
+    let mut count = 0;
+    for entry in std::fs::read_dir(directory).map_err(|error| {
         refusal(format!(
             "cannot read the staged source `{}`: {error}",
-            source.display()
+            directory.display()
         ))
     })? {
         let entry = entry.map_err(|error| {
             refusal(format!(
                 "cannot read the staged source `{}`: {error}",
-                source.display()
+                directory.display()
             ))
         })?;
         let name = entry.file_name().to_string_lossy().replace('\\', "/");
-        // The build's own output (cargo target and artifacts) is Effigy's, not
-        // the caller's source: it stays, and it is never handed back as source.
-        if name == ".effigy" {
+        let relative = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        if relative == ".effigy" || relative == STAGE_INVENTORY_FILE {
             continue;
         }
-        let metadata = entry.metadata().map_err(|error| {
+        let file_type = entry.file_type().map_err(|error| {
             refusal(format!(
                 "cannot inspect staged entry `{}`: {error}",
                 entry.path().display()
             ))
         })?;
-        if metadata.is_dir() {
-            removed |= remove_unaccounted_tree(&entry.path(), &name, files)?;
-            continue;
-        }
-        if !files.contains_key(&name) {
-            std::fs::remove_file(entry.path()).map_err(|error| {
-                refusal(format!(
-                    "cannot remove stale staged source `{}`: {error}",
-                    entry.path().display()
-                ))
-            })?;
-            removed = true;
+        if file_type.is_dir() {
+            count += count_source_files(&entry.path(), &relative)?;
+        } else {
+            count += 1;
         }
     }
-    Ok(removed)
+    Ok(count)
+}
+
+/// Create one staged directory of this environment's own. A link in its place
+/// is removed as a link — never followed, so nothing outside the owned tree is
+/// touched — and the result must be a real directory.
+fn ensure_owned_directory(directory: &Path) -> Result<(), RunnerError> {
+    if let Ok(metadata) = std::fs::symlink_metadata(directory) {
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            std::fs::remove_file(directory).map_err(|error| {
+                refusal(format!(
+                    "cannot replace the unowned staged directory `{}`: {error}",
+                    directory.display()
+                ))
+            })?;
+        }
+    }
+    std::fs::create_dir_all(directory).map_err(|error| {
+        refusal(format!(
+            "cannot create the staged directory `{}`: {error}",
+            directory.display()
+        ))
+    })?;
+    let metadata = std::fs::symlink_metadata(directory).map_err(|error| {
+        refusal(format!(
+            "cannot inspect the staged directory `{}`: {error}",
+            directory.display()
+        ))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(refusal(format!(
+            "the staged directory `{}` is not a directory of its own",
+            directory.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Create the staged directories between the bound root and `target`, one
+/// component at a time. An existing link is removed as a link, so creating a
+/// directory can never reach through an alias into another tree.
+fn ensure_owned_directory_chain(root: &Path, target: &Path) -> Result<(), RunnerError> {
+    let relative = target.strip_prefix(root).map_err(|_| {
+        refusal(format!(
+            "staged directory `{}` is outside the bound source `{}`",
+            target.display(),
+            root.display()
+        ))
+    })?;
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(refusal(format!(
+                "staged directory `{}` is not a plain path below `{}`",
+                target.display(),
+                root.display()
+            )));
+        };
+        current.push(name);
+        ensure_owned_directory(&current)?;
+    }
+    Ok(())
+}
+
+/// Remove an entry that must not be there as a link or a directory before this
+/// invocation writes its file in its place. A link is unlinked, never followed.
+fn replace_unowned_entry(path: &Path) -> Result<(), RunnerError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            std::fs::remove_file(path).map_err(|error| {
+                refusal(format!(
+                    "cannot remove the unowned staged link `{}`: {error}",
+                    path.display()
+                ))
+            })?;
+        }
+        Ok(metadata) if metadata.is_dir() => {
+            return Err(refusal(format!(
+                "staged path `{}` is a directory where this build writes a file",
+                path.display()
+            )));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Remove staged source the closure no longer names. The tree is this
+/// checkout's own build source, so a deleted or renamed file must not survive
+/// as stale input; a link is removed as a link and never traversed.
+fn remove_unaccounted(
+    source: &Path,
+    files: &BTreeMap<String, StagedFile>,
+) -> Result<bool, RunnerError> {
+    remove_unaccounted_tree(source, "", files)
 }
 
 fn remove_unaccounted_tree(
@@ -250,45 +366,55 @@ fn remove_unaccounted_tree(
     files: &BTreeMap<String, StagedFile>,
 ) -> Result<bool, RunnerError> {
     let mut removed = false;
-    let mut kept = false;
     for entry in std::fs::read_dir(directory).map_err(|error| {
         refusal(format!(
-            "cannot read staged directory `{}`: {error}",
+            "cannot read staged source `{}`: {error}",
             directory.display()
         ))
     })? {
         let entry = entry.map_err(|error| {
             refusal(format!(
-                "cannot read staged directory `{}`: {error}",
+                "cannot read staged source `{}`: {error}",
                 directory.display()
             ))
         })?;
-        let name = format!(
-            "{prefix}/{}",
-            entry.file_name().to_string_lossy().replace('\\', "/")
-        );
-        let metadata = entry.metadata().map_err(|error| {
+        let name = entry.file_name().to_string_lossy().replace('\\', "/");
+        let relative = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        // The build's own output (cargo target and artifacts) is Effigy's, not
+        // the caller's source: it stays, and it is never handed back as source.
+        if prefix.is_empty() && (name == ".effigy" || name == STAGE_INVENTORY_FILE) {
+            continue;
+        }
+        let file_type = entry.file_type().map_err(|error| {
             refusal(format!(
                 "cannot inspect staged entry `{}`: {error}",
                 entry.path().display()
             ))
         })?;
-        if metadata.is_dir() {
-            if remove_unaccounted_tree(&entry.path(), &name, files)? {
+        // `file_type` is the entry's own kind: a symlink here is never a
+        // directory, so recursion cannot follow an alias out of the tree.
+        if file_type.is_dir() && !file_type.is_symlink() {
+            if remove_unaccounted_tree(&entry.path(), &relative, files)? {
                 removed = true;
             }
-            if std::fs::read_dir(entry.path())
+            let empty = std::fs::read_dir(entry.path())
                 .map(|mut entries| entries.next().is_none())
-                .unwrap_or(false)
-            {
-                let _ = std::fs::remove_dir(entry.path());
-                continue;
+                .unwrap_or(false);
+            if empty {
+                std::fs::remove_dir(entry.path()).map_err(|error| {
+                    refusal(format!(
+                        "cannot remove empty staged directory `{}`: {error}",
+                        entry.path().display()
+                    ))
+                })?;
             }
-            kept = true;
             continue;
         }
-        if files.contains_key(&name) {
-            kept = true;
+        if files.contains_key(&relative) {
             continue;
         }
         std::fs::remove_file(entry.path()).map_err(|error| {
@@ -298,14 +424,6 @@ fn remove_unaccounted_tree(
             ))
         })?;
         removed = true;
-    }
-    if !kept {
-        std::fs::remove_dir(directory).map_err(|error| {
-            refusal(format!(
-                "cannot remove empty staged directory `{}`: {error}",
-                directory.display()
-            ))
-        })?;
     }
     Ok(removed)
 }
