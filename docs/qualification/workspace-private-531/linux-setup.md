@@ -133,7 +133,7 @@ All three backend inputs/GO-index stay **UNARMED** pending actual GOs, accepted
 placement and planner-bound aggregate execution. Consumer/install/production/
 merge authority is unchanged.
 
-## Setup adapter status (source-only, revision 9)
+## Setup adapter status (source-only, revision 10)
 
 Pure controls, no effect. Files: `linux_setup.py` (Stage1 entry bound to the registered
 home, admission verifiers, setup plan, executor, host credit, `ssh_argv`),
@@ -143,6 +143,16 @@ contained stdin transfer), `linux_receipts.py` (OpenSSH-signed admission receipt
 `linux-setup-probe.sh` (read-only probe, hash bound), `linux-setup-stages.json` (ledger
 checked against the plan), `linux_setup_tests.py` (161 controls, including real-process flows;
 `test:qualification:linux-setup`).
+
+Preparation request hashing and Linux guest placement share the explicit
+`preparation_requests.REQUIRED_MODULE_NAMES` inventory. It covers the staged
+preparation modules and the setup adapter's local imports, including
+`linux_disk_identity.py`, transfer and receipt helpers, Stage1, and the
+observation caller. Requests hash each exact source file; placement requires
+the same exact guest/host map and current byte hashes. The isolated import
+control stages only this declared closure, and confirms the setup adapter
+cannot import when the disk identity parser is omitted. This closes a source
+packaging gap; it does not activate a request or establish any setup gate.
 
 - **Gate and positive path.** The payload is wrapped so it blocks on a FIFO in the stage
   directory before running. The outside monitor samples the unit while it is loaded and

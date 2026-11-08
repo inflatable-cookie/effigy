@@ -1052,12 +1052,16 @@ class PlacementMapChecks(unittest.TestCase):
 
     def test_a_complete_exact_map_has_no_gaps(self):
         modules, _ = setup.required_placements({})
+        placed_names = {Path(host).name for _, host in modules}
+        self.assertEqual(set(setup.REQUIRED_MODULE_NAMES), placed_names - set(setup.REQUIRED_DRIVER_NAMES))
+        self.assertIn('linux_disk_identity.py', [Path(host).name for _, host in modules])
         self.assertEqual(setup.placement_gaps(self.pairs(), modules), [])
 
     def test_missing_unexpected_mismatched_and_unbound_placements_each_refuse(self):
         modules, _ = setup.required_placements({})
         good = self.pairs()
         self.assertIn('incomplete', ' '.join(setup.placement_gaps(good[1:], modules)))
+        self.assertIn('duplicate', ' '.join(setup.placement_gaps(good + [dict(good[0])], modules)))
         self.assertIn('unexpected', ' '.join(setup.placement_gaps(good + [{'guest_path': setup.BASE + '/x', 'host_path': 'y',
                                                                          'sha256': 'z' * 64}], modules)))
         bad_sha = [dict(good[0], sha256='0' * 64)] + good[1:]

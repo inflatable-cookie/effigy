@@ -69,11 +69,7 @@ ARCHIVE_NAME = 'inputs/archive.tar'
 ARCHIVE_SHA256 = '03df0b512b7536467cfb44f131619543d4e561e09aee29cab71be12445bfe867'   # candidate H (§6.3)
 ARCHIVE_B_SHA256 = '69dfda56c8be8e46fa0c6dea5224b519cfc55f471ada2945545d17c9c53eda83'  # old source B (§6.3)
 # Repository files every guest run needs. The guest copies sit under BASE/driver with their names.
-REQUIRED_MODULE_NAMES = ('preparation_requests.py', 'preparation_stage.py', 'preparation_resources.py',
-                         'preparation_guest.py', 'preparation_controls.py', 'preparation_observations.py',
-                         'preparation_placement.py', 'preparation_archive.py', 'preparation_nextest.py',
-                         'preparation_metadata.py', 'linux_setup.py', 'linux_supervisor.py',
-                         'linux_transfer.py', 'linux_receipts.py', 'linux_stage1.py', 'linux_observation_caller.py')
+REQUIRED_MODULE_NAMES = preparation_requests.REQUIRED_MODULE_NAMES
 REQUIRED_DRIVER_NAMES = ('common.py', 'runtime.py', 'probe.py')
 KEY_LIFETIME_SECONDS = 86400
 PROBE = Path(__file__).resolve().parent / 'linux-setup-probe.sh'
