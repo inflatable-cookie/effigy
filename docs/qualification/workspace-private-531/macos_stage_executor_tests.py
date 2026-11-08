@@ -2050,12 +2050,15 @@ class ProgramBindingTests(Fixture):
             drifted = copy.read_bytes() + b'\n'
             copy.write_bytes(drifted)
             calls = []
+            # Move the pin with the changed bytes so the activation input binding alone detects drift.
             with mock.patch.object(ex, 'GUEST_CONTEXT_SHA256', hashlib.sha256(drifted).hexdigest()):
-                with self.assertRaises(ex.Refusal):
+                with self.assertRaises(ex.Refusal) as caught:
                     ex.execute_stage('C2', self.bindings, activation_path=path, activation_sha256=sha,
                                      evidence_root=self.evidence, manifest_path=ex.MANIFEST_PATH,
                                      transport=self.routed({}, calls), utc_now=NOW)
+            self.assertIn('input drift', str(caught.exception))
             self.assertEqual(calls, [])
+            self.assertEqual(os.listdir(self.evidence), [])
             self.assertFalse(os.path.exists(self.tmp + '/claims/act-drift-0001.claim'))
 
     def test_a_changed_pin_refuses_before_any_plan_or_dispatch(self):
