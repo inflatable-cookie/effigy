@@ -108,7 +108,7 @@ pub enum RouteSource {
 }
 
 /// The route portion of one committed endpoint snapshot.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RouteTable {
     /// Kernel publication fence of this snapshot; zero for uncommitted fixtures.
     #[serde(skip)]

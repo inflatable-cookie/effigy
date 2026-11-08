@@ -44,6 +44,19 @@ const IDLE_SHUTDOWN_DELAY: Duration = Duration::from_secs(5 * 60);
 /// How often the daemon drops cached certificates no route names.
 const CERT_PRUNE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
+/// How often the daemon re-observes the committed endpoint snapshot when no
+/// filesystem event arrives (effigy#716). A missed notification must not strand
+/// a route: one Store read at this interval is far below the daemon's other
+/// timers and bounds a missed event's visibility to a few seconds.
+const ROUTE_RECONCILE_INTERVAL: Duration = Duration::from_secs(5);
+
+/// The first retry delay after a failed re-observation; each consecutive
+/// failure doubles it up to [`ROUTE_RECONCILE_MAX_RETRY`]. A refused read is
+/// transient (a commit in flight, a gate held), so it is retried rather than
+/// treated as an empty table.
+const ROUTE_RECONCILE_RETRY: Duration = Duration::from_secs(1);
+const ROUTE_RECONCILE_MAX_RETRY: Duration = Duration::from_secs(30);
+
 /// Waits out one idle delay. Production sleeps; tests drive the clock.
 type IdleWait = Arc<dyn Fn(Duration) + Send + Sync>;
 
@@ -55,6 +68,32 @@ struct IdleShutdown {
     wait: IdleWait,
     /// Gateway state directory that holds the operator log for the stop record.
     state_dir: PathBuf,
+}
+
+/// Reads one committed route snapshot. The daemon reads the endpoint Store;
+/// tests substitute a controlled seam.
+type RouteRead = Arc<dyn Fn(&Path) -> Result<RouteTable, GatewayError> + Send + Sync>;
+
+/// What one application of an observed snapshot did to the live table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReloadApplication {
+    /// The observation is the applied snapshot: no fence, cache or idle change.
+    Unchanged,
+    /// The applied table changed, with the idle-stop action that change needs.
+    Changed(IdleShutdownAction),
+}
+
+/// What one observation of the committed snapshot did, including the idle stop
+/// it armed. The timer handle is returned so a caller can wait for its decision.
+#[derive(Debug)]
+enum ReloadOutcome {
+    /// The observed snapshot is the applied one: nothing was applied.
+    Unchanged,
+    /// A changed snapshot is now the applied table.
+    Applied {
+        /// The idle stop this change armed, when one was armed.
+        idle_timer: Option<std::thread::JoinHandle<()>>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1358,19 +1397,28 @@ async fn run_gateway_with_cancel(
 
     // Resolver and alias installation belongs exclusively to gateway setup.
     // Route reloads update the table and clear the DNS cache without host mutations.
-    let watcher_table = Arc::clone(&shared_table);
-    let watcher_cache = Arc::clone(&dns_cache);
     let watcher_path = runtime_config.route_table_path.clone();
-    let watcher_config = runtime_config.clone();
-    let idle_shutdown_generation = Arc::new(AtomicU64::new(0));
-    let _watcher = setup_file_watcher(
+    let idle_shutdown = IdleShutdown {
+        generation: Arc::new(AtomicU64::new(0)),
+        shutdown: shutdown_tx.clone(),
+        wait: Arc::new(std::thread::sleep),
+        state_dir: watcher_path.parent().unwrap_or(&watcher_path).to_path_buf(),
+    };
+    let reloader = RouteReloader::production(
         &watcher_path,
-        watcher_table,
-        watcher_cache,
-        idle_shutdown_generation,
-        shutdown_tx.clone(),
-        watcher_config,
-    )?;
+        Arc::clone(&shared_table),
+        Arc::clone(&dns_cache),
+        idle_shutdown,
+        runtime_config.is_private(),
+    );
+    let route_signal = Arc::new(ReconcileSignal::new());
+    let _watcher = setup_file_watcher(&watcher_path, Arc::clone(&route_signal))?;
+    // One owned worker applies every observed snapshot: it reloads on a
+    // filesystem event and re-observes the committed snapshot on its own, so a
+    // notification the kernel never delivered cannot strand a route (effigy#716).
+    // Dropping the handle stops and joins it, so no reload outlives this call,
+    // including every startup failure below.
+    let _reconcile = RouteReconcile::spawn(RouteReconciler::production(reloader, route_signal));
 
     let has_tls = runtime_config.proxy.tls_bind_addr.is_some() && runtime_config.tls.is_some();
 
@@ -1761,40 +1809,24 @@ fn joined_server_task_result(
     }
 }
 
-/// Set up a filesystem watcher that reloads the route table when it changes.
+/// Set up a filesystem watcher that asks the single route-reload worker to
+/// observe the kernel database directory when it changes. The watcher never
+/// reloads itself: a burst of notifications coalesces into one observation, so
+/// per-event work cannot grow and no reload races another.
 fn setup_file_watcher(
     path: &Path,
-    table: Arc<RwLock<RouteTable>>,
-    dns_cache: Arc<DnsCache>,
-    idle_shutdown_generation: Arc<AtomicU64>,
-    shutdown_tx: watch::Sender<bool>,
-    gateway_config: GatewayConfig,
+    signal: Arc<ReconcileSignal>,
 ) -> Result<RecommendedWatcher, GatewayError> {
     let watched_path = path.to_path_buf();
-    let idle = IdleShutdown {
-        generation: idle_shutdown_generation,
-        shutdown: shutdown_tx,
-        wait: Arc::new(std::thread::sleep),
-        state_dir: path.parent().unwrap_or(path).to_path_buf(),
-    };
-
     let mut watcher =
         notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
             Ok(ev) => {
                 use notify::EventKind;
                 match ev.kind {
                     EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
-                        debug!(path = %watched_path.display(), "route table changed, reloading");
-                        if let Err(error) = reload_route_table_and_maybe_schedule_shutdown(
-                            &watched_path,
-                            &table,
-                            &dns_cache,
-                            &idle,
-                            gateway_config.is_private(),
-                        ) {
-                            error!(error = %error, "failed to reload route table");
-                        }
+                        debug!(path = %watched_path.display(), "route store changed, reloading");
                         // Route reload never elevates or changes platform setup.
+                        signal.notify();
                     }
                     _ => {}
                 }
@@ -1823,32 +1855,263 @@ fn setup_file_watcher(
     Ok(watcher)
 }
 
-/// Reloads the route table and, when the reload empties it, starts the idle
-/// timer. The timer's handle is returned so a caller can wait for its decision.
-fn reload_route_table_and_maybe_schedule_shutdown(
-    path: &Path,
-    table: &Arc<RwLock<RouteTable>>,
-    dns_cache: &Arc<DnsCache>,
-    idle: &IdleShutdown,
+/// Observes committed endpoint snapshots and applies them to the live table.
+///
+/// A refused read - Unknown, unreadable, or out of contract for a private
+/// gateway - is returned as an error and leaves the applied table, its revision
+/// fence, the DNS cache and the idle generation exactly as they were: it never
+/// becomes an empty or partial success.
+#[derive(Clone)]
+struct RouteReloader {
+    path: PathBuf,
+    table: Arc<RwLock<RouteTable>>,
+    dns_cache: Arc<DnsCache>,
+    idle: IdleShutdown,
     private: bool,
-) -> Result<Option<std::thread::JoinHandle<()>>, GatewayError> {
-    let new_table = RouteTable::load(path)?;
-    if private {
-        validate_private_routes(&new_table)?;
-    }
-    let action = apply_reloaded_route_table(table, new_table, dns_cache, private, &idle.generation);
-    debug!("route table reloaded, DNS cache cleared");
-    match action {
-        IdleShutdownAction::Arm(generation) => Ok(Some(schedule_idle_shutdown(
-            Arc::clone(table),
-            idle.clone(),
-            generation,
-        ))),
-        IdleShutdownAction::Cancel => {
-            debug!("route table became non-empty; cancelled pending idle shutdown");
-            Ok(None)
+    read: RouteRead,
+}
+
+impl RouteReloader {
+    /// The daemon's reader: the committed Store snapshot through the same
+    /// reader every other gateway surface uses.
+    fn production(
+        path: &Path,
+        table: Arc<RwLock<RouteTable>>,
+        dns_cache: Arc<DnsCache>,
+        idle: IdleShutdown,
+        private: bool,
+    ) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            table,
+            dns_cache,
+            idle,
+            private,
+            read: Arc::new(RouteTable::load),
         }
-        IdleShutdownAction::None => Ok(None),
+    }
+
+    /// Observe the committed snapshot once and apply it when it differs from
+    /// the applied table.
+    fn reload(&self) -> Result<ReloadOutcome, GatewayError> {
+        let observed = (self.read)(&self.path)?;
+        if self.private {
+            validate_private_routes(&observed)?;
+        }
+        let application = apply_reloaded_route_table(
+            &self.table,
+            observed,
+            &self.dns_cache,
+            self.private,
+            &self.idle.generation,
+        );
+        match application {
+            ReloadApplication::Unchanged => Ok(ReloadOutcome::Unchanged),
+            ReloadApplication::Changed(action) => {
+                debug!("route table reloaded, DNS cache cleared");
+                match action {
+                    IdleShutdownAction::Arm(generation) => Ok(ReloadOutcome::Applied {
+                        idle_timer: Some(schedule_idle_shutdown(
+                            Arc::clone(&self.table),
+                            self.idle.clone(),
+                            generation,
+                        )),
+                    }),
+                    IdleShutdownAction::Cancel => {
+                        debug!("route table became non-empty; cancelled pending idle shutdown");
+                        Ok(ReloadOutcome::Applied { idle_timer: None })
+                    }
+                    IdleShutdownAction::None => Ok(ReloadOutcome::Applied { idle_timer: None }),
+                }
+            }
+        }
+    }
+}
+
+/// Why a reconciliation wait ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Wake {
+    /// A filesystem event arrived: observe again now.
+    Event,
+    /// The reconciliation interval elapsed: observe again.
+    Interval,
+    /// The daemon is stopping: settle the worker.
+    Stop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SignalState {
+    /// The worker is observing or waiting; nothing is pending.
+    Idle,
+    /// At least one filesystem event is pending; further events coalesce.
+    Event,
+    /// The worker must stop and join.
+    Stop,
+}
+
+/// The single wake-up a route worker waits on: a coalescing filesystem-event
+/// signal, its reconciliation interval, and its stop request. It holds no queue,
+/// so a burst of notifications cannot grow work.
+struct ReconcileSignal {
+    state: std::sync::Mutex<SignalState>,
+    changed: std::sync::Condvar,
+}
+
+impl ReconcileSignal {
+    fn new() -> Self {
+        Self {
+            state: std::sync::Mutex::new(SignalState::Idle),
+            changed: std::sync::Condvar::new(),
+        }
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, SignalState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    /// Record that the watched directory changed. One observation is ever
+    /// pending: reconciliation reads the committed snapshot, so it never needs
+    /// one reload per event.
+    fn notify(&self) {
+        let mut state = self.state();
+        if *state == SignalState::Idle {
+            *state = SignalState::Event;
+        }
+        self.changed.notify_all();
+    }
+
+    /// Ask the worker to stop. A later [`Self::wait`] always reports `Stop`.
+    fn stop(&self) {
+        *self.state() = SignalState::Stop;
+        self.changed.notify_all();
+    }
+
+    /// Wait for an event, the interval, or a stop request.
+    fn wait(&self, delay: Duration) -> Wake {
+        let state = self.state();
+        let (mut state, timeout) = self
+            .changed
+            .wait_timeout_while(state, delay, |state| *state == SignalState::Idle)
+            .unwrap_or_else(|poison| poison.into_inner());
+        match *state {
+            SignalState::Stop => Wake::Stop,
+            SignalState::Event => {
+                *state = SignalState::Idle;
+                Wake::Event
+            }
+            SignalState::Idle => {
+                debug_assert!(timeout.timed_out());
+                Wake::Interval
+            }
+        }
+    }
+}
+
+/// The daemon's single route-reload owner. Every observed snapshot is applied
+/// here, so no two reloads run at once, and it re-observes the committed
+/// snapshot on its own so a missed notification still converges (effigy#716).
+struct RouteReconciler {
+    reloader: RouteReloader,
+    signal: Arc<ReconcileSignal>,
+    /// Re-observation interval when nothing signals.
+    interval: Duration,
+    /// First retry delay after a failed observation.
+    retry: Duration,
+    /// Cap on the retry delay.
+    max_retry: Duration,
+}
+
+impl RouteReconciler {
+    fn production(reloader: RouteReloader, signal: Arc<ReconcileSignal>) -> Self {
+        Self {
+            reloader,
+            signal,
+            interval: ROUTE_RECONCILE_INTERVAL,
+            retry: ROUTE_RECONCILE_RETRY,
+            max_retry: ROUTE_RECONCILE_MAX_RETRY,
+        }
+    }
+
+    /// The same worker on test intervals, so a control observes convergence
+    /// rather than waiting out the production interval.
+    #[cfg(test)]
+    fn with_intervals(mut self, interval: Duration, retry: Duration) -> Self {
+        self.interval = interval;
+        self.retry = retry;
+        self.max_retry = retry.saturating_mul(4);
+        self
+    }
+
+    /// Observe and apply once, then wait for an event, the interval or a stop.
+    fn run(self) {
+        let mut retry = self.retry;
+        loop {
+            let next = match self.reloader.reload() {
+                Ok(ReloadOutcome::Unchanged) => {
+                    retry = self.retry;
+                    self.interval
+                }
+                Ok(ReloadOutcome::Applied { idle_timer }) => {
+                    // An armed idle stop is owned work that outlives one
+                    // observation; it settles itself under its own generation.
+                    drop(idle_timer);
+                    retry = self.retry;
+                    self.interval
+                }
+                Err(error) => {
+                    // The applied table stays exactly as it was. A refused or
+                    // unknown observation is retried; it is never an empty table.
+                    error!(
+                        error = %error,
+                        "route table reconciliation failed; keeping the applied table"
+                    );
+                    let delay = retry;
+                    retry = std::cmp::min(retry.saturating_mul(2), self.max_retry);
+                    delay
+                }
+            };
+            match self.signal.wait(next) {
+                Wake::Stop => return,
+                Wake::Event | Wake::Interval => {}
+            }
+        }
+    }
+}
+
+/// Owned route-reconciliation work. Settling it stops the worker and joins it,
+/// so no reload outlives the gateway under a normal stop or a startup failure
+/// that returns after the watcher was installed.
+struct RouteReconcile {
+    signal: Arc<ReconcileSignal>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl RouteReconcile {
+    fn spawn(reconciler: RouteReconciler) -> Self {
+        let signal = Arc::clone(&reconciler.signal);
+        Self {
+            signal,
+            worker: Some(std::thread::spawn(move || reconciler.run())),
+        }
+    }
+
+    /// Stop the worker and wait for it: at most one in-flight observation
+    /// remains. Idempotent.
+    fn settle(&mut self) {
+        self.signal.stop();
+        if let Some(worker) = self.worker.take() {
+            if worker.join().is_err() {
+                error!("route table reconciliation worker panicked");
+            }
+        }
+    }
+}
+
+impl Drop for RouteReconcile {
+    fn drop(&mut self) {
+        self.settle();
     }
 }
 
@@ -1869,15 +2132,22 @@ fn validate_private_routes(table: &RouteTable) -> Result<(), GatewayError> {
 /// machine gateway outlives its last route, so a later `container up` or
 /// `up` finds it still running (effigy#480). The generation moves under the
 /// table's write lock, so a timer's check cannot interleave with a transition.
+///
+/// Applying the snapshot that is already applied changes nothing: re-observing
+/// an unchanged revision must not clear the DNS cache, move the connection
+/// fence or arm another idle stop for the same generation (effigy#716).
 fn apply_reloaded_route_table(
     table: &Arc<RwLock<RouteTable>>,
     new_table: RouteTable,
     dns_cache: &Arc<DnsCache>,
     idle_shutdown: bool,
     idle_generation: &AtomicU64,
-) -> IdleShutdownAction {
+) -> ReloadApplication {
     let action = {
         let mut guard = crate::locks::write_tolerant(table);
+        if *guard == new_table {
+            return ReloadApplication::Unchanged;
+        }
         let was_empty = guard.is_empty();
         let is_empty = new_table.is_empty();
         *guard = new_table;
@@ -1893,7 +2163,7 @@ fn apply_reloaded_route_table(
         }
     };
     dns_cache.clear();
-    action
+    ReloadApplication::Changed(action)
 }
 
 /// Stops the gateway when its route table is still empty after the idle delay

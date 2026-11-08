@@ -101,6 +101,28 @@ legacy file to import or verify. Unknown observations retain the last applied
 daemon table and report an error instead of falling back to a file.
 Status uses the same pure snapshot reader.
 
+## Reload lifecycle
+
+One owned worker is the only place an observed snapshot is applied, so no two
+reloads race. The directory watcher only signals it: a burst of notifications
+coalesces into one observation, and no per-event work or thread grows from it.
+The worker observes the committed snapshot on a five-second interval of its own,
+so a notification the kernel never delivered cannot strand a route; a passed
+event wakes it immediately and it re-observes rather than counting events. A
+failed observation is retried from one second, doubling up to thirty seconds,
+and resets on the next success.
+
+Applying the snapshot that is already applied changes nothing: an unchanged
+revision keeps the revision fence, the DNS cache and the idle generation, and
+arms no second idle stop. A changed snapshot replaces the routes, moves the
+fence, clears the DNS cache and runs the same empty/non-empty idle transition the
+filesystem event used to. A refused read - Unknown, unreadable, or out of
+contract for a private gateway - keeps the applied table exactly as it was and
+is logged with its cause; it is never an empty or partially applied success.
+Shutdown and every startup failure after the watcher was installed settle the
+worker: it is stopped and joined, so at most one in-flight observation outlives
+the signal.
+
 ## Proxy connection lifetime
 
 The daemon carries the committed Store revision into its in-memory route table.
@@ -138,7 +160,13 @@ the failure; it does not claim the cause of a past unexplained refusal.
 - `test:gateway:endpoints`: snapshot publication and idempotence, persistent
   owners, immediate reuse after release, concurrent conflict races, stale
   revisions, collision refusal, untrusted inputs, Unknown reads and
-  publication/retention faults; the route model tests also run.
+  publication/retention faults; the route model tests also run. The
+  `milestone_130acca8_` controls drive the daemon's own reload worker: a
+  committed route whose notification never arrives, a refused observation that
+  is retried into the same snapshot, unknown and out-of-contract observations
+  that keep the applied table and diagnostics, an unchanged revision that
+  clears no cache and arms no second idle stop, a changed snapshot that moves
+  the fence and routes, and cancellation that settles the worker.
 - `proof:gateway:pinned-reader`: a pinned build decodes a route snapshot
   written by the current build.
 - `test:gateway:loopback-lifecycle`: alias addresses derived from the route
