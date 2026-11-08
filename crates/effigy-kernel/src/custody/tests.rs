@@ -4510,32 +4510,39 @@ fn live_anchor_refused_kill_still_refuses_closure() {
 }
 
 #[test]
-fn only_the_authority_refusal_of_an_exited_anchor_is_passed_over() {
-    use crate::ident::ProcessState;
+fn only_a_retirement_cause_passes_over_the_authority_refusal() {
     let authority = UnknownReason::Inconsistent(platform::MEMBER_UNVERIFIED.into());
-    let evidence = || Evidence::new("test".into(), None).unwrap();
-    let exited = [
-        Observed::Absent(AbsenceProof::NoSuchProcess { pid: 1 }),
-        Observed::Verified(ProcessState::Zombie, evidence()),
-    ];
-    for state in &exited {
-        assert!(anchor::refused_by_retired_anchor(&authority, state));
+    let cause = |stage: &'static str, category: &'static str| {
+        Some(anchor::VerificationFailure { stage, category })
+    };
+    for retired in [
+        cause("generation", "absent"),
+        cause("state", "absent"),
+        cause("state", "zombie"),
+    ] {
+        assert!(anchor::refused_by_retirement(&authority, retired));
     }
-    for live in [ProcessState::Active, ProcessState::Stopped] {
-        assert!(!anchor::refused_by_retired_anchor(
-            &authority,
-            &Observed::Verified(live, evidence())
-        ));
+    // Each of these is the anchor's own recorded cause for a refusal, not a
+    // retirement. A reused pid is never taken as the anchor's exit.
+    for other in [
+        cause("nonce", "mismatch"),
+        cause("current-group", "mismatch"),
+        cause("birth", "birth-order-or-kind"),
+        cause("generation", "replaced"),
+        cause("state", "unreadable"),
+        None,
+    ] {
+        assert!(!anchor::refused_by_retirement(&authority, other));
     }
-    let other_refusals = [
+    let retired = cause("state", "zombie");
+    for other in [
         UnknownReason::PermissionDenied,
         UnknownReason::Inconsistent("unrelated refusal".into()),
         UnknownReason::TimedOut {
             phase: "group closure".into(),
         },
-    ];
-    for other in other_refusals {
-        assert!(!anchor::refused_by_retired_anchor(&other, &exited[0]));
+    ] {
+        assert!(!anchor::refused_by_retirement(&other, retired));
     }
 }
 
@@ -4543,18 +4550,18 @@ fn only_the_authority_refusal_of_an_exited_anchor_is_passed_over() {
 fn only_exited_anchors_count_as_retired() {
     use crate::ident::ProcessState;
     let unknown = || Observed::Unknown(UnknownReason::Injected);
-    assert!(anchor::retired(&Observed::Absent(
+    assert!(anchor::seam::retired(&Observed::Absent(
         AbsenceProof::NoSuchProcess { pid: 1 }
     )));
-    assert!(anchor::retired(&Observed::Verified(
+    assert!(anchor::seam::retired(&Observed::Verified(
         ProcessState::Zombie,
         Evidence::new("test".into(), None).unwrap()
     )));
     for live in [ProcessState::Active, ProcessState::Stopped] {
-        assert!(!anchor::retired(&Observed::Verified(
+        assert!(!anchor::seam::retired(&Observed::Verified(
             live,
             Evidence::new("test".into(), None).unwrap()
         )));
     }
-    assert!(!anchor::retired(&unknown()));
+    assert!(!anchor::seam::retired(&unknown()));
 }

@@ -2,6 +2,7 @@
 //! ignores cooperative signals; escalation targets workload identities only.
 use super::*;
 use crate::ident::{self, ProcessState};
+use std::cell::Cell;
 
 const NO_LIVE_MEMBER: &str = "no live workload member to signal";
 
@@ -145,35 +146,57 @@ fn member_signal(
     member: &ProcessIdentity,
     signal: i32,
 ) -> Observed<SignalDelivered> {
+    member_signal_recorded(r, anchor, member, signal, &Cell::new(None))
+}
+
+/// `member_signal`, recording the verification failure that refused the
+/// authority check, if one did. The record is the refusal's own cause, read
+/// from the same verification that refused the signal.
+fn member_signal_recorded(
+    r: &ProcessReceipt,
+    anchor: &ProcessIdentity,
+    member: &ProcessIdentity,
+    signal: i32,
+    refusal: &Cell<Option<VerificationFailure>>,
+) -> Observed<SignalDelivered> {
     platform::signal_checked(member, signal, || {
         #[cfg(test)]
         if let Some(decision) = seam::authority(anchor.pid) {
             return decision;
         }
-        // SAFETY: signal_checked has verified the positive member generation.
-        (unsafe { libc::getpgid(member.pid as i32) }) == r.pgid as i32 && verified(r, anchor)
+        // The verification owns the group check too, so every refusal leaves
+        // its own recorded cause; a separate group read could refuse silently.
+        match verification(r, anchor) {
+            Ok(()) => true,
+            Err(failure) => {
+                refusal.set(Some(failure));
+                false
+            }
+        }
     })
 }
 
-/// Whether an anchor's observed state means it has retired: it is gone, or it
-/// exited and waits to be reaped. Its group's closure is then judged from the
-/// group itself, never from the anchor.
-pub(super) fn retired(state: &Observed<ProcessState>) -> bool {
-    matches!(
-        state,
-        Observed::Absent(_) | Observed::Verified(ProcessState::Zombie, _)
-    )
-}
-
-/// Whether a refused anchor kill may be passed over: only the authority refusal,
-/// and only once a fresh observation shows the anchor retired. Every other
-/// refusal, and this refusal while the anchor is still live, stays a refusal.
-pub(super) fn refused_by_retired_anchor(
+/// Whether an anchor kill was refused because the anchor had already retired.
+/// It counts only when the authority refusal itself came from a verification
+/// that found the anchor absent or a zombie. Any other refusal, and the same
+/// refusal for any other recorded cause (a changed nonce, group or birth, or a
+/// reused pid), stays a refusal.
+pub(super) fn refused_by_retirement(
     reason: &UnknownReason,
-    state: &Observed<ProcessState>,
+    refusal: Option<VerificationFailure>,
 ) -> bool {
-    matches!(reason, UnknownReason::Inconsistent(message) if message == platform::MEMBER_UNVERIFIED)
-        && retired(state)
+    let retired = matches!(
+        refusal,
+        Some(VerificationFailure {
+            stage: "generation",
+            category: "absent",
+        }) | Some(VerificationFailure {
+            stage: "state",
+            category: "absent" | "zombie",
+        })
+    );
+    retired
+        && matches!(reason, UnknownReason::Inconsistent(message) if message == platform::MEMBER_UNVERIFIED)
 }
 
 /// Test seam for the one window the anchor can retire inside a kill: after its
@@ -194,6 +217,15 @@ pub(crate) mod seam {
 
     thread_local! {
         static ARMED: Cell<Option<(u32, Authority)>> = const { Cell::new(None) };
+    }
+
+    /// Whether an observed state means the anchor has exited: gone, or a zombie
+    /// awaiting reap.
+    pub(crate) fn retired(state: &Observed<ProcessState>) -> bool {
+        matches!(
+            state,
+            Observed::Absent(_) | Observed::Verified(ProcessState::Zombie, _)
+        )
     }
 
     pub(crate) fn arm(pid: u32, action: Authority) {
@@ -313,12 +345,16 @@ pub(super) fn stop(
         if let Err(e) = crate::fault_point!(AnchorStop) {
             return Observed::Unknown(unknown(e));
         }
-        if let Observed::Unknown(reason) = member_signal(r, anchor, anchor, libc::SIGKILL) {
+        let refusal = Cell::new(None);
+        if let Observed::Unknown(reason) =
+            member_signal_recorded(r, anchor, anchor, libc::SIGKILL, &refusal)
+        {
             // The anchor retires itself once its group has no live member, so it
-            // can exit between the liveness check above and this kill. A refused
-            // kill of a retired anchor has nothing left to kill. Closure is still
-            // proven below from the group, never from the anchor's exit.
-            if !refused_by_retired_anchor(&reason, &ident::process_state(anchor.pid)) {
+            // can exit between the liveness check above and this kill. Only a
+            // refusal whose own verification recorded that retirement is passed
+            // over. Closure is still proven below from the group, never from the
+            // anchor's exit.
+            if !refused_by_retirement(&reason, refusal.get()) {
                 return Observed::Unknown(reason);
             }
         }
