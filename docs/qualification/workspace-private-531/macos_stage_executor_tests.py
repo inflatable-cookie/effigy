@@ -2052,6 +2052,65 @@ class WindowProofTests(Fixture):
         effect.assert_not_called()
         self.assertEqual(os.listdir(self.tmp + '/claims'), [])
 
+    def assert_replaced_d0_destination_refused(self, key):
+        parent = os.path.dirname(self.bindings[key])
+        os.mkdir(parent, 0o700)
+        os.mkdir(self.bindings[key], 0o700)
+        request = self.request('window-replaced-' + key)
+        path, digest = self.freeze(request)
+        os.rename(self.bindings[key], self.bindings[key] + '-old')
+        os.mkdir(self.bindings[key], 0o700)
+        with mock.patch.object(ex, '_execute_stage') as effect, self.assertRaises(ex.Refusal):
+            proof.main(['proof', path, digest])
+        effect.assert_not_called()
+        self.assertEqual(os.listdir(self.tmp + '/claims'), [])
+        self.assertFalse(os.path.exists(request['activation_path']))
+        self.assertFalse(os.path.exists(request['evidence_path']))
+
+    def test_replaced_desktop_config_refuses_before_claim(self):
+        self.assert_replaced_d0_destination_refused('desktop_config')
+
+    def test_replaced_desktop_context_refuses_before_claim(self):
+        self.assert_replaced_d0_destination_refused('desktop_context_dir')
+
+    def test_appearing_or_symlinked_d0_destination_refuses_before_claim(self):
+        request = self.request()
+        path, digest = self.freeze(request)
+        os.symlink(self.evidence, os.path.dirname(self.bindings['desktop_config']))
+        with mock.patch.object(ex, '_execute_stage') as effect, self.assertRaises(ex.Refusal):
+            proof.main(['proof', path, digest])
+        effect.assert_not_called()
+        self.assertEqual(os.listdir(self.tmp + '/claims'), [])
+
+    def test_new_d0_directory_refuses_before_claim(self):
+        request = self.request()
+        path, digest = self.freeze(request)
+        os.mkdir(os.path.dirname(self.bindings['desktop_config']), 0o700)
+        os.mkdir(self.bindings['desktop_context_dir'], 0o700)
+        with mock.patch.object(ex, '_execute_stage') as effect, self.assertRaises(ex.Refusal):
+            proof.main(['proof', path, digest])
+        effect.assert_not_called()
+        self.assertEqual(os.listdir(self.tmp + '/claims'), [])
+
+    def test_window_duration_boundaries_and_input_template_drift(self):
+        options = dict(activation_id='window-boundary', duration_seconds=61, evidence_root=self.evidence)
+        for duration in (61, 360):
+            self.assertEqual(proof.window_recipe('D0', self.bindings, dict(options, duration_seconds=duration))
+                             ['duration_seconds'], duration)
+        for duration in (0, 60, 361, 1200, 1201, True):
+            with self.subTest(duration=duration), self.assertRaises(ex.Refusal):
+                proof.window_recipe('D0', self.bindings, dict(options, duration_seconds=duration))
+        request = self.request()
+        changed = json.loads(json.dumps(request))
+        changed['inputs']['repository'][next(iter(changed['inputs']['repository']))] = '0' * 64
+        for index, altered in enumerate((changed, dict(request, issued_utc='2026-01-01T00:00:00Z'),
+                                         dict(request, absent_paths=[]))):
+            path, digest = self.freeze(altered, 'window-drift-%d' % index)
+            with mock.patch.object(ex, '_execute_stage') as effect, self.assertRaises(ex.Refusal):
+                proof.main(['proof', path, digest])
+            effect.assert_not_called()
+        self.assertEqual(os.listdir(self.tmp + '/claims'), [])
+
     def test_window_plan_has_no_effects_and_rejects_duplicate_options(self):
         before = tree(self.tmp)
         request = self.request()

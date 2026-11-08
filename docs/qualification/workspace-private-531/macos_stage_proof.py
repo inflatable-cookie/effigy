@@ -69,6 +69,9 @@ def window_recipe(stage_id, bindings, options):
             observed[root] = list(executor.Pins.observe(root))
         except FileNotFoundError:
             observed[root] = None  # Explicit provisioning precondition; execution refuses it.
+    # D0 creates these paths exclusively; their approved identity is absence.
+    absent_paths = ([os.path.dirname(bindings['desktop_config']), bindings['desktop_config'],
+                     bindings['desktop_context_dir']] if stage_id == 'D0' else [])
     return dict(schema='macos-stage-window-v1', stage=stage_id, bindings=bindings,
                 bindings_sha256=executor.canon_sha(bindings), inputs=identity['inputs'],
                 inputs_sha256=identity['inputs_sha256'], manifest_sha256=identity['manifest_sha256'],
@@ -78,7 +81,7 @@ def window_recipe(stage_id, bindings, options):
                 activation_path=executor.ACTIVATIONS_DIR + '/' + activation_id + '.json',
                 claim_path=executor.CLAIMS_DIR + '/proof-' + activation_id + '.claim',
                 evidence_path=evidence + '/proof-' + activation_id + '.json',
-                evidence_root=evidence, roots=observed)
+                evidence_root=evidence, roots=observed, absent_paths=absent_paths)
 
 
 def execute_window(request, request_sha, manifest, inputs_hash):
@@ -86,6 +89,8 @@ def execute_window(request, request_sha, manifest, inputs_hash):
     expected = window_recipe(request['stage'], request['bindings'], options)
     if request != expected or any(value is None for value in expected['roots'].values()):
         raise executor.Refusal('window request, policy or root identity differs')
+    if any(os.path.lexists(path) for path in request['absent_paths']):
+        raise executor.Refusal('D0 destination is not absent')
     paths = (request['activation_path'], request['claim_path'], request['evidence_path'],
              request['evidence_root'] + '/' + request['stage'] + '-' + request['activation_id'],
              executor.CLAIMS_DIR + '/' + request['activation_id'] + '.claim')
@@ -98,6 +103,8 @@ def execute_window(request, request_sha, manifest, inputs_hash):
             if list(pins.items[root]) != identity:
                 raise executor.Refusal('root identity changed')
         pins.recheck()
+        if any(os.path.lexists(path) for path in request['absent_paths']):
+            raise executor.Refusal('D0 destination is not absent')
         executor.claim_activation('proof-' + request['activation_id'], request_sha)
         pins.recheck()
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -146,7 +153,7 @@ def main(argv):
     window_keys = {'schema', 'stage', 'bindings', 'bindings_sha256', 'inputs', 'inputs_sha256',
                    'manifest_sha256', 'source_sha256', 'candidate_head', 'decision', 'decision_version',
                    'scope', 'activation_id', 'duration_seconds', 'activation_path', 'claim_path',
-                   'evidence_path', 'evidence_root', 'roots'}
+                   'evidence_path', 'evidence_root', 'roots', 'absent_paths'}
     if not isinstance(request, dict) or (window and set(request) != window_keys) or (not window and set(request) != {
         'stage', 'activation_path', 'activation_sha256', 'bindings', 'evidence_root',
         'inputs', 'inputs_sha256', 'manifest_sha256', 'source_sha256',

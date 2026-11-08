@@ -331,7 +331,9 @@ Gates:
   scratch, retain its exact bytes and SHA-256, and pin the merged K, selector
   `qualification:macos:proof-only -- /absolute/path/to/request.json REQUEST_SHA256` and request hash
   in Nucleus. Null root identities are provisioning preconditions: rerun the plan after provisioning,
-  before freezing the request. Check all named destinations are unused. The native operator answer and
+  before freezing the request. The D0 `absent_paths` are fixed creation destinations and must remain
+  absent through launch; existing directories and symlinks refuse before the request claim. Check all
+  named destinations are unused. The native operator answer and
   actual proof-only launch remain necessary. At launch the request claim is spent even on an uncertain
   or partial write; retain the claim, activation, proof evidence and stage evidence, and never retry it.
   The runtime timestamps come from launch, not from the preparation file. Source-test simulations confer
