@@ -1667,6 +1667,19 @@ pub fn remove_capability(host: &mut impl CapabilityHost, operator_uid: u32) -> i
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn observed_current_capability(
+    host: &mut impl CapabilityHost,
+    operator_uid: u32,
+) -> BindCapabilityState {
+    let identity = match bound_identity(host, operator_uid) {
+        Ok(identity) => identity,
+        Err(_) => return BindCapabilityState::Unknown,
+    };
+    host.observe(&identity)
+        .unwrap_or(BindCapabilityState::Unknown)
+}
+
 fn bound_identity(
     host: &mut impl CapabilityHost,
     operator_uid: u32,
@@ -1846,10 +1859,7 @@ pub fn remove_current_capability(operator_uid: u32) -> io::Result<()> {
 pub fn current_capability_state(operator_uid: u32) -> BindCapabilityState {
     #[cfg(target_os = "linux")]
     {
-        let mut host = CurrentExecutable;
-        host.identity()
-            .and_then(|identity| host.observe(&identity))
-            .unwrap_or(BindCapabilityState::Unknown)
+        observed_current_capability(&mut CurrentExecutable, operator_uid)
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -3124,6 +3134,22 @@ mod tests {
         // Teardown is idempotent and never removes what is not there.
         remove_capability(&mut host, 501).unwrap();
         assert_eq!(host.removed, 1);
+    }
+
+    #[test]
+    fn current_capability_state_checks_executable_custody() {
+        let mut owned = FakeCapability::new(BindCapabilityState::Installed);
+        assert_eq!(
+            observed_current_capability(&mut owned, 501),
+            BindCapabilityState::Installed
+        );
+
+        let mut foreign_owner = FakeCapability::new(BindCapabilityState::Installed);
+        foreign_owner.identity.uid = 502;
+        assert_eq!(
+            observed_current_capability(&mut foreign_owner, 501),
+            BindCapabilityState::Unknown
+        );
     }
 
     #[test]
