@@ -28,6 +28,7 @@ from linux_supervisor import Refusal, exclusive
 import linux_supervisor as supervisor
 import preparation_observations as observations
 import linux_disk_identity as identity
+import linux_allocation_bound as allocation
 import linux_disk_association as disk_association
 import preparation_resources as resources
 import linux_receipts
@@ -516,15 +517,19 @@ def verify_disk_association(facts, supported=None):
     return disk_association.verify(facts, supported)
 
 
-def verify_hard_limit(witness, limit_bytes, supported=None):
+def verify_hard_limit(witness, limit_bytes, supported=None, facts=None):
     """A hard limit is established only by a source-verified, kernel-enforced mechanism.
 
-    Polling counters never qualify. Empty support means every witness refuses.
+    Polling counters never qualify. Empty support means every witness refuses. The kernel
+    project-quota mechanism verifies its originals against exact facts (see _allocation_facts).
     """
     supported = SUPPORTED_HARD_LIMITS if supported is None else supported
     mechanism = witness.get('mechanism') if isinstance(witness, dict) else None
     if mechanism not in supported:
         raise Refusal('no source-verified hard-limit mechanism; polling counters are not a quota')
+    if mechanism == allocation.MECHANISM:
+        bound = allocation.verify(witness, limit_bytes, facts or {}, supported)
+        return {'mechanism': mechanism, 'limit_bytes': limit_bytes, 'bound': bound}
     limits = witness.get('limits') or []
     if limit_bytes is None or limit_bytes not in limits or witness.get('enforcement') != 'kernel':
         raise Refusal('hard limit does not cover this row or is not kernel-enforced')
@@ -995,10 +1000,17 @@ def setup_plan(fresh):
     return rows
 
 
+def _allocation_facts(fresh):
+    """Exact facts a kernel allocation bound must match: boot, owned uid, stage root and the current object set."""
+    identity = fresh.get('identity') or {}
+    return {'boot_id': identity.get('boot_id'), 'uid': fresh.get('effigy531_uid'), 'root': BASE,
+            'entries': fresh.get('allocation_entries')}
+
+
 def _hard_limit_reason(fresh, row):
     """None when a source-verified kernel limit covers this row; otherwise the refusal text."""
     try:
-        verify_hard_limit(fresh.get('hard_limit') or {}, row['limit_bytes'], None)
+        verify_hard_limit(fresh.get('hard_limit') or {}, row['limit_bytes'], None, _allocation_facts(fresh))
     except Refusal as exc:
         return str(exc)
     return None
