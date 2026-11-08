@@ -783,13 +783,18 @@ def call_bounded(fn, seconds):
 
     def expired(signum, frame):
         raise Refusal('helper exceeded its remaining allowance')
+    started = time.monotonic()
+    prior_delay, prior_interval = signal.setitimer(signal.ITIMER_REAL, 0)
     previous = signal.signal(signal.SIGALRM, expired)
-    signal.setitimer(signal.ITIMER_REAL, seconds)
+    signal.setitimer(signal.ITIMER_REAL, min(seconds, prior_delay) if prior_delay else seconds)
     try:
         return fn()
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
+        if prior_delay:
+            remaining = prior_delay - (time.monotonic() - started)
+            signal.setitimer(signal.ITIMER_REAL, max(remaining, 0.000001), prior_interval)
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -1549,7 +1554,7 @@ def execute_stage(stage_id, bindings, **kwargs):
 
 def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, evidence_root,
                   transport=None, monitor_factory=None, clock=time.monotonic, utc_now=None,
-                  manifest_path=MANIFEST_PATH, desktop_socket=None):
+                  manifest_path=MANIFEST_PATH, desktop_socket=None, outer_deadline=None, force_simulation=False):
     """Run one owner-placed stage. Returns the stage receipt. Refuses before any effect when the
     activation, the derived inputs, the bindings, the preceding chain, the admission, the claim, the
     identities or a collision differs."""
@@ -1589,6 +1594,8 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
         check_d0_identities(prior, bindings, pins)  # the roots the original D0 chain created, before any effect
     # One absolute monotonic deadline for the whole stage, bounded by the activation window.
     budget = min(stage['seconds'], (datetime.datetime.fromisoformat(go['expires_utc'].replace('Z', '+00:00')) - now).total_seconds())
+    if outer_deadline is not None:
+        budget = min(budget, outer_deadline - clock())
     if budget <= stage['reserve_seconds']:
         raise Refusal('activation window leaves no step budget after the reserve')
     deadline = clock() + budget
@@ -1758,7 +1765,7 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                     prior=None if go.get('prior_receipt') is None else dict(
                         stage=PRIOR[stage_id], path=go['prior_receipt']['path'], sha256=go['prior_receipt']['sha256']),
                     engine_id=ctx['engine_id'], receipts=ctx['receipts'], steps=steps_out, origin=origin,
-                    closure_simulated=bool(TEST_SEAM['simulate_guest_closure']),
+                    closure_simulated=bool(TEST_SEAM['simulate_guest_closure'] or force_simulation),
                     pinned=sorted(pins.items),
                     guest_closure='unknown' if any(s.get('guest') for s in steps_out) else 'not-applicable')
         try:
