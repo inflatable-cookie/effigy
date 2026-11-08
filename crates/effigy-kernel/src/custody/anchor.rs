@@ -2,6 +2,7 @@
 //! ignores cooperative signals; escalation targets workload identities only.
 use super::*;
 use crate::ident::{self, ProcessState};
+use std::cell::Cell;
 
 const NO_LIVE_MEMBER: &str = "no live workload member to signal";
 
@@ -139,16 +140,124 @@ fn closed_detail(
 /// Each pidfd opens before the generation observation; on macOS the documented
 /// identity-check/numeric-signal window remains. An open pidfd never justifies
 /// a numeric group signal. Membership and anchor evidence are checked afresh.
-fn member_signal(
+pub(super) fn member_signal(
     r: &ProcessReceipt,
     anchor: &ProcessIdentity,
     member: &ProcessIdentity,
     signal: i32,
 ) -> Observed<SignalDelivered> {
+    member_signal_recorded(r, anchor, member, signal, &Cell::new(None))
+}
+
+/// `member_signal`, recording the verification failure that refused the
+/// authority check, if one did. The record is the refusal's own cause, read
+/// from the same verification that refused the signal.
+fn member_signal_recorded(
+    r: &ProcessReceipt,
+    anchor: &ProcessIdentity,
+    member: &ProcessIdentity,
+    signal: i32,
+    refusal: &Cell<Option<VerificationFailure>>,
+) -> Observed<SignalDelivered> {
     platform::signal_checked(member, signal, || {
-        // SAFETY: signal_checked has verified the positive member generation.
-        (unsafe { libc::getpgid(member.pid as i32) }) == r.pgid as i32 && verified(r, anchor)
+        #[cfg(test)]
+        if member.pid == anchor.pid {
+            if let Some(decision) = seam::authority(anchor.pid) {
+                return decision;
+            }
+        }
+        // The anchor's verification comes first and records its own refusal
+        // cause, retirement included. It proves the anchor, never the member.
+        if let Err(failure) = verification(r, anchor) {
+            refusal.set(Some(failure));
+            return false;
+        }
+        // The member's own group, read now: a member that left the group is not
+        // authorised by the anchor's group check. SAFETY: getpgid only observes.
+        (unsafe { libc::getpgid(member.pid as i32) }) == r.pgid as i32
     })
+}
+
+/// Whether an anchor kill was refused because the anchor had already retired.
+/// It counts only when the authority refusal itself came from a verification
+/// that found the anchor absent or a zombie. Any other refusal, and the same
+/// refusal for any other recorded cause (a changed nonce, group or birth, or a
+/// reused pid), stays a refusal.
+pub(super) fn refused_by_retirement(
+    reason: &UnknownReason,
+    refusal: Option<VerificationFailure>,
+) -> bool {
+    let retired = matches!(
+        refusal,
+        Some(VerificationFailure {
+            stage: "generation",
+            category: "absent",
+        }) | Some(VerificationFailure {
+            stage: "state",
+            category: "absent" | "zombie",
+        })
+    );
+    retired
+        && matches!(reason, UnknownReason::Inconsistent(message) if message == platform::MEMBER_UNVERIFIED)
+}
+
+/// Test seam for the one window the anchor can retire inside a kill: after its
+/// generation read succeeds and before the authority check re-reads it. Only
+/// the next authority check for the armed anchor is affected.
+#[cfg(test)]
+pub(crate) mod seam {
+    use super::*;
+    use std::cell::Cell;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) enum Authority {
+        /// SIGKILL the anchor at the crossing, then let the real check observe it.
+        RetireAnchor,
+        /// Refuse the signal while the anchor is still live.
+        RefuseLive,
+    }
+
+    thread_local! {
+        static ARMED: Cell<Option<(u32, Authority)>> = const { Cell::new(None) };
+    }
+
+    /// Whether an observed state means the anchor has exited: gone, or a zombie
+    /// awaiting reap.
+    pub(crate) fn retired(state: &Observed<ProcessState>) -> bool {
+        matches!(
+            state,
+            Observed::Absent(_) | Observed::Verified(ProcessState::Zombie, _)
+        )
+    }
+
+    pub(crate) fn arm(pid: u32, action: Authority) {
+        ARMED.with(|armed| armed.set(Some((pid, action))));
+    }
+
+    pub(crate) fn disarm() {
+        ARMED.with(|armed| armed.set(None));
+    }
+
+    /// The decision forced for this crossing, or `None` for the real check.
+    pub(super) fn authority(pid: u32) -> Option<bool> {
+        let (armed, action) = ARMED.with(Cell::get)?;
+        if armed != pid {
+            return None;
+        }
+        disarm();
+        match action {
+            Authority::RefuseLive => Some(false),
+            Authority::RetireAnchor => {
+                // SAFETY: the pid is the anchor this test launched.
+                unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while !retired(&ident::process_state(pid)) && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                None
+            }
+        }
+    }
 }
 
 pub(super) fn signal(
@@ -238,8 +347,18 @@ pub(super) fn stop(
         if let Err(e) = crate::fault_point!(AnchorStop) {
             return Observed::Unknown(unknown(e));
         }
-        if let Observed::Unknown(reason) = member_signal(r, anchor, anchor, libc::SIGKILL) {
-            return Observed::Unknown(reason);
+        let refusal = Cell::new(None);
+        if let Observed::Unknown(reason) =
+            member_signal_recorded(r, anchor, anchor, libc::SIGKILL, &refusal)
+        {
+            // The anchor retires itself once its group has no live member, so it
+            // can exit between the liveness check above and this kill. Only a
+            // refusal whose own verification recorded that retirement is passed
+            // over. Closure is still proven below from the group, never from the
+            // anchor's exit.
+            if !refused_by_retirement(&reason, refusal.get()) {
+                return Observed::Unknown(reason);
+            }
         }
         if let Err(e) = crate::fault_point!(AnchorStopped) {
             return Observed::Unknown(unknown(e));

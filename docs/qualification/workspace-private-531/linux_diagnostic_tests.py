@@ -1,5 +1,6 @@
 """Local fixture tests; no real VM, network or engine commands."""
 import contextlib
+import errno
 import hashlib
 import importlib
 import io
@@ -111,13 +112,212 @@ class InventoryTests(unittest.TestCase):
             extent.truncate(17 * 1024 * 1024)
         inventory = diagnostic.inventory(disk, xml)
         monitor = diagnostic.ExtentMonitor(root, disk, xml, inventory)
-        self.assertEqual(monitor.package_initial['logical'], len(xml) + 17 * 1024 * 1024)
+        # The sparse extent is a stable object: charged by extent inventory once, never as
+        # ancillary metadata and never twice.
+        self.assertEqual(monitor.package_initial, {'logical': 0, 'allocated': 0})
         self.assertEqual(monitor.check()['extents']['logical'], 0)
+        (disk / 'notes.txt').write_bytes(b'note')
+        self.assertEqual(monitor.check()['package']['logical'], len(b'note'))
 
     def test_setup_top_mechanism_remains_refused(self):
         self.assertEqual(proof.setup.SUPPORTED_TOP_MECHANISMS, frozenset())
         with self.assertRaises(proof.setup.Refusal):
             proof.setup.verify_writable_top({'mechanism': 'unknown'}, b'<Disk/>')
+
+
+def disk_fixture():
+    """A canonical package root holding one descriptor-owned extent."""
+    root = fixture()
+    disk = root / 'disk'
+    disk.mkdir()
+    xml = descriptor([(GUID_A, 'a.hds')])
+    (disk / 'a.hds').write_bytes(b'a')
+    (disk / 'DiskDescriptor.xml').write_bytes(xml)
+    return root, disk, xml
+
+
+def row(inode, logical, allocated=None):
+    return {'device': 1, 'inode': inode, 'uid': os.geteuid(), 'logical': logical,
+            'allocated': logical if allocated is None else allocated}
+
+
+class MetadataAccountingTests(unittest.TestCase):
+    """Ancillary metadata replacement is charged, never silently skipped or silently blamed."""
+
+    def test_atomic_replacement_keeps_the_previous_charge(self):
+        account = diagnostic.AncillaryAccount()
+        first = account.observe({'config.pvs.backup': row(10, 4096)})
+        second = account.observe({'config.pvs.backup': row(11, 4096)})
+        self.assertEqual(first['held'], {'logical': 4096, 'allocated': 4096})
+        self.assertEqual(second['held'], {'logical': 8192, 'allocated': 8192})
+        self.assertEqual([event['kind'] for event in account.events], ['appeared', 'replaced'])
+        replaced = account.events[-1]
+        self.assertEqual(replaced['path'], 'config.pvs.backup')
+        self.assertEqual((replaced['previous']['inode'], replaced['current']['inode']), (10, 11))
+        self.assertEqual(replaced['current']['uid'], os.geteuid())
+
+    def test_rotation_and_disappearance_never_refund(self):
+        account = diagnostic.AncillaryAccount()
+        account.observe({'config.pvs.backup': row(10, 100)})
+        account.observe({'config.pvs.backup': row(10, 100), 'config.pvs.backup.tmp': row(11, 50)})
+        third = account.observe({'config.pvs.backup': row(10, 40)})
+        self.assertEqual(third['held'], {'logical': 150, 'allocated': 150})
+        final = account.observe({})
+        self.assertEqual(final['held'], {'logical': 150, 'allocated': 150})
+        self.assertEqual([event['kind'] for event in account.events],
+                         ['appeared', 'appeared', 'shrank', 'disappeared', 'disappeared'])
+        self.assertEqual(account.events[2]['previous']['logical'], 100)
+        self.assertEqual(account.events[2]['current']['logical'], 40)
+
+    def test_reused_inode_at_the_same_path_is_charged_again(self):
+        account = diagnostic.AncillaryAccount()
+        account.observe({'config.pvs.backup': row(10, 100)})
+        account.observe({'config.pvs.backup': row(11, 100)})
+        third = account.observe({'config.pvs.backup': row(10, 100)})
+        # A sample cannot tell an atomically replaced file from a reused inode number, so the
+        # third incarnation is charged in full instead of matching the first incarnation's
+        # earlier charge.
+        self.assertEqual(third['held'], {'logical': 300, 'allocated': 300})
+        self.assertEqual(third['incarnations'], 3)
+        self.assertEqual([event['kind'] for event in account.events],
+                         ['appeared', 'replaced', 'replaced'])
+        self.assertEqual((account.events[-1]['previous']['inode'],
+                          account.events[-1]['current']['inode']), (11, 10))
+
+    def test_new_objects_are_charged_conservatively(self):
+        account = diagnostic.AncillaryAccount()
+        account.observe({'a': row(1, 10, 4096)})
+        grown = account.observe({'a': row(1, 20, 4096), 'b': row(2, 30, 8192)})
+        self.assertEqual(grown['held'], {'logical': 50, 'allocated': 12288})
+        self.assertEqual(grown['incarnations'], 2)
+        self.assertEqual(account.samples, 2)
+
+    def test_file_replacement_is_an_event_not_a_refusal(self):
+        root, disk, xml = disk_fixture()
+        backup = root / 'config.pvs.backup'
+        backup.write_bytes(b'first')
+        monitor = diagnostic.ExtentMonitor(root, disk, xml, diagnostic.inventory(disk, xml))
+        self.assertEqual(monitor.package_initial['logical'], len(b'first'))
+        self.assertEqual(monitor.check()['package'], {'logical': 0, 'allocated': 0})
+        temporary = root / 'config.pvs.backup.tmp'
+        temporary.write_bytes(b'second-incarnation')
+        os.replace(temporary, backup)
+        charged = monitor.check()
+        self.assertEqual(charged['package']['logical'], len(b'second-incarnation'))
+        self.assertEqual([event['kind'] for event in monitor.ancillary.events], ['replaced'])
+        event = monitor.ancillary.events[0]
+        self.assertNotEqual((event['previous']['device'], event['previous']['inode']),
+                            (event['current']['device'], event['current']['inode']))
+        self.assertEqual(monitor.ancillary.held['logical'], len(b'first') + len(b'second-incarnation'))
+
+    def test_ancillary_growth_cap_refuses(self):
+        root, disk, xml = disk_fixture()
+        extra = root / 'config.pvs.backup'
+        extra.write_bytes(b'small')
+        monitor = diagnostic.ExtentMonitor(root, disk, xml, diagnostic.inventory(disk, xml))
+        monitor.check()
+        with extra.open('wb') as handle:
+            handle.truncate(diagnostic.CAP + len(b'small') + 1)
+        with self.assertRaisesRegex(Refusal, 'ancillary metadata growth exceeds cap'):
+            monitor.check()
+
+    def test_unaccountable_metadata_stays_a_refusal(self):
+        root = fixture()
+        (root / 'plain').write_bytes(b'x')
+        (root / 'link').symlink_to(root / 'plain')
+        with self.assertRaisesRegex(Refusal, 'symlink'):
+            diagnostic.package_sample(root)
+        (root / 'link').unlink()
+        os.link(root / 'plain', root / 'alias')
+        with self.assertRaisesRegex(Refusal, 'aliased file'):
+            diagnostic.package_sample(root)
+        (root / 'alias').unlink()
+        os.mkfifo(root / 'fifo')
+        with self.assertRaisesRegex(Refusal, 'non-regular file'):
+            diagnostic.package_sample(root)
+        (root / 'fifo').unlink()
+        with patch.object(diagnostic.os, 'geteuid', return_value=os.geteuid() + 1):
+            with self.assertRaisesRegex(Refusal, 'foreign-owned'):
+                diagnostic.package_sample(root)
+        original = diagnostic.lstat
+
+        def unreadable(path):
+            if Path(path).name == 'plain':
+                raise Refusal('package entry unreadable: ' + str(path))
+            return original(path)
+
+        with patch.object(diagnostic, 'lstat', side_effect=unreadable):
+            with self.assertRaisesRegex(Refusal, 'package entry unreadable'):
+                diagnostic.package_sample(root)
+
+    def test_extent_and_root_identity_stay_fatal(self):
+        root, disk, xml = disk_fixture()
+        monitor = diagnostic.ExtentMonitor(root, disk, xml, diagnostic.inventory(disk, xml))
+        (root / 'config.pvs.backup').write_bytes(b'x')
+        self.assertEqual(monitor.check()['package']['logical'], 1)
+        (disk / 'a.hds').unlink()
+        (disk / 'a.hds').write_bytes(b'b')
+        with self.assertRaisesRegex(Refusal, 'extent identity changed'):
+            monitor.check()
+        root, disk, xml = disk_fixture()
+        monitor = diagnostic.ExtentMonitor(root, disk, xml, diagnostic.inventory(disk, xml))
+        moved = root / 'moved'
+        disk.rename(moved)
+        disk.mkdir()
+        (disk / 'a.hds').write_bytes(b'a')
+        (disk / 'DiskDescriptor.xml').write_bytes(xml)
+        with self.assertRaisesRegex(Refusal, 'package or disk identity changed'):
+            monitor.check()
+
+    def test_descriptor_identity_change_is_not_a_content_change(self):
+        root, disk, xml = disk_fixture()
+        monitor = diagnostic.ExtentMonitor(root, disk, xml, diagnostic.inventory(disk, xml))
+        temporary = disk / 'DiskDescriptor.xml.tmp'
+        temporary.write_bytes(xml)
+        os.replace(temporary, disk / 'DiskDescriptor.xml')
+        result = monitor.check()
+        self.assertEqual(result['extents'], {'logical': 0, 'allocated': 0})
+        self.assertEqual(len(monitor.identity_events), 1)
+        event = monitor.identity_events[0]
+        self.assertEqual((event['object'], event['source'], event['content_identical']),
+                         ('descriptor', 'sampled', True))
+        self.assertNotEqual(event['previous']['inode'], event['current']['inode'])
+        (disk / 'DiskDescriptor.xml').write_bytes(b'<Disk/>')
+        with self.assertRaisesRegex(Refusal, 'descriptor content changed'):
+            monitor.check()
+
+    def test_recorded_712_shape_is_classified_without_a_content_claim(self):
+        facts = json.loads((SOURCE_DIR / 'fixtures' / '712-metadata-shape.json').read_text())
+
+        def retained(name, side):
+            item = facts[name]
+            return {'sha256': item['content_sha256_' + side], 'device': item['device'],
+                    'inode': item['inode_' + side], 'uid': 501, 'size': item['size']}
+
+        before = {name: retained(name, 'before') for name in ('config', 'descriptor')}
+        post = {name: retained(name, 'after') for name in ('config', 'descriptor')}
+        outcome = {'findings': [], 'metadata_differences': [], 'identity_events': []}
+        proof.compare_originals(outcome, before, post)
+        self.assertEqual(outcome['findings'], [])
+        events = {event['object']: event for event in outcome['identity_events']}
+        # The descriptor was atomically replaced with identical bytes; the config kept its
+        # identity and changed content. Neither is a content-change claim about the descriptor.
+        self.assertEqual(set(events), {'descriptor'})
+        self.assertTrue(events['descriptor']['content_identical'])
+        self.assertEqual((events['descriptor']['previous']['inode'],
+                          events['descriptor']['current']['inode']), (1993213, 1993596))
+        self.assertEqual(len(outcome['metadata_differences']), 1)
+        self.assertIn('config bytes changed', outcome['metadata_differences'][0])
+
+    def test_cleanup_windows_stay_inside_the_reviewed_budget(self):
+        self.assertEqual(proof.DURATION, 600)
+        self.assertEqual(proof.RESERVE, 120)
+        for name in ('RUN_WAIT', 'READY_WAIT', 'STATE_WAIT', 'STOP_OBSERVE', 'FINAL_RESERVE'):
+            self.assertIs(type(getattr(proof, name)), int)
+            self.assertGreater(getattr(proof, name), 0)
+        self.assertLessEqual(proof.RUN_WAIT + proof.READY_WAIT, proof.DURATION - 2 * proof.RESERVE)
+        self.assertLessEqual(proof.STATE_WAIT + proof.STOP_OBSERVE + proof.FINAL_RESERVE,
+                             proof.DURATION - proof.RESERVE)
 
     def test_retained_snapshot_bytes_bind_complete_canonical_inventory(self):
         raw = (SOURCE_DIR / 'fixtures' / 'retained-snapshot-list.json').read_bytes()
@@ -182,8 +382,349 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(set(facts), {'config'})
         self.assertEqual(len(errors), 1)
 
+    def test_extent_counters_missing_or_decreasing_refuse(self):
+        leaf = {'path': '/leaf', 'device': 1, 'inode': 2, 'guid': GUID_A, 'parent': ZERO,
+                'logical': 4, 'allocated': 4}
+        before = {'leaf': leaf}
+        missing = {'leaf': {key: value for key, value in leaf.items() if key != 'allocated'}}
+        with self.assertRaisesRegex(Refusal, 'counter missing or decreased'):
+            diagnostic.extent_growth(before, missing)
+        with self.assertRaisesRegex(Refusal, 'counter missing or decreased'):
+            diagnostic.extent_growth(before, {'leaf': dict(leaf, logical=3)})
+
+
+class Listing:
+    """A scandir result: the entries a hook chose to list, as the walk's context manager."""
+    def __init__(self, entries):
+        self.entries = entries
+
+    def __enter__(self):
+        return iter(self.entries)
+
+    def __exit__(self, *exc):
+        return False
+
+
+class ProtectedSampleTests(unittest.TestCase):
+    """The descriptor and extents are verified once per sample; a moved listing is retried and kept."""
+
+    def monitor(self):
+        root, disk, xml = disk_fixture()
+        return root, disk, xml, diagnostic.ExtentMonitor(root, disk, xml, diagnostic.inventory(disk, xml))
+
+    def seam(self, hook):
+        """Route the package walk's listing of the disk directory through hook(path, real_scandir).
+
+        inventory lists with listdir, so the disk directory's scandir is only the package walk.
+        """
+        real = os.scandir
+
+        def scan(path):
+            if Path(path).name != 'disk':
+                return real(path)
+            return hook(path, real)
+        return patch.object(diagnostic.os, 'scandir', scan)
+
+    def test_listed_descriptor_completes_without_a_second_lookup(self):
+        root, disk, xml, monitor = self.monitor()
+        descriptor = disk / 'DiskDescriptor.xml'
+
+        def removed_after_listing(path, real):
+            # The 717 shape: listed, then gone before a second pathname lookup would have run.
+            with real(path) as scan:
+                entries = list(scan)
+            descriptor.unlink()
+            return Listing(entries)
+
+        with self.seam(removed_after_listing):
+            result = monitor.check()
+        self.assertEqual(result['attempts'], 1)
+        self.assertEqual(monitor.observation_failures, [])
+        # The next sample verifies the descriptor itself, so its absence refuses with errno kept.
+        with self.assertRaises(diagnostic.ObservationRefusal) as caught:
+            monitor.check()
+        self.assertEqual(caught.exception.observation['errno'], errno.ENOENT)
+        self.assertEqual(caught.exception.observation['phase'], 'descriptor-verify')
+        self.assertEqual([failure['attempt'] for failure in monitor.observation_failures], [1, 2])
+
+    def test_moved_listing_repeats_once_and_retains_the_failure(self):
+        root, disk, xml, monitor = self.monitor()
+        descriptor = disk / 'DiskDescriptor.xml'
+        moved = []
+
+        def replaced_once(path, real):
+            if not moved:
+                moved.append(True)
+                temporary = disk / 'DiskDescriptor.xml.tmp'
+                temporary.write_bytes(xml)
+                os.replace(temporary, descriptor)
+            return real(path)
+
+        with self.seam(replaced_once):
+            result = monitor.check()
+        self.assertEqual(result['attempts'], 2)
+        self.assertEqual(len(monitor.observation_failures), 1)
+        failure = monitor.observation_failures[0]
+        self.assertEqual((failure['phase'], failure['operation'], failure['attempt']),
+                         ('package-walk', 'listing', 1))
+        self.assertEqual(failure['path'], str(descriptor))
+        self.assertIsNone(failure['errno'])
+        self.assertEqual(len(monitor.identity_events), 1)
+        self.assertTrue(monitor.identity_events[0]['content_identical'])
+
+    def test_persistently_moved_identity_refuses_after_the_bounded_repeat(self):
+        root, disk, xml, monitor = self.monitor()
+        descriptor = disk / 'DiskDescriptor.xml'
+
+        def always_replaced(path, real):
+            temporary = disk / 'DiskDescriptor.xml.tmp'
+            temporary.write_bytes(xml)
+            os.replace(temporary, descriptor)
+            return real(path)
+
+        with self.seam(always_replaced), self.assertRaisesRegex(
+                diagnostic.ObservationRefusal, 'identity moved before the listing'):
+            monitor.check()
+        self.assertEqual([failure['attempt'] for failure in monitor.observation_failures], [1, 2])
+
+    def test_absent_listing_refuses_after_the_bounded_repeat(self):
+        root, disk, xml, monitor = self.monitor()
+
+        def hidden(path, real):
+            with real(path) as scan:
+                return Listing([entry for entry in scan if entry.name != 'DiskDescriptor.xml'])
+
+        with self.seam(hidden), self.assertRaisesRegex(
+                diagnostic.ObservationRefusal, 'absent from the package listing'):
+            monitor.check()
+        self.assertEqual([(f['phase'], f['operation'], f['attempt']) for f in monitor.observation_failures],
+                         [('package-walk', 'listing', 1), ('package-walk', 'listing', 2)])
+
+    def test_absent_before_protected_verification_keeps_the_errno(self):
+        root, disk, xml, monitor = self.monitor()
+        (disk / 'DiskDescriptor.xml').unlink()
+        with self.assertRaises(diagnostic.ObservationRefusal) as caught:
+            monitor.check()
+        self.assertEqual((caught.exception.observation['phase'], caught.exception.observation['operation'],
+                          caught.exception.observation['errno']), ('descriptor-verify', 'lstat', errno.ENOENT))
+        self.assertIn('No such file', str(caught.exception))
+        self.assertEqual(len(monitor.observation_failures), 2)
+
+    def test_persistent_unreadability_refuses_with_errno(self):
+        if os.geteuid() == 0:
+            self.skipTest('an owner-mode refusal needs a non-root owner')
+        root, disk, xml, monitor = self.monitor()
+        descriptor = disk / 'DiskDescriptor.xml'
+        descriptor.chmod(0)
+        try:
+            with self.assertRaises(diagnostic.ObservationRefusal) as caught:
+                monitor.check()
+        finally:
+            descriptor.chmod(0o600)
+        self.assertEqual((caught.exception.observation['operation'], caught.exception.observation['errno']),
+                         ('open', errno.EACCES))
+
+    def test_changed_descriptor_bytes_refuse_without_a_repeat(self):
+        root, disk, xml, monitor = self.monitor()
+        (disk / 'DiskDescriptor.xml').write_bytes(b'<Disk/>')
+        with self.assertRaisesRegex(Refusal, 'descriptor content changed'):
+            monitor.check()
+        self.assertEqual(monitor.observation_failures, [])
+
+    def test_symlink_hardlink_and_foreign_descriptor_refuse(self):
+        root, disk, xml, monitor = self.monitor()
+        descriptor = disk / 'DiskDescriptor.xml'
+        descriptor.unlink()
+        descriptor.symlink_to(disk / 'a.hds')
+        with self.assertRaisesRegex(Refusal, 'not a regular file'):
+            monitor.check()
+
+        root, disk, xml, monitor = self.monitor()
+        os.link(disk / 'DiskDescriptor.xml', root / 'alias')
+        with self.assertRaisesRegex(Refusal, 'aliased file'):
+            monitor.check()
+
+        root, disk, xml, monitor = self.monitor()
+        with patch.object(diagnostic.os, 'geteuid', return_value=os.geteuid() + 1):
+            with self.assertRaisesRegex(Refusal, 'foreign-owned'):
+                monitor.check()
+
+    def test_descriptor_replaced_by_a_symlink_after_verification_refuses(self):
+        root, disk, xml, monitor = self.monitor()
+        descriptor = disk / 'DiskDescriptor.xml'
+
+        def symlinked(path, real):
+            descriptor.unlink()
+            descriptor.symlink_to(disk / 'a.hds')
+            return real(path)
+
+        with self.seam(symlinked), self.assertRaisesRegex(Refusal, 'not a regular entry'):
+            monitor.check()
+        self.assertEqual(monitor.observation_failures, [])
+
+    def test_forged_and_stale_protected_observations_refuse(self):
+        root = fixture()
+        (root / 'plain').write_bytes(b'x')
+        with self.assertRaisesRegex(Refusal, 'forged or stale'):
+            diagnostic.package_sample(root, {str(root / 'plain'): {'inode': (root / 'plain').stat().st_ino}})
+        with self.assertRaisesRegex(Refusal, 'not issued by the monitor'):
+            diagnostic.Witness(object(), {})
+        with self.assertRaisesRegex(Refusal, 'absent from the package listing'):
+            diagnostic.package_sample(root, diagnostic.Witness(diagnostic._ISSUER, {str(root / 'ghost'): {'inode': 1}}))
+        witness = diagnostic.Witness(diagnostic._ISSUER, {})
+        diagnostic.package_sample(root, witness)
+        with self.assertRaisesRegex(Refusal, 'forged or stale'):
+            diagnostic.package_sample(root, witness)
+
+    def test_lookup_failures_keep_operation_path_and_errno(self):
+        root = fixture()
+        with self.assertRaises(diagnostic.ObservationRefusal) as caught:
+            diagnostic.lstat(root / 'missing')
+        observation = caught.exception.observation
+        self.assertEqual((observation['phase'], observation['operation'], observation['errno']),
+                         ('package-walk', 'lstat', errno.ENOENT))
+        self.assertEqual(observation['path'], str(root / 'missing'))
+        self.assertIn('No such file', str(caught.exception))
+
+
+PROGRAM = '''#!/usr/bin/python3
+import json, os, sys, time
+from pathlib import Path
+state = Path(%(state)r)
+log = Path(%(log)r)
+scenario = Path(%(scenario)r)
+root = Path(%(root)r)
+home = Path(%(home)r)
+disk = Path(%(disk)r)
+vm = %(vm)r
+args = sys.argv[1:]
+with log.open('a') as handle:
+    handle.write(args[0] + '\\n')
+mode = scenario.read_text()
+
+def advance():
+    # Parallels reports 'starting' while the VM boots; the client that refused is gone but the
+    # same VM reaches 'running' asynchronously after a few state observations of its own.
+    if state.read_text() == 'starting' and mode in ('start_client_refusal',
+                                                    'start_refusal_cleanup_running'):
+        counter = root / 'starting-lists'
+        seen = int(counter.read_text()) if counter.exists() else 0
+        counter.write_text(str(seen + 1))
+        if seen >= (1 if mode == 'start_client_refusal' else 4):
+            state.write_text('running')
+
+def touch(path, data):
+    temporary = path.with_name(path.name + '.tmp')
+    temporary.write_bytes(data)
+    os.replace(temporary, path)
+
+if args[0] == 'start':
+    if mode in ('start_client_refusal', 'start_refusal_cleanup_running',
+                'start_stuck_starting'):
+        print('Starting the VM', flush=True)
+        state.write_text('starting')
+        sys.exit(255)
+    if mode == 'start_immediately_stopped':
+        state.write_text('stopped')
+    else:
+        state.write_text('running')
+    if mode == 'start_extent_cap':
+        with (disk / 'b.hds').open('wb') as extent:
+            extent.truncate(%(cap)d + 2)
+        print('Starting the VM', flush=True)
+        time.sleep(1)
+    if mode == 'metadata_rotation':
+        touch(home / 'config.pvs.backup', b'replacement-incarnation')
+        time.sleep(0.8)
+elif args[0] == 'stop':
+    if state.read_text() == 'starting':
+        (root / 'stop-while-starting').write_text('violation')
+        sys.exit(70)
+    if mode == 'stop_fail':
+        sys.exit(1)
+    state.write_text('stopped')
+    if mode == 'stop_timeout':
+        time.sleep(2)
+elif args[0] == 'snapshot-list':
+    print('{}' if mode == 'wrong_snapshot' else %(snapshot)r)
+elif args[0] == 'list':
+    advance()
+    vm['State'] = state.read_text()
+    if mode == 'wrong_home':
+        vm['Home'] = '/wrong/'
+    if mode == 'wrong_uuid':
+        vm['ID'] = 'wrong'
+    print(json.dumps([vm]))
+elif args[0] == 'exec' and args[-1] == 'ready':
+    if mode == 'early_boot' and not (root / 'ready-attempt').exists():
+        (root / 'ready-attempt').write_text('1')
+        sys.exit(1)
+    if mode == 'never_ready':
+        sys.exit(1)
+    print('ready')
+elif args[0] == 'exec':
+    if mode == 'growth':
+        (disk / 'b.hds').write_bytes(b'extent-more')
+    if mode == 'config_change':
+        (home / 'config.pvs').write_bytes(b'config-changed')
+    if mode == 'config_replaced':
+        touch(home / 'config.pvs', b'config-replacement')
+    if mode == 'config_missing':
+        (home / 'config.pvs').unlink()
+    if mode == 'descriptor_changed':
+        touch(disk / 'DiskDescriptor.xml', b'<Disk/>')
+    if mode == 'descriptor_replaced_equal':
+        touch(disk / 'DiskDescriptor.xml', (disk / 'DiskDescriptor.xml').read_bytes())
+    if mode == 'descriptor_missing':
+        (disk / 'DiskDescriptor.xml').unlink()
+    if mode == 'extent_missing':
+        (disk / 'b.hds').unlink()
+    if mode == 'extent_replaced':
+        touch(disk / 'b.hds', b'replacement')
+    if mode == 'timeout':
+        print('uid=0', flush=True)
+        time.sleep(2)
+    elif mode == 'partial':
+        print('uid=0')
+    else:
+        print(%(probe)r, end='')
+'''
+
 
 class EntryTests(unittest.TestCase):
+    """The real supervisor primitive (preparation_stage.run_stage) drives a local fake CLI."""
+
+    # mode, expected entry exit, graceful stop commands sent
+    MODES = (
+        ('wrong_home', 1, 0),
+        ('wrong_uuid', 1, 0),
+        ('wrong_snapshot', 1, 0),
+        ('start_prelaunch', 1, 0),
+        ('start_stuck_starting', 1, 0),
+        ('start_immediately_stopped', 1, 0),
+        ('partial', 1, 1),
+        ('stop_fail', 1, 1),
+        ('stop_unknown', 1, 1),
+        ('stop_timeout', 1, 1),
+        ('growth', 0, 1),
+        ('early_boot', 0, 1),
+        ('never_ready', 1, 1),
+        ('metadata_rotation', 0, 1),
+        ('config_change', 0, 1),
+        ('config_replaced', 0, 1),
+        ('config_missing', 1, 1),
+        ('descriptor_changed', 1, 1),
+        ('descriptor_replaced_equal', 0, 1),
+        ('descriptor_missing', 1, 1),
+        ('extent_missing', 1, 1),
+        ('extent_replaced', 1, 1),
+        ('timeout', 1, 1),
+        ('start_exception', 1, 1),
+        ('start_extent_cap', 1, 1),
+        ('start_client_refusal', 1, 1),
+        ('start_refusal_cleanup_running', 1, 1),
+    )
+
     def test_complete_and_spent_request(self):
         root = fixture()
         evidence = root / 'evidence'
@@ -197,43 +738,42 @@ class EntryTests(unittest.TestCase):
             extent.truncate(17 * 1024 * 1024)
         (disk / 'b.hds').write_bytes(b'extent')
         scenario = root / 'scenario'
-        scenario.write_text('complete')
         log = root / 'calls'
         snapshot = {'snapshot': {'current': True}}
         snapshot_sha = hashlib.sha256(proof.canonical(snapshot)).hexdigest()
         state = root / 'state'
-        state.write_text('stopped')
         vm = {'ID': proof.setup.VM_UUID, 'State': 'stopped', 'Home': str(home) + '/',
               'Home path': str(home / 'config.pvs'),
               'Hardware': {'hdd0': {'enabled': True, 'image': str(disk)}}}
         program = root / 'fake-prlctl'
         probe_output = ''.join(key + '=unknown\n' for key in sorted(proof.PROBE_KEYS))
-        program.write_text('#!/usr/bin/python3\nimport json,sys,time\nfrom pathlib import Path\np=Path(' + repr(str(state)) + ')\na=sys.argv[1:]\nvm=' + repr(vm) + '\n'
-                           'mode=Path(' + repr(str(scenario)) + ').read_text()\n'
-                           'log=Path(' + repr(str(log)) + ')\n'
-                           "with log.open('a') as f: f.write(a[0]+'\\n')\n"
-                           "if a[0]=='start':\n p.write_text('running')\n if mode=='start_accounting': Path(" + repr(str(home / 'config.pvs')) + " ).unlink(); time.sleep(1)\n"
-                           "elif a[0]=='stop':\n if mode=='stop_fail': sys.exit(1)\n p.write_text('stopped')\n"
-                           "elif a[0]=='snapshot-list': print('{}' if mode=='wrong_snapshot' else " + repr(json.dumps(snapshot)) + ")\n"
-                           "elif a[0]=='list':\n vm['State']=p.read_text()\n if mode=='wrong_home': vm['Home']='/wrong/'\n if mode=='wrong_uuid': vm['ID']='wrong'\n print(json.dumps([vm]))\n"
-                           "elif a[0]=='exec' and a[-1]=='ready':\n if mode=='early_boot' and not Path(" + repr(str(root / 'ready-attempt')) + " ).exists(): Path(" + repr(str(root / 'ready-attempt')) + " ).write_text('1'); sys.exit(1)\n print('ready')\n"
-                           "elif a[0]=='exec':\n"
-                           " if mode=='growth': Path(" + repr(str(disk / 'b.hds')) + " ).write_bytes(b'extent-more')\n"
-                           " if mode=='config_change': Path(" + repr(str(home / 'config.pvs')) + " ).write_bytes(b'changed')\n"
-                           " if mode=='descriptor_change': Path(" + repr(str(disk / 'DiskDescriptor.xml')) + " ).write_bytes(b'changed')\n"
-                           " if mode=='extent_missing': Path(" + repr(str(disk / 'b.hds')) + " ).unlink()\n"
-                           " if mode=='extent_replaced': Path(" + repr(str(disk / 'b.hds')) + " ).unlink(); Path(" + repr(str(disk / 'b.hds')) + " ).write_bytes(b'new')\n"
-                           " if mode=='descriptor_missing': Path(" + repr(str(disk / 'DiskDescriptor.xml')) + " ).unlink()\n"
-                           " if mode=='descriptor_replaced': Path(" + repr(str(disk / 'DiskDescriptor.xml')) + " ).unlink(); Path(" + repr(str(disk / 'DiskDescriptor.xml')) + " ).write_bytes(b'replaced')\n"
-                           " if mode=='config_replaced': Path(" + repr(str(home / 'config.pvs')) + " ).unlink(); Path(" + repr(str(home / 'config.pvs')) + " ).write_bytes(b'replaced')\n"
-                           " if mode=='config_missing': Path(" + repr(str(home / 'config.pvs')) + " ).unlink()\n"
-                           " if mode=='timeout': print('uid=0',flush=True); time.sleep(2)\n"
-                           " if mode=='partial': print('uid=0')\n"
-                           " else: print(" + repr(probe_output) + ",end='')\n")
+        program.write_text(PROGRAM % {'state': str(state), 'log': str(log), 'scenario': str(scenario),
+                                      'root': str(root), 'home': str(home), 'disk': str(disk),
+                                      'vm': vm, 'snapshot': json.dumps(snapshot),
+                                      'probe': probe_output, 'cap': diagnostic.CAP})
         program.chmod(0o700)
         head = '1' * 40
+
+        def reset(mode):
+            scenario.write_text(mode)
+            state.write_text('stopped')
+            (home / 'config.pvs').write_bytes(b'config')
+            (disk / 'DiskDescriptor.xml').write_bytes(descriptor([(GUID_A, 'a.hds'), (GUID_B, 'b.hds')]))
+            (disk / 'a.hds').write_bytes(b'a')
+            (disk / 'b.hds').write_bytes(b'extent')
+            (home / 'config.pvs.backup').write_bytes(b'original-backup')
+            for leftover in ('config.pvs.backup.tmp', 'starting-lists', 'ready-attempt',
+                             'stop-while-starting'):
+                (root / leftover).unlink(missing_ok=True)
+            log.write_text('')
+
         def git(args, **kwargs):
             return (head + '\n').encode() if 'rev-parse' in args else b''
+
+        reset('complete')
+        with (disk / 'a.hds').open('wb') as extent:
+            extent.truncate(17 * 1024 * 1024)
+        state.write_text('stopped')
         with patch.object(proof, 'SCRATCH', str(root)), patch.object(proof, 'PRLCTL', str(program)), \
              patch.object(proof, 'PRLCTL_SHA256', hashlib.sha256(program.read_bytes()).hexdigest()), \
              patch.object(proof, 'SNAPSHOT_SHA', snapshot_sha), patch.object(proof.setup, 'PVM_HOME', str(home)), \
@@ -270,77 +810,166 @@ class EntryTests(unittest.TestCase):
                 self.assertEqual(proof.main(['proof', str(path), digest]), 0)
             self.assertEqual(state.read_text(), 'stopped')
             result = json.loads((evidence / 'linux-diagnostic-fixture01' / 'outcome.json').read_text())
+            self.assertEqual(result['schema'], 'linux-diagnostic-observation-v3')
             self.assertEqual(result['start_count'], 1)
+            self.assertEqual(result['stop_count'], 1)
+            self.assertEqual(result['stop_eligibility'], 'running')
             self.assertEqual(result['before_extents']['a.hds']['logical'], 17 * 1024 * 1024)
             self.assertEqual(result['writable_top'], 'unknown')
             self.assertEqual(result['placement'], 'not evaluated')
+            self.assertEqual(result['findings'], [])
+            self.assertEqual(result['metadata_differences'], [])
+            self.assertEqual(result['identity_events'], [])
+            self.assertEqual(result['before_metadata']['logical'],
+                             len(b'config') + len(b'original-backup'))
+            self.assertEqual(result['metadata_events'], [])
+            self.assertNotIn('stop-while-starting', [p.name for p in root.iterdir()])
             with self.assertRaises(Refusal):
                 proof.main(['proof', str(path), digest])
-            for index, mode in enumerate(('wrong_home', 'wrong_uuid', 'wrong_snapshot', 'partial', 'stop_fail', 'growth', 'config_change', 'descriptor_change', 'extent_missing', 'extent_replaced', 'config_missing', 'descriptor_missing', 'descriptor_replaced', 'config_replaced', 'early_boot', 'timeout', 'stop_unknown', 'start_accounting', 'start_exception', 'start_prelaunch'), 2):
-                scenario.write_text(mode)
-                state.write_text('stopped')
-                (home / 'config.pvs').write_bytes(b'config')
-                (disk / 'DiskDescriptor.xml').write_bytes(descriptor([(GUID_A, 'a.hds'), (GUID_B, 'b.hds')]))
-                (disk / 'b.hds').write_bytes(b'extent')
-                log.write_text('')
-                item = proof.plan(str(evidence), 'fixture%02d' % index, head)
-                item_path = root / ('request-%02d.json' % index)
-                item_raw = json.dumps(item).encode()
-                item_path.write_bytes(item_raw)
-                item_path.chmod(0o400)
-                expected = 0 if mode in ('growth', 'early_boot') else 1
-                original_run = proof.stage.run_stage
-                def bounded(*args, **kwargs):
-                    if mode == 'start_prelaunch' and args[1][1:2] == ['start']:
-                        raise Refusal('refused before spawn')
-                    if mode == 'start_exception' and args[1][1:2] == ['start']:
-                        original_run(*args, **kwargs)
-                        raise Refusal('failure after launcher receipt')
-                    if mode == 'stop_unknown' and args[1][1:2] == ['list'] and 'stop' in log.read_text().splitlines():
-                        raise Refusal('terminal observation unavailable')
-                    if mode == 'timeout' and args[1][1:2] == ['exec'] and '-c' in args[1]:
-                        args = (args[0], args[1], 0.2, *args[3:])
-                    return original_run(*args, **kwargs)
-                with patch.object(proof.stage, 'run_stage', side_effect=bounded), contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(proof.main(['proof', str(item_path), hashlib.sha256(item_raw).hexdigest()]), expected)
-                result = json.loads((evidence / ('linux-diagnostic-fixture%02d' % index) / 'outcome.json').read_text())
-                calls = log.read_text().splitlines()
-                self.assertEqual(result['writable_top'], 'unknown')
-                self.assertEqual(result['placement'], 'not evaluated')
-                if mode in ('wrong_home', 'wrong_uuid', 'wrong_snapshot', 'start_prelaunch'):
-                    self.assertNotIn('start', calls)
-                else:
-                    self.assertEqual(calls.count('start'), 1)
-                    self.assertEqual(calls.count('stop'), 1)
-                if mode == 'start_prelaunch':
-                    self.assertNotIn('stop', calls)
-                    self.assertEqual(result['vm_terminal'], 'unknown')
-                    self.assertTrue(any('stop not attempted' in finding for finding in result['findings']))
-                if mode == 'start_exception':
-                    self.assertEqual(result['start']['waited_exit'], 0)
-                    self.assertEqual(result['vm_terminal'], 'stopped')
-                if mode == 'start_accounting':
-                    self.assertEqual(result['start']['disposition'], 'resource-refusal')
-                    self.assertNotEqual(result['start']['waited_exit'], 0)
-                    self.assertEqual(result['vm_terminal'], 'stopped')
-                    self.assertEqual(result['stop']['waited_exit'], 0)
-                if mode == 'early_boot':
-                    self.assertGreaterEqual(calls.count('exec'), 3)
-                if mode == 'timeout':
-                    self.assertEqual(result['probe']['disposition'], 'timeout')
-                    self.assertEqual(result['vm_terminal'], 'stopped')
-                if mode == 'config_missing':
-                    self.assertIn('descriptor', result['post'])
-                if mode == 'growth':
-                    self.assertEqual(result['final_growth']['extents']['logical'], 5)
-                if mode == 'stop_unknown':
-                    self.assertEqual(result['stop']['waited_exit'], 0)
-                    self.assertEqual(result['vm_terminal'], 'unknown')
-                if mode == 'stop_fail':
-                    self.assertEqual(result['vm_terminal'], 'unknown')
-                if mode == 'partial':
-                    self.assertEqual(result['vm_terminal'], 'stopped')
-                    self.assertTrue(any('partial' in x for x in result['findings']))
+            cases = {name: (expected, stops) for name, expected, stops in self.MODES}
+            original_run = proof.stage.run_stage
+
+            def bounded(*args, **kwargs):
+                argv = args[1]
+                if argv[1:2] == ['start'] and scenario.read_text() == 'start_prelaunch':
+                    raise Refusal('refused before spawn')
+                if argv[1:2] == ['start'] and scenario.read_text() == 'start_exception':
+                    original_run(*args, **kwargs)
+                    raise Refusal('failure after launcher receipt')
+                if (argv[1:2] == ['list'] and scenario.read_text() == 'stop_unknown'
+                        and 'stop' in log.read_text().splitlines()):
+                    raise Refusal('terminal observation unavailable')
+                if argv[1:2] == ['exec'] and '-c' in argv and scenario.read_text() == 'timeout':
+                    args = (args[0], argv, 0.2) + args[3:]
+                if argv[1:2] == ['stop'] and scenario.read_text() == 'stop_timeout':
+                    args = (args[0], argv, 0.2) + args[3:]
+                return original_run(*args, **kwargs)
+
+            with patch.object(proof.stage, 'run_stage', side_effect=bounded), \
+                 patch.object(proof, 'PAUSE', 0.05), patch.object(proof, 'RUN_WAIT', 0.6), \
+                 patch.object(proof, 'READY_WAIT', 1), patch.object(proof, 'STATE_WAIT', 6), \
+                 patch.object(proof, 'STOP_OBSERVE', 1):
+                for index, (mode, expected, stops) in enumerate(self.MODES, 2):
+                    with self.subTest(mode=mode):
+                        reset(mode)
+                        item = proof.plan(str(evidence), 'fixture%02d' % index, head)
+                        item_path = root / ('request-%02d.json' % index)
+                        item_raw = json.dumps(item).encode()
+                        item_path.write_bytes(item_raw)
+                        item_path.chmod(0o400)
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            self.assertEqual(proof.main(['proof', str(item_path),
+                                                         hashlib.sha256(item_raw).hexdigest()]), expected)
+                        result = json.loads((evidence / ('linux-diagnostic-fixture%02d' % index)
+                                             / 'outcome.json').read_text())
+                        calls = log.read_text().splitlines()
+                        self.assertEqual(result['writable_top'], 'unknown')
+                        self.assertEqual(result['placement'], 'not evaluated')
+                        self.assertEqual(result['stop_count'], stops)
+                        self.assertEqual(calls.count('start'), 1 if mode not in
+                                         ('wrong_home', 'wrong_uuid', 'wrong_snapshot', 'start_prelaunch') else 0)
+                        self.assertEqual(calls.count('stop'), stops)
+                        self.assertFalse((root / 'stop-while-starting').exists())
+                        if mode == 'start_prelaunch':
+                            self.assertEqual(result['vm_terminal'], 'unknown')
+                            self.assertTrue(any('stop not attempted' in finding
+                                                for finding in result['findings']))
+                        if mode == 'start_stuck_starting':
+                            self.assertEqual(result['stop_eligibility'], 'unknown')
+                            self.assertEqual(result['vm_terminal'], 'unknown')
+                            self.assertNotIn('stop', calls)
+                            self.assertTrue(any('graceful stop not attempted' in finding
+                                                for finding in result['findings']))
+                        if mode == 'start_immediately_stopped':
+                            # Observed stopped, no stop command, and not a successful handoff.
+                            self.assertEqual(result['stop'], {'command': 'not sent',
+                                                              'observed': 'stopped'})
+                            self.assertEqual(result['vm_terminal'], 'stopped')
+                            self.assertEqual(expected, 1)
+                            self.assertTrue(any('running observation unknown' in finding
+                                                for finding in result['findings']))
+                            self.assertTrue(any('no graceful stop command was executed' in finding
+                                                for finding in result['findings']))
+                        if mode == 'start_client_refusal':
+                            self.assertEqual(result['start']['waited_exit'], 255)
+                            self.assertEqual(result['stop_eligibility'], 'running')
+                            self.assertEqual(result['vm_terminal'], 'stopped')
+                            self.assertEqual(result['stop']['waited_exit'], 0)
+                            self.assertGreater(calls.index('stop'), calls.index('start'))
+                        if mode in ('start_client_refusal', 'start_refusal_cleanup_running'):
+                            # Every executed step is journalled once: no side-channel effect.
+                            steps = list((evidence / ('linux-diagnostic-fixture%02d' % index))
+                                         .glob('step-*'))
+                            self.assertEqual(len(steps), len(calls))
+                        if mode == 'start_refusal_cleanup_running':
+                            # The refused start aborts before the boot loop: only the cleanup
+                            # window waits, observes this same VM reach running, stops it once.
+                            self.assertEqual(result['start']['waited_exit'], 255)
+                            self.assertEqual(calls[:3], ['list', 'snapshot-list', 'start'])
+                            self.assertGreaterEqual(calls.count('list'), 3)
+                            self.assertEqual(result['stop_eligibility'], 'running')
+                            self.assertEqual(result['stop_count'], 1)
+                            self.assertEqual(result['stop']['waited_exit'], 0)
+                            self.assertEqual(result['vm_terminal'], 'stopped')
+                            self.assertGreater(calls.index('stop'), calls.index('start'))
+                        if mode == 'start_extent_cap':
+                            self.assertEqual(result['start']['disposition'], 'resource-refusal')
+                            self.assertEqual(result['start']['waited_exit'], -9)
+                            self.assertEqual(result['vm_terminal'], 'stopped')
+                            self.assertEqual(result['stop']['waited_exit'], 0)
+                        if mode == 'start_exception':
+                            self.assertEqual(result['start']['waited_exit'], 0)
+                            self.assertEqual(result['vm_terminal'], 'stopped')
+                        if mode == 'stop_timeout':
+                            self.assertEqual(result['stop']['disposition'], 'timeout')
+                            self.assertNotEqual(result['stop']['waited_exit'], 0)
+                            self.assertEqual(result['vm_terminal'], 'stopped')
+                            self.assertTrue(any('graceful stop did not complete' in finding
+                                                for finding in result['findings']))
+                        if mode == 'metadata_rotation':
+                            replaced = [event for event in result['metadata_events']
+                                        if event['kind'] == 'replaced']
+                            self.assertTrue(replaced)
+                            self.assertEqual(replaced[0]['path'], 'config.pvs.backup')
+                            self.assertGreaterEqual(result['post_metadata']['logical'],
+                                                    len(b'original-backup') + len(b'replacement-incarnation'))
+                            self.assertFalse(any('identity changed' in finding
+                                                 for finding in result['findings']))
+                        if mode == 'growth':
+                            self.assertEqual(result['final_growth']['extents']['logical'], 5)
+                        if mode == 'early_boot':
+                            self.assertGreaterEqual(calls.count('exec'), 3)
+                            self.assertEqual(result['findings'], [])
+                        if mode == 'never_ready':
+                            self.assertTrue(any('readiness unknown' in finding
+                                                for finding in result['findings']))
+                        if mode == 'config_change':
+                            self.assertEqual(result['findings'], [])
+                            self.assertTrue(any('config bytes changed' in difference
+                                                for difference in result['metadata_differences']))
+                        if mode == 'config_replaced':
+                            self.assertEqual(result['findings'], [])
+                            self.assertTrue(any(event['object'] == 'config' and
+                                                event['content_identical'] is False
+                                                for event in result['identity_events']))
+                        if mode == 'config_missing':
+                            self.assertIn('descriptor', result['post'])
+                        if mode == 'descriptor_replaced_equal':
+                            self.assertEqual(result['findings'], [])
+                            self.assertTrue(any(event['object'] == 'descriptor' and
+                                                event['content_identical'] is True
+                                                for event in result['identity_events']))
+                        if mode == 'descriptor_changed':
+                            self.assertTrue(any('descriptor content changed' in finding
+                                                for finding in result['findings']))
+                        if mode == 'stop_unknown':
+                            self.assertEqual(result['stop']['waited_exit'], 0)
+                            self.assertEqual(result['vm_terminal'], 'unknown')
+                        if mode == 'stop_fail':
+                            self.assertEqual(result['vm_terminal'], 'unknown')
+                        if mode == 'partial':
+                            self.assertEqual(result['vm_terminal'], 'stopped')
+                            self.assertTrue(any('partial' in x for x in result['findings']))
 
 
 def git(args, cwd):
@@ -490,7 +1119,9 @@ class CheckoutBindingTests(unittest.TestCase):
         self.assertEqual(result['vm_terminal'], 'stopped')
         self.assertEqual(result['findings'], [])
         calls = [json.loads(line) for line in self.log.read_text().splitlines()]
-        self.assertEqual([call[1] for call in calls], ['list', 'snapshot-list', 'start', 'list', 'exec', 'exec', 'stop', 'list', 'snapshot-list'])
+        self.assertEqual([call[1] for call in calls],
+                         ['list', 'snapshot-list', 'start', 'list', 'exec', 'exec', 'list', 'stop', 'list',
+                          'snapshot-list'])
         self.assertTrue(all(call[0] == str(self.program) for call in calls))
         self.assertIn([str(self.program), 'start', proof.setup.VM_UUID], calls)
         steps = sorted(self.destination('checkout01').glob('step-*'))

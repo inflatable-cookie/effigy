@@ -409,6 +409,12 @@ The anchor is excluded from workload closure and stopped last. A missing, killed
 or unverifiable anchor grants no signal authority while workload members remain;
 an empty group still proves closure. Session escapes remain outside custody.
 
+During the anchor's final stop, its own recorded disappearance or zombie state
+may explain a refused signal. That specific retirement refusal permits another
+group-closure observation; it never proves closure itself. Unreadable, replaced,
+nonce, birth or group failures still refuse. Every workload member keeps its
+own fresh group check independently of the anchor's verification.
+
 For receipts without an anchor, recovery signals a group only with fresh leader
 generation evidence. Linux 6.9's pidfd group operation targets the original
 kernel group; EINVAL selects the contract's older-kernel fallback after another

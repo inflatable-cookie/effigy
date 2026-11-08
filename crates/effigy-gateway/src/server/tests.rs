@@ -850,7 +850,7 @@ fn apply_reloaded_route_table_noops_when_already_empty() {
     let action =
         apply_reloaded_route_table(&table, RouteTable::new(), &dns_cache, true, &generation);
 
-    assert_eq!(action, IdleShutdownAction::None);
+    assert_eq!(action, ReloadApplication::Unchanged);
     assert_eq!(generation.load(Ordering::SeqCst), 0);
     assert!(table.read().unwrap().is_empty());
 }
@@ -864,7 +864,10 @@ fn apply_reloaded_route_table_arms_idle_shutdown_when_last_route_removed() {
     let action =
         apply_reloaded_route_table(&table, RouteTable::new(), &dns_cache, true, &generation);
 
-    assert_eq!(action, IdleShutdownAction::Arm(1));
+    assert_eq!(
+        action,
+        ReloadApplication::Changed(IdleShutdownAction::Arm(1))
+    );
     assert_eq!(generation.load(Ordering::SeqCst), 1);
     assert!(table.read().unwrap().is_empty());
 }
@@ -880,7 +883,7 @@ fn machine_gateway_never_arms_idle_shutdown_when_last_route_removed() {
     let action =
         apply_reloaded_route_table(&table, RouteTable::new(), &dns_cache, false, &generation);
 
-    assert_eq!(action, IdleShutdownAction::None);
+    assert_eq!(action, ReloadApplication::Changed(IdleShutdownAction::None));
     assert_eq!(generation.load(Ordering::SeqCst), 0);
     assert!(table.read().unwrap().is_empty());
 }
@@ -894,14 +897,21 @@ fn apply_reloaded_route_table_cancels_idle_shutdown_when_route_returns() {
     let action =
         apply_reloaded_route_table(&table, demo_route_table(), &dns_cache, true, &generation);
 
-    assert_eq!(action, IdleShutdownAction::Cancel);
+    assert_eq!(
+        action,
+        ReloadApplication::Changed(IdleShutdownAction::Cancel)
+    );
     assert_eq!(generation.load(Ordering::SeqCst), 5);
     assert_eq!(table.read().unwrap().len(), 1);
 }
 
 /// A gateway that starts before anything has published - a fresh machine, and
 /// every `up`/`dev` that starts the gateway first - still serves the first
-/// route: setting up the watcher creates the store directory it watches.
+/// route: setting up the watcher creates the store directory it watches, and the
+/// route worker (event or interval) applies the commit that follows. The
+/// notification seam itself is proved by
+/// `milestone_130acca8_notification_wakes_the_route_worker`; this control keeps
+/// the real watcher on a fresh store, which is what a daemon started first has.
 #[test]
 fn route_published_after_startup_reaches_a_watcher_installed_on_a_fresh_store() {
     let fixture = gateway_dir();
@@ -915,16 +925,16 @@ fn route_published_after_startup_reaches_a_watcher_installed_on_a_fresh_store() 
     );
 
     let table = Arc::new(RwLock::new(RouteTable::new()));
-    let (shutdown_tx, _shutdown_rx) = watch::channel(false);
-    let _watcher = setup_file_watcher(
-        &routes_path,
-        Arc::clone(&table),
-        Arc::new(DnsCache::new(Duration::from_secs(2))),
-        Arc::new(AtomicU64::new(0)),
-        shutdown_tx,
-        GatewayConfig::standard(routes_path.parent().unwrap().to_path_buf()),
-    )
-    .expect("watcher setup for an unpublished store");
+    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
+    let clock = held_clock();
+    let (idle, _stopped) = idle_shutdown(&routes_path, &clock);
+    let signal = Arc::new(ReconcileSignal::new());
+    let _watcher = setup_file_watcher(&routes_path, Arc::clone(&signal))
+        .expect("watcher setup for an unpublished store");
+    let _reconcile = RouteReconcile::spawn(RouteReconciler::production(
+        reloader(&routes_path, &table, &dns_cache, &idle, false),
+        signal,
+    ));
 
     #[cfg(unix)]
     {
@@ -956,19 +966,556 @@ fn route_published_after_startup_reaches_a_watcher_installed_on_a_fresh_store() 
         })
         .expect("publish the first route");
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
-    while table
-        .read()
-        .expect("route table")
-        .lookup("late.test")
-        .is_none()
-    {
+    wait_until(
+        "the route published after startup",
+        Duration::from_secs(20),
+        || {
+            table
+                .read()
+                .expect("route table")
+                .lookup("late.test")
+                .is_some()
+        },
+    );
+}
+
+/// effigy#716: the notification the directory watcher delivers wakes the route
+/// worker immediately, even when its own interval is far away, and the worker
+/// re-observes rather than counting events.
+#[test]
+fn milestone_130acca8_notification_wakes_the_route_worker() {
+    let (_fixture, routes) = gateway_state();
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
+    let clock = held_clock();
+    let (idle, _stopped) = idle_shutdown(&routes, &clock);
+    let observations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let reloader = RouteReloader {
+        read: counting_reader(&observations),
+        ..reloader(&routes, &table, &dns_cache, &idle, false)
+    };
+    let signal = Arc::new(ReconcileSignal::new());
+    let mut reconcile = RouteReconcile::spawn(
+        RouteReconciler::production(reloader, Arc::clone(&signal))
+            .with_intervals(Duration::from_secs(600), Duration::from_secs(600)),
+    );
+    wait_until("the opening observation", Duration::from_secs(20), || {
+        observations.load(Ordering::SeqCst) > 0
+    });
+    let opening = observations.load(Ordering::SeqCst);
+
+    publish_route(&routes, "notified.test");
+    // Exactly what the watcher callback does for a filesystem event.
+    signal.notify();
+    wait_until("the notified route", Duration::from_secs(20), || {
+        table.read().unwrap().lookup("notified.test").is_some()
+    });
+    assert!(
+        observations.load(Ordering::SeqCst) > opening,
+        "the notification woke a fresh observation"
+    );
+    assert_eq!(
+        table.read().unwrap().revision,
+        store_revision(&routes),
+        "the notified observation applied the committed fence"
+    );
+    reconcile.settle();
+}
+
+/// effigy#716: the watcher's callback is wired to the worker's signal. A
+/// delivered event that can change the committed snapshot leaves exactly one
+/// pending observation, and an event kind that cannot change it leaves none.
+/// This is deterministic: it does not depend on the platform delivering an
+/// event, which is why the publication control no longer claims to prove it.
+#[test]
+fn milestone_130acca8_watcher_callback_signals_the_route_worker() {
+    use notify::event::{AccessKind, CreateKind, ModifyKind, RemoveKind};
+    use notify::{Event, EventKind};
+    let signal = Arc::new(ReconcileSignal::new());
+    let mut handler = route_watch_handler(Arc::clone(&signal), PathBuf::from("/fixture/store"));
+
+    // Two delivered changes coalesce into one pending observation.
+    handler(Ok(Event::new(EventKind::Modify(ModifyKind::Any))));
+    handler(Ok(Event::new(EventKind::Create(CreateKind::File))));
+    assert_eq!(
+        signal.wait(Duration::ZERO),
+        Wake::Event,
+        "a delivered change is one pending observation"
+    );
+    assert_eq!(
+        signal.wait(Duration::ZERO),
+        Wake::Interval,
+        "the pending observation was consumed, not queued twice"
+    );
+
+    handler(Ok(Event::new(EventKind::Remove(RemoveKind::File))));
+    assert_eq!(signal.wait(Duration::ZERO), Wake::Event, "removal signals");
+    assert_eq!(
+        signal.wait(Duration::ZERO),
+        Wake::Interval,
+        "and is consumed once"
+    );
+
+    // Event kinds that cannot change the committed snapshot signal nothing.
+    handler(Ok(Event::new(EventKind::Access(AccessKind::Read))));
+    assert_eq!(
+        signal.wait(Duration::ZERO),
+        Wake::Interval,
+        "an access is not a change"
+    );
+    // A watcher error is reported and does not fabricate work.
+    handler(Err(notify::Error::generic("fixture watcher error")));
+    assert_eq!(
+        signal.wait(Duration::ZERO),
+        Wake::Interval,
+        "a watcher error is not an observation"
+    );
+}
+
+/// effigy#716: an observation that panics is reported at the panic point and
+/// retried like any other failed observation, so one panic cannot silently end
+/// reconciliation.
+#[test]
+fn milestone_130acca8_panicking_observation_keeps_the_worker_alive() {
+    let (_fixture, routes) = gateway_state();
+    publish_route(&routes, "after-panic.test");
+    let committed = store_revision(&routes);
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
+    let clock = held_clock();
+    let (idle, _stopped) = idle_shutdown(&routes, &clock);
+    let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = Arc::clone(&attempts);
+    let reloader = RouteReloader {
+        read: Arc::new(move |path: &Path| {
+            if observed.fetch_add(1, Ordering::SeqCst) == 0 {
+                panic!("fixture observation panicked");
+            }
+            RouteTable::load(path)
+        }),
+        ..reloader(&routes, &table, &dns_cache, &idle, false)
+    };
+    let mut reconcile = RouteReconcile::spawn(quick_reconciler(reloader));
+    wait_until(
+        "the route after a panicked observation",
+        Duration::from_secs(20),
+        || table.read().unwrap().lookup("after-panic.test").is_some(),
+    );
+    assert!(
+        attempts.load(Ordering::SeqCst) >= 2,
+        "the worker kept observing after the panic"
+    );
+    assert_eq!(table.read().unwrap().revision, committed);
+    reconcile.settle();
+}
+
+fn store_revision(routes: &Path) -> u64 {
+    crate::endpoint_store::EndpointStore::for_routes(routes)
+        .snapshot()
+        .expect("committed snapshot")
+        .revision
+}
+
+fn wait_until(what: &str, deadline: Duration, mut ready: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + deadline;
+    while !ready() {
         assert!(
             std::time::Instant::now() < deadline,
-            "a gateway started first never reloaded the route published after it"
+            "timed out waiting for {what}"
         );
-        std::thread::sleep(Duration::from_millis(25));
+        std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+/// A route a private gateway may not bind: it names a non-loopback alias.
+fn private_invalid_table(revision: u64) -> RouteTable {
+    let mut table = RouteTable::new();
+    table.revision = revision;
+    table.upsert(Route {
+        domain: "invalid.test".to_owned(),
+        target: None,
+        dns_ip: Some("10.1.2.3".parse().unwrap()),
+        tcp_port: None,
+        tcp_target: None,
+        tls: false,
+        source: RouteSource::Container,
+        project: "fixture".to_owned(),
+        managed_listener: None,
+        registered: chrono::Utc::now(),
+    });
+    table
+}
+
+/// effigy#716: a valid commit whose filesystem notification is missed still
+/// reaches the running table. Nothing watches this store, so no event can ever
+/// arrive; the committed snapshot is applied by reconciliation alone, and the
+/// store keeps exactly one commit.
+#[test]
+fn milestone_130acca8_missed_notification_still_applies_the_committed_route() {
+    let (_fixture, routes) = gateway_state();
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
+    let clock = held_clock();
+    let (idle, stopped) = idle_shutdown(&routes, &clock);
+    let observations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let reloader = RouteReloader {
+        read: counting_reader(&observations),
+        ..reloader(&routes, &table, &dns_cache, &idle, false)
+    };
+    let mut reconcile = RouteReconcile::spawn(quick_reconciler(reloader));
+    wait_until("the opening observation", Duration::from_secs(20), || {
+        observations.load(Ordering::SeqCst) > 0
+    });
+
+    publish_route(&routes, "reconciled.test");
+    let committed = store_revision(&routes);
+    wait_until(
+        "the missed notification's route",
+        Duration::from_secs(20),
+        || table.read().unwrap().lookup("reconciled.test").is_some(),
+    );
+    assert_eq!(
+        table.read().unwrap().revision,
+        committed,
+        "the applied table carries the committed fence"
+    );
+    assert_eq!(
+        store_revision(&routes),
+        committed,
+        "reconciliation applies the publisher's snapshot instead of writing another"
+    );
+    assert!(
+        observations.load(Ordering::SeqCst) > 1,
+        "the route arrived on a later observation, not the opening one"
+    );
+    reconcile.settle();
+    assert!(clock.waits.lock().unwrap().is_empty());
+    assert!(!*stopped.borrow());
+}
+
+/// effigy#716: a refused observation is retried, and the unchanged committed
+/// snapshot is then applied without a second commit or event.
+#[test]
+fn milestone_130acca8_refused_observation_retries_the_committed_snapshot() {
+    let (_fixture, routes) = gateway_state();
+    publish_route(&routes, "retried.test");
+    let committed = store_revision(&routes);
+
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
+    let clock = held_clock();
+    let (idle, _stopped) = idle_shutdown(&routes, &clock);
+    let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let refused = Arc::clone(&attempts);
+    let read: RouteRead = Arc::new(move |path: &Path| {
+        if refused.fetch_add(1, Ordering::SeqCst) < 3 {
+            return Err(GatewayError::EndpointStore {
+                reason: "fixture refused the observation".to_owned(),
+            });
+        }
+        RouteTable::load(path)
+    });
+    let reloader = RouteReloader {
+        read,
+        ..reloader(&routes, &table, &dns_cache, &idle, false)
+    };
+    dns_cache.put("cached.test".to_owned(), true, None);
+
+    // The refused observation keeps the applied table and the cache, and is
+    // reported as a refusal rather than an empty success.
+    let error = reloader
+        .reload()
+        .expect_err("the first observation is refused");
+    assert!(
+        error.to_string().contains("refused the observation"),
+        "{error}"
+    );
+    assert!(table.read().unwrap().lookup("retried.test").is_none());
+    assert_eq!(table.read().unwrap().revision, 0);
+    assert!(
+        dns_cache.get("cached.test").is_some(),
+        "a refused observation clears no cache"
+    );
+
+    // The worker retries until the unchanged committed snapshot is consumed.
+    let mut reconcile = RouteReconcile::spawn(quick_reconciler(reloader));
+    wait_until("the retried route", Duration::from_secs(20), || {
+        table.read().unwrap().lookup("retried.test").is_some()
+    });
+    assert!(
+        attempts.load(Ordering::SeqCst) >= 4,
+        "the route arrived after retries, not on the first observation"
+    );
+    assert_eq!(table.read().unwrap().revision, committed);
+    assert_eq!(store_revision(&routes), committed, "no second commit");
+    reconcile.settle();
+}
+
+/// effigy#716: unknown and out-of-contract observations preserve the applied
+/// table, its fence, the DNS cache and the idle generation, and are reported.
+/// A permanently refused store is retried without replacing the table.
+#[test]
+fn milestone_130acca8_unknown_or_invalid_observation_retains_the_applied_table() {
+    let (_fixture, routes) = gateway_state();
+    publish_route(&routes, "kept.test");
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
+    let clock = held_clock();
+    let (idle, stopped) = idle_shutdown(&routes, &clock);
+    let applied = reloader(&routes, &table, &dns_cache, &idle, false);
+    assert!(matches!(
+        applied.reload().expect("apply the committed route"),
+        ReloadOutcome::Applied { idle_timer: None }
+    ));
+    let applied_revision = table.read().unwrap().revision;
+    let applied_generation = idle.generation.load(Ordering::SeqCst);
+    dns_cache.put("kept.test".to_owned(), true, None);
+
+    let unknown = RouteReloader {
+        read: Arc::new(|_| {
+            Err(GatewayError::EndpointStore {
+                reason: "observation unknown: store unreadable".to_owned(),
+            })
+        }),
+        ..applied.clone()
+    };
+    let error = unknown.reload().expect_err("an unknown read is refused");
+    assert!(error.to_string().contains("store unreadable"), "{error}");
+
+    let refused_revision = applied_revision + 1;
+    let invalid = RouteReloader {
+        read: Arc::new(move |_| Ok(private_invalid_table(refused_revision))),
+        private: true,
+        ..applied.clone()
+    };
+    let error = invalid
+        .reload()
+        .expect_err("an out-of-contract private snapshot is refused");
+    assert!(
+        error.to_string().contains("unprivileged loopback"),
+        "{error}"
+    );
+
+    {
+        let retained = table.read().unwrap();
+        assert_eq!(retained.revision, applied_revision);
+        assert!(retained.lookup("kept.test").is_some());
+    }
+    assert!(dns_cache.get("kept.test").is_some());
+    assert_eq!(idle.generation.load(Ordering::SeqCst), applied_generation);
+    assert!(clock.waits.lock().unwrap().is_empty());
+
+    // A store that never becomes readable leaves the applied table in place
+    // while the worker keeps retrying.
+    let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let refused = Arc::clone(&attempts);
+    let permanent = RouteReloader {
+        read: Arc::new(move |_| {
+            refused.fetch_add(1, Ordering::SeqCst);
+            Err(GatewayError::EndpointStore {
+                reason: "observation unknown: store unreadable".to_owned(),
+            })
+        }),
+        ..applied
+    };
+    let mut reconcile = RouteReconcile::spawn(quick_reconciler(permanent));
+    wait_until("the retried refusal", Duration::from_secs(20), || {
+        attempts.load(Ordering::SeqCst) >= 3
+    });
+    let retained = table.read().unwrap();
+    assert_eq!(retained.revision, applied_revision);
+    assert!(retained.lookup("kept.test").is_some());
+    drop(retained);
+    reconcile.settle();
+    assert!(clock.waits.lock().unwrap().is_empty());
+    assert!(!*stopped.borrow());
+}
+
+/// effigy#716: re-observing the applied revision changes nothing - no cache
+/// clear, no fence move, and no second idle timer for the same generation.
+#[test]
+fn milestone_130acca8_unchanged_reconciliation_clears_nothing_and_arms_nothing() {
+    let (_fixture, routes) = gateway_state();
+    publish_route(&routes, "steady.test");
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
+    let clock = held_clock();
+    let (idle, stopped) = idle_shutdown(&routes, &clock);
+    let reloader = reloader(&routes, &table, &dns_cache, &idle, true);
+    assert!(matches!(
+        reloader.reload().expect("apply the committed route"),
+        ReloadOutcome::Applied { idle_timer: None }
+    ));
+    let revision = table.read().unwrap().revision;
+    let generation = idle.generation.load(Ordering::SeqCst);
+    dns_cache.put("steady.test".to_owned(), true, None);
+
+    for _ in 0..5 {
+        assert!(
+            matches!(
+                reloader.reload().expect("re-observe the applied snapshot"),
+                ReloadOutcome::Unchanged
+            ),
+            "the applied snapshot is unchanged"
+        );
+    }
+    assert_eq!(table.read().unwrap().revision, revision);
+    assert_eq!(idle.generation.load(Ordering::SeqCst), generation);
+    assert!(
+        dns_cache.get("steady.test").is_some(),
+        "an unchanged observation keeps the cache"
+    );
+    assert!(
+        clock.waits.lock().unwrap().is_empty(),
+        "no idle timer is armed for an unchanged table"
+    );
+
+    // The same holds for the empty private table: the withdrawal arms one stop,
+    // and re-observing that empty snapshot arms no second one.
+    withdraw_route(&routes, "steady.test");
+    let armed = match reloader.reload().expect("apply the withdrawal") {
+        ReloadOutcome::Applied { idle_timer } => idle_timer.expect("the withdrawal arms the stop"),
+        ReloadOutcome::Unchanged => panic!("the withdrawal is a change"),
+    };
+    wait_until("the armed idle timer", Duration::from_secs(20), || {
+        !clock.waits.lock().unwrap().is_empty()
+    });
+    let armed_generation = idle.generation.load(Ordering::SeqCst);
+    for _ in 0..5 {
+        assert!(matches!(
+            reloader.reload().expect("re-observe the empty snapshot"),
+            ReloadOutcome::Unchanged
+        ));
+    }
+    assert_eq!(
+        idle.generation.load(Ordering::SeqCst),
+        armed_generation,
+        "a no-op observation must not move the idle generation"
+    );
+    assert_eq!(
+        clock.waits.lock().unwrap().len(),
+        1,
+        "no second idle timer is spawned"
+    );
+    clock.release.send(()).unwrap();
+    armed.join().expect("the armed stop settles");
+    assert!(
+        *stopped.borrow(),
+        "the armed stop still stops the empty gateway"
+    );
+    assert_eq!(stop_records(&routes).len(), 1);
+}
+
+/// effigy#716: a genuinely changed snapshot advances the revision fence, clears
+/// the DNS cache and replaces the routes, and leaves the idle generation alone
+/// while the table stays non-empty.
+#[test]
+fn milestone_130acca8_changed_snapshot_advances_fence_cache_and_routes() {
+    let (_fixture, routes) = gateway_state();
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
+    let clock = held_clock();
+    let (idle, _stopped) = idle_shutdown(&routes, &clock);
+    let reloader = reloader(&routes, &table, &dns_cache, &idle, true);
+
+    publish_route(&routes, "first.test");
+    let first = store_revision(&routes);
+    dns_cache.put("stale.test".to_owned(), true, None);
+    assert!(matches!(
+        reloader.reload().expect("apply the first route"),
+        ReloadOutcome::Applied { idle_timer: None }
+    ));
+    assert_eq!(table.read().unwrap().revision, first);
+    assert!(table.read().unwrap().lookup("first.test").is_some());
+    assert!(
+        dns_cache.get("stale.test").is_none(),
+        "a changed snapshot clears the DNS cache"
+    );
+    assert_eq!(
+        idle.generation.load(Ordering::SeqCst),
+        1,
+        "the empty-to-routed transition cancels the idle generation"
+    );
+
+    publish_route(&routes, "second.test");
+    let second = store_revision(&routes);
+    assert!(second > first, "a second commit is a new revision");
+    dns_cache.put("stale.test".to_owned(), true, None);
+    assert!(matches!(
+        reloader.reload().expect("apply the second route"),
+        ReloadOutcome::Applied { idle_timer: None }
+    ));
+    {
+        let applied = table.read().unwrap();
+        assert_eq!(applied.revision, second, "the fence advanced");
+        assert!(applied.lookup("first.test").is_some());
+        assert!(applied.lookup("second.test").is_some());
+    }
+    assert!(dns_cache.get("stale.test").is_none());
+    assert_eq!(
+        idle.generation.load(Ordering::SeqCst),
+        1,
+        "a routed-to-routed change arms nothing"
+    );
+
+    withdraw_route(&routes, "first.test");
+    let third = store_revision(&routes);
+    assert!(matches!(
+        reloader.reload().expect("apply the withdrawal"),
+        ReloadOutcome::Applied { idle_timer: None }
+    ));
+    {
+        let applied = table.read().unwrap();
+        assert_eq!(applied.revision, third);
+        assert!(applied.lookup("first.test").is_none());
+        assert!(applied.lookup("second.test").is_some());
+    }
+    assert!(clock.waits.lock().unwrap().is_empty());
+}
+
+/// effigy#716: cancellation settles the owned reconciliation work. The worker
+/// stops while it is waiting, joins, and can never observe again.
+#[test]
+fn milestone_130acca8_cancelled_reconciliation_settles_its_worker() {
+    let (_fixture, routes) = gateway_state();
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
+    let clock = held_clock();
+    let (idle, _stopped) = idle_shutdown(&routes, &clock);
+    let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let reloader = RouteReloader {
+        read: counting_reader(&attempts),
+        ..reloader(&routes, &table, &dns_cache, &idle, false)
+    };
+    let mut reconcile = RouteReconcile::spawn(quick_reconciler(reloader));
+    wait_until("the running worker", Duration::from_secs(20), || {
+        attempts.load(Ordering::SeqCst) > 0
+    });
+
+    let started = std::time::Instant::now();
+    reconcile.settle();
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "a waiting worker settles promptly"
+    );
+    assert!(
+        reconcile.worker.is_none(),
+        "the owned worker was joined rather than detached"
+    );
+    assert_eq!(
+        reconcile.signal.wait(Duration::from_secs(5)),
+        Wake::Stop,
+        "a settled signal never lets another observation start"
+    );
+    let settled = attempts.load(Ordering::SeqCst);
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        settled,
+        "a joined worker cannot observe again"
+    );
+    // Settling is idempotent and leaves the same zero workers.
+    reconcile.settle();
+    assert!(reconcile.worker.is_none());
 }
 
 /// A clock the test holds. Each idle wait is recorded, then returns only when
@@ -1048,7 +1595,7 @@ fn withdraw_route(routes: &Path, domain: &str) {
         .expect("withdraw route");
 }
 
-/// One reload through the same function the route watcher calls.
+/// One observation through the same reloader the route worker drives.
 fn reload(
     routes: &Path,
     table: &Arc<RwLock<RouteTable>>,
@@ -1056,8 +1603,45 @@ fn reload(
     private: bool,
 ) -> Option<std::thread::JoinHandle<()>> {
     let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
-    reload_route_table_and_maybe_schedule_shutdown(routes, table, &dns_cache, idle, private)
+    match reloader(routes, table, &dns_cache, idle, private)
+        .reload()
         .expect("route table reload")
+    {
+        ReloadOutcome::Unchanged => None,
+        ReloadOutcome::Applied { idle_timer } => idle_timer,
+    }
+}
+
+fn reloader(
+    routes: &Path,
+    table: &Arc<RwLock<RouteTable>>,
+    dns_cache: &Arc<DnsCache>,
+    idle: &IdleShutdown,
+    private: bool,
+) -> RouteReloader {
+    RouteReloader::production(
+        routes,
+        Arc::clone(table),
+        Arc::clone(dns_cache),
+        idle.clone(),
+        private,
+    )
+}
+
+/// A worker that reconciles on a short interval so a control observes
+/// convergence instead of waiting out the production interval.
+fn quick_reconciler(reloader: RouteReloader) -> RouteReconciler {
+    RouteReconciler::production(reloader, Arc::new(ReconcileSignal::new()))
+        .with_intervals(Duration::from_millis(25), Duration::from_millis(5))
+}
+
+/// Records every observation a reloader makes, then reads the store.
+fn counting_reader(attempts: &Arc<std::sync::atomic::AtomicUsize>) -> RouteRead {
+    let attempts = Arc::clone(attempts);
+    Arc::new(move |path: &Path| {
+        attempts.fetch_add(1, Ordering::SeqCst);
+        RouteTable::load(path)
+    })
 }
 
 fn stop_records(routes: &Path) -> Vec<serde_json::Value> {

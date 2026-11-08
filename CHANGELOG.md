@@ -8,6 +8,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Update the locked `ctutils` and Tokio dependencies to patched releases
+  (`ctutils` 0.4.4 and Tokio 1.53.3) for RUSTSEC-2026-0385 and
+  RUSTSEC-2026-0386. Cargo deny policy and runtime behavior remain unchanged.
+
 - Prepare a private, proof-only Linux VM diagnostic observation route with complete extent accounting and retained originals.
 
 - Allow a pinned macOS proof request to start its bounded stage window at the externally approved launch (effigy#696).
@@ -977,6 +981,22 @@ During v0.x, MINOR bumps may include breaking changes.
   name, such as an extra empty directory.
 
 ### Fixed
+
+- Avoid a false cleanup failure when a custody anchor retires during its final
+  stop, while retaining independent workload group checks and positive group
+  closure (effigy#709).
+- Keep a running gateway's routes converging when a filesystem notification is
+  missed or its first reload is refused (effigy#716). One owned worker is now
+  the only place an observed endpoint snapshot is applied: the directory watcher
+  only signals it, and it re-observes the committed Store snapshot on a
+  five-second interval, retrying a failed observation from one second up to
+  thirty. A missed event therefore no longer strands a route until something
+  publishes again. Re-applying the already applied revision changes nothing -
+  no revision-fence move, no DNS cache clear and no second idle stop - while a
+  changed snapshot still updates the fence, cache, routes and idle generation.
+  An Unknown, unreadable or out-of-contract observation keeps the applied table
+  and reports its cause instead of becoming an empty success. Shutdown and every
+  startup failure after the watcher was installed stop and join the worker.
 
 - Give automatic Linux workspace artifact builds an exact checkout-owned
   builder (effigy#710). The private builder's project is now scoped to the
