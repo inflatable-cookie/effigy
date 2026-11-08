@@ -907,9 +907,11 @@ fn apply_reloaded_route_table_cancels_idle_shutdown_when_route_returns() {
 
 /// A gateway that starts before anything has published - a fresh machine, and
 /// every `up`/`dev` that starts the gateway first - still serves the first
-/// route: setting up the watcher creates the store directory it watches, and
-/// the commit's notification wakes the route worker promptly. The worker's own
-/// interval is set far beyond the deadline, so only the event can settle this.
+/// route: setting up the watcher creates the store directory it watches, and the
+/// route worker (event or interval) applies the commit that follows. The
+/// notification seam itself is proved by
+/// `milestone_130acca8_notification_wakes_the_route_worker`; this control keeps
+/// the real watcher on a fresh store, which is what a daemon started first has.
 #[test]
 fn route_published_after_startup_reaches_a_watcher_installed_on_a_fresh_store() {
     let fixture = gateway_dir();
@@ -929,25 +931,10 @@ fn route_published_after_startup_reaches_a_watcher_installed_on_a_fresh_store() 
     let signal = Arc::new(ReconcileSignal::new());
     let _watcher = setup_file_watcher(&routes_path, Arc::clone(&signal))
         .expect("watcher setup for an unpublished store");
-    let observations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let reloader = RouteReloader {
-        read: counting_reader(&observations),
-        ..reloader(&routes_path, &table, &dns_cache, &idle, false)
-    };
-    let _reconcile = RouteReconcile::spawn(
-        RouteReconciler::production(reloader, signal)
-            .with_intervals(Duration::from_secs(600), Duration::from_secs(600)),
-    );
-    // Let the worker take its opening observation before the commit, so the
-    // route below can only arrive because the event woke it.
-    let settled = std::time::Instant::now() + Duration::from_secs(20);
-    while observations.load(Ordering::SeqCst) == 0 {
-        assert!(
-            std::time::Instant::now() < settled,
-            "the route worker never took its opening observation"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    let _reconcile = RouteReconcile::spawn(RouteReconciler::production(
+        reloader(&routes_path, &table, &dns_cache, &idle, false),
+        signal,
+    ));
 
     #[cfg(unix)]
     {
@@ -979,19 +966,60 @@ fn route_published_after_startup_reaches_a_watcher_installed_on_a_fresh_store() 
         })
         .expect("publish the first route");
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
-    while table
-        .read()
-        .expect("route table")
-        .lookup("late.test")
-        .is_none()
-    {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "a gateway started first never reloaded the route published after it"
-        );
-        std::thread::sleep(Duration::from_millis(25));
-    }
+    wait_until(
+        "the route published after startup",
+        Duration::from_secs(20),
+        || {
+            table
+                .read()
+                .expect("route table")
+                .lookup("late.test")
+                .is_some()
+        },
+    );
+}
+
+/// effigy#716: the notification the directory watcher delivers wakes the route
+/// worker immediately, even when its own interval is far away, and the worker
+/// re-observes rather than counting events.
+#[test]
+fn milestone_130acca8_notification_wakes_the_route_worker() {
+    let (_fixture, routes) = gateway_state();
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
+    let clock = held_clock();
+    let (idle, _stopped) = idle_shutdown(&routes, &clock);
+    let observations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let reloader = RouteReloader {
+        read: counting_reader(&observations),
+        ..reloader(&routes, &table, &dns_cache, &idle, false)
+    };
+    let signal = Arc::new(ReconcileSignal::new());
+    let mut reconcile = RouteReconcile::spawn(
+        RouteReconciler::production(reloader, Arc::clone(&signal))
+            .with_intervals(Duration::from_secs(600), Duration::from_secs(600)),
+    );
+    wait_until("the opening observation", Duration::from_secs(20), || {
+        observations.load(Ordering::SeqCst) > 0
+    });
+    let opening = observations.load(Ordering::SeqCst);
+
+    publish_route(&routes, "notified.test");
+    // Exactly what the watcher callback does for a filesystem event.
+    signal.notify();
+    wait_until("the notified route", Duration::from_secs(20), || {
+        table.read().unwrap().lookup("notified.test").is_some()
+    });
+    assert!(
+        observations.load(Ordering::SeqCst) > opening,
+        "the notification woke a fresh observation"
+    );
+    assert_eq!(
+        table.read().unwrap().revision,
+        store_revision(&routes),
+        "the notified observation applied the committed fence"
+    );
+    reconcile.settle();
 }
 
 fn store_revision(routes: &Path) -> u64 {
