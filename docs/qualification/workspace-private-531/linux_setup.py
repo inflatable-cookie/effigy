@@ -717,7 +717,6 @@ def _stage1_binding(fresh):
     anchors = EXTERNAL_ANCHORS if isinstance(EXTERNAL_ANCHORS, dict) else {}
     trust = dict(fresh.get('go_trust') or {})
     trust['sha256'] = anchors.get('allowed_signers_sha256')
-        trust['principal'] = anchors.get('principal', 'effigy-go')
     trust['principal'] = anchors.get('principal', 'effigy-go')
     return linux_stage1.binding_reasons(fresh, anchors, trust, anchors.get('head'), VM_UUID,
                                         CONFIG_ALLOWANCE_BYTES)
@@ -1115,7 +1114,9 @@ def execute_plan(facts, runner, observe_identity, observe_terminal, stage_root, 
         try:
             outcome = dict(runner(row, stage, monitor))
             monitor.check()
-        except (resources.Refusal, Refusal) as exc:
+        except resources.Refusal as exc:
+            return halt('resource refusal during the row: ' + str(exc))
+        except Refusal as exc:
             return halt('row refused: ' + str(exc))
         for name in ('stdout', 'stderr', 'writer_stdout', 'writer_stderr'):
             exclusive(stage / name, outcome.get(name, b'') or b'')
