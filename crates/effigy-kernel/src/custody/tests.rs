@@ -4472,7 +4472,7 @@ fn anchored_group_with_pinned_anchor() -> (
 // then refused as "member generation unverified". The retired anchor is not a
 // refusal by itself: the group, observed afresh, decides closure.
 #[test]
-fn anchor_retired_between_liveness_and_kill_still_closes_the_group() {
+fn milestone_130acca8_anchor_retired_between_liveness_and_kill_still_closes_the_group() {
     let (_child, r, anchor, _fixture) = anchored_group_with_pinned_anchor();
     anchor::seam::arm(anchor.pid, anchor::seam::Authority::RetireAnchor);
     let closed = anchor::stop(
@@ -4490,7 +4490,7 @@ fn anchor_retired_between_liveness_and_kill_still_closes_the_group() {
 // Negative control: a kill refused while the anchor is still live stays
 // refused. Only a retired anchor may be passed over.
 #[test]
-fn live_anchor_refused_kill_still_refuses_closure() {
+fn milestone_130acca8_live_anchor_refused_kill_still_refuses_closure() {
     let (_child, r, anchor, _fixture) = anchored_group_with_pinned_anchor();
     anchor::seam::arm(anchor.pid, anchor::seam::Authority::RefuseLive);
     let closed = anchor::stop(
@@ -4510,7 +4510,7 @@ fn live_anchor_refused_kill_still_refuses_closure() {
 }
 
 #[test]
-fn only_a_retirement_cause_passes_over_the_authority_refusal() {
+fn milestone_130acca8_only_a_retirement_cause_passes_over_the_authority_refusal() {
     let authority = UnknownReason::Inconsistent(platform::MEMBER_UNVERIFIED.into());
     let cause = |stage: &'static str, category: &'static str| {
         Some(anchor::VerificationFailure { stage, category })
@@ -4547,7 +4547,7 @@ fn only_a_retirement_cause_passes_over_the_authority_refusal() {
 }
 
 #[test]
-fn only_exited_anchors_count_as_retired() {
+fn milestone_130acca8_only_exited_anchors_count_as_retired() {
     use crate::ident::ProcessState;
     let unknown = || Observed::Unknown(UnknownReason::Injected);
     assert!(anchor::seam::retired(&Observed::Absent(
@@ -4564,4 +4564,136 @@ fn only_exited_anchors_count_as_retired() {
         )));
     }
     assert!(!anchor::seam::retired(&unknown()));
+}
+
+/// Stop a leader that has already exited, with its anchor pinned so the anchor
+/// cannot retire before the stop observes it. The seam decides only the
+/// anchor's kill; the signal phase and the group loop run for real.
+fn exited_leader_stop(retire_anchor: bool) -> (StopReport, ProcessIdentity) {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root).unwrap();
+    let mut child = Custody::spawn(
+        &mut run,
+        ProcessSpec {
+            argv: vec!["/bin/sleep".into(), "1".into()],
+            cwd: home.path().into(),
+            env: BTreeMap::new(),
+            grace: Duration::from_millis(10),
+            lifetime: Lifetime::Finite(Duration::from_secs(60)),
+            terminal: Terminal::None,
+            label: "exited leader".into(),
+        },
+        &cx,
+    )
+    .unwrap();
+    let anchor = child.anchor().expect("recorded anchor");
+    // SAFETY: the pid is an anchor this test launched and still owns.
+    unsafe { libc::kill(anchor.pid as i32, libc::SIGSTOP) };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !matches!(child.poll(), Observed::Verified(..)) {
+        assert!(Instant::now() < deadline, "the leader exits");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let action = if retire_anchor {
+        anchor::seam::Authority::RetireAnchor
+    } else {
+        anchor::seam::Authority::RefuseLive
+    };
+    anchor::seam::arm(anchor.pid, action);
+    let report = child.stop(&cx.operation().cleanup(Duration::from_secs(30)).unwrap());
+    anchor::seam::disarm();
+    (report, anchor)
+}
+
+// Causal control: the refused kill of a live anchor, through a real stop, yields
+// the recorded residue shape: leader verified; group inconsistent; residue
+// [no live workload member, no live workload member, other]. It reproduces that
+// signature from the same mechanism. It does not prove the historical
+// occurrence's raw reason, which was never retained.
+#[test]
+fn milestone_130acca8_refused_anchor_kill_reproduces_the_recorded_residue_shape() {
+    let (report, anchor) = exited_leader_stop(false);
+    let _fixture = AnchorFixture(vec![anchor]);
+    assert!(
+        matches!(report.leader, Observed::Verified(..)),
+        "the recorded leader is verified: {report:?}"
+    );
+    assert!(
+        matches!(
+            &report.group,
+            Observed::Unknown(UnknownReason::Inconsistent(message))
+                if message == platform::MEMBER_UNVERIFIED
+        ),
+        "the group is inconsistent with the authority refusal: {report:?}"
+    );
+    let shape: Vec<&str> = report
+        .residue
+        .iter()
+        .map(|reason| match reason {
+            UnknownReason::Inconsistent(message) => message.as_str(),
+            _ => "other-category",
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            "no live workload member to signal",
+            "no live workload member to signal",
+            platform::MEMBER_UNVERIFIED,
+        ],
+        "{report:?}"
+    );
+    assert!(matches!(report.capture, CaptureState::Complete));
+}
+
+// Regression control: the same stop, with the anchor retiring inside its kill,
+// closes the group and clears the residue. The retirement is the refusal's own
+// recorded cause.
+#[test]
+fn milestone_130acca8_retired_anchor_kill_closes_the_recorded_shape() {
+    let (report, anchor) = exited_leader_stop(true);
+    let _fixture = AnchorFixture(vec![anchor]);
+    assert!(
+        matches!(report.group, Observed::Verified(..) | Observed::Absent(_)),
+        "a retired anchor leaves a closed group: {report:?}"
+    );
+    assert!(report.residue.is_empty(), "{report:?}");
+    assert!(report.leader.verified().is_some(), "{report:?}");
+}
+
+// Regression control: a member whose own group is not the anchored group is
+// refused before the signal, and it survives. The anchor verifies, so the
+// anchor's group check alone would have authorised a signal to it. The member
+// starts outside the anchored group because a process cannot join a group that
+// owns another session (EPERM); only the member's own group read decides here.
+#[test]
+fn milestone_130acca8_member_that_left_the_group_is_refused_before_signal() {
+    let (_child, r, anchor, _fixture) = anchored_group_with_pinned_anchor();
+    let mut member = Command::new("/bin/sleep")
+        .arg("30")
+        .spawn()
+        .expect("member");
+    let identity = fixture_identity(member.id());
+    assert_ne!(
+        unsafe { libc::getpgid(member.id() as i32) },
+        r.pgid as i32,
+        "the member is outside the anchored group"
+    );
+    let refused = anchor::member_signal(&r, &anchor, &identity, libc::SIGTERM);
+    assert!(
+        matches!(
+            &refused,
+            Observed::Unknown(UnknownReason::Inconsistent(message))
+                if message == platform::MEMBER_UNVERIFIED
+        ),
+        "a member outside the group is refused: {refused:?}"
+    );
+    assert!(
+        member.try_wait().expect("member status").is_none(),
+        "the refused member is not signalled"
+    );
+    member.kill().expect("stop the member");
+    member.wait().expect("reap the member");
 }

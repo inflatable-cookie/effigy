@@ -140,7 +140,7 @@ fn closed_detail(
 /// Each pidfd opens before the generation observation; on macOS the documented
 /// identity-check/numeric-signal window remains. An open pidfd never justifies
 /// a numeric group signal. Membership and anchor evidence are checked afresh.
-fn member_signal(
+pub(super) fn member_signal(
     r: &ProcessReceipt,
     anchor: &ProcessIdentity,
     member: &ProcessIdentity,
@@ -161,18 +161,20 @@ fn member_signal_recorded(
 ) -> Observed<SignalDelivered> {
     platform::signal_checked(member, signal, || {
         #[cfg(test)]
-        if let Some(decision) = seam::authority(anchor.pid) {
-            return decision;
-        }
-        // The verification owns the group check too, so every refusal leaves
-        // its own recorded cause; a separate group read could refuse silently.
-        match verification(r, anchor) {
-            Ok(()) => true,
-            Err(failure) => {
-                refusal.set(Some(failure));
-                false
+        if member.pid == anchor.pid {
+            if let Some(decision) = seam::authority(anchor.pid) {
+                return decision;
             }
         }
+        // The anchor's verification comes first and records its own refusal
+        // cause, retirement included. It proves the anchor, never the member.
+        if let Err(failure) = verification(r, anchor) {
+            refusal.set(Some(failure));
+            return false;
+        }
+        // The member's own group, read now: a member that left the group is not
+        // authorised by the anchor's group check. SAFETY: getpgid only observes.
+        (unsafe { libc::getpgid(member.pid as i32) }) == r.pgid as i32
     })
 }
 
