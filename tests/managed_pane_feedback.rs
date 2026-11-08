@@ -6,9 +6,9 @@
 #[cfg(unix)]
 fn pane_fixture(script: &str) {
     use std::process::Command;
+    let script = format!("{}/tests/scripts/{script}", env!("CARGO_MANIFEST_DIR"));
     let output = Command::new("python3")
-        .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/scripts/"))
-        .arg(script)
+        .arg(&script)
         .arg(env!("CARGO_BIN_EXE_effigy"))
         .output()
         .expect("run pane fixture");
