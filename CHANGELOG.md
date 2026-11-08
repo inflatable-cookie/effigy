@@ -8,6 +8,24 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Bound the Linux artifact builder's host writes (effigy#743). Cargo
+  intermediates are the build's own fixed private tree on the builder's
+  writable layer instead of a directory inside the checkout the release profile
+  shares into the VM, so the build's only host bind is no longer an uncapped
+  writer. The staged source closure refuses above a declared 512 MiB before the
+  first write, the artifact export and its copy-back are refused above their
+  per-file caps (200 MiB / 64 KiB / 4 KiB) before the copy, and a successful
+  build publishes one `effigy.builder-write-boundary.v1` record of what it
+  observed through the container's own view — contained mounts, the closure
+  census, the export names and sizes, closed writers and a settled tree. The
+  Recipe E source entry binds every field and carries the observed bytes under
+  the Stage2 5 GiB premise with E9; a producer that publishes no record, or one
+  that leaves a writer open, refuses before the claim. The build tree's VM-side
+  storage is disclosed with its cap, free-space floor and backing-disk
+  implication rather than counted as a host write, and no profile, mount or
+  disk setting changes.
+
+
 - Secure existing gateway stdout/stderr logs to owner-only mode on the held
   descriptor before appending or giving them to the daemon child. Existing bytes
   are preserved; unopened legacy files, directory permissions and raw diagnostic

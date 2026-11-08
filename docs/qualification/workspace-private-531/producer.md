@@ -190,11 +190,11 @@ Stage2 budget is pinned in the request as `budget`: `e9_reserved_bytes` and
 `e14_reserved_bytes` and `headroom_bytes = 5 GiB - (E9 reserved + E14 reserved)`.
 Actual above reservation, a non-integer argument, or an over-budget value refuses
 at plan time. Drift refuses as `request bindings drifted: budget`.
-`E14_RESERVATION` covers the retained artifact (200 MiB), receipt (64 KiB), sidecar
-(4 KiB) and the capped evidence streams for the two Colima inventory observations and
-the producer. Staging,
-render and cargo target writes are not reserved, so headroom bounds only the writers
-named there.
+`E14_RESERVATION` covers the staged source closure (512 MiB), the artifact export
+and its copy-back (200 MiB + 64 KiB + 4 KiB each) and the capped evidence streams
+for the two Colima inventory observations and the producer. Execute refuses an
+occurrence whose observed E14 bytes exceed that reservation, and one whose
+observed host writes plus the pinned E9 reservation exceed 5 GiB.
 
 The host source receipt is written by the maintained `install:local` producer
 (`scripts/build-local-bin.rhai`) beside the sidecar. It names the activated bytes
@@ -203,20 +203,71 @@ empty features and `dirty` (`true` for a dirty or non-git checkout). Recipe E re
 a receipt whose binary, source, sidecar or dirty flag does not match. The install
 test checks this against git and the binary hash (`test:install:local`).
 
-Still refused in production before the claim (fixtures stay on the simulation seam):
+### The host-write boundary (effigy#743)
 
-- **SO-host-write.** Kit §6.3 host writes ≤5 GiB (E9 archive, E14 artifact,
-  evidence) are a Stage2-wide premise. The per-writer metric map is
-  `HOST_WRITE_WRITERS` in the entry: staging/render/source and the cargo target
-  under C are retained allocated bytes by directory walk, which is not
-  cumulative writes and has no bound; artifact copy-back and evidence are
-  cumulative host bytes through capped transfers. No writer is interruptible at a
-  cap with positive closure; `run_stage` sampling is not a hard quota. Planner
-  proposal: set `CARGO_TARGET_DIR` inside the VM instead of
-  `/workspace/.effigy/linux-release/target`. Host-written surfaces then become the
-  staged source closure (measurable from its manifest), the 200 MiB capped copy and
-  the capped evidence streams. Cost: cargo target moves to the Colima VM disk, a
-  shared-profile setting that needs planner or Tom sign-off.
+SO-host-write is closed for Recipe E by construction, not by sampling. Each host
+writer has a declared metric and a bound that applies before its writes, and the
+occurrence publishes what it observed:
+
+| writer | path | metric | bound |
+| --- | --- | --- | --- |
+| staging/render/source | the profile's shared host mount | cumulative bytes written (content-addressed closure, each file once) | `STAGED_SOURCE_CAP` 512 MiB, refused before the first staged write |
+| cargo tree | `/var/tmp/effigy-artifact-build` on the builder's writable layer | VM-side retained bytes; not a host bind and not a cumulative count | `BUILD_TREE_CAP` 25 GiB retained, `BUILD_TREE_HEADROOM` free floor, VM filesystem ENOSPC |
+| artifact export and copy-back | `.effigy/linux-release/artifacts` in the shared mount, then the host copy into the checkout | cumulative bytes: three declared names, each written once, at or below their per-file caps | 200 MiB / 64 KiB / 4 KiB checked before the copy |
+| evidence | `linux-recipe-e-<activation>/` | cumulative bytes via capped stream writes | `2*PRODUCER_OUTPUT_CAP + 4*OBSERVE_CAP` |
+
+Cargo intermediates are the build's own private tree inside the exact
+checkout-owned builder. It is a fixed path on the container's writable layer:
+not a profile mount, not a host bind, not a shared-profile setting, and not
+reachable by another checkout. The tree is therefore *not* a host-write figure
+and is never counted as zero: it is VM-side storage backed by the Colima disk
+file. The record discloses its retained bytes, the two free-space readings and
+the declared cap and floor; releasing filesystem space does not necessarily
+shrink the backing file, and the record says so. The profile's declared disk
+(from the engine's own `list --json` row) is the ceiling, and execute refuses a
+profile whose disk is below the declared floor. No limit is invented or raised
+here.
+
+The source bind itself stays writable: this change alters no Colima profile,
+mount, disk, shared-service or foreign-resource declaration. Containment is
+established and verified instead of assumed:
+
+- before compiling, a probe through the builder's own view (`/proc/self/mountinfo`,
+  the container's `du`/`df`) requires nothing mounted below `/workspace`, no
+  mount covering the build tree, a build tree inside its cap and the declared
+  free-space headroom;
+- after the build, the same view must show the closure's digests and file count
+  unchanged, only artifact-shaped entries under the export directory with the
+  three declared names present and each inside its cap, no `cargo`/`rustc`/`cc`/`ld`
+  process left and no process whose working directory is inside the build tree,
+  and a byte-stable tree across a one-second settle interval. Client exit alone
+  is never closure;
+- the container-side script refuses an output above the binary cap *before* the
+  first copy into the shared mount, and the host copy-back reads each declared
+  file only within its own cap.
+
+`linux_recipe_e_proof.py` then requires exactly one record of schema
+`effigy.builder-write-boundary.v1` on the producer's own stdout, verifies every
+field against its own declaration (exact field sets, the restriction switch's
+value, the build tree path and caps, the export caps and names, the copy-back,
+the closure observations) and carries the observed host bytes plus the pinned E9
+reservation under the 5 GiB Stage2 premise. `E14_RESERVATION` counts the staged
+closure, the export and its copy-back, and the evidence streams. A producer that
+publishes no record — including an older implementation that ignores
+`EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING` — is refused before the claim, so the
+restriction remains bound to the actual source that ran. Missing, duplicated,
+internally inconsistent or over-bound records refuse with the occurrence spent
+and the originals retained; nothing is retried and no shared profile is stopped.
+
+The staged export is released after the verified bytes reach the caller, so the
+staged tree is the source closure again for the next build. The build tree is
+kept warm between builds (an incremental build stays incremental) and reset only
+when it is already above its cap, which the record reports.
+
+The cargo tree's cost is VM-side storage on the Colima disk file, so it is a
+physical host-storage implication, not a host-bind write. A later occurrence
+that wants the tree's bytes accounted as a host write would need a writer-side
+interruptible counter; none is claimed here.
 
 This task produces reviewed source only.
 

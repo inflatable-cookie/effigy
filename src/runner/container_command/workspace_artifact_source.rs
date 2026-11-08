@@ -15,11 +15,13 @@
 //! be read refuses with the concrete cause instead of staging something else.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use effigy_containers::artifact_source::{
     ensure_owned_stage_directory, StageBinding, StageManifest, StagePlan, StageState, StagedFile,
-    STAGE_EXCLUDED_PREFIXES, STAGE_INVENTORY_FILE, STAGE_SCHEMA,
+    ARTIFACT_BINARY_CAP_BYTES, ARTIFACT_EXPORT_DIR, ARTIFACT_RECEIPT_CAP_BYTES,
+    ARTIFACT_SIDECAR_CAP_BYTES, STAGED_SOURCE_CAP_BYTES, STAGE_EXCLUDED_PREFIXES,
+    STAGE_INVENTORY_FILE, STAGE_SCHEMA,
 };
 
 use crate::runner::error::RunnerError;
@@ -34,6 +36,9 @@ pub(in crate::runner) struct StagedSource {
     /// Digest of the inventory file inside the bound tree, and the number of
     /// source files it lists. The container proves both before compiling.
     pub inventory_digest: String,
+    /// Exact bytes this checkout's closure carries: the whole of this staging's
+    /// host write, and the figure the write-boundary record reports.
+    pub bytes: u64,
 }
 
 fn refusal(reason: impl std::fmt::Display) -> RunnerError {
@@ -66,6 +71,16 @@ pub(in crate::runner) fn stage(
     // directory at the derived path proves nothing on its own.
     let previous = prove_owned_child(repo_root, plan, &binding)?;
     let closure = workspace_closure(&caller)?;
+    // This staging's host writes are exactly the closure's bytes, and the
+    // closure is known before the first file is written (effigy#743). Refusing
+    // here keeps the shared mount's write surface finite without inventing a
+    // quota: a source tree larger than the declared cap is never written.
+    let closure_bytes = closure.bytes;
+    if closure_bytes > STAGED_SOURCE_CAP_BYTES {
+        return Err(refusal(format!(
+            "this checkout's source closure is {closure_bytes} bytes, above the declared {STAGED_SOURCE_CAP_BYTES}-byte staged-source cap; nothing was staged"
+        )));
+    }
     // Only now, with ownership proved, is the owned leaf created: it is this
     // producer's child, not an existing directory this checkout never recorded.
     ensure_owned_stage_directory(plan, &plan.stage_root, &binding)?;
@@ -162,6 +177,7 @@ pub(in crate::runner) fn stage(
         manifest,
         changed,
         inventory_digest: sha256_hex(&inventory),
+        bytes: closure_bytes,
     })
 }
 
@@ -539,6 +555,9 @@ struct WorkspaceClosure {
     submodules: BTreeMap<String, String>,
     head: Option<String>,
     digest: String,
+    /// Exact bytes the closure carries, read from this checkout while it is
+    /// listed. Staging refuses above its declared cap before writing any of it.
+    bytes: u64,
 }
 
 fn workspace_closure(caller: &Path) -> Result<WorkspaceClosure, RunnerError> {
@@ -566,6 +585,7 @@ fn workspace_closure(caller: &Path) -> Result<WorkspaceClosure, RunnerError> {
     })?;
     let mut files = BTreeMap::new();
     let mut submodules = BTreeMap::new();
+    let mut bytes_total = 0u64;
     for record in raw.split('\0').filter(|record| !record.is_empty()) {
         let (meta, relative) = record.split_once('\t').ok_or_else(|| {
             refusal(format!(
@@ -615,6 +635,7 @@ fn workspace_closure(caller: &Path) -> Result<WorkspaceClosure, RunnerError> {
             ))
         })?;
         let executable = mode == "100755";
+        bytes_total += bytes.len() as u64;
         files.insert(
             relative,
             StagedFile {
@@ -649,6 +670,7 @@ fn workspace_closure(caller: &Path) -> Result<WorkspaceClosure, RunnerError> {
         submodules,
         head,
         digest,
+        bytes: bytes_total,
     })
 }
 
@@ -773,9 +795,11 @@ pub(in crate::runner) fn verify_source_unchanged(
 /// producer receipt before any byte reaches the caller's checkout.
 #[derive(Debug, Clone)]
 pub(in crate::runner) struct ProducedArtifact {
-    pub binary: PathBuf,
-    pub active_version: PathBuf,
-    pub receipt: PathBuf,
+    /// Exact bytes this copy-back wrote into the checkout: its own host write,
+    /// reported beside the export it read.
+    pub bytes: u64,
+    /// Whether the staged export was released after the bytes were published.
+    pub export_released: bool,
 }
 
 /// Copy one verified staged artifact back into the caller's checkout, in the
@@ -791,15 +815,14 @@ pub(in crate::runner) fn restore_produced_artifact(
     let staged_artifacts = plan.source.join(".effigy/linux-release/artifacts");
     let checkout_artifacts = checkout.join(".effigy/linux-release/artifacts");
     let name = format!("effigy-{triple}");
-    let staged = ProducedArtifact {
-        binary: staged_artifacts.join(&name),
-        active_version: staged_artifacts.join(format!("{name}.active-version")),
-        receipt: staged_artifacts.join(format!("{name}.receipt")),
-    };
-    let receipt = std::fs::read_to_string(&staged.receipt).map_err(|error| {
+    let staged_binary = staged_artifacts.join(&name);
+    let staged_version_path = staged_artifacts.join(format!("{name}.active-version"));
+    let staged_receipt_path = staged_artifacts.join(format!("{name}.receipt"));
+    let receipt_bytes = read_capped(&staged_receipt_path, ARTIFACT_RECEIPT_CAP_BYTES)?;
+    let receipt = String::from_utf8(receipt_bytes.clone()).map_err(|error| {
         refusal(format!(
-            "the staged build wrote no producer receipt `{}`: {error}",
-            staged.receipt.display()
+            "the staged build's producer receipt `{}` is not UTF-8: {error}",
+            staged_receipt_path.display()
         ))
     })?;
     let field = |key: &str| {
@@ -814,23 +837,22 @@ pub(in crate::runner) fn restore_produced_artifact(
             field("release_triple").unwrap_or("none")
         )));
     }
-    let bytes = std::fs::read(&staged.binary).map_err(|error| {
-        refusal(format!(
-            "the staged build wrote no artifact `{}`: {error}",
-            staged.binary.display()
-        ))
-    })?;
+    let bytes = read_capped(&staged_binary, ARTIFACT_BINARY_CAP_BYTES)?;
     let digest = sha256_hex(&bytes);
     if field("sha256") != Some(digest.as_str()) {
         return Err(refusal(format!(
             "the staged artifact `{}` does not carry the digest its producer receipt names",
-            staged.binary.display()
+            staged_binary.display()
         )));
     }
-    let staged_version = std::fs::read_to_string(&staged.active_version).map_err(|error| {
+    let staged_version = String::from_utf8(read_capped(
+        &staged_version_path,
+        ARTIFACT_SIDECAR_CAP_BYTES,
+    )?)
+    .map_err(|error| {
         refusal(format!(
-            "the staged build wrote no active version `{}`: {error}",
-            staged.active_version.display()
+            "the staged active version `{}` is not UTF-8: {error}",
+            staged_version_path.display()
         ))
     })?;
     if staged_version.trim() != active_version {
@@ -845,6 +867,7 @@ pub(in crate::runner) fn restore_produced_artifact(
             checkout_artifacts.display()
         ))
     })?;
+    let mut copied = 0u64;
     for (name, contents, executable) in [
         (name.clone(), bytes, true),
         (
@@ -852,13 +875,99 @@ pub(in crate::runner) fn restore_produced_artifact(
             staged_version.into_bytes(),
             false,
         ),
-        (format!("{name}.receipt"), receipt.into_bytes(), false),
+        (format!("{name}.receipt"), receipt_bytes, false),
     ] {
+        copied += contents.len() as u64;
         write_file_atomically(&checkout_artifacts.join(&name), &contents, executable)?;
     }
+    // Release this build's staged export now that the bytes it blessed live in
+    // the checkout: the container's writable export target is this checkout's
+    // own output, never retained source. Only a link-free tree below the owned
+    // export path is removed, and a refusal to remove it is reported rather than
+    // hidden.
+    let export_released = release_staged_export(plan)?;
     Ok(ProducedArtifact {
-        binary: checkout_artifacts.join(&name),
-        active_version: checkout_artifacts.join(format!("{name}.active-version")),
-        receipt: checkout_artifacts.join(format!("{name}.receipt")),
+        bytes: copied,
+        export_released,
     })
+}
+
+/// Read one produced file only when it is a regular file within its declared cap.
+fn read_capped(path: &Path, cap: u64) -> Result<Vec<u8>, RunnerError> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+        refusal(format!(
+            "the staged build wrote no `{}`: {error}",
+            path.display()
+        ))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(refusal(format!(
+            "the staged build's `{}` is not a regular file",
+            path.display()
+        )));
+    }
+    if metadata.len() > cap {
+        return Err(refusal(format!(
+            "the staged build's `{}` is {} bytes, above its declared {cap}-byte cap",
+            path.display(),
+            metadata.len()
+        )));
+    }
+    let bytes = std::fs::read(path).map_err(|error| {
+        refusal(format!(
+            "the staged build's `{}` is unreadable: {error}",
+            path.display()
+        ))
+    })?;
+    if bytes.len() as u64 > cap {
+        return Err(refusal(format!(
+            "the staged build's `{}` changed while it was read past its declared {cap}-byte cap",
+            path.display()
+        )));
+    }
+    Ok(bytes)
+}
+
+/// Remove the staged build's own export directory, and only that.
+///
+/// The export lives in the staged source the profile's shared mount carries, so
+/// the container can write it without a second writable bind. It is this
+/// checkout's output, not source: releasing it keeps the staged tree the source
+/// closure the build compiled and returns the host bytes the export used.
+fn release_staged_export(plan: &StagePlan) -> Result<bool, RunnerError> {
+    let export = plan.source.join(ARTIFACT_EXPORT_DIR);
+    // `artifacts`, its `linux-release` parent and the private `.effigy` root the
+    // container wrote, innermost first. Nothing above them is touched, and the
+    // staged closure never carries any of them.
+    let (Some(service), Some(private)) = (export.parent(), export.parent().and_then(Path::parent))
+    else {
+        return Ok(false);
+    };
+    for path in [&export, service, private] {
+        let metadata = match std::fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+            Err(error) => {
+                return Err(refusal(format!(
+                    "cannot inspect the staged export `{}`: {error}",
+                    path.display()
+                )))
+            }
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(refusal(format!(
+                "the staged export `{}` is not a directory of its own; it is not removed",
+                path.display()
+            )));
+        }
+    }
+    for path in [&export, service, private] {
+        std::fs::remove_dir_all(path).map_err(|error| {
+            refusal(format!(
+                "cannot release the staged export `{}`: {error}",
+                path.display()
+            ))
+        })?;
+    }
+    Ok(true)
 }
