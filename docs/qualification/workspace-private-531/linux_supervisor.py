@@ -414,6 +414,8 @@ def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, mo
     stage = Path(stage_dir)
     if not isinstance(boot_id, str) or not boot_id:
         raise Refusal('boot identity required before supervised start')
+    if os.geteuid() != 0 and request['payload_uid'] != os.geteuid():
+        raise Refusal('unprivileged supervisor cannot assign another payload uid')
     nonce = request['nonce']
     unit = unit_name(nonce)
     if nonce in seen_invocations.get('nonces', ()):
@@ -495,6 +497,8 @@ def _run_held(stage, request, ops, clock, boot_id, seen_invocations, monitor, un
             raise Refusal('InvocationID reused')
     if candidate is not None:
         seen_invocations.setdefault('invocations', set()).add(show['invocation_id'])
+    if any(len(outcome[name]) > PAYLOAD_STDOUT_CAP for name in ('stdout', 'stderr')):
+        candidate, reason, disposition = None, 'partial output exceeds retained transport cap', 'output-cap'
     payload_stdout = outcome['stdout'][:PAYLOAD_STDOUT_CAP]
     record = {'disposition': disposition, 'candidate': candidate, 'reason': reason, 'show': show,
               'samples': samples, 'release_index': monitor.release_index, 'elapsed_seconds': clock() - start,
@@ -502,7 +506,9 @@ def _run_held(stage, request, ops, clock, boot_id, seen_invocations, monitor, un
                           for n in ('stdout', 'stderr')}}
     _row_write(row_fd, 'supervisor.json', (json.dumps(record, sort_keys=True, indent=2, default=str) + '\n').encode())
     return {'disposition': disposition, 'candidate': candidate, 'reason': reason, 'show': show,
-            'samples': samples, 'payload_stdout': payload_stdout.decode('utf-8', 'replace')}
+            'samples': samples, 'payload_stdout': payload_stdout.decode('utf-8', 'replace'),
+            'payload_stdout_b64': base64.b64encode(payload_stdout).decode('ascii'),
+            'payload_stderr_b64': base64.b64encode(outcome['stderr'][:PAYLOAD_STDOUT_CAP]).decode('ascii')}
 
 
 class SystemdOps:
@@ -631,7 +637,7 @@ def main(argv):
         raise Refusal('boot identity differs from the request')
     result = run_supervised(request['stage_dir'], request, SystemdOps(_subprocess_runner), time.monotonic, boot_id, {},
                             None, stage_owner=owner)
-    result['payload_stdout_b64'] = base64.b64encode(result.pop('payload_stdout').encode('utf-8')).decode('ascii')
+    result.pop('payload_stdout')  # exact bytes already encoded; no Unicode round trip
     print(json.dumps(result, sort_keys=True, default=str))
     return 0 if result['candidate'] is not None else 1
 

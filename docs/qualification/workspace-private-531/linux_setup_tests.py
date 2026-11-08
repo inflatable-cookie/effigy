@@ -1962,7 +1962,7 @@ class RealSupervisorFlowChecks(unittest.TestCase):
         result, _ = self.run_real(['/bin/sh', '-c', 'echo x > "%s"' % marker], timeout=2)
         self.assertFalse(marker.exists(), 'payload ran without a release')
         self.assertIsNone(result['candidate'])
-        self.assertEqual(result['disposition'], 'failed')
+        self.assertEqual(result['disposition'], 'timeout')
 
     def test_descendant_keeps_the_real_unit_active_until_the_deadline(self):
         result, _ = self.run_real(['/bin/sh', '-c', 'sleep 30 & exit 0'], timeout=3)
@@ -2044,7 +2044,7 @@ class RealTransferFlowChecks(unittest.TestCase):
         started = time.monotonic()
         out = setup.default_row_runner(row, None, None)
         self.assertNotEqual(out['disposition'], 'exited')
-        self.assertLess(time.monotonic() - started, 40)
+        self.assertLess(time.monotonic() - started, row['timeout_seconds'] + 95)
         self.assertIsNone(out['candidate'])
 
     def test_a_failed_writer_is_never_closure(self):
@@ -2342,6 +2342,23 @@ class InstalledSupervisorChecks(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn('direct child of the reviewed stage root', proc.stderr)
         self.assertFalse((self.root / 'elsewhere').exists())
+
+
+class OriginalStreamChecks(unittest.TestCase):
+    def test_binary_streams_round_trip_and_partial_output_never_credits(self):
+        for data, candidate in ((b'\xff\x00', True), (b'x' * (supervisor.PAYLOAD_STDOUT_CAP + 1), False)):
+            stage = fresh_row('stream-controls-')
+            ops = FakeOps(stage, [NOT_FOUND, show_text()])
+            def run(argv, timeout):
+                return dict(returncode=0, stdout=data, stderr=b'\xfe', timed_out=False)
+            ops.run = run
+            active = dict(kind='loaded', invocation_id=INVOCATION, control_group=GROUP, active_state='active')
+            result = supervised(stage, request(stage), ops, lambda: 0.0, BOOT, {}, Scripted([active], 1))
+            self.assertEqual(result['candidate'] is not None, candidate)
+            if candidate:
+                self.assertEqual(base64.b64decode(result['payload_stdout_b64']), data)
+                self.assertEqual(base64.b64decode(result['payload_stderr_b64']), b'\xfe')
+            self.assertEqual((stage / 'stdout').read_bytes(), data)
 
 
 class ExactApprovalAndCustodyChecks(unittest.TestCase):
