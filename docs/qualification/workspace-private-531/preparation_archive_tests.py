@@ -250,6 +250,15 @@ class StageChecks(unittest.TestCase):
         self.assertEqual(result['disposition'], 'output-cap')
         self.assertEqual((self.root / 'stdout').stat().st_size, 32)
 
+    def test_output_cap_killpg_eperm_on_unreaped_leader(self):
+        extra = self.root / 'cap-eperm'
+        extra.mkdir(mode=0o700)
+        with patch.object(stage.os, 'killpg', side_effect=PermissionError('EPERM unreaped leader')):
+            result = stage.run_stage(extra, [sys.executable, '-c', "print('x' * 50000, flush=True)"],
+                                     2, 32, {})
+        self.assertEqual(result['disposition'], 'output-cap')
+        self.assertEqual((extra / 'stdout').stat().st_size, 32)
+
     def test_empty_argument_is_preserved(self):
         result = stage.run_stage(self.root, [sys.executable, '-c', 'import sys; print(repr(sys.argv[1]))', ''],
                                  2, 1024, {})

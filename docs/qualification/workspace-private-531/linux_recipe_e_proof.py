@@ -32,6 +32,7 @@ SELECTOR = 'workspace:linux:artifact'
 DURATION = 1800
 RESERVE = 120
 ARTIFACT_CAP = 200 * 1024 * 1024
+HOST_WRITE_CAP = 5 * 1024 * 1024 * 1024
 OBSERVE_LIMIT = 15
 OBSERVE_CAP = 65536
 PRODUCER_OUTPUT_CAP = 1024 * 1024
@@ -49,6 +50,19 @@ REQUIRED_POLICY = {
 # Fixture runs label simulation. Production stays False. Fixture receipts cannot
 # stand in as production predecessor evidence.
 TEST_SEAM = {'simulation': False}
+# Kit §6.3 ≤5 GiB is a Stage2-wide host-write premise (E9 archive, E14 artifact,
+# evidence). workspace:linux:artifact has no host-write telemetry; run_stage
+# resource_monitor is sampling-only; sampling is not a hard quota. Named
+# unresolved — do not claim the bound is met.
+HOST_WRITE = {
+    'status': 'missing',
+    'cap_bytes': HOST_WRITE_CAP,
+    'reason': (
+        'SO-host-write: kit §6.3 host writes ≤5 GiB (E9 archive, E14 artifact, evidence) '
+        'is a Stage2-wide premise; workspace:linux:artifact has no host-write telemetry; '
+        'run_stage resource_monitor is sampling-only and sampling is not a hard quota'
+    ),
+}
 
 
 def sha(path):
@@ -332,9 +346,7 @@ def check_artifact(binary, receipt_path, sidecar, expected_version):
     }
 
 
-def execute(request, request_path, request_hash):
-    launched_at = time.time()
-    deadline = time.monotonic() + DURATION
+def bound_inputs(request):
     if request != plan(request['root'], request['activation_id'], request['head']):
         raise stage.Refusal('request bindings drifted')
     actual = subprocess.check_output([GIT, '-C', str(HERE), 'rev-parse', 'HEAD'], timeout=10).decode().strip()
@@ -346,6 +358,13 @@ def execute(request, request_path, request_hash):
     runtime = runtime_inputs(request['repository'])
     if set(runtime) & set(request['machine']):
         raise stage.Refusal('input alias between checkout and machine')
+    return actual, runtime
+
+
+def execute(request, request_path, request_hash):
+    launched_at = time.time()
+    deadline = time.monotonic() + DURATION
+    actual, runtime = bound_inputs(request)
     if time.monotonic() >= deadline - RESERVE:
         raise stage.Refusal('blocked producer clock')
     if not 0 < PRODUCER_OUTPUT_CAP <= 64 * 1024 * 1024 or not 0 < OBSERVE_CAP <= 64 * 1024 * 1024:
@@ -383,6 +402,7 @@ def execute(request, request_path, request_hash):
         'remote_workload_closure': 'unknown',
         'producer_closure': 'unknown',
         'profile_stop_attempted': False,
+        'host_write': dict(HOST_WRITE),
         'findings': [],
     }
     serial = 0
@@ -439,6 +459,9 @@ def execute(request, request_path, request_hash):
         if not good(result):
             outcome['remote_workload_closure'] = 'unknown'
             raise stage.Refusal('producer nonzero exit')
+        actual, runtime = bound_inputs(request)
+        outcome['head'] = actual
+        outcome['runtime_inputs'] = runtime
         checked = check_artifact(binary, receipt_path, sidecar, request['host_active_version'])
         retained = destination / 'retained'
         retained.mkdir(mode=0o700)
@@ -448,6 +471,9 @@ def execute(request, request_path, request_hash):
             stage.exclusive(retained / Path(source).name, Path(source).read_bytes())
         if sha(binary) != originals['binary'] or sha(receipt_path) != originals['receipt']:
             raise stage.Refusal('producer originals changed while retained')
+        actual, runtime = bound_inputs(request)
+        outcome['head'] = actual
+        outcome['runtime_inputs'] = runtime
         outcome['artifact'] = checked
         outcome['original_hashes'] = originals
         outcome['producer_workload'] = 'completed'

@@ -147,10 +147,14 @@ release-source mount, and one inventory observation of profile
 checkout-scoped identity and is refused as a candidate; 627 stays historical.
 A later parent binds new candidate C after remaining critical source and green
 QA. Nested helpers take the remaining E14 allowance (absolute clock 1800s
-including cleanup reserve) through `preparation_stage.run_stage`. Uncertain
-closure stays Unknown and spent: no retry, no shared-profile stop. Toolchain
-identity is SO-4 missing until a supported owned-builder exec exists. This
-task produces reviewed source only.
+including cleanup reserve) through `preparation_stage.run_stage`. Bound head,
+clean tree, runtime inputs and machine identities are rechecked after the
+producer returns, before the checker. Uncertain closure stays Unknown and
+spent: no retry, no shared-profile stop. Toolchain identity is SO-4 missing
+until a supported owned-builder exec exists. Kit §6.3 host writes ≤5 GiB (E9
+archive, E14 artifact, evidence) stay unresolved: the producer has no
+host-write telemetry and sampling is not a hard quota. This task produces
+reviewed source only.
 
 ## Per-platform identity facts each cell must carry
 

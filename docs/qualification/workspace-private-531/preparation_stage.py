@@ -142,9 +142,10 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
         killed_at = None
 
         def stop_group():
+            # Darwin killpg on an exited unreaped leader is EPERM; ESRCH is ProcessLookupError.
             try:
                 os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
         while True:
             # Do not reap the group leader while a stream remains open: the group
@@ -217,7 +218,7 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
         if child is not None and child.poll() is None:
             try:
                 os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
             try:
                 result['waited_exit'] = child.wait(timeout=None if cleanup_deadline is None else

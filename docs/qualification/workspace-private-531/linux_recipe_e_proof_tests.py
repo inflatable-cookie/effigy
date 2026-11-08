@@ -124,6 +124,11 @@ if kind == 'nonzero':
 if kind == 'timeout':
     time.sleep(30)
     sys.exit(0)
+if kind == 'dirty_source':
+    Path('untracked-recipe-e-drift').write_text('drift\\n')
+if kind == 'host_drift':
+    self_path = Path(os.path.realpath(sys.argv[0]))
+    self_path.write_bytes(self_path.read_bytes() + b'\\n# drift\\n')
 artifacts = Path(os.getcwd()) / '.effigy/linux-release/artifacts'
 artifacts.mkdir(parents=True)
 name = 'effigy-aarch64-unknown-linux-gnu'
@@ -155,6 +160,9 @@ version = 'other-version' if kind == 'version_mismatch' else %(version)r
 class PredicateTests(unittest.TestCase):
     def test_production_seam_refuses_fixture_predecessor_use(self):
         self.assertFalse(proof.TEST_SEAM['simulation'])
+        self.assertEqual(proof.HOST_WRITE['status'], 'missing')
+        self.assertEqual(proof.HOST_WRITE['cap_bytes'], 5 * 1024 * 1024 * 1024)
+        self.assertIn('§6.3', proof.HOST_WRITE['reason'])
 
     def test_elf_and_receipt_predicates(self):
         good = elf_bytes()
@@ -304,6 +312,10 @@ class EntryTests(unittest.TestCase):
         self.assertEqual(result['policy']['workspace_source'], 'staged')
         self.assertTrue(result['policy']['checkout_scoped_identity'])
         self.assertFalse(self.violation.exists())
+        self.assertEqual(result['host_write']['status'], 'missing')
+        self.assertEqual(result['host_write']['cap_bytes'], proof.HOST_WRITE_CAP)
+        self.assertIn('sampling is not a hard quota', result['host_write']['reason'])
+        self.assertNotIn('resource_usage', result.get('producer', {}))
         steps = sorted(self.destination('complete01').glob('step-*'))
         self.assertEqual(len(steps), 2)
         colima_intent = json.loads((steps[0] / 'intent.json').read_text())
@@ -509,6 +521,33 @@ class EntryTests(unittest.TestCase):
         self.assertIsNotNone(seen[1]['deadline'])
         self.assertGreaterEqual(seen[1]['cleanup'], seen[1]['deadline'])
         self.assertEqual(seen[1]['argv'][-1], 'workspace:linux:artifact')
+
+    def test_post_producer_revalidation(self):
+        for mode, message in (('dirty_source', 'not clean'), ('host_drift', 'bindings drifted')):
+            with self.subTest(mode=mode):
+                self.log.write_text('')
+                self.mode.write_text(mode)
+                artifacts = self.checkout / '.effigy/linux-release/artifacts'
+                if artifacts.exists():
+                    shutil.rmtree(artifacts)
+                activation = 'post' + mode[-4:]
+                original = self.effigy.read_bytes()
+                try:
+                    code, _, printed = self.run_main(activation)
+                finally:
+                    self.effigy.write_bytes(original)
+                    self.effigy.chmod(0o700)
+                    git(['checkout', '-q', '--', '.'], self.checkout)
+                    stray = self.checkout / 'untracked-recipe-e-drift'
+                    if stray.exists():
+                        stray.unlink()
+                self.assertEqual(code, 1)
+                result = json.loads(printed)
+                self.assertTrue(any(message in item for item in result['findings']), result['findings'])
+                self.assertEqual(result['host_write']['status'], 'missing')
+                self.assertTrue((self.evidence / ('linux-recipe-e-' + activation + '.claim')).exists())
+                self.assertIn('effigy', [row['tool'] for row in self.calls()])
+                self.assertNotIn('artifact', result)
 
     def test_detached_checkout_binds_without_editing_request(self):
         request = self.request('detach01')
