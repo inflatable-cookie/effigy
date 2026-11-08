@@ -929,6 +929,50 @@ def derive_inputs(manifest_path=MANIFEST_PATH):
     return out
 
 
+def stable_input_manifest(manifest_path=MANIFEST_PATH):
+    """Bind repository inputs by their exact relative paths and machine inputs by canonical paths.
+
+    Return the prospective identity and the separately resolved runtime map. Reject aliases
+    before building either map so two declared roles cannot collapse into one entry.
+    """
+    root = REPO_ROOT.resolve(strict=True)
+    repo_paths = list(PROGRAM_FILES) + [Path(manifest_path), RECIPE_PATH,
+                                        REPO_ROOT / 'effigy.toml', REPO_ROOT / 'config/tasks.toml']
+    machine_paths = [Path(sys.executable)] + list(map(Path, TOOL_PATHS))
+    repo, machine, runtime = {}, {}, {}
+    for path in repo_paths:
+        path = Path(path)
+        try:
+            relative = path.relative_to(REPO_ROOT)
+            if not relative.parts or any(part in ('', '.', '..') for part in relative.parts):
+                raise ValueError('invalid relative path')
+            resolved = path.resolve(strict=True)
+            if resolved != root / relative or not resolved.is_file():
+                raise ValueError('alias or escape')
+        except (OSError, ValueError) as exc:
+            raise Refusal(f'invalid repository input: {path}') from exc
+        role = relative.as_posix()
+        if role in repo or str(resolved) in runtime:
+            raise Refusal('duplicate repository input')
+        digest = sha_file(resolved)
+        repo[role] = digest
+        runtime[str(resolved)] = digest
+    for path in machine_paths:
+        try:
+            resolved = path.resolve(strict=True)
+            if not resolved.is_file():
+                raise ValueError('not a file')
+        except (OSError, ValueError) as exc:
+            raise Refusal(f'invalid machine input: {path}') from exc
+        key = str(resolved)
+        if key in runtime:
+            raise Refusal('duplicate machine input')
+        digest = sha_file(resolved)
+        machine[key] = digest
+        runtime[key] = digest
+    return {'repository': repo, 'machine': machine}, runtime
+
+
 def default_transport(**kw):
     return primitive.run_stage(kw['root'], kw['argv'], kw['timeout'], kw['output_cap'], kw['input_hashes'],
                                guest=kw['guest'], cwd=kw['cwd'], environment=kw['environment'],
