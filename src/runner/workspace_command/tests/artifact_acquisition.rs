@@ -704,6 +704,7 @@ fn a_waiter_that_gives_up_builds_and_publishes_nothing() {
     let holder = std::fs::OpenOptions::new()
         .create(true)
         .write(true)
+        .truncate(false)
         .open(&lock_path)
         .expect("holder file");
     holder.try_lock().expect("holder takes the lock");
