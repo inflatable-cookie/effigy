@@ -1,6 +1,6 @@
 # Task-engine signal matrix — evidence index and executable unarmed packet
 
-Queue tasks effigy#582 and effigy#585, building on effigy#579. Status:
+Queue tasks effigy#582, effigy#585 and effigy#739, building on effigy#579. Status:
 **prepared, not executed.** This directory is a source-only reconciliation
 of accepted proof credit plus an UNARMED executable packet for the genuine
 missing real-engine cells. `--execute` is a real GO-bound pass, not a stub.
@@ -15,7 +15,7 @@ fixtures are not native qualification, lane closure, or release credit.
 Owning index: `matrix.json`. Packet contract: `packet-r1.md`. Pinned
 placeholders: `manifest-r1.json`. Admission, labeled-double, and local HostCli-fixture battery:
 `boundaries.py` (`test:qualification:task-engine-signals`). Launcher:
-`launch.py`. Execute pass: `execute.py`.
+`launch.py`. Execute pass: `execute.py`. Proof-only entry: `signal_proof.py`.
 
 ## What this is not
 
@@ -117,6 +117,47 @@ resources, and never uses Colima profile `effigy` or #531/#574 GO. The
 fixture is an ordinary `run_in = "container"` hold task, not Discard and
 not workspace-private apply.
 
-Scratch for a later GO window: `/Volumes/Builds/scratch/effigy/579`.
+## Scratch binding and proof entry (effigy#739)
+
+- The pinned scratch root is `/Volumes/Stash/scratch/effigy/579`. The earlier
+  `/Volumes/Builds/scratch/effigy/579` binding is retired and unavailable. This
+  packet restores nothing, adds no alias or mount and never reuses an old GO.
+  Original history: helper bundle SHA-256
+  `921606595c56bc877d078f48fbdb24732142bccee57b64fc78ce1343568b1814` at planning
+  `f156f62f9`, before effigy#739.
+- `require_canonical_scratch` (`common.py`) runs before any read. The root must be
+  a canonical directory under the Stash namespace, not an alias or symlink, owned
+  by the invoking account, and free of group or other bits. Builds names refuse.
+  A future occurrence binds that root and its exact identities before effects.
+  Fixtures live only under the run TMPDIR.
+- `signal_proof.py` is the one fixed proof entry, selector
+  `qualification:task-engine-signals:proof-only`. It takes exactly
+  `REQUEST SHA256`. The request is `proof-request.json` at the pinned root:
+  owner-only, read-only, at most 8 KiB, hash-pinned, unique keys, no extra
+  fields. It names the bundle, GO hash, source, candidate binary and hash,
+  observer and hash, owner root, engine kind, identity, context, image digest,
+  window and inventory. Every field must equal the GO receipt before anything runs.
+- External precondition, as for the accepted macOS and Linux proof entries:
+  Nucleus launches the exact selector at the exact merged commit with the pinned
+  inputs, under already-recorded same-sequence authority. A request file, an
+  environment token or the file's existence is not that authority. The entry
+  reads no environment.
+- The entry turns the request into an in-memory armed overlay (candidate and
+  engine fields only) and calls the existing `launch.main` with the production
+  `HostCliDriver`. The committed manifest stays `armed: false` and
+  `qualification: false`. Ordinary `launch.py --execute` still refuses.
+- Behaviour is unchanged: one serial five-cell container pass (INT, TERM, HUP,
+  KILL, then foreign/unknown refusal), original deadlines, positive remote closure,
+  PID and start custody, and one-shot attempt receipts. Unknown or failure spends
+  the occurrence with no retry.
+- The KILL cell signals the recorded owner. It is not owner-loss recovery.
+  Owner-loss stays a distinct evidence obligation this packet does not claim.
+- A labeled double yields `labeled-double`. A test HostCli fixture yields
+  `fixture-pass` or refuses. Only the production `HostCli` label can yield
+  `native-pass`, and that is still `qualification: false` until a later owner
+  accepts it.
+- The future proof-only call names the exact selector plus the request, bundle
+  and GO hashes. Packet-specific GO, armed and one-use preconditions stay in place.
+  The candidate and live engine or image facts stay future inputs.
 Admission fixtures use this run's `TMPDIR` (or that scratch) via
 `mkdtemp` and do not delete those roots.

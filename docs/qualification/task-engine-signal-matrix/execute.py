@@ -380,6 +380,9 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
         if kind_name == 'labeled-double':
             outcome['qualification'] = False
             outcome['credit'] = 'source-control-flow'
+        elif kind_name == 'fixture-pass':
+            outcome['qualification'] = False
+            outcome['credit'] = 'fixture-not-native'
         elif kind_name == 'native-pass':
             outcome['qualification'] = False
             outcome['credit'] = 'native-execution-not-accepted'
@@ -857,4 +860,7 @@ def execute_pass(manifest, go, plan, scratch, transport=None, allow_native=False
         return record('labeled-double', retry=False)
     if transport.label == 'HostCli':
         return record('native-pass', retry=False)
+    if transport.label == 'HostCli-fixture':
+        # A HostCliDriver pointed at owned fake executables by a test. Never native credit.
+        return record('fixture-pass', retry=False)
     return write_error('failed', 'unknown transport label %r' % transport.label)

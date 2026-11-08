@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Launcher for the task-engine real-container signal packet.
 
-Queue tasks effigy#579, effigy#582 and effigy#585. This file never starts
-a VM, engine, container, image pull, or install by itself. Missing GO,
-wrong hashes, and UNARMED committed placeholders refuse before effects.
+Queue tasks effigy#579, effigy#582, effigy#585 and effigy#739. This file never
+starts a VM, engine, container, image pull, or install by itself. Missing GO,
+wrong hashes, and UNARMED committed placeholders refuse before effects. The
+scratch root must be the canonical private Stash root before any read.
 A plan is never execution. `--execute` is a real GO-bound pass: the CLI
 uses HostCliDriver only; tests inject a labeled double as a Python
 argument. Duplicate or lost-response resend is refused from retained
@@ -21,7 +22,8 @@ if (DIR.name, DIR.parent.name, DIR.parent.parent.name) != (
 sys.path.insert(0, str(DIR))
 from common import (  # noqa: E402
     Refused, apply_overlay, construct_plan, match_go, require_armed,
-    verify_binary, verify_go_receipt, verify_packet_bundle,
+    require_canonical_scratch, verify_binary, verify_go_receipt,
+    verify_packet_bundle,
 )
 
 
@@ -30,6 +32,7 @@ def main(argv=None, scratch_dir=None, overlay=None, transport=None, allow_native
     bundle = verify_packet_bundle()
     execute = '--execute' in argv
     scratch = Path(scratch_dir) if scratch_dir is not None else Path(bundle['manifest']['scratch_root'])
+    require_canonical_scratch(scratch)
     go = verify_go_receipt(scratch / 'go.txt', bundle['bundle_sha256'], scratch_dir=scratch)
     working = apply_overlay(bundle['manifest'], overlay)
     require_armed(working)
