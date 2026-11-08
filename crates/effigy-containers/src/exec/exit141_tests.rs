@@ -908,7 +908,7 @@ fn inventory_and_ownership_child() {
         assert!(
             unknown
                 .to_string()
-                .contains("canonical full container identity is missing"),
+                .contains("canonical container identity is unverified: inspect returned 0 records; exactly one container is required"),
             "{unknown}"
         );
 

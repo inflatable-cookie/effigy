@@ -1529,7 +1529,9 @@ fn detached_up_with_an_uncertain_identity_publishes_no_route() {
         .expect_err("an uncertain container identity must not be routed");
     let text = error.to_string();
     assert!(
-        text.contains("ownership changed or is unknown"),
+        text.contains(
+            "full-ID/project/service/oneoff/running/checkout/scope ownership does not match"
+        ),
         "the refusal names the identity it could not verify: {text}"
     );
     let table = fixture.routes();
