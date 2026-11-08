@@ -12,9 +12,10 @@
     "common.py",
     "launch.py",
     "execute.py",
+    "signal_proof.py",
     "boundaries.py"
   ],
-  "scratch_root": "/Volumes/Builds/scratch/effigy/579",
+  "scratch_root": "/Volumes/Stash/scratch/effigy/579",
   "receipts": {
     "go": "go.txt",
     "invocation": "invocation-receipt.json",
