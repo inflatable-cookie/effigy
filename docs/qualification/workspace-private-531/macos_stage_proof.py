@@ -22,8 +22,8 @@ def main(argv):
     path = str(Path(argv[1]).resolve())
     if path != argv[1]:
         raise executor.Refusal('proof request path must be canonical')
-    raw = executor.read_checked_file(path, must_be_in=executor.prep.STASH, read_only=True)
-    if len(raw) > 65536 or hashlib.sha256(raw).hexdigest() != argv[2]:
+    raw = executor.read_checked_file(path, must_be_in=executor.prep.STASH, read_only=True, max_bytes=65536)
+    if hashlib.sha256(raw).hexdigest() != argv[2]:
         raise executor.Refusal('proof request hash or size mismatch')
     request = json.loads(raw)
     if not isinstance(request, dict) or set(request) != {

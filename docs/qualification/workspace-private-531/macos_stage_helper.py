@@ -71,8 +71,9 @@ def created_directories(request, step):
 def main(argv):
     if len(argv) != 3:
         raise executor.Refusal('fixed helper requires one hash-bound request')
-    raw = Path(argv[1]).read_bytes()
-    if len(raw) > 65536 or hashlib.sha256(raw).hexdigest() != argv[2]:
+    raw = executor.read_checked_file(argv[1], must_be_in=os.path.dirname(argv[1]), read_only=False,
+                                     max_bytes=65536)
+    if hashlib.sha256(raw).hexdigest() != argv[2]:
         raise executor.Refusal('helper request hash or size mismatch')
     request = json.loads(raw)
     keys = {'stage', 'step', 'bindings', 'inputs', 'claim', 'anchor', 'anchor_fd', 'anchor_identity', 'endpoint',

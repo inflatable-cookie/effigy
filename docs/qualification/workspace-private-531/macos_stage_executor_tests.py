@@ -416,6 +416,11 @@ class FixedHelperTests(Fixture):
             os.chmod(request_path, 0o400)
             with self.assertRaisesRegex(ex.Refusal, 'only admitted C0 or D0'):
                 proof.main(['proof', request_path, ex.sha_file(request_path)])
+            oversized = self.tmp + '/proof-oversized'
+            Path(oversized).write_bytes(b'x' * 65537)
+            os.chmod(oversized, 0o400)
+            with self.assertRaisesRegex(ex.Refusal, 'size limit'):
+                proof.main(['proof', oversized, ex.sha_file(oversized)])
             self.assertEqual(os.listdir(self.tmp + '/claims'), [])
             stage_call.assert_not_called()
 

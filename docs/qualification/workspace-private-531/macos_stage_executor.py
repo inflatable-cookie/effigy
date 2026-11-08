@@ -532,7 +532,7 @@ def write_json_new(dir_path, name, value):
     return write_new_file(dir_path, name, (json.dumps(value, sort_keys=True, indent=2) + '\n').encode())
 
 
-def read_checked_file(path, *, must_be_in, read_only):
+def read_checked_file(path, *, must_be_in, read_only, max_bytes=None):
     """Read one regular file by descriptor. The path must be canonical under the given directory and the
     file must be owned by this user, a single link, and read-only when asked."""
     real = os.path.realpath(path)
@@ -549,7 +549,10 @@ def read_checked_file(path, *, must_be_in, read_only):
         if read_only and stat.S_IMODE(info.st_mode) & 0o222:
             raise Refusal(f'{path}: activation must be read-only')
         with os.fdopen(fd, 'rb', closefd=False) as source:
-            return source.read()
+            data = source.read() if max_bytes is None else source.read(max_bytes + 1)
+        if max_bytes is not None and len(data) > max_bytes:
+            raise Refusal(f'{path}: file exceeds its size limit')
+        return data
     finally:
         os.close(fd)
 
