@@ -36,7 +36,7 @@ def bind(manifest, stage_id, stage_dir, environment, inputs, gates, verify_gate,
     modules = ('preparation_requests.py', 'preparation_stage.py', 'preparation_resources.py',
                'preparation_guest.py', 'preparation_controls.py', 'preparation_observations.py',
                'preparation_placement.py', 'preparation_archive.py', 'preparation_nextest.py',
-               'preparation_metadata.py')
+               'preparation_metadata.py', 'linux_setup.py', 'linux_supervisor.py')
     for path in (manifest_file, *(own_dir / name for name in modules)):
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         if str(path) in bound and bound[str(path)] != digest:

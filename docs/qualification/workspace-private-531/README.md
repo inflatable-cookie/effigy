@@ -142,6 +142,14 @@ no global config edit, alternate transport or credential sharing is introduced.
 The [Linux 4f6a5ed3 preparation kit](linux-4f6a5ed3-preparation.md) plans the
 Stash-hosted Ubuntu VM's Stage1 read-only probe, Stage2 setup and Recipe E route.
 It is preparation only; it arms nothing.
+The Linux setup adapter (`linux_setup.py`, `linux_supervisor.py`, `linux-setup-probe.sh`,
+`linux-setup-stages.json`, `linux_transfer.py`, `linux_receipts.py`,
+`linux_stage1.py`, `linux_observation_caller.py`) holds the v2 probe parser, Stage1 request, setup rows
+E3–E9/E19 and the guest supervisor. Exact root requests and nonces are one-use;
+Stage1 requires a separately signed fresh occurrence with retained post-state.
+The actual observation caller binds VM identity and SSH terminal observations.
+It is source-only: `test:qualification:linux-setup`
+checks it with injected transports and performs no VM, SSH, account or systemd effect.
 The [macOS 4f6a5ed3 preparation](macos-4f6a5ed3-preparation.md) plans the fresh
 Colima and Docker Desktop stages as a staged manifest, each needing its own GO.
 Manifest r3 corrects the r2 Colima flags, route order, deadlines, caps and cleanup
