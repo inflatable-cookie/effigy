@@ -8,6 +8,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Keep macOS proof input bindings stable across equivalent pinned checkouts (effigy#695).
+
 - Supervise macOS preparation helpers against the stage deadline and live storage counter, retaining
   an unknown result if a child cannot be reaped. Native execution still requires a separately activated
   Nucleus proof and operator GO (effigy#694).
