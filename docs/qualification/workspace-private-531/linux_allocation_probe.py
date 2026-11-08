@@ -18,6 +18,7 @@ import sys
 
 Q_GETFMT = 0x800004                  # linux/quota.h
 Q_GETQUOTA = 0x800007
+Q_SETQUOTA = 0x800008
 PRJQUOTA = 2
 QB_UNIT_BYTES = 1024                 # if_dqblk block limits are in 1 KiB quota blocks (QIF_DQBLKSIZE_BITS = 10)
 FS_IOC_FSGETXATTR = 0x801C581F       # _IOR('X', 31, struct fsxattr)
@@ -30,6 +31,25 @@ class DQBlk(ctypes.Structure):
     _fields_ = [(name, ctypes.c_uint64) for name in
                 ('bhard', 'bsoft', 'cur', 'ihard', 'isoft', 'curinodes', 'btime', 'itime')] + \
                [('valid', ctypes.c_uint32)]
+
+
+def limit_record(charged_bytes, row_bytes):
+    """Construct a prospective block-limit record; this function performs no syscall.
+
+    A shared project's hard limit must leave exactly the row reservation, not
+    merely have enough global headroom.  Refuse fractional quota blocks rather
+    than round up beyond the row's ceiling.
+    """
+    if any(not isinstance(v, int) or isinstance(v, bool) or v < 0
+           for v in (charged_bytes, row_bytes)) or row_bytes == 0:
+        raise Refused('invalid-limit')
+    total = charged_bytes + row_bytes
+    if total % QB_UNIT_BYTES or total // QB_UNIT_BYTES > (1 << 64) - 1:
+        raise Refused('unrepresentable-limit')
+    block = DQBlk()
+    block.bhard = total // QB_UNIT_BYTES
+    block.valid = 1  # QIF_BLIMITS: modify block limits only
+    return block
 
 
 class Refused(Exception):

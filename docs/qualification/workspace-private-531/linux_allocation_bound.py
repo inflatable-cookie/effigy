@@ -188,6 +188,8 @@ def verify(witness, limit_bytes, facts, supported):
     headroom = hard - charged
     if headroom < limit_bytes:
         raise Refusal('limit exceeds the project headroom left after current charges')
+    if headroom > limit_bytes:
+        raise Refusal('project headroom exceeds the row ceiling')
 
     header, entries = _entries(texts['tree'])
     if header.get('boot_id') != boot or header.get('root') != root or \

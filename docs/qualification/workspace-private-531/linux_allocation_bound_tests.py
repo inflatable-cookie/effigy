@@ -37,7 +37,7 @@ ENTRIES = (
     ('inputs/archive.tar', 'reg', '8:2', UID, 531, 1, 65536),
 )
 CHARGED = 34 << 20
-HARD = 1 << 30
+HARD = CHARGED + LIMIT
 
 
 def facts(**over):
@@ -165,6 +165,8 @@ class VerifierChecks(unittest.TestCase):
         self.assertEqual(self.verify(limit=headroom)['remaining_after_bytes'], 0)
         with self.assertRaisesRegex(Refusal, 'exceeds the project headroom'):
             self.verify(limit=headroom + 1)
+        with self.assertRaisesRegex(Refusal, 'headroom exceeds the row ceiling'):
+            self.verify(render(hard_qb=(1 << 30) // 1024))
         with self.assertRaisesRegex(Refusal, 'no active hard block limit|headroom'):
             self.verify(render(charged=HARD))
         for bad in (0, -1, True, None, 1.5):
@@ -226,12 +228,13 @@ class VerifierChecks(unittest.TestCase):
 
     def test_kernel_charge_must_cover_every_tree_byte_and_multiple_files_are_summed(self):
         with self.assertRaisesRegex(Refusal, 'below the tree bytes'):
-            self.verify(render(charged=1 << 20))
+            self.verify(render(charged=1 << 20, hard_qb=((1 << 20) + LIMIT) // 1024))
         two_files = ENTRIES + (('inputs/second.tar', 'reg', '8:2', UID, 531, 1, 65536),)
         fx = facts(entries={'.', 'inputs', 'inputs/archive.tar', 'inputs/second.tar'})
         with self.assertRaisesRegex(Refusal, 'below the tree bytes'):
             self.verify(render(entries=two_files, charged=CHARGED), fx=fx)
-        self.assertEqual(self.verify(render(entries=two_files, charged=(66 << 20)), fx=fx)['entries'], 4)
+        self.assertEqual(self.verify(render(entries=two_files, charged=(66 << 20),
+                                            hard_qb=((66 << 20) + LIMIT) // 1024), fx=fx)['entries'], 4)
 
     def test_facts_must_bind_boot_uid_root_and_exact_entries(self):
         for fx in (facts(boot_id=None), facts(boot_id=''), facts(uid=True), facts(root=''),
@@ -261,6 +264,16 @@ class HelperChecks(unittest.TestCase):
             addr._obj.valid = 3
             return rc_quota, errno if rc_quota else 0
         return call
+
+    def test_prospective_limit_reserves_exact_row_and_changes_only_block_limits(self):
+        record = probe.limit_record(CHARGED, LIMIT)
+        self.assertEqual(record.bhard * probe.QB_UNIT_BYTES, CHARGED + LIMIT)
+        self.assertEqual(record.valid, bound.QIF_BLIMITS)
+        self.assertEqual(record.bsoft, 0)
+        for charged, row in ((0, 0), (-1, LIMIT), (CHARGED, True), (1, LIMIT),
+                             (1 << 90, LIMIT)):
+            with self.subTest(charged=charged, row=row), self.assertRaises(probe.Refused):
+                probe.limit_record(charged, row)
 
     def test_quota_lines_feed_the_verifier_in_kernel_units(self):
         lines = probe.quota_lines('/dev/sda2', 531, call=self.fake_call(4, HARD // 1024),
