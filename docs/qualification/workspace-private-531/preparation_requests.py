@@ -11,6 +11,18 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from preparation_stage import exclusive
 
+# Explicit reviewed closure for request hashing and Linux guest placement. Keep
+# this list in sync with static local imports in the preparation/setup adapters;
+# it is intentionally not a directory scan or a generic dependency resolver.
+REQUIRED_MODULE_NAMES = (
+    'preparation_requests.py', 'preparation_stage.py', 'preparation_resources.py',
+    'preparation_guest.py', 'preparation_controls.py', 'preparation_observations.py',
+    'preparation_placement.py', 'preparation_archive.py', 'preparation_nextest.py',
+    'preparation_metadata.py', 'linux_setup.py', 'linux_supervisor.py',
+    'linux_transfer.py', 'linux_receipts.py', 'linux_stage1.py',
+    'linux_observation_caller.py', 'linux_disk_identity.py',
+)
+
 
 def bind(manifest, stage_id, stage_dir, environment, inputs, gates, verify_gate, resource_accounting, manifest_path, nonce=None, guest_path=None):
     rows = [row for row in manifest['stages'] if row['id'] == stage_id]
@@ -33,11 +45,7 @@ def bind(manifest, stage_id, stage_dir, environment, inputs, gates, verify_gate,
     if json.loads(manifest_bytes) != manifest:
         raise ValueError('manifest bytes differ from reviewed manifest')
     own_dir = Path(__file__).resolve().parent
-    modules = ('preparation_requests.py', 'preparation_stage.py', 'preparation_resources.py',
-               'preparation_guest.py', 'preparation_controls.py', 'preparation_observations.py',
-               'preparation_placement.py', 'preparation_archive.py', 'preparation_nextest.py',
-               'preparation_metadata.py', 'linux_setup.py', 'linux_supervisor.py')
-    for path in (manifest_file, *(own_dir / name for name in modules)):
+    for path in (manifest_file, *(own_dir / name for name in REQUIRED_MODULE_NAMES)):
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         if str(path) in bound and bound[str(path)] != digest:
             raise ValueError('source or manifest hash collision')

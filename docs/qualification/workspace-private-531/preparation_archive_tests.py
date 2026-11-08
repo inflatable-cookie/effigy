@@ -8,6 +8,7 @@ import tarfile
 import tempfile
 import sys
 import subprocess
+import shutil
 import time
 import unittest
 from unittest.mock import patch
@@ -416,6 +417,9 @@ class ManifestChecks(unittest.TestCase):
             requests.bind(manifest, 'example', root, {}, {}, {'closure': receipt}, lambda *_: False, {'counter_files': {'writes': '/counter'}, 'limits': {'writes': 10}}, manifest_path)
         result = requests.bind(manifest, 'example', root, {}, {}, {'closure': receipt}, lambda *_: True, {'counter_files': {'writes': '/counter'}, 'limits': {'writes': 10}}, manifest_path)
         self.assertEqual(result['argv'], ['/bin/true'])
+        for name in requests.REQUIRED_MODULE_NAMES:
+            path = Path(requests.__file__).resolve().parent / name
+            self.assertEqual(result['input_hashes'][str(path)], hashlib.sha256(path.read_bytes()).hexdigest())
         output = root / 'request.json'
         requests.write_request(output, result)
         with self.assertRaises(FileExistsError):
@@ -515,6 +519,76 @@ class NextestProvisioningChecks(unittest.TestCase):
         data = other.getvalue()
         with self.assertRaises(nextest.Refusal):
             nextest._admit(data, hashlib.sha256(data).hexdigest())
+
+
+class LinuxClosureChecks(unittest.TestCase):
+    def test_only_declared_closure_imports_setup_in_isolation(self):
+        source = Path(requests.__file__).resolve().parent
+        program = "import sys; sys.path.insert(0, sys.argv[1]); import linux_setup"
+        with tempfile.TemporaryDirectory(prefix='linux-closure-') as temp:
+            root = Path(temp).resolve()
+            os.chmod(root, 0o700)
+            complete = root / 'complete'
+            complete.mkdir(mode=0o700)
+            for name in requests.REQUIRED_MODULE_NAMES:
+                shutil.copyfile(source / name, complete / name)
+            result = subprocess.run([sys.executable, '-I', '-B', '-c', program, str(complete)],
+                                    cwd=root, capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            old_inventory = root / 'old-inventory'
+            old_inventory.mkdir(mode=0o700)
+            for name in requests.REQUIRED_MODULE_NAMES:
+                if name != 'linux_disk_identity.py':
+                    shutil.copyfile(source / name, old_inventory / name)
+            missing = subprocess.run([sys.executable, '-I', '-B', '-c', program, str(old_inventory)],
+                                     cwd=root, capture_output=True, text=True, timeout=20)
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn('linux_disk_identity', missing.stderr)
+
+    def test_bound_import_change_refuses_before_stage_dispatch(self):
+        source = Path(requests.__file__).resolve().parent
+        script = '''
+import hashlib, json, os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import preparation_requests as requests
+import preparation_stage as stage
+root = Path(sys.argv[2]).resolve()
+stage_dir = root / 'run'
+stage_dir.mkdir(mode=0o700)
+manifest = {'stages': [{'id': 'example', 'transport': 'host', 'preconditions': ['closure'],
+    'argv': [sys.executable, '-c', 'raise SystemExit(0)'], 'cwd': str(root),
+    'timeout_seconds': 60, 'output_cap_bytes': 1024}], 'admission_reserve_seconds': 180,
+    'report_reserve_seconds': 120, 'max_stage_seconds_including_admission_and_report': 1200}
+manifest_path = root / 'manifest.json'
+manifest_path.write_text(json.dumps(manifest))
+receipt = root / 'closure.json'
+receipt.write_text(json.dumps({'gate': 'closure', 'status': 'pass'}))
+request = requests.bind(manifest, 'example', stage_dir, {}, {}, {'closure': receipt},
+    lambda *_: True, {'counter_files': {'writes': str(root / 'counter')}, 'limits': {'writes': 10}}, manifest_path)
+(Path(sys.argv[1]) / 'linux_disk_identity.py').write_bytes(b'# changed after request binding\\n')
+try:
+    stage.run_stage(stage_dir, request['argv'], 60, 1024, request['input_hashes'],
+                    cwd=str(root), environment={})
+except stage.Refusal as exc:
+    assert 'input hash drift' in str(exc)
+    assert not (stage_dir / 'intent.json').exists()
+else:
+    raise AssertionError('drifted imported module reached dispatch')
+'''
+        with tempfile.TemporaryDirectory(prefix='linux-drift-') as temp:
+            root = Path(temp).resolve()
+            os.chmod(root, 0o700)
+            staged = root / 'modules'
+            staged.mkdir(mode=0o700)
+            for name in requests.REQUIRED_MODULE_NAMES:
+                shutil.copyfile(source / name, staged / name)
+            helper = root / 'control.py'
+            helper.write_text(script)
+            result = subprocess.run([sys.executable, '-I', '-B', str(helper), str(staged), str(root)],
+                                    cwd=root, capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == '__main__':
