@@ -115,6 +115,9 @@ class EntryTests(unittest.TestCase):
                            " if mode=='descriptor_change': Path(" + repr(str(disk / 'DiskDescriptor.xml')) + " ).write_bytes(b'changed')\n"
                            " if mode=='extent_missing': Path(" + repr(str(disk / 'b.hds')) + " ).unlink()\n"
                            " if mode=='extent_replaced': Path(" + repr(str(disk / 'b.hds')) + " ).unlink(); Path(" + repr(str(disk / 'b.hds')) + " ).write_bytes(b'new')\n"
+                           " if mode=='descriptor_missing': Path(" + repr(str(disk / 'DiskDescriptor.xml')) + " ).unlink()\n"
+                           " if mode=='descriptor_replaced': Path(" + repr(str(disk / 'DiskDescriptor.xml')) + " ).unlink(); Path(" + repr(str(disk / 'DiskDescriptor.xml')) + " ).write_bytes(b'replaced')\n"
+                           " if mode=='config_replaced': Path(" + repr(str(home / 'config.pvs')) + " ).unlink(); Path(" + repr(str(home / 'config.pvs')) + " ).write_bytes(b'replaced')\n"
                            " if mode=='config_missing': Path(" + repr(str(home / 'config.pvs')) + " ).unlink()\n"
                            " if mode=='timeout': print('uid=0',flush=True); time.sleep(2)\n"
                            " if mode=='partial': print('uid=0')\n"
@@ -127,6 +130,16 @@ class EntryTests(unittest.TestCase):
              patch.object(proof, 'SNAPSHOT_SHA', snapshot_sha), patch.object(proof.setup, 'PVM_HOME', str(home)), \
              patch.object(proof.subprocess, 'check_output', side_effect=git):
             request = proof.plan(str(evidence), 'fixture01', head)
+            with self.assertRaises(Refusal):
+                proof.plan(str(root.parent), 'outside01', head)
+            with patch.object(proof.setup, 'PROBE_SHA256', '0' * 64):
+                with self.assertRaises(Refusal):
+                    proof.plan(str(evidence), 'probe-bad', head)
+            original_program = program.read_bytes()
+            program.write_bytes(original_program + b'\n# drift\n')
+            with self.assertRaises(Refusal):
+                proof.execute(request, str(root / 'no-request'), '0' * 64)
+            program.write_bytes(original_program)
             bad = dict(request, candidate_h='0' * 40)
             with self.assertRaises(Refusal):
                 proof.execute(bad, str(root / 'no-request'), '0' * 64)
@@ -145,7 +158,7 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(result['placement'], 'not evaluated')
             with self.assertRaises(Refusal):
                 proof.main(['proof', str(path), digest])
-            for index, mode in enumerate(('wrong_home', 'wrong_uuid', 'wrong_snapshot', 'partial', 'stop_fail', 'growth', 'config_change', 'descriptor_change', 'extent_missing', 'extent_replaced', 'config_missing', 'early_boot', 'timeout'), 2):
+            for index, mode in enumerate(('wrong_home', 'wrong_uuid', 'wrong_snapshot', 'partial', 'stop_fail', 'growth', 'config_change', 'descriptor_change', 'extent_missing', 'extent_replaced', 'config_missing', 'descriptor_missing', 'descriptor_replaced', 'config_replaced', 'early_boot', 'timeout'), 2):
                 scenario.write_text(mode)
                 state.write_text('stopped')
                 (home / 'config.pvs').write_bytes(b'config')
