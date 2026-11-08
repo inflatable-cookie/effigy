@@ -1,16 +1,20 @@
 """Local fixture tests; no real VM, network or engine commands."""
 import contextlib
 import hashlib
+import importlib
 import io
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+SOURCE_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SOURCE_DIR))
 import linux_diagnostic as diagnostic
 import linux_diagnostic_proof as proof
 from preparation_stage import Refusal
@@ -19,6 +23,9 @@ from preparation_stage import Refusal
 ZERO = '{00000000-0000-0000-0000-000000000000}'
 GUID_A = '{11111111-1111-1111-1111-111111111111}'
 GUID_B = '{22222222-2222-2222-2222-222222222222}'
+REPO_ROOT = SOURCE_DIR.parents[2]
+MODULE_ROLE = 'docs/qualification/workspace-private-531'
+CHECKOUT_MODULES = tuple(sorted(path.stem for path in SOURCE_DIR.glob('*.py')))
 
 
 def descriptor(names):
@@ -247,6 +254,230 @@ class EntryTests(unittest.TestCase):
                 if mode == 'partial':
                     self.assertEqual(result['vm_terminal'], 'stopped')
                     self.assertTrue(any('partial' in x for x in result['findings']))
+
+
+def git(args, cwd):
+    return subprocess.check_output(['/usr/bin/git', '-C', str(cwd), '-c', 'user.name=fixture',
+                                    '-c', 'user.email=fixture@invalid', '-c', 'core.hooksPath=/dev/null',
+                                    *args], timeout=30).decode().strip()
+
+
+def make_checkout(path):
+    """A real git checkout holding the reviewed source roles and config at this path."""
+    module = path / MODULE_ROLE
+    module.mkdir(parents=True)
+    for source in SOURCE_DIR.glob('*.py'):
+        shutil.copyfile(source, module / source.name)
+    shutil.copyfile(SOURCE_DIR / 'linux-setup-probe.sh', module / 'linux-setup-probe.sh')
+    (path / 'config').mkdir()
+    shutil.copyfile(REPO_ROOT / 'config' / 'tasks.toml', path / 'config' / 'tasks.toml')
+    git(['init', '-q'], path)
+    git(['add', '-A'], path)
+    git(['commit', '-q', '-m', 'fixture'], path)
+    return path
+
+
+def detached_clone(source, path):
+    """The same commit at a distinct clean detached path, as Nucleus provisions it."""
+    git(['clone', '-q', '--no-hardlinks', str(source), str(path)], source.parent)
+    git(['checkout', '-q', '--detach'], path)
+    return path
+
+
+def load_entry(checkout):
+    """Import the reviewed entry from one checkout with its own module objects, then restore this process."""
+    saved = {name: sys.modules.pop(name) for name in CHECKOUT_MODULES if name in sys.modules}
+    module_dir = str(checkout / MODULE_ROLE)
+    sys.path.insert(0, module_dir)
+    written = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        return importlib.import_module('linux_diagnostic_proof')
+    finally:
+        sys.dont_write_bytecode = written
+        sys.path[:] = [entry for entry in sys.path if entry != module_dir]
+        for name in CHECKOUT_MODULES:
+            sys.modules.pop(name, None)
+        sys.modules.update(saved)
+
+
+class CheckoutBindingTests(unittest.TestCase):
+    """Identical source at distinct checkout paths; the request is never edited."""
+
+    def setUp(self):
+        self.base = fixture()
+        self.root = self.base / 'scratch'
+        self.root.mkdir(mode=0o700)
+        self.evidence = self.root / 'evidence'
+        self.evidence.mkdir(mode=0o700)
+        self.home = self.root / 'vm.pvm'
+        self.disk = self.home / 'harddisk1.hdd'
+        self.disk.mkdir(parents=True)
+        (self.home / 'config.pvs').write_bytes(b'config')
+        (self.disk / 'DiskDescriptor.xml').write_bytes(descriptor([(GUID_A, 'a.hds')]))
+        (self.disk / 'a.hds').write_bytes(b'extent')
+        self.state = self.root / 'state'
+        self.state.write_text('stopped')
+        self.log = self.root / 'calls'
+        snapshot = {'snapshot': {'current': True}}
+        self.snapshot_sha = hashlib.sha256(proof.canonical(snapshot)).hexdigest()
+        vm = {'ID': proof.setup.VM_UUID, 'State': 'stopped', 'Home': str(self.home) + '/',
+              'Home path': str(self.home / 'config.pvs'),
+              'Hardware': {'hdd0': {'enabled': True, 'image': str(self.disk)}}}
+        probe = ''.join(key + '=unknown\n' for key in sorted(proof.PROBE_KEYS))
+        self.program = self.root / 'fake-prlctl'
+        self.program.write_text('\n'.join([
+            '#!/usr/bin/python3',
+            'import json, sys',
+            'from pathlib import Path',
+            'state, log = Path(%r), Path(%r)' % (str(self.state), str(self.log)),
+            'vm = %r' % (vm,),
+            'args = sys.argv[1:]',
+            "with log.open('a') as f: f.write(args[0] + '\\n')",
+            "if args[0] == 'start': state.write_text('running')",
+            "elif args[0] == 'stop': state.write_text('stopped')",
+            "elif args[0] == 'snapshot-list': print(%r)" % (json.dumps(snapshot),),
+            "elif args[0] == 'list':",
+            "    vm['State'] = state.read_text()",
+            "    print(json.dumps([vm]))",
+            "elif args[0] == 'exec' and args[-1] == 'ready': print('ready')",
+            "elif args[0] == 'exec': print(%r, end='')" % (probe,),
+            '',
+        ]))
+        self.program.chmod(0o700)
+        self.primary_path = make_checkout(self.base / 'primary')
+        self.primary = load_entry(self.primary_path)
+        self.head = git(['rev-parse', 'HEAD'], self.primary_path)
+
+    @contextlib.contextmanager
+    def bound(self, entry):
+        """Point one loaded entry at this fixture's scratch root, fake transport and VM package."""
+        with patch.object(entry, 'SCRATCH', str(self.root)), patch.object(entry, 'PRLCTL', str(self.program)), \
+             patch.object(entry, 'SNAPSHOT_SHA', self.snapshot_sha), patch.object(entry.setup, 'PVM_HOME', str(self.home)):
+            yield
+
+    def request(self, activation):
+        with self.bound(self.primary):
+            return self.primary.plan(str(self.evidence), activation, self.head)
+
+    def write_request(self, activation, request):
+        raw = json.dumps(request, sort_keys=True).encode()
+        path = self.root / ('request-%s.json' % activation)
+        path.write_bytes(raw)
+        path.chmod(0o400)
+        return path, hashlib.sha256(raw).hexdigest()
+
+    def destination(self, activation):
+        return self.evidence / ('linux-diagnostic-' + activation)
+
+    def test_request_from_primary_binds_at_detached_checkout(self):
+        request = self.request('checkout01')
+        detached = detached_clone(self.primary_path, self.base / 'detached')
+        entry = load_entry(detached)
+        path, digest = self.write_request('checkout01', request)
+        with self.bound(entry), contextlib.redirect_stdout(io.StringIO()) as printed:
+            self.assertEqual(entry.main(['proof', str(path), digest]), 0)
+        self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), digest)
+        result = json.loads(printed.getvalue())
+        self.assertEqual(result['checkout_root'], str(detached))
+        self.assertNotEqual(str(detached), str(self.primary_path))
+        self.assertEqual(result['repository_identity'], request['repository'])
+        self.assertEqual(set(result['runtime_inputs']), {str(detached / role) for role in request['repository']})
+        self.assertEqual(result['vm_terminal'], 'stopped')
+        self.assertEqual(result['findings'], [])
+        calls = self.log.read_text().split()
+        self.assertEqual((calls.count('start'), calls.count('stop')), (1, 1))
+        steps = sorted(self.destination('checkout01').glob('step-*'))
+        self.assertTrue(steps)
+        for step in steps:
+            hashes = json.loads((step / 'intent.json').read_text())['input_hashes']
+            self.assertIn(str(detached / MODULE_ROLE / 'linux_diagnostic.py'), hashes)
+            self.assertFalse(any(key.startswith(str(self.primary_path)) for key in hashes))
+
+    def assert_refused(self, entry, request, message):
+        self.log.unlink(missing_ok=True)
+        activation = request['activation_id']
+        with self.bound(entry), self.assertRaisesRegex(entry.stage.Refusal, message):
+            raw = json.dumps(request).encode()
+            entry.execute(request, str(self.root / ('request-%s.json' % activation)), hashlib.sha256(raw).hexdigest())
+        self.assertFalse(self.destination(activation).exists())
+        self.assertFalse(self.evidence.joinpath('linux-diagnostic-' + activation + '.claim').exists())
+        self.assertFalse(self.log.exists())
+
+    def test_changed_checkout_or_request_refuses_before_effects(self):
+        module = MODULE_ROLE + '/'
+
+        def wrong_head(path, request):
+            git(['commit', '-q', '--allow-empty', '-m', 'drift'], path)
+            return request
+
+        def untracked_extra(path, request):
+            (path / module / 'extra_input.py').write_text('X = 1\n')
+            return request
+
+        def uncommitted_change(path, request):
+            with (path / module / 'linux_diagnostic.py').open('a') as source:
+                source.write('\n# drift\n')
+            return request
+
+        def missing_source(path, request):
+            (path / module / 'linux_diagnostic.py').unlink()
+            return request
+
+        def extra_request_role(path, request):
+            return dict(request, repository=dict(request['repository'], **{module + 'extra_input.py': '0' * 64}))
+
+        cases = [
+            ('wrong head', wrong_head, 'head drifted'),
+            ('untracked extra source', untracked_extra, 'not clean'),
+            ('changed source', uncommitted_change, 'bindings drifted'),
+            ('missing source', missing_source, 'input unavailable'),
+            ('extra request role', extra_request_role, 'bindings drifted'),
+        ]
+        for number, (name, mutate, message) in enumerate(cases):
+            with self.subTest(case=name):
+                activation = 'casecheck%02d' % number
+                request = self.request(activation)
+                checkout = detached_clone(self.primary_path, self.base / ('case-%02d' % number))
+                entry = load_entry(checkout)
+                self.assert_refused(entry, mutate(checkout, request), message)
+
+    def test_mutation_after_binding_refuses_before_dispatch(self):
+        request = self.request('mutatecheck')
+        detached = detached_clone(self.primary_path, self.base / 'mutate')
+        entry = load_entry(detached)
+        raw = json.dumps(request).encode()
+        original = entry.stage.run_stage
+
+        def mutate_then_run(*args, **kwargs):
+            with (detached / MODULE_ROLE / 'linux_diagnostic.py').open('a') as source:
+                source.write('\n# mutation after binding\n')
+            return original(*args, **kwargs)
+
+        with self.bound(entry), patch.object(entry.stage, 'run_stage', side_effect=mutate_then_run):
+            result = entry.execute(request, str(self.root / 'request-mutatecheck.json'), hashlib.sha256(raw).hexdigest())
+        self.assertFalse(self.log.exists())
+        self.assertEqual(result['start_count'], 0)
+        self.assertTrue(any('input hash drift' in finding for finding in result['findings']))
+
+    def test_root_and_tool_changes_refuse_before_effects(self):
+        request = self.request('rootcheck01')
+        entry = load_entry(detached_clone(self.primary_path, self.base / 'root'))
+        moved = self.root / 'moved-evidence'
+        self.evidence.rename(moved)
+        self.evidence.mkdir(mode=0o700)
+        try:
+            self.assert_refused(entry, request, 'bindings drifted')
+        finally:
+            self.evidence.rmdir()
+            moved.rename(self.evidence)
+        request = self.request('toolcheck01')
+        original = self.program.read_bytes()
+        self.program.write_bytes(original + b'\n# drift\n')
+        try:
+            self.assert_refused(entry, request, 'bindings drifted')
+        finally:
+            self.program.write_bytes(original)
 
 
 if __name__ == '__main__':
