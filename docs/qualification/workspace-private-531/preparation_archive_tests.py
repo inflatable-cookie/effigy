@@ -7,6 +7,8 @@ from pathlib import Path
 import tarfile
 import tempfile
 import sys
+import subprocess
+import time
 import unittest
 from unittest.mock import patch
 
@@ -209,6 +211,38 @@ class StageChecks(unittest.TestCase):
         self.assertEqual(result['disposition'], 'timeout')
         self.assertEqual((self.root / 'stdout').read_bytes(), b'partial\n')
         self.assertIsNotNone(result['waited_exit'])
+
+    def test_cleanup_deadline_records_unreaped_child_as_unknown(self):
+        real_wait = subprocess.Popen.wait
+        children = []
+        real_popen = subprocess.Popen
+
+        def spawn(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            return child
+
+        def unreaped(child, timeout=None):
+            raise subprocess.TimeoutExpired(child.args, timeout)
+
+        now = time.monotonic()
+        try:
+            with patch.object(real_popen, 'wait', unreaped), \
+                 patch.object(stage.subprocess, 'Popen', side_effect=spawn):
+                result = stage.run_stage(self.root, [sys.executable, '-c', 'import time; time.sleep(10)'],
+                                         0.1, 1024, {}, deadline=now + 0.1, cleanup_deadline=now + 0.4)
+            self.assertEqual(result['disposition'], 'unknown')
+            self.assertIsNone(result['waited_exit'])
+            self.assertEqual(result['process']['pid'], children[0].pid)
+        finally:
+            for child in children:
+                real_wait(child, timeout=5)
+
+    def test_deferred_input_checks_refuse_an_arbitrary_child(self):
+        with self.assertRaises(stage.Refusal):
+            stage.run_stage(self.root, [sys.executable, '-c', 'pass'], 1, 1024, {},
+                            verify_in_fixed_helper=True)
+        self.assertFalse((self.root / 'intent.json').exists())
 
     def test_output_cap(self):
         result = self.run_script("print('x' * 50000, flush=True)", cap=32)
