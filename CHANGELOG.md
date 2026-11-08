@@ -8,6 +8,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Update the locked `ctutils` and Tokio dependencies to patched releases
+  (`ctutils` 0.4.4 and Tokio 1.53.3) for RUSTSEC-2026-0385 and
+  RUSTSEC-2026-0386. Cargo deny policy and runtime behavior remain unchanged.
+
 - Prepare a private, proof-only Linux VM diagnostic observation route with complete extent accounting and retained originals.
 
 - Allow a pinned macOS proof request to start its bounded stage window at the externally approved launch (effigy#696).
