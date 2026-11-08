@@ -4951,11 +4951,13 @@ struct HttpsProbe {
     stderr: String,
 }
 
-/// The listener readiness budget the managed-listener fixtures declare in the
-/// manifests they write (`listener.readiness.timeout_secs`). A published route
-/// reaches the gateway daemon asynchronously, so a proof waits for that
-/// observation inside the same declared budget instead of assuming a successful
-/// first probe or a hidden five-second window.
+/// The fixture's own bound on a route the gateway daemon consumes
+/// asynchronously. It is not read from a manifest: the managed-listener
+/// manifests declare readiness windows of 20-30 s
+/// (`listener.readiness.timeout_secs`), and this boundary matches the widest
+/// one. A proof passes a tighter caller-owned deadline where it has one; this is
+/// the default for probes that do not, and it replaces a successful-first-probe
+/// assumption and a hidden five-second window, not a production timeout.
 const MANAGED_LISTENER_READY_BUDGET: Duration = Duration::from_secs(30);
 
 fn listener_readiness_deadline() -> Instant {
@@ -5441,10 +5443,11 @@ fn socket_field(payload: &Value, field: &str) -> SocketAddr {
         .unwrap_or_else(|error| panic!("invalid {field} in {payload}: {error}"))
 }
 
-/// A verified HTTPS request inside the managed listener readiness budget. The
-/// route a caller proved published in the store is consumed by the gateway
-/// daemon asynchronously, so this waits for the response it can verify instead
-/// of failing the proof on a probe the daemon cannot serve yet.
+/// A verified HTTPS request inside the fixture's 30-second managed-listener
+/// readiness bound. The route a caller proved published in the store is
+/// consumed by the gateway daemon asynchronously, so this waits for the
+/// response it can verify instead of failing the proof on a probe the daemon
+/// cannot serve yet.
 fn curl_https(address: SocketAddr, ca: &Path, hostname: &str, path: &str) -> String {
     wait_for_verified_https(
         address,
@@ -8915,8 +8918,7 @@ exit 0
 }
 
 /// The checkout-shaped private host whose build is this run's Effigy, with the
-/// Linux guest artifact a local producer wrote and the receipts that authenticate
-/// it.
+/// Linux guest artifact and the producer-shaped receipt that authenticates it.
 ///
 /// The workspace handoff takes the guest artifact from the local checkout on a
 /// development host; it refuses to substitute the published release for a local
@@ -8924,8 +8926,10 @@ exit 0
 /// `<root>/target/debug/effigy` makes this run's own build look exactly like a
 /// developer checkout's build output, so provenance is genuine and nothing is
 /// downloaded. The artifact bytes are never executed - the private guest adapter
-/// stands in for the guest - and its receipt names the target and the digest of
-/// those exact bytes, as the real producer writes them.
+/// stands in for the guest - and its receipt carries the field set the local
+/// producer writes (`scripts/build-linux-workspace-artifact.rhai`): the two
+/// paths, the target, the digest of those exact bytes,
+/// `build_kind=workspace-artifact` and `completed_at`.
 struct LocalEffigyHost {
     binary: PathBuf,
 }
@@ -8984,9 +8988,18 @@ fn seed_local_effigy_host(fixture: &Path) -> LocalEffigyHost {
     .expect("local artifact version");
     fs::write(artifact.with_extension("install-identity"), &identity)
         .expect("local artifact install identity");
+    // The same field set the local producer writes
+    // (`scripts/build-linux-workspace-artifact.rhai`): the two paths, the
+    // target, the digest, `build_kind=workspace-artifact` and its completion
+    // time. A receipt with invented fields or kinds would not be the producer's.
+    let completed_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
     fs::write(
         artifact.with_extension("receipt"),
-        format!("release_triple={LOCAL_GUEST_TARGET}\nsha256={digest}\nbuild_kind=local\n"),
+        format!(
+            "binary={binary}\ncopied_binary={artifact}\nrelease_triple={LOCAL_GUEST_TARGET}\nsha256={digest}\nbuild_kind=workspace-artifact\ncompleted_at={completed_at}\n",
+            binary = binary.display(),
+            artifact = artifact.display(),
+        ),
     )
     .expect("local artifact producer receipt");
     LocalEffigyHost { binary }

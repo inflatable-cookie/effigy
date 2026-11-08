@@ -187,10 +187,13 @@ previous snapshot. Both are not-ready observations.
 
 The gateway-private probes therefore follow evidence instead of a first probe
 or a hidden window. `wait_for_listener_https` and `curl_https` poll through a
-handshake the daemon cannot serve yet inside the listener readiness budget the
-fixture's own manifest declares (`readiness.timeout_secs`); only the wanted
-verified response ends them, and a timeout names the last probe, the last
-response and the gateway's own record. The adapterless fixtures first wait for
+handshake the daemon cannot serve yet inside a fixture-owned bound: the caller's
+own deadline where it has one, otherwise the 30-second managed-listener bound
+that matches the widest readiness window those fixtures declare
+(`readiness.timeout_secs`, 20-30 s). It is a fixture bound on asynchronous
+daemon consumption, not a production timeout. Only the wanted verified response
+ends a wait, and a timeout names the last probe, the last response and the
+gateway's own record. The adapterless fixtures first wait for
 the daemon's applied publication through `GET /_effigy/routes` on the plain
 HTTP proxy `gateway up` reports - the same live snapshot the proxy routes from -
 so a store read is never mistaken for consumption. A proof that reads the store
@@ -219,8 +222,10 @@ pins that.
 The container workspace handoff fixtures (the scoped-clone switch, the managed
 clone lifecycle) acquire their Linux guest artifact from a private
 checkout-shaped host: this run's own build hard-linked at
-`<root>/target/debug/effigy`, the artifact and its producer receipt (target,
-digest, `build_kind=local`) beside it, and the artifact source set to `local`.
+`<root>/target/debug/effigy`, the artifact and a producer-shaped receipt
+beside it (`scripts/build-linux-workspace-artifact.rhai`'s field set: the two
+paths, `release_triple`, `sha256`, `build_kind=workspace-artifact`,
+`completed_at`), and the artifact source set to `local`.
 They no longer seed a release-shaped cache and force `download`: a local Effigy
 build refusing the published release as its substitute is product truth
 (effigy#701), covered by `artifact_acquisition`. The artifact bytes are never
