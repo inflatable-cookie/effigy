@@ -438,6 +438,52 @@ pub fn ensure_runtime_backend_running_report(
     }
 }
 
+/// The no-change form of [`ensure_runtime_backend_running_report`]: `Ok` only
+/// when the backend is already usable as configured, so the ordinary ensure
+/// would reuse it without any write. Every other state (not running, managed
+/// settings drifted, runtime units needing a start) refuses before a start,
+/// create, restart, settings write or unit start can run. Docker's ensure is
+/// already a read-only `ps`, so it is reused as-is.
+pub fn verify_runtime_backend_no_change(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<ColimaEnsureReport, ContainerExecError> {
+    match resolve_compose_backend_for_repo(repo_root, policy) {
+        ComposeBackend::Docker => ensure_runtime_backend_running_report(policy, repo_root),
+        ComposeBackend::ColimaNerdctl => verify_colima_profile_no_change(policy, repo_root),
+    }
+}
+
+fn verify_colima_profile_no_change(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<ColimaEnsureReport, ContainerExecError> {
+    let refusal = |reason: &str| {
+        ContainerExecError::Failure {
+        command: "Colima profile no-change check".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: format!(
+            "Colima profile `{}` {reason}; no-change mode refuses to start, create, restart, rewrite or unit-start the shared profile",
+            policy.profile
+        ),
+    }
+    };
+    if !colima_is_running(policy, repo_root)? {
+        return Err(refusal("is not running"));
+    }
+    if managed_colima_profile_drift(&policy.profile).is_some() {
+        return Err(refusal("has managed settings that differ from Effigy's"));
+    }
+    ensure_running_profile_runtime_ready(
+        policy.profile.as_str(),
+        COLIMA_RUNNING_PROFILE_GRACE,
+        |timeout| wait_for_colima_runtime_ready(policy, repo_root, timeout),
+        || Err("containerd/BuildKit units are not running and would need a unit start".to_owned()),
+    )?;
+    Ok(ColimaEnsureReport::default())
+}
+
 pub fn colima_is_running(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
@@ -1906,6 +1952,85 @@ esac
                 .iter()
                 .any(|call| call.starts_with("start ") || call.starts_with("stop ")),
             "a configured running profile is not restarted: {calls:#?}"
+        );
+    }
+
+    #[test]
+    fn no_change_reuses_a_configured_running_profile_without_any_write() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        fixture.write_colima_config("forwardAgent: true\n");
+        let policy = fixture.policy();
+
+        let report =
+            verify_runtime_backend_no_change(&policy, &fixture.root).expect("reuse profile");
+
+        assert_eq!(report, ColimaEnsureReport::default());
+        let calls = fixture.calls();
+        assert!(
+            !calls.iter().any(|call| call.contains("start")
+                || call.starts_with("stop ")
+                || call.starts_with("restart ")
+                || call.starts_with("delete ")),
+            "a configured running profile needs no start, restart or unit start: {calls:#?}"
+        );
+        let config = std::fs::read_to_string(fixture.home.join(".colima/effigy/colima.yaml"))
+            .expect("managed config");
+        assert_eq!(config, "forwardAgent: true\n");
+    }
+
+    #[test]
+    fn no_change_refuses_an_absent_or_stopped_profile_without_starting_it() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        let policy = fixture.policy();
+        let absent = verify_runtime_backend_no_change(&policy, &fixture.root)
+            .expect_err("absent profile refuses");
+        assert!(absent.to_string().contains("is not running"), "{absent}");
+
+        fixture.state("listed");
+        let stopped = verify_runtime_backend_no_change(&policy, &fixture.root)
+            .expect_err("stopped profile refuses");
+        assert!(stopped.to_string().contains("is not running"), "{stopped}");
+
+        let calls = fixture.calls();
+        assert!(
+            !calls.iter().any(|call| call.starts_with("start")
+                || call.starts_with("stop ")
+                || call.starts_with("restart ")
+                || call.starts_with("delete ")),
+            "no-change never starts or creates the profile: {calls:#?}"
+        );
+        assert!(!fixture.has_state("running"));
+    }
+
+    #[test]
+    fn no_change_refuses_drifted_managed_settings_without_rewriting_them() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        fixture.write_colima_config("forwardAgent: false\n");
+        let policy = fixture.policy();
+
+        let error = verify_runtime_backend_no_change(&policy, &fixture.root)
+            .expect_err("drifted settings refuse");
+
+        assert!(error.to_string().contains("managed settings"), "{error}");
+        let config = std::fs::read_to_string(fixture.home.join(".colima/effigy/colima.yaml"))
+            .expect("unchanged config");
+        assert_eq!(
+            config, "forwardAgent: false\n",
+            "no-change never rewrites settings"
+        );
+        let calls = fixture.calls();
+        assert!(
+            !calls.iter().any(|call| call.starts_with("start ")
+                || call.starts_with("stop ")
+                || call.starts_with("restart ")),
+            "{calls:#?}"
         );
     }
 

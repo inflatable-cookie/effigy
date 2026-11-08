@@ -45,6 +45,8 @@ RESERVE = 120
 ARTIFACT_CAP = 200 * 1024 * 1024
 HOST_WRITE_CAP = 5 * 1024 * 1024 * 1024
 HOST_BINARY_CAP = 512 * 1024 * 1024
+RECEIPT_CAP = 64 * 1024
+SIDECAR_CAP = 4096
 HOST_BINARY_ROLE = '.local-install/bin/effigy'
 HOST_RECEIPT_KEYS = ('source_head', 'source_tree', 'binary_sha256', 'active_version',
                      'build_kind', 'features', 'dirty', 'completed_at')
@@ -93,24 +95,18 @@ HOST_WRITE_WRITERS = (
     {'writer': 'evidence', 'path': 'linux-recipe-e-<activation>/ (host)',
      'metric': 'cumulative bytes via capped stream writes', 'bound': '2*PRODUCER_OUTPUT_CAP + 2*OBSERVE_CAP per occurrence'},
 )
-# E9 archive reservation and actual usage are Stage2 values pinned by the planner
-# ({'reserved': bytes, 'actual': bytes}). No supported source supplies them yet,
-# so production has no budget input and refuses before the claim. E14 reserves
-# the retained artifact copy plus both capped evidence streams per producer step;
-# staging, render and cargo target writes have no reservation (see above).
-E9_RESERVATION = None
-E14_RESERVATION = ARTIFACT_CAP + 2 * PRODUCER_OUTPUT_CAP + 2 * OBSERVE_CAP
-# The producer's build helper calls ensure_runtime_backend_running_report, which
-# can create, start, restart or reconfigure the shared profile. No already-running
-# no-change route exists in the supported interfaces.
-RUNTIME_NO_CHANGE = {
-    'status': 'missing',
-    'reason': (
-        'SO-runtime-no-change: workspace:linux:artifact reaches '
-        'ensure_runtime_backend_running_report, which may create, start, restart or reconfigure '
-        'the shared Colima profile; no supported already-running no-change route exists'
-    ),
-}
+# E14 reserves the retained artifact, receipt and sidecar copies plus the capped
+# evidence streams: producer stdout/stderr once, Colima inventory before and after
+# the producer. Intent, process and receipt JSON are small and unreserved. Staging,
+# render and cargo target writes have no reservation, so headroom bounds only the
+# writers named here, never all E14 host writes.
+E14_RESERVATION = (ARTIFACT_CAP + RECEIPT_CAP + SIDECAR_CAP
+                   + 2 * PRODUCER_OUTPUT_CAP + 4 * OBSERVE_CAP)
+# Restriction-only switch read by the producer's build helper: with `1` it reuses
+# only an already running, already configured profile and refuses every start,
+# create, restart, settings rewrite and unit start (verify_runtime_backend_no_change).
+# The host binary is C's own build, so C's source supplies this route.
+NO_CHANGE_ENV = 'EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING'
 
 
 def sha(path):
@@ -286,10 +282,10 @@ def host_binding(root, head, tree):
     sidecar = Path(str(binary) + '.active-version')
     receipt = Path(str(binary) + '.source-receipt')
     binary_sha, size = stream_digest(binary, HOST_BINARY_CAP, 'host binary')
-    version = read_small(sidecar, 4096, 'host active-version sidecar').decode('utf-8', 'strict').strip()
+    version = read_small(sidecar, SIDECAR_CAP, 'host active-version sidecar').decode('utf-8', 'strict').strip()
     if not version:
         raise stage.Refusal('host active-version sidecar empty')
-    raw = read_small(receipt, 65536, 'host source receipt')
+    raw = read_small(receipt, RECEIPT_CAP, 'host source receipt')
     fields = parse_fields(raw, HOST_RECEIPT_KEYS, 'host source receipt')
     if fields['binary_sha256'] != binary_sha:
         raise stage.Refusal('host source receipt does not name these binary bytes')
@@ -325,10 +321,22 @@ def producer_environment():
     env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP') if key in os.environ}
     env['LANG'] = 'C'
     env['EFFIGY_LINUX_RELEASE_TRIPLE'] = TARGET
+    env[NO_CHANGE_ENV] = '1'
     return env
 
 
-def plan(root, activation_id, head, candidate_root, candidate_head):
+def budget_identity(e9_reserved, e9_actual):
+    """Planner-pinned Stage2 values; headroom covers only the E14 writers in E14_RESERVATION."""
+    headroom = stage2_headroom(e9_reserved, e9_actual, E14_RESERVATION)
+    return {
+        'cap_bytes': HOST_WRITE_CAP, 'e9_reserved_bytes': e9_reserved,
+        'e9_actual_bytes': e9_actual, 'e14_reserved_bytes': E14_RESERVATION,
+        'headroom_bytes': headroom,
+        'scope': 'bounded E14 writers only: artifact, receipt, sidecar and evidence streams',
+    }
+
+
+def plan(root, activation_id, head, candidate_root, candidate_head, e9_reserved, e9_actual):
     """Read-only prospective bindings; this is not activation authority."""
     if not re.fullmatch(r'[A-Za-z0-9_-]{4,64}', activation_id):
         raise stage.Refusal('invalid activation id')
@@ -344,12 +352,13 @@ def plan(root, activation_id, head, candidate_root, candidate_head):
     if os.path.realpath(GIT) != GIT:
         raise stage.Refusal('git is not at its canonical path')
     host = host_binding(candidate['root'], candidate['head'], candidate['tree'])
+    budget = budget_identity(e9_reserved, e9_actual)
     return {
         'schema': SCHEMA, 'head': head, 'candidate_h': CANDIDATE_H_HEAD,
         'root': root, 'root_identity': identity, 'activation_id': activation_id,
         'duration_seconds': DURATION, 'target': TARGET, 'profile': PROFILE,
         'stash_source_mount': mount, 'selector': SELECTOR, 'policy': policy,
-        'preparation': preparation, 'candidate': candidate, 'host': host,
+        'preparation': preparation, 'candidate': candidate, 'host': host, 'budget': budget,
         'colima': program, 'program': program['canonical'], 'effigy': host['binary'],
         'machine': machine_identity(program['canonical'], interpreter),
         'interpreter': interpreter,
@@ -411,6 +420,8 @@ def select_release_profile(raw):
     if len(rows) != 1:
         raise stage.Refusal('effigy-release profile observation is incomplete')
     row = rows[0]
+    if row.get('status') != 'Running':
+        raise stage.Refusal('effigy-release profile is not Running')
     arch = row.get('arch')
     if arch not in ('aarch64', 'arm64'):
         raise stage.Refusal('effigy-release architecture is not aarch64')
@@ -460,7 +471,7 @@ def check_artifact(binary, receipt_path, sidecar, expected_version):
     if total != size:
         raise stage.Refusal('artifact changed while read')
     digest_value = digest_value.hexdigest()
-    raw_receipt = read_small(receipt_path, 65536, 'artifact receipt')
+    raw_receipt = read_small(receipt_path, RECEIPT_CAP, 'artifact receipt')
     receipt = parse_receipt(raw_receipt)
     if receipt['sha256'] != digest_value:
         raise stage.Refusal('receipt SHA mismatch')
@@ -468,7 +479,7 @@ def check_artifact(binary, receipt_path, sidecar, expected_version):
         raise stage.Refusal('receipt target differs')
     if receipt['build_kind'] != 'workspace-artifact':
         raise stage.Refusal('receipt build_kind differs')
-    version = read_small(sidecar, 4096, 'artifact active-version sidecar').decode('utf-8', 'strict').strip()
+    version = read_small(sidecar, SIDECAR_CAP, 'artifact active-version sidecar').decode('utf-8', 'strict').strip()
     if version != expected_version:
         raise stage.Refusal('active-version sidecar differs from host')
     elf = check_elf(header)
@@ -496,7 +507,7 @@ def runtime_inputs(request):
         runtime[str(resolved)] = expected
     host = request['host']
     runtime[host['binary']] = host['sha256']
-    runtime[host['sidecar']] = hashlib.sha256(read_small(host['sidecar'], 4096, 'host active-version sidecar')).hexdigest()
+    runtime[host['sidecar']] = hashlib.sha256(read_small(host['sidecar'], SIDECAR_CAP, 'host active-version sidecar')).hexdigest()
     runtime[host['receipt']] = host['receipt_sha256']
     return runtime
 
@@ -515,9 +526,10 @@ def _resolve(root, role):
 
 
 def bindings(request):
-    """Recompute every binding with the request's own pinned roles and heads."""
+    """Recompute every binding with the request's own pinned roles, heads and budget."""
     return plan(request['root'], request['activation_id'], request['head'],
-                request['candidate']['root'], request['candidate']['head'])
+                request['candidate']['root'], request['candidate']['head'],
+                request['budget']['e9_reserved_bytes'], request['budget']['e9_actual_bytes'])
 
 
 def bound_inputs(request):
@@ -556,14 +568,8 @@ def stage2_headroom(e9_reserved, e9_actual, e14_reserved, cap=HOST_WRITE_CAP):
 def execute(request, request_path, request_hash):
     launched_at = time.time()
     deadline = time.monotonic() + DURATION
-    if not TEST_SEAM['simulation']:
-        for gate in (HOST_WRITE, RUNTIME_NO_CHANGE):
-            if gate['status'] == 'missing':
-                raise stage.Refusal(gate['reason'])
-        if E9_RESERVATION is None:
-            raise stage.Refusal('SO-stage2-budget: no E9 reservation source is wired')
-    if E9_RESERVATION is not None:
-        stage2_headroom(E9_RESERVATION['reserved'], E9_RESERVATION['actual'], E14_RESERVATION)
+    if not TEST_SEAM['simulation'] and HOST_WRITE['status'] == 'missing':
+        raise stage.Refusal(HOST_WRITE['reason'])
     actual, runtime = bound_inputs(request)
     if time.monotonic() >= deadline - RESERVE:
         raise stage.Refusal('blocked producer clock')
@@ -594,7 +600,7 @@ def execute(request, request_path, request_hash):
         'policy': request['policy'], 'preparation': request['preparation'],
         'candidate': {key: value for key, value in request['candidate'].items() if key != 'inputs'},
         'candidate_inputs': request['candidate']['inputs'], 'host': request['host'],
-        'colima': request['colima'], 'machine_identity': request['machine'],
+        'budget': request['budget'], 'colima': request['colima'], 'machine_identity': request['machine'],
         'preparation_root': str(REPO_ROOT), 'candidate_root': candidate_root,
         'runtime_inputs': runtime, 'simulation': bool(TEST_SEAM['simulation']),
         'usable_production_predecessor': False,
@@ -607,7 +613,6 @@ def execute(request, request_path, request_hash):
         'profile_stop_attempted': False,
         'host_write': dict(HOST_WRITE),
         'host_write_writers': list(HOST_WRITE_WRITERS),
-        'runtime_no_change': dict(RUNTIME_NO_CHANGE),
         'findings': [],
     }
     serial = 0
@@ -664,6 +669,12 @@ def execute(request, request_path, request_hash):
         if not good(result):
             outcome['remote_workload_closure'] = 'unknown'
             raise stage.Refusal('producer nonzero exit')
+        result, step = call(colima_argv, OBSERVE_LIMIT, OBSERVE_CAP, operational_end, colima_env, str(REPO_ROOT))
+        outcome['colima_observation_after'] = result
+        if not good(result):
+            raise stage.Refusal('Colima inventory observation failed after the producer')
+        if select_release_profile((step / 'stdout').read_bytes()) != outcome['colima_profile']:
+            raise stage.Refusal('effigy-release profile changed during the producer')
         actual, runtime = bound_inputs(request)
         outcome['head'] = actual
         outcome['runtime_inputs'] = runtime
@@ -671,10 +682,11 @@ def execute(request, request_path, request_hash):
         retained = destination / 'retained'
         retained.mkdir(mode=0o700)
         copies = {}
+        caps = {'binary': ARTIFACT_CAP, 'receipt': RECEIPT_CAP, 'active-version': SIDECAR_CAP}
         for label, source in (('binary', binary), ('receipt', receipt_path), ('active-version', sidecar)):
             handle, _ = open_regular(source, label)
             with handle:
-                copies[label] = resources.bounded_copy(handle, retained / Path(source).name, ARTIFACT_CAP)
+                copies[label] = resources.bounded_copy(handle, retained / Path(source).name, caps[label])
         if copies['binary']['sha256'] != checked['sha256'] or copies['receipt']['sha256'] != checked['receipt_sha256']:
             raise stage.Refusal('producer originals changed while retained')
         actual, runtime = bound_inputs(request)
@@ -700,9 +712,16 @@ def execute(request, request_path, request_hash):
     return outcome
 
 
+def stage2_argument(raw):
+    if not re.fullmatch(r'[0-9]{1,20}', raw):
+        raise stage.Refusal('stage2 budget argument must be a non-negative integer')
+    return int(raw)
+
+
 def main(argv):
-    if len(argv) == 7 and argv[1] == 'plan':
-        print(json.dumps(plan(argv[2], argv[3], argv[4], argv[5], argv[6]), sort_keys=True, indent=2))
+    if len(argv) == 9 and argv[1] == 'plan':
+        budget = [stage2_argument(argv[7]), stage2_argument(argv[8])]
+        print(json.dumps(plan(argv[2], argv[3], argv[4], argv[5], argv[6], *budget), sort_keys=True, indent=2))
         return 0
     if len(argv) != 3:
         raise stage.Refusal('proof entry requires a request and SHA-256')

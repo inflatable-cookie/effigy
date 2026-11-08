@@ -25,7 +25,10 @@
 //   5. copy the release binary to `effigy.new`, verify the bytes, sign it with
 //      that identity and mark it executable;
 //   6. rename the staged binary over the active path;
-//   7. publish the new version receipt by rename, never by truncating it.
+//   7. publish the new version receipt by rename, never by truncating it;
+//   8. publish the source receipt (`effigy.source-receipt`) by rename, naming the
+//      activated bytes, the checkout's HEAD and tree, and whether it was dirty.
+//      The entry rejects a stale receipt because its binary hash no longer matches.
 let source = path::join(repo_root, "target/release/effigy");
 let install_dir = path::join(repo_root, ".local-install/bin");
 let target = path::join(install_dir, "effigy");
@@ -257,6 +260,33 @@ fn local_codesign_identity() {
     str::trim(result["stdout"].to_string())
 }
 
+// The source receipt is what Recipe E verifies a host binary against. It names
+// the final activated bytes (after signing), the checkout's HEAD and tree, the
+// active version written beside it, the build kind and the feature set. A dirty
+// checkout is recorded as `dirty=true`, never hidden. Without git the install
+// still succeeds, the head and tree are left empty and the dirty flag is true,
+// so the receipt names no source and Recipe E refuses it.
+fn local_source_receipt(target, version) {
+    let head = capture_process("git", ["rev-parse", "HEAD"]);
+    let tree = capture_process("git", ["rev-parse", "HEAD^{tree}"]);
+    let known = !(head == () || head == "" || tree == () || tree == "");
+    let status = process::run("git", ["status", "--short", "--untracked-files=normal"]);
+    let dirty = if !known || !status["success"] || str::trim(status["stdout"].to_string()) != "" {
+        "true"
+    } else {
+        "false"
+    };
+    let completed = capture_process("date", ["-u", "+%Y-%m-%dT%H:%M:%SZ"]);
+    "source_head=" + (if known { head } else { "" }) + "\n"
+        + "source_tree=" + (if known { tree } else { "" }) + "\n"
+        + "binary_sha256=" + fs::sha256(target) + "\n"
+        + "active_version=" + version + "\n"
+        + "build_kind=install-local\n"
+        + "features=\n"
+        + "dirty=" + dirty + "\n"
+        + "completed_at=" + (if completed == () { "" } else { completed }) + "\n"
+}
+
 fn activate_local_install(source, staged_target, target, active_version_file, version, codesign_identity) {
     require_regular_file(source, "built effigy release binary");
     run_check("stage local effigy binary", "cp", [source, staged_target]);
@@ -274,6 +304,14 @@ fn activate_local_install(source, staged_target, target, active_version_file, ve
         "activate local effigy version",
         "mv",
         [staged_version_file, active_version_file],
+    );
+    let receipt_file = target + ".source-receipt";
+    let staged_receipt_file = receipt_file + ".new";
+    fs::write_file(staged_receipt_file, local_source_receipt(target, version));
+    run_check(
+        "activate local effigy source receipt",
+        "mv",
+        [staged_receipt_file, receipt_file],
     );
 }
 

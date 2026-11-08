@@ -25,6 +25,7 @@ MODULE_ROLE = 'docs/qualification/workspace-private-531'
 CHECKOUT_MODULES = tuple(sorted(path.stem for path in SOURCE_DIR.glob('*.py')))
 TARGET = 'aarch64-unknown-linux-gnu'
 HOST_VERSION = 'fixture-host-version'
+PLAN_BUDGET = (1024 * 1024, 512 * 1024)
 
 
 def fixture():
@@ -98,6 +99,8 @@ if sys.argv[1:] != ['list', '--json']:
 kind = mode.read_text().strip()
 if kind == 'wrong_arch':
     print(json.dumps({'name': 'effigy-release', 'status': 'Running', 'arch': 'x86_64', 'runtime': 'containerd'}))
+elif kind == 'stopped':
+    print(json.dumps({'name': 'effigy-release', 'status': 'Stopped', 'arch': 'aarch64', 'runtime': 'containerd'}))
 elif kind == 'missing_profile':
     print(json.dumps({'name': 'effigy', 'status': 'Running', 'arch': 'aarch64', 'runtime': 'containerd'}))
 elif kind == 'colima_fail':
@@ -126,6 +129,8 @@ if kind == 'nonzero':
 if kind == 'timeout':
     time.sleep(30)
     sys.exit(0)
+if kind == 'profile_flip':
+    mode.write_text('stopped')
 if kind == 'dirty_source':
     Path('untracked-recipe-e-drift').write_text('drift\\n')
 if kind == 'host_drift':
@@ -169,8 +174,9 @@ class PredicateTests(unittest.TestCase):
         self.assertEqual(proof.HOST_WRITE['status'], 'missing')
         self.assertEqual(proof.HOST_WRITE['cap_bytes'], 5 * 1024 * 1024 * 1024)
         self.assertIn('§6.3', proof.HOST_WRITE['reason'])
-        self.assertEqual(proof.RUNTIME_NO_CHANGE['status'], 'missing')
-        self.assertIsNone(proof.E9_RESERVATION)
+        self.assertEqual(proof.NO_CHANGE_ENV, 'EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING')
+        self.assertEqual(proof.E14_RESERVATION, proof.ARTIFACT_CAP + 64 * 1024 + 4096
+                         + 2 * proof.PRODUCER_OUTPUT_CAP + 4 * proof.OBSERVE_CAP)
 
     def test_elf_and_receipt_predicates(self):
         good = elf_bytes()
@@ -201,7 +207,7 @@ class PredicateTests(unittest.TestCase):
         with self.assertRaisesRegex(Refusal, 'incomplete'):
             proof.select_release_profile(json.dumps({'name': 'effigy', 'arch': 'aarch64'}).encode())
         with self.assertRaisesRegex(Refusal, 'not aarch64'):
-            proof.select_release_profile(json.dumps({'name': 'effigy-release', 'arch': 'x86_64'}).encode())
+            proof.select_release_profile(json.dumps({'name': 'effigy-release', 'arch': 'x86_64', 'status': 'Running'}).encode())
 
     def test_unactivated_main_refuses(self):
         with self.assertRaisesRegex(Refusal, 'proof entry requires a request'):
@@ -215,7 +221,7 @@ class PredicateTests(unittest.TestCase):
         evidence.mkdir(mode=0o700)
         with patch.object(proof, 'SCRATCH', str(root)):
             with self.assertRaisesRegex(Refusal, 'must differ from candidate H'):
-                proof.plan(str(evidence), 'headcheck', proof.CANDIDATE_H_HEAD, str(root), '1' * 40)
+                proof.plan(str(evidence), 'headcheck', proof.CANDIDATE_H_HEAD, str(root), '1' * 40, *PLAN_BUDGET)
             with self.assertRaisesRegex(Refusal, 'candidate must differ from candidate H'):
                 proof.candidate_identity(str(root), proof.CANDIDATE_H_HEAD)
 
@@ -331,7 +337,7 @@ class EntryTests(unittest.TestCase):
     def request(self, activation, entry=None, candidate=None, candidate_head=None):
         with self.bound_entry(entry) as loaded:
             return loaded.plan(str(self.evidence), activation, self.head,
-                               str(candidate or self.candidate), candidate_head or self.candidate_head)
+                               str(candidate or self.candidate), candidate_head or self.candidate_head, *PLAN_BUDGET)
 
     def write_request(self, activation, request):
         raw = json.dumps(request, sort_keys=True).encode()
@@ -386,14 +392,18 @@ class EntryTests(unittest.TestCase):
         self.assertEqual(result['host_write']['status'], 'missing')
         self.assertEqual(result['host_write']['cap_bytes'], proof.HOST_WRITE_CAP)
         self.assertIn('not a hard quota', result['host_write']['reason'])
-        self.assertEqual(result['runtime_no_change']['status'], 'missing')
+        self.assertEqual(result['producer_environment'][proof.NO_CHANGE_ENV], '1')
+        self.assertEqual(result['budget']['headroom_bytes'],
+                         proof.HOST_WRITE_CAP - PLAN_BUDGET[0] - proof.E14_RESERVATION)
         self.assertEqual({row['writer'] for row in result['host_write_writers']},
                          {'staging/render/source', 'cargo target', 'artifact copy-back', 'evidence'})
         self.assertNotIn('resource_usage', result.get('producer', {}))
         steps = sorted(self.destination('complete01').glob('step-*'))
-        self.assertEqual(len(steps), 2)
+        self.assertEqual(len(steps), 3)
         colima_intent = json.loads((steps[0] / 'intent.json').read_text())
         producer_intent = json.loads((steps[1] / 'intent.json').read_text())
+        after_intent = json.loads((steps[2] / 'intent.json').read_text())
+        self.assertEqual(after_intent['argv'], [str(self.colima_target), 'list', '--json'])
         self.assertEqual(colima_intent['argv'], [str(self.colima_target), 'list', '--json'])
         self.assertEqual(producer_intent['argv'], [str(self.effigy), 'workspace:linux:artifact'])
         self.assertEqual(producer_intent['cwd'], str(self.candidate))
@@ -404,8 +414,9 @@ class EntryTests(unittest.TestCase):
         self.assertTrue((retained / ('effigy-' + TARGET)).exists())
         self.assertEqual(result['original_hashes']['binary'], result['artifact']['sha256'])
         tools = [row['tool'] for row in self.calls()]
-        self.assertEqual(tools, ['colima', 'effigy'])
+        self.assertEqual(tools, ['colima', 'effigy', 'colima'])
         self.assertEqual(self.calls()[1]['cwd'], str(self.candidate))
+        self.assertEqual(self.calls()[1]['env'][proof.NO_CHANGE_ENV], '1')
 
     def test_duplicate_claim(self):
         code, request, _ = self.run_main('dup01')
@@ -440,11 +451,11 @@ class EntryTests(unittest.TestCase):
         self.colima.unlink()
         self.colima.symlink_to(outside)
         with self.bound_entry(), self.assertRaisesRegex(self.entry.stage.Refusal, 'allowlisted target'):
-            self.entry.plan(str(self.evidence), 'alias02', self.head, str(self.candidate), self.candidate_head)
+            self.entry.plan(str(self.evidence), 'alias02', self.head, str(self.candidate), self.candidate_head, *PLAN_BUDGET)
         self.colima.unlink()
         self.colima.write_text('plain')
         with self.bound_entry(), self.assertRaisesRegex(self.entry.stage.Refusal, 'supported Homebrew alias'):
-            self.entry.plan(str(self.evidence), 'alias03', self.head, str(self.candidate), self.candidate_head)
+            self.entry.plan(str(self.evidence), 'alias03', self.head, str(self.candidate), self.candidate_head, *PLAN_BUDGET)
 
     def test_preserved_launcher_is_not_the_host_binary(self):
         launcher = self.bin / 'effigy'
@@ -457,29 +468,29 @@ class EntryTests(unittest.TestCase):
         # Without the C binary's own sidecar the launcher is never a fallback.
         Path(str(self.effigy) + '.active-version').unlink()
         with self.bound_entry(), self.assertRaisesRegex(self.entry.stage.Refusal, 'host active-version sidecar'):
-            self.entry.plan(str(self.evidence), 'launch02', self.head, str(self.candidate), self.candidate_head)
+            self.entry.plan(str(self.evidence), 'launch02', self.head, str(self.candidate), self.candidate_head, *PLAN_BUDGET)
 
     def test_unrelated_and_forged_host_receipts_refuse(self):
         self.write_host_metadata(binary_sha='0' * 64)
         with self.bound_entry(), self.assertRaisesRegex(self.entry.stage.Refusal, 'does not name these binary bytes'):
-            self.entry.plan(str(self.evidence), 'host01', self.head, str(self.candidate), self.candidate_head)
+            self.entry.plan(str(self.evidence), 'host01', self.head, str(self.candidate), self.candidate_head, *PLAN_BUDGET)
         self.write_host_metadata(head='2' * 40)
         with self.bound_entry(), self.assertRaisesRegex(self.entry.stage.Refusal, 'does not name candidate C source'):
-            self.entry.plan(str(self.evidence), 'host02', self.head, str(self.candidate), self.candidate_head)
+            self.entry.plan(str(self.evidence), 'host02', self.head, str(self.candidate), self.candidate_head, *PLAN_BUDGET)
         self.write_host_metadata()
         Path(str(self.effigy) + '.active-version').write_text('other-version\n')
         with self.bound_entry(), self.assertRaisesRegex(self.entry.stage.Refusal, 'active version differs'):
-            self.entry.plan(str(self.evidence), 'host03', self.head, str(self.candidate), self.candidate_head)
+            self.entry.plan(str(self.evidence), 'host03', self.head, str(self.candidate), self.candidate_head, *PLAN_BUDGET)
         self.write_host_metadata(dirty='true')
         with self.bound_entry(), self.assertRaisesRegex(self.entry.stage.Refusal, 'not a clean default-feature'):
-            self.entry.plan(str(self.evidence), 'host04', self.head, str(self.candidate), self.candidate_head)
+            self.entry.plan(str(self.evidence), 'host04', self.head, str(self.candidate), self.candidate_head, *PLAN_BUDGET)
         self.write_host_metadata(features='extra')
         with self.bound_entry(), self.assertRaisesRegex(self.entry.stage.Refusal, 'not a clean default-feature'):
-            self.entry.plan(str(self.evidence), 'host05', self.head, str(self.candidate), self.candidate_head)
+            self.entry.plan(str(self.evidence), 'host05', self.head, str(self.candidate), self.candidate_head, *PLAN_BUDGET)
         self.write_host_metadata()
         Path(str(self.effigy) + '.source-receipt').unlink()
         with self.bound_entry(), self.assertRaisesRegex(self.entry.stage.Refusal, 'host source receipt unavailable'):
-            self.entry.plan(str(self.evidence), 'host06', self.head, str(self.candidate), self.candidate_head)
+            self.entry.plan(str(self.evidence), 'host06', self.head, str(self.candidate), self.candidate_head, *PLAN_BUDGET)
         self.assertEqual(self.calls(), [])
 
     def test_preparation_k_and_candidate_c_stay_separate(self):
@@ -517,15 +528,15 @@ class EntryTests(unittest.TestCase):
         git(['commit', '-q', '-m', 'h-policy'], detached)
         head = git(['rev-parse', 'HEAD'], detached)
         with self.bound_entry(), self.assertRaisesRegex(self.entry.stage.Refusal, 'not staged checkout-scoped'):
-            self.entry.plan(str(self.evidence), 'hpolicy', self.head, str(detached), head)
+            self.entry.plan(str(self.evidence), 'hpolicy', self.head, str(detached), head, *PLAN_BUDGET)
 
     def test_candidate_dirty_or_wrong_head_refuses(self):
         (self.candidate / 'untracked-before-plan').write_text('x\n')
         with self.bound_entry(), self.assertRaisesRegex(self.entry.stage.Refusal, 'candidate checkout is not clean'):
-            self.entry.plan(str(self.evidence), 'dirty01', self.head, str(self.candidate), self.candidate_head)
+            self.entry.plan(str(self.evidence), 'dirty01', self.head, str(self.candidate), self.candidate_head, *PLAN_BUDGET)
         (self.candidate / 'untracked-before-plan').unlink()
         with self.bound_entry(), self.assertRaisesRegex(self.entry.stage.Refusal, 'candidate head differs'):
-            self.entry.plan(str(self.evidence), 'wrong01', self.head, str(self.candidate), '1' * 40)
+            self.entry.plan(str(self.evidence), 'wrong01', self.head, str(self.candidate), '1' * 40, *PLAN_BUDGET)
 
     def test_source_and_host_mismatch(self):
         request = self.request('hostmiss')
@@ -666,24 +677,18 @@ class EntryTests(unittest.TestCase):
 
     def test_blocked_clock_and_zero_caps(self):
         with self.bound_entry(), patch.object(self.entry, 'DURATION', 1), patch.object(self.entry, 'RESERVE', 120):
-            request = dict(self.entry.plan(str(self.evidence), 'clock01', self.head, str(self.candidate), self.candidate_head))
+            request = dict(self.entry.plan(str(self.evidence), 'clock01', self.head, str(self.candidate), self.candidate_head, *PLAN_BUDGET))
             with self.assertRaisesRegex(self.entry.stage.Refusal, 'blocked producer clock'):
                 self.entry.execute(request, str(self.root / 'request-clock01.json'), '0' * 64)
         self.assertFalse((self.evidence / 'linux-recipe-e-clock01.claim').exists())
         with self.bound_entry(), patch.object(self.entry, 'PRODUCER_OUTPUT_CAP', 0):
-            request = self.entry.plan(str(self.evidence), 'zerocap', self.head, str(self.candidate), self.candidate_head)
+            request = self.entry.plan(str(self.evidence), 'zerocap', self.head, str(self.candidate), self.candidate_head, *PLAN_BUDGET)
             with self.assertRaisesRegex(self.entry.stage.Refusal, 'zero output cap'):
                 self.entry.execute(request, str(self.root / 'request-zerocap.json'), '0' * 64)
         self.assertFalse((self.evidence / 'linux-recipe-e-zerocap.claim').exists())
 
     def test_production_refuses_unresolved_prerequisites_before_claim(self):
-        resolved_host = {'HOST_WRITE': {'status': 'resolved'}}
-        resolved_runtime = {'RUNTIME_NO_CHANGE': {'status': 'resolved'}}
-        cases = (
-            ({}, 'SO-host-write'),
-            (resolved_host, 'SO-runtime-no-change'),
-            ({**resolved_host, **resolved_runtime}, 'SO-stage2-budget'),
-        )
+        cases = (({}, 'SO-host-write'),)
         for index, (overrides, message) in enumerate(cases):
             activation = 'hostwrite%d' % index
             with contextlib.ExitStack() as stack:
@@ -692,11 +697,50 @@ class EntryTests(unittest.TestCase):
                 for name, values in overrides.items():
                     stack.enter_context(patch.dict(getattr(self.entry, name), values))
                 request = dict(self.entry.plan(str(self.evidence), activation, self.head,
-                                               str(self.candidate), self.candidate_head))
+                                               str(self.candidate), self.candidate_head, *PLAN_BUDGET))
                 with self.assertRaisesRegex(self.entry.stage.Refusal, message):
                     self.entry.execute(request, str(self.root / ('request-%s.json' % activation)), '0' * 64)
             self.assertFalse((self.evidence / ('linux-recipe-e-%s.claim' % activation)).exists())
         self.assertEqual(self.calls(), [])
+
+    def test_stopped_profile_refuses_before_the_producer(self):
+        self.mode.write_text('stopped')
+        code, _, printed = self.run_main('stopped01')
+        self.assertEqual(code, 1)
+        result = json.loads(printed)
+        self.assertTrue(any('not Running' in item for item in result['findings']), result['findings'])
+        self.assertEqual([row['tool'] for row in self.calls()], ['colima'])
+        self.assertNotIn('producer_argv', result)
+
+    def test_profile_stopping_during_the_producer_refuses_before_the_artifact(self):
+        self.mode.write_text('profile_flip')
+        code, _, printed = self.run_main('flip01')
+        self.assertEqual(code, 1)
+        result = json.loads(printed)
+        self.assertTrue(any('not Running' in item for item in result['findings']), result['findings'])
+        self.assertEqual([row['tool'] for row in self.calls()], ['colima', 'effigy', 'colima'])
+        self.assertEqual(result['colima_observation_after']['disposition'], 'exited')
+        self.assertNotIn('artifact', result)
+
+    def test_stage2_budget_is_pinned_and_refuses_before_any_effect(self):
+        cap = proof.HOST_WRITE_CAP
+        with self.bound_entry(), self.assertRaisesRegex(self.entry.stage.Refusal, 'budget exceeded'):
+            self.entry.plan(str(self.evidence), 'budget1', self.head, str(self.candidate),
+                            self.candidate_head, cap - proof.E14_RESERVATION + 1, 0)
+        with self.bound_entry(), self.assertRaisesRegex(self.entry.stage.Refusal, 'exceed their reservation'):
+            self.entry.plan(str(self.evidence), 'budget2', self.head, str(self.candidate),
+                            self.candidate_head, 10, 11)
+        with self.bound_entry(), self.assertRaisesRegex(self.entry.stage.Refusal, 'non-negative integer'):
+            self.entry.main(['linux_recipe_e_proof.py', 'plan', str(self.evidence), 'budget3', self.head,
+                             str(self.candidate), self.candidate_head, '-1', '0'])
+        request = self.request('budget4')
+        self.assertEqual(request['budget']['headroom_bytes'], cap - proof.E14_RESERVATION - PLAN_BUDGET[0])
+        request['budget']['e9_reserved_bytes'] = 0
+        request['budget']['e9_actual_bytes'] = 0
+        with self.assertRaisesRegex(self.entry.stage.Refusal, 'request bindings drifted: budget'):
+            self.run_main('budget4', request)
+        self.assertEqual(self.calls(), [])
+        self.assertFalse((self.evidence / 'linux-recipe-e-budget4.claim').exists())
 
     def test_remaining_allowance_reaches_nested_helpers(self):
         seen = []
@@ -711,17 +755,19 @@ class EntryTests(unittest.TestCase):
         with self.bound_entry(), patch.object(self.entry.stage, 'run_stage', side_effect=capture):
             code, _, _ = self.run_main('allow01')
         self.assertEqual(code, 0)
-        self.assertEqual(len(seen), 2)
+        self.assertEqual(len(seen), 3)
         self.assertLessEqual(seen[0]['timeout'], 15)
         self.assertLessEqual(seen[1]['timeout'], 1800)
+        self.assertLessEqual(seen[2]['timeout'], 15)
         self.assertIsNotNone(seen[1]['deadline'])
         self.assertGreaterEqual(seen[1]['cleanup'], seen[1]['deadline'])
         self.assertEqual(seen[1]['argv'][-1], 'workspace:linux:artifact')
         self.assertEqual(seen[1]['cwd'], str(self.candidate))
+        self.assertEqual(seen[2]['cwd'], str(self.checkout))
 
     def test_post_producer_revalidation(self):
         for mode, message in (('dirty_source', 'not clean'),
-                              ('host_drift', 'does not name these binary bytes')):
+                              ('host_drift', 'input hash drift')):
             with self.subTest(mode=mode):
                 self.log.write_text('')
                 self.mode.write_text(mode)
