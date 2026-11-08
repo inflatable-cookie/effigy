@@ -32,6 +32,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_receipts as receipts
 import linux_setup as setup
 import linux_disk_identity as identity
+import linux_disk_association as disk_association
+import linux_disk_association_tests as disk_controls
 import linux_supervisor as supervisor
 import linux_transfer as transfers
 import preparation_observations as observations
@@ -683,28 +685,7 @@ class DefaultRowRunnerChecks(unittest.TestCase):
 
 
 class DiskAndHardLimitChecks(unittest.TestCase):
-    host = {'uuid': setup.VM_UUID, 'disk_uid': setup.DISK_UID, 'controller': 'sata', 'position': 0, 'serial': 'S1'}
-    guest = {'path': '/dev/sda', 'size': setup.ROOT_BYTES, 'serial': 'S1'}
-
-    def test_disk_association_fails_closed_without_a_supported_mechanism(self):
-        with self.assertRaises(Refusal):
-            setup.verify_disk_association(self.host, self.guest, {'mechanism': 'fake'})
-        with self.assertRaises(Refusal):
-            setup.verify_disk_association(self.host, self.guest, {})
-
-    def test_supported_disk_mechanism_still_checks_every_link(self):
-        supported = frozenset({'test-disk'})
-        self.assertEqual(setup.verify_disk_association(self.host, self.guest, {'mechanism': 'test-disk'},
-                                                       supported)['serial'], 'S1')
-        wrong = [(dict(self.host, uuid='00000000-0000-0000-0000-000000000000'), self.guest),
-                 (dict(self.host, controller='scsi'), self.guest),
-                 (dict(self.host, serial='OTHER'), self.guest),
-                 (self.host, dict(self.guest, size=1)),
-                 (self.host, dict(self.guest, path='/dev/sdb'))]
-        for host, guest in wrong:
-            with self.subTest(host=host, guest=guest), self.assertRaises(Refusal):
-                setup.verify_disk_association(host, guest, {'mechanism': 'test-disk'}, supported)
-
+    # Disk association premises are controlled in linux_disk_association_tests.py.
     def test_polling_witness_is_never_a_hard_limit(self):
         with self.assertRaises(Refusal):
             setup.verify_hard_limit({'mechanism': 'polling', 'limits': [setup.TRANSFER_CAP],
@@ -1419,9 +1400,7 @@ class PlacementMapChecks(unittest.TestCase):
 
 
 def disk_witness():
-    host = {'uuid': setup.VM_UUID, 'disk_uid': setup.DISK_UID, 'controller': 'sata', 'position': 0, 'serial': 'S1'}
-    guest = {'path': '/dev/sda', 'size': setup.ROOT_BYTES, 'serial': 'S1'}
-    return {'mechanism': 'test-disk', 'host': host, 'guest': guest}
+    return disk_controls.disk_witness()
 
 
 def hard_limit_witness():
@@ -1643,7 +1622,8 @@ class PlanChecks(unittest.TestCase):
         rows = {r['id']: r for r in setup.setup_plan(self.fx.facts())}
         self.assertTrue(any('hard-limit' in m or 'quota' in m for m in rows['E9a']['missing']))
         with patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({'test-limit'})), \
-                patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', frozenset({'test-disk'})):
+                patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', disk_controls.TEST_SUPPORTED), \
+                patch.object(disk_association, 'PINS', disk_controls.TEST_PINS):
             rows = {r['id']: r for r in setup.setup_plan(self.fx.facts(hard_limit=hard_limit_witness(),
                                                                        disk_association=disk_witness()))}
         for rid in ('E9a', 'E9b', 'E8', 'E19.0'):
@@ -1839,19 +1819,20 @@ class ExecutorChecks(unittest.TestCase):
         return self.fx.facts(hard_limit=hard_limit_witness(), disk_association=disk_witness(), **over)
 
     def supported(self):
-        return (patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', frozenset({'test-disk'})),
+        return (patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', disk_controls.TEST_SUPPORTED),
+                patch.object(disk_association, 'PINS', disk_controls.TEST_PINS),
                 patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({'test-limit'})))
 
     def test_a_failed_stage_cleanup_halts_the_plan_after_credit(self):
-        p1, p2 = self.supported()
-        with p1, p2:
+        p1, p2, p3 = self.supported()
+        with p1, p2, p3:
             result = execute(self.chain(), ok_runner(), stop_unit=lambda unit: 'failed')
         self.assertIsNotNone(result['halt'])
         self.assertIn('cleanup of the stage unit did not exit cleanly', result['reason'])
 
     def test_full_chain_runs_in_order_with_contained_and_host_credited_payloads(self):
-        p1, p2 = self.supported()
-        with p1, p2:
+        p1, p2, p3 = self.supported()
+        with p1, p2, p3:
             facts = self.chain()
             ids = [r['id'] for r in setup.setup_plan(facts)]
             runner = ok_runner()
@@ -1885,8 +1866,8 @@ class ExecutorChecks(unittest.TestCase):
         self.assertEqual(runner.calls, [])
 
     def test_ssh_config_drift_or_loose_mode_halts_before_intent(self):
-        p1, p2 = self.supported()
-        with p1, p2:
+        p1, p2, p3 = self.supported()
+        with p1, p2, p3:
             facts = self.chain()
             self.fx.config.write_bytes(b'Host changed\n')
             self.fx.config.chmod(0o600)
@@ -1898,68 +1879,69 @@ class ExecutorChecks(unittest.TestCase):
         fx2 = PlanFixture()
         fx2.config.chmod(0o644)
         with patch.object(setup, 'ARCHIVE_SHA256', fx2.archive_sha):
-            p1, p2 = self.supported()
-            with p1, p2:
+            p1, p2, p3 = self.supported()
+            with p1, p2, p3:
                 result = execute(fx2.facts(hard_limit=hard_limit_witness(), disk_association=disk_witness()),
                                  ok_runner())
         self.assertEqual(result['halt'], 'E9a')
         self.assertIn('owner-only', result['reason'])
 
     def test_expired_ephemeral_key_halts_the_transfer_row(self):
-        p1, p2 = self.supported()
-        with p1, p2:
+        p1, p2, p3 = self.supported()
+        with p1, p2, p3:
             result = execute(self.chain(), ok_runner(), wall_clock=lambda: NOW + 3600)
         self.assertEqual(result['halt'], 'E9a')
         self.assertIn('expired', result['reason'])
 
     def test_supervised_row_needs_the_supervisor_installed_from_source(self):
-        p1, p2 = self.supported()
-        with p1, p2:
+        p1, p2, p3 = self.supported()
+        with p1, p2, p3:
             rows = {r['id']: r for r in setup.setup_plan(self.chain(supervisor_installed=None))}
         self.assertTrue(any('supervisor installed' in m for m in rows['E8']['missing']))
 
     def test_writer_exit_nonzero_holds_the_transfer(self):
-        p1, p2 = self.supported()
+        p1, p2, p3 = self.supported()
         bad = {'disposition': 'writer-failed', 'waited_exit': 0, 'writer_exit': 9, 'candidate': None,
                'payload_stdout': '', 'stdout': b'', 'stderr': b''}
-        with p1, p2:
+        with p1, p2, p3:
             result = execute(self.chain(), ok_runner({'E9a': bad}))
         self.assertEqual(result['halt'], 'E9a')
         self.assertIn('no advance credit', result['reason'])
 
     def test_payload_expectation_is_judged_on_payload_stdout(self):
-        p1, p2 = self.supported()
+        p1, p2, p3 = self.supported()
         truncated = {'disposition': 'exited', 'waited_exit': 0, 'writer_exit': 0, 'candidate': candidate_for('E9a'),
                      'payload_stdout': 'abc', 'stdout': b'', 'stderr': b''}
-        with p1, p2:
+        with p1, p2, p3:
             result = execute(self.chain(), ok_runner({'E9a': truncated}))
         self.assertEqual(result['halt'], 'E9a')
 
     def test_tree_digest_mismatch_holds_the_extraction(self):
-        p1, p2 = self.supported()
+        p1, p2, p3 = self.supported()
         wrong = {'disposition': 'exited', 'waited_exit': 0, 'candidate': candidate_for('E9b'),
                  'payload_stdout': '0' * 64 + '  x\n', 'stdout': b'', 'stderr': b''}
-        with p1, p2:
+        with p1, p2, p3:
             result = execute(self.chain(), ok_runner({'E9b': wrong}))
         self.assertEqual(result['halt'], 'E9b')
 
     def test_supervised_row_without_a_terminal_host_observation_holds(self):
-        p1, p2 = self.supported()
-        with p1, p2:
+        p1, p2, p3 = self.supported()
+        with p1, p2, p3:
             result = execute(self.chain(), ok_runner(), observe_terminal=lambda row: {'show_text': NOT_FOUND})
         self.assertEqual(result['halt'], 'E9a')
         self.assertIn('no advance credit', result['reason'])
 
     def test_mismatched_host_observation_holds_with_reason(self):
-        p1, p2 = self.supported()
-        with p1, p2:
+        p1, p2, p3 = self.supported()
+        with p1, p2, p3:
             result = execute(self.chain(), ok_runner(), observe_terminal=lambda row: {
                 'show_text': show_text(invocation='11111111222233334444555566667777')})
         self.assertEqual(result['halt'], 'E9a')
         self.assertIn('credit', result['reason'])
 
     def test_polling_only_hard_limit_halts_the_network_row(self):
-        with patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', frozenset({'test-disk'})):
+        with patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', disk_controls.TEST_SUPPORTED), \
+                patch.object(disk_association, 'PINS', disk_controls.TEST_PINS):
             result = execute(self.fx.facts(disk_association=disk_witness()), ok_runner())
         self.assertEqual(result['halt'], 'E9a')
         self.assertIn('hard-limit', result['reason'])
@@ -2916,7 +2898,8 @@ class AuthenticatedObservationChecks(unittest.TestCase):
     def test_every_ssh_payload_checks_credentials_before_intent(self):
         fx = PlanFixture()
         with patch.object(setup, 'ARCHIVE_SHA256', fx.archive_sha), patch.object(setup, 'ARCHIVE_B_SHA256', fx.archive_b_sha), \
-             patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', frozenset({'test-disk'})), \
+             patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', disk_controls.TEST_SUPPORTED), \
+                patch.object(disk_association, 'PINS', disk_controls.TEST_PINS), \
              patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({'test-limit'})):
             facts = fx.facts(hard_limit=hard_limit_witness(), disk_association=disk_witness())
             rows = {r['id']: r for r in setup.setup_plan(facts)}
