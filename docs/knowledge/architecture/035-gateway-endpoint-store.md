@@ -177,6 +177,11 @@ the failure; it does not claim the cause of a past unexplained refusal.
   the fence and routes, a delivered watcher event reaching the worker's signal
   (without the platform having to deliver one), an observation that panics but
   does not end reconciliation, and cancellation that settles the worker.
+  `milestone_cbef4a23_` controls drive the same worker's TLS reload: applying a
+  committed TLS route loads the certificate from the selected private root
+  without a filesystem event, an unchanged later observation still loads a
+  pair written after the route, and an incomplete neighbour keeps the last
+  loaded set while the applied snapshot stays.
 - `proof:gateway:pinned-reader`: a pinned build decodes a route snapshot
   written by the current build.
 - `test:gateway:loopback-lifecycle`: alias addresses derived from the route

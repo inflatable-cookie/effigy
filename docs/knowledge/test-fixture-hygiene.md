@@ -183,7 +183,14 @@ store or the listener state has not proven the proxy serves the route. QA
 130acca8 surfaced both observations in real private fixtures: a handshake
 answered with the TLS `access_denied` alert rustls sends when the SNI resolver
 resolves no certificate, and `503 No Route` while the daemon still served its
-previous snapshot. Both are not-ready observations.
+previous snapshot. Both are not-ready observations. QA cbef4a23 showed the
+certificate half can stay not-ready after the daemon has consumed the route:
+the live `/_effigy/routes` view named the domain while HTTPS still answered
+`tlsv1 alert access denied` for the whole listener budget, because only the
+cert-directory watcher loaded SNI and that notification never arrived. The
+daemon now reloads the SNI resolver from the selected private root on the same
+route observation that applies the snapshot (effigy#737), so a missed
+cert-directory event cannot strand a published TLS route.
 
 The gateway-private probes therefore follow evidence instead of a first probe
 or a hidden window. `wait_for_listener_https` and `curl_https` poll through a
@@ -207,6 +214,12 @@ loaded, and a route the consumer has not installed past the five-second window
 the fixtures used to assume. Each wait must reach the verified response, and the
 same control reads an unpublished route as absent from a real daemon's live view
 before the publication appears there.
+
+`milestone_cbef4a23_applied_route_serves_verified_https_from_a_late_certificate`
+produces the pair in the selected private root, waits for the daemon's live
+route view, then requires a CA/SNI-verified response from that domain and a
+TLS refusal for `unknown.host.test`. The crate's `milestone_cbef4a23_`
+controls prove the route worker loads that pair without a filesystem event.
 
 A server that double-forks and calls `setsid` has left every recorded process
 group, so the generation sweep can never name it. The double-fork proof records
