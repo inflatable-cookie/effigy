@@ -1072,6 +1072,148 @@ fn milestone_130acca8_watcher_callback_signals_the_route_worker() {
     );
 }
 
+/// QA cbef4a23: applying a committed TLS route loads the certificate from the
+/// selected private root into the watched SNI resolver without a filesystem
+/// event. The seven gateway_private HTTPS failures observed `tlsv1 alert
+/// access denied` after the live route view already named the domain, because
+/// only the cert-directory watcher loaded SNI and that notification never
+/// arrived.
+#[test]
+fn milestone_cbef4a23_route_observation_loads_a_certificate_without_a_filesystem_event() {
+    let (_fixture, routes) = gateway_state();
+    let certs = routes.parent().unwrap().join("certs");
+    crate::private_state::create_owner_only_directory(&certs).expect("certs directory");
+    let domain = "cbef4a23.host.test";
+    write_self_signed_cert_pair(&certs, domain);
+
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
+    let clock = held_clock();
+    let (idle, _stopped) = idle_shutdown(&routes, &clock);
+    let resolver = Arc::new(SniCertResolver::new());
+    assert!(
+        !resolver.has_cert(domain),
+        "the watched resolver starts without the produced certificate"
+    );
+    let reloader = reloader(&routes, &table, &dns_cache, &idle, true).with_tls(TlsReload {
+        resolver: Arc::clone(&resolver),
+        certs_dir: certs.clone(),
+        private: true,
+    });
+
+    publish_tls_route(&routes, domain);
+    match reloader.reload().expect("observe the published TLS route") {
+        ReloadOutcome::Applied { idle_timer } => drop(idle_timer),
+        ReloadOutcome::Unchanged => panic!("the first observation must apply the published route"),
+    }
+
+    assert!(
+        table.read().unwrap().lookup(domain).is_some(),
+        "the observation applied the route"
+    );
+    assert!(
+        resolver.has_cert(domain),
+        "applying the route loaded the certificate without a filesystem event"
+    );
+    assert!(
+        !resolver.has_cert("unknown.host.test"),
+        "an unpublished domain still has no certificate"
+    );
+}
+
+/// QA cbef4a23: a later observation that does not change the applied table
+/// still loads a certificate written after the route was applied. The caller
+/// writes the pair before publication, but a missed first load must still
+/// converge on the interval.
+#[test]
+fn milestone_cbef4a23_unchanged_observation_loads_a_certificate_written_after_the_route() {
+    let (_fixture, routes) = gateway_state();
+    let certs = routes.parent().unwrap().join("certs");
+    crate::private_state::create_owner_only_directory(&certs).expect("certs directory");
+    let domain = "cbef4a23-late.host.test";
+    publish_tls_route(&routes, domain);
+
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
+    let clock = held_clock();
+    let (idle, _stopped) = idle_shutdown(&routes, &clock);
+    let resolver = Arc::new(SniCertResolver::new());
+    let reloader = reloader(&routes, &table, &dns_cache, &idle, true).with_tls(TlsReload {
+        resolver: Arc::clone(&resolver),
+        certs_dir: certs.clone(),
+        private: true,
+    });
+    match reloader
+        .reload()
+        .expect("apply the route before its certificate exists")
+    {
+        ReloadOutcome::Applied { idle_timer } => drop(idle_timer),
+        ReloadOutcome::Unchanged => panic!("the empty table must take the published route"),
+    }
+    assert!(
+        !resolver.has_cert(domain),
+        "no certificate is loaded until the pair exists"
+    );
+
+    write_self_signed_cert_pair(&certs, domain);
+    match reloader.reload().expect("re-observe after the pair lands") {
+        ReloadOutcome::Unchanged => {}
+        ReloadOutcome::Applied { .. } => {
+            panic!("the already applied revision must not move the fence")
+        }
+    }
+    assert!(
+        resolver.has_cert(domain),
+        "an unchanged observation still loads the late certificate"
+    );
+}
+
+/// QA cbef4a23: a private incomplete pair does not replace the last loaded
+/// set. The applied route stays, and the domain that already had a complete
+/// pair keeps serving.
+#[test]
+fn milestone_cbef4a23_incomplete_certificate_keeps_the_last_loaded_set() {
+    let (_fixture, routes) = gateway_state();
+    let certs = routes.parent().unwrap().join("certs");
+    crate::private_state::create_owner_only_directory(&certs).expect("certs directory");
+    let served = "cbef4a23-served.host.test";
+    write_self_signed_cert_pair(&certs, served);
+
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
+    let clock = held_clock();
+    let (idle, _stopped) = idle_shutdown(&routes, &clock);
+    let resolver = Arc::new(SniCertResolver::new());
+    let reloader = reloader(&routes, &table, &dns_cache, &idle, true).with_tls(TlsReload {
+        resolver: Arc::clone(&resolver),
+        certs_dir: certs.clone(),
+        private: true,
+    });
+    publish_tls_route(&routes, served);
+    reloader.reload().expect("load the complete pair");
+    assert!(resolver.has_cert(served));
+
+    std::fs::write(certs.join("stale.host.test.pem"), "not a complete pair")
+        .expect("incomplete certificate");
+    publish_tls_route(&routes, "stale.host.test");
+    match reloader.reload().expect("the route still applies") {
+        ReloadOutcome::Applied { idle_timer } => drop(idle_timer),
+        ReloadOutcome::Unchanged => panic!("the new domain must apply"),
+    }
+    assert!(
+        resolver.has_cert(served),
+        "an incomplete neighbour must not drop the last loaded certificate"
+    );
+    assert!(
+        !resolver.has_cert("stale.host.test"),
+        "an incomplete pair is never installed"
+    );
+    assert!(
+        table.read().unwrap().lookup("stale.host.test").is_some(),
+        "a failed certificate reload does not unwind the applied snapshot"
+    );
+}
+
 /// effigy#716: an observation that panics is reported at the panic point and
 /// retried like any other failed observation, so one panic cannot silently end
 /// reconciliation.
@@ -1565,6 +1707,14 @@ fn idle_shutdown(routes: &Path, clock: &HeldClock) -> (IdleShutdown, watch::Rece
 }
 
 fn publish_route(routes: &Path, domain: &str) {
+    publish_route_with_tls(routes, domain, false);
+}
+
+fn publish_tls_route(routes: &Path, domain: &str) {
+    publish_route_with_tls(routes, domain, true);
+}
+
+fn publish_route_with_tls(routes: &Path, domain: &str, tls: bool) {
     crate::endpoint_store::EndpointStore::for_routes(routes)
         .routes(|table| {
             table.upsert(Route {
@@ -1573,7 +1723,7 @@ fn publish_route(routes: &Path, domain: &str) {
                 dns_ip: None,
                 tcp_port: None,
                 tcp_target: None,
-                tls: false,
+                tls,
                 source: RouteSource::Container,
                 // A checkout path that no longer exists is pruned on every
                 // write, so the owner is the fixture's own existing directory.
@@ -1584,6 +1734,49 @@ fn publish_route(routes: &Path, domain: &str) {
             Ok::<_, GatewayError>(())
         })
         .expect("publish route");
+}
+
+fn write_self_signed_cert_pair(certs: &Path, domain: &str) {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let cert = certs.join(format!("{domain}.pem"));
+    let key = certs.join(format!("{domain}-key.pem"));
+    let output = std::process::Command::new("openssl")
+        .args([
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-sha256",
+            "-days",
+            "30",
+            "-subj",
+            &format!("/CN={domain}"),
+            "-addext",
+            &format!("subjectAltName=DNS:{domain}"),
+            "-keyout",
+            key.to_str().expect("UTF-8 key path"),
+            "-out",
+            cert.to_str().expect("UTF-8 cert path"),
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .expect("run openssl for a fixture certificate");
+    assert!(
+        output.status.success(),
+        "openssl failed for {domain}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in [&cert, &key] {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .expect("private fixture certificate mode");
+        }
+    }
 }
 
 fn withdraw_route(routes: &Path, domain: &str) {
@@ -1625,6 +1818,7 @@ fn reloader(
         Arc::clone(dns_cache),
         idle.clone(),
         private,
+        None,
     )
 }
 

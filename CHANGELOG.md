@@ -987,6 +987,15 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Load a private gateway's TLS certificates when the daemon applies a committed
+  route snapshot, so a missed cert-directory notification cannot leave a
+  published HTTPS route answering `tlsv1 alert access denied` (effigy#737,
+  QA cbef4a23). The route worker already re-observes the Store when the
+  directory watcher is silent (effigy#716); that same observation now reloads
+  the SNI resolver from the selected private root. An incomplete or invalid
+  pair keeps the last loaded set and does not unwind the applied snapshot.
+  Operator reloads replace the resolver in one write, so a handshake never
+  sees an empty map between `clear` and the first `add`.
 - Keep managed panes bounded when a tab starts Effigy itself (effigy#729). The
   pane fact is `EFFIGY_MANAGED_PANE=1`, outside the `EFFIGY_INTERNAL_` namespace
   that Effigy's child environment and consumer wrappers scrub, so a nested child

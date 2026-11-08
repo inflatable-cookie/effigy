@@ -558,55 +558,54 @@ pub fn server_config_from_resolver(resolver: Arc<SniCertResolver>) -> rustls::Se
 }
 
 /// Reload a resolver from the certificate directory.
+///
+/// The replacement is one map write, so a handshake never observes an empty
+/// resolver between `clear` and the first successful `add`. A directory that
+/// cannot be read leaves the last loaded set in place.
 pub fn sync_sni_resolver_from_dir(
     resolver: &SniCertResolver,
     certs_dir: &Path,
 ) -> Result<usize, GatewayError> {
-    resolver.clear();
+    let mut certs = HashMap::new();
+    if certs_dir.is_dir() {
+        let entries = std::fs::read_dir(certs_dir).map_err(|e| GatewayError::TlsError {
+            domain: certs_dir.display().to_string(),
+            reason: format!("failed to read certs directory: {e}"),
+        })?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
 
-    if !certs_dir.is_dir() {
-        return Ok(0);
-    }
+            let filename = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
 
-    let entries = std::fs::read_dir(certs_dir).map_err(|e| GatewayError::TlsError {
-        domain: certs_dir.display().to_string(),
-        reason: format!("failed to read certs directory: {e}"),
-    })?;
-    let mut loaded = 0;
+            if filename.ends_with(".pem") && !filename.ends_with("-key.pem") {
+                let domain = filename.trim_end_matches(".pem");
+                let key_path = certs_dir.join(format!("{domain}-key.pem"));
 
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-
-        let filename = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-
-        if filename.ends_with(".pem") && !filename.ends_with("-key.pem") {
-            let domain = filename.trim_end_matches(".pem");
-            let key_path = certs_dir.join(format!("{domain}-key.pem"));
-
-            if key_path.exists() {
-                match load_certified_key(&path, &key_path) {
-                    Ok(cert) => {
-                        resolver.add_cert(domain.to_string(), cert);
-                        loaded += 1;
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            domain = domain,
-                            error = %e,
-                            "skipping cert with load error"
-                        );
+                if key_path.exists() {
+                    match load_certified_key(&path, &key_path) {
+                        Ok(cert) => {
+                            certs.insert(domain.to_string(), cert);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                domain = domain,
+                                error = %e,
+                                "skipping cert with load error"
+                            );
+                        }
                     }
                 }
             }
         }
     }
-
+    let loaded = certs.len();
+    *crate::locks::write_tolerant(&resolver.certs) = certs;
     Ok(loaded)
 }
 
