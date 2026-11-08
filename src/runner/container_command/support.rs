@@ -388,7 +388,7 @@ fn exec_error_means_runtime_not_running(error: &ContainerExecError) -> bool {
         ContainerExecError::Failure { stderr, .. } => {
             runtime_probe_means_runtime_not_running("", stderr)
         }
-        ContainerExecError::Launch { .. } => false,
+        ContainerExecError::Launch { .. } | ContainerExecError::Refusal { .. } => false,
     }
 }
 

@@ -873,7 +873,7 @@ pub fn recover_colima_runtime_with_progress(
             ContainerExecError::Failure { stdout, stderr, .. } => {
                 docker_failure_looks_like_colima_runtime_state_loss(stdout, stderr)
             }
-            ContainerExecError::Launch { .. } => false,
+            ContainerExecError::Launch { .. } | ContainerExecError::Refusal { .. } => false,
         };
         if !runtime_state_loss {
             return Err(error);

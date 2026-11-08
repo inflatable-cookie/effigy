@@ -948,6 +948,22 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Give automatic Linux workspace artifact builds an exact checkout-owned
+  builder (effigy#710). The private builder's project is now scoped to the
+  exact canonical checkout: a runtime-scoped checkout keeps its generation
+  token, and an unmarked primary checkout gains a `-co-<digest>` suffix through
+  the new `checkout_scoped_identity` container option the builder declares. A
+  build therefore selects or creates only its own builder and reuses it across
+  ordinary incremental builds, instead of colliding with another checkout's
+  retained builder in the old shared project. A foreign or legacy builder is
+  never inspected for effect, executed in, stopped, relabelled, mounted or
+  adopted, and every full-ID, project, service, oneoff, running, checkout/scope,
+  working-directory and writable-source-bind check is unchanged. A refused
+  builder observation now names its concrete cause (malformed JSON, record
+  count, short id, missing name or `State.Status`, ownership or bind mismatch)
+  and no longer reports a validation refusal as a process exit code or a
+  signal.
+
 - Restored automatic Linux workspace artifact acquisition (effigy#701). A
   development install (`install:local` or a checkout build) builds its missing
   or stale artifact during host Prepare, once, and rebuilds after a same-version

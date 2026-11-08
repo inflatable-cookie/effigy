@@ -197,11 +197,27 @@ incremental rebuild makes it stale. Source selection and release-cache
 eligibility are specified in [052 §8.9](052-runtime-kernel-contract.md#89-binary-provisioning).
 
 The maintained Linux builder uses the stable private Compose project base
-`effigy-artifact-builder-v1`, with the ordinary checkout/worktree scope suffix.
-This is a one-time namespace migration from `effigy-linux-release`, not a new
-namespace per source version, upgrade or retry. The first build activates a
-new labelled builder through the existing manager; subsequent builds reuse its
-strictly verified immutable ID, including after a changed source input. Artifact paths and the task interface are unchanged.
+`effigy-artifact-builder-v1` with a checkout-scoped suffix: the ordinary
+worktree/ephemeral-clone generation token where the checkout is runtime-scoped,
+and a canonical-checkout digest (`-co-`) for an unmarked primary checkout. The
+builder therefore owns exactly one project per exact source checkout, including
+primary checkouts, and two checkouts on one host never query, reuse or collide
+with each other's builder. The suffix is not a new namespace per source
+version, upgrade or retry: the same checkout keeps one identity across ordinary
+incremental builds, and its builder is reused by its strictly verified
+immutable ID. This is a one-time namespace migration from `effigy-linux-release`
+and from the previously unscoped primary-checkout spelling, not a per-build
+change. Names never prove ownership: the full-ID, project, service, oneoff,
+running, checkout/scope, working-directory and writable-source-bind checks all
+stay in force, so a same-spelled impostor or a builder of another checkout's
+source is refused rather than adopted. Artifact paths and the task interface
+are unchanged.
+
+A refused builder observation names the concrete cause (malformed JSON, a wrong
+record count, a short id, a missing name or `State.Status`, an ownership or
+bind mismatch) and never presents a validation refusal as a process exit code
+or a signal; only a command that actually ended reports its termination. The
+diagnostic stays bounded to identity facts and is secret-safe.
 
 Legacy `effigy-linux-release` containers and their admission records, cache
 volumes and other retained data are left untouched, whether absent, labelled,
@@ -218,9 +234,13 @@ need image/dependency downloads and additional disk space; old caches remain.
 A collision in the new project is not an empty project: missing, foreign,
 mixed or contradictory ownership evidence still refuses before activation or
 exec. No generic ownership check or ordinary application drift guard is
-relaxed. Private transport fixtures exercise the shipped declaration, the
+relaxed. Two checkouts in the same old namespace are separated by the
+checkout-scoped suffix before any list, so neither builder's resources are
+inspected, executed in, stopped, relabelled, mounted into or adopted by the
+other. Private transport fixtures exercise the shipped declaration, the
 native legacy shape and named-oneoff counterexample, the ordinary and bounded
-handoffs, repeat upgrades and failures; they do not attest live consumer
+handoffs, repeat upgrades, another checkout's retained builder in the old
+project, and failures; they do not attest live consumer
 recovery.
 
 ### Container-local TCP alias visibility

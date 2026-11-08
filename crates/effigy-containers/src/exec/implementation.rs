@@ -49,12 +49,27 @@ pub enum ContainerExecError {
         command: String,
         error: std::io::Error,
     },
+    /// An observation refused the evidence it read. No command ended, so the
+    /// diagnostic must never borrow a process exit code or claim a signal: it
+    /// names the observation and the concrete reason it refused.
+    Refusal { command: String, reason: String },
     Failure {
         command: String,
         code: Option<i32>,
         stdout: String,
         stderr: String,
     },
+}
+
+impl ContainerExecError {
+    /// A validation refusal with its concrete cause. Only a real child
+    /// termination may carry an exit code or a signal claim.
+    fn refused(command: &str, reason: impl Into<String>) -> Self {
+        Self::Refusal {
+            command: command.to_owned(),
+            reason: reason.into(),
+        }
+    }
 }
 
 fn container_manager_error(error: ContainerManagerError) -> ContainerExecError {
@@ -71,6 +86,9 @@ impl std::fmt::Display for ContainerExecError {
         match self {
             Self::Launch { command, error } => {
                 write!(f, "failed to launch `{command}`: {error}")
+            }
+            Self::Refusal { command, reason } => {
+                write!(f, "{command} refused: {reason}")
             }
             Self::Failure {
                 command,
@@ -699,6 +717,183 @@ mod legacy_admission_tests {
             .verify_shutdown_listing(&policy, row.as_bytes())
             .expect("matching scoped ownership");
     }
+
+    /// The retained nerdctl inspect shape an operator's report captured for the
+    /// private builder (effigy#710), with every identity value derived from a
+    /// private fixture checkout: full 64-character id, `Name` without a leading
+    /// slash, `State.Status`/`Running`/`Restarting`, the bind plus both cargo
+    /// caches and an empty `NetworkSettings.Ports`. No live container, engine
+    /// or VM is read.
+    fn retained_nerdctl_inspect(
+        project: &str,
+        checkout: &Path,
+        workspace_source: &Path,
+    ) -> serde_json::Value {
+        let checkout_label = checkout.display().to_string();
+        let source = workspace_source.display().to_string();
+        serde_json::json!({
+            "Id": "80b63d97762b5a4858fe316356c54ac41007ddb19309a88028cf1b41a8613cce",
+            "Created": "2026-11-02T21:25:31.41161783Z",
+            "Path": "bash",
+            "Args": ["-lc", "while true; do sleep 3600; done"],
+            "State": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": true,
+                "Pid": 983,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-11-08T11:29:18.538605086Z",
+                "FinishedAt": "",
+            },
+            "Image": "sha256:2f8c5ff844de522282140bc51b634eb1da22df359e701197f0b0016416f41217",
+            "Name": format!("{project}-builder-1"),
+            "RestartCount": 0,
+            "Driver": "runc",
+            "Platform": "linux/arm64/v8",
+            "Mounts": [
+                {"Type": "bind", "Source": source, "Destination": "/workspace", "Mode": "", "RW": true, "Propagation": ""},
+                {"Type": "volume", "Name": format!("{project}-cargo-registry"), "Source": format!("/var/lib/nerdctl/1935db59/volumes/default/{project}-cargo-registry/_data"), "Destination": "/root/.cargo/registry", "Driver": "local", "Mode": "", "RW": true, "Propagation": ""},
+                {"Type": "volume", "Name": format!("{project}-cargo-git"), "Source": format!("/var/lib/nerdctl/1935db59/volumes/default/{project}-cargo-git/_data"), "Destination": "/root/.cargo/git", "Driver": "local", "Mode": "", "RW": true, "Propagation": ""},
+            ],
+            "Config": {
+                "Hostname": "builder",
+                "Image": format!("docker.io/library/{project}-builder:latest"),
+                "WorkingDir": "/workspace",
+                "Labels": {
+                    "com.docker.compose.project": project,
+                    "com.docker.compose.service": "builder",
+                    "com.effigy.checkout": checkout_label,
+                    "nerdctl/name": format!("{project}-builder-1"),
+                    "nerdctl/platform": "linux/arm64/v8",
+                    "nerdctl/state-dir": "/var/lib/nerdctl/1935db59/containers/default/80b63d97762b5a4858fe316356c54ac41007ddb19309a88028cf1b41a8613cce",
+                    "containerd.io/restart.policy": "unless-stopped",
+                    "containerd.io/restart.status": "running",
+                },
+            },
+            "NetworkSettings": {
+                "Bridge": "",
+                "SandboxID": "0d5d1c0a8d9dbfc0f9d3d6f6d8ba44a44ed8d5b2f7b3f2f5d9f7c1a9e6d3b8f0",
+                "HairpinMode": false,
+                "Ports": {},
+                "Gateway": "",
+                "IPAddress": "10.4.2.3",
+                "IPPrefixLen": 24,
+                "MacAddress": "aa:4b:8a:7c:7e:6c",
+            },
+        })
+    }
+
+    fn builder_row(project: &str) -> super::RunningComposeContainer {
+        super::RunningComposeContainer {
+            container_name: format!("{project}-builder-1"),
+            status: "Up".to_owned(),
+            ports: vec![],
+            project_name: Some(project.to_owned()),
+            working_dir: None,
+            service: Some("builder".to_owned()),
+            oneoff: false,
+        }
+    }
+
+    fn builder_context(checkout: &Path) -> OwnershipContext {
+        OwnershipContext {
+            declared: BTreeSet::from(["builder".to_owned()]),
+            canonical: checkout.to_path_buf(),
+            scope_token: None,
+        }
+    }
+
+    #[test]
+    fn retained_nerdctl_shape_proves_an_owned_current_builder() {
+        let private = tempfile::tempdir().expect("private checkout");
+        let checkout = private.path().canonicalize().expect("canonical checkout");
+        let project = "effigy-artifact-builder-v1-co-0123456789ab";
+        let context = builder_context(&checkout);
+        let record = retained_nerdctl_inspect(project, &checkout, &checkout);
+        let binding = context
+            .verify_inspected(
+                &checkout,
+                &policy(project),
+                &builder_row(project),
+                serde_json::json!([record]).to_string().as_bytes(),
+            )
+            .expect("the retained nerdctl shape is an owned running builder");
+        assert_eq!(
+            binding.id(),
+            "80b63d97762b5a4858fe316356c54ac41007ddb19309a88028cf1b41a8613cce"
+        );
+        assert_eq!(binding.scope, None);
+        assert!(super::workspace_builder_source_bind_is_owned(
+            &checkout,
+            record.get("Mounts").and_then(|value| value.as_array())
+        ));
+        assert!(super::workspace_builder_has_no_published_ports(Some(
+            &record
+        )));
+    }
+
+    #[test]
+    fn retained_nerdctl_shape_refuses_another_checkouts_source_without_adoption() {
+        let private = tempfile::tempdir().expect("private checkout");
+        let checkout = private.path().canonicalize().expect("canonical checkout");
+        // The retained builder effigy#710 collided with: the same project
+        // spelling, a different checkout's real source and no mount of this
+        // checkout. The foreign source is a derived private directory, never
+        // the retained checkout itself.
+        let foreign = private.path().join("other-checkout");
+        std::fs::create_dir_all(&foreign).expect("foreign checkout");
+        let foreign = foreign.canonicalize().expect("canonical foreign checkout");
+        let project = "effigy-artifact-builder-v1";
+        let context = builder_context(&checkout);
+        let record = retained_nerdctl_inspect(project, &foreign, &foreign);
+        let error = context
+            .verify_inspected(
+                &checkout,
+                &policy(project),
+                &builder_row(project),
+                serde_json::json!([record]).to_string().as_bytes(),
+            )
+            .expect_err("a builder of another checkout's source is never adopted");
+        assert!(
+            error.to_string().contains("does not match owned project"),
+            "{error}"
+        );
+        assert!(!super::workspace_builder_source_bind_is_owned(
+            &checkout,
+            record.get("Mounts").and_then(|value| value.as_array())
+        ));
+    }
+
+    #[test]
+    fn inspect_refusals_name_the_concrete_cause_and_never_claim_a_signal() {
+        let private = tempfile::tempdir().expect("private checkout");
+        let checkout = private.path().canonicalize().expect("canonical checkout");
+        let project = "effigy-artifact-builder-v1-co-0123456789ab";
+        let context = builder_context(&checkout);
+        let mut record = retained_nerdctl_inspect(project, &checkout, &checkout);
+        record
+            .as_object_mut()
+            .expect("record")
+            .get_mut("State")
+            .and_then(|state| state.as_object_mut())
+            .expect("state")
+            .remove("Status");
+        let error = context
+            .verify_inspected(
+                &checkout,
+                &policy(project),
+                &builder_row(project),
+                serde_json::json!([record]).to_string().as_bytes(),
+            )
+            .expect_err("an incomplete inspect record is not proof of identity");
+        let rendered = error.to_string();
+        assert!(rendered.contains("refused"), "{rendered}");
+        assert!(rendered.contains("State.Status"), "{rendered}");
+        assert!(!rendered.contains("signal"), "{rendered}");
+        assert!(!rendered.contains("exit code"), "{rendered}");
+    }
 }
 
 /// An inspected binding. Fields are private so only strict inspection can mint it.
@@ -753,12 +948,10 @@ impl VerifiedComposeContainer {
         {
             return Ok(());
         }
-        Err(ContainerExecError::Failure {
-            command: "inspect owned binding".to_owned(),
-            code: None,
-            stdout: String::new(),
-            stderr: "binding unavailable: container full ID or checkout/scope/backend binding changed before effect".to_owned(),
-        })
+        Err(ContainerExecError::refused(
+            "inspect owned binding",
+            "binding unavailable: container full ID or checkout/scope/backend binding changed before effect",
+        ))
     }
 }
 
@@ -767,21 +960,12 @@ pub fn verify_workspace_artifact_builder_declaration(
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), ContainerExecError> {
     for file in &policy.compose_files {
-        let content = policy
-            .read_compose(file)
-            .map_err(|error| ContainerExecError::Failure {
-                command: "read workspace builder declaration".to_owned(),
-                code: None,
-                stdout: String::new(),
-                stderr: error.to_string(),
-            })?;
-        let compose: serde_yaml::Value =
-            serde_yaml::from_str(&content).map_err(|error| ContainerExecError::Failure {
-                command: "parse workspace builder declaration".to_owned(),
-                code: None,
-                stdout: String::new(),
-                stderr: error.to_string(),
-            })?;
+        let content = policy.read_compose(file).map_err(|error| {
+            ContainerExecError::refused("read workspace builder declaration", error.to_string())
+        })?;
+        let compose: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
+            ContainerExecError::refused("parse workspace builder declaration", error.to_string())
+        })?;
         let builder = compose
             .get("services")
             .and_then(|services| services.get("builder"));
@@ -792,20 +976,18 @@ pub fn verify_workspace_artifact_builder_declaration(
                     || builder.get("ports").is_some()
             })
         {
-            return Err(ContainerExecError::Failure {
-                command: "verify workspace builder declaration".to_owned(), code: None, stdout: String::new(),
-                stderr: "workspace artifact builder cannot include, extend, depend on or publish other workloads".to_owned(),
-            });
+            return Err(ContainerExecError::refused(
+                "verify workspace builder declaration",
+                "workspace artifact builder cannot include, extend, depend on or publish other workloads",
+            ));
         }
     }
     let services = declared_service_names(policy, &policy.compose_files)?;
     if services.len() != 1 || !services.contains("builder") {
-        return Err(ContainerExecError::Failure {
-            command: "verify workspace builder declaration".to_owned(),
-            code: None,
-            stdout: String::new(),
-            stderr: "workspace artifact builder must declare only the builder service".to_owned(),
-        });
+        return Err(ContainerExecError::refused(
+            "verify workspace builder declaration",
+            "workspace artifact builder must declare only the builder service",
+        ));
     }
     Ok(())
 }
@@ -831,49 +1013,23 @@ pub fn verify_workspace_artifact_builder(
         remaining,
     )?;
     let mut binding = ownership.verify_inspected(repo_root, policy, row, &output.stdout)?;
-    let raw: serde_json::Value =
-        serde_json::from_slice(&output.stdout).map_err(|error| ContainerExecError::Launch {
-            command: "inspect workspace builder".to_owned(),
-            error: std::io::Error::other(error),
-        })?;
+    let raw: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|error| {
+        ContainerExecError::refused(
+            "inspect workspace builder",
+            format!("inspect output is not JSON: {error}"),
+        )
+    })?;
     let record = raw.as_array().and_then(|records| records.first());
     let checkout = record
         .and_then(|record| record.pointer("/Config/Labels/com.effigy.checkout"))
         .and_then(|value| value.as_str());
-    let mounts = record
-        .and_then(|record| record.get("Mounts"))
-        .and_then(|value| value.as_array());
-    let workspace_mounts = mounts
-        .into_iter()
-        .flatten()
-        .filter(|mount| {
-            mount.get("Destination").and_then(|value| value.as_str()) == Some("/workspace")
-        })
-        .collect::<Vec<_>>();
-    let shadowed = mounts.into_iter().flatten().any(|mount| {
-        mount
-            .get("Destination")
-            .and_then(|value| value.as_str())
-            .is_some_and(|destination| destination.starts_with("/workspace/"))
-    });
-    let bind_matches = !shadowed
-        && match workspace_mounts.as_slice() {
-            [mount] => {
-                mount.get("Type").and_then(|value| value.as_str()) == Some("bind")
-                    && mount.get("RW").and_then(|value| value.as_bool()) == Some(true)
-                    && mount
-                        .get("Source")
-                        .and_then(|value| value.as_str())
-                        .and_then(|value| Path::new(value).canonicalize().ok())
-                        .as_ref()
-                        == Some(&ownership.canonical)
-            }
-            _ => false,
-        };
-    let no_ports = record
-        .and_then(|record| record.pointer("/NetworkSettings/Ports"))
-        .and_then(|value| value.as_object())
-        .is_some_and(|ports| ports.is_empty());
+    let bind_matches = workspace_builder_source_bind_is_owned(
+        &ownership.canonical,
+        record
+            .and_then(|record| record.get("Mounts"))
+            .and_then(|value| value.as_array()),
+    );
+    let no_ports = workspace_builder_has_no_published_ports(record);
     // Scoped checkout labels locate the owner, while Compose may name its
     // immutable render directory. A supplied working directory must still
     // belong to this checkout or one of its retained render generations.
@@ -888,13 +1044,78 @@ pub fn verify_workspace_artifact_builder(
         || !no_ports
         || !working_dir_matches
     {
-        return Err(ContainerExecError::Failure {
-            command: "inspect workspace builder".to_owned(), code: None, stdout: String::new(),
-            stderr: "workspace builder checkout/scope/working-directory labels or writable /workspace source bind are unverified".to_owned(),
-        });
+        let mut mismatched = Vec::new();
+        if !ownership.owns(checkout, binding.scope.as_deref()) {
+            mismatched.push("checkout/scope labels");
+        }
+        if !bind_matches {
+            mismatched.push("one writable /workspace source bind");
+        }
+        if !no_ports {
+            mismatched.push("no published ports");
+        }
+        if !working_dir_matches {
+            mismatched.push("an owned Compose working directory");
+        }
+        return Err(ContainerExecError::refused(
+            "inspect workspace builder",
+            format!(
+                "workspace builder identity does not match owned project `{}` at `{}`; unverified: {}",
+                policy.project_name,
+                ownership.canonical.display(),
+                mismatched.join(", "),
+            ),
+        ));
     }
     binding.workspace_builder_deadline = Some(deadline);
     Ok(binding)
+}
+
+/// The builder's source bind: exactly one writable bind of `canonical` at
+/// `/workspace`, with nothing mounted below it. A name, label or volume never
+/// substitutes for it, so a builder belonging to another checkout's source is
+/// refused even when both share a project spelling.
+fn workspace_builder_source_bind_is_owned(
+    canonical: &Path,
+    mounts: Option<&Vec<serde_json::Value>>,
+) -> bool {
+    let workspace_mounts = mounts
+        .into_iter()
+        .flatten()
+        .filter(|mount| {
+            mount.get("Destination").and_then(|value| value.as_str()) == Some("/workspace")
+        })
+        .collect::<Vec<_>>();
+    let shadowed = mounts.into_iter().flatten().any(|mount| {
+        mount
+            .get("Destination")
+            .and_then(|value| value.as_str())
+            .is_some_and(|destination| destination.starts_with("/workspace/"))
+    });
+    !shadowed
+        && match workspace_mounts.as_slice() {
+            [mount] => {
+                mount.get("Type").and_then(|value| value.as_str()) == Some("bind")
+                    && mount.get("RW").and_then(|value| value.as_bool()) == Some(true)
+                    && mount
+                        .get("Source")
+                        .and_then(|value| value.as_str())
+                        .and_then(|value| Path::new(value).canonicalize().ok())
+                        .as_deref()
+                        == Some(canonical)
+            }
+            _ => false,
+        }
+}
+
+/// The builder declares no route, so an inspected record with published
+/// associations is not the private builder. A missing `NetworkSettings.Ports`
+/// object is not proof of "no ports".
+fn workspace_builder_has_no_published_ports(record: Option<&serde_json::Value>) -> bool {
+    record
+        .and_then(|record| record.pointer("/NetworkSettings/Ports"))
+        .and_then(|value| value.as_object())
+        .is_some_and(|ports| ports.is_empty())
 }
 
 fn builder_working_directory_is_owned(checkout: &Path, label: Option<&serde_json::Value>) -> bool {
@@ -1277,11 +1498,11 @@ impl OwnershipContext {
         service: &str,
         listing_stdout: &[u8],
     ) -> Result<String, ContainerExecError> {
-        let refuse = |reason: &str| ContainerExecError::Failure {
-            command: "list owned service".to_owned(),
-            code: None,
-            stdout: String::new(),
-            stderr: format!("binding unavailable: {reason}"),
+        let refuse = |reason: &str| {
+            ContainerExecError::refused(
+                "list owned service",
+                format!("binding unavailable: {reason}"),
+            )
         };
         if !self.declared.contains(service) {
             return Err(refuse(
@@ -1330,21 +1551,23 @@ impl OwnershipContext {
         row: &RunningComposeContainer,
         inspect_stdout: &[u8],
     ) -> Result<VerifiedComposeContainer, ContainerExecError> {
-        let raw: serde_json::Value =
-            serde_json::from_slice(inspect_stdout).map_err(|_| ContainerExecError::Failure {
-                command: "inspect owned binding".to_owned(),
-                code: None,
-                stdout: String::new(),
-                stderr: "binding unavailable: inspect JSON is invalid".to_owned(),
-            })?;
+        let raw: serde_json::Value = serde_json::from_slice(inspect_stdout).map_err(|error| {
+            ContainerExecError::refused(
+                "inspect owned binding",
+                format!("binding unavailable: inspect JSON is invalid: {error}"),
+            )
+        })?;
         let identity = super::parse::parse_inspected_container_identity(&String::from_utf8_lossy(
             inspect_stdout,
         ))
-        .map_err(|_| ContainerExecError::Failure {
-            command: "inspect owned binding".to_owned(),
-            code: None,
-            stdout: String::new(),
-            stderr: "binding unavailable: canonical full container identity is missing".to_owned(),
+        .map_err(|error| {
+            // The parser's own cause is the diagnosis: a missing canonical
+            // identity is one reason among malformed JSON, a wrong record
+            // count, a short id, a missing name and a missing State.Status.
+            ContainerExecError::refused(
+                "inspect owned binding",
+                format!("binding unavailable: canonical container identity is unverified: {error}"),
+            )
         })?;
         let record = raw.as_array().and_then(|records| records.first());
         let labels = record
@@ -1357,20 +1580,24 @@ impl OwnershipContext {
         let owned = self.inspected_identity_matches(policy, row, &identity, oneoff_label_ok, true)
             && self.owns(working_dir, inspected_scope);
         if !owned {
-            return Err(ContainerExecError::Failure { command: "inspect owned binding".to_owned(), code: None, stdout: String::new(), stderr: "binding unavailable: full-ID/project/service/oneoff/running/checkout ownership changed or is unknown".to_owned() });
+            return Err(ContainerExecError::refused(
+                "inspect owned binding",
+                format!(
+                    "binding unavailable: full-ID/project/service/oneoff/running/checkout/scope ownership does not match owned project `{}` at `{}`",
+                    policy.project_name,
+                    self.canonical.display(),
+                ),
+            ));
         }
         let Some(ports) = record
             .and_then(|record| record.get("NetworkSettings"))
             .and_then(|network| network.get("Ports"))
             .and_then(|ports| ports.as_object())
         else {
-            return Err(ContainerExecError::Failure {
-                command: "inspect owned binding".to_owned(),
-                code: None,
-                stdout: String::new(),
-                stderr: "binding unavailable: fresh published-port associations are missing"
-                    .to_owned(),
-            });
+            return Err(ContainerExecError::refused(
+                "inspect owned binding",
+                "binding unavailable: fresh published-port associations are missing",
+            ));
         };
         let mut current = row.clone();
         current.ports.clear();

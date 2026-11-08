@@ -50,7 +50,12 @@ pub(crate) fn resolve_project_name(
         .project_name
         .clone()
         .unwrap_or_else(|| default_project_name(default_project_name_base, name, container_count));
-    let project_name = scope_project_name(repo_root, project_name, config.share_runtime_identity)?;
+    let project_name = scope_project_name_with(
+        repo_root,
+        project_name,
+        config.share_runtime_identity,
+        config.checkout_scoped_identity,
+    )?;
     Ok(sanitize_project_name_component(&project_name))
 }
 
@@ -58,6 +63,24 @@ pub(crate) fn scope_project_name(
     repo_root: &Path,
     project_name: String,
     share_runtime_identity: bool,
+) -> Result<String, ContainerPolicyError> {
+    scope_project_name_with(repo_root, project_name, share_runtime_identity, false)
+}
+
+/// The Compose project identity for one environment.
+///
+/// A runtime-scoped checkout (linked worktree or marked ephemeral clone) keeps
+/// its generation token, so a recreated scope gets a new identity. An
+/// environment that declares `checkout_scoped_identity` additionally owns one
+/// identity per checkout even when that checkout keeps primary-checkout
+/// behaviour: the suffix is the canonical checkout path's digest, so two
+/// primary checkouts on one host never share a project, while repeated builds
+/// in one checkout keep the same one.
+fn scope_project_name_with(
+    repo_root: &Path,
+    project_name: String,
+    share_runtime_identity: bool,
+    checkout_scoped_identity: bool,
 ) -> Result<String, ContainerPolicyError> {
     if share_runtime_identity {
         return Ok(project_name);
@@ -74,6 +97,9 @@ pub(crate) fn scope_project_name(
                 .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?
             {
                 Some(kind) => format!("{project_name}-{}-unprepared", kind.project_tag()),
+                None if checkout_scoped_identity => {
+                    format!("{project_name}-co-{}", checkout_identity_key(repo_root)?)
+                }
                 None => project_name,
             },
         );
@@ -83,6 +109,22 @@ pub(crate) fn scope_project_name(
         kind.project_tag(),
         &scope[..12]
     ))
+}
+
+/// The stable identity of one owning checkout, for an environment that owns a
+/// Compose project per checkout even where the checkout keeps its declared
+/// project name. It is the canonical checkout path's digest, never a name.
+fn checkout_identity_key(repo_root: &Path) -> Result<String, ContainerPolicyError> {
+    let checkout = worktree_scope::checkout_root(repo_root)
+        .canonicalize()
+        .map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "cannot establish checkout identity for {}: {error}",
+                repo_root.display()
+            ))
+        })?;
+    let digest = effigy_gateway::ports::sha256_hex(checkout.as_os_str().as_encoded_bytes());
+    Ok(digest[..12].to_owned())
 }
 
 fn default_project_name(
@@ -147,6 +189,61 @@ pub(crate) fn validate_unique_project_names(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checkout_scoped_identity_separates_primary_checkouts_and_reuses_one_per_checkout() {
+        let root = tempfile::tempdir().unwrap();
+        let config: ManifestContainerConfig =
+            toml::from_str("project_name = 'app-dev'\ncheckout_scoped_identity = true").unwrap();
+        let mut names = Vec::new();
+        for name in ["one", "two"] {
+            let checkout = root.path().join(name);
+            std::fs::create_dir_all(checkout.join(".git")).unwrap();
+            std::fs::write(checkout.join(".git/config"), "[core]\n").unwrap();
+            let value = resolve_project_name(&config, "app", "dev", 1, &checkout).unwrap();
+            // One exact checkout keeps one identity across ordinary rebuilds.
+            assert_eq!(
+                value,
+                resolve_project_name(&config, "app", "dev", 1, &checkout).unwrap()
+            );
+            assert!(value.starts_with("app-dev-co-"), "{value}");
+            assert_eq!(value.len(), "app-dev-co-".len() + 12);
+            names.push(value);
+        }
+        assert_ne!(names[0], names[1]);
+
+        // The digest is of the canonical checkout path, not of the spelling
+        // used to reach it.
+        let aliased = root.path().join("one").join("nested");
+        std::fs::create_dir_all(&aliased).unwrap();
+        assert_eq!(
+            resolve_project_name(&config, "app", "dev", 1, &aliased).unwrap(),
+            names[0],
+            "a nested catalog directory belongs to the enclosing checkout"
+        );
+
+        // A runtime-scoped checkout keeps its generation token instead.
+        let marked = root.path().join("marked");
+        std::fs::create_dir_all(marked.join(".git")).unwrap();
+        std::fs::write(
+            marked.join(".git/config"),
+            "[effigy]\n\truntimeScope = ephemeral\n",
+        )
+        .unwrap();
+        worktree_scope::prepare_checkout_token(&marked).unwrap();
+        assert!(resolve_project_name(&config, "app", "dev", 1, &marked)
+            .unwrap()
+            .starts_with("app-dev-ec-"));
+
+        // Declared sharing wins for an environment that asks for it; the
+        // manifest refuses that contradiction before any policy is built.
+        let shared: ManifestContainerConfig =
+            toml::from_str("project_name = 'app-dev'\nshare_runtime_identity = true").unwrap();
+        assert_eq!(
+            resolve_project_name(&shared, "app", "dev", 1, &root.path().join("one")).unwrap(),
+            "app-dev"
+        );
+    }
 
     #[test]
     fn main_checkout_keeps_name_while_linked_worktrees_get_stable_distinct_names() {

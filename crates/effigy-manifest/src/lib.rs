@@ -425,6 +425,14 @@ impl TaskManifest {
         }
         if let Some(containers) = self.containers.as_ref() {
             for (container_name, container) in &containers.environments {
+                if container.share_runtime_identity && container.checkout_scoped_identity {
+                    return Err(ManifestError::Compose {
+                        path: manifest_path.to_path_buf(),
+                        detail: format!(
+                            "[containers.{container_name}].checkout_scoped_identity cannot combine with `share_runtime_identity = true`; one environment cannot both isolate its Compose identity per checkout and share one identity across checkouts"
+                        ),
+                    });
+                }
                 if let Some(dns) = container.dns.as_ref() {
                     validate_dns_routes(manifest_path, container_name, dns)?;
                 }
@@ -1519,6 +1527,17 @@ catalog = "postgres"
             "[containers.hybrid]\nprimary_service = \"app\"\nshare_runtime_identity = true",
         );
         let error = err(&parse(&manifest));
+        assert!(error.contains("share_runtime_identity"), "{error}");
+    }
+
+    #[test]
+    fn checkout_scoped_identity_with_shared_identity_is_rejected() {
+        let manifest = valid_pair().replace(
+            "[containers.dev]\nprimary_service = \"app\"",
+            "[containers.dev]\nprimary_service = \"app\"\nshare_runtime_identity = true\ncheckout_scoped_identity = true",
+        );
+        let error = err(&parse(&manifest));
+        assert!(error.contains("checkout_scoped_identity"), "{error}");
         assert!(error.contains("share_runtime_identity"), "{error}");
     }
 

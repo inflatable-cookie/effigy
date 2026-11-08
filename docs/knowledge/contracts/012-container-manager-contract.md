@@ -167,12 +167,15 @@ for command/result ownership and native limits.
 
 The maintained artifact task has a narrow execution-only recovery operation for
 an owned running source-bound builder. Its stable private project base is
-`effigy-artifact-builder-v1`, retaining ordinary checkout/worktree isolation.
-The one-time namespace migration creates a new labelled builder and leaves
-legacy `effigy-linux-release` containers, admissions and caches untouched;
-ambiguous legacy objects are never adopted or executed. Later upgrades reuse
-the same managed project. Separate new caches can cost downloads and disk
-space; no cleanup is required to proceed. It does not readmit changed Compose
-inputs or grant general application recovery authority. The
+`effigy-artifact-builder-v1` with a checkout-scoped suffix: the scope generation
+token for a runtime-scoped checkout, and a canonical-checkout digest (`-co-`)
+for an unmarked primary checkout. Each exact source checkout therefore owns one
+builder project on a host, and repeated builds in it reuse that project. The
+one-time namespace migration creates a new labelled builder and leaves legacy
+`effigy-linux-release` containers, admissions and caches untouched; ambiguous
+legacy objects are never adopted or executed. Later upgrades reuse the same
+managed project. Separate new caches can cost downloads and disk space; no
+cleanup is required to proceed. It does not readmit changed Compose inputs or
+grant general application recovery authority. The
 [backend compatibility contract](006-compose-backend-compatibility.md) owns its
 identity, bind, locking, deadline and refusal rules.

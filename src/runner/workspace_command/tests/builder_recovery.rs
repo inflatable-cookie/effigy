@@ -26,11 +26,16 @@ if cmd == 'ps':
     if mode == 'list_fail': sys.exit(19)
     if mode == 'malformed_list': print('\tUp\t\t' + os.environ['EFFIGY_RECOVERY_PROJECT'] + '\t\tbuilder\t'); sys.exit(0)
     records = json.loads(identity.read_text()) if identity.exists() else []
-    legacy = state / 'legacy.json'
-    if legacy.exists(): records += json.loads(legacy.read_text())
+    # Records from another project keep their own labels: a historical
+    # legacy builder or another checkout's builder in the old namespace.
+    foreign = []
+    for name in ['legacy.json', 'other.json']:
+        path = state / name
+        if path.exists(): foreign += json.loads(path.read_text())
+    records += foreign
     for row in records:
         labels = row['Config']['Labels']
-        project = labels['com.docker.compose.project'] if row in (json.loads(legacy.read_text()) if legacy.exists() else []) else os.environ['EFFIGY_RECOVERY_PROJECT']
+        project = labels['com.docker.compose.project'] if row in foreign else os.environ['EFFIGY_RECOVERY_PROJECT']
         if '--filter' in args and args[args.index('--filter')+1] != 'label=com.docker.compose.project=' + project: continue
         line = '%s\t%s\t\t%s\t%s\t%s\t%s' % (row['Name'].lstrip('/'), 'Up 1 second' if row['State']['Running'] else 'Exited (0)', project, labels.get('com.docker.compose.project.working_dir', ''), labels.get('com.docker.compose.service', ''), labels.get('com.docker.compose.oneoff', ''))
         print(line)
@@ -51,6 +56,8 @@ if cmd == 'inspect':
     if mode == 'replace' and count > 1: row[0]['Id'] = 'b' * 64
     if mode == 'change_name' and count > 1: row[0]['Name'] = '/successor-builder-1'
     if mode == 'multiple_inspect': row += row
+    if mode == 'inspect_short_id': row[0]['Id'] = row[0]['Id'][:12]
+    if mode == 'inspect_missing_status': row[0]['State'].pop('Status', None)
     if mode == 'change_bind' and count > 1: row[0]['Mounts'][0]['Source'] = str(state)
     if mode == 'up_inspect_fail': sys.exit(24)
     print(json.dumps(row))
@@ -58,6 +65,7 @@ if cmd == 'inspect':
 if cmd == 'up':
     if mode == 'up_fail': sys.exit(21)
     generated = next(a for a in args if a.endswith('.generated.compose.yml'))
+    (state / 'last-up-compose').write_text(pathlib.Path(generated).read_text())
     services = pathlib.Path(generated).read_text().split('\nvolumes:')[0]
     labels = dict(re.findall(r'^\s*(com\.effigy\.[^:]+): (.+)$', services, re.M))
     labels.update({'com.docker.compose.project': os.environ['EFFIGY_RECOVERY_PROJECT'], 'com.docker.compose.service': 'builder'})
@@ -440,6 +448,34 @@ esac
             ], "NetworkSettings": {"Ports": {}}
         }]);
         let path = self.root.join("state/legacy.json");
+        std::fs::write(&path, record.to_string()).unwrap();
+        self.preserved.push((path, record.to_string().into_bytes()));
+    }
+
+    /// Another checkout's builder in the old globally named project, exactly
+    /// the shape the operator's report observed (effigy#710): a running
+    /// builder whose `/workspace` bind and checkout label are a different
+    /// checkout's source. It is never this checkout's builder and must stay
+    /// untouched.
+    fn retain_other_checkout(&mut self) {
+        // A derived path with the observed foreign-builder shape; the retained
+        // checkout itself is never named, read or written.
+        let foreign_source = format!("{}/other-checkout/source", self.root.display());
+        let record = json!([{
+            "Id": "d".repeat(64),
+            "Name": "effigy-artifact-builder-v1-builder-1",
+            "State": {"Status": "running", "Running": true},
+            "Config": {"Labels": {
+                "com.docker.compose.project": "effigy-artifact-builder-v1",
+                "com.docker.compose.service": "builder",
+                "com.docker.compose.oneoff": "False",
+                "com.docker.compose.project.working_dir": foreign_source,
+                "com.effigy.checkout": foreign_source
+            }},
+            "Mounts": [{"Type": "bind", "Source": foreign_source, "Destination": "/workspace", "RW": true}],
+            "NetworkSettings": {"Ports": {}}
+        }]);
+        let path = self.root.join("state/other.json");
         std::fs::write(&path, record.to_string()).unwrap();
         self.preserved.push((path, record.to_string().into_bytes()));
     }
@@ -1020,14 +1056,28 @@ fn assert_managed_namespace_preserves_legacy(scoped: bool, legacy: &str) {
     let _lock = crate::contract_test_support::lock_test();
     let mut fixture = Fixture::with_declaration(false, false, "colima", scoped);
     fixture.retain_legacy(legacy);
-    assert_eq!(
-        fixture.policy.project_name,
-        if scoped {
-            "effigy-artifact-builder-v1-ec-7288dc2b3e84"
-        } else {
-            "effigy-artifact-builder-v1"
-        }
-    );
+    let project_name = fixture.policy.project_name.clone();
+    if scoped {
+        assert_eq!(project_name, "effigy-artifact-builder-v1-ec-7288dc2b3e84");
+    } else {
+        // An unmarked primary checkout owns its own builder project, exactly as
+        // the exact-checkout suffix names it, and repeated loads reuse it.
+        assert!(
+            project_name.starts_with("effigy-artifact-builder-v1-co-"),
+            "{project_name}"
+        );
+        assert_eq!(
+            project_name.len(),
+            "effigy-artifact-builder-v1-co-".len() + 12,
+            "{project_name}"
+        );
+        assert_eq!(
+            effigy_containers::load_container_policy(&fixture.root, Some("linux-release"))
+                .unwrap()
+                .project_name,
+            project_name
+        );
+    }
     fixture
         .task()
         .unwrap_or_else(|error| panic!("scoped={scoped}, legacy={legacy}: {error}"));
@@ -1200,6 +1250,81 @@ fn a_collision_in_the_managed_namespace_is_never_treated_as_empty() {
         assert!(
             !fixture.calls().iter().flatten().any(|arg| arg == "exec"),
             "{case}"
+        );
+        fixture.assert_preserved();
+    }
+}
+
+/// The operator's original report (effigy#710): the only builder on the host
+/// belonged to another checkout's source under the old global project name.
+/// This checkout must activate its own distinctly owned builder through the
+/// maintained lifecycle, and the foreign builder is never inspected, exec'd,
+/// stopped, relabelled, removed, mounted or adopted.
+#[test]
+fn another_checkouts_builder_is_never_touched_and_a_distinct_owner_is_created() {
+    let _lock = crate::contract_test_support::lock_test();
+    let mut fixture = Fixture::new(false, false, "colima");
+    fixture.retain_other_checkout();
+    fixture
+        .task()
+        .expect("the automatic build selects its own distinct builder");
+    assert_eq!(fixture.activation_count(), 1);
+    let identity: Value =
+        serde_json::from_slice(&std::fs::read(fixture.root.join("state/identity.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        identity[0]["Config"]["Labels"]["com.docker.compose.project"],
+        json!(fixture.policy.project_name)
+    );
+    assert_eq!(
+        identity[0]["Config"]["Labels"]["com.effigy.checkout"],
+        json!(fixture.root)
+    );
+    assert_ne!(
+        identity[0]["Config"]["Labels"]["com.docker.compose.project"],
+        json!("effigy-artifact-builder-v1")
+    );
+    let calls = serde_json::to_string(&fixture.calls()).unwrap();
+    assert!(
+        !calls.contains("effigy-artifact-builder-v1-builder-1"),
+        "the foreign builder name was targeted: {calls}"
+    );
+    assert!(
+        !calls.contains(&"d".repeat(64)),
+        "the foreign builder id was targeted: {calls}"
+    );
+    assert!(
+        !calls.contains("\"effigy-artifact-builder-v1\""),
+        "the foreign project was queried or activated: {calls}"
+    );
+    // The activation's own render mounts only this checkout and its own caches.
+    let compose = std::fs::read_to_string(fixture.root.join("state/last-up-compose")).unwrap();
+    assert!(compose.contains(&format!("{}:/workspace", fixture.root.display())));
+    assert!(!compose.contains("other-checkout"));
+    assert!(!compose.contains("effigy-artifact-builder-v1-cargo-registry"));
+    assert!(compose.contains(&format!("{}-cargo-registry", fixture.policy.project_name)));
+    fixture.assert_preserved();
+}
+
+/// A wrong or incomplete inspect must name its own cause and must not borrow a
+/// process exit code: no command ended, so no signal is claimed.
+#[test]
+fn refused_inspect_names_its_cause_without_claiming_a_signal() {
+    let _lock = crate::contract_test_support::lock_test();
+    for (mode, cause) in [
+        ("inspect_missing_status", "State.Status"),
+        ("inspect_short_id", "64-character hexadecimal"),
+    ] {
+        let fixture = Fixture::new(true, true, "docker");
+        fixture.mode(mode);
+        let error = fixture.task().expect_err(mode);
+        assert!(error.contains("refused"), "{mode}: {error}");
+        assert!(error.contains(cause), "{mode}: {error}");
+        assert!(!error.contains("signal"), "{mode}: {error}");
+        assert!(!error.contains("no exit code"), "{mode}: {error}");
+        assert!(
+            !fixture.root.join("state/build-effect").exists(),
+            "{mode}: {error}"
         );
         fixture.assert_preserved();
     }

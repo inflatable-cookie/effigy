@@ -1376,7 +1376,8 @@ fn terminate_child_process_tree(child: &mut std::process::Child) {
 pub(crate) fn error_is_timeout(error: &ContainerExecError) -> bool {
     match error {
         ContainerExecError::Failure { stderr, .. } => stderr.contains("command timed out"),
-        ContainerExecError::Launch { .. } => false,
+        // An observation that refused its evidence never timed out a child.
+        ContainerExecError::Launch { .. } | ContainerExecError::Refusal { .. } => false,
     }
 }
 

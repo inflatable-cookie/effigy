@@ -1077,6 +1077,9 @@ impl From<effigy_containers::exec::ContainerExecError> for RunnerError {
             effigy_containers::exec::ContainerExecError::Launch { command, error } => {
                 Self::TaskCommandLaunch { command, error }
             }
+            effigy_containers::exec::ContainerExecError::Refusal { command, reason } => {
+                Self::TaskInvocation(format!("{command} refused: {reason}"))
+            }
             effigy_containers::exec::ContainerExecError::Failure {
                 command,
                 code,
