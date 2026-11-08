@@ -918,6 +918,8 @@ class Stage1Checks(unittest.TestCase):
         self.assertEqual(req['before']['chain'][0], setup.CURRENT_SNAPSHOT)
         self.assertTrue(Path(req['retained']['config']).exists())
         self.assertEqual(sum(s['seconds'] for s in req['steps']), 480)
+        self.assertEqual(req['steps'][3]['argv'][-3:], ['/usr/bin/systemctl', 'is-system-running', '--wait'])
+        self.assertNotIn('/bin/echo', req['steps'][3]['argv'])
         self.assertEqual(req['steps'][4]['argv'][-1], PROBE_SCRIPT)
 
     def test_unregistered_home_uuid_or_probe_script_refuse(self):
@@ -1038,6 +1040,343 @@ class Stage1Checks(unittest.TestCase):
         self.assertEqual((stage / 'before-config.bin').read_bytes(), self.config.read_bytes())
         self.assertFalse((stage / 'before-descriptor.xml').exists())
 
+    def write_parallels_config(self, uptime='394', vmnet='{aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa}',
+                               stamps=('100', '100'), mac='001122334455'):
+        ports = ''.join('<USBPort><Location>%s</Location><SystemName>usb</SystemName>'
+                        '<Timestamp>%s</Timestamp></USBPort>' % (index, stamp)
+                        for index, stamp in enumerate(stamps))
+        return ('<ParallelsVirtualMachine><Identification>'
+                '<VmUptimeInSeconds>%s</VmUptimeInSeconds></Identification>'
+                '<Hardware><NetworkAdapter><MAC>%s</MAC><VMNetUuid>%s</VMNetUuid></NetworkAdapter>'
+                '<UsbConnectHistory>%s</UsbConnectHistory><Hdd><Enabled>1</Enabled></Hdd>'
+                '</Hardware></ParallelsVirtualMachine>' % (uptime, mac, vmnet, ports)).encode()
+
+    def test_permitted_uptime_and_usb_timestamp_admit_byte_different_originals(self):
+        before = self.write_parallels_config(uptime='394', stamps=('100', '200'))
+        after = self.write_parallels_config(uptime='499', stamps=('150', '250'))
+        self.config.write_bytes(before)
+        req = self.request()
+        self.config.write_bytes(after)
+        result = setup.stage1_verify_post(req, self.after())
+        self.assertNotEqual(result['config_sha256'], result['post_config_sha256'])
+        self.assertEqual(Path(req['retained']['config']).read_bytes(), before)
+        self.assertEqual((Path(req['retained']['config']).parent / 'post-config.bin').read_bytes(), after)
+        kinds = {item['kind'] for item in result['config_changes']}
+        self.assertEqual(kinds, {'uptime', 'usb_timestamp'})
+        self.assertTrue(all(item['admitted'] for item in result['config_changes']))
+
+    def test_vmnetuuid_change_refuses_with_the_missing_vendor_fact(self):
+        import linux_stage1
+        before = self.write_parallels_config(vmnet='{aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa}')
+        after = self.write_parallels_config(vmnet='{bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb}')
+        self.config.write_bytes(before)
+        req = self.request()
+        self.config.write_bytes(after)
+        with self.assertRaises(Refusal) as caught:
+            setup.stage1_verify_post(req, self.after())
+        self.assertIn(linux_stage1.VMNET_UUID_MISSING_FACT, str(caught.exception))
+        self.assertEqual(Path(req['retained']['config']).read_bytes(), before)
+        self.assertEqual((Path(req['retained']['config']).parent / 'post-config.bin').read_bytes(), after)
+
+    def test_protected_mac_disk_and_structure_mutations_refuse(self):
+        before = self.write_parallels_config()
+        mutations = (
+            self.write_parallels_config(mac='ffffffffffff'),
+            before.replace(b'<Enabled>1</Enabled>', b'<Enabled>0</Enabled>'),
+            before.replace(b'</Hardware>', b'<Extra/></Hardware>'),
+            b'<not-xml',
+        )
+        for mutated in mutations:
+            self.config.write_bytes(before)
+            req = self.request()
+            self.config.write_bytes(mutated)
+            with self.assertRaises(Refusal):
+                setup.stage1_verify_post(req, self.after())
+
+    def test_uptime_or_usb_timestamp_malformed_or_backwards_refuse(self):
+        import linux_stage1
+        before = self.write_parallels_config(uptime='10', stamps=('100', '100'))
+        mutations = (
+            self.write_parallels_config(uptime='9', stamps=('100', '100')),
+            self.write_parallels_config(uptime='11', stamps=('90', '100')),
+            self.write_parallels_config(uptime='not-an-int', stamps=('100', '100')),
+            self.write_parallels_config(uptime='²', stamps=('100', '100')),
+            self.write_parallels_config(uptime='10', stamps=('①', '100')),
+        )
+        for mutated in mutations:
+            self.config.write_bytes(before)
+            req = self.request()
+            self.config.write_bytes(mutated)
+            with self.assertRaises(Refusal):
+                setup.stage1_verify_post(req, self.after())
+        encoded = b'<?xml version="1.0" encoding="no-such-codec"?><vm/>'
+        with self.assertRaises(observations.Refusal):
+            linux_stage1.compare_protected_config(encoded, encoded)
+
+
+class Stage1CallerChecks(unittest.TestCase):
+    """Injected-transport Stage1 run: systemd wait, same-boot probe, stop, post-state."""
+
+    def setUp(self):
+        self.root = tmpdir('pvm-')
+        self.home = self.root / 'Ubuntu 26.04 ARM64.pvm'
+        self.home.mkdir()
+        self.config = self.home / 'config.pvs'
+        self.config.write_bytes(b'<vm><clock>1</clock></vm>')
+        self.disk = self.home / 'harddisk1.hdd'
+        self.disk.mkdir()
+        self.top, self.base = setup.CURRENT_SNAPSHOT, BASE_GUID
+        self.top_file = 'harddisk1.hdd.0.' + setup.CURRENT_SNAPSHOT + '.hds'
+        self.base_file = 'harddisk1.hdd.0.' + BASE_GUID + '.hds'
+        self.descriptor = Stage1Checks.write_descriptor(self, self.top, self.base)
+        (self.disk / 'DiskDescriptor.xml').write_bytes(self.descriptor)
+        (self.disk / self.top_file).write_bytes(b'aaaa')
+        (self.disk / self.base_file).write_bytes(b'bb')
+        patcher = patch.object(setup, 'PVM_HOME', str(self.home))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.obs = identity.observation(self.descriptor)
+        ident = lambda path: {'dev': path.lstat().st_dev, 'inode': path.lstat().st_ino, 'uid': path.lstat().st_uid}
+        self.fresh = {'home': str(self.home), 'uuid': setup.VM_UUID, 'probe_script': PROBE_SCRIPT,
+                      'state': 'stopped', 'snapshot_count': 36, 'current_snapshot': setup.CURRENT_SNAPSHOT,
+                      'clean_base_present': True, 'config_identity': ident(self.config),
+                      'bundle_identity': ident(self.home)}
+        self.calls = []
+
+    def make_request(self):
+        return setup.stage1_request(self.fresh, tmpdir('stage1-run-'), self.obs)
+
+    def after(self, **changes):
+        base = {'state': 'stopped', 'snapshot_count': 36, 'current_snapshot': setup.CURRENT_SNAPSHOT,
+                'clean_base_present': True}
+        base.update(changes)
+        return base
+
+    def transport_for(self, req, outcomes):
+        def transport(argv, timeout, output_cap):
+            step = next(s['id'] for s in req['steps'] if s['argv'] == argv)
+            self.calls.append((step, timeout, tuple(argv[-3:])))
+            return outcomes[step]
+        return transport
+
+    def ok_outcomes(self, state='running', boot=BOOT, probe=None):
+        probe = PROBE_OUTPUT if probe is None else probe
+        ok = {'disposition': 'exited', 'waited_exit': 0, 'stdout': b'', 'stderr': b''}
+        ready = dict(ok, stdout=(state + '\n').encode())
+        if state != 'running':
+            ready['disposition'] = 'failed'
+            ready['waited_exit'] = 1
+        return {
+            'S1.1': dict(ok), 'S1.1b': dict(ok), 'S1.2': dict(ok),
+            'S1.3': ready, 'S1.4': dict(ok, stdout=probe.encode()),
+            'S1.5': dict(ok), 'S1.6': dict(ok),
+        }
+
+    def test_readiness_timeout_never_extends_or_consumes_reserve(self):
+        self.assertEqual(setup.stage1_readiness_timeout(90, 435, 120), 90)
+        self.assertEqual(setup.stage1_readiness_timeout(90, 150, 120), 30)
+        with self.assertRaises(Refusal):
+            setup.stage1_readiness_timeout(90, 120, 120)
+        with self.assertRaises(Refusal):
+            setup.stage1_readiness_timeout(90, 100, 120)
+
+    def test_accept_readiness_only_running_exit_zero(self):
+        self.assertEqual(setup.stage1_accept_readiness(
+            {'disposition': 'exited', 'waited_exit': 0, 'stdout': b'running\n'}), 'running')
+        for state in ('degraded', 'unknown', 'starting', 'maintenance', 'stopping', 'offline'):
+            with self.assertRaises(Refusal):
+                setup.stage1_accept_readiness(
+                    {'disposition': 'failed', 'waited_exit': 1, 'stdout': state.encode()})
+        with self.assertRaises(Refusal):
+            setup.stage1_accept_readiness({'disposition': 'timeout', 'waited_exit': -1, 'stdout': b''})
+        with self.assertRaises(Refusal):
+            setup.stage1_accept_readiness({'disposition': 'exited', 'waited_exit': 0, 'stdout': b'weird\n'})
+        with self.assertRaises(Refusal):
+            setup.stage1_accept_readiness({'disposition': 'exited', 'waited_exit': 0, 'stdout': None})
+        with self.assertRaises(Refusal):
+            setup.stage1_accept_readiness(
+                {'disposition': 'exited', 'waited_exit': 1, 'stdout': b'running\n'})
+
+    def test_starting_then_running_on_the_same_clock_then_probe(self):
+        state_dir = tmpdir('syswait-')
+        state_file = state_dir / 'state'
+        state_file.write_text('starting\n')
+        fake = state_dir / 'systemctl'
+        fake.write_text(
+            '#!%s\n'
+            'import sys, time\n'
+            'from pathlib import Path\n'
+            'path = Path(%r)\n'
+            'assert sys.argv[1:] == ["is-system-running", "--wait"]\n'
+            'deadline = time.time() + 2\n'
+            'while time.time() < deadline:\n'
+            '    text = path.read_text().strip()\n'
+            '    if text not in ("starting", "initializing"):\n'
+            '        print(text)\n'
+            '        raise SystemExit(0 if text == "running" else 1)\n'
+            '    time.sleep(0.02)\n'
+            'print("unknown")\n'
+            'raise SystemExit(1)\n' % (sys.executable, str(state_file)))
+        fake.chmod(0o755)
+        outcomes = self.ok_outcomes()
+        req = self.make_request()
+
+        def transport(argv, timeout, output_cap):
+            step = next(s['id'] for s in req['steps'] if s['argv'] == argv)
+            self.calls.append(step)
+            if step == 'S1.3':
+                def flip():
+                    time.sleep(0.08)
+                    state_file.write_text('running\n')
+                threading.Thread(target=flip, daemon=True).start()
+                proc = subprocess.run([str(fake), 'is-system-running', '--wait'],
+                                      capture_output=True, timeout=timeout)
+                return {'disposition': 'exited' if proc.returncode == 0 else 'failed',
+                        'waited_exit': proc.returncode, 'stdout': proc.stdout, 'stderr': proc.stderr}
+            return outcomes[step]
+
+        clock = [0.0]
+        result = setup.stage1_run(req, self.after(), transport, clock=lambda: clock[0], started_at=0.0,
+                                  identity={'vm': setup.VM_UUID, 'boot_id': BOOT, 'host_key_fp': HOSTKEY})
+        self.assertEqual(result['readiness'], 'running')
+        self.assertEqual(result['probe']['system_state'], 'running')
+        self.assertEqual(result['probe']['boot_id'], BOOT)
+        self.assertIn('S1.3', self.calls)
+        self.assertIn('S1.4', self.calls)
+
+    def test_degraded_unknown_timeout_wrong_boot_no_stop_and_missing_post(self):
+        identity_ok = {'vm': setup.VM_UUID, 'boot_id': BOOT, 'host_key_fp': HOSTKEY}
+
+        def run(outcomes, after=None, identity=None):
+            req = self.make_request()
+            return setup.stage1_run(req, after or self.after(), self.transport_for(req, outcomes),
+                                    clock=lambda: 0.0, started_at=0.0, identity=identity or identity_ok), req
+
+        outcomes = self.ok_outcomes(state='degraded')
+        with self.assertRaises(Refusal) as caught:
+            run(outcomes)
+        self.assertIn('degraded', str(caught.exception))
+
+        outcomes = self.ok_outcomes(state='unknown')
+        with self.assertRaises(Refusal):
+            run(outcomes)
+
+        outcomes = self.ok_outcomes()
+        outcomes['S1.3'] = {'disposition': 'timeout', 'waited_exit': -1, 'stdout': b'', 'stderr': b''}
+        with self.assertRaises(Refusal):
+            run(outcomes)
+
+        outcomes = self.ok_outcomes()
+        with self.assertRaises(Refusal) as caught:
+            run(outcomes, identity={'vm': setup.VM_UUID, 'boot_id': 'other-boot', 'host_key_fp': HOSTKEY})
+        self.assertIn('boot or VM differs', str(caught.exception))
+
+        outcomes = self.ok_outcomes()
+        outcomes['S1.5'] = {'disposition': 'failed', 'waited_exit': 255, 'stdout': b'', 'stderr': b''}
+        with self.assertRaises(Refusal) as caught:
+            run(outcomes)
+        self.assertIn('client exit is not VM closure', str(caught.exception))
+
+        outcomes = self.ok_outcomes()
+        with self.assertRaises(Refusal):
+            run(outcomes, after=self.after(state='running'))
+
+        req = self.make_request()
+        os.chmod(self.config, 0)
+        self.addCleanup(lambda: os.chmod(self.config, 0o644))
+        with self.assertRaises(Refusal):
+            setup.stage1_run(req, self.after(), self.transport_for(req, self.ok_outcomes()),
+                             clock=lambda: 0.0, started_at=0.0, identity=identity_ok)
+        self.assertTrue(Path(req['retained']['config']).exists())
+
+    def test_host_deadline_for_wait_uses_remaining_minus_reserve(self):
+        outcomes = self.ok_outcomes()
+        seen = {}
+
+        req = self.make_request()
+
+        def transport(argv, timeout, output_cap):
+            step = next(s['id'] for s in req['steps'] if s['argv'] == argv)
+            seen[step] = timeout
+            return outcomes[step]
+
+        setup.stage1_run(req, self.after(), transport, clock=lambda: 400.0, started_at=0.0,
+                         identity={'vm': setup.VM_UUID, 'boot_id': BOOT, 'host_key_fp': HOSTKEY})
+        # remaining 200, reserve 120, step 90 → min(90, 80) = 80
+        self.assertEqual(seen['S1.3'], 80)
+
+    def test_omitted_identity_refuses_before_any_step(self):
+        req = self.make_request()
+        calls = []
+
+        def transport(argv, timeout, output_cap):
+            calls.append(argv)
+            return {'disposition': 'exited', 'waited_exit': 0, 'stdout': b'', 'stderr': b''}
+
+        with self.assertRaises(Refusal) as caught:
+            setup.stage1_run(req, self.after(), transport, clock=lambda: 0.0, started_at=0.0)
+        self.assertIn('occurrence identity', str(caught.exception))
+        self.assertEqual(calls, [])
+
+    def test_start_failure_still_attempts_graceful_stop(self):
+        identity_ok = {'vm': setup.VM_UUID, 'boot_id': BOOT, 'host_key_fp': HOSTKEY}
+        for start in (
+                {'disposition': 'timeout', 'waited_exit': -1, 'stdout': b'', 'stderr': b''},
+                {'disposition': 'failed', 'waited_exit': 1, 'stdout': b'', 'stderr': b''}):
+            req = self.make_request()
+            outcomes = self.ok_outcomes()
+            outcomes['S1.2'] = start
+            calls = []
+
+            def transport(argv, timeout, output_cap, outcomes=outcomes, calls=calls, req=req):
+                step = next(s['id'] for s in req['steps'] if s['argv'] == argv)
+                calls.append(step)
+                return outcomes[step]
+
+            with self.assertRaises(Refusal) as caught:
+                setup.stage1_run(req, self.after(), transport, clock=lambda: 0.0, started_at=0.0,
+                                 identity=identity_ok)
+            self.assertIn('client exit is not VM closure', str(caught.exception))
+            self.assertIn('S1.2', calls)
+            self.assertIn('S1.5', calls)
+            self.assertNotIn('S1.3', calls)
+            self.assertNotIn('S1.4', calls)
+            self.assertTrue((Path(req['retained']['config']).parent / 'post-config.bin').exists())
+
+
+class Genuine719ReplayChecks(unittest.TestCase):
+    """Replay retained 719 before/post bytes privately; hashes pin the originals."""
+
+    ROOT = Path('/Volumes/Stash/scratch/effigy/linux-artifact-preparation.l0tx7tam/'
+                'linux-observation-after-718.iqln6y5v/linux-diagnostic-observe-3081fce52a636bcbe1fd9423')
+    BEFORE = '9ca05a1d5bcf5b637e44e577133837154509d867d7a29330ba48d79e96f76c48'
+    POST = 'c069e773a9bdf0d7a81f4ec7fd23cd94c8f6486881e67506d69286ad271fe47b'
+    DESCRIPTOR = '974876501b91274d3e433d19f7ee5347fa23f5562b6062c8ccb8c8be194c09a0'
+
+    def test_genuine_719_hashes_and_classifies_without_setup_admission(self):
+        import linux_stage1
+        if not self.ROOT.is_dir():
+            self.skipTest('retained 719 originals are not present on this machine')
+        before = (self.ROOT / 'before-config').read_bytes()
+        post = (self.ROOT / 'post-config').read_bytes()
+        before_desc = (self.ROOT / 'before-descriptor').read_bytes()
+        post_desc = (self.ROOT / 'post-descriptor').read_bytes()
+        self.assertEqual(hashlib.sha256(before).hexdigest(), self.BEFORE)
+        self.assertEqual(hashlib.sha256(post).hexdigest(), self.POST)
+        self.assertEqual(hashlib.sha256(before_desc).hexdigest(), self.DESCRIPTOR)
+        self.assertEqual(hashlib.sha256(post_desc).hexdigest(), self.DESCRIPTOR)
+        self.assertNotEqual(before, post)
+        result = linux_stage1.config_transitions(before, post)
+        kinds = {item['kind']: item for item in result['changes']}
+        self.assertEqual(set(kinds), {'uptime', 'usb_timestamp', 'vmnet_uuid'})
+        self.assertTrue(kinds['uptime']['admitted'])
+        self.assertTrue(kinds['usb_timestamp']['admitted'])
+        self.assertFalse(kinds['vmnet_uuid']['admitted'])
+        self.assertIn(linux_stage1.VMNET_UUID_MISSING_FACT, kinds['vmnet_uuid']['reason'])
+        with self.assertRaises(observations.Refusal) as caught:
+            linux_stage1.compare_protected_config(before, post)
+        self.assertIn(linux_stage1.VMNET_UUID_MISSING_FACT, str(caught.exception))
+
 
 class PlacementMapChecks(unittest.TestCase):
     """The placement map must cover every module, driver, GO receipt and signature, exactly."""
@@ -1140,17 +1479,20 @@ class PlanFixture:
         return [{'guest_path': g, 'host_path': h, 'sha256': hashlib.sha256(Path(h).read_bytes()).hexdigest()}
                 for g, h in modules]
 
-    def stage1_fact(self):
+    def stage1_fact(self, config=None, post_config=None):
         """A signed synthetic occurrence; production needs the independent observer's receipt."""
         import linux_stage1
-        config, descriptor = b'<vm><clock>1</clock></vm>', b'<Disk/>'
+        config = b'<vm><clock>1</clock></vm>' if config is None else config
+        post_config = config if post_config is None else post_config
+        descriptor = b'<Disk/>'
         retained = {}
         for key, data in (('config', config), ('descriptor', descriptor),
-                          ('post_config', config), ('post_descriptor', descriptor)):
+                          ('post_config', post_config), ('post_descriptor', descriptor)):
             path = self.dir / (key + '.bin')
             path.write_bytes(data)
             retained[key] = str(path)
-        config_sha, descriptor_sha = (hashlib.sha256(x).hexdigest() for x in (config, descriptor))
+        config_sha, post_sha, descriptor_sha = (hashlib.sha256(x).hexdigest()
+                                                for x in (config, post_config, descriptor))
         extents = {setup.CURRENT_SNAPSHOT: {'path': '/synthetic/extent', 'parent': ZERO,
                                            'device': 1, 'inode': 2, 'size': 4}}
         fact = {'before': {'config_sha256': config_sha, 'descriptor_sha256': descriptor_sha,
@@ -1158,7 +1500,7 @@ class PlanFixture:
                            'chain': [setup.CURRENT_SNAPSHOT]},
                 'retained': retained,
                 'post': {'config_sha256': config_sha, 'growth_bytes': 0,
-                         'post_config_sha256': config_sha, 'post_descriptor_sha256': descriptor_sha,
+                         'post_config_sha256': post_sha, 'post_descriptor_sha256': descriptor_sha,
                          'extents': extents, 'chain': [setup.CURRENT_SNAPSHOT]},
                 'occurrence': {'nonce': 'stage1-test-occurrence', 'started_at': NOW - 300,
                                'finished_at': NOW - 1, 'vm': setup.VM_UUID,
@@ -1202,8 +1544,9 @@ class PlanFixture:
             'controls_payload': ['/bin/sh', '-c', 'true', 'sh'],
             'supervisor_installed': {'sha256': hashlib.sha256(setup.SUPERVISOR_SOURCE.read_bytes()).hexdigest()},
             'placements': self.module_placements(),
-            'stage1': self.stage1_fact(),
         }
+        if 'stage1' not in over:
+            facts['stage1'] = self.stage1_fact()
         facts.update(over)
         return facts
 
@@ -1404,7 +1747,27 @@ class AnchorChecks(unittest.TestCase):
     def test_stage1_post_growth_over_the_allowance_is_not_bound(self):
         facts = self.fx.facts(stage1=dict(self.fx.stage1_fact(), post={'config_sha256': 'x', 'growth_bytes': 0}))
         rows = {r['id']: r for r in setup.setup_plan(facts)}
-        self.assertTrue(any('Stage1 post-run config differs' in m for m in rows['E3a']['missing']))
+        self.assertTrue(any('Stage1' in m and ('original hash differs' in m or 'retained post' in m
+                                               or 'config transition' in m) for m in rows['E3a']['missing']))
+
+    def test_permitted_uptime_and_usb_transitions_still_bind(self):
+        writer = Stage1Checks.write_parallels_config
+        before = writer(None, uptime='394', stamps=('100', '200'))
+        after = writer(None, uptime='499', stamps=('150', '250'))
+        facts = self.fx.facts(stage1=self.fx.stage1_fact(config=before, post_config=after))
+        rows = {r['id']: r for r in setup.setup_plan(facts)}
+        self.assertFalse(any(m.startswith('Stage1') for m in rows['E3a']['missing']))
+        self.assertNotEqual(facts['stage1']['before']['config_sha256'],
+                            facts['stage1']['post']['post_config_sha256'])
+
+    def test_vmnetuuid_transition_is_not_bound(self):
+        import linux_stage1
+        writer = Stage1Checks.write_parallels_config
+        before = writer(None)
+        after = writer(None, vmnet='{bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb}')
+        facts = self.fx.facts(stage1=self.fx.stage1_fact(config=before, post_config=after))
+        rows = {r['id']: r for r in setup.setup_plan(facts)}
+        self.assertTrue(any(linux_stage1.VMNET_UUID_MISSING_FACT in m for m in rows['E3a']['missing']))
 
     def test_go_index_must_match_the_receipts(self):
         facts = self.fx.facts()
