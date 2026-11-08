@@ -669,8 +669,10 @@ def cgroup_route(units=('system.slice', 'user.slice')):
     if units is None:
         lines.append('unit_observation absent')
         return ('\n'.join(lines) + '\n').encode()
+    # The IO properties are emitted one documented device=rate pair per record, as the probe does.
     properties = {'MemoryMax': 'infinity', 'MemoryHigh': 'infinity', 'MemorySwapMax': 'infinity',
-                  'IOReadMax': 'infinity', 'IOWriteMax': 'infinity', 'TasksMax': '4915',
+                  'IOReadBandwidthMax': '/dev/vda=1048576', 'IOWriteBandwidthMax': '/dev/vda=2097152',
+                  'IOReadIOPSMax': '/dev/vda=100', 'IOWriteIOPSMax': 'empty', 'TasksMax': '4915',
                   'CPUWeight': '100'}
     for unit in units:
         lines.append('unit %s present' % unit)
@@ -821,7 +823,16 @@ class WriterBoundObservationTests(unittest.TestCase):
         self.assertEqual(result['facts']['control_groups']['files']['cgroup.controllers']['controllers'],
                          ['cpuset', 'cpu', 'io', 'memory', 'pids'])
         self.assertEqual(result['facts']['control_groups']['units']['system.slice']['properties']
-                         ['IOWriteMax'], {'status': 'observed', 'value': 'infinity'})
+                         ['IOWriteBandwidthMax'],
+                         {'status': 'observed',
+                          'devices': [{'device': '/dev/vda', 'rate': '2097152'}]})
+        self.assertEqual(result['facts']['control_groups']['units']['system.slice']['properties']
+                         ['IOReadIOPSMax'],
+                         {'status': 'observed', 'devices': [{'device': '/dev/vda', 'rate': '100'}]})
+        self.assertEqual(result['facts']['control_groups']['units']['system.slice']['properties']
+                         ['IOWriteIOPSMax'], {'status': 'empty', 'devices': []})
+        self.assertEqual(result['limits']['io_write_bandwidth_max'].startswith('per-device write rate'),
+                         True)
         self.assertEqual(result['complete'], True)
         self.assertEqual(result['findings'], [])
 
@@ -892,10 +903,111 @@ class WriterBoundObservationTests(unittest.TestCase):
         self.assertEqual(root['ancestry'], ['dm-1', 'dm-0'])
         self.assertIn('the root controller is virtual and this schema cannot resolve it to one controller',
                       root['reasons'])
-        # An ambiguous mapper is a recorded fact, not a failed read: no finding and no claim.
-        self.assertEqual(result['findings'], [])
+        # The ambiguity is recorded and it is not hidden: the receipt cannot read as complete or
+        # eligible while no writer bound is established, and every route's own status stays honest.
+        self.assertTrue(any('root controller or ancestry is ambiguous' in finding
+                            for finding in result['findings']))
+        self.assertFalse(result['complete'])
+        self.assertEqual(result['observation_eligibility'],
+                         'not eligible: the root controller or ancestry is ambiguous, so no writer '
+                         'bound is established')
         self.assertEqual(result['limits']['writer_association'], 'not established')
         self.assertEqual(statuses(result)['block-lsblk'], 'absent')
+        self.assertEqual(statuses(result)['block-sysfs'], guest_probe.OBSERVED)
+
+    def test_absent_encoder_records_attributes_as_unavailable(self):
+        blocks = block_sysfs([block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda'),
+                             block_record('vda2', '254:2', 1, 267386880, VIRTIO + '/block/vda/vda2')],
+                            ['attr vda serial unavailable\n', 'attr vda model unavailable\n',
+                             'attr vda vendor unavailable\n'], encoding='unavailable')
+        result, _, retained = self.observe(observation_outputs(**{'block-sysfs': (0, blocks)}))
+        disk = result['facts']['disks'][0]
+        self.assertEqual(statuses(result)['block-sysfs'], guest_probe.OBSERVED)
+        for field in ('serial', 'model', 'vendor'):
+            self.assertEqual(disk[field], {'status': 'unavailable'})
+        self.assertEqual(result['facts']['block_inventory']['sysfs_encoding'], 'unavailable')
+        self.assertIn(b'attr vda serial unavailable', retained['block-sysfs'])
+        # A hex payload without an encoder is refused instead of being read as text.
+        broken = blocks + b'attr vda serial hex:41\n'
+        result, _, _ = self.observe(observation_outputs(**{'block-sysfs': (0, broken)}))
+        self.assertEqual(statuses(result)['block-sysfs'], guest_probe.MALFORMED)
+        self.assertFalse(result['complete'])
+
+    def test_real_probe_scripts_decode_their_own_output(self):
+        """The reviewed scripts are run for real, so no fixture invents a record they never emit."""
+        tree = fixture()
+        (tree / 'sys' / 'fs' / 'cgroup').mkdir(parents=True)
+        for name in ('cgroup.controllers', 'cgroup.subtree_control'):
+            (tree / 'sys' / 'fs' / 'cgroup' / name).write_text('cpuset cpu io memory pids\n')
+        (tree / 'bin').mkdir()
+        systemctl = tree / 'bin' / 'systemctl'
+        systemctl.write_text('#!/bin/sh\n'
+                             'printf "MemoryMax=infinity\\nMemoryHigh=infinity\\n'
+                             'MemorySwapMax=infinity\\nIOReadBandwidthMax=/dev/sda 1048576 '
+                             '/dev/sdb 2048\\nIOWriteBandwidthMax=/dev/sda 4096\\n'
+                             'IOReadIOPSMax=\\nIOWriteIOPSMax=/dev/sda 100\\n'
+                             'TasksMax=4915\\nCPUWeight=100\\n"\n')
+        systemctl.chmod(0o700)
+        script = guest_probe.CGROUP_UNITS.replace('/sys/fs/cgroup', str(tree / 'sys' / 'fs' / 'cgroup'))
+        script = script.replace('systemctl', str(systemctl))
+        run = subprocess.run(['/bin/sh', '-c', script], capture_output=True, timeout=60,
+                             env={'PATH': str(tree / 'bin') + ':/usr/bin:/bin', 'LC_ALL': 'C'})
+        self.assertEqual(run.returncode, 0, run.stderr)
+        route = next(item for item in guest_probe.ROUTES if item['id'] == 'cgroup-units')
+        status, facts, reasons = guest_probe.decode(
+            route, {'disposition': 'exited', 'waited_exit': 0}, run.stdout)
+        self.assertEqual((status, reasons), (guest_probe.OBSERVED, []))
+        properties = facts['units']['system.slice']['properties']
+        self.assertEqual(properties['MemoryMax'], {'status': 'observed', 'value': 'infinity'})
+        self.assertEqual(properties['IOWriteBandwidthMax'],
+                         {'status': 'observed', 'devices': [{'device': '/dev/sda', 'rate': '4096'}]})
+        self.assertEqual([item['device'] for item in properties['IOReadBandwidthMax']['devices']],
+                         ['/dev/sda', '/dev/sdb'])
+        self.assertEqual(properties['IOReadIOPSMax'], {'status': 'empty', 'devices': []})
+        self.assertEqual(sorted(facts['files']), ['cgroup.controllers', 'cgroup.subtree_control'])
+
+        # The documented version flag differs per tool: dumpe2fs refuses --version and accepts -V.
+        tools = tree / 'tools'
+        tools.mkdir()
+        (tools / 'lsblk').write_text('#!/bin/sh\n[ "$1" = --version ] || exit 1\n'
+                                     'echo "lsblk from util-linux 2.39.3"\n')
+        (tools / 'dumpe2fs').write_text('#!/bin/sh\n[ "$1" = -V ] || exit 1\n'
+                                        'echo "dumpe2fs 1.47.0"\n')
+        for name in ('lsblk', 'dumpe2fs'):
+            (tools / name).chmod(0o700)
+        run = subprocess.run(['/bin/sh', '-c', guest_probe.CAPABILITIES], capture_output=True, timeout=60,
+                             env={'PATH': str(tools), 'LC_ALL': 'C'})
+        self.assertEqual(run.returncode, 0, run.stderr)
+        route = next(item for item in guest_probe.ROUTES if item['id'] == 'capabilities')
+        status, facts, reasons = guest_probe.decode(
+            route, {'disposition': 'exited', 'waited_exit': 0}, run.stdout)
+        self.assertEqual((status, reasons), (guest_probe.OBSERVED, []))
+        self.assertEqual(facts['versions'], {'lsblk': 'lsblk from util-linux 2.39.3',
+                                             'dumpe2fs': 'dumpe2fs 1.47.0'})
+        self.assertEqual(facts['quota_tools']['repquota'], 'absent')
+        self.assertEqual(facts['tools']['lsblk'], str(tools / 'lsblk'))
+
+    def test_complete_dump_with_a_failed_exit_is_not_an_observation(self):
+        result, _, retained = self.observe(observation_outputs(**{'filesystem': (1, filesystem_route())}))
+        row = next(item for item in result['routes'] if item['id'] == 'filesystem')
+        self.assertEqual(row['status'], guest_probe.FAILED)
+        self.assertEqual(row['facts']['project_feature'], 'present')
+        self.assertIn('after its dump', row['reasons'][0])
+        self.assertFalse(result['complete'])
+        self.assertTrue(any('writer-bound observation filesystem' in finding for finding in result['findings']))
+        self.assertIn(b'Filesystem features:', retained['filesystem'])
+
+    def test_lsblk_failed_read_is_not_an_unsupported_command(self):
+        result, _, _ = self.observe(observation_outputs(**{'block-lsblk': (125, b'')}))
+        row = next(item for item in result['routes'] if item['id'] == 'block-lsblk')
+        self.assertEqual(row['status'], guest_probe.FAILED)
+        self.assertIn('could not be verified', row['reasons'][0])
+        self.assertFalse(result['complete'])
+        result, _, _ = self.observe(observation_outputs(**{'block-lsblk': (126, b'')}))
+        row = next(item for item in result['routes'] if item['id'] == 'block-lsblk')
+        self.assertEqual(row['status'], guest_probe.UNSUPPORTED)
+        self.assertEqual(result['findings'], [])
+        self.assertTrue(result['complete'])
 
     def test_absent_capability_is_a_negative_observation(self):
         result, _, _ = self.observe(observation_outputs(**ABSENT_ROUTES))
@@ -963,6 +1075,10 @@ class WriterBoundObservationTests(unittest.TestCase):
             'lsblk extra column': {'block-lsblk': (0, (json.dumps({'blockdevices': [
                 {'name': 'vda', 'maj:min': '254:0', 'pkname': None, 'type': 'disk', 'size': 1024,
                  'zone': 'none'}]}) + '\n').encode())},
+            'io property pair': {'cgroup-units': (0, b'file cgroup.controllers cpu\n'
+                                                     b'unit system.slice present\n'
+                                                     b'property system.slice IOReadBandwidthMax '
+                                                     b'/dev/vda=abc\n')},
             'unknown record': {'capabilities': (0, b'tool lsblk /usr/bin/lsblk\nshell rm -rf /\n')},
             'records after the dump': {'filesystem': (0, filesystem_route().replace(
                 b'Filesystem state:', b'obs status observed\nFilesystem state:'))},
@@ -1049,7 +1165,8 @@ class WriterBoundObservationTests(unittest.TestCase):
         self.assertEqual(limits['aggregate_filesystem_allocation'], 'not established')
         self.assertEqual(limits['guest_disk_association'], 'unknown')
         self.assertEqual(limits['setup_credit'], 'none')
-        self.assertIn('rate', limits['io_write_max'])
+        self.assertIn('rate', limits['io_write_bandwidth_max'])
+        self.assertIn('not an aggregate allocation', limits['io_write_bandwidth_max'])
         self.assertIn('not an aggregate allocation', limits['memory_max'])
         self.assertIn('not a filesystem allocation quota', limits['rlimit_fsize'])
         # A same-shaped serial or size is never turned into a host/guest equality.
@@ -1704,6 +1821,25 @@ class CheckoutBindingTests(unittest.TestCase):
             (path / module / 'linux_diagnostic.py').unlink()
             return request
 
+        def changed_observation_source(path, request):
+            # The new writer-bound read module is part of the complete input inventory.
+            with (path / module / 'linux_diagnostic_probe.py').open('a') as source:
+                source.write('\n# drift\n')
+            return request
+
+        def missing_observation_source(path, request):
+            (path / module / 'linux_diagnostic_probe.py').unlink()
+            return request
+
+        def changed_route_binding(path, request):
+            # A changed fixed route (its timeout, like any reviewed byte) changes the route digest,
+            # so the recomputed plan refuses the request before any dispatch.
+            source = path / module / 'linux_diagnostic_probe.py'
+            text = source.read_text()
+            source.write_text(text.replace("{'id': 'block-sysfs', 'script': BLOCK_SYSFS, 'timeout': 20}",
+                                           "{'id': 'block-sysfs', 'script': BLOCK_SYSFS, 'timeout': 21}", 1))
+            return request
+
         def extra_request_role(path, request):
             return dict(request, repository=dict(request['repository'], **{module + 'extra_input.py': '0' * 64}))
 
@@ -1712,6 +1848,9 @@ class CheckoutBindingTests(unittest.TestCase):
             ('untracked extra source', untracked_extra, 'not clean'),
             ('changed source', uncommitted_change, 'bindings drifted'),
             ('missing source', missing_source, 'input unavailable'),
+            ('changed observation source', changed_observation_source, 'bindings drifted'),
+            ('missing observation source', missing_observation_source, 'input unavailable'),
+            ('changed route binding', changed_route_binding, 'bindings drifted'),
             ('extra request role', extra_request_role, 'bindings drifted'),
         ]
         for number, (name, mutate, message) in enumerate(cases):

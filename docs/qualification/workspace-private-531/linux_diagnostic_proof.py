@@ -281,7 +281,7 @@ def execute(request, request_path, request_hash):
                'observation_failures': [],
                'guest_writer_bound': {'schema': 'linux-writer-bound-observation-v1',
                                       'status': 'not attempted',
-                                      'reason': 'the boot-complete probe did not complete',
+                                      'reason': 'the boot-complete probe or the writer-bound dispatch did not complete',
                                       'routes_sha256': guest_probe.routes_digest(), 'routes': [],
                                       'facts': {}, 'limits': dict(guest_probe.LIMITS),
                                       'complete': False, 'findings': []},

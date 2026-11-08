@@ -48,6 +48,8 @@ OPTION = re.compile(r'^[A-Za-z0-9_=+.:-]{1,64}$')
 CONTROLLER = re.compile(r'^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$')
 HEX = re.compile(r'^[0-9a-f]{0,2048}$')
 PROPERTY = re.compile(r'^(infinity|[0-9]{1,20})$')
+IO_DEVICE = re.compile(r'^/[A-Za-z0-9._:/+@-]{1,255}$')
+IO_RATE = re.compile(r'^(infinity|[0-9]{1,20})$')
 
 # A device-map, software-raid, loop or otherwise virtual controller cannot be resolved to one
 # physical controller by this schema; the facts say so instead of guessing.
@@ -56,8 +58,11 @@ CONTROLLER_KINDS = (('virtio', re.compile(r'^virtio[0-9]+$')), ('ata', re.compil
                     ('mmc', re.compile(r'^mmc[0-9]+$')), ('scsi', re.compile(r'^host[0-9]+$')),
                     ('pci', CONTROLLER), ('virtual', re.compile(r'^(dm|md|loop|nbd|zram|ram)[0-9]*$')))
 
-PROPERTY_KEYS = ('MemoryMax', 'MemoryHigh', 'MemorySwapMax', 'IOReadMax', 'IOWriteMax', 'TasksMax',
-                 'CPUWeight')
+# Documented systemd resource-control properties. The IO entries are a(st) device+rate lists, so
+# they decode as bounded device=rate pairs and never as a scalar byte count.
+SCALAR_PROPERTY_KEYS = ('MemoryMax', 'MemoryHigh', 'MemorySwapMax', 'TasksMax', 'CPUWeight')
+ARRAY_PROPERTY_KEYS = ('IOReadBandwidthMax', 'IOWriteBandwidthMax', 'IOReadIOPSMax', 'IOWriteIOPSMax')
+PROPERTY_KEYS = SCALAR_PROPERTY_KEYS + ARRAY_PROPERTY_KEYS
 QUOTA_TOOLS = ('repquota', 'quota', 'quotacheck', 'quotaon', 'edquota')
 CAPABILITY_TOOLS = ('lsblk', 'findmnt', 'blkid', 'dumpe2fs', 'tune2fs', 'repquota', 'quota', 'quotacheck',
                     'quotaon', 'edquota', 'systemctl', 'systemd-run', 'readlink', 'od')
@@ -80,8 +85,11 @@ LIMITS = {
     'host_guest_serial_equality': 'not established and not inferred from a similar size, model or name',
     'memory_max': 'byte bound of one control group; bounds memory and is not an aggregate allocation',
     'memory_high': 'throttling byte threshold of one control group; not an allocation',
-    'io_write_max': 'write rate in bytes per second; it is a rate and not an aggregate allocation',
-    'io_read_max': 'read rate in bytes per second; it is a rate and not an aggregate allocation',
+    'io_write_bandwidth_max': ('per-device write rate in bytes per second (the brief IOWriteMax '
+                               'shorthand); a rate, not an aggregate allocation'),
+    'io_read_bandwidth_max': ('per-device read rate in bytes per second; a rate, not an aggregate allocation'),
+    'io_read_iops_max': 'per-device read operations per second; a rate, not an allocation',
+    'io_write_iops_max': 'per-device write operations per second; a rate, not an allocation',
     'tasks_max': 'task count bound of one control group; not an allocation',
     'rlimit_fsize': 'a per-file size limit is not a filesystem allocation quota',
     'sampling_and_post_growth': 'sampled counters and post-growth checks are not an allocation quota',
@@ -120,6 +128,7 @@ for d in /sys/class/block/*; do
     for a in serial model vendor; do
       f="/sys/class/block/$n/device/$a"
       if [ ! -e "$f" ]; then printf 'attr %s %s missing\\n' "$n" "$a"; continue; fi
+      if [ "$encoding" != hex ]; then printf 'attr %s %s unavailable\\n' "$n" "$a"; continue; fi
       h=$(cat "$f" 2>/dev/null | encode)
       if [ -z "$h" ]; then printf 'attr %s %s empty\\n' "$n" "$a"
       else printf 'attr %s %s hex:%s\\n' "$n" "$a" "$h"; fi
@@ -132,10 +141,14 @@ BLOCK_LSBLK = '''# effigy-linux-observation: block-lsblk
 LC_ALL=C
 export LC_ALL
 command -v lsblk >/dev/null 2>&1 || exit 127
-# The documented JSON invocation is checked before the evidence read: a build that refuses it is
-# an unsupported command, not a failed or truncated read.
-lsblk -J -b -o NAME >/dev/null 2>&1 || exit 126
-exec lsblk -J -b -o NAME,MAJ:MIN,PKNAME,TYPE,SIZE,FSTYPE,UUID,MOUNTPOINT
+# The documented invocation is checked before the evidence read. A build that reports the option
+# itself as unknown is unsupported (126); any other failed check stays a failed read (125) so a
+# broken read is never reported as an unsupported command. -a keeps size-zero devices visible.
+error=$(lsblk -J -a -b -o NAME 2>&1 >/dev/null) || case $error in
+  *"unrecognized option"*|*"invalid option"*|*"unknown option"*) exit 126;;
+  *) exit 125;;
+esac
+exec lsblk -J -a -b -o NAME,MAJ:MIN,PKNAME,TYPE,SIZE,FSTYPE,UUID,MOUNTPOINT
 '''
 
 MOUNTINFO = '''# effigy-linux-observation: mountinfo
@@ -217,9 +230,12 @@ for t in lsblk findmnt blkid dumpe2fs tune2fs repquota quota quotacheck quotaon 
 done
 for t in lsblk findmnt dumpe2fs; do
   command -v "$t" >/dev/null 2>&1 || continue
-  v=$("$t" --version 2>/dev/null | while IFS= read -r l; do printf '%s' "$l"; break; done)
-  if [ -z "$v" ]; then printf 'version %s absent\\n' "$t"; continue; fi
-  case $v in *[!A-Za-z0-9._:+ /-]*) v=invalid;; esac
+  case $t in
+    dumpe2fs) flag=-V ;;
+    *) flag=--version ;;
+  esac
+  v=$("$t" "$flag" 2>/dev/null | while IFS= read -r l; do printf '%s' "$l"; break; done)
+  if [ -z "$v" ]; then printf 'version %s unavailable\\n' "$t"; continue; fi
   printf 'version %s %s\\n' "$t" "$v"
 done
 '''
@@ -232,19 +248,31 @@ for f in cgroup.controllers cgroup.subtree_control; do
   if [ ! -r "$p" ]; then printf 'file %s unreadable\\n' "$f"; continue; fi
   v=$(cat "$p" 2>/dev/null) || v=
   if [ -z "$v" ]; then printf 'file %s empty\\n' "$f"; continue; fi
-  case $v in *[!A-Za-z0-9_ +-]*) v=invalid;; esac
+  # Controller names are space separated; the decoder validates every name.
   printf 'file %s %s\\n' "$f" "$v"
 done
 if ! command -v systemctl >/dev/null 2>&1; then printf 'unit_observation absent\\n'; exit 0; fi
 for u in system.slice user.slice; do
-  out=$(systemctl show -p MemoryMax -p MemoryHigh -p MemorySwapMax -p IOReadMax -p IOWriteMax -p TasksMax -p CPUWeight -- "$u" 2>/dev/null) || out=
+  out=$(systemctl show -p MemoryMax -p MemoryHigh -p MemorySwapMax -p IOReadBandwidthMax -p IOWriteBandwidthMax -p IOReadIOPSMax -p IOWriteIOPSMax -p TasksMax -p CPUWeight -- "$u" 2>/dev/null) || out=
   if [ -z "$out" ]; then printf 'unit %s unreadable\\n' "$u"; continue; fi
   printf 'unit %s present\\n' "$u"
   printf '%s\\n' "$out" | while IFS= read -r l; do
     k=${l%%=*}
     v=${l#*=}
-    case $k in MemoryMax|MemoryHigh|MemorySwapMax|IOReadMax|IOWriteMax|TasksMax|CPUWeight) ;; *) continue;; esac
-    if [ -z "$v" ]; then v=empty; fi
+    case $k in
+      MemoryMax|MemoryHigh|MemorySwapMax|TasksMax|CPUWeight) ;;
+      IOReadBandwidthMax|IOWriteBandwidthMax|IOReadIOPSMax|IOWriteIOPSMax) ;;
+      *) continue;;
+    esac
+    if [ -z "$v" ]; then printf 'property %s %s empty\\n' "$u" "$k"; continue; fi
+    case $k in
+      IO*)
+        set -f
+        set -- $v
+        if [ "$(($# % 2))" -ne 0 ]; then printf 'property %s %s invalid\\n' "$u" "$k"; continue; fi
+        while [ $# -ge 2 ]; do printf 'property %s %s %s=%s\\n' "$u" "$k" "$1" "$2"; shift 2; done
+        continue;;
+    esac
     case $v in *[!A-Za-z0-9._+-]*) v=invalid;; esac
     printf 'property %s %s %s\\n' "$u" "$k" "$v"
   done
@@ -746,13 +774,29 @@ def parse_cgroup_units(raw):
         if kind == 'property':
             if len(row) != 4 or row[1] not in units or row[2] not in PROPERTY_KEYS:
                 raise Bad(MALFORMED, 'invalid property record')
-            if (row[1], row[2]) in properties:
+            key, value = (row[1], row[2]), row[3]
+            if row[2] in ARRAY_PROPERTY_KEYS:
+                # One record per documented device=rate pair; a list value never carries a space.
+                if value in ('empty', 'invalid'):
+                    if key in properties:
+                        raise Bad(MALFORMED, 'duplicate or mixed IO property record')
+                    properties[key] = {'status': value, 'devices': []}
+                    continue
+                device, separator, rate = value.partition('=')
+                if not separator or not IO_DEVICE.match(device) or not IO_RATE.match(rate):
+                    raise Bad(MALFORMED, 'an IO property carries an invalid device+rate pair')
+                record = properties.setdefault(key, {'status': 'observed', 'devices': []})
+                if record['status'] != 'observed' or any(item['device'] == device
+                                                         for item in record['devices']):
+                    raise Bad(MALFORMED, 'duplicate or mixed IO property record')
+                record['devices'].append({'device': device, 'rate': rate})
+                continue
+            if key in properties:
                 raise Bad(MALFORMED, 'duplicate property record')
-            value = row[3]
             if value in ('empty', 'invalid'):
-                properties[(row[1], row[2])] = {'status': value}
+                properties[key] = {'status': value}
             elif PROPERTY.match(value):
-                properties[(row[1], row[2])] = {'status': 'observed', 'value': value}
+                properties[key] = {'status': 'observed', 'value': value}
             else:
                 raise Bad(MALFORMED, 'a unit property carries an invalid value')
             continue
@@ -784,7 +828,9 @@ def decode(route, result, raw):
     if code == 127:
         return ABSENT, {}, ['the documented tool is not installed']
     if code == 126:
-        return UNSUPPORTED, {}, ['the fixed invocation was refused by the guest']
+        return UNSUPPORTED, {}, ['the documented invocation is not supported by this guest build']
+    if code == 125 and route['id'] == 'block-lsblk':
+        return FAILED, {}, ['the documented invocation could not be verified, so the read is not an observation']
     if route['id'] == 'filesystem':
         try:
             status, facts, reasons = parse_filesystem(raw)
@@ -794,6 +840,10 @@ def decode(route, result, raw):
             if status != OBSERVED:
                 return MALFORMED, {}, ['the read exited successfully but reported ' + status]
             return OBSERVED, facts, reasons
+        if status == OBSERVED:
+            # A complete dump from a read that still failed is a partial observation: the facts
+            # are retained but the read never becomes an observation.
+            return FAILED, facts, ['the fixed read exited ' + str(code) + ' after its dump']
         return status, facts, reasons
     if code not in (0, None):
         reasons = ['the fixed read exited ' + str(code)]
@@ -1019,10 +1069,23 @@ def summarize(rows):
     if agreement.get('status') == 'differs':
         findings.append('writer-bound observation: block inventories differ (' +
                         '; '.join(agreement['reasons']) + ')')
+    root = facts.get('root', {})
+    ambiguity = root.get('status') == 'ambiguous'
+    if ambiguity:
+        findings.append('writer-bound observation: the root controller or ancestry is ambiguous (' +
+                        '; '.join(root.get('reasons', [])) + ')')
+    elif root.get('status') != 'resolved':
+        findings.append('writer-bound observation: the root device or mount is unresolved')
+    complete = not findings and not any(row['status'] in INCOMPLETE for row in rows)
+    if complete:
+        eligibility = 'eligible for a later reviewed correlation mechanism'
+    elif ambiguity:
+        eligibility = ('not eligible: the root controller or ancestry is ambiguous, so no writer '
+                       'bound is established')
+    else:
+        eligibility = 'incomplete: missing facts stay unknown and grant nothing'
     return {'schema': 'linux-writer-bound-observation-v1', 'routes_sha256': routes_digest(),
             'routes': rows, 'facts': facts, 'limits': dict(LIMITS),
-            'observation_eligibility': ('eligible for a later reviewed correlation mechanism'
-                                        if not findings else
-                                        'incomplete: missing facts stay unknown and grant nothing'),
-            'complete': not findings and not any(row['status'] in INCOMPLETE for row in rows),
+            'observation_eligibility': eligibility,
+            'complete': complete,
             'findings': findings}
