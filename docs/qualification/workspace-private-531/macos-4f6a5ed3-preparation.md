@@ -7,6 +7,21 @@ naming the stage, the manifest, source and input hashes, the engine identity and
 of at most 1200 seconds. The standing decision is not a blanket authority, and no GO is
 recorded here.
 
+## Revision r4 (supersedes r3 for D1 and D4)
+
+r3 refused D1 because `docker volume create` is idempotent and the name was caller-derived, so exclusive
+creation could not be established. r4 names no volume in the create. The engine generates the name, the
+create prints it, and the receipt is the inspect of that printed name with this occurrence's label. D4
+re-observes the engine and each exact target before its own removal, compares it with the receipt that
+produced the target, and includes the complete image inventory in the before and after foreign lists.
+The contract is source-qualified by controlled transports. Native execution remains under a separate
+owner GO and a Nucleus proof-only launch. D2 and D3 remain held, so D4 is not admitted. Details are in the
+D1, D4 and Executor sections below.
+
+The D1 window request names the original D0 receipt (`prior_receipt`, exact path and sha256). It verifies
+that receipt's complete chain at plan time and at launch. It also pins the control root and the two Docker
+directories to the identities the original D0 helper recorded. D0 is not rerun and is not relabelled.
+
 ## Revision r3 (supersedes r2)
 
 r2 (`macos-4f6a5ed3-stages-r2`, manifest sha256 `50d6f46c…`, `macos_preparation.py`
@@ -164,8 +179,11 @@ Desktop (`desktop`), with the pinned env above:
 
 - **D0** endpoint, owned dirs and baseline (unchanged from r2). The owned/foreign split is
   observation only.
-- **D1** owned volume `effigy-4f6a-qual-<token>`, labelled `effigy.qual=<token>`, then
-  `volume inspect` as the creation receipt.
+- **D1** owned fixture volume, named by the engine (r4). The create names no volume:
+  `docker volume create --label effigy.qual=<token>` prints one engine-generated 64-hex name. Before it, a
+  label observation (`volume ls --filter label=effigy.qual=<token>`) must be empty. After it, `volume inspect`
+  of that exact printed name must carry the same name and this occurrence's label. Both streams are retained.
+  Not a receipt unless the inspect closed. Window 300 s, reserve 60 s, storage cap 1 MiB, download 0.
 - **D2** runtime image, 1200 s stage: stage the Dockerfile, then
   `docker build --platform linux/arm64 --provenance=false --label effigy.qual=<token> --tag
   effigy-4f6a-desktop-runtime:<token> --iidfile {desktop_iidfile} {desktop_context_dir}`.
@@ -178,15 +196,20 @@ Desktop (`desktop`), with the pinned env above:
   effigy.qual=<token> --name effigy-4f6a-dcheck-<token> --cidfile {desktop_cidfile}
   {image_id} python3 -I -c {check_source}`, host envelope 240 s. The cidfile is read as
   the container creation receipt, and the facts are checked.
-- **D4** cleanup by receipt only: observe the engine ID (`docker info`), then ps, volume
-  and the image by authenticated ID (`docker image inspect {image_id}`, which carries
-  RepoTags and Config.Labels; `docker image ls` does not, so it is not used). The helper
-  refuses if the engine ID changed since D0, then selects with `occurrence_receipts`: the
-  names and labels each stage set, bound to the IDs its own outputs returned.
-  An image that cannot be inspected by its ID refuses the selection; nothing is removed
-  and the occurrence is retained. Only exact
-  matches on this engine are removed, by ID. Unauthorized and foreign resources are never
-  touched. Each removal runs only when its selected set is non-empty.
+- **D4** cleanup by creation receipt only (r4). Observations: engine (`docker info`), `ps -a`, `volume ls`,
+  the complete image inventory (`image ls --all --no-trunc`), and the selected image's inspect by ID. The
+  helper `select_cleanup_targets` selects only receipted creations on this engine. Each class (containers,
+  volumes, images) then runs, only if it selected exactly one target: a fresh `docker info`, an exact
+  `inspect` of that target, the helper `check_cleanup_target`, and the removal. The check compares every
+  immutable fact the receipt kept (name, driver, scope, mountpoint, creation time, labels for volumes;
+  ID, repo tags, creation time, OS, architecture, labels for images; ID, name and label for containers).
+  Any drift, missing fact, foreign label or replacement refuses before that removal. After the removals:
+  `ps -a`, `volume ls` and the complete image inventory. Foreign lists must equal the lists observed
+  before the first removal. Removals are `docker rm`, `docker volume rm` and `docker image rm` by exact
+  ID or name, never `-f`, never prune. Stage budget 600 s, reserve 60 s, step total 460 s. The pre-removal
+  check is not an atomic conditional delete: the engine can change between the check and the removal, and
+  the post-compare is the only detection after that. Each class with no selection is recorded as skipped.
+
 
 ## Proof-entry bindings (G1–G3, gated)
 
@@ -260,11 +283,22 @@ Gates:
 - `c4-nerdctl-build-help` reads flag metadata before the build. The build only starts if
   `--iidfile`, `--platform` and `--provenance` are in the guest's own help text.
 
-- Manifest changes: pre-effect steps `d1-engine-info` and `d1-volume-absent` before the D1 create, and
-  `d2-engine-info` and `d3-engine-info` before their effects. D1's three volume argv take the
-  per-activation `{owned_volume_name}` in place of the fixed name. D4 gains `d4-post-ps` and
-  `d4-post-volume` after its removals, and its stage budget grows from 300 to 360 seconds so the
-  step total (280) still fits under the reserve. Each stage's step total stays under its budget.
+- Manifest r4 changes, D1 and D4 only. C0 and D0 are byte-identical to r2 and r3. D1 replaces
+  `d1-volume-absent` with the label observation `d1-label-absent` and takes the name from the create's
+  output, so no argv carries a caller-chosen name. D4 gains per-class observation, inspect and check steps
+  before each removal, `d4-observe-images` and `d4-post-images`, and a budget of 600 s (step total 460 s).
+  Each stage's step total stays under its budget.
+- Why the engine-named create (r4). Docker's daemon chooses `stringid.GenerateRandomID()` when the name is
+  empty, and the CLI prints the name the API returns. The API has no 'created' flag: the store's internal
+  `created` boolean is not sent, and an existing volume with the requested name is returned without a
+  label comparison. Attribution therefore rests on three things, not on the API alone: the engine-generated
+  64-hex name; label absence observed before the create; and the inspect of that exact name carrying this
+  occurrence's label. A name collision needs a random 256-bit collision, and a label collision needs a
+  same-user process that already holds this token. The caller never chooses the name. Source reads:
+  moby `volume/service/service.go` (`GenerateRandomID` for an empty name), `volume/service/store.go`
+  (`create` returns an existing volume with `created=false`, no label comparison), and docker/cli
+  `cli/command/volume/create.go` (prints `res.Volume.Name`). Native confirmation that the daemon's create
+  prints a 64-hex name is a D1 proof obligation; a different shape refuses at the create post-check.
 
 ## Executor (source only)
 
@@ -345,9 +379,10 @@ Gates:
   - C2: a multi-effect guest stage. The guest closure is unknown after the route echo, so the probe
     is not reachable through this adapter.
   - C3: `guest_spec` derives from the C2 probe output and the `token32` that C0 mints.
-  - D1: `docker volume create` is idempotent and the name is observable, so exclusive creation
-    cannot be established.
-  - D4: no per-target re-observation before removal, and no image foreign list.
+  - D1 is statically admitted (r4). Its ordinary execution still refuses at the owner mechanism; its
+    proof-only window names the original D0 receipt (see Executor).
+  - D4: its per-target contract is source-qualified, but its predecessor D3 needs D2 (download cap),
+    so D4 cannot run until D2 and D3 qualify.
   - D3, C5 and C6: unadmitted because their predecessor is.
 - **C0 (fresh tokens).** Its handlers are `verify_tool_sha` (the live colima and docker binaries
   against the sha256 the pinned 688 C0 record names) and `verify_tranche_summary` (the tranche
@@ -450,14 +485,19 @@ Gates:
   non-zero client exit is still `guest_unknown`; a timeout stops the stage. D2: the Dockerfile is staged, built
   and read back; a pre-existing Dockerfile refuses before the build; a build whose allowance runs out stops
   before the readback. Static admission and the owner refusal still refuse with the simulation on.
-- **Not proven.** Native execution or an actual Nucleus proof execution and native GO. Exclusive volume
-  creation (D1) and per-target removal re-observation (D4). Termination of an uninterruptible kernel wait.
-  The C2 probe through the stage loop: after the route echo's unknown closure
+- **Not proven.** Native execution or an actual Nucleus proof execution and native GO. Native confirmation
+  that the engine's volume create prints one 64-hex name and that its inspect carries the anonymous and occurrence
+  labels as the source reads predict (D1). Native per-target re-observation and removal (D4). Termination of an
+  uninterruptible kernel wait. The C2 probe through the stage loop: after the route echo's unknown closure
   the adapter halts. The probe and the C4 steps are dispatched only under the test-only closure simulation,
   never in production. The C0 origin is exercised by a test run only, so
   the `token32` route has not run natively. The fresh-chain root binding is proven against local fixture C0
   receipts only: no native C0 has created a root that a later C stage then re-observed. The guest closure rule
   for multi-effect stages, which C2 needs before its probe can be dispatched.
+- **Create-unknown volumes.** A D1 create whose closure is unknown, or whose inspect failed, leaves an
+  engine-named volume with the occurrence label and no receipt. D4 never removes it. The stage stops
+  and retains the create stream, so the volume is reported for manual removal.
+
 
 ## Remaining gates
 
@@ -474,8 +514,8 @@ Gates:
 ## Validation
 
 Controls run through `effigy test:qualification:workspace-private:macos`
-(`macos_preparation_boundaries.py`: 104 cases, injected only, no native action). Docs run
+(`macos_preparation_boundaries.py`: 109 cases, injected only, no native action). Docs run
 through `effigy qa:docs`.
 The executor runs through `effigy test:qualification:workspace-private:macos-executor`
-(`macos_stage_executor_tests.py`: 103 cases, injected local children, no native action; execution runs only under the test-only seams described in the Executor section).
+(`macos_stage_executor_tests.py`: 166 cases, injected local children, no native action; execution runs only under the test-only seams described in the Executor section).
 Its shared primitive change is covered by `effigy test:qualification:linux-preparation`.
