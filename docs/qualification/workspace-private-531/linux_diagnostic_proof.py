@@ -154,6 +154,8 @@ def execute(request, request_path, request_hash):
         raise stage.Refusal('preparation checkout is not clean')
     if actual != request['head']:
         raise stage.Refusal('preparation head drifted')
+    if time.monotonic() >= deadline - RESERVE - 120:
+        raise stage.Refusal('insufficient time to start and reserve graceful stop')
     root = Path(request['root'])
     claim = root / ('linux-diagnostic-' + request['activation_id'] + '.claim')
     destination = root / ('linux-diagnostic-' + request['activation_id'])
@@ -193,6 +195,13 @@ def execute(request, request_path, request_hash):
                                  resource_monitor=monitor if track else None, deadline=end,
                                  cleanup_deadline=operational_end)
         return result, (step / 'stdout').read_bytes()
+
+    def pause(end, track=True):
+        until = min(end, time.monotonic() + 5)
+        while time.monotonic() < until:
+            if track and monitor is not None:
+                monitor.check()
+            time.sleep(min(0.25, max(0, until - time.monotonic())))
 
     def good(result):
         return result.get('disposition') == 'exited' and result.get('waited_exit') == 0
@@ -239,7 +248,7 @@ def execute(request, request_path, request_hash):
                     break
                 except stage.Refusal:
                     pass
-            time.sleep(min(5, max(0, start_end - time.monotonic())))
+            pause(start_end)
         if not running:
             raise stage.Refusal('running observation unknown')
         ready = False
@@ -248,7 +257,7 @@ def execute(request, request_path, request_hash):
             if good(result) and raw == b'ready\n':
                 ready = True
                 break
-            time.sleep(min(5, max(0, start_end - time.monotonic())))
+            pause(start_end)
         if not ready:
             raise stage.Refusal('bootstrap transport readiness unknown')
         probe = (HERE / 'linux-setup-probe.sh').read_text()
@@ -278,7 +287,7 @@ def execute(request, request_path, request_hash):
                                 break
                             except stage.Refusal:
                                 pass
-                        time.sleep(min(5, max(0, operational_end - time.monotonic())))
+                        pause(operational_end, track=False)
             except Exception as exc:
                 outcome['findings'].append('stop observation: ' + str(exc))
             if outcome['vm_terminal'] != 'stopped':

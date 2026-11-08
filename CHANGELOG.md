@@ -6,10 +6,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
-- Prepare a private, proof-only Linux VM diagnostic observation route with complete extent accounting and retained originals.
-
-
 ### Security
+
+- Prepare a private, proof-only Linux VM diagnostic observation route with complete extent accounting and retained originals.
 
 - Allow a pinned macOS proof request to start its bounded stage window at the externally approved launch (effigy#696).
 

@@ -100,7 +100,7 @@ class EntryTests(unittest.TestCase):
               'Hardware': {'hdd0': {'enabled': True, 'image': str(disk)}}}
         program = root / 'fake-prlctl'
         probe_output = ''.join(key + '=unknown\n' for key in sorted(proof.PROBE_KEYS))
-        program.write_text('#!/usr/bin/python3\nimport json,sys\nfrom pathlib import Path\np=Path(' + repr(str(state)) + ')\na=sys.argv[1:]\nvm=' + repr(vm) + '\n'
+        program.write_text('#!/usr/bin/python3\nimport json,sys,time\nfrom pathlib import Path\np=Path(' + repr(str(state)) + ')\na=sys.argv[1:]\nvm=' + repr(vm) + '\n'
                            'mode=Path(' + repr(str(scenario)) + ').read_text()\n'
                            'log=Path(' + repr(str(log)) + ')\n'
                            "with log.open('a') as f: f.write(a[0]+'\\n')\n"
@@ -108,7 +108,7 @@ class EntryTests(unittest.TestCase):
                            "elif a[0]=='stop':\n if mode=='stop_fail': sys.exit(1)\n p.write_text('stopped')\n"
                            "elif a[0]=='snapshot-list': print('{}' if mode=='wrong_snapshot' else " + repr(json.dumps(snapshot)) + ")\n"
                            "elif a[0]=='list':\n vm['State']=p.read_text()\n if mode=='wrong_home': vm['Home']='/wrong/'\n if mode=='wrong_uuid': vm['ID']='wrong'\n print(json.dumps([vm]))\n"
-                           "elif a[0]=='exec' and a[-1]=='ready': print('ready')\n"
+                           "elif a[0]=='exec' and a[-1]=='ready':\n if mode=='early_boot' and not Path(" + repr(str(root / 'ready-attempt')) + " ).exists(): Path(" + repr(str(root / 'ready-attempt')) + " ).write_text('1'); sys.exit(1)\n print('ready')\n"
                            "elif a[0]=='exec':\n"
                            " if mode=='growth': Path(" + repr(str(disk / 'b.hds')) + " ).write_bytes(b'extent-more')\n"
                            " if mode=='config_change': Path(" + repr(str(home / 'config.pvs')) + " ).write_bytes(b'changed')\n"
@@ -116,6 +116,7 @@ class EntryTests(unittest.TestCase):
                            " if mode=='extent_missing': Path(" + repr(str(disk / 'b.hds')) + " ).unlink()\n"
                            " if mode=='extent_replaced': Path(" + repr(str(disk / 'b.hds')) + " ).unlink(); Path(" + repr(str(disk / 'b.hds')) + " ).write_bytes(b'new')\n"
                            " if mode=='config_missing': Path(" + repr(str(home / 'config.pvs')) + " ).unlink()\n"
+                           " if mode=='timeout': print('uid=0',flush=True); time.sleep(2)\n"
                            " if mode=='partial': print('uid=0')\n"
                            " else: print(" + repr(probe_output) + ",end='')\n")
         program.chmod(0o700)
@@ -144,7 +145,7 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(result['placement'], 'not evaluated')
             with self.assertRaises(Refusal):
                 proof.main(['proof', str(path), digest])
-            for index, mode in enumerate(('wrong_home', 'wrong_uuid', 'wrong_snapshot', 'partial', 'stop_fail', 'growth', 'config_change', 'descriptor_change', 'extent_missing', 'extent_replaced', 'config_missing'), 2):
+            for index, mode in enumerate(('wrong_home', 'wrong_uuid', 'wrong_snapshot', 'partial', 'stop_fail', 'growth', 'config_change', 'descriptor_change', 'extent_missing', 'extent_replaced', 'config_missing', 'early_boot', 'timeout'), 2):
                 scenario.write_text(mode)
                 state.write_text('stopped')
                 (home / 'config.pvs').write_bytes(b'config')
@@ -156,8 +157,13 @@ class EntryTests(unittest.TestCase):
                 item_raw = json.dumps(item).encode()
                 item_path.write_bytes(item_raw)
                 item_path.chmod(0o400)
-                expected = 0 if mode == 'growth' else 1
-                with contextlib.redirect_stdout(io.StringIO()):
+                expected = 0 if mode in ('growth', 'early_boot') else 1
+                original_run = proof.stage.run_stage
+                def bounded(*args, **kwargs):
+                    if mode == 'timeout' and args[1][1:2] == ['exec'] and '-c' in args[1]:
+                        args = (args[0], args[1], 0.2, *args[3:])
+                    return original_run(*args, **kwargs)
+                with patch.object(proof.stage, 'run_stage', side_effect=bounded), contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(proof.main(['proof', str(item_path), hashlib.sha256(item_raw).hexdigest()]), expected)
                 result = json.loads((evidence / ('linux-diagnostic-fixture%02d' % index) / 'outcome.json').read_text())
                 calls = log.read_text().splitlines()
@@ -166,6 +172,13 @@ class EntryTests(unittest.TestCase):
                 else:
                     self.assertEqual(calls.count('start'), 1)
                     self.assertEqual(calls.count('stop'), 1)
+                if mode == 'early_boot':
+                    self.assertGreaterEqual(calls.count('exec'), 3)
+                if mode == 'timeout':
+                    self.assertEqual(result['probe']['disposition'], 'timeout')
+                    self.assertEqual(result['vm_terminal'], 'stopped')
+                if mode == 'config_missing':
+                    self.assertIn('descriptor', result['post'])
                 if mode == 'growth':
                     self.assertEqual(result['final_growth']['extents']['logical'], 5)
                 if mode == 'stop_fail':
