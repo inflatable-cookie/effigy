@@ -28,6 +28,54 @@ MODULE_ROLE = 'docs/qualification/workspace-private-531'
 CHECKOUT_MODULES = tuple(sorted(path.stem for path in SOURCE_DIR.glob('*.py')))
 
 
+# Fixture model of the installed vendor parallels_wrapper (sha256 f3148009...) dispatch lines: the
+# tool is chosen from basename($0) and a wrapper target name exits 9 before any VM command. The
+# bootstrap branch (inittool2, Parallels Service) is omitted: the fixed route never reaches it.
+WRAPPER_MODEL = r'''#!/bin/bash
+function read_symlink() {
+	local path=$1
+	local pwd=$PWD
+	while true; do
+		cd "$(dirname "$path")"
+		path=$(basename "$path")
+		[ -L "$path" ] || break
+		path=$(readlink "$path")
+	done
+	echo $PWD/$path
+	cd "$pwd"
+}
+SELF_PATH=$(read_symlink "$0")
+BUNDLE_DIR=$(cd "`dirname "$SELF_PATH"`/../.."; pwd)
+BASENAME="$(basename "${0}")"
+SUPPORTED_TOOLS=(
+		"Contents/MacOS/prlctl"
+		"Contents/MacOS/prlsrvctl"
+		"Contents/MacOS/prl_convert"
+		"Contents/MacOS/prl_perf_ctl"
+		"Contents/MacOS/prl_disk_tool"
+		)
+function resolve_tool() {
+	local tool_name="${1}"
+	if [ "x${tool_name}" == "x" ]; then
+		return 1
+	fi
+	for path in "${SUPPORTED_TOOLS[@]}"; do
+		if [ "x${tool_name}" == "x${path##*/}" ]; then
+			echo "${BUNDLE_DIR}/${path}"
+			return $([ -f "${BUNDLE_DIR}/${path}" ])
+		fi
+	done
+	return 1
+}
+tool=$(resolve_tool "${BASENAME}")
+if [ "x$?" != "x0" ]; then
+	logger -t pdfm-bootstrap -p install.error -s "parallels_wrapper: Can't find ${BASENAME} instance"
+	exit 9
+fi
+exec "${tool}" "$@"
+'''
+
+
 def descriptor(names):
     images = ''.join('<Image><GUID>%s</GUID><File>%s</File></Image>' % (guid, name) for guid, name in names)
     shots = ''.join('<Shot><GUID>%s</GUID><ParentGUID>%s</ParentGUID></Shot>' % (guid, ZERO) for guid, _ in names)
@@ -149,6 +197,7 @@ class EntryTests(unittest.TestCase):
         def git(args, **kwargs):
             return (head + '\n').encode() if 'rev-parse' in args else b''
         with patch.object(proof, 'SCRATCH', str(root)), patch.object(proof, 'PRLCTL', str(program)), \
+             patch.object(proof, 'PRLCTL_SHA256', hashlib.sha256(program.read_bytes()).hexdigest()), \
              patch.object(proof, 'SNAPSHOT_SHA', snapshot_sha), patch.object(proof.setup, 'PVM_HOME', str(home)), \
              patch.object(proof.subprocess, 'check_output', side_effect=git):
             changed_root = root / 'changed-root'
@@ -325,7 +374,11 @@ class CheckoutBindingTests(unittest.TestCase):
               'Home path': str(self.home / 'config.pvs'),
               'Hardware': {'hdd0': {'enabled': True, 'image': str(self.disk)}}}
         probe = ''.join(key + '=unknown\n' for key in sorted(proof.PROBE_KEYS))
-        self.program = self.root / 'fake-prlctl'
+        # Installed shape: the bundle CLI is a distinct executable; /usr/local/bin/prlctl is an alias
+        # to the vendor-shaped wrapper below. The fixed route launches the bundle CLI directly.
+        self.bundle = self.base / 'Parallels Desktop.app' / 'Contents' / 'MacOS'
+        self.bundle.mkdir(parents=True)
+        self.program = self.bundle / 'prlctl'
         self.program.write_text('\n'.join([
             '#!/usr/bin/python3',
             'import json, sys',
@@ -333,7 +386,7 @@ class CheckoutBindingTests(unittest.TestCase):
             'state, log = Path(%r), Path(%r)' % (str(self.state), str(self.log)),
             'vm = %r' % (vm,),
             'args = sys.argv[1:]',
-            "with log.open('a') as f: f.write(args[0] + '\\n')",
+            "with log.open('a') as f: f.write(json.dumps(sys.argv) + '\\n')",
             "if args[0] == 'start': state.write_text('running')",
             "elif args[0] == 'stop': state.write_text('stopped')",
             "elif args[0] == 'snapshot-list': print(%r)" % (json.dumps(snapshot),),
@@ -345,6 +398,18 @@ class CheckoutBindingTests(unittest.TestCase):
             '',
         ]))
         self.program.chmod(0o700)
+        self.program_sha = hashlib.sha256(self.program.read_bytes()).hexdigest()
+        self.wrapper = self.bundle / 'parallels_wrapper'
+        self.wrapper.write_text(WRAPPER_MODEL)
+        self.wrapper.chmod(0o700)
+        self.alias = self.base / 'usr-local-bin' / 'prlctl'
+        self.alias.parent.mkdir()
+        self.alias.symlink_to(self.wrapper)
+        (self.base / 'bin').mkdir()
+        self.logger_log = self.base / 'logger.log'
+        logger = self.base / 'bin' / 'logger'
+        logger.write_text("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> '%s'\n" % self.logger_log)
+        logger.chmod(0o700)
         self.primary_path = make_checkout(self.base / 'primary')
         self.primary = load_entry(self.primary_path)
         self.head = git(['rev-parse', 'HEAD'], self.primary_path)
@@ -353,6 +418,7 @@ class CheckoutBindingTests(unittest.TestCase):
     def bound(self, entry):
         """Point one loaded entry at this fixture's scratch root, fake transport and VM package."""
         with patch.object(entry, 'SCRATCH', str(self.root)), patch.object(entry, 'PRLCTL', str(self.program)), \
+             patch.object(entry, 'PRLCTL_SHA256', self.program_sha), \
              patch.object(entry, 'SNAPSHOT_SHA', self.snapshot_sha), patch.object(entry.setup, 'PVM_HOME', str(self.home)):
             yield
 
@@ -385,10 +451,14 @@ class CheckoutBindingTests(unittest.TestCase):
         self.assertEqual(set(result['runtime_inputs']), {str(detached / role) for role in request['repository']})
         self.assertEqual(result['vm_terminal'], 'stopped')
         self.assertEqual(result['findings'], [])
-        calls = self.log.read_text().split()
-        self.assertEqual((calls.count('start'), calls.count('stop')), (1, 1))
+        calls = [json.loads(line) for line in self.log.read_text().splitlines()]
+        self.assertEqual([call[1] for call in calls], ['list', 'snapshot-list', 'start', 'list', 'exec', 'exec', 'stop', 'list', 'snapshot-list'])
+        self.assertTrue(all(call[0] == str(self.program) for call in calls))
+        self.assertIn([str(self.program), 'start', proof.setup.VM_UUID], calls)
         steps = sorted(self.destination('checkout01').glob('step-*'))
         self.assertTrue(steps)
+        for step in steps:
+            self.assertEqual(json.loads((step / 'intent.json').read_text())['argv'][0], str(self.program))
         for step in steps:
             hashes = json.loads((step / 'intent.json').read_text())['input_hashes']
             self.assertIn(str(detached / MODULE_ROLE / 'linux_diagnostic.py'), hashes)
@@ -475,9 +545,37 @@ class CheckoutBindingTests(unittest.TestCase):
         original = self.program.read_bytes()
         self.program.write_bytes(original + b'\n# drift\n')
         try:
-            self.assert_refused(entry, request, 'bindings drifted')
+            self.assert_refused(entry, request, 'reviewed build')
         finally:
             self.program.write_bytes(original)
+
+    def test_canonical_wrapper_target_cannot_select_prlctl(self):
+        """The old plan launched the realpath of /usr/local/bin/prlctl: parallels_wrapper, which exits 9."""
+        env = {'PATH': str(self.base / 'bin') + ':/usr/bin:/bin', 'LANG': 'C'}
+        run = subprocess.run([str(self.wrapper), 'list', '--info', proof.setup.VM_UUID, '--json'],
+                             env=env, capture_output=True, timeout=30)
+        self.assertEqual(run.returncode, 9)
+        self.assertFalse(self.log.exists())
+        self.assertIn("Can't find parallels_wrapper instance", self.logger_log.read_text())
+
+    def test_production_route_is_the_bundle_cli(self):
+        self.assertEqual(proof.PRLCTL, '/Applications/Parallels Desktop.app/Contents/MacOS/prlctl')
+        self.assertEqual(proof.PRLCTL_ALIAS, '/usr/local/bin/prlctl')
+        self.assertNotEqual(proof.PRLCTL, proof.PRLCTL_ALIAS)
+        self.assertEqual(proof.PRLCTL_SHA256, '2f61a1c60db2d51591fb8479a248a982a81658f136f1501a94733b7a81731c57')
+
+    def test_alias_program_refuses_at_plan(self):
+        """A symlink at the bundle CLI path, or a changed CLI, is refused before any launch."""
+        moved = self.bundle / 'prlctl.real'
+        self.program.rename(moved)
+        self.program.symlink_to(self.alias)
+        try:
+            with self.bound(self.primary), self.assertRaisesRegex(self.primary.stage.Refusal, 'canonical bundle path'):
+                self.primary.plan(str(self.evidence), 'aliascheck', self.head)
+        finally:
+            self.program.unlink()
+            moved.rename(self.program)
+        self.assertFalse(self.log.exists())
 
 
 if __name__ == '__main__':

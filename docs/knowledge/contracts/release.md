@@ -212,6 +212,27 @@ failure journeys, gateway reboot/crash/soak, security disposition,
 exact-candidate release certification, and Tom's final publication decision
 in force. None is satisfied by a landed PR or by the test-only stage.
 
+### Qualification-sequence proof-only authority — 2026-11-08
+
+Tom's exact words, relayed by Nucleus planner `10a6187a` (message
+`060147e1-9527-4010-870f-bc59a6617a15`, 2026-11-08): “I've answered the effigy
+decision - they don't need to keep asking me for approval for the next step!”
+
+Within this qualification sequence, a proof-only brief whose only purpose is
+another approval omits `requiresOperatorGo`, and Nucleus dispatches one
+source-immutable executor without a fresh generic operator GO for each stage.
+The planner still binds the exact reviewed commit and request, input, tool and
+resource identities, the one-use occurrence, and budgets and cleanup. Existing
+technical refusal gates and independent receipt review remain. Future
+proof-only briefs also omit worker preference fields (Nucleus ruling
+`7e17f273`). Historical `requiresOperatorGo` briefs and results are not
+rewritten.
+
+This is a scope-bounded clarification. It grants no proof waiver, refunded
+native allowance, unrestricted cleanup, release, tag or publication, new
+frontier or by-request profile, or product or threat-scope change. #706 remains
+failed with its actual successful evidence and is not replayed.
+
 ## Governing v0.15 direction — 2026-10-18
 
 Tom's answered Queue decision `5bcf44e4-7e9d-49ee-99d1-c6a46b47a93b`
