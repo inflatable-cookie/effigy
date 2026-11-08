@@ -692,6 +692,6 @@ does not sweep unopened legacy logs or repair directory and ancestor
 permissions. Raw diagnostic contents remain a separate exposure limit. The fix
 does not qualify native gateway behavior or release acceptance, and workspace
 Phase A apply and preparation still require qualified private or discarded
-output before their production path is accepted. The remaining raw-output and
-historical-file exposure still needs its own pre-freeze disposition; this change
-does not record acceptance of those risks.
+output before their production path is accepted. Tom's v0.15 acceptance of the
+remaining raw-output and historical-file limits is recorded in the
+[release disposition](release.md#workspace-and-gateway-diagnostic-disposition-before-v015-freeze).

@@ -1298,6 +1298,13 @@ absolute no-recycled-PGID guarantee** on those platforms; the residual is tracke
 as lead `0453e055` and carried in the pre-freeze security evidence as lead
 `b013f65a`. A receiver that is not ours can only be reached by that reuse.
 
+Tom's board decision `db99330f-a317-46e1-92eb-f3865f6f108d` v2, 2026-11-08,
+settles this pre-freeze disposition: "Accept the documented platform limit for
+v0.15". The identity checks, conservative `Unknown` refusals and required native
+qualification remain. Stronger kernel-backed membership stays a follow-up under
+`0453e055`; this ruling grants no absolute no-recycled-PID/PGID guarantee or
+execution, production-enablement or publication authority.
+
 Owners that hold their unreaped child are not subject to that window at all: the
 settle path signals the group while this process still holds the unreaped direct
 leader, so the pid and the group number are pinned by it and `leader already

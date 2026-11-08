@@ -98,9 +98,17 @@ unopened legacy logs, directory or ancestor permissions, and raw diagnostics may
 still contain sensitive upstream text. Workspace Phase A apply and workspace
 preparation separately require qualified private or discarded output before
 their production path is accepted. This source fix is not native gateway or
-release qualification, and it does not accept the remaining raw-output or
-historical-file exposure. Keep their separate pre-freeze disposition, review and
-native gates in force.
+release qualification.
+
+Tom's board decision `5ebbc141-3120-48e4-93f9-ca837e9b42ee` v2, 2026-11-08,
+settles the remaining diagnostic disposition: "Keep private raw diagnostics for
+v0.15". This accepts raw gateway/Compose diagnostic contents and the documented
+historical-file limits for this release. Unopened legacy files and pre-upgrade
+followers remain uninspected; no cleanup or global sanitization is claimed.
+The separate numeric-signal disposition is recorded in
+[contract 052](052-runtime-kernel-contract.md).
+Both rulings retain the required implementation, native and consumer proofs;
+neither grants production activation or publication authority.
 
 ## v0.15 Level 1 qualification order — 2026-11-02
 
