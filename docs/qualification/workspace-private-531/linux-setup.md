@@ -147,7 +147,7 @@ checked against the plan), `linux_setup_tests.py` (192 controls, including real-
 Preparation request hashing and Linux guest placement share the explicit
 `preparation_requests.REQUIRED_MODULE_NAMES` inventory. It covers the staged
 preparation modules and the setup adapter's local imports, including
-`linux_disk_identity.py`, transfer and receipt helpers, Stage1, and the
+`linux_disk_identity.py`, `linux_disk_association.py`, transfer and receipt helpers, Stage1, and the
 observation caller. Requests hash each exact source file; placement requires
 the same exact guest/host map and current byte hashes. The isolated import
 control stages only this declared closure, and confirms the setup adapter
