@@ -555,18 +555,18 @@ pub fn prove_stage_ownership(
             )))
         }
     };
-    let mut any = false;
-    for entry in entries {
-        entry.map_err(|error| {
+    let empty = entries
+        .into_iter()
+        .next()
+        .transpose()
+        .map_err(|error| {
             refusal(format!(
                 "cannot read the staged child `{}`: {error}",
                 plan.stage_root.display()
             ))
-        })?;
-        any = true;
-        break;
-    }
-    if !any {
+        })?
+        .is_none();
+    if empty {
         // An empty directory carries nothing to adopt; this producer owns it.
         return Ok(());
     }

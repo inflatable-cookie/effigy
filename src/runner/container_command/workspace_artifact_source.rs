@@ -313,18 +313,18 @@ fn prove_owned_child(
             )))
         }
     };
-    let mut any = false;
-    for entry in entries {
-        entry.map_err(|error| {
+    let empty = entries
+        .into_iter()
+        .next()
+        .transpose()
+        .map_err(|error| {
             refusal(format!(
                 "cannot read the staged child `{}`: {error}",
                 plan.stage_root.display()
             ))
-        })?;
-        any = true;
-        break;
-    }
-    if !any {
+        })?
+        .is_none();
+    if empty {
         return Ok(None);
     }
     match std::fs::symlink_metadata(&plan.manifest) {
