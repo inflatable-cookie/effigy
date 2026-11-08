@@ -1000,7 +1000,11 @@ class WriterBoundObservationTests(unittest.TestCase):
             run = subprocess.run(['/bin/sh', '-c', guest_probe.CAPABILITIES], capture_output=True, timeout=60,
                                  env={'PATH': str(tools), 'LC_ALL': 'C'})
             self.assertEqual(run.returncode, 0, run.stderr)
-            return guest_probe.decode(route, {'disposition': 'exited', 'waited_exit': 0}, run.stdout)
+            return run.stdout.decode()
+
+        def decode_output(stdout):
+            return guest_probe.decode(route, {'disposition': 'exited', 'waited_exit': 0},
+                                      stdout.encode())
 
         def tool(name, body):
             path = tools / name
@@ -1008,9 +1012,19 @@ class WriterBoundObservationTests(unittest.TestCase):
             path.chmod(0o700)
 
         # A refused -V that writes its error and usage to stderr must never read as a version.
-        tool('dumpe2fs', '[ "$1" = -V ] || { echo "dumpe2fs: invalid option -- V" >&2; '
+        # The fake really refuses (the guard runs "&&" for -V), and the probe's record is checked
+        # directly so the refusal path cannot pass as the silent empty-output case.
+        tool('dumpe2fs', '[ "$1" = -V ] && { echo "dumpe2fs: invalid option -- V" >&2; '
                          'echo "Usage: dumpe2fs [-V] device" >&2; exit 1; }\n')
-        status, facts, reasons = run_route()
+        refused = subprocess.run([str(tools / 'dumpe2fs'), '-V'], capture_output=True, text=True,
+                                 timeout=30)
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn('invalid option', refused.stderr)
+        stdout = run_route()
+        self.assertEqual([line for line in stdout.splitlines() if line.startswith('version')],
+                         ['version dumpe2fs unavailable'])
+        self.assertNotIn('invalid option', stdout)
+        status, facts, reasons = decode_output(stdout)
         self.assertEqual((status, reasons), (guest_probe.OBSERVED, []))
         self.assertEqual(facts['versions']['dumpe2fs'], {'status': 'unavailable'})
         self.assertEqual(facts['tools']['dumpe2fs'], str(tools / 'dumpe2fs'))
@@ -1018,7 +1032,10 @@ class WriterBoundObservationTests(unittest.TestCase):
 
         # A present tool that prints nothing records unavailable and keeps every other fact.
         tool('findmnt', 'exit 0\n')
-        status, facts, reasons = run_route()
+        stdout = run_route()
+        self.assertEqual([line for line in stdout.splitlines() if line.startswith('version')],
+                         ['version findmnt unavailable', 'version dumpe2fs unavailable'])
+        status, facts, reasons = decode_output(stdout)
         self.assertEqual((status, reasons), (guest_probe.OBSERVED, []))
         self.assertEqual(facts['versions']['findmnt'], {'status': 'unavailable'})
         self.assertEqual(facts['tools']['findmnt'], str(tools / 'findmnt'))
@@ -1026,14 +1043,14 @@ class WriterBoundObservationTests(unittest.TestCase):
         # A banner from a failed invocation is not accepted either.
         tools.joinpath('dumpe2fs').unlink()
         tool('lsblk', '[ "$1" = --version ] && echo "lsblk from util-linux 2.39.3"; exit 1\n')
-        status, facts, reasons = run_route()
+        status, facts, reasons = decode_output(run_route())
         self.assertEqual((status, reasons), (guest_probe.OBSERVED, []))
         self.assertEqual(facts['versions']['lsblk'], {'status': 'unavailable'})
 
         # An unrelated line on stderr is not a version even when the tool succeeds.
         tools.joinpath('lsblk').unlink()
         tool('dumpe2fs', 'echo "warning: deprecated call" >&2; exit 0\n')
-        status, facts, reasons = run_route()
+        status, facts, reasons = decode_output(run_route())
         self.assertEqual((status, reasons), (guest_probe.OBSERVED, []))
         self.assertEqual(facts['versions']['dumpe2fs'], {'status': 'unavailable'})
 
