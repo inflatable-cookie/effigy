@@ -17,6 +17,7 @@ from unittest.mock import patch
 SOURCE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SOURCE_DIR))
 import linux_diagnostic as diagnostic
+import linux_diagnostic_probe as guest_probe
 import linux_diagnostic_proof as proof
 from preparation_stage import Refusal
 
@@ -587,6 +588,660 @@ class ProtectedSampleTests(unittest.TestCase):
         self.assertIn('No such file', str(caught.exception))
 
 
+# ----------------------------------------------------------------- writer-bound read fixtures
+
+VIRTIO = '/sys/devices/pci0000:00/0000:00:05.0/virtio2'
+ROOT_UUID = 'd488be7b-682f-41ac-b79b-57bbf495a01d'
+PART_UUID = '8f3e1a2b-1111-2222-3333-444455556666'
+EXT4_FEATURES = ('has_journal', 'ext_attr', 'resize_inode', 'dir_index', 'filetype', 'extent', '64bit',
+                 'flex_bg', 'sparse_super', 'large_file', 'huge_file', 'dir_nlink', 'extra_isize',
+                 'metadata_csum', 'project', 'quota')
+
+
+def block_record(name, majmin, partition, sectors, syspath):
+    return 'block %s %s %d %d 0 0 %s\n' % (name, majmin, partition, sectors, syspath)
+
+
+def attribute(name, field, value):
+    if value is None:
+        return 'attr %s %s missing\n' % (name, field)
+    return 'attr %s %s hex:%s\n' % (name, field, value.encode().hex())
+
+
+def block_sysfs(records, attributes=(), encoding='hex'):
+    return ('encoding %s\n' % encoding + ''.join(records) + ''.join(attributes)).encode()
+
+
+def lsblk_node(name, majmin, parent=None, kind='part', size=1048576, fstype=None, uuid=None,
+               mountpoint=None, children=None):
+    node = {'name': name, 'maj:min': majmin, 'pkname': parent, 'type': kind, 'size': size,
+            'fstype': fstype, 'uuid': uuid, 'mountpoint': mountpoint}
+    if children is not None:
+        node['children'] = children
+    return node
+
+
+def lsblk_route(devices):
+    return (json.dumps({'blockdevices': devices}) + '\n').encode()
+
+
+def mountinfo_route(*lines):
+    return ''.join(line + '\n' for line in lines).encode()
+
+
+def filesystem_route(majmin='254:2', fstype='ext4', device='vda2', features=EXT4_FEATURES,
+                     uuid=ROOT_UUID, tool='present', status=None, dump=True):
+    records = ['obs root_majmin %s' % majmin, 'obs root_fstype %s' % fstype]
+    if device is not None:
+        records.append('obs root_device %s' % device)
+    if tool is not None:
+        records.append('obs tool %s' % tool)
+    if status is not None:
+        records.append('obs status %s' % status)
+    text = '\n'.join(records) + '\n'
+    if dump:
+        text += ('Filesystem volume name:   <none>\n'
+                 'Last mounted on:          /\n'
+                 'Filesystem UUID:          %s\n'
+                 'Filesystem features:      %s\n'
+                 'Filesystem state:         clean\n'
+                 'Default mount options:    user_xattr acl\n'
+                 % (uuid, ' '.join(features)))
+    return text.encode()
+
+
+def capabilities_route(present=('lsblk', 'findmnt', 'blkid', 'dumpe2fs', 'tune2fs', 'systemctl',
+                                'systemd-run', 'readlink', 'od')):
+    lines = []
+    for tool in guest_probe.CAPABILITY_TOOLS:
+        lines.append('tool %s %s' % (tool, '/usr/bin/' + tool if tool in present else 'absent'))
+    for tool, stream, version in (('lsblk', 'stdout', 'lsblk from util-linux 2.39.3'),
+                                  ('findmnt', 'stdout', 'findmnt from util-linux 2.39.3'),
+                                  ('dumpe2fs', 'stderr', 'dumpe2fs 1.47.0')):
+        if tool in present:
+            lines.append('version %s %s %s' % (tool, stream, version))
+    return ('\n'.join(lines) + '\n').encode()
+
+
+def cgroup_route(units=('system.slice', 'user.slice')):
+    lines = ['file cgroup.controllers cpuset cpu io memory pids',
+             'file cgroup.subtree_control cpuset cpu io memory pids']
+    if units is None:
+        lines.append('unit_observation absent')
+        return ('\n'.join(lines) + '\n').encode()
+    # The IO properties are emitted one documented device=rate pair per record, as the probe does.
+    properties = {'MemoryMax': 'infinity', 'MemoryHigh': 'infinity', 'MemorySwapMax': 'infinity',
+                  'IOReadBandwidthMax': '/dev/vda=1048576', 'IOWriteBandwidthMax': '/dev/vda=2097152',
+                  'IOReadIOPSMax': '/dev/vda=100', 'IOWriteIOPSMax': 'empty', 'TasksMax': '4915',
+                  'CPUWeight': '100'}
+    for unit in units:
+        lines.append('unit %s present' % unit)
+        for key, value in properties.items():
+            lines.append('property %s %s %s' % (unit, key, value))
+    return ('\n'.join(lines) + '\n').encode()
+
+
+def one_disk_blocks():
+    return block_sysfs([block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda'),
+                        block_record('vda1', '254:1', 1, 1048576, VIRTIO + '/block/vda/vda1'),
+                        block_record('vda2', '254:2', 1, 267386880, VIRTIO + '/block/vda/vda2')],
+                       [attribute('vda', 'serial', 'BV9VAH2KP2Q4N4A04SN0'),
+                        attribute('vda', 'model', 'harddisk1 SSD'),
+                        attribute('vda', 'vendor', 'ATA     ')])
+
+
+def one_disk_lsblk():
+    return lsblk_route([lsblk_node('vda', '254:0', kind='disk', size=137438953472, children=[
+        lsblk_node('vda1', '254:1', 'vda'),
+        lsblk_node('vda2', '254:2', 'vda', size=136902082560, fstype='ext4', uuid=ROOT_UUID,
+                   mountpoint='/')])])
+
+
+def one_disk_uuids():
+    return ('dir by-uuid present\ndir by-partuuid present\n'
+            'entry by-uuid %s vda2\nentry by-partuuid %s vda2\n' % (ROOT_UUID, PART_UUID)).encode()
+
+
+def observation_outputs(**overrides):
+    """Every fixed read route answered with one reviewed-guest disk and an ext4 root."""
+    outputs = {
+        'block-sysfs': (0, one_disk_blocks()),
+        'block-lsblk': (0, one_disk_lsblk()),
+        'mountinfo': (0, mountinfo_route('22 1 254:2 / / rw,relatime shared:1 - ext4 /dev/vda2 '
+                                         'rw,errors=remount-ro',
+                                         '23 22 0:5 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw')),
+        'filesystem': (0, filesystem_route()),
+        'device-uuids': (0, one_disk_uuids()),
+        'capabilities': (0, capabilities_route()),
+        'cgroup-units': (0, cgroup_route()),
+    }
+    outputs.update(overrides)
+    return outputs
+
+
+ABSENT_ROUTES = {
+    'block-lsblk': (127, b''),
+    'filesystem': (69, filesystem_route(tool='absent', dump=False)),
+    'device-uuids': (127, b''),
+    'capabilities': (0, capabilities_route(present=())),
+    'cgroup-units': (0, cgroup_route(units=None)),
+}
+
+MALFORMED_ROUTES = {
+    'block-lsblk': (0, b'not json\n'),
+    'mountinfo': (0, b'22 1 254:2 / / rw - ext4 /dev/vda2'),
+}
+
+
+def route_text(outputs=None):
+    """Route answers as text, the shape the fixture tool prints."""
+    outputs = observation_outputs() if outputs is None else outputs
+    return {name: (code, raw if isinstance(raw, str) else raw.decode())
+            for name, (code, raw) in outputs.items()}
+
+
+def statuses(result):
+    return {row['id']: row['status'] for row in result['routes']}
+
+
+class WriterBoundObservationTests(unittest.TestCase):
+    """Every fixed read route and its full parser; observations only, never gate credit."""
+
+    def observe(self, outputs=None, budget=None, deadline=10 ** 9, retain_error=False, run_error=None):
+        outputs = observation_outputs() if outputs is None else outputs
+        calls, retained = [], {}
+
+        def run(argv, limit, cap, end):
+            calls.append(list(argv))
+            for route in guest_probe.ROUTES:
+                if route['script'] != argv[2]:
+                    continue
+                if run_error == route['id']:
+                    raise Refusal('transport failure')
+                row = outputs.get(route['id'], (0, b''))
+                if len(row) == 3:
+                    disposition, code, raw = row
+                else:
+                    code, raw = row
+                    disposition = 'exited' if code == 0 else 'failed'
+                return {'disposition': disposition, 'waited_exit': code}, raw
+            raise AssertionError('unexpected argv: %r' % (argv,))
+
+        def retain(name, data):
+            if retain_error:
+                raise OSError(errno.ENOSPC, 'No space left on device')
+            retained[name] = data
+            return 'observation-%s.raw' % name
+
+        result = guest_probe.observe(run, retain, lambda: None, deadline,
+                                     guest_probe.BUDGET_SECONDS if budget is None else budget)
+        return result, calls, retained
+
+    def test_every_route_runs_once_with_its_reviewed_argv(self):
+        result, calls, retained = self.observe()
+        self.assertEqual([call[2] for call in calls], [route['script'] for route in guest_probe.ROUTES])
+        self.assertTrue(all(call[:2] == ['/bin/sh', '-c'] for call in calls))
+        self.assertEqual(tuple(statuses(result)), guest_probe.route_ids())
+        self.assertEqual(set(retained), set(guest_probe.route_ids()))
+        rows = [[route['id'], ['/bin/sh', '-c', route['script']], route['timeout'],
+                 guest_probe.MAX_ROUTE_BYTES] for route in guest_probe.ROUTES]
+        self.assertEqual(guest_probe.routes_digest(),
+                         hashlib.sha256(json.dumps(rows, sort_keys=True, separators=(',', ':')).encode())
+                         .hexdigest())
+        rows[0][1][2] += '# drift\n'
+        self.assertNotEqual(guest_probe.routes_digest(),
+                            hashlib.sha256(json.dumps(rows, sort_keys=True, separators=(',', ':')).encode())
+                            .hexdigest())
+        for row in result['routes']:
+            self.assertEqual(row['original'], 'observation-%s.raw' % row['id'])
+            self.assertEqual(row['sha256'], hashlib.sha256(retained[row['id']]).hexdigest())
+
+    def test_one_disk_positive_facts(self):
+        result, _, _ = self.observe()
+        self.assertEqual(set(statuses(result).values()), {guest_probe.OBSERVED})
+        root = result['facts']['root']
+        self.assertEqual(root['status'], 'resolved')
+        self.assertEqual((root['device'], root['fstype'], root['source']), ('vda2', 'ext4', '/dev/vda2'))
+        self.assertEqual(root['ancestry'], ['vda2', 'vda'])
+        self.assertEqual(root['controller_kind'], 'virtio')
+        self.assertTrue(root['controller_path'].endswith('/virtio2'))
+        self.assertEqual(root['mount_options'], ['rw', 'relatime'])
+        self.assertEqual(root['super_options'], ['rw', 'errors=remount-ro'])
+        self.assertEqual(root['filesystem_uuid'], ROOT_UUID)
+        self.assertEqual(result['facts']['root_uuids'], {'status': 'observed', 'entries': {
+            'by-uuid': [ROOT_UUID], 'by-partuuid': [PART_UUID]}})
+        self.assertEqual([disk['name'] for disk in result['facts']['disks']], ['vda'])
+        self.assertEqual(result['facts']['disks'][0]['serial']['text'], 'BV9VAH2KP2Q4N4A04SN0')
+        self.assertEqual(result['facts']['disks'][0]['model']['text'], 'harddisk1 SSD')
+        self.assertEqual(result['facts']['additional_disks'], [])
+        self.assertEqual([part['name'] for part in result['facts']['additional_partitions']], ['vda1'])
+        self.assertEqual(result['facts']['block_inventory']['count'], 3)
+        self.assertEqual(result['facts']['inventory_agreement']['status'], 'agrees')
+        self.assertEqual(result['facts']['filesystem_features']['project_feature'], 'present')
+        self.assertEqual(result['facts']['filesystem_features']['quota_feature'], 'present')
+        self.assertEqual(result['facts']['quota_tools']['repquota'], 'absent')
+        self.assertEqual(result['facts']['control_groups']['files']['cgroup.controllers']['controllers'],
+                         ['cpuset', 'cpu', 'io', 'memory', 'pids'])
+        self.assertEqual(result['facts']['control_groups']['units']['system.slice']['properties']
+                         ['IOWriteBandwidthMax'],
+                         {'status': 'observed',
+                          'devices': [{'device': '/dev/vda', 'rate': '2097152'}]})
+        self.assertEqual(result['facts']['control_groups']['units']['system.slice']['properties']
+                         ['IOReadIOPSMax'],
+                         {'status': 'observed', 'devices': [{'device': '/dev/vda', 'rate': '100'}]})
+        self.assertEqual(result['facts']['control_groups']['units']['system.slice']['properties']
+                         ['IOWriteIOPSMax'], {'status': 'empty', 'devices': []})
+        self.assertEqual(result['limits']['io_write_bandwidth_max'].startswith('per-device write rate'),
+                         True)
+        self.assertEqual(result['complete'], True)
+        self.assertEqual(result['findings'], [])
+
+    def test_additional_disk_is_not_hidden(self):
+        blocks = block_sysfs(
+            [block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda'),
+             block_record('vda2', '254:2', 1, 267386880, VIRTIO + '/block/vda/vda2'),
+             block_record('vdb', '254:16', 0, 20971520, VIRTIO + '/block/vdb'),
+             block_record('vdb1', '254:17', 1, 20970496, VIRTIO + '/block/vdb/vdb1')],
+            [attribute('vda', 'serial', 'BV9VAH2KP2Q4N4A04SN0'), attribute('vda', 'model', 'harddisk1 SSD'),
+             attribute('vda', 'vendor', 'ATA     '), attribute('vdb', 'serial', None),
+             attribute('vdb', 'model', None), attribute('vdb', 'vendor', None)])
+        lsblk = lsblk_route([
+            lsblk_node('vda', '254:0', kind='disk', size=137438953472, children=[
+                lsblk_node('vda2', '254:2', 'vda', size=136902082560, fstype='ext4', uuid=ROOT_UUID,
+                           mountpoint='/')]),
+            lsblk_node('vdb', '254:16', kind='disk', size=10737418240, children=[
+                lsblk_node('vdb1', '254:17', 'vdb', size=10736893952)])])
+        result, _, _ = self.observe(observation_outputs(**{'block-sysfs': (0, blocks),
+                                                         'block-lsblk': (0, lsblk)}))
+        self.assertEqual([disk['name'] for disk in result['facts']['additional_disks']], ['vdb'])
+        self.assertEqual(result['facts']['additional_disks'][0]['serial']['status'], 'missing')
+        self.assertEqual([part['name'] for part in result['facts']['additional_partitions']], ['vdb1'])
+        self.assertEqual(result['facts']['root']['ancestry'], ['vda2', 'vda'])
+        self.assertEqual(result['facts']['root']['status'], 'resolved')
+        self.assertEqual(result['findings'], [])
+
+    def test_mismatched_root_parent_stays_ambiguous(self):
+        blocks = block_sysfs([block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda'),
+                             block_record('vda2', '254:2', 1, 267386880, VIRTIO + '/block/vdz/vda2')],
+                            [attribute('vda', 'serial', None), attribute('vda', 'model', None),
+                             attribute('vda', 'vendor', None)])
+        lsblk = lsblk_route([lsblk_node('vda', '254:0', kind='disk', size=137438953472, children=[
+            lsblk_node('vda2', '254:2', 'vdz', size=136902082560, fstype='ext4', uuid=ROOT_UUID,
+                       mountpoint='/')])])
+        result, _, _ = self.observe(observation_outputs(**{'block-sysfs': (0, blocks),
+                                                         'block-lsblk': (0, lsblk)}))
+        root = result['facts']['root']
+        self.assertEqual(root['status'], 'ambiguous')
+        self.assertIn('the root partition parent is unresolved', root['reasons'])
+        self.assertEqual(root['ancestry'], ['vda2'])
+        self.assertIn('the root ancestry does not reach a whole disk', root['reasons'])
+        self.assertEqual(result['facts']['block_inventory']['parent_unresolved'], ['vda2'])
+        self.assertEqual(result['facts']['inventory_agreement']['status'], 'differs')
+        self.assertTrue(any('block inventories differ' in finding for finding in result['findings']))
+        self.assertTrue(any('writer-bound observation block-sysfs' in finding or
+                            'writer-bound observation: block inventories' in finding
+                            for finding in result['findings']))
+        self.assertFalse(result['complete'])
+
+    def test_mapper_root_is_an_ambiguous_controller(self):
+        mapper = '/sys/devices/virtual/block/dm-0'
+        blocks = block_sysfs([block_record('dm-0', '253:0', 0, 268435456, mapper),
+                             block_record('dm-1', '253:1', 1, 267386880, mapper + '/dm-1')],
+                            [attribute('dm-0', 'serial', None), attribute('dm-0', 'model', None),
+                             attribute('dm-0', 'vendor', None)])
+        outputs = observation_outputs(**{
+            'block-sysfs': (0, blocks),
+            'block-lsblk': (127, b''),
+            'mountinfo': (0, mountinfo_route('22 1 253:1 / / rw,relatime - ext4 /dev/mapper/root rw')),
+            'filesystem': (0, filesystem_route(majmin='253:1', device='dm-1')),
+            'device-uuids': (0, ('dir by-uuid present\ndir by-partuuid absent\n'
+                                 'entry by-uuid %s dm-1\n' % ROOT_UUID).encode())})
+        result, _, _ = self.observe(outputs)
+        root = result['facts']['root']
+        self.assertEqual(root['status'], 'ambiguous')
+        self.assertEqual(root['controller_kind'], 'virtual')
+        self.assertEqual(root['ancestry'], ['dm-1', 'dm-0'])
+        self.assertIn('the root controller is virtual and this schema cannot resolve it to one controller',
+                      root['reasons'])
+        # The ambiguity is recorded and it is not hidden: the receipt cannot read as complete or
+        # eligible while no writer bound is established, and every route's own status stays honest.
+        self.assertTrue(any('root controller or ancestry is ambiguous' in finding
+                            for finding in result['findings']))
+        self.assertFalse(result['complete'])
+        self.assertEqual(result['observation_eligibility'],
+                         'not eligible: the root controller or ancestry is ambiguous, so no writer '
+                         'bound is established')
+        self.assertEqual(result['limits']['writer_association'], 'not established')
+        self.assertEqual(statuses(result)['block-lsblk'], 'absent')
+        self.assertEqual(statuses(result)['block-sysfs'], guest_probe.OBSERVED)
+
+    def test_absent_encoder_records_attributes_as_unavailable(self):
+        blocks = block_sysfs([block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda'),
+                             block_record('vda2', '254:2', 1, 267386880, VIRTIO + '/block/vda/vda2')],
+                            ['attr vda serial unavailable\n', 'attr vda model unavailable\n',
+                             'attr vda vendor unavailable\n'], encoding='unavailable')
+        result, _, retained = self.observe(observation_outputs(**{'block-sysfs': (0, blocks)}))
+        disk = result['facts']['disks'][0]
+        self.assertEqual(statuses(result)['block-sysfs'], guest_probe.OBSERVED)
+        for field in ('serial', 'model', 'vendor'):
+            self.assertEqual(disk[field], {'status': 'unavailable'})
+        self.assertEqual(result['facts']['block_inventory']['sysfs_encoding'], 'unavailable')
+        self.assertIn(b'attr vda serial unavailable', retained['block-sysfs'])
+        # A hex payload without an encoder is refused instead of being read as text.
+        broken = blocks + b'attr vda serial hex:41\n'
+        result, _, _ = self.observe(observation_outputs(**{'block-sysfs': (0, broken)}))
+        self.assertEqual(statuses(result)['block-sysfs'], guest_probe.MALFORMED)
+        self.assertFalse(result['complete'])
+
+    def test_real_probe_scripts_decode_their_own_output(self):
+        """The reviewed scripts are run for real, so no fixture invents a record they never emit."""
+        tree = fixture()
+        (tree / 'sys' / 'fs' / 'cgroup').mkdir(parents=True)
+        for name in ('cgroup.controllers', 'cgroup.subtree_control'):
+            (tree / 'sys' / 'fs' / 'cgroup' / name).write_text('cpuset cpu io memory pids\n')
+        (tree / 'bin').mkdir()
+        systemctl = tree / 'bin' / 'systemctl'
+        systemctl.write_text('#!/bin/sh\n'
+                             'printf "MemoryMax=infinity\\nMemoryHigh=infinity\\n'
+                             'MemorySwapMax=infinity\\nIOReadBandwidthMax=/dev/sda 1048576 '
+                             '/dev/sdb 2048\\nIOWriteBandwidthMax=/dev/sda 4096\\n'
+                             'IOReadIOPSMax=\\nIOWriteIOPSMax=/dev/sda 100\\n'
+                             'TasksMax=4915\\nCPUWeight=100\\n"\n')
+        systemctl.chmod(0o700)
+        script = guest_probe.CGROUP_UNITS.replace('/sys/fs/cgroup', str(tree / 'sys' / 'fs' / 'cgroup'))
+        script = script.replace('systemctl', str(systemctl))
+        run = subprocess.run(['/bin/sh', '-c', script], capture_output=True, timeout=60,
+                             env={'PATH': str(tree / 'bin') + ':/usr/bin:/bin', 'LC_ALL': 'C'})
+        self.assertEqual(run.returncode, 0, run.stderr)
+        route = next(item for item in guest_probe.ROUTES if item['id'] == 'cgroup-units')
+        status, facts, reasons = guest_probe.decode(
+            route, {'disposition': 'exited', 'waited_exit': 0}, run.stdout)
+        self.assertEqual((status, reasons), (guest_probe.OBSERVED, []))
+        properties = facts['units']['system.slice']['properties']
+        self.assertEqual(properties['MemoryMax'], {'status': 'observed', 'value': 'infinity'})
+        self.assertEqual(properties['IOWriteBandwidthMax'],
+                         {'status': 'observed', 'devices': [{'device': '/dev/sda', 'rate': '4096'}]})
+        self.assertEqual([item['device'] for item in properties['IOReadBandwidthMax']['devices']],
+                         ['/dev/sda', '/dev/sdb'])
+        self.assertEqual(properties['IOReadIOPSMax'], {'status': 'empty', 'devices': []})
+        self.assertEqual(sorted(facts['files']), ['cgroup.controllers', 'cgroup.subtree_control'])
+
+        # The documented version flag differs per tool: dumpe2fs refuses --version and accepts -V.
+        tools = tree / 'tools'
+        tools.mkdir()
+        (tools / 'lsblk').write_text('#!/bin/sh\n[ "$1" = --version ] || exit 1\n'
+                                     'echo "lsblk from util-linux 2.39.3"\n')
+        (tools / 'dumpe2fs').write_text('#!/bin/sh\n[ "$1" = -V ] || exit 1\n'
+                                        'echo "dumpe2fs 1.47.0" >&2\n')
+        for name in ('lsblk', 'dumpe2fs'):
+            (tools / name).chmod(0o700)
+        run = subprocess.run(['/bin/sh', '-c', guest_probe.CAPABILITIES], capture_output=True, timeout=60,
+                             env={'PATH': str(tools), 'LC_ALL': 'C'})
+        self.assertEqual(run.returncode, 0, run.stderr)
+        route = next(item for item in guest_probe.ROUTES if item['id'] == 'capabilities')
+        status, facts, reasons = guest_probe.decode(
+            route, {'disposition': 'exited', 'waited_exit': 0}, run.stdout)
+        self.assertEqual((status, reasons), (guest_probe.OBSERVED, []))
+        self.assertEqual(facts['versions'], {
+            'lsblk': {'status': 'observed', 'stream': 'stdout',
+                      'text': 'lsblk from util-linux 2.39.3'},
+            'dumpe2fs': {'status': 'observed', 'stream': 'stderr', 'text': 'dumpe2fs 1.47.0'}})
+        self.assertEqual(facts['quota_tools']['repquota'], 'absent')
+        self.assertEqual(facts['tools']['lsblk'], str(tools / 'lsblk'))
+
+    def test_version_capability_requires_success_and_banner_shape(self):
+        """A version is a version only from a successful invocation whose first line is its banner."""
+        tree = fixture()
+        tools = tree / 'tools'
+        tools.mkdir()
+        route = next(item for item in guest_probe.ROUTES if item['id'] == 'capabilities')
+
+        def run_route():
+            run = subprocess.run(['/bin/sh', '-c', guest_probe.CAPABILITIES], capture_output=True, timeout=60,
+                                 env={'PATH': str(tools), 'LC_ALL': 'C'})
+            self.assertEqual(run.returncode, 0, run.stderr)
+            return run.stdout.decode()
+
+        def decode_output(stdout):
+            return guest_probe.decode(route, {'disposition': 'exited', 'waited_exit': 0},
+                                      stdout.encode())
+
+        def tool(name, body):
+            path = tools / name
+            path.write_text('#!/bin/sh\n' + body)
+            path.chmod(0o700)
+
+        # A refused -V that writes its error and usage to stderr must never read as a version.
+        # The fake really refuses (the guard runs "&&" for -V), and the probe's record is checked
+        # directly so the refusal path cannot pass as the silent empty-output case.
+        tool('dumpe2fs', '[ "$1" = -V ] && { echo "dumpe2fs: invalid option -- V" >&2; '
+                         'echo "Usage: dumpe2fs [-V] device" >&2; exit 1; }\n')
+        refused = subprocess.run([str(tools / 'dumpe2fs'), '-V'], capture_output=True, text=True,
+                                 timeout=30)
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn('invalid option', refused.stderr)
+        stdout = run_route()
+        self.assertEqual([line for line in stdout.splitlines() if line.startswith('version')],
+                         ['version dumpe2fs unavailable'])
+        self.assertNotIn('invalid option', stdout)
+        status, facts, reasons = decode_output(stdout)
+        self.assertEqual((status, reasons), (guest_probe.OBSERVED, []))
+        self.assertEqual(facts['versions']['dumpe2fs'], {'status': 'unavailable'})
+        self.assertEqual(facts['tools']['dumpe2fs'], str(tools / 'dumpe2fs'))
+        self.assertEqual(facts['quota_tools']['repquota'], 'absent')
+
+        # A present tool that prints nothing records unavailable and keeps every other fact.
+        tool('findmnt', 'exit 0\n')
+        stdout = run_route()
+        self.assertEqual([line for line in stdout.splitlines() if line.startswith('version')],
+                         ['version findmnt unavailable', 'version dumpe2fs unavailable'])
+        status, facts, reasons = decode_output(stdout)
+        self.assertEqual((status, reasons), (guest_probe.OBSERVED, []))
+        self.assertEqual(facts['versions']['findmnt'], {'status': 'unavailable'})
+        self.assertEqual(facts['tools']['findmnt'], str(tools / 'findmnt'))
+
+        # A banner from a failed invocation is not accepted either.
+        tools.joinpath('dumpe2fs').unlink()
+        tool('lsblk', '[ "$1" = --version ] && echo "lsblk from util-linux 2.39.3"; exit 1\n')
+        status, facts, reasons = decode_output(run_route())
+        self.assertEqual((status, reasons), (guest_probe.OBSERVED, []))
+        self.assertEqual(facts['versions']['lsblk'], {'status': 'unavailable'})
+
+        # An unrelated line on stderr is not a version even when the tool succeeds.
+        tools.joinpath('lsblk').unlink()
+        tool('dumpe2fs', 'echo "warning: deprecated call" >&2; exit 0\n')
+        status, facts, reasons = decode_output(run_route())
+        self.assertEqual((status, reasons), (guest_probe.OBSERVED, []))
+        self.assertEqual(facts['versions']['dumpe2fs'], {'status': 'unavailable'})
+
+    def test_complete_dump_with_a_failed_exit_is_not_an_observation(self):
+        result, _, retained = self.observe(observation_outputs(**{'filesystem': (1, filesystem_route())}))
+        row = next(item for item in result['routes'] if item['id'] == 'filesystem')
+        self.assertEqual(row['status'], guest_probe.FAILED)
+        self.assertEqual(row['facts']['project_feature'], 'present')
+        self.assertIn('after its dump', row['reasons'][0])
+        self.assertFalse(result['complete'])
+        self.assertTrue(any('writer-bound observation filesystem' in finding for finding in result['findings']))
+        self.assertIn(b'Filesystem features:', retained['filesystem'])
+
+    def test_lsblk_failed_read_is_not_an_unsupported_command(self):
+        result, _, _ = self.observe(observation_outputs(**{'block-lsblk': (125, b'')}))
+        row = next(item for item in result['routes'] if item['id'] == 'block-lsblk')
+        self.assertEqual(row['status'], guest_probe.FAILED)
+        self.assertIn('could not be verified', row['reasons'][0])
+        self.assertFalse(result['complete'])
+        result, _, _ = self.observe(observation_outputs(**{'block-lsblk': (126, b'')}))
+        row = next(item for item in result['routes'] if item['id'] == 'block-lsblk')
+        self.assertEqual(row['status'], guest_probe.UNSUPPORTED)
+        self.assertEqual(result['findings'], [])
+        self.assertTrue(result['complete'])
+
+    def test_absent_capability_is_a_negative_observation(self):
+        result, _, _ = self.observe(observation_outputs(**ABSENT_ROUTES))
+        rows = statuses(result)
+        for route in ('block-lsblk', 'filesystem', 'device-uuids'):
+            self.assertEqual(rows[route], guest_probe.ABSENT)
+        self.assertEqual(rows['block-sysfs'], guest_probe.OBSERVED)
+        self.assertEqual(result['facts']['filesystem_features']['status'], 'unknown')
+        self.assertEqual(result['facts']['filesystem_features']['project_feature'], None)
+        self.assertEqual(result['facts']['quota_tools']['quotaon'], 'absent')
+        self.assertEqual(result['facts']['control_groups']['unit_observation'], 'absent')
+        self.assertEqual(result['facts']['inventory_agreement']['status'], 'unavailable')
+        self.assertEqual(result['facts']['root']['status'], 'resolved')
+        self.assertEqual(result['findings'], [])
+        self.assertTrue(result['complete'])
+
+    def test_unsupported_invocation_is_recorded_apart_from_a_failed_read(self):
+        result, _, _ = self.observe(observation_outputs(**{'block-lsblk': (126, b'')}))
+        self.assertEqual(statuses(result)['block-lsblk'], guest_probe.UNSUPPORTED)
+        self.assertEqual(result['findings'], [])
+        self.assertTrue(result['complete'])
+        self.assertEqual(result['facts']['inventory_agreement']['status'], 'unavailable')
+        result, _, _ = self.observe(observation_outputs(**{'block-lsblk': (1, b'')}))
+        self.assertEqual(statuses(result)['block-lsblk'], guest_probe.FAILED)
+        self.assertFalse(result['complete'])
+
+    def test_unsupported_filesystem_is_a_negative_observation(self):
+        unsupported = filesystem_route(fstype='btrfs', device='vda2', status='unsupported-filesystem',
+                                       dump=False)
+        result, _, _ = self.observe(observation_outputs(**{'filesystem': (68, unsupported)}))
+        self.assertEqual(statuses(result)['filesystem'], guest_probe.UNSUPPORTED)
+        self.assertEqual(result['facts']['filesystem_features']['status'], 'unknown')
+        self.assertEqual(result['findings'], [])
+        self.assertTrue(result['complete'])
+
+    def test_missing_project_and_quota_features_are_recorded_absent(self):
+        features = tuple(name for name in EXT4_FEATURES if name not in ('project', 'quota'))
+        result, _, _ = self.observe(observation_outputs(**{
+            'filesystem': (0, filesystem_route(features=features))}))
+        self.assertEqual(statuses(result)['filesystem'], guest_probe.OBSERVED)
+        self.assertEqual(result['facts']['filesystem_features']['project_feature'], 'absent')
+        self.assertEqual(result['facts']['filesystem_features']['quota_feature'], 'absent')
+        self.assertIn('metadata_csum', result['facts']['filesystem_features']['features'])
+        self.assertEqual(result['findings'], [])
+
+    def test_read_failure_leaves_an_incomplete_observation(self):
+        failed = filesystem_route(status='read-failed', dump=False)
+        result, _, _ = self.observe(observation_outputs(**{'filesystem': (70, failed)}))
+        self.assertEqual(statuses(result)['filesystem'], guest_probe.FAILED)
+        self.assertFalse(result['complete'])
+        self.assertTrue(any('writer-bound observation filesystem' in finding for finding in result['findings']))
+        self.assertEqual(result['facts']['root']['status'], 'resolved')
+
+    def test_malformed_duplicate_oversize_and_truncated_reads_are_incomplete(self):
+        cases = {
+            'truncated mountinfo': {'mountinfo': (0, mountinfo_route('22 1 254:2 / / rw - ext4 /dev/vda2 rw')[:-1])},
+            'duplicate block': {'block-sysfs': (0, block_sysfs([
+                block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda'),
+                block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda')]))},
+            'oversize output': {'block-sysfs': (0, b'encoding hex\n' + b'block x\n' * (guest_probe.MAX_ROUTE_BYTES // 6))},
+            'output cap': {'mountinfo': ('output-cap', -9, b'22 1 254:2 / / rw - ext4 /dev/vda2 rw\n')},
+            'duplicate json key': {'block-lsblk': (0, b'{"blockdevices": [], "blockdevices": []}\n')},
+            'lsblk missing column': {'block-lsblk': (0, (json.dumps({'blockdevices': [
+                {'name': 'vda', 'maj:min': '254:0', 'pkname': None, 'type': 'disk'}]}) + '\n').encode())},
+            'lsblk extra column': {'block-lsblk': (0, (json.dumps({'blockdevices': [
+                {'name': 'vda', 'maj:min': '254:0', 'pkname': None, 'type': 'disk', 'size': 1024,
+                 'zone': 'none'}]}) + '\n').encode())},
+            'io property pair': {'cgroup-units': (0, b'file cgroup.controllers cpu\n'
+                                                     b'unit system.slice present\n'
+                                                     b'property system.slice IOReadBandwidthMax '
+                                                     b'/dev/vda=abc\n')},
+            'unknown record': {'capabilities': (0, b'tool lsblk /usr/bin/lsblk\nshell rm -rf /\n')},
+            'records after the dump': {'filesystem': (0, filesystem_route().replace(
+                b'Filesystem state:', b'obs status observed\nFilesystem state:'))},
+            'not utf-8': {'mountinfo': (0, b'22 1 254:2 / / rw - ext4 /dev/vda2 rw\n\xff\n')},
+            'undocumented escape': {'mountinfo': (0, mountinfo_route('22 1 254:2 / / rw - ext4 /dev/vd\\7772 rw'))},
+        }
+        for name, overrides in cases.items():
+            with self.subTest(case=name):
+                result, _, _ = self.observe(observation_outputs(**overrides))
+                incomplete = [route for route, status in statuses(result).items()
+                              if status in guest_probe.INCOMPLETE]
+                self.assertTrue(incomplete, name)
+                self.assertFalse(result['complete'])
+                self.assertTrue(any('writer-bound observation' in finding for finding in result['findings']))
+                for route in incomplete:
+                    self.assertEqual(result['facts'].get('root', {}).get('status') in ('resolved', 'ambiguous',
+                                                                                    'unknown'), True)
+
+    def test_adversarial_names_stay_data(self):
+        # Kernel and mount escaping is decoded once, then never re-split or executed.
+        source = '/dev/weird\\040name\\012tail'
+        outputs = observation_outputs(**{
+            'mountinfo': (0, mountinfo_route('22 1 254:2 / / rw,relatime - ext4 %s rw' % source))})
+        result, _, retained = self.observe(outputs)
+        self.assertEqual(result['facts']['root']['source'], '/dev/weird name\ntail')
+        self.assertEqual(result['findings'], [])
+        self.assertIn(b'weird\\040name\\012tail', retained['mountinfo'])
+        # A tool-reported name carrying shell syntax is refused as malformed, never run.
+        hostile = 'vda; touch /tmp/pwned'
+        lsblk = lsblk_route([lsblk_node(hostile, '254:0', kind='disk', size=1024)])
+        result, _, _ = self.observe(observation_outputs(**{'block-lsblk': (0, lsblk)}))
+        self.assertEqual(statuses(result)['block-lsblk'], guest_probe.MALFORMED)
+        self.assertFalse(result['complete'])
+        # An attribute payload that is not UTF-8 keeps its exact bytes and no text.
+        blocks = block_sysfs([block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda'),
+                             block_record('vda2', '254:2', 1, 267386880, VIRTIO + '/block/vda/vda2')],
+                            [attribute('vda', 'serial', 'x'),
+                             'attr vda model hex:%s\n' % b'model\nX'.hex(),
+                             attribute('vda', 'vendor', None)])
+        result, _, _ = self.observe(observation_outputs(**{'block-sysfs': (0, blocks)}))
+        self.assertEqual(result['facts']['disks'][0]['model']['text'], 'model\nX')
+        self.assertEqual(bytes.fromhex(result['facts']['disks'][0]['model']['hex']), b'model\nX')
+
+    def test_budget_and_retention_failures_are_incomplete(self):
+        result, calls, _ = self.observe(budget=0)
+        self.assertEqual(calls, [])
+        self.assertEqual(set(statuses(result).values()), {guest_probe.NOT_ATTEMPTED})
+        self.assertFalse(result['complete'])
+        self.assertTrue(all('shared observation window' in row['reasons'][0] for row in result['routes']))
+        self.assertTrue(any('shared observation window' in finding for finding in result['findings']))
+        result, _, _ = self.observe(retain_error=True)
+        self.assertEqual(set(statuses(result).values()), {guest_probe.FAILED})
+        self.assertFalse(result['complete'])
+        self.assertTrue(all(row['original'] is None for row in result['routes']))
+        self.assertTrue(any('original was not retained' in finding for finding in result['findings']))
+
+    def test_transport_failure_and_identity_drift(self):
+        result, _, _ = self.observe(run_error='mountinfo')
+        self.assertEqual(statuses(result)['mountinfo'], guest_probe.FAILED)
+        self.assertFalse(result['complete'])
+        self.assertTrue(any('could not run' in finding for finding in result['findings']))
+        drifted = {'raised': False}
+
+        def guard():
+            if drifted['raised']:
+                raise Refusal('evidence root identity changed')
+            drifted['raised'] = True
+
+        with self.assertRaisesRegex(Refusal, 'evidence root identity changed'):
+            guest_probe.observe(lambda *args: ({'disposition': 'exited', 'waited_exit': 0}, b''),
+                                lambda *args: None, guard, 10 ** 9)
+
+    def test_facts_never_open_setup_disk_or_hard_limit_gates(self):
+        result, _, _ = self.observe()
+        self.assertEqual(set(result), {'schema', 'routes_sha256', 'routes', 'facts', 'limits', 'complete',
+                                       'findings', 'observation_eligibility'})
+        self.assertEqual(proof.setup.SUPPORTED_HARD_LIMITS, frozenset())
+        self.assertEqual(proof.setup.SUPPORTED_DISK_MECHANISMS, frozenset())
+        self.assertIsNone(proof.setup.EXTERNAL_ANCHORS)
+        self.assertEqual(proof.setup.SUPPORTED_TOP_MECHANISMS, frozenset({'parallels-descriptor-selection-v1'}))
+        self.assertIn('linux_diagnostic_probe.py', proof.SOURCES)
+        limits = result['limits']
+        self.assertEqual(limits['hard_quota'], 'not established')
+        self.assertEqual(limits['aggregate_filesystem_allocation'], 'not established')
+        self.assertEqual(limits['guest_disk_association'], 'unknown')
+        self.assertEqual(limits['setup_credit'], 'none')
+        self.assertIn('rate', limits['io_write_bandwidth_max'])
+        self.assertIn('not an aggregate allocation', limits['io_write_bandwidth_max'])
+        self.assertIn('not an aggregate allocation', limits['memory_max'])
+        self.assertIn('not a filesystem allocation quota', limits['rlimit_fsize'])
+        # A same-shaped serial or size is never turned into a host/guest equality.
+        self.assertIn('not inferred', limits['host_guest_serial_equality'])
+        self.assertNotIn('association', result['facts']['root'])
+        self.assertEqual(result['facts']['root']['status'], 'resolved')
+
+
 PROGRAM = '''#!/usr/bin/python3
 import json, os, sys, time
 from pathlib import Path
@@ -597,6 +1252,8 @@ root = Path(%(root)r)
 home = Path(%(home)r)
 disk = Path(%(disk)r)
 vm = %(vm)r
+routes = %(routes)r
+mode_routes = %(mode_routes)r
 args = sys.argv[1:]
 with log.open('a') as handle:
     handle.write(args[0] + '\\n')
@@ -663,6 +1320,12 @@ elif args[0] == 'exec' and args[-1] == 'ready':
         sys.exit(1)
     print('ready')
 elif args[0] == 'exec':
+    script = args[-1] if len(args) > 4 else ''
+    for name in routes:
+        if ('# effigy-linux-observation: ' + name) in script:
+            code, out = mode_routes.get(mode, {}).get(name, routes[name])
+            sys.stdout.write(out)
+            sys.exit(code)
     if mode == 'growth':
         (disk / 'b.hds').write_bytes(b'extent-more')
     if mode == 'config_change':
@@ -723,6 +1386,8 @@ class EntryTests(unittest.TestCase):
         ('start_extent_cap', 1, 1),
         ('start_client_refusal', 1, 1),
         ('start_refusal_cleanup_running', 1, 1),
+        ('writer_bound_absent', 0, 1),
+        ('writer_bound_malformed', 1, 1),
     )
 
     def test_complete_and_spent_request(self):
@@ -750,7 +1415,10 @@ class EntryTests(unittest.TestCase):
         program.write_text(PROGRAM % {'state': str(state), 'log': str(log), 'scenario': str(scenario),
                                       'root': str(root), 'home': str(home), 'disk': str(disk),
                                       'vm': vm, 'snapshot': json.dumps(snapshot),
-                                      'probe': probe_output, 'cap': diagnostic.CAP})
+                                      'probe': probe_output, 'cap': diagnostic.CAP,
+                                      'routes': route_text(),
+                                      'mode_routes': {'writer_bound_absent': route_text(ABSENT_ROUTES),
+                                                      'writer_bound_malformed': route_text(MALFORMED_ROUTES)}})
         program.chmod(0o700)
         head = '1' * 40
 
@@ -810,7 +1478,7 @@ class EntryTests(unittest.TestCase):
                 self.assertEqual(proof.main(['proof', str(path), digest]), 0)
             self.assertEqual(state.read_text(), 'stopped')
             result = json.loads((evidence / 'linux-diagnostic-fixture01' / 'outcome.json').read_text())
-            self.assertEqual(result['schema'], 'linux-diagnostic-observation-v3')
+            self.assertEqual(result['schema'], 'linux-diagnostic-observation-v4')
             self.assertEqual(result['start_count'], 1)
             self.assertEqual(result['stop_count'], 1)
             self.assertEqual(result['stop_eligibility'], 'running')
@@ -818,6 +1486,26 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(result['writable_top'], 'unknown')
             self.assertEqual(result['placement'], 'not evaluated')
             self.assertEqual(result['findings'], [])
+            writer_bound = result['guest_writer_bound']
+            self.assertEqual(writer_bound['schema'], 'linux-writer-bound-observation-v1')
+            self.assertEqual(writer_bound['status'], 'observed')
+            self.assertTrue(writer_bound['complete'])
+            self.assertEqual(writer_bound['findings'], [])
+            self.assertEqual({row['id']: row['status'] for row in writer_bound['routes']},
+                             {route: guest_probe.OBSERVED for route in guest_probe.route_ids()})
+            self.assertEqual(writer_bound['facts']['root']['device'], 'vda2')
+            self.assertEqual(writer_bound['facts']['root']['ancestry'], ['vda2', 'vda'])
+            self.assertEqual(writer_bound['facts']['root']['controller_kind'], 'virtio')
+            self.assertEqual(writer_bound['facts']['additional_disks'], [])
+            self.assertEqual(writer_bound['facts']['filesystem_features']['project_feature'], 'present')
+            self.assertEqual(writer_bound['limits']['hard_quota'], 'not established')
+            self.assertEqual(result['hard_quota'], 'not established')
+            self.assertEqual(result['guest_association'], 'unknown')
+            for route in guest_probe.route_ids():
+                original = evidence / 'linux-diagnostic-fixture01' / ('observation-%s.raw' % route)
+                self.assertTrue(original.is_file(), route)
+                self.assertEqual(hashlib.sha256(original.read_bytes()).hexdigest(),
+                                 {row['id']: row['sha256'] for row in writer_bound['routes']}[route])
             self.assertEqual(result['metadata_differences'], [])
             self.assertEqual(result['identity_events'], [])
             self.assertEqual(result['before_metadata']['logical'],
@@ -970,6 +1658,34 @@ class EntryTests(unittest.TestCase):
                         if mode == 'partial':
                             self.assertEqual(result['vm_terminal'], 'stopped')
                             self.assertTrue(any('partial' in x for x in result['findings']))
+                        if mode == 'writer_bound_absent':
+                            self.assertEqual(result['guest_writer_bound']['status'], 'observed')
+                            self.assertTrue(result['guest_writer_bound']['complete'])
+                            rows = {row['id']: row['status']
+                                    for row in result['guest_writer_bound']['routes']}
+                            self.assertEqual(rows['block-sysfs'], guest_probe.OBSERVED)
+                            for route in ('block-lsblk', 'filesystem', 'device-uuids'):
+                                self.assertEqual(rows[route], guest_probe.ABSENT)
+                            self.assertEqual(result['findings'], [])
+                            self.assertEqual(result['guest_writer_bound']['facts']['root']['status'],
+                                             'resolved')
+                            self.assertEqual(result['guest_writer_bound']['facts']
+                                             ['filesystem_features']['status'], 'unknown')
+                            self.assertEqual(result['guest_writer_bound']['facts']
+                                             ['control_groups']['unit_observation'], 'absent')
+                            self.assertEqual(result['writable_top'], 'unknown')
+                        if mode == 'writer_bound_malformed':
+                            self.assertEqual(result['guest_writer_bound']['status'], 'partial')
+                            self.assertFalse(result['guest_writer_bound']['complete'])
+                            self.assertTrue(any('writer-bound observation' in finding
+                                                for finding in result['findings']))
+                            rows = {row['id']: row['status']
+                                    for row in result['guest_writer_bound']['routes']}
+                            self.assertEqual(rows['block-lsblk'], guest_probe.MALFORMED)
+                            self.assertEqual(rows['mountinfo'], guest_probe.MALFORMED)
+                            self.assertEqual(rows['block-sysfs'], guest_probe.OBSERVED)
+                            self.assertEqual(result['guest_association'], 'unknown')
+                            self.assertEqual(result['hard_quota'], 'not established')
 
 
 def git(args, cwd):
@@ -1052,6 +1768,7 @@ class CheckoutBindingTests(unittest.TestCase):
             'from pathlib import Path',
             'state, log = Path(%r), Path(%r)' % (str(self.state), str(self.log)),
             'vm = %r' % (vm,),
+            'routes = %r' % (route_text(),),
             'args = sys.argv[1:]',
             "with log.open('a') as f: f.write(json.dumps(sys.argv) + '\\n')",
             "if args[0] == 'start': state.write_text('running')",
@@ -1061,7 +1778,14 @@ class CheckoutBindingTests(unittest.TestCase):
             "    vm['State'] = state.read_text()",
             "    print(json.dumps([vm]))",
             "elif args[0] == 'exec' and args[-1] == 'ready': print('ready')",
-            "elif args[0] == 'exec': print(%r, end='')" % (probe,),
+            "elif args[0] == 'exec':",
+            "    script = args[-1] if len(args) > 4 else ''",
+            "    for name in routes:",
+            "        if ('# effigy-linux-observation: ' + name) in script:",
+            "            code, out = routes[name]",
+            "            sys.stdout.write(out)",
+            "            sys.exit(code)",
+            "    print(%r, end='')" % (probe,),
             '',
         ]))
         self.program.chmod(0o700)
@@ -1120,8 +1844,9 @@ class CheckoutBindingTests(unittest.TestCase):
         self.assertEqual(result['findings'], [])
         calls = [json.loads(line) for line in self.log.read_text().splitlines()]
         self.assertEqual([call[1] for call in calls],
-                         ['list', 'snapshot-list', 'start', 'list', 'exec', 'exec', 'list', 'stop', 'list',
-                          'snapshot-list'])
+                         ['list', 'snapshot-list', 'start', 'list', 'exec', 'exec'] +
+                         ['exec'] * len(guest_probe.route_ids()) +
+                         ['list', 'stop', 'list', 'snapshot-list'])
         self.assertTrue(all(call[0] == str(self.program) for call in calls))
         self.assertIn([str(self.program), 'start', proof.setup.VM_UUID], calls)
         steps = sorted(self.destination('checkout01').glob('step-*'))
@@ -1163,6 +1888,25 @@ class CheckoutBindingTests(unittest.TestCase):
             (path / module / 'linux_diagnostic.py').unlink()
             return request
 
+        def changed_observation_source(path, request):
+            # The new writer-bound read module is part of the complete input inventory.
+            with (path / module / 'linux_diagnostic_probe.py').open('a') as source:
+                source.write('\n# drift\n')
+            return request
+
+        def missing_observation_source(path, request):
+            (path / module / 'linux_diagnostic_probe.py').unlink()
+            return request
+
+        def changed_route_binding(path, request):
+            # A changed fixed route (its timeout, like any reviewed byte) changes the route digest,
+            # so the recomputed plan refuses the request before any dispatch.
+            source = path / module / 'linux_diagnostic_probe.py'
+            text = source.read_text()
+            source.write_text(text.replace("{'id': 'block-sysfs', 'script': BLOCK_SYSFS, 'timeout': 20}",
+                                           "{'id': 'block-sysfs', 'script': BLOCK_SYSFS, 'timeout': 21}", 1))
+            return request
+
         def extra_request_role(path, request):
             return dict(request, repository=dict(request['repository'], **{module + 'extra_input.py': '0' * 64}))
 
@@ -1171,6 +1915,9 @@ class CheckoutBindingTests(unittest.TestCase):
             ('untracked extra source', untracked_extra, 'not clean'),
             ('changed source', uncommitted_change, 'bindings drifted'),
             ('missing source', missing_source, 'input unavailable'),
+            ('changed observation source', changed_observation_source, 'bindings drifted'),
+            ('missing observation source', missing_observation_source, 'input unavailable'),
+            ('changed route binding', changed_route_binding, 'bindings drifted'),
             ('extra request role', extra_request_role, 'bindings drifted'),
         ]
         for number, (name, mutate, message) in enumerate(cases):

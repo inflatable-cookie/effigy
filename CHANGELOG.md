@@ -19,6 +19,15 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Prepare a private, proof-only Linux VM diagnostic observation route with complete extent accounting and retained originals.
 
+- Extend that proof-only Linux diagnostic occurrence with fixed, read-only writer-bound
+  capability observations: every guest block disk and partition with major:minor, parent and
+  sysfs controller path, the root mount/source/filesystem/UUID and its resolved ancestry,
+  documented ext2/3/4 features, read-only quota-tool capability, and cgroup-v2 controllers
+  with existing slice properties. Originals and per-read statuses (`observed`, `absent`,
+  `unsupported`, `not-found`, `ambiguous`, `failed`, `malformed`, `not-attempted`) are retained;
+  the facts stay observations and grant no setup, disk, hard-limit, association or trust credit
+  (effigy#740).
+
 - Allow a pinned macOS proof request to start its bounded stage window at the externally approved launch (effigy#696).
 
 - Keep macOS proof input bindings stable across equivalent pinned checkouts (effigy#695).
