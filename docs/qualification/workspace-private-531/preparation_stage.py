@@ -36,6 +36,9 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
     deadline: optional absolute time.monotonic() cap shared by a multi-step stage; the
     launch limit is the earlier of start + timeout and deadline. stdin_path/stdin_sha256:
     optional hash-bound bytes delivered as the child's stdin (default: /dev/null).
+    cleanup_deadline bounds the wait after termination; a missing waited exit stays unknown.
+    verify_in_fixed_helper is restricted to the fixed macOS helper, which checks the
+    bound inputs in the monitored child before and after its operation.
     """
     root = Path(root)
     info = root.lstat()
