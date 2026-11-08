@@ -2269,6 +2269,305 @@ class PinnedProbeTests(Fixture):
         self.assertEqual(result['streams']['stdout']['bytes'], 0)  # no guest facts are reported from this host
 
 
+class FreshChainRootTests(Fixture):
+    """A genuine fresh C0 receipt supplies the owned roots of the C stages that follow it: the binding is the
+    chain's own verified creation record, never the pinned 688 records and never a caller path. C0 runs the real
+    fixed helpers over a fixture 688 record for its tool and tranche checks; C1 and C2 run through the adapter's
+    entry point with controlled transports. No native effect, credential or network read."""
+
+    def use_historical(self, roots):
+        """A fixture 688 C0 record and tranche summary, pinned by their own sha256 for this test only. The record's
+        token is the recorded one and it names this fixture's tool bytes, so C0's tool and tranche helpers run for
+        real. `roots` becomes the record's roots_final, used only by the historical C1 binding."""
+        hist = self.tmp + '/historical'
+        os.mkdir(hist, 0o700)
+        tranche = hist + '/summary.json'
+        Path(tranche).write_bytes(b'{"tranche": "fixture"}\n')
+        tranche_sha = ex.sha_file(tranche)
+        record = dict(status='passed: fixture', token=ex.RECORDED_TOKEN, zero_share_present=True, roots_safe=True,
+                      failed_at=None,
+                      tools={'colima': {'sha256': ex.sha_file(self.colima)},
+                             'docker': {'sha256': ex.sha_file(self.docker)}},
+                      tranche_summary_sha256=tranche_sha,
+                      roots_final={r['path']: dict(device=r['device'], inode=r['inode'], entries=r['entries'])
+                                   for r in roots.values()})
+        data = (json.dumps(record, sort_keys=True, indent=2) + '\n').encode()
+        record_path = hist + '/C0.stage.json'
+        Path(record_path).write_bytes(data)
+        for patcher in (mock.patch.dict(ex.HISTORICAL_C0, dict(path=record_path, sha256=sha_bytes(data),
+                                                              tranche_path=tranche, tranche_sha256=tranche_sha)),
+                        mock.patch.object(ex, 'LINUX_ARTIFACT_DIR', hist)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return dict(path=record_path, sha256=sha_bytes(data))
+
+    def run_c0(self, token, activation_id):
+        """C0 through the real fixed helpers: no helper receipt is fabricated, and the stage closes on a
+        controlled transport for its one exec step."""
+        bindings = self.make_bindings(token)
+        calls = []
+        with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}), \
+             mock.patch.object(ex, 'HISTORICAL_TOOL_HASHES',
+                               {'colima': ex.sha_file(self.colima), 'docker': ex.sha_file(self.docker)}):
+            receipt = self.execute('C0', self.routed({'c0-colima-start-help': emit('help')}, calls), prior_ref=None,
+                                   activation_id=activation_id, bindings=bindings,
+                                   monitor_factory=FixedHelperTests.quiet_monitor)
+        self.assertEqual(receipt['closure'], 'closed', receipt)
+        self.assertEqual([c[0] for c in calls], ['c0-colima-start-help'])
+        for step in receipt['steps'][:4]:  # every helper ran as a supervised child with its own receipt
+            self.assertIn('helper_receipt', step)
+            self.assertEqual((step['closure'], step['waited_exit']), ('closed', 0))
+        return bindings, receipt, self.ref('C0', activation_id)
+
+    def c0_body(self, receipt):
+        return json.loads(Path(receipt['stage_root'], 'stage-receipt.json').read_text())
+
+    def assert_no_claim(self, stage, activation_id):
+        self.assertFalse(os.path.lexists(self.tmp + f'/claims/{activation_id}.claim'))
+        self.assertFalse(os.path.lexists(self.stage_dir(stage, activation_id)))
+
+    def test_a_genuine_fresh_c0_supplies_the_roots_without_the_historical_binding(self):
+        """The contradiction this task removes: a verified fresh C0 used to reach a root check that demanded the
+        688 records. The same chain now binds the roots its own C0 created, and the 688 records are not read."""
+        self.use_historical({})
+        bindings, c0, c0_ref = self.run_c0('f0f0f0b1', 'fresh-c0-0001')
+        body = self.c0_body(c0)
+        ex.verify_receipt_tree(body, 'C0', ex.chain_key(bindings), ex.load_manifest())  # the origin is genuine
+        self.assertNotEqual(bindings['token'], ex.RECORDED_TOKEN)
+        wrong = {name: dict(rec, device=0, inode=0) for name, rec in ex.RECORDED_ROOTS.items()}
+        calls = []
+        with mock.patch.object(ex, 'RECORDED_ROOTS', wrong):  # consulted, these records would refuse the run
+            receipt = self.execute('C1', self.routed({'c1-colima-start': emit('started')}, calls),
+                                   prior_ref=c0_ref, activation_id='fresh-c1-0001', bindings=bindings)
+        self.assertEqual(receipt['closure'], 'closed', receipt)
+        self.assertEqual([c[0] for c in calls], ['c1-colima-start'])
+        self.assertEqual(receipt['prior']['stage'], 'C0')
+        self.assertEqual(receipt['token'], bindings['token'])
+
+    def test_the_verified_chain_carries_the_fresh_roots_to_a_later_c_stage(self):
+        """C2 consumes the genuine C1 receipt, so its root check walks two verified links to the C0 creation
+        record. The guest echo still stops the stage: this corrects the root check, not the guest closure."""
+        self.use_historical({})
+        bindings, _, c0_ref = self.run_c0('f0f0f0b5', 'fresh-c0-0005')
+        c1 = self.execute('C1', self.routed({'c1-colima-start': emit('started')}, []), prior_ref=c0_ref,
+                          activation_id='fresh-c1-0005', bindings=bindings)
+        self.assertEqual(c1['closure'], 'closed')
+        c1_ref = self.ref('C1', 'fresh-c1-0005')
+        routes = {'c2-colima-status': emit('{"status":"running"}'), 'c2-route-echo': emit(prep.ROUTE_ECHO)}
+        calls = []
+        receipt = self.execute('C2', self.routed(routes, calls), prior_ref=c1_ref,
+                               activation_id='fresh-c2-0005', bindings=bindings)
+        self.assertEqual(receipt['closure'], 'guest_unknown')
+        self.assertEqual([c[0] for c in calls], ['c2-colima-status', 'c2-route-echo'])
+        # The admission seam is per run: the genuine C1 receipt grants no admission credit to the next stage.
+        with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}):
+            with self.assertRaisesRegex(ex.Refusal, 'stage unadmitted'):
+                self.execute('C2', self.routed({}, []), prior_ref=c1_ref,
+                             activation_id='fresh-c2-unadmitted', bindings=bindings)
+        self.assert_no_claim('C2', 'fresh-c2-unadmitted')
+
+    def test_origin_roots_are_the_c0_creation_record_by_shape_identity_mode_and_entries(self):
+        self.use_historical({})
+        bindings, c0, _ = self.run_c0('f0f0f0b2', 'fresh-c0-0002')
+        body = self.c0_body(c0)
+        roots = ex.origin_roots(body, bindings, ex.load_manifest())
+        self.assertEqual(set(roots), {'control', 'colima_home', 'qualification_root'})
+        self.assertEqual(roots['control']['entries'], ['bin', 'c', 'h', 's'])  # what C0 created and pinned
+        self.assertEqual((roots['colima_home']['entries'], roots['qualification_root']['entries']), ([], []))
+        for name, rec in roots.items():
+            info = os.lstat(rec['path'])
+            self.assertEqual(rec['path'], prep.control_paths(bindings['token'])[name], name)
+            self.assertEqual((rec['device'], rec['inode'], rec['uid'], rec['mode']),
+                             (info.st_dev, info.st_ino, info.st_uid, stat.S_IMODE(info.st_mode)), name)
+        pins = ex.Pins()
+        ex.check_recorded_roots(body, bindings, pins, first_use=True, manifest=ex.load_manifest())
+        self.assertEqual(set(pins.items), {r['path'] for r in roots.values()})
+        pins.recheck()
+
+    def test_a_tampered_c0_creation_record_refuses_where_the_field_is_read(self):
+        """A self-consistent edit of the C0 creation helper's record re-records every hash the receipt names, so
+        only the field-level binding can refuse it. The live roots are untouched and never adopted."""
+        self.use_historical({})
+        bindings, c0, c0_ref = self.run_c0('f0f0f0b6', 'fresh-c0-0006')
+
+        def rewrite(mutate):
+            """Re-record every hash and stream the C0 receipt, its helper evidence and its child receipt name, so
+            the receipt stays self-consistent and only the field-level checks can refuse it."""
+            step_root = Path(c0['stage_root'], 'c0-make-owned-roots')
+            evidence_path = step_root / 'helper.json'
+            helper = json.loads(evidence_path.read_text())
+            mutate(helper['result'])
+            evidence_path.write_text(json.dumps(helper, sort_keys=True, indent=2) + '\n')
+            stdout = json.loads((step_root / 'stdout').read_text())
+            stdout['result'] = helper['result']
+            data = json.dumps(stdout, sort_keys=True).encode()
+            (step_root / 'stdout').write_bytes(data)
+            stream = dict(sha256=sha_bytes(data), bytes=len(data))
+            receipt = json.loads(Path(c0_ref['path']).read_text())
+            step = next(s for s in receipt['steps'] if s['id'] == 'c0-make-owned-roots')
+            child = json.loads(Path(step['helper_receipt']['path']).read_text())
+            child['streams']['stdout'] = stream
+            if isinstance(child.get('observed_bytes'), dict) and 'stdout' in child['observed_bytes']:
+                child['observed_bytes']['stdout'] = len(data)
+            Path(step['helper_receipt']['path']).write_text(json.dumps(child, sort_keys=True, indent=2) + '\n')
+            step['helper_receipt']['sha256'] = ex.sha_file(step['helper_receipt']['path'])
+            step['evidence']['sha256'] = ex.sha_file(evidence_path)
+            step['streams']['stdout'] = stream
+            Path(c0_ref['path']).write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')
+            return dict(c0_ref, sha256=ex.sha_file(c0_ref['path']))
+
+        def row(result, name):
+            return next(item for item in result['created']
+                        if item['path'] == prep.control_paths(bindings['token'])[name])
+
+        def inode(result):
+            row(result, 'control')['identity'][1] += 1
+
+        def uid(result):
+            row(result, 'qualification_root')['identity'][2] = os.geteuid() + 1
+
+        def mode(result):
+            row(result, 'colima_home')['identity'][3] = 0o755
+
+        def missing(result):
+            result['created'] = [item for item in result['created']
+                                 if item['path'] != prep.control_paths(bindings['token'])['qualification_root']]
+
+        cases = {'inode': (inode, 'root identity changed since the C0 origin creation record'),
+                 'uid': (uid, "recorded another user's root"),
+                 'mode': (mode, 'was not mode 0700'),
+                 'missing': (missing, 'did not create exactly')}
+        for name, (mutate, message) in cases.items():
+            with self.subTest(field=name):
+                forged = rewrite(mutate)
+                calls = []
+                with self.assertRaisesRegex(ex.Refusal, message):
+                    self.execute('C1', self.routed({}, calls), prior_ref=forged,
+                                 activation_id=f'fresh-c1-tamper-{name}', bindings=bindings)
+                self.assertEqual(calls, [])
+                self.assert_no_claim('C1', f'fresh-c1-tamper-{name}')
+        # The origin's own control binding is a field of the receipt: an edit refuses before any root is read.
+        receipt = json.loads(Path(c0_ref['path']).read_text())
+        receipt['control'] = self.tmp + '/mac-4f6a-elsewhere'
+        Path(c0_ref['path']).write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')
+        with self.assertRaisesRegex(ex.Refusal, "does not name this token's control root"):
+            self.execute('C1', self.routed({}, []), prior_ref=dict(c0_ref, sha256=ex.sha_file(c0_ref['path'])),
+                         activation_id='fresh-c1-control', bindings=bindings)
+        self.assert_no_claim('C1', 'fresh-c1-control')
+
+    def test_original_creation_output_and_evidence_tampering_refuse(self):
+        self.use_historical({})
+        bindings, c0, c0_ref = self.run_c0('f0f0f0b7', 'fresh-c0-0007')
+        step_root = Path(c0['stage_root'], 'c0-make-owned-roots')
+        stdout = step_root / 'stdout'
+        original = stdout.read_bytes()
+        data = json.loads(original)
+        data['result']['created'][0]['identity'][1] += 1
+        stdout.write_text(json.dumps(data, sort_keys=True))
+        calls = []
+        with self.assertRaisesRegex(ex.Refusal, 'helper stdout changed'):
+            self.execute('C1', self.routed({}, calls), prior_ref=c0_ref, activation_id='fresh-c1-output',
+                         bindings=bindings)
+        self.assertEqual(calls, [])
+        stdout.write_bytes(original)
+        evidence = step_root / 'helper.json'
+        helper = json.loads(evidence.read_text())
+        helper['result']['created'][0]['identity'][1] += 1
+        evidence.write_text(json.dumps(helper, sort_keys=True, indent=2) + '\n')
+        with self.assertRaisesRegex(ex.Refusal, 'differs from its recorded hash'):
+            self.execute('C1', self.routed({}, calls), prior_ref=c0_ref, activation_id='fresh-c1-evidence',
+                         bindings=bindings)
+        self.assertEqual(calls, [])
+        self.assert_no_claim('C1', 'fresh-c1-evidence')
+
+    def test_a_replaced_remodelled_or_extended_root_refuses_before_any_call(self):
+        self.use_historical({})
+        for token, case in (('f0f0f0c1', 'replaced'), ('f0f0f0c2', 'mode'), ('f0f0f0c3', 'entries')):
+            with self.subTest(case=case):
+                bindings, _, c0_ref = self.run_c0(token, f'fresh-c0-{case}')
+                control = bindings['control']
+                if case == 'replaced':
+                    os.rename(control, control + '.moved')
+                    os.mkdir(control, 0o700)
+                    message = 'root identity changed since the C0 origin creation record'
+                elif case == 'mode':
+                    os.chmod(bindings['colima_home'], 0o755)
+                    message = 'root mode changed'
+                else:
+                    Path(control, 'unexpected').write_bytes(b'x')
+                    message = 'root entries differ from the C0 origin creation record'
+                calls = []
+                with self.assertRaisesRegex(ex.Refusal, message):
+                    self.execute('C1', self.routed({}, calls), prior_ref=c0_ref,
+                                 activation_id=f'fresh-c1-{case}', bindings=bindings)
+                self.assertEqual(calls, [])
+                self.assert_no_claim('C1', f'fresh-c1-{case}')
+
+    def test_a_missing_root_or_an_alias_refuses_before_any_call(self):
+        """A later C stage checks identity only, so the absent and aliased shapes are read through the same check
+        after C1 has populated the control root."""
+        self.use_historical({})
+        for token, case in (('f0f0f0c4', 'missing'), ('f0f0f0c5', 'alias')):
+            with self.subTest(case=case):
+                bindings, c0, c0_ref = self.run_c0(token, f'fresh-c0-{case}')
+                body = self.c0_body(c0)
+                path = bindings['qualification_root'] if case == 'missing' else bindings['colima_home']
+                os.rename(path, path + '.moved')
+                if case == 'alias':
+                    os.symlink(bindings['control'], path)
+                    message = 'alias or non-directory root'
+                else:
+                    message = 'recorded root is absent'
+                with self.assertRaisesRegex(ex.Refusal, message):
+                    ex.check_recorded_roots(body, bindings, ex.Pins(), first_use=False, manifest=ex.load_manifest())
+
+    def test_the_recorded_token_keeps_its_own_pinned_records_and_never_gets_a_minted_origin(self):
+        """The historical binding stays exact and distinct: for the recorded token the root check reads the 688
+        identities, not a chain's creation record, and a historical C0 cannot supply fresh roots."""
+        self.use_historical({})
+        bindings, c0, _ = self.run_c0('f0f0f0b8', 'fresh-c0-0008')
+        body = self.c0_body(c0)
+        roots = ex.origin_roots(body, bindings, ex.load_manifest())
+        recorded = {name: dict(rec, inode=rec['inode'] + 1) for name, rec in roots.items()}
+        with mock.patch.object(ex, 'RECORDED_ROOTS', recorded):
+            with self.assertRaisesRegex(ex.Refusal, 'root identity changed since the recorded C0 receipt'):
+                ex.check_recorded_roots(body, dict(bindings, token=ex.RECORDED_TOKEN), ex.Pins(),
+                                        first_use=True, manifest=ex.load_manifest())
+        historical = dict(stage='C0', closure='closed', historical=True, token=bindings['token'],
+                          control=bindings['control'])
+        with self.assertRaisesRegex(ex.Refusal, 'minted no token32'):
+            ex.origin_roots(historical, bindings, ex.load_manifest())
+        with self.assertRaisesRegex(ex.Refusal, 'the chain has no executor C0 origin'):
+            ex.origin_roots(ex.executor_origin({'stage': 'C1', 'receipts': []}), bindings, ex.load_manifest())
+
+    def test_ordinary_entry_and_unadmitted_c1_refuse_before_effects(self):
+        self.use_historical({})
+        bindings, _, c0_ref = self.run_c0('f0f0f0b9', 'fresh-c0-0009')
+        calls = []
+        path, sha = self.activation('C1', c0_ref, 'fresh-c1-refused', bindings=bindings)
+        with mock.patch.dict(ex.TEST_SEAM, {'owner_activation': False}):
+            with self.assertRaisesRegex(ex.Refusal, 'no owner-controlled activation mechanism'):
+                ex.execute_stage('C1', bindings, activation_path=path, activation_sha256=sha,
+                                 evidence_root=self.evidence, transport=self.routed({}, calls), utc_now=NOW)
+        with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}):
+            with self.assertRaisesRegex(ex.Refusal, 'stage unadmitted'):
+                ex.execute_stage('C1', bindings, activation_path=path, activation_sha256=sha,
+                                 evidence_root=self.evidence, transport=self.routed({}, calls), utc_now=NOW)
+        self.assertEqual(calls, [])
+        self.assert_no_claim('C1', 'fresh-c1-refused')
+
+    def test_a_chain_that_is_not_this_tokens_origin_refuses_before_the_roots_are_read(self):
+        self.use_historical({})
+        bindings, c0, c0_ref = self.run_c0('f0f0f0ba', 'fresh-c0-000a')
+        other = self.make_bindings('f0f0f0bb')
+        calls = []
+        with self.assertRaisesRegex(ex.Refusal, 'another backend chain'):
+            self.execute('C1', self.routed({}, calls), prior_ref=c0_ref, activation_id='fresh-c1-other',
+                         bindings=other)
+        self.assertEqual(calls, [])
+        self.assertFalse(os.path.lexists(other['control']))
+
+
 class CoverageLedgerTests(unittest.TestCase):
     """Every manifest step is accounted for, with the test that exercises it and how:
     executed (the adapter ran it with a real local child or the real handler); executed_stub_chain (the adapter

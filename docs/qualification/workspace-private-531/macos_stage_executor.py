@@ -68,13 +68,18 @@ HISTORICAL_TOOL_HASHES = {
 }
 OWNER_PREREQUISITE = ('an owner-controlled Nucleus proof-only execution at the pinned commit and inputs, '
                       'after native operator GO; the program cannot independently prove that launch provenance')
-# Recorded from the 688 C0 receipt (token 7deaf1b3): the three owned roots, by identity.
+# Recorded from the 688 C0 receipt (token 7deaf1b3): the three owned roots, by identity. These are the pinned
+# historical route's identities only. Every other token's roots and identities come from its own verified C0
+# creation record (origin_roots); no chain adopts these, and the recorded token is never given a fresh binding.
 RECORDED_TOKEN = '7deaf1b3'
 RECORDED_ROOTS = {
     'control': dict(path=f'{prep.STASH}/mac-4f6a-7deaf1b3', device=16777245, inode=156479713, entries=2),
     'colima_home': dict(path=f'{prep.STASH}/mac-4f6a-7deaf1b3/c', device=16777245, inode=156479714, entries=0),
     'qualification_root': dict(path=f'{prep.STASH}/mac-4f6a-7deaf1b3/s', device=16777245, inode=156479715, entries=0),
 }
+# The three owned roots one C0 creation makes, named as the fixed creation helper's request names them. Their
+# paths are the token's supported shape (prep.control_paths): the control root and its c and s children.
+ROOT_SHAPE = ('control', 'colima_home', 'qualification_root')
 # Recorded from 690's corrected acceptance: the engine the D stages must observe again.
 RECORDED_ENGINE_ID = 'ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd'
 # The one preceding stage each stage may consume. C0 and D0 are origins and consume none.
@@ -145,16 +150,24 @@ def build_verify_spec(stage_stdout):
     return json.dumps(dict(parent=parent, name=name, context=result), sort_keys=True)
 
 
-def origin_token32(body, token):
-    """The token32 that the C0 origin minted for this chain, read from the verified C0 receipt beneath it. The walk
-    follows each receipt's recorded predecessor to C0 (each was verified recursively by the chain verifier). A
-    historical C0 minted none, and a chain with no executor origin refuses."""
+def executor_origin(body):
+    """The C0 receipt at the root of this verified chain, reached through each receipt's recorded predecessor.
+    Every receipt read back here was already verified recursively by the chain verifier, and is re-read by its
+    recorded path and hash. A chain with no executor origin refuses."""
     cur = body
     while cur.get('stage') != 'C0':
         ref = cur.get('prior')
         if not isinstance(ref, dict):
             raise Refusal('the chain has no executor C0 origin: refuse')
         cur = read_receipt(ref)
+    return cur
+
+
+def origin_token32(body, token):
+    """The token32 that the C0 origin minted for this chain, read from the verified C0 receipt beneath it. The walk
+    follows each receipt's recorded predecessor to C0 (each was verified recursively by the chain verifier). A
+    historical C0 minted none, and a chain with no executor origin refuses."""
+    cur = executor_origin(body)
     origin = cur.get('origin')
     if cur.get('token') != token or cur.get('closure') != 'closed' or not isinstance(origin, dict):
         raise Refusal('the C0 origin is not a closed receipt of this token with a token32: refuse')
@@ -367,8 +380,10 @@ def runtime_preconditions(stage_id, bindings):
     if stage_id in ('C1', 'C2', 'C3', 'C4', 'C5', 'C6'):
         pre['recorded_roots'] = ({k: dict(v) for k, v in RECORDED_ROOTS.items()}
                                  if bindings.get('token') == RECORDED_TOKEN
-                                 else 'refuse: no recorded root identity for this token')
-        pre['recorded_roots_source'] = '688 C0 receipt, token 7deaf1b3 (roots_final)'
+                                 else 'the roots and identities the verified C0 origin creation helper '
+                                      'recorded: path shape, device, inode, uid, 0700 mode, first-use entries')
+        pre['recorded_roots_source'] = ('688 C0 receipt, token 7deaf1b3 (roots_final), for the recorded token only; '
+                                        "otherwise the chain's own verified C0 creation record")
     if stage_id in ('D1', 'D2', 'D3', 'D4'):
         pre['engine_id'] = RECORDED_ENGINE_ID
         pre['engine_id_source'] = '690 corrected acceptance: observed engine, 29.8.0 linux/aarch64'
@@ -469,12 +484,92 @@ class Pins:
         self.held.clear()
 
 
-def check_recorded_roots(bindings, pins, *, first_use):
-    """C-stage start: the owned roots must be the 688 recorded identities, bound by exact identity and
-    never recreated or adopted. Entry counts are checked only before C1 populates them."""
-    if bindings['token'] != RECORDED_TOKEN:
-        raise Refusal('no recorded root identity for this token: refuse, do not adopt')
-    for name, rec in RECORDED_ROOTS.items():
+def created_root_rows(origin, manifest):
+    """The roots and identities the C0 origin's own creation helper recorded, read from that step's hash-bound
+    evidence. The step is the manifest's C0 creation step; nothing here is caller-supplied or asserted by an
+    outer receipt."""
+    creation = [s['id'] for s in stage_of(manifest, 'C0')['steps']
+                if s['kind'] == 'helper' and s['helper'] == 'make_owned_dir']
+    if len(creation) != 1:
+        raise Refusal('the manifest does not name exactly one C0 owned-root creation step')
+    step = next((s for s in origin.get('steps') or [] if s.get('id') == creation[0]), None)
+    if not isinstance(step, dict) or step.get('kind') != 'helper' or step.get('closure') != 'closed':
+        raise Refusal('the C0 origin records no closed owned-root creation: refuse')
+    evidence = step.get('evidence')
+    if not isinstance(evidence, dict) or not isinstance(evidence.get('path'), str):
+        raise Refusal('the C0 origin records no creation evidence: refuse')
+    helper = json.loads(read_checked_file(evidence['path'], must_be_in=origin['stage_root'], read_only=False))
+    result = helper.get('result') if isinstance(helper, dict) and helper.get('step') == step['id'] else None
+    created = result.get('created') if isinstance(result, dict) else None
+    if not isinstance(created, list) or not created:
+        raise Refusal('the C0 origin records no created root identities: refuse')
+    rows = {}
+    for item in created:
+        if not isinstance(item, dict) or set(item) != {'path', 'identity'}:
+            raise Refusal('the C0 origin creation record is malformed: refuse')
+        path, identity = item['path'], item['identity']
+        if (not isinstance(path, str) or not isinstance(identity, list) or len(identity) != 4
+                or not all(isinstance(v, int) and not isinstance(v, bool) for v in identity)):
+            raise Refusal('the C0 origin creation record is malformed: refuse')
+        if path in rows:
+            raise Refusal('the C0 origin creation record repeats a root: refuse')
+        device, inode, uid, mode = identity
+        rows[path] = dict(device=device, inode=inode, uid=uid, mode=mode)
+    pinned = origin.get('pinned')
+    if not isinstance(pinned, list) or not set(rows) <= set(pinned):
+        raise Refusal('the C0 origin did not pin the roots it records: refuse')
+    # The stage's own pinned inventory also names the owned children C0 left under each root (its Colima bin and
+    # home), so the first-use entry set stays the chain's record rather than a guess.
+    for path, row in rows.items():
+        row['entries'] = sorted({os.path.basename(other) for other in pinned
+                                 if isinstance(other, str) and os.path.dirname(other) == path})
+    return rows
+
+
+def origin_roots(origin, bindings, manifest):
+    """A fresh chain's owned roots: the path shape this token supports, and the device, inode, uid, 0700 mode and
+    first-use entries the verified C0 origin recorded. Only an executor C0 that minted its token32 can supply
+    them; a historical C0 minted none and refuses here."""
+    token = bindings['token']
+    if origin.get('token') != token or origin.get('closure') != 'closed' or origin.get('closure_simulated'):
+        raise Refusal('the C0 origin is not a closed receipt of this token: refuse')
+    if not isinstance(origin.get('origin'), dict):
+        raise Refusal('the C0 origin minted no token32: refuse')
+    shape = prep.control_paths(token)
+    if origin.get('control') != shape['control']:
+        raise Refusal("the C0 origin does not name this token's control root: refuse")
+    rows = created_root_rows(origin, manifest)
+    expected = {shape[name]: name for name in ROOT_SHAPE}
+    if set(rows) != set(expected):
+        raise Refusal("the C0 origin did not create exactly this token's owned roots: refuse")
+    roots = {}
+    for path, name in expected.items():
+        rec = dict(rows[path], path=path)
+        if rec['uid'] != os.geteuid():
+            raise Refusal(f"{name}: the C0 origin recorded another user's root")
+        if rec['mode'] != 0o700:
+            raise Refusal(f'{name}: the C0 origin recorded a root that was not mode 0700')
+        roots[name] = rec
+    return roots
+
+
+def recorded_root_records(bindings, prior, manifest):
+    """The root records a C stage must observe, and the source they come from. The pinned 688 identities bind the
+    recorded token only; every other token's roots and identities are the ones its own verified C0 created."""
+    if bindings['token'] == RECORDED_TOKEN:
+        return {name: dict(rec) for name, rec in RECORDED_ROOTS.items()}, 'the recorded C0 receipt'
+    if not isinstance(prior, dict):
+        raise Refusal("no verified predecessor names this token's C0 origin: refuse, do not adopt")
+    return origin_roots(executor_origin(prior), bindings, manifest), 'the C0 origin creation record'
+
+
+def check_recorded_roots(prior, bindings, pins, *, first_use, manifest):
+    """C-stage start: the owned roots must be the identities this chain's origin established, bound by exact
+    identity and never recreated or adopted. A fresh chain's come from its verified C0 creation record; the
+    recorded token keeps its own pinned 688 identities. Entry counts are checked only before C1 populates them.
+    Directories are compared and listed through a held, no-follow descriptor so a replacement mid-check refuses."""
+    records, source = recorded_root_records(bindings, prior, manifest)
+    for name, rec in records.items():
         path = rec['path']
         try:
             info = os.lstat(path)
@@ -482,12 +577,30 @@ def check_recorded_roots(bindings, pins, *, first_use):
             raise Refusal(f'{name}: recorded root is absent: {exc.strerror}')
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode) or os.path.realpath(path) != path:
             raise Refusal(f'{name}: alias or non-directory root')
-        if (info.st_dev, info.st_ino) != (rec['device'], rec['inode']) or info.st_uid != os.geteuid():
-            raise Refusal(f'{name}: root identity changed since the recorded C0 receipt')
-        if stat.S_IMODE(info.st_mode) != 0o700:
+        if (info.st_dev, info.st_ino) != (rec['device'], rec['inode']):
+            raise Refusal(f'{name}: root identity changed since {source}')
+        if info.st_uid != rec.get('uid', os.geteuid()) or info.st_uid != os.geteuid():
+            raise Refusal(f'{name}: root owner changed since {source}')
+        if stat.S_IMODE(info.st_mode) != rec.get('mode', 0o700):
             raise Refusal(f'{name}: root mode changed')
-        if first_use and len(os.listdir(path)) != rec['entries']:
-            raise Refusal(f'{name}: root entry count changed since the recorded C0 receipt')
+        if first_use:
+            try:
+                fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            except OSError as exc:
+                raise Refusal(f'{name}: recorded root cannot be opened: {exc.strerror}')
+            try:
+                held = os.fstat(fd)
+                if (held.st_dev, held.st_ino) != (info.st_dev, info.st_ino):
+                    raise Refusal(f'{name}: root identity changed while opening')
+                live = sorted(os.listdir(fd))
+            finally:
+                os.close(fd)
+            expected = rec['entries']
+            if isinstance(expected, int):
+                if len(live) != expected:
+                    raise Refusal(f'{name}: root entry count changed since {source}')
+            elif live != expected:
+                raise Refusal(f'{name}: root entries differ from {source}')
         pins.pin(path)
 
 
@@ -1398,7 +1511,7 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
     pins = Pins()
     control = bindings['control']
     if stage_id in ('C1', 'C2', 'C3', 'C4', 'C5', 'C6'):
-        check_recorded_roots(bindings, pins, first_use=stage_id == 'C1')
+        check_recorded_roots(prior, bindings, pins, first_use=stage_id == 'C1', manifest=manifest)
     elif stage_id != 'C0':  # C0 creates the control root itself
         pins.pin(control)
     if stage_id.startswith('D') and stage_id != 'D0':

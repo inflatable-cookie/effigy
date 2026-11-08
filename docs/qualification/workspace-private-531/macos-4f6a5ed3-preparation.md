@@ -356,14 +356,17 @@ Gates:
   binds it. Each claimed C0 activation mints one
   `token32` (32 lowercase hex), written exclusively as `token32.json` and recorded by hash in the receipt
   as `origin`. It is the chain's origin: `origin_token32` reads it back from the verified C0 receipt before
-  C3 and C4 claim. A historical C0 minted none, so C3 and C4 refuse for the recorded token.
+  C3 and C4 claim. A historical C0 minted none, so C3 and C4 refuse for the recorded token. That receipt also
+  supplies the owned roots a fresh chain's later C stages must re-observe (effigy#698): its creation step's
+  evidence, identity rows and pinned inventory are the binding, with no caller path and no 688 record.
 - **C1 binds the pinned 688 C0 record, by identity.** The record is
   `macos-4f6a5ed3-activation-7deaf1b3/C0.stage.json` (sha256 `15a5373e…`) and its tranche summary
   (`macos-metadata-rfzuiadz/summary.json`, sha256 `cdfb7fb6…`). C1 accepts it only when the bytes
   match the pinned sha, the record is a passed, zero-share, safe C0 for the recorded token, the live
   colima and docker binaries match the recorded tools, and the recorded roots match the recorded
   identities. This is a binding, not a receipt: C1 claims its own activation, and nothing is
-  replayed, adopted or recreated.
+  replayed, adopted or recreated. A fresh token takes no part of this: its C1 consumes its own verified
+  executor C0 receipt, and the 688 records are never consulted for it.
 - **Plan.** `plan` is pure. Each stage resolves to its argv, pinned env, timeouts, caps, runtime
   preconditions, the sources it derives at run time (`runtime_derived`), and both its global and
   static admission reasons. Derived and unpinned slots render as explicit placeholders.
@@ -392,10 +395,14 @@ Gates:
   receipt and both streams must match recorded hashes. Each creation receipt must equal, field for
   field (kind, id, name, label, engine), what its producing stage's receipt, recorded argv and
   original streams establish.
-- **Recorded identities.** C1 onward binds the three 688 C0 roots (token `7deaf1b3`) by device,
-  inode, owner and mode; entry counts are checked only at C1. D1 to D4 require the chain engine to be
-  `ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd`, the engine 690 observed. An empty or default `docker info`
-  template refuses.
+- **Recorded identities.** C1 onward binds the owned roots by device, inode, owner, mode 0700 and (at C1
+  only) their first-use entries, read back through a held no-follow descriptor. A fresh chain's roots come
+  from its own verified C0 creation record: the paths of the token's supported shape, and the identities and
+  first-use entries that record's `make_owned_dir` evidence and pinned inventory name (effigy#698). The
+  recorded token instead keeps the three pinned 688 roots (token `7deaf1b3`) by count; that route never
+  receives a minted token32 or a fresh binding, and a fresh chain never adopts the 688 identities. D1 to D4
+  require the chain engine to be `ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd`, the engine 690 observed. An empty or
+  default `docker info` template refuses.
 - **Guest sources (pinned).** The C2 probe, the C3 stage and the C4 verify run the reviewed
   `macos_guest_context.py` (sha256 `713cb10e…`) as `python3 -I -B -c <source> <mode> <spec>`. It is a
   copy of the historical `image_context.py` (sha256 `af74047f…`, unchanged), with one contract
@@ -417,8 +424,10 @@ Gates:
   `unknown_retained`.
 - **Test seams (tests only).** `TEST_SEAM` lifts the owner refusal and the static reasons inside the
   test process only, and `simulate_guest_closure` treats a clean guest exit as closed so the loop can run
-  past guest steps (its receipts are labelled and refused by the chain verifier). Production defaults are off. Tests that replace predecessor verification (C3, C4, C5
-  and C6), the C0 origin walk for C3 and C4, or the historical record (`HISTORICAL_C0`) say so.
+  past guest steps (its receipts are labelled and refused by the chain verifier). Production defaults are off. Tests that replace predecessor verification (C1, C2, C3, C4, C5
+  and C6), the C0 origin walk for C3 and C4, or the historical record (`HISTORICAL_C0`) say so. The fresh-chain
+  root binding (`FreshChainRootTests`) replaces none of them: its C0, C1 and C2 runs are genuine receipts, and
+  only the local children that stand in for the tools are controlled.
 - **Desktop context (D2).** `host_stage_dockerfile` writes the reviewed recipe exclusively as the build
   context's `Dockerfile`, reads it back and compares it with the pin. An existing `Dockerfile` refuses:
   nothing is adopted or overwritten.
@@ -444,8 +453,9 @@ Gates:
   The C2 probe through the stage loop: after the route echo's unknown closure
   the adapter halts. The probe and the C4 steps are dispatched only under the test-only closure simulation,
   never in production. The C0 origin is exercised by a test run only, so
-  the `token32` route has not run natively. The guest closure rule for multi-effect stages, which C2 needs
-  before its probe can be dispatched.
+  the `token32` route has not run natively. The fresh-chain root binding is proven against local fixture C0
+  receipts only: no native C0 has created a root that a later C stage then re-observed. The guest closure rule
+  for multi-effect stages, which C2 needs before its probe can be dispatched.
 
 ## Remaining gates
 
