@@ -55,6 +55,41 @@ IMAGE_OBJECT = json.dumps({'Id': IMAGE, 'RepoTags': [IMAGE_NAME], 'Config': {'La
 
 # A routed step that runs the manifest's remote tail locally, with the pinned guest source and its real arguments.
 RUN_PINNED = object()
+# A small stand-in for the pinned Colima image. Every fixture swaps the real 447 MB pin and the network opener for these,
+# so no test fetches anything. The real pin is checked separately, against the preparation constants.
+FAKE_IMAGE = b'effigy fixture image\n' * 64
+FAKE_PIN = dict(url=prep.COLIMA_IMAGE_URL, sha512=hashlib.sha512(FAKE_IMAGE).hexdigest(), bytes=len(FAKE_IMAGE),
+                name=prep.COLIMA_IMAGE_NAME)
+
+
+class FakeResponse:
+    """An HTTPResponse stand-in: a status, headers and a body that read(n) serves in finite pieces."""
+
+    def __init__(self, body=FAKE_IMAGE, status=200, headers=None):
+        self.body, self.status = io.BytesIO(body), status
+        self.headers = dict({'Content-Length': str(len(body))}, **(headers or {}))
+
+    def getheader(self, name, default=None):
+        return next((v for k, v in self.headers.items() if k.lower() == name.lower()), default)
+
+    def read(self, n=-1):
+        return self.body.read(n)
+
+
+class FakeConnection:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+def fake_opener(response=None):
+    """Returns an opener that yields one fake connection and the given response (default: the pinned bytes)."""
+    def opener(url):
+        assert url == prep.COLIMA_IMAGE_URL, 'the fixture may only fetch the pinned URL'
+        return FakeConnection(), response or FakeResponse()
+    return opener
 
 
 def emit(text, exit_code=0, err=''):
@@ -114,7 +149,9 @@ class Fixture(unittest.TestCase):
         for target, name, value in ((prep, 'STASH', self.tmp), (ex, 'CLAIMS_DIR', self.tmp + '/claims'),
                                     (ex, 'ACTIVATIONS_DIR', self.activations),
                                     (ex, 'TOOL_PATHS', (self.colima, self.docker)),
-                                    (ex, 'DESKTOP_SOCKET', self.socket_path)):
+                                    (ex, 'DESKTOP_SOCKET', self.socket_path),
+                                    (ex, 'colima_image_pin', lambda manifest: dict(FAKE_PIN)),
+                                    (ex, 'open_pinned_https', fake_opener())):
             patcher = mock.patch.object(target, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -625,7 +662,7 @@ class PlanTests(Fixture):
 
     def test_admission_is_exact_and_each_refusal_is_named(self):
         plans = {s['id']: ex.resolve_stage(s['id'], self.bindings) for s in ex.load_manifest()['stages']}
-        self.assertEqual({k for k, v in plans.items() if not v['static_admission']}, {'C0', 'D0', 'D1'})
+        self.assertEqual({k for k, v in plans.items() if not v['static_admission']}, {'C0', 'C1', 'D0', 'D1'})
         for plan in plans.values():  # every resolved request carries the global refusal and its prerequisite
             self.assertEqual(plan['admission'][0], ex.OWNER_ACTIVATION_REASON)
             self.assertFalse(plan['execution']['admitted'])
@@ -635,7 +672,8 @@ class PlanTests(Fixture):
         self.assertTrue(any('predecessor D2' in r for r in plans['D3']['static_admission']))
         self.assertTrue(any('predecessor C4' in r for r in plans['C5']['static_admission']))
         self.assertTrue(any('token32' in r for r in plans['C3']['static_admission']))
-        self.assertTrue(any('wire traffic is not counted' in r for r in plans['C1']['static_admission']))
+        self.assertEqual(plans['C1']['static_admission'], [])  # the pinned image fetch is admitted; execution still refuses
+        self.assertTrue(any('ONE proposal' in r for r in plans['C4']['static_admission']))
         self.assertTrue(any('multi-effect guest stage' in r for r in plans['C2']['static_admission']))
         self.assertTrue(any('host_stage_dockerfile' in r or 'download' in r for r in plans['D2']['static_admission']))
 
@@ -664,9 +702,11 @@ class PlanTests(Fixture):
                     self.assertEqual(env['PATH'], ex.DESKTOP_BASE_PATH)
 
     def test_colima_start_argv_is_the_accepted_zero_share_form(self):
-        argv = ex.resolve_stage('C1', self.bindings)['steps'][1]['argv']
+        steps = {s['id']: s for s in ex.resolve_stage('C1', self.bindings)['steps']}
+        argv = steps['c1-colima-start']['argv']
         for flag in ('--ssh-config=false', '--activate=false', '--cpus'):
             self.assertIn(flag, argv)
+        self.assertEqual(argv[argv.index('--disk-image') + 1], self.bindings['colima_cache_home'] + '/effigy-image/' + prep.COLIMA_IMAGE_NAME)
         self.assertEqual(argv[argv.index('--mount') + 1], 'none')
 
     def test_plan_shows_runtime_derived_values_as_placeholders_with_their_source(self):
@@ -965,7 +1005,7 @@ class HelperDispatchTests(Fixture):
         self.assertEqual(ex.prefetch_pinned_artifact(_io.BytesIO(data), dest, len(data), digest),
                          {'bytes': len(data), 'sha512': digest})
         self.assertEqual(stat.S_IMODE(os.lstat(dest).st_mode), 0o600)
-        with self.assertRaises(FileExistsError):
+        with self.assertRaises(ex.Collision):  # an existing name is a refusal, never adopted
             ex.prefetch_pinned_artifact(_io.BytesIO(data), dest, len(data), digest)
         with self.assertRaises(ex.Refusal):
             ex.prefetch_pinned_artifact(_io.BytesIO(data + b'x'), self.tmp + '/big.raw', len(data), digest)
@@ -2755,12 +2795,14 @@ class FreshChainRootTests(Fixture):
             with self.assertRaisesRegex(ex.Refusal, 'no owner-controlled activation mechanism'):
                 ex.execute_stage('C1', bindings, activation_path=path, activation_sha256=sha,
                                  evidence_root=self.evidence, transport=self.routed({}, calls), utc_now=NOW)
+        # C1 is admitted now (its one fetch is pinned). A still-unadmitted stage keeps the static refusal, before any claim.
+        c4_path, c4_sha = self.activation('C4', c0_ref, 'fresh-c4-refused', bindings=bindings)
         with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}):
             with self.assertRaisesRegex(ex.Refusal, 'stage unadmitted'):
-                ex.execute_stage('C1', bindings, activation_path=path, activation_sha256=sha,
+                ex.execute_stage('C4', bindings, activation_path=c4_path, activation_sha256=c4_sha,
                                  evidence_root=self.evidence, transport=self.routed({}, calls), utc_now=NOW)
         self.assertEqual(calls, [])
-        self.assert_no_claim('C1', 'fresh-c1-refused')
+        self.assert_no_claim('C4', 'fresh-c4-refused')
 
     def test_a_chain_that_is_not_this_tokens_origin_refuses_before_the_roots_are_read(self):
         self.use_historical({})
@@ -2790,6 +2832,7 @@ class CoverageLedgerTests(unittest.TestCase):
         'c0-colima-start-help': ('executed', 'DispatchSweepTests.test_c0_runs_on_a_fresh_token_against_the_pinned_tools_and_tranche'),
         'c1-make-owned-dirs': ('executed', 'DispatchSweepTests.test_c1_binds_the_pinned_historical_c0_by_identity_and_dispatches_its_colima_start'),
         'c1-colima-start': ('executed', 'DispatchSweepTests.test_c1_binds_the_pinned_historical_c0_by_identity_and_dispatches_its_colima_start'),
+        'c1-prefetch-colima-image': ('executed', 'ColimaImageFetchTests.test_exact_bytes_are_fetched_once_into_the_owned_directory'),
         'c2-colima-status': ('executed', 'DispatchSweepTests.test_c2_route_echo_is_the_first_guest_effect_and_no_source_payload_is_dispatched'),
         'c2-route-echo': ('executed', 'DispatchSweepTests.test_c2_route_echo_is_the_first_guest_effect_and_no_source_payload_is_dispatched'),
         'c2-compare-route-echo': ('executed', 'DispatchSweepTests.test_c2_comparison_runs_through_the_adapter_and_the_probe_is_recorded_not_dispatched'),
@@ -3567,6 +3610,188 @@ class OriginalD0EvidenceTests(unittest.TestCase):
         Path(out).write_text(json.dumps(request, sort_keys=True, indent=2) + '\n')
         self.assertFalse(os.path.lexists(request['claim_path']))
         self.assertFalse(os.path.lexists(request['activation_path']))
+
+
+# The real pin function and opener, captured before any fixture swaps them.
+REAL_PIN = ex.colima_image_pin
+REAL_OPEN = ex.open_pinned_https
+
+
+def scripted_https(script, seen):
+    """A stand-in for http.client.HTTPSConnection: each request pops the next scripted response and records its host and
+    target, so a test can see exactly which hosts were contacted."""
+    class Connection:
+        def __init__(self, host, port, timeout=None, context=None):
+            seen.append(host)
+
+        def request(self, method, target, headers=None):
+            seen.append(target)
+
+        def getresponse(self):
+            return script.pop(0)
+
+        def close(self):
+            pass
+    return Connection
+
+
+class ColimaImageFetchTests(Fixture):
+    """The one pinned Colima image: exact bytes, exclusive custody, every refusal before or after the transfer."""
+
+    def setUp(self):
+        super().setUp()
+        self.image_dir = self.bindings['colima_cache_home'] + '/' + ex.COLIMA_IMAGE_DIR
+        os.makedirs(self.bindings['colima_cache_home'], 0o700, exist_ok=True)
+        os.mkdir(self.image_dir, 0o700)
+        self.dest = self.image_dir + '/' + prep.COLIMA_IMAGE_NAME
+        self.monitor = mock.Mock(check=mock.Mock(return_value={'storage': 0}))
+        self.ctx = dict(bindings=self.bindings, manifest=ex.load_manifest(), monitor=self.monitor)
+
+    def fetch(self, response, dest=None):
+        conn = FakeConnection()
+        return ex.fetch_colima_image(dest or self.dest, FAKE_PIN, opener=lambda url: (conn, response)), conn
+
+    def test_exact_bytes_are_fetched_once_into_the_owned_directory(self):
+        result = ex.h_prefetch_colima_image(self.ctx, dict(inputs=[self.dest]))
+        self.assertEqual(result, dict(bytes=len(FAKE_IMAGE), sha512=FAKE_PIN['sha512']))
+        self.assertEqual(Path(self.dest).read_bytes(), FAKE_IMAGE)
+        self.assertEqual(stat.S_IMODE(os.stat(self.dest).st_mode), 0o600)
+        self.assertTrue(self.monitor.check.called)  # the live counter sampled the transfer
+
+    def test_a_destination_off_the_reviewed_path_refuses(self):
+        with self.assertRaises(primitive.Refusal):
+            ex.h_prefetch_colima_image(self.ctx, dict(inputs=[self.image_dir + '/other.raw.gz']))
+        self.assertEqual(os.listdir(self.image_dir), [])
+
+    def test_the_image_directory_must_be_empty_owned_and_real(self):
+        Path(self.image_dir + '/leftover').write_bytes(b'x')
+        with self.assertRaises(primitive.Refusal):
+            ex.h_prefetch_colima_image(self.ctx, dict(inputs=[self.dest]))
+        os.remove(self.image_dir + '/leftover')
+        os.rmdir(self.image_dir)
+        elsewhere = self.tmp + '/elsewhere'
+        os.mkdir(elsewhere, 0o700)
+        os.symlink(elsewhere, self.image_dir)
+        with self.assertRaises(primitive.Refusal):
+            ex.h_prefetch_colima_image(self.ctx, dict(inputs=[self.dest]))
+        self.assertEqual(os.listdir(elsewhere), [])
+
+    def test_unknown_or_mismatched_length_refuses_before_any_byte_is_written(self):
+        for headers in ({'Content-Length': None}, {'Content-Length': str(len(FAKE_IMAGE) + 1)}):
+            with self.assertRaises(primitive.Refusal):
+                self.fetch(FakeResponse(headers=headers))
+            self.assertFalse(os.path.lexists(self.dest))
+
+    def test_encoding_chunking_and_status_refuse(self):
+        cases = (FakeResponse(headers={'Content-Encoding': 'gzip'}), FakeResponse(headers={'Transfer-Encoding': 'chunked'}),
+                 FakeResponse(status=500), FakeResponse(status=404))
+        for response in cases:
+            with self.assertRaises(primitive.Refusal):
+                self.fetch(response)
+            self.assertFalse(os.path.lexists(self.dest))
+
+    def test_over_cap_and_short_bodies_refuse_and_retain_the_partial_file(self):
+        with self.assertRaises(primitive.Refusal):
+            self.fetch(FakeResponse(body=FAKE_IMAGE + b'x', headers={'Content-Length': str(len(FAKE_IMAGE))}))
+        self.assertTrue(os.path.exists(self.dest))  # retained, not removed; never a verified image
+        os.remove(self.dest)
+        with self.assertRaises(primitive.Refusal):
+            self.fetch(FakeResponse(body=FAKE_IMAGE[:-1], headers={'Content-Length': str(len(FAKE_IMAGE))}))
+        self.assertEqual(Path(self.dest).read_bytes(), FAKE_IMAGE[:-1])
+
+    def test_a_same_length_wrong_body_refuses_on_sha512(self):
+        with self.assertRaises(primitive.Refusal):
+            self.fetch(FakeResponse(body=b'z' * len(FAKE_IMAGE)))
+        self.assertTrue(os.path.exists(self.dest))
+
+    def test_an_existing_name_or_symlink_is_a_collision_and_is_never_adopted(self):
+        Path(self.dest).write_bytes(b'foreign')
+        with self.assertRaises(ex.Collision):
+            self.fetch(FakeResponse())
+        self.assertEqual(Path(self.dest).read_bytes(), b'foreign')
+        os.remove(self.dest)
+        target = self.image_dir + '/elsewhere.raw.gz'
+        os.symlink(target, self.dest)
+        with self.assertRaises(ex.Collision):
+            self.fetch(FakeResponse())
+        self.assertFalse(os.path.lexists(target))
+
+    def test_a_lost_live_counter_stops_the_transfer_with_the_partial_retained(self):
+        calls = []
+
+        def checkpoint():
+            calls.append(1)
+            raise primitive.Refusal('live counter lost')
+        with self.assertRaises(primitive.Refusal):
+            ex.prefetch_pinned_artifact(FakeResponse(), self.dest, len(FAKE_IMAGE), FAKE_PIN['sha512'], checkpoint=checkpoint)
+        self.assertEqual(calls, [1])
+        self.assertTrue(os.path.exists(self.dest))
+
+
+class RedirectPolicyTests(Fixture):
+    """The real opener, with http.client replaced by a scripted connection: redirects stay on allowlisted HTTPS hosts."""
+
+    def open(self, script, seen):
+        with mock.patch('http.client.HTTPSConnection', scripted_https(script, seen)):
+            return REAL_OPEN(prep.COLIMA_IMAGE_URL)
+
+    def test_redirects_follow_only_allowlisted_https_hosts(self):
+        seen = []
+        conn, response = self.open([FakeResponse(b'', 302, {'Location': 'https://release-assets.githubusercontent.com/a?x=1'}),
+                                    FakeResponse()], seen)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(seen[0], 'github.com')
+        self.assertEqual(seen[2], 'release-assets.githubusercontent.com')
+        self.assertEqual(seen[3], '/a?x=1')
+
+    def test_a_redirect_off_the_allowlist_or_off_https_refuses_before_connecting(self):
+        for location in ('https://evil.example/x', 'http://release-assets.githubusercontent.com/x'):
+            seen = []
+            with self.assertRaises(primitive.Refusal):
+                self.open([FakeResponse(b'', 302, {'Location': location})], seen)
+            self.assertNotIn('evil.example', seen)
+            self.assertEqual(seen.count('github.com'), 1)  # the first hop only
+
+    def test_redirect_loops_and_missing_locations_refuse(self):
+        with self.assertRaises(primitive.Refusal):
+            self.open([FakeResponse(b'', 302, {'Location': 'https://github.com/loop'})] * 4, [])
+        with self.assertRaises(primitive.Refusal):
+            self.open([FakeResponse(b'', 302, {})], [])
+
+    def test_the_first_url_must_be_allowlisted(self):
+        seen = []
+        with mock.patch('http.client.HTTPSConnection', scripted_https([], seen)):
+            with self.assertRaises(primitive.Refusal):
+                REAL_OPEN('https://example.com/x')
+        self.assertEqual(seen, [])
+
+
+class ColimaImagePinTests(unittest.TestCase):
+    def test_the_real_manifest_pins_the_reviewed_image_and_its_cap(self):
+        manifest = ex.load_manifest()
+        pin = REAL_PIN(manifest)
+        self.assertEqual(pin, dict(url=prep.COLIMA_IMAGE_URL, sha512=prep.COLIMA_IMAGE_SHA512, bytes=446992920,
+                                   name=prep.COLIMA_IMAGE_NAME))
+        c1 = ex.stage_of(manifest, 'C1')
+        self.assertEqual(c1['download_cap_bytes'], pin['bytes'])
+        self.assertEqual([s['id'] for s in c1['steps']],
+                         ['c1-make-owned-dirs', 'c1-prefetch-colima-image', 'c1-colima-start'])
+        self.assertIn('prefetch_colima_image', ex.HANDLERS)
+
+    def test_a_changed_size_or_url_refuses_before_any_fetch(self):
+        manifest = ex.load_manifest()
+        for key, value in (('bytes', 446992921), ('url', prep.COLIMA_IMAGE_URL + '?x')):
+            changed = json.loads(json.dumps(manifest))
+            changed['binding_inputs']['colima_image'][key] = value
+            with self.assertRaises(primitive.Refusal):
+                REAL_PIN(changed)
+
+    def test_only_the_image_fetch_is_admitted_from_the_download_stages(self):
+        manifest = ex.load_manifest()
+        self.assertNotIn('C1', ex.UNADMITTED)
+        self.assertIn('ONE proposal', ex.UNADMITTED['C4'])
+        self.assertIn('ONE proposal', ex.UNADMITTED['D2'])
+        self.assertEqual(ex.stage_admission(ex.stage_of(manifest, 'C1')), [])
 
 
 if __name__ == '__main__':

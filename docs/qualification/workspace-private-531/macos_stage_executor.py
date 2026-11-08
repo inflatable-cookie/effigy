@@ -86,18 +86,23 @@ PRIOR = {'C1': 'C0', 'C2': 'C1', 'C3': 'C2', 'C4': 'C3', 'C5': 'C4', 'C6': 'C5',
          'D1': 'D0', 'D2': 'D1', 'D3': 'D2', 'D4': 'D3'}
 PATH_BINDINGS = ('control', 'colima_home', 'colima_cache_home', 'colima_docker_config', 'qualification_root',
                  'desktop_config', 'desktop_context_dir', 'desktop_iidfile', 'desktop_cidfile')
-DOWNLOAD_UNADMITTED = ('download cap is payload bytes; wire traffic is not counted and the manifest '
-                       'records no pinned image size, so a bounded prefetch cannot verify size')
+# The download cap is payload bytes (the runner's own fetches). C1's one fetch is the pinned Colima image, admitted
+# through the prefetch helper with its exact size. C4 and D2 pull the base image and apt packages inside the engine
+# build, so the runner observes no payload bytes and nothing bounds them; they stay refused with one proposal.
+ENGINE_SIDE_NETWORK = ('C4 and D2 fetch the base image and apt packages inside the engine build: the runner sees no '
+                       'payload bytes and the manifest pins no size, so the download cap cannot be enforced. ONE proposal, '
+                       'not implemented: pin an exact-size base OCI archive and an offline apt bundle, fetch and hash each '
+                       'as the Colima image is, load them through a fixed step, and build with no network. That changes '
+                       'the recipe hash and the build argv and needs a fresh GO')
 UNADMITTED = {
-    'C1': DOWNLOAD_UNADMITTED,
     'C2': ('multi-effect guest stage: the guest closure is unknown after the route echo, so the probe is not '
            'reachable through this adapter; the probe source itself is pinned (macos_guest_context.py)'),
     'C3': ('guest_spec is derived from the C2 probe output and the token32 that the C0 origin mints; '
            'C2 is unadmitted'),
-    'C4': DOWNLOAD_UNADMITTED,
-    'D2': DOWNLOAD_UNADMITTED,
+    'C4': ENGINE_SIDE_NETWORK,
+    'D2': ENGINE_SIDE_NETWORK,
     'D4': ('D4 cleanup is source-qualified (per-target engine and inspect checks, complete image inventory), but '
-           'its predecessor D3 needs D2, whose download cap is payload bytes with no pinned image size: '
+           'its predecessor D3 needs D2, which is unadmitted for its engine-side network: '
            'D4 cannot run until D2 and D3 qualify'),
 }
 # Ordinary execution stays refused; the separate proof entry has an external Nucleus launch precondition.
@@ -993,9 +998,28 @@ def h_check_cleanup_target(ctx, step):
 HALT_SAFE_HELPERS = frozenset({'compare_route_echo'})
 
 # Helper handlers. Anything absent here is unadmitted with its reason (stage_admission).
+def h_prefetch_colima_image(ctx, step):
+    """The one pinned Colima image, fetched once into the owned, empty effigy-image directory. The fixed path and the
+    reviewed pin are checked first; the live monitor samples growth per chunk. Colima starts from this file with
+    --disk-image, which it checks against the same sha512."""
+    pin = colima_image_pin(ctx['manifest'])
+    directory = os.path.join(ctx['bindings']['colima_cache_home'], COLIMA_IMAGE_DIR)
+    destination = render1(step['inputs'][0], ctx['bindings'])
+    if destination != f"{directory}/{pin['name']}":
+        raise Refusal('prefetch destination differs from the reviewed image path')
+    info = os.lstat(directory)
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700
+            or os.listdir(directory)):
+        raise Refusal('the image directory must be the empty, owned, 0700 directory the make step created')
+    result = fetch_colima_image(destination, pin, opener=open_pinned_https,
+                                checkpoint=lambda: ctx['monitor'].check())
+    return dict(bytes=result['bytes'], sha512=result['sha512'])
+
+
 HANDLERS = {
     'make_owned_dir': h_make_owned_dir,
     'claim_intent': h_claim_intent,
+    'prefetch_colima_image': h_prefetch_colima_image,
     'verify_desktop_endpoint': h_verify_desktop_endpoint,
     'compare_route_echo': h_compare_route_echo,
     'render_guest_spec': h_render_guest_spec,
@@ -1054,12 +1078,17 @@ def image_creation_receipt(token, image_id, inspect_text, engine_id):
                 architecture=row.get('Architecture'), labels=labels)
 
 
-def prefetch_pinned_artifact(source, destination, size, sha512):
-    """Bounded prefetch of one pinned artifact: exact size, exact sha512, O_EXCL, fsync, readback.
-    Not wired into any admitted stage: C1 stays unadmitted until the pin records a size."""
+def prefetch_pinned_artifact(source, destination, size, sha512, checkpoint=None):
+    """Bounded prefetch of one pinned artifact: exact size, exact sha512, O_EXCL, fsync, chunked readback.
+    Counts payload bytes read from source, never more than size + 1. checkpoint, if given, runs after every chunk so
+    a live resource monitor samples growth during the transfer. An existing name, including a symlink, is a Collision:
+    it is never adopted, and a partial file is retained at the destination."""
     if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
         raise Refusal('pinned size required')
-    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+    try:
+        fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+    except FileExistsError as exc:
+        raise Collision(f'{os.path.basename(destination)}: name already taken; never adopted') from exc
     digest, total = hashlib.sha512(), 0
     with os.fdopen(fd, 'wb') as out:
         while True:
@@ -1073,14 +1102,88 @@ def prefetch_pinned_artifact(source, destination, size, sha512):
                 raise Refusal('artifact larger than its pinned size; partial file retained')
             digest.update(chunk)
             out.write(chunk)
+            if checkpoint is not None:
+                checkpoint()
         out.flush()
         os.fsync(out.fileno())
     if total != size or digest.hexdigest() != sha512:
         raise Refusal('artifact size or sha512 differs from the pin; partial file retained')
-    with open(destination, 'rb') as readback:
-        if hashlib.sha512(readback.read()).hexdigest() != sha512:
-            raise Refusal('readback differs from the pinned sha512')
+    readback = hashlib.sha512()
+    with open(destination, 'rb') as check:
+        for block in iter(lambda: check.read(1024 * 1024), b''):
+            readback.update(block)
+    if readback.hexdigest() != sha512:
+        raise Refusal('readback differs from the pinned sha512')
     return dict(bytes=total, sha512=sha512)
+
+
+# The one Colima image: fetched by the prefetch helper into an owned directory, then started with --disk-image.
+# Colima's own cache is not used: its cache trusts any existing file without a hash check.
+COLIMA_IMAGE_DIR = 'effigy-image'
+# Release downloads redirect to these GitHub asset hosts only. Any other host, scheme, port or credential refuses.
+REDIRECT_HOSTS = frozenset({'github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com'})
+MAX_REDIRECTS = 3
+
+
+def colima_image_pin(manifest):
+    """The reviewed image: URL and sha512 equal the preparation constants, and the exact payload size is pinned beside
+    them. Any other value refuses before a byte is fetched."""
+    image = manifest['binding_inputs']['colima_image']
+    if (image.get('url') != prep.COLIMA_IMAGE_URL or image.get('sha512') != prep.COLIMA_IMAGE_SHA512
+            or image.get('bytes') != prep.COLIMA_IMAGE_BYTES):
+        raise Refusal('colima image pin differs from the reviewed URL, sha512 and size: refuse')
+    return dict(url=prep.COLIMA_IMAGE_URL, sha512=prep.COLIMA_IMAGE_SHA512, bytes=prep.COLIMA_IMAGE_BYTES,
+                name=prep.COLIMA_IMAGE_NAME)
+
+
+def open_pinned_https(url):
+    """One HTTPS GET of a pinned release URL with identity encoding. Redirects are followed only to an allowlisted HTTPS
+    host, at most MAX_REDIRECTS, and their bodies are never read. Returns (connection, final response); the caller closes."""
+    import http.client
+    import ssl
+    import urllib.parse
+    current = url
+    for _ in range(MAX_REDIRECTS + 1):
+        parts = urllib.parse.urlsplit(current)
+        if (parts.scheme != 'https' or parts.hostname not in REDIRECT_HOSTS or parts.port not in (None, 443)
+                or parts.username or parts.password or parts.fragment):
+            raise Refusal('download host or scheme is not allowlisted: refuse')
+        conn = http.client.HTTPSConnection(parts.hostname, 443, timeout=60, context=ssl.create_default_context())
+        try:
+            target = parts.path + ('?' + parts.query if parts.query else '')
+            conn.request('GET', target, headers={'Accept-Encoding': 'identity', 'User-Agent': 'effigy-qualification'})
+            response = conn.getresponse()
+        except BaseException:
+            conn.close()
+            raise
+        if response.status in (301, 302, 303, 307, 308):
+            location = response.getheader('Location')
+            conn.close()
+            if not location:
+                raise Refusal('redirect without a Location: refuse')
+            current = urllib.parse.urljoin(current, location)
+            continue
+        return conn, response
+    raise Refusal('too many redirects: refuse')
+
+
+def fetch_colima_image(destination, pin, *, opener, checkpoint=None):
+    """Fetch the pinned image to destination. Refuses unless the final response is 200 with identity encoding, no chunked
+    transfer, and a Content-Length equal to the pinned size. Only then are payload bytes written."""
+    conn, response = opener(pin['url'])
+    try:
+        if response.status != 200:
+            raise Refusal(f'download answered {response.status}: refuse')
+        if (response.getheader('Content-Encoding') or 'identity').strip().lower() != 'identity':
+            raise Refusal('content encoding is not identity: refuse')
+        if response.getheader('Transfer-Encoding'):
+            raise Refusal('chunked transfer has no pinned length: refuse')
+        length = response.getheader('Content-Length') or ''
+        if not length.isdigit() or int(length) != pin['bytes']:
+            raise Refusal('Content-Length is absent or differs from the pinned size: refuse before any byte is written')
+        return prefetch_pinned_artifact(response, destination, pin['bytes'], pin['sha512'], checkpoint=checkpoint)
+    finally:
+        conn.close()
 
 
 def step_closure(result, guest):
@@ -1401,6 +1504,12 @@ def verify_receipt_tree(body, stage_id, key, manifest):
             helper = json.loads(read_checked_file(ev['path'], must_be_in=root, read_only=False))
             if helper != {'step': step['id'], 'result': output.get('result')}:
                 raise Refusal(f"{step['id']}: helper result differs from its original output")
+        elif step['id'] == 'c1-prefetch-colima-image':
+            # An in-process helper: its receipt is the step's own helper.json. The fetched image must be the pinned one.
+            helper = json.loads(read_checked_file(ev['path'], must_be_in=root, read_only=False))
+            pin = colima_image_pin(manifest)
+            if helper.get('result') != dict(bytes=pin['bytes'], sha512=pin['sha512']):
+                raise Refusal('c1 prefetch result differs from the pinned Colima image')
     # 4. Creation receipts: each is re-derived field by field from its producing stage's own receipt, the
     #    step's intent and original streams, and must match the stored receipt exactly.
     for rec in body['receipts']:
@@ -1626,7 +1735,7 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
     ctx = dict(bindings=run_bindings, outputs={}, receipts=list((prior or {}).get('receipts', [])), selection=None,
                recipe=None, stage_root=stage_root, engine_id=engine, desktop_socket=desktop_socket, token32=token32,
                activation_id=go['activation_id'], claim=claim, pins=pins, pre_foreign=None,
-               prior_outputs=prior_output_paths(prior))
+               prior_outputs=prior_output_paths(prior), manifest=manifest, monitor=monitor)
     steps_out, closure, error = [], 'closed', None
     halted = False  # set when a guest step's closure is unknown: later effects stop, pure host reads may run
     try:

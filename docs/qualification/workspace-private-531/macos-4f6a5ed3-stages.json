@@ -3,6 +3,7 @@
     "base_image": "docker.io/library/ubuntu@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11",
     "check_source_sha256": "5fcd965f2339afd885895d4e75684503d6077371089e3025f6c434e2536bdb28",
     "colima_image": {
+      "bytes": 446992920,
       "sha512": "86fd0879941f890b72ad54709cd28d0b9c31638b3ba0201d3abd11eaadc0e87079b908af05de939d9cceb1d338ec3827efc73e81b9c6716148048ab91c7f9286",
       "url": "https://github.com/abiosoft/colima-core/releases/download/v0.10.4/ubuntu-24.04-minimal-cloudimg-arm64-containerd.raw.gz"
     },
@@ -41,6 +42,7 @@
     "compare_route_echo",
     "host_stage_dockerfile",
     "make_owned_dir",
+    "prefetch_colima_image",
     "read_cidfile",
     "read_iidfile",
     "render_guest_spec",
@@ -50,7 +52,7 @@
     "verify_tool_sha",
     "verify_tranche_summary"
   ],
-  "manifest": "macos-4f6a5ed3-stages-r4",
+  "manifest": "macos-4f6a5ed3-stages-r5",
   "observed_metadata": {
     "child": "linux-artifact-preparation.l0tx7tam/macos-metadata-rfzuiadz",
     "note": "local metadata only; not a running-engine or guest observation",
@@ -63,7 +65,7 @@
     "image_context.py": "af74047f640111907930273f7cc7a2b46eac4cb27943f0a512fccf56a1b3b322",
     "image_prepare.py": "882f9e44e7acd87e5ab94237feb7f19a452a3bbb86dd1cf208f311129847964f",
     "macos_metadata_tranche.py": "c204bfaa87c2534da05b62c5f10beda5d3196216ce40d6afffeb8dec2ef9d1a6",
-    "macos_preparation.py": "cb0c1ea75e08d53a0c281a8000d82810a3336e47bbe5078f15e14e886f573fe2"
+    "macos_preparation.py": "ead3a4522fdffb93ee50e6774c9f99b02d5afe51c46681f330dee303531fc983"
   },
   "proof_entry": {
     "baseline": {
@@ -253,9 +255,9 @@
     },
     {
       "backend": "colima",
-      "closure": "waited exit 0 closes; a deadline or cap is Unknown and retained, never replayed. Global writes are disabled: --ssh-config=false, --activate=false, and COLIMA_CACHE_HOME and DOCKER_CONFIG point at owned roots. C2 identity follows.",
-      "download_cap_bytes": 2147483648,
-      "failure": "no retry; a deadline, cap or non-zero exit leaves the VM as Unknown and retained. If --mount none is refused the stage stops; the GO must name any changed share.",
+      "closure": "waited exit 0 closes; a deadline or cap is Unknown and retained, never replayed. The one pinned image is fetched by the fixed prefetch helper: exact pinned bytes and sha512, payload bytes counted, exclusive create, then Colima starts from that file with --disk-image, which Colima checks against the same sha512 at use. Global writes are disabled: --ssh-config=false, --activate=false, and COLIMA_CACHE_HOME and DOCKER_CONFIG point at owned roots. C2 identity follows.",
+      "download_cap_bytes": 446992920,
+      "failure": "no retry; a deadline, cap, size or hash mismatch, redirect or encoding refusal stops before colima start, and the partial image file is retained. A deadline, cap or non-zero start exit leaves the VM as Unknown and retained. If --mount none is refused the stage stops; the GO must name any changed share.",
       "id": "C1",
       "name": "fresh isolated engine start",
       "network_sources": [
@@ -264,7 +266,8 @@
       "reserve_seconds": 60,
       "retained_after_failure": [
         "Colima instance colima-effigy-4f6a-qual and its daemon, not stopped or deleted here",
-        "COLIMA_HOME, COLIMA_CACHE_HOME and the owned docker-config directory, never removed by pattern"
+        "COLIMA_HOME, COLIMA_CACHE_HOME and the owned docker-config directory, never removed by pattern",
+        "the owned effigy-image directory and any partial or verified image file in it, never removed or reused"
       ],
       "retention": "start stream, PID, waited exit, profile YAML path, owned cache and Docker config listings only",
       "seconds": 900,
@@ -274,12 +277,24 @@
           "id": "c1-make-owned-dirs",
           "inputs": [
             "{colima_cache_home}",
-            "{colima_docker_config}"
+            "{colima_docker_config}",
+            "{colima_cache_home}/effigy-image"
           ],
           "kind": "helper",
           "output_cap_bytes": 4096,
           "retries": 0,
           "timeout_seconds": 30
+        },
+        {
+          "helper": "prefetch_colima_image",
+          "id": "c1-prefetch-colima-image",
+          "inputs": [
+            "{colima_cache_home}/effigy-image/ubuntu-24.04-minimal-cloudimg-arm64-containerd.raw.gz"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 210
         },
         {
           "argv": [
@@ -303,6 +318,8 @@
             "20",
             "--mount",
             "none",
+            "--disk-image",
+            "{colima_cache_home}/effigy-image/ubuntu-24.04-minimal-cloudimg-arm64-containerd.raw.gz",
             "--ssh-config=false",
             "--activate=false"
           ],
