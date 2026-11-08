@@ -94,13 +94,16 @@ targets only when it needs them.
 
 ## Workspace and gateway diagnostic disposition before v0.15 freeze
 
-Before freeze, obtain Tom's decision on security lead `8d767d55`: existing gateway
-daemon logs can contain raw diagnostics and pre-existing permissive log files
-or searchable directories can expose them to other local users. New-file mode
-0600 does not repair legacy files and is not global sanitization. Workspace
-Phase A apply and workspace preparation separately require qualified private or
-discarded output before their production path is accepted. A fake-backend proof
-is not a native gateway or release qualification; keep the existing review and
+Gateway stdout/stderr logs now repair a normally reopened file to owner-only
+mode on its held descriptor, after checking the selected gateway directory,
+regular-file type, owner and single-link identity. The writers preserve existing
+bytes and append behavior. This is operation-local: it does not scan or repair
+unopened legacy logs, directory or ancestor permissions, and raw diagnostics may
+still contain sensitive upstream text. Workspace Phase A apply and workspace
+preparation separately require qualified private or discarded output before
+their production path is accepted. This source fix is not native gateway or
+release qualification, and it does not accept the remaining raw-output or
+historical-file exposure. Keep their separate pre-freeze disposition, review and
 native gates in force.
 
 ## v0.15 Level 1 qualification order — 2026-11-02
