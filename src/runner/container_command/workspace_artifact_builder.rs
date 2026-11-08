@@ -415,7 +415,7 @@ fn run_probe(
         &inventory_digest,
         source_files,
     );
-    let (success, reported) = run_builder_script(
+    let (success, reported, diagnostics) = run_builder_script(
         repo_root,
         policy,
         binding,
@@ -423,14 +423,19 @@ fn run_probe(
         "workspace artifact boundary probe",
     )?;
     if !success {
+        // A refused probe names its cause from whichever stream carried it: the
+        // script reports its own refusals on stdout, and a shell that stops
+        // early reports on stderr.
+        let cause = if !reported.is_empty() {
+            reported.lines().next().unwrap_or_default().to_owned()
+        } else if !diagnostics.is_empty() {
+            diagnostics.lines().next().unwrap_or_default().to_owned()
+        } else {
+            "no output".to_owned()
+        };
         return Err(RunnerError::task_invocation(format!(
-            "workspace artifact {} boundary probe refused: {}",
-            phase.label(),
-            if reported.is_empty() {
-                "no output".to_owned()
-            } else {
-                reported.lines().next().unwrap_or_default().to_owned()
-            }
+            "workspace artifact {} boundary probe refused: {cause}",
+            phase.label()
         )));
     }
     let probe = parse_probe(&reported, phase)?;
@@ -457,14 +462,14 @@ fn run_probe(
 }
 
 /// Execute one script inside the verified builder and return whether it
-/// succeeded plus its captured stdout.
+/// succeeded plus its captured stdout and stderr.
 fn run_builder_script(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     binding: &VerifiedComposeContainer,
     script: &str,
     label: &str,
-) -> Result<(bool, String), RunnerError> {
+) -> Result<(bool, String, String), RunnerError> {
     let mut args = ["exec", "-T", "-w", "/workspace", "builder"]
         .map(OsString::from)
         .to_vec();
@@ -479,16 +484,11 @@ fn run_builder_script(
     let output = crate::runner::exec_command::run_verified_compose_exec_plan(
         policy, &plan, binding, true, None, None,
     )?;
-    let mut reported = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    // A refused probe names its cause from whichever stream carried it: the
-    // script reports its own refusals on stdout, and a shell that stops early
-    // reports on stderr.
-    let diagnostics = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    if !diagnostics.is_empty() {
-        reported.push_str(": ");
-        reported.push_str(&diagnostics);
-    }
-    Ok((output.status.success(), reported))
+    Ok((
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+    ))
 }
 
 /// The one record a successful build publishes about its own writers.
@@ -955,7 +955,7 @@ mod tests {
 
     /// The probe's own stdout shape: every declared field once, integers only.
     fn before_output(overrides: &[(&str, u64)]) -> String {
-        let mut rows = vec![
+        let mut rows = [
             ("census", 1u64),
             ("source_files", 2134),
             ("nested_workspace_mounts", 0),
@@ -978,7 +978,7 @@ mod tests {
     }
 
     fn after_output(overrides: &[(&str, u64)]) -> String {
-        let mut rows = vec![
+        let mut rows = [
             ("census", 1u64),
             ("source_files", 2134),
             ("nested_workspace_mounts", 0),

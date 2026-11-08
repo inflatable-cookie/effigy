@@ -25,7 +25,6 @@ During v0.x, MINOR bumps may include breaking changes.
   implication rather than counted as a host write, and no profile, mount or
   disk setting changes.
 
-
 - Secure existing gateway stdout/stderr logs to owner-only mode on the held
   descriptor before appending or giving them to the daemon child. Existing bytes
   are preserved; unopened legacy files, directory permissions and raw diagnostic
