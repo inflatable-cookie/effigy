@@ -465,18 +465,32 @@ class Pins:
                 if (info.st_dev, info.st_ino, info.st_uid, stat.S_IMODE(info.st_mode)) != identity:
                     raise Refusal(f'{path}: held descriptor changed: refuse')
 
-    def hold(self, path):
-        fd = private_dir(path)
-        info = os.fstat(fd)
-        identity = (info.st_dev, info.st_ino, info.st_uid, stat.S_IMODE(info.st_mode))
-        if path in self.items and self.items[path] != identity:
+    def adopt(self, path, fd):
+        """Pin an already-opened no-follow directory descriptor. The descriptor's own identity is what the pin
+        records, so no path observation can intervene between a caller's comparison and the pin. The caller opened
+        the descriptor; this takes ownership of it on success and closes it on refusal."""
+        try:
+            if os.path.realpath(path) != path or not (path == prep.STASH or path.startswith(prep.STASH + '/')):
+                raise Refusal(f'{path}: pinned path must be canonical under Stash scratch')
+            info = os.fstat(fd)
+            if not stat.S_ISDIR(info.st_mode):
+                raise Refusal(f'{path}: pinned path must be a directory, not a link')
+            if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+                raise Refusal(f'{path}: pinned directory must be owned by this user and mode 0700')
+            identity = (info.st_dev, info.st_ino, info.st_uid, stat.S_IMODE(info.st_mode))
+            if path in self.items and self.items[path] != identity:
+                raise Refusal(f'{path}: held directory differs from its pin')
+        except BaseException:
             os.close(fd)
-            raise Refusal(f'{path}: held directory differs from its pin')
+            raise
         if path in self.held:
             os.close(fd)
         else:
             self.held[path] = fd
         self.items[path] = identity
+
+    def hold(self, path):
+        self.adopt(path, private_dir(path))
 
     def close(self):
         for fd in self.held.values():
@@ -567,41 +581,47 @@ def check_recorded_roots(prior, bindings, pins, *, first_use, manifest):
     """C-stage start: the owned roots must be the identities this chain's origin established, bound by exact
     identity and never recreated or adopted. A fresh chain's come from its verified C0 creation record; the
     recorded token keeps its own pinned 688 identities. Entry counts are checked only before C1 populates them.
-    Directories are compared and listed through a held, no-follow descriptor so a replacement mid-check refuses."""
+
+    Each root is opened no-follow once. That descriptor supplies the device, inode, owner, mode and (at C1) entry
+    comparison, and then becomes the stage's held pin, so no path is re-observed between the comparison and the
+    pin and a same-user swap in that gap can neither be pinned nor carried into an effect."""
     records, source = recorded_root_records(bindings, prior, manifest)
     for name, rec in records.items():
         path = rec['path']
         try:
-            info = os.lstat(path)
+            link = os.lstat(path)
         except OSError as exc:
             raise Refusal(f'{name}: recorded root is absent: {exc.strerror}')
-        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode) or os.path.realpath(path) != path:
+        if stat.S_ISLNK(link.st_mode) or os.path.realpath(path) != path:
             raise Refusal(f'{name}: alias or non-directory root')
-        if (info.st_dev, info.st_ino) != (rec['device'], rec['inode']):
-            raise Refusal(f'{name}: root identity changed since {source}')
-        if info.st_uid != rec.get('uid', os.geteuid()) or info.st_uid != os.geteuid():
-            raise Refusal(f'{name}: root owner changed since {source}')
-        if stat.S_IMODE(info.st_mode) != rec.get('mode', 0o700):
-            raise Refusal(f'{name}: root mode changed')
-        if first_use:
-            try:
-                fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-            except OSError as exc:
-                raise Refusal(f'{name}: recorded root cannot be opened: {exc.strerror}')
-            try:
-                held = os.fstat(fd)
-                if (held.st_dev, held.st_ino) != (info.st_dev, info.st_ino):
-                    raise Refusal(f'{name}: root identity changed while opening')
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError as exc:
+            raise Refusal(f'{name}: recorded root cannot be opened: {exc.strerror}')
+        adopted = False
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISDIR(info.st_mode):
+                raise Refusal(f'{name}: alias or non-directory root')
+            if (info.st_dev, info.st_ino) != (rec['device'], rec['inode']):
+                raise Refusal(f'{name}: root identity changed since {source}')
+            if info.st_uid != rec.get('uid', os.geteuid()) or info.st_uid != os.geteuid():
+                raise Refusal(f'{name}: root owner changed since {source}')
+            if stat.S_IMODE(info.st_mode) != rec.get('mode', 0o700):
+                raise Refusal(f'{name}: root mode changed')
+            if first_use:
                 live = sorted(os.listdir(fd))
-            finally:
+                expected = rec['entries']
+                if isinstance(expected, int):
+                    if len(live) != expected:
+                        raise Refusal(f'{name}: root entry count changed since {source}')
+                elif live != expected:
+                    raise Refusal(f'{name}: root entries differ from {source}')
+            pins.adopt(path, fd)  # the same descriptor, not a second look at the path
+            adopted = True
+        finally:
+            if not adopted:
                 os.close(fd)
-            expected = rec['entries']
-            if isinstance(expected, int):
-                if len(live) != expected:
-                    raise Refusal(f'{name}: root entry count changed since {source}')
-            elif live != expected:
-                raise Refusal(f'{name}: root entries differ from {source}')
-        pins.pin(path)
 
 
 def ensure_colima_path(control, pins):

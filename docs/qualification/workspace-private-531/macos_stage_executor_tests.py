@@ -2380,9 +2380,72 @@ class FreshChainRootTests(Fixture):
             self.assertEqual((rec['device'], rec['inode'], rec['uid'], rec['mode']),
                              (info.st_dev, info.st_ino, info.st_uid, stat.S_IMODE(info.st_mode)), name)
         pins = ex.Pins()
+        self.addCleanup(pins.close)
         ex.check_recorded_roots(body, bindings, pins, first_use=True, manifest=ex.load_manifest())
-        self.assertEqual(set(pins.items), {r['path'] for r in roots.values()})
+        root_paths = {r['path'] for r in roots.values()}
+        self.assertEqual(set(pins.items), root_paths)
+        self.assertEqual(set(pins.held), root_paths)  # the roots' own descriptors are held, not re-observed
         pins.recheck()
+
+    @staticmethod
+    def swapping_open(target):
+        """An os.open that renames `target` and puts an empty directory in its place right after that path has been
+        opened: a same-user swap that lands inside the window the check is looking at."""
+        swapped = []
+        real_open = os.open
+
+        def opener(path, flags, *args, **kwargs):
+            fd = real_open(path, flags, *args, **kwargs)
+            if path == target and not swapped:
+                swapped.append(True)
+                os.rename(target, target + '.moved')
+                os.mkdir(target, 0o700)
+            return fd
+        return opener, swapped
+
+    def test_the_pin_is_the_descriptor_that_was_compared_not_a_second_path_look(self):
+        """The comparison and the pin share one held descriptor. No path observation runs inside the check, and a
+        same-user swap after the open is recorded as the directory that was opened, so the next recheck refuses
+        before any effect and the replacement is neither pinned nor written into."""
+        self.use_historical({})
+        bindings, c0, _ = self.run_c0('f0f0f0c6', 'fresh-c0-0006')
+        body = self.c0_body(c0)
+        manifest = ex.load_manifest()
+        target = bindings['qualification_root']
+
+        def reobserved(*args, **kwargs):
+            raise AssertionError('a pinned root was re-observed by path')
+
+        quiet = ex.Pins()
+        self.addCleanup(quiet.close)
+        with mock.patch.object(ex.Pins, 'observe', side_effect=reobserved), \
+                mock.patch.object(ex.Pins, 'pin', side_effect=reobserved):
+            ex.check_recorded_roots(body, bindings, quiet, first_use=True, manifest=manifest)
+        self.assertEqual(set(quiet.held), {r['path'] for r in ex.origin_roots(body, bindings, manifest).values()})
+
+        pins = ex.Pins()
+        self.addCleanup(pins.close)
+        opener, swapped = self.swapping_open(target)
+        with mock.patch.object(ex.os, 'open', side_effect=opener):
+            ex.check_recorded_roots(body, bindings, pins, first_use=True, manifest=manifest)
+        self.assertTrue(swapped, 'the swap ran inside the check window')
+        moved = os.lstat(target + '.moved')
+        self.assertEqual(pins.items[target], (moved.st_dev, moved.st_ino, moved.st_uid, stat.S_IMODE(moved.st_mode)))
+        with self.assertRaisesRegex(ex.Refusal, 'pinned directory identity, owner or mode changed'):
+            pins.recheck()  # the replacement is caught before any step
+
+        # The same window through the entry point: the stage refuses before its first step, so the replacement is
+        # never reached and never adopted.
+        other, _, other_ref = self.run_c0('f0f0f0c7', 'fresh-c0-0007b')
+        opener, swapped = self.swapping_open(other['qualification_root'])
+        calls = []
+        with mock.patch.object(ex.os, 'open', side_effect=opener):
+            with self.assertRaisesRegex(ex.Refusal, 'pinned directory identity, owner or mode changed'):
+                self.execute('C1', self.routed({}, calls), prior_ref=other_ref,
+                             activation_id='fresh-c1-swap', bindings=other)
+        self.assertTrue(swapped)
+        self.assertEqual(calls, [])
+        self.assertFalse(os.path.lexists(other['control'] + '/cache'))  # C1's own creation never ran
 
     def test_a_tampered_c0_creation_record_refuses_where_the_field_is_read(self):
         """A self-consistent edit of the C0 creation helper's record re-records every hash the receipt names, so

@@ -396,7 +396,9 @@ Gates:
   field (kind, id, name, label, engine), what its producing stage's receipt, recorded argv and
   original streams establish.
 - **Recorded identities.** C1 onward binds the owned roots by device, inode, owner, mode 0700 and (at C1
-  only) their first-use entries, read back through a held no-follow descriptor. A fresh chain's roots come
+  only) their first-use entries. Each root is opened no-follow once: that descriptor supplies the comparison and
+  then becomes the stage's held pin, so no path is re-observed between them and a same-user swap in that gap is
+  pinned as the opened directory and refused at the next recheck before any step. A fresh chain's roots come
   from its own verified C0 creation record: the paths of the token's supported shape, and the identities and
   first-use entries that record's `make_owned_dir` evidence and pinned inventory name (effigy#698). The
   recorded token instead keeps the three pinned 688 roots (token `7deaf1b3`) by count; that route never
