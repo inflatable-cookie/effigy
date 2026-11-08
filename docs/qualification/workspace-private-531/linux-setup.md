@@ -296,8 +296,24 @@ Installed systemd capabilities and that lifecycle still need fresh native bindin
 
 Writable-top selection is source-implemented as metadata only. Stage1 still refuses before any effect:
 no live producer supplies a top observation (`top_observation` is None), and every row stays gated by
-`EXTERNAL_ANCHORS`, which is unset in production. Still unavailable: controller-to-guest association,
-source-verified kernel hard limits, fresh signed Stage1 evidence, exact activation
+`EXTERNAL_ANCHORS`, which is unset in production.
+
+Controller-to-guest association is a fail-closed verifier in `linux_disk_association.py`, with `PINS` empty, so
+every association refuses. It has five premises, each checked on its own inputs (`premise_table`): `host_read`
+(one pinned read-only accessor, exact tool bytes and Desktop build, bounded output, boot bracket, and the serial
+and image UID the output names), `config` (exactly one hdd0 at SATA index 0 in the reviewed VM; CD-ROMs counted,
+not disks), `descriptor` (selected top, chain and every extent, from the descriptor bytes), `guest_blocks` (exactly
+one whole disk, `/dev/sda`, with the reviewed root partition on it; loop and ROM classified by type, anything
+else refuses) and `serial` (host read serial equals the guest parent serial).
+
+The upstream candidate, `PrlVmDevHd_GetSerialNumber`, is used by libvirt's Virtuozzo driver. It is not exported by the
+installed Parallels Desktop 27.1.0 SDK (`libprl_sdk.11.dylib`, sha256 `464af6b9…`); its only serial accessors are
+the VM SMBIOS serial and serial ports. So no pinned host read exists. Retained 748 facts establish the config and
+guest-block premises and descriptor self-consistency, not the link: the config device Uuid `{9447f202…}` differs
+from the descriptor disk UID `{44b5d35e…}`, and no documented rule joins them. Guest `ata1` is not mapped to SATA
+position 0, and the guest sysfs serial attribute is absent while the probe reports the parent serial.
+
+Still unavailable: source-verified kernel hard limits, fresh signed Stage1 evidence, exact activation
 anchors and root installation authorization. No VM, SSH, account, service, build,
 proof or production effect ran here. E10/E13k/E14 stay held; measurement692 grants
 no longer stage. Source controls confer no native proof credit.
