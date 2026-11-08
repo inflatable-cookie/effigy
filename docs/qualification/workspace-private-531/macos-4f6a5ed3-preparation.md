@@ -317,6 +317,25 @@ Gates:
   configured scratch root. The Desktop endpoint, engine identity, tool bytes, all input rechecks,
   one-use claims and other runtime gates still apply. A real operator GO and Nucleus proof-only launch
   remain necessary; this plan grants neither.
+- **Launch-time window recipe.** The legacy exact-file route above remains supported. For a delayed
+  approval, provision the private activation, claims and evidence directories and the C0 parent or D0
+  control root first. Create an options JSON containing exactly `activation_id` (fresh, 8–64 safe
+  characters), `duration_seconds` (integer greater than the stage reserve and at most its stage
+  seconds and 1200), and canonical `evidence_root`. With the bindings JSON described above, run:
+
+  ```sh
+  effigy qualification:macos:proof-only -- plan-window D0 /absolute/path/to/bindings.json /absolute/path/to/options.json
+  ```
+
+  Use C0 in place of D0 when appropriate. Save the output unchanged as a read-only request under
+  scratch, retain its exact bytes and SHA-256, and pin the merged K, selector
+  `qualification:macos:proof-only -- /absolute/path/to/request.json REQUEST_SHA256` and request hash
+  in Nucleus. Null root identities are provisioning preconditions: rerun the plan after provisioning,
+  before freezing the request. Check all named destinations are unused. The native operator answer and
+  actual proof-only launch remain necessary. At launch the request claim is spent even on an uncertain
+  or partial write; retain the claim, activation, proof evidence and stage evidence, and never retry it.
+  The runtime timestamps come from launch, not from the preparation file. Source-test simulations confer
+  no native proof credit.
 - **Static admission.** C0 and D0 have no remaining static helper refusal. Their actual execution still
   needs the external proof-only precondition and all runtime checks. Other stages remain refused:
   - C1, C4 and D2: the download cap is payload bytes, wire traffic is not counted, and the manifest

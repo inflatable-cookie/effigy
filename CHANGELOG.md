@@ -8,6 +8,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Allow a pinned macOS proof request to start its bounded stage window at the externally approved launch (effigy#696).
+
 - Keep macOS proof input bindings stable across equivalent pinned checkouts (effigy#695).
 
 - Supervise macOS preparation helpers against the stage deadline and live storage counter, retaining

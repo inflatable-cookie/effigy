@@ -1942,6 +1942,126 @@ def copied_checkout(parent, name):
         yield root
 
 
+class WindowProofTests(Fixture):
+    def request(self, activation_id='window-proof-0001'):
+        options = dict(activation_id=activation_id, duration_seconds=300, evidence_root=self.evidence)
+        return proof.window_recipe('D0', self.bindings, options)
+
+    def freeze(self, request, name='window-request.json'):
+        path = self.tmp + '/' + name
+        Path(path).write_text(json.dumps(request, sort_keys=True))
+        os.chmod(path, 0o400)
+        return path, ex.sha_file(path)
+
+    def test_delayed_simulated_launch_runs_real_entry_and_keeps_window(self):
+        with copied_checkout(self.tmp, 'window-first'):
+            request = self.request()
+            path, digest = self.freeze(request)
+        calls, deadlines = [], []
+        routes = {'d0-info': emit(ENGINE_JSON), 'd0-ps': emit(''),
+                  'd0-network': emit(''), 'd0-volume': emit('')}
+        admitted = dict(ex.UNADMITTED)
+        admitted.pop('D0', None)
+        prepared = datetime.datetime.now(datetime.timezone.utc)
+        before = prepared + datetime.timedelta(seconds=1800)
+        real_datetime = datetime.datetime
+        class LaunchClock(real_datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return before
+        with copied_checkout(self.tmp, 'window-second'), \
+             mock.patch.object(proof.datetime, 'datetime', LaunchClock), \
+             mock.patch.object(ex, 'UNADMITTED', admitted), \
+             mock.patch.object(ex, 'default_transport', self.routed(routes, calls, before=lambda kw: deadlines.append(kw['cleanup_deadline']))), \
+             mock.patch.object(ex, 'default_monitor', FixedHelperTests.quiet_monitor), \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(proof.main(['proof', path, digest]), 0)
+            with self.assertRaises(ex.Refusal):
+                proof.main(['proof', path, digest])
+        retained = json.loads(Path(request['evidence_path']).read_text())
+        go = retained['activation']
+        issued = datetime.datetime.fromisoformat(go['issued_utc'])
+        expires = datetime.datetime.fromisoformat(go['expires_utc'])
+        self.assertGreater((issued - prepared).total_seconds(), 1200)
+        self.assertGreaterEqual(issued, before)
+        self.assertEqual((expires - issued).total_seconds(), 300)
+        raw = Path(request['activation_path']).read_bytes()
+        self.assertEqual(raw, retained['activation_bytes_utf8'].encode())
+        self.assertEqual(sha_bytes(raw), retained['activation_sha256'])
+        self.assertEqual(retained['request_sha256'], digest)
+        self.assertEqual(go['source_sha256'], request['source_sha256'])
+        self.assertEqual(json.loads(Path(request['claim_path']).read_text())['go_sha256'], digest)
+        self.assertTrue(calls)
+        self.assertEqual(len(set(deadlines)), 1)
+
+    def test_window_refuses_drift_collision_and_partial_write_without_dispatch(self):
+        request = self.request()
+        for index, change in enumerate(({'duration_seconds': 1201}, {'stage': 'C1'},
+                                        {'bindings_sha256': '0' * 64}, {'roots': {}})):
+            path, digest = self.freeze(dict(request, **change), 'bad-%d' % index)
+            with mock.patch.object(ex, '_execute_stage') as effect, self.assertRaises(ex.Refusal):
+                proof.main(['proof', path, digest])
+            effect.assert_not_called()
+        path, digest = self.freeze(request)
+        original_write = ex.write_new_file
+        def partial(directory, name, data, **kwargs):
+            if directory == self.activations:
+                Path(directory, name).write_bytes(data[:3])
+                raise OSError('simulated partial write')
+            return original_write(directory, name, data, **kwargs)
+        with mock.patch.object(ex, 'write_new_file', side_effect=partial), \
+             mock.patch.object(ex, '_execute_stage') as effect, self.assertRaises(OSError):
+            proof.main(['proof', path, digest])
+        effect.assert_not_called()
+        with self.assertRaises(ex.Refusal):
+            proof.main(['proof', path, digest])
+
+    def test_reaped_timeout_through_entry_keeps_spent_window(self):
+        request = self.request('window-timeout')
+        path, digest = self.freeze(request)
+        calls = []
+        transport = self.routed({'d0-info': 'import time; time.sleep(30)'}, calls)
+        def short(**kw):
+            return transport(**dict(kw, timeout=min(kw['timeout'], 0.1)))
+        with mock.patch.object(ex, 'default_transport', short), \
+             mock.patch.object(ex, 'default_monitor', FixedHelperTests.quiet_monitor), \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(proof.main(['proof', path, digest]), 1)
+            with self.assertRaises(ex.Refusal):
+                proof.main(['proof', path, digest])
+        receipt = json.loads(Path(self.evidence, 'D0-window-timeout', 'stage-receipt.json').read_text())
+        self.assertEqual(receipt['steps'][-1]['closure'], 'unknown_retained')
+        self.assertIsNotNone(receipt['steps'][-1]['waited_exit'])
+        self.assertEqual([call[0] for call in calls], ['d0-info'])
+        self.assertTrue(Path(request['evidence_path']).exists())
+
+    def test_window_refuses_replaced_root_and_collision_before_claim(self):
+        request = self.request()
+        path, digest = self.freeze(request)
+        os.rename(self.evidence, self.evidence + '-original')
+        os.mkdir(self.evidence, 0o700)
+        with mock.patch.object(ex, '_execute_stage') as effect, self.assertRaises(ex.Refusal):
+            proof.main(['proof', path, digest])
+        effect.assert_not_called()
+        self.assertEqual(os.listdir(self.tmp + '/claims'), [])
+        fresh = self.request('window-collision')
+        Path(fresh['activation_path']).write_text('occupied')
+        path, digest = self.freeze(fresh, 'collision-request')
+        with mock.patch.object(ex, '_execute_stage') as effect, self.assertRaises(ex.Refusal):
+            proof.main(['proof', path, digest])
+        effect.assert_not_called()
+        self.assertEqual(os.listdir(self.tmp + '/claims'), [])
+
+    def test_window_plan_has_no_effects_and_rejects_duplicate_options(self):
+        before = tree(self.tmp)
+        request = self.request()
+        self.assertEqual(before, tree(self.tmp))
+        self.assertNotIn('issued_utc', request)
+        self.assertNotIn('expires_utc', request)
+        with self.assertRaises(ex.Refusal):
+            proof.unique_object([('duration_seconds', 300), ('duration_seconds', 300)])
+
+
 class StableProofTests(Fixture):
     def test_two_checkouts_bind_same_request_and_retain_distinct_maps(self):
         with copied_checkout(self.tmp, 'first'):
