@@ -121,7 +121,14 @@ Where the output goes:
 - every step draws through one process-wide sink, so concurrent steps stack
   instead of interleaving;
 - while the managed-run TUI owns the terminal, `steps::suspend_terminal()`
-  silences the sink so the two never draw over each other.
+  silences the sink so the two never draw over each other;
+- a process whose output Effigy captures into a line-oriented log (a managed
+  TUI pane, the `--headless` relay, the run's own output, a host process's log)
+  inherits `EFFIGY_MANAGED_PANE=1` and writes bounded plain start and finish
+  lines (`StepMode::Pane`) with no banner. The marker is outside the
+  `EFFIGY_INTERNAL_` namespace, which is what Effigy's own child environment
+  and consumer wrappers scrub, so a nested child keeps it; the earlier
+  `EFFIGY_INTERNAL_MANAGED_PANE=1` spelling is still honoured.
 
 Never write a spinner by hand. A command that owns a richer event stream keeps
 its own lines and leaves step drawing to the sink: an engine whose work is in

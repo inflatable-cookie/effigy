@@ -271,6 +271,30 @@ test reads the wall clock.
 | TUI panes | `multiprocess::render::panes::tests::output_tests::a_starting_pane_names_its_wait_and_the_elapsed_time_not_just_a_glyph`, `an_entry_with_its_own_state_does_not_borrow_the_session_clock`, and `frame_tests::waiting_tabs_name_their_own_dependency_and_phase` |
 | TUI shutdown | `multiprocess::lifecycle::progress::tests::shutdown_frames_have_one_current_label` and `the_completion_frame_counts_the_processes_and_the_forced_ones` |
 
+## The pane fact a nested child inherits
+
+A managed run's processes write into a captured, line-oriented log - a TUI
+pane, the `--headless` relay, the run's own output, or a host process's log -
+so a spinner there is frames, not progress. Every one of those children carries
+`EFFIGY_MANAGED_PANE=1` (`effigy_ui::steps::MANAGED_PANE_ENV`), and the
+environment's `up` command carries it in its spawn environment so its inherited
+host processes do too. The fact is published outside the `EFFIGY_INTERNAL_`
+namespace on purpose: Effigy's own child environment strips that namespace, and
+so do consumer wrappers (the shipped bundle's `profile_env.py` scrubs
+`EFFIGY_INTERNAL_*` and `EFFIGY_MANAGED_HOST_*`), so an internal spelling is
+exactly the one a Services tab loses - the pre-fix shape was 110 live frames,
+a repeated wait and a nested `EFFIGY` banner inside one pane log (effigy#729).
+`effigy_ui::steps::LEGACY_MANAGED_PANE_ENV` still counts when present.
+
+Evidence: `crates/effigy-ui/src/steps.rs` tests
+`the_pane_fact_survives_the_names_a_child_can_carry` and
+`pane_mode_writes_one_plain_start_and_finish` (the mode itself), plus the real
+PTY fixtures `tests/scripts/managed-pane-feedback.py` (a TUI pane and the
+`--headless` relay) and `tests/scripts/managed-pane-nested.py` (a Services-style
+tab whose program starts Effigy with the internal namespace scrubbed, beside a
+non-Effigy tab, with a failing step and a standalone/piped control in the same
+run).
+
 ## A new site
 
 A step that can wait starts from `ProgressSource::waiting_for(the exact thing

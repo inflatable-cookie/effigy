@@ -25,8 +25,10 @@
 //! process-wide sink, which serialises finish lines and never interleaves a
 //! spinner with them. While the managed-run TUI owns the terminal,
 //! [`suspend_terminal`] silences the sink so the two never draw over each
-//! other. Nested Effigy processes in managed panes instead write bounded
-//! plain start and finish lines.
+//! other. A process whose output Effigy captures and renders as plain lines -
+//! a managed pane, or any captured run log - carries
+//! [`MANAGED_PANE_ENV`] instead and writes bounded plain start and finish
+//! lines, never spinner frames or the CLI banner (effigy#729).
 
 use std::cell::RefCell;
 use std::io::{IsTerminal, Write};
@@ -39,12 +41,41 @@ use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 use crate::theme::{is_ci_environment, resolve_color_enabled, OutputMode};
 
-/// Product handoff for children whose output belongs to a managed TUI pane.
-pub const MANAGED_PANE_ENV: &str = "EFFIGY_INTERNAL_MANAGED_PANE";
+/// Product fact for a child whose output Effigy captures and renders as plain
+/// lines: a managed TUI pane, or any captured run log.
+///
+/// The fact is inherited, so every Effigy process a captured child starts - a
+/// nested task run, a run step, a wrapper script's own `effigy` call - keeps
+/// drawing bounded start and finish lines instead of spinner frames and the
+/// CLI banner.
+///
+/// It deliberately sits outside the `EFFIGY_INTERNAL_` namespace. Effigy's own
+/// child environment and consumer wrappers (the shipped bundle's
+/// `profile_env.py` scrubs `EFFIGY_INTERNAL_*` and `EFFIGY_MANAGED_HOST_*`)
+/// drop that namespace, and a nested child that loses the fact animates its
+/// frames into a line-oriented log: a staircase of stale frames, repeated
+/// waits and a nested banner (effigy#729).
+pub const MANAGED_PANE_ENV: &str = "EFFIGY_MANAGED_PANE";
+
+/// The first spelling of [`MANAGED_PANE_ENV`]. No longer written, still
+/// honoured: an invocation already carrying it is inside a pane either way.
+pub const LEGACY_MANAGED_PANE_ENV: &str = "EFFIGY_INTERNAL_MANAGED_PANE";
 
 /// Whether this process writes feedback into a managed pane.
 pub fn in_managed_pane() -> bool {
-    std::env::var_os(MANAGED_PANE_ENV).is_some_and(|value| value == "1")
+    pane_marker([MANAGED_PANE_ENV, LEGACY_MANAGED_PANE_ENV], |name| {
+        std::env::var_os(name)
+    })
+}
+
+/// The pane fact as a child's environment carries it: any known name set to
+/// `1` marks the process, so a spelling this binary stopped writing still
+/// counts.
+fn pane_marker(names: [&str; 2], lookup: impl Fn(&str) -> Option<std::ffi::OsString>) -> bool {
+    names
+        .iter()
+        .filter_map(|name| lookup(name))
+        .any(|value| value == "1")
 }
 
 const TICK: Duration = Duration::from_millis(80);
@@ -932,6 +963,26 @@ mod tests {
         step.succeed("web finished");
         let text = buffer.text();
         assert_eq!(text, "Started: running web\n✓ web finished\n");
+    }
+
+    #[test]
+    fn the_pane_fact_survives_the_names_a_child_can_carry() {
+        // A captured child inherits the written marker, and an invocation
+        // already carrying the first spelling is still a pane.
+        for marked in [MANAGED_PANE_ENV, LEGACY_MANAGED_PANE_ENV] {
+            let value = pane_marker([MANAGED_PANE_ENV, LEGACY_MANAGED_PANE_ENV], |name| {
+                (name == marked).then(|| "1".into())
+            });
+            assert!(value, "{marked}");
+        }
+        // Anything but `1` is not the fact, and no marker at all is a real
+        // terminal.
+        for unmarked in [None, Some("0"), Some("true"), Some("")] {
+            let value = pane_marker([MANAGED_PANE_ENV, LEGACY_MANAGED_PANE_ENV], |_| {
+                unmarked.map(Into::into)
+            });
+            assert!(!value, "{unmarked:?}");
+        }
     }
 
     #[test]
