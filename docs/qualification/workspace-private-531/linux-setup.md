@@ -325,6 +325,41 @@ The block inventory records a partition's `removable` as `na`, not as a value: t
 
 These are observations, not bounds. `guest_writer_bound.limits` states what the facts cannot establish: `MemoryMax` is a byte bound of one control group and `IOWriteBandwidthMax` (the brief's `IOWriteMax` shorthand) a per-device write rate in bytes per second, so neither is an aggregate allocation; the IOPS properties are per-device rates too; `RLIMIT_FSIZE`, sampled counters and post-growth checks are not a filesystem allocation quota. `SUPPORTED_HARD_LIMITS`, `SUPPORTED_DISK_MECHANISMS`, `EXTERNAL_ANCHORS`, the E8/E9 setup gates and writable-top, readiness, placement and guest-association stay unchanged and unset. A root kernel name may match this guest's history and a serial or size may look alike, but no host/guest serial equality, association or controller proof is inferred: additional disks and partitions stay listed, and a device-mapper or otherwise virtual root is recorded as an ambiguous controller rather than resolved by name. An ambiguous or unresolved root, a cross-inventory disagreement or any failed, malformed or skipped read makes the receipt `complete: false` and `not eligible` with the reason in `findings`; only a resolved, fully observed occurrence can read as eligible for a later reviewed correlation mechanism. The retained 719 evidence stays historical: it carries the earlier probe fields, no writer-bound reads, and is never upgraded to these facts.
 
+### Allocation bound (source-only, unadmitted)
+
+`linux_allocation_bound.py` verifies the one mechanism that can bound retained allocation on the native root: ext4 project quota (`quota` and `project` features, one reserved project id on the stage tree `BASE`, inherited). The kernel refuses allocation past the project's hard block limit, for every writer that creates objects in the tree, root supervisor included. The verifier takes five route originals (`mountinfo`, `dumpe2fs -h`, `by-uuid`, the fixed `quota` helper output with Q_GETFMT and Q_GETQUOTA, and the fixed `tree` helper output with lstat and FS_IOC_FSGETXATTR per entry). It checks each original's hash and exit, then matches them against exact request facts: boot id, owned uid, `BASE` and the exact entry set. Accepted witnesses must show a writable native ext4 root, an active project limit covering the row with headroom, one project and device on every entry, no hardlinked file, symlink or foreign object, and kernel charge at least the tree's bytes. `route_plan` binds the fixed argv and the helper's SHA-256; nothing here runs them.
+
+Observed 2026-11-08 (747 originals, `observation-filesystem.raw`): `/dev/sda2` ext4 UUID `d488be7b-…`, mounted `rw,relatime` with `user_xattr,acl`, features without `project` or `quota`, and no `repquota`, `quota`, `quotacheck`, `quotaon` or `edquota`. That is absence. A test feeds the retained features line in and expects refusal (`lacks project,quota; enforcement is not provisioned`). Production admits nothing: `SUPPORTED_HARD_LIMITS` stays empty, and `verify_hard_limit` delegates the new mechanism only when it is admitted and its facts are complete.
+
+What the mechanism bounds, per row. The earlier wording "≤ N MiB writes" is not one metric, so each row is qualified by what it can actually bound:
+
+| Row | Written wording | Metric this mechanism can bound | Not bounded here |
+| --- | --- | --- | --- |
+| E8 | ≤ 60 s, ≤ 64 MiB writes | retained allocation ≤ 64 MiB in `BASE` | cumulative writes: overwrites and delete-and-rewrite allocate nothing new |
+| E9a / E9c | archive ≤ 40 MiB | retained archive bytes in `BASE/inputs` | the transfer stream itself; partial output past EDQUOT is a failed transfer, not a success |
+| E9b | extracted ≤ 500 MiB | retained extracted tree in `BASE/source` | temporary create-and-delete traffic during extraction |
+| E19 / EGO | placements ≤ 40 MiB each | retained placement bytes | — |
+
+A per-file `RLIMIT_FSIZE`, a sampled counter, a post-growth census, `MemoryMax` and `IOWriteBandwidthMax` are not this bound. Cumulative I/O volume has no admitted mechanism. If an operator needs "≤ 64 MiB writes" literally, that is a separate metric decision, not something this mechanism gives.
+
+Residual writers outside the project. Objects created under `BASE` (including the root supervisor's stage files, since `BASE/stage` inherits the project) are charged. Writes outside `BASE` are not bounded by this mechanism: root-owned approval records under `/var/lib/effigy531-approved`, supervisor records, the fixed-size drop-in and sudoers files, and everything E12 writes to Docker storage (pull ≤ 1 GiB, build, engine disk ≤ 2 GiB) or apt. Each needs its own finite bound before its row can rely on this mechanism. The current source does not establish one for the approval record or supervisor records, and E12 stays held.
+
+#### Proposal (not approved; needs an operator ruling)
+
+Goal: make the native root enforce a project quota with no mount change and no data move. Smallest supported change, in this order:
+
+1. Pre-change: create one Parallels snapshot of the registered VM (the VM has 36 snapshots; this is one more). Retain `dumpe2fs -h /dev/sda2` and `mountinfo` before the change.
+2. Offline, from a rescue boot with `/dev/sda2` unmounted: `e2fsck -f /dev/sda2`, then `tune2fs -O project -Q prjquota /dev/sda2` (exact flags to be confirmed against the installed e2fsprogs man page before running; `-Q prjquota` should enable only project accounting, not user and group quota), then `e2fsck -f /dev/sda2`. No `fstab` edit, no mount-option change, no remount, no `quota` package.
+3. Normal boot. The kernel enables the feature at mount time. Verify with the `quota` helper mode: `getfmt_rc=0`, `fmt` nonzero.
+4. Set the stage tree's project: `chattr -R -p 531 BASE` and `chattr +P BASE` (both directories and files), run before any payload writes under `BASE`. At E7 the tree is empty, so no existing object carries another project.
+5. Set the hard limit: 1 GiB (1048576 quota blocks of 1 KiB), enough for the E8/E9/E19 caps plus placements. This needs a fixed `Q_SETQLIM` setter as a new helper mode, reviewed separately, so no package install is needed. Later stages (E10 toolchain ≤ 4 GiB, E13 target ≤ 25 GiB) need their own reviewed budgets on the same mechanism before they run.
+6. Activation: stop the VM, then the new `tree` and `quota` originals are taken under a fresh boot; `verify` must admit with `remaining_after_bytes` shown.
+
+Affected: the root filesystem superblock feature flags and two hidden quota inodes. No user data is rewritten; `BASE` is empty until E7. Capacity: quota inodes a few MB. Time: an offline `e2fsck` of a 128 GiB ext4 with about 8.3 M inodes, minutes, to confirm on native. Interruption: power loss or a failed `tune2fs` during step 2 can corrupt the root; the step-1 snapshot is the recovery path. Rollback: restore the step-1 snapshot. Removing the feature in place (`tune2fs -O ^quota`) is not assumed to be clean. Retention: keep the snapshot and every pre/post `dumpe2fs`, `mountinfo`, quota and tree original.
+
+Operator rulings required: (a) approve one VM snapshot and the offline `tune2fs`/`e2fsck` on the native root; (b) approve the metric wording above (retained allocation, not cumulative writes) for E8 and the E9/E19 rows; (c) confirm E12 and root-owned records outside `BASE` stay held until their own bounds exist.
+
+Alternative, only if (a) is refused: a dedicated fixed-size ext4 partition or virtual disk for `BASE`. That changes placement, so it is a material change needing its own proposal.
 
 ## Writable top selection (K-25, source-only)
 
