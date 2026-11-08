@@ -3415,6 +3415,19 @@ class DesktopReadyTests(Fixture):
             return real_popen(argv, **kwargs)
         env = {'HOME': '/Users/tom', 'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LANG': 'C',
                'DOCKER_CLI_HINTS': 'false', 'DOCKER_CLI_HOOKS': 'false', 'OTEL_SDK_DISABLED': 'true'}
+        good_root = self.tmp + '/context-guard-good'
+        os.mkdir(good_root, 0o700)
+        Path(config + '/config.json').write_text(json.dumps({'currentContext': 'desktop-linux',
+            'auths': {'example.invalid': {'auth': 'ZHVtbXk6ZHVtbXk='}}, 'credsStore': 'sentinel'}))
+        with mock.patch.object(primitive.subprocess, 'Popen', side_effect=synthetic):
+            good = primitive.run_stage(good_root, [docker, 'context', 'show'], 15, 4096,
+                       {os.path.realpath(docker): ex.sha_file(docker)}, cwd=good_root,
+                       environment=env, fixed_context_query=True)
+        self.assertEqual((good['disposition'], good['context_streams']), ('exited', 'original-non-secret'))
+        self.assertEqual(Path(good_root + '/stdout').read_bytes(), b'desktop-linux\n')
+        self.assertEqual(Path(good_root + '/stderr').read_bytes(), b'')
+        Path(config + '/config.json').write_text(json.dumps({'currentContext': 'desktop-linux',
+            'aliases': {'dummy-private-value': 'example'}}))
         with mock.patch.object(primitive.subprocess, 'Popen', side_effect=synthetic):
             result = primitive.run_stage(root, [docker, 'context', 'show'], 15, 4096,
                        {os.path.realpath(docker): ex.sha_file(docker)}, cwd=root,
