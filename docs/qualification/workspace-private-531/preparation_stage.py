@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import selectors
 import signal
 import subprocess
@@ -26,7 +27,7 @@ def record(path, value):
     exclusive(path, (json.dumps(value, sort_keys=True, indent=2) + '\n').encode())
 
 
-def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identity_probe=None, cwd=None, environment=None, resource_monitor=None, deadline=None, stdin_path=None, stdin_sha256=None, cleanup_deadline=None, pass_fds=(), verify_in_fixed_helper=False):
+def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identity_probe=None, cwd=None, environment=None, resource_monitor=None, deadline=None, stdin_path=None, stdin_sha256=None, cleanup_deadline=None, pass_fds=(), verify_in_fixed_helper=False, fixed_context_query=False):
     """Spend a stage occurrence before launch. A missing receipt is unknown.
 
     The caller supplies an already private, exclusive directory and exact, reviewed
@@ -67,6 +68,12 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
     environment = environment if environment is not None else {k: os.environ[k] for k in ('PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG') if k in os.environ}
     if not isinstance(environment, dict) or any(not isinstance(k, str) or not isinstance(v, str) or '=' in k or '\x00' in k + v for k, v in environment.items()):
         raise Refusal('invalid environment')
+    if fixed_context_query:
+        expected_env = {'HOME': '/Users/tom', 'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LANG': 'C',
+                        'DOCKER_CLI_HINTS': 'false', 'DOCKER_CLI_HOOKS': 'false', 'OTEL_SDK_DISABLED': 'true'}
+        if (argv != ['/usr/local/bin/docker', 'context', 'show'] or environment != expected_env
+                or guest or stdin_path is not None or output_cap > 4096 or pass_fds or verify_in_fixed_helper):
+            raise Refusal('context stream protection requires the fixed local context-name query')
     if stdin_path is not None:
         with open(stdin_path, 'rb') as source:
             if hashlib.sha256(source.read()).hexdigest() != stdin_sha256:
@@ -95,6 +102,7 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
         os.close(root_fd)
     child = None
     streams = {}
+    guarded = {'stdout': bytearray(), 'stderr': bytearray()}
     stdin_file = None
     result = {'disposition': 'unknown', 'guest_closure': 'unknown' if guest else 'not-applicable'}
     try:
@@ -167,7 +175,11 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
                     continue
                 name = key.data
                 remaining = max(0, output_cap - counts[name])
-                streams[name].write(data[:remaining])
+                if fixed_context_query:
+                    if name == 'stdout':
+                        guarded[name].extend(data[:remaining])
+                else:
+                    streams[name].write(data[:remaining])
                 counts[name] += len(data)
                 if counts[name] > output_cap and reason is None:
                     reason = 'output-cap'
@@ -187,6 +199,15 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
         result.update(disposition='unknown' if exit_code is None else reason or ('exited' if exit_code == 0 else 'failed'),
                       waited_exit=exit_code, elapsed_seconds=time.monotonic() - start,
                       observed_bytes=counts)
+        if fixed_context_query:
+            if (result['disposition'] == 'exited' and counts['stderr'] == 0
+                    and re.fullmatch(rb'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\n', guarded['stdout'])):
+                streams['stdout'].write(guarded['stdout'])
+                result['context_streams'] = 'original-non-secret'
+            else:
+                result['context_streams'] = 'suppressed-untrusted'
+                if result['disposition'] == 'exited':
+                    result['disposition'] = 'context-output-refused'
     except BaseException as exc:
         if child is not None and child.poll() is None:
             try:

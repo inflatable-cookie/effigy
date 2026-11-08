@@ -326,7 +326,11 @@ sha256 `4fb51be4a4e9389b942ecbf52901a962bdccdaa38275e6de4d353df33981d600`, built
 Its [context show](https://github.com/docker/cli/blob/88096ef00576baf72a9cb45caa45c0544c40e0a7/cli/command/context/show.go)
 prints the selected name; its [config loader](https://github.com/docker/cli/blob/88096ef00576baf72a9cb45caa45c0544c40e0a7/cli/config/configfile/file.go)
 can decode auth fields. A synthetic config and helper sentinel exercise this exact CLI without a
-daemon or real credentials.
+daemon or real credentials. The shared stage supervisor has one narrowly restricted context-query
+mode: it retains the original name and empty stderr only when the command succeeds with a valid name.
+It suppresses all output on other results, since the CLI can include configuration aliases in errors;
+the process, waited exit and suppression disposition remain recorded. This avoids writing unexpected
+config text into evidence while keeping the existing responsive supervisor and its bounds.
 
 The context is read before and after readiness. Startup is refused unless it is already
 `desktop-linux`, because [Docker documents that Desktop selects that context at startup](https://docs.docker.com/desktop/setup/install/mac-permission-requirements/).

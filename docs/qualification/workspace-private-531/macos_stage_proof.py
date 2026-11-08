@@ -32,6 +32,7 @@ def unique_object(pairs):
 PROOF_STAGES = ('C0', 'D0', 'D1')
 
 DESKTOP_DISK = '/Users/tom/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw'
+DESKTOP_GROWTH_CAP = 512 * 1024 * 1024
 DESKTOP_APP = '/Applications/Docker.app'
 OPEN = '/usr/bin/open'
 ORIGINAL_D0 = {'stage': 'D0', 'path': executor.LINUX_ARTIFACT_DIR + '/d0-proof-preparation.wmn5kjr9/'
@@ -71,7 +72,7 @@ class DesktopDisk:
                 raise executor.Refusal('Desktop backing file lost, replaced or aliased')
             current = held.st_blocks * 512
             self.high = max(self.high, current)
-            if self.high - self.initial > 512 * 1024 * 1024:
+            if self.high - self.initial > DESKTOP_GROWTH_CAP:
                 raise executor.Refusal('Desktop backing file growth exceeds 512 MiB')
             return dict(device=held.st_dev, inode=held.st_ino, allocated=current,
                         initial=self.initial, maximum=self.high)
@@ -113,8 +114,14 @@ def app_inputs(sample=None):
             elif stat.S_ISDIR(info.st_mode):
                 members[rel] = ['directory', stat.S_IMODE(info.st_mode)]
             elif stat.S_ISREG(info.st_mode):
+                if info.st_nlink != 1:
+                    raise executor.Refusal('Desktop bundle file has an alias')
                 digest = hashlib.sha256()
-                with open(path, 'rb') as source:
+                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+                with os.fdopen(fd, 'rb') as source:
+                    opened = os.fstat(source.fileno())
+                    if (opened.st_dev, opened.st_ino, opened.st_nlink) != (info.st_dev, info.st_ino, 1):
+                        raise executor.Refusal('Desktop bundle file identity changed')
                     while True:
                         data = source.read(1024 * 1024)
                         if not data:
@@ -122,6 +129,10 @@ def app_inputs(sample=None):
                         digest.update(data)
                         if sample is not None:
                             sample()
+                    after = os.fstat(source.fileno())
+                    if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) != (
+                            opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns):
+                        raise executor.Refusal('Desktop bundle file changed while read')
                 members[rel] = ['file', stat.S_IMODE(info.st_mode), digest.hexdigest()]
             else:
                 raise executor.Refusal('unsupported Desktop bundle member')
@@ -229,7 +240,7 @@ def execute_ready(request, request_sha):
             def check(self):
                 return sample()
 
-        def child(name, argv, env, allowance=30, retry_endpoint=False):
+        def child(name, argv, env, allowance=30, retry_endpoint=False, context_query=False):
             now = time.monotonic()
             step_deadline = min(now + allowance, hard)
             if step_deadline <= now:
@@ -239,9 +250,10 @@ def execute_ready(request, request_sha):
             executor.create_private_dir(path)
             pins.hold(path)
             result = executor.call_bounded(
-                lambda: executor.primitive.run_stage(path, argv, step_deadline - now, 262144, runtime_inputs,
+                lambda: executor.primitive.run_stage(path, argv, step_deadline - now, 4096 if context_query else 262144, runtime_inputs,
                             cwd=path, environment=env, resource_monitor=RecordingMonitor(), deadline=step_deadline,
-                            cleanup_deadline=deadline, identity_probe=executor.start_identity), deadline - time.monotonic())
+                            cleanup_deadline=deadline, identity_probe=executor.start_identity,
+                            fixed_context_query=context_query), deadline - time.monotonic())
             receipt['steps'].append(dict(id=name, result=result, receipt=path + '/receipt.json',
                                          receipt_sha256=executor.checked_sha(path + '/receipt.json', must_be_in=root)))
             if retry_endpoint and result.get('disposition') == 'failed' and result.get('waited_exit') == 1:
@@ -260,7 +272,7 @@ def execute_ready(request, request_sha):
         def context(name):
             env = {'HOME': '/Users/tom', 'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LANG': 'C',
                    'DOCKER_CLI_HINTS': 'false', 'DOCKER_CLI_HOOKS': 'false', 'OTEL_SDK_DISABLED': 'true'}
-            data = child(name, [executor.prep.DOCKER, 'context', 'show'], env)
+            data = child(name, [executor.prep.DOCKER, 'context', 'show'], env, context_query=True)
             if not data.endswith(b'\n') or data.count(b'\n') != 1:
                 raise executor.Refusal('context name is missing or malformed')
             try:

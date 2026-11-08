@@ -3212,6 +3212,8 @@ class DesktopReadyTests(Fixture):
                 if name not in routes:
                     raise AssertionError('unexpected readiness step ' + name)
                 argv = [sys.executable, '-I', '-B', '-c', routes[name]]
+                # This local-child route is explicitly simulated; production uses the fixed-query guard.
+                kwargs['fixed_context_query'] = False
             return real_run(root, argv, *args, **kwargs)
 
         with mock.patch.object(primitive, 'run_stage', side_effect=local), \
@@ -3367,6 +3369,17 @@ class DesktopReadyTests(Fixture):
         with self.assertRaises(ex.Refusal):
             disk.check()
 
+    def test_growth_during_start_stops_before_d1(self):
+        os.unlink(self.socket_path)
+        request = self.request('ready-growth-0001')
+        routes = dict(self.routes(), **{'app-start':
+            'with open(%r, "ab") as f: f.write(b"x" * 1048576)\n' % self.disk})
+        calls = []
+        with mock.patch.object(proof, 'DESKTOP_GROWTH_CAP', 0), self.assertRaises(ex.Refusal):
+            self.entry(request, routes, calls)
+        self.assertIn('app-start', [x[0] for x in calls])
+        self.assertFalse(os.path.exists(self.evidence + '/D1-' + request['d1']['activation_id']))
+
     def test_pinned_cli_context_query_uses_only_synthetic_config(self):
         docker = '/usr/local/bin/docker'
         if not os.path.isfile(docker) or ex.sha_file(docker) != ex.HISTORICAL_TOOL_HASHES['docker']:
@@ -3386,6 +3399,34 @@ class DesktopReadyTests(Fixture):
                  'OTEL_SDK_DISABLED': 'true'})
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, b'desktop-linux\n', b''))
         self.assertFalse(os.path.lexists(marker))
+
+    def test_context_supervisor_suppresses_untrusted_config_error(self):
+        docker = '/usr/local/bin/docker'
+        self.assertEqual(ex.sha_file(docker), ex.HISTORICAL_TOOL_HASHES['docker'])
+        config = self.tmp + '/bad-context-config'
+        os.mkdir(config, 0o700)
+        Path(config + '/config.json').write_text(json.dumps({'currentContext': 'desktop-linux',
+            'aliases': {'dummy-private-value': 'example'}}))
+        root = self.tmp + '/context-guard'
+        os.mkdir(root, 0o700)
+        real_popen = subprocess.Popen
+        def synthetic(argv, **kwargs):
+            kwargs['env'] = dict(kwargs['env'], HOME=self.tmp, DOCKER_CONFIG=config)
+            return real_popen(argv, **kwargs)
+        env = {'HOME': '/Users/tom', 'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LANG': 'C',
+               'DOCKER_CLI_HINTS': 'false', 'DOCKER_CLI_HOOKS': 'false', 'OTEL_SDK_DISABLED': 'true'}
+        with mock.patch.object(primitive.subprocess, 'Popen', side_effect=synthetic):
+            result = primitive.run_stage(root, [docker, 'context', 'show'], 15, 4096,
+                       {os.path.realpath(docker): ex.sha_file(docker)}, cwd=root,
+                       environment=env, fixed_context_query=True)
+        self.assertEqual(result['context_streams'], 'suppressed-untrusted')
+        self.assertNotEqual(result['disposition'], 'exited')
+        self.assertEqual(Path(root + '/stdout').read_bytes(), b'')
+        self.assertEqual(Path(root + '/stderr').read_bytes(), b'')
+        self.assertNotIn('dummy-private-value', Path(root + '/receipt.json').read_text())
+        with self.assertRaises(primitive.Refusal):
+            primitive.run_stage(root, [docker, 'context', 'ls'], 15, 4096, {}, cwd=root,
+                                environment=env, fixed_context_query=True)
 
 
 class OriginalD0EvidenceTests(unittest.TestCase):
