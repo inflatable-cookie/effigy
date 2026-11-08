@@ -14,6 +14,11 @@ class Refusal(ValueError):
     pass
 
 
+# Nested helpers may consume the remaining Recipe E producer allowance (kit E14).
+# Existing callers still pass at most 900 seconds; this does not enlarge native windows.
+STAGE_TIMEOUT_CAP = 1800
+
+
 def exclusive(path, data):
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
     fd = os.open(path, flags, 0o600)
@@ -46,7 +51,7 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
     if not root.is_dir() or root.is_symlink() or info.st_uid != os.geteuid() or info.st_mode & 0o777 != 0o700:
         raise Refusal('stage directory must be owned and mode 0700')
     if (not isinstance(argv, list) or not argv or (not isinstance(argv[0], str) or not argv[0] or any(not isinstance(x, str) or '\x00' in x for x in argv))
-            or not 0 < timeout <= 900 or not 0 < output_cap <= 64 * 1024 * 1024):
+            or not 0 < timeout <= STAGE_TIMEOUT_CAP or not 0 < output_cap <= 64 * 1024 * 1024):
         raise Refusal('invalid argv, deadline, or output cap')
     if deadline is not None and deadline - time.monotonic() <= 0:
         raise Refusal('stage deadline already passed: refuse before launch')
@@ -137,9 +142,13 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
         killed_at = None
 
         def stop_group():
+            # Darwin: killpg on a zombie group leader with no live members raises
+            # EPERM (PermissionError); ESRCH is ProcessLookupError. Both mean the
+            # group is gone. A zombie leader with a live grandchild still accepts
+            # killpg and SIGKILL reaches the remaining members.
             try:
                 os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
         while True:
             # Do not reap the group leader while a stream remains open: the group
@@ -212,7 +221,7 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
         if child is not None and child.poll() is None:
             try:
                 os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
             try:
                 result['waited_exit'] = child.wait(timeout=None if cleanup_deadline is None else

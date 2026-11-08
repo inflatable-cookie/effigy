@@ -387,6 +387,23 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- Private Colima Recipe E producer entry (`linux_recipe_e_proof.py`,
+  `test:qualification:linux-recipe-e`, launch
+  `qualification:linux:recipe-e-proof-only`) binds an exact current-checkout
+  request for Darwin-side `workspace:linux:artifact` at
+  `aarch64-unknown-linux-gnu`: reviewed source/config/tool hashes, host binary
+  plus sidecar (never `EFFIGY_ACTIVE_VERSION`), staged checkout-scoped
+  `effigy-release` policy, one inventory observation of that profile as
+  aarch64, and an exclusive one-use claim before effects. Nested helpers take
+  the remaining E14 1800s allowance through `preparation_stage.run_stage`
+  (cap raised 900→1800 for that remaining producer clock; existing callers
+  still pass at most 900). Bound inputs are rechecked after the producer
+  returns. Kit §6.3 host writes ≤5 GiB stay a named unresolved refusal (no
+  producer telemetry; sampling is not a quota); production execute refuses
+  that prerequisite before the claim, and fixtures stay on the simulation
+  seam. `run_stage` treats Darwin `killpg` EPERM on an unreaped group leader
+  as gone. Frozen H and 627 stay historical. Source and injected controls
+  only.
 - Prepare boot-complete Linux Stage1 readiness and protected config transition
   admission (effigy#732). Stage1 S1.3 now requests systemd 259
   `systemctl is-system-running --wait` with a host remaining-absolute deadline
@@ -403,7 +420,6 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostic or a virtual-network identity change; a syntactically valid UUID
   is not a harmless transition. Source controls only: no VM, SSH, account or
   service effect.
-
 - Stage the development Linux artifact builder's source through the release
   profile's own supported host mount (effigy#715). A normal incremental
   `install:local` from a checkout the `effigy-release` profile does not share
