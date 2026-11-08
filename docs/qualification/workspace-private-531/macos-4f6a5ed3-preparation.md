@@ -341,8 +341,8 @@ a matching engine skips startup, while only the two recognised local connection 
 separately claimed start, including when the socket exists but refuses connections. Other failures
 and changed engine facts refuse. The recognised error requires exit 1 and the exact stderr; stdout
 is retained and may contain client facts, as in the spent 702 attempt. Nested helper timers preserve
-the earlier outer deadline. The owned
-socket and a matching engine response establish readiness. Drift, missing telemetry, unexpected
+the earlier outer deadline. The owned socket and a matching engine response establish readiness.
+Drift, missing telemetry, unexpected
 failed commands and exhausted reserve stop before D1.
 
 The held, no-alias Desktop disk is sampled before, during and after the operation against a 512 MiB
@@ -564,5 +564,5 @@ Controls run through `effigy test:qualification:workspace-private:macos`
 (`macos_preparation_boundaries.py`: 109 cases, injected only, no native action). Docs run
 through `effigy qa:docs`.
 The executor runs through `effigy test:qualification:workspace-private:macos-executor`
-(`macos_stage_executor_tests.py`: 166 cases, injected local children, no native action; execution runs only under the test-only seams described in the Executor section).
+(`macos_stage_executor_tests.py`: 189 cases, injected local children, no native action; execution runs only under the test-only seams described in the Executor section).
 Its shared primitive change is covered by `effigy test:qualification:linux-preparation`.
