@@ -127,13 +127,30 @@ provisional commit again, and do not substitute a stand-in.
 ## Recipe E — Linux guest artifact
 
 The existing `workspace:linux:artifact` producer under its own separate scoped
-builder GO, run at `H` in the frozen Effigy source. Its normal receipt
+builder GO. Decision D-2: Darwin Colima `effigy-release`, target
+`aarch64-unknown-linux-gnu`, not Parallels. Its normal receipt
 (`binary`, `copied_binary`, `release_triple`, `sha256`,
 `build_kind=workspace-artifact`, `completed_at`) and the active-version
 sidecar must be preserved unchanged. Record cells `guest_artifact`,
 `guest_producer_receipt` and `guest_active_version` from the producer's
 `.effigy/linux-release/artifacts/` outputs. The native proof never rebuilds
 the artifact and never blesses bytes with new sidecars.
+
+The exact-bound source entry is `linux_recipe_e_proof.py`
+(`qualification:linux:recipe-e-proof-only`, controls
+`test:qualification:linux-recipe-e`). It binds the current clean checkout,
+reviewed preparation/program/config/tool hashes, the host binary and its
+sidecar (not `EFFIGY_ACTIVE_VERSION`), policy identity
+`workspace_source=staged` plus `checkout_scoped_identity=true`, the Stash
+release-source mount, and one inventory observation of profile
+`effigy-release` as aarch64. Frozen H (`4f6a5ed3`) cannot use staging or
+checkout-scoped identity and is refused as a candidate; 627 stays historical.
+A later parent binds new candidate C after remaining critical source and green
+QA. Nested helpers take the remaining E14 allowance (absolute clock 1800s
+including cleanup reserve) through `preparation_stage.run_stage`. Uncertain
+closure stays Unknown and spent: no retry, no shared-profile stop. Toolchain
+identity is SO-4 missing until a supported owned-builder exec exists. This
+task produces reviewed source only.
 
 ## Per-platform identity facts each cell must carry
 

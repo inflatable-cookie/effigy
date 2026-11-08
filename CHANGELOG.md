@@ -382,6 +382,18 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- Private Colima Recipe E producer entry (`linux_recipe_e_proof.py`,
+  `test:qualification:linux-recipe-e`, launch
+  `qualification:linux:recipe-e-proof-only`) binds an exact current-checkout
+  request for Darwin-side `workspace:linux:artifact` at
+  `aarch64-unknown-linux-gnu`: reviewed source/config/tool hashes, host binary
+  plus sidecar (never `EFFIGY_ACTIVE_VERSION`), staged checkout-scoped
+  `effigy-release` policy, one inventory observation of that profile as
+  aarch64, and an exclusive one-use claim before effects. Nested helpers take
+  the remaining E14 1800s allowance through `preparation_stage.run_stage`
+  (cap raised 900→1800 for that remaining producer clock; existing callers
+  still pass at most 900). Frozen H and 627 stay historical. Source and
+  injected controls only.
 - Stage the development Linux artifact builder's source through the release
   profile's own supported host mount (effigy#715). A normal incremental
   `install:local` from a checkout the `effigy-release` profile does not share

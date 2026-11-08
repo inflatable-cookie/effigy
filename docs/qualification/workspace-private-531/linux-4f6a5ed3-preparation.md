@@ -205,7 +205,7 @@ that need code are listed as source-owner proposals in §6.4.
 | B — candidate and utility | `build:workspace:private-qualification` | Guest build, same escape | Same as A |
 | C — test executables, nextest, metadata | `build:workspace:private-qualification:test-inputs`, `…:cargo-metadata` (builds), `test:workspace:private-qualification:kernel` (builds helper and runs tests) | Guest build and native metadata (E13a, E17). Helper through E13k with its own GO | E13k is a native test run. Its GO must name it. Metadata per SO-6 |
 | D — genuine old baseline `823d859da` | That commit's own covering selector (`build:runtime-storage`) | Native guest fixture at `823d859da`, its own tree and its own selector text | Launcher question (SO-5a). Default: that commit's own script, no H code |
-| E — guest artifact | `workspace:linux:artifact` (Darwin host, Colima `effigy-release`) | Same route at H with `EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu`, copied into the guest source at `.effigy/linux-release/artifacts/` | Producer route exists. ELF and toolchain predicates added by kit (§4.1). Colima arch unobserved |
+| E — guest artifact | `workspace:linux:artifact` (Darwin host, Colima `effigy-release`) | Same route with `EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu`, copied into the guest source at `.effigy/linux-release/artifacts/` | Source proof entry binds the current checkout (not H). ELF/size/SHA predicates live in that entry (§4.1). Native E14 still GO-gated. Frozen H/627 stay historical |
 
 ### 4.1 Recipe E predicates
 
@@ -230,6 +230,14 @@ The kit adds these, read-only, on the frozen copy before freezing:
 The RecipeE artifact must be retained unmodified, with its receipt and
 active-version sidecar. The kit does not rewrite them or rebuild them from a
 hash.
+
+The Darwin Colima exact-bound proof entry `linux_recipe_e_proof.py` enforces
+those kit predicates on a later native occurrence: one exclusive claim, one
+`colima list --json` inventory observation selecting only `effigy-release`,
+then `effigy workspace:linux:artifact` with the aarch64 triple and no
+`EFFIGY_ACTIVE_VERSION`. Candidate H and H's unstaged global builder policy
+refuse. Sampling is not a VM quota. Owned-builder `cargo -V`/`rustc -Vv` is
+not a supported E14 interface, so toolchain identity stays SO-4 missing.
 
 Decision D-2. Recipe E is built by the Darwin-side Colima aarch64 builder, not
 inside the Parallels guest. Reason: it is the only supported producer route
@@ -465,7 +473,7 @@ E13a → E13k → E13b → E16 → E17 → E19 → E18.
 | E13a | Guest builds at H, each through E11: `build:runtime-storage` (A), `build:workspace:private-qualification` (B, utility), `build:workspace:private-qualification:test-inputs` (test executables, listed only), `build:workspace:private-qualification:cargo-metadata` (metadata). Each stays inside its `tasks.toml` timeout (900 s) | ≤ 3,600 s total (4 × 900 s); target dir ≤ 25 GiB; cargo registry ≤ 4 GiB under `B/toolchain` | Frozen copies (E16) kept; `target` kept as evidence |
 | E13b | Guest build of D at `823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1` in `B/old-823d859d/source` (separate tree, never inside `B/source`). **Blocked until SO-5a is ruled.** The route must not use any binary built from H. Its selector text is read from that commit's own `config/tasks.toml` first | ≤ 1,800 s | Frozen copy kept; tree kept as evidence |
 | E13k | Guest native test run: `test:workspace:private-qualification:kernel` through E11. It builds the helper (600 s) and runs nextest (900 s). **This is a native test execution with its own GO** (G11). Its test results are retained as evidence and are not proof cells | ≤ 1,500 s | Retained. A build-only route, if ruled, replaces it (SO-5b) |
-| E14 | Host: Recipe E `EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact` at clean H, Colima `effigy-release`. Separate builder GO. Verify §4.1 predicates | ≤ 1,800 s; artifact ≤ 200 MiB | Producer receipt kept |
+| E14 | Host: Recipe E `EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact` at the later bound candidate C (not frozen H), Colima `effigy-release`. Separate builder GO. Exact-bound source entry `linux_recipe_e_proof.py`. Verify §4.1 predicates | ≤ 1,800 s; artifact ≤ 200 MiB | Producer receipt kept |
 | E15 | Host → guest: copy E's artifact `effigy-aarch64-unknown-linux-gnu` with its `.receipt` and `.active-version` into `B/source/.effigy/linux-release/artifacts/`, byte-for-byte. Verify sha256 on both sides. The copy is also the guest `effigy` launcher for E11 (D-7) | ≤ 200 MiB | Retained |
 | E16 | Freeze into `B/frozen/`, mode `0500`, hash each, write receipts: candidate, production, utility, kernel helper, kernel tests, custody tests, nextest, D old binary, E artifact, `gateway-nextest.toml` copy. Freeze before any later build can reuse its output | ≤ 1 GiB | Retained with manifest |
 | E17 | Guest native metadata: `cargo-metadata.json` from E13a's metadata selector, and `binaries.json` derived per SO-6 into `B/metadata/`. Rewrite only the exact `binary-path` values to frozen copies | ≤ 60 s | Hash recorded |

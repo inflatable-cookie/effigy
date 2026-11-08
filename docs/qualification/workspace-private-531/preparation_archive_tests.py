@@ -262,6 +262,18 @@ class StageChecks(unittest.TestCase):
         self.assertTrue((self.root / 'intent.json').exists())
         self.assertTrue((self.root / 'receipt.json').exists())
 
+    def test_recipe_e_timeout_cap_accepts_1800_and_refuses_above(self):
+        self.assertEqual(stage.STAGE_TIMEOUT_CAP, 1800)
+        for timeout in (900, 1800):
+            root = self.root / ('cap-%s' % timeout)
+            root.mkdir(mode=0o700)
+            result = stage.run_stage(root, [sys.executable, '-c', 'pass'], timeout, 1024, {})
+            self.assertEqual(result['disposition'], 'exited')
+        bad = self.root / 'cap-1801'
+        bad.mkdir(mode=0o700)
+        with self.assertRaisesRegex(stage.Refusal, 'invalid argv, deadline, or output cap'):
+            stage.run_stage(bad, [sys.executable, '-c', 'pass'], 1801, 1024, {})
+
 
 class MetadataChecks(unittest.TestCase):
     def test_derives_test_and_fixture_paths(self):
