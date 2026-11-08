@@ -1395,7 +1395,7 @@
 ] }
 "test:workspace:artifact-builder-recovery" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { task = "test:workspace:effigy-build" },
-  { id = "builder-recovery", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-rhai --lib --filterset 'test(workspace_artifact_build_helper) | test(workspace_artifact_builder::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "builder-recovery", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-rhai --lib --filterset 'test(workspace_artifact_build_helper) | test(workspace_artifact_builder::tests::) | test(workspace_artifact_producer)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
 "check:workspace:artifact-builder-recovery" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh clippy -p effigy-rhai --all-targets -- -D warnings",

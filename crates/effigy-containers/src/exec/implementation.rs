@@ -829,10 +829,11 @@ mod legacy_admission_tests {
         );
         assert_eq!(binding.scope, None);
         assert_eq!(
-            super::workspace_builder_source_bind(
+            super::workspace_builder_source_mount(
                 record.get("Mounts").and_then(|value| value.as_array())
             )
-            .as_deref(),
+            .as_ref()
+            .map(|(source, _)| source.as_path()),
             Some(checkout.as_path())
         );
         assert!(super::workspace_builder_has_no_published_ports(Some(
@@ -867,10 +868,11 @@ mod legacy_admission_tests {
             "{error}"
         );
         assert_eq!(
-            super::workspace_builder_source_bind(
+            super::workspace_builder_source_mount(
                 record.get("Mounts").and_then(|value| value.as_array())
             )
-            .as_deref(),
+            .as_ref()
+            .map(|(source, _)| source.as_path()),
             Some(foreign.as_path())
         );
     }
@@ -1002,7 +1004,7 @@ pub fn verify_workspace_artifact_builder_declaration(
 }
 
 /// Strict builder execution authority: explicit checkout/scope labels, a full
-/// immutable identity and a writable source bind at /workspace. Unlike stack
+/// immutable identity and a read-only source bind at /workspace. Unlike stack
 /// reactivation this never adopts legacy unlabelled containers.
 pub fn verify_workspace_artifact_builder(
     repo_root: &Path,
@@ -1017,10 +1019,12 @@ pub fn verify_workspace_artifact_builder(
     let mut binding = inspected.binding;
     let checkout = inspected.checkout;
     let bind_matches = observed.as_deref() == Some(expected.as_path());
+    let read_only = inspected.source_read_only;
     let no_ports = inspected.no_ports;
     let working_dir_matches = inspected.working_dir_matches;
     if !ownership.owns(checkout.as_deref(), binding.scope.as_deref())
         || !bind_matches
+        || !read_only
         || !no_ports
         || !working_dir_matches
     {
@@ -1031,15 +1035,19 @@ pub fn verify_workspace_artifact_builder(
         if !bind_matches {
             mismatched.push(match observed.as_deref() {
                 Some(observed) => format!(
-                    "one writable `/workspace` source bind at `{}` (observed `{}`)",
+                    "one read-only `/workspace` source bind at `{}` (observed `{}`)",
                     expected.display(),
                     observed.display()
                 ),
                 None => format!(
-                    "one writable `/workspace` source bind at `{}`",
+                    "one read-only `/workspace` source bind at `{}`",
                     expected.display()
                 ),
             });
+        }
+        if bind_matches && !read_only {
+            mismatched
+                .push("one read-only `/workspace` source bind (observed writable)".to_owned());
         }
         if !no_ports {
             mismatched.push("no published ports".to_owned());
@@ -1074,6 +1082,10 @@ pub struct ObservedWorkspaceArtifactBuilder {
     pub id: String,
     pub source: PathBuf,
     pub never_started: bool,
+    /// Whether inspect reported `RW=false` on the one `/workspace` bind.
+    /// Observation records this so an owned writable builder can be refused or
+    /// recovered; it authorizes nothing on its own.
+    pub read_only: bool,
 }
 
 /// Observe one owned builder's identity and source. A listing that says
@@ -1105,13 +1117,14 @@ pub fn observed_workspace_artifact_builder(
     let source = inspected.workspace_source.ok_or_else(|| {
         ContainerExecError::refused(
             "inspect workspace builder",
-            "workspace builder binds no single writable `/workspace` source",
+            "workspace builder binds no single `/workspace` source",
         )
     })?;
     Ok(ObservedWorkspaceArtifactBuilder {
         id,
         source,
         never_started: false,
+        read_only: inspected.source_read_only,
     })
 }
 
@@ -1220,7 +1233,14 @@ fn observed_never_started_builder(
     let mounts = record
         .and_then(|record| record.get("Mounts"))
         .and_then(|value| value.as_array());
-    if workspace_builder_source_bind(mounts).as_deref() != Some(checkout.as_path()) {
+    let (workspace_source, source_read_only) =
+        workspace_builder_source_mount(mounts).ok_or_else(|| {
+            refuse(format!(
+                "binding unavailable: the owned `/workspace` bind is not `{}`",
+                checkout.display()
+            ))
+        })?;
+    if workspace_source.as_path() != checkout.as_path() {
         return Err(refuse(format!(
             "binding unavailable: the owned `/workspace` bind is not `{}`",
             checkout.display()
@@ -1253,6 +1273,7 @@ fn observed_never_started_builder(
         id: identity.id,
         source: checkout,
         never_started: true,
+        read_only: source_read_only,
     })
 }
 
@@ -1281,6 +1302,7 @@ struct InspectedWorkspaceBuilder {
     binding: VerifiedComposeContainer,
     checkout: Option<String>,
     workspace_source: Option<PathBuf>,
+    source_read_only: bool,
     no_ports: bool,
     working_dir_matches: bool,
 }
@@ -1320,7 +1342,10 @@ fn inspect_workspace_artifact_builder(
     let mounts = record
         .and_then(|record| record.get("Mounts"))
         .and_then(|value| value.as_array());
-    let workspace_source = workspace_builder_source_bind(mounts);
+    let (workspace_source, source_read_only) = match workspace_builder_source_mount(mounts) {
+        Some((source, read_only)) => (Some(source), read_only),
+        None => (None, false),
+    };
     let no_ports = workspace_builder_has_no_published_ports(record);
     // Scoped checkout labels locate the owner, while Compose may name its
     // immutable render directory. A supplied working directory must still
@@ -1341,16 +1366,23 @@ fn inspect_workspace_artifact_builder(
         binding,
         checkout,
         workspace_source,
+        source_read_only,
         no_ports,
         working_dir_matches,
     })
 }
 
-/// The one writable `/workspace` source the builder's mounts resolve to, with
-/// nothing mounted below it. A name, label or volume never substitutes for it,
-/// so a builder belonging to another checkout's source (or one bound to a VM
+/// The one `/workspace` source the builder's mounts resolve to, with nothing
+/// mounted below it. A name, label or volume never substitutes for it, so a
+/// builder belonging to another checkout's source (or one bound to a VM
 /// directory that does not exist on the host) is never adopted.
-fn workspace_builder_source_bind(mounts: Option<&Vec<serde_json::Value>>) -> Option<PathBuf> {
+///
+/// Identification does not require the bind to be writable: an owned read-write
+/// leftover is observed so the caller can refuse or recover it. Execution
+/// authority still requires `RW=false`.
+fn workspace_builder_source_mount(
+    mounts: Option<&Vec<serde_json::Value>>,
+) -> Option<(PathBuf, bool)> {
     let mounts = mounts?;
     let workspace_mounts = mounts
         .iter()
@@ -1370,15 +1402,15 @@ fn workspace_builder_source_bind(mounts: Option<&Vec<serde_json::Value>>) -> Opt
     let [mount] = workspace_mounts.as_slice() else {
         return None;
     };
-    if mount.get("Type").and_then(|value| value.as_str()) != Some("bind")
-        || mount.get("RW").and_then(|value| value.as_bool()) != Some(true)
-    {
+    if mount.get("Type").and_then(|value| value.as_str()) != Some("bind") {
         return None;
     }
-    mount
+    let read_only = mount.get("RW").and_then(|value| value.as_bool()) == Some(false);
+    let source = mount
         .get("Source")
         .and_then(|value| value.as_str())
-        .and_then(|value| Path::new(value).canonicalize().ok())
+        .and_then(|value| Path::new(value).canonicalize().ok())?;
+    Some((source, read_only))
 }
 
 /// Where this environment's builder source must be: the canonical checkout, or

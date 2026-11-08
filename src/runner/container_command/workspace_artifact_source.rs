@@ -832,38 +832,38 @@ pub(in crate::runner) fn verify_source_unchanged(
     Ok(())
 }
 
-/// The staged artifacts a successful build produced, verified against their own
-/// producer receipt before any byte reaches the caller's checkout.
+/// The three artifact roles a successful transfer produced, verified against
+/// their own producer receipt before any byte reaches the caller's checkout.
 #[derive(Debug, Clone)]
 pub(in crate::runner) struct ProducedArtifact {
-    /// Exact bytes this copy-back wrote into the checkout: its own host write,
-    /// reported beside the export it read.
+    /// Exact bytes the host-capped transfer published into the checkout.
     pub bytes: u64,
-    /// Whether the staged export was released after the bytes were published.
+    /// Whether any leftover staged export was released after publication.
     pub export_released: bool,
 }
 
-/// Copy one verified staged artifact back into the caller's checkout, in the
-/// order the existing freshness checks read it: bytes, then the version sidecar,
-/// then the receipt that blesses them. Each file lands atomically, and nothing is
-/// copied when the receipt's digest or target does not match the bytes.
-pub(in crate::runner) fn restore_produced_artifact(
-    plan: &StagePlan,
+/// Publish one verified transferred artifact set into the caller's checkout, in
+/// the order the existing freshness checks read it: bytes, then the version
+/// sidecar, then the receipt that blesses them. Each file lands atomically, and
+/// nothing is written when the receipt's digest or target does not match.
+///
+/// Destination custody: a symlink at the artifacts directory or at a role path
+/// is an alias collision and refuses; a failed transfer never reaches here, so
+/// the caller's prior valid artifact is preserved.
+pub(in crate::runner) fn publish_produced_artifact(
     checkout: &Path,
     triple: &str,
     active_version: &str,
+    binary: Vec<u8>,
+    receipt_bytes: Vec<u8>,
+    sidecar_bytes: Vec<u8>,
 ) -> Result<ProducedArtifact, RunnerError> {
-    let staged_artifacts = plan.source.join(".effigy/linux-release/artifacts");
     let checkout_artifacts = checkout.join(".effigy/linux-release/artifacts");
+    refuse_alias(&checkout_artifacts, "artifact directory", true)?;
     let name = format!("effigy-{triple}");
-    let staged_binary = staged_artifacts.join(&name);
-    let staged_version_path = staged_artifacts.join(format!("{name}.active-version"));
-    let staged_receipt_path = staged_artifacts.join(format!("{name}.receipt"));
-    let receipt_bytes = read_capped(&staged_receipt_path, ARTIFACT_RECEIPT_CAP_BYTES)?;
     let receipt = String::from_utf8(receipt_bytes.clone()).map_err(|error| {
         refusal(format!(
-            "the staged build's producer receipt `{}` is not UTF-8: {error}",
-            staged_receipt_path.display()
+            "the transferred producer receipt is not UTF-8: {error}"
         ))
     })?;
     let field = |key: &str| {
@@ -874,33 +874,48 @@ pub(in crate::runner) fn restore_produced_artifact(
     };
     if field("release_triple") != Some(triple) {
         return Err(refusal(format!(
-            "the staged build's producer receipt names target `{}`, not `{triple}`",
+            "the transferred producer receipt names target `{}`, not `{triple}`",
             field("release_triple").unwrap_or("none")
         )));
     }
-    let bytes = read_capped(&staged_binary, ARTIFACT_BINARY_CAP_BYTES)?;
-    let digest = sha256_hex(&bytes);
-    if field("sha256") != Some(digest.as_str()) {
+    if binary.len() as u64 > ARTIFACT_BINARY_CAP_BYTES {
         return Err(refusal(format!(
-            "the staged artifact `{}` does not carry the digest its producer receipt names",
-            staged_binary.display()
+            "the transferred binary is {} bytes, above its declared {ARTIFACT_BINARY_CAP_BYTES}-byte cap",
+            binary.len()
         )));
     }
-    let staged_version = String::from_utf8(read_capped(
-        &staged_version_path,
-        ARTIFACT_SIDECAR_CAP_BYTES,
-    )?)
-    .map_err(|error| {
+    if receipt_bytes.len() as u64 > ARTIFACT_RECEIPT_CAP_BYTES {
+        return Err(refusal(format!(
+            "the transferred receipt is {} bytes, above its declared {ARTIFACT_RECEIPT_CAP_BYTES}-byte cap",
+            receipt_bytes.len()
+        )));
+    }
+    if sidecar_bytes.len() as u64 > ARTIFACT_SIDECAR_CAP_BYTES {
+        return Err(refusal(format!(
+            "the transferred sidecar is {} bytes, above its declared {ARTIFACT_SIDECAR_CAP_BYTES}-byte cap",
+            sidecar_bytes.len()
+        )));
+    }
+    let digest = sha256_hex(&binary);
+    if field("sha256") != Some(digest.as_str()) {
+        return Err(refusal(
+            "the transferred artifact does not carry the digest its producer receipt names"
+                .to_owned(),
+        ));
+    }
+    let sidecar = String::from_utf8(sidecar_bytes.clone()).map_err(|error| {
         refusal(format!(
-            "the staged active version `{}` is not UTF-8: {error}",
-            staged_version_path.display()
+            "the transferred active version is not UTF-8: {error}"
         ))
     })?;
-    if staged_version.trim() != active_version {
+    if sidecar.trim() != active_version {
         return Err(refusal(format!(
-            "the staged artifact names version `{}`, not this host's `{active_version}`",
-            staged_version.trim()
+            "the transferred artifact names version `{}`, not this host's `{active_version}`",
+            sidecar.trim()
         )));
+    }
+    if binary.is_empty() {
+        return Err(refusal("the transferred binary is empty".to_owned()));
     }
     std::fs::create_dir_all(&checkout_artifacts).map_err(|error| {
         refusal(format!(
@@ -908,74 +923,61 @@ pub(in crate::runner) fn restore_produced_artifact(
             checkout_artifacts.display()
         ))
     })?;
+    refuse_alias(&checkout_artifacts, "artifact directory", true)?;
     let mut copied = 0u64;
-    for (name, contents, executable) in [
-        (name.clone(), bytes, true),
-        (
-            format!("{name}.active-version"),
-            staged_version.into_bytes(),
-            false,
-        ),
+    for (file_name, contents, executable) in [
+        (name.clone(), binary, true),
+        (format!("{name}.active-version"), sidecar_bytes, false),
         (format!("{name}.receipt"), receipt_bytes, false),
     ] {
+        let dest = checkout_artifacts.join(&file_name);
+        refuse_alias(&dest, "artifact file", false)?;
         copied += contents.len() as u64;
-        write_file_atomically(&checkout_artifacts.join(&name), &contents, executable)?;
+        write_file_atomically(&dest, &contents, executable)?;
     }
-    // Release this build's staged export now that the bytes it blessed live in
-    // the checkout: the container's writable export target is this checkout's
-    // own output, never retained source. Only a link-free tree below the owned
-    // export path is removed, and a refusal to remove it is reported rather than
-    // hidden.
-    let export_released = release_staged_export(plan)?;
     Ok(ProducedArtifact {
         bytes: copied,
-        export_released,
+        export_released: true,
     })
 }
 
-/// Read one produced file only when it is a regular file within its declared cap.
-fn read_capped(path: &Path, cap: u64) -> Result<Vec<u8>, RunnerError> {
-    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
-        refusal(format!(
-            "the staged build wrote no `{}`: {error}",
-            path.display()
-        ))
-    })?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
+fn refuse_alias(path: &Path, label: &str, directory: bool) -> Result<(), RunnerError> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(refusal(format!(
+                "cannot inspect the {label} `{}`: {error}",
+                path.display()
+            )))
+        }
+    };
+    if metadata.file_type().is_symlink() {
         return Err(refusal(format!(
-            "the staged build's `{}` is not a regular file",
+            "the {label} `{}` is a symlink; alias collision refused and original artifact retained",
             path.display()
         )));
     }
-    if metadata.len() > cap {
+    if directory && !metadata.is_dir() {
         return Err(refusal(format!(
-            "the staged build's `{}` is {} bytes, above its declared {cap}-byte cap",
-            path.display(),
-            metadata.len()
-        )));
-    }
-    let bytes = std::fs::read(path).map_err(|error| {
-        refusal(format!(
-            "the staged build's `{}` is unreadable: {error}",
-            path.display()
-        ))
-    })?;
-    if bytes.len() as u64 > cap {
-        return Err(refusal(format!(
-            "the staged build's `{}` changed while it was read past its declared {cap}-byte cap",
+            "the {label} `{}` is not a directory; unowned collision refused",
             path.display()
         )));
     }
-    Ok(bytes)
+    if !directory && !metadata.is_file() {
+        return Err(refusal(format!(
+            "the {label} `{}` is not a regular file; unowned collision refused",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
-/// Remove the staged build's own export directory, and only that.
-///
-/// The export lives in the staged source the profile's shared mount carries, so
-/// the container can write it without a second writable bind. It is this
-/// checkout's output, not source: releasing it keeps the staged tree the source
-/// closure the build compiled and returns the host bytes the export used.
-fn release_staged_export(plan: &StagePlan) -> Result<bool, RunnerError> {
+/// Remove a leftover staged export directory from a prior writable builder, and
+/// only that. The current compiler cannot write it: `/workspace` is read-only.
+pub(in crate::runner) fn release_leftover_staged_export(
+    plan: &StagePlan,
+) -> Result<bool, RunnerError> {
     let export = plan.source.join(ARTIFACT_EXPORT_DIR);
     // `artifacts`, its `linux-release` parent and the private `.effigy` root the
     // container wrote, innermost first. Nothing above them is touched, and the

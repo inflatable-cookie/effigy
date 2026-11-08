@@ -1,11 +1,10 @@
 // The target is part of the build, never merely the output's label. Missing
 // target libraries or a cross linker must fail before a receipt can be written.
 //
-// Cargo intermediates are the build's own private tree on the builder's writable
-// layer, never in the checkout the profile shares into the VM (effigy#743): that
-// shared mount is the build's only host bind, so the only bytes it writes there
-// are the three declared artifact export files. The export is capped before the
-// copy, so an oversized build refuses without writing to the host at all.
+// Cargo intermediates and the three artifact roles stay in the build's own
+// private tree on the builder's writable layer (effigy#743, effigy#749). The
+// `/workspace` source bind is read-only: this script never writes through it.
+// The host transfers the three roles after positive closure.
 // The declared boundary. Rhai globals are not in a function's scope, so the
 // script builder and the post-build checks each name the same literals.
 fn artifact_build_tree() { "/var/tmp/effigy-artifact-build" }
@@ -20,9 +19,10 @@ fn workspace_artifact_build_script(release_triple, active_version) {
     }
     let target_dir = build_tree + "/target";
     let release_dir = target_dir + "/" + release_triple + "/release";
-    let export_binary = "/workspace/.effigy/linux-release/artifacts/effigy-" + release_triple;
+    let built_binary = release_dir + "/effigy";
+    let built_sidecar = release_dir + "/effigy.active-version";
+    let built_receipt = release_dir + "/effigy.receipt";
     let build_script = "set -eu\n";
-    build_script += "mkdir -p /workspace/.effigy/linux-release/artifacts\n";
     build_script += "mkdir -p " + str::shell_quote(target_dir) + "\n";
     build_script += "chmod 700 " + str::shell_quote(build_tree) + " " + str::shell_quote(target_dir) + "\n";
     build_script += "export CARGO_TARGET_DIR=" + str::shell_quote(target_dir) + "\n";
@@ -30,22 +30,21 @@ fn workspace_artifact_build_script(release_triple, active_version) {
     build_script += "export EFFIGY_ACTIVE_VERSION=" + str::shell_quote(active_version) + "\n";
     build_script += "cd /workspace\n";
     build_script += "cargo build --release --bin effigy --target " + str::shell_quote(release_triple) + "\n";
-    build_script += "printf '%s\\n' \"$EFFIGY_ACTIVE_VERSION\" > " + str::shell_quote(release_dir + "/effigy.active-version") + "\n";
-    // Caps are checked against the built bytes before the first host write: an
-    // export above its declared cap never reaches the shared mount.
-    build_script += "binary_bytes=$(wc -c < " + str::shell_quote(release_dir + "/effigy") + " | tr -d ' ')\n";
+    build_script += "printf '%s\\n' \"$EFFIGY_ACTIVE_VERSION\" > " + str::shell_quote(built_sidecar) + "\n";
+    build_script += "binary_bytes=$(wc -c < " + str::shell_quote(built_binary) + " | tr -d ' ')\n";
     build_script += "if [ \"$binary_bytes\" -gt " + caps["binary"].to_string() + " ]; then echo \"artifact-over-cap $binary_bytes\"; exit 61; fi\n";
-    build_script += "cp " + str::shell_quote(release_dir + "/effigy") + " " + str::shell_quote(export_binary) + "\n";
-    build_script += "cp " + str::shell_quote(release_dir + "/effigy.active-version") + " " + str::shell_quote(export_binary + ".active-version") + "\n";
-    build_script += "artifact_sha256=$(sha256sum " + str::shell_quote(export_binary) + " | cut -d' ' -f1)\n";
+    build_script += "sidecar_bytes=$(wc -c < " + str::shell_quote(built_sidecar) + " | tr -d ' ')\n";
+    build_script += "if [ \"$sidecar_bytes\" -gt " + caps["sidecar"].to_string() + " ]; then echo \"sidecar-over-cap $sidecar_bytes\"; exit 61; fi\n";
+    build_script += "artifact_sha256=$(sha256sum " + str::shell_quote(built_binary) + " | cut -d' ' -f1)\n";
     build_script += "{\n";
-    build_script += "  echo \"binary=" + release_dir + "/effigy\"\n";
-    build_script += "  echo \"copied_binary=" + export_binary + "\"\n";
+    build_script += "  echo \"binary=" + built_binary + "\"\n";
     build_script += "  echo \"release_triple=" + release_triple + "\"\n";
     build_script += "  echo \"sha256=$artifact_sha256\"\n";
     build_script += "  echo \"build_kind=workspace-artifact\"\n";
     build_script += "  echo \"completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)\"\n";
-    build_script += "} > " + str::shell_quote(export_binary + ".receipt") + "\n";
+    build_script += "} > " + str::shell_quote(built_receipt) + "\n";
+    build_script += "receipt_bytes=$(wc -c < " + str::shell_quote(built_receipt) + " | tr -d ' ')\n";
+    build_script += "if [ \"$receipt_bytes\" -gt " + caps["receipt"].to_string() + " ]; then echo \"receipt-over-cap $receipt_bytes\"; exit 61; fi\n";
     return build_script;
 }
 

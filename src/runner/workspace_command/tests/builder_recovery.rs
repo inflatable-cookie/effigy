@@ -92,12 +92,14 @@ if cmd == 'up':
     # The rendered bind is the source this container really carries: a staging
     # run binds the staged closure, and a VM that cannot reach the host path
     # carries an empty directory that this fake reproduces by name.
-    workspace = re.search(r'^\s*-\s*[\'\"]?([^\'\"\n]*?):/workspace[\'\"]?\s*$', services, re.M)
+    workspace = re.search(r'^\s*-\s*[\'\"]?([^\'\"\n]*?):/workspace(?::([^\'\"\n]*))?[\'\"]?\s*$', services, re.M)
     source = workspace.group(1) if workspace else str(root)
+    opts = (workspace.group(2) if workspace else '') or ''
+    rw = 'ro' not in [part.strip() for part in opts.split(',') if part.strip()]
     if mode == 'up_empty_source':
         source = str(state / 'empty-vm-directory')
         pathlib.Path(source).mkdir(exist_ok=True)
-    identity.write_text(json.dumps([{'Id': 'a'*64, 'Name': '/' + os.environ['EFFIGY_RECOVERY_PROJECT'] + '-builder-1', 'State': {'Running': True, 'Status': 'running'}, 'Config': {'Labels': labels}, 'Mounts': [{'Type': 'bind', 'Source': source, 'Destination': '/workspace', 'RW': True}], 'NetworkSettings': {'Ports': {}}}],))
+    identity.write_text(json.dumps([{'Id': 'a'*64, 'Name': '/' + os.environ['EFFIGY_RECOVERY_PROJECT'] + '-builder-1', 'State': {'Running': True, 'Status': 'running'}, 'Config': {'Labels': labels}, 'Mounts': [{'Type': 'bind', 'Source': source, 'Destination': '/workspace', 'Mode': 'ro' if not rw else '', 'RW': rw}], 'NetworkSettings': {'Ports': {}}}],))
     sys.exit(0)
 if cmd == 'rm':
     identity.unlink(missing_ok=True)
@@ -109,6 +111,12 @@ if cmd == 'exec':
         tail = tail[1:] if tail[0] in ['-i', '-t', '-T'] else tail[2:]
     if tail[0] != 'a'*64: sys.exit(22)
     if tail[1:] == ['true']: sys.exit(0)
+    if tail[1] == 'cat' and '--' in tail[2:]:
+        path = tail[tail.index('--') + 1]
+        mapped = path.replace('/var/tmp/effigy-artifact-build', str(state / 'build-tree'))
+        mapped = mapped.replace('/workspace', json.loads(identity.read_text())[0]['Mounts'][0]['Source'])
+        sys.stdout.buffer.write(pathlib.Path(mapped).read_bytes())
+        sys.exit(0)
     if len(tail) != 4 or tail[1:3] != ['sh', '-lc']: sys.exit(25)
     script = tail[3]
     bound = json.loads(identity.read_text())[0]['Mounts'][0]['Source']
@@ -123,7 +131,11 @@ if cmd == 'exec':
             tampered = sorted(pathlib.Path(bound).rglob('*.rhai'))
             if not tampered: sys.exit(33)
             tampered[0].write_text('// changed inside the container bind\n')
-        resolved = script.replace('/workspace', str(bound))
+        # File operations run on the fixture bind. Mount-table checks keep the
+        # container view (`/workspace`) so the cargo tree — which the fixture
+        # stores under the checkout, not under `/workspace` — is not reported as
+        # covered by the source bind.
+        resolved = script.replace('cd /workspace', "cd '" + str(bound) + "'")
         resolved = resolved.replace('/var/tmp/effigy-artifact-build', str(state / 'build-tree'))
         resolved = resolved.replace('/proc/self/mountinfo', str(state / 'mountinfo'))
         # The process scan reads the container's `/proc`, so the fixture serves
@@ -132,9 +144,10 @@ if cmd == 'exec':
         resolved = resolved.replace('/proc/[0-9]*', str(state / 'proc') + '/[0-9]*')
         if mode == 'nested_mount' and 'export_binary_bytes' not in script:
             with (state / 'mountinfo').open('a') as handle:
-                handle.write('9 8 0:9 / ' + str(bound) + '/nested rw,relatime - virtiofs x rw\n')
+                handle.write('9 8 0:9 / /workspace/nested rw,relatime - virtiofs x rw\n')
         if mode == 'export_over_cap' and 'export_binary_bytes' in script:
-            over = pathlib.Path(bound) / '.effigy/linux-release/artifacts' / ('effigy-' + os.environ.get('EFFIGY_LINUX_RELEASE_TRIPLE', 'x86_64-unknown-linux-gnu'))
+            triple = os.environ.get('EFFIGY_LINUX_RELEASE_TRIPLE', 'x86_64-unknown-linux-gnu')
+            over = state / 'build-tree' / 'target' / triple / 'release' / 'effigy'
             with over.open('r+b') as handle:
                 handle.truncate(209715201)
         if 'export_binary_bytes' in script:
@@ -153,7 +166,7 @@ if cmd == 'exec':
                 (cwd / 'cwd').symlink_to(state / 'build-tree')
         status = os.spawnve(os.P_WAIT, '/bin/sh', ['/bin/sh', '-lc', resolved], os.environ)
         sys.exit(status)
-    if not all(part in script for part in ['cargo build --release --bin effigy --target ', 'cd /workspace', 'EFFIGY_ACTIVE_VERSION=', '/workspace/.effigy/linux-release/artifacts/effigy-']): sys.exit(26)
+    if not all(part in script for part in ['cargo build --release --bin effigy --target ', 'cd /workspace', 'EFFIGY_ACTIVE_VERSION=', '/var/tmp/effigy-artifact-build']): sys.exit(26)
     (state / 'build-effect').write_text('verified current-source build')
     with (state / 'builds').open('a') as f: f.write('build\n')
     (state / 'build-source').write_text(bound)
@@ -168,11 +181,12 @@ if cmd == 'exec':
         with (pathlib.Path(bound) / 'Cargo.toml').open('a') as f: f.write('# staged edit during the build\n')
     if mode in ['build_fail', 'interrupted']: sys.exit(23 if mode == 'build_fail' else 130)
     if mode == 'no_output': sys.exit(0)
-    artifacts = pathlib.Path(bound) / '.effigy/linux-release/artifacts'
-    artifacts.mkdir(parents=True, exist_ok=True)
+    rw = json.loads(identity.read_text())[0]['Mounts'][0].get('RW', True)
     triple = os.environ.get('EFFIGY_LINUX_RELEASE_TRIPLE', 'x86_64-unknown-linux-gnu')
-    # A compiler that ignores CARGO_TARGET_DIR, or that picks its own output
-    # path, writes into the bound source where production's after-probe censuses.
+    # Compiler writes through the source bind are denied when it is read-only.
+    if not rw and mode in ['old_cargo_tree', 'stray_effigy_path', 'write_and_remove']:
+        sys.stderr.write('Read-only file system\n')
+        sys.exit(30)
     if mode == 'old_cargo_tree':
         stale = pathlib.Path(bound) / '.effigy/linux-release/target' / triple / 'release'
         stale.mkdir(parents=True, exist_ok=True)
@@ -182,18 +196,18 @@ if cmd == 'exec':
         stray.mkdir(parents=True, exist_ok=True)
         (stray / 'ab').write_text('build output outside the declared export')
     if mode == 'write_and_remove':
-        # The v2 case: bytes written through the writable host bind and removed
-        # again before the after-probe runs. Nothing is left for a census to see.
         import shutil as _shutil
         transient = pathlib.Path(bound) / '.effigy/linux-release/target/transient'
         transient.parent.mkdir(parents=True, exist_ok=True)
         transient.write_bytes(b'x' * (4 * 1024 * 1024))
         _shutil.rmtree(pathlib.Path(bound) / '.effigy/linux-release/target')
-    binary = artifacts / ('effigy-' + triple)
+    release = state / 'build-tree' / 'target' / triple / 'release'
+    release.mkdir(parents=True, exist_ok=True)
+    binary = release / 'effigy'
     binary.write_text('fresh current source output ' + mode)
     version = '0.0.0-other-host' if mode == 'wrong_version' else os.environ['EFFIGY_RECOVERY_VERSION']
-    pathlib.Path(str(binary) + '.active-version').write_text(version)
-    pathlib.Path(str(binary) + '.receipt').write_text('release_triple=' + ('wrong-target' if mode == 'wrong_target' else triple) + '\nsha256=' + __import__('hashlib').sha256(binary.read_bytes()).hexdigest() + '\ncompleted_at=2026-10-16T00:00:00Z\n')
+    (release / 'effigy.active-version').write_text(version)
+    (release / 'effigy.receipt').write_text('release_triple=' + ('wrong-target' if mode == 'wrong_target' else triple) + '\nsha256=' + __import__('hashlib').sha256(binary.read_bytes()).hexdigest() + '\ncompleted_at=2026-10-16T00:00:00Z\n')
     print('private-build-ok')
     sys.exit(0)
 raise SystemExit('unauthorized backend operation: ' + repr(args))
@@ -504,7 +518,7 @@ esac
         // source bind at `/workspace` and nothing below it.
         std::fs::write(
             root.join("state/mountinfo"),
-            "1 0 8:1 / / rw,relatime - apfs /dev/disk3s1 rw\n2 1 0:1 / /workspace rw,relatime - virtiofs release-source rw\n",
+            "1 0 8:1 / / rw,relatime - apfs /dev/disk3s1 rw\n2 1 0:1 / /workspace ro,relatime - virtiofs release-source ro\n",
         )
         .unwrap();
         // The profile exists and runs until a test deletes both facts.
@@ -523,7 +537,7 @@ esac
                 .trim());
             }
             let bind = expected_workspace_source(&policy, &root);
-            let identity = json!([{"Id": "a".repeat(64), "Name": format!("/{}-builder-1", policy.project_name), "State": {"Running": true, "Status": "running"}, "Config": {"Labels": labels}, "Mounts": [{"Type": "bind", "Source": bind, "Destination": "/workspace", "RW": true}], "NetworkSettings": {"Ports": {}}}]);
+            let identity = json!([{"Id": "a".repeat(64), "Name": format!("/{}-builder-1", policy.project_name), "State": {"Running": true, "Status": "running"}, "Config": {"Labels": labels}, "Mounts": [{"Type": "bind", "Source": bind, "Destination": "/workspace", "Mode": "ro", "RW": false}], "NetworkSettings": {"Ports": {}}}]);
             std::fs::write(root.join("state/identity.json"), identity.to_string()).unwrap();
             write_legacy_partial_marker(&root, &policy);
         }
@@ -1101,7 +1115,7 @@ fn assert_invalid_builder_refuses_before_build(case: &str) {
         "stopped" => fixture.mutate(|row| { row["State"]["Running"] = json!(false); row["State"]["Status"] = json!("exited"); }),
         "ports" => fixture.mutate(|row| row["NetworkSettings"]["Ports"] = json!({"80/tcp": [{"HostIp": "127.0.0.1", "HostPort": "12345"}]})),
         "bad_bind" => fixture.mutate(|row| row["Mounts"][0]["Source"] = json!(fixture.root.join("state"))),
-        "readonly_bind" => fixture.mutate(|row| row["Mounts"][0]["RW"] = json!(false)),
+        "writable_bind" => fixture.mutate(|row| { row["Mounts"][0]["RW"] = json!(true); row["Mounts"][0]["Mode"] = json!(""); }),
         "missing_bind" => fixture.mutate(|row| row["Mounts"] = json!([])),
         "shadow_bind" => fixture.mutate(|row| row["Mounts"].as_array_mut().unwrap().push(json!({"Type": "bind", "Source": fixture.root.join("state"), "Destination": "/workspace/src", "RW": true}))),
         _ => fixture.mode(case),
@@ -1138,7 +1152,6 @@ mod invalid_builders {
         change_name,
         unlabelled,
         bad_bind,
-        readonly_bind,
         missing_bind,
         shadow_bind,
         replace,
@@ -1660,10 +1673,11 @@ fn refused_inspect_names_its_cause_without_claiming_a_signal() {
     }
 }
 
-/// The operator's development install (effigy#715): the release profile shares
-/// one writable mount and this checkout is outside it. The automatic task stages
-/// the checkout's tracked source closure there, binds that directory, compiles
-/// it, and copies only the verified artifact bytes back.
+/// The operator's development install (effigy#715, effigy#749): the release
+/// profile shares one writable mount and this checkout is outside it. The
+/// automatic task stages the checkout's tracked source closure there, binds
+/// that directory read-only, compiles inside the owned builder, and the host
+/// transfers only the verified artifact bytes back.
 #[test]
 fn staged_source_is_bound_compiled_and_copied_back_to_the_caller() {
     let _lock = crate::contract_test_support::lock_test();
@@ -1680,8 +1694,8 @@ fn staged_source_is_bound_compiled_and_copied_back_to_the_caller() {
         );
         let compose = std::fs::read_to_string(fixture.root.join("state/last-up-compose")).unwrap();
         assert!(
-            compose.contains(&format!("{}:/workspace", plan.source.display())),
-            "the rendered bind is the staged source: {compose}"
+            compose.contains(&format!("{}:/workspace:ro", plan.source.display())),
+            "the rendered bind is the read-only staged source: {compose}"
         );
         assert!(
             !compose.contains(&format!("{}:/workspace", fixture.root.display())),
@@ -1725,9 +1739,9 @@ fn staged_source_is_bound_compiled_and_copied_back_to_the_caller() {
     }
 }
 
-/// The build's one writable host export is finite: an artifact above its
-/// declared 200 MiB cap never reaches the caller, and the individual file caps
-/// are what the release reads (effigy#743).
+/// The host-capped transfer is finite: an artifact above its declared 200 MiB
+/// cap never reaches the caller, and the individual file caps are what the
+/// release reads (effigy#749).
 #[test]
 fn an_export_above_its_declared_cap_is_refused_before_it_reaches_the_caller() {
     let _lock = crate::contract_test_support::lock_test();
@@ -1762,21 +1776,14 @@ fn an_export_above_its_declared_cap_is_refused_before_it_reaches_the_caller() {
     fixture.assert_preserved();
 }
 
-/// The bound source after a build may hold only the declared artifact export.
-/// A compiler that keeps writing into the bind — the obsolete
-/// `linux-release/target` an older producer used, or any other `.effigy` path —
-/// is caught by the after-probe's census and refuses instead of leaving an
-/// uncounted host writer (effigy#743).
+/// Compiler writes through the read-only `/workspace` bind are denied at
+/// containment. The obsolete cargo tree, a stray `.effigy` path and a
+/// write-and-remove all fail with EROFS before any host destination is
+/// published (effigy#749).
 #[test]
-fn the_after_census_refuses_build_output_outside_the_declared_export() {
+fn compiler_writes_through_the_read_only_source_bind_are_denied() {
     let _lock = crate::contract_test_support::lock_test();
-    for (mode, message) in [
-        ("old_cargo_tree", "linux-release/target"),
-        (
-            "stray_effigy_path",
-            "outside its artifact service directory",
-        ),
-    ] {
+    for mode in ["old_cargo_tree", "stray_effigy_path", "write_and_remove"] {
         let fixture = Fixture::staged(false, false, "docker");
         let plan = fixture.stage().expect("a staged source plan");
         let artifact = fixture
@@ -1785,51 +1792,18 @@ fn the_after_census_refuses_build_output_outside_the_declared_export() {
         write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
         fixture.mode(mode);
         let error = fixture.task().expect_err(mode);
-        assert!(error.contains(message), "{mode}: {error}");
-        assert!(
-            error.contains("not bounded") || error.contains("not artifact-shaped"),
-            "{mode}: {error}"
-        );
+        assert!(error.contains("failed with status"), "{mode}: {error}");
         assert_eq!(
             std::fs::read_to_string(&artifact).unwrap(),
             "stale bytes",
-            "{mode}: an unbounded write is never published"
+            "{mode}: a denied compiler write is never published"
         );
         assert!(
-            !plan
-                .source
-                .join(".effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu.copied")
-                .exists(),
-            "{mode}"
+            !plan.source.join(".effigy").exists(),
+            "{mode}: the read-only bind received no compiler write"
         );
         fixture.assert_preserved();
     }
-}
-
-/// The v2 control: a write through the writable host bind that is removed again
-/// before the after-probe runs leaves no residual, so the census — however strict
-/// — cannot see it and this build still publishes its record. That is precisely
-/// why no post-build census is a cumulative bound on the bound source, and why
-/// the Recipe E entry keeps the SO-host-write refusal in production until real
-/// pre-write containment exists (see producer.md). Delete this control when that
-/// containment lands and the refusal is replaced by it.
-#[test]
-fn a_write_removed_before_the_after_probe_is_invisible_to_the_census() {
-    let _lock = crate::contract_test_support::lock_test();
-    let fixture = Fixture::staged(false, false, "docker");
-    fixture.stage().expect("a staged source plan");
-    fixture.mode("write_and_remove");
-    fixture
-        .task()
-        .expect("the build succeeds: the removed write left no residual");
-    let artifact = fixture
-        .root
-        .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
-    assert!(
-        artifact.is_file(),
-        "the occurrence published its artifact: the census had nothing to refuse"
-    );
-    fixture.assert_preserved();
 }
 
 /// A writer that is still open when the build returns is not closure, whichever
@@ -1840,7 +1814,7 @@ fn a_writer_still_holding_the_cargo_tree_refuses_as_unknown_closure() {
     let _lock = crate::contract_test_support::lock_test();
     for mode in ["writer_tool_alive", "writer_in_tree"] {
         let fixture = Fixture::staged(false, false, "docker");
-        let plan = fixture.stage().expect("a staged source plan");
+        fixture.stage().expect("a staged source plan");
         let artifact = fixture
             .root
             .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
@@ -1857,7 +1831,10 @@ fn a_writer_still_holding_the_cargo_tree_refuses_as_unknown_closure() {
             "{mode}: an occurrence with unknown closure publishes nothing"
         );
         assert!(
-            plan.source.join(".effigy").exists(),
+            fixture
+                .root
+                .join("state/build-tree/target/x86_64-unknown-linux-gnu/release/effigy")
+                .exists(),
             "{mode}: an unknown closure is not cleaned as if it had finished"
         );
         fixture.assert_preserved();
@@ -1975,6 +1952,86 @@ fn staged_source_replaces_a_pre_staging_builder_once() {
     }
 }
 
+/// Ordinary auto-build recovers an owned leftover whose `/workspace` is still
+/// writable: the maintained activation replaces it with the declared read-only
+/// bind. Restricted E14 cannot do this.
+#[test]
+fn ordinary_auto_build_recovers_an_owned_writable_source_bind() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(true, false, "docker");
+    let plan = fixture.stage().expect("a staged source plan");
+    fixture.mutate(|row| {
+        row["Mounts"][0]["RW"] = json!(true);
+        row["Mounts"][0]["Mode"] = json!("");
+    });
+    fixture
+        .task()
+        .expect("ordinary auto-build recovers the owned writable leftover");
+    assert_eq!(fixture.activation_count(), 1);
+    assert_eq!(fixture.build_source(), plan.source);
+    let identity: Value =
+        serde_json::from_slice(&std::fs::read(fixture.root.join("state/identity.json")).unwrap())
+            .unwrap();
+    assert_eq!(identity[0]["Mounts"][0]["RW"], json!(false));
+    assert_eq!(identity[0]["Mounts"][0]["Mode"], json!("ro"));
+    let compose = std::fs::read_to_string(fixture.root.join("state/last-up-compose")).unwrap();
+    assert!(
+        compose.contains(&format!("{}:/workspace:ro", plan.source.display())),
+        "the recovered bind is read-only: {compose}"
+    );
+    fixture.assert_preserved();
+}
+
+/// Restricted E14 (`EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING=1`) refuses an old,
+/// writable or mismatched owned builder before claim and cannot create,
+/// replace or reconfigure it.
+#[test]
+fn no_change_refuses_an_old_writable_or_mismatched_owned_builder_before_claim() {
+    let _lock = crate::contract_test_support::lock_test();
+    for case in ["writable_bind", "pre_staging"] {
+        let fixture = Fixture::staged(true, false, "docker");
+        fixture.stage().expect("a staged source plan");
+        match case {
+            "writable_bind" => fixture.mutate(|row| {
+                row["Mounts"][0]["RW"] = json!(true);
+                row["Mounts"][0]["Mode"] = json!("");
+            }),
+            "pre_staging" => fixture.mutate(|row| row["Mounts"][0]["Source"] = json!(fixture.root)),
+            _ => unreachable!(),
+        }
+        let _switch =
+            EnvGuard::set_many(&[("EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING", Some("1".to_owned()))]);
+        let error = fixture.task().expect_err(case);
+        assert!(
+            error.contains("refuses an old, writable or mismatched owned builder before claim"),
+            "{case}: {error}"
+        );
+        assert_eq!(fixture.activation_count(), 0, "{case}");
+        assert!(
+            !fixture.root.join("state/build-effect").exists(),
+            "{case}: {error}"
+        );
+        fixture.assert_preserved();
+    }
+}
+
+/// Restricted E14 reuses a matching read-only owned builder and does not
+/// reconfigure it.
+#[test]
+fn no_change_reuses_a_matching_read_only_owned_builder() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(true, false, "docker");
+    fixture.stage().expect("a staged source plan");
+    let _switch =
+        EnvGuard::set_many(&[("EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING", Some("1".to_owned()))]);
+    fixture
+        .task()
+        .expect("restricted E14 reuses the matching read-only builder");
+    assert_eq!(fixture.activation_count(), 0);
+    assert!(fixture.root.join("state/build-effect").exists());
+    fixture.assert_preserved();
+}
+
 fn assert_staged_source_refuses_before_build(case: &str) {
     let _lock = crate::contract_test_support::lock_test();
     let fixture = Fixture::staged(false, false, "docker");
@@ -2075,7 +2132,7 @@ fn assert_staged_source_refuses_before_build(case: &str) {
             assert!(error.contains("boundary probe"), "{case}: {error}")
         }
         "nested_mount" => assert!(
-            error.contains("boundary probe") || error.contains("writable host surface"),
+            error.contains("not the only host surface") || error.contains("nested"),
             "{case}: {error}"
         ),
         "wrong_target" | "wrong_version" => assert!(
@@ -2318,14 +2375,31 @@ fn concurrent_staged_callers_have_no_second_effect() {
         .task()
         .expect("the caller builds once the lock is free");
     assert_eq!(fixture.build_source(), plan.source);
+    let calls = fixture.calls();
+    let execs = calls
+        .iter()
+        .filter(|args| args.iter().any(|arg| arg == "exec"))
+        .collect::<Vec<_>>();
     assert_eq!(
-        fixture
-            .calls()
+        execs.len(),
+        6,
+        "one probe before, one build, one probe after, three host-capped transfers, never a duplicate build: {execs:?}"
+    );
+    assert_eq!(
+        execs
             .iter()
-            .filter(|args| args.iter().any(|arg| arg == "exec"))
+            .filter(|args| args.iter().any(|arg| arg.contains("cargo build")))
+            .count(),
+        1,
+        "the compiler runs once: {execs:?}"
+    );
+    assert_eq!(
+        execs
+            .iter()
+            .filter(|args| args.iter().any(|arg| arg == "cat"))
             .count(),
         3,
-        "one boundary probe before, one build and one boundary probe after, never a duplicate build"
+        "the host transfers the three artifact roles: {execs:?}"
     );
     fixture.assert_preserved();
 }

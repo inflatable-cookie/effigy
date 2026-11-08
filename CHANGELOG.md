@@ -8,23 +8,17 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
-- Prepare, and keep refused, the Linux artifact builder's host-write boundary
-  (effigy#743). Cargo intermediates now build in the builder's own fixed private
-  tree on its writable layer instead of inside the checkout the release profile
-  shares into the VM, and every writer that leaves something behind is bounded and
-  observed: the staged closure refuses above 512 MiB before its first write, the
-  export and its copy-back are refused above 200 MiB / 64 KiB / 4 KiB before the
-  copy, and a successful build publishes one `effigy.builder-write-boundary.v1`
-  record of the container's own view — contained mounts, the closure census, the
-  bound source's build-output tree (only the declared export, so a compiler still
-  writing the obsolete `linux-release/target` refuses by name), closed writers and
-  a settled tree. The build tree's VM-side storage is disclosed with its cap,
-  free-space floor and backing-disk implication rather than counted as a host
-  write. SO-host-write itself stays refused: the source bind is still writable, a
-  write removed before any observation leaves nothing to count, so production
-  execute refuses before the claim and the record claims no bound. The smallest
-  supported way to close it (read-only source plus one narrow export bind through
-  the maintained builder) is written down in `producer.md`.
+- Enforce the Linux artifact builder's host-write boundary (effigy#749, closing
+  the SO-host-write gap left by effigy#743). The `/workspace` source bind is
+  read-only and `SYS_ADMIN` is dropped so remount cannot restore writability;
+  compile output stays in the owned builder's private tree; after positive
+  closure the host transfers the three capped roles (200 MiB / 64 KiB / 4 KiB)
+  while receiving and atomically publishes a complete verified set. The compiler
+  has no writable host bind and cannot choose the destination. A failed, oversize
+  or interrupted transfer publishes nothing. Ordinary auto-build may recover an
+  owned leftover still carrying a writable bind; restricted E14 refuses an old,
+  writable or mismatched builder before claim. The cargo tree remains VM-side
+  disclosed storage, not a host-bind counter. Caps and floors are unchanged.
 
 - Secure existing gateway stdout/stderr logs to owner-only mode on the held
   descriptor before appending or giving them to the daemon child. Existing bytes
