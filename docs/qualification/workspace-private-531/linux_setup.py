@@ -30,6 +30,7 @@ import preparation_observations as observations
 import preparation_resources as resources
 import linux_receipts
 import linux_transfer as transfers
+import preparation_requests
 from linux_receipts import verify_signed_receipt
 from linux_transfer import writer_remote_argv
 
@@ -71,7 +72,7 @@ REQUIRED_MODULE_NAMES = ('preparation_requests.py', 'preparation_stage.py', 'pre
                          'preparation_guest.py', 'preparation_controls.py', 'preparation_observations.py',
                          'preparation_placement.py', 'preparation_archive.py', 'preparation_nextest.py',
                          'preparation_metadata.py', 'linux_setup.py', 'linux_supervisor.py',
-                         'linux_transfer.py', 'linux_receipts.py')
+                         'linux_transfer.py', 'linux_receipts.py', 'linux_stage1.py', 'linux_observation_caller.py')
 REQUIRED_DRIVER_NAMES = ('common.py', 'runtime.py', 'probe.py')
 KEY_LIFETIME_SECONDS = 86400
 PROBE = Path(__file__).resolve().parent / 'linux-setup-probe.sh'
@@ -101,7 +102,7 @@ CANDIDATE_H_HEAD = '4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02'   # source-bound c
 # row refuses. Tests set this global; the production module leaves it None.
 EXTERNAL_ANCHORS = None
 SUDOERS_PATH = '/etc/sudoers.d/50-effigy531-supervisor'
-SUDOERS_TEXT = ACCOUNT + ' ALL=(root) NOPASSWD: ' + SUPERVISOR_PATH + '\n'
+SUDOERS_TEXT = '# No general supervisor grant; exact one-use rules installed only after row admission.\n'
 SUDOERS_SCRIPT = 'set -e; umask 022; printf "%s" "$1" > "$2"; chmod 0440 "$2"; visudo -cf "$2" >/dev/null; sha256sum "$2"'
 IDENTITY_KEYS = ('vm', 'boot_id', 'host_key_fp')
 UNIT_STATE_PROPERTIES = '--property=LoadState,ActiveState,SubState,Result,ExecMainStatus,InvocationID,ControlGroup'
@@ -337,7 +338,8 @@ def stage1_verify_post(request, after):
     growth = _wrap(observations.compare_extents, before['extents'], after_inventory['extents'], before['chain'],
                    cap=CONFIG_ALLOWANCE_BYTES)
     return {'growth_bytes': growth, 'config_sha256': before['config_sha256'],
-            'post_config_sha256': _sha(post_config), 'post_descriptor_sha256': _sha(post_descriptor)}
+            'post_config_sha256': _sha(post_config), 'post_descriptor_sha256': _sha(post_descriptor),
+            'extents': after_inventory['extents'], 'chain': after_inventory['chain']}
 
 
 def verify_disk_association(host, guest, witness, supported=None):
@@ -519,9 +521,26 @@ def _supervised_argv(fresh, row_id, payload_argv, cwd, timeout, cfg, transfer=Fa
     request = {'nonce': nonce, 'payload_user': ACCOUNT, 'payload_uid': uid, 'cwd': cwd,
                'timeout_seconds': timeout, 'argv': payload_argv, 'stage_dir': _stage(row_id),
                'expected_boot_id': identity['boot_id'], 'transfer': transfer}
+    # Explicit host-to-guest map, also bound by the plan GO. No inferred guest paths.
+    mapped = {}
+    for item in (fresh.get('placements') or []):
+        guest = item.get('guest_path')
+        if guest in mapped:
+            raise Refusal('colliding request input mapping')
+        mapped[guest] = item.get('sha256')
+    for key, guest in (('archive', BASE + '/' + ARCHIVE_NAME), ('archive_b', BASE + '/inputs/archive-B.tar')):
+        item = fresh.get(key) or {}
+        if item.get('sha256'):
+            mapped[guest] = item['sha256']
+    request['input_hashes'] = mapped
+    request['resources'] = fresh.get('resource_accounting')
+    request['ssh_binding'] = {'files': fresh.get('ssh_files'), 'identity': identity,
+                              'expiry': fresh.get('authorized_keys_expiry')}
     text = json.dumps(request, sort_keys=True)
-    remote = ['sudo', '-n', SUPERVISOR_PATH, '--request-json', text, '--sha256', _sha(text.encode('utf-8'))]
-    return ssh_argv(cfg, remote), {'nonce': nonce, 'unit': supervisor.unit_name(nonce)}
+    digest = _sha(text.encode('utf-8'))
+    remote = ['sudo', '-n', SUPERVISOR_PATH, '--approved-request', digest]
+    return ssh_argv(cfg, remote), {'nonce': nonce, 'unit': supervisor.unit_name(nonce),
+                                  'request_json': text, 'request_sha256': digest}
 
 
 def _transfer_payload(row_id, dest):
@@ -693,22 +712,15 @@ def _archive_bound(item, sha256):
 
 
 def _stage1_binding(fresh):
-    """Reasons the Stage1 originals and post-state are not bound into the plan. Empty means bound."""
-    s1 = fresh.get('stage1')
-    if not isinstance(s1, dict) or not isinstance(s1.get('before'), dict) or not isinstance(s1.get('retained'), dict) \
-            or not isinstance(s1.get('post'), dict):
-        return ['Stage1 originals and post-state not bound']
-    before, retained, post = s1['before'], s1['retained'], s1['post']
-    reasons = []
-    for key, path in (('config_sha256', retained.get('config')), ('descriptor_sha256', retained.get('descriptor'))):
-        if not path or not Path(path).is_file() or _file_sha(path) != before.get(key):
-            reasons.append('Stage1 retained original does not match the request: ' + key)
-    if post.get('config_sha256') != before.get('config_sha256'):
-        reasons.append('Stage1 post-run config differs from the original')
-    growth = post.get('growth_bytes')
-    if not isinstance(growth, int) or isinstance(growth, bool) or not 0 <= growth <= CONFIG_ALLOWANCE_BYTES:
-        reasons.append('Stage1 post-run growth is outside the allowance')
-    return reasons
+    """Authenticate a fresh occurrence and retained complete before/after evidence."""
+    import linux_stage1
+    anchors = EXTERNAL_ANCHORS if isinstance(EXTERNAL_ANCHORS, dict) else {}
+    trust = dict(fresh.get('go_trust') or {})
+    trust['sha256'] = anchors.get('allowed_signers_sha256')
+        trust['principal'] = anchors.get('principal', 'effigy-go')
+    trust['principal'] = anchors.get('principal', 'effigy-go')
+    return linux_stage1.binding_reasons(fresh, anchors, trust, anchors.get('head'), VM_UUID,
+                                        CONFIG_ALLOWANCE_BYTES)
 
 
 def _go_index_reasons(fresh):
@@ -748,13 +760,11 @@ def setup_plan(fresh):
         if not HEX40.fullmatch(head or '') or head == CANDIDATE_H_HEAD:
             global_missing.append('preparation head anchor must be 40 hex and distinct from candidate H')
         trust['sha256'] = anchors.get('allowed_signers_sha256')
+        trust['principal'] = anchors.get('principal', 'effigy-go')
     global_missing += _stage1_binding(fresh)
     rows = _rows(fresh)
-    s1 = fresh.get('stage1') if isinstance(fresh.get('stage1'), dict) else {}
-    stage1_before = None
-    if isinstance(s1.get('before'), dict):
-        stage1_before = {k: s1['before'].get(k) for k in ('config_sha256', 'descriptor_sha256', 'top_guid')}
-    digest = plan_digest(rows, head, stage1_before)
+    import linux_stage1
+    digest = plan_digest(rows, head, linux_stage1.digest_value(fresh.get('stage1')))
     gates = fresh.get('go') or {}
     identity = fresh.get('identity')
     output = fresh.get('probe_output')
@@ -896,7 +906,7 @@ def host_credit(expected, candidate, observation):
 
     def authenticate(receipt):
         return all(receipt.get(k) == observation.get(k)
-                   for k in ('boot_id', 'nonce', 'unit', 'invocation_id', 'active_state', 'sub_state', 'result'))
+                   for k in ('boot_id', 'nonce', 'unit', 'invocation_id', 'active_state', 'sub_state', 'result', 'exec_main_status', 'control_group'))
     return _wrap(observations.verify_contained_closure, expected, candidate, authenticate)
 
 
@@ -911,11 +921,77 @@ def _private_file(path, expected_sha):
         raise Refusal('credential file bytes drifted from the bound hash')
 
 
+def check_ssh_credentials(facts, wall_clock):
+    files = facts['ssh_files']
+    _private_file(files['config'], files['config_sha256'])
+    _private_file(files['known_hosts'], files['known_hosts_sha256'])
+    # A tiny isolated config only: no Includes, Match blocks, hooks or proxies.
+    values = {}
+    for line in Path(files['config']).read_text().splitlines():
+        parts = line.strip().split(None, 1)
+        if not parts or line.lstrip().startswith('#'):
+            continue
+        if len(parts) != 2 or parts[0].lower() in values:
+            raise Refusal('isolated SSH config required')
+        values[parts[0].lower()] = parts[1]
+    fixed = dict(host=SSH_ALIAS, user=ACCOUNT, batchmode='yes', stricthostkeychecking='yes',
+                 identitiesonly='yes', identityagent='none', globalknownhostsfile='/dev/null',
+                 updatehostkeys='no', forwardagent='no', clearallforwardings='yes', requesttty='no',
+                 permitlocalcommand='no', canonicalizehostname='no', proxycommand='none',
+                 proxyjump='none', remotecommand='none', localcommand='none', connecttimeout='10')
+    if set(values) != set(fixed) | {'hostname', 'identityfile', 'userknownhostsfile'} or any(values.get(k) != v for k, v in fixed.items()):
+        raise Refusal('isolated SSH policy differs')
+    probe = parse_probe(facts['probe_output'], _sha(facts['probe_output'].encode()), facts['probe_output_sha256'])
+    if values['hostname'] != probe['ssh_listen_ipv4'] or values['userknownhostsfile'] != files['known_hosts']:
+        raise Refusal('SSH endpoint or known hosts differs from probe')
+    _private_file(values['identityfile'], files.get('identity_sha256'))
+    known = Path(files['known_hosts']).read_text().split()
+    try:
+        fingerprint = 'SHA256:' + base64.b64encode(hashlib.sha256(base64.b64decode(known[2], validate=True)).digest()).decode().rstrip('=')
+    except (ValueError, IndexError):
+        raise Refusal('invalid pinned host key')
+    if len(known) != 3 or known[0] != values['hostname'] or known[1] != 'ssh-ed25519' or fingerprint != facts['identity']['host_key_fp']:
+        raise Refusal('pinned host key differs from authenticated probe')
+    if wall_clock() >= facts['authorized_keys_expiry']:
+        raise Refusal('ephemeral key has expired')
+
+
 # ---------------------------------------------------------------- production runner
 
 def _stop_unit_via_vm(unit):
     """Host cleanup after credit: stop the RemainAfterExit unit over the VM route. Returns its disposition."""
     return transfers.run_transfer(_vm('/usr/bin/systemctl', 'stop', unit), None, 30, OUTPUT_CAP)['disposition']
+
+
+# Root capability creation uses the authenticated VM route, after executor gates and intent.
+# Fixed source and argv; no guest-provided script, path or sudo wildcard is accepted.
+APPROVAL_INSTALL = r"""
+import os, sys, stat, hashlib, subprocess
+root, digest, data, program = sys.argv[1:]
+assert hashlib.sha256(data.encode()).hexdigest() == digest
+assert len(digest) == 64 and all(c in '0123456789abcdef' for c in digest)
+try: os.mkdir(root, 0o700)
+except FileExistsError: pass
+fd = os.open(root, os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    info = os.fstat(fd)
+    assert info.st_uid == 0 and stat.S_IMODE(info.st_mode) == 0o700
+    assert not os.path.exists(root + '/' + digest + '.spent')
+    out = os.open(digest + '.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
+    with os.fdopen(out, 'wb') as f: f.write(data.encode()); f.flush(); os.fsync(f.fileno())
+    rule = 'effigy531 ALL=(root) NOPASSWD: ' + program + ' --approved-request ' + digest + '\n'
+    path = '/etc/sudoers.d/effigy531-' + digest
+    out = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o440)
+    with os.fdopen(out, 'w') as f: f.write(rule)
+    subprocess.run(['/usr/sbin/visudo', '-cf', path], check=True)
+finally: os.close(fd)
+"""
+
+
+def approval_install_argv(row):
+    credit = row['credit']
+    return _vm('/usr/bin/python3', '-I', '-c', APPROVAL_INSTALL, supervisor.AUTH_ROOT,
+               credit['request_sha256'], credit['request_json'], SUPERVISOR_PATH)
 
 
 def default_row_runner(row, stage, monitor):
@@ -925,14 +1001,23 @@ def default_row_runner(row, stage, monitor):
     candidate and payload stdout come from the supervisor's JSON line. The writer's exit is
     returned for the executor's precondition check.
     """
+    if row['credit'] and row['credit'].get('request_json'):
+        approval = transfers.run_transfer(approval_install_argv(row), None, 30, OUTPUT_CAP, monitor)
+        for stream in ('stdout', 'stderr'):
+            exclusive(Path(stage) / ('approval.' + stream), approval[stream])
+        exclusive(Path(stage) / 'approval.exit', str(approval['waited_exit']).encode())
+        if approval['disposition'] != 'exited':
+            raise Refusal('exact root request provisioning failed; no SSH request started')
+    transport_seconds = row['timeout_seconds'] + 90
     if row['kind'] == 'contained-transfer':
         res = transfers.run_contained_transfer(row['argv'], row['writer_argv'], row['stdin_path'],
-                                               row['timeout_seconds'], OUTPUT_CAP, monitor)
+                                               transport_seconds, OUTPUT_CAP, monitor)
         return {'disposition': res['disposition'], 'reason': res['reason'], 'waited_exit': res['supervisor_exit'],
                 'writer_exit': res['writer_exit'], 'candidate': res['candidate'],
                 'payload_stdout': res['payload_stdout'], 'stdout': res['supervisor_stdout'],
-                'stderr': res['supervisor_stderr']}
-    out = transfers.run_transfer(row['argv'], None, row['timeout_seconds'], OUTPUT_CAP, monitor)
+                'stderr': res['supervisor_stderr'], 'writer_stdout': res.get('writer_stdout', b''),
+                'writer_stderr': res['writer_stderr']}
+    out = transfers.run_transfer(row['argv'], None, transport_seconds, OUTPUT_CAP, monitor)
     result = {'disposition': out['disposition'], 'reason': out['reason'], 'waited_exit': out['waited_exit'],
               'writer_exit': None, 'candidate': None, 'payload_stdout': '', 'stdout': out['stdout'],
               'stderr': out['stderr']}
@@ -994,17 +1079,17 @@ def execute_plan(facts, runner, observe_identity, observe_terminal, stage_root, 
                 return halt('bootstrap argv differs from the exact reviewed operation')
             if row['id'] == 'E-SUP' and row['argv'] != supervisor_install_argv():
                 return halt('supervisor install argv differs from the reviewed source')
-        observed = observe_identity(row)
+        try:
+            observed = observe_identity(row)
+        except (Refusal, OSError, ValueError) as exc:
+            return halt('identity observation unknown: ' + str(exc))
         if any(observed.get(k) != facts['identity'][k] for k in IDENTITY_KEYS):
             return halt('identity drift: VM-route re-observation differs from the plan')
-        if row['kind'] == 'contained-transfer':
+        if row['kind'] in ('contained-transfer', 'vm-supervised'):
             try:
-                _private_file(facts['ssh_files']['config'], facts['ssh_files']['config_sha256'])
-                _private_file(facts['ssh_files']['known_hosts'], facts['ssh_files']['known_hosts_sha256'])
-            except Refusal as exc:
+                check_ssh_credentials(facts, wall_clock)
+            except (Refusal, KeyError, OSError) as exc:
                 return halt('credential: ' + str(exc))
-            if wall_clock() >= facts['authorized_keys_expiry']:
-                return halt('credential: ephemeral key has expired')
         remaining = budget_seconds - (clock() - started)
         if row['timeout_seconds'] + STAGE_ADMISSION_RESERVE + STAGE_REPORT_RESERVE > remaining:
             return halt('total budget exhausted')
@@ -1025,25 +1110,27 @@ def execute_plan(facts, runner, observe_identity, observe_terminal, stage_root, 
                                                       'writer_argv': row['writer_argv'], 'stdin_sha256': stdin_sha,
                                                       'expect': row['expect'], 'credit': row['credit']},
                                                      sort_keys=True, indent=2) + '\n').encode())
+        if row['credit'] and row['credit'].get('request_json'):
+            preparation_requests.write_request(stage / 'mapped-request.json', json.loads(row['credit']['request_json']))
         try:
             outcome = dict(runner(row, stage, monitor))
             monitor.check()
-        except resources.Refusal as exc:
-            return halt('resource refusal during the row: ' + str(exc))
-        for name in ('stdout', 'stderr'):
+        except (resources.Refusal, Refusal) as exc:
+            return halt('row refused: ' + str(exc))
+        for name in ('stdout', 'stderr', 'writer_stdout', 'writer_stderr'):
             exclusive(stage / name, outcome.get(name, b'') or b'')
         closure, credit_note = 'unknown', None
         if row['effect'] in ('supervised', 'transfer') and outcome.get('disposition') == 'exited' \
                 and outcome.get('candidate') is not None and row['credit']:
-            observation = observation_from_show(observe_terminal(row)['show_text'], row['credit']['unit'],
-                                                observed['boot_id'], row['credit']['nonce'])
-            expected = {'boot_id': facts['identity']['boot_id'], 'nonce': row['credit']['nonce'],
-                        'unit': row['credit']['unit'], 'invocation_id': (observation or {}).get('invocation_id'),
-                        'control_group': ''}
             try:
+                observation = observation_from_show(observe_terminal(row)['show_text'], row['credit']['unit'],
+                                                    observed['boot_id'], row['credit']['nonce'])
+                expected = {'boot_id': facts['identity']['boot_id'], 'nonce': row['credit']['nonce'],
+                            'unit': row['credit']['unit'], 'invocation_id': (observation or {}).get('invocation_id'),
+                            'control_group': ''}
                 closure = host_credit(expected, outcome['candidate'], observation)
-            except Refusal as exc:
-                credit_note = str(exc)
+            except (Refusal, OSError, ValueError) as exc:
+                credit_note = 'observation unknown: ' + str(exc)
         cleanup = None
         if row['effect'] in ('supervised', 'transfer') and row['credit']:
             cleanup = (stop_unit or _stop_unit_via_vm)(row['credit']['unit'])

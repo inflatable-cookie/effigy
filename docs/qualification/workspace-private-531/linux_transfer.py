@@ -137,7 +137,7 @@ def run_contained_transfer(supervisor_argv, writer_argv, stdin_path, timeout, ou
     sup_codes, writer_code = codes[0], codes[1]
     sup_out = streams[supervisor]
     writer_out = streams[writer]
-    result = {'supervisor_exit': sup_codes, 'writer_exit': writer_code, 'writer_stderr': writer_out['stderr'],
+    result = {'supervisor_exit': sup_codes, 'writer_exit': writer_code, 'writer_stderr': writer_out['stderr'], 'writer_stdout': writer_out['stdout'],
               'supervisor_stdout': sup_out['stdout'], 'supervisor_stderr': sup_out['stderr'],
               'candidate': None, 'payload_stdout': '', 'supervisor_result': None}
     if failure is not None:

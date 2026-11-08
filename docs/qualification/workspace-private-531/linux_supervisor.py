@@ -13,26 +13,25 @@ So the unit is provably active, with a control group, before the payload does an
 work. A payload that is never observed active is never released and ends at its
 RuntimeMaxSec deadline, which is unknown.
 
-The emitted argv sets RemainAfterExit=yes, so a finished unit stays loaded as
-active(exited) with Result, ExecMainStatus and an empty cgroup. That is the terminal
-state closure is judged on. The unit is not collected until the host has observed it
-and stopped it (linux_setup.execute_plan). Any absent sample after release, or a
-changed InvocationID, is unknown.
+The emitted argv sets RemainAfterExit=yes. systemd-run --pipe waits until the
+unit is inactive or failed (v259 run.c run_context_check_done); it does not return
+at active(exited). The outside monitor stops the already empty successful
+active(exited) unit, then the original systemd-run caller returns its actual
+waited result. The final loaded inactive/dead sample must keep InvocationID and
+report success, status zero and no cgroup. Collection or read races are unknown.
 
-Upstream basis (systemd v259, fetched 2026-11-07):
-- `systemd-run --pipe` waits for the transient service to terminate; `--wait` cannot
-  combine with `--scope`. Whether `--pipe` returns on main exit under RemainAfterExit is
-  not in the manual: a live check must confirm it. A timeout there is unknown, never a pass.
-- RemainAfterExit=yes keeps the service active after its processes exit; without it a
-  finished service is not active, and `--collect` unloads it, so `--collect` is not used.
-- `ExitType=cgroup` (v250) keeps a service active while any process in its cgroup has
-  not exited; `RuntimeMaxSec=` fails the unit at its deadline.
-- systemctl prints a byte-array property such as InvocationID as contiguous lowercase
-  hex with no hyphens (bus-print-properties.c, the "y" branch).
+Gate admission has a separate 30-second reserve. The full payload deadline begins
+at release; RuntimeMaxSec includes that gate reserve, and the monitor enforces
+the original payload deadline. Cleanup has a separate 30-second reserve. These
+reserves consume existing admission/report headroom, never extend payload bounds.
 
-Credit is never decided here. The guest reports a candidate and its payload stdout. The
-host credits closure (linux_setup.host_credit) only after its own VM-route observation
-of the unit agrees with the candidate.
+The root entry consumes a private exact request provisioned through the separately
+admitted authenticated root bootstrap. Caller arguments cannot authorize a request.
+Root owns the row directory and holds its descriptor through every root-side file
+access. Nothing here is installed or executed by source controls.
+
+Credit remains host-owned: the candidate needs a separate authenticated terminal
+observation. SSH exit alone never establishes closure.
 """
 import base64
 import hashlib
@@ -71,6 +70,7 @@ INVOCATION = re.compile(r'^[0-9a-f]{32}$')
 MIN_SYSTEMD = 250          # ExitType=cgroup
 MAX_TIMEOUT = 900          # per-stage ceiling in the setup manifest
 CLEANUP_RESERVE_SECONDS = 30
+GATE_RESERVE_SECONDS = 30
 FORBIDDEN_RUN_FLAGS = ('--scope', '--collect', '--user', '--no-block', '--wait')
 SUPERVISOR = 'systemd-service-cgroup-v2'
 BOOT_ID_PATH = '/proc/sys/kernel/random/boot_id'
@@ -82,9 +82,10 @@ PAYLOAD_STDOUT_CAP = 65536
 PAYLOAD_ACCOUNT = 'effigy531'     # the one account a request may name; a request for any other account is refused
 STAGE_OWNER = 0                   # the stage root is root-owned in production
 # The only directory the installed entry creates row stages under. It is root-owned and mode 0711,
-# so the payload account can traverse to its own row directory and cannot list the others.
+# so the payload account can traverse to FIFO endpoints without owning any directory.
 STAGE_ROOT = '/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/stage'
 STAGE_ROOT_MODE = 0o711
+AUTH_ROOT = '/var/lib/effigy531-approved'
 ROW_NAME = re.compile(r'^[A-Za-z0-9._-]{1,32}$')
 
 
@@ -127,7 +128,7 @@ def run_argv(nonce, payload_user, cwd, timeout, argv):
         '--service-type=exec',
         '--property=ExitType=cgroup',
         '--property=KillMode=control-group',
-        '--property=RuntimeMaxSec=%d' % timeout,
+        '--property=RuntimeMaxSec=%d' % (timeout + GATE_RESERVE_SECONDS),
         '--property=WorkingDirectory=' + cwd,
         '--remain-after-exit',
         '--pipe',
@@ -206,15 +207,22 @@ class Monitor:
     failed read is recorded as a failure, never a pass. Absence before start is normal.
     """
 
-    def __init__(self, ops, unit, interval=0.05, on_active=None):
+    def __init__(self, ops, unit, interval=0.05, on_active=None, payload_timeout=None, clock=time.monotonic):
         self.ops, self.unit, self.interval = ops, unit, interval
         self.on_active = on_active
+        self.payload_timeout, self.clock = payload_timeout, clock
+        self.started_at = None
+        self.released_at = None
+        self.deadline_expired = False
         self.samples = []
         self.release_index = None
+        self.finish_requested = False
+        self.released_invocation = None
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name='effigy-stage-monitor', daemon=True)
 
     def start(self):
+        self.started_at = self.clock()
         self._thread.start()
 
     def stop(self):
@@ -231,7 +239,8 @@ class Monitor:
         if show is None:
             return {'kind': 'absent'}
         record = {'kind': 'loaded', 'invocation_id': show['invocation_id'], 'control_group': show['control_group'],
-                  'active_state': show['active_state'], 'populated': None}
+                  'active_state': show['active_state'], 'sub_state': show['sub_state'],
+                  'result': show['result'], 'exec_main_status': show['exec_main_status'], 'populated': None}
         if show['control_group']:
             try:
                 record['populated'] = parse_populated(self.ops.events(events_path(show['control_group'])))
@@ -246,10 +255,33 @@ class Monitor:
             if (self.on_active and self.release_index is None and record['kind'] == 'loaded'
                     and record['active_state'] == 'active' and record['control_group']):
                 self.release_index = len(self.samples)
+                self.released_invocation = record['invocation_id']
                 try:
                     self.on_active(record)
-                except OSError as exc:
+                    self.released_at = self.clock()
+                except (Refusal, OSError) as exc:
                     self.samples.append({'kind': 'release-failed', 'reason': str(exc)})
+            # --pipe waits for inactive/failed, including with RemainAfterExit. Stop the
+            # already empty successful unit from outside the payload before waiting for
+            # systemd-run. No payload deadline is shortened and failed/missing reads fail closed.
+            if (self.release_index is not None and not self.finish_requested
+                    and record.get('kind') == 'loaded'
+                    and record.get('invocation_id') == self.released_invocation and terminal_exited(record)):
+                self.finish_requested = True
+                try:
+                    self.ops.finish(['systemctl', 'stop', self.unit])
+                except (Refusal, OSError) as exc:
+                    self.samples.append({'kind': 'read-failed', 'reason': str(exc)})
+            now = self.clock()
+            if self.payload_timeout is not None and not self.deadline_expired:
+                end = (self.released_at + self.payload_timeout if self.released_at is not None
+                       else self.started_at + GATE_RESERVE_SECONDS)
+                if now > end:
+                    self.deadline_expired = True
+                    try:
+                        self.ops.stop(stop_argv(self.unit))
+                    except (Refusal, OSError) as exc:
+                        self.samples.append({'kind': 'read-failed', 'reason': str(exc)})
             self._stop.wait(self.interval)
 
 
@@ -258,9 +290,9 @@ def closure_receipt(boot_id, nonce, show, observed_group, waited_exit):
     return {'boot_id': boot_id, 'nonce': nonce, 'unit': unit_name(nonce),
             'invocation_id': show['invocation_id'], 'control_group': '',
             'observed_control_group': observed_group,
-            'supervisor': SUPERVISOR, 'terminal_basis': UNIT_EXITED,
+            'supervisor': SUPERVISOR, 'terminal_basis': UNIT_INACTIVE,
             'populated': 0, 'active_state': show['active_state'], 'sub_state': show['sub_state'],
-            'result': show['result'], 'waited_exit': waited_exit}
+            'result': show['result'], 'exec_main_status': show['exec_main_status'], 'waited_exit': waited_exit}
 
 
 def terminal_exited(show):
@@ -286,8 +318,9 @@ def _eligible(boot_id, nonce, show, samples, release_index, waited_exit):
         return None, 'no pre-release sample shows this InvocationID active in a cgroup'
     if len({s['control_group'] for s in active}) != 1:
         return None, 'monitor saw more than one control group for this InvocationID'
-    if not terminal_exited(show):
-        return None, 'post-run terminal state is not active(exited), Result=success, status 0, empty cgroup'
+    if not (show['active_state'] == 'inactive' and show['sub_state'] == 'dead'
+            and show['result'] == 'success' and show['exec_main_status'] == '0' and show['control_group'] == ''):
+        return None, 'post-run terminal state is not inactive/dead, Result=success, status 0, empty cgroup'
     return closure_receipt(boot_id, nonce, show, active[-1]['control_group'], waited_exit), None
 
 
@@ -313,35 +346,48 @@ def hold_stage_parent(parent, owner):
 
 
 def create_row(parent_fd, name, uid):
-    """Create the row directory through the held parent: payload-owned, mode 0700, never reused."""
+    """Root retains row ownership; the payload owns only FIFO endpoints, never the directory."""
     try:
-        os.mkdir(name, 0o700, dir_fd=parent_fd)
+        os.mkdir(name, 0o711, dir_fd=parent_fd)
     except FileExistsError as exc:
         raise Refusal('row stage already exists; a stage is never reused') from exc
-    try:
-        os.chown(name, uid, -1, dir_fd=parent_fd, follow_symlinks=False)
-    except PermissionError as exc:
-        raise Refusal('the row cannot be assigned to the payload account by this process') from exc
     fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+    info = os.fstat(fd)
+    if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o711:
+        os.close(fd)
+        raise Refusal('row stage must remain supervisor-owned, mode 0711')
+    return fd
+
+
+def _row_write(row_fd, name, data):
+    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=row_fd)
+    with os.fdopen(fd, 'wb') as output:
+        output.write(data)
+        output.flush()
+        os.fsync(output.fileno())
+
+
+def _make_fifo(row_fd, name, uid):
+    os.mkfifo(name, 0o600, dir_fd=row_fd)
+    os.chown(name, uid, -1, dir_fd=row_fd, follow_symlinks=False)
+
+
+def _release_row_gate(row_fd):
+    fd = os.open(GATE_NAME, os.O_RDWR | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=row_fd)
     try:
-        info = os.fstat(fd)
+        if not stat.S_ISFIFO(os.fstat(fd).st_mode):
+            raise Refusal('gate endpoint is not a FIFO')
+        os.write(fd, b'go\n')
     finally:
         os.close(fd)
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or stat.S_IMODE(info.st_mode) != 0o700:
-        raise Refusal('row stage must be a directory owned by the payload account, mode 0700')
-
-
-def _make_fifo(path, uid):
-    os.mkfifo(path, 0o600)
-    os.chown(path, uid, -1)
 
 
 def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, monitor=None, stage_owner=STAGE_OWNER):
     """One-use supervised payload. Intent is spent before any effect.
 
     Candidate eligibility, all required: the unit was absent before start; the monitor
-    saw this InvocationID active in one cgroup before it released the gate; no sample
-    after release shows populated 1; the post-run unit is loaded with the same
+    saw this InvocationID active in one cgroup before it released the gate; any live
+    descendant keeps the unit active/running; the post-run unit is loaded with the same
     InvocationID, inactive, Result=success, ExecMainStatus=0 and an empty ControlGroup.
     A gate that is never released ends at the deadline and is unknown. Returns
     {'disposition', 'candidate', 'reason', 'show', 'samples', 'payload_stdout'}.
@@ -372,27 +418,39 @@ def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, mo
         raise Refusal('row stage already exists; a stage is never reused')
     if not os.path.lexists(stage.parent):
         # Created once, mode 0711. Its own parent is held and checked before the mkdir.
-        os.close(hold_stage_parent(stage.parent.parent, stage_owner))
-        os.mkdir(stage.parent, 0o711)
-        os.chmod(stage.parent, STAGE_ROOT_MODE)
+        ancestor_fd = hold_stage_parent(stage.parent.parent, stage_owner)
+        try:
+            os.mkdir(stage.parent.name, STAGE_ROOT_MODE, dir_fd=ancestor_fd)
+        finally:
+            os.close(ancestor_fd)
     parent_fd = hold_stage_parent(stage.parent, stage_owner)
+    row_fd = None
     try:
-        create_row(parent_fd, stage.name, request['payload_uid'])
+        row_fd = create_row(parent_fd, stage.name, request['payload_uid'])
+        return _run_held(stage, request, ops, clock, boot_id, seen_invocations, monitor,
+                         unit, gate, argv, intent, row_fd)
     finally:
+        if row_fd is not None:
+            os.close(row_fd)
         os.close(parent_fd)
-    exclusive(stage / 'intent.json', (json.dumps(intent, sort_keys=True, indent=2) + '\n').encode())
+
+
+def _run_held(stage, request, ops, clock, boot_id, seen_invocations, monitor, unit, gate, argv, intent, row_fd):
+    nonce = request['nonce']
+    _row_write(row_fd, 'intent.json', (json.dumps(intent, sort_keys=True, indent=2) + '\n').encode())
     seen_invocations.setdefault('nonces', set()).add(nonce)
     if parse_show(ops.show(show_argv(unit)), unit) is not None:
         raise Refusal('unit already loaded before start; nonce is not fresh')
-    _make_fifo(str(gate), request['payload_uid'])
+    _make_fifo(row_fd, GATE_NAME, request['payload_uid'])
     if request.get('transfer'):
-        _make_fifo(str(stage / TRANSFER_NAME), request['payload_uid'])
-    monitor = monitor or Monitor(ops, unit, on_active=lambda record: release_gate(str(gate)))
+        _make_fifo(row_fd, TRANSFER_NAME, request['payload_uid'])
+    monitor = monitor or Monitor(ops, unit, on_active=lambda record: _release_row_gate(row_fd),
+                                 payload_timeout=request['timeout_seconds'], clock=clock)
     start = clock()
-    deadline = start + request['timeout_seconds'] + CLEANUP_RESERVE_SECONDS
+    deadline = start + request['timeout_seconds'] + GATE_RESERVE_SECONDS + CLEANUP_RESERVE_SECONDS
     monitor.start()
     try:
-        outcome = ops.run(argv, request['timeout_seconds'] + CLEANUP_RESERVE_SECONDS)
+        outcome = ops.run(argv, request['timeout_seconds'] + GATE_RESERVE_SECONDS + CLEANUP_RESERVE_SECONDS)
         disconnected = False
     except Disconnect:
         outcome = {'returncode': None, 'stdout': b'', 'stderr': b'', 'timed_out': False}
@@ -400,8 +458,8 @@ def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, mo
     finally:
         monitor.stop()
     for name in ('stdout', 'stderr'):
-        exclusive(stage / name, outcome[name])
-    timed_out = bool(outcome.get('timed_out')) or clock() > deadline
+        _row_write(row_fd, name, outcome[name])
+    timed_out = bool(outcome.get('timed_out')) or getattr(monitor, 'deadline_expired', False) or clock() > deadline
     if timed_out or disconnected:
         ops.stop(stop_argv(unit))
     show = parse_show(ops.show(show_argv(unit)), unit)
@@ -423,7 +481,7 @@ def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, mo
               'samples': samples, 'release_index': monitor.release_index, 'elapsed_seconds': clock() - start,
               'streams': {n: {'bytes': len(outcome[n]), 'sha256': hashlib.sha256(outcome[n]).hexdigest()}
                           for n in ('stdout', 'stderr')}}
-    exclusive(stage / 'supervisor.json', (json.dumps(record, sort_keys=True, indent=2, default=str) + '\n').encode())
+    _row_write(row_fd, 'supervisor.json', (json.dumps(record, sort_keys=True, indent=2, default=str) + '\n').encode())
     return {'disposition': disposition, 'candidate': candidate, 'reason': reason, 'show': show,
             'samples': samples, 'payload_stdout': payload_stdout.decode('utf-8', 'replace')}
 
@@ -454,6 +512,9 @@ class SystemdOps:
     def stop(self, argv):
         self.runner(argv, 30)
 
+    def finish(self, argv):
+        self._checked(argv, CLEANUP_RESERVE_SECONDS)
+
     def show(self, argv):
         # A failed read must refuse: reading "absent" here could start a second unit.
         return self._checked(argv)
@@ -478,22 +539,50 @@ def _subprocess_runner(argv, timeout):
         return {'returncode': None, 'stdout': out, 'stderr': err, 'timed_out': True}
 
 
-def main(argv):
-    """Root entry point: `effigy-stage-supervisor --request-json JSON --sha256 HEX`.
+def consume_approved_request(digest, root=AUTH_ROOT, owner=0):
+    """The authenticated root bootstrap provisions exact bytes; the caller supplies no authority.
 
-    The request travels inline in argv, so the plan digest covers its exact bytes. Prints
-    one JSON line with the disposition, candidate and payload stdout (base64). It never
-    credits closure.
+    Hold the approval directory for the read and the durable one-use spend. A hash
+    from an unprivileged caller cannot create a root-owned approved record.
     """
-    if len(argv) != 4 or argv[0] != '--request-json' or argv[2] != '--sha256':
-        raise Refusal('usage: --request-json JSON --sha256 HEX')
-    raw = argv[1].encode('utf-8')
-    if len(raw) > 1024 * 1024 or hashlib.sha256(raw).hexdigest() != argv[3]:
-        raise Refusal('request hash mismatch')
+    if not isinstance(digest, str) or not NONCE.fullmatch(digest):
+        raise Refusal('approved request digest must be SHA256')
+    parent = hold_stage_parent(Path(root), owner)
+    try:
+        if stat.S_IMODE(os.fstat(parent).st_mode) != 0o700:
+            raise Refusal('approval directory must be mode 0700')
+        fd = os.open(digest + '.json', os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent)
+        with os.fdopen(fd, 'rb') as source:
+            info = os.fstat(source.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != owner
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
+                raise Refusal('approval must be a private supervisor-owned regular file')
+            raw = source.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024 or hashlib.sha256(raw).hexdigest() != digest:
+            raise Refusal('approved request bytes differ from digest')
+        try:
+            _row_write(parent, digest + '.spent', digest.encode())
+        except FileExistsError as exc:
+            raise Refusal('approved request already spent') from exc
+        os.fsync(parent)
+        return raw
+    finally:
+        os.close(parent)
+
+
+def main(argv):
+    """Root entry: only an exact, provisioned, one-use approval digest is accepted."""
+    if len(argv) != 2 or argv[0] != '--approved-request':
+        raise Refusal('usage: --approved-request SHA256')
+    approval_seam = os.environ.get('EFFIGY_APPROVAL_ROOT')
+    if approval_seam is not None and os.geteuid() == 0:
+        raise Refusal('test seams are refused for root runs')
+    raw = consume_approved_request(argv[1], approval_seam or AUTH_ROOT,
+                                   os.geteuid() if approval_seam else 0)
     request = json.loads(raw)
     required = {'nonce', 'payload_user', 'payload_uid', 'cwd', 'timeout_seconds', 'argv', 'stage_dir',
                 'expected_boot_id'}
-    if not required <= set(request) or set(request) - required - {'transfer'}:
+    if not required <= set(request) or set(request) - required - {'transfer', 'input_hashes', 'resources', 'ssh_binding'}:
         raise Refusal('unsupported request schema')
     stage = Path(request['stage_dir'])
     # Two test seams, EFFIGY_STAGE_ROOT and EFFIGY_PAYLOAD_ACCOUNT, exist because the reviewed root and
@@ -515,7 +604,10 @@ def main(argv):
             raise Refusal('payload uid differs from the account on this host')
     except KeyError as exc:
         raise Refusal('payload account does not exist on this host') from exc
-    boot_id = Path(os.environ.get('EFFIGY_BOOT_ID_PATH', BOOT_ID_PATH)).read_text().strip()
+    boot_seam = os.environ.get('EFFIGY_BOOT_ID_PATH')
+    if boot_seam is not None and os.geteuid() == 0:
+        raise Refusal('test seams are refused for root runs')
+    boot_id = Path(boot_seam or BOOT_ID_PATH).read_text().strip()
     if boot_id != request['expected_boot_id']:
         raise Refusal('boot identity differs from the request')
     result = run_supervised(request['stage_dir'], request, SystemdOps(_subprocess_runner), time.monotonic, boot_id, {},
