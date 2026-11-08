@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-11-02
+Last Updated: 2026-11-08
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -51,7 +51,19 @@ runtime (`/run/effigy/secrets`) is admissible and its bytes are budgeted. A
 volume syntax, and the known unmodelled service mount contributors (`extends`,
 `configs`, `secrets`, and `volumes_from`), and referenced top-level
 named-volume options that are not modelled refuse before apply with path-free
-diagnostics. Docker backends do not use this guard. The
+diagnostics. One top-level volume definition is modelled beyond those managed
+defaults: the `data_from` generated
+`{owner_volume_name: {external: true}}` entry, optionally repeating that same
+platform name as `name`. Effigy only writes that form for a borrowed volume it
+ensures idempotently before `up`, so the estimate resolves the mount to the
+owner's platform volume path rather than adding this project's prefix. Every
+other external definition stays unmodelled and refuses: an unknown external
+name, a key aliased off the owner's name, `external: false` or a malformed
+`external` value, external combined with driver or label fields,
+`driver_opts`/plugins, and a borrowed key redefined as a managed volume by a
+later Compose input. Admission remains a read-only size estimate: it never
+creates, removes or relabels a volume, and borrowed volumes stay outside
+owned-volume classification. Docker backends do not use this guard. The
 estimate does not inspect image metadata for implicit
 `VOLUME` entries or account for other runtime-created mounts. Variable modes,
 propagation, escaping, paths and nerdctl versions still need qualification, so

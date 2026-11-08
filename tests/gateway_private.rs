@@ -7184,7 +7184,8 @@ fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
             .env("CAROOT", &cleanup.foreign_ca)
             .env("FOREIGN_CAROOT", &cleanup.foreign_ca)
             .env("FAKE_DOCKER_LOG", &cleanup.docker_log)
-            .env("EFFIGY_DEBUG_DETACHED_VERIFY", "1");
+            .env("EFFIGY_DEBUG_DETACHED_VERIFY", "1")
+            .env("EFFIGY_EXECUTABLE", &local_host.binary);
         command
     };
     let switch_up = |env: &str| {
@@ -7542,7 +7543,10 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
             .env("MKCERT_CALLS", &cleanup.mkcert_calls)
             .env("CAROOT", &cleanup.foreign_ca)
             .env("FOREIGN_CAROOT", &cleanup.foreign_ca)
-            .env("FAKE_DOCKER_LOG", &cleanup.docker_log);
+            .env("FAKE_DOCKER_LOG", &cleanup.docker_log)
+            // The managed run's process and lifecycle children re-exec through
+            // this variable, and an outer `effigy test` sets it to the QA binary.
+            .env("EFFIGY_EXECUTABLE", &local_host.binary);
     };
 
     // The managed shell/exec readiness probes resolve the container policy
@@ -7647,6 +7651,23 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
     assert!(
         published >= 6,
         "the stack's declared routes are published: {published}"
+    );
+    // The seeded private artifact is admitted as it is: no producer build ran
+    // in any checkout, and no host effect was touched on the way to active.
+    let managed_trace = format!("{}{}", supervisor_output(), lifecycle_log());
+    assert!(
+        !managed_trace.contains("building linux effigy artifact"),
+        "the managed run rebuilt the artifact instead of admitting the private host's: {managed_trace}"
+    );
+    assert_eq!(
+        fs::read(&local_host.artifact).expect("private guest artifact"),
+        LOCAL_GUEST_BYTES,
+        "the private guest artifact is the one published"
+    );
+    assert!(
+        !effects.log.exists() || fs::read(&effects.log).expect("effect log").is_empty(),
+        "the managed run touched a host effect: {}",
+        fs::read_to_string(&effects.log).unwrap_or_default()
     );
     assert!(
         state.join(format!("active-{stack_project}")).exists(),
@@ -8932,9 +8953,11 @@ exit 0
 /// `build_kind=workspace-artifact` and `completed_at`.
 struct LocalEffigyHost {
     binary: PathBuf,
+    artifact: PathBuf,
 }
 
 const LOCAL_GUEST_TARGET: &str = "x86_64-unknown-linux-gnu";
+const LOCAL_GUEST_BYTES: &[u8] = b"private local guest artifact, never executed\n";
 
 fn seed_local_effigy_host(fixture: &Path) -> LocalEffigyHost {
     use sha2::{Digest, Sha256};
@@ -8975,12 +8998,11 @@ fn seed_local_effigy_host(fixture: &Path) -> LocalEffigyHost {
         .join(format!("effigy-{LOCAL_GUEST_TARGET}"));
     fs::create_dir_all(artifact.parent().expect("private artifact parent"))
         .expect("private local artifact directory");
-    let bytes = b"private local guest artifact, never executed\n";
-    let digest = Sha256::digest(bytes)
+    let digest = Sha256::digest(LOCAL_GUEST_BYTES)
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    fs::write(&artifact, bytes).expect("private local guest artifact");
+    fs::write(&artifact, LOCAL_GUEST_BYTES).expect("private local guest artifact");
     fs::write(
         artifact.with_extension("active-version"),
         effigy_core::build_info::active_version(),
@@ -9002,7 +9024,7 @@ fn seed_local_effigy_host(fixture: &Path) -> LocalEffigyHost {
         ),
     )
     .expect("local artifact producer receipt");
-    LocalEffigyHost { binary }
+    LocalEffigyHost { binary, artifact }
 }
 
 /// A private guest store for the scoped handover cases. Preparation

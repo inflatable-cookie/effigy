@@ -1140,7 +1140,7 @@ fn observed_never_started_builder(
     const CONTEXT: &str = "inspect never-started workspace builder";
     let refuse = |reason: String| ContainerExecError::refused(CONTEXT, reason);
     if !matches!(
-        crate::compose::resolve_compose_backend_for_policy(policy),
+        crate::compose::resolve_compose_backend_for_repo(repo_root, policy),
         crate::compose::ComposeBackend::ColimaNerdctl
     ) {
         return Err(refuse(
