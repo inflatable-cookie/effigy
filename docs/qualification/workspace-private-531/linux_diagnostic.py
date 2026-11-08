@@ -168,13 +168,16 @@ class AncillaryAccount:
     logical and allocated size, a replacement keeps the previous incarnation's
     whole charge, and a disappearance refunds nothing. Every identity and counter
     event is retained with path, device, inode, uid and both counter
-    observations. Unreadable, aliased, symlinked or foreign-owned entries stay
-    refusals. This is sampled accounting with a sampled ceiling, not a hard quota.
+    observations. An identity change at a sampled path is charged in full even
+    when the new device/inode equals an earlier incarnation's: a sample cannot
+    tell an atomically replaced file from a reused inode number. Unreadable,
+    aliased, symlinked or foreign-owned entries stay refusals. This is sampled
+    accounting with a sampled ceiling, not a hard quota.
     """
     def __init__(self):
-        self.incarnations = {}
-        self.charges = {}
+        self.current = {}
         self.samples = 0
+        self.incarnations = 0
         self.held = {key: 0 for key in COUNTERS}
         self.events = []
 
@@ -188,6 +191,12 @@ class AncillaryAccount:
         return {'device': row['device'], 'inode': row['inode'], 'uid': row['uid'],
                 'logical': row['logical'], 'allocated': row['allocated']}
 
+    @staticmethod
+    def _facts(record):
+        return {'device': record['device'], 'inode': record['inode'], 'uid': record['uid'],
+                'logical': record['charged']['logical'],
+                'allocated': record['charged']['allocated']}
+
     def observe(self, sample):
         """Charge one sample; return the held totals and event count."""
         self.samples += 1
@@ -196,39 +205,36 @@ class AncillaryAccount:
             row = sample[path]
             observed = self._observed(row)
             ident = (row['device'], row['inode'])
-            previous = self.incarnations.get(path)
-            if previous is None:
-                self._event('appeared', path, None, observed)
-            elif previous != ident:
-                charge = self.charges[(path,) + previous]
-                self._event('replaced', path, dict(charge['charged'], device=previous[0],
-                                                   inode=previous[1], uid=charge['uid']), observed)
-            record = self.charges.get((path,) + ident)
-            if record is None:
-                record = {'path': path, 'uid': row['uid'], 'first_sample': self.samples,
-                          'charged': {key: row[key] for key in COUNTERS},
-                          'observed': {key: row[key] for key in COUNTERS}}
-                self.charges[(path,) + ident] = record
+            record = self.current.get(path)
+            if record is None or (record['device'], record['inode']) != ident:
+                # A path that appears, or whose identity changed, is a new incarnation and is
+                # charged in full. A sampled path cannot distinguish an atomically replaced file
+                # from a reused inode number, so returning to an earlier inode is charged again
+                # rather than credited against the earlier incarnation.
+                self._event('appeared' if record is None else 'replaced', path,
+                            None if record is None else self._facts(record), observed)
+                record = {'device': observed['device'], 'inode': observed['inode'],
+                          'uid': observed['uid'],
+                          'charged': {key: observed[key] for key in COUNTERS},
+                          'observed': {key: observed[key] for key in COUNTERS}}
+                self.current[path] = record
+                self.incarnations += 1
                 for key in COUNTERS:
-                    self.held[key] += row[key]
+                    self.held[key] += observed[key]
             else:
-                if any(row[key] < record['observed'][key] for key in COUNTERS):
+                if any(observed[key] < record['observed'][key] for key in COUNTERS):
                     self._event('shrank', path, dict(record['observed'], device=ident[0],
                                                      inode=ident[1], uid=record['uid']), observed)
                 for key in COUNTERS:
-                    if row[key] > record['charged'][key]:
-                        self.held[key] += row[key] - record['charged'][key]
-                        record['charged'][key] = row[key]
-                    record['observed'][key] = row[key]
+                    if observed[key] > record['charged'][key]:
+                        self.held[key] += observed[key] - record['charged'][key]
+                        record['charged'][key] = observed[key]
+                    record['observed'][key] = observed[key]
             record['last_sample'] = self.samples
-            seen[path] = ident
-        for path in sorted(set(self.incarnations) - set(seen)):
-            ident = self.incarnations[path]
-            charge = self.charges[(path,) + ident]
-            self._event('disappeared', path, dict(charge['charged'], device=ident[0],
-                                                  inode=ident[1], uid=charge['uid']), None)
-        self.incarnations = seen
-        return {'objects': len(seen), 'incarnations': len(self.charges),
+            seen[path] = record
+        for path in sorted(set(self.current) - set(seen)):
+            self._event('disappeared', path, self._facts(self.current.pop(path)), None)
+        return {'objects': len(seen), 'incarnations': self.incarnations,
                 'events': len(self.events), 'held': dict(self.held)}
 
 

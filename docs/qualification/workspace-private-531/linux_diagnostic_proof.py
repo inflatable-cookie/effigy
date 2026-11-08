@@ -455,8 +455,11 @@ def execute(request, request_path, request_hash):
                 except Exception as exc:
                     outcome['findings'].append('terminal state observation: ' + str(exc))
             elif outcome['vm_terminal'] == 'stopped':
-                outcome['metadata_differences'].append(
-                    'bound VM was already stopped; no graceful stop command was sent')
+                # Observed, not claimed as a stop: this VM reached stopped without this entry
+                # executing a graceful stop, so the observation is not a complete
+                # boot/probe/graceful-stop handoff and must not read as successful.
+                outcome['findings'].append(
+                    'bound VM was already stopped; no graceful stop command was executed')
             elif budget:
                 outcome['findings'].append(
                     'eligible running state not observed in the cleanup window; graceful stop not attempted')

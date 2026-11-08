@@ -168,6 +168,21 @@ class MetadataAccountingTests(unittest.TestCase):
         self.assertEqual(account.events[2]['previous']['logical'], 100)
         self.assertEqual(account.events[2]['current']['logical'], 40)
 
+    def test_reused_inode_at_the_same_path_is_charged_again(self):
+        account = diagnostic.AncillaryAccount()
+        account.observe({'config.pvs.backup': row(10, 100)})
+        account.observe({'config.pvs.backup': row(11, 100)})
+        third = account.observe({'config.pvs.backup': row(10, 100)})
+        # A sample cannot tell an atomically replaced file from a reused inode number, so the
+        # third incarnation is charged in full instead of matching the first incarnation's
+        # earlier charge.
+        self.assertEqual(third['held'], {'logical': 300, 'allocated': 300})
+        self.assertEqual(third['incarnations'], 3)
+        self.assertEqual([event['kind'] for event in account.events],
+                         ['appeared', 'replaced', 'replaced'])
+        self.assertEqual((account.events[-1]['previous']['inode'],
+                          account.events[-1]['current']['inode']), (11, 10))
+
     def test_new_objects_are_charged_conservatively(self):
         account = diagnostic.AncillaryAccount()
         account.observe({'a': row(1, 10, 4096)})
@@ -383,14 +398,14 @@ with log.open('a') as handle:
 mode = scenario.read_text()
 
 def advance():
-    # Parallels reports 'starting' while the VM boots; the client that refused is gone but
-    # the same VM reaches 'running' asynchronously, on its own schedule.
+    # Parallels reports 'starting' while the VM boots; the client that refused is gone but the
+    # same VM reaches 'running' asynchronously after a few state observations of its own.
     if state.read_text() == 'starting' and mode in ('start_client_refusal',
                                                     'start_refusal_cleanup_running'):
         counter = root / 'starting-lists'
         seen = int(counter.read_text()) if counter.exists() else 0
         counter.write_text(str(seen + 1))
-        if seen >= (1 if mode == 'start_client_refusal' else 40):
+        if seen >= (1 if mode == 'start_client_refusal' else 4):
             state.write_text('running')
 
 def touch(path, data):
@@ -661,10 +676,14 @@ class EntryTests(unittest.TestCase):
                             self.assertTrue(any('graceful stop not attempted' in finding
                                                 for finding in result['findings']))
                         if mode == 'start_immediately_stopped':
+                            # Observed stopped, no stop command, and not a successful handoff.
                             self.assertEqual(result['stop'], {'command': 'not sent',
                                                               'observed': 'stopped'})
                             self.assertEqual(result['vm_terminal'], 'stopped')
+                            self.assertEqual(expected, 1)
                             self.assertTrue(any('running observation unknown' in finding
+                                                for finding in result['findings']))
+                            self.assertTrue(any('no graceful stop command was executed' in finding
                                                 for finding in result['findings']))
                         if mode == 'start_client_refusal':
                             self.assertEqual(result['start']['waited_exit'], 255)
@@ -672,6 +691,11 @@ class EntryTests(unittest.TestCase):
                             self.assertEqual(result['vm_terminal'], 'stopped')
                             self.assertEqual(result['stop']['waited_exit'], 0)
                             self.assertGreater(calls.index('stop'), calls.index('start'))
+                        if mode in ('start_client_refusal', 'start_refusal_cleanup_running'):
+                            # Every executed step is journalled once: no side-channel effect.
+                            steps = list((evidence / ('linux-diagnostic-fixture%02d' % index))
+                                         .glob('step-*'))
+                            self.assertEqual(len(steps), len(calls))
                         if mode == 'start_refusal_cleanup_running':
                             # The refused start aborts before the boot loop: only the cleanup
                             # window waits, observes this same VM reach running, stops it once.
