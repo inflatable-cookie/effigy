@@ -1809,6 +1809,32 @@ fn joined_server_task_result(
     }
 }
 
+/// The watcher callback: one coalescing signal for an event that can change the
+/// committed snapshot, and nothing for an event kind that cannot. It is a named
+/// function so the wiring from a delivered event to the worker's signal is
+/// proved directly, without depending on the platform delivering one.
+fn route_watch_handler(
+    signal: Arc<ReconcileSignal>,
+    watched_path: PathBuf,
+) -> impl FnMut(notify::Result<notify::Event>) + Send + 'static {
+    move |event| match event {
+        Ok(event) => {
+            use notify::EventKind;
+            match event.kind {
+                EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
+                    debug!(path = %watched_path.display(), "route store changed, reloading");
+                    // Route reload never elevates or changes platform setup.
+                    signal.notify();
+                }
+                _ => {}
+            }
+        }
+        Err(error) => {
+            error!(error = %error, "file watcher error");
+        }
+    }
+}
+
 /// Set up a filesystem watcher that asks the single route-reload worker to
 /// observe the kernel database directory when it changes. The watcher never
 /// reloads itself: a burst of notifications coalesces into one observation, so
@@ -1817,24 +1843,7 @@ fn setup_file_watcher(
     path: &Path,
     signal: Arc<ReconcileSignal>,
 ) -> Result<RecommendedWatcher, GatewayError> {
-    let watched_path = path.to_path_buf();
-    let mut watcher =
-        notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
-            Ok(ev) => {
-                use notify::EventKind;
-                match ev.kind {
-                    EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
-                        debug!(path = %watched_path.display(), "route store changed, reloading");
-                        // Route reload never elevates or changes platform setup.
-                        signal.notify();
-                    }
-                    _ => {}
-                }
-            }
-            Err(e) => {
-                error!(error = %e, "file watcher error");
-            }
-        })
+    let mut watcher = notify::recommended_watcher(route_watch_handler(signal, path.to_path_buf()))
         .map_err(|e| GatewayError::WatcherError(e.to_string()))?;
 
     // Watch the database directory, including rollback-journal removal: that
@@ -2048,24 +2057,39 @@ impl RouteReconciler {
     fn run(self) {
         let mut retry = self.retry;
         loop {
-            let next = match self.reloader.reload() {
-                Ok(ReloadOutcome::Unchanged) => {
+            // An observation that panics must not end reconciliation silently:
+            // the applied table is kept, the cause is logged here, and the
+            // worker retries like any other failed observation. The table's
+            // locks are poison-tolerant, so the next observation is safe.
+            let observed =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.reloader.reload()));
+            let next = match observed {
+                Ok(Ok(ReloadOutcome::Unchanged)) => {
                     retry = self.retry;
                     self.interval
                 }
-                Ok(ReloadOutcome::Applied { idle_timer }) => {
+                Ok(Ok(ReloadOutcome::Applied { idle_timer })) => {
                     // An armed idle stop is owned work that outlives one
                     // observation; it settles itself under its own generation.
                     drop(idle_timer);
                     retry = self.retry;
                     self.interval
                 }
-                Err(error) => {
+                Ok(Err(error)) => {
                     // The applied table stays exactly as it was. A refused or
                     // unknown observation is retried; it is never an empty table.
                     error!(
                         error = %error,
                         "route table reconciliation failed; keeping the applied table"
+                    );
+                    let delay = retry;
+                    retry = std::cmp::min(retry.saturating_mul(2), self.max_retry);
+                    delay
+                }
+                Err(panic) => {
+                    error!(
+                        panic = %panic_message(panic.as_ref()),
+                        "route table observation panicked; keeping the applied table"
                     );
                     let delay = retry;
                     retry = std::cmp::min(retry.saturating_mul(2), self.max_retry);
@@ -2078,6 +2102,15 @@ impl RouteReconciler {
             }
         }
     }
+}
+
+/// A panic payload as text, for the diagnostic line only.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|text| (*text).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "non-text panic payload".to_owned())
 }
 
 /// Owned route-reconciliation work. Settling it stops the worker and joins it,

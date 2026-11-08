@@ -212,9 +212,11 @@ impl LiveRouteTable {
         crate::locks::read_tolerant(&self.table)
     }
 
-    /// Reload the route table from disk.
+    /// Reload the route table from the committed Store snapshot.
     ///
-    /// Called by the file watcher when the route table file changes.
+    /// A live table's own replace path; the daemon applies snapshots through
+    /// `server::RouteReloader`, which owns the revision fence, DNS cache and
+    /// idle generation, so only table-local callers use this.
     pub fn reload(&self) -> Result<(), GatewayError> {
         let new_table = RouteTable::load(&self.path)?;
         let mut guard = crate::locks::write_tolerant(&self.table);

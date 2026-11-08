@@ -1022,6 +1022,93 @@ fn milestone_130acca8_notification_wakes_the_route_worker() {
     reconcile.settle();
 }
 
+/// effigy#716: the watcher's callback is wired to the worker's signal. A
+/// delivered event that can change the committed snapshot leaves exactly one
+/// pending observation, and an event kind that cannot change it leaves none.
+/// This is deterministic: it does not depend on the platform delivering an
+/// event, which is why the publication control no longer claims to prove it.
+#[test]
+fn milestone_130acca8_watcher_callback_signals_the_route_worker() {
+    use notify::event::{AccessKind, CreateKind, ModifyKind, RemoveKind};
+    use notify::{Event, EventKind};
+    let signal = Arc::new(ReconcileSignal::new());
+    let mut handler = route_watch_handler(Arc::clone(&signal), PathBuf::from("/fixture/store"));
+
+    // Two delivered changes coalesce into one pending observation.
+    handler(Ok(Event::new(EventKind::Modify(ModifyKind::Any))));
+    handler(Ok(Event::new(EventKind::Create(CreateKind::File))));
+    assert_eq!(
+        signal.wait(Duration::ZERO),
+        Wake::Event,
+        "a delivered change is one pending observation"
+    );
+    assert_eq!(
+        signal.wait(Duration::ZERO),
+        Wake::Interval,
+        "the pending observation was consumed, not queued twice"
+    );
+
+    handler(Ok(Event::new(EventKind::Remove(RemoveKind::File))));
+    assert_eq!(signal.wait(Duration::ZERO), Wake::Event, "removal signals");
+    assert_eq!(
+        signal.wait(Duration::ZERO),
+        Wake::Interval,
+        "and is consumed once"
+    );
+
+    // Event kinds that cannot change the committed snapshot signal nothing.
+    handler(Ok(Event::new(EventKind::Access(AccessKind::Read))));
+    assert_eq!(
+        signal.wait(Duration::ZERO),
+        Wake::Interval,
+        "an access is not a change"
+    );
+    // A watcher error is reported and does not fabricate work.
+    handler(Err(notify::Error::generic("fixture watcher error")));
+    assert_eq!(
+        signal.wait(Duration::ZERO),
+        Wake::Interval,
+        "a watcher error is not an observation"
+    );
+}
+
+/// effigy#716: an observation that panics is reported at the panic point and
+/// retried like any other failed observation, so one panic cannot silently end
+/// reconciliation.
+#[test]
+fn milestone_130acca8_panicking_observation_keeps_the_worker_alive() {
+    let (_fixture, routes) = gateway_state();
+    publish_route(&routes, "after-panic.test");
+    let committed = store_revision(&routes);
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
+    let clock = held_clock();
+    let (idle, _stopped) = idle_shutdown(&routes, &clock);
+    let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = Arc::clone(&attempts);
+    let reloader = RouteReloader {
+        read: Arc::new(move |path: &Path| {
+            if observed.fetch_add(1, Ordering::SeqCst) == 0 {
+                panic!("fixture observation panicked");
+            }
+            RouteTable::load(path)
+        }),
+        ..reloader(&routes, &table, &dns_cache, &idle, false)
+    };
+    let mut reconcile = RouteReconcile::spawn(quick_reconciler(reloader));
+    wait_until(
+        "the route after a panicked observation",
+        Duration::from_secs(20),
+        || table.read().unwrap().lookup("after-panic.test").is_some(),
+    );
+    assert!(
+        attempts.load(Ordering::SeqCst) >= 2,
+        "the worker kept observing after the panic"
+    );
+    assert_eq!(table.read().unwrap().revision, committed);
+    reconcile.settle();
+}
+
 fn store_revision(routes: &Path) -> u64 {
     crate::endpoint_store::EndpointStore::for_routes(routes)
         .snapshot()
