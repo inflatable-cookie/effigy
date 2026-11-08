@@ -234,7 +234,7 @@ jobs:
 
       - name: Check glibc compatibility floor
         if: contains(matrix.target, 'unknown-linux-gnu')
-        run: ./effigy-${{ matrix.target }} release check-binary ./effigy-${{ matrix.target }} --glibc-floor 2.35
+        run: ./scripts/release/checks.sh check-binary ./effigy-${{ matrix.target }} --glibc-floor 2.35
 
       - name: Smoke test
         run: ./effigy-${{ matrix.target }} smoke:release ./effigy-${{ matrix.target }}

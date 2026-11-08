@@ -52,8 +52,8 @@ commands refuse with these replacements:
 | `effigy release evidence closeout` | `effigy release:evidence:closeout` | manual; writes a closeout record from captured artifacts |
 | `effigy release evidence summary` | `effigy release receipt <run>` | the Run itself |
 
-`release:verify:binaries` checks the GitHub Release assets (four binaries and the
-two macOS checksum sidecars), the Homebrew formula version and the
+`release:verify:binaries` checks the GitHub Release assets (four binaries and
+four matching checksum sidecars), the Homebrew formula version and the
 tagged-source install. It is what marks a published release verified in the
 receipt. It fails closed when `brew` is missing rather than reporting a release
 verified without the tap; pass `--skip-homebrew` deliberately when that is the
@@ -64,20 +64,16 @@ operator's installed `effigy` must be at least as new as the checkout: a stale
 one fails the gate loudly while parsing `[release]`. The Run itself always runs
 from the source-built binary the `release:run` selector names.
 
-## Before the next publication: the binary workflow's GLIBC step
+## Binary workflow GLIBC check
 
-`.github/workflows/release-binaries.yml` still runs the retired
-`./effigy-<target> release check-binary …` in its build job, so that step fails
-once a release is cut from a tree that includes this retirement.
-`effigy release:metadata` warns about it and names the fix; it does not fail,
-because the workflow is outside the release Run. Before publishing:
+`.github/workflows/release-binaries.yml` uses the maintained repository script
+for its GLIBC check, preserving the Linux-only condition and 2.35 floor:
 
 ```
 ./scripts/release/checks.sh check-binary ./effigy-${{ matrix.target }} --glibc-floor 2.35
 ```
 
-is the replacement for that step. It needs an approved workflow edit, which
-this change does not make.
+The script replaces the retired `release check-binary` CLI spelling.
 
 ## Compatibility: `[distribution]` and the shorthand
 
@@ -94,13 +90,16 @@ targets only when it needs them.
 
 ## Workspace and gateway diagnostic disposition before v0.15 freeze
 
-Before freeze, obtain Tom's decision on security lead `8d767d55`: existing gateway
-daemon logs can contain raw diagnostics and pre-existing permissive log files
-or searchable directories can expose them to other local users. New-file mode
-0600 does not repair legacy files and is not global sanitization. Workspace
-Phase A apply and workspace preparation separately require qualified private or
-discarded output before their production path is accepted. A fake-backend proof
-is not a native gateway or release qualification; keep the existing review and
+Gateway stdout/stderr logs now repair a normally reopened file to owner-only
+mode on its held descriptor, after checking the selected gateway directory,
+regular-file type, owner and single-link identity. The writers preserve existing
+bytes and append behavior. This is operation-local: it does not scan or repair
+unopened legacy logs, directory or ancestor permissions, and raw diagnostics may
+still contain sensitive upstream text. Workspace Phase A apply and workspace
+preparation separately require qualified private or discarded output before
+their production path is accepted. This source fix is not native gateway or
+release qualification, and it does not accept the remaining raw-output or
+historical-file exposure. Keep their separate pre-freeze disposition, review and
 native gates in force.
 
 ## v0.15 Level 1 qualification order — 2026-11-02
@@ -277,6 +276,12 @@ sidecars, not a signed manifest. Existing release gates, binary names and
 platforms remain authoritative. This request permits the checksum workflow
 edit, not a release, an old-release mutation, or a tag change. Human release
 and version authorization is still required.
+
+Task effigy#731 extends the maintained release-assets helper to generate,
+verify and publish the same exact sidecar format for the two Linux binaries.
+The workspace cold-cache consumer can then verify its matching raw binary.
+The checksum remains unsigned; it does not establish GitHub artifact
+provenance.
 
 ## Prepare
 

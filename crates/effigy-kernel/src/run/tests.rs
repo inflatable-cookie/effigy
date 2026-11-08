@@ -1123,6 +1123,10 @@ fn gateway_operator_events_write_one_private_record_per_action() {
     record_gateway_operator(&directory, OperatorAction::Up, "gateway up command");
     assert!(!directory.exists());
     std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("gateway.stderr.log");
+    std::fs::write(&path, "{\"sentinel\":true}\n").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let original = std::fs::read(&path).unwrap();
     for (action, cause) in [
         (OperatorAction::Up, "gateway up command"),
         (OperatorAction::Down, "gateway down command"),
@@ -1130,12 +1134,13 @@ fn gateway_operator_events_write_one_private_record_per_action() {
     ] {
         record_gateway_operator(&directory, action, cause);
     }
-    let path = directory.join("gateway.stderr.log");
     let log = std::fs::read_to_string(&path).unwrap();
     let events = log
         .lines()
+        .skip(1)
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect::<Vec<_>>();
+    assert!(log.as_bytes().starts_with(&original));
     assert_eq!(events.len(), 3, "{log}");
     for (event, (name, cause)) in events.iter().zip([
         ("gateway_up", "gateway up command"),
@@ -1152,6 +1157,26 @@ fn gateway_operator_events_write_one_private_record_per_action() {
     assert_eq!(events[1]["action"], "down", "{log}");
     let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600, "an operator log stays private");
+}
+
+#[test]
+fn gateway_operator_new_log_is_private_under_restrictive_umask() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = effigy_test_support::Fixture::new("gateway-operator-umask-").unwrap();
+    let directory = fixture.path().join("gateway");
+    std::fs::create_dir(&directory).unwrap();
+    // SAFETY: restore the process umask before assertions; no child is started.
+    let old_umask = unsafe { libc::umask(0o777) };
+    record_gateway_operator(&directory, OperatorAction::Up, "gateway up command");
+    // SAFETY: restore the exact prior process umask.
+    unsafe { libc::umask(old_umask) };
+    let mode = std::fs::metadata(directory.join("gateway.stderr.log"))
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600);
 }
 
 #[test]

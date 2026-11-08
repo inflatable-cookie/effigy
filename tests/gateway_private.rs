@@ -4052,6 +4052,91 @@ fn milestone_130acca8_https_waits_poll_through_a_missing_certificate_and_an_unco
     );
 }
 
+/// QA cbef4a23: a certificate produced in the selected private root is served
+/// over verified HTTPS once the daemon applies the route, even when the
+/// cert-directory watcher never delivers an event. The seven integrated-QA
+/// failures had already consumed the route (`/_effigy/routes`) and then
+/// spent the listener budget on `tlsv1 alert access denied`.
+#[test]
+fn milestone_cbef4a23_applied_route_serves_verified_https_from_a_late_certificate() {
+    let fixture = effigy_test_support::Fixture::new("milestone-cbef4a23-https-").unwrap();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let foreign_ca = fixture.path().join("foreign-ca");
+    private_directory(&foreign_ca);
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (root, https_address, proxy_address) = start_managed_listener_gateway_addresses(
+        fixture.path(),
+        &effects,
+        &foreign_ca,
+        &mut gateway_cleanup,
+    );
+    let ca_path = root.join("ca/rootCA.pem");
+    let domain = "cbef4a23.host.test";
+    let body = "cbef4a23-body";
+    let upstream = CannedUpstream::start(body);
+    let _env = env_test_support::EnvGuard::set_many(&[
+        (
+            "EFFIGY_GATEWAY_MKCERT_BIN",
+            Some(effects.private_mkcert.as_os_str()),
+        ),
+        ("EFFECT_LOG", Some(effects.log.as_os_str())),
+        ("MKCERT_CALLS", Some(effects.mkcert_calls.as_os_str())),
+        ("FOREIGN_CAROOT", Some(foreign_ca.as_os_str())),
+    ]);
+    effigy_gateway::tls::TlsConfig::new(root.join("certs"))
+        .with_ca_root(root.join("ca"))
+        .generate_cert(domain)
+        .expect("produce the private certificate before publication");
+    assert!(
+        root.join("certs").join(format!("{domain}.pem")).is_file(),
+        "the selected private root holds the produced certificate"
+    );
+    save_private_routes(&root, &[(domain, upstream.address, true)]);
+    let target = upstream.address.to_string();
+    let consumed = wait_for_gateway_route(
+        proxy_address,
+        domain,
+        Some(&target),
+        listener_readiness_deadline(),
+    );
+    assert_eq!(
+        live_route_target(&consumed, domain),
+        Some(Some(target)),
+        "the daemon applied the route before the HTTPS probe: {consumed}"
+    );
+    let response = wait_for_verified_https(
+        https_address,
+        &ca_path,
+        domain,
+        "/",
+        listener_readiness_deadline(),
+        false,
+        |response| response == body,
+    );
+    assert_eq!(response, body);
+
+    let unknown = probe_https(
+        https_address,
+        &ca_path,
+        "unknown.host.test",
+        "/",
+        Duration::from_secs(5),
+        true,
+        false,
+    );
+    assert!(
+        !unknown.success && unknown.stdout.is_empty(),
+        "an unknown SNI still fails closed: stderr {:?} response {:?}",
+        unknown.stderr,
+        unknown.stdout
+    );
+    assert!(
+        unknown.stderr.contains("access denied") || unknown.stderr.contains("alert"),
+        "the unknown handshake is a TLS refusal, not a verified response: {}",
+        unknown.stderr
+    );
+}
+
 /// Wait for the generation's exact body over verified HTTPS inside `deadline`.
 /// The route and its certificate are published before the gateway daemon has
 /// consumed them: until the daemon's SNI resolver loads the new certificate, a
@@ -4521,13 +4606,14 @@ fn fixture_environment_command(checkout: &Path, cleanup: &ManagedContainerCleanu
     // nextest injects `NEXTEST_*` runner settings (such as the thread count),
     // into the test process. Coding-agent and queue harnesses inject their own
     // ambient values (`AI_AGENT=pi`, `NORTHSTAR_BASE_BRANCH=main`, session
-    // paths and tokens). Effigy's classifier reads a short inherited value as
-    // a secret when it appears in an argument (the watch-mode respawn proof
-    // refuses its own listener, and the bound-elsewhere proof refuses its
-    // listener on `NEXTEST_TEST_THREADS`), and output redaction replaces the
-    // same values inside a child's captured output, where the proofs read
-    // published domains and recorded pids. A fixture never passes them to
-    // Effigy.
+    // paths and tokens). Pip injects `PIP_PROGRESS_BAR=on`. Effigy's classifier
+    // reads a short inherited value as a secret when it appears in an argument
+    // (the watch-mode respawn proof refuses its own listener, the bound-elsewhere
+    // proof refuses its listener on `NEXTEST_TEST_THREADS`, and a python3
+    // adapterless listener refuses on `PIP_PROGRESS_BAR=on` because `on` occurs
+    // inside `python3`). Output redaction replaces the same values inside a
+    // child's captured output, where the proofs read published domains and
+    // recorded pids. A fixture never passes them to Effigy.
     for (key, _) in std::env::vars_os() {
         if key.to_str().is_some_and(|name| {
             name.starts_with("CARGO_")
@@ -4536,6 +4622,7 @@ fn fixture_environment_command(checkout: &Path, cleanup: &ManagedContainerCleanu
                 || name.starts_with("PI_")
                 || name.starts_with("PASEO_")
                 || name.starts_with("NORTHSTAR_")
+                || name.starts_with("PIP_")
                 || matches!(
                     name,
                     "AI_AGENT"

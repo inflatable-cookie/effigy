@@ -56,14 +56,8 @@ fn operator_event_line(action: OperatorAction, cause: &str) -> String {
 
 fn append_operator_line(directory: &std::path::Path, line: &str) -> std::io::Result<()> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        // An operator log is private to its owner, in the shared gateway state
-        // directory and in a private root the fixture policy validates.
-        .mode(0o600)
-        .open(directory.join("gateway.stderr.log"))?;
+    let mut log =
+        crate::fs::open_gateway_log_append(directory, "gateway.stderr.log", None, None, true)?;
     writeln!(log, "{line}")
 }
 

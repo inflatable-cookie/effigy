@@ -15,7 +15,11 @@ import stat
 from pathlib import Path
 
 DIR = Path(__file__).resolve().parent
-SCRATCH = Path('/Volumes/Builds/scratch/effigy/579')
+# Supported Stash namespace (effigy#739). The retired Builds binding
+# `/Volumes/Builds/scratch/effigy/579` is history only and refuses below.
+STASH_NAMESPACE = '/Volumes/Stash/scratch/effigy'
+RETIRED_BUILDS_NAMESPACE = '/Volumes/Builds/scratch/effigy'
+SCRATCH = Path(STASH_NAMESPACE) / '579'
 MANIFEST = DIR / 'manifest-r1.json'
 SCHEMA = 'effigy.qualification.task-engine-signal-matrix.r1'
 UNARMED = 'UNARMED'
@@ -103,6 +107,31 @@ def load_manifest():
     if obj.get('schema') != SCHEMA:
         raise Refused('manifest schema mismatch: %s' % obj.get('schema'))
     return obj
+
+
+def require_canonical_scratch(root):
+    """Private, canonical root under the supported Stash namespace; no effect before this passes.
+
+    Refuses the retired Builds binding, any alias or symlink on the path, a foreign owner,
+    a group/other-accessible mode and a missing root. Names are checked without creating
+    anything.
+    """
+    text = str(root)
+    if (text != os.path.normpath(text) or not text.startswith(STASH_NAMESPACE + os.sep)
+            or text.startswith(RETIRED_BUILDS_NAMESPACE)):
+        raise Refused('scratch root is not under the supported Stash namespace: %s' % text)
+    if os.path.realpath(STASH_NAMESPACE) != STASH_NAMESPACE:
+        raise Refused('Stash scratch namespace is an alias')
+    try:
+        st = os.lstat(text)
+    except OSError as exc:
+        raise Refused('scratch root missing: %s' % exc) from exc
+    if not stat.S_ISDIR(st.st_mode) or os.path.realpath(text) != text:
+        raise Refused('scratch root is a symlink, alias or not a directory')
+    if st.st_uid != os.getuid():
+        raise Refused('scratch root is owned by another account')
+    if st.st_mode & 0o077:
+        raise Refused('scratch root is accessible to group or other')
 
 
 def verify_packet_bundle():

@@ -8,6 +8,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Secure existing gateway stdout/stderr logs to owner-only mode on the held
+  descriptor before appending or giving them to the daemon child. Existing bytes
+  are preserved; unopened legacy files, directory permissions and raw diagnostic
+  contents are not changed (effigy#736).
+
 - Update the locked `ctutils` and Tokio dependencies to patched releases
   (`ctutils` 0.4.4 and Tokio 1.53.3) for RUSTSEC-2026-0385 and
   RUSTSEC-2026-0386. Cargo deny policy and runtime behavior remain unchanged.
@@ -399,6 +404,22 @@ During v0.x, MINOR bumps may include breaking changes.
   seam. `run_stage` treats Darwin `killpg` EPERM on an unreaped group leader
   as gone. Frozen H and 627 stay historical. Source and injected controls
   only.
+- Prepare boot-complete Linux Stage1 readiness and protected config transition
+  admission (effigy#732). Stage1 S1.3 now requests systemd 259
+  `systemctl is-system-running --wait` with a host remaining-absolute deadline
+  that keeps the 120 s reserve; only `running`/exit 0 admits, and degraded,
+  unknown, timeout, transport, nonzero or missing terminal facts refuse. After
+  wait, the reviewed probe must match the same boot and VM. Post-stop config
+  comparison is semantic: structure, order, attributes and tails stay exact,
+  originals and hashes are retained, and only source-reviewed leaf rules may
+  change — `Identification/VmUptimeInSeconds` and
+  `UsbConnectHistory/USBPort/Timestamp` when both values are non-negative
+  integers and the later value is not smaller. A `NetworkAdapter/VMNetUuid`
+  rewrite stays unadmitted because the published Parallels NetworkAdapter
+  schema does not define that field or say whether a rewrite is a per-session
+  diagnostic or a virtual-network identity change; a syntactically valid UUID
+  is not a harmless transition. Source controls only: no VM, SSH, account or
+  service effect.
 - Stage the development Linux artifact builder's source through the release
   profile's own supported host mount (effigy#715). A normal incremental
   `install:local` from a checkout the `effigy-release` profile does not share
@@ -1004,6 +1025,26 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Load a private gateway's TLS certificates when the daemon applies a committed
+  route snapshot, so a missed cert-directory notification cannot leave a
+  published HTTPS route answering `tlsv1 alert access denied` (effigy#737,
+  QA cbef4a23). The route worker already re-observes the Store when the
+  directory watcher is silent (effigy#716); that same observation now reloads
+  the SNI resolver from the selected private root. An incomplete or invalid
+  pair keeps the last loaded set and does not unwind the applied snapshot.
+  Operator reloads replace the resolver in one write, so a handshake never
+  sees an empty map between `clear` and the first `add`.
+- Publish and verify SHA-256 sidecars for all four release binaries, including
+  Linux assets, so cold-cache workspace acquisition can verify the binary it
+  downloads. The Linux build workflow also uses the maintained GLIBC check
+  script while keeping its 2.35 floor.
+- Close four Stage1 admission holes found in review of PR 826 (effigy#732).
+  `stage1_run` now requires occurrence identity before any step, so a wrong-boot
+  probe cannot pass by omitting identity; a launched start that times out or
+  returns nonzero still attempts the graceful stop and retains post-state;
+  Unicode numeric lookalikes (`²`, `①`) and unknown XML encodings refuse as
+  malformed config instead of raising; the genuine 719 replay skips when the
+  private evidence is absent.
 - Keep managed panes bounded when a tab starts Effigy itself (effigy#729). The
   pane fact is `EFFIGY_MANAGED_PANE=1`, outside the `EFFIGY_INTERNAL_` namespace
   that Effigy's child environment and consumer wrappers scrub, so a nested child

@@ -133,7 +133,7 @@ All three backend inputs/GO-index stay **UNARMED** pending actual GOs, accepted
 placement and planner-bound aggregate execution. Consumer/install/production/
 merge authority is unchanged.
 
-## Setup adapter status (source-only, revision 10)
+## Setup adapter status (source-only, revision 12)
 
 Pure controls, no effect. Files: `linux_setup.py` (Stage1 entry bound to the registered
 home, admission verifiers, setup plan, executor, host credit, `ssh_argv`),
@@ -141,7 +141,7 @@ home, admission verifiers, setup plan, executor, host credit, `ssh_argv`),
 candidate producer, root entry point), `linux_transfer.py` (bounded local processes, the
 contained stdin transfer), `linux_receipts.py` (OpenSSH-signed admission receipts),
 `linux-setup-probe.sh` (read-only probe, hash bound), `linux-setup-stages.json` (ledger
-checked against the plan), `linux_setup_tests.py` (161 controls, including real-process flows;
+checked against the plan), `linux_setup_tests.py` (192 controls, including real-process flows;
 `test:qualification:linux-setup`).
 
 Preparation request hashing and Linux guest placement share the explicit
@@ -197,12 +197,25 @@ packaging gap; it does not activate a request or establish any setup gate.
   namespace `effigy-go-receipt`) checked against an allowed-signers file bound by sha256.
   Each receipt must name its gate, be approved, and be bound to this plan digest. Tampered,
   wrong-signer, unsigned and stale receipts refuse. The trust anchor is an operator key.
-- **Stage1.** One start, one read-only probe, one graceful stop, 600 s, no snapshot, no
-  `--kill`. The request reads the registered home itself. Config, descriptor and extent
-  inventory are recomputed from `PVM_HOME`, and the probe script must hash to the reviewed
-  value. Post-stop, `stage1_verify_post` refuses on drift in config bytes, identities,
-  descriptor, extents, snapshot tree or growth above 1 GiB. Post-run bytes are retained into the stage before any check, and the
-  writable top is selected from the exact descriptor bytes, never a file name (K-25).
+- **Stage1.** One start, one systemd 259 `systemctl is-system-running --wait` readiness
+  (exactly `running`/exit 0; degraded, unknown, timeout, transport, nonzero or missing
+  refuse), one read-only probe on that same boot and VM, one graceful stop, 600 s including
+  120 s reserve, no snapshot, no `--kill`. Occurrence identity is required; omitting it
+  refuses before any step. A launched start that fails still attempts the graceful stop
+  and retains post-state. The request reads the registered home itself.
+  Config, descriptor and extent inventory are recomputed from `PVM_HOME`, and the probe
+  script must hash to the reviewed value. Host timeout for wait is min(step, remaining
+  absolute − reserve) and never extends. A transport or client exit is not VM closure.
+  Post-stop, `stage1_verify_post` compares retained config semantically: structure, order,
+  attributes and tails stay exact; originals and hashes are preserved. Only source-reviewed
+  leaf transitions may change (`Identification/VmUptimeInSeconds` and
+  `UsbConnectHistory/USBPort/Timestamp`, both ASCII non-negative integers, later value not
+  smaller). Unicode numeric lookalikes and unknown XML encodings refuse. A `NetworkAdapter/VMNetUuid` rewrite is unadmitted: the published Parallels
+  NetworkAdapter schema does not define that field or state whether a rewrite is a
+  per-session diagnostic or a virtual-network identity change. Identities, descriptor,
+  extents, snapshot tree or growth above 1 GiB still refuse. Post-run bytes are retained
+  into the stage before any check, and the writable top is selected from the exact
+  descriptor bytes, never a file name (K-25).
 - **Stage root (revision 8).** Row stages are direct children of the reviewed root
   `/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/stage`. The root is created mode 0711 and
   owned by root. Each row directory is mode 0700 and owned by the payload account. The

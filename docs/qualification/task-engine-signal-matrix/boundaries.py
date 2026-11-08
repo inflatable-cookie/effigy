@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """Committed refusal-boundary battery for the task-engine signal packet.
 
-Queue tasks effigy#579, effigy#582 and effigy#585. Installed-Effigy selector
-`test:qualification:task-engine-signals` runs only this file. Fake backends,
-labeled doubles, and owned local fake-executable HostCli fixtures under this
-run's TMPDIR (or /Volumes/Builds/scratch/effigy/579/) — no VM, engine,
-container, image, install, or native task. Passing these controls is not
-native closure.
+Queue tasks effigy#579, effigy#582, effigy#585 and effigy#739. Installed-Effigy
+selector `test:qualification:task-engine-signals` runs this file after a
+compile-only pass over the packet sources. Fake backends, labeled doubles,
+and owned local fake-executable HostCli fixtures under this run's TMPDIR (or
+/Volumes/Stash/scratch/effigy/579/) — no VM, engine, container, image,
+install, or native task. The proof-entry controls prove request admission and
+dispatch through the production HostCliDriver with labeled fixtures only.
+Passing these controls is not native closure.
 """
+import contextlib
 import hashlib
+import io
 import json
 import os
 import signal as os_signal
@@ -21,13 +25,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common  # noqa: E402
 import execute  # noqa: E402
 import launch  # noqa: E402
+import signal_proof  # noqa: E402
 from common import (  # noqa: E402
     DIR, HELPER_NAME, HEX40, HEX64, NONCE_HEX_LEN, SCRATCH, SIGNAL_CELLS,
     STATUS_SCHEMA, UNARMED, Refused, apply_overlay, bundle_digest,
-    construct_plan, decode_output, generate_nonce, helper_kill_tail,
-    load_manifest, observe_snapshot, parse_identity, parse_inspect,
-    parse_snapshot, parse_status, production_helper, require_armed,
-    verify_go_receipt, verify_packet_bundle,
+    construct_plan, decode_output, digest_bytes, generate_nonce,
+    helper_kill_tail, load_manifest, observe_snapshot, parse_identity,
+    parse_inspect, parse_snapshot, parse_status, production_helper,
+    require_armed, require_canonical_scratch, verify_go_receipt,
+    verify_packet_bundle,
 )
 from execute import HostCliDriver, LabeledDouble, LostResponse, execute_pass  # noqa: E402
 
@@ -1080,18 +1086,28 @@ with log.open('a') as fh:
         'nonce': os.environ.get('EFFIGY_CUSTODY_NONCE'),
         'pid': os.getpid(),
     }) + '\n')
+if len(sys.argv) >= 2 and sys.argv[1] == 'run':
+    raise SystemExit(2)
 if len(sys.argv) >= 2 and sys.argv[1] == 'tasks':
-    print(json.dumps({
+    owner = None
+    if os.environ.get('TES_STATUS_OWNER') == '1' and record.exists():
+        try:
+            owner = json.loads(record.read_text())
+        except ValueError:
+            owner = None
+    if owner is not None:
+        view = {'state': 'running', 'current': {'pid': owner['pid'], 'run_id': 'fixture-run'}}
+    else:
+        view = {'state': 'not-recorded', 'current': None}
+    print(json.dumps(dict({
         'schema': 'effigy.tasks-status.v3',
         'schema_version': 3,
         'task': {'selector': 'hold'},
-        'state': 'not-recorded',
-        'current': None,
         'latest': None,
         'history': [],
         'warnings': [],
         'routing': {},
-    }))
+    }, **view)))
     raise SystemExit(0)
 got = []
 def handler(signum, _frame):
@@ -1376,6 +1392,303 @@ def t_hostcli_unparsable_inspect_stdout_is_not_verified():
         reap_driver(driver)
 
 
+class LabeledHostCliFixture(HostCliDriver):
+    """HostCliDriver aimed at owned fake executables. Its label is never native credit."""
+
+    label = 'HostCli-fixture'
+
+
+class FixtureDouble(LabeledDouble):
+    label = 'HostCli-fixture'
+
+
+class NoEffects:
+    """A transport that fails the battery if any effect reaches it."""
+
+    label = 'HostCli-fixture'
+
+    def __init__(self):
+        self.calls = []
+
+    def call(self, call):
+        self.calls.append(call)
+        raise AssertionError('effect reached the transport')
+
+    start = signal = wait = call
+
+
+def request_obj(tmp, overlay):
+    cand = overlay['candidate']
+    eng = overlay['engine']
+    return {
+        'schema': signal_proof.SCHEMA,
+        'selector': signal_proof.SELECTOR,
+        'bundle_sha256': BUNDLE,
+        'go_sha256': digest_bytes((tmp / 'go.txt').read_bytes()),
+        'source': cand['source_commit'],
+        'binary': cand['binary_path'],
+        'binary_sha256': cand['binary_sha256'],
+        'observer': cand['observer_path'],
+        'observer_sha256': cand['observer_sha256'],
+        'owner_root': cand['owner_root'],
+        'engine': eng['kind'],
+        'identity': eng['identity'],
+        'context': eng['context'],
+        'image_digest': eng['image_digest'],
+        'window': '2026-11-03T00:00:00Z',
+        'inventory': str(tmp / 'inventory-pre.json'),
+    }
+
+
+def write_request_bytes(tmp, raw, name=None, mode=0o600):
+    path = tmpfile(tmp, name or signal_proof.REQUEST_NAME, raw, mode=mode)
+    return str(path), digest_bytes(raw)
+
+
+def entry_base(go_mut=None, go_over=None):
+    """A private root with a candidate, observer, owner root and a GO matching the overlay."""
+    tmp = owned_tmp()
+    overlay = armed_fixture(tmp)
+    go_overlay = go_mut(json.loads(json.dumps(overlay))) if go_mut else overlay
+    write_matching_go(tmp, go_overlay, **(go_over or {}))
+    return tmp, overlay
+
+
+def entry_case(go_mut=None, go_over=None, req_mut=None):
+    """One GO and one request. `req_mut` edits the request dict from its matching values."""
+    tmp, overlay = entry_base(go_mut, go_over)
+    obj = request_obj(tmp, overlay)
+    if req_mut:
+        obj = req_mut(tmp, obj)
+    path, sha = write_request_bytes(tmp, json.dumps(obj, sort_keys=True).encode())
+    return tmp, path, sha
+
+
+def expect_no_effects(tmp, path, sha, fragment=None):
+    transport = NoEffects()
+    expect_refused(lambda: signal_proof.run([path, sha], scratch_dir=tmp, transport=transport), fragment)
+    assert transport.calls == [], 'effects reached the transport before refusal'
+    assert not os.path.lexists(tmp / 'invocation-receipt.json'), 'a refusal wrote an attempt receipt'
+
+
+def set_fields(**fields):
+    def mut(_tmp, obj):
+        return dict(obj, **fields)
+    return mut
+
+
+def t_scratch_binding_is_pinned_to_stash():
+    assert str(SCRATCH) == '/Volumes/Stash/scratch/effigy/579', str(SCRATCH)
+    assert 'Builds' not in str(SCRATCH)
+    assert load_manifest()['scratch_root'] == str(SCRATCH)
+
+
+def t_scratch_binding_refuses_retired_builds_root():
+    expect_refused(lambda: require_canonical_scratch(Path('/Volumes/Builds/scratch/effigy/579')), 'Stash')
+
+
+def t_scratch_binding_refuses_outside_and_unnormalized_names():
+    expect_refused(lambda: require_canonical_scratch(Path('/tmp/effigy-579')), 'Stash')
+    expect_refused(lambda: require_canonical_scratch(Path('/Volumes/Stash/scratch/effigy/../effigy/579')), 'Stash')
+
+
+def t_scratch_binding_refuses_alias_loose_and_missing_roots():
+    tmp = owned_tmp()
+    real = tmp / 'real'
+    real.mkdir(mode=0o700)
+    os.symlink(real, tmp / 'alias')
+    loose = tmp / 'loose'
+    loose.mkdir()
+    loose.chmod(0o755)
+    expect_refused(lambda: require_canonical_scratch(tmp / 'alias'), 'symlink')
+    expect_refused(lambda: require_canonical_scratch(loose), 'group or other')
+    expect_refused(lambda: require_canonical_scratch(tmp / 'missing'), 'missing')
+    require_canonical_scratch(real)
+
+
+def t_launch_refuses_builds_root_before_any_read():
+    expect_refused(
+        lambda: launch.main(['--execute'], scratch_dir=Path('/Volumes/Builds/scratch/effigy/579')),
+        'Stash',
+    )
+
+
+def t_proof_entry_has_no_environment_or_subprocess_authority():
+    text = (DIR / 'signal_proof.py').read_text()
+    for needle in ('os.environ', 'getenv', 'subprocess', 'os.system', 'os.spawn'):
+        assert needle not in text, 'signal_proof.py names %s' % needle
+
+
+def t_proof_entry_cli_without_pinned_root_refuses():
+    expect_refused(lambda: signal_proof.run(['/nonexistent/proof-request.json', 'a' * 64]))
+
+
+def t_proof_entry_argv_and_path_refuse_before_effects():
+    tmp, path, sha = entry_case()
+    expect_no_effects(tmp, str(tmp / 'other.json'), sha, 'pinned path')
+    expect_no_effects(tmp, path, 'f' * 64, 'hash')
+    transport = NoEffects()
+    expect_refused(lambda: signal_proof.run([path], scratch_dir=tmp, transport=transport), 'request path')
+    assert transport.calls == []
+
+
+def t_proof_entry_missing_go_refuses_before_effects():
+    tmp, overlay = entry_base()
+    obj = request_obj(tmp, overlay)
+    path, sha = write_request_bytes(tmp, json.dumps(obj, sort_keys=True).encode())
+    (tmp / 'go.txt').unlink()
+    expect_no_effects(tmp, path, sha, 'missing')
+
+
+def t_proof_entry_schema_is_strict_before_effects():
+    cases = {
+        'extra key': set_fields(program='x'),
+        'missing key': lambda _t, o: {k: v for k, v in o.items() if k != 'window'},
+        'wrong schema': set_fields(schema='effigy.other.v1'),
+        'wrong selector': set_fields(selector='other'),
+        'fake engine': set_fields(engine='TEST_REMOTE', identity='TEST_REMOTE:' + 'a' * 64 + '@qual-579'),
+        'engine and identity disagree': set_fields(engine='docker-compose'),
+        'short source': set_fields(source='d' * 39),
+        'relative binary': set_fields(binary='candidate/effigy'),
+        'dotdot binary': set_fields(binary='/x/../y'),
+        'short image digest': set_fields(image_digest='sha256:abc'),
+        'operator profile context': set_fields(identity='colima-nerdctl:' + 'a' * 64 + '@effigy', context='effigy'),
+        'non-hex identity': set_fields(identity='colima-nerdctl:' + 'z' * 64 + '@qual-579'),
+    }
+    for label in sorted(cases):
+        tmp, path, sha = entry_case(req_mut=cases[label])
+        expect_no_effects(tmp, path, sha)
+
+
+def t_proof_entry_raw_request_refuses_before_effects():
+    raw_cases = {
+        'duplicate key': b'{"schema": "x", "schema": "y"}',
+        'malformed json': b'{"schema":',
+        'non-utf8': b'\xff\xfe{}',
+        'oversize': b' ' * (signal_proof.REQUEST_MAX_BYTES + 1),
+    }
+    for label in sorted(raw_cases):
+        tmp, _overlay = entry_base()
+        path, sha = write_request_bytes(tmp, raw_cases[label])
+        expect_no_effects(tmp, path, sha)
+    tmp, _overlay = entry_base()
+    path, sha = write_request_bytes(tmp, b'{}', mode=0o644)
+    expect_no_effects(tmp, path, sha)
+    tmp, _overlay = entry_base()
+    _real, real_sha = write_request_bytes(tmp, b'{}', name='real.json')
+    os.symlink(tmp / 'real.json', tmp / signal_proof.REQUEST_NAME)
+    expect_no_effects(tmp, str(tmp / signal_proof.REQUEST_NAME), real_sha)
+
+
+def t_proof_entry_identity_mismatches_refuse_before_effects():
+    def go_field(key, value):
+        def mut(overlay):
+            if key in overlay['candidate']:
+                overlay['candidate'][key] = value
+            else:
+                overlay['engine'][key] = value
+            return overlay
+        return mut
+
+    def req_root(tmp, obj):
+        return dict(obj, owner_root=str(tmp / 'elsewhere'))
+
+    def req_inventory(tmp, obj):
+        return dict(obj, inventory=str(tmp / 'inventory-other.json'))
+
+    cases = [
+        ('wrong packet bundle', {'req_mut': set_fields(bundle_sha256='f' * 64)}),
+        ('wrong GO hash', {'req_mut': set_fields(go_sha256='f' * 64)}),
+        ('wrong source', {'req_mut': set_fields(source='e' * 40)}),
+        ('wrong program sha', {'req_mut': set_fields(binary_sha256='f' * 64)}),
+        ('wrong program path', {'req_mut': set_fields(binary='/Volumes/Stash/scratch/effigy/579/other-effigy')}),
+        ('wrong observer sha', {'req_mut': set_fields(observer_sha256='f' * 64)}),
+        ('wrong observer path', {'req_mut': set_fields(observer='/Volumes/Stash/scratch/effigy/579/other-observer')}),
+        ('wrong engine kind', {'req_mut': set_fields(engine='docker-compose', identity='docker-compose:' + 'a' * 64 + '@qual-579')}),
+        ('wrong image', {'req_mut': set_fields(image_digest='sha256:' + 'c' * 64)}),
+        ('owner root differs', {'req_mut': req_root}),
+        ('owner root outside scratch', {'req_mut': set_fields(owner_root='/Volumes/Stash/scratch/effigy/other/owner')}),
+        ('window differs', {'req_mut': set_fields(window='2026-11-04T00:00:00Z')}),
+        ('inventory differs', {'req_mut': req_inventory}),
+        ('GO window differs', {'go_over': {'window': '2026-11-04T00:00:00Z'}}),
+        ('GO packet differs', {'go_over': {'packet': 'f' * 64}}),
+        ('GO program sha differs', {'go_mut': go_field('binary_sha256', 'f' * 64)}),
+        ('GO source differs', {'go_mut': go_field('source_commit', 'e' * 40)}),
+        ('GO image differs', {'go_mut': go_field('image_digest', 'sha256:' + 'c' * 64)}),
+    ]
+    for label, kwargs in cases:
+        tmp, path, sha = entry_case(**kwargs)
+        expect_no_effects(tmp, path, sha)
+
+
+def t_proof_entry_builds_root_refuses_before_any_read():
+    expect_refused(
+        lambda: signal_proof.run(
+            ['/Volumes/Builds/scratch/effigy/579/proof-request.json', 'a' * 64],
+            scratch_dir=Path('/Volumes/Builds/scratch/effigy/579'),
+        ),
+        'Stash',
+    )
+
+
+def t_fixture_label_full_pass_is_never_native_credit():
+    tmp = owned_tmp()
+    overlay = armed_fixture(tmp)
+    write_matching_go(tmp, overlay)
+    go = verify_go_receipt(tmp / 'go.txt', BUNDLE, scratch_dir=tmp)
+    working = apply_overlay(load_manifest(), overlay)
+    plan = construct_plan(working)
+    result = execute_pass(working, go, plan, tmp, transport=FixtureDouble(Script('happy')), allow_native=False)
+    assert result['kind'] == 'fixture-pass', result['kind']
+    assert result['qualification'] is False
+    assert result['credit'] == 'fixture-not-native'
+
+
+def t_proof_entry_exact_request_reaches_hostcli_dispatch():
+    tmp = owned_tmp()
+    env, candidate = hostcli_env(tmp)
+    env['TES_STATUS_OWNER'] = '1'
+    observer = tmp / 'candidate' / 'observer'
+    observer.write_bytes(b'labeled-fixture-observer\n')
+    observer.chmod(0o700)
+    (tmp / 'owner' / '.effigy' / 'state').mkdir(parents=True)
+    overlay = armed_overlay(
+        tmp,
+        binary_sha=hashlib.sha256(candidate.read_bytes()).hexdigest(),
+        binary_path=str(candidate),
+    )
+    overlay['candidate']['observer_path'] = str(observer)
+    overlay['candidate']['observer_sha256'] = hashlib.sha256(observer.read_bytes()).hexdigest()
+    write_matching_go(tmp, overlay)
+    path, sha = write_request_bytes(tmp, json.dumps(request_obj(tmp, overlay), sort_keys=True).encode())
+    driver = LabeledHostCliFixture(env=env)
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            rc = signal_proof.run([path, sha], scratch_dir=tmp, transport=driver)
+    finally:
+        reap_driver(driver)
+    result = json.loads(buf.getvalue())
+    assert rc == 1, rc
+    assert result['kind'] == 'unknown', result['kind']
+    assert result['transport'] == 'HostCli-fixture'
+    assert result['qualification'] is False and result['credit'] == 'unknown-not-a-retry'
+    assert [c['op'] for c in result['calls']] == ['inspect', 'helper-snap', 'workload'], result['calls']
+    assert result['calls'][0]['program'] == 'colima'
+    assert result['calls'][0]['argv_head'] == ['nerdctl', '--profile', 'qual-579', '--', 'inspect', FULL_ID]
+    assert env['PATH'].startswith(str(tmp / 'bin') + os.pathsep)
+    rows = [json.loads(line) for line in Path(env['TES_FAKE_LOG']).read_text().splitlines() if line]
+    assert rows[0]['argv'][:4] == ['nerdctl', '--profile', 'qual-579', '--']
+    assert rows[0]['argv'][-2:] == ['inspect', FULL_ID]
+    assert (tmp / 'invocation-receipt.json').is_file()
+    assert not (tmp / 'cleanup-receipt.json').exists()
+    error = json.loads((tmp / 'error-receipt.json').read_text())
+    assert error['qualification'] is False and error['retry'] is False and error['kind'] == 'unknown'
+    transport = NoEffects()
+    expect_refused(lambda: signal_proof.run([path, sha], scratch_dir=tmp, transport=transport), 'already attempted')
+    assert transport.calls == []
+
+
 CASES = [
     t_hostcli_owner_missing_start_identity_is_refused,
     t_packet_bundle,
@@ -1449,6 +1762,21 @@ CASES = [
     t_hostcli_fixture_wait_timeout_is_lost_not_kill,
     t_hostcli_fixture_foreign_pid_is_refused,
     t_hostcli_unparsable_inspect_stdout_is_not_verified,
+    t_scratch_binding_is_pinned_to_stash,
+    t_scratch_binding_refuses_retired_builds_root,
+    t_scratch_binding_refuses_outside_and_unnormalized_names,
+    t_scratch_binding_refuses_alias_loose_and_missing_roots,
+    t_launch_refuses_builds_root_before_any_read,
+    t_proof_entry_has_no_environment_or_subprocess_authority,
+    t_proof_entry_cli_without_pinned_root_refuses,
+    t_proof_entry_argv_and_path_refuse_before_effects,
+    t_proof_entry_missing_go_refuses_before_effects,
+    t_proof_entry_schema_is_strict_before_effects,
+    t_proof_entry_raw_request_refuses_before_effects,
+    t_proof_entry_identity_mismatches_refuse_before_effects,
+    t_proof_entry_builds_root_refuses_before_any_read,
+    t_fixture_label_full_pass_is_never_native_credit,
+    t_proof_entry_exact_request_reaches_hostcli_dispatch,
 ]
 
 
