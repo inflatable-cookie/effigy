@@ -91,6 +91,7 @@ impl ProbePhase {
                 "census",
                 "source_files",
                 "nested_workspace_mounts",
+                "build_output_entries",
                 "build_tree_mounts",
                 "build_tree_retained_bytes",
                 "build_tree_reset",
@@ -102,6 +103,7 @@ impl ProbePhase {
                 "nested_workspace_mounts",
                 "export_dir_entries",
                 "export_unexpected",
+                "export_unexpected_kind",
                 "export_binary_bytes",
                 "export_receipt_bytes",
                 "export_sidecar_bytes",
@@ -120,19 +122,43 @@ impl ProbePhase {
 struct Probe {
     phase: ProbePhase,
     values: BTreeMap<String, u64>,
+    /// What the after-probe found where only the artifact export belongs. It is
+    /// a fixed vocabulary rather than a path, so a refusal can name the surface
+    /// without carrying container text into a message.
+    unexpected_kind: String,
 }
 
 impl Probe {
     fn get(&self, key: &str) -> u64 {
         self.values.get(key).copied().unwrap_or_default()
     }
+
+    fn unexpected(&self) -> &str {
+        if self.unexpected_kind.is_empty() {
+            "artifacts"
+        } else {
+            &self.unexpected_kind
+        }
+    }
 }
+
+/// What the after-probe reports where only the artifact export belongs.
+const EXPORT_UNEXPECTED_KINDS: [&str; 7] = [
+    "artifacts",
+    "target",
+    "tree",
+    "service",
+    "entry",
+    "link",
+    "missing",
+];
 
 /// Parse a probe's stdout strictly: `key value` lines only, the exact expected
 /// key set, decimal integers, no duplicates and nothing else.
 fn parse_probe(stdout: &str, phase: ProbePhase) -> Result<Probe, RunnerError> {
     let keys = phase.keys();
     let mut values = BTreeMap::new();
+    let mut unexpected_kind = String::new();
     for line in stdout.lines() {
         let line = line.trim();
         if line.is_empty() {
@@ -152,11 +178,23 @@ fn parse_probe(stdout: &str, phase: ProbePhase) -> Result<Probe, RunnerError> {
                 phase.label()
             )));
         }
-        if values.contains_key(key) {
+        if values.contains_key(key)
+            || (key == "export_unexpected_kind" && !unexpected_kind.is_empty())
+        {
             return Err(RunnerError::task_invocation(format!(
                 "workspace artifact {} boundary probe reported `{key}` twice",
                 phase.label()
             )));
+        }
+        if key == "export_unexpected_kind" {
+            if !EXPORT_UNEXPECTED_KINDS.contains(&raw) {
+                return Err(RunnerError::task_invocation(format!(
+                    "workspace artifact {} boundary probe reported an unknown unexpected-entry kind",
+                    phase.label()
+                )));
+            }
+            unexpected_kind = raw.to_owned();
+            continue;
         }
         if raw.is_empty() || raw.len() > 20 || !raw.bytes().all(|byte| byte.is_ascii_digit()) {
             return Err(RunnerError::task_invocation(format!(
@@ -173,7 +211,13 @@ fn parse_probe(stdout: &str, phase: ProbePhase) -> Result<Probe, RunnerError> {
     }
     let missing = keys
         .iter()
-        .filter(|key| !values.contains_key(**key))
+        .filter(|key| {
+            if **key == "export_unexpected_kind" {
+                unexpected_kind.is_empty()
+            } else {
+                !values.contains_key(**key)
+            }
+        })
         .copied()
         .collect::<Vec<_>>();
     if !missing.is_empty() {
@@ -183,7 +227,11 @@ fn parse_probe(stdout: &str, phase: ProbePhase) -> Result<Probe, RunnerError> {
             missing.join(", ")
         )));
     }
-    Ok(Probe { phase, values })
+    Ok(Probe {
+        phase,
+        values,
+        unexpected_kind,
+    })
 }
 
 /// The staged export's declared per-file caps, in the order the probe reports
@@ -229,10 +277,7 @@ fn check_probe(probe: &Probe) -> Result<(), RunnerError> {
         }
         ProbePhase::After => {
             if probe.get("export_unexpected") != 0 {
-                return refuse(format!(
-                    "the artifact export holds {} entr(ies) that are not artifact-shaped files",
-                    probe.get("export_unexpected")
-                ));
+                return refuse(unexpected_refusal(probe));
             }
             for (key, cap) in export_caps() {
                 if probe.get(key) > cap {
@@ -260,6 +305,21 @@ fn check_probe(probe: &Probe) -> Result<(), RunnerError> {
             Ok(())
         }
     }
+}
+
+/// Why a build's writes leave the declared host surface, named by where the
+/// census found them. The obsolete cargo target an older producer wrote into the
+/// bind is its own case: that is the writer this boundary exists to end.
+fn unexpected_refusal(probe: &Probe) -> String {
+    let cause = match probe.unexpected() {
+        "target" => "the build wrote into `/workspace/.effigy/linux-release/target`, the cargo tree an older producer kept inside the bound source",
+        "tree" => "the build wrote into `/workspace/.effigy` outside its artifact service directory",
+        "service" => "the build wrote something other than the declared artifact export under `/workspace/.effigy/linux-release`",
+        "link" => "the build's service tree in the bound source holds a link or a non-directory where a directory belongs",
+        "missing" => "the build wrote no declared artifact export into the bound source",
+        _ => "the artifact export holds entries that are not artifact-shaped files",
+    };
+    format!("{cause}; its writable host surface is not bounded")
 }
 
 /// The container-side script one probe runs. It carries no caller input: the
@@ -318,7 +378,8 @@ fi
 nested=$(awk -v w="$workspace_target" 'index($5, w "/") == 1 {n++} END {print n+0}' /proc/self/mountinfo)"#;
 
 /// Pre-build: the tree is the container's own layer, is inside its cap and has
-/// headroom, and nothing has been compiled yet.
+/// headroom, the bound source carries no build output of its own, and nothing
+/// has been compiled yet.
 const BEFORE_SCRIPT: &str = r#"covered=$(awk -v r="$tree" '$5 != "/" && ($5 == r || substr(r, 1, length($5) + 1) == $5 "/") {n++} END {print n+0}' /proc/self/mountinfo)
 [ "$covered" = 0 ] || { echo "build-tree-mount $covered"; exit 47; }
 mkdir -p "$tree/target"
@@ -332,29 +393,84 @@ if [ "$retained" -gt "$cap" ]; then
   retained=0
   reset=1
 fi
+build_output_entries=0
+if [ -e ./.effigy ] || [ -L ./.effigy ]; then
+  build_output_entries=$(find ./.effigy | wc -l | tr -d ' ')
+fi
 free=$(( $(df -P -k "$tree" | awk 'NR==2 {print $4}') * 1024 ))
 echo "census $census"
 echo "source_files $source_files"
 echo "nested_workspace_mounts $nested"
+echo "build_output_entries $build_output_entries"
 echo "build_tree_mounts $covered"
 echo "build_tree_retained_bytes $retained"
 echo "build_tree_reset $reset"
 echo "build_tree_free_bytes $free""#;
 
-/// Post-build: the source is unchanged, the export holds only artifact-shaped
-/// entries with the three declared names inside their caps, no build process
-/// remains and the tree is settled.
+/// Post-build: the source is unchanged, the bound source carries nothing but
+/// the declared artifact export, no build process remains and the tree is
+/// settled.
+///
+/// `/workspace/.effigy` is the build's own service tree inside the bind. In a
+/// staged bind the closure excludes it by rule and staging clears it, so every
+/// entry the census finds there is this build's output: only `linux-release`,
+/// only `artifacts` below it, and only artifact-shaped names below that. A
+/// checkout bind's `.effigy` is Effigy's own private state instead, so there only
+/// the builder's `linux-release` directory is censused. The obsolete
+/// `linux-release/target` an older producer wrote into the bind, and any other
+/// path a compiler chose, are counted and named rather than pruned.
 const AFTER_SCRIPT: &str = r#"export_dir_entries=0
 export_unexpected=0
-if [ -d "$export_dir" ] && [ ! -L "$export_dir" ]; then
+export_unexpected_kind=artifacts
+mark() {
+  if [ "$export_unexpected" = 0 ]; then export_unexpected_kind=$1; fi
+  export_unexpected=$((export_unexpected + 1))
+}
+if [ "$census" = 1 ]; then
+  # A staged bind is the closure and nothing else: staging cleared this tree, so
+  # every entry below it now is this build's output.
+  if [ ! -e ./.effigy ] && [ ! -L ./.effigy ]; then
+    mark missing
+  elif [ ! -d ./.effigy ] || [ -L ./.effigy ]; then
+    mark link
+  else
+    for entry in ./.effigy/* ./.effigy/.[!.]*; do
+      if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then continue; fi
+      base=$(basename "$entry")
+      if [ "$base" != linux-release ] || [ ! -d "$entry" ] || [ -L "$entry" ]; then
+        mark tree
+      fi
+    done
+  fi
+fi
+if [ ! -e ./.effigy/linux-release ] && [ ! -L ./.effigy/linux-release ]; then
+  mark service
+elif [ ! -d ./.effigy/linux-release ] || [ -L ./.effigy/linux-release ]; then
+  mark service
+else
+  for entry in ./.effigy/linux-release/* ./.effigy/linux-release/.[!.]*; do
+    if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then continue; fi
+    base=$(basename "$entry")
+    if [ "$base" = target ]; then
+      mark target
+    elif [ "$base" != artifacts ] || [ ! -d "$entry" ] || [ -L "$entry" ]; then
+      mark service
+    fi
+  done
+fi
+if [ ! -d "$export_dir" ] || [ -L "$export_dir" ]; then
+  mark missing
+else
   for entry in "$export_dir"/* "$export_dir"/.[!.]*; do
     if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then continue; fi
     export_dir_entries=$((export_dir_entries + 1))
     base=$(basename "$entry")
-    if [ ! -f "$entry" ] || [ -L "$entry" ]; then export_unexpected=$((export_unexpected + 1)); fi
+    if [ ! -f "$entry" ] || [ -L "$entry" ]; then
+      mark link
+    fi
     case "$base" in
       effigy-*) ;;
-      *) export_unexpected=$((export_unexpected + 1)) ;;
+      *) mark entry ;;
     esac
   done
 fi
@@ -383,6 +499,7 @@ echo "source_files $source_files"
 echo "nested_workspace_mounts $nested"
 echo "export_dir_entries $export_dir_entries"
 echo "export_unexpected $export_unexpected"
+echo "export_unexpected_kind $export_unexpected_kind"
 echo "export_binary_bytes $binary"
 echo "export_receipt_bytes $receipt"
 echo "export_sidecar_bytes $sidecar"
@@ -458,6 +575,15 @@ fn run_probe(
             ))
         }
     }
+    // A staged bind is the closure and nothing else: staging clears the build's
+    // own output, so any `.effigy` entry already there is unattributed output from
+    // another writer, not this build's starting state.
+    if staged.is_some() && phase == ProbePhase::Before && probe.get("build_output_entries") != 0 {
+        return Err(RunnerError::task_invocation(format!(
+            "the staged source already holds {} build-output entr(ies) this build did not write; its writable host surface is not attributable, so nothing was compiled",
+            probe.get("build_output_entries")
+        )));
+    }
     Ok(probe)
 }
 
@@ -523,6 +649,7 @@ fn boundary_marker(
             "nested_mounts": after.get("nested_workspace_mounts"),
             "census": after.get("census") == 1,
             "source_files": after.get("source_files"),
+            "build_output_entries_before": before.get("build_output_entries"),
         },
         "staged": {
             "mode": if staged.is_some() { "staged" } else { "checkout" },
@@ -959,6 +1086,7 @@ mod tests {
             ("census", 1u64),
             ("source_files", 2134),
             ("nested_workspace_mounts", 0),
+            ("build_output_entries", 0),
             ("build_tree_mounts", 0),
             ("build_tree_retained_bytes", 0),
             ("build_tree_reset", 0),
@@ -984,6 +1112,7 @@ mod tests {
             ("nested_workspace_mounts", 0),
             ("export_dir_entries", 3),
             ("export_unexpected", 0),
+            ("export_unexpected_kind", 0),
             ("export_binary_bytes", 17 * 1024 * 1024),
             ("export_receipt_bytes", 220),
             ("export_sidecar_bytes", 20),
@@ -1000,7 +1129,15 @@ mod tests {
             }
         }
         rows.iter()
-            .map(|(key, value)| format!("{key} {value}"))
+            .map(|(key, value)| {
+                if *key == "export_unexpected_kind" {
+                    // A token, never a number: the census names the surface it
+                    // found rather than carrying a path.
+                    format!("{key} {}", if *value == 0 { "artifacts" } else { "target" })
+                } else {
+                    format!("{key} {value}")
+                }
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -1035,6 +1172,42 @@ mod tests {
         assert!(parse_probe(&textual, ProbePhase::Before).is_err());
         // The before-phase key set never satisfies the after phase.
         assert!(parse_probe(&complete, ProbePhase::After).is_err());
+    }
+
+    #[test]
+    fn the_after_census_names_every_path_outside_the_declared_export() {
+        for kind in ["target", "tree", "service", "entry", "link", "missing"] {
+            let raw = after_output(&[("export_unexpected", 1), ("export_unexpected_kind", 1)])
+                .replace(
+                    "export_unexpected_kind target",
+                    &format!("export_unexpected_kind {kind}"),
+                );
+            let probe = parse_probe(&raw, ProbePhase::After).expect("parsed probe");
+            let refusal = check_probe(&probe).expect_err("must refuse").to_string();
+            assert!(refusal.contains("not bounded"), "{kind}: {refusal}");
+            if kind != "entry" {
+                // Every surface the census can find has its own naming; only an
+                // entry inside the export directory is the artifact-shape case.
+                assert!(
+                    !refusal.contains("artifact-shaped"),
+                    "{kind}: the refusal names the surface: {refusal}"
+                );
+            }
+        }
+        // The obsolete cargo tree inside the bind is its own case by name.
+        let probe = parse_probe(
+            &after_output(&[("export_unexpected", 1), ("export_unexpected_kind", 1)]),
+            ProbePhase::After,
+        )
+        .expect("parsed probe");
+        let refusal = check_probe(&probe).expect_err("must refuse").to_string();
+        assert!(refusal.contains("linux-release/target"), "{refusal}");
+        // An unknown kind token is never accepted.
+        let raw = after_output(&[]).replace(
+            "export_unexpected_kind artifacts",
+            "export_unexpected_kind else",
+        );
+        assert!(parse_probe(&raw, ProbePhase::After).is_err());
     }
 
     #[test]
@@ -1082,6 +1255,35 @@ mod tests {
 
     /// The scripts are pure text over the constants, and the export name is the
     /// only value that comes from the requested target.
+    #[test]
+    fn the_probe_scripts_census_the_whole_build_service_tree() {
+        // A staged bind's `.effigy` is build output, not source: the after-probe
+        // must count everything there, so a compiler that writes the obsolete
+        // cargo tree (or any other path) instead of the declared export refuses.
+        let after = probe_script(
+            ProbePhase::After,
+            "effigy-aarch64-unknown-linux-gnu",
+            ".effigy-builder-source.inventory",
+            "b".repeat(64).as_str(),
+            2134,
+        );
+        assert!(after.contains("./.effigy/linux-release"));
+        assert!(after.contains("base\" = target"));
+        assert!(after.contains("export_unexpected_kind"));
+        assert!(after.contains("export_unexpected=$((export_unexpected + 1))"));
+        // The before-probe reports pre-existing build output instead of assuming
+        // the bind starts clean.
+        let before = probe_script(
+            ProbePhase::Before,
+            "effigy-aarch64-unknown-linux-gnu",
+            ".effigy-builder-source.inventory",
+            "b".repeat(64).as_str(),
+            2134,
+        );
+        assert!(before.contains("build_output_entries="));
+        assert!(before.contains("find ./.effigy"));
+    }
+
     #[test]
     fn probes_name_the_declared_boundary_and_carry_no_caller_input() {
         for phase in [ProbePhase::Before, ProbePhase::After] {
@@ -1133,6 +1335,7 @@ mod tests {
         assert_eq!(marker["no_change"]["restricted"], true);
         assert_eq!(marker["source_bind"]["nested_mounts"], 0);
         assert_eq!(marker["source_bind"]["source_files"], 2134);
+        assert_eq!(marker["source_bind"]["build_output_entries_before"], 0);
         assert_eq!(marker["build_tree"]["path"], BUILD_TREE_ROOT);
         assert_eq!(marker["build_tree"]["cap_bytes"], BUILD_TREE_CAP_BYTES);
         assert_eq!(marker["build_tree"]["writers_closed"], true);

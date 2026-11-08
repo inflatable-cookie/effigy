@@ -115,6 +115,12 @@ pub(in crate::runner) fn stage(
     };
     write_manifest(plan, &staged_manifest)?;
     let bound = ensure_owned_stage_directory(plan, &plan.source, &binding)?;
+    // The staged tree is the caller's closure and nothing else. The build's own
+    // `.effigy` tree — a previous export, or the cargo target an older producer
+    // wrote into the bound source — is never source, so it is cleared before this
+    // build. Every `.effigy` entry a later census sees is then attributable to
+    // this build alone (effigy#743).
+    changed |= clear_superseded_build_output(&plan.source)?;
     // Write the closure, then remove what it no longer names. The staged tree is
     // this checkout's own build source, so a deleted or renamed file must not
     // survive as stale input.
@@ -179,6 +185,40 @@ pub(in crate::runner) fn stage(
         inventory_digest: sha256_hex(&inventory),
         bytes: closure_bytes,
     })
+}
+
+/// Remove superseded build output from the staged source.
+///
+/// Only the staged source root is touched, and only its `.effigy` entry: a link
+/// there is removed as a link, never followed. The closure never carries that
+/// path (it is excluded by rule), so nothing the caller tracks is at risk.
+fn clear_superseded_build_output(source: &Path) -> Result<bool, RunnerError> {
+    let output = source.join(".effigy");
+    match std::fs::symlink_metadata(&output) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            std::fs::remove_file(&output).map_err(|error| {
+                refusal(format!(
+                    "cannot clear the superseded staged build output `{}`: {error}",
+                    output.display()
+                ))
+            })?;
+            Ok(true)
+        }
+        Ok(_) => {
+            std::fs::remove_dir_all(&output).map_err(|error| {
+                refusal(format!(
+                    "cannot clear the superseded staged build output `{}`: {error}",
+                    output.display()
+                ))
+            })?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(refusal(format!(
+            "cannot inspect the staged build output `{}`: {error}",
+            output.display()
+        ))),
+    }
 }
 
 /// The inventory the container reads: one `sha256  path` line per staged file,
@@ -504,8 +544,9 @@ fn remove_unaccounted_tree(
         } else {
             format!("{prefix}/{name}")
         };
-        // The build's own output (cargo target and artifacts) is Effigy's, not
-        // the caller's source: it stays, and it is never handed back as source.
+        // The staged tree's own records are Effigy's, not the caller's source:
+        // they stay, and they are never handed back as source. The build's
+        // `.effigy` output is cleared before every staging instead.
         if prefix.is_empty() && (name == ".effigy" || name == STAGE_INVENTORY_FILE) {
             continue;
         }

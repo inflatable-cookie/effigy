@@ -17,7 +17,10 @@ During v0.x, MINOR bumps may include breaking changes.
   per-file caps (200 MiB / 64 KiB / 4 KiB) before the copy, and a successful
   build publishes one `effigy.builder-write-boundary.v1` record of what it
   observed through the container's own view — contained mounts, the closure
-  census, the export names and sizes, closed writers and a settled tree. The
+  census, the bound source's build-output tree (only the declared export, so a
+  compiler still writing the obsolete `linux-release/target` into the bind
+  refuses by name), the export names and sizes, closed writers and a settled
+  tree. The
   Recipe E source entry binds every field and carries the observed bytes under
   the Stage2 5 GiB premise with E9; a producer that publishes no record, or one
   that leaves a writer open, refuses before the claim. The build tree's VM-side

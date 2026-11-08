@@ -242,6 +242,15 @@ established and verified instead of assumed:
   process left and no process whose working directory is inside the build tree,
   and a byte-stable tree across a one-second settle interval. Client exit alone
   is never closure;
+- the bound source's own `.effigy` tree is censused, not pruned: in a staged bind
+  the closure excludes it by rule and staging clears it, so after the build it may
+  hold only `linux-release/artifacts` and only artifact-shaped names there (a
+  checkout bind's `.effigy` is Effigy's own private state, so there only the
+  builder's `linux-release` directory is censused). The
+  obsolete `linux-release/target` an older producer kept inside the bind — the
+  writer this change exists to end — and any other path a compiler chooses are
+  counted and named, and the occurrence refuses. A `.effigy` entry already present
+  before the build refuses as unattributed output;
 - the container-side script refuses an output above the binary cap *before* the
   first copy into the shared mount, and the host copy-back reads each declared
   file only within its own cap.
@@ -249,9 +258,10 @@ established and verified instead of assumed:
 `linux_recipe_e_proof.py` then requires exactly one record of schema
 `effigy.builder-write-boundary.v1` on the producer's own stdout, verifies every
 field against its own declaration (exact field sets, the restriction switch's
-value, the build tree path and caps, the export caps and names, the copy-back,
-the closure observations) and carries the observed host bytes plus the pinned E9
-reservation under the 5 GiB Stage2 premise. `E14_RESERVATION` counts the staged
+value, the bound source's pre-build build-output census, the build tree path and
+caps, the export caps and names, the copy-back, the closure observations) and
+carries the observed host bytes plus the pinned E9 reservation under the 5 GiB
+Stage2 premise. `E14_RESERVATION` counts the staged
 closure, the export and its copy-back, and the evidence streams. A producer that
 publishes no record — including an older implementation that ignores
 `EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING` — is refused before the claim, so the

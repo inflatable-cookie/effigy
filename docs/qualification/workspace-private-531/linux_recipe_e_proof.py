@@ -799,9 +799,17 @@ def verify_boundary(value, request):
         raise stage.Refusal(
             'the producer did not run under the restriction-only switch; an implementation that '
             'ignores it cannot publish this record and is never assumed safe')
-    source = boundary_fields(value['source_bind'], ('target', 'nested_mounts', 'census', 'source_files'), 'source_bind')
+    source = boundary_fields(
+        value['source_bind'],
+        ('target', 'nested_mounts', 'census', 'source_files', 'build_output_entries_before'),
+        'source_bind')
     if source['target'] != '/workspace' or source['nested_mounts'] != 0:
         raise stage.Refusal('the build retains a mount below its source bind')
+    # The bound source starts as the closure and nothing else: an entry already
+    # there when the build starts is output from another writer, not this build's
+    # starting state, so nothing it observes afterwards is attributable.
+    if boundary_count(source['build_output_entries_before'], 'source_bind.build_output_entries_before', 4096) != 0:
+        raise stage.Refusal('the bound source already held build output this build did not write')
     staged = boundary_fields(value['staged'], ('mode', 'files', 'bytes', 'cap_bytes', 'changed'), 'staged')
     if staged['mode'] != 'staged':
         raise stage.Refusal('the candidate policy is not the staged source this entry binds')

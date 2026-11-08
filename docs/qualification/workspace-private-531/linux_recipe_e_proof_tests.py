@@ -193,7 +193,8 @@ def boundary():
                       'value': os.environ.get('EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING'),
                       'restricted': True},
         'source_bind': {'target': '/workspace', 'nested_mounts': 0, 'census': True,
-                        'source_files': %(source_files)d},
+                        'source_files': %(source_files)d,
+                        'build_output_entries_before': 0},
         'staged': {'mode': 'staged', 'files': %(source_files)d, 'bytes': 4096,
                    'cap_bytes': %(staged_cap)d, 'changed': True},
         'export': {'directory': '/workspace/.effigy/linux-release/artifacts',
@@ -221,6 +222,8 @@ def boundary():
         value['source_bind']['nested_mounts'] = 1
     if kind == 'no_census':
         value['source_bind']['census'] = False
+    if kind == 'dirty_bind':
+        value['source_bind']['build_output_entries_before'] = 4
     if kind == 'open_writer':
         value['build_tree']['writers_closed'] = False
     if kind == 'unstable_tree':
@@ -766,6 +769,7 @@ class EntryTests(unittest.TestCase):
             'unrestricted': 'restriction-only switch',
             'nested_mount': 'mount below its source bind',
             'no_census': 'did not census the staged source',
+            'dirty_bind': 'already held build output',
             'open_writer': 'closure is not positively proven',
             'unstable_tree': 'closure is not positively proven',
             'over_cap': 'exceeds its declared bound',

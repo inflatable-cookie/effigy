@@ -126,6 +126,10 @@ if cmd == 'exec':
         resolved = script.replace('/workspace', str(bound))
         resolved = resolved.replace('/var/tmp/effigy-artifact-build', str(state / 'build-tree'))
         resolved = resolved.replace('/proc/self/mountinfo', str(state / 'mountinfo'))
+        # The process scan reads the container's `/proc`, so the fixture serves
+        # one: production's own `readlink <pid>/exe` and `<pid>/cwd` then see the
+        # writer this scenario leaves behind.
+        resolved = resolved.replace('/proc/[0-9]*', str(state / 'proc') + '/[0-9]*')
         if mode == 'nested_mount' and 'export_binary_bytes' not in script:
             with (state / 'mountinfo').open('a') as handle:
                 handle.write('9 8 0:9 / ' + str(bound) + '/nested rw,relatime - virtiofs x rw\n')
@@ -133,9 +137,20 @@ if cmd == 'exec':
             over = pathlib.Path(bound) / '.effigy/linux-release/artifacts' / ('effigy-' + os.environ.get('EFFIGY_LINUX_RELEASE_TRIPLE', 'x86_64-unknown-linux-gnu'))
             with over.open('r+b') as handle:
                 handle.truncate(209715201)
-        if mode == 'writer_left_running' and 'export_binary_bytes' in script:
-            writer = subprocess.Popen(['sleep', '30'])
-            (state / 'held-writer.pid').write_text(str(writer.pid))
+        if 'export_binary_bytes' in script:
+            # A writer that is still holding the build tree when the after-probe
+            # runs: one with a build tool's executable, one whose working
+            # directory is inside the tree. Both are what production reads.
+            proc = state / 'proc'
+            if mode == 'writer_tool_alive':
+                tool = proc / '4242' / 'cargo'
+                tool.parent.mkdir(parents=True, exist_ok=True)
+                tool.write_text('')
+                (proc / '4242' / 'exe').symlink_to(tool)
+            if mode == 'writer_in_tree':
+                cwd = proc / '4243'
+                cwd.mkdir(parents=True, exist_ok=True)
+                (cwd / 'cwd').symlink_to(state / 'build-tree')
         status = os.spawnve(os.P_WAIT, '/bin/sh', ['/bin/sh', '-lc', resolved], os.environ)
         sys.exit(status)
     if not all(part in script for part in ['cargo build --release --bin effigy --target ', 'cd /workspace', 'EFFIGY_ACTIVE_VERSION=', '/workspace/.effigy/linux-release/artifacts/effigy-']): sys.exit(26)
@@ -156,6 +171,16 @@ if cmd == 'exec':
     artifacts = pathlib.Path(bound) / '.effigy/linux-release/artifacts'
     artifacts.mkdir(parents=True, exist_ok=True)
     triple = os.environ.get('EFFIGY_LINUX_RELEASE_TRIPLE', 'x86_64-unknown-linux-gnu')
+    # A compiler that ignores CARGO_TARGET_DIR, or that picks its own output
+    # path, writes into the bound source where production's after-probe censuses.
+    if mode == 'old_cargo_tree':
+        stale = pathlib.Path(bound) / '.effigy/linux-release/target' / triple / 'release'
+        stale.mkdir(parents=True, exist_ok=True)
+        (stale / 'effigy').write_text('compiled into the host bind')
+    if mode == 'stray_effigy_path':
+        stray = pathlib.Path(bound) / '.effigy/state/objects'
+        stray.mkdir(parents=True, exist_ok=True)
+        (stray / 'ab').write_text('build output outside the declared export')
     binary = artifacts / ('effigy-' + triple)
     binary.write_text('fresh current source output ' + mode)
     version = '0.0.0-other-host' if mode == 'wrong_version' else os.environ['EFFIGY_RECOVERY_VERSION']
@@ -1727,6 +1752,82 @@ fn an_export_above_its_declared_cap_is_refused_before_it_reaches_the_caller() {
         "nothing beyond the declared names is exported"
     );
     fixture.assert_preserved();
+}
+
+/// The bound source after a build may hold only the declared artifact export.
+/// A compiler that keeps writing into the bind — the obsolete
+/// `linux-release/target` an older producer used, or any other `.effigy` path —
+/// is caught by the after-probe's census and refuses instead of leaving an
+/// uncounted host writer (effigy#743).
+#[test]
+fn the_after_census_refuses_build_output_outside_the_declared_export() {
+    let _lock = crate::contract_test_support::lock_test();
+    for (mode, message) in [
+        ("old_cargo_tree", "linux-release/target"),
+        (
+            "stray_effigy_path",
+            "outside its artifact service directory",
+        ),
+    ] {
+        let fixture = Fixture::staged(false, false, "docker");
+        let plan = fixture.stage().expect("a staged source plan");
+        let artifact = fixture
+            .root
+            .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+        write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
+        fixture.mode(mode);
+        let error = fixture.task().expect_err(mode);
+        assert!(error.contains(message), "{mode}: {error}");
+        assert!(
+            error.contains("not bounded") || error.contains("not artifact-shaped"),
+            "{mode}: {error}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&artifact).unwrap(),
+            "stale bytes",
+            "{mode}: an unbounded write is never published"
+        );
+        assert!(
+            !plan
+                .source
+                .join(".effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu.copied")
+                .exists(),
+            "{mode}"
+        );
+        fixture.assert_preserved();
+    }
+}
+
+/// A writer that is still open when the build returns is not closure, whichever
+/// way the container reports it: a build tool process, or a process whose
+/// working directory is inside the cargo tree.
+#[test]
+fn a_writer_still_holding_the_cargo_tree_refuses_as_unknown_closure() {
+    let _lock = crate::contract_test_support::lock_test();
+    for mode in ["writer_tool_alive", "writer_in_tree"] {
+        let fixture = Fixture::staged(false, false, "docker");
+        let plan = fixture.stage().expect("a staged source plan");
+        let artifact = fixture
+            .root
+            .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+        write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
+        fixture.mode(mode);
+        let error = fixture.task().expect_err(mode);
+        assert!(
+            error.contains("still holds the builder's cargo tree"),
+            "{mode}: {error}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&artifact).unwrap(),
+            "stale bytes",
+            "{mode}: an occurrence with unknown closure publishes nothing"
+        );
+        assert!(
+            plan.source.join(".effigy").exists(),
+            "{mode}: an unknown closure is not cleaned as if it had finished"
+        );
+        fixture.assert_preserved();
+    }
 }
 
 /// The staged export is this build's own output, not source: after the verified
