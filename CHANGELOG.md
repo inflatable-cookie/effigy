@@ -948,6 +948,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Avoid a false cleanup failure when a custody anchor retires during its final
+  stop, while retaining independent workload group checks and positive group
+  closure (effigy#709).
+
 - Give automatic Linux workspace artifact builds an exact checkout-owned
   builder (effigy#710). The private builder's project is now scoped to the
   exact canonical checkout: a runtime-scoped checkout keeps its generation
