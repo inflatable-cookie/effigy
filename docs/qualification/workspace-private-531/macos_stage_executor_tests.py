@@ -22,6 +22,7 @@ from pathlib import Path
 import shutil
 import socket
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -3169,6 +3170,222 @@ class D1WindowTests(Fixture):
             proof.main(['proof', path, digest])
         effect.assert_not_called()
         self.assertFalse(os.path.lexists(self.tmp + '/claims/d1-swap-0001.claim'))
+
+
+class DesktopReadyTests(Fixture):
+    """Entry-path simulations use local children and never confer native receipt credit."""
+    def setUp(self):
+        super().setUp()
+        prior = self.d0()
+        self.disk = self.tmp + '/disk'
+        Path(self.disk).write_bytes(b'disk')
+        for target, name, value in ((proof, 'ORIGINAL_D0', prior), (proof, 'DESKTOP_DISK', self.disk),
+                                    (proof, 'OPEN', self.docker)):
+            patcher = mock.patch.object(target, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(proof, 'app_inputs', return_value={'bundle_sha256': 'a' * 64,
+                                                                     'open_sha256': ex.sha_file(self.docker)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def request(self, name='ready-test-0001', duration=300):
+        return proof.ready_recipe(self.bindings, dict(activation_id=name, duration_seconds=duration,
+                                                       evidence_root=self.evidence))
+
+    def entry(self, request, routes, calls, d1_overrides=None):
+        path = self.tmp + '/request-' + request['d1']['activation_id']
+        if not os.path.exists(path):
+            Path(path).write_text(json.dumps(request, sort_keys=True))
+            os.chmod(path, 0o400)
+        real_run = primitive.run_stage
+        d1calls = []
+        volume = volume_for(request['d1']['activation_id'])
+        d1routes = {'d1-engine-info': emit(ENGINE_JSON), 'd1-label-absent': emit(''),
+                    'd1-volume-create': create_child(volume), 'd1-volume-inspect': emit(inspect_object(volume))}
+        d1routes.update(d1_overrides or {})
+
+        def local(root, argv, *args, **kwargs):
+            name = os.path.basename(str(root))
+            if '/ready-' in str(root):
+                calls.append((name, argv))
+                if name not in routes:
+                    raise AssertionError('unexpected readiness step ' + name)
+                argv = [sys.executable, '-I', '-B', '-c', routes[name]]
+            return real_run(root, argv, *args, **kwargs)
+
+        with mock.patch.object(primitive, 'run_stage', side_effect=local), \
+             mock.patch.object(ex, 'default_transport', self.routed(d1routes, d1calls)), \
+             mock.patch.object(ex, 'default_monitor', FixedHelperTests.quiet_monitor), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            code = proof.main(['proof', path, ex.sha_file(path)])
+        return code, json.loads(out.getvalue()), d1calls
+
+    def routes(self):
+        return {'context-before': emit('desktop-linux\n'), 'context-after': emit('desktop-linux\n'),
+                'engine-info': emit(ENGINE_JSON)}
+
+    def test_ready_skips_start_and_d1_receipt_is_simulation(self):
+        request = self.request()
+        calls = []
+        code, receipt, d1calls = self.entry(request, self.routes(), calls)
+        self.assertEqual(code, 0)
+        self.assertEqual(receipt['closure'], 'closed')
+        self.assertTrue(receipt['closure_simulated'])
+        self.assertEqual([x[0] for x in calls], ['context-before', 'engine-info', 'context-after'])
+        self.assertEqual([x[0] for x in d1calls], ['d1-engine-info', 'd1-label-absent',
+                                                   'd1-volume-create', 'd1-volume-inspect'])
+        with self.assertRaisesRegex(ex.Refusal, 'simulated'):
+            ex.verify_receipt_tree(receipt, 'D1', ex.chain_key(self.bindings), ex.load_manifest())
+
+    def test_ready_preserves_non_desktop_context(self):
+        request = self.request('ready-other-0001')
+        routes = dict(self.routes(), **{'context-before': emit('other\n'), 'context-after': emit('other\n')})
+        calls = []
+        code, _, _ = self.entry(request, routes, calls)
+        self.assertEqual(code, 0)
+        self.assertNotIn('app-start', [item[0] for item in calls])
+
+    def test_absent_socket_launches_once_then_reaches_d1(self):
+        os.unlink(self.socket_path)
+        request = self.request('ready-start-0001')
+        routes = self.routes()
+        routes['app-start'] = ('import socket\ns=socket.socket(socket.AF_UNIX)\ns.bind(%r)\n' % self.socket_path)
+        calls = []
+        code, _, d1calls = self.entry(request, routes, calls)
+        self.assertEqual(code, 0)
+        self.assertEqual([x[0] for x in calls].count('app-start'), 1)
+        self.assertTrue(d1calls)
+        self.assertTrue(os.path.exists(self.tmp + '/claims/start-ready-start-0001.claim'))
+
+    def test_start_polls_a_temporarily_unavailable_engine(self):
+        os.unlink(self.socket_path)
+        request = self.request('ready-poll-0001')
+        error = ('failed to connect to the docker API at ' + prep.DESKTOP_HOST +
+                 '; check if the path is correct and if the daemon is running: dial unix ' +
+                 self.socket_path + ': connect: connection refused\n')
+        routes = dict(self.routes(), **{'app-start': 'import socket\ns=socket.socket(socket.AF_UNIX)\ns.bind(%r)\n' % self.socket_path,
+                                        'engine-info': emit('', 1, error),
+                                        'engine-info-0002': emit(ENGINE_JSON)})
+        calls = []
+        code, _, d1calls = self.entry(request, routes, calls)
+        self.assertEqual(code, 0)
+        self.assertEqual([x[0] for x in calls].count('app-start'), 1)
+        self.assertIn('engine-info-0002', [x[0] for x in calls])
+        self.assertTrue(d1calls)
+
+    def test_context_change_and_bad_engine_stop_before_d1(self):
+        for name, override in [('context', {'context-after': emit('other\n')}),
+                               ('engine', {'engine-info': emit('{"ID":"other"}')})]:
+            request = self.request('ready-' + name + '-0001')
+            calls = []
+            with self.assertRaises(ex.Refusal):
+                self.entry(request, dict(self.routes(), **override), calls)
+            self.assertFalse(os.path.exists(self.evidence + '/D1-' + request['d1']['activation_id']))
+
+    def test_wrong_context_and_launch_failure_stop_before_d1(self):
+        os.unlink(self.socket_path)
+        for name, routes in [('context', dict(self.routes(), **{'context-before': emit('other\n')})),
+                             ('failure', dict(self.routes(), **{'app-start': emit('', 1)}))]:
+            request = self.request('start-' + name + '-0001')
+            calls = []
+            with self.assertRaises(ex.Refusal):
+                self.entry(request, routes, calls)
+            self.assertFalse(os.path.exists(self.evidence + '/D1-' + request['d1']['activation_id']))
+            if name == 'context':
+                self.assertNotIn('app-start', [x[0] for x in calls])
+
+    def test_successful_launcher_without_endpoint_times_out_before_d1(self):
+        os.unlink(self.socket_path)
+        request = self.request('ready-timeout-0001', duration=61)
+        calls = []
+        with self.assertRaises(ex.Refusal):
+            self.entry(request, dict(self.routes(), **{'app-start': emit('')}), calls)
+        self.assertFalse(os.path.exists(self.evidence + '/D1-' + request['d1']['activation_id']))
+        self.assertTrue(os.path.exists(self.tmp + '/claims/start-ready-timeout-0001.claim'))
+
+    def test_failed_create_keeps_original_no_replay_disposition(self):
+        request = self.request('ready-createfail-0001')
+        code, receipt, calls = self.entry(request, self.routes(), [], {'d1-volume-create': emit('', 1)})
+        self.assertEqual(code, 1)
+        self.assertEqual(receipt['closure'], 'stopped')
+        self.assertEqual(receipt['steps'][-1]['closure'], 'failed_closed')
+        self.assertEqual(calls[-1][0], 'd1-volume-create')
+        with self.assertRaises(ex.Refusal):
+            self.entry(request, self.routes(), [])
+
+    def test_backing_file_replaced_or_aliased_refuses(self):
+        request = self.request('ready-disk-0001')
+        os.rename(self.disk, self.disk + '.old')
+        Path(self.disk).write_bytes(b'replacement')
+        with self.assertRaises(ex.Refusal):
+            self.entry(request, self.routes(), [])
+        os.link(self.disk, self.disk + '.link')
+        with self.assertRaises(ex.Refusal):
+            self.request('ready-link-0001')
+
+    def test_input_drift_and_reused_start_claim_stop_before_launch(self):
+        os.unlink(self.socket_path)
+        request = self.request('ready-reuse-0001')
+        ex.claim_activation('start-ready-reuse-0001', 'a' * 64)
+        calls = []
+        with self.assertRaisesRegex(ex.Refusal, 'already claimed'):
+            self.entry(request, self.routes(), calls)
+        self.assertNotIn('app-start', [x[0] for x in calls])
+        request = self.request('ready-drift-0001')
+        request['app_inputs'] = dict(request['app_inputs'], bundle_sha256='b' * 64)
+        with self.assertRaises(ex.Refusal):
+            self.entry(request, self.routes(), [])
+
+    def test_spent_d1_claim_refuses_before_startup(self):
+        os.unlink(self.socket_path)
+        request = self.request('ready-d1-spent-0001')
+        ex.claim_activation('ready-d1-spent-0001', 'a' * 64)
+        calls = []
+        with self.assertRaisesRegex(ex.Refusal, 'no replay'):
+            self.entry(request, self.routes(), calls)
+        self.assertEqual(calls, [])
+
+    def test_root_or_prior_drift_refuses(self):
+        request = self.request('ready-root-0001')
+        directory = self.bindings['desktop_context_dir']
+        os.rmdir(directory)
+        os.mkdir(directory, 0o700)
+        with self.assertRaises(ex.Refusal):
+            self.entry(request, self.routes(), [])
+        with mock.patch.object(proof, 'ORIGINAL_D0', dict(proof.ORIGINAL_D0, sha256='0' * 64)):
+            with self.assertRaises(ex.Refusal):
+                self.request('ready-prior-0001')
+
+    def test_growth_limit_and_missing_file_refuse(self):
+        disk = proof.DesktopDisk()
+        self.addCleanup(disk.close)
+        disk.initial -= 512 * 1024 * 1024 + 1
+        with self.assertRaisesRegex(ex.Refusal, 'growth'):
+            disk.check()
+        os.rename(self.disk, self.disk + '.missing')
+        with self.assertRaises(ex.Refusal):
+            disk.check()
+
+    def test_pinned_cli_context_query_uses_only_synthetic_config(self):
+        docker = '/usr/local/bin/docker'
+        if not os.path.isfile(docker) or ex.sha_file(docker) != ex.HISTORICAL_TOOL_HASHES['docker']:
+            self.fail('source-reviewed Docker CLI is unavailable or changed')
+        config = self.tmp + '/synthetic-config'
+        os.mkdir(config, 0o700)
+        Path(config + '/config.json').write_text(json.dumps({'currentContext': 'desktop-linux',
+            'auths': {'example.invalid': {'auth': 'ZHVtbXk6ZHVtbXk='}}, 'credsStore': 'sentinel'}))
+        helper = self.tmp + '/docker-credential-sentinel'
+        marker = self.tmp + '/helper-called'
+        Path(helper).write_text('#!/bin/sh\n: > "$SENTINEL_MARKER"\nexit 1\n')
+        os.chmod(helper, 0o700)
+        result = subprocess.run([docker, 'context', 'show'], stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15, check=False,
+            env={'HOME': self.tmp, 'DOCKER_CONFIG': config, 'PATH': self.tmp + ':/usr/bin:/bin',
+                 'SENTINEL_MARKER': marker, 'DOCKER_CLI_HOOKS': 'false', 'DOCKER_CLI_HINTS': 'false',
+                 'OTEL_SDK_DISABLED': 'true'})
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, b'desktop-linux\n', b''))
+        self.assertFalse(os.path.lexists(marker))
 
 
 class OriginalD0EvidenceTests(unittest.TestCase):

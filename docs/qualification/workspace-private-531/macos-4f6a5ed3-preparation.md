@@ -304,6 +304,43 @@ Gates:
 
 `macos_stage_executor.py` is the stage runner. This source preparation starts no native backend.
 
+### Desktop readiness before D1
+
+The prospective `plan-ready BINDINGS OPTIONS` request binds the original D0 receipt, its three
+directory identities, the expected engine, the exact installed Desktop bundle and launcher, the
+source-reviewed Docker CLI, and the freshly observed identity of the existing `Docker.raw`. It
+composes a readiness prefix with the existing D1 window. The proof launch has one monotonic deadline
+of at most 900 seconds, including the 60-second reserve; readiness has at most 600 seconds and D1
+has at most 300 seconds or the remaining allowance. The readiness and app-start claims are distinct
+from D1's claims. A spent or uncertain claim is not replayable. The original D1 creation and
+inspection receipt still determines whether a volume is attributable.
+
+The fixed CLI context-name query is the sole default-config exception. Its normal config loader may
+internally decode stored auths. It does not retrieve credential values, call helpers, authenticate or
+contact a registry. The adapter does not parse, copy or expose the global config. The exact request's
+`requiresOperatorGo` discloses this loader behaviour and both possible effects: starting Desktop and
+creating an empty volume. A later Nucleus qualification must pin that request and explicitly obtain
+GO for that scope; this source preparation grants no native action. The pinned CLI is Docker 29.8.0,
+sha256 `4fb51be4a4e9389b942ecbf52901a962bdccdaa38275e6de4d353df33981d600`, built from
+[`88096ef`](https://github.com/docker/cli/tree/88096ef00576baf72a9cb45caa45c0544c40e0a7).
+Its [context show](https://github.com/docker/cli/blob/88096ef00576baf72a9cb45caa45c0544c40e0a7/cli/command/context/show.go)
+prints the selected name; its [config loader](https://github.com/docker/cli/blob/88096ef00576baf72a9cb45caa45c0544c40e0a7/cli/config/configfile/file.go)
+can decode auth fields. A synthetic config and helper sentinel exercise this exact CLI without a
+daemon or real credentials.
+
+The context is read before and after readiness. Startup is refused unless it is already
+`desktop-linux`, because [Docker documents that Desktop selects that context at startup](https://docs.docker.com/desktop/setup/install/mac-permission-requirements/).
+The already-ready path skips startup and requires the selection to remain unchanged. Neither check
+prevents concurrent external changes. The fixed launcher opens only `/Applications/Docker.app`;
+its exit does not establish readiness. The owned socket and a matching engine response do. Drift,
+missing telemetry, failed commands and exhausted reserve stop before D1.
+
+The held, no-alias Desktop disk is sampled before, during and after the operation against a 512 MiB
+allocated-growth threshold, alongside the private-root monitor. Samples are not a hard filesystem
+quota. The launcher process group does not contain the app or daemon's entire lifetime; Desktop may
+remain running after a timeout. No descendant-closure or complete resource certificate is claimed.
+Fixture simulations are labelled and their D1 receipts cannot be consumed as native chain evidence.
+
 - **Activation.** The ordinary `execute_stage` entry refuses. The separate
   `qualification:macos:proof-only -- REQUEST SHA256` entry is only for an actual Nucleus proof-only
   launch at the pinned commit and inputs, after native operator GO. Nucleus must record that execution;
