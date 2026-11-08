@@ -582,7 +582,7 @@ fn exec_error_means_runtime_not_running(error: &ContainerExecError) -> bool {
                 || stderr.contains("Cannot connect to the Docker daemon")
                 || stderr.contains("daemon is not running")
         }
-        ContainerExecError::Launch { .. } => false,
+        ContainerExecError::Launch { .. } | ContainerExecError::Refusal { .. } => false,
     }
 }
 

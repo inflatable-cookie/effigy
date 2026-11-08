@@ -44,6 +44,11 @@ impl From<ContainerExecError> for EffigyRuntimeError {
             ContainerExecError::Launch { command, error } => {
                 Self::TaskCommandLaunch { command, error }
             }
+            // No child ended, so no exit code or signal is claimed: the
+            // observation refused its own evidence and says why.
+            ContainerExecError::Refusal { command, reason } => {
+                Self::task_invocation(format!("{command} refused: {reason}"))
+            }
             ContainerExecError::Failure {
                 command,
                 code,

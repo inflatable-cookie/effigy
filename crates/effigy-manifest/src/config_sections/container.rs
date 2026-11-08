@@ -310,6 +310,14 @@ pub struct ManifestContainerConfig {
     /// Deliberately reuse one Compose identity across linked worktrees.
     #[serde(default)]
     pub share_runtime_identity: bool,
+    /// Own one Compose identity per checkout even when the checkout keeps
+    /// primary-checkout behaviour. The identity's suffix is derived from the
+    /// canonical checkout path, so two primary checkouts on one host never
+    /// share this environment's project while repeated commands in one
+    /// checkout reuse it. Runtime-scoped checkouts keep their generation
+    /// token. Contradicts `share_runtime_identity`.
+    #[serde(default)]
+    pub checkout_scoped_identity: bool,
     /// Borrow this environment's service data volumes from another
     /// environment: services present in both environments with the same
     /// catalog entry mount the target environment's named volumes, so the

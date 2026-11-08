@@ -130,6 +130,7 @@ fn routed_task_runtime_env_maps_aliases_only_for_raw_payloads() {
 #[test]
 fn resolve_exec_working_dir_prefers_exec_config() {
     let config = ManifestContainerConfig {
+        checkout_scoped_identity: false,
         share_runtime_identity: false,
         driver: None,
         startup: None,
@@ -158,6 +159,7 @@ fn resolve_exec_working_dir_prefers_exec_config() {
 #[test]
 fn build_alias_table_resolves_multi_word_aliases() {
     let aliases = build_alias_table(&ManifestContainerConfig {
+        checkout_scoped_identity: false,
         share_runtime_identity: false,
         driver: None,
         startup: None,
@@ -201,6 +203,7 @@ fn build_alias_table_resolves_multi_word_aliases() {
 #[test]
 fn build_alias_table_defaults_command_to_alias_name_for_string_entries() {
     let aliases = build_alias_table(&ManifestContainerConfig {
+        checkout_scoped_identity: false,
         share_runtime_identity: false,
         driver: None,
         startup: None,
@@ -242,6 +245,7 @@ fn build_raw_exec_args_uses_mapped_cwd() {
     fs::create_dir_all(root.join("app")).expect("mkdir app");
     write_container_manifest(&root, "/var/www/html");
     let config = ManifestContainerConfig {
+        checkout_scoped_identity: false,
         share_runtime_identity: false,
         driver: None,
         startup: None,
@@ -298,6 +302,7 @@ fn build_raw_exec_args_keeps_tty_and_service_user_for_non_primary_services() {
     let root = temp_repo("raw-args-interactive");
     write_container_manifest(&root, "/var/www/html");
     let config = ManifestContainerConfig {
+        checkout_scoped_identity: false,
         share_runtime_identity: false,
         driver: None,
         startup: None,
@@ -641,6 +646,7 @@ fn routed_task_exec_requires_workspace_effigy_only_for_workspace_primary_service
 #[test]
 fn build_alias_table_renders_service_param_templates() {
     let aliases = build_alias_table(&ManifestContainerConfig {
+        checkout_scoped_identity: false,
         share_runtime_identity: false,
         driver: None,
         startup: None,

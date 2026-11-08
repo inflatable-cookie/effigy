@@ -4,8 +4,11 @@ startup = "detached"
 profile = "effigy-release"
 compose_file = "infra/release/linux/docker-compose.yml"
 # Stable private builder protocol identity; upgrades reuse this project.
+# The builder owns one project per exact canonical checkout, including an
+# unmarked primary checkout, so two checkouts on one host never share it.
 # Legacy effigy-linux-release resources are retained and never adopted.
 project_name = "effigy-artifact-builder-v1"
+checkout_scoped_identity = true
 primary_service = "builder"
 
 [containers."linux-release".lifecycle]

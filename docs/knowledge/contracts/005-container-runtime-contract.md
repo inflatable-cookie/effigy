@@ -1195,6 +1195,13 @@ contract.
 
 `share_runtime_identity = true` is an explicit opt-in to one Compose identity
 across worktrees. It must not arise merely from equal `project_name` values.
+`checkout_scoped_identity = true` is the opposite opt-in: the environment owns
+one Compose project per correct checkout even where that checkout keeps
+primary-checkout behaviour, with a canonical-checkout digest (`-co-`) suffix; a
+runtime-scoped checkout keeps its generation token instead. The private Linux
+workspace artifact builder declares it, so two checkouts on one host never
+share a builder project. The two flags contradict each other and manifest
+validation refuses a declaration that sets both.
 Repo-owned Compose files keep their own resource rules: linked worktrees fail
 closed when they contain fixed published ports, container names, or named
 external resources that Effigy cannot scope.

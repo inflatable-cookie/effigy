@@ -825,6 +825,16 @@ it at the same path gets a new identity. To intentionally share one Compose
 stack, set
 `share_runtime_identity = true` under `[containers.<name>]`.
 
+An environment that must own one stack per checkout even on an unmarked primary
+checkout declares `checkout_scoped_identity = true` under
+`[containers.<name>]`. Its project name then gains a `-co-<digest>` suffix
+derived from the canonical checkout path, so two primary checkouts on one host
+use separate projects while repeated commands in one checkout reuse it. The
+private Linux workspace artifact builder uses this so automatic artifact
+builds never share a builder with another checkout's source. A runtime-scoped
+checkout keeps its generation token instead, and the flag cannot be combined
+with `share_runtime_identity = true`.
+
 The clone marker is read from that checkout's own `.git/config` only — never
 from global or system Git configuration, and `[include]` directives are not
 followed. Only the tool that created the clone (Nucleus sets this marker on
