@@ -510,7 +510,7 @@ def ensure_colima_path(control, pins):
         os.close(dfd)
 
 
-def write_new_file(dir_path, name, data):
+def write_new_file(dir_path, name, data, *, mode=0o600):
     """Exclusive file create inside a private directory, through a descriptor, fsynced with its parent."""
     dfd = private_dir(dir_path)
     try:
@@ -521,6 +521,7 @@ def write_new_file(dir_path, name, data):
         with os.fdopen(fd, 'wb') as out:
             out.write(data)
             out.flush()
+            os.fchmod(out.fileno(), mode)
             os.fsync(out.fileno())
         os.fsync(dfd)
     finally:
