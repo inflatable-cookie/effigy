@@ -20,7 +20,8 @@ REQUIRED_MODULE_NAMES = (
     'preparation_placement.py', 'preparation_archive.py', 'preparation_nextest.py',
     'preparation_metadata.py', 'linux_setup.py', 'linux_supervisor.py',
     'linux_transfer.py', 'linux_receipts.py', 'linux_stage1.py',
-    'linux_observation_caller.py', 'linux_disk_identity.py',
+    'linux_observation_caller.py', 'linux_disk_identity.py', 'linux_allocation_bound.py',
+    'linux_allocation_probe.py',
 )
 
 

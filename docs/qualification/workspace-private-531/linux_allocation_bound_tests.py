@@ -53,7 +53,7 @@ def original(text, code=0):
 def render(mount_dev='8:2', mount_fs='ext4', mount_source='/dev/sda2', mount_options='rw,relatime',
            uuid=bound.ROOT_UUID, features=None, link='../../sda2', boot=BOOT, quota_dev='8:2',
            fmt=4, fmt_rc=0, quota_rc=0, hard_qb=HARD // 1024, charged=CHARGED, project=531, qb_unit=1024,
-           entries=ENTRIES, tree_root=ROOT, tree_boot=BOOT, tree_project=531):
+           entries=ENTRIES, tree_root=ROOT, tree_boot=BOOT, tree_project=531, valid=3):
     features = OBSERVED_747_FEATURES + ' project quota' if features is None else features
     texts = {
         'mountinfo': '36 1 %s / / %s shared:1 - %s %s rw\n' % (mount_dev, mount_options, mount_fs, mount_source),
@@ -64,7 +64,7 @@ def render(mount_dev='8:2', mount_fs='ext4', mount_source='/dev/sda2', mount_opt
             'boot_id=%s' % boot, 'device=/dev/sda2', 'dev=%s' % quota_dev, 'project_id=%d' % project,
             'qb_unit_bytes=%d' % qb_unit, 'getfmt_rc=%d getfmt_errno=0 fmt=%d' % (fmt_rc, fmt),
             'getquota_rc=%d getquota_errno=0' % quota_rc,
-            'bhard_qb=%d bsoft_qb=0 curspace_bytes=%d valid=3' % (hard_qb, charged)]) + '\n',
+            'bhard_qb=%d bsoft_qb=0 curspace_bytes=%d valid=%d' % (hard_qb, charged, valid)]) + '\n',
         'tree': '\n'.join(['boot_id=%s' % tree_boot, 'root=%s' % tree_root, 'project_id=%d' % tree_project] +
                           ['entry path=%s type=%s dev=%s ino=%d uid=%d gid=0 mode=700 nlink=%d projid=%d '
                            'blocks512=%d size=0' % (p, k, d, 10 + i, u, n, pr, b)
@@ -154,6 +154,12 @@ class VerifierChecks(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(Refusal):
                 self.verify(render(**change))
 
+    def test_quota_valid_bits_must_mark_both_block_limit_and_space_usage(self):
+        for valid in (0, bound.QIF_BLIMITS, bound.QIF_SPACE, bound.QIF_BLIMITS | (1 << 2)):  # QIF_ILIMITS_B = 2
+            with self.subTest(valid=valid), self.assertRaisesRegex(Refusal, 'valid'):
+                self.verify(render(valid=valid))
+        self.assertEqual(self.verify(render(valid=bound.QIF_BLIMITS | bound.QIF_SPACE))['entries'], 3)
+
     def test_limit_equal_to_headroom_admits_and_one_byte_more_refuses(self):
         headroom = HARD - CHARGED
         self.assertEqual(self.verify(limit=headroom)['remaining_after_bytes'], 0)
@@ -189,6 +195,34 @@ class VerifierChecks(unittest.TestCase):
         root_is_file = (('.', 'reg', '8:2', UID, 531, 1, 8),) + ENTRIES[1:]
         with self.assertRaises(Refusal):
             self.verify(render(entries=root_is_file))
+
+    def test_supervisor_fifos_are_admitted_only_as_blockless_single_links(self):
+        gate = ('inputs/gate.fifo', 'fifo', '8:2', 0, -1, 1, 0)
+        payload = ('inputs/transfer.fifo', 'fifo', '8:2', UID, -1, 1, 0)
+        fx = facts(entries={'.', 'inputs', 'inputs/archive.tar', 'inputs/gate.fifo', 'inputs/transfer.fifo'})
+        self.assertEqual(self.verify(render(entries=ENTRIES + (gate, payload)), fx=fx)['entries'], 5)
+        bad = (
+            ('inputs/gate.fifo', 'fifo', '8:2', 0, -1, 1, 8),
+            ('inputs/gate.fifo', 'fifo', '8:2', 0, -1, 2, 0),
+            ('inputs/gate.fifo', 'fifo', '8:2', 4242, -1, 1, 0),
+            ('inputs/gate.fifo', 'fifo', '7:0', 0, -1, 1, 0),
+            ('inputs/gate.fifo', 'other', '8:2', 0, -1, 1, 0),
+        )
+        for entry in bad:
+            with self.subTest(entry=entry), self.assertRaises(Refusal):
+                self.verify(render(entries=ENTRIES + (entry,)), fx=fx)
+
+    def test_real_fifo_in_the_tree_is_listed_without_blocking_or_opening(self):
+        dir_ = Path(tempfile.mkdtemp(prefix='fifo-tree-', dir=os.environ.get('TMPDIR')))
+        self.addCleanup(shutil.rmtree, dir_, True)
+        root = dir_ / 'stage'
+        (root / 'inputs').mkdir(parents=True)
+        os.mkfifo(root / 'inputs' / 'gate.fifo', 0o600)
+        lines = probe.tree_lines(str(root), 531, read_boot=lambda: BOOT, read_project=lambda fd: 531)
+        fifo = [ln for ln in lines if 'path=inputs/gate.fifo' in ln]
+        self.assertEqual(len(fifo), 1)
+        self.assertIn('type=fifo', fifo[0])
+        self.assertIn('projid=-1', fifo[0])
 
     def test_kernel_charge_must_cover_every_tree_byte_and_multiple_files_are_summed(self):
         with self.assertRaisesRegex(Refusal, 'below the tree bytes'):
@@ -294,6 +328,14 @@ class HelperChecks(unittest.TestCase):
         self.assertEqual(plan[0]['argv'], ['/bin/cat', '/proc/self/mountinfo'])
         self.assertIn('quota', plan[3]['argv'])
         self.assertIn(ROOT, plan[4]['argv'])
+
+
+class InventoryChecks(unittest.TestCase):
+    def test_allocation_modules_are_in_the_request_closure(self):
+        import preparation_requests as requests
+        for name in ('linux_allocation_bound.py', 'linux_allocation_probe.py'):
+            with self.subTest(name=name):
+                self.assertIn(name, requests.REQUIRED_MODULE_NAMES)
 
 
 class ProductionPathChecks(unittest.TestCase):

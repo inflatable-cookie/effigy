@@ -94,8 +94,10 @@ def tree_lines(root, project_id, read_boot=boot_id, read_project=None):
         relative, absolute = pending.pop()
         info = os.lstat(absolute)
         kind = 'dir' if stat.S_ISDIR(info.st_mode) else 'reg' if stat.S_ISREG(info.st_mode) else \
-            'lnk' if stat.S_ISLNK(info.st_mode) else 'other'
+            'fifo' if stat.S_ISFIFO(info.st_mode) else 'lnk' if stat.S_ISLNK(info.st_mode) else 'other'
         projid = -1
+        # A FIFO is never opened: opening it can block on the supervisor's gate, and its inode carries no
+        # block charge, so its project id is not read.
         if kind in ('dir', 'reg'):
             flags = os.O_RDONLY | os.O_NOFOLLOW | (os.O_DIRECTORY if kind == 'dir' else 0)
             try:

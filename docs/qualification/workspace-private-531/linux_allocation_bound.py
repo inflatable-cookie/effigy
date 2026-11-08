@@ -30,6 +30,10 @@ ROOT_FSTYPE = 'ext4'
 REQUIRED_FEATURES = frozenset({'project', 'quota'})
 PROJECT_ID = 531                                  # reserved for the stage tree; no other object may carry it
 QB_UNIT_BYTES = probe.QB_UNIT_BYTES
+# if_dqblk dqb_valid bits, linux/quota.h enum: QIF_BLIMITS_B = 0, QIF_SPACE_B = 1
+QIF_BLIMITS = 1 << 0
+QIF_SPACE = 1 << 1
+ROOT_UID = 0                                      # the supervisor creates its gate FIFO as root
 ROUTES = ('mountinfo', 'dumpe2fs', 'by-uuid', 'quota', 'tree')
 HELPER = Path(__file__).resolve().parent / 'linux_allocation_probe.py'
 HEX64 = re.compile(r'^[0-9a-f]{64}$')
@@ -176,6 +180,9 @@ def verify(witness, limit_bytes, facts, supported):
         raise Refusal('project quota record is unavailable')
     hard = _int(quota.get('bhard_qb'), 'bhard_qb') * QB_UNIT_BYTES
     charged = _int(quota.get('curspace_bytes'), 'curspace_bytes')
+    valid = _int(quota.get('valid'), 'valid')
+    if not valid & QIF_BLIMITS or not valid & QIF_SPACE:
+        raise Refusal('quota record does not mark its block limit and space usage valid')
     if hard <= 0:
         raise Refusal('project has no active hard block limit')
     headroom = hard - charged
@@ -191,10 +198,21 @@ def verify(witness, limit_bytes, facts, supported):
     tree_bytes = 0
     for path, fields in entries.items():
         kind = fields.get('type')
-        if kind not in ('dir', 'reg'):
-            raise Refusal('entry ' + path + ' is a ' + str(kind) + ', not an owned directory or file')
-        if fields.get('dev') != mount['dev'] or _int(fields.get('uid'), 'uid') != uid:
-            raise Refusal('entry ' + path + ' is on another device or owned by another uid')
+        if kind not in ('dir', 'reg', 'fifo'):
+            raise Refusal('entry ' + path + ' is a ' + str(kind) + ', not an owned directory, file or FIFO')
+        if fields.get('dev') != mount['dev']:
+            raise Refusal('entry ' + path + ' is on another device')
+        owner = _int(fields.get('uid'), 'uid')
+        if kind == 'fifo':
+            # A FIFO allocates no blocks and carries no project charge, so its project id is not read.
+            # The supervisor gate is root-owned; a payload FIFO is owned by the payload uid.
+            if owner not in (uid, ROOT_UID):
+                raise Refusal('FIFO ' + path + ' is owned by another uid')
+            if _int(fields.get('blocks512'), 'blocks512') != 0 or _int(fields.get('nlink'), 'nlink') != 1:
+                raise Refusal('FIFO ' + path + ' holds blocks or is linked')
+            continue
+        if owner != uid:
+            raise Refusal('entry ' + path + ' is owned by another uid')
         if _int(fields.get('projid'), 'projid') != PROJECT_ID:
             raise Refusal('entry ' + path + ' carries another project id')
         if kind == 'reg' and _int(fields.get('nlink'), 'nlink') != 1:
