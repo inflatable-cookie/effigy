@@ -973,6 +973,7 @@ catalog = "php-fpm"
             ports_declared_explicitly: false,
             declared_mounts: Vec::new(),
             declared_media_mounts: Vec::new(),
+            workspace_source: effigy_containers::artifact_source::WorkspaceSource::Checkout,
             pull_production_hook: None,
             health_check: None,
             health_timeout_secs: 60,

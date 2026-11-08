@@ -22,6 +22,7 @@ mode = (state / 'mode').read_text()
 cmd = next((a for a in args if a in ['ps', 'inspect', 'up', 'exec', 'down', 'rm', 'info']), '')
 identity = state / 'identity.json'
 if cmd == 'info': sys.exit(0)
+if cmd == 'sleep': time.sleep(float(args[1]) if len(args) > 1 else 0.5); sys.exit(0)
 if cmd == 'ps':
     if mode == 'list_fail': sys.exit(19)
     if mode == 'malformed_list': print('\tUp\t\t' + os.environ['EFFIGY_RECOVERY_PROJECT'] + '\t\tbuilder\t'); sys.exit(0)
@@ -65,14 +66,26 @@ if cmd == 'inspect':
 if cmd == 'up':
     if mode == 'up_fail': sys.exit(21)
     generated = next(a for a in args if a.endswith('.generated.compose.yml'))
-    (state / 'last-up-compose').write_text(pathlib.Path(generated).read_text())
-    services = pathlib.Path(generated).read_text().split('\nvolumes:')[0]
+    compose = pathlib.Path(generated).read_text()
+    (state / 'last-up-compose').write_text(compose)
+    services = compose.split('\nvolumes:')[0]
     labels = dict(re.findall(r'^\s*(com\.effigy\.[^:]+): (.+)$', services, re.M))
     labels.update({'com.docker.compose.project': os.environ['EFFIGY_RECOVERY_PROJECT'], 'com.docker.compose.service': 'builder'})
     if os.environ['EFFIGY_COMPOSE_BACKEND'] == 'docker':
-        labels.update({'com.docker.compose.oneoff': 'False', 'com.docker.compose.project.working_dir': str(root)})
+        working_dir = str(root)
+        if '--project-directory' in args:
+            working_dir = args[args.index('--project-directory') + 1]
+        labels.update({'com.docker.compose.oneoff': 'False', 'com.docker.compose.project.working_dir': working_dir})
     if mode == 'up_bad_labels': labels.pop('com.effigy.checkout', None)
-    identity.write_text(json.dumps([{'Id': 'a'*64, 'Name': '/' + os.environ['EFFIGY_RECOVERY_PROJECT'] + '-builder-1', 'State': {'Running': True, 'Status': 'running'}, 'Config': {'Labels': labels}, 'Mounts': [{'Type': 'bind', 'Source': str(root), 'Destination': '/workspace', 'RW': True}], 'NetworkSettings': {'Ports': {}}}]))
+    # The rendered bind is the source this container really carries: a staging
+    # run binds the staged closure, and a VM that cannot reach the host path
+    # carries an empty directory that this fake reproduces by name.
+    workspace = re.search(r'^\s*-\s*[\'\"]?([^\'\"\n]*?):/workspace[\'\"]?\s*$', services, re.M)
+    source = workspace.group(1) if workspace else str(root)
+    if mode == 'up_empty_source':
+        source = str(state / 'empty-vm-directory')
+        pathlib.Path(source).mkdir(exist_ok=True)
+    identity.write_text(json.dumps([{'Id': 'a'*64, 'Name': '/' + os.environ['EFFIGY_RECOVERY_PROJECT'] + '-builder-1', 'State': {'Running': True, 'Status': 'running'}, 'Config': {'Labels': labels}, 'Mounts': [{'Type': 'bind', 'Source': source, 'Destination': '/workspace', 'RW': True}], 'NetworkSettings': {'Ports': {}}}],))
     sys.exit(0)
 if cmd == 'rm':
     identity.unlink(missing_ok=True)
@@ -86,19 +99,41 @@ if cmd == 'exec':
     if tail[1:] == ['true']: sys.exit(0)
     if len(tail) != 4 or tail[1:3] != ['sh', '-lc']: sys.exit(25)
     script = tail[3]
+    bound = json.loads(identity.read_text())[0]['Mounts'][0]['Source']
+    if 'source-closure-verified' in script and 'cargo build' not in script:
+        # The source probe reads the container's own bind. Run it for real
+        # against that directory, so an empty directory, another source, a
+        # changed file or an unaccounted extra file answers with what it holds.
+        if mode == 'probe_fail': sys.exit(31)
+        if mode == 'probe_tamper':
+            tampered = sorted(pathlib.Path(bound).rglob('*.rhai'))
+            if not tampered: sys.exit(33)
+            tampered[0].write_text('// changed inside the container bind\n')
+        resolved = script.replace('/workspace', str(bound))
+        status = os.spawnve(os.P_WAIT, '/bin/sh', ['/bin/sh', '-lc', resolved], os.environ)
+        sys.exit(status)
     if not all(part in script for part in ['cargo build --release --bin effigy --target ', 'cd /workspace', 'EFFIGY_ACTIVE_VERSION=', '/workspace/.effigy/linux-release/artifacts/effigy-']): sys.exit(26)
     (state / 'build-effect').write_text('verified current-source build')
+    with (state / 'builds').open('a') as f: f.write('build\n')
+    (state / 'build-source').write_text(bound)
     if mode == 'signal_success':
         (state / 'await-signal').write_text('ready')
         time.sleep(0.8)
+    if mode == 'slow_build':
+        time.sleep(float(os.environ.get('EFFIGY_RECOVERY_BUILD_DELAY', '0.8')))
+    if mode == 'change_source_during_build':
+        with (root / 'Cargo.toml').open('a') as f: f.write('# caller edit during the build\n')
+    if mode == 'tamper_stage_during_build':
+        with (pathlib.Path(bound) / 'Cargo.toml').open('a') as f: f.write('# staged edit during the build\n')
     if mode in ['build_fail', 'interrupted']: sys.exit(23 if mode == 'build_fail' else 130)
     if mode == 'no_output': sys.exit(0)
-    artifacts = root / '.effigy/linux-release/artifacts'
+    artifacts = pathlib.Path(bound) / '.effigy/linux-release/artifacts'
     artifacts.mkdir(parents=True, exist_ok=True)
     triple = os.environ.get('EFFIGY_LINUX_RELEASE_TRIPLE', 'x86_64-unknown-linux-gnu')
     binary = artifacts / ('effigy-' + triple)
     binary.write_text('fresh current source output ' + mode)
-    pathlib.Path(str(binary) + '.active-version').write_text(os.environ['EFFIGY_RECOVERY_VERSION'])
+    version = '0.0.0-other-host' if mode == 'wrong_version' else os.environ['EFFIGY_RECOVERY_VERSION']
+    pathlib.Path(str(binary) + '.active-version').write_text(version)
     pathlib.Path(str(binary) + '.receipt').write_text('release_triple=' + ('wrong-target' if mode == 'wrong_target' else triple) + '\nsha256=' + __import__('hashlib').sha256(binary.read_bytes()).hexdigest() + '\ncompleted_at=2026-10-16T00:00:00Z\n')
     print('private-build-ok')
     sys.exit(0)
@@ -229,6 +264,23 @@ impl Fixture {
     }
 
     fn with_declaration(retained: bool, changed: bool, backend: &str, scoped: bool) -> Self {
+        Self::with_source(retained, changed, backend, scoped, false)
+    }
+
+    /// The same maintained declaration, in a checkout the release profile's
+    /// only writable mount does not reach: the builder's source can then only
+    /// be this checkout's staged closure (effigy#715).
+    fn staged(retained: bool, changed: bool, backend: &str) -> Self {
+        Self::with_source(retained, changed, backend, false, true)
+    }
+
+    fn with_source(
+        retained: bool,
+        changed: bool,
+        backend: &str,
+        scoped: bool,
+        staged: bool,
+    ) -> Self {
         let temp = builder_fixture();
         let root = temp.path().canonicalize().unwrap();
         std::fs::create_dir_all(root.join(".git")).unwrap();
@@ -277,6 +329,22 @@ impl Fixture {
         .unwrap();
         let bin = root.join("bin");
         write_executable(&bin.join("docker"), FAKE_DOCKER);
+        // Only the mid-snapshot case uses it: a real `git`, plus one write to a
+        // tracked file when the closure has already been hashed.
+        write_executable(
+            &bin.join("git"),
+            r#"#!/bin/sh
+real=/usr/bin/git
+if [ "$1" = "rev-parse" ] && [ -n "${EFFIGY_RECOVERY_MUTATE_DURING_SNAPSHOT:-}" ]; then
+  marker="${EFFIGY_RECOVERY_ROOT}/state/snapshot-mutated"
+  if [ ! -f "$marker" ]; then
+    printf '# written while snapshotting\n' >> "${EFFIGY_RECOVERY_ROOT}/Cargo.toml"
+    : > "$marker"
+  fi
+fi
+exec "$real" "$@"
+"#,
+        );
         write_executable(
             &bin.join("colima"),
             r#"#!/bin/sh
@@ -305,6 +373,40 @@ nerdctl) while [ "$1" != -- ]; do shift; done; shift; exec "$(dirname "$0")/dock
 esac
 "#,
         );
+        if staged {
+            // A real index: the staged closure is the tracked working tree.
+            // Private state, fixtures and the mount stay untracked, so nothing
+            // ignored is ever a source input.
+            std::fs::write(
+                root.join(".gitignore"),
+                "host-home/\nstate/\nbin/\n.effigy/\nfixture-host\n",
+            )
+            .unwrap();
+            // The tracked workspace the builder compiles, so the source probe
+            // proves the same build inputs a cargo build reads.
+            std::fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
+            std::fs::write(root.join("Cargo.lock"), "version = 4\n").unwrap();
+            for args in [vec!["init", "-q"], vec!["add", "-A"]] {
+                let status = std::process::Command::new("git")
+                    .args(&args)
+                    .current_dir(&root)
+                    .status()
+                    .expect("private git fixture");
+                assert!(status.success(), "git {args:?}");
+            }
+            let mount = root.join("host-home/release-source");
+            std::fs::create_dir_all(&mount).unwrap();
+            let profile = root.join("host-home/.colima/effigy-release");
+            std::fs::create_dir_all(&profile).unwrap();
+            std::fs::write(
+                profile.join("colima.yaml"),
+                format!(
+                    "cpu: 2\nmemory: 2\ndisk: 100\nmounts:\n  - location: {}\n    writable: true\n",
+                    mount.display()
+                ),
+            )
+            .unwrap();
+        }
         let env = EnvGuard::set_many(&[
             (
                 "PATH",
@@ -354,7 +456,8 @@ esac
                 .unwrap()
                 .trim());
             }
-            let identity = json!([{"Id": "a".repeat(64), "Name": format!("/{}-builder-1", policy.project_name), "State": {"Running": true, "Status": "running"}, "Config": {"Labels": labels}, "Mounts": [{"Type": "bind", "Source": root, "Destination": "/workspace", "RW": true}], "NetworkSettings": {"Ports": {}}}]);
+            let bind = expected_workspace_source(&policy, &root);
+            let identity = json!([{"Id": "a".repeat(64), "Name": format!("/{}-builder-1", policy.project_name), "State": {"Running": true, "Status": "running"}, "Config": {"Labels": labels}, "Mounts": [{"Type": "bind", "Source": bind, "Destination": "/workspace", "RW": true}], "NetworkSettings": {"Ports": {}}}]);
             std::fs::write(root.join("state/identity.json"), identity.to_string()).unwrap();
             write_legacy_partial_marker(&root, &policy);
         }
@@ -452,6 +555,30 @@ esac
         self.preserved.push((path, record.to_string().into_bytes()));
     }
 
+    /// The retained 531 producer the brief names: a builder of another
+    /// checkout's source under its own project spelling. It is not ours to
+    /// inspect, exec in, stop, relabel, mount or adopt.
+    fn retain_foreign_531(&mut self) {
+        let source = format!("{}/531-producer/source", self.root.display());
+        let record = json!([{
+            "Id": "e".repeat(64),
+            "Name": "effigy-531-producer-builder-1",
+            "State": {"Status": "running", "Running": true},
+            "Config": {"Labels": {
+                "com.docker.compose.project": "effigy-531-producer",
+                "com.docker.compose.service": "builder",
+                "com.docker.compose.oneoff": "False",
+                "com.docker.compose.project.working_dir": source,
+                "com.effigy.checkout": source
+            }},
+            "Mounts": [{"Type": "bind", "Source": source, "Destination": "/workspace", "RW": true}],
+            "NetworkSettings": {"Ports": {}}
+        }]);
+        let path = self.root.join("state/foreign-531.json");
+        std::fs::write(&path, record.to_string()).unwrap();
+        self.preserved.push((path, record.to_string().into_bytes()));
+    }
+
     /// Another checkout's builder in the old globally named project, exactly
     /// the shape the operator's report observed (effigy#710): a running
     /// builder whose `/workspace` bind and checkout label are a different
@@ -545,6 +672,81 @@ esac
     fn mode(&self, mode: &str) {
         std::fs::write(self.root.join("state/mode"), mode).unwrap();
     }
+
+    /// The staged source this declaration binds, if it binds one.
+    /// Retain this run's staged evidence where the caller asked for it: the
+    /// record's closure and inventory digests, both source hashes, and the
+    /// backend streams. Absent the request nothing is written.
+    fn retain_receipt(&self, plan: &effigy_containers::artifact_source::StagePlan) {
+        let Some(directory) = std::env::var_os("EFFIGY_RECOVERY_RECEIPT_DIR") else {
+            return;
+        };
+        let directory = PathBuf::from(directory);
+        if std::fs::create_dir_all(&directory).is_err() {
+            return;
+        }
+        let record = effigy_containers::artifact_source::StageManifest::read(plan).ok();
+        let head = std::process::Command::new("/usr/bin/git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&self.root)
+            .output()
+            .ok()
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
+        let manifest_file = plan.source.join("Cargo.toml");
+        let receipt = json!({
+            "schema": "effigy.builder-source-stage.receipt.v1",
+            "head": head,
+            "fixture_head": std::process::Command::new("/usr/bin/git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&self.root)
+                .output()
+                .ok()
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned()),
+            "caller": self.root,
+            "project": self.policy.project_name,
+            "profile": self.policy.profile,
+            "stage_source": plan.source,
+            "stage_manifest": plan.manifest,
+            "closure": record.as_ref().map(|record| record.closure.clone()),
+            "inventory_digest": std::fs::read(plan.inventory())
+                .ok()
+                .map(|bytes| crate::runner::workspace_client::context::sha256_text(&bytes)),
+            "file_count": record.as_ref().map(|record| record.files.len()),
+            "source_hashes": record.as_ref().map(|record| record.files.clone()),
+            "build_sentinel_sha256": std::fs::read(&manifest_file)
+                .ok()
+                .map(|bytes| crate::runner::workspace_client::context::sha256_text(&bytes)),
+            "calls": self.calls(),
+            "colima_calls": std::fs::read_to_string(self.root.join("state/colima-calls")).unwrap_or_default(),
+        });
+        let _ = std::fs::write(
+            directory.join("builder-source-stage.receipt.json"),
+            serde_json::to_vec_pretty(&receipt).unwrap_or_default(),
+        );
+        for stream in [
+            "calls",
+            "timing",
+            "colima-calls",
+            "last-up-compose",
+            "build-source",
+        ] {
+            let source = self.root.join("state").join(stream);
+            if let Ok(bytes) = std::fs::read(&source) {
+                let _ = std::fs::write(directory.join(stream), bytes);
+            }
+        }
+    }
+
+    fn stage(&self) -> Option<effigy_containers::artifact_source::StagePlan> {
+        effigy_containers::artifact_source::policy_stage(&self.policy).unwrap()
+    }
+
+    /// The container's own bind source, as the fake backend recorded it.
+    fn build_source(&self) -> PathBuf {
+        PathBuf::from(
+            std::fs::read_to_string(self.root.join("state/build-source")).expect("build source"),
+        )
+    }
     fn task(&self) -> Result<(), String> {
         let _executable = effigy_core::executable_override::set_scoped(Some(
             Self::compiled_cli().display().to_string(),
@@ -634,6 +836,68 @@ esac
             "{colima}"
         );
     }
+}
+
+/// The one source this declaration binds: the checkout itself, or its owned
+/// staged closure when the release profile cannot reach the checkout.
+fn expected_workspace_source(
+    policy: &effigy_containers::EffectiveContainerPolicy,
+    root: &Path,
+) -> PathBuf {
+    effigy_containers::artifact_source::policy_stage(policy)
+        .expect("source plan")
+        .map(|plan| plan.source)
+        .unwrap_or_else(|| root.to_path_buf())
+}
+
+/// Every Compose invocation this build made names staged inputs inside the
+/// owned mount, never the checkout's own unreachable render objects.
+fn assert_staged_compose_inputs(
+    fixture: &Fixture,
+    plan: &effigy_containers::artifact_source::StagePlan,
+) {
+    let render_root = plan
+        .stage_root
+        .join(effigy_containers::artifact_source::STAGE_RENDER_DIR);
+    let mut activations = 0;
+    let mut execs = 0;
+    for args in fixture.calls() {
+        let compose_inputs = args
+            .windows(2)
+            .filter(|pair| pair[0] == "-f")
+            .map(|pair| pair[1].clone())
+            .collect::<Vec<_>>();
+        let project_directory = args
+            .windows(2)
+            .find(|pair| pair[0] == "--project-directory")
+            .map(|pair| pair[1].clone());
+        if compose_inputs.is_empty() {
+            continue;
+        }
+        if args.iter().any(|arg| arg == "up") {
+            activations += 1;
+            let directory = project_directory.expect("activation names its project directory");
+            assert!(
+                Path::new(&directory).starts_with(&render_root),
+                "the activation project directory is the owned render: {directory}"
+            );
+        }
+        if args.iter().any(|arg| arg == "exec") {
+            execs += 1;
+        }
+        for input in compose_inputs {
+            assert!(
+                Path::new(&input).starts_with(&render_root),
+                "every Compose input is staged inside the mount: {input}"
+            );
+            assert!(
+                !input.contains("/.effigy/state/objects/"),
+                "the checkout's unreachable render objects are never handed to the VM: {input}"
+            );
+            assert!(Path::new(&input).is_file(), "{input} exists");
+        }
+    }
+    assert!(activations + execs > 0, "the build invoked Compose");
 }
 
 fn preserve_tree(dir: &Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
@@ -1328,4 +1592,858 @@ fn refused_inspect_names_its_cause_without_claiming_a_signal() {
         );
         fixture.assert_preserved();
     }
+}
+
+/// The operator's development install (effigy#715): the release profile shares
+/// one writable mount and this checkout is outside it. The automatic task stages
+/// the checkout's tracked source closure there, binds that directory, compiles
+/// it, and copies only the verified artifact bytes back.
+#[test]
+fn staged_source_is_bound_compiled_and_copied_back_to_the_caller() {
+    let _lock = crate::contract_test_support::lock_test();
+    for backend in ["docker", "colima"] {
+        let fixture = Fixture::staged(false, false, backend);
+        let plan = fixture.stage().expect("a staged source plan");
+        fixture
+            .task()
+            .expect("the automatic build stages and compiles");
+        assert_eq!(
+            fixture.build_source().canonicalize().unwrap(),
+            plan.source.canonicalize().unwrap(),
+            "the builder compiled the staged source"
+        );
+        let compose = std::fs::read_to_string(fixture.root.join("state/last-up-compose")).unwrap();
+        assert!(
+            compose.contains(&format!("{}:/workspace", plan.source.display())),
+            "the rendered bind is the staged source: {compose}"
+        );
+        assert!(
+            !compose.contains(&format!("{}:/workspace", fixture.root.display())),
+            "the unreachable checkout path is never bound: {compose}"
+        );
+        // Colima runs Compose inside the VM, so the inputs it reads must be in
+        // the mount as well: every activation and exec names staged files, and
+        // the project directory is the owned render generation.
+        assert_staged_compose_inputs(&fixture, &plan);
+        // The record names exactly which caller inputs were snapshotted.
+        let record = effigy_containers::artifact_source::StageManifest::read(&plan).unwrap();
+        assert_eq!(record.caller, fixture.root.canonicalize().unwrap());
+        assert_eq!(record.project, fixture.policy.project_name);
+        assert_eq!(record.profile, "effigy-release");
+        for tracked in [
+            "effigy.toml",
+            "Cargo.toml",
+            "Cargo.lock",
+            "scripts/build.rhai",
+            "infra/dev/catalog/linux-release-builder/compose.fragment.yml",
+        ] {
+            assert!(record.files.contains_key(tracked), "{tracked} is staged");
+            assert!(plan.source.join(tracked).is_file(), "{tracked} is bound");
+        }
+        let artifact = fixture
+            .root
+            .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+        assert!(artifact.is_file(), "the artifact reached the caller");
+        assert!(linux_workspace_effigy_artifact_receipt_matches_target(
+            &artifact,
+            LinuxWorkspaceTarget::X86_64Gnu
+        ));
+        assert_eq!(
+            std::fs::read_to_string(artifact.with_extension("active-version"))
+                .unwrap()
+                .trim(),
+            effigy_core::build_info::active_version()
+        );
+        fixture.retain_receipt(&plan);
+        fixture.assert_preserved();
+    }
+}
+
+/// Only the tracked working tree is a source input: private state, ignored and
+/// untracked files, and local secret files never reach the builder.
+#[test]
+fn staged_source_carries_tracked_inputs_only() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(false, false, "docker");
+    let plan = fixture.stage().expect("a staged source plan");
+    std::fs::write(fixture.root.join(".env"), "TOKEN=private\n").unwrap();
+    std::fs::write(fixture.root.join("state/private-note"), "private\n").unwrap();
+    std::fs::write(fixture.root.join("untracked-note"), "untracked\n").unwrap();
+    fixture
+        .task()
+        .expect("the automatic build stages the tracked source");
+    let staged = std::fs::read_dir(&plan.source)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    for private in [".env", "untracked-note", "state", "host-home", "bin"] {
+        assert!(!staged.contains(&private.to_string()), "{staged:?}");
+        assert!(!plan.source.join(private).exists(), "{private} was staged");
+    }
+    let record = effigy_containers::artifact_source::StageManifest::read(&plan).unwrap();
+    assert!(!record
+        .files
+        .keys()
+        .any(|path| path == ".env" || path.starts_with("state/") || path.starts_with(".effigy/")));
+    fixture.assert_preserved();
+}
+
+/// Ordinary incremental builds keep one staged directory, refresh changed
+/// source in place and reuse the same builder: no second activation.
+#[test]
+fn staged_source_keeps_one_builder_and_refreshes_changed_inputs() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(true, false, "docker");
+    let plan = fixture.stage().expect("a staged source plan");
+    fixture.task().expect("first build");
+    assert_eq!(
+        fixture.activation_count(),
+        0,
+        "the retained builder is reused"
+    );
+    let first = effigy_containers::artifact_source::StageManifest::read(&plan).unwrap();
+    let notes = fixture.root.join("scripts/notes.rhai");
+    std::fs::write(&notes, "// a changed development input\n").unwrap();
+    let status = std::process::Command::new("git")
+        .args(["add", "scripts/notes.rhai"])
+        .current_dir(&fixture.root)
+        .status()
+        .expect("private git fixture");
+    assert!(status.success());
+    fixture.task().expect("second build with changed source");
+    let second = effigy_containers::artifact_source::StageManifest::read(&plan).unwrap();
+    assert_ne!(first.closure, second.closure, "the closure digest moved");
+    assert_eq!(
+        std::fs::read_to_string(plan.source.join("scripts/notes.rhai")).unwrap(),
+        "// a changed development input\n"
+    );
+    assert_eq!(fixture.build_source(), plan.source);
+    assert_eq!(fixture.activation_count(), 0);
+    fixture.assert_preserved();
+}
+
+/// A retained builder created before staged source existed binds the checkout's
+/// own unreachable path. The maintained activation replaces exactly that owned
+/// container with the staged bind; the build then succeeds with no manual step.
+#[test]
+fn staged_source_replaces_a_pre_staging_builder_once() {
+    let _lock = crate::contract_test_support::lock_test();
+    for backend in ["docker", "colima"] {
+        let fixture = Fixture::staged(true, false, backend);
+        let plan = fixture.stage().expect("a staged source plan");
+        // Exactly the pre-staging declaration's bind: this checkout's own path.
+        let identity = fixture.root.join("state/identity.json");
+        let mut rows: Value = serde_json::from_slice(&std::fs::read(&identity).unwrap()).unwrap();
+        rows[0]["Mounts"][0]["Source"] = json!(fixture.root);
+        std::fs::write(&identity, rows.to_string()).unwrap();
+        fixture
+            .task()
+            .expect("the pre-staging builder is replaced by the maintained activation");
+        assert_eq!(fixture.activation_count(), 1);
+        assert_eq!(fixture.build_source(), plan.source);
+        let current: Value = serde_json::from_slice(&std::fs::read(&identity).unwrap()).unwrap();
+        let bound = std::path::Path::new(current[0]["Mounts"][0]["Source"].as_str().unwrap());
+        assert_eq!(bound, plan.source);
+        fixture.assert_preserved();
+    }
+}
+
+fn assert_staged_source_refuses_before_build(case: &str) {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(false, false, "docker");
+    let plan = fixture.stage().expect("a staged source plan");
+    match case {
+        "empty_vm_directory" => fixture.mode("up_empty_source"),
+        "probe_fail" => fixture.mode("probe_fail"),
+        "probe_tamper" => fixture.mode("probe_tamper"),
+        "wrong_target" => fixture.mode("wrong_target"),
+        "wrong_version" => fixture.mode("wrong_version"),
+        "foreign_scope_record" => {
+            // The checkout's own staged child, recorded against another run
+            // scope: a different generation of the same checkout.
+            std::fs::create_dir_all(plan.source.parent().unwrap()).unwrap();
+            std::fs::create_dir_all(&plan.source).unwrap();
+            let record = serde_json::json!({
+                "schema": effigy_containers::artifact_source::STAGE_SCHEMA,
+                "caller": fixture.root.canonicalize().unwrap(),
+                "scope": "ffffffffffffffffffffffffffffffff",
+                "project": fixture.policy.project_name,
+                "profile": "effigy-release",
+                "source": plan.source,
+                "closure": "a".repeat(64),
+                "head": null,
+                "files": {},
+                "submodules": {},
+                "excluded": [],
+            });
+            std::fs::write(&plan.manifest, record.to_string()).unwrap();
+        }
+        "foreign_record" => {
+            // Another checkout's staged source under this checkout's child.
+            std::fs::create_dir_all(plan.source.parent().unwrap()).unwrap();
+            std::fs::create_dir_all(&plan.source).unwrap();
+            let record = serde_json::json!({
+                "schema": effigy_containers::artifact_source::STAGE_SCHEMA,
+                "caller": fixture.root.join("other-checkout"),
+                "scope": null,
+                "project": fixture.policy.project_name,
+                "profile": "effigy-release",
+                "source": plan.source,
+                "closure": "a".repeat(64),
+                "head": null,
+                "files": {},
+                "submodules": {},
+                "excluded": [],
+            });
+            std::fs::write(&plan.manifest, record.to_string()).unwrap();
+        }
+        "unreadable_record" => {
+            std::fs::create_dir_all(plan.source.parent().unwrap()).unwrap();
+            std::fs::write(&plan.manifest, "not a record").unwrap();
+        }
+        "missing_mount" => {
+            std::fs::remove_dir_all(fixture.root.join("host-home/release-source")).unwrap();
+            let error = fixture.task().expect_err(case);
+            assert!(error.contains("shares no writable host mount"), "{error}");
+            assert!(!fixture.root.join("state/build-effect").exists());
+            return;
+        }
+        _ => unreachable!(),
+    }
+    // Wrong target and wrong version are refused after the container build, when
+    // the staged bytes are checked against their own receipt. Nothing unverified
+    // may reach the caller there either.
+    let caller_artifact = fixture
+        .root
+        .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    if matches!(case, "wrong_target" | "wrong_version") {
+        write_linux_artifact(&caller_artifact, "stale bytes", Some(STALE_IDENTITY));
+    }
+    let error = fixture.task().expect_err(case);
+    if matches!(case, "wrong_target" | "wrong_version") {
+        assert_eq!(
+            std::fs::read_to_string(&caller_artifact).unwrap(),
+            "stale bytes",
+            "{case}"
+        );
+        assert_eq!(
+            read_trimmed_identity_file(&workspace_effigy_install_identity_file(&caller_artifact))
+                .as_deref(),
+            Some(STALE_IDENTITY),
+            "{case}"
+        );
+    } else {
+        assert!(
+            !fixture.root.join("state/build-effect").exists(),
+            "{case}: {error}"
+        );
+    }
+    match case {
+        "empty_vm_directory" => assert!(
+            error.contains("does not carry the staged") || error.contains("source bind"),
+            "{case}: {error}"
+        ),
+        "probe_fail" | "probe_tamper" => {
+            assert!(error.contains("does not carry the"), "{case}: {error}")
+        }
+        "wrong_target" | "wrong_version" => assert!(
+            error.contains("producer receipt") || error.contains("names version"),
+            "{case}: {error}"
+        ),
+        "foreign_scope_record" => assert!(error.contains("belongs to scope"), "{case}: {error}"),
+        "foreign_record" => assert!(error.contains("belongs to checkout"), "{case}: {error}"),
+        "unreadable_record" => {
+            assert!(error.contains("is not a binding record"), "{case}: {error}")
+        }
+        _ => {}
+    }
+    fixture.assert_preserved();
+}
+
+mod staged_source_refusals {
+    use super::*;
+    macro_rules! cases {
+        ($($case:ident),+ $(,)?) => { $(
+            #[test]
+            fn $case() {
+                assert_staged_source_refuses_before_build(stringify!($case));
+            }
+        )+ };
+    }
+    cases!(
+        empty_vm_directory,
+        probe_fail,
+        probe_tamper,
+        wrong_target,
+        wrong_version,
+        foreign_record,
+        foreign_scope_record,
+        unreadable_record,
+        missing_mount,
+    );
+}
+
+/// Ownership first: a directory at the derived stage path is not proof. A child
+/// that already holds entries without this checkout's binding record is refused
+/// and left exactly as it was, by the automatic task.
+#[test]
+fn staged_source_refuses_a_preexisting_unowned_stage_and_preserves_it() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(false, false, "docker");
+    let plan = fixture.stage().expect("a staged source plan");
+    let foreign_file = plan.source.join("Cargo.toml");
+    std::fs::create_dir_all(plan.source.join("src")).unwrap();
+    std::fs::write(&foreign_file, "unowned source bytes\n").unwrap();
+    std::fs::write(plan.source.join("src/lib.rs"), "unowned\n").unwrap();
+    let render = plan
+        .stage_root
+        .join("render/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+    std::fs::create_dir_all(&render).unwrap();
+    std::fs::write(render.join("compose.yml"), "unowned render\n").unwrap();
+    let artifact = fixture
+        .root
+        .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
+    let error = fixture
+        .task()
+        .expect_err("unrecorded staged content is not adopted");
+    assert!(
+        error.contains("carries no binding record") || error.contains("did not record"),
+        "{error}"
+    );
+    // Nothing was written, cleaned, adopted or published.
+    assert_eq!(
+        std::fs::read_to_string(&foreign_file).unwrap(),
+        "unowned source bytes\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(plan.source.join("src/lib.rs")).unwrap(),
+        "unowned\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(render.join("compose.yml")).unwrap(),
+        "unowned render\n"
+    );
+    assert!(!plan.manifest.exists(), "no record was invented");
+    assert_eq!(std::fs::read_to_string(&artifact).unwrap(), "stale bytes");
+    assert!(!fixture.root.join("state/build-effect").exists());
+    fixture.assert_preserved();
+}
+
+/// An alias above the owned child is not followed, replaced or adopted: the
+/// build refuses and the aliased tree keeps exactly what it had.
+#[test]
+fn staged_source_refuses_an_alias_above_its_owned_child() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(false, false, "docker");
+    let plan = fixture.stage().expect("a staged source plan");
+    let outside = fixture.root.join("state/aliased-tree");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("kept"), "not ours\n").unwrap();
+    let owned_parent = plan.stage_root.parent().unwrap().to_path_buf();
+    std::os::unix::fs::symlink(&outside, &owned_parent).unwrap();
+    let error = fixture
+        .task()
+        .expect_err("an aliased child is not followed");
+    assert!(
+        error.contains("link this checkout did not create"),
+        "{error}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(outside.join("kept")).unwrap(),
+        "not ours\n"
+    );
+    assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 1);
+    assert!(
+        std::fs::symlink_metadata(&owned_parent)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the alias was left exactly as it was"
+    );
+    assert!(!fixture.root.join("state/build-effect").exists());
+    fixture.assert_preserved();
+}
+
+/// Inside a child this checkout recorded, a link is an entry: cleanup unlinks it
+/// and never follows it, so the target keeps everything it had.
+#[test]
+fn staged_source_cleanup_never_follows_an_alias_out_of_its_directory() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(false, false, "docker");
+    let plan = fixture.stage().expect("a staged source plan");
+    // The first automatic build records the child as this checkout's.
+    fixture
+        .task()
+        .expect("the automatic build stages the tracked source");
+    let outside = fixture.root.join("state/outside-source");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("kept"), "not ours to remove\n").unwrap();
+    std::fs::remove_dir_all(plan.source.join("scripts")).unwrap();
+    std::os::unix::fs::symlink(&outside, plan.source.join("scripts")).unwrap();
+    std::os::unix::fs::symlink(outside.join("kept"), plan.source.join("stale-file")).unwrap();
+    fixture
+        .task()
+        .expect("the recorded child is refreshed without following the links");
+    assert_eq!(
+        std::fs::read_to_string(outside.join("kept")).unwrap(),
+        "not ours to remove\n",
+        "the alias target was left untouched"
+    );
+    assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 1);
+    let staged_dir = std::fs::symlink_metadata(plan.source.join("scripts")).unwrap();
+    assert!(
+        !staged_dir.file_type().is_symlink() && staged_dir.is_dir(),
+        "the alias became the tracked directory itself"
+    );
+    assert!(plan.source.join("scripts/build.rhai").is_file());
+    assert!(
+        std::fs::symlink_metadata(plan.source.join("stale-file")).is_err(),
+        "the stale alias was removed"
+    );
+    fixture.assert_preserved();
+}
+
+/// Interrupting the build after the backend reported success must not copy a
+/// staged artifact back into the caller's checkout.
+#[test]
+fn interrupted_staged_build_cannot_publish_an_artifact() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(false, false, "docker");
+    fixture.mode("signal_success");
+    let artifact = fixture
+        .root
+        .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
+    let output_path = fixture.root.join("state/signal-client-output");
+    let output = std::fs::File::create(&output_path).unwrap();
+    let mut child = std::process::Command::new(fixture.host())
+        .arg("workspace:linux:artifact")
+        .current_dir(&fixture.root)
+        .stdout(output.try_clone().unwrap())
+        .stderr(output)
+        .spawn_owned()
+        .unwrap();
+    let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while !fixture.root.join("state/await-signal").exists() {
+        let status = child.try_wait().unwrap();
+        assert!(
+            status.is_none() && std::time::Instant::now() < ready_deadline,
+            "staged build did not reach its signal boundary: status={status:?}\n{}",
+            std::fs::read_to_string(&output_path).unwrap_or_default(),
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(child.id() as i32),
+        nix::sys::signal::Signal::SIGTERM,
+    )
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let exit = loop {
+        if let Some(exit) = child.try_wait().unwrap() {
+            break exit;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "interrupted staged build did not finish"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert!(!exit.success(), "a backend exit 0 cannot hide interruption");
+    assert_eq!(
+        read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact)).as_deref(),
+        Some(STALE_IDENTITY)
+    );
+    assert_eq!(std::fs::read_to_string(&artifact).unwrap(), "stale bytes");
+    fixture.assert_preserved();
+}
+
+/// Two staged callers serialize on the maintained operation lock: the second
+/// enters no staging, activation or build while the first holds it.
+#[test]
+fn concurrent_staged_callers_have_no_second_effect() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(true, false, "docker");
+    let plan = fixture.stage().expect("a staged source plan");
+    let guard = crate::runner::task_engine::TaskRun::exclusive(
+        &fixture.root,
+        "shared:linux-workspace-artifact-builder",
+        0,
+    )
+    .unwrap();
+    let error =
+        crate::runner::container_command::workspace_artifact_builder::build(&fixture.root, &[])
+            .expect_err("active builder operation cannot be entered twice");
+    assert!(matches!(
+        error,
+        crate::runner::error::RunnerError::TaskLockConflict(_)
+    ));
+    assert!(!fixture.root.join("state/build-effect").exists());
+    drop(guard);
+    fixture
+        .task()
+        .expect("the caller builds once the lock is free");
+    assert_eq!(fixture.build_source(), plan.source);
+    assert_eq!(
+        fixture
+            .calls()
+            .iter()
+            .filter(|args| args.iter().any(|arg| arg == "exec"))
+            .count(),
+        2,
+        "one closure probe and one build, never a duplicate build"
+    );
+    fixture.assert_preserved();
+}
+
+/// The brief's controlled production case: the host source is outside the VM's
+/// only mount, the retained 531 producer binds another checkout's source, and
+/// the maintained automatic task stages the closure into the covered Stash root,
+/// selects its own staged builder and copies the verified artifact back without
+/// touching the foreign builder or any VM setting.
+#[test]
+fn staged_source_builds_beside_a_foreign_531_builder_without_touching_it() {
+    let _lock = crate::contract_test_support::lock_test();
+    let mut fixture = Fixture::staged(false, false, "colima");
+    fixture.retain_foreign_531();
+    fixture.retain_other_checkout();
+    let plan = fixture.stage().expect("a staged source plan");
+    fixture
+        .task()
+        .expect("the automatic build stages its own source and compiles");
+    assert_eq!(fixture.activation_count(), 1, "one owned activation");
+    assert_eq!(fixture.build_source(), plan.source);
+    let calls = serde_json::to_string(&fixture.calls()).unwrap();
+    for foreign in [
+        "effigy-531-producer",
+        "531-producer/source",
+        &"e".repeat(64),
+        "other-checkout",
+        &"d".repeat(64),
+    ] {
+        assert!(
+            !calls.contains(foreign),
+            "the foreign builder was targeted: {foreign}"
+        );
+    }
+    // The selected builder is this checkout's own staged one.
+    let identity: Value =
+        serde_json::from_slice(&std::fs::read(fixture.root.join("state/identity.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        identity[0]["Config"]["Labels"]["com.effigy.checkout"],
+        json!(fixture.root)
+    );
+    assert!(Path::new(identity[0]["Mounts"][0]["Source"].as_str().unwrap()) == plan.source);
+    let artifact = fixture
+        .root
+        .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    assert!(
+        artifact.is_file(),
+        "the verified artifact reached the caller"
+    );
+    fixture.assert_preserved();
+}
+
+/// A failed staged producer publishes nothing and keeps the caller's stale
+/// artifact, and the retry needs no manual step.
+#[test]
+fn failed_staged_producer_publishes_nothing_and_retry_reuses_the_builder() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(false, false, "docker");
+    let plan = fixture.stage().expect("a staged source plan");
+    let artifact = fixture
+        .root
+        .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
+    fixture.mode("build_fail");
+    fixture
+        .task()
+        .expect_err("a failed producer publishes nothing");
+    assert_eq!(std::fs::read_to_string(&artifact).unwrap(), "stale bytes");
+    assert_eq!(
+        read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact)).as_deref(),
+        Some(STALE_IDENTITY)
+    );
+    fixture.mode("retry");
+    fixture.task().expect("the retry reuses the staged builder");
+    assert_eq!(fixture.build_source(), plan.source);
+    assert_eq!(
+        fixture.activation_count(),
+        1,
+        "the retry reuses the builder the first run activated"
+    );
+    assert_ne!(std::fs::read_to_string(&artifact).unwrap(), "stale bytes");
+    fixture.assert_preserved();
+}
+
+fn assert_compiled_source_drift_publishes_nothing(mode: &str) {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(false, false, "docker");
+    let artifact = fixture
+        .root
+        .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
+    fixture.mode(mode);
+    let error = fixture.task().expect_err(mode);
+    assert!(
+        error.contains("while the builder compiled"),
+        "{mode}: {error}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&artifact).unwrap(),
+        "stale bytes",
+        "{mode}: an artifact for source that moved is never published"
+    );
+    assert_eq!(
+        read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact)).as_deref(),
+        Some(STALE_IDENTITY),
+        "{mode}"
+    );
+    fixture.assert_preserved();
+}
+
+mod compiled_source_drift {
+    use super::*;
+    macro_rules! cases {
+        ($($case:ident),+ $(,)?) => { $(
+            #[test]
+            fn $case() {
+                assert_compiled_source_drift_publishes_nothing(stringify!($case));
+            }
+        )+ };
+    }
+    cases!(change_source_during_build, tamper_stage_during_build);
+}
+
+/// How many producer runs this fixture's private backend recorded.
+fn private_build_count(root: &Path) -> usize {
+    std::fs::read_to_string(root.join("state/builds"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count()
+}
+
+/// Two automatic acquisition callers in one checkout run at once. The maintained
+/// freshness and single-flight locks let exactly one of them build, and the
+/// other hands off the artifact that build produced.
+#[test]
+fn concurrent_automatic_acquisition_callers_build_once() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(false, false, "docker");
+    let plan = fixture.stage().expect("a staged source plan");
+    fixture.mode("slow_build");
+    let host = fixture.host();
+    let artifact = fixture
+        .root
+        .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "old-bytes", Some(STALE_IDENTITY));
+    let mut callers = Vec::new();
+    for _ in 0..2 {
+        let root = fixture.root.clone();
+        let host = host.clone();
+        let target = LinuxWorkspaceTarget::X86_64Gnu;
+        callers.push(std::thread::spawn(move || {
+            ensure_local_linux_workspace_effigy_artifact(&host, &root, target)
+        }));
+    }
+    for caller in callers {
+        let bound = caller
+            .join()
+            .expect("acquisition caller")
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(bound.artifact, artifact);
+    }
+    assert_eq!(
+        private_build_count(&fixture.root),
+        1,
+        "exactly one automatic caller produced the artifact; ledger: {:?}",
+        std::fs::read_to_string(fixture.root.join("state/builds"))
+    );
+    assert_eq!(fixture.build_source(), plan.source);
+    let expected = workspace_effigy_local_install_identity(&host).unwrap();
+    assert!(linux_workspace_effigy_artifact_is_current(
+        &artifact,
+        LinuxWorkspaceTarget::X86_64Gnu,
+        &expected
+    ));
+    fixture.assert_preserved();
+}
+
+/// A tracked input that changes while the snapshot is being taken is refused
+/// before anything is staged, bound or published.
+#[test]
+fn staged_source_refuses_an_edit_made_while_snapshotting() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(false, false, "docker");
+    let plan = fixture.stage().expect("a staged source plan");
+    let artifact = fixture
+        .root
+        .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
+    let _mutate = EnvGuard::set_many(&[(
+        "EFFIGY_RECOVERY_MUTATE_DURING_SNAPSHOT",
+        Some("1".to_owned()),
+    )]);
+    let error = fixture
+        .task()
+        .expect_err("a source edit during the snapshot publishes nothing");
+    assert!(error.contains("changed while it was staged"), "{error}");
+    assert_eq!(std::fs::read_to_string(&artifact).unwrap(), "stale bytes");
+    assert!(!fixture.root.join("state/build-effect").exists());
+    assert!(
+        !plan.manifest.exists()
+            || effigy_containers::artifact_source::StageManifest::read(&plan).is_ok(),
+        "no half-written record is left behind"
+    );
+    fixture.assert_preserved();
+}
+
+/// Publishing the record before the files must stay recoverable: an interrupted
+/// incremental stage leaves a pending record that may name bytes the tree does
+/// not carry, and the next automatic run completes it instead of refusing
+/// forever.
+#[test]
+fn an_interrupted_incremental_stage_is_completed_by_the_next_run() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(false, false, "docker");
+    let plan = fixture.stage().expect("a staged source plan");
+    fixture.task().expect("the first build records the child");
+    let record = effigy_containers::artifact_source::StageManifest::read(&plan).unwrap();
+    let relative = "Cargo.toml";
+    let staged = plan.source.join(relative);
+
+    // The interruption: the caller's file was edited and the pending record was
+    // published, but the staged copy still carries the older bytes.
+    std::fs::write(fixture.root.join(relative), "[workspace]\n# edited\n").unwrap();
+    let edited_digest = effigy_core::git_source::sha256_hex(b"[workspace]\n# edited\n");
+    let mut pending = record.clone();
+    pending.state = effigy_containers::artifact_source::StageState::Pending;
+    pending.files.get_mut(relative).unwrap().sha256 = edited_digest.clone();
+    pending.closure = "f".repeat(64);
+    std::fs::write(&plan.manifest, serde_json::to_vec_pretty(&pending).unwrap()).unwrap();
+    assert_ne!(
+        effigy_core::git_source::sha256_hex(&std::fs::read(&staged).unwrap()),
+        edited_digest,
+        "the staged copy is stale, exactly as an interrupted run leaves it"
+    );
+    fixture
+        .task()
+        .expect("the next run completes the interrupted stage");
+    assert_eq!(
+        effigy_core::git_source::sha256_hex(&std::fs::read(&staged).unwrap()),
+        edited_digest,
+        "the staged copy carries the caller's edited bytes"
+    );
+    let recovered = effigy_containers::artifact_source::StageManifest::read(&plan).unwrap();
+    assert_eq!(
+        recovered.state,
+        effigy_containers::artifact_source::StageState::Complete
+    );
+    assert_eq!(
+        recovered.closure,
+        record_digest_after_recovery(&fixture, &plan)
+    );
+
+    // The second interruption names no changed source at all: the staged bytes
+    // were damaged, and the same run must repair them from the record.
+    std::fs::write(&staged, "damaged staged bytes\n").unwrap();
+    let mut pending = recovered.clone();
+    pending.state = effigy_containers::artifact_source::StageState::Pending;
+    std::fs::write(&plan.manifest, serde_json::to_vec_pretty(&pending).unwrap()).unwrap();
+    fixture
+        .task()
+        .expect("the next run repairs a damaged staged file");
+    assert_eq!(
+        std::fs::read(&staged).unwrap(),
+        std::fs::read(fixture.root.join(relative)).unwrap()
+    );
+    fixture.assert_preserved();
+}
+
+/// The closure digest the producer derives for this fixture's current source.
+fn record_digest_after_recovery(
+    fixture: &Fixture,
+    plan: &effigy_containers::artifact_source::StagePlan,
+) -> String {
+    // The record names every staged file; re-hash the staged bytes and the
+    // caller's tracked set the same way the producer does.
+    let record = effigy_containers::artifact_source::StageManifest::read(plan).unwrap();
+    for (relative, file) in &record.files {
+        assert_eq!(
+            effigy_core::git_source::sha256_hex(
+                &std::fs::read(plan.source.join(relative)).unwrap()
+            ),
+            file.sha256,
+            "{relative}"
+        );
+    }
+    assert_eq!(
+        std::fs::read(plan.source.join("Cargo.toml")).unwrap(),
+        std::fs::read(fixture.root.join("Cargo.toml")).unwrap()
+    );
+    record.closure
+}
+
+/// A mode-only change in the caller is a changed input: the staged copy must
+/// carry the new executable bit, not just the same bytes.
+#[test]
+fn staged_source_refreshes_a_mode_only_change() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(false, false, "docker");
+    let plan = fixture.stage().expect("a staged source plan");
+    let relative = "scripts/build.rhai";
+    fixture
+        .task()
+        .expect("the first build stages the tracked source");
+    let staged = plan.source.join(relative);
+    let before = effigy_containers::artifact_source::StageManifest::read(&plan)
+        .unwrap()
+        .files
+        .get(relative)
+        .unwrap()
+        .clone();
+    assert!(
+        !before.executable,
+        "the fixture tracks this file non-executable"
+    );
+    assert_eq!(
+        std::fs::metadata(&staged).unwrap().permissions().mode() & 0o111,
+        0,
+        "the staged copy starts non-executable"
+    );
+
+    // Same bytes, new mode, recorded in the index the closure reads.
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(
+        fixture.root.join(relative),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let status = std::process::Command::new("git")
+        .args(["add", relative])
+        .current_dir(&fixture.root)
+        .status()
+        .expect("private git fixture");
+    assert!(status.success());
+
+    fixture
+        .task()
+        .expect("the mode-only change is staged by the next automatic run");
+    let after = effigy_containers::artifact_source::StageManifest::read(&plan)
+        .unwrap()
+        .files
+        .get(relative)
+        .unwrap()
+        .clone();
+    assert_eq!(after.sha256, before.sha256, "the bytes are unchanged");
+    assert!(after.executable, "the record carries the new mode");
+    assert_ne!(
+        std::fs::metadata(&staged).unwrap().permissions().mode() & 0o111,
+        0,
+        "the staged copy carries the new executable bit"
+    );
+    fixture.assert_preserved();
 }

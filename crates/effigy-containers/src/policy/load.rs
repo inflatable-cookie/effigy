@@ -205,7 +205,14 @@ fn creation_policy(
     publish(&resolved.0)?;
     stage(CreationPolicyStage::MountSources);
     super::mounts::prepare_container_mount_sources(&resolved.0)?;
-    Ok(resolved)
+    // A Compose client that runs inside the VM reads the inputs from the VM, so
+    // an environment whose checkout the profile cannot reach Compose-stages its
+    // published render into the owned mount (effigy#715). Every policy that
+    // reaches Compose through this entry gets the same staged paths, and the
+    // render digest is unchanged, so admission and records are unaffected.
+    let (mut policy, decisions) = resolved;
+    crate::artifact_source::stage_compose_render(&mut policy)?;
+    Ok((policy, decisions))
 }
 
 pub fn prepare_container_policy(
@@ -654,6 +661,12 @@ fn build_effective_policy(
         ports_declared_explicitly: !host.ports.is_empty(),
         declared_mounts: resolved_host_mounts,
         declared_media_mounts: data.media,
+        // An unreadable spelling is refused by manifest validation; anything
+        // else that is not `staged` keeps the checkout's own path.
+        workspace_source: match config.workspace_source.as_deref().map(str::trim) {
+            Some("staged") => crate::artifact_source::WorkspaceSource::Staged,
+            _ => crate::artifact_source::WorkspaceSource::Checkout,
+        },
         pull_production_hook: data.pull_production,
         health_check: health.check,
         health_timeout_secs: health.timeout_secs.unwrap_or(DEFAULT_HEALTH_TIMEOUT_SECS),

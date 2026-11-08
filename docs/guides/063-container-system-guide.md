@@ -835,6 +835,18 @@ builds never share a builder with another checkout's source. A runtime-scoped
 checkout keeps its generation token instead, and the flag cannot be combined
 with `share_runtime_identity = true`.
 
+The builder also declares `workspace_source = "staged"`. A VM reaches only the
+host paths its Colima profile shares, so a checkout outside every shared mount
+binds the checkout's staged source closure under the profile's own writable
+mount instead of a host path the VM would silently replace with an empty
+directory. The closure is the tracked working tree, with uncommitted edits and
+without Effigy state, secret files, ignored or untracked paths or submodule
+contents; `effigy workspace:linux:artifact` refreshes it before each build,
+proves through the container that the bound bytes are that closure, and copies
+only the receipt-verified artifact back. Inside a shared mount the checkout's
+own path stays bound and nothing is staged. The profile configuration is only
+read: no mount, profile setting or VM is added or changed.
+
 The clone marker is read from that checkout's own `.git/config` only — never
 from global or system Git configuration, and `[include]` directives are not
 followed. Only the tool that created the clone (Nucleus sets this marker on

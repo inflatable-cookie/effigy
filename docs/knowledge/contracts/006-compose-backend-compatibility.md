@@ -185,6 +185,100 @@ retained admission with no container refuses; a first activation with neither
 container nor admission uses the ordinary container manager. Existing runtime
 drift checks remain in force. No VM recovery or broad cleanup is added.
 
+### The builder's source when the profile cannot reach the checkout
+
+A VM sees only the host paths its Colima profile shares. A development checkout
+outside every shared mount therefore has no source a bind can carry: the
+container runtime creates an empty directory for the inaccessible path and the
+build compiles nothing. The maintained `linux-release` environment declares
+`workspace_source = "staged"` (effigy#715), and the producer resolves the source
+from the profile's own configuration, which it reads and never writes:
+
+- A writable profile mount that contains the checkout keeps the checkout's own
+  path as the source. Nothing is staged and nothing changes.
+- Otherwise the only existing writable profile mount hosts one owned child for
+  this checkout: `<mount>/effigy-builder-source/<project>/source`, bound at
+  `/workspace`, with its binding record beside it. An absent, unreadable or
+  ambiguous profile config is refused by name rather than guessed at, and no
+  mount, profile setting or VM is ever added or changed.
+
+The owned child is never guessed at. Before anything below the mount is
+created, written or removed, the producer proves ownership: either the child's
+`stage.json` record names this canonical checkout, its scope, project and
+profile, or the child does not exist yet (or is an empty directory) and this
+producer creates it. A directory at the derived path is not proof, so a child
+that already holds entries without this checkout's record refuses whole —
+nothing in it is written, cleaned, adopted or published — and so does a record
+belonging to another checkout, scope, project or profile. A pre-existing link or
+file in the owned chain is refused rather than followed, unlinked or replaced.
+The record is written before the first file lands, so an interrupted run leaves
+this checkout's own record rather than an unowned tree. That early record is
+`pending`: it proves ownership and claims no closure, a reader that needs the
+staged source refuses it, and only a `complete` record — written after every
+file and the inventory were verified — describes written bytes. Recovery never
+trusts the record for content: a staged file is rewritten whenever its bytes or
+its executable bit no longer carry the closure's entry — a mode-only change in
+the caller is a changed input, not a reuse — so an interruption during an
+incremental refresh (a pending record naming newer digests while the tree still
+holds older bytes) is completed by the next run instead of refusing forever, and
+the whole-closure verification checks each staged file's mode as well as its
+digest. The same record
+carries the Compose render generation staged beside the source, and render
+staging shares the one ownership rule.
+
+The staged closure is the checkout's tracked working tree — every path
+`git ls-files` reports, read from the working tree so uncommitted development
+edits are part of the build — with a digest per file and one digest over the
+ordered inventory. It is never a recursive copy: Effigy's own `.effigy` state,
+local secret files, ignored and untracked paths and submodule contents are
+excluded by rule and recorded as excluded; submodule pins are recorded as
+evidence, and a symlink or an unreadable tracked path refuses with its concrete
+cause. `stage.json` records the canonical checkout, its scope, project and
+profile, the closure digest, the caller's `HEAD` and every file digest, so the
+producer can name exactly which caller inputs it snapshotted. A record naming
+another checkout, scope or project is refused before any write.
+
+A profile that cannot reach the checkout also cannot reach the Compose inputs:
+the render lives under the checkout's `.effigy/state/objects` and a
+`colima nerdctl -- compose` client reads `-f` files and the project directory
+from inside the VM. The same owned child therefore also carries the published
+render closure at `<stage>/render/<render-digest>`, byte-for-byte, and every
+activation and exec of that environment names those files. The render digest is
+unchanged, so admission, records and generation reuse are unaffected; one
+generation is kept at a time, and a superseded generation is removed as a
+directory or a link, never through one.
+
+Ordinary incremental builds keep one staged directory, so the caller's project
+identity and the builder's cargo target stay stable, while changed source is
+refreshed in place and source that is no longer tracked is removed. Staging and
+cleanup treat a link as an entry, never as a path to follow: a link in the
+staged tree is unlinked, its target is untouched, and a tracked directory that
+a stale alias occupies becomes the real directory the closure names. The owned
+chain is created one component at a time from the profile's mount — which must
+be a real directory of its own — so an alias planted between the mount and the
+owned child is unlinked rather than followed, and the finished chain's canonical
+path must still be inside that mount. Nothing outside the owned child is
+created, replaced or removed by staging. Before
+compiling, the build asks the container, through its verified immutable ID,
+whether `/workspace` carries the whole closure: the inventory inside the bound
+tree must carry the digest this build recorded, every listed file must match
+its digest, and the source-file count must equal the recorded count. An empty
+auto-created VM directory, another source, a changed or missing file and an
+unaccounted extra file all refuse by name instead of becoming a build error.
+Only bytes the build's own producer receipt blesses for the requested target
+and the host's version are copied back into the checkout's artifact directory,
+atomically and in the order the existing freshness checks read them. Before any
+byte is copied back, the whole binding is re-proved: the caller's current
+tracked closure must still hash to the digest that was compiled and the staged
+tree must still carry every recorded digest. A caller edit, a concurrent writer
+or a changed staged tree during a long build therefore publishes nothing and
+says which side moved.
+
+A builder retained from the pre-staging declaration binds the checkout's own
+unreachable path. The maintained activation replaces exactly that checkout's
+container with the staged bind once; the builder is never adopted, exec'd,
+hand-removed or relabelled, and a builder bound to another source still refuses.
+
 The builder remains detached after success or failure, preserving its cache
 volumes and completed artifacts for retry. Its original image may be unable to
 compile newer source; a failed build then remains a failure and grants no
