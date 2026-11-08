@@ -149,7 +149,17 @@ fn estimate_primary_service_mount_label_size(
     // tmpfs target collides with a volume target the estimate counts both:
     // the budget is an over-count-safe preflight, not a runtime oracle.
     let mut tmpfs_mounts = Vec::new();
-    let mut unmodelled_named_volumes = std::collections::BTreeMap::<String, usize>::new();
+    // Borrowed `data_from` volume names are the only external volumes Effigy
+    // itself declares, so they are the only ones this estimate can resolve a
+    // backend source for.
+    let borrowed_volume_names = policy
+        .borrowed_volumes
+        .iter()
+        .map(|volume| volume.name.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut named_volume_sources = std::collections::BTreeMap::<String, ModelledNamedVolume>::new();
+    let mut unmodelled_named_volumes =
+        std::collections::BTreeMap::<String, UnmodelledNamedVolume>::new();
     for (file_index, compose_file) in policy.compose_files.iter().enumerate() {
         let content = policy.read_compose(compose_file)?;
         let parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|_| {
@@ -164,8 +174,9 @@ fn estimate_primary_service_mount_label_size(
         };
 
         // Named-volume options can change the backing source path. Recognize
-        // defaults and Effigy's generated aliases; defer unsupported
-        // definitions until we know if the primary service mounts them.
+        // the defaults, the generated `data_from` borrow and the explicit
+        // `name` alias; defer unsupported definitions until we know if the
+        // primary service mounts them.
         if let Some(volume_definitions) =
             document.get(serde_yaml::Value::String("volumes".to_owned()))
         {
@@ -184,10 +195,41 @@ fn estimate_primary_service_mount_label_size(
                         "a top-level volume definition has an unmodelled key",
                     ));
                 };
-                if !is_modelled_named_volume_definition(name, definition) {
-                    unmodelled_named_volumes
-                        .entry(name.to_owned())
-                        .or_insert(file_index);
+                match classify_named_volume_definition(
+                    name,
+                    definition,
+                    borrowed_volume_names.contains(name),
+                ) {
+                    Ok(modelled) => {
+                        // Compose merges top-level volume definitions by key,
+                        // so a later identical definition names the same
+                        // volume. Definitions that disagree are not merged
+                        // here: their effective identity is ambiguous.
+                        match named_volume_sources.get(name) {
+                            Some(existing) if existing != &modelled => {
+                                named_volume_sources.remove(name);
+                                unmodelled_named_volumes.insert(
+                                    name.to_owned(),
+                                    UnmodelledNamedVolume {
+                                        file_index,
+                                        detail: "conflicting top-level volume definitions across Compose inputs",
+                                    },
+                                );
+                            }
+                            Some(_) => {}
+                            None => {
+                                if !unmodelled_named_volumes.contains_key(name) {
+                                    named_volume_sources.insert(name.to_owned(), modelled);
+                                }
+                            }
+                        }
+                    }
+                    Err(detail) => {
+                        named_volume_sources.remove(name);
+                        unmodelled_named_volumes
+                            .entry(name.to_owned())
+                            .or_insert(UnmodelledNamedVolume { file_index, detail });
+                    }
                 }
             }
         }
@@ -279,15 +321,26 @@ fn estimate_primary_service_mount_label_size(
             effective.insert(mount.target.clone(), mount);
         }
     }
-    for mount in effective.values() {
-        if let Some(name) = &mount.named_volume_source {
-            if let Some(file_index) = unmodelled_named_volumes.get(name) {
-                return Err(mount_budget_refusal(
-                    policy,
-                    *file_index,
-                    "primary service mounts a named volume with unmodelled top-level options",
-                ));
-            }
+    for mount in effective.values_mut() {
+        let Some(name) = mount.named_volume_source.clone() else {
+            continue;
+        };
+        if let Some(unmodelled) = unmodelled_named_volumes.get(&name) {
+            return Err(mount_budget_refusal(
+                policy,
+                unmodelled.file_index,
+                &format!(
+                    "primary service mounts a named volume with {}",
+                    unmodelled.detail
+                ),
+            ));
+        }
+        // A borrowed volume is the owner's platform volume, mounted under the
+        // name the owner created rather than this project's prefix.
+        if let Some(ModelledNamedVolume::External { platform_name }) =
+            named_volume_sources.get(&name)
+        {
+            mount.source = named_volume_data_path(platform_name);
         }
     }
     if effective.is_empty() && tmpfs_mounts.is_empty() {
@@ -316,19 +369,86 @@ fn estimate_primary_service_mount_label_size(
     }))
 }
 
-fn is_modelled_named_volume_definition(name: &str, definition: &serde_yaml::Value) -> bool {
+/// How one top-level volume definition names the platform volume that the
+/// primary service's mounts resolve to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ModelledNamedVolume {
+    /// Compose creates the volume and names it from the project and key.
+    Managed,
+    /// `external: true` over a volume Effigy borrows through `data_from`: the
+    /// owner already created this platform volume, so this environment never
+    /// creates, removes or re-labels it. `platform_name` is the resolved
+    /// volume identity Compose mounts.
+    External { platform_name: String },
+}
+
+#[derive(Debug)]
+struct UnmodelledNamedVolume {
+    file_index: usize,
+    detail: &'static str,
+}
+
+/// Model one top-level volume definition, or name the reason its backing
+/// source cannot be resolved before runtime.
+///
+/// The supported external form is exactly what the `data_from` generator
+/// writes: the key is the owner's platform volume name, `external: true` says
+/// it already exists, and an explicit `name` may repeat that same identity.
+/// Unknown external names, an alias keyed off the owner's name, `external:
+/// false`, an external mapping or string form, `driver_opts`, plugins,
+/// interpolation and conflicting fields all keep their definition unmodelled,
+/// because each would leave the mounted source path unknown here.
+fn classify_named_volume_definition(
+    name: &str,
+    definition: &serde_yaml::Value,
+    borrowed: bool,
+) -> Result<ModelledNamedVolume, &'static str> {
     if definition.is_null() {
-        return true;
+        return Ok(ModelledNamedVolume::Managed);
     }
     let Some(options) = definition.as_mapping() else {
-        return false;
+        return Err("unmodelled top-level options");
     };
-    options.iter().all(|(key, value)| match key.as_str() {
+    if options.contains_key(serde_yaml::Value::String("external".to_owned())) {
+        if !borrowed {
+            return Err("an `external` volume that is not a `data_from` borrowed volume");
+        }
+        for (field, value) in options {
+            match field.as_str() {
+                Some("external") if value.as_bool() == Some(true) => {}
+                Some("name") if value.as_str() == Some(name) => {}
+                _ => {
+                    return Err(
+                        "an `external` volume definition outside the supported `data_from` form",
+                    )
+                }
+            }
+        }
+        return Ok(ModelledNamedVolume::External {
+            platform_name: name.to_owned(),
+        });
+    }
+    let modelled = options.iter().all(|(field, value)| match field.as_str() {
         Some("driver") => value.as_str() == Some("local"),
         Some("name") => value.as_str() == Some(name),
         Some("labels") => value.as_mapping().is_some(),
         _ => false,
-    })
+    });
+    if modelled {
+        Ok(ModelledNamedVolume::Managed)
+    } else {
+        Err("unmodelled top-level options")
+    }
+}
+
+/// The containerd volume-store path a platform named volume materializes as.
+/// The 64-hex segment reserves the documented containerd namespace identity
+/// width because the exact id is unavailable before runtime.
+fn named_volume_data_path(platform_name: &str) -> String {
+    format!(
+        "/var/lib/nerdctl/{}/volumes/default/{platform_name}/_data",
+        "0".repeat(64)
+    )
 }
 
 fn mount_budget_refusal(
@@ -502,13 +622,7 @@ fn parse_effective_mount(
         } else {
             format!("{project_name}-{source}")
         };
-        (
-            format!(
-                "/var/lib/nerdctl/{}/volumes/default/{volume_name}/_data",
-                "0".repeat(64)
-            ),
-            "bind",
-        )
+        (named_volume_data_path(&volume_name), "bind")
     };
     Ok(EffectiveMount {
         source: resolved,
@@ -566,6 +680,111 @@ fn path_is_within(path: &Path, root: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colima_named_volume_definitions_classify_only_supported_identities() {
+        let definition = |text: &str| -> serde_yaml::Value { serde_yaml::from_str(text).unwrap() };
+
+        // The defaults, the generated managed form and the explicit `name`
+        // alias keep Compose creating the volume from the project prefix.
+        for managed in [
+            "null",
+            "{}",
+            "{driver: local}",
+            "{name: cache}",
+            "{driver: local, name: cache, labels: {com.effigy.managed: \"true\"}}",
+        ] {
+            assert_eq!(
+                classify_named_volume_definition("cache", &definition(managed), false),
+                Ok(ModelledNamedVolume::Managed),
+                "{managed}"
+            );
+        }
+
+        // A borrowed `data_from` volume is the generated external form: the
+        // key is the owner's platform volume name.
+        for supported in [
+            "{external: true}",
+            "{external: true, name: acow-dev-db-data}",
+        ] {
+            assert_eq!(
+                classify_named_volume_definition("acow-dev-db-data", &definition(supported), true),
+                Ok(ModelledNamedVolume::External {
+                    platform_name: "acow-dev-db-data".to_owned()
+                }),
+                "{supported}"
+            );
+        }
+
+        // Unknown external names, aliases, a false or malformed `external`,
+        // driver options and interpolation leave the source path unknown.
+        let unsupported: [(&str, bool, &str); 15] = [
+            ("acow-dev-db-data", false, "{external: true}"),
+            ("acow-dev-db-data", true, "{external: false}"),
+            ("acow-dev-db-data", true, "{external: \"true\"}"),
+            (
+                "acow-dev-db-data",
+                true,
+                "{external: {name: acow-dev-db-data}}",
+            ),
+            (
+                "acow-dev-db-data",
+                true,
+                "{external: true, name: stack-db-data}",
+            ),
+            (
+                "acow-dev-db-data",
+                true,
+                "{external: true, name: ../../../etc}",
+            ),
+            (
+                "acow-dev-db-data",
+                true,
+                "{external: true, name: \"${VOLUME_NAME}\"}",
+            ),
+            ("acow-dev-db-data", true, "{external: true, driver: local}"),
+            (
+                "acow-dev-db-data",
+                true,
+                "{external: true, labels: {com.docker.compose.project: acow}}",
+            ),
+            (
+                "acow-dev-db-data",
+                true,
+                "{external: true, driver_opts: {type: nfs}}",
+            ),
+            (
+                "cache",
+                false,
+                "{driver_opts: {device: /dev/disk/by-partuuid/EXAMPLE}}",
+            ),
+            ("cache", false, "{driver: nfs}"),
+            ("cache", false, "{name: other}"),
+            ("cache", false, "{driver: local, external: true}"),
+            ("cache", false, "cache"),
+        ];
+        for (key, borrowed, text) in unsupported {
+            assert!(
+                classify_named_volume_definition(key, &definition(text), borrowed).is_err(),
+                "`{text}` must stay unmodelled"
+            );
+        }
+    }
+
+    #[test]
+    fn colima_borrowed_volume_mounts_use_the_owner_platform_name() {
+        // The owner's platform volume name is what nerdctl materializes, so
+        // the estimate must not add this project's prefix to a borrowed
+        // volume.
+        assert_eq!(
+            named_volume_data_path("acow-dev-db-data"),
+            format!(
+                "/var/lib/nerdctl/{}/volumes/default/acow-dev-db-data/_data",
+                "0".repeat(64)
+            )
+        );
+        assert!(!named_volume_data_path("acow-dev-db-data").contains("acow-hybrid"));
+    }
 
     #[test]
     fn mount_json_estimate_counts_nerdctl_key_and_json_escaping() {

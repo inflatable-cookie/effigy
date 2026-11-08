@@ -38,7 +38,10 @@ if cmd == 'ps':
         labels = row['Config']['Labels']
         project = labels['com.docker.compose.project'] if row in foreign else os.environ['EFFIGY_RECOVERY_PROJECT']
         if '--filter' in args and args[args.index('--filter')+1] != 'label=com.docker.compose.project=' + project: continue
-        line = '%s\t%s\t\t%s\t%s\t%s\t%s' % (row['Name'].lstrip('/'), 'Up 1 second' if row['State']['Running'] else 'Exited (0)', project, labels.get('com.docker.compose.project.working_dir', ''), labels.get('com.docker.compose.service', ''), labels.get('com.docker.compose.oneoff', ''))
+        st = row.get('State', {})
+        status_text = 'Created' if st.get('Status', 'x') == '' else ('Up 1 second' if st.get('Running') else 'Exited (0)')
+        if status_text == 'Created' and '--all' not in args: continue
+        line = '%s\t%s\t\t%s\t%s\t%s\t%s' % (row['Name'].lstrip('/'), status_text, project, labels.get('com.docker.compose.project.working_dir', ''), labels.get('com.docker.compose.service', ''), labels.get('com.docker.compose.oneoff', ''))
         print(line)
         if mode == 'multiple_rows' and project == os.environ['EFFIGY_RECOVERY_PROJECT']: print(line)
     sys.exit(0)
@@ -50,6 +53,15 @@ if cmd == 'inspect':
     count_path.write_text(str(count))
     if not identity.exists(): sys.exit(1)
     row = json.loads(identity.read_text())
+    if mode == 'created_then_running' and row[0]['State'].get('Status') == '':
+        # Two reads precede the observation and the next one is the transition's
+        # own re-observation, so the builder starts after the observation.
+        reads = state / 'created-reads'
+        count_created = int(reads.read_text()) + 1 if reads.exists() else 1
+        reads.write_text(str(count_created))
+        if count_created > 2:
+            row[0]['State'] = {'Status': 'running', 'Running': True, 'Paused': False, 'Restarting': False, 'Pid': 1, 'ExitCode': 0, 'Error': '', 'StartedAt': '2026-11-08T00:00:00Z', 'FinishedAt': ''}
+            identity.write_text(json.dumps(row))
     if mode == 'change_inputs':
         with (root / 'effigy.toml').open('a') as f: f.write('\n# concurrent input change\n')
     if mode == 'remove_marker':
@@ -2445,5 +2457,234 @@ fn staged_source_refreshes_a_mode_only_change() {
         0,
         "the staged copy carries the new executable bit"
     );
+    fixture.assert_preserved();
+}
+
+impl Fixture {
+    /// The retained Colima nerdctl record of this checkout's builder, created
+    /// but never started (`Created`), bound to its own path as the pre-staging
+    /// declaration binds it. Every `State` field is the exact never-started
+    /// shape nerdctl reports, with no running status fabricated.
+    fn retain_created_pre_staging(&self) {
+        use std::os::unix::fs::MetadataExt;
+        let root_meta = std::fs::metadata(&self.root).unwrap();
+        let project = self.policy.project_name.clone();
+        let mut labels = json!({
+            "com.docker.compose.project": project,
+            "com.docker.compose.service": "builder",
+            "com.docker.compose.oneoff": "False",
+            "com.effigy.checkout": self.root,
+            "com.effigy.checkout-fence": json!({"device": root_meta.dev(), "inode": 1992354169u64}).to_string(),
+            "com.effigy.checkout-generation": json!({"device": root_meta.dev(), "inode": root_meta.ino()}).to_string(),
+        });
+        if let Some(scope) = effigy_core::worktree_scope::resolve(&self.root).unwrap() {
+            labels["com.effigy.scope"] = json!(std::fs::read_to_string(
+                scope
+                    .token_dir
+                    .join(effigy_core::worktree_scope::SCOPE_FILE)
+            )
+            .unwrap()
+            .trim());
+        }
+        let record = json!([{
+            "Id": "a".repeat(64),
+            "Name": format!("/{project}-builder-1"),
+            "State": {
+                "Status": "", "Running": false, "Paused": false, "Restarting": false,
+                "Pid": 0, "ExitCode": 0, "Error": "", "StartedAt": "", "FinishedAt": ""
+            },
+            "Config": {"Labels": labels},
+            "Mounts": [
+                {"Type": "bind", "Source": self.root, "Destination": "/workspace", "RW": true},
+                {"Type": "volume", "Name": format!("{project}-cargo-registry"), "Destination": "/root/.cargo/registry", "RW": true},
+                {"Type": "volume", "Name": format!("{project}-cargo-git"), "Destination": "/root/.cargo/git", "RW": true}
+            ],
+            "NetworkSettings": {"Ports": {}}
+        }]);
+        std::fs::write(self.root.join("state/identity.json"), record.to_string()).unwrap();
+    }
+}
+
+/// The retained Created shape is replaced once by the maintained activation,
+/// bound to the verified staged source, and the next call reuses that builder.
+#[test]
+fn created_pre_staging_builder_is_replaced_once_and_reused() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(true, false, "colima");
+    let plan = fixture.stage().expect("a staged source plan");
+    fixture.retain_created_pre_staging();
+    fixture
+        .task()
+        .expect("the never-started builder is replaced by the maintained activation");
+    assert_eq!(fixture.activation_count(), 1);
+    assert_eq!(fixture.build_source(), plan.source);
+    assert_eq!(private_build_count(&fixture.root), 1);
+    let current: Value =
+        serde_json::from_slice(&std::fs::read(fixture.root.join("state/identity.json")).unwrap())
+            .unwrap();
+    assert_eq!(current[0]["State"]["Status"], "running");
+    assert_eq!(
+        std::path::Path::new(current[0]["Mounts"][0]["Source"].as_str().unwrap()),
+        plan.source
+    );
+    fixture.assert_preserved();
+    fixture
+        .task()
+        .expect("the incremental call reuses the replaced builder");
+    assert_eq!(fixture.activation_count(), 1);
+    assert_eq!(private_build_count(&fixture.root), 2);
+}
+
+/// Each refusal names no transition, no exec and no build. Empty status alone is
+/// never proof: every other field and ownership fact must hold too.
+fn assert_created_builder_refuses_without_transition(case: &str) {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(true, false, "colima");
+    fixture.stage().expect("a staged source plan");
+    fixture.retain_created_pre_staging();
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(&fixture.root).unwrap();
+    let device = meta.dev();
+    let generation_inode = if case == "stale_generation" {
+        meta.ino() + 1
+    } else {
+        meta.ino()
+    };
+    fixture.mutate(|record| match case {
+        "lowercase_created_status" => record["State"]["Status"] = json!("created"),
+        "running_with_empty_status" => record["State"]["Running"] = json!(true),
+        "paused" => record["State"]["Paused"] = json!(true),
+        "restarting" => record["State"]["Restarting"] = json!(true),
+        "nonzero_pid" => record["State"]["Pid"] = json!(4242),
+        "started_at" => record["State"]["StartedAt"] = json!("2026-11-08T00:00:00Z"),
+        "finished_at" => record["State"]["FinishedAt"] = json!("2026-11-08T00:00:00Z"),
+        "error_text" => record["State"]["Error"] = json!("exec: boom"),
+        "missing_error_field" => {
+            record["State"].as_object_mut().unwrap().remove("Error");
+        }
+        "missing_state" => {
+            record.as_object_mut().unwrap().remove("State");
+        }
+        "short_id" => record["Id"] = json!("a".repeat(12)),
+        "wrong_name" => record["Name"] = json!("/successor-builder-1"),
+        "wrong_service" => {
+            record["Config"]["Labels"]["com.docker.compose.service"] = json!("worker")
+        }
+        "stale_generation" => {
+            record["Config"]["Labels"]["com.effigy.checkout-generation"] =
+                json!(json!({"device": device, "inode": generation_inode}).to_string());
+        }
+        "fence_device_mismatch" => {
+            record["Config"]["Labels"]["com.effigy.checkout-fence"] =
+                json!(json!({"device": device + 1, "inode": 1992354169u64}).to_string());
+        }
+        "missing_generation" => {
+            record["Config"]["Labels"]
+                .as_object_mut()
+                .unwrap()
+                .remove("com.effigy.checkout-generation");
+        }
+        "foreign_checkout_label" => {
+            record["Config"]["Labels"]["com.effigy.checkout"] = json!("/nonexistent/other");
+        }
+        "bind_to_other_source" => {
+            record["Mounts"][0]["Source"] = json!("/nonexistent/other-checkout");
+        }
+        "renamed_cache_volume" => {
+            record["Mounts"][1]["Name"] = json!("other-cargo-registry");
+        }
+        "extra_mount" => {
+            record["Mounts"].as_array_mut().unwrap().push(
+                json!({"Type": "volume", "Name": "extra", "Destination": "/extra", "RW": true}),
+            );
+        }
+        "published_port" => {
+            record["NetworkSettings"]["Ports"] =
+                json!({"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8080"}]});
+        }
+        _ => unreachable!("{case}"),
+    });
+    let error = fixture.task().expect_err(case);
+    assert_eq!(fixture.activation_count(), 0, "{case}: {error}");
+    assert_eq!(private_build_count(&fixture.root), 0, "{case}: {error}");
+    assert!(
+        fixture
+            .calls()
+            .iter()
+            .all(|args| !args.iter().any(|arg| arg == "exec")),
+        "{case}: no exec may run on refusal"
+    );
+    assert!(
+        !fixture.root.join("state/build-effect").exists(),
+        "{case}: {error}"
+    );
+    fixture.assert_preserved();
+}
+
+mod created_builder_refusals {
+    use super::*;
+    macro_rules! cases {
+        ($($case:ident),+ $(,)?) => { $(
+            #[test]
+            fn $case() {
+                assert_created_builder_refuses_without_transition(stringify!($case));
+            }
+        )+ };
+    }
+    cases!(
+        lowercase_created_status,
+        running_with_empty_status,
+        paused,
+        restarting,
+        nonzero_pid,
+        started_at,
+        finished_at,
+        error_text,
+        missing_error_field,
+        missing_state,
+        short_id,
+        wrong_name,
+        wrong_service,
+        stale_generation,
+        fence_device_mismatch,
+        missing_generation,
+        foreign_checkout_label,
+        bind_to_other_source,
+        renamed_cache_volume,
+        extra_mount,
+        published_port,
+    );
+}
+
+/// The never-started shape is proven only for the Colima nerdctl backend; the
+/// same record under Docker is refused and never transitioned.
+#[test]
+fn created_builder_under_docker_refuses_without_transition() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(true, false, "docker");
+    fixture.stage().expect("a staged source plan");
+    fixture.retain_created_pre_staging();
+    let error = fixture.task().expect_err("docker never-started");
+    assert!(error.contains("Colima nerdctl"), "{error}");
+    assert_eq!(fixture.activation_count(), 0);
+    assert_eq!(private_build_count(&fixture.root), 0);
+    fixture.assert_preserved();
+}
+
+/// A builder that starts while the transition is being prepared is never the
+/// target: the repeated observation refuses before the lifecycle acts.
+#[test]
+fn created_builder_started_before_transition_is_not_targeted() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(true, false, "colima");
+    fixture.stage().expect("a staged source plan");
+    fixture.retain_created_pre_staging();
+    fixture.mode("created_then_running");
+    let error = fixture
+        .task()
+        .expect_err("a started builder is not replaced");
+    assert!(error.contains("never-started"), "{error}");
+    assert_eq!(fixture.activation_count(), 0, "{error}");
+    assert_eq!(private_build_count(&fixture.root), 0, "{error}");
     fixture.assert_preserved();
 }

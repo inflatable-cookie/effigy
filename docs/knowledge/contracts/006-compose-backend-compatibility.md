@@ -313,6 +313,20 @@ bind mismatch) and never presents a validation refusal as a process exit code
 or a signal; only a command that actually ended reports its termination. The
 diagnostic stays bounded to identity facts and is secret-safe.
 
+A builder this checkout created and never started is the Colima nerdctl
+never-started shape: its listing says `Created`, and its inspect has an empty
+`State.Status` with `Running`, `Paused` and `Restarting` false, `Pid` 0 and
+empty `StartedAt`, `FinishedAt` and `Error`. That shape is accepted only under
+the Colima nerdctl backend, only in the current project namespace, and only
+when the checkout's generation label matches the checkout root, its fence
+names the same device, and its own `/workspace` bind, exactly its two cargo
+caches and no published ports all match. The staged-source build then replaces
+that one builder through the maintained activation, re-observing the same full
+ID immediately before the transition, and proves the new running identity
+before it builds. Empty status alone never authorizes a start, exec,
+replacement or stop; a running, paused, restarting, changed or foreign
+identity is refused.
+
 Legacy `effigy-linux-release` containers and their admission records, cache
 volumes and other retained data are left untouched, whether absent, labelled,
 or ambiguous. A pre-label nerdctl container lacks the checkout/scope and oneoff

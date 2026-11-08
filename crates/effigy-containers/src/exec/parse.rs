@@ -56,6 +56,11 @@ pub fn compose_status_is_running(status: &str) -> bool {
     lowered.contains("up") || lowered.contains("running")
 }
 
+/// The listed status of a container created but never started.
+pub fn compose_status_is_created(status: &str) -> bool {
+    status.trim().eq_ignore_ascii_case("created")
+}
+
 /// Statuses that say the backend is already acting on the container, so the
 /// container is neither running nor a reliable start target.
 fn compose_status_is_in_flight(status: &str) -> bool {
@@ -116,6 +121,25 @@ pub(crate) struct InspectedContainerIdentity {
 pub(crate) fn parse_inspected_container_identity(
     stdout: &str,
 ) -> Result<InspectedContainerIdentity, String> {
+    parse_inspected_identity(stdout, false)
+}
+
+/// Parse exactly one never-started inspect record: the Colima nerdctl shape of
+/// a container created but never started. nerdctl assigns `State.Status` only
+/// for a container with a process, so this shape is the only one whose status
+/// is empty, and only when every other `State` field states "never started"
+/// exactly. It is identity evidence, never a running binding, so the caller
+/// must also prove the listing says `Created`.
+pub(crate) fn parse_inspected_never_started_identity(
+    stdout: &str,
+) -> Result<InspectedContainerIdentity, String> {
+    parse_inspected_identity(stdout, true)
+}
+
+fn parse_inspected_identity(
+    stdout: &str,
+    never_started: bool,
+) -> Result<InspectedContainerIdentity, String> {
     let records: Vec<InspectRecord> = serde_json::from_str(stdout)
         .map_err(|error| format!("failed to parse inspect json: {error}"))?;
     if records.len() != 1 {
@@ -137,21 +161,33 @@ pub(crate) fn parse_inspected_container_identity(
         .map(|value| value.trim_start_matches('/').to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "inspect record missing container name".to_owned())?;
-    let status = record
-        .state
-        .as_ref()
-        .and_then(|state| state.status.as_deref())
-        .unwrap_or("")
-        .trim()
-        .to_owned();
-    if status.is_empty() {
-        return Err("inspect record missing State.Status".to_owned());
-    }
-    let running = record
-        .state
-        .as_ref()
-        .and_then(|state| state.running)
-        .unwrap_or(false);
+    let (status, running) = if never_started {
+        let state = record
+            .state
+            .as_ref()
+            .ok_or_else(|| "inspect record missing State".to_owned())?;
+        if !state.is_never_started() {
+            return Err("inspect State is not the exact never-started shape".to_owned());
+        }
+        (String::new(), false)
+    } else {
+        let status = record
+            .state
+            .as_ref()
+            .and_then(|state| state.status.as_deref())
+            .unwrap_or("")
+            .trim()
+            .to_owned();
+        if status.is_empty() {
+            return Err("inspect record missing State.Status".to_owned());
+        }
+        let running = record
+            .state
+            .as_ref()
+            .and_then(|state| state.running)
+            .unwrap_or(false);
+        (status, running)
+    };
     let labels = record
         .config
         .as_ref()
@@ -220,6 +256,34 @@ struct InspectStateWord {
     status: Option<String>,
     #[serde(rename = "Running", alias = "running")]
     running: Option<bool>,
+    #[serde(rename = "Paused")]
+    paused: Option<bool>,
+    #[serde(rename = "Restarting")]
+    restarting: Option<bool>,
+    #[serde(rename = "Pid")]
+    pid: Option<i64>,
+    #[serde(rename = "StartedAt")]
+    started_at: Option<String>,
+    #[serde(rename = "FinishedAt")]
+    finished_at: Option<String>,
+    #[serde(rename = "Error")]
+    error: Option<String>,
+}
+
+impl InspectStateWord {
+    /// Every never-started field stated exactly, as the Colima nerdctl inspect
+    /// reports a created container: no status, no process, no start or finish
+    /// time and no error. A missing field is unknown, not never-started.
+    fn is_never_started(&self) -> bool {
+        self.status.as_deref() == Some("")
+            && self.running == Some(false)
+            && self.paused == Some(false)
+            && self.restarting == Some(false)
+            && self.pid == Some(0)
+            && self.started_at.as_deref() == Some("")
+            && self.finished_at.as_deref() == Some("")
+            && self.error.as_deref() == Some("")
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -726,5 +790,114 @@ mod tests {
             identity.volume_refs[0].destination.as_deref(),
             Some("/var/lib/mysql")
         );
+    }
+
+    fn created_record(mutate: impl FnOnce(&mut serde_json::Value)) -> String {
+        let mut record = serde_json::json!([{
+            "Id": FULL_ID,
+            "Name": "/effigy-artifact-builder-v1-ec-7288dc2b3e84-builder-1",
+            "State": {
+                "Status": "", "Running": false, "Paused": false, "Restarting": false,
+                "Pid": 0, "ExitCode": 0, "Error": "", "StartedAt": "", "FinishedAt": ""
+            },
+            "Config": {"Labels": {
+                "com.docker.compose.project": "effigy-artifact-builder-v1-ec-7288dc2b3e84",
+                "com.docker.compose.service": "builder",
+                "com.docker.compose.oneoff": "False"
+            }},
+            "Mounts": [{"Type": "bind", "Source": "/Users/tom/Dev/projects/effigy", "Destination": "/workspace", "RW": true}]
+        }]);
+        mutate(&mut record);
+        record.to_string()
+    }
+
+    #[test]
+    fn never_started_identity_accepts_only_the_exact_retained_state() {
+        let stdout = created_record(|_| {});
+        let identity =
+            parse_inspected_never_started_identity(&stdout).expect("the retained created shape");
+        assert_eq!(identity.id, FULL_ID);
+        assert_eq!(
+            identity.name,
+            "effigy-artifact-builder-v1-ec-7288dc2b3e84-builder-1"
+        );
+        assert_eq!(identity.status, "");
+        assert!(!identity.running);
+        assert_eq!(identity.service.as_deref(), Some("builder"));
+        // The running parser keeps its missing-status refusal for the same record.
+        let strict = parse_inspected_container_identity(&stdout).unwrap_err();
+        assert!(strict.contains("State.Status"), "{strict}");
+    }
+
+    #[test]
+    fn never_started_identity_refuses_any_other_state_field() {
+        for (label, field, value) in [
+            ("status created", "Status", serde_json::json!("created")),
+            ("status running", "Status", serde_json::json!("running")),
+            ("status null", "Status", serde_json::Value::Null),
+            ("running", "Running", serde_json::json!(true)),
+            ("paused", "Paused", serde_json::json!(true)),
+            ("restarting", "Restarting", serde_json::json!(true)),
+            ("pid", "Pid", serde_json::json!(1)),
+            (
+                "started",
+                "StartedAt",
+                serde_json::json!("2026-11-08T00:00:00Z"),
+            ),
+            (
+                "finished",
+                "FinishedAt",
+                serde_json::json!("2026-11-08T00:00:00Z"),
+            ),
+            ("error", "Error", serde_json::json!("boom")),
+        ] {
+            let stdout = created_record(|record| record[0]["State"][field] = value);
+            let error = parse_inspected_never_started_identity(&stdout).expect_err(label);
+            assert!(error.contains("never-started"), "{label}: {error}");
+        }
+        // An absent field is unknown, not never-started.
+        for field in [
+            "Status",
+            "Running",
+            "Paused",
+            "Restarting",
+            "Pid",
+            "StartedAt",
+            "FinishedAt",
+            "Error",
+        ] {
+            let stdout = created_record(|record| {
+                record[0]["State"].as_object_mut().unwrap().remove(field);
+            });
+            let error = parse_inspected_never_started_identity(&stdout).expect_err(field);
+            assert!(error.contains("never-started"), "{field}: {error}");
+        }
+        let stdout = created_record(|record| {
+            record[0].as_object_mut().unwrap().remove("State");
+        });
+        let error = parse_inspected_never_started_identity(&stdout).unwrap_err();
+        assert!(error.contains("missing State"), "{error}");
+    }
+
+    #[test]
+    fn never_started_identity_keeps_id_and_record_count_strict() {
+        let short = created_record(|record| record[0]["Id"] = serde_json::json!("dd94022f7dd0"));
+        let error = parse_inspected_never_started_identity(&short).unwrap_err();
+        assert!(error.contains("64-character"), "{error}");
+        let duplicate = created_record(|record| {
+            let first = record[0].clone();
+            record.as_array_mut().unwrap().push(first);
+        });
+        let error = parse_inspected_never_started_identity(&duplicate).unwrap_err();
+        assert!(error.contains("exactly one container"), "{error}");
+    }
+
+    #[test]
+    fn created_listing_status_is_recognised_only_as_created() {
+        assert!(compose_status_is_created("Created"));
+        assert!(compose_status_is_created(" created "));
+        assert!(!compose_status_is_created(""));
+        assert!(!compose_status_is_created("Up 2 seconds"));
+        assert!(!compose_status_is_running("Created"));
     }
 }

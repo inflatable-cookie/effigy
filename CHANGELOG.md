@@ -1000,6 +1000,20 @@ During v0.x, MINOR bumps may include breaking changes.
   command and inherited host processes carry the same fact. A standalone
   terminal still draws live spinner frames, and piped or `--json` output is
   unchanged. The old `EFFIGY_INTERNAL_MANAGED_PANE` spelling is still honoured.
+- Recover this checkout's own never-started Linux builder (`Created`, empty inspect status)
+  through the maintained activation when the staged source replaces its old direct bind,
+  instead of refusing automatic artifact acquisition on the missing `State.Status`. The
+  running parser keeps its refusal; the never-started shape is proven separately.
+- Admit the borrowing environment's generated `data_from` volumes to the
+  Colima nerdctl mount-budget preflight (effigy#730). Preflight now models the
+  one supported external volume definition —
+  `{owner_volume_name: {external: true}}`, optionally repeating that same
+  platform name as `name` — and estimates the owner's platform volume path
+  instead of adding this project's prefix, so a within-budget hybrid
+  environment is admitted. Unknown external names, aliases, `external: false`
+  or malformed external values, driver options, conflicting redefinitions and
+  unresolved interpolation still refuse before apply, and admission only
+  reads: borrowed volumes stay unowned, uncreated, unremoved and unrelabelled.
 
 - Avoid a false cleanup failure when a custody anchor retires during its final
   stop, while retaining independent workload group checks and positive group
