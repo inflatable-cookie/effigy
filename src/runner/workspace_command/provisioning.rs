@@ -625,26 +625,7 @@ fn publish_workspace_guest_effect(
     );
     progress.finish_clear();
     let target = LinuxWorkspaceTarget::from_image(&bound.platform, &bound.libc)?;
-    // The artifact was acquired before activation for one image family. A
-    // changed image, or bytes that stopped being current, refuses here: the
-    // publication never builds or downloads inside its reservation.
-    if target != artifact.target {
-        return Err(RunnerError::task_invocation(format!(
-            "workspace image changed after its guest artifact was prepared (`{}` now, `{}` prepared); run `{HOST_REPREPARE_COMMAND}` on the host",
-            target.release_triple(),
-            artifact.target.release_triple(),
-        )));
-    }
-    if !linux_workspace_effigy_artifact_is_current(
-        &artifact.artifact,
-        target,
-        &artifact.install_identity,
-    ) {
-        return Err(RunnerError::task_invocation(format!(
-            "linux workspace artifact `{}` changed after it was prepared; run `{HOST_REPREPARE_COMMAND}` on the host",
-            artifact.artifact.display(),
-        )));
-    }
+    check_acquired_artifact(artifact, target)?;
     prepare_workspace_guest(
         &mut guest,
         &artifact.artifact,
@@ -2393,34 +2374,83 @@ pub(in crate::runner) fn prepare_workspace_artifact(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Option<HostWorkspaceArtifact>, RunnerError> {
+    prepare_workspace_artifact_with(repo_root, policy, &ArtifactHost::current()?, || {
+        let mut guest = ComposeWorkspaceGuest::unbounded(repo_root, policy)?;
+        guest.probe_container_identity()
+    })
+}
+
+/// The host facts an artifact acquisition reads: the running executable, which
+/// selects provenance, the directory discovery starts from, and the source policy.
+#[derive(Debug, Clone)]
+pub(super) struct ArtifactHost {
+    pub(super) binary: PathBuf,
+    pub(super) cwd: PathBuf,
+    pub(super) source: LinuxWorkspaceArtifactSource,
+}
+
+impl ArtifactHost {
+    pub(super) fn current() -> Result<Self, RunnerError> {
+        Ok(Self {
+            binary: std::env::current_exe().map_err(RunnerError::Cwd)?,
+            cwd: current_working_dir()?,
+            source: configured_linux_workspace_artifact_source()?,
+        })
+    }
+}
+
+/// Host Prepare's artifact step (§8.9). The container-mode boundary comes first,
+/// then the probed image picks the target family, then acquisition runs on this
+/// host. A hybrid environment never probes or acquires.
+pub(super) fn prepare_workspace_artifact_with(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    host: &ArtifactHost,
+    probe: impl FnOnce() -> Result<WorkspaceContainerIdentity, RunnerError>,
+) -> Result<Option<HostWorkspaceArtifact>, RunnerError> {
     if std::env::var_os("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF").is_some() {
         return Ok(None);
     }
     if operator_workspace_for_policy(repo_root, policy)?.is_none() {
         return Ok(None);
     }
-    let mut guest = ComposeWorkspaceGuest::unbounded(repo_root, policy)?;
-    let bound = guest.probe_container_identity()?;
-    let target = LinuxWorkspaceTarget::from_image(&bound.platform, &bound.libc)?;
-    acquire_linux_workspace_effigy_artifact(repo_root, target).map(Some)
-}
-
-/// Acquire the artifact for `target` on the running host, from its provenance
-/// and the `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE` policy.
-pub(super) fn acquire_linux_workspace_effigy_artifact(
-    workspace_repo_root: &Path,
-    target: LinuxWorkspaceTarget,
-) -> Result<HostWorkspaceArtifact, RunnerError> {
-    let host_binary = std::env::current_exe().map_err(RunnerError::Cwd)?;
-    let cwd = current_working_dir()?;
-    let source = configured_linux_workspace_artifact_source()?;
+    let image = probe()?;
+    let target = LinuxWorkspaceTarget::from_image(&image.platform, &image.libc)?;
     acquire_linux_workspace_effigy_artifact_with(
-        &host_binary,
-        workspace_repo_root,
-        cwd.as_path(),
-        source,
+        &host.binary,
+        repo_root,
+        &host.cwd,
+        host.source,
         target,
     )
+    .map(Some)
+}
+
+/// Publication consumes an acquired artifact only for the image family it was
+/// acquired for, and only while its bytes still carry the identity they were
+/// bound to. It never builds or downloads in its place.
+pub(super) fn check_acquired_artifact(
+    artifact: &HostWorkspaceArtifact,
+    target: LinuxWorkspaceTarget,
+) -> Result<(), RunnerError> {
+    if target != artifact.target {
+        return Err(RunnerError::task_invocation(format!(
+            "workspace image changed after its guest artifact was prepared (`{}` now, `{}` prepared); run `{HOST_REPREPARE_COMMAND}` on the host",
+            target.release_triple(),
+            artifact.target.release_triple(),
+        )));
+    }
+    if !linux_workspace_effigy_artifact_is_current(
+        &artifact.artifact,
+        target,
+        &artifact.install_identity,
+    ) {
+        return Err(RunnerError::task_invocation(format!(
+            "linux workspace artifact `{}` changed after it was prepared; run `{HOST_REPREPARE_COMMAND}` on the host",
+            artifact.artifact.display(),
+        )));
+    }
+    Ok(())
 }
 
 /// The acquisition seam: a development plan builds or reuses the checkout's
@@ -2558,7 +2588,14 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
     if linux_workspace_effigy_artifact_is_current(&artifact, target, &identity) {
         return bind_verified_linux_workspace_effigy_artifact(target, &artifact, &identity);
     }
-    let _build = LinuxWorkspaceArtifactBuildLock::acquire(checkout, target)?;
+    let _build = ArtifactFileLock::acquire(
+        &linux_workspace_artifact_lock_path(checkout, target),
+        &format!(
+            "linux workspace artifact build for `{}` in `{}`",
+            target.release_triple(),
+            checkout.display()
+        ),
+    )?;
     if linux_workspace_effigy_artifact_is_current(&artifact, target, &identity) {
         return bind_verified_linux_workspace_effigy_artifact(target, &artifact, &identity);
     }
@@ -2631,19 +2668,18 @@ pub(super) fn linux_workspace_artifact_lock_path(
     ))
 }
 
-/// Serialises one target's artifact build in one checkout. The lock is the open
-/// file, so it releases on drop and on process exit.
-struct LinuxWorkspaceArtifactBuildLock {
+/// An exclusive lock on one artifact path. Holding the open file is the lock, so
+/// it releases on drop and on process exit; a waiter that gives up never holds it.
+struct ArtifactFileLock {
     _held: std::fs::File,
 }
 
-impl LinuxWorkspaceArtifactBuildLock {
-    fn acquire(checkout: &Path, target: LinuxWorkspaceTarget) -> Result<Self, RunnerError> {
-        let path = linux_workspace_artifact_lock_path(checkout, target);
+impl ArtifactFileLock {
+    fn acquire(path: &Path, what: &str) -> Result<Self, RunnerError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| {
                 RunnerError::task_invocation(format!(
-                    "cannot create linux workspace artifact lock directory `{}`: {error}",
+                    "cannot create lock directory `{}` for {what}: {error}",
                     parent.display()
                 ))
             })?;
@@ -2652,37 +2688,52 @@ impl LinuxWorkspaceArtifactBuildLock {
             .create(true)
             .truncate(false)
             .write(true)
-            .open(&path)
+            .open(path)
             .map_err(|error| {
                 RunnerError::task_invocation(format!(
-                    "cannot open linux workspace artifact lock `{}`: {error}",
+                    "cannot open lock `{}` for {what}: {error}",
                     path.display()
                 ))
             })?;
-        let deadline = std::time::Instant::now() + LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_TIMEOUT;
+        let deadline = std::time::Instant::now() + artifact_lock_wait_timeout();
         loop {
             match file.try_lock() {
                 Ok(()) => return Ok(Self { _held: file }),
                 Err(std::fs::TryLockError::WouldBlock) => {}
                 Err(std::fs::TryLockError::Error(error)) => {
                     return Err(RunnerError::task_invocation(format!(
-                        "cannot lock linux workspace artifact `{}`: {error}",
+                        "cannot lock `{}` for {what}: {error}",
                         path.display()
                     )))
                 }
             }
             if std::time::Instant::now() >= deadline {
                 return Err(RunnerError::task_invocation(format!(
-                    "timed out waiting for another linux workspace artifact build for `{}` in `{}` \
-                     to finish; lock `{}` is still held",
-                    target.release_triple(),
-                    checkout.display(),
+                    "timed out waiting for another {what} to finish; lock `{}` is still held",
                     path.display()
                 )));
             }
             std::thread::sleep(LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_POLL_INTERVAL);
         }
     }
+}
+
+/// How long a waiter blocks on another preparation's lock before it gives up.
+fn artifact_lock_wait_timeout() -> std::time::Duration {
+    #[cfg(test)]
+    {
+        if let Some(wait) = ARTIFACT_LOCK_WAIT.with(std::cell::Cell::get) {
+            return wait;
+        }
+    }
+    LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_TIMEOUT
+}
+
+// Tests shorten the lock wait to exercise the give-up path without sleeping.
+#[cfg(test)]
+thread_local! {
+    pub(super) static ARTIFACT_LOCK_WAIT: std::cell::Cell<Option<std::time::Duration>> =
+        const { std::cell::Cell::new(None) };
 }
 
 pub(super) fn resolve_local_effigy_repo_root_from_paths(
@@ -2899,15 +2950,8 @@ pub(super) fn ensure_downloaded_linux_workspace_effigy_artifact(
 ) -> Result<PathBuf, RunnerError> {
     let cache_path = linux_workspace_effigy_cache_path(target)?;
     let install_identity = workspace_effigy_release_install_identity();
-    if linux_workspace_release_cache_is_current(&cache_path, &install_identity)
-        && verify_guest_artifact(&cache_path, target).is_ok()
-    {
-        ensure_workspace_effigy_active_version_file(
-            &cache_path,
-            &effigy_core::build_info::active_version(),
-        )?;
-        ensure_workspace_effigy_install_identity_file(&cache_path, &install_identity)?;
-        return Ok(cache_path);
+    if let Some(cached) = current_release_cache(&cache_path, target, &install_identity)? {
+        return Ok(cached);
     }
 
     let parent = cache_path.parent().ok_or_else(|| {
@@ -2922,6 +2966,18 @@ pub(super) fn ensure_downloaded_linux_workspace_effigy_artifact(
             parent.display()
         ))
     })?;
+    // One fetch per cache: a concurrent preparation waits here, then reuses the
+    // bytes the first one verified and published, instead of racing its rename.
+    let _fetch = ArtifactFileLock::acquire(
+        &cache_path.with_extension("lock"),
+        &format!(
+            "linux workspace release download of `{}`",
+            target.release_triple()
+        ),
+    )?;
+    if let Some(cached) = current_release_cache(&cache_path, target, &install_identity)? {
+        return Ok(cached);
+    }
 
     let url = linux_workspace_effigy_release_url(target);
     super::emit_workspace_info(
@@ -2956,6 +3012,26 @@ pub(super) fn ensure_downloaded_linux_workspace_effigy_artifact(
         Err(error) => progress.fail_error(error),
     }
     result.map(|()| cache_path)
+}
+
+/// The cached release artifact when its identity and receipt are current and its
+/// bytes verify. Binds the sidecars to the verified bytes; never stamps stale ones.
+fn current_release_cache(
+    cache_path: &Path,
+    target: LinuxWorkspaceTarget,
+    install_identity: &str,
+) -> Result<Option<PathBuf>, RunnerError> {
+    if !linux_workspace_release_cache_is_current(cache_path, install_identity)
+        || verify_guest_artifact(cache_path, target).is_err()
+    {
+        return Ok(None);
+    }
+    ensure_workspace_effigy_active_version_file(
+        cache_path,
+        &effigy_core::build_info::active_version(),
+    )?;
+    ensure_workspace_effigy_install_identity_file(cache_path, install_identity)?;
+    Ok(Some(cache_path.to_path_buf()))
 }
 
 /// Write the producer receipt an artifact is authenticated against.
@@ -3184,6 +3260,14 @@ thread_local! {
 
 #[cfg(test)]
 fn release_get(_client: &reqwest::blocking::Client, url: &str) -> Result<Vec<u8>, String> {
+    // The checksum sidecar is a second GET of the same download, not a fetch.
+    if !url.ends_with(RELEASE_CHECKSUM_SUFFIX) {
+        RELEASE_FETCHES.with(|fetches| fetches.set(fetches.get() + 1));
+    }
+    let delay = RELEASE_FETCH_DELAY.with(std::cell::Cell::get);
+    if !delay.is_zero() {
+        std::thread::sleep(delay);
+    }
     RELEASE_FIXTURES.with(|fixtures| {
         fixtures
             .borrow()
@@ -3191,6 +3275,15 @@ fn release_get(_client: &reqwest::blocking::Client, url: &str) -> Result<Vec<u8>
             .cloned()
             .ok_or_else(|| format!("no test release fixture serves `{url}`"))
     })
+}
+
+// Test-only transport accounting: how many asset GETs this thread issued, and how long
+// each takes, so a concurrency test can observe duplicate fetches.
+#[cfg(test)]
+thread_local! {
+    pub(super) static RELEASE_FETCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static RELEASE_FETCH_DELAY: std::cell::Cell<std::time::Duration> =
+        const { std::cell::Cell::new(std::time::Duration::ZERO) };
 }
 
 /// The checksum a release publishes beside an artifact (`<asset>.sha256`).

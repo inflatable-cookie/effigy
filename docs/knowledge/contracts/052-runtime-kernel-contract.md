@@ -3322,12 +3322,14 @@ the missing credential named, and local reads keep working.
     stale. Current means the file, its active version, its target receipt and
     the host's install identity all match, so a same-version incremental rebuild
     makes the artifact stale. Concurrent preparations share one producer run
-    through a per-target lock; a waiter reuses the output the first run produced.
+    through a per-target lock; a waiter reuses the output the first run produced,
+    and a waiter that cannot get the lock in time builds and publishes nothing.
   - A release host is any other executable. `auto` reuses a verified current
     release cache, or downloads the asset for this version and target, checks it
     against the checksum the release publishes beside it, and publishes the
-    cache and its receipt atomically. A failed or unverified download publishes
-    nothing and leaves an older cache untouched. A release host never builds from
+    cache and its receipt atomically. Concurrent downloads of one cache share one
+    fetch through a lock beside the cache file. A failed or unverified download
+    publishes nothing and leaves an older cache untouched. A release host never builds from
     source, even when a checkout is nearby.
   - `local` names a checkout explicitly and builds there, reusing a current
     artifact. `download` takes the release asset on a release host and refuses on

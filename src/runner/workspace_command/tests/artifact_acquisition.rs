@@ -7,17 +7,20 @@
 
 use super::{linux_artifact_fixture, write_linux_artifact};
 use crate::contract_test_support::EnvGuard;
-use crate::runner::workspace_client::context::sha256_text;
+use crate::runner::workspace_client::context::{sha256_text, WorkspaceContainerIdentity};
 use crate::runner::workspace_command::provisioning::{
-    acquire_linux_workspace_effigy_artifact_with, artifact_plan,
+    acquire_linux_workspace_effigy_artifact_with, artifact_plan, check_acquired_artifact,
+    ensure_downloaded_linux_workspace_effigy_artifact,
     ensure_local_linux_workspace_effigy_artifact, linux_workspace_artifact_lock_path,
     linux_workspace_effigy_artifact_is_current, linux_workspace_effigy_cache_path,
-    linux_workspace_effigy_release_url, read_trimmed_identity_file, verify_guest_artifact,
-    workspace_artifact_receipt_path, workspace_effigy_active_version_file,
-    workspace_effigy_install_identity_file, workspace_effigy_local_install_identity,
-    workspace_effigy_release_install_identity, ArtifactPlan, LinuxWorkspaceArtifactSource,
-    LinuxWorkspaceTarget, RELEASE_FIXTURES,
+    linux_workspace_effigy_release_url, prepare_workspace_artifact_with,
+    read_trimmed_identity_file, verify_guest_artifact, workspace_artifact_receipt_path,
+    workspace_effigy_active_version_file, workspace_effigy_install_identity_file,
+    workspace_effigy_local_install_identity, workspace_effigy_release_install_identity,
+    ArtifactHost, ArtifactPlan, LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget,
+    ARTIFACT_LOCK_WAIT, RELEASE_FETCHES, RELEASE_FETCH_DELAY, RELEASE_FIXTURES,
 };
+use effigy_containers::EffectiveContainerPolicy;
 use std::path::{Path, PathBuf};
 
 const X86: LinuxWorkspaceTarget = LinuxWorkspaceTarget::X86_64Gnu;
@@ -39,16 +42,18 @@ fn host_at(path: &Path, body: &str) -> PathBuf {
     path.to_path_buf()
 }
 
-/// A producer that writes a fresh artifact with a receipt the digest check can
-/// authenticate. Every run appends one line to `builds.log`.
-const VERIFIED_X86_BUILD: &str = r#"echo built >> builds.log
+/// A producer that writes a fresh artifact for whichever target the host asks
+/// for, with a receipt the digest check can authenticate. Every run appends one
+/// line to `builds.log`.
+const VERIFIED_BUILD: &str = r#"echo built >> builds.log
 [ "$1" = "workspace:linux:artifact" ] || exit 2
+triple="$EFFIGY_LINUX_RELEASE_TRIPLE"
 mkdir -p .effigy/linux-release/artifacts
-out=.effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu
+out=".effigy/linux-release/artifacts/effigy-$triple"
 printf 'fresh-bytes\n' > "$out"
 printf '%s\n' "$EFFIGY_FIXTURE_ACTIVE_VERSION" > "$out.active-version"
 digest=$( (shasum -a 256 "$out" 2>/dev/null || sha256sum "$out") | cut -d' ' -f1)
-printf 'release_triple=x86_64-unknown-linux-gnu\nsha256=%s\nbuild_kind=workspace-artifact\n' "$digest" > "$out.receipt""#;
+printf 'release_triple=%s\nsha256=%s\nbuild_kind=workspace-artifact\n' "$triple" "$digest" > "$out.receipt""#;
 
 fn build_count(root: &Path) -> usize {
     std::fs::read_to_string(root.join("builds.log"))
@@ -104,7 +109,7 @@ fn write_release_cache(cache: &Path, bytes: &str) {
 #[test]
 fn a_development_host_builds_a_missing_artifact_once_and_publishes_verified_output() {
     let root = linux_artifact_fixture("dev-missing");
-    let host = host_at(&root.join(".local-install/bin/effigy"), VERIFIED_X86_BUILD);
+    let host = host_at(&root.join(".local-install/bin/effigy"), VERIFIED_BUILD);
     let _home = home_guard(&root);
 
     let bound = acquire_linux_workspace_effigy_artifact_with(
@@ -139,7 +144,7 @@ fn a_development_host_builds_a_missing_artifact_once_and_publishes_verified_outp
 #[test]
 fn a_development_build_tree_host_is_provenanced_to_its_checkout() {
     let root = linux_artifact_fixture("dev-build-tree");
-    let host = host_at(&root.join("target/debug/effigy"), VERIFIED_X86_BUILD);
+    let host = host_at(&root.join("target/debug/effigy"), VERIFIED_BUILD);
     let plan = artifact_plan(&host, &root, &root, LinuxWorkspaceArtifactSource::Auto)
         .expect("a checkout's own build output is a development host");
     assert_eq!(plan, ArtifactPlan::Build { checkout: root });
@@ -397,7 +402,7 @@ fn concurrent_preparations_share_one_producer_run() {
     let root = linux_artifact_fixture("single-flight");
     let host = host_at(
         &root.join(".local-install/bin/effigy"),
-        &format!("sleep 1\n{VERIFIED_X86_BUILD}"),
+        &format!("sleep 1\n{VERIFIED_BUILD}"),
     );
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
     let handles = (0..2)
@@ -428,4 +433,335 @@ fn concurrent_preparations_share_one_producer_run() {
         X86,
         &workspace_effigy_local_install_identity(&host).expect("host identity"),
     ));
+}
+
+const CONTAINER_MODE_MANIFEST: &str = r#"[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+working_dir = "/workspace"
+
+[containers.web.services.app]
+catalog = "node"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/workspace"
+"#;
+
+/// The same container with no declared `[systems.*]` workspace: a hybrid
+/// environment, which never probes, builds or downloads a guest artifact.
+const HYBRID_MANIFEST: &str = r#"[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+working_dir = "/workspace"
+
+[containers.web.services.app]
+catalog = "node"
+"#;
+
+/// A checkout-shaped repo whose `effigy.toml` declares the given containers.
+fn repo_with_manifest(label: &str, manifest: &str) -> PathBuf {
+    let repo = linux_artifact_fixture(label);
+    std::fs::write(repo.join("effigy.toml"), manifest).expect("container manifest");
+    repo
+}
+
+fn web_policy(repo: &Path) -> EffectiveContainerPolicy {
+    let mut policy = crate::runner::test_support::effective_container_policy(
+        "web",
+        "demo-web",
+        "app",
+        repo.join("compose.yml"),
+    );
+    policy.repo_root = repo.to_path_buf();
+    policy.workspace_user = Some("dev".to_owned());
+    policy.workspace_home = Some("/home/dev".to_owned());
+    policy
+}
+
+/// What the Docker probe reports for a running container of this image family.
+fn probed_image(platform: &str, libc: &str) -> WorkspaceContainerIdentity {
+    WorkspaceContainerIdentity {
+        container_id: "a".repeat(64),
+        vm_boot_id: "boot-fixture".to_owned(),
+        platform: platform.to_owned(),
+        libc: libc.to_owned(),
+    }
+}
+
+fn host_for(binary: PathBuf, cwd: &Path, source: LinuxWorkspaceArtifactSource) -> ArtifactHost {
+    ArtifactHost {
+        binary,
+        cwd: cwd.to_path_buf(),
+        source,
+    }
+}
+
+#[test]
+fn prepare_for_a_hybrid_environment_never_probes_or_builds() {
+    let repo = repo_with_manifest("prepare-hybrid", HYBRID_MANIFEST);
+    let host = host_for(
+        host_at(
+            &repo.join(".local-install/bin/effigy"),
+            "echo built >> builds.log\nexit 9",
+        ),
+        &repo,
+        LinuxWorkspaceArtifactSource::Auto,
+    );
+    let probed = std::cell::Cell::new(false);
+
+    let prepared = prepare_workspace_artifact_with(&repo, &web_policy(&repo), &host, || {
+        probed.set(true);
+        Ok(probed_image("x86_64", "gnu"))
+    })
+    .expect("a hybrid environment prepares nothing");
+
+    assert_eq!(prepared, None);
+    assert!(
+        !probed.get(),
+        "no guest identity is probed without a declared workspace"
+    );
+    assert_eq!(build_count(&repo), 0);
+}
+
+#[test]
+fn prepare_builds_the_family_the_probed_image_declares() {
+    let repo = repo_with_manifest("prepare-family", CONTAINER_MODE_MANIFEST);
+    let host = host_for(
+        host_at(&repo.join(".local-install/bin/effigy"), VERIFIED_BUILD),
+        &repo,
+        LinuxWorkspaceArtifactSource::Auto,
+    );
+    let _home = home_guard(&repo);
+    let policy = web_policy(&repo);
+
+    let x86 = prepare_workspace_artifact_with(&repo, &policy, &host, || {
+        Ok(probed_image("x86_64", "gnu"))
+    })
+    .expect("prepare for a glibc x86_64 image")
+    .expect("a container-mode workspace acquires its artifact");
+    assert_eq!(x86.target, X86);
+    assert_eq!(x86.artifact, repo.join(X86.artifact_relative_path()));
+    verify_guest_artifact(&x86.artifact, X86).expect("acquired bytes are authenticated");
+
+    let musl = prepare_workspace_artifact_with(&repo, &policy, &host, || {
+        Ok(probed_image("aarch64", "musl"))
+    })
+    .expect("prepare for a musl aarch64 image")
+    .expect("a container-mode workspace acquires its artifact");
+    assert_eq!(musl.target, LinuxWorkspaceTarget::Aarch64Musl);
+    assert!(musl.artifact.ends_with("effigy-aarch64-unknown-linux-musl"));
+    assert_eq!(
+        build_count(&repo),
+        2,
+        "each image family is built once, and the first family is reused"
+    );
+}
+
+#[test]
+fn prepare_refuses_an_image_without_a_provable_libc_before_any_build() {
+    let repo = repo_with_manifest("prepare-libc", CONTAINER_MODE_MANIFEST);
+    let host = host_for(
+        host_at(&repo.join(".local-install/bin/effigy"), VERIFIED_BUILD),
+        &repo,
+        LinuxWorkspaceArtifactSource::Auto,
+    );
+    let _home = home_guard(&repo);
+
+    let error = prepare_workspace_artifact_with(&repo, &web_policy(&repo), &host, || {
+        Ok(probed_image("x86_64", ""))
+    })
+    .expect_err("an unprovable libc has no artifact to match");
+
+    assert!(error.to_string().contains("C library"), "{error}");
+    assert_eq!(build_count(&repo), 0);
+}
+
+#[test]
+fn prepare_on_a_release_host_downloads_the_probed_family_without_a_builder() {
+    let base = effigy_test_support::Fixture::thread_lifetime("artifact-acq-prepare-release-")
+        .expect("fixture");
+    let repo = base.join("app");
+    std::fs::create_dir_all(&repo).expect("mkdir app");
+    std::fs::write(repo.join("effigy.toml"), CONTAINER_MODE_MANIFEST).expect("manifest");
+    std::fs::create_dir_all(repo.join("config")).expect("mkdir config");
+    std::fs::write(repo.join("config/tasks.toml"), "").expect("tasks");
+    std::fs::write(repo.join("config/containers.toml"), "").expect("containers");
+    let host = host_for(
+        host_at(&repo.join("bin/effigy"), "echo built >> builds.log\nexit 9"),
+        &repo,
+        LinuxWorkspaceArtifactSource::Auto,
+    );
+    let _home = home_guard(&base);
+    let bytes = "released-musl-bytes";
+    let url = linux_workspace_effigy_release_url(LinuxWorkspaceTarget::Aarch64Musl);
+    let digest = sha256_text(bytes.as_bytes());
+    RELEASE_FIXTURES.with(|fixtures| {
+        let mut fixtures = fixtures.borrow_mut();
+        fixtures.insert(url.clone(), bytes.as_bytes().to_vec());
+        fixtures.insert(
+            format!("{url}.sha256"),
+            format!(
+                "{}  effigy-aarch64-unknown-linux-musl\n",
+                digest.trim_start_matches("sha256:")
+            )
+            .into_bytes(),
+        );
+    });
+
+    let prepared = prepare_workspace_artifact_with(&repo, &web_policy(&repo), &host, || {
+        Ok(probed_image("aarch64", "musl"))
+    })
+    .expect("a release host prepares its probed family")
+    .expect("a container-mode workspace acquires its artifact");
+
+    assert_eq!(prepared.target, LinuxWorkspaceTarget::Aarch64Musl);
+    assert_eq!(
+        prepared.install_identity,
+        workspace_effigy_release_install_identity()
+    );
+    assert_eq!(build_count(&repo), 0, "a release host never runs a builder");
+}
+
+#[test]
+fn publication_consumes_only_the_family_and_identity_it_acquired() {
+    let repo = repo_with_manifest("publish-check", CONTAINER_MODE_MANIFEST);
+    let host = host_for(
+        host_at(&repo.join(".local-install/bin/effigy"), VERIFIED_BUILD),
+        &repo,
+        LinuxWorkspaceArtifactSource::Auto,
+    );
+    let _home = home_guard(&repo);
+    let prepared = prepare_workspace_artifact_with(&repo, &web_policy(&repo), &host, || {
+        Ok(probed_image("x86_64", "gnu"))
+    })
+    .expect("prepare")
+    .expect("acquired");
+
+    check_acquired_artifact(&prepared, X86).expect("the acquired family publishes");
+    check_acquired_artifact(&prepared, LinuxWorkspaceTarget::Aarch64Musl)
+        .expect_err("an image that changed family after preparation is refused");
+
+    std::fs::write(
+        workspace_effigy_install_identity_file(&prepared.artifact),
+        "local:replaced-after-prepare\n",
+    )
+    .expect("replace identity");
+    let error = check_acquired_artifact(&prepared, X86)
+        .expect_err("bytes whose identity moved after preparation are not published");
+    assert!(
+        error.to_string().contains("changed after it was prepared"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_producer_killed_mid_build_publishes_nothing_and_releases_its_lock() {
+    let root = linux_artifact_fixture("producer-killed");
+    let host = host_at(
+        &root.join(".local-install/bin/effigy"),
+        "echo built >> builds.log\nmkdir -p .effigy/linux-release/artifacts\nprintf 'partial' > \".effigy/linux-release/artifacts/effigy-$EFFIGY_LINUX_RELEASE_TRIPLE\"\nkill -9 $$",
+    );
+    let artifact = root.join(X86.artifact_relative_path());
+
+    ensure_local_linux_workspace_effigy_artifact(&host, &root, X86)
+        .expect_err("a producer killed before it finishes is a failed build");
+
+    assert_eq!(build_count(&root), 1);
+    assert!(!workspace_effigy_install_identity_file(&artifact).exists());
+    assert!(!workspace_effigy_active_version_file(&artifact).exists());
+    assert!(!linux_workspace_effigy_artifact_is_current(
+        &artifact,
+        X86,
+        &workspace_effigy_local_install_identity(&host).expect("host identity"),
+    ));
+    let lock = std::fs::OpenOptions::new()
+        .write(true)
+        .open(linux_workspace_artifact_lock_path(&root, X86))
+        .expect("lock file survives the killed run");
+    lock.try_lock()
+        .expect("a killed producer releases the single-flight lock");
+}
+
+#[test]
+fn a_waiter_that_gives_up_builds_and_publishes_nothing() {
+    let root = linux_artifact_fixture("waiter-gives-up");
+    let host = host_at(&root.join(".local-install/bin/effigy"), VERIFIED_BUILD);
+    let artifact = root.join(X86.artifact_relative_path());
+    // Another preparation holds this target's build lock for the whole wait.
+    let lock_path = linux_workspace_artifact_lock_path(&root, X86);
+    std::fs::create_dir_all(lock_path.parent().expect("lock dir")).expect("mkdir locks");
+    let holder = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&lock_path)
+        .expect("holder file");
+    holder.try_lock().expect("holder takes the lock");
+    ARTIFACT_LOCK_WAIT.with(|wait| wait.set(Some(std::time::Duration::from_millis(50))));
+
+    let error = ensure_local_linux_workspace_effigy_artifact(&host, &root, X86)
+        .expect_err("a waiter that cannot get the lock in time gives up");
+    ARTIFACT_LOCK_WAIT.with(|wait| wait.set(None));
+    drop(holder);
+
+    assert!(error.to_string().contains("timed out waiting"), "{error}");
+    assert_eq!(
+        build_count(&root),
+        0,
+        "a waiter that gave up never runs the producer"
+    );
+    assert!(!workspace_effigy_install_identity_file(&artifact).exists());
+    assert!(!artifact.exists());
+}
+
+#[test]
+fn concurrent_release_downloads_share_one_fetch() {
+    let (base, _app, _host) = release_world("download-once");
+    let _home = home_guard(&base);
+    let url = linux_workspace_effigy_release_url(X86);
+    let bytes = "shared-release-bytes";
+    let digest = sha256_text(bytes.as_bytes());
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let handles = (0..2)
+        .map(|_| {
+            let (url, barrier) = (url.clone(), barrier.clone());
+            let checksum = format!("{}  {X86_ARTIFACT}\n", digest.trim_start_matches("sha256:"));
+            std::thread::spawn(move || {
+                RELEASE_FIXTURES.with(|fixtures| {
+                    let mut fixtures = fixtures.borrow_mut();
+                    fixtures.insert(url.clone(), bytes.as_bytes().to_vec());
+                    fixtures.insert(format!("{url}.sha256"), checksum.into_bytes());
+                });
+                RELEASE_FETCH_DELAY.with(|delay| delay.set(std::time::Duration::from_millis(300)));
+                barrier.wait();
+                let path = ensure_downloaded_linux_workspace_effigy_artifact(X86);
+                (path, RELEASE_FETCHES.with(std::cell::Cell::get))
+            })
+        })
+        .collect::<Vec<_>>();
+    let results = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("download thread"))
+        .collect::<Vec<_>>();
+
+    let cache = linux_workspace_effigy_cache_path(X86).expect("cache path");
+    for (path, _) in &results {
+        assert_eq!(path.as_ref().expect("both callers are satisfied"), &cache);
+    }
+    let fetches: usize = results.iter().map(|(_, fetches)| fetches).sum();
+    assert_eq!(
+        fetches, 1,
+        "one caller fetches; the other reuses the verified cache"
+    );
+    verify_guest_artifact(&cache, X86).expect("the single published cache verifies");
 }
