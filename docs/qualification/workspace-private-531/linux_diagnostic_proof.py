@@ -18,6 +18,7 @@ import time
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import linux_diagnostic as diagnostic
+import linux_diagnostic_probe as guest_probe
 import linux_setup as setup
 import preparation_stage as stage
 
@@ -45,8 +46,8 @@ RUN_WAIT = 180
 READY_WAIT = 120
 STOP_OBSERVE = 60
 FINAL_RESERVE = 15
-SOURCES = ('linux_diagnostic_proof.py', 'linux_diagnostic.py', 'linux_setup.py',
-           'linux_supervisor.py', 'linux_transfer.py', 'linux_receipts.py',
+SOURCES = ('linux_diagnostic_proof.py', 'linux_diagnostic.py', 'linux_diagnostic_probe.py',
+           'linux_setup.py', 'linux_supervisor.py', 'linux_transfer.py', 'linux_receipts.py',
            'preparation_stage.py', 'preparation_resources.py', 'preparation_observations.py',
            'preparation_requests.py', 'linux_disk_identity.py', 'linux-setup-probe.sh')
 
@@ -138,9 +139,11 @@ def plan(root, activation_id, head):
     if not effigy:
         raise stage.Refusal('installed Effigy unavailable')
     effigy = os.path.realpath(effigy)
-    return {'schema': 'linux-diagnostic-window-v2', 'head': head,
+    return {'schema': 'linux-diagnostic-window-v3', 'head': head,
             'candidate_h': setup.CANDIDATE_H_HEAD, 'root': root, 'root_identity': identity,
             'activation_id': activation_id, 'duration_seconds': DURATION,
+            'observation_routes_sha256': guest_probe.routes_digest(),
+            'observation_budget_seconds': guest_probe.BUDGET_SECONDS,
             'repository': repository, 'machine': machine_identity(program, interpreter, effigy),
             'program': program, 'interpreter': interpreter,
             'snapshot_sha256': SNAPSHOT_SHA, 'effigy': effigy}
@@ -266,7 +269,7 @@ def execute(request, request_path, request_hash):
     destination.mkdir(mode=0o700)
     operational_end = deadline - RESERVE
     start_end = operational_end - 120
-    outcome = {'schema': 'linux-diagnostic-observation-v3', 'request_sha256': request_hash,
+    outcome = {'schema': 'linux-diagnostic-observation-v4', 'request_sha256': request_hash,
                'head': actual, 'candidate_h': setup.CANDIDATE_H_HEAD, 'launched_at': launched_at,
                'writable_top': 'unknown', 'guest_association': 'unknown',
                'readiness': 'not evaluated', 'placement': 'not evaluated',
@@ -276,6 +279,12 @@ def execute(request, request_path, request_hash):
                'metadata_accounting': 'sampled conservative charges; not a hard quota',
                'metadata_differences': [], 'identity_events': [], 'metadata_events': [],
                'observation_failures': [],
+               'guest_writer_bound': {'schema': 'linux-writer-bound-observation-v1',
+                                      'status': 'not attempted',
+                                      'reason': 'the boot-complete probe did not complete',
+                                      'routes_sha256': guest_probe.routes_digest(), 'routes': [],
+                                      'facts': {}, 'limits': dict(guest_probe.LIMITS),
+                                      'complete': False, 'findings': []},
                'repository_identity': request['repository'], 'machine_identity': request['machine'],
                'checkout_root': str(REPO_ROOT), 'runtime_inputs': runtime}
     serial = 0
@@ -396,6 +405,24 @@ def execute(request, request_path, request_hash):
         if not good(result):
             raise stage.Refusal('probe incomplete')
         outcome['probe_fields'] = check_probe(raw)
+        # The writer-bound capability reads share this boot-complete occurrence and its
+        # deadlines. They are observations only: no field here feeds writable_top,
+        # guest_association, readiness, placement, hard_quota or any setup gate.
+        def guard():
+            if private_root(str(root)) != request['root_identity']:
+                raise stage.Refusal('evidence root identity changed')
+
+        def retain_observation(name, data):
+            path = destination / ('observation-' + name + '.raw')
+            stage.exclusive(path, data)
+            return path.name
+
+        writer_bound = guest_probe.observe(
+            lambda argv, limit, cap, end: call(['exec', setup.VM_UUID] + argv, limit, cap, end),
+            retain_observation, guard, start_end)
+        writer_bound['status'] = 'observed' if writer_bound['complete'] else 'partial'
+        outcome['guest_writer_bound'] = writer_bound
+        outcome['findings'].extend(writer_bound['findings'])
     except Exception as exc:
         outcome['findings'].append(type(exc).__name__ + ': ' + str(exc))
     finally:
