@@ -287,6 +287,10 @@ class FixedHelperTests(Fixture):
             self.assertGreater(child['process']['pid'], 0)
             self.assertTrue((root / 'stdout').is_file())
             self.assertTrue((root / 'stderr').is_file())
+        ex.verify_receipt_tree(receipt, 'D0', ex.chain_key(self.bindings), ex.load_manifest())
+        Path(receipt['stage_root'], 'd0-make-owned-dirs', 'stdout').write_text('{}\n')
+        with self.assertRaisesRegex(ex.Refusal, 'helper stdout changed'):
+            ex.verify_receipt_tree(receipt, 'D0', ex.chain_key(self.bindings), ex.load_manifest())
 
     def test_live_zero_cap_stops_a_helper_blocked_on_a_fifo(self):
         calls = []
