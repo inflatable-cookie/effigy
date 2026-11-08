@@ -2,10 +2,6 @@
 set -euo pipefail
 export LC_ALL=C
 
-macos_binaries=(
-  effigy-aarch64-apple-darwin
-  effigy-x86_64-apple-darwin
-)
 release_binaries=(
   effigy-aarch64-apple-darwin
   effigy-aarch64-unknown-linux-gnu
@@ -18,7 +14,9 @@ release_assets=(
   effigy-x86_64-apple-darwin
   effigy-x86_64-unknown-linux-gnu
   effigy-aarch64-apple-darwin.sha256
+  effigy-aarch64-unknown-linux-gnu.sha256
   effigy-x86_64-apple-darwin.sha256
+  effigy-x86_64-unknown-linux-gnu.sha256
 )
 
 usage() {
@@ -68,10 +66,10 @@ require_artifact_dir() {
 generate_sidecars() {
   local artifact_dir=$1 binary path digest
   require_artifact_dir "$artifact_dir"
-  for binary in "${macos_binaries[@]}"; do
+  for binary in "${release_binaries[@]}"; do
     require_nonempty_file "$artifact_dir/$binary"
   done
-  for binary in "${macos_binaries[@]}"; do
+  for binary in "${release_binaries[@]}"; do
     path="$artifact_dir/$binary"
     digest=$(sha256_of "$path")
     printf '%s  %s\n' "$digest" "$binary" > "$path.sha256"
@@ -81,7 +79,7 @@ generate_sidecars() {
 verify_sidecars() {
   local artifact_dir=$1 binary path sidecar digest
   require_artifact_dir "$artifact_dir"
-  for binary in "${macos_binaries[@]}"; do
+  for binary in "${release_binaries[@]}"; do
     path="$artifact_dir/$binary"
     sidecar="$path.sha256"
     require_nonempty_file "$path"

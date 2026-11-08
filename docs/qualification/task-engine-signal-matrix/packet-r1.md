@@ -31,12 +31,12 @@ packet admission and execute control-flow only.
   The helper body is the shipped `HELPER` constant in
   `crates/effigy-containers/src/environment/remote.rs`.
 - One bounded run. Pre/post exact-owned inventory and cleanup/error
-  receipts under `/Volumes/Builds/scratch/effigy/579`.
+  receipts under `/Volumes/Stash/scratch/effigy/579`.
 
 ## GO contract
 
 The operator-copied receipt is a regular 0600 file at exactly
-`/Volumes/Builds/scratch/effigy/579/go.txt` (tests pass a disposable
+`/Volumes/Stash/scratch/effigy/579/go.txt` (tests pass a disposable
 scratch root). Required lines:
 
 ```
@@ -147,3 +147,14 @@ effect and revalidated before recovery; missing or changed identity refuses.
 A separate cleared-environment discovery control does not launch a backend.
 Neither the fixture nor use of a real backend with a cleared environment has
 been verified at this head; the named checks and native gates remain required.
+
+## Proof-only entry (effigy#739)
+
+`signal_proof.py` is the one fixed Nucleus entry. External precondition: Nucleus
+launches `qualification:task-engine-signals:proof-only` at the exact merged commit
+with the pinned inputs, under already-recorded same-sequence authority. It takes
+`REQUEST SHA256`. The request is a bounded, strict, hash-pinned file at
+`<scratch>/proof-request.json` whose identities must equal the GO receipt. The
+entry then admits the in-memory overlay through the existing `launch.main` and the
+production `HostCliDriver`. The committed manifest stays unarmed. The full binding
+and history are in `README.md`.

@@ -2,8 +2,9 @@
 //! development build and a release download, the producer's single-flight, and
 //! the refusals that keep stale or unverified bytes from being published.
 //!
-//! Every host here is a private shell fixture and every release body comes from
-//! `RELEASE_FIXTURES`, so no test builds a real artifact or reaches GitHub.
+//! Hosts and release bodies use private fixtures; one cold-cache case exercises
+//! the real HTTP client against a local server populated by release-assets.sh.
+//! No test builds a real artifact or reaches GitHub.
 
 use super::{linux_artifact_fixture, write_linux_artifact};
 use crate::contract_test_support::EnvGuard;
@@ -19,12 +20,127 @@ use crate::runner::workspace_command::provisioning::{
     workspace_effigy_local_install_identity, workspace_effigy_release_install_identity,
     ArtifactHost, ArtifactPlan, LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget,
     ARTIFACT_LOCK_WAIT, RELEASE_FETCHES, RELEASE_FETCH_DELAY, RELEASE_FIXTURES,
+    RELEASE_FIXTURE_BASE_URL,
 };
 use effigy_containers::EffectiveContainerPolicy;
+use std::collections::BTreeMap;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 const X86: LinuxWorkspaceTarget = LinuxWorkspaceTarget::X86_64Gnu;
 const X86_ARTIFACT: &str = "effigy-x86_64-unknown-linux-gnu";
+
+struct ReleaseBaseGuard;
+
+impl ReleaseBaseGuard {
+    fn set(url: String) -> Self {
+        RELEASE_FIXTURE_BASE_URL.with(|base| *base.borrow_mut() = Some(url));
+        Self
+    }
+}
+
+impl Drop for ReleaseBaseGuard {
+    fn drop(&mut self) {
+        RELEASE_FIXTURE_BASE_URL.with(|base| *base.borrow_mut() = None);
+    }
+}
+
+fn private_http_release_fixture(
+    assets: BTreeMap<String, Vec<u8>>,
+) -> (String, JoinHandle<Vec<String>>) {
+    let listener =
+        std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind private HTTP fixture");
+    listener
+        .set_nonblocking(true)
+        .expect("nonblocking fixture listener");
+    let address = listener.local_addr().expect("fixture address");
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut requested = Vec::new();
+        while requested.len() < 2 && Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let mut request = Vec::new();
+                    let mut chunk = [0_u8; 1024];
+                    loop {
+                        let count = stream.read(&mut chunk).expect("read fixture HTTP request");
+                        request.extend_from_slice(&chunk[..count]);
+                        if count == 0 || request.windows(4).any(|window| window == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    let asset = String::from_utf8_lossy(&request)
+                        .lines()
+                        .next()
+                        .and_then(|line| line.split_whitespace().nth(1))
+                        .and_then(|path| path.rsplit('/').next())
+                        .unwrap_or_default()
+                        .to_owned();
+                    requested.push(asset.clone());
+                    if let Some(body) = assets.get(&asset) {
+                        write!(
+                            stream,
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        )
+                        .expect("write fixture response headers");
+                        stream.write_all(body).expect("write fixture response body");
+                    } else {
+                        stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                            .expect("write fixture 404");
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("accept fixture HTTP request: {error}"),
+            }
+        }
+        requested
+    });
+    (format!("http://{address}"), server)
+}
+
+fn generated_linux_release_assets() -> BTreeMap<String, Vec<u8>> {
+    let fixture = effigy_test_support::Fixture::thread_lifetime("release-producer-http-")
+        .expect("fresh release producer fixture");
+    let artifacts = fixture.join("artifacts");
+    std::fs::create_dir_all(&artifacts).expect("create artifact directory");
+    let binaries: [(&str, &[u8]); 4] = [
+        ("effigy-aarch64-apple-darwin", b"arm macOS fixture"),
+        ("effigy-aarch64-unknown-linux-gnu", b"arm Linux fixture"),
+        ("effigy-x86_64-apple-darwin", b"x86 macOS fixture"),
+        (X86_ARTIFACT, b"x86 Linux release fixture"),
+    ];
+    for (name, contents) in binaries {
+        std::fs::write(artifacts.join(name), contents).expect("write raw release fixture");
+    }
+    let producer = Command::new("bash")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/release-assets.sh"))
+        .arg("generate")
+        .arg(&artifacts)
+        .output()
+        .expect("run maintained release checksum producer");
+    assert!(
+        producer.status.success(),
+        "release asset generation failed: {}",
+        String::from_utf8_lossy(&producer.stderr)
+    );
+    let mut assets = BTreeMap::new();
+    assets.insert(
+        X86_ARTIFACT.to_owned(),
+        std::fs::read(artifacts.join(X86_ARTIFACT)).expect("read generated Linux binary"),
+    );
+    assets.insert(
+        format!("{X86_ARTIFACT}.sha256"),
+        std::fs::read(artifacts.join(format!("{X86_ARTIFACT}.sha256")))
+            .expect("read generated Linux sidecar"),
+    );
+    assets
+}
 
 /// Writes an executable host at `path` whose body is the whole shell program.
 fn host_at(path: &Path, body: &str) -> PathBuf {
@@ -191,6 +307,126 @@ fn a_release_host_on_a_cold_cache_downloads_the_exact_target_without_a_builder()
         0,
         "a release host never runs a builder"
     );
+}
+
+#[test]
+fn cold_release_acquisition_consumes_the_publisher_sidecar_over_private_http() {
+    let (base_url, server) = private_http_release_fixture(generated_linux_release_assets());
+    let _release_base = ReleaseBaseGuard::set(base_url);
+    let (base, app, host) = release_world("publisher-consumer-http");
+    let _home = home_guard(&base);
+    RELEASE_FETCHES.with(|fetches| fetches.set(0));
+
+    let first = acquire_linux_workspace_effigy_artifact_with(
+        &host,
+        &app,
+        &app,
+        LinuxWorkspaceArtifactSource::Auto,
+        X86,
+    )
+    .expect("cold-cache release host downloads its published binary");
+    assert_eq!(
+        first.install_identity,
+        workspace_effigy_release_install_identity()
+    );
+    assert_eq!(
+        read_trimmed_identity_file(&workspace_effigy_active_version_file(&first.artifact))
+            .as_deref(),
+        Some(effigy_core::build_info::active_version().as_str()),
+        "the acquired release artifact carries the host version"
+    );
+    assert_eq!(
+        std::fs::read(&first.artifact).expect("cached release bytes"),
+        b"x86 Linux release fixture"
+    );
+    verify_guest_artifact(&first.artifact, X86).expect("downloaded bytes have a valid receipt");
+    assert_eq!(
+        build_count(&app),
+        0,
+        "release hosts never compile a guest binary"
+    );
+
+    let reused = acquire_linux_workspace_effigy_artifact_with(
+        &host,
+        &app,
+        &app,
+        LinuxWorkspaceArtifactSource::Auto,
+        X86,
+    )
+    .expect("the authenticated release cache is reused");
+    assert_eq!(reused, first, "cache reuse preserves release identity");
+    assert_eq!(RELEASE_FETCHES.with(std::cell::Cell::get), 1);
+    assert_eq!(
+        server.join().expect("private HTTP fixture server exits"),
+        vec![X86_ARTIFACT.to_owned(), format!("{X86_ARTIFACT}.sha256")]
+    );
+}
+
+#[test]
+fn release_acquisition_refuses_corrupt_or_missing_sidecars_over_private_http() {
+    for case in ["bad-digest", "wrong-name", "bad-format", "missing", "empty"] {
+        let mut assets = generated_linux_release_assets();
+        let sidecar_name = format!("{X86_ARTIFACT}.sha256");
+        match case {
+            "bad-digest" => {
+                assets.insert(
+                    sidecar_name.clone(),
+                    format!("{}  {X86_ARTIFACT}\n", "0".repeat(64)).into_bytes(),
+                );
+            }
+            "wrong-name" => {
+                let digest = sha256_text(b"x86 Linux release fixture");
+                assets.insert(
+                    sidecar_name.clone(),
+                    format!("{}  wrong-name\n", digest.trim_start_matches("sha256:")).into_bytes(),
+                );
+            }
+            "bad-format" => {
+                let digest = sha256_text(b"x86 Linux release fixture");
+                assets.insert(
+                    sidecar_name.clone(),
+                    format!("{} {X86_ARTIFACT}\n", digest.trim_start_matches("sha256:"))
+                        .into_bytes(),
+                );
+            }
+            "missing" => {
+                assets.remove(&sidecar_name);
+            }
+            "empty" => {
+                assets.insert(sidecar_name, Vec::new());
+            }
+            _ => unreachable!(),
+        }
+        let (base_url, server) = private_http_release_fixture(assets);
+        let _release_base = ReleaseBaseGuard::set(base_url);
+        let (base, app, host) = release_world(&format!("http-{case}"));
+        let _home = home_guard(&base);
+
+        let error = acquire_linux_workspace_effigy_artifact_with(
+            &host,
+            &app,
+            &app,
+            LinuxWorkspaceArtifactSource::Auto,
+            X86,
+        )
+        .expect_err("an unauthenticated release body is refused");
+        assert!(error.to_string().contains("checksum"), "{error}");
+        assert!(
+            !linux_workspace_effigy_cache_path(X86)
+                .expect("cache path")
+                .exists(),
+            "a refused download publishes no cache"
+        );
+        assert_eq!(build_count(&app), 0, "release hosts do not compile locally");
+        assert_eq!(
+            server
+                .join()
+                .expect("private HTTP fixture server exits")
+                .len(),
+            2,
+            "the consumer requests the binary and its checksum"
+        );
+    }
 }
 
 #[test]

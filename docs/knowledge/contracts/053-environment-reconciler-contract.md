@@ -683,15 +683,15 @@ future work and do not qualify the current workspace activation caller.
 
 The ordinary gateway startup path can write raw daemon stdout and stderr to
 gateway logs, including diagnostic URLs or other secret-bearing upstream text.
-New gateway log files are created with mode 0600, but reopening a pre-existing
-0644 file does not tighten it; legacy directory and ancestor permissions can
-permit other local users to read those files. New mode 0700 directories do not
-repair existing directories. These facts do not establish global sanitization or
-private permissions for every existing gateway installation. The v0.14.1 writer
-already emitted raw output with umask-dependent modes; the current new-file mode
-is an improvement, not a migration of old files.
-
-Security lead `8d767d55` requires Tom's disposition before v0.15 freeze. This is
-separate from the release-blocking requirement for private or discarded output
-on workspace Phase A apply and preparation. No native gateway qualification or
-release acceptance follows from the present source audit.
+Both daemon stream writers and the operator-event appender now open the selected
+log without following aliases, verify a regular single-link file and applicable
+ownership, secure the held descriptor to mode 0600, and verify that mode before
+writing or handing the stream to the child. Existing bytes and append behavior
+are preserved. This repairs only a log opened during that normal operation; it
+does not sweep unopened legacy logs or repair directory and ancestor
+permissions. Raw diagnostic contents remain a separate exposure limit. The fix
+does not qualify native gateway behavior or release acceptance, and workspace
+Phase A apply and preparation still require qualified private or discarded
+output before their production path is accepted. The remaining raw-output and
+historical-file exposure still needs its own pre-freeze disposition; this change
+does not record acceptance of those risks.

@@ -119,7 +119,7 @@ manual dispatch (existing annotated vX.Y.Z tag)
   │
   ├─ 4. Smoke test each binary on native runner
   │
-  ├─ 5. Generate and verify macOS SHA-256 sidecars
+  ├─ 5. Generate and verify SHA-256 sidecars for all four binaries
   │
   ├─ 6. Create GitHub Release with binaries and sidecars attached
   │
@@ -130,16 +130,14 @@ manual dispatch (existing annotated vX.Y.Z tag)
 
 The cross-compile and publish stages must not run unless release gates pass.
 
-Starting with the next normally authorized release, GitHub Releases also
-include `effigy-aarch64-apple-darwin.sha256` and
-`effigy-x86_64-apple-darwin.sha256` beside the unchanged macOS binaries. Each
-sidecar is one ASCII line containing the binary's 64-character lowercase
-SHA-256 digest, two spaces, its basename, and a newline. The release job
-computes and verifies each sidecar against the final downloaded binary before
-creating the release, then selects the four raw binaries and two macOS
-sidecars explicitly for either release-notes path. Linux assets remain the
-same. These checksums are unsigned and published alongside the binaries; the
-workflow has no artifact-signing step, so a sidecar alone does not establish
+Starting with the next normally authorized release, GitHub Releases include a
+`.sha256` sidecar beside each of the four unchanged binaries. Each sidecar is
+one ASCII line containing the binary's 64-character lowercase SHA-256 digest,
+two spaces, its basename, and a newline. The release job computes and verifies
+each sidecar against the final downloaded binary before creating the release,
+then selects all four raw binaries and all four sidecars explicitly for either
+release-notes path. These checksums are unsigned and published alongside the
+binaries; the workflow has no artifact-signing step, so a sidecar alone does not establish
 artifact provenance.
 
 The local `test:release:macos-checksums` selector exercises sidecar generation,
