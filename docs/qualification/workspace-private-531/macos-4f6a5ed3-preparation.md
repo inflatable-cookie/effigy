@@ -339,7 +339,9 @@ prevents concurrent external changes. The fixed launcher opens only `/Applicatio
 its exit does not establish readiness. An initial bounded engine read makes the startup decision:
 a matching engine skips startup, while only the two recognised local connection errors permit a
 separately claimed start, including when the socket exists but refuses connections. Other failures
-and changed engine facts refuse. Nested helper timers preserve the earlier outer deadline. The owned
+and changed engine facts refuse. The recognised error requires exit 1 and the exact stderr; stdout
+is retained and may contain client facts, as in the spent 702 attempt. Nested helper timers preserve
+the earlier outer deadline. The owned
 socket and a matching engine response establish readiness. Drift, missing telemetry, unexpected
 failed commands and exhausted reserve stop before D1.
 

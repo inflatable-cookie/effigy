@@ -257,13 +257,12 @@ def execute_ready(request, request_sha):
             receipt['steps'].append(dict(id=name, result=result, receipt=path + '/receipt.json',
                                          receipt_sha256=executor.checked_sha(path + '/receipt.json', must_be_in=root)))
             if retry_endpoint and result.get('disposition') == 'failed' and result.get('waited_exit') == 1:
-                out = executor.read_checked_file(path + '/stdout', must_be_in=root, read_only=False, max_bytes=262144)
                 err = executor.read_checked_file(path + '/stderr', must_be_in=root, read_only=False, max_bytes=262144)
                 fixed = ('failed to connect to the docker API at ' + executor.prep.DESKTOP_HOST +
                          '; check if the path is correct and if the daemon is running: dial unix ' +
                          executor.DESKTOP_SOCKET + ': connect: ')
-                if out == b'' and err in ((fixed + 'connection refused\n').encode(),
-                                           (fixed + 'no such file or directory\n').encode()):
+                if err in ((fixed + 'connection refused\n').encode(),
+                           (fixed + 'no such file or directory\n').encode()):
                     return None
             if result.get('disposition') != 'exited' or result.get('waited_exit') != 0:
                 raise executor.Refusal(name + ': command failed or closure unknown')

@@ -3287,6 +3287,31 @@ class DesktopReadyTests(Fixture):
         self.assertTrue(d1calls)
         self.assertTrue(os.path.exists(self.tmp + '/claims/start-ready-start-0001.claim'))
 
+    def test_retained_702_output_shape_starts_then_reaches_d1(self):
+        recorded = Path(ex.LINUX_ARTIFACT_DIR) / 'd1-proof-preparation.ep88ymux' / 'evidence' / \
+            'D1-d1-2e23b881db80c5652152fded0ad195bb' / 'd1-engine-info'
+        if not (recorded / 'stdout').is_file() or not (recorded / 'stderr').is_file():
+            self.skipTest('the retained 702 streams are not present on this machine')
+        stdout, stderr = (recorded / 'stdout').read_bytes(), (recorded / 'stderr').read_bytes()
+        self.assertEqual(sha_bytes(stdout), '01077956601bca3d0dc9638082e9f0b7863418540f3d7c15af0cadad397ca923')
+        self.assertEqual(sha_bytes(stderr), '02ddce4680313daa323875915ce802d357efb5619e24600f29bd695d32393cd4')
+        self.assertEqual(len(stdout), 1380)
+        os.unlink(self.socket_path)
+        request = self.request('ready-702-shape-0001')
+        # The fixture's Unix socket is private; only the dial path in the retained error is redirected.
+        error = stderr.decode().replace('dial unix ' + prep.DESKTOP_HOST[len('unix://'):] + ':',
+                                        'dial unix ' + self.socket_path + ':')
+        routes = dict(self.routes(), **{'engine-before': emit(stdout.decode(), 1, error),
+            'app-start': 'import socket\ns=socket.socket(socket.AF_UNIX)\ns.bind(%r)\n' % self.socket_path})
+        calls = []
+        code, receipt, d1calls = self.entry(request, routes, calls)
+        self.assertEqual(code, 0)
+        self.assertEqual([x[0] for x in calls].count('app-start'), 1)
+        self.assertTrue(d1calls)
+        self.assertTrue(receipt['closure_simulated'])
+        before = Path(self.evidence) / ('ready-' + request['d1']['activation_id']) / 'engine-before' / 'stdout'
+        self.assertEqual(sha_bytes(before.read_bytes()), sha_bytes(stdout))
+
     def test_start_polls_a_temporarily_unavailable_engine(self):
         os.unlink(self.socket_path)
         request = self.request('ready-poll-0001')
@@ -3333,6 +3358,13 @@ class DesktopReadyTests(Fixture):
             self.entry(request, dict(self.routes(), **{'engine-before': emit('', 1, 'unexpected error\n')}), calls)
         self.assertNotIn('app-start', [x[0] for x in calls])
         self.assertFalse(os.path.exists(self.evidence + '/D1-' + request['d1']['activation_id']))
+
+    def test_nonempty_stdout_does_not_admit_an_unexpected_error(self):
+        request = self.request('ready-wrong-error-0001')
+        calls = []
+        with self.assertRaises(ex.Refusal):
+            self.entry(request, dict(self.routes(), **{'engine-before': emit('client facts\n', 1, 'unexpected error\n')}), calls)
+        self.assertNotIn('app-start', [x[0] for x in calls])
 
     def test_successful_read_without_owned_socket_refuses(self):
         os.unlink(self.socket_path)
