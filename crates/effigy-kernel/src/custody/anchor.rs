@@ -146,9 +146,73 @@ fn member_signal(
     signal: i32,
 ) -> Observed<SignalDelivered> {
     platform::signal_checked(member, signal, || {
+        #[cfg(test)]
+        if let Some(decision) = seam::authority(anchor.pid) {
+            return decision;
+        }
         // SAFETY: signal_checked has verified the positive member generation.
         (unsafe { libc::getpgid(member.pid as i32) }) == r.pgid as i32 && verified(r, anchor)
     })
+}
+
+/// Whether an anchor's observed state means it has retired: it is gone, or it
+/// exited and waits to be reaped. Its group's closure is then judged from the
+/// group itself, never from the anchor.
+pub(super) fn retired(state: &Observed<ProcessState>) -> bool {
+    matches!(
+        state,
+        Observed::Absent(_) | Observed::Verified(ProcessState::Zombie, _)
+    )
+}
+
+/// Test seam for the one window the anchor can retire inside a kill: after its
+/// generation read succeeds and before the authority check re-reads it. Only
+/// the next authority check for the armed anchor is affected.
+#[cfg(test)]
+pub(crate) mod seam {
+    use super::*;
+    use std::cell::Cell;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) enum Authority {
+        /// SIGKILL the anchor at the crossing, then let the real check observe it.
+        RetireAnchor,
+        /// Refuse the signal while the anchor is still live.
+        RefuseLive,
+    }
+
+    thread_local! {
+        static ARMED: Cell<Option<(u32, Authority)>> = const { Cell::new(None) };
+    }
+
+    pub(crate) fn arm(pid: u32, action: Authority) {
+        ARMED.with(|armed| armed.set(Some((pid, action))));
+    }
+
+    pub(crate) fn disarm() {
+        ARMED.with(|armed| armed.set(None));
+    }
+
+    /// The decision forced for this crossing, or `None` for the real check.
+    pub(super) fn authority(pid: u32) -> Option<bool> {
+        let (armed, action) = ARMED.with(Cell::get)?;
+        if armed != pid {
+            return None;
+        }
+        disarm();
+        match action {
+            Authority::RefuseLive => Some(false),
+            Authority::RetireAnchor => {
+                // SAFETY: the pid is the anchor this test launched.
+                unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while !retired(&ident::process_state(pid)) && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                None
+            }
+        }
+    }
 }
 
 pub(super) fn signal(
@@ -239,7 +303,13 @@ pub(super) fn stop(
             return Observed::Unknown(unknown(e));
         }
         if let Observed::Unknown(reason) = member_signal(r, anchor, anchor, libc::SIGKILL) {
-            return Observed::Unknown(reason);
+            // The anchor retires itself once its group has no live member, so it
+            // can exit between the liveness check above and this kill. A refused
+            // kill of a retired anchor has nothing left to kill. Closure is still
+            // proven below from the group, never from the anchor's exit.
+            if !retired(&ident::process_state(anchor.pid)) {
+                return Observed::Unknown(reason);
+            }
         }
         if let Err(e) = crate::fault_point!(AnchorStopped) {
             return Observed::Unknown(unknown(e));

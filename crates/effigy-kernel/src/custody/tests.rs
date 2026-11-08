@@ -4412,3 +4412,119 @@ fn anchored_recovery_journal_detail_cannot_turn_unknown_into_release() {
         (EffectState::Residue, Some(reason.to_string()))
     );
 }
+
+/// Launch a leader in an anchored group, then stop the leader so the anchor is
+/// the group's only member. The anchor is pinned with SIGSTOP so it cannot
+/// retire itself before the stop under test observes it.
+fn anchored_group_with_pinned_anchor() -> (
+    spawn::Blocked,
+    ProcessReceipt,
+    ProcessIdentity,
+    AnchorFixture,
+) {
+    let home = home();
+    let cx = cx();
+    let spec = ProcessSpec {
+        argv: vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "trap '' TERM; /bin/sleep 30".into(),
+        ],
+        cwd: home.path().into(),
+        env: BTreeMap::new(),
+        grace: Duration::from_millis(10),
+        lifetime: Lifetime::Finite(Duration::from_secs(60)),
+        terminal: Terminal::None,
+        label: "anchor retirement".into(),
+    };
+    let image = crate::supervise::anchor::Image::prepare(&executable()).unwrap();
+    let mut child = spawn::Blocked::fork(
+        &spec,
+        "anchor-retirement",
+        cx.operation(),
+        &image,
+        None,
+        None,
+    )
+    .unwrap();
+    let anchor = fixture_identity(child.anchor.unwrap());
+    let r = ProcessReceipt {
+        identity: fixture_identity(child.pid),
+        pgid: child.pid,
+        nonce: "anchor-retirement".into(),
+        grace_millis: 10,
+    };
+    let fixture = AnchorFixture(vec![r.identity.clone(), anchor.clone()]);
+    child.go().unwrap();
+    child.executed(cx.operation()).unwrap();
+    // SAFETY: the pid is an anchor this test launched and still owns.
+    unsafe { libc::kill(anchor.pid as i32, libc::SIGSTOP) };
+    // SAFETY: the pid is the leader this test launched; SIGKILL is its owner's stop.
+    unsafe { libc::kill(child.pid as i32, libc::SIGKILL) };
+    while spawn::reap(r.identity.pid).unwrap().is_none() {
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    (child, r, anchor, fixture)
+}
+
+// Regression control for the release closure refusal (certified-candidate run):
+// the anchor exits between the stop's liveness check and its kill. Its kill is
+// then refused as "member generation unverified". The retired anchor is not a
+// refusal by itself: the group, observed afresh, decides closure.
+#[test]
+fn anchor_retired_between_liveness_and_kill_still_closes_the_group() {
+    let (_child, r, anchor, _fixture) = anchored_group_with_pinned_anchor();
+    anchor::seam::arm(anchor.pid, anchor::seam::Authority::RetireAnchor);
+    let closed = anchor::stop(
+        &r,
+        Some(&anchor),
+        &cx().operation().cleanup(Duration::from_secs(10)).unwrap(),
+    );
+    anchor::seam::disarm();
+    assert!(
+        matches!(closed, Observed::Verified(..) | Observed::Absent(_)),
+        "a retired anchor leaves a closed group: {closed:?}"
+    );
+}
+
+// Negative control: a kill refused while the anchor is still live stays
+// refused. Only a retired anchor may be passed over.
+#[test]
+fn live_anchor_refused_kill_still_refuses_closure() {
+    let (_child, r, anchor, _fixture) = anchored_group_with_pinned_anchor();
+    anchor::seam::arm(anchor.pid, anchor::seam::Authority::RefuseLive);
+    let closed = anchor::stop(
+        &r,
+        Some(&anchor),
+        &cx().operation().cleanup(Duration::from_secs(10)).unwrap(),
+    );
+    anchor::seam::disarm();
+    match closed {
+        Observed::Unknown(UnknownReason::Inconsistent(message)) => {
+            assert_eq!(message, "member generation unverified");
+        }
+        other => panic!("a live anchor's refused kill must refuse closure: {other:?}"),
+    }
+    // SAFETY: the pid is the anchor this test launched; it is still ours to stop.
+    unsafe { libc::kill(anchor.pid as i32, libc::SIGKILL) };
+}
+
+#[test]
+fn only_exited_anchors_count_as_retired() {
+    use crate::ident::ProcessState;
+    let unknown = || Observed::Unknown(UnknownReason::Injected);
+    assert!(anchor::retired(&Observed::Absent(
+        AbsenceProof::NoSuchProcess { pid: 1 }
+    )));
+    assert!(anchor::retired(&Observed::Verified(
+        ProcessState::Zombie,
+        Evidence::new("test".into(), None).unwrap()
+    )));
+    for live in [ProcessState::Active, ProcessState::Stopped] {
+        assert!(!anchor::retired(&Observed::Verified(
+            live,
+            Evidence::new("test".into(), None).unwrap()
+        )));
+    }
+    assert!(!anchor::retired(&unknown()));
+}
