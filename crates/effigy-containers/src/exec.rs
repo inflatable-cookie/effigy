@@ -55,7 +55,7 @@ pub use implementation::{
     list_running_compose_containers_for_policy_with_timeout,
     list_running_compose_containers_for_profile,
     list_running_compose_containers_for_project_with_deadline,
-    list_running_compose_containers_profiled, observed_workspace_artifact_builder_source,
+    list_running_compose_containers_profiled, observed_workspace_artifact_builder,
     owned_service_listing_args, run_backend_invocation, run_backend_invocation_private_until,
     run_backend_invocation_until, run_compose_capture, run_compose_capture_with_env,
     run_compose_invocation_capture, run_compose_invocation_capture_with_env,
@@ -63,15 +63,16 @@ pub use implementation::{
     shared_project_containers, shared_render_identity, shutdown_container,
     verify_owned_running_compose_identities, verify_owned_running_compose_rows,
     verify_shared_render_container, verify_workspace_artifact_builder,
-    verify_workspace_artifact_builder_declaration, ContainerExecError, OwnershipContext,
-    RunningComposeContainerInventory, RuntimeInventoryFailure, SharedProjectContainer,
-    VerifiedComposeContainer,
+    verify_workspace_artifact_builder_declaration, ContainerExecError,
+    ObservedWorkspaceArtifactBuilder, OwnershipContext, RunningComposeContainerInventory,
+    RuntimeInventoryFailure, SharedProjectContainer, VerifiedComposeContainer,
 };
 pub use managed_stop::{end_owned_container_process_group, verify_owned_stack_for_shutdown};
 pub use mounts::ensure_isolated_mount_host_points;
 pub use parse::{
-    compose_status_is_running, parse_running_compose_containers, RunningComposeContainer,
-    RunningComposeContainerProfiled, RunningContainerStats, RunningContainerStatsCapture,
+    compose_status_is_created, compose_status_is_running, parse_running_compose_containers,
+    RunningComposeContainer, RunningComposeContainerProfiled, RunningContainerStats,
+    RunningContainerStatsCapture,
 };
 pub use process::{
     no_containers_diagnostic, retained_backend_log_path, run_command_capture,

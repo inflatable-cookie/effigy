@@ -1061,18 +1061,33 @@ pub fn verify_workspace_artifact_builder(
     Ok(binding)
 }
 
-/// The exact `/workspace` source one otherwise-owned retained builder binds.
+/// The identity and exact `/workspace` source one otherwise-owned retained
+/// builder reports, and whether it is the never-started shape.
 ///
 /// It authorizes nothing on its own: the artifact producer uses it only to tell
 /// a builder retained from the pre-staging declaration apart from a foreign,
 /// replaced or unreadable one, so the maintained activation can replace the
-/// builder this checkout owns instead of adopting it.
-pub fn observed_workspace_artifact_builder_source(
+/// builder this checkout owns instead of adopting it. A transition re-observes
+/// the same identity immediately before it acts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservedWorkspaceArtifactBuilder {
+    pub id: String,
+    pub source: PathBuf,
+    pub never_started: bool,
+}
+
+/// Observe one owned builder's identity and source. A listing that says
+/// `Created` takes the never-started path, whose proof is stricter than the
+/// running path; every other listing takes the strict running inspection.
+pub fn observed_workspace_artifact_builder(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     row: &RunningComposeContainer,
     deadline: Instant,
-) -> Result<PathBuf, ContainerExecError> {
+) -> Result<ObservedWorkspaceArtifactBuilder, ContainerExecError> {
+    if super::parse::compose_status_is_created(&row.status) {
+        return observed_never_started_builder(repo_root, policy, row, deadline);
+    }
     let inspected = inspect_workspace_artifact_builder(repo_root, policy, row, deadline)?;
     let ownership = inspected.ownership;
     if !ownership.owns(
@@ -1086,12 +1101,179 @@ pub fn observed_workspace_artifact_builder_source(
             "workspace builder identity is not this checkout's own; its source bind is not adopted",
         ));
     }
-    inspected.workspace_source.ok_or_else(|| {
+    let id = inspected.binding.id().to_owned();
+    let source = inspected.workspace_source.ok_or_else(|| {
         ContainerExecError::refused(
             "inspect workspace builder",
             "workspace builder binds no single writable `/workspace` source",
         )
+    })?;
+    Ok(ObservedWorkspaceArtifactBuilder {
+        id,
+        source,
+        never_started: false,
     })
+}
+
+const CHECKOUT_GENERATION_LABEL: &str = "com.effigy.checkout-generation";
+const CHECKOUT_FENCE_LABEL: &str = "com.effigy.checkout-fence";
+const BUILDER_CACHE_VOLUMES: [(&str, &str); 2] = [
+    ("/root/.cargo/registry", "cargo-registry"),
+    ("/root/.cargo/git", "cargo-git"),
+];
+
+/// The identity and source of a builder the Colima nerdctl backend reports as
+/// created but never started.
+///
+/// That shape has no `State.Status`, so the strict running parser cannot read
+/// it. Here the listing must say `Created`, the inspect must state every
+/// never-started field exactly, and this checkout's own labels, generation,
+/// fence, `/workspace` bind and cache volumes must all match before the source
+/// is trusted. Empty status alone proves nothing, and nothing here authorizes
+/// start, exec or stop.
+fn observed_never_started_builder(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    row: &RunningComposeContainer,
+    deadline: Instant,
+) -> Result<ObservedWorkspaceArtifactBuilder, ContainerExecError> {
+    const CONTEXT: &str = "inspect never-started workspace builder";
+    let refuse = |reason: String| ContainerExecError::refused(CONTEXT, reason);
+    if !matches!(
+        crate::compose::resolve_compose_backend_for_policy(policy),
+        crate::compose::ComposeBackend::ColimaNerdctl
+    ) {
+        return Err(refuse(
+            "the never-started shape is proven only for the Colima nerdctl backend".to_owned(),
+        ));
+    }
+    let ownership = OwnershipContext::resolve(repo_root, policy)?;
+    let remaining = super::process::remaining_until_deadline(deadline, CONTEXT)?;
+    let output = run_runtime_command_capture_for_policy_with_absolute_deadline(
+        repo_root,
+        policy,
+        &inspect_owned_binding_args(row),
+        CONTEXT,
+        deadline,
+        remaining,
+    )?;
+    let identity = super::parse::parse_inspected_never_started_identity(&String::from_utf8_lossy(
+        &output.stdout,
+    ))
+    .map_err(|error| refuse(format!("binding unavailable: {error}")))?;
+    let raw: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| refuse(format!("inspect output is not JSON: {error}")))?;
+    let record = raw.as_array().and_then(|records| records.first());
+    let labels = record
+        .and_then(|record| record.get("Config"))
+        .and_then(|config| config.get("Labels"));
+    let (working_dir, oneoff_label_ok) = compose_binding_labels(labels);
+    let inspected_scope = labels
+        .and_then(|labels| labels.get(crate::runtime::scope::SCOPE_LABEL))
+        .map(|value| value.as_str().unwrap_or_default());
+    // Compose names its one builder `<project>-builder-1`; a successor name is
+    // another container of this project, even when its listing agrees.
+    if identity.name != format!("{}-builder-1", policy.project_name) {
+        return Err(refuse(format!(
+            "binding unavailable: container `{}` is not the project's builder",
+            identity.name
+        )));
+    }
+    if !ownership.inspected_identity_matches(policy, row, &identity, oneoff_label_ok, false)
+        || !ownership.owns(working_dir, inspected_scope)
+    {
+        return Err(refuse(format!(
+            "binding unavailable: full-ID/project/service/oneoff/checkout/scope ownership does not match owned project `{}` at `{}`",
+            policy.project_name,
+            ownership.canonical.display(),
+        )));
+    }
+    let checkout = ownership.canonical.clone();
+    let root = std::fs::metadata(&checkout)
+        .map_err(|error| refuse(format!("the checkout is not readable: {error}")))?;
+    // The generation names this checkout's root directory; the fence names its
+    // device. The fence's inode is not re-derivable here, so it is only checked
+    // for presence and device.
+    let object_identity = |name: &str| {
+        labels
+            .and_then(|labels| labels.get(name))
+            .and_then(|value| value.as_str())
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+            .and_then(|value| {
+                Some((
+                    value.get("device")?.as_u64()?,
+                    value.get("inode")?.as_u64()?,
+                ))
+            })
+    };
+    use std::os::unix::fs::MetadataExt;
+    if object_identity(CHECKOUT_GENERATION_LABEL) != Some((root.dev(), root.ino())) {
+        return Err(refuse(
+            "binding unavailable: checkout generation is stale or unverified".to_owned(),
+        ));
+    }
+    if object_identity(CHECKOUT_FENCE_LABEL).map(|(device, _)| device) != Some(root.dev()) {
+        return Err(refuse(
+            "binding unavailable: checkout fence is unverified".to_owned(),
+        ));
+    }
+    let mounts = record
+        .and_then(|record| record.get("Mounts"))
+        .and_then(|value| value.as_array());
+    if workspace_builder_source_bind(mounts).as_deref() != Some(checkout.as_path()) {
+        return Err(refuse(format!(
+            "binding unavailable: the owned `/workspace` bind is not `{}`",
+            checkout.display()
+        )));
+    }
+    if !builder_cache_volumes_are_owned(mounts, &policy.project_name) {
+        return Err(refuse(
+            "binding unavailable: the owned cargo cache volumes are not this project's".to_owned(),
+        ));
+    }
+    if !workspace_builder_has_no_published_ports(record) {
+        return Err(refuse(
+            "binding unavailable: the builder publishes ports".to_owned(),
+        ));
+    }
+    let staged = crate::artifact_source::policy_stage(policy)
+        .map_err(|error| refuse(format!("resolve workspace builder source: {error}")))?;
+    if !builder_working_directory_is_owned(
+        &checkout,
+        staged.as_ref(),
+        record.and_then(|record| {
+            record.pointer("/Config/Labels/com.docker.compose.project.working_dir")
+        }),
+    ) {
+        return Err(refuse(
+            "binding unavailable: the Compose working directory is not this checkout's".to_owned(),
+        ));
+    }
+    Ok(ObservedWorkspaceArtifactBuilder {
+        id: identity.id,
+        source: checkout,
+        never_started: true,
+    })
+}
+
+/// Exactly the builder's two cargo caches, each the named volume of this
+/// project, read-write, with nothing else mounted beside the `/workspace` bind.
+fn builder_cache_volumes_are_owned(
+    mounts: Option<&Vec<serde_json::Value>>,
+    project_name: &str,
+) -> bool {
+    let Some(mounts) = mounts else { return false };
+    mounts.len() == BUILDER_CACHE_VOLUMES.len() + 1
+        && BUILDER_CACHE_VOLUMES.iter().all(|(destination, suffix)| {
+            let name = format!("{project_name}-{suffix}");
+            mounts.iter().any(|mount| {
+                mount.get("Type").and_then(|value| value.as_str()) == Some("volume")
+                    && mount.get("Destination").and_then(|value| value.as_str())
+                        == Some(destination)
+                    && mount.get("Name").and_then(|value| value.as_str()) == Some(name.as_str())
+                    && mount.get("RW").and_then(|value| value.as_bool()) == Some(true)
+            })
+        })
 }
 
 struct InspectedWorkspaceBuilder {
