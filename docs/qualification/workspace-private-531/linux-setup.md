@@ -271,8 +271,9 @@ and [kill semantics](https://raw.githubusercontent.com/systemd/systemd/v259/man/
 The stand-in now waits in active(exited) until stop, matching the reviewed wait loop.
 Installed systemd capabilities and that lifecycle still need fresh native binding.
 
-Writable-top selection is source-implemented as metadata only; no live observation producer
-runs, so Stage1 still refuses before any effect. Still unavailable: controller-to-guest association,
+Writable-top selection is source-implemented as metadata only. Stage1 still refuses before any effect:
+no live producer supplies a top observation (`top_observation` is None), and every row stays gated by
+`EXTERNAL_ANCHORS`, which is unset in production. Still unavailable: controller-to-guest association,
 source-verified kernel hard limits, fresh signed Stage1 evidence, exact activation
 anchors and root installation authorization. No VM, SSH, account, service, build,
 proof or production effect ran here. E10/E13k/E14 stay held; measurement692 grants
@@ -295,35 +296,50 @@ Retained content hashes and metadata identities are reported separately. A descr
 
 Once a start launcher is recorded as spawned for the verified VM, cleanup observes that same VM's own state inside the existing operational deadline instead of sending a stop while Parallels still reports `starting` (which is refused and closes nothing). It waits in a bounded window for eligible `running` state before the one graceful stop; a VM already observed `stopped` is recorded without claiming any stop command and is reported as a finding, because a successful handoff needs a positively executed graceful stop; an unobserved or non-terminal state stays unknown and no stop is sent. A later `stopped` observation establishes terminal state only and never repairs a timed-out or killed stop client. Launcher exit alone does not establish VM state. If the operational budget cannot fit the windows, the limitation is recorded and the retained originals still run. The separately signed fresh Stage1/setup admission and its supported-mechanism gates remain required and unchanged.
 
+
 ## Writable top selection (K-25, source-only)
 
-Spec: QEMU "Parallels Disk Format" (`https://www.qemu.org/docs/master/interop/prl-xml.html`), read
-2026-11-08. Pin: rendered text sha256 `33036524…`, page HTML sha256 `fe1560d0…` (QEMU 11.1.50 docs).
-The brief's pinned v7.2.9 `docs/interop/prl-xml.txt` could not be fetched (404 from raw and the
-GitHub API; no v7.2 tags visible), so this pin is master's bytes. Gap: pin v7.2.9 or a tagged revision.
+Primary source: QEMU "Parallels Disk Format" spec, pinned at QEMU tag `v7.2.9` (commit `385095e48acabb2c2416951e2f25fdb7b638a579`,
+GitLab `qemu-project/qemu`; GitHub mirror `qemu/qemu`). File `docs/interop/prl-xml.txt`, content sha256
+`9ee40bd00979750e0e8569b0e224bebeed5e73a49d1a873e31bfe38a7ece91bc` (6942 bytes), read in full on 2026-11-08.
+Secondary, master: `https://www.qemu.org/docs/master/interop/prl-xml.html` (QEMU 11.1.50 docs), rendered-text
+sha256 `33036524…`, HTML sha256 `fe1560d0…`, read 2026-11-08. The two agree on every rule below; master is not
+the pin.
 
 `linux_disk_identity.py` selects the top from the descriptor bytes:
 
-- Explicit `Snapshots/TopGUID` is the top. The predefined `{5fbaabe3-…}` names it only when TopGUID
-  is absent; with an explicit TopGUID it is an ordinary image.
-- An explicit TopGUID that is empty, padded, malformed, duplicated, not an image or not a leaf
-  refuses. It never falls back to the predefined GUID.
+- Explicit `Snapshots/TopGUID` is the top. The predefined `{5fbaabe3-…}` names it only when TopGUID is absent;
+  with an explicit TopGUID it is an ordinary image.
+- An explicit TopGUID that is empty, padded, malformed, duplicated, not an image or not a leaf refuses. It never
+  falls back to the predefined GUID.
 - BackupID `{704718e1-…}` cannot be the top.
-- One Storage, Start 0, End = Disk_size, Padding 0, Cylinders×Heads×Sectors = Disk_size, positive
-  Blocksize. Padding 1 and split storage refuse as outside the specification.
-- Types `Plain` (root only) or `Compressed`. Every overlay must be Compressed.
-- Image and Shot GUIDs one-to-one; one root; every image reaches it; no cycle; no dangling parent;
-  File names are plain `.hds` names with no separators, aliases or case-only duplicates.
-- Unspecified nodes and attributes are neither interpreted nor rejected; they do not change the
-  selection. Input is bounded at 1 MiB; DTD and entity declarations refuse.
-- `preparation_observations.descriptor_chain` is the reference validator; the selection must agree.
+- One Storage, Start 0, End = Disk_size, Padding 0, Cylinders×Heads×Sectors = Disk_size, positive Blocksize.
+  Padding 1 and split storage refuse as outside the specification.
+- Types `Plain` (root only) or `Compressed`. Every overlay must be Compressed (spec: overlays must be expandable).
+- Image and Shot GUIDs one-to-one; one root; every image reaches it; no cycle; no dangling parent; File names are
+  plain `.hds` names with no separators, aliases or case-only duplicates. The spec allows relative or absolute
+  paths; this selector is stricter and fails closed.
+- Unspecified nodes and attributes are neither interpreted nor rejected and do not change the selection. The spec
+  says they "don't affect functionality" and must be left as they are. Input is bounded at 1 MiB; DTD and entity
+  declarations refuse.
+- Disk UID: the descriptor's `Disk_Parameters/UID` is an unspecified node. It must be present exactly once. The
+  setup verifier compares it to the reviewed disk `DISK_UID` and refuses a mismatch. It is an identity equality
+  check only; it establishes no controller, guest or disk correlation.
+- `preparation_observations.descriptor_chain` is the reference validator; the selection must agree with it.
 
-Stage1 and post-run verification re-derive the selection and refuse a caller observation whose GUID
-or complete `result_digest` differs. Only `parallels-descriptor-selection-v1` is supported.
+Stage1 and post-run verification re-derive the selection and refuse a caller observation whose GUID or complete
+`result_digest` differs. The only supported mechanism is `parallels-descriptor-selection-v1`. Caller values cannot
+add mechanisms.
 
-Not established by metadata selection: image-body readability, header or Blocksize-to-cluster
-compatibility, encryption, guest or disk correlation, and setup proof. Encryption and Miscellaneous
-nodes stay uninterpreted; reading any body needs its own source.
+Not established by metadata selection: image-body readability, header or Blocksize-to-cluster compatibility
+(spec: each Compressed image's cluster size must equal Blocksize, held in its header), encryption, guest or disk
+correlation, and setup proof. The retained descriptor's `Encryption` node has a zero engine and empty data and
+salt; this selector does not interpret it. Reading any image body needs its own source.
 
-Retained-719 control: the before-descriptor (sha256 `974876…`) is not present in this worktree or the
-Stash/Builds scratch trees, so the local control (`EFFIGY_LINUX_719_DESCRIPTOR`) did not run here.
+Retained-719 control (local, `EFFIGY_LINUX_719_DESCRIPTOR`, input sha256 `974876…`, not committed): derives the
+predefined top `{5fbaabe3-…}`, file `harddisk1.hdd.0.{5fbaabe3-…}.hds`, a four-image chain to zero, 37 images, and
+disk UID `{44b5d35e-…}`. The setup verifier accepts the same bytes with the matching observation. This is
+metadata selection only. It is not a runtime, header or setup proof, and it grants no admission, correlation or
+credit to any prior run.
+
+Not run here: a live Stage1 against the registered VM, and any image-body or header read.

@@ -15,6 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_disk_identity as identity
 import linux_setup as setup
 
+DISK_UID = setup.DISK_UID
+OTHER_UID = '{11111111-2222-3333-4444-555555555555}'
+
 A = '{11111111-1111-1111-1111-111111111111}'
 B = '{22222222-2222-2222-2222-222222222222}'
 R = '{33333333-3333-3333-3333-333333333333}'
@@ -30,13 +33,22 @@ TOP_NODE = f'<TopGUID>{A}</TopGUID>'
 
 def doc(top_node=TOP_NODE, images=TOP_CHAIN, shots=TOP_SHOTS, version='1.0', padding='0', size=SIZE,
         cylinders=524288, heads=16, sectors=32, start='0', end=None, blocksize='2048', storages=1,
-        extra='', snapshot_extra=''):
-    """A descriptor in the documented shape; keyword overrides make one field wrong at a time."""
+        extra='', snapshot_extra='', uid_xml=None):
+    """A descriptor in the documented shape; keyword overrides make one field wrong at a time.
+
+    The unspecified nodes mirror the retained shape (sector sizes, an encryption node with a zero
+    engine, the disk UID, a name and miscellaneous counters). None of them changes the selection.
+    """
     end = str(size) if end is None else end
+    uid_xml = f'<UID>{DISK_UID}</UID>' if uid_xml is None else uid_xml
     image_xml = ''.join(f'<Image><GUID>{g}</GUID><Type>{t}</Type><File>{f}</File></Image>' for g, t, f in images)
     storage = f'<Storage><Start>{start}</Start><End>{end}</End><Blocksize>{blocksize}</Blocksize>{image_xml}</Storage>'
     params = (f'<Disk_Parameters><Disk_size>{size}</Disk_size><Cylinders>{cylinders}</Cylinders>'
-              f'<Heads>{heads}</Heads><Sectors>{sectors}</Sectors><Padding>{padding}</Padding></Disk_Parameters>')
+              f'<Heads>{heads}</Heads><Sectors>{sectors}</Sectors><Padding>{padding}</Padding>'
+              '<PhysicalSectorSize>4096</PhysicalSectorSize><LogicSectorSize>512</LogicSectorSize>'
+              '<Encryption><Engine>{00000000-0000-0000-0000-000000000000}</Engine><Data></Data><Salt></Salt></Encryption>'
+              f'{uid_xml}<Name>harddisk1 SSD</Name><Miscellaneous><Bootable>1</Bootable></Miscellaneous>'
+              '</Disk_Parameters>')
     shot_xml = ''.join(f'<Shot><GUID>{g}</GUID><ParentGUID>{p}</ParentGUID></Shot>' for g, p in shots)
     return (f'<Parallels_disk_image Version="{version}">{params}<StorageData>{storage * storages}</StorageData>'
             f'<Snapshots>{top_node}{shot_xml}{snapshot_extra}</Snapshots>{extra}</Parallels_disk_image>').encode()
@@ -149,6 +161,13 @@ class DocumentedSelection(unittest.TestCase):
         for key in ('selector', 'top_guid', 'top_file', 'chain', 'chain_files', 'images', 'disk_size'):
             self.assertEqual(result[key], plain[key])
 
+    def test_disk_uid_is_exactly_one_guid_under_disk_parameters(self):
+        refuses(doc(uid_xml=''))
+        refuses(doc(uid_xml=f'<UID>{DISK_UID}</UID><UID>{DISK_UID}</UID>'))
+        refuses(doc(uid_xml='<UID>not-a-guid</UID>'))
+        refuses(doc(uid_xml='<UID> ' + DISK_UID + ' </UID>'))
+        self.assertEqual(identity.select_top(doc())['disk_uid'], DISK_UID)
+
     def test_bounds_and_entity_declarations_refuse(self):
         refuses(b'')
         refuses(doc() + b' ' * identity.MAX_BYTES)
@@ -166,6 +185,12 @@ class SetupVerifierBinding(unittest.TestCase):
                         dict(obs, result_digest='0' * 64)):
             with self.assertRaises(setup.Refusal):
                 setup.verify_writable_top(changed, data)
+
+    def test_a_descriptor_for_another_disk_refuses_even_with_a_matching_observation(self):
+        other = doc(uid_xml=f'<UID>{OTHER_UID}</UID>')
+        self.assertEqual(identity.select_top(other)['top_guid'], A)
+        with self.assertRaises(setup.Refusal):
+            setup.verify_writable_top(identity.observation(other), other)
 
     def test_stale_observation_refuses_after_the_descriptor_changes(self):
         old = doc()
@@ -194,6 +219,9 @@ class RetainedDescriptorControl(unittest.TestCase):
         self.assertEqual(selection['top_file'], 'harddisk1.hdd.0.' + P + '.hds')
         self.assertEqual(len(selection['chain']), 4)
         self.assertEqual(len(selection['images']), 37)
+        self.assertEqual(selection['disk_uid'], DISK_UID)
+        # Metadata selection and the setup verifier's identity comparison only; no runtime or setup proof.
+        self.assertEqual(setup.verify_writable_top(identity.observation(data), data)['top_guid'], P)
 
 
 if __name__ == '__main__':

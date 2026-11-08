@@ -196,20 +196,23 @@ def _retain(stage_dir, name, data):
     return str(Path(stage_dir) / name)
 
 
-def verify_writable_top(observation, descriptor, supported=None):
+def verify_writable_top(observation, descriptor):
     """The writable top is selected from the exact descriptor bytes, never from the caller.
 
-    The selection (linux_disk_identity.select_top) is the only source. An observation must name the
-    same mechanism, GUID and complete result digest, or it is stale or fabricated and refuses. A file
-    name, a bare GUID or a mechanism string is not evidence on its own.
+    The selection (linux_disk_identity.select_top) is the only source. An observation must name a
+    supported mechanism and the same GUID and complete result digest, or it is stale or fabricated and
+    refuses. The descriptor's disk UID must be the reviewed disk; this is an identity equality check
+    only, not disk-to-guest correlation (verify_disk_association stays closed). A file name, a bare
+    GUID or a mechanism string is not evidence on its own.
     """
-    mechanisms = SUPPORTED_TOP_MECHANISMS if supported is None else supported
-    if not isinstance(observation, dict) or observation.get('mechanism') not in mechanisms:
+    if not isinstance(observation, dict) or observation.get('mechanism') not in SUPPORTED_TOP_MECHANISMS:
         raise Refusal('writable-top observation mechanism is not supported; the association is refused')
     try:
         selection = identity.select_top(descriptor)
     except identity.Refusal as exc:
         raise Refusal('writable top is not selectable from the descriptor: ' + str(exc)) from exc
+    if selection['disk_uid'].lower() != DISK_UID.lower():
+        raise Refusal('descriptor disk UID is not the reviewed disk')
     if observation.get('guid') != selection['top_guid'] or observation.get('result_digest') != selection['digest']:
         raise Refusal('writable-top observation differs from the descriptor bytes; stale or fabricated')
     return selection
@@ -332,7 +335,7 @@ def stage1_verify_post(request, after):
         raise Refusal('descriptor bytes changed')
     selection = verify_writable_top(request['top_observation'], post_descriptor)
     top = selection['top_guid']
-    if top != request['top_guid'] or selection['digest'] != before['top_selection_digest']:
+    if top != request['top_guid'] or selection['digest'] != before.get('top_selection_digest'):
         raise Refusal('writable top changed')
     after_inventory = _wrap(observations.inventory_extents, post_descriptor, top, str((home / DISK_DIR).resolve()))
     growth = _wrap(observations.compare_extents, before['extents'], after_inventory['extents'], before['chain'],

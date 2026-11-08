@@ -28,7 +28,7 @@ FILE_NAME = re.compile(r'^[A-Za-z0-9._{}-]+\.hds$')
 DECIMAL = re.compile(r'^[1-9][0-9]*$')
 IMAGE_TYPES = ('Plain', 'Compressed')
 NOT_ESTABLISHED = ('image bodies not read; header, cluster-size and encryption compatibility '
-                   'not established by metadata selection')
+                   'not established by metadata selection; disk UID not correlated to any controller or guest')
 
 
 class Refusal(ValueError):
@@ -137,7 +137,10 @@ def select_top(descriptor):
         raise Refusal('invalid disk descriptor XML') from exc
     if root.tag != 'Parallels_disk_image' or root.get('Version') != '1.0':
         raise Refusal('descriptor root is not Parallels_disk_image Version 1.0')
-    disk_size = _geometry(_only(root, 'Disk_Parameters', 'root'))
+    params = _only(root, 'Disk_Parameters', 'root')
+    disk_size = _geometry(params)
+    # UID is an unspecified node. It is read only as the disk identity to compare against the reviewed disk.
+    disk_uid = _value(params, 'UID', 'Disk_Parameters', GUID)
     images = _storage(_only(root, 'StorageData', 'root'), disk_size)
     snapshots = _only(root, 'Snapshots', 'root')
     parents = _snapshots(snapshots, images)
@@ -173,7 +176,7 @@ def select_top(descriptor):
               'top_guid': images[key]['guid'], 'top_file': images[key]['file'],
               'chain': chain, 'chain_files': [images[m]['file'] for m in chain_keys],
               'images': {image['guid']: {'file': image['file'], 'type': image['type']} for image in images.values()},
-              'disk_size': disk_size, 'not_established': NOT_ESTABLISHED}
+              'disk_uid': disk_uid, 'disk_size': disk_size, 'not_established': NOT_ESTABLISHED}
     result['digest'] = hashlib.sha256(json.dumps(result, sort_keys=True).encode()).hexdigest()
     return result
 

@@ -883,7 +883,8 @@ class Stage1Checks(unittest.TestCase):
     def write_descriptor(self, top, base, explicit=True):
         # The documented shape: one Storage, Padding 0, an explicit TopGUID and a compressed overlay.
         geometry = ('<Disk_Parameters><Disk_size>268435456</Disk_size><Cylinders>524288</Cylinders>'
-                    '<Heads>16</Heads><Sectors>32</Sectors><Padding>0</Padding></Disk_Parameters>')
+                    f'<Heads>16</Heads><Sectors>32</Sectors><Padding>0</Padding><UID>{setup.DISK_UID}</UID>'
+                    '</Disk_Parameters>')
         storage = ('<StorageData><Storage><Start>0</Start><End>268435456</End><Blocksize>2048</Blocksize>'
                    f'<Image><GUID>{top}</GUID><Type>Compressed</Type><File>{self.top_file}</File></Image>'
                    f'<Image><GUID>{base}</GUID><Type>Compressed</Type><File>{self.base_file}</File></Image>'
@@ -988,6 +989,12 @@ class Stage1Checks(unittest.TestCase):
     def test_retained_pre_start_bytes_are_checked_against_the_request(self):
         req = self.request()
         Path(req['retained']['config']).write_bytes(b'tampered')
+        with self.assertRaises(Refusal):
+            setup.stage1_verify_post(req, self.after())
+
+    def test_post_run_refuses_a_request_without_its_selection_digest(self):
+        req = self.request()
+        del req['before']['top_selection_digest']
         with self.assertRaises(Refusal):
             setup.stage1_verify_post(req, self.after())
 
