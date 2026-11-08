@@ -1,0 +1,431 @@
+//! Production artifact acquisition: the host Prepare's choice between a
+//! development build and a release download, the producer's single-flight, and
+//! the refusals that keep stale or unverified bytes from being published.
+//!
+//! Every host here is a private shell fixture and every release body comes from
+//! `RELEASE_FIXTURES`, so no test builds a real artifact or reaches GitHub.
+
+use super::{linux_artifact_fixture, write_linux_artifact};
+use crate::contract_test_support::EnvGuard;
+use crate::runner::workspace_client::context::sha256_text;
+use crate::runner::workspace_command::provisioning::{
+    acquire_linux_workspace_effigy_artifact_with, artifact_plan,
+    ensure_local_linux_workspace_effigy_artifact, linux_workspace_artifact_lock_path,
+    linux_workspace_effigy_artifact_is_current, linux_workspace_effigy_cache_path,
+    linux_workspace_effigy_release_url, read_trimmed_identity_file, verify_guest_artifact,
+    workspace_artifact_receipt_path, workspace_effigy_active_version_file,
+    workspace_effigy_install_identity_file, workspace_effigy_local_install_identity,
+    workspace_effigy_release_install_identity, ArtifactPlan, LinuxWorkspaceArtifactSource,
+    LinuxWorkspaceTarget, RELEASE_FIXTURES,
+};
+use std::path::{Path, PathBuf};
+
+const X86: LinuxWorkspaceTarget = LinuxWorkspaceTarget::X86_64Gnu;
+const X86_ARTIFACT: &str = "effigy-x86_64-unknown-linux-gnu";
+
+/// Writes an executable host at `path` whose body is the whole shell program.
+fn host_at(path: &Path, body: &str) -> PathBuf {
+    std::fs::create_dir_all(path.parent().expect("host parent")).expect("mkdir host dir");
+    std::fs::write(
+        path,
+        format!(
+            "#!/bin/sh\nset -eu\nEFFIGY_FIXTURE_ACTIVE_VERSION={}\n{body}\n",
+            effigy_core::shell::shell_quote(&effigy_core::build_info::active_version())
+        ),
+    )
+    .expect("write host");
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod host");
+    path.to_path_buf()
+}
+
+/// A producer that writes a fresh artifact with a receipt the digest check can
+/// authenticate. Every run appends one line to `builds.log`.
+const VERIFIED_X86_BUILD: &str = r#"echo built >> builds.log
+[ "$1" = "workspace:linux:artifact" ] || exit 2
+mkdir -p .effigy/linux-release/artifacts
+out=.effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu
+printf 'fresh-bytes\n' > "$out"
+printf '%s\n' "$EFFIGY_FIXTURE_ACTIVE_VERSION" > "$out.active-version"
+digest=$( (shasum -a 256 "$out" 2>/dev/null || sha256sum "$out") | cut -d' ' -f1)
+printf 'release_triple=x86_64-unknown-linux-gnu\nsha256=%s\nbuild_kind=workspace-artifact\n' "$digest" > "$out.receipt""#;
+
+fn build_count(root: &Path) -> usize {
+    std::fs::read_to_string(root.join("builds.log"))
+        .map(|log| log.lines().count())
+        .unwrap_or(0)
+}
+
+/// A scratch base that holds a consumer app, a release host and a nearby
+/// checkout, with no repo marker above the host's own directory.
+fn release_world(label: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let base = effigy_test_support::Fixture::thread_lifetime(&format!("artifact-acq-{label}-"))
+        .expect("fresh artifact acquisition fixture");
+    let app = base.join("app");
+    std::fs::create_dir_all(&app).expect("mkdir app");
+    let host = host_at(
+        &base.join("app").join("bin").join("effigy"),
+        "echo built >> builds.log\nexit 9",
+    );
+    (base, app, host)
+}
+
+fn home_guard(base: &Path) -> EnvGuard {
+    let home = base.join("home");
+    std::fs::create_dir_all(&home).expect("mkdir home");
+    EnvGuard::set_many(&[("HOME", Some(home.display().to_string()))])
+}
+
+fn write_release_cache(cache: &Path, bytes: &str) {
+    std::fs::create_dir_all(cache.parent().expect("cache parent")).expect("mkdir cache");
+    std::fs::write(cache, bytes).expect("write cache bytes");
+    let digest = sha256_text(bytes.as_bytes());
+    std::fs::write(
+        workspace_artifact_receipt_path(cache),
+        format!(
+            "release_triple={}\nsha256={}\nbuild_kind=release-download\n",
+            X86.release_triple(),
+            digest.trim_start_matches("sha256:")
+        ),
+    )
+    .expect("write release receipt");
+    std::fs::write(
+        workspace_effigy_install_identity_file(cache),
+        format!("{}\n", workspace_effigy_release_install_identity()),
+    )
+    .expect("write release identity");
+    std::fs::write(
+        workspace_effigy_active_version_file(cache),
+        effigy_core::build_info::active_version(),
+    )
+    .expect("write release version");
+}
+
+#[test]
+fn a_development_host_builds_a_missing_artifact_once_and_publishes_verified_output() {
+    let root = linux_artifact_fixture("dev-missing");
+    let host = host_at(&root.join(".local-install/bin/effigy"), VERIFIED_X86_BUILD);
+    let _home = home_guard(&root);
+
+    let bound = acquire_linux_workspace_effigy_artifact_with(
+        &host,
+        &root,
+        &root,
+        LinuxWorkspaceArtifactSource::Auto,
+        X86,
+    )
+    .expect("a development host builds its missing artifact");
+
+    assert_eq!(bound.artifact, root.join(X86.artifact_relative_path()));
+    assert_eq!(
+        bound.install_identity,
+        workspace_effigy_local_install_identity(&host).expect("host identity")
+    );
+    verify_guest_artifact(&bound.artifact, X86).expect("published bytes match their receipt");
+    assert_eq!(build_count(&root), 1);
+
+    let reused = acquire_linux_workspace_effigy_artifact_with(
+        &host,
+        &root,
+        &root,
+        LinuxWorkspaceArtifactSource::Auto,
+        X86,
+    )
+    .expect("a current artifact is reused");
+    assert_eq!(reused, bound);
+    assert_eq!(build_count(&root), 1, "a current artifact starts no build");
+}
+
+#[test]
+fn a_development_build_tree_host_is_provenanced_to_its_checkout() {
+    let root = linux_artifact_fixture("dev-build-tree");
+    let host = host_at(&root.join("target/debug/effigy"), VERIFIED_X86_BUILD);
+    let plan = artifact_plan(&host, &root, &root, LinuxWorkspaceArtifactSource::Auto)
+        .expect("a checkout's own build output is a development host");
+    assert_eq!(plan, ArtifactPlan::Build { checkout: root });
+}
+
+#[test]
+fn a_release_host_on_a_cold_cache_downloads_the_exact_target_without_a_builder() {
+    let (base, app, host) = release_world("cold");
+    let _home = home_guard(&base);
+    let bytes = "published-release-bytes";
+    let url = linux_workspace_effigy_release_url(X86);
+    let digest = sha256_text(bytes.as_bytes());
+    RELEASE_FIXTURES.with(|fixtures| {
+        let mut fixtures = fixtures.borrow_mut();
+        fixtures.insert(url.clone(), bytes.as_bytes().to_vec());
+        fixtures.insert(
+            format!("{url}.sha256"),
+            format!("{}  {X86_ARTIFACT}\n", digest.trim_start_matches("sha256:")).into_bytes(),
+        );
+    });
+
+    let bound = acquire_linux_workspace_effigy_artifact_with(
+        &host,
+        &app,
+        &app,
+        LinuxWorkspaceArtifactSource::Auto,
+        X86,
+    )
+    .expect("a release host downloads its matching asset");
+
+    let cache = linux_workspace_effigy_cache_path(X86).expect("cache path");
+    assert_eq!(bound.artifact, cache);
+    assert_eq!(
+        bound.install_identity,
+        workspace_effigy_release_install_identity()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&cache).expect("cached bytes"),
+        bytes
+    );
+    verify_guest_artifact(&cache, X86).expect("cache is authenticated by its receipt");
+    assert_eq!(
+        build_count(&base.join("app")),
+        0,
+        "a release host never runs a builder"
+    );
+}
+
+#[test]
+fn a_valid_release_cache_is_reused_without_fetching() {
+    let (base, app, host) = release_world("cache-hit");
+    let _home = home_guard(&base);
+    let cache = linux_workspace_effigy_cache_path(X86).expect("cache path");
+    write_release_cache(&cache, "cached-release-bytes");
+    RELEASE_FIXTURES.with(|fixtures| fixtures.borrow_mut().clear());
+
+    let bound = acquire_linux_workspace_effigy_artifact_with(
+        &host,
+        &app,
+        &app,
+        LinuxWorkspaceArtifactSource::Auto,
+        X86,
+    )
+    .expect("a verified cache is reused; a fetch would fail with no fixture");
+
+    assert_eq!(bound.artifact, cache);
+    assert_eq!(
+        std::fs::read_to_string(&cache).expect("cached bytes"),
+        "cached-release-bytes"
+    );
+}
+
+#[test]
+fn a_nearby_checkout_cannot_turn_a_release_host_into_a_source_build() {
+    let (base, app, host) = release_world("nearby");
+    let _home = home_guard(&base);
+    let nearby = base.join("effigy");
+    std::fs::create_dir_all(nearby.join("config")).expect("mkdir nearby config");
+    std::fs::write(nearby.join("effigy.toml"), "").expect("nearby manifest");
+    std::fs::write(nearby.join("config/tasks.toml"), "").expect("nearby tasks");
+    std::fs::write(nearby.join("config/containers.toml"), "").expect("nearby containers");
+
+    assert_eq!(
+        artifact_plan(&host, &app, &app, LinuxWorkspaceArtifactSource::Auto).expect("plan"),
+        ArtifactPlan::Download,
+        "auto never builds from a checkout the release host merely sits near"
+    );
+    assert_eq!(
+        artifact_plan(&host, &app, &app, LinuxWorkspaceArtifactSource::Download).expect("plan"),
+        ArtifactPlan::Download
+    );
+    assert_eq!(
+        artifact_plan(&host, &app, &app, LinuxWorkspaceArtifactSource::Local).expect("plan"),
+        ArtifactPlan::Build { checkout: nearby },
+        "an explicit `local` names a checkout and builds only there"
+    );
+}
+
+#[test]
+fn explicit_source_policies_follow_the_host_provenance() {
+    let root = linux_artifact_fixture("policy-dev");
+    let dev = host_at(&root.join(".local-install/bin/effigy"), "exit 9");
+    let _home = home_guard(&root);
+    assert_eq!(
+        artifact_plan(&dev, &root, &root, LinuxWorkspaceArtifactSource::Auto).expect("auto"),
+        ArtifactPlan::Build {
+            checkout: root.clone()
+        }
+    );
+    let refused = artifact_plan(&dev, &root, &root, LinuxWorkspaceArtifactSource::Download)
+        .expect_err("a local build never substitutes the published release");
+    assert!(refused.to_string().contains("download"), "{refused}");
+
+    let (base, app, release) = release_world("policy-release");
+    let _home = home_guard(&base);
+    assert_eq!(
+        artifact_plan(&release, &app, &app, LinuxWorkspaceArtifactSource::Download)
+            .expect("download"),
+        ArtifactPlan::Download
+    );
+    artifact_plan(&release, &app, &app, LinuxWorkspaceArtifactSource::Local)
+        .expect_err("`local` with no checkout anywhere names what is missing");
+
+    // A `+local.` stamp with no checkout we can prove refuses both sources.
+    let stamped = host_at(&base.join("loose/bin/effigy"), "exit 9");
+    std::fs::write(
+        workspace_effigy_active_version_file(&stamped),
+        "v0.15.0+local.abc1234\n",
+    )
+    .expect("write stamp");
+    for source in [
+        LinuxWorkspaceArtifactSource::Auto,
+        LinuxWorkspaceArtifactSource::Download,
+    ] {
+        artifact_plan(&stamped, &app, &app, source)
+            .expect_err("an unproven local build neither builds nor downloads");
+    }
+}
+
+#[test]
+fn a_release_cache_with_a_bad_checksum_publishes_nothing() {
+    let (base, app, host) = release_world("bad-checksum");
+    let _home = home_guard(&base);
+    let url = linux_workspace_effigy_release_url(X86);
+    RELEASE_FIXTURES.with(|fixtures| {
+        let mut fixtures = fixtures.borrow_mut();
+        fixtures.insert(url.clone(), b"tampered-bytes".to_vec());
+        fixtures.insert(
+            format!("{url}.sha256"),
+            format!("{}\n", "0".repeat(64)).into_bytes(),
+        );
+    });
+
+    acquire_linux_workspace_effigy_artifact_with(
+        &host,
+        &app,
+        &app,
+        LinuxWorkspaceArtifactSource::Auto,
+        X86,
+    )
+    .expect_err("bytes the release does not name are refused");
+    let cache = linux_workspace_effigy_cache_path(X86).expect("cache path");
+    assert!(
+        !cache.exists(),
+        "a refused download never reaches the cache"
+    );
+    assert!(!workspace_artifact_receipt_path(&cache).exists());
+}
+
+#[test]
+fn a_release_without_a_fetchable_asset_refuses_and_keeps_the_old_cache() {
+    let (base, app, host) = release_world("no-asset");
+    let _home = home_guard(&base);
+    let cache = linux_workspace_effigy_cache_path(X86).expect("cache path");
+    write_release_cache(&cache, "older-release-bytes");
+    // Make the cache stale for this release: its receipt names other bytes.
+    std::fs::write(
+        workspace_artifact_receipt_path(&cache),
+        format!(
+            "release_triple={}\nsha256={}\n",
+            X86.release_triple(),
+            "1".repeat(64)
+        ),
+    )
+    .expect("stale receipt");
+    RELEASE_FIXTURES.with(|fixtures| fixtures.borrow_mut().clear());
+
+    let error = acquire_linux_workspace_effigy_artifact_with(
+        &host,
+        &app,
+        &app,
+        LinuxWorkspaceArtifactSource::Auto,
+        X86,
+    )
+    .expect_err("no fetchable asset is an actionable refusal");
+    assert!(
+        error.to_string().contains("no test release fixture"),
+        "{error}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&cache).expect("old bytes stay"),
+        "older-release-bytes"
+    );
+}
+
+#[test]
+fn a_failed_build_publishes_nothing_and_releases_its_lock() {
+    let root = linux_artifact_fixture("failed-build");
+    let host = host_at(
+        &root.join(".local-install/bin/effigy"),
+        "echo built >> builds.log\nmkdir -p .effigy/linux-release/artifacts\nprintf 'partial' > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu\nexit 3",
+    );
+    let artifact = root.join(X86.artifact_relative_path());
+
+    ensure_local_linux_workspace_effigy_artifact(&host, &root, X86)
+        .expect_err("a failed producer run is refused");
+    assert_eq!(build_count(&root), 1);
+    assert!(!workspace_effigy_install_identity_file(&artifact).exists());
+    assert!(!workspace_effigy_active_version_file(&artifact).exists());
+
+    let lock = std::fs::OpenOptions::new()
+        .write(true)
+        .open(linux_workspace_artifact_lock_path(&root, X86))
+        .expect("lock file survives the failed run");
+    lock.try_lock()
+        .expect("a failed run releases its single-flight lock");
+}
+
+#[test]
+fn a_build_that_only_touches_old_bytes_is_refused_and_unchanged() {
+    let root = linux_artifact_fixture("touched-old");
+    let host = host_at(
+        &root.join(".local-install/bin/effigy"),
+        r#"touch .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu
+printf '%s\n' "$EFFIGY_FIXTURE_ACTIVE_VERSION" > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu.active-version
+exit 0"#,
+    );
+    let artifact = root.join(X86.artifact_relative_path());
+    write_linux_artifact(&artifact, "unchanged old bytes", Some("local:v0.0.0:1:1"));
+
+    ensure_local_linux_workspace_effigy_artifact(&host, &root, X86)
+        .expect_err("touch, version rewrite and success cannot bless unchanged bytes");
+    assert_eq!(
+        read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact)).as_deref(),
+        Some("local:v0.0.0:1:1")
+    );
+    assert_eq!(
+        std::fs::read_to_string(&artifact).expect("old bytes"),
+        "unchanged old bytes"
+    );
+}
+
+#[test]
+fn concurrent_preparations_share_one_producer_run() {
+    let root = linux_artifact_fixture("single-flight");
+    let host = host_at(
+        &root.join(".local-install/bin/effigy"),
+        &format!("sleep 1\n{VERIFIED_X86_BUILD}"),
+    );
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let handles = (0..2)
+        .map(|_| {
+            let (root, host, barrier) = (root.clone(), host.clone(), barrier.clone());
+            std::thread::spawn(move || {
+                barrier.wait();
+                ensure_local_linux_workspace_effigy_artifact(&host, &root, X86)
+            })
+        })
+        .collect::<Vec<_>>();
+    let results = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("preparation thread"))
+        .collect::<Vec<_>>();
+
+    for result in &results {
+        let bound = result.as_ref().expect("both preparations are satisfied");
+        assert_eq!(bound.artifact, root.join(X86.artifact_relative_path()));
+    }
+    assert_eq!(
+        build_count(&root),
+        1,
+        "the waiter finds the first run's output current instead of building"
+    );
+    assert!(linux_workspace_effigy_artifact_is_current(
+        &root.join(X86.artifact_relative_path()),
+        X86,
+        &workspace_effigy_local_install_identity(&host).expect("host identity"),
+    ));
+}

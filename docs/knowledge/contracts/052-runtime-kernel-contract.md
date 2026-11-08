@@ -3312,25 +3312,35 @@ the missing credential named, and local reads keep working.
   workspace generation by an atomic pointer. The architecture comes from the
   container image's platform, not the host's `uname`. An image whose libc
   has no matching artifact refuses Prepare.
-- No consumer-time build: Prepare never builds or writes a host source pointer.
-  `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE` defaults to `auto`. It discovers a
-  local Effigy checkout and accepts its produced artifact when the file, active
-  version and target receipt match; install identity is computed afterwards,
-  not used as this freshness predicate. Publication authenticates the bytes.
-  Otherwise `auto` enters the release acquisition path only when the cache
-  already has a file with the current active version and release install
-  identity; without that cache it refuses with the explicit build/download
-  commands. That path verifies the receipt/digest and may download replacement
-  bytes if verification fails. `download` skips local discovery and enters
-  release acquisition even with no cache, reusing a verified current cache
-  before downloading. `local` refuses a stale/missing artifact in a discovered
-  checkout; if no checkout is discovered, it reaches the same current-cache
-  predicate as `auto`. It is not an unconditional local-only switch.
+- Host acquisition runs before publication. The host Prepare acquires the guest
+  artifact before any activation run opens, so a long build or download never
+  sits inside the publication's reservation. `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE`
+  defaults to `auto`, and the host's provenance decides what `auto` may use:
+  - A development host is an `install:local` activation (`<checkout>/.local-install/bin/effigy`)
+    or a checkout's own `target/{debug,release}` build. `auto` builds that
+    checkout's artifact with the producer once, when the artifact is missing or
+    stale. Current means the file, its active version, its target receipt and
+    the host's install identity all match, so a same-version incremental rebuild
+    makes the artifact stale. Concurrent preparations share one producer run
+    through a per-target lock; a waiter reuses the output the first run produced.
+  - A release host is any other executable. `auto` reuses a verified current
+    release cache, or downloads the asset for this version and target, checks it
+    against the checksum the release publishes beside it, and publishes the
+    cache and its receipt atomically. A failed or unverified download publishes
+    nothing and leaves an older cache untouched. A release host never builds from
+    source, even when a checkout is nearby.
+  - `local` names a checkout explicitly and builds there, reusing a current
+    artifact. `download` takes the release asset on a release host and refuses on
+    a development host, whose release would not be its artifact. A `+local.`
+    host with no provable checkout refuses under `auto` and `download`.
+- Publication consumes only current bytes. It re-checks the target and the
+  install identity of the artifact the host acquired, authenticates the bytes
+  against their receipt, and refuses when either changed. It never builds or
+  downloads, and an unauthenticated artifact publishes nothing.
 - No run-time build or download: task, exec and terminal entry never fetch
-  or compile Effigy or look for a sibling checkout. A contributor produces the
-  artifact with the explicit `effigy workspace:linux:artifact` task, which
-  records the same digest receipt; Prepare itself never builds one, even when a
-  sibling checkout is present, and consumes only a produced artifact.
+  or compile Effigy or look for a sibling checkout. The host Prepare produces
+  the artifact through the `workspace:linux:artifact` producer, which records the
+  same digest receipt, and publication never runs a producer.
 - A version or protocol mismatch between client, context and server refuses
   before any effect, naming the host re-prepare command. Guest artifact
   installation never replaces the live executable under an active run.

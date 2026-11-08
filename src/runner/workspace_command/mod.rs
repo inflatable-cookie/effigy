@@ -54,13 +54,23 @@ pub(in crate::runner) fn publish_workspace_guest(
     provisioning::publish_workspace_guest(repo_root, policy).map(|_prepared| ())
 }
 
+/// Acquire the guest artifact an activation will publish. Runs before the
+/// activation run opens, so a build or a download is never inside its reservation.
+pub(in crate::runner) fn prepare_workspace_artifact(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Option<provisioning::HostWorkspaceArtifact>, RunnerError> {
+    provisioning::prepare_workspace_artifact(repo_root, policy)
+}
+
 /// Only the host environment activation owns this publication boundary.
 pub(in crate::runner) fn publish_workspace_guest_in(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     run: &mut effigy_containers::environment::EnvRun<'_>,
+    artifact: Option<&provisioning::HostWorkspaceArtifact>,
 ) -> Result<(), RunnerError> {
-    provisioning::publish_workspace_guest_in(repo_root, policy, run).map(|_| ())
+    provisioning::publish_workspace_guest_in(repo_root, policy, run, artifact).map(|_| ())
 }
 
 pub(in crate::runner) fn ensure_workspace_effigy_available_for_policy_bounded(

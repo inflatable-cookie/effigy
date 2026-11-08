@@ -946,6 +946,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Restored automatic Linux workspace artifact acquisition (effigy#701). A
+  development install (`install:local` or a checkout build) builds its missing
+  or stale artifact during host Prepare, once, and rebuilds after a same-version
+  incremental change. A released Effigy downloads the matching GitHub asset on a
+  cold cache, verifies its checksum and reuses the verified cache. Neither
+  builds during publication or task entry. `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE=download`
+  now refuses on a development install instead of substituting the release.
+
 - Nested sequence builtins pin `--repo` to the selected catalog except the
   forms shown to break public grammar or cwd semantics: `docs check` keeps
   invoking-cwd paths and repository-root default scope; `bundle sync` still

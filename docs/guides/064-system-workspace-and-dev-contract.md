@@ -390,22 +390,24 @@ Behavior:
 - open workspace shell
 - do package or maintenance work inside Linux
 - on shell exit, prompt to bring the system down and default the answer to yes
-- Prepare consumes a produced Linux artifact; it never builds one at consumer
-  runtime. `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE=auto` (default) first checks
-  a discovered Effigy checkout's artifact for the current active version and
-  target receipt. Otherwise it requires a release cache with current version
-  and release identity before entering release acquisition. With no such cache,
-  it refuses rather than starting a first download.
-- To produce an artifact, run
-  `EFFIGY_LINUX_RELEASE_TRIPLE=<triple> effigy workspace:linux:artifact` from the
-  Effigy checkout. To allow a first release download, set
-  `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE=download` on the host Prepare command
-  (for example `effigy workspace`). `download` skips local discovery and reuses
-  a verified current release cache before fetching bytes.
-- `local` refuses a stale/missing artifact when a checkout is discovered. With
-  no discovered checkout it can still enter release acquisition if the release
-  cache has current version and identity. Both that path and `auto` may replace
-  cached bytes that fail verification. See the precise
+- The host Prepare acquires the Linux artifact before it publishes anything.
+  Publication and task entry never build or download one.
+- `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE=auto` (default) depends on how the
+  Effigy you run was installed:
+  - A development install (`effigy install:local`, or a build in a checkout's
+    `target/` tree) builds that checkout's artifact automatically, once, when it
+    is missing or stale for this host. Rebuilding Effigy with `install:local`
+    makes the artifact stale, so the next Prepare rebuilds it.
+  - A released Effigy downloads the matching GitHub release asset on a cold
+    cache, verifies it against the published checksum, and reuses the verified
+    cache afterwards. It never builds from source, even when an Effigy checkout
+    sits nearby.
+- `download` takes the release asset. It refuses on a development install,
+  because the published release is not that build's artifact; use `auto` there.
+- `local` names a checkout explicitly and builds there. It uses a current
+  artifact and rebuilds a stale one; it does not fall back to a download.
+- A development install whose checkout cannot be proven refuses under `auto` and
+  `download` and names `effigy install:local`. See the precise
   [source selection rules](../knowledge/contracts/052-runtime-kernel-contract.md#89-binary-provisioning).
   Entry verification afterwards is pure reads; it never builds, downloads or
   reinstalls the guest.
