@@ -560,7 +560,7 @@ runs `gh workflow run release-binaries.yml -f tag=<tag>`; it reports
 `committed: true` with the workflow run URL and the GitHub Release as
 destinations, and never waits for the workflow. `release:check:binaries` answers
 §7's idempotency question from `gh release view`. `release:verify:binaries` runs
-after the workflow and checks the four binary assets and the two macOS checksum
+after the workflow and checks the four binary assets and four matching checksum
 sidecars on the GitHub Release, the Homebrew formula's version, and the
 tagged-source install through `release:verify:install`. A workflow that has not
 finished therefore leaves the release published but unverified, which §7
@@ -574,14 +574,10 @@ the replacements. Each retired command still refuses with its repo task, and
 `crates/effigy-distribution`, `src/runner/distribution_command` and the
 `distribution::` Rhai module were deleted with it.
 
-**The workflow's GLIBC step is a disclosed follow-up.** The release binary
-workflow still calls `effigy-<target> release check-binary`. The retirement
-makes that step fail, and this change does not edit `.github/workflows/`: the
-`metadata` gate warns with the exact replacement
-(`./scripts/release/checks.sh check-binary …`) instead of failing closed,
-because the workflow is outside the Run. A release owner lands that approved
-workflow edit before the next publication; `release:metadata` starts failing if
-the guard disappears entirely.
+**The workflow's GLIBC step uses the maintained check.** The release binary
+workflow calls `./scripts/release/checks.sh check-binary` for Linux targets at
+floor 2.35. `release:metadata` requires that exact command and the Linux-only
+condition, so the retired CLI spelling cannot return unnoticed.
 
 **The proof is a fixture, not a publication.** `tests/cli_output_tests/
 release_platform_tests.rs` copies this repository's `config/release.toml` byte

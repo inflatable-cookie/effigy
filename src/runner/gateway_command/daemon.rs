@@ -1,4 +1,4 @@
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
@@ -14,18 +14,36 @@ use effigy_ui::steps::ProgressSource;
 use crate::runner::error::RunnerError;
 
 pub(super) fn spawn_gateway_daemon(config: &GatewayConfig) -> Result<(), RunnerError> {
-    if let Some(root) = config.private_state_root() {
+    let log_directory_owner = if let Some(root) = config.private_state_root() {
         effigy_gateway::private_state::validate_root(root)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(root).map_err(RunnerError::Cwd)?.uid()
+        }
+        #[cfg(not(unix))]
+        {
+            0
+        }
     } else {
         identity::ensure_trusted_gateway_parent(&config.pid_file_path)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    }
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+    };
     let effigy_bin = std::env::current_exe().map_err(RunnerError::Cwd)?;
-    let stdout_log =
-        create_gateway_log(gateway_stdout_log_path(config)).map_err(RunnerError::Cwd)?;
-    let stderr_log =
-        create_gateway_log(gateway_stderr_log_path(config)).map_err(RunnerError::Cwd)?;
+    let allow_root_file_owner = config.private_state_root().is_none();
+    let stdout_log = create_gateway_log(
+        gateway_stdout_log_path(config),
+        log_directory_owner,
+        allow_root_file_owner,
+    )
+    .map_err(RunnerError::Cwd)?;
+    let stderr_log = create_gateway_log(
+        gateway_stderr_log_path(config),
+        log_directory_owner,
+        allow_root_file_owner,
+    )
+    .map_err(RunnerError::Cwd)?;
     let mut command = ProcessCommand::new(&effigy_bin);
     command
         .arg("__gateway-run")
@@ -99,20 +117,33 @@ pub(super) fn spawn_gateway_daemon(config: &GatewayConfig) -> Result<(), RunnerE
     Ok(())
 }
 
-fn create_gateway_log(path: PathBuf) -> std::io::Result<File> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        OpenOptions::new()
-            .create(true)
-            .append(true)
-            .mode(0o600)
-            .open(path)
-    }
-    #[cfg(not(unix))]
-    {
-        OpenOptions::new().create(true).append(true).open(path)
-    }
+fn create_gateway_log(
+    path: PathBuf,
+    directory_owner: u32,
+    allow_root_file_owner: bool,
+) -> std::io::Result<File> {
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "gateway log has no parent",
+        )
+    })?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "gateway log name is invalid",
+            )
+        })?;
+    effigy_kernel::fs::open_gateway_log_append(
+        parent,
+        name,
+        Some(directory_owner),
+        Some(directory_owner),
+        allow_root_file_owner,
+    )
 }
 
 pub(super) fn wait_for_private_gateway_ready(
@@ -468,6 +499,88 @@ fn gateway_stderr_log_path(config: &GatewayConfig) -> PathBuf {
         .parent()
         .unwrap_or(config.pid_file_path.as_path())
         .join("gateway.stderr.log")
+}
+
+#[cfg(all(test, unix))]
+mod gateway_log_tests {
+    use super::create_gateway_log;
+    use std::io::Write;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    #[test]
+    fn gateway_log_writer_repairs_existing_child_streams_and_preserves_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let directory_owner = std::fs::metadata(root.path()).unwrap().uid();
+        for name in ["gateway.stdout.log", "gateway.stderr.log"] {
+            let path = root.path().join(name);
+            std::fs::write(&path, b"existing sentinel\n").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            let mut log = create_gateway_log(path.clone(), directory_owner, false).unwrap();
+            log.write_all(b"new child diagnostics\n").unwrap();
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                b"existing sentinel\nnew child diagnostics\n"
+            );
+            assert_eq!(std::fs::metadata(path).unwrap().mode() & 0o777, 0o600);
+        }
+    }
+
+    #[test]
+    fn gateway_log_writer_creates_private_streams_under_restrictive_umask() {
+        let root = tempfile::tempdir().unwrap();
+        let directory_owner = std::fs::metadata(root.path()).unwrap().uid();
+        // SAFETY: restore before assertions; no child process is started.
+        let old_umask = unsafe { nix::libc::umask(0o777) };
+        let results = ["gateway.stdout.log", "gateway.stderr.log"]
+            .map(|name| create_gateway_log(root.path().join(name), directory_owner, false));
+        // SAFETY: restore the exact process umask observed above.
+        unsafe { nix::libc::umask(old_umask) };
+        for (name, result) in ["gateway.stdout.log", "gateway.stderr.log"]
+            .into_iter()
+            .zip(results)
+        {
+            drop(result.unwrap());
+            assert_eq!(
+                std::fs::metadata(root.path().join(name)).unwrap().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[test]
+    fn gateway_log_writer_refuses_unsafe_files_and_untrusted_parent_owner() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let directory_owner = std::fs::metadata(root.path()).unwrap().uid();
+        let target = root.path().join("target");
+        std::fs::write(&target, b"sentinel").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let symlink = root.path().join("gateway.stdout.log");
+        std::os::unix::fs::symlink(&target, &symlink).unwrap();
+        assert!(create_gateway_log(symlink.clone(), directory_owner, false).is_err());
+        std::fs::remove_file(&symlink).unwrap();
+
+        let hardlink = root.path().join("gateway.stderr.log");
+        std::fs::hard_link(&target, &hardlink).unwrap();
+        assert!(create_gateway_log(hardlink.clone(), directory_owner, false).is_err());
+        std::fs::remove_file(&hardlink).unwrap();
+
+        let fifo = root.path().join("gateway.stdout.log");
+        let fifo_c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: this creates one FIFO inside the owned temporary fixture.
+        assert_eq!(unsafe { nix::libc::mkfifo(fifo_c.as_ptr(), 0o600) }, 0);
+        assert!(create_gateway_log(fifo.clone(), directory_owner, false).is_err());
+        std::fs::remove_file(fifo).unwrap();
+
+        let wrong_owner = directory_owner.wrapping_add(1);
+        let absent = root.path().join("gateway.stderr.log");
+        assert!(create_gateway_log(absent.clone(), wrong_owner, false).is_err());
+        assert!(!absent.exists());
+        assert_eq!(std::fs::read(&target).unwrap(), b"sentinel");
+        assert_eq!(std::fs::metadata(target).unwrap().mode() & 0o777, 0o644);
+    }
 }
 
 #[cfg(test)]

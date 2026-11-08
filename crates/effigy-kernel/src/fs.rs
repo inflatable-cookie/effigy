@@ -13,6 +13,203 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Component, Path, PathBuf};
 
+/// Open the gateway diagnostic log for append after validating the selected
+/// gateway directory. The caller applies the gateway-specific parent policy;
+/// this function pins that directory and the exact log inode before repairing
+/// permissions, so a path replacement cannot redirect the chmod or append.
+#[cfg(unix)]
+pub fn open_gateway_log_append(
+    directory: &Path,
+    name: &str,
+    expected_directory_owner: Option<u32>,
+    expected_file_owner: Option<u32>,
+    allow_root_file_owner: bool,
+) -> io::Result<File> {
+    use std::os::unix::fs::MetadataExt;
+
+    let path = CString::new(directory.as_os_str().as_bytes()).map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidInput, "gateway log path contains NUL")
+    })?;
+    // SAFETY: path is a valid NUL-terminated pathname. The returned descriptor
+    // is checked and transferred to File exactly once below.
+    let directory_fd = unsafe {
+        libc::open(
+            path.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if directory_fd == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: open returned a fresh descriptor; ownership transfers to File.
+    let directory_file = unsafe { File::from_raw_fd(directory_fd) };
+    let directory_metadata = directory_file.metadata()?;
+    if !directory_metadata.is_dir()
+        || directory_metadata.mode() & 0o022 != 0
+        || expected_directory_owner.is_some_and(|owner| directory_metadata.uid() != owner)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "gateway log directory is not trusted",
+        ));
+    }
+
+    let name = CString::new(name).map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidInput, "gateway log name contains NUL")
+    })?;
+    if name.as_bytes().is_empty() || name.as_bytes().contains(&b'/') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "gateway log name must be one path component",
+        ));
+    }
+    // O_NONBLOCK prevents an unsafe FIFO replacement from hanging this open.
+    // SAFETY: name is one fixed path component and directory_file pins its
+    // containing directory. The returned descriptor is checked before use.
+    let log_fd = unsafe {
+        libc::openat(
+            directory_file.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_WRONLY
+                | libc::O_APPEND
+                | libc::O_CREAT
+                | libc::O_NOFOLLOW
+                | libc::O_CLOEXEC
+                | libc::O_NONBLOCK,
+            0o600,
+        )
+    };
+    if log_fd == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: openat returned a fresh descriptor; ownership transfers to File.
+    let log = unsafe { File::from_raw_fd(log_fd) };
+    let metadata = log.metadata()?;
+    let owner = metadata.uid();
+    let expected_file_owner = expected_file_owner.unwrap_or(directory_metadata.uid());
+    if !metadata.is_file()
+        || metadata.nlink() != 1
+        || (owner != expected_file_owner && !(allow_root_file_owner && owner == 0))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "gateway log file is not a trusted single-link regular file",
+        ));
+    }
+    // Change only the verified held inode, then verify before the caller can
+    // append any bytes.
+    crate::fs::fchmod(&log, 0o600)?;
+    let secured = log.metadata()?;
+    if secured.dev() != metadata.dev()
+        || secured.ino() != metadata.ino()
+        || secured.uid() != owner
+        || secured.nlink() != 1
+        || !secured.is_file()
+        || secured.mode() & 0o777 != 0o600
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "gateway log file could not be secured",
+        ));
+    }
+    Ok(log)
+}
+
+#[cfg(all(test, unix))]
+mod gateway_log_tests {
+    use super::open_gateway_log_append;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    #[test]
+    fn gateway_log_secures_new_files_with_restrictive_umask() {
+        let root = tempfile::tempdir().unwrap();
+        // SAFETY: restored before assertions and no child process is started.
+        let old_umask = unsafe { libc::umask(0o777) };
+        let result = open_gateway_log_append(root.path(), "gateway.stderr.log", None, None, true);
+        // SAFETY: restore the exact process umask observed above.
+        unsafe { libc::umask(old_umask) };
+        let log = result.unwrap();
+        let metadata = log.metadata().unwrap();
+        assert_eq!(metadata.mode() & 0o777, 0o600);
+        assert_eq!(metadata.nlink(), 1);
+    }
+
+    #[test]
+    fn gateway_log_refuses_aliases_types_and_owner_mismatch_before_mutation() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("target");
+        std::fs::write(&target, b"sentinel").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let before = std::fs::metadata(&target).unwrap();
+
+        let symlink = root.path().join("gateway.stderr.log");
+        std::os::unix::fs::symlink(&target, &symlink).unwrap();
+        assert!(
+            open_gateway_log_append(root.path(), "gateway.stderr.log", None, None, true).is_err()
+        );
+        std::fs::remove_file(&symlink).unwrap();
+
+        std::fs::hard_link(&target, &symlink).unwrap();
+        assert!(
+            open_gateway_log_append(root.path(), "gateway.stderr.log", None, None, true).is_err()
+        );
+        std::fs::remove_file(&symlink).unwrap();
+
+        let fifo_path = root.path().join("fifo");
+        let fifo_c = std::ffi::CString::new(fifo_path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: fifo_c names an unused path inside the owned fixture.
+        assert_eq!(unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) }, 0);
+        std::fs::rename(&fifo_path, &symlink).unwrap();
+        assert!(
+            open_gateway_log_append(root.path(), "gateway.stderr.log", None, None, true).is_err()
+        );
+        std::fs::remove_file(&symlink).unwrap();
+
+        let wrong_owner = before.uid().wrapping_add(1);
+        assert!(open_gateway_log_append(
+            root.path(),
+            "gateway.stderr.log",
+            Some(wrong_owner),
+            None,
+            true
+        )
+        .is_err());
+        let log_path = root.path().join("gateway.stderr.log");
+        std::fs::write(&log_path, b"fixture-owned").unwrap();
+        std::fs::set_permissions(&log_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(open_gateway_log_append(
+            root.path(),
+            "gateway.stderr.log",
+            None,
+            Some(wrong_owner),
+            false
+        )
+        .is_err());
+        let after = std::fs::metadata(&target).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"sentinel");
+        assert_eq!(after.mode() & 0o777, 0o644);
+        assert_eq!(after.nlink(), 1);
+        assert_eq!(std::fs::read(&log_path).unwrap(), b"fixture-owned");
+        assert_eq!(std::fs::metadata(&log_path).unwrap().mode() & 0o777, 0o644);
+    }
+}
+
+#[cfg(not(unix))]
+pub fn open_gateway_log_append(
+    directory: &Path,
+    name: &str,
+    _expected_directory_owner: Option<u32>,
+    _expected_file_owner: Option<u32>,
+    _allow_root_file_owner: bool,
+) -> io::Result<File> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(directory.join(name))
+}
+
 pub(crate) const DIR_MODE: u32 = 0o700;
 pub(crate) const FILE_MODE: u32 = 0o600;
 /// Reason reported when a trusted object carries group or other bits.

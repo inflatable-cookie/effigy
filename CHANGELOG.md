@@ -8,6 +8,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Secure existing gateway stdout/stderr logs to owner-only mode on the held
+  descriptor before appending or giving them to the daemon child. Existing bytes
+  are preserved; unopened legacy files, directory permissions and raw diagnostic
+  contents are not changed (effigy#736).
+
 - Update the locked `ctutils` and Tokio dependencies to patched releases
   (`ctutils` 0.4.4 and Tokio 1.53.3) for RUSTSEC-2026-0385 and
   RUSTSEC-2026-0386. Cargo deny policy and runtime behavior remain unchanged.
@@ -1004,6 +1009,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Publish and verify SHA-256 sidecars for all four release binaries, including
+  Linux assets, so cold-cache workspace acquisition can verify the binary it
+  downloads. The Linux build workflow also uses the maintained GLIBC check
+  script while keeping its 2.35 floor.
 - Close four Stage1 admission holes found in review of PR 826 (effigy#732).
   `stage1_run` now requires occurrence identity before any step, so a wrong-boot
   probe cannot pass by omitting identity; a launched start that times out or
