@@ -1007,7 +1007,10 @@ def h_prefetch_colima_image(ctx, step):
     destination = render1(step['inputs'][0], ctx['bindings'])
     if destination != f"{directory}/{pin['name']}":
         raise Refusal('prefetch destination differs from the reviewed image path')
-    info = os.lstat(directory)
+    try:
+        info = os.lstat(directory)
+    except OSError as exc:
+        raise Refusal('the image directory is missing: the make step must create it first') from exc
     if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700
             or os.listdir(directory)):
         raise Refusal('the image directory must be the empty, owned, 0700 directory the make step created')

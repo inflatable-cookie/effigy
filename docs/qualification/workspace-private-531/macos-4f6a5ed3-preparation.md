@@ -1,7 +1,7 @@
 # macOS 4f6a5ed3 preparation: Colima and Desktop stages
 
 Preparation only. It arms nothing and gives no proof credit. The executable plan is
-[macos-4f6a5ed3-stages.json](macos-4f6a5ed3-stages.json), manifest revision r3. Each stage
+[macos-4f6a5ed3-stages.json](macos-4f6a5ed3-stages.json), manifest revision r5 (r5 section below). Each stage
 needs its own fresh GO under standing decision `63c338e2-1c50-435e-9783-e78e9d8558e6` v2,
 naming the stage, the manifest, source and input hashes, the engine identity and a window
 of at most 1200 seconds. The standing decision is not a blanket authority, and no GO is
@@ -447,7 +447,8 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
 - **Static admission.** C0 and D0 have no remaining static helper refusal. Their actual execution still
   needs the external proof-only precondition and all runtime checks. Other stages remain refused:
   - C1: admitted statically (r5). Its one fetch is the pinned Colima image through the prefetch helper, with the exact
-    size and sha512. Ordinary execution still refuses; a proof-only window needs the external activation.
+    size and sha512. Ordinary execution still refuses. It is in the proof entry (`PROOF_STAGES`) as a plain proof request
+    only; its window recipe is refused, since the window recipe is not reviewed for C1.
   - C4 and D2: refused. The engine build fetches the base image and apt packages, which the runner cannot observe or bound.
     ONE proposal, not implemented: pin an exact-size base OCI archive and an offline apt bundle, fetch and hash each as the
     Colima image is, load them through a fixed step, and build with no network. Effects: a new recipe hash, a new build argv,

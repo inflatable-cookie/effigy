@@ -3663,6 +3663,11 @@ class ColimaImageFetchTests(Fixture):
             ex.h_prefetch_colima_image(self.ctx, dict(inputs=[self.image_dir + '/other.raw.gz']))
         self.assertEqual(os.listdir(self.image_dir), [])
 
+    def test_a_missing_image_directory_refuses_as_a_refusal(self):
+        os.rmdir(self.image_dir)
+        with self.assertRaises(primitive.Refusal):
+            ex.h_prefetch_colima_image(self.ctx, dict(inputs=[self.dest]))
+
     def test_the_image_directory_must_be_empty_owned_and_real(self):
         Path(self.image_dir + '/leftover').write_bytes(b'x')
         with self.assertRaises(primitive.Refusal):
@@ -3764,6 +3769,25 @@ class RedirectPolicyTests(Fixture):
             with self.assertRaises(primitive.Refusal):
                 REAL_OPEN('https://example.com/x')
         self.assertEqual(seen, [])
+
+
+class C1ProofEntryTests(Fixture):
+    """C1 is admitted in the proof entry as a plain request. It has no window recipe, and its prospective data
+    binds the same pinned inputs the executor plans."""
+
+    def test_c1_prospective_data_binds_the_pinned_inputs(self):
+        self.assertIn('C1', proof.PROOF_STAGES)
+        data = proof.prospective('C1', self.bindings)
+        self.assertEqual(data['stage'], 'C1')
+        self.assertEqual(data['inputs_sha256'], ex.canon_sha(ex.stable_input_manifest()[0]))
+        self.assertEqual(data['bindings_sha256'], ex.canon_sha(self.bindings))
+
+    def test_c1_has_no_window_recipe_and_unknown_stages_still_refuse(self):
+        options = dict(activation_id='c1-window', duration_seconds=600, evidence_root=self.evidence)
+        with self.assertRaisesRegex(ex.Refusal, 'no window recipe'):
+            proof.window_recipe('C1', self.bindings, options)
+        with self.assertRaisesRegex(ex.Refusal, 'supports only C0, D0, D1 or C1'):
+            proof.prospective('C2', self.bindings)
 
 
 class ColimaImagePinTests(unittest.TestCase):
