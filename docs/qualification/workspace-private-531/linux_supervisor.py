@@ -13,10 +13,18 @@ So the unit is provably active, with a control group, before the payload does an
 work. A payload that is never observed active is never released and ends at its
 RuntimeMaxSec deadline, which is unknown.
 
+The emitted argv sets RemainAfterExit=yes, so a finished unit stays loaded as
+active(exited) with Result, ExecMainStatus and an empty cgroup. That is the terminal
+state closure is judged on. The unit is not collected until the host has observed it
+and stopped it (linux_setup.execute_plan). Any absent sample after release, or a
+changed InvocationID, is unknown.
+
 Upstream basis (systemd v259, fetched 2026-11-07):
-- `systemd-run --pipe` waits like `--wait`; `--wait` cannot combine with `--scope`.
-- `--collect` unloads the unit after it finishes, so it is never used. Without it a
-  finished transient service stays loaded, inactive, with Result and ExecMainStatus.
+- `systemd-run --pipe` waits for the transient service to terminate; `--wait` cannot
+  combine with `--scope`. Whether `--pipe` returns on main exit under RemainAfterExit is
+  not in the manual: a live check must confirm it. A timeout there is unknown, never a pass.
+- RemainAfterExit=yes keeps the service active after its processes exit; without it a
+  finished service is not active, and `--collect` unloads it, so `--collect` is not used.
 - `ExitType=cgroup` (v250) keeps a service active while any process in its cgroup has
   not exited; `RuntimeMaxSec=` fails the unit at its deadline.
 - systemctl prints a byte-array property such as InvocationID as contiguous lowercase
@@ -30,6 +38,7 @@ import base64
 import hashlib
 import json
 import os
+import pwd
 import re
 import stat
 import subprocess
@@ -42,6 +51,7 @@ from pathlib import Path
 # imports only the standard library. Refusal and exclusive mirror preparation_stage; the
 # constant mirrors preparation_observations.UNIT_INACTIVE. A test pins both.
 UNIT_INACTIVE = 'unit-inactive-exittype-cgroup'
+UNIT_EXITED = 'unit-exited-exittype-cgroup'
 
 
 class Refusal(ValueError):
@@ -69,6 +79,8 @@ PROPERTIES = 'LoadState,ActiveState,SubState,Result,ExecMainStatus,InvocationID,
 GATE_NAME = 'gate.fifo'
 TRANSFER_NAME = 'transfer.fifo'
 PAYLOAD_STDOUT_CAP = 65536
+PAYLOAD_ACCOUNT = 'effigy531'     # the one account a request may name; a request for any other account is refused
+STAGE_OWNER = 0                   # the stage root is root-owned in production
 # The only directory the installed entry creates row stages under. It is root-owned and mode 0711,
 # so the payload account can traverse to its own row directory and cannot list the others.
 STAGE_ROOT = '/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/stage'
@@ -246,28 +258,77 @@ def closure_receipt(boot_id, nonce, show, observed_group, waited_exit):
     return {'boot_id': boot_id, 'nonce': nonce, 'unit': unit_name(nonce),
             'invocation_id': show['invocation_id'], 'control_group': '',
             'observed_control_group': observed_group,
-            'supervisor': SUPERVISOR, 'terminal_basis': UNIT_INACTIVE,
-            'populated': 0, 'active_state': show['active_state'], 'result': show['result'],
-            'waited_exit': waited_exit}
+            'supervisor': SUPERVISOR, 'terminal_basis': UNIT_EXITED,
+            'populated': 0, 'active_state': show['active_state'], 'sub_state': show['sub_state'],
+            'result': show['result'], 'waited_exit': waited_exit}
+
+
+def terminal_exited(show):
+    """RemainAfterExit leaves a finished service active(exited): main exited 0, the cgroup is gone."""
+    return (show['active_state'] == 'active' and show['sub_state'] == 'exited' and show['result'] == 'success'
+            and show['exec_main_status'] == '0' and show['control_group'] == '')
 
 
 def _eligible(boot_id, nonce, show, samples, release_index, waited_exit):
     if release_index is None:
         return None, 'gate never released: the monitor never saw the unit active; closure is unknown'
+    if any(s.get('kind') in ('read-failed', 'release-failed') or s.get('populated_error') for s in samples):
+        return None, 'a failed read or release occurred; closure is unknown'
+    after = samples[release_index:]
+    if any(s.get('kind') == 'absent' for s in after):
+        return None, 'the unit was collected after release; closure is unknown'
     invocation = show['invocation_id']
+    if any(s.get('kind') == 'loaded' and s.get('invocation_id') != invocation for s in after):
+        return None, 'InvocationID changed after release; closure is unknown'
     before = [s for s in samples[:release_index] if s.get('kind') == 'loaded' and s['invocation_id'] == invocation]
     active = [s for s in before if s['active_state'] == 'active' and s['control_group']]
     if not active:
         return None, 'no pre-release sample shows this InvocationID active in a cgroup'
     if len({s['control_group'] for s in active}) != 1:
         return None, 'monitor saw more than one control group for this InvocationID'
-    if any(s.get('kind') in ('read-failed', 'release-failed') or s.get('populated_error') for s in samples):
-        return None, 'a failed read or release occurred; closure is unknown'
-    if show['active_state'] != 'inactive' or show['result'] != 'success' or show['exec_main_status'] != '0':
-        return None, 'post-run terminal state is not inactive success'
-    if show['control_group'] != '':
-        return None, 'post-run unit still has a control group'
+    if not terminal_exited(show):
+        return None, 'post-run terminal state is not active(exited), Result=success, status 0, empty cgroup'
     return closure_receipt(boot_id, nonce, show, active[-1]['control_group'], waited_exit), None
+
+
+def hold_stage_parent(parent, owner):
+    """Open a stage parent and check it. Returns the held descriptor; the caller closes it.
+
+    The parent must be canonical (no symlink or alias in its path), a real directory owned by
+    `owner`, and not writable by group or others. The check runs on the held descriptor, so a
+    row created through it cannot be redirected by a path swapped after the check.
+    """
+    text = str(parent)
+    if os.path.realpath(text) != text:
+        raise Refusal('stage parent is not canonical: a symlink or alias is in its path')
+    info = os.lstat(text)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != owner or info.st_mode & 0o022:
+        raise Refusal('stage parent must be a directory owned by the reviewed owner, not writable by others')
+    fd = os.open(text, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    held = os.fstat(fd)
+    if (held.st_dev, held.st_ino) != (info.st_dev, info.st_ino):
+        os.close(fd)
+        raise Refusal('stage parent changed between the check and the open')
+    return fd
+
+
+def create_row(parent_fd, name, uid):
+    """Create the row directory through the held parent: payload-owned, mode 0700, never reused."""
+    try:
+        os.mkdir(name, 0o700, dir_fd=parent_fd)
+    except FileExistsError as exc:
+        raise Refusal('row stage already exists; a stage is never reused') from exc
+    try:
+        os.chown(name, uid, -1, dir_fd=parent_fd, follow_symlinks=False)
+    except PermissionError as exc:
+        raise Refusal('the row cannot be assigned to the payload account by this process') from exc
+    fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+    try:
+        info = os.fstat(fd)
+    finally:
+        os.close(fd)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or stat.S_IMODE(info.st_mode) != 0o700:
+        raise Refusal('row stage must be a directory owned by the payload account, mode 0700')
 
 
 def _make_fifo(path, uid):
@@ -275,7 +336,7 @@ def _make_fifo(path, uid):
     os.chown(path, uid, -1)
 
 
-def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, monitor=None):
+def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, monitor=None, stage_owner=STAGE_OWNER):
     """One-use supervised payload. Intent is spent before any effect.
 
     Candidate eligibility, all required: the unit was absent before start; the monitor
@@ -286,17 +347,6 @@ def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, mo
     {'disposition', 'candidate', 'reason', 'show', 'samples', 'payload_stdout'}.
     """
     stage = Path(stage_dir)
-    if not os.path.lexists(stage):
-        # The supervisor is root: it creates the row stage for the payload account, and its parent once.
-        if not os.path.lexists(stage.parent):
-            os.makedirs(stage.parent, 0o700)
-            os.chmod(stage.parent, STAGE_ROOT_MODE)
-        os.mkdir(stage, 0o700)
-        os.chown(stage, request['payload_uid'], -1)
-    info = stage.lstat()
-    if (not stat.S_ISDIR(info.st_mode) or stage.is_symlink() or info.st_uid != request['payload_uid']
-            or stat.S_IMODE(info.st_mode) != 0o700):
-        raise Refusal('stage directory must be owned by the payload account and mode 0700')
     if not isinstance(boot_id, str) or not boot_id:
         raise Refusal('boot identity required before supervised start')
     nonce = request['nonce']
@@ -317,6 +367,19 @@ def run_supervised(stage_dir, request, ops, clock, boot_id, seen_invocations, mo
                     gate_argv(str(gate), payload))
     intent = {'unit': unit, 'argv': argv, 'boot_id': boot_id, 'timeout_seconds': request['timeout_seconds'],
               'cleanup_reserve_seconds': CLEANUP_RESERVE_SECONDS, 'gate': str(gate)}
+    # Custody and creation come after every refusal above, so a refused request leaves no stage behind.
+    if os.path.lexists(stage):
+        raise Refusal('row stage already exists; a stage is never reused')
+    if not os.path.lexists(stage.parent):
+        # Created once, mode 0711. Its own parent is held and checked before the mkdir.
+        os.close(hold_stage_parent(stage.parent.parent, stage_owner))
+        os.mkdir(stage.parent, 0o711)
+        os.chmod(stage.parent, STAGE_ROOT_MODE)
+    parent_fd = hold_stage_parent(stage.parent, stage_owner)
+    try:
+        create_row(parent_fd, stage.name, request['payload_uid'])
+    finally:
+        os.close(parent_fd)
     exclusive(stage / 'intent.json', (json.dumps(intent, sort_keys=True, indent=2) + '\n').encode())
     seen_invocations.setdefault('nonces', set()).add(nonce)
     if parse_show(ops.show(show_argv(unit)), unit) is not None:
@@ -433,14 +496,30 @@ def main(argv):
     if not required <= set(request) or set(request) - required - {'transfer'}:
         raise Refusal('unsupported request schema')
     stage = Path(request['stage_dir'])
-    # EFFIGY_STAGE_ROOT is a test seam: the reviewed root does not exist on a development host.
-    # The installed command line never sets it, and the host checks every credit independently.
-    if str(stage.parent) != os.environ.get('EFFIGY_STAGE_ROOT', STAGE_ROOT) or not ROW_NAME.fullmatch(stage.name):
+    # Two test seams, EFFIGY_STAGE_ROOT and EFFIGY_PAYLOAD_ACCOUNT, exist because the reviewed root and
+    # account do not exist on a development host. A root run refuses both, so they cannot widen the
+    # installed entry; the host also checks every credit independently.
+    seam = os.environ.get('EFFIGY_STAGE_ROOT')
+    account_seam = os.environ.get('EFFIGY_PAYLOAD_ACCOUNT')
+    if (seam is not None or account_seam is not None) and os.geteuid() == 0:
+        raise Refusal('test seams are refused for root runs')
+    root = seam if seam is not None else STAGE_ROOT
+    owner = os.geteuid() if seam is not None else STAGE_OWNER
+    if str(stage.parent) != root or not ROW_NAME.fullmatch(stage.name):
         raise Refusal('stage must be a direct child of the reviewed stage root')
+    account = account_seam if account_seam is not None else PAYLOAD_ACCOUNT
+    if request['payload_user'] != account:
+        raise Refusal('payload account is not the reviewed account')
+    try:
+        if pwd.getpwnam(account).pw_uid != request['payload_uid']:
+            raise Refusal('payload uid differs from the account on this host')
+    except KeyError as exc:
+        raise Refusal('payload account does not exist on this host') from exc
     boot_id = Path(os.environ.get('EFFIGY_BOOT_ID_PATH', BOOT_ID_PATH)).read_text().strip()
     if boot_id != request['expected_boot_id']:
         raise Refusal('boot identity differs from the request')
-    result = run_supervised(request['stage_dir'], request, SystemdOps(_subprocess_runner), time.monotonic, boot_id, {})
+    result = run_supervised(request['stage_dir'], request, SystemdOps(_subprocess_runner), time.monotonic, boot_id, {},
+                            None, stage_owner=owner)
     result['payload_stdout_b64'] = base64.b64encode(result.pop('payload_stdout').encode('utf-8')).decode('ascii')
     print(json.dumps(result, sort_keys=True, default=str))
     return 0 if result['candidate'] is not None else 1

@@ -63,7 +63,7 @@ DROPIN_TEXT = ('Match User effigy531\n'
                '    PermitTTY no\n')
 SUPERVISOR_PATH = '/usr/local/libexec/effigy-stage-supervisor'
 SUPERVISOR_SOURCE = Path(__file__).resolve().parent / 'linux_supervisor.py'
-ARCHIVE_NAME = 'archive.tar'
+ARCHIVE_NAME = 'inputs/archive.tar'
 ARCHIVE_SHA256 = '03df0b512b7536467cfb44f131619543d4e561e09aee29cab71be12445bfe867'   # candidate H (§6.3)
 ARCHIVE_B_SHA256 = '69dfda56c8be8e46fa0c6dea5224b519cfc55f471ada2945545d17c9c53eda83'  # old source B (§6.3)
 # Repository files every guest run needs. The guest copies sit under BASE/driver with their names.
@@ -94,9 +94,19 @@ PAYLOAD_CAP = 64 * 1024 * 1024             # E8 filesystem controls (brief: <= 6
 # Mechanisms that have been source-verified. Empty: none is established yet.
 SUPPORTED_DISK_MECHANISMS = frozenset()
 SUPPORTED_HARD_LIMITS = frozenset()
+SUPPORTED_TOP_MECHANISMS = frozenset()     # independent writable-top observation; none established yet
+CANDIDATE_H_HEAD = '4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02'   # source-bound candidate H, distinct from K
+# External anchors: the preparation head K, candidate H, the probe transcript sha and the allowed-signers
+# sha. They come from the proof-entry activation (#694), never from the facts object. Unset means every
+# row refuses. Tests set this global; the production module leaves it None.
+EXTERNAL_ANCHORS = None
+SUDOERS_PATH = '/etc/sudoers.d/50-effigy531-supervisor'
+SUDOERS_TEXT = ACCOUNT + ' ALL=(root) NOPASSWD: ' + SUPERVISOR_PATH + '\n'
+SUDOERS_SCRIPT = 'set -e; umask 022; printf "%s" "$1" > "$2"; chmod 0440 "$2"; visudo -cf "$2" >/dev/null; sha256sum "$2"'
 IDENTITY_KEYS = ('vm', 'boot_id', 'host_key_fp')
 UNIT_STATE_PROPERTIES = '--property=LoadState,ActiveState,SubState,Result,ExecMainStatus,InvocationID,ControlGroup'
-BOOTSTRAP_ROOT = frozenset({'E3a', 'E3b', 'E3c', 'E4', 'E4v', 'E5a', 'E5b', 'E5c', 'E6a', 'E6', 'E7a', 'E7b', 'E7c', 'E-SUP'})
+BOOTSTRAP_ROOT = frozenset({'E3a', 'E3b', 'E3c', 'E4', 'E4v', 'E5a', 'E5b', 'E5c', 'E6a', 'E6', 'E7a', 'E7b', 'E7c',
+                            'E-SUP', 'E-SUDO'})
 
 
 def _sha(data):
@@ -184,32 +194,49 @@ def _retain(stage_dir, name, data):
     return str(Path(stage_dir) / name)
 
 
-def derive_writable_top(descriptor):
-    """The writable top is the one image whose file name names the current snapshot GUID.
+def verify_writable_top(observation, descriptor, supported=None):
+    """The writable top is an independently observed image. A file name never names it.
 
-    The descriptor is the only source. Zero or several matches refuse, and the chain is then
-    checked by observations.inventory_extents.
+    The observation must come from a supported mechanism; none is established yet, so every
+    observation refuses and the association is never reached. The observed GUID must be an
+    image of the descriptor and the leaf of its chain: no snapshot may name it as parent.
     """
     import xml.etree.ElementTree as ET
+    mechanisms = SUPPORTED_TOP_MECHANISMS if supported is None else supported
+    if not isinstance(observation, dict) or observation.get('mechanism') not in mechanisms:
+        raise Refusal('writable-top observation mechanism is not supported; the association is refused')
     try:
         root = ET.fromstring(descriptor)
     except ET.ParseError as exc:
         raise Refusal('invalid disk descriptor') from exc
-    token = CURRENT_SNAPSHOT.strip('{}')
-    named = [item for item in root.findall('./StorageData/Storage/Image')
-             if token in (item.findtext('File') or '') and (item.findtext('File') or '').endswith('.hds')]
-    guids = [item.findtext('GUID') for item in named]
-    if guids != [CURRENT_SNAPSHOT]:
-        raise Refusal('the writable top must be the one image named by, and identified as, the current snapshot')
-    return guids[0]
+    guid = observation.get('guid')
+    images = {item.findtext('GUID') for item in root.findall('./StorageData/Storage/Image')}
+    parents = {shot.findtext('ParentGUID') for shot in root.findall('./Snapshots/Shot')}
+    if not isinstance(guid, str) or guid not in images:
+        raise Refusal('observed writable top is not an image of the descriptor')
+    if guid in parents:
+        raise Refusal('observed writable top is not the leaf of the snapshot chain')
+    return guid
 
 
-def stage1_request(fresh, stage_dir):
+def _retained_original(source, stage, name, failed):
+    """Read one original and retain it into the stage. A failure is recorded and does not stop the other."""
+    try:
+        data = Path(source).read_bytes()
+    except OSError as exc:
+        failed.append('%s unreadable (%s)' % (name, exc.strerror))
+        return None
+    _retain(stage, name, data)
+    return data
+
+
+def stage1_request(fresh, stage_dir, top_observation=None):
     """Request for the one-start entry, bound to the registered VM home and its disk chain.
 
-    Config bytes, descriptor bytes and the extent inventory are read here from the
-    registered home. Callers supply observations (state, snapshot tree, identities,
-    probe text), never bytes or inventories. The probe text must hash to the reviewed probe.
+    Config bytes and descriptor bytes are read here from the registered home and each is retained
+    on its own, so a failure to read one does not discard the other. The writable top is an
+    independently observed image (verify_writable_top). Callers supply observations, never bytes or
+    inventories. The probe text must hash to the reviewed probe.
     """
     if fresh.get('home') != PVM_HOME or fresh.get('uuid') != VM_UUID:
         raise Refusal('VM home or UUID is not the registered one')
@@ -231,18 +258,21 @@ def stage1_request(fresh, stage_dir):
     if fresh.get('config_identity') != config_identity or fresh.get('bundle_identity') != bundle_identity:
         raise Refusal('config or bundle identity differs from the live registered files')
     _owned_dir(directory)
-    descriptor = descriptor_path.read_bytes()
-    config = config_path.read_bytes()
-    top = derive_writable_top(descriptor)
-    inventory = _wrap(observations.inventory_extents, descriptor, top, str(directory.resolve()))
-    if not inventory['chain'] or inventory['chain'][0] != top:
-        raise Refusal('descriptor chain does not start at the derived writable top')
-    if set(inventory['chain']) - set(inventory['extents']):
-        raise Refusal('chain names an extent absent from the inventory')
     stage = Path(stage_dir)
     info = stage.lstat()
     if not stat.S_ISDIR(info.st_mode) or stage.is_symlink() or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
         raise Refusal('stage directory must be owned and mode 0700')
+    failed = []
+    config = _retained_original(config_path, stage, 'before-config.bin', failed)
+    descriptor = _retained_original(descriptor_path, stage, 'before-descriptor.xml', failed)
+    if failed:
+        raise Refusal('original not retained: ' + '; '.join(failed) + ' (the other original is retained)')
+    top = verify_writable_top(top_observation, descriptor)
+    inventory = _wrap(observations.inventory_extents, descriptor, top, str(directory.resolve()))
+    if not inventory['chain'] or inventory['chain'][0] != top:
+        raise Refusal('descriptor chain does not start at the observed writable top')
+    if set(inventory['chain']) - set(inventory['extents']):
+        raise Refusal('chain names an extent absent from the inventory')
     total = sum(seconds for _, seconds, _ in STAGE1_STEPS)
     if total != 480 or total + STAGE1_RESERVE != 600:
         raise Refusal('Stage1 budget drifted from the 600-second bound')
@@ -264,28 +294,29 @@ def stage1_request(fresh, stage_dir):
     return {'stage_dir': str(stage), 'vm': VM_UUID, 'home': PVM_HOME, 'steps': steps,
             'deadline_seconds': 600, 'reserve_seconds': STAGE1_RESERVE,
             'growth_cap_bytes': CONFIG_ALLOWANCE_BYTES, 'no_snapshot': True, 'no_kill': True,
-            'top_guid': top, 'bundle_identity': bundle_identity,
+            'top_guid': top, 'top_observation': top_observation, 'bundle_identity': bundle_identity,
             'before': {'config_sha256': _sha(config), 'config_identity': config_identity,
                        'descriptor_sha256': _sha(descriptor), 'extents': inventory['extents'],
-                       'chain': inventory['chain']},
-            'retained': {'config': _retain(stage, 'before-config.bin', config),
-                         'descriptor': _retain(stage, 'before-descriptor.xml', descriptor)}}
+                       'chain': inventory['chain'], 'top_guid': top},
+            'retained': {'config': str(stage / 'before-config.bin'),
+                         'descriptor': str(stage / 'before-descriptor.xml')}}
 
 
 def stage1_verify_post(request, after):
-    """Refuse on any drift from the retained bytes, identities or the recomputed inventory.
+    """Refuse on any drift from the retained bytes, identities, the observed top or the recomputed inventory.
 
-    The post-run config and descriptor bytes are written into the stage directory first, so a
-    refusal still leaves the evidence. Each check re-reads the registered files and recomputes
-    the writable top and the inventory from the descriptor it just retained.
+    The post-run config and descriptor bytes are retained into the stage before any check, each on
+    its own, so a refusal still leaves the evidence. The writable top is re-observed on the post
+    descriptor; a file name is never used.
     """
     before = request['before']
     stage = Path(request['retained']['config']).parent
     home = Path(request['home'])
-    post_config = (home / CONFIG_NAME).read_bytes()
-    post_descriptor = (home / DISK_DIR / DESCRIPTOR_NAME).read_bytes()
-    _retain(stage, 'post-config.bin', post_config)
-    _retain(stage, 'post-descriptor.xml', post_descriptor)
+    failed = []
+    post_config = _retained_original(home / CONFIG_NAME, stage, 'post-config.bin', failed)
+    post_descriptor = _retained_original(home / DISK_DIR / DESCRIPTOR_NAME, stage, 'post-descriptor.xml', failed)
+    if failed:
+        raise Refusal('post-run original not retained: ' + '; '.join(failed))
     retained_config = Path(request['retained']['config']).read_bytes()
     if _sha(retained_config) != before['config_sha256']:
         raise Refusal('retained pre-start config bytes do not match the request')
@@ -299,13 +330,14 @@ def stage1_verify_post(request, after):
     _wrap(observations.compare_config, retained_config, post_config, [])
     if _sha(post_descriptor) != before['descriptor_sha256']:
         raise Refusal('descriptor bytes changed')
-    top = derive_writable_top(post_descriptor)
+    top = verify_writable_top(request['top_observation'], post_descriptor)
     if top != request['top_guid']:
         raise Refusal('writable top changed')
     after_inventory = _wrap(observations.inventory_extents, post_descriptor, top, str((home / DISK_DIR).resolve()))
     growth = _wrap(observations.compare_extents, before['extents'], after_inventory['extents'], before['chain'],
                    cap=CONFIG_ALLOWANCE_BYTES)
-    return {'growth_bytes': growth, 'config_sha256': before['config_sha256']}
+    return {'growth_bytes': growth, 'config_sha256': before['config_sha256'],
+            'post_config_sha256': _sha(post_config), 'post_descriptor_sha256': _sha(post_descriptor)}
 
 
 def verify_disk_association(host, guest, witness, supported=None):
@@ -408,7 +440,7 @@ SHELL_OPS = {
     'E5c': 'set -e; /usr/bin/systemctl reload ssh; /usr/bin/systemctl is-active ssh',
     'E6a': 'set -e; umask 077; mkdir -m 0700 "$1"; chown effigy531:effigy531 "$1"; stat -c "%a %U" "$1"',
     'E7a': 'set -e; mkdir -m 0755 "$1"; stat -c "%a" "$1"',
-    'E7b': 'set -e; mkdir -m 0700 "$1"; chown effigy531:effigy531 "$1"; stat -c "%a %U" "$1"',
+    'E7b': 'set -e; mkdir -m 0755 "$1"; stat -c "%a %U" "$1"',
     'E7c': ('set -e; cd "$1"; for d in ' + ' '.join(BASE_DIRS) + '; do mkdir -m 0700 "$d"; chown effigy531:effigy531 "$d"; done; '
             'find "$1" -mindepth 1 -type d | wc -l | tr -d " "'),
 }
@@ -425,6 +457,7 @@ BOOTSTRAP_EXACT = {
     'E7a': _vm(*_sh(SHELL_OPS['E7a'], SCRATCH)),
     'E7b': _vm(*_sh(SHELL_OPS['E7b'], BASE)),
     'E7c': _vm(*_sh(SHELL_OPS['E7c'], BASE)),
+    'E-SUDO': _vm(*_sh(SUDOERS_SCRIPT, SUDOERS_TEXT, SUDOERS_PATH)),
 }
 EXPECT = {
     'E3a': {'stdout_regex': r'effigy531:x:\d+:\d+:[^:\n]*:/home/effigy531:/bin/bash\n'},
@@ -436,7 +469,7 @@ EXPECT = {
     'E5c': {'stdout': 'active\n'},
     'E6a': {'stdout': '700 effigy531\n'},
     'E7a': {'stdout': '755\n'},
-    'E7b': {'stdout': '700 effigy531\n'},
+    'E7b': {'stdout': '755 root\n'},
     'E7c': {'stdout': '11\n'},
 }
 
@@ -470,20 +503,25 @@ def _stage(row_id):
     return supervisor.STAGE_ROOT + '/' + row_id
 
 
-def _supervised_argv(fresh, row_id, payload_argv, cwd, timeout, transfer=False):
-    """Supervisor start with the request inline. The plan digest covers the exact request bytes."""
+def _supervised_argv(fresh, row_id, payload_argv, cwd, timeout, cfg, transfer=False):
+    """Supervisor start over pinned SSH, request inline. The plan digest covers the exact request bytes.
+
+    The remote command is the one sudo rule the bootstrap installs (SUDOERS_TEXT): the root supervisor,
+    run for the payload account only. Its terminal evidence returns on the same SSH session.
+    """
     nonces = fresh.get('row_nonces')
     nonce = nonces.get(row_id) if isinstance(nonces, dict) else None
     uid = fresh.get('effigy531_uid')
     identity = fresh.get('identity') or {}
-    if not isinstance(uid, int) or isinstance(uid, bool) or not HEX64.fullmatch(nonce or '') or not identity.get('boot_id'):
+    if not cfg or not isinstance(uid, int) or isinstance(uid, bool) or not HEX64.fullmatch(nonce or '') \
+            or not identity.get('boot_id'):
         return [], None
     request = {'nonce': nonce, 'payload_user': ACCOUNT, 'payload_uid': uid, 'cwd': cwd,
                'timeout_seconds': timeout, 'argv': payload_argv, 'stage_dir': _stage(row_id),
                'expected_boot_id': identity['boot_id'], 'transfer': transfer}
     text = json.dumps(request, sort_keys=True)
-    return _vm(SUPERVISOR_PATH, '--request-json', text, '--sha256', _sha(text.encode('utf-8'))), \
-        {'nonce': nonce, 'unit': supervisor.unit_name(nonce)}
+    remote = ['sudo', '-n', SUPERVISOR_PATH, '--request-json', text, '--sha256', _sha(text.encode('utf-8'))]
+    return ssh_argv(cfg, remote), {'nonce': nonce, 'unit': supervisor.unit_name(nonce)}
 
 
 def _transfer_payload(row_id, dest):
@@ -524,6 +562,8 @@ def _rows(fresh):
     _row(rows, 'E7c', 'vm-root', BOOTSTRAP_EXACT['E7c'], 60, VM_BASIS, 'E7', EXPECT['E7c'])
     _row(rows, 'E-SUP', 'vm-root', supervisor_install_argv(), 60, VM_BASIS, 'E-SUP',
          {'stdout_sha': _file_sha(SUPERVISOR_SOURCE)})
+    _row(rows, 'E-SUDO', 'vm-root', BOOTSTRAP_EXACT['E-SUDO'], 30, VM_BASIS, 'E-SUP',
+         {'stdout_sha': _sha(SUDOERS_TEXT.encode())})
     files = fresh.get('ssh_files') or {}
     cfg = files.get('config')
     ssh_ok = bool(cfg and HEX64.fullmatch(files.get('config_sha256', '') or '') and files.get('known_hosts')
@@ -533,7 +573,7 @@ def _rows(fresh):
     tree_digest = expected_tree_digest(archive['path']) if archive_ok else None
     # E9a: the archive streams over SSH into a FIFO that a supervised payload reads.
     dest = BASE + '/' + ARCHIVE_NAME
-    argv, credit = _supervised_argv(fresh, 'E9a', _transfer_payload('E9a', dest), BASE, 900, transfer=True) \
+    argv, credit = _supervised_argv(fresh, 'E9a', _transfer_payload('E9a', dest), BASE, 900, cfg, transfer=True) \
         if archive_ok else ([], None)
     writer = ssh_argv(cfg, writer_remote_argv(_stage('E9a') + '/' + supervisor.TRANSFER_NAME)) \
         if archive_ok else []
@@ -543,8 +583,8 @@ def _rows(fresh):
     # E9c: the old-source B archive streams the same contained way to its own destination.
     archive_b = fresh.get('archive_b') or {}
     b_ok = bool(ssh_ok and archive_b.get('path') and archive_b.get('sha256') == ARCHIVE_B_SHA256)
-    dest_b = BASE + '/archive-B.tar'
-    argv, credit = _supervised_argv(fresh, 'E9c', _transfer_payload('E9c', dest_b), BASE, 900, transfer=True) \
+    dest_b = BASE + '/inputs/archive-B.tar'
+    argv, credit = _supervised_argv(fresh, 'E9c', _transfer_payload('E9c', dest_b), BASE, 900, cfg, transfer=True) \
         if b_ok else ([], None)
     writer = ssh_argv(cfg, writer_remote_argv(_stage('E9c') + '/' + supervisor.TRANSFER_NAME)) if b_ok else []
     _row(rows, 'E9c', 'contained-transfer', argv, 900, SUPERVISED_BASIS, 'E9', {'stdout_sha': ARCHIVE_B_SHA256},
@@ -552,7 +592,7 @@ def _rows(fresh):
          credit=credit, writer_argv=writer)
     # E9b: the extraction and its tree digest run as a supervised payload.
     argv, credit = _supervised_argv(fresh, 'E9b', ['/bin/sh', '-c', remote_extract_script(), 'sh', dest,
-                                                   BASE + '/source'], BASE, 300) if archive_ok else ([], None)
+                                                   BASE + '/source'], BASE, 300, cfg) if archive_ok else ([], None)
     _row(rows, 'E9b', 'vm-supervised', argv, 300, SUPERVISED_BASIS, 'E9',
          {'stdout_sha': tree_digest} if tree_digest else None, limit_bytes=EXTRACT_CAP, credit=credit)
     # E19: one contained transfer per reviewed placement.
@@ -569,7 +609,7 @@ def _rows(fresh):
     # E8: the filesystem controls run as a supervised payload from the reviewed argv.
     payload = fresh.get('controls_payload')
     e8_ok = isinstance(payload, list) and payload and all(isinstance(a, str) and a for a in payload)
-    argv, credit = _supervised_argv(fresh, 'E8', list(payload), BASE, 900) if e8_ok else ([], None)
+    argv, credit = _supervised_argv(fresh, 'E8', list(payload), BASE, 900, cfg) if e8_ok else ([], None)
     _row(rows, 'E8', 'vm-supervised', argv, 900, SUPERVISED_BASIS, 'E8', None, limit_bytes=PAYLOAD_CAP, credit=credit)
     return rows
 
@@ -579,11 +619,16 @@ def _placement_row(rows, fresh, cfg, row_id, item):
     ok = bool(cfg and HEX64.fullmatch(item.get('sha256', '') or '') and item.get('guest_path')
               and item.get('host_path') and item['guest_path'].startswith(BASE + '/'))
     argv, credit = _supervised_argv(fresh, row_id, _transfer_payload(row_id, item.get('guest_path', '')),
-                                    BASE, 300, transfer=True) if ok else ([], None)
+                                    BASE, 300, cfg, transfer=True) if ok else ([], None)
     writer = ssh_argv(cfg, writer_remote_argv(_stage(row_id) + '/' + supervisor.TRANSFER_NAME)) if ok else []
     _row(rows, row_id, 'contained-transfer', argv, 300, SUPERVISED_BASIS, 'E19',
          {'stdout_sha': item.get('sha256')}, stdin=item.get('host_path') if ok else None,
          stdin_sha=item.get('sha256') if ok else None, limit_bytes=TRANSFER_CAP, credit=credit, writer_argv=writer)
+
+
+def go_index_bytes(go):
+    """The GO index: gate to receipt sha256 in sorted order. Its host bytes are placed and hash-checked."""
+    return (json.dumps({gate: go[gate]['sha256'] for gate in sorted(go)}, sort_keys=True) + '\n').encode()
 
 
 def required_placements(fresh):
@@ -600,6 +645,9 @@ def required_placements(fresh):
     signers = (fresh.get('go_trust') or {}).get('allowed_signers')
     if signers:
         go.append((BASE + '/inputs/go/allowed_signers', signers))
+    index = fresh.get('go_index') or {}
+    if index.get('path'):
+        go.append((BASE + '/inputs/go/index.json', index['path']))
     return modules, go
 
 
@@ -627,8 +675,8 @@ def placement_gaps(given, required):
     return gaps
 
 
-def plan_digest(rows, expected_head):
-    """Digest of the plan's executable content, bound to the reviewed head.
+def plan_digest(rows, expected_head, stage1_before=None):
+    """Digest of the plan's executable content, bound to the preparation head, candidate H and Stage1.
 
     GO-placement rows (EGO.*) are excluded: they carry the receipts, and the receipts sign this
     digest. Everything else that changes what runs is included.
@@ -636,28 +684,84 @@ def plan_digest(rows, expected_head):
     body = [[r['id'], r['kind'], r['argv'], r['writer_argv'], r['timeout_seconds'], r['closure_basis'],
              r['expect'], r['stdin_sha256'], r['limit_bytes'], r['credit']] for r in rows
             if not r['id'].startswith('EGO.') and r['id'] != 'EGO']
-    return _sha(json.dumps({'head': expected_head, 'rows': body}, sort_keys=True).encode())
+    return _sha(json.dumps({'head': expected_head, 'candidate_h': CANDIDATE_H_HEAD, 'stage1': stage1_before,
+                            'rows': body}, sort_keys=True).encode())
 
 
 def _archive_bound(item, sha256):
     return bool(item and item.get('path') and item.get('sha256') == sha256)
 
 
+def _stage1_binding(fresh):
+    """Reasons the Stage1 originals and post-state are not bound into the plan. Empty means bound."""
+    s1 = fresh.get('stage1')
+    if not isinstance(s1, dict) or not isinstance(s1.get('before'), dict) or not isinstance(s1.get('retained'), dict) \
+            or not isinstance(s1.get('post'), dict):
+        return ['Stage1 originals and post-state not bound']
+    before, retained, post = s1['before'], s1['retained'], s1['post']
+    reasons = []
+    for key, path in (('config_sha256', retained.get('config')), ('descriptor_sha256', retained.get('descriptor'))):
+        if not path or not Path(path).is_file() or _file_sha(path) != before.get(key):
+            reasons.append('Stage1 retained original does not match the request: ' + key)
+    if post.get('config_sha256') != before.get('config_sha256'):
+        reasons.append('Stage1 post-run config differs from the original')
+    growth = post.get('growth_bytes')
+    if not isinstance(growth, int) or isinstance(growth, bool) or not 0 <= growth <= CONFIG_ALLOWANCE_BYTES:
+        reasons.append('Stage1 post-run growth is outside the allowance')
+    return reasons
+
+
+def _go_index_reasons(fresh):
+    """The GO index must hash to the bytes the receipts imply. Empty means bound."""
+    index = fresh.get('go_index')
+    go = fresh.get('go') or {}
+    if not isinstance(index, dict) or not index.get('path') or not isinstance(go, dict) or not go:
+        return ['GO index not bound']
+    try:
+        expected = _sha(go_index_bytes(go))
+    except (KeyError, TypeError):
+        return ['GO index not bound: receipts lack sha256 entries']
+    if not Path(index['path']).is_file() or _file_sha(index['path']) != expected:
+        return ['GO index bytes differ from the receipts']
+    return []
+
+
 def setup_plan(fresh):
     """Ordered setup rows with each row's live blockers resolved against the facts.
 
-    A row's `missing` lists what must be bound before it can run. A row whose argv would
-    embed a live value that is absent keeps an empty argv, so no placeholder reaches a shell.
+    The preparation head, candidate H, probe transcript sha and allowed-signers sha come from
+    EXTERNAL_ANCHORS, never from facts. Without anchors every row refuses. A row's `missing`
+    lists what must be bound before it can run. A row whose argv would embed a live value that
+    is absent keeps an empty argv, so no placeholder reaches a shell.
     """
-    rows = _rows(fresh)
-    digest = plan_digest(rows, fresh.get('expected_head'))
-    gates = fresh.get('go') or {}
-    trust = fresh.get('go_trust') or {}
-    identity = fresh.get('identity')
+    anchors = EXTERNAL_ANCHORS if isinstance(EXTERNAL_ANCHORS, dict) else None
     global_missing = []
-    probe = None
+    head = None
+    trust = dict(fresh.get('go_trust') or {})
+    if anchors is None:
+        global_missing.append('external anchors unbound: preparation head, candidate H, probe and allowed-signers '
+                              'sha come from the proof-entry activation (#694), not from facts')
+    else:
+        head = anchors.get('head')
+        if anchors.get('candidate_h') != CANDIDATE_H_HEAD:
+            global_missing.append('candidate H anchor is not the reviewed source head')
+        if not HEX40.fullmatch(head or '') or head == CANDIDATE_H_HEAD:
+            global_missing.append('preparation head anchor must be 40 hex and distinct from candidate H')
+        trust['sha256'] = anchors.get('allowed_signers_sha256')
+    global_missing += _stage1_binding(fresh)
+    rows = _rows(fresh)
+    s1 = fresh.get('stage1') if isinstance(fresh.get('stage1'), dict) else {}
+    stage1_before = None
+    if isinstance(s1.get('before'), dict):
+        stage1_before = {k: s1['before'].get(k) for k in ('config_sha256', 'descriptor_sha256', 'top_guid')}
+    digest = plan_digest(rows, head, stage1_before)
+    gates = fresh.get('go') or {}
+    identity = fresh.get('identity')
     output = fresh.get('probe_output')
+    probe = None
     if isinstance(output, str) and HEX64.fullmatch(fresh.get('probe_output_sha256') or ''):
+        if anchors is not None and fresh['probe_output_sha256'] != anchors.get('probe_sha256'):
+            global_missing.append('probe transcript sha256 differs from the externally bound probe')
         try:
             probe = parse_probe(output, _sha(output.encode()), fresh['probe_output_sha256'])
         except Refusal as exc:
@@ -671,12 +775,11 @@ def setup_plan(fresh):
         global_missing.append('identity differs from the probe bound to this plan')
     if not fresh.get('resource_accounting'):
         global_missing.append('resource accounting (counter files and limits)')
-    if not HEX40.fullmatch(fresh.get('expected_head') or ''):
-        global_missing.append('expected reviewed head (40 hex, bound into the plan digest)')
     if not isinstance(fresh.get('e2_public_key'), str):
         global_missing.append('E2 public key line')
-    if not isinstance(trust, dict) or not trust.get('allowed_signers'):
-        global_missing.append('go_trust (allowed signers and sha256)')
+    if not isinstance(trust, dict) or not trust.get('allowed_signers') or not trust.get('sha256'):
+        global_missing.append('go_trust (allowed signers path and externally anchored sha256)')
+    global_missing += _go_index_reasons(fresh)
     for row in rows:
         missing = list(global_missing)
         rid = row['id']
@@ -722,8 +825,7 @@ def setup_plan(fresh):
             if reason:
                 missing.append(reason)
         if row['go']:
-            ok, reason = verify_signed_receipt(gates.get(row['go']), row['go'], digest, trust,
-                                               fresh.get('expected_head'))
+            ok, reason = verify_signed_receipt(gates.get(row['go']), row['go'], digest, trust, head)
             if not ok:
                 missing.append('GO ' + row['go'] + ': ' + reason)
         row['missing'] = sorted(set(missing))
@@ -775,7 +877,7 @@ def observation_from_show(show_text, unit, boot_id, nonce):
     if show is None:
         return None
     return {'boot_id': boot_id, 'nonce': nonce, 'unit': unit, 'invocation_id': show['invocation_id'],
-            'active_state': show['active_state'], 'result': show['result'],
+            'active_state': show['active_state'], 'sub_state': show['sub_state'], 'result': show['result'],
             'exec_main_status': show['exec_main_status'], 'control_group': show['control_group']}
 
 
@@ -794,7 +896,7 @@ def host_credit(expected, candidate, observation):
 
     def authenticate(receipt):
         return all(receipt.get(k) == observation.get(k)
-                   for k in ('boot_id', 'nonce', 'unit', 'invocation_id', 'active_state', 'result'))
+                   for k in ('boot_id', 'nonce', 'unit', 'invocation_id', 'active_state', 'sub_state', 'result'))
     return _wrap(observations.verify_contained_closure, expected, candidate, authenticate)
 
 
@@ -810,6 +912,11 @@ def _private_file(path, expected_sha):
 
 
 # ---------------------------------------------------------------- production runner
+
+def _stop_unit_via_vm(unit):
+    """Host cleanup after credit: stop the RemainAfterExit unit over the VM route. Returns its disposition."""
+    return transfers.run_transfer(_vm('/usr/bin/systemctl', 'stop', unit), None, 30, OUTPUT_CAP)['disposition']
+
 
 def default_row_runner(row, stage, monitor):
     """Production runner. Each row is local processes (prlctl and ssh) with its own deadline and cap.
@@ -862,7 +969,8 @@ def _expect_met(row, outcome):
     return False
 
 
-def execute_plan(facts, runner, observe_identity, observe_terminal, stage_root, clock, wall_clock, budget_seconds):
+def execute_plan(facts, runner, observe_identity, observe_terminal, stage_root, clock, wall_clock, budget_seconds,
+                 stop_unit=None):
     """Build the plan from the facts and run it row by row through every gate.
 
     The executor never takes a row list from the caller. Gates, in order, halt with the row
@@ -936,11 +1044,16 @@ def execute_plan(facts, runner, observe_identity, observe_terminal, stage_root, 
                 closure = host_credit(expected, outcome['candidate'], observation)
             except Refusal as exc:
                 credit_note = str(exc)
+        cleanup = None
+        if row['effect'] in ('supervised', 'transfer') and row['credit']:
+            cleanup = (stop_unit or _stop_unit_via_vm)(row['credit']['unit'])
         receipt = {'disposition': outcome.get('disposition'), 'waited_exit': outcome.get('waited_exit'),
                    'closure': closure, 'postobserve': _expect_met(row, outcome),
                    'writer_exit': outcome.get('writer_exit'), 'credit_note': credit_note,
-                   'candidate': outcome.get('candidate')}
+                   'candidate': outcome.get('candidate'), 'cleanup': cleanup}
         exclusive(stage / 'receipt.json', (json.dumps(receipt, sort_keys=True, indent=2) + '\n').encode())
+        if cleanup not in (None, 'exited'):
+            return halt('cleanup of the stage unit did not exit cleanly: ' + str(cleanup))
         if not advance_allowed(receipt, closure, row['closure_basis']):
             return halt('held: no advance credit' + (' (' + credit_note + ')' if credit_note else ''))
         completed.append(row['id'])

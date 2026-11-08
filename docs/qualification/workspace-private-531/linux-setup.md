@@ -115,7 +115,7 @@ All three backend inputs/GO-index stay **UNARMED** pending actual GOs, accepted
 placement and planner-bound aggregate execution. Consumer/install/production/
 merge authority is unchanged.
 
-## Setup adapter status (source-only, revision 8)
+## Setup adapter status (source-only, revision 9)
 
 Pure controls, no effect. Files: `linux_setup.py` (Stage1 entry bound to the registered
 home, admission verifiers, setup plan, executor, host credit, `ssh_argv`),
@@ -123,7 +123,7 @@ home, admission verifiers, setup plan, executor, host credit, `ssh_argv`),
 candidate producer, root entry point), `linux_transfer.py` (bounded local processes, the
 contained stdin transfer), `linux_receipts.py` (OpenSSH-signed admission receipts),
 `linux-setup-probe.sh` (read-only probe, hash bound), `linux-setup-stages.json` (ledger
-checked against the plan), `linux_setup_tests.py` (134 controls, including real-process flows;
+checked against the plan), `linux_setup_tests.py` (161 controls, including real-process flows;
 `test:qualification:linux-setup`).
 
 - **Gate and positive path.** The payload is wrapped so it blocks on a FIFO in the stage
@@ -133,13 +133,13 @@ checked against the plan), `linux_setup_tests.py` (134 controls, including real-
   payload never observed active is never released and ends at its RuntimeMaxSec deadline,
   which is unknown. Candidate eligibility needs a pre-release active sample for this
   InvocationID in one cgroup, no failed read or release sample, and a post-run loaded
-  unit with the same InvocationID, inactive, Result=success, ExecMainStatus=0 and an empty
+  unit with the same InvocationID, active(exited) under RemainAfterExit, Result=success, ExecMainStatus=0 and an empty
   ControlGroup. A populated=1 sample while the unit runs is no veto (K-16). InvocationID is
   parsed as the contiguous hex systemctl prints.
 - **Host credit.** The host reads the unit over the VM route and credits closure only when
   the candidate equals that observation (boot ID, nonce, unit, InvocationID, active state,
-  result), through the 686 `unit-inactive-exittype-cgroup` basis.
-- **Contained transfer.** A transfer row starts the supervisor (`prlctl exec`, request
+  result), through the 686 `unit-exited-exittype-cgroup` basis (K-22).
+- **Contained transfer.** A transfer row starts the supervisor over pinned SSH (`sudo -n` of the one installed program, request
   inline) and, at once, an SSH writer that waits for the stage FIFO and streams the
   archive or placement into it. The payload reads the FIFO and writes the destination. SSH
   exit is only the writer's precondition (exit 0). Closure comes from the supervisor
@@ -174,7 +174,7 @@ checked against the plan), `linux_setup_tests.py` (134 controls, including real-
   inventory are recomputed from `PVM_HOME`, and the probe script must hash to the reviewed
   value. Post-stop, `stage1_verify_post` refuses on drift in config bytes, identities,
   descriptor, extents, snapshot tree or growth above 1 GiB. Post-run bytes are retained into the stage before any check, and the
-  writable top is derived from the descriptor (K-18, K-19).
+  writable top is an observed image, never a file name (K-25).
 - **Stage root (revision 8).** Row stages are direct children of the reviewed root
   `/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/stage`. The root is created mode 0711 and
   owned by root. Each row directory is mode 0700 and owned by the payload account. The
@@ -189,6 +189,16 @@ checked against the plan), `linux_setup_tests.py` (134 controls, including real-
   allowed-signers file needs exactly one placement with a pinned host path and sha256.
   Missing, unexpected, duplicate and mismatched entries each refuse. The B archive (E9c)
   uses the same contained transfer as the H archive (E9a).
+- **Revision 9 changes.** Lifecycle: RemainAfterExit=yes stays, so the terminal state is
+  active(exited), and the host stops the unit after credit (K-22). Transport: supervised
+  payloads reach the root supervisor over pinned SSH through one sudo rule, installed
+  by the E-SUDO row (K-23). Anchors: the preparation head, candidate H, probe transcript
+  sha and signer pin come from `EXTERNAL_ANCHORS` and never from facts (K-24). Writable
+  top: the file-name derivation is removed; a top needs an observation from a supported
+  mechanism, and none is established, so Stage1 refuses before any effect (K-25). Custody:
+  the stage parent is canonical, held by descriptor, not writable by others, and rows are
+  created through it and never reused (K-26). BASE is root-owned 0755; archives sit under
+  `inputs/`; the GO index is placed and hash-checked (K-27).
 - **Admission.** The executor rebuilds the plan from facts, never from a caller's rows.
   Gates: the probe output is hash-bound (E3 account absence, E4 docker group); GO receipts
   are signed and plan-bound; E6 accepts only one restricted ssh-ed25519 line for the E2 key
@@ -243,6 +253,35 @@ Decisions taken here (reviewer checks):
   payload start and terminal observation stay on the VM route, and closure comes from host
   credit plus the signed receipts. Moving the payload itself onto SSH would run it as the
   login account, not through systemd. Reviewer check requested on this boundary.
+- **K-22** Lifecycle. The emitted argv keeps `--remain-after-exit`. A finished unit is then
+  active(exited) with Result=success, ExecMainStatus=0 and an empty cgroup, and that is the
+  terminal state closure is judged on. Inactive is no longer required, because RemainAfterExit
+  makes it unreachable. 686 gains `unit-exited-exittype-cgroup` as a separate basis. An absent
+  sample after release, or a changed InvocationID, is Unknown. The host stops the unit after
+  credit, and a failed stop halts the plan. Live check needed: whether `systemd-run --pipe`
+  returns on main exit under RemainAfterExit, and whether `ControlGroup` is empty in that state.
+- **K-23** Transport. Supervised payloads (E8, E9a, E9b, E9c, E19.N, EGO.N) run as
+  `ssh … sudo -n /usr/local/libexec/effigy-stage-supervisor --request-json … --sha256 …`. The
+  E-SUDO bootstrap writes one sudoers rule for that single program and runs `visudo -cf`. The
+  entry pins the payload account (`effigy531`) and checks its uid through `pwd`. Test seams are
+  refused for root runs. The host's terminal observation stays a VM-route read (`prlctl exec
+  systemctl show`), so it is not the payload path. **Reviewer ruling asked:** is that read an
+  acceptable independent observation under K-3?
+- **K-24** Anchors. `EXTERNAL_ANCHORS` carries the preparation head, candidate H (`4f6a5ed3`),
+  probe transcript sha and allowed-signers sha. They come from the proof-entry activation
+  (#694). Production leaves them unset, so every row refuses. The Stage1 originals are
+  re-hashed at plan time and the Stage1 fingerprint enters the digest.
+- **K-25** Writable top. `derive_writable_top` (a file-name match) is removed. The top must come
+  from a mechanism in `SUPPORTED_TOP_MECHANISMS`, which is empty, so Stage1 refuses before any
+  effect. The observed GUID must be a descriptor image and a leaf of the chain. The retained
+  real684 descriptor is not in the retained preparation root, so the negative control uses a
+  reviewed-shape descriptor and says so.
+- **K-26** Stage custody. The stage parent must be canonical, a directory owned by the reviewed
+  owner (0 in production), and not writable by group or others. It is held by descriptor. A row
+  is created through that descriptor, is payload-owned and mode 0700, and is never reused.
+  `BASE` is root-owned 0755 (E7b), so the stage root under it is not payload-controlled.
+- **K-27** Placement. The GO index (`inputs/go/index.json`) is placed and hash-checked against
+  the receipts. The archives move to `BASE/inputs/`. E-SUDO is a bootstrap row gated by E-SUP.
 
-Still required before any activation (not in this change): a source-verified controller-to-guest disk association with fresh identifiers on both sides; a source-verified kernel hard-limit mechanism; the VM-route identity re-observation and terminal-state observation wired to the real route; the staged supervisor and its root install as a separate GO; the operator's signing key and allowed-signers file, with signed GO receipts for each gate; the H archive at its pinned path with the pinned ssh config and known_hosts under the control root; the E2 key line and expiry; the Stage1 probe script and output bound to this plan; the reviewed placements and the GO placements (E19.N, EGO.N); the B archive at its pinned path
+Still required before any activation (not in this change): a source-verified controller-to-guest disk association with fresh identifiers on both sides; a source-verified kernel hard-limit mechanism; the VM-route identity re-observation and terminal-state observation wired to the real route; the root supervisor install and the E-SUDO sudo rule as separate GOs; the external anchors from the proof-entry activation (#694, K-24); a supported writable-top observation mechanism (K-25); the operator's signing key and allowed-signers file, with signed GO receipts for each gate; the H archive at its pinned path with the pinned ssh config and known_hosts under the control root; the E2 key line and expiry; the Stage1 probe script and output bound to this plan; the reviewed placements and the GO placements (E19.N, EGO.N); the B archive at its pinned path
 (E9c); the controls payload argv; and each live row's own GO. The gate, the positive path and the contained transfer are exercised here with real local processes and FIFOs, but not with real systemd, real prlctl or a real SSH server. A live systemd check of the InvocationID and terminal sequence is still needed. E10, E13k and E14 stay held as before.

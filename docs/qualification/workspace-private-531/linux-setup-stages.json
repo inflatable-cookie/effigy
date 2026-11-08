@@ -182,6 +182,18 @@
       "effect_note": "argv embeds the reviewed supervisor source as base64 (no staging route); root install still a separate GO"
     },
     {
+      "id": "E-SUDO",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 30,
+      "go": "E-SUP",
+      "status": "template",
+      "live_blockers": [],
+      "effect": "bootstrap",
+      "needs_hard_limit": false,
+      "effect_note": "narrow sudo rule: effigy531 may run only the root supervisor, for the payload account; visudo-checked"
+    },
+    {
       "id": "E9a",
       "kind": "contained-transfer",
       "closure_basis": "supervised-contained",
