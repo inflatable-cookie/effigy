@@ -331,6 +331,8 @@ def execute_ready(request, request_sha):
                 raise executor.Refusal('Desktop engine did not become ready')
             sample()
             time.sleep(min(0.5, remaining))
+        if not socket_present():
+            raise executor.Refusal('Desktop endpoint disappeared after readiness read')
         try:
             engine = executor.prep.engine_id_from_info(info.decode())
         except (ValueError, UnicodeDecodeError) as exc:

@@ -3334,6 +3334,15 @@ class DesktopReadyTests(Fixture):
         self.assertNotIn('app-start', [x[0] for x in calls])
         self.assertFalse(os.path.exists(self.evidence + '/D1-' + request['d1']['activation_id']))
 
+    def test_successful_read_without_owned_socket_refuses(self):
+        os.unlink(self.socket_path)
+        request = self.request('ready-missing-socket-0001')
+        calls = []
+        with self.assertRaisesRegex(ex.Refusal, 'endpoint disappeared'):
+            self.entry(request, dict(self.routes(), **{'engine-before': emit(ENGINE_JSON)}), calls)
+        self.assertNotIn('app-start', [x[0] for x in calls])
+        self.assertFalse(os.path.exists(self.evidence + '/D1-' + request['d1']['activation_id']))
+
     def test_wrong_context_and_launch_failure_stop_before_d1(self):
         os.unlink(self.socket_path)
         for name, routes in [('context', dict(self.routes(), **{'context-before': emit('other\n')})),
