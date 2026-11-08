@@ -117,6 +117,10 @@ if cmd == 'exec':
     if mode == 'signal_success':
         (state / 'await-signal').write_text('ready')
         time.sleep(0.8)
+    if mode == 'change_source_during_build':
+        with (root / 'Cargo.toml').open('a') as f: f.write('# caller edit during the build\n')
+    if mode == 'tamper_stage_during_build':
+        with (pathlib.Path(bound) / 'Cargo.toml').open('a') as f: f.write('# staged edit during the build\n')
     if mode in ['build_fail', 'interrupted']: sys.exit(23 if mode == 'build_fail' else 130)
     if mode == 'no_output': sys.exit(0)
     artifacts = pathlib.Path(bound) / '.effigy/linux-release/artifacts'
@@ -527,6 +531,30 @@ esac
             ], "NetworkSettings": {"Ports": {}}
         }]);
         let path = self.root.join("state/legacy.json");
+        std::fs::write(&path, record.to_string()).unwrap();
+        self.preserved.push((path, record.to_string().into_bytes()));
+    }
+
+    /// The retained 531 producer the brief names: a builder of another
+    /// checkout's source under its own project spelling. It is not ours to
+    /// inspect, exec in, stop, relabel, mount or adopt.
+    fn retain_foreign_531(&mut self) {
+        let source = format!("{}/531-producer/source", self.root.display());
+        let record = json!([{
+            "Id": "e".repeat(64),
+            "Name": "effigy-531-producer-builder-1",
+            "State": {"Status": "running", "Running": true},
+            "Config": {"Labels": {
+                "com.docker.compose.project": "effigy-531-producer",
+                "com.docker.compose.service": "builder",
+                "com.docker.compose.oneoff": "False",
+                "com.docker.compose.project.working_dir": source,
+                "com.effigy.checkout": source
+            }},
+            "Mounts": [{"Type": "bind", "Source": source, "Destination": "/workspace", "RW": true}],
+            "NetworkSettings": {"Ports": {}}
+        }]);
+        let path = self.root.join("state/foreign-531.json");
         std::fs::write(&path, record.to_string()).unwrap();
         self.preserved.push((path, record.to_string().into_bytes()));
     }
@@ -1785,6 +1813,11 @@ fn staged_source_cleanup_never_follows_an_alias_out_of_its_directory() {
     // A tracked directory replaced by an alias, and a stale file alias.
     std::os::unix::fs::symlink(&outside, plan.source.join("scripts")).unwrap();
     std::os::unix::fs::symlink(outside.join("kept"), plan.source.join("stale-file")).unwrap();
+    // An alias between the profile's mount and the owned child, where a bare
+    // `create_dir_all` would have created the stage inside an unowned tree.
+    let owned_parent = plan.stage_root.parent().unwrap().to_path_buf();
+    std::fs::remove_dir_all(&owned_parent).unwrap();
+    std::os::unix::fs::symlink(&outside, &owned_parent).unwrap();
     fixture
         .task()
         .expect("the automatic build stages the tracked source");
@@ -1803,6 +1836,16 @@ fn staged_source_cleanup_never_follows_an_alias_out_of_its_directory() {
     assert!(
         std::fs::symlink_metadata(plan.source.join("stale-file")).is_err(),
         "the stale alias was removed"
+    );
+    let owned = std::fs::symlink_metadata(&owned_parent).unwrap();
+    assert!(
+        !owned.file_type().is_symlink() && owned.is_dir(),
+        "the mount-level alias became a real owned directory"
+    );
+    assert_eq!(
+        std::fs::read_dir(&outside).unwrap().count(),
+        1,
+        "nothing was created inside the aliased tree"
     );
     fixture.assert_preserved();
 }
@@ -1898,4 +1941,124 @@ fn concurrent_staged_callers_have_no_second_effect() {
         "one closure probe and one build, never a duplicate build"
     );
     fixture.assert_preserved();
+}
+
+/// The brief's controlled production case: the host source is outside the VM's
+/// only mount, the retained 531 producer binds another checkout's source, and
+/// the maintained automatic task stages the closure into the covered Stash root,
+/// selects its own staged builder and copies the verified artifact back without
+/// touching the foreign builder or any VM setting.
+#[test]
+fn staged_source_builds_beside_a_foreign_531_builder_without_touching_it() {
+    let _lock = crate::contract_test_support::lock_test();
+    let mut fixture = Fixture::staged(false, false, "colima");
+    fixture.retain_foreign_531();
+    fixture.retain_other_checkout();
+    let plan = fixture.stage().expect("a staged source plan");
+    fixture
+        .task()
+        .expect("the automatic build stages its own source and compiles");
+    assert_eq!(fixture.activation_count(), 1, "one owned activation");
+    assert_eq!(fixture.build_source(), plan.source);
+    let calls = serde_json::to_string(&fixture.calls()).unwrap();
+    for foreign in [
+        "effigy-531-producer",
+        "531-producer/source",
+        &"e".repeat(64),
+        "other-checkout",
+        &"d".repeat(64),
+    ] {
+        assert!(
+            !calls.contains(foreign),
+            "the foreign builder was targeted: {foreign}"
+        );
+    }
+    // The selected builder is this checkout's own staged one.
+    let identity: Value =
+        serde_json::from_slice(&std::fs::read(fixture.root.join("state/identity.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        identity[0]["Config"]["Labels"]["com.effigy.checkout"],
+        json!(fixture.root)
+    );
+    assert!(Path::new(identity[0]["Mounts"][0]["Source"].as_str().unwrap()) == plan.source);
+    let artifact = fixture
+        .root
+        .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    assert!(
+        artifact.is_file(),
+        "the verified artifact reached the caller"
+    );
+    fixture.assert_preserved();
+}
+
+/// A failed staged producer publishes nothing and keeps the caller's stale
+/// artifact, and the retry needs no manual step.
+#[test]
+fn failed_staged_producer_publishes_nothing_and_retry_reuses_the_builder() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(false, false, "docker");
+    let plan = fixture.stage().expect("a staged source plan");
+    let artifact = fixture
+        .root
+        .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
+    fixture.mode("build_fail");
+    fixture
+        .task()
+        .expect_err("a failed producer publishes nothing");
+    assert_eq!(std::fs::read_to_string(&artifact).unwrap(), "stale bytes");
+    assert_eq!(
+        read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact)).as_deref(),
+        Some(STALE_IDENTITY)
+    );
+    fixture.mode("retry");
+    fixture.task().expect("the retry reuses the staged builder");
+    assert_eq!(fixture.build_source(), plan.source);
+    assert_eq!(
+        fixture.activation_count(),
+        1,
+        "the retry reuses the builder the first run activated"
+    );
+    assert_ne!(std::fs::read_to_string(&artifact).unwrap(), "stale bytes");
+    fixture.assert_preserved();
+}
+
+fn assert_compiled_source_drift_publishes_nothing(mode: &str) {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(false, false, "docker");
+    let artifact = fixture
+        .root
+        .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
+    fixture.mode(mode);
+    let error = fixture.task().expect_err(mode);
+    assert!(
+        error.contains("while the builder compiled"),
+        "{mode}: {error}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&artifact).unwrap(),
+        "stale bytes",
+        "{mode}: an artifact for source that moved is never published"
+    );
+    assert_eq!(
+        read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact)).as_deref(),
+        Some(STALE_IDENTITY),
+        "{mode}"
+    );
+    fixture.assert_preserved();
+}
+
+mod compiled_source_drift {
+    use super::*;
+    macro_rules! cases {
+        ($($case:ident),+ $(,)?) => { $(
+            #[test]
+            fn $case() {
+                assert_compiled_source_drift_publishes_nothing(stringify!($case));
+            }
+        )+ };
+    }
+    cases!(change_source_during_build, tamper_stage_during_build);
 }

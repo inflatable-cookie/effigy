@@ -282,8 +282,8 @@ fn write_render_closure(
     directory: &Path,
     closure: &effigy_kernel::objects::Closure,
 ) -> Result<(), ContainerPolicyError> {
-    ensure_owned_directory(&plan.stage_root.join(STAGE_RENDER_DIR))?;
-    ensure_owned_directory(directory)?;
+    ensure_owned_stage_directory(plan, &plan.stage_root.join(STAGE_RENDER_DIR))?;
+    ensure_owned_stage_directory(plan, directory)?;
     for (name, bytes) in closure.files() {
         let relative = Path::new(name);
         if relative.is_absolute()
@@ -296,7 +296,9 @@ fn write_render_closure(
             )));
         }
         let target = directory.join(relative);
-        ensure_owned_directory(target.parent().unwrap_or(directory))?;
+        if let Some(parent) = target.parent() {
+            ensure_owned_stage_directory(plan, parent)?;
+        }
         match std::fs::symlink_metadata(&target) {
             Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
                 std::fs::remove_file(&target).map_err(|error| {
@@ -383,25 +385,90 @@ fn prune_other_render_generations(
     Ok(())
 }
 
-/// Create one owned directory, refusing to follow a link that already sits in
-/// its place. Cleanup and staging never traverse an alias.
-fn ensure_owned_directory(directory: &Path) -> Result<(), ContainerPolicyError> {
-    if let Ok(metadata) = std::fs::symlink_metadata(directory) {
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+/// Create `directory` as part of this environment's owned chain below the
+/// profile's shared mount, and return its canonical path.
+///
+/// Every component is created and checked on its own, starting at the mount
+/// root: an alias that already sits between the mount and the owned leaf is
+/// removed as a link, so creating a directory can never reach through it into a
+/// tree Effigy does not own. The mount itself must be a real directory of its
+/// own, the finished chain must be real directories all the way down, and the
+/// canonical result must still be inside the mount.
+pub fn ensure_owned_stage_directory(
+    plan: &StagePlan,
+    directory: &Path,
+) -> Result<PathBuf, ContainerPolicyError> {
+    let mount = real_directory_of_its_own(&plan.mount_root, "the profile's shared mount")?;
+    let relative = directory.strip_prefix(&plan.mount_root).map_err(|_| {
+        refusal(format!(
+            "the staged directory `{}` is not below the profile's mount `{}`",
+            directory.display(),
+            plan.mount_root.display()
+        ))
+    })?;
+    let mut current = plan.mount_root.clone();
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(refusal(format!(
+                "the staged directory `{}` is not a plain path below `{}`",
+                directory.display(),
+                plan.mount_root.display()
+            )));
+        };
+        current.push(name);
+        ensure_real_directory(&current)?;
+    }
+    let observed = current.canonicalize().map_err(|error| {
+        refusal(format!(
+            "cannot resolve the staged directory `{}`: {error}",
+            current.display()
+        ))
+    })?;
+    if !observed.starts_with(&mount) {
+        return Err(refusal(format!(
+            "the staged directory `{}` resolves to `{}`, outside the profile's mount `{}`",
+            current.display(),
+            observed.display(),
+            mount.display()
+        )));
+    }
+    Ok(observed)
+}
+
+/// One directory that is real and of its own: an existing alias is unlinked, an
+/// existing non-directory is replaced, and the result is verified on disk.
+fn ensure_real_directory(directory: &Path) -> Result<(), ContainerPolicyError> {
+    match std::fs::symlink_metadata(directory) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
             std::fs::remove_file(directory).map_err(|error| {
                 refusal(format!(
-                    "cannot replace the unowned staged directory `{}`: {error}",
+                    "cannot replace the unowned staged entry `{}`: {error}",
+                    directory.display()
+                ))
+            })?;
+            std::fs::create_dir(directory).map_err(|error| {
+                refusal(format!(
+                    "cannot create the staged directory `{}`: {error}",
                     directory.display()
                 ))
             })?;
         }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir(directory).map_err(|error| {
+                refusal(format!(
+                    "cannot create the staged directory `{}`: {error}",
+                    directory.display()
+                ))
+            })?;
+        }
+        Err(error) => {
+            return Err(refusal(format!(
+                "cannot inspect the staged directory `{}`: {error}",
+                directory.display()
+            )))
+        }
     }
-    std::fs::create_dir_all(directory).map_err(|error| {
-        refusal(format!(
-            "cannot create the staged directory `{}`: {error}",
-            directory.display()
-        ))
-    })?;
     let metadata = std::fs::symlink_metadata(directory).map_err(|error| {
         refusal(format!(
             "cannot inspect the staged directory `{}`: {error}",
@@ -415,6 +482,32 @@ fn ensure_owned_directory(directory: &Path) -> Result<(), ContainerPolicyError> 
         )));
     }
     Ok(())
+}
+
+/// The canonical path of a directory that is a real directory of its own, never
+/// a link and never something that resolves through one.
+fn real_directory_of_its_own(
+    directory: &Path,
+    what: &str,
+) -> Result<PathBuf, ContainerPolicyError> {
+    let metadata = std::fs::symlink_metadata(directory).map_err(|error| {
+        refusal(format!(
+            "cannot inspect {what} `{}`: {error}",
+            directory.display()
+        ))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(refusal(format!(
+            "{what} `{}` is not a directory of its own",
+            directory.display()
+        )));
+    }
+    directory.canonicalize().map_err(|error| {
+        refusal(format!(
+            "cannot resolve {what} `{}`: {error}",
+            directory.display()
+        ))
+    })
 }
 
 /// The file a staged closure staged for one repo-relative path.

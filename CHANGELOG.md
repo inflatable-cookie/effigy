@@ -395,7 +395,11 @@ During v0.x, MINOR bumps may include breaking changes.
   paths are refreshed in place; another checkout's staged source, an empty
   runtime-created directory, a missing or ambiguous profile mount, a symlink
   and an unreadable tracked path all refuse by name before compiling, while a
-  link planted in the staged tree is unlinked rather than followed out of it. The
+  link planted in the staged tree, or between the profile's mount and the owned
+  child, is unlinked rather than followed out of it, and nothing outside the
+  owned child is created or removed. A caller or staged-tree edit during the
+  build publishes nothing: the caller's current closure and the staged tree are
+  re-proved against the compiled digest before any byte is copied back. The
   environment declares it with the new `workspace_source = "staged"` container
   option, which the private Linux builder sets; no VM, profile setting or mount
   is added or changed, and a release host still downloads.

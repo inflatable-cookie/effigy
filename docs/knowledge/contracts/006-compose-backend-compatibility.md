@@ -229,7 +229,12 @@ identity and the builder's cargo target stay stable, while changed source is
 refreshed in place and source that is no longer tracked is removed. Staging and
 cleanup treat a link as an entry, never as a path to follow: a link in the
 staged tree is unlinked, its target is untouched, and a tracked directory that
-a stale alias occupies becomes the real directory the closure names. Before
+a stale alias occupies becomes the real directory the closure names. The owned
+chain is created one component at a time from the profile's mount — which must
+be a real directory of its own — so an alias planted between the mount and the
+owned child is unlinked rather than followed, and the finished chain's canonical
+path must still be inside that mount. Nothing outside the owned child is
+created, replaced or removed by staging. Before
 compiling, the build asks the container, through its verified immutable ID,
 whether `/workspace` carries the whole closure: the inventory inside the bound
 tree must carry the digest this build recorded, every listed file must match
@@ -238,7 +243,12 @@ auto-created VM directory, another source, a changed or missing file and an
 unaccounted extra file all refuse by name instead of becoming a build error.
 Only bytes the build's own producer receipt blesses for the requested target
 and the host's version are copied back into the checkout's artifact directory,
-atomically and in the order the existing freshness checks read them.
+atomically and in the order the existing freshness checks read them. Before any
+byte is copied back, the whole binding is re-proved: the caller's current
+tracked closure must still hash to the digest that was compiled and the staged
+tree must still carry every recorded digest. A caller edit, a concurrent writer
+or a changed staged tree during a long build therefore publishes nothing and
+says which side moved.
 
 A builder retained from the pre-staging declaration binds the checkout's own
 unreachable path. The maintained activation replaces exactly that checkout's

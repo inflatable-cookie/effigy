@@ -256,8 +256,13 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
         )));
     }
     // The build wrote its artifact into the staged source. Only bytes its own
-    // producer receipt blesses for this target and version reach the caller.
-    if let Some((plan, _)) = &staged {
+    // producer receipt blesses for this target and version reach the caller, and
+    // only while the source still matches what was compiled: a caller edit or a
+    // changed staged tree during a long build makes the artifact describe source
+    // that is no longer the recorded one.
+    if let Some((plan, staged_source)) = &staged {
+        check_interruption()?;
+        workspace_artifact_source::verify_source_unchanged(plan, staged_source)?;
         check_interruption()?;
         let triple = std::env::var("EFFIGY_LINUX_RELEASE_TRIPLE")
             .ok()

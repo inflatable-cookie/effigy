@@ -18,8 +18,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use effigy_containers::artifact_source::{
-    StageBinding, StageManifest, StagePlan, StagedFile, STAGE_EXCLUDED_PREFIXES,
-    STAGE_INVENTORY_FILE, STAGE_SCHEMA,
+    ensure_owned_stage_directory, StageBinding, StageManifest, StagePlan, StagedFile,
+    STAGE_EXCLUDED_PREFIXES, STAGE_INVENTORY_FILE, STAGE_SCHEMA,
 };
 
 use crate::runner::error::RunnerError;
@@ -61,7 +61,7 @@ pub(in crate::runner) fn stage(
         scope.as_deref(),
     )?;
     let caller = binding.caller.clone();
-    ensure_owned_directory(&plan.stage_root)?;
+    ensure_owned_stage_directory(plan, &plan.stage_root)?;
     let previous = match std::fs::symlink_metadata(&plan.manifest) {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err(refusal(format!(
@@ -87,7 +87,7 @@ pub(in crate::runner) fn stage(
 
     let closure = workspace_closure(&caller)?;
     let mut changed = false;
-    ensure_owned_directory(&plan.source)?;
+    let bound = ensure_owned_stage_directory(plan, &plan.source)?;
     // Write the closure, then remove what it no longer names. The staged tree is
     // this checkout's own build source, so a deleted or renamed file must not
     // survive as stale input.
@@ -115,7 +115,7 @@ pub(in crate::runner) fn stage(
             )));
         }
         if let Some(parent) = target.parent() {
-            ensure_owned_directory_chain(&plan.source, parent)?;
+            ensure_owned_directory_chain(&bound, parent)?;
         }
         replace_unowned_entry(&target)?;
         write_file_atomically(&target, &bytes, file.executable)?;
@@ -624,6 +624,35 @@ fn write_file_atomically(target: &Path, bytes: &[u8], executable: bool) -> Resul
         refusal(format!(
             "cannot publish staged source `{}`: {error}",
             target.display()
+        ))
+    })?;
+    Ok(())
+}
+
+/// Refuse to publish when the source stopped matching what the builder compiled.
+///
+/// The builder reads a closure this producer snapshotted. A caller edit, a
+/// concurrent writer or a changed staged tree during a long build would make the
+/// produced artifact describe source that is no longer the recorded one, so both
+/// sides are re-proved before any byte is copied back: the caller's current
+/// tracked closure must still hash to the recorded digest, and the staged tree
+/// must still carry every recorded digest.
+pub(in crate::runner) fn verify_source_unchanged(
+    plan: &StagePlan,
+    staged: &StagedSource,
+) -> Result<(), RunnerError> {
+    let current = workspace_closure(&staged.manifest.caller)?;
+    if current.digest != staged.manifest.closure {
+        return Err(refusal(format!(
+            "the checkout `{}` changed while the builder compiled the recorded source (closure `{}` now, `{}` compiled); the produced artifact is not published, run again",
+            staged.manifest.caller.display(),
+            &current.digest[..12],
+            &staged.manifest.closure[..12],
+        )));
+    }
+    verify_staged(plan, &staged.manifest).map_err(|error| {
+        refusal(format!(
+            "the staged source changed while the builder compiled it ({error}); the produced artifact is not published, run again"
         ))
     })?;
     Ok(())
