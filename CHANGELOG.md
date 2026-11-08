@@ -8,6 +8,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Prepare a private, proof-only Linux VM diagnostic observation route with complete extent accounting and retained originals.
+
 - Allow a pinned macOS proof request to start its bounded stage window at the externally approved launch (effigy#696).
 
 - Keep macOS proof input bindings stable across equivalent pinned checkouts (effigy#695).
