@@ -2991,4 +2991,34 @@ mod settlement_tests {
             }
         }
     }
+
+    #[test]
+    fn milestone_130acca8_unresolved_group_refuses_and_keeps_its_residue() {
+        // The anchor-retirement refusal is one of these categories; each one
+        // must still refuse, and residue is never dropped with the group.
+        let refused = UnknownReason::Inconsistent("member generation unverified".into());
+        let verified = || Observed::Verified(Closure, Evidence::new("test".into(), None).unwrap());
+        let report = |group, residue: Vec<UnknownReason>| StopReport {
+            leader: Observed::Unknown(UnknownReason::Injected),
+            group,
+            capture: CaptureState::Complete,
+            signals: vec![],
+            residue,
+        };
+        let unresolved = report(Observed::Unknown(refused.clone()), vec![refused.clone()]);
+        let error = settlement_refusal(&unresolved, "rev-parse")
+            .expect("an unresolved group refuses")
+            .to_string();
+        assert!(error.contains("group: unknown"), "{error}");
+        assert!(error.contains("residue=[inconsistent:other]"), "{error}");
+        assert!(!error.contains("member generation unverified"), "{error}");
+        assert!(
+            settlement_refusal(&report(verified(), vec![refused]), "rev-parse").is_some(),
+            "a verified group never clears residue it did not account for"
+        );
+        assert!(
+            settlement_refusal(&report(verified(), vec![]), "rev-parse").is_none(),
+            "a verified group with no residue settles"
+        );
+    }
 }

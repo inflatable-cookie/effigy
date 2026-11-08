@@ -703,6 +703,7 @@ fn a_waiter_that_gives_up_builds_and_publishes_nothing() {
     std::fs::create_dir_all(lock_path.parent().expect("lock dir")).expect("mkdir locks");
     let holder = std::fs::OpenOptions::new()
         .create(true)
+        .truncate(false)
         .write(true)
         .truncate(false)
         .open(&lock_path)
