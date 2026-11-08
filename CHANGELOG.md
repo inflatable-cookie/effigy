@@ -38,6 +38,13 @@ During v0.x, MINOR bumps may include breaking changes.
   strict default still refuse and every refusal retains the complete observed stat identity
   (effigy#746).
 
+- Read a partition's `removable` flag as `na` in the proof-only Linux writer-bound block inventory:
+  the kernel exposes that attribute on whole disks only, so its absence on a partition no longer
+  refuses the inventory or hides the root ancestry. Whole-disk flags stay strict, an unavailable or
+  malformed inventory reads `unknown` rather than `ambiguous`, and invalid or unobserved cgroup
+  properties stay visible findings. The retained effigy#747 original replays only through the
+  legacy selector (effigy#748).
+
 - Allow a pinned macOS proof request to start its bounded stage window at the externally approved launch (effigy#696).
 
 - Keep macOS proof input bindings stable across equivalent pinned checkouts (effigy#695).
