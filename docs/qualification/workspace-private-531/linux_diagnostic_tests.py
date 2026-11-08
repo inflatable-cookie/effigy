@@ -989,6 +989,54 @@ class WriterBoundObservationTests(unittest.TestCase):
         self.assertEqual(facts['quota_tools']['repquota'], 'absent')
         self.assertEqual(facts['tools']['lsblk'], str(tools / 'lsblk'))
 
+    def test_version_capability_requires_success_and_banner_shape(self):
+        """A version is a version only from a successful invocation whose first line is its banner."""
+        tree = fixture()
+        tools = tree / 'tools'
+        tools.mkdir()
+        route = next(item for item in guest_probe.ROUTES if item['id'] == 'capabilities')
+
+        def run_route():
+            run = subprocess.run(['/bin/sh', '-c', guest_probe.CAPABILITIES], capture_output=True, timeout=60,
+                                 env={'PATH': str(tools), 'LC_ALL': 'C'})
+            self.assertEqual(run.returncode, 0, run.stderr)
+            return guest_probe.decode(route, {'disposition': 'exited', 'waited_exit': 0}, run.stdout)
+
+        def tool(name, body):
+            path = tools / name
+            path.write_text('#!/bin/sh\n' + body)
+            path.chmod(0o700)
+
+        # A refused -V that writes its error and usage to stderr must never read as a version.
+        tool('dumpe2fs', '[ "$1" = -V ] || { echo "dumpe2fs: invalid option -- V" >&2; '
+                         'echo "Usage: dumpe2fs [-V] device" >&2; exit 1; }\n')
+        status, facts, reasons = run_route()
+        self.assertEqual((status, reasons), (guest_probe.OBSERVED, []))
+        self.assertEqual(facts['versions']['dumpe2fs'], {'status': 'unavailable'})
+        self.assertEqual(facts['tools']['dumpe2fs'], str(tools / 'dumpe2fs'))
+        self.assertEqual(facts['quota_tools']['repquota'], 'absent')
+
+        # A present tool that prints nothing records unavailable and keeps every other fact.
+        tool('findmnt', 'exit 0\n')
+        status, facts, reasons = run_route()
+        self.assertEqual((status, reasons), (guest_probe.OBSERVED, []))
+        self.assertEqual(facts['versions']['findmnt'], {'status': 'unavailable'})
+        self.assertEqual(facts['tools']['findmnt'], str(tools / 'findmnt'))
+
+        # A banner from a failed invocation is not accepted either.
+        tools.joinpath('dumpe2fs').unlink()
+        tool('lsblk', '[ "$1" = --version ] && echo "lsblk from util-linux 2.39.3"; exit 1\n')
+        status, facts, reasons = run_route()
+        self.assertEqual((status, reasons), (guest_probe.OBSERVED, []))
+        self.assertEqual(facts['versions']['lsblk'], {'status': 'unavailable'})
+
+        # An unrelated line on stderr is not a version even when the tool succeeds.
+        tools.joinpath('lsblk').unlink()
+        tool('dumpe2fs', 'echo "warning: deprecated call" >&2; exit 0\n')
+        status, facts, reasons = run_route()
+        self.assertEqual((status, reasons), (guest_probe.OBSERVED, []))
+        self.assertEqual(facts['versions']['dumpe2fs'], {'status': 'unavailable'})
+
     def test_complete_dump_with_a_failed_exit_is_not_an_observation(self):
         result, _, retained = self.observe(observation_outputs(**{'filesystem': (1, filesystem_route())}))
         row = next(item for item in result['routes'] if item['id'] == 'filesystem')

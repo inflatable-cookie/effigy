@@ -234,14 +234,29 @@ for t in lsblk findmnt dumpe2fs; do
     dumpe2fs) flag=-V ;;
     *) flag=--version ;;
   esac
-  # Some tools (dumpe2fs) print their banner on stderr, so both documented streams are read. The
-  # record names the stream it came from; no temp file is written by this read-only probe.
-  v=$("$t" "$flag" 2>/dev/null | while IFS= read -r l; do printf '%s' "$l"; break; done)
+  # Some tools (dumpe2fs) print their banner on stderr, so both documented streams are read. A
+  # stream is only a version when that same invocation succeeded and its first line is the tool's
+  # own banner (it starts with the tool name and carries a version digit); anything else, such as a
+  # refused option or a usage line, records unavailable instead of a fabricated version. The record
+  # names the stream; no temp file is written by this read-only probe.
+  v=
   stream=stdout
-  if [ -z "$v" ]; then
-    v=$("$t" "$flag" 2>&1 >/dev/null | while IFS= read -r l; do printf '%s' "$l"; break; done)
-    stream=stderr
+  raw=$("$t" "$flag" 2>/dev/null); rc=$?
+  if [ "$rc" = 0 ] && [ -n "$raw" ]; then
+    v=$(printf '%s\\n' "$raw" | while IFS= read -r l; do printf '%s' "$l"; break; done)
   fi
+  if [ -z "$v" ]; then
+    stream=stderr
+    raw=$("$t" "$flag" 2>&1 >/dev/null); rc=$?
+    if [ "$rc" = 0 ] && [ -n "$raw" ]; then
+      v=$(printf '%s\\n' "$raw" | while IFS= read -r l; do printf '%s' "$l"; break; done)
+    fi
+  fi
+  case $v in
+    "") ;;
+    "$t"*) case $v in *[0-9]*) ;; *) v= ;; esac ;;
+    *) v= ;;
+  esac
   if [ -z "$v" ]; then printf 'version %s unavailable\\n' "$t"; continue; fi
   printf 'version %s %s %s\\n' "$t" "$stream" "$v"
 done
@@ -736,13 +751,14 @@ def parse_capabilities(raw):
                 raise Bad(MALFORMED, 'tool capability record carries an invalid path')
             continue
         if kind == 'version':
-            if len(row) < 4 or row[1] not in CAPABILITY_TOOLS or row[1] in versions:
+            if len(row) < 3 or row[1] not in CAPABILITY_TOOLS or row[1] in versions:
                 raise Bad(MALFORMED, 'invalid or duplicate tool version record')
             if row[2] == 'unavailable':
-                if len(row) != 4:
+                # The emitter writes a three-field unavailable record: <tool> unavailable.
+                if len(row) != 3:
                     raise Bad(MALFORMED, 'an unavailable version record carries text')
                 versions[row[1]] = {'status': 'unavailable'}
-            elif row[2] in ('stdout', 'stderr'):
+            elif row[2] in ('stdout', 'stderr') and len(row) >= 4:
                 versions[row[1]] = {'status': 'observed', 'stream': row[2],
                                     'text': _bounded(' '.join(row[3:]), 200)}
             else:
@@ -1064,8 +1080,8 @@ def correlate(rows):
         'quota_tools': capabilities.get('quota_tools', {}),
         'tool_versions': capabilities.get('versions', {}),
         'tool_versions_note': ('a version banner is read from stdout first and from stderr when stdout is '
-                               'empty; the record names that stream'),
-
+                               'empty; the record names that stream and is only a version when that '
+                               'invocation succeeded with the tool banner'),
         'control_groups': {'status': 'observed' if groups else 'unknown',
                            'files': groups.get('files', {}), 'units': groups.get('units', {}),
                            'unit_observation': groups.get('unit_observation')},
