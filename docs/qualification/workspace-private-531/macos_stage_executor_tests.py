@@ -829,14 +829,18 @@ class PlanTests(Fixture):
             before = tree(self.tmp)
             for stage in ('C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6'):
                 plan = ex.resolve_stage(stage, bindings, manifest)
-                self.assertTrue(plan['socket_paths'])
+                self.assertEqual(len(plan['socket_paths']), 9)
+                self.assertIn('user-v2/qemu', {row['name'] for row in plan['socket_paths']})
                 for row in plan['socket_paths']:
                     self.assertEqual(row['bytes'], len(row['path'].encode()))
                     self.assertLessEqual(row['bytes'] + 5, 104)
+            print('816 clean socket plan: ' + json.dumps(plan['socket_paths'], sort_keys=True))
             legacy = json.loads(json.dumps(manifest).replace('q4', 'effigy-4f6a-qual'))
             old = dict(bindings, colima_home='/Volumes/Stash/scratch/effigy/mac-4f6a-9b47cb21/c')
-            with self.assertRaisesRegex(ex.Refusal, r'ssh.sock.1234567890123456 is 105 bytes'):
+            with self.assertRaisesRegex(ex.Refusal, r'ssh.sock.1234567890123456 is 105 bytes') as failure:
                 ex.resolve_stage('C1', old, legacy)
+            self.assertIn(old['colima_home'] + '/_lima/colima-effigy-4f6a-qual/ssh.sock.1234567890123456', str(failure.exception))
+            print('816 legacy refusal: ' + str(failure.exception))
             self.assertEqual(before, tree(self.tmp))
 
     def test_plan_is_pure_and_writes_nothing(self):

@@ -127,7 +127,7 @@ def control_paths(token):
     """Fresh owned Colima and Desktop paths for one token. Pure: no filesystem access."""
     require(TOKEN.fullmatch(token or ''), 'eight lowercase hex token required')
     require(PROFILE not in PROTECTED_PROFILES, 'planned profile must not be a protected backend')
-    control = f'{STASH}/m4-{token}'
+    control = f'{STASH}/mac-4f6a-{token}'
     home = f'{control}/c'
     instance = f'colima-{PROFILE}'
     return dict(
@@ -154,14 +154,16 @@ def control_paths(token):
 
 
 def socket_paths(home, profile):
-    """Draft host socket inventory; pinned-source qualification remains pending for #816."""
+    """Pinned Colima v0.10.3 / Lima v2.2.1: VZ, containerd, user-v2, no host mounts.
+    Source receipt and exclusions: macos-4f6a5ed3-preparation.md, Socket source qualification.
+    """
     instance = f'{home}/_lima/colima-{profile}'
     return {name: f'{instance}/{name}' for name in (
         'ssh.sock', 'ssh.sock.1234567890123456', 'ha.sock', 'ga.sock',
-        'serial.sock', 'serialp.sock', 'serialv.sock', 'qmp.sock', 'swtpm.sock',
     )} | {f'colima/{name}': f'{home}/{profile}/{name}' for name in (
-        'docker.sock', 'containerd.sock', 'buildkitd.sock',
-    )}
+        'containerd.sock', 'buildkitd.sock',
+    )} | {f'user-v2/{kind}': f'{home}/_lima/_networks/user-v2/user-v2_{kind}.sock'
+         for kind in ('fd', 'qemu', 'ep')}
 
 
 def check_socket_paths(home, profile=PROFILE):
@@ -447,6 +449,9 @@ def check_colima_start(argv):
     true, so the forbidden global writes are disabled with the =false form (bool flags do not
     take a separate value). --mount none returns nil mounts, so no $HOME mount is added."""
     require(argv[1:2] == ['start'], 'colima start expected')
+    for flag, value in (('--runtime', 'containerd'), ('--vm-type', 'vz')):
+        require(argv.count(flag) == 1 and argv[argv.index(flag) + 1:argv.index(flag) + 2] == [value],
+                f'socket inventory requires {flag} {value}')
     require('--cpu' not in argv and '--cpus' in argv, 'colima start takes --cpus (0.10.3), not --cpu')
     require('--ssh-config=false' in argv, 'C1 must pass --ssh-config=false (default writes ~/.ssh/config)')
     require('--activate=false' in argv, 'C1 must pass --activate=false (default switches the active context)')

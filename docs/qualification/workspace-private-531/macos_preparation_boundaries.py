@@ -126,7 +126,7 @@ class PathControls(unittest.TestCase):
             prep.check_paths(paths, existing=set())
 
     def test_socket_margin_and_utf8_bytes(self):
-        tail = '/_lima/colima-q4/ssh.sock.1234567890123456'
+        tail = '/_lima/_networks/user-v2/user-v2_qemu.sock'
         home = '/' + 'x' * (99 - len(tail) - 1)
         rows = prep.check_socket_paths(home)
         self.assertEqual(max(row['bytes'] for row in rows), 99)
