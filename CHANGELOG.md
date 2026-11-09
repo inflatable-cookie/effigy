@@ -8,6 +8,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Close the fixed Colima route-echo, probe, stage and verify helpers through an
+  authenticated guest envelope (effigy#754). The pinned helper records Linux
+  `/proc` identity, waits the contained child, and the host binds a one-use nonce
+  before launch. A local `colima ssh` exit stays `guest_unknown`. C2 and C3 are
+  admitted as plain proof requests; C4 and D2 stay refused for engine-side
+  network. Inner streams replace the step records and the raw transport is
+  retained.
+
 - Prepare, and keep refused, the Linux artifact builder's host-write boundary
   (effigy#743). Cargo intermediates now build in the builder's own fixed private
   tree on its writable layer instead of inside the checkout the release profile

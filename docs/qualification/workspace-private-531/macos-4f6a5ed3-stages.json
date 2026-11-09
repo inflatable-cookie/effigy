@@ -52,7 +52,7 @@
     "verify_tool_sha",
     "verify_tranche_summary"
   ],
-  "manifest": "macos-4f6a5ed3-stages-r5",
+  "manifest": "macos-4f6a5ed3-stages-r6",
   "observed_metadata": {
     "child": "linux-artifact-preparation.l0tx7tam/macos-metadata-rfzuiadz",
     "note": "local metadata only; not a running-engine or guest observation",
@@ -65,7 +65,7 @@
     "image_context.py": "af74047f640111907930273f7cc7a2b46eac4cb27943f0a512fccf56a1b3b322",
     "image_prepare.py": "882f9e44e7acd87e5ab94237feb7f19a452a3bbb86dd1cf208f311129847964f",
     "macos_metadata_tranche.py": "c204bfaa87c2534da05b62c5f10beda5d3196216ce40d6afffeb8dec2ef9d1a6",
-    "macos_preparation.py": "ead3a4522fdffb93ee50e6774c9f99b02d5afe51c46681f330dee303531fc983"
+    "macos_preparation.py": "2d946e07679bfac8c9b621352403ef38cd232be8128e664f0152a73ada9575e9"
   },
   "proof_entry": {
     "baseline": {
@@ -155,7 +155,9 @@
     "desktop_host",
     "desktop_iidfile",
     "guest_context",
+    "guest_helper_source",
     "guest_iidfile",
+    "guest_nonce",
     "guest_spec",
     "guest_verify_spec",
     "image_id",
@@ -394,8 +396,13 @@
             "-p",
             "effigy-4f6a-qual",
             "--",
-            "printf",
-            "%s",
+            "python3",
+            "-I",
+            "-B",
+            "-c",
+            "{guest_helper_source}",
+            "echo",
+            "{guest_nonce}",
             "{route_echo}"
           ],
           "env": {
@@ -442,8 +449,10 @@
             "-I",
             "-B",
             "-c",
-            "{probe_source}",
-            "probe"
+            "{guest_helper_source}",
+            "probe",
+            "{guest_nonce}",
+            "{probe_source}"
           ],
           "env": {
             "set": {
@@ -511,8 +520,10 @@
             "-I",
             "-B",
             "-c",
-            "{stage_source}",
+            "{guest_helper_source}",
             "stage",
+            "{guest_nonce}",
+            "{stage_source}",
             "{guest_spec}"
           ],
           "env": {
@@ -583,8 +594,10 @@
             "-I",
             "-B",
             "-c",
-            "{verify_source}",
+            "{guest_helper_source}",
             "verify",
+            "{guest_nonce}",
+            "{verify_source}",
             "{guest_verify_spec}"
           ],
           "env": {

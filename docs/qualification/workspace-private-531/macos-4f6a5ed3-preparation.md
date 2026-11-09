@@ -1,11 +1,38 @@
 # macOS 4f6a5ed3 preparation: Colima and Desktop stages
 
 Preparation only. It arms nothing and gives no proof credit. The executable plan is
-[macos-4f6a5ed3-stages.json](macos-4f6a5ed3-stages.json), manifest revision r5 (r5 section below). Each stage
+[macos-4f6a5ed3-stages.json](macos-4f6a5ed3-stages.json), manifest revision r6 (r6 section below). Each stage
 needs its own fresh GO under standing decision `63c338e2-1c50-435e-9783-e78e9d8558e6` v2,
 naming the stage, the manifest, source and input hashes, the engine identity and a window
 of at most 1200 seconds. The standing decision is not a blanket authority, and no GO is
 recorded here.
+
+## Revision r6 (supersedes r5 for C2 and C3; manifest `macos-4f6a5ed3-stages-r6`)
+
+C2 and C3 are admitted. Their Colima `ssh` echo, probe and stage steps, and C4's verify step, run the pinned
+`macos_guest_helper.py` as `python3 -I -B -c <source> <operation> <nonce> …`. The helper records Linux `/proc`
+identity, runs one allowlisted payload as a contained child in the same session and group, waits, and emits a
+length-prefixed envelope. The host authenticates that envelope against a durable one-use intent written before
+launch: nonce, operation, helper source hash, boot, waited child exit 0, same session and group, empty group.
+A local `colima ssh` client exit is `guest_unknown`. Inner stdout/stderr replace the step streams; the raw
+transport is retained as `stdout.transport` / `stderr.transport`.
+
+C2 order is unchanged: status, echo, compare, probe. An authenticated matching echo dispatches the probe. A
+client-exit-only echo still lets compare read the captured bytes (quoting proof) and records the probe
+`not_dispatched`. C3 derives `guest_spec` from the C2 probe parent and the C0 `token32`, stages the reviewed
+recipe on bounded stdin, and refuses if the stage reports a different parent.
+
+C4 and D2 stay unadmitted for engine-side network. C4's verify helper can close; `nerdctl build --help` remains
+`guest_unknown`. Ordinary entry stays refused. C2 and C3 join C1 as plain proof requests (no window recipe).
+
+| Step | Prerequisite | Closed when | Otherwise |
+| --- | --- | --- | --- |
+| `c2-route-echo` | pinned helper, one-use nonce, hostile `ROUTE_ECHO` last | authenticated envelope, waited child 0, same session/group, empty group, inner bytes = `ROUTE_ECHO` | local client exit, truncated/missing envelope, leftover group, unreaped, setsid, cap/timeout: Unknown; nonce/boot/source/PID mismatch: refuse; lost stdout: Unknown, compare skipped |
+| `c2-guest-probe` | closed echo and matching compare | same helper closure over the pinned probe source | not dispatched if the echo did not close |
+| `c3-stage-context` | closed C2, C0 `token32`, recipe pin | helper closure and reported parent = C2 parent | replaced parent refuses; C4/D2 still unadmitted |
+| `c4-verify-context` | closed C3 | helper closure | engine-side help/build remain Unknown |
+
+No native C2/C3 occurrence. Unsupported remote/engine closures stay Unknown. No generic SSH executor.
 
 ## Revision r5 (supersedes r4 for C1; manifest `macos-4f6a5ed3-stages-r5`)
 
@@ -31,7 +58,7 @@ and an existing name, including a symlink, is a collision.
 
 C4 and D2 are not admitted. Their base-image pull and in-build apt fetches happen inside the engine build, so the runner
 sees no payload bytes and nothing bounds them. The one proposal, not implemented, is in the Static admission list below.
-C2 still needs its own remote-closure prerequisite before C3, C5, D3 and D4 can be reached.
+C2 and C3 are admitted in r6 through the pinned guest helper; C5, D3 and D4 still wait on C4.
 
 ## Revision r4 (supersedes r3 for D1 and D4)
 
@@ -67,8 +94,8 @@ defects are corrected in r3:
   to `~/Library/Caches/colima`. The stage pins `COLIMA_CACHE_HOME` to an owned directory.
 - **C2 route echo first.** Colima passes `colima ssh` arguments through to `limactl shell`,
   so quoting is not established by Colima's source. The route echo now runs before any
-  probe, stage or check source crosses the route. It is `printf %s <hostile>`, not a
-  Python one-liner, and its characters cannot redirect, pipe or background.
+  probe, stage or check source crosses the route. The echo runs the pinned guest helper
+  with the hostile constant last; its characters cannot redirect, pipe or background.
 - **C4 and C5 deadlines.** Each remote `nerdctl build` and `run` has a guest deadline
   inside a host envelope (table below). The check also carries an in-container alarm.
 - **C4 and C5 image identity.** The build writes `--iidfile`. The check runs by that
@@ -178,8 +205,9 @@ Colima (`colima`):
   `https://github.com/abiosoft/colima-core/releases/download/v0.10.4/ubuntu-24.04-minimal-cloudimg-arm64-containerd.raw.gz`,
   sha512 `86fd0879…`.
 - **C2** identity, 300 s stage: `colima status -p effigy-4f6a-qual --json`,
-  `printf %s <route echo>` and the byte comparison, then the guest parent probe. Nothing
-  else crosses the route until the comparison passes.
+  the pinned guest helper `echo` of the hostile constant, the byte comparison, then the
+  guest parent probe through the same helper. Nothing else crosses the route until the
+  comparison passes. The echo and probe close only on an authenticated helper envelope.
 - **C3** stage Dockerfile by the existing helper, with the same argv and
   `runtime.Dockerfile` on stdin. Storage cap 1 MiB.
 - **C4** verify and build, 1200 s stage, 120 s reserve. Steps: render verify spec, verify
@@ -302,9 +330,10 @@ Gates:
   its form.
 - The guest name stays under the helper's `effigy-531-image-` shape. The helper
   enforces it, so the plan binds the name instead of changing the helper.
-- Route echo is `printf %s` with a hostile constant that has no redirect, pipe or
-  background character. Its outcome is a syntax failure or a harmless echo if a shell
-  parses it, never a write.
+- Route echo is the pinned guest helper with the hostile constant last. The constant has
+  no redirect, pipe or background character. A mangled shell route cannot write. The helper
+  source is the one reviewed exception on the echo argv; other source slots still wait for
+  the compare.
 - `c4-nerdctl-build-help` reads flag metadata before the build. The build only starts if
   `--iidfile`, `--platform` and `--provenance` are in the guest's own help text.
 
@@ -445,7 +474,7 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
   The runtime timestamps come from launch, not from the preparation file. Source-test simulations confer
   no native proof credit.
 - **Static admission.** C0 and D0 have no remaining static helper refusal. Their actual execution still
-  needs the external proof-only precondition and all runtime checks. Other stages remain refused:
+  needs the external proof-only precondition and all runtime checks. Remaining refusals:
   - C1: admitted statically (r5). Its one fetch is the pinned Colima image through the prefetch helper, with the exact
     size and sha512. Ordinary execution still refuses. It is in the proof entry (`PROOF_STAGES`) as a plain proof request
     only; its window recipe is refused, since the window recipe is not reviewed for C1.
@@ -453,9 +482,11 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
     ONE proposal, not implemented: pin an exact-size base OCI archive and an offline apt bundle, fetch and hash each as the
     Colima image is, load them through a fixed step, and build with no network. Effects: a new recipe hash, a new build argv,
     two new pinned artifacts and a fresh GO. It changes no existing refusal.
-  - C2: a multi-effect guest stage. The guest closure is unknown after the route echo, so the probe
-    is not reachable through this adapter.
-  - C3: `guest_spec` derives from the C2 probe output and the `token32` that C0 mints.
+  - C2: admitted (r6). The pinned guest helper authenticates echo and probe closure. Ordinary
+    execution still refuses. It is in the proof entry as a plain proof request; its window recipe
+    is refused.
+  - C3: admitted (r6). `guest_spec` derives from the C2 probe output and the `token32` that C0 mints.
+    Ordinary execution still refuses. Plain proof request only; no window recipe.
   - D1 is statically admitted (r4). Its ordinary execution still refuses at the owner mechanism; its
     proof-only window names the original D0 receipt (see Executor).
   - D4: its per-target contract is source-qualified, but its predecessor D3 needs D2 (engine-side network),
@@ -517,25 +548,27 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
   receives a minted token32 or a fresh binding, and a fresh chain never adopts the 688 identities. D1 to D4
   require the chain engine to be `ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd`, the engine 690 observed. An empty or
   default `docker info` template refuses.
-- **Guest sources (pinned).** The C2 probe, the C3 stage and the C4 verify run the reviewed
-  `macos_guest_context.py` (sha256 `713cb10e…`) as `python3 -I -B -c <source> <mode> <spec>`. It is a
-  copy of the historical `image_context.py` (sha256 `af74047f…`, unchanged), with one contract
-  change: `stage` also reports the parent binding, so the C4 verify spec derives from the C3 output.
-  The executor reads the source from the pinned file and refuses a changed one. The file is also one of
-  the bound program files: the GO commits to its bytes, so a change after activation refuses before any
-  dispatch as an input drift. The pin is the content check; the binding is what the activation commits to.
+- **Guest sources (pinned).** The C2 echo, C2 probe, C3 stage and C4 verify run the reviewed
+  `macos_guest_helper.py` (sha256 `fcea577e…`) as `python3 -I -B -c <helper> <operation> <nonce> …`.
+  Probe, stage and verify then run the reviewed `macos_guest_context.py` (sha256 `713cb10e…`) as the
+  contained child. That file is a copy of the historical `image_context.py` (sha256 `af74047f…`,
+  unchanged), with one contract change: `stage` also reports the parent binding, so the C4 verify spec
+  derives from the C3 output. The executor reads both sources from the pinned files and refuses a
+  changed one. Both files are bound program files: the GO commits to their bytes, so a change after
+  activation refuses before any dispatch as an input drift.
 - **Derived specs.** `render_guest_spec` builds C3's spec with `build_guest_spec` from the C2 probe's
   parent binding, the chain's `token32` and the recipe hash. In C4 it builds the verify spec with
   `build_verify_spec` from the C3 output; the spec's context must carry the same `token32`. The context
   path becomes `guest_context`, and `guest_iidfile` is that path with `.iid` appended. None of these is
-  caller-supplied: the plan shows placeholders, and the run derives the values from the chain. C2
-  remains unadmitted, so these paths are not activated by this source change.
+  caller-supplied: the plan shows placeholders, and the run derives the values from the chain. A C3
+  stage that reports a different parent than the C2 probe refuses.
 - **Colima and Desktop.** Colima children resolve `docker` to `/usr/local/bin/docker` through an owned
   `bin/docker` link at the front of `PATH`, re-checked on every Colima step. Desktop runs with its
   pinned socket, `DOCKER_HOST`, an owned `DOCKER_CONFIG`, no `HOME` and no `DOCKER_CONTEXT`.
-- **Guest.** Any waited exit of a guest step, zero or not, is its client's exit. The guest's own closure
-  is unknown, so the step is `guest_unknown` and the stage stops there. A timeout, cap or monitor refusal is
-  `unknown_retained`.
+- **Guest.** A local ssh client exit, zero or not, is `guest_unknown`. The four fixed helper steps close
+  only when the authenticated envelope is closed and the local client also waited exit 0. A timeout, cap
+  or monitor refusal is `unknown_retained`. Unsupported remote steps (C4 engine-side, C5) stay
+  `guest_unknown` on a client exit.
 - **Test seams (tests only).** `TEST_SEAM` lifts the owner refusal and the static reasons inside the
   test process only, and `simulate_guest_closure` treats a clean guest exit as closed so the loop can run
   past guest steps (its receipts are labelled and refused by the chain verifier). Production defaults are off. Tests that replace predecessor verification (C1, C2, C3, C4, C5
@@ -550,27 +583,26 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
   `host_stage_dockerfile`), `executed_stub_chain` (the adapter ran it with a stubbed predecessor),
   `helper_direct` (the handler ran on controlled inputs, not through a stage), and
   `executed_closure_simulated` (the stage loop dispatched it under the test-only closure simulation, with its
-  exact argv, env, stdin and outputs asserted). C2's probe and every C4 step are `executed_closure_simulated`.
-  Under the simulation a guest step whose local child exits 0 is treated as closed, and every receipt it writes
-  is labelled `closure_simulated`; the chain verifier refuses such a receipt. The simulated chain is C2, then C3
-  on the genuine C2 receipt, then C4 on the genuine C3 receipt. Each link is a stub `verify_chain` returning the
-  genuine receipt, labelled as such. C3 and C4 also stub the C0 origin walk. The C3 and C4 guest steps run the
-  pinned source through a local child that replaces only the `ssh` wrapper; the C4 build writes its iidfile in
-  the guest parent, and the iidfile read returns exactly those bytes. A not_dispatched step is refusal coverage
-  only. Production coverage of the same steps: a matching C2 echo halts before the probe; a mismatched echo
-  refuses; an echo whose allowance runs out stops before the probe. A clean C4 verify halts before the build; a
-  non-zero client exit is still `guest_unknown`; a timeout stops the stage. D2: the Dockerfile is staged, built
-  and read back; a pre-existing Dockerfile refuses before the build; a build whose allowance runs out stops
-  before the readback. Static admission and the owner refusal still refuse with the simulation on.
+  exact argv, env, stdin and outputs asserted). C2 echo and probe are `executed` through injected helper
+  envelopes. C3 is `executed_stub_chain` the same way. C4 verify is `executed_stub_chain`; the remaining C4
+  engine-side steps stay `executed_closure_simulated`. Under the simulation a guest step whose local child
+  exits 0 is treated as closed, and every receipt it writes is labelled `closure_simulated`; the chain
+  verifier refuses such a receipt. The simulated chain is C2, then C3 on that C2 receipt, then C4 on that
+  C3 receipt. Each link is a stub `verify_chain` returning the genuine receipt, labelled as such. C3 and C4
+  also stub the C0 origin walk. A not_dispatched step is refusal coverage only. Production coverage: a
+  matching authenticated C2 echo dispatches the probe; a client-exit-only echo lets compare run and records
+  the probe `not_dispatched`; a mismatched echo refuses; an echo whose allowance runs out stops before the
+  probe. A clean C4 verify closes, then `nerdctl build --help` is `guest_unknown`; a non-zero client exit is
+  still `guest_unknown`; a timeout stops the stage. D2: the Dockerfile is staged, built and read back; a
+  pre-existing Dockerfile refuses before the build; a build whose allowance runs out stops before the
+  readback. Static admission and the owner refusal still refuse with the simulation on.
 - **Not proven.** Native execution or an actual Nucleus proof execution and native GO. Native confirmation
   that the engine's volume create prints one 64-hex name and that its inspect carries the anonymous and occurrence
   labels as the source reads predict (D1). Native per-target re-observation and removal (D4). Termination of an
-  uninterruptible kernel wait. The C2 probe through the stage loop: after the route echo's unknown closure
-  the adapter halts. The probe and the C4 steps are dispatched only under the test-only closure simulation,
-  never in production. The C0 origin is exercised by a test run only, so
-  the `token32` route has not run natively. The fresh-chain root binding is proven against local fixture C0
-  receipts only: no native C0 has created a root that a later C stage then re-observed. The guest closure rule
-  for multi-effect stages, which C2 needs before its probe can be dispatched.
+  uninterruptible kernel wait. Native C2/C3 helper closure (Linux `/proc` in a Colima guest). C4 engine-side
+  download and build. The C0 origin is exercised by a test run only, so the `token32` route has not run
+  natively. The fresh-chain root binding is proven against local fixture C0 receipts only: no native C0 has
+  created a root that a later C stage then re-observed. C5 still cannot close under the guest rule.
 - **Create-unknown volumes.** A D1 create whose closure is unknown, or whose inspect failed, leaves an
   engine-named volume with the occurrence label and no receipt. D4 never removes it. The stage stops
   and retains the create stream, so the volume is reported for manual removal.

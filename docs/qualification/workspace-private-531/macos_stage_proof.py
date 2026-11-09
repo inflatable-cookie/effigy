@@ -29,8 +29,9 @@ def unique_object(pairs):
 
 
 # D1 is reached only through a window request, which names the original D0 receipt it consumes.
-# C1 is a plain proof request only: its window recipe is not reviewed (window_recipe refuses it).
-PROOF_STAGES = ('C0', 'D0', 'D1', 'C1')
+# C1, C2 and C3 are plain proof requests only: their window recipes are not reviewed (window_recipe refuses them).
+PROOF_STAGES = ('C0', 'D0', 'D1', 'C1', 'C2', 'C3')
+PROOF_STAGE_REFUSAL = 'proof entry supports only C0, D0, D1, C1, C2 or C3'
 
 DESKTOP_DISK = '/Users/tom/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw'
 DESKTOP_GROWTH_CAP = 512 * 1024 * 1024
@@ -381,7 +382,7 @@ def execute_ready(request, request_sha):
 def prospective(stage_id, bindings):
     """Read-only binding data for a later externally authorised proof launch."""
     if stage_id not in PROOF_STAGES:
-        raise executor.Refusal('proof entry supports only C0, D0, D1 or C1')
+        raise executor.Refusal(PROOF_STAGE_REFUSAL)
     manifest = executor.load_manifest()
     plan = executor.resolve_stage(stage_id, bindings, manifest)
     if plan['static_admission']:
@@ -407,8 +408,8 @@ def checked_prior(ref, bindings, manifest):
 
 def window_recipe(stage_id, bindings, options):
     """Prospective request. Directory identities must be captured after provisioning."""
-    if stage_id == 'C1':
-        raise executor.Refusal('C1 has no window recipe: it runs only as a plain proof request')
+    if stage_id in ('C1', 'C2', 'C3'):
+        raise executor.Refusal(f'{stage_id} has no window recipe: it runs only as a plain proof request')
     base_options = {'activation_id', 'duration_seconds', 'evidence_root'}
     if set(options) != base_options | ({'prior_receipt'} if stage_id == 'D1' else set()):
         raise executor.Refusal('unsupported window options')
@@ -548,7 +549,7 @@ def main(argv):
         raise executor.Refusal('unsupported proof request')
     stage_id = request['stage']
     if stage_id not in PROOF_STAGES:
-        raise executor.Refusal('proof entry supports only C0, D0, D1 or C1')
+        raise executor.Refusal(PROOF_STAGE_REFUSAL)
     if stage_id == 'D1' and not window:
         raise executor.Refusal('D1 runs only through a window request that names its D0 receipt')
     manifest = executor.load_manifest()

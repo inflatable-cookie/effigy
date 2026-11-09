@@ -27,6 +27,7 @@ import time
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import macos_guest_helper as guest_helper  # noqa: E402
 import macos_preparation as prep  # noqa: E402
 import preparation_stage as primitive  # noqa: E402
 from preparation_resources import Monitor  # noqa: E402
@@ -37,14 +38,23 @@ RECIPE_PATH = HERE / 'runtime.Dockerfile'
 SCHEMA = 'macos-stage-executor-receipt/2'
 # The guest helper that the C2 probe, C3 stage and C4 verify argv run in the guest. Pinned by sha256.
 GUEST_CONTEXT_PATH = HERE / 'macos_guest_context.py'
+GUEST_HELPER_PATH = HERE / 'macos_guest_helper.py'
 HELPER_PATH = HERE / 'macos_stage_helper.py'
 PROOF_PATH = HERE / 'macos_stage_proof.py'
 REPO_ROOT = HERE.parents[2]
 GUEST_CONTEXT_SHA256 = '713cb10ea8ce2d5c15422650b3aa8abfe45ef5de1b0fa885219b70d3cab0f873'
+GUEST_HELPER_SHA256 = 'fcea577e8ff578cd1241f545a6e10cd5fdab1de282283567e9228732cb2fab83'
 # Program files whose bytes the GO binds. Changing any of them after activation refuses before dispatch.
 PROGRAM_FILES = (HERE / 'macos_stage_executor.py', HERE / 'macos_preparation.py',
-                 HERE / 'preparation_stage.py', HERE / 'preparation_resources.py', GUEST_CONTEXT_PATH, HELPER_PATH,
-                 PROOF_PATH)
+                 HERE / 'preparation_stage.py', HERE / 'preparation_resources.py', GUEST_CONTEXT_PATH,
+                 GUEST_HELPER_PATH, HELPER_PATH, PROOF_PATH)
+# Allowlisted Colima guest-helper operations. A local ssh client exit cannot close these.
+FIXED_GUEST_STEPS = {
+    'c2-route-echo': 'echo',
+    'c2-guest-probe': 'probe',
+    'c3-stage-context': 'stage',
+    'c4-verify-context': 'verify',
+}
 TOOL_PATHS = (prep.COLIMA, prep.DOCKER)
 # Read-only, hash-bound requests carry scope, not authority; activation is an external Nucleus precondition.
 ACTIVATIONS_DIR = prep.STASH + '/macos-stage-activations'
@@ -95,10 +105,6 @@ ENGINE_SIDE_NETWORK = ('C4 and D2 fetch the base image and apt packages inside t
                        'as the Colima image is, load them through a fixed step, and build with no network. That changes '
                        'the recipe hash and the build argv and needs a fresh GO')
 UNADMITTED = {
-    'C2': ('multi-effect guest stage: the guest closure is unknown after the route echo, so the probe is not '
-           'reachable through this adapter; the probe source itself is pinned (macos_guest_context.py)'),
-    'C3': ('guest_spec is derived from the C2 probe output and the token32 that the C0 origin mints; '
-           'C2 is unadmitted'),
     'C4': ENGINE_SIDE_NETWORK,
     'D2': ENGINE_SIDE_NETWORK,
     'D4': ('D4 cleanup is source-qualified (per-target engine and inspect checks, complete image inventory), but '
@@ -115,20 +121,23 @@ OWNER_ACTIVATION_REASON = ('no owner-controlled activation mechanism exists in t
 PINNED_SOURCE_BINDINGS = {'probe_source': 'probe', 'stage_source': 'stage', 'verify_source': 'verify'}
 # Never caller-supplied. Each is produced by this run or by the verified chain: the guest specs and context names
 # come from the C2 probe, the C3 stage output and the token32 the C0 origin minted; pinned sources come from the
-# pinned guest helper.
+# pinned guest helper. guest_nonce is minted once per fixed guest step before launch.
 DERIVED_BINDINGS = ('image_id', 'owned_container_ids', 'owned_image_id', 'owned_volume_name', 'token32',
-                    'guest_spec', 'guest_verify_spec', 'guest_context', 'guest_iidfile')
-NOT_SUPPLIED = DERIVED_BINDINGS + tuple(PINNED_SOURCE_BINDINGS)
+                    'guest_spec', 'guest_verify_spec', 'guest_context', 'guest_iidfile', 'guest_nonce')
+NOT_SUPPLIED = DERIVED_BINDINGS + tuple(PINNED_SOURCE_BINDINGS) + ('guest_helper_source',)
 PLAN_PLACEHOLDERS = {k: f'<{k}>' for k in NOT_SUPPLIED}
 
 
 def guest_source_bindings():
-    """The three guest sources, read from the pinned helper. A changed file refuses: the sha must equal the pin."""
+    """Pinned guest sources. A changed file refuses: each sha must equal its pin."""
     raw = GUEST_CONTEXT_PATH.read_bytes()
     if hashlib.sha256(raw).hexdigest() != GUEST_CONTEXT_SHA256:
         raise Refusal('the pinned guest helper differs from its sha256: refuse')
+    helper = GUEST_HELPER_PATH.read_bytes()
+    if hashlib.sha256(helper).hexdigest() != GUEST_HELPER_SHA256:
+        raise Refusal('the pinned Colima guest helper differs from its sha256: refuse')
     text = raw.decode()
-    return {slot: text for slot in PINNED_SOURCE_BINDINGS}
+    return dict({slot: text for slot in PINNED_SOURCE_BINDINGS}, guest_helper_source=helper.decode())
 
 
 def build_guest_spec(probe_parent, token32):
@@ -354,6 +363,8 @@ RUNTIME_DERIVED = {
     'probe_source': 'pinned: macos_guest_context.py probe (sha256 pinned in macos_stage_executor.py)',
     'stage_source': 'pinned: macos_guest_context.py stage (same pin)',
     'verify_source': 'pinned: macos_guest_context.py verify (same pin)',
+    'guest_helper_source': 'pinned: macos_guest_helper.py echo/probe/stage/verify (sha256 pinned in macos_stage_executor.py)',
+    'guest_nonce': 'minted once per fixed guest step before launch; bound into argv and the guest-intent record',
     'token32': 'minted once by the C0 origin step (mint_token32), read back from the verified C0 receipt by '
                'origin_token32 before C3 and C4 claim',
     'guest_spec': 'render_guest_spec (C3): build_guest_spec from the C2 probe output and the chain token32',
@@ -1189,21 +1200,111 @@ def fetch_colima_image(destination, pin, *, opener, checkpoint=None):
         conn.close()
 
 
+def _stage_guest_closure(steps_out):
+    """Stage-level guest closure: closed only when every dispatched guest step authenticated closed."""
+    guest_steps = [step for step in steps_out if step.get('guest')]
+    if not guest_steps:
+        return 'not-applicable'
+    dispatched = [step for step in guest_steps if step.get('closure') != 'not_dispatched']
+    if dispatched and all(step.get('closure') == 'closed' and step.get('guest_closure') == 'closed'
+                          for step in dispatched):
+        return 'closed'
+    return 'unknown'
+
+
 def step_closure(result, guest):
-    """Only a host step with a waited exit 0 closes. A guest step's waited exit, zero or not, is its client's
-    exit: the guest's own closure is not observed, so it is guest_unknown and the stage stops there. Deadline,
-    cap, monitor refusal and local error are unknown and retained."""
+    """A host step with a waited exit 0 closes. A guest step closes only when the authenticated helper
+    receipt is closed and the local client also waited exit 0. A local ssh exit alone is guest_unknown.
+    Deadline, cap, monitor refusal and local error are unknown and retained."""
     if result.get('waited_exit') is None or result.get('disposition') == 'local-error':
         return 'unknown_retained'
     if guest:
         if TEST_SEAM['simulate_guest_closure'] and result['disposition'] == 'exited' and result.get('waited_exit') == 0:
             return 'closed'  # test-only closure simulation; production never reaches this line with the seam on
+        if (result.get('guest_closure') == 'closed' and result['disposition'] == 'exited'
+                and result.get('waited_exit') == 0):
+            return 'closed'
         return 'guest_unknown' if result['disposition'] in ('exited', 'failed') else 'unknown_retained'
     if result['disposition'] == 'exited':
         return 'closed'
     if result['disposition'] == 'failed':
         return 'failed_closed'
     return 'unknown_retained'
+
+
+def bind_guest_intent(ctx, step_id, step_root):
+    """Durable one-use nonce and operation binding, written before the guest helper is launched."""
+    operation = FIXED_GUEST_STEPS[step_id]
+    nonce = os.urandom(32).hex()
+    used = ctx.setdefault('guest_nonces', set())
+    if nonce in used:
+        raise Refusal('guest nonce collision: refuse')
+    used.add(nonce)
+    intent = dict(nonce=nonce, operation=operation, source_sha256=GUEST_HELPER_SHA256,
+                  boot_id=ctx.get('guest_boot_id'), step=step_id, activation_id=ctx['activation_id'])
+    write_json_new(step_root, 'guest-intent.json', intent)
+    ctx['bindings']['guest_nonce'] = nonce
+    ctx['guest_intent'] = intent
+    return intent
+
+
+def check_guest_helper_argv(resolved, intent):
+    """The rendered -c program must be the pinned helper, with this step's operation and nonce."""
+    argv = resolved['argv']
+    try:
+        c_idx = argv.index('-c')
+    except ValueError as exc:
+        raise Refusal(f"{resolved['id']}: fixed guest helper is not a python -c launch") from exc
+    source = argv[c_idx + 1]
+    if hashlib.sha256(source.encode()).hexdigest() != GUEST_HELPER_SHA256:
+        raise Refusal('guest helper source differs from its pin')
+    if argv[c_idx + 2] != intent['operation']:
+        raise Refusal('guest helper operation differs from the bound intent')
+    if argv[c_idx + 3] != intent['nonce']:
+        raise Refusal('guest nonce not bound in argv')
+
+
+def establish_guest_closure(result, intent, step_root):
+    """Authenticate the helper envelope. Preserve raw transport bytes; inner streams replace stdout/stderr.
+
+    A missing or truncated envelope stays unknown. Contradictory nonce, operation, source hash or inner
+    stream hash raises. A local client exit is not this function's close.
+    """
+    stdout_path = f'{step_root}/stdout'
+    stderr_path = f'{step_root}/stderr'
+    try:
+        raw_out = Path(stdout_path).read_bytes()
+        raw_err = Path(stderr_path).read_bytes()
+    except OSError:
+        result['guest_closure'] = 'unknown'
+        return result
+    write_new_file(step_root, 'stdout.transport', raw_out)
+    write_new_file(step_root, 'stderr.transport', raw_err)
+    result['transport_streams'] = {
+        'stdout': {'bytes': len(raw_out), 'sha256': hashlib.sha256(raw_out).hexdigest()},
+        'stderr': {'bytes': len(raw_err), 'sha256': hashlib.sha256(raw_err).hexdigest()},
+    }
+    parsed = guest_helper.parse_envelope(raw_out)
+    if parsed is None:
+        result['guest_closure'] = 'unknown'
+        return result
+    try:
+        closure = guest_helper.evaluate_guest_closure(
+            intent, parsed['header'], parsed['trailer'], parsed['stdout'], parsed['stderr'])
+    except guest_helper.Refusal as exc:
+        raise Refusal(str(exc)) from exc
+    os.unlink(stdout_path)
+    os.unlink(stderr_path)
+    write_new_file(step_root, 'stdout', parsed['stdout'])
+    write_new_file(step_root, 'stderr', parsed['stderr'])
+    result['streams'] = {
+        'stdout': {'bytes': len(parsed['stdout']), 'sha256': hashlib.sha256(parsed['stdout']).hexdigest()},
+        'stderr': {'bytes': len(parsed['stderr']), 'sha256': hashlib.sha256(parsed['stderr']).hexdigest()},
+    }
+    result['guest_closure'] = closure
+    result['guest_identity'] = {key: parsed['header'].get(key)
+                                for key in ('boot_id', 'pid', 'start_time', 'pgid', 'session_id')}
+    return result
 
 
 def derive_inputs(manifest_path=MANIFEST_PATH):
@@ -1232,8 +1333,9 @@ def stable_input_manifest(manifest_path=None):
     machine_paths = [Path(sys.executable)] + list(map(Path, TOOL_PATHS))
     expected = {f'docs/qualification/workspace-private-531/{name}' for name in (
         'macos_stage_executor.py', 'macos_preparation.py', 'preparation_stage.py',
-        'preparation_resources.py', 'macos_guest_context.py', 'macos_stage_helper.py',
-        'macos_stage_proof.py', 'macos-4f6a5ed3-stages.json', 'runtime.Dockerfile')}
+        'preparation_resources.py', 'macos_guest_context.py', 'macos_guest_helper.py',
+        'macos_stage_helper.py', 'macos_stage_proof.py', 'macos-4f6a5ed3-stages.json',
+        'runtime.Dockerfile')}
     expected.update(('effigy.toml', 'config/tasks.toml'))
     try:
         declared = [Path(path).relative_to(REPO_ROOT).as_posix() for path in repo_paths]
@@ -1488,6 +1590,14 @@ def verify_receipt_tree(body, stage_id, key, manifest):
                 data = read_checked_file(f"{root}/{step['id']}/{name}", must_be_in=root, read_only=False)
                 if hashlib.sha256(data).hexdigest() != rec['sha256'] or len(data) != rec['bytes']:
                     raise Refusal(f"{step['id']}: {name} differs from its recorded stream")
+            if step.get('guest') and step.get('closure') == 'closed' and step.get('guest_closure') != 'closed':
+                raise Refusal(f"{step['id']}: closed guest step lacks authenticated guest closure")
+            if step.get('transport_streams'):
+                for name in ('stdout', 'stderr'):
+                    rec = step['transport_streams'][name]
+                    data = read_checked_file(f"{root}/{step['id']}/{name}.transport", must_be_in=root, read_only=False)
+                    if hashlib.sha256(data).hexdigest() != rec['sha256'] or len(data) != rec['bytes']:
+                        raise Refusal(f"{step['id']}: {name}.transport differs from its recorded stream")
         elif stage_id in ('C0', 'D0') and not (TEST_SEAM['admit_unadmitted'] and 'helper_receipt' not in step):
             child = step.get('helper_receipt')
             if (not isinstance(child, dict) or child.get('path') != f"{root}/{step['id']}/receipt.json"
@@ -1738,15 +1848,23 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
     ctx = dict(bindings=run_bindings, outputs={}, receipts=list((prior or {}).get('receipts', [])), selection=None,
                recipe=None, stage_root=stage_root, engine_id=engine, desktop_socket=desktop_socket, token32=token32,
                activation_id=go['activation_id'], claim=claim, pins=pins, pre_foreign=None,
-               prior_outputs=prior_output_paths(prior), manifest=manifest, monitor=monitor)
+               prior_outputs=prior_output_paths(prior), manifest=manifest, monitor=monitor,
+               guest_boot_id=None, guest_nonces=set())
     steps_out, closure, error = [], 'closed', None
     halted = False  # set when a guest step's closure is unknown: later effects stop, pure host reads may run
     try:
         for step in stage['steps']:
             step_root = f"{stage_root}/{step['id']}"
-            if halted and not (step['kind'] == 'helper' and step['helper'] in HALT_SAFE_HELPERS):
-                steps_out.append(dict(id=step['id'], kind=step['kind'], closure='not_dispatched'))
-                continue
+            if halted:
+                safe = step['kind'] == 'helper' and step['helper'] in HALT_SAFE_HELPERS
+                if safe and step['helper'] == 'compare_route_echo':
+                    echo = ctx['outputs'].get('c2-route-echo') or {}
+                    path = echo.get('stdout')
+                    if not path or not os.path.isfile(path):
+                        safe = False  # lost echo stream: do not invent a quoting proof
+                if not safe:
+                    steps_out.append(dict(id=step['id'], kind=step['kind'], closure='not_dispatched'))
+                    continue
             pins.recheck()
             monitor.check()  # live: growth between windows and by helpers counts against the same cap
             now_mono = clock()
@@ -1818,9 +1936,13 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                                                     sha256=checked_sha(step_root + '/receipt.json', must_be_in=stage_root)))
                 steps_out.append(item)
                 continue
-            resolved = resolve_step(step, ctx['bindings'])
             create_private_dir(step_root)
             pins.pin(step_root)
+            if step['id'] in FIXED_GUEST_STEPS:
+                bind_guest_intent(ctx, step['id'], step_root)
+            resolved = resolve_step(step, ctx['bindings'])
+            if step['id'] in FIXED_GUEST_STEPS:
+                check_guest_helper_argv(resolved, ctx['guest_intent'])
             if resolved['argv'][0] == prep.COLIMA:
                 ensure_colima_path(control, pins)
             stdin_path = stdin_sha = None
@@ -1835,6 +1957,10 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                                monitor=monitor, deadline=step_deadline, cleanup_deadline=deadline, step=step['id'],
                                stdin_path=stdin_path, stdin_sha256=stdin_sha,
                                identity_probe=start_identity)
+            if step['id'] in FIXED_GUEST_STEPS and resolved['guest']:
+                result = establish_guest_closure(result, ctx['guest_intent'], step_root)
+                if result.get('guest_closure') == 'closed' and result.get('guest_identity', {}).get('boot_id'):
+                    ctx['guest_boot_id'] = result['guest_identity']['boot_id']
             step_closure_value = step_closure(result, resolved['guest'])
             post_refusal = None
             try:
@@ -1848,13 +1974,18 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
             evidence = dict(path=step_root + '/receipt.json', sha256=checked_sha(step_root + '/receipt.json', must_be_in=stage_root))
             ctx['outputs'][step['id']] = dict(stdout=step_root + '/stdout', stderr=step_root + '/stderr',
                                               exit=result.get('waited_exit'), disposition=result.get('disposition'))
-            steps_out.append(dict(id=step['id'], kind='exec', closure=step_closure_value, guest=resolved['guest'],
-                                  closure_simulated=bool(TEST_SEAM['simulate_guest_closure'] and resolved['guest']),
-                                  argv=resolved['argv'], env_keys=sorted(resolved['env']),
-                                  disposition=result.get('disposition'), waited_exit=result.get('waited_exit'),
-                                  guest_closure=result.get('guest_closure'), process=result.get('process'),
-                                  streams=result.get('streams'), evidence=evidence,
-                                  observations=dict(path=observations, sha256=checked_sha(observations, must_be_in=stage_root))))
+            item = dict(id=step['id'], kind='exec', closure=step_closure_value, guest=resolved['guest'],
+                        closure_simulated=bool(TEST_SEAM['simulate_guest_closure'] and resolved['guest']),
+                        argv=resolved['argv'], env_keys=sorted(resolved['env']),
+                        disposition=result.get('disposition'), waited_exit=result.get('waited_exit'),
+                        guest_closure=result.get('guest_closure'), process=result.get('process'),
+                        streams=result.get('streams'), evidence=evidence,
+                        observations=dict(path=observations, sha256=checked_sha(observations, must_be_in=stage_root)))
+            if result.get('transport_streams') is not None:
+                item['transport_streams'] = result['transport_streams']
+            if result.get('guest_identity') is not None:
+                item['guest_identity'] = result['guest_identity']
+            steps_out.append(item)
             if step_closure_value == 'guest_unknown':
                 halted = True  # the client's exit proves nothing about the guest: no further effects
                 continue
@@ -1879,7 +2010,7 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                     engine_id=ctx['engine_id'], receipts=ctx['receipts'], steps=steps_out, origin=origin,
                     closure_simulated=bool(TEST_SEAM['simulate_guest_closure'] or force_simulation),
                     pinned=sorted(pins.items),
-                    guest_closure='unknown' if any(s.get('guest') for s in steps_out) else 'not-applicable')
+                    guest_closure=_stage_guest_closure(steps_out))
         try:
             primitive.record(stage_root + '/stage-receipt.json', body)
             dfd = private_dir(stage_root)
@@ -1917,6 +2048,14 @@ def post_check(ctx, step_id, stage_id, bindings, evidence):
         receipt = volume_creation_receipt(read_ref(ctx, 'd1-volume-create.stdout'), bindings['token'],
                                           read_ref(ctx, 'd1-volume-inspect.stdout'), ctx['engine_id'])
         ctx['receipts'].append(dict(receipt, evidence=evidence))
+    if step_id == 'c3-stage-context':
+        try:
+            reported = json.loads(read_ref(ctx, 'c3-stage-context.stdout'))
+            spec = json.loads(ctx['bindings']['guest_spec'])
+        except (TypeError, ValueError, KeyError) as exc:
+            raise Refusal('the C3 stage output is not a parent receipt') from exc
+        if not isinstance(reported, dict) or reported.get('parent') != spec.get('parent'):
+            raise Refusal('the C3 stage parent differs from the C2 probe parent')
     if step_id == 'd4-post-images':
         post_cleanup_compare(ctx)
 
