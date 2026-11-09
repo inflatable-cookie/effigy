@@ -2792,6 +2792,63 @@ class InstalledSupervisorChecks(unittest.TestCase):
 
 
 class QuotaBypassCandidateChecks(unittest.TestCase):
+    def test_candidate_broker_record_checks_custody_and_drops_before_write(self):
+        root = tmpdir('quota-broker-')
+        parent = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        bit = supervisor.CAP_SYS_RESOURCE_BIT
+        state = {'effective': bit, 'permitted': bit, 'inheritable': bit}
+        events = []
+        real_write = supervisor._row_write
+
+        def capget(header, data):
+            events.append('get')
+            for field, value in state.items():
+                setattr(data[0], field, value)
+            return 0
+
+        def capset(header, data):
+            events.append('set')
+            for field in state:
+                state[field] = getattr(data[0], field)
+            return 0
+
+        def prctl(operation, arg, *unused):
+            events.append('prctl')
+            return 1 if operation == supervisor.PR_GET_NO_NEW_PRIVS else 0
+
+        def attrs(fd):
+            events.append('attrs')
+            return supervisor.BROKER_PROJECT_ID, supervisor.BROKER_PROJINHERIT
+
+        def write(fd, name, data):
+            events.append('write')
+            self.assertFalse(any(value & bit for value in state.values()))
+            return real_write(fd, name, data)
+
+        try:
+            device = os.fstat(parent).st_dev
+            with patch.object(supervisor, '_row_write', side_effect=write):
+                supervisor._candidate_quota_broker_record(parent, 'intent.json', b'fixed', device, os.getuid(),
+                                                           capget, capset, prctl, attrs)
+            self.assertEqual((root / 'intent.json').read_bytes(), b'fixed')
+            self.assertLess(events.index('set'), events.index('write'))
+            self.assertEqual(events.count('attrs'), 2)
+            with self.assertRaisesRegex(Refusal, 'custody differs'):
+                supervisor._candidate_quota_broker_record(parent, 'stdout', b'x', device + 1, os.getuid(),
+                                                           capget, capset, prctl, attrs)
+            with self.assertRaisesRegex(Refusal, 'project or inheritance differs'):
+                supervisor._candidate_quota_broker_record(parent, 'stdout', b'x', device, os.getuid(),
+                                                           capget, capset, prctl, lambda fd: (0, 0))
+            with self.assertRaisesRegex(Refusal, 'drop failed or is unknown'):
+                supervisor._candidate_quota_broker_record(parent, 'stdout', b'x', device, os.getuid(),
+                                                           capget, lambda *args: -1, prctl, attrs)
+            with self.assertRaisesRegex(Refusal, 'not fixed'):
+                supervisor._candidate_quota_broker_record(parent, '../other', b'x', device, os.getuid(),
+                                                           capget, capset, prctl, attrs)
+            self.assertFalse((root / 'stdout').exists())
+        finally:
+            os.close(parent)
+
     def test_candidate_drops_and_rechecks_bypass_before_a_writer_can_run(self):
         bit = supervisor.CAP_SYS_RESOURCE_BIT
         state = {'effective': bit | 1, 'permitted': bit | 1, 'inheritable': bit}

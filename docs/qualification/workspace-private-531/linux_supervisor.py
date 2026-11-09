@@ -35,12 +35,14 @@ observation. SSH exit alone never establishes closure.
 """
 import base64
 import ctypes
+import fcntl
 import hashlib
 import json
 import os
 import pwd
 import re
 import stat
+import struct
 import subprocess
 import sys
 import threading
@@ -86,6 +88,8 @@ CAP_SYS_RESOURCE_BIT = 1 << 24
 CAPABILITY_VERSION_3 = 0x20080522
 PR_SET_NO_NEW_PRIVS, PR_GET_NO_NEW_PRIVS, PR_CAP_AMBIENT = 38, 39, 47
 PR_CAP_AMBIENT_IS_SET, PR_CAP_AMBIENT_CLEAR_ALL = 1, 4
+BROKER_PROJECT_ID, BROKER_PROJINHERIT = 531, 0x200
+BROKER_RECORD_NAMES = frozenset({'intent.json', 'stdout', 'stderr', 'supervisor.json'})
 PAYLOAD_ACCOUNT = 'effigy531'     # the one account a request may name; a request for any other account is refused
 STAGE_OWNER = 0                   # the stage root is root-owned in production
 # The only directory the installed entry creates row stages under. It is root-owned and mode 0711,
@@ -425,6 +429,48 @@ def _candidate_drop_quota_bypass(capget, capset, prctl):
         raise Refusal('quota-bypass capability remains present')
     expect(prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0), 1, 'no-new-privileges verification')
     expect(prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_IS_SET, 24, 0, 0), 0, 'ambient verification')
+
+
+def _broker_project_attributes(fd):
+    data = bytearray(28)
+    fcntl.ioctl(fd, 0x801c581f, data)
+    flags, _, _, project, _, _ = struct.unpack('=5I8s', data)
+    return project, flags
+
+
+def _candidate_quota_broker_record(row_fd, name, data, expected_dev, owner,
+                                   capget, capset, prctl, read_project=_broker_project_attributes):
+    """Source-only child body; no production entry or caller authority invokes it."""
+    if not isinstance(name, str) or name not in BROKER_RECORD_NAMES or \
+            not isinstance(data, bytes) or len(data) > ROOT_RECORD_CAP:
+        raise Refusal('broker record is not fixed or exceeds its byte ceiling')
+    if type(row_fd) is not int or type(expected_dev) is not int or type(owner) is not int:
+        raise Refusal('broker device or owner is invalid')
+    def observe_stat():
+        try:
+            return os.fstat(row_fd)
+        except OSError as exc:
+            raise Refusal('broker directory observation is unavailable') from exc
+    def observe_project():
+        try:
+            return read_project(row_fd)
+        except OSError as exc:
+            raise Refusal('broker project observation is unavailable') from exc
+    before = observe_stat()
+    if not stat.S_ISDIR(before.st_mode) or before.st_uid != owner or before.st_dev != expected_dev or \
+            before.st_mode & 0o022:
+        raise Refusal('broker directory custody differs')
+    project = observe_project()
+    if not isinstance(project, tuple) or len(project) != 2 or type(project[0]) is not int or \
+            type(project[1]) is not int or project[0] != BROKER_PROJECT_ID or \
+            not 0 <= project[1] <= 0xffffffff or not project[1] & BROKER_PROJINHERIT:
+        raise Refusal('broker directory project or inheritance differs')
+    _candidate_drop_quota_bypass(capget, capset, prctl)
+    after, post_project = observe_stat(), observe_project()
+    if (before.st_dev, before.st_ino, before.st_uid, before.st_mode) != \
+            (after.st_dev, after.st_ino, after.st_uid, after.st_mode) or post_project != project:
+        raise Refusal('broker directory changed after capability drop')
+    _row_write(row_fd, name, data)
 
 
 def _record_after_start(row_fd, name, data, ops, unit):
