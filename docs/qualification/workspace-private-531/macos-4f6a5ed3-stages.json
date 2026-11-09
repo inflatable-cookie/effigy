@@ -63,7 +63,7 @@
     "verify_tool_sha",
     "verify_tranche_summary"
   ],
-  "manifest": "macos-4f6a5ed3-stages-r6",
+  "manifest": "macos-4f6a5ed3-stages-r8",
   "observed_metadata": {
     "child": "linux-artifact-preparation.l0tx7tam/macos-metadata-rfzuiadz",
     "note": "local metadata only; not a running-engine or guest observation",
@@ -76,7 +76,7 @@
     "image_context.py": "af74047f640111907930273f7cc7a2b46eac4cb27943f0a512fccf56a1b3b322",
     "image_prepare.py": "882f9e44e7acd87e5ab94237feb7f19a452a3bbb86dd1cf208f311129847964f",
     "macos_metadata_tranche.py": "c204bfaa87c2534da05b62c5f10beda5d3196216ce40d6afffeb8dec2ef9d1a6",
-    "macos_preparation.py": "e16c63e15705e3074d89945a3e703791a4c9251f3b2699c67b7e7c01b58f4f4a"
+    "macos_preparation.py": "8754613ec61a0a688167df71462ecb9a3fc884335f473b34714aff3e50ac7527"
   },
   "proof_entry": {
     "baseline": {
@@ -167,7 +167,9 @@
     "desktop_iidfile",
     "desktop_input_dir",
     "guest_context",
+    "guest_helper_hex",
     "guest_iidfile",
+    "guest_nonce",
     "guest_spec",
     "guest_verify_spec",
     "image_id",
@@ -406,8 +408,14 @@
             "-p",
             "effigy-4f6a-qual",
             "--",
-            "printf",
-            "%s",
+            "python3",
+            "-I",
+            "-B",
+            "-c",
+            "exec(__import__('binascii').unhexlify(__import__('sys').argv[1]))",
+            "{guest_helper_hex}",
+            "echo",
+            "{guest_nonce}",
             "{route_echo}"
           ],
           "env": {
@@ -454,8 +462,11 @@
             "-I",
             "-B",
             "-c",
-            "{probe_source}",
-            "probe"
+            "exec(__import__('binascii').unhexlify(__import__('sys').argv[1]))",
+            "{guest_helper_hex}",
+            "probe",
+            "{guest_nonce}",
+            "{probe_source}"
           ],
           "env": {
             "set": {
@@ -523,8 +534,11 @@
             "-I",
             "-B",
             "-c",
-            "{stage_source}",
+            "exec(__import__('binascii').unhexlify(__import__('sys').argv[1]))",
+            "{guest_helper_hex}",
             "stage",
+            "{guest_nonce}",
+            "{stage_source}",
             "{guest_spec}"
           ],
           "env": {
@@ -595,8 +609,11 @@
             "-I",
             "-B",
             "-c",
-            "{verify_source}",
+            "exec(__import__('binascii').unhexlify(__import__('sys').argv[1]))",
+            "{guest_helper_hex}",
             "verify",
+            "{guest_nonce}",
+            "{verify_source}",
             "{guest_verify_spec}"
           ],
           "env": {

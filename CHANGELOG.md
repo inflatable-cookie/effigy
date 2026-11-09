@@ -8,6 +8,20 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Close the fixed Colima route-echo, probe, stage and verify helpers through an
+  authenticated guest envelope (effigy#754). The pinned helper records Linux
+  `/proc` identity, waits the contained child, and the host binds a one-use nonce
+  before launch. Helper bytes cross the Colima route as hex behind a pinned
+  one-argv launcher; `own_source_sha256` hashes that payload from `sys.orig_argv`,
+  `/proc/self/cmdline`, or the `-c` hex in `sys.argv`. The helper sets
+  `PR_SET_CHILD_SUBREAPER` before spawn and refuses if `prctl` fails; after wait
+  a live or zombie descendant whose ppid chain still reaches the helper cannot
+  close.
+  A local `colima ssh` exit stays `guest_unknown`. C2 and C3 are admitted as
+  plain proof requests. D2 is admitted on the host OCI/deb path from 756; C4
+  stays refused until guest transfer of those inputs. Inner streams replace the
+  step records and the raw transport is retained.
+
 - Pin finite Ubuntu 22.04 arm64 OCI blobs and offline apt debs as the C4/D2 runtime-image
   inputs, fetch and hash them with exact size on the host, and build with `--network none`
   plus local `--build-context` oci-layout/debs so FROM cannot contact a registry
