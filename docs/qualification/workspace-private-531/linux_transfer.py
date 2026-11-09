@@ -27,7 +27,7 @@ import preparation_resources as resources
 from linux_supervisor import Refusal
 
 MAX_DEADLINE = 1200
-WRITER_TOOLS = ('/usr/bin/env', '/bin/sh', '/bin/sleep', '/bin/cat')
+WRITER_TOOLS = ('/usr/bin/env', '/bin/sh', '/bin/sleep', '/bin/cat', '/usr/bin/python3')
 WRITER_TOOL_MAX_BYTES = 32 * 1024 * 1024
 # Remote side of the writer. Polls for the FIFO, then streams stdin into it.
 WAIT_AND_CAT = ('n=0; while [ ! -p "$1" ]; do n=$((n+1)); [ "$n" -gt "$2" ] && exit 9; /bin/sleep 0.1; done; '
@@ -111,7 +111,7 @@ def _writer_tool_identity(path, owner, boundary):
 
 
 def fixed_writer_tool_observations():
-    """Read only the four fixed guest paths; originals alone do not admit a writer."""
+    """Read only the fixed guest paths; originals alone do not admit a writer."""
     return {path: _writer_tool_identity(path, 0, '/') for path in WRITER_TOOLS}
 
 

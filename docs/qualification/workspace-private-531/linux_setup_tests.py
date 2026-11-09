@@ -636,11 +636,12 @@ class ContainedTransferChecks(unittest.TestCase):
         binary_dir = root / 'usr' / 'bin'
         binary_dir.mkdir(parents=True)
         (root / 'bin').symlink_to('usr/bin')
-        for name in ('env', 'sh', 'sleep', 'cat'):
+        for name in ('env', 'sh', 'sleep', 'cat', 'python3'):
             binary = binary_dir / name
             binary.write_bytes(('fixture-' + name).encode())
             binary.chmod(0o755)
-        paths = (binary_dir / 'env', root / 'bin' / 'sh', root / 'bin' / 'sleep', root / 'bin' / 'cat')
+        paths = (binary_dir / 'env', root / 'bin' / 'sh', root / 'bin' / 'sleep', root / 'bin' / 'cat',
+                 binary_dir / 'python3')
         def observe():
             return {name: transfers._writer_tool_identity(str(path), os.getuid(), str(root))
                     for name, path in zip(transfers.WRITER_TOOLS, paths)}
@@ -1722,7 +1723,7 @@ class PlanChecks(unittest.TestCase):
         self.assertEqual(rows['E9a']['kind'], 'contained-transfer')
         self.assertEqual(rows['E9a']['argv'][:3], ['/usr/bin/ssh', '-F', str(self.fx.config)])
         remote = shlex.split(rows['E9a']['argv'][-1])
-        self.assertEqual(remote[:3], ['sudo', '-n', setup.SUPERVISOR_PATH])
+        self.assertEqual(remote[:6], ['sudo', '-n', setup.SUPERVISOR_PYTHON, '-I', '-B', setup.SUPERVISOR_PATH])
         self.assertIn('--approved-request', remote)
         self.assertEqual(rows['E9a']['writer_argv'][:5], ['/usr/bin/ssh', '-F', str(self.fx.config), setup.SSH_ALIAS, '--'])
         self.assertIn(supervisor.TRANSFER_NAME, shlex.join(rows['E9a']['writer_argv']))
@@ -2637,7 +2638,7 @@ class SshCallerChecks(unittest.TestCase):
         row = rows['E8']
         self.assertEqual(row['argv'][:3], ['/usr/bin/ssh', '-F', str(fx.config)])
         remote = shlex.split(row['argv'][-1])
-        self.assertEqual(remote[:3], ['sudo', '-n', setup.SUPERVISOR_PATH])
+        self.assertEqual(remote[:6], ['sudo', '-n', setup.SUPERVISOR_PYTHON, '-I', '-B', setup.SUPERVISOR_PATH])
         req = json.loads(row['credit']['request_json'])
         root = tmpdir('ssh-caller-')
         req.update(stage_dir=str(root / 'stage-root' / 'E8'), payload_user=ACCOUNT_NAME, payload_uid=os.geteuid(),
@@ -2656,7 +2657,7 @@ class SshCallerChecks(unittest.TestCase):
         (approval / (digest + '.json')).write_text(text)
         (approval / (digest + '.json')).chmod(0o600)
         env['EFFIGY_APPROVAL_ROOT'] = str(approval)
-        proc = subprocess.run([str(installed), '--approved-request', digest], capture_output=True,
+        proc = subprocess.run([sys.executable, '-I', '-B', str(installed), '--approved-request', digest], capture_output=True,
                               text=True, env=env, timeout=120)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         result = json.loads(proc.stdout.strip().splitlines()[-1])

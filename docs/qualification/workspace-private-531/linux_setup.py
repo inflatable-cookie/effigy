@@ -66,6 +66,7 @@ DROPIN_TEXT = ('Match User effigy531\n'
                '    X11Forwarding no\n'
                '    PermitTTY no\n')
 SUPERVISOR_PATH = '/usr/local/libexec/effigy-stage-supervisor'
+SUPERVISOR_PYTHON = '/usr/bin/python3'
 SUPERVISOR_SOURCE = Path(__file__).resolve().parent / 'linux_supervisor.py'
 ARCHIVE_NAME = 'inputs/archive.tar'
 ARCHIVE_SHA256 = '03df0b512b7536467cfb44f131619543d4e561e09aee29cab71be12445bfe867'   # candidate H (§6.3)
@@ -700,7 +701,7 @@ def _supervised_argv(fresh, row_id, payload_argv, cwd, timeout, cfg, transfer=Fa
                               'expiry': fresh.get('authorized_keys_expiry')}
     text = json.dumps(request, sort_keys=True)
     digest = _sha(text.encode('utf-8'))
-    remote = ['sudo', '-n', SUPERVISOR_PATH, '--approved-request', digest]
+    remote = ['sudo', '-n', SUPERVISOR_PYTHON, '-I', '-B', SUPERVISOR_PATH, '--approved-request', digest]
     return ssh_argv(cfg, remote), {'nonce': nonce, 'unit': supervisor.unit_name(nonce),
                                   'request_json': text, 'request_sha256': digest}
 
@@ -1146,7 +1147,7 @@ try:
     assert not os.path.exists(root + '/' + digest + '.spent')
     out = os.open(digest + '.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
     with os.fdopen(out, 'wb') as f: f.write(data.encode()); f.flush(); os.fsync(f.fileno())
-    rule = 'effigy531 ALL=(root) NOPASSWD: ' + program + ' --approved-request ' + digest + '\n'
+    rule = 'effigy531 ALL=(root) NOPASSWD: /usr/bin/python3 -I -B ' + program + ' --approved-request ' + digest + '\n'
     path = '/etc/sudoers.d/effigy531-' + digest
     out = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o440)
     with os.fdopen(out, 'w') as f: f.write(rule)
