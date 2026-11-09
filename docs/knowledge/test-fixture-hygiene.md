@@ -329,6 +329,13 @@ waiting for another fixture cannot consume its serving budget. FIFO timeout
 fixtures release their owned writer and replace the FIFO after the assertion;
 the fragment deadline proof waits for actual read completion before teardown.
 
+Local submodule fixtures scope `GIT_ALLOW_PROTOCOL=file` under the shared
+environment guard, restoring inherited policy afterward. Fake container
+lifecycle proofs omit unrelated fixed host publications; their real health
+listeners use OS-assigned ports. Status-contract fixtures retain the explicit
+port declarations they assert. A shared CLI cohort exercises those lifecycle
+proofs together and retains the JSON failure and private backend call logs.
+
 Recorded-generation closure requires positive absence, zombie state or an
 identity mismatch. An unknown identity or state stays unresolved within the
 fixture's existing wait bound; repeated failed observations do not prove closure.

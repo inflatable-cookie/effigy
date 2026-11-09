@@ -504,6 +504,7 @@ fn shared_process_ambient_guard_regressions() {
         "runner::container_command::reserved_input::tests::a_stalled_fragment_stops_the_closure_at_the_deadline",
         "runner::bootstrap_command::tests::a_failing_setup_selector_fails_bootstrap",
         "runner::container_command::lifecycle::tests::the_creation_load_captures_a_mount",
+        "runner::container_command::lifecycle::tests::container_up_preparation_",
         "runner::container_command::data_custody_tests::every_data_command_route",
         "runner::gateway_command::tests::gateway_identity_legacy",
         "runner::workspace_command::tests::artifact_acquisition::release_acquisition_refuses_corrupt_or_missing_sidecars_over_private_http",

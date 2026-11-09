@@ -2578,6 +2578,7 @@ services:
     /// extra-mount decisions that render recorded (effigy#371).
     #[test]
     fn container_up_preparation_renders_once_and_runs_no_apply() {
+        let _environment = crate::contract_test_support::clean_fixture_environment();
         let root = temp_repo("container-up-one-render", "one-render");
         let home = root.join("home");
         let bin = root.join("bin");
@@ -2617,37 +2618,21 @@ primary_service = "app"
         )
         .expect("write compose");
 
-        let saved = (
-            std::env::var_os("PATH"),
-            std::env::var_os("HOME"),
-            std::env::var_os("EFFIGY_COMPOSE_BACKEND"),
-        );
-        std::env::set_var(
-            "PATH",
-            format!(
-                "{}:{}",
-                bin.display(),
-                saved.0.clone().unwrap_or_default().to_string_lossy()
+        let _runtime = crate::contract_test_support::EnvGuard::set_many(&[
+            (
+                "PATH",
+                Some(format!(
+                    "{}:{}",
+                    bin.display(),
+                    std::env::var("PATH").unwrap_or_default()
+                )),
             ),
-        );
-        std::env::set_var("HOME", &home);
-        std::env::set_var("EFFIGY_COMPOSE_BACKEND", "docker");
+            ("HOME", Some(home.display().to_string())),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+        ]);
 
         let mut operation = DetachedOperationState::default();
         let prepared = prepare_container_up(&root, Some("web"), false, true, &mut operation);
-
-        match saved.0 {
-            Some(value) => std::env::set_var("PATH", value),
-            None => std::env::remove_var("PATH"),
-        }
-        match saved.1 {
-            Some(value) => std::env::set_var("HOME", value),
-            None => std::env::remove_var("HOME"),
-        }
-        match saved.2 {
-            Some(value) => std::env::set_var("EFFIGY_COMPOSE_BACKEND", value),
-            None => std::env::remove_var("EFFIGY_COMPOSE_BACKEND"),
-        }
 
         let plan = prepared.expect("container up prepares");
         let objects = root.join(".effigy/state/objects");
@@ -2664,6 +2649,14 @@ primary_service = "app"
             "preparation runs no apply: {calls}"
         );
         assert!(plan.workspace_mount_decisions.is_empty());
+    }
+
+    #[test]
+    fn container_up_preparation_waits_for_environment_before_runtime_discovery() {
+        crate::contract_test_support::assert_waits_for_path_mutator(|boundary| {
+            boundary();
+            container_up_preparation_renders_once_and_runs_no_apply();
+        });
     }
 
     #[test]

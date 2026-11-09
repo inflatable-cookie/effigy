@@ -2252,7 +2252,19 @@ fn container_status_payload_template() -> Value {
 }
 
 fn write_container_fixture(root: &std::path::Path, health_check: Option<&str>, mount: &str) {
-    write_container_fixture_with_task(root, health_check, mount, false);
+    write_container_fixture_with_task(root, health_check, mount, false, true);
+}
+
+/// These fake-runtime lifecycle proofs publish no host service. A proof that
+/// needs real health owns an OS-assigned listener separately. Unrelated fixed
+/// host ports would make it depend on another process's services; the status
+/// contract fixtures retain their explicit port declarations.
+fn write_container_fixture_without_host_ports(
+    root: &std::path::Path,
+    health_check: Option<&str>,
+    mount: &str,
+) {
+    write_container_fixture_with_task(root, health_check, mount, false, false);
 }
 
 fn write_null_dns_mount_fixture(root: &std::path::Path, mount_count: usize) {
@@ -2448,6 +2460,7 @@ fn write_container_fixture_with_task(
     health_check: Option<&str>,
     mount: &str,
     include_task: bool,
+    publish_host_ports: bool,
 ) {
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::create_dir_all(root.join("app")).expect("mkdir app dir");
@@ -2457,6 +2470,11 @@ fn write_container_fixture_with_task(
     )
     .expect("write compose file");
 
+    let host_ports = if publish_host_ports {
+        r#"ports = ["8080:80", "3306:3306"]"#
+    } else {
+        ""
+    };
     let health_block = health_check.map_or(String::new(), |check| {
         format!("\n[containers.web.health]\ncheck = \"{check}\"\ntimeout_secs = 2\n")
     });
@@ -2487,7 +2505,7 @@ shutdown = "graceful"
 detach_timeout_secs = 1
 {health_block}
 [containers.web.host]
-ports = ["8080:80", "3306:3306"]
+{host_ports}
 mounts = ["{mount}"]
 {task_block}
 "#
@@ -3429,7 +3447,7 @@ fn cli_container_reset_succeeds_with_unrelated_required_container_secrets() {
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
-    write_container_fixture(&root, None, "./app:/workspace");
+    write_container_fixture_without_host_ports(&root, None, "./app:/workspace");
     append_required_container_secret(&root);
     write_locked_test_vault(&root, "vault-passphrase", &[]);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
@@ -3978,7 +3996,7 @@ fn cli_container_up_detached_starts_colima_and_reports_ready() {
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind health");
     let port = listener.local_addr().expect("addr").port();
-    write_container_fixture(
+    write_container_fixture_without_host_ports(
         &root,
         Some(&format!("tcp://127.0.0.1:{port}")),
         "./app:/workspace",
@@ -4152,6 +4170,32 @@ fn compose_inputs(log: &str) -> std::collections::BTreeSet<String> {
     files
 }
 
+/// Keep the three fake-runtime up proofs in one libtest process so concurrent
+/// cold activations exercise their original budgets and report full JSON errors.
+#[test]
+fn shared_cli_container_up_cohort() {
+    let mut command = Command::new(std::env::current_exe().expect("CLI test binary"));
+    let child = command
+        .args([
+            "--test-threads=8",
+            "--nocapture",
+            "command_behavior_tests::cli_container_up_",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn_owned()
+        .expect("owned shared-process container up cohort");
+    let output = child.wait_with_output().expect("bounded cohort completion");
+    assert!(
+        output.status.success(),
+        "shared-process container up cohort: status={}; stdout={}; stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
 /// Acowtancy #756: a render that carried `restart: unless-stopped` let nerdctl's
 /// restart manager settle a container between Compose's create and start, and
 /// `dev` exited 1 with `cannot start a container that has stopped`. The fake
@@ -4167,7 +4211,7 @@ fn cli_container_up_applies_the_restart_policy_after_compose_started_the_stack()
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind health");
     let port = listener.local_addr().expect("addr").port();
-    write_container_fixture(
+    write_container_fixture_without_host_ports(
         &root,
         Some(&format!("tcp://127.0.0.1:{port}")),
         "./app:/workspace",
@@ -4209,11 +4253,21 @@ fn cli_container_up_applies_the_restart_policy_after_compose_started_the_stack()
             .expect("run effigy")
     };
 
+    let diagnostic = |output: &std::process::Output| {
+        format!(
+            "status={}; stdout={}; stderr={}; colima calls={}; docker calls={}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+            fs::read_to_string(&colima_args).unwrap_or_default(),
+            fs::read_to_string(&docker_args).unwrap_or_default(),
+        )
+    };
     let first = up();
     assert!(
         first.status.success(),
         "the restart policy must not reach Compose's create: {}",
-        String::from_utf8_lossy(&first.stderr)
+        diagnostic(&first)
     );
     let first_inputs = compose_inputs(&fs::read_to_string(&colima_args).expect("read colima args"));
     assert!(
@@ -4227,7 +4281,7 @@ fn cli_container_up_applies_the_restart_policy_after_compose_started_the_stack()
     assert!(
         second.status.success(),
         "a re-up must not recreate a service for its restart policy: {}",
-        String::from_utf8_lossy(&second.stderr)
+        diagnostic(&second)
     );
     let second_inputs =
         compose_inputs(&fs::read_to_string(&colima_args).expect("read colima args"));
@@ -5417,7 +5471,7 @@ fn cli_container_attached_session_stops_environment_on_sigint() {
     let private = effigy_test_support::Fixture::new("effigy-158-attached-")
         .expect("exclusive private fixture");
     let root = fs::canonicalize(private.path()).expect("canonical private fixture");
-    write_container_fixture(&root, None, "./app:/workspace");
+    write_container_fixture_without_host_ports(&root, None, "./app:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
     let colima_args = root.join("colima-args.log");
@@ -5476,7 +5530,7 @@ fn cli_container_attached_stream_session_reports_operator_overview() {
     let private = effigy_test_support::Fixture::new("effigy-158-attached-")
         .expect("exclusive private fixture");
     let root = fs::canonicalize(private.path()).expect("canonical private fixture");
-    write_container_fixture(&root, None, "./app:/workspace");
+    write_container_fixture_without_host_ports(&root, None, "./app:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let colima_args = root.join("colima-args.log");
     let log_follow = root.join("log-follow.marker");
@@ -5542,7 +5596,7 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
-    write_container_fixture(&root, None, "./app:/workspace");
+    write_container_fixture_without_host_ports(&root, None, "./app:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
     let colima_args = root.join("colima-args.log");
@@ -5612,7 +5666,7 @@ fn cli_workspace_binding_handoff_stops_environment_after_return() {
         .lock()
         .unwrap_or_else(|p| p.into_inner());
     let root = temp_execution_workspace("task-workspace-binding");
-    write_container_fixture_with_task(&root, None, "./app:/workspace", true);
+    write_container_fixture_with_task(&root, None, "./app:/workspace", true, false);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let canonical_root = fs::canonicalize(&root).expect("canonical handoff checkout");
     let inspect = write_owned_runtime_inspect(&canonical_root);
@@ -5666,7 +5720,7 @@ fn cli_container_attached_session_terminates_log_process_group() {
     let private = effigy_test_support::Fixture::new("effigy-158-attached-")
         .expect("exclusive private fixture");
     let root = fs::canonicalize(private.path()).expect("canonical private fixture");
-    write_container_fixture(&root, None, "./app:/workspace");
+    write_container_fixture_without_host_ports(&root, None, "./app:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
     let colima_args = root.join("colima-args.log");
@@ -5760,7 +5814,7 @@ fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind health");
     let port = listener.local_addr().expect("addr").port();
-    write_container_fixture(
+    write_container_fixture_without_host_ports(
         &root,
         Some(&format!("tcp://127.0.0.1:{port}")),
         "./app:/workspace",
@@ -5807,7 +5861,7 @@ fn cli_container_shell_command_runs_via_sh_lc() {
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
-    write_container_fixture(&root, None, "./:/workspace");
+    write_container_fixture_without_host_ports(&root, None, "./:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
     let colima_args = root.join("colima-args.log");
@@ -5866,7 +5920,7 @@ fn cli_container_rejects_mounts_that_escape_repo_root() {
     let root = fs::canonicalize(root).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     fs::create_dir(private.path().join("outside")).expect("owned rejected mount");
-    write_container_fixture(&root, None, "../outside:/workspace");
+    write_container_fixture_without_host_ports(&root, None, "../outside:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
     let colima_args = root.join("colima-args.log");
