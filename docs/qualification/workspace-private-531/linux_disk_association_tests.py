@@ -160,6 +160,34 @@ class DiskAssociationControls(unittest.TestCase):
             extra = f'<{tag} id="2"><Index>0</Index><Enabled>1</Enabled></{tag}>'
             self.assertRefusedAt('config', valid_association(config=config_xml(extra=extra)))
 
+    def test_block_device_hidden_under_an_allowed_tag_refuses_config(self):
+        """Every hiding place in the retained tag set: a USB disk, a VirtIO block child, a SATA or SCSI
+        controller under Sound, a disk under the connect history, and a second USB element."""
+        hidden = {
+            'usb disk': '<USB><Enabled>1</Enabled><Connected>1</Connected><EmulatedType>1</EmulatedType>'
+                        '<UsbType>0</UsbType><SystemName>SanDisk|0781|5581|high|--|1234</SystemName></USB>',
+            'virtio block': '<VirtIO><ModernNet>0</ModernNet><VirtIOBlk id="3"><Index>1</Index></VirtIOBlk></VirtIO>',
+            'sata under sound': '<Sound><Enabled>1</Enabled><SataController><Index>1</Index></SataController></Sound>',
+            'disk under history': '<UsbConnectHistory><USBPort><Location>03000000</Location>'
+                                  '<SystemName>SanDisk|0781|5581|high|--|1234</SystemName></USBPort></UsbConnectHistory>',
+            'second usb element': '<USB><Enabled>1</Enabled><Connected>1</Connected><EmulatedType>3</EmulatedType>'
+                                  '<UsbType>2</UsbType><SystemName>VIRTUAL@UVC@|203a|fff9|high|--|X</SystemName></USB>'
+                                  '<USB><Enabled>1</Enabled><Connected>1</Connected><EmulatedType>1</EmulatedType>'
+                                  '<UsbType>0</UsbType><SystemName>SanDisk|0781|5581|high|--|1234</SystemName></USB>',
+        }
+        for label, extra in hidden.items():
+            with self.subTest(label):
+                association = valid_association(config=config_xml(extra=extra))
+                self.assertEqual(table(association)['config'][0], 'refuse', table(association)['config'])
+                self.assertEqual(table(association)['guest_blocks'][0], 'pass')
+
+    def test_reviewed_usb_camera_and_virtual_history_pass_config(self):
+        extra = ('<USB><Enabled>1</Enabled><Connected>1</Connected><EmulatedType>3</EmulatedType><UsbType>2</UsbType>'
+                 '<SystemName>VIRTUAL@UVC@|203a|fff9|high|--|6C707041</SystemName></USB>'
+                 '<UsbConnectHistory><USBPort><SystemName>VIRTUAL@MOUSE@|203a|fffc|full|--|PW3.0</SystemName>'
+                 '</USBPort></UsbConnectHistory>')
+        self.assertEqual(table(valid_association(config=config_xml(extra=extra)))['config'][0], 'pass')
+
     def test_bare_count_of_one_is_not_the_disk(self):
         """Both sides count one, so a counting heuristic accepts. The host source is not an image-backed disk."""
         counterexamples = {

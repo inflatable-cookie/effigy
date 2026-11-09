@@ -13,7 +13,8 @@ which premises it establishes:
                 output in the pinned grammar; yields the serial and the image UID it names
   config        the registered VM has exactly one hard disk: hdd0, SATA index 0, the reviewed device
                 Uuid, enabled and connected, image-backed (not passthrough, not remote); every Hardware
-                child is a reviewed tag, so an unknown device refuses; CD-ROM devices are counted and not
+                child is a reviewed tag, and no element outside Hdd and CdRom carries a block-capable name
+                at any depth; USB holds only the reviewed virtual camera; CD-ROM devices are counted and not
                 treated as disks
   descriptor    the descriptor bytes select the reviewed disk UID, the top, the chain and every extent
   guest_blocks  the guest has exactly one whole disk, /dev/sda, non-removable and on the platform ATA
@@ -59,6 +60,13 @@ HARDWARE_TAGS = frozenset({
 # remote) plain disk. A physical or remote disk can match the count and the name and is still not this disk.
 HDD_REVIEWED_FIELDS = (('Enabled', '1'), ('Connected', '1'), ('Remote', '0'), ('Passthrough', '0'),
                        ('DiskType', '1'))
+# A block device can hide under an allowed tag (VirtIOBlk, a SCSI or SATA controller, a disk under USB), so
+# every element outside Hdd and CdRom is checked at any depth. 'ide' is a prefix only: 'Video' contains it.
+BLOCK_WORDS = ('hdd', 'cdrom', 'floppy', 'disk', 'scsi', 'sata', 'nvme', 'storage', 'optical', 'block', 'blk',
+               'mass', 'ata')
+BLOCK_PREFIXES = ('ide',)
+# The reviewed USB content: the one virtual camera, and only virtual devices in the connect history.
+USB_CAMERA = {'EmulatedType': '3', 'UsbType': '2', 'SystemName': 'VIRTUAL@UVC@'}
 MAX_CONFIG_BYTES = 1024 * 1024
 PREMISES = ('mechanism', 'host_read', 'config', 'descriptor', 'guest_blocks', 'serial')
 UNSUPPORTED = ('unsupported controller-to-guest disk association: no source-verified host read of the '
@@ -136,6 +144,25 @@ def _check_host_read(association, pin):
             'sha256': hashlib.sha256(output).hexdigest()}
 
 
+def _check_hardware_content(hardware):
+    """Block-capable content may not hide under an allowed tag. Hdd and CdRom are checked on their own fields."""
+    for child in hardware:
+        if child.tag in ('Hdd', 'CdRom'):
+            continue
+        for node in child.iter():
+            low = node.tag.lower()
+            if any(word in low for word in BLOCK_WORDS) or low.startswith(BLOCK_PREFIXES):
+                raise Refusal('config %s carries a block-capable element %s' % (child.tag, node.tag))
+    for usb in hardware.findall('USB'):
+        if (usb.findtext('EmulatedType') != USB_CAMERA['EmulatedType']
+                or usb.findtext('UsbType') != USB_CAMERA['UsbType']
+                or not (usb.findtext('SystemName') or '').startswith(USB_CAMERA['SystemName'])):
+            raise Refusal('config USB device is not the reviewed virtual camera; a USB disk or other device refuses')
+    for port in hardware.findall('UsbConnectHistory/USBPort'):
+        if not (port.findtext('SystemName') or '').startswith('VIRTUAL@'):
+            raise Refusal('config USB connect history names a non-virtual device')
+
+
 def _check_config(association):
     """The registered VM: one hdd at SATA index 0, the reviewed device Uuid. CD-ROMs are counted only."""
     data = association.get('config')
@@ -159,6 +186,7 @@ def _check_config(association):
     unknown = sorted({child.tag for child in hardware} - HARDWARE_TAGS)
     if unknown:
         raise Refusal('config Hardware has unreviewed device elements: %s' % ', '.join(unknown))
+    _check_hardware_content(hardware)
     hdds = root.findall('Hardware/Hdd')
     if len(hdds) != 1:
         raise Refusal('config has %d hard disks; the association needs exactly one' % len(hdds))

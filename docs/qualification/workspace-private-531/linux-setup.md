@@ -302,8 +302,10 @@ Controller-to-guest association is a fail-closed verifier in `linux_disk_associa
 every association refuses. It has six premises, each checked on its own inputs (`premise_table`): `host_read`
 (one pinned read-only accessor, exact tool bytes and Desktop build, bounded output, boot bracket, and the serial
 and image UID the output names), `config` (exactly one hdd0 at SATA index 0 in the reviewed VM, enabled, connected,
-image-backed (`Passthrough` 0, `Remote` 0, `DiskType` 1); every `Hardware` child is a reviewed tag, so an unknown
-device refuses; CD-ROMs counted, not disks), `descriptor` (selected top, chain and every extent, from the
+image-backed (`Passthrough` 0, `Remote` 0, `DiskType` 1); every `Hardware` child is a reviewed tag, and no element
+outside `Hdd` and `CdRom` carries a block-capable name at any depth (`Hdd`, `Disk`, `Scsi`, `Sata`, `VirtIOBlk`,
+...); USB holds only the reviewed virtual camera, and the connect history only `VIRTUAL@` names; CD-ROMs counted,
+not disks), `descriptor` (selected top, chain and every extent, from the
 descriptor bytes), `guest_blocks` (exactly one whole disk, `/dev/sda`, non-removable and on the platform ATA
 controller `/sys/devices/platform/PRL4010:00/ata…`, with the reviewed root partition on it; loop and ROM classified
 by type, anything else refuses) and `serial` (host read serial equals the guest parent serial).
@@ -317,14 +319,22 @@ carry no block device there. Those facts close the host side only.
 Primary sources pinned for this read (installed 27.1.0 build 58756): `prlctl` (`2f61a1c6…`) help, `prlctl list`
 (`-i` is "VM configuration information"; no runtime device-state field); `libprl_shared_apps.dylib` and
 `libPrlXmlModel.1.dylib` (config element names `Passthrough`, `DiskType`, `Enabled`, `Connected`, `Remote` exist,
-their semantics are not in the binary); `ParallelsVirtualizationSDK` (`464af6b9…`) exports no `PrlVmDevHd_*`
-accessor. Parallels docs, "Physical Hard Drive": passthrough is a mode of attaching a host drive
+their semantics are not in the binary); `ParallelsVirtualizationSDK` (`464af6b9…`, 1270 exported symbols by
+`nm -gU`). The export table has the typed device accessors `PrlVmCfg_GetAllDevices`, `PrlVmCfg_GetDevsCount`,
+`PrlVmCfg_GetHardDisksCount`, `PrlVmCfg_GetHardDisk`, `PrlVmDev_GetType`, `GetIfaceType`, `GetIndex`, `GetSysName`,
+`GetImagePath`, `IsEnabled`, `IsConnected`, `IsRemote`, `IsPassthrough`, `PrlVmDevHd_GetDiskType`, `GetSizeOnDisk`,
+and `PrlVm_GetState`. No disk-serial accessor exists: the serial exports are the VM SMBIOS system serial
+(`PrlVmCfg_GetSmbiosSystemSerialNumber`), serial ports (`PrlVmCfg_GetSerialPort`, `PrlSrvCfg_GetSerialPort`) and
+`PrlVmDevSerial_*`. Parallels docs, "Physical Hard Drive": passthrough is a mode of attaching a host drive
 (`--device-add hdd --device <real_name> --passthr`); the page says nothing about VM hardware being limited to
-the configuration.
+the configuration. Parallels C API v19, `PrlVmCfg_GetAllDevices`: "Obtains a handles list of all virtual devices in a
+virtual machine", taking a `PHT_VM_CONFIGURATION` handle, so the list is the configuration's, not the running VM's.
+Parallels C API v19, `PrlVmDev_IsConnected`: "Checks if the specified virtual device is connected"; the page does not
+say whether that is configuration or running state.
 
 The upstream candidate, `PrlVmDevHd_GetSerialNumber`, is used by libvirt's Virtuozzo driver. It is not exported by the
-installed Parallels Desktop 27.1.0 SDK (`ParallelsVirtualizationSDK`, sha256 `464af6b9…`); its only serial accessors
-are the VM SMBIOS serial and serial ports. So no pinned host read exists.
+installed Parallels Desktop 27.1.0 SDK (`ParallelsVirtualizationSDK`, sha256 `464af6b9…`), which exports no disk-serial
+accessor at all (see the export list above). So no pinned host serial read exists.
 
 Replay of the retained 747 originals (transport observation, outcome sha256 `a99c3ac4…`; boot `6de5909b…`; no new
 native read) through `_run`: `config` pass (before config; the post config Hdd/CdRom subtree is identical),
@@ -339,10 +349,20 @@ Counterexample to the count heuristic: the config's one `Hdd` may be a physical 
 while the guest's one `/dev/sda` is a different device. The verifier now refuses that shape at `config`, and
 `linux_disk_association_tests.test_bare_count_of_one_is_not_the_disk` pins it. The one shape it cannot refuse from
 retained bytes is an image-backed config `Hdd` next to a guest disk the config does not declare. That is the
-missing premise. Smallest next fixed read: none is source-ready yet. The candidate is a bounded, boot-bracketed
-read of the registered VM's runtime device list, which needs a captured JSON grammar and a primary source that
-says it reflects presentation, not configuration. Until then `SUPPORTED_DISK_MECHANISMS` stays empty and 623 is
-not ready.
+missing premise. Smallest source-ready next fixed read (not run here; native, needs its own authorization): a
+read-only SDK configuration inventory of the registered VM, using only the installed exports above. Bracket it
+with the guest boot id and `PrlVm_GetState`, both before and after. Steps: `PrlSrv_LoginLocal`, `PrlVm_RegEx` on the
+reviewed VM UUID, `PrlVm_GetConfig`, `PrlVmCfg_GetAllDevices` (typed list, its count from `PrlVmCfg_GetDevsCount`),
+then per device `PrlVmDev_GetType`, `GetIfaceType`, `GetIndex`, `GetSysName`, `GetImagePath`, `IsEnabled`,
+`IsConnected`, `IsRemote`, `IsPassthrough`, and for hard disks `PrlVmDevHd_GetDiskType`. Output: one `key=value`
+line per device, at most 64 KiB, exit 0, no `Set*`, `Connect` or `Disconnect` call. The verifier can take it only
+when the typed list has exactly one hard disk, enabled, connected, image-backed, not remote or passthrough, with
+`GetImagePath` equal to the reviewed image path (canonical path custody), and no other block-capable device. That
+closes the host inventory premise on the SDK's own parser, not the XML one. It does not close presentation: no
+export or doc says the running guest presents exactly the configured devices. So `SUPPORTED_DISK_MECHANISMS` stays
+empty and 623 is not ready. Whether presentation is accepted as a threat-contract assumption (the hypervisor
+presents what the configuration declares, under the same-user boundary) is a decision for the planner, not
+something this source work can settle.
 
 Still unavailable: source-verified kernel hard limits, fresh signed Stage1 evidence, exact activation
 anchors and root installation authorization. No VM, SSH, account, service, build,
