@@ -25,6 +25,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_allocation_bound as bound
 import linux_rescue_input as rescue
+import linux_rescue_input_proof as rescue_proof
 import linux_allocation_probe as probe
 import linux_supervisor as supervisor
 import linux_setup as setup
@@ -731,6 +732,13 @@ class ProductionPathChecks(unittest.TestCase):
                                                                       writer_tools=None))}
         self.assertTrue(any('writer tool custody' in m for m in without['E9a']['missing']))
 
+    def test_completed_label_cannot_credit_quota(self):
+        witness = render(tree_root=setup.BASE, boot=lst.BOOT, tree_boot=lst.BOOT, entries=ENTRIES)
+        live = self.fx.facts(hard_limit=witness, allocation_entries={'.', 'inputs', 'inputs/archive.tar'},
+                             activation={'completed': True})
+        reason = setup._hard_limit_reason(live, {'limit_bytes': LIMIT})
+        self.assertIn('activation completion', reason)
+
     def test_missing_exact_entries_refuses_the_prebound_hard_limit_path(self):
         witness = render(tree_root=setup.BASE, boot=lst.BOOT, tree_boot=lst.BOOT)
         with patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({MECH})):
@@ -1113,6 +1121,7 @@ class ActivationRouteChecks(unittest.TestCase):
     def test_the_recorded_medium_ships_the_source_qualified_toolset(self):
         self.assertEqual(bound.ACTIVATION_MEDIUM['e2fsprogs'].split('-')[0], bound.OFFLINE_TOOL_VERSION)
         self.assertEqual(len(bound.ACTIVATION_MEDIUM['iso_sha256']), 64)
+        self.assertEqual(bound.ACTIVATION_MEDIUM['url'], rescue.URL)
         self.assertGreater(bound.ACTIVATION_MEDIUM['iso_bytes'], 2 << 30)
 
     def test_a_complete_sequence_is_accepted_and_names_the_next_boundary(self):
@@ -1288,6 +1297,48 @@ class RescueInputChecks(unittest.TestCase):
         with self.assertRaises(rescue.Refusal):
             rescue.open_fixed_https(rescue.URL, {'Authorization': 'x'})
 
+    def test_proof_entry_is_unarmed_and_checks_full_signature(self):
+        result = subprocess.run([sys.executable, '-I', '-B', rescue_proof.__file__],
+                                capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(b'ordinary execution is unarmed', result.stderr)
+        status = ('[GNUPG:] VALIDSIG ' + rescue.FINGERPRINT + ' 2026-08-27 1 0 4 0 1 10 00 '
+                  + rescue.FINGERPRINT + '\n')
+        good = {'disposition': 'exited', 'waited_exit': 0}
+        self.assertTrue(rescue_proof.verified_signature(good, status))
+        for bad in (status.replace(rescue.FINGERPRINT, 'D94AA3F0EFE21092'),
+                    status.replace(rescue.FINGERPRINT, 'A' * 40), '', status + status):
+            self.assertFalse(rescue_proof.verified_signature(good, bad))
+        self.assertFalse(rescue_proof.verified_signature(dict(good, waited_exit=1), status))
+        self.assertFalse(rescue_proof.verified_signature(dict(good, waited_exit=True), status))
+        with patch.object(rescue_proof, 'GPG', '/missing/effigy-gpg'):
+            with self.assertRaisesRegex(rescue.Refusal, 'verifier unavailable'):
+                rescue_proof.source_inputs()
+
+    def test_forged_metadata_and_expired_checkpoint_refuse(self):
+        pins = dict(rescue_proof.META_HASHES, SHA256SUMS='0' * 64)
+        with patch.object(rescue_proof, 'META_HASHES', pins), self.assertRaisesRegex(rescue.Refusal, 'metadata'):
+            rescue_proof.source_inputs()
+        with patch.object(rescue.inputs, 'fetch_pinned_https') as fetch:
+            def expired():
+                raise rescue.Refusal('deadline expired')
+            with self.assertRaisesRegex(rescue.Refusal, 'deadline'):
+                rescue.fetch_fixed('/fixture/' + rescue.NAME, checkpoint=expired)
+            fetch.assert_not_called()
+
+    def test_proof_plan_binds_fixture_identity_and_refuses_collisions(self):
+        fixture = tempfile.mkdtemp(prefix='rescue-fixture-')
+        evidence = tempfile.mkdtemp(prefix='rescue-evidence-')
+        plan = rescue_proof.plan(fixture, evidence, 'a' * 40, 'b' * 64)
+        self.assertEqual(plan['destination'], fixture + '/' + rescue.NAME)
+        self.assertEqual((plan['bytes'], plan['sha256'], plan['duration_seconds']),
+                         (rescue.SIZE, rescue.SHA256, 1800))
+        Path(fixture, 'foreign').write_bytes(b'x')
+        with self.assertRaises(rescue.Refusal):
+            rescue_proof.plan(fixture, evidence, 'a' * 40, 'b' * 64)
+        with self.assertRaises(rescue.Refusal):
+            rescue_proof.plan(evidence, evidence, 'a' * 40, 'b' * 64)
+
     def test_bounded_transport_refuses_redirect_encoding_truncation_and_overflow(self):
         data = b'fixture'
         digest = hashlib.sha256(data).hexdigest()
@@ -1316,6 +1367,19 @@ class RescueInputChecks(unittest.TestCase):
         with self.assertRaises(rescue.Refusal):
             rescue.inputs.fetch_pinned_https('fixture', str(root / 'collision'), 0, digest,
                 opener=lambda url, headers: (Connection(), Response(b'', 200, {'Content-Length': '0'})))
+        partial = root / 'partial'
+        with self.assertRaises(rescue.Refusal):
+            rescue.inputs.fetch_pinned_https('fixture', str(partial), len(data), digest,
+                opener=lambda url, headers: (Connection(), Response(data[:-1], 200, {'Content-Length': str(len(data))})))
+        self.assertEqual(partial.read_bytes(), data[:-1])
+        with self.assertRaises(rescue.Refusal):
+            rescue.inputs.fetch_pinned_https('fixture', str(partial), len(data), digest,
+                opener=lambda url, headers: (Connection(), Response(data, 200, {'Content-Length': str(len(data))})))
+        wrong_hash = root / 'wrong-hash'
+        with self.assertRaises(rescue.Refusal):
+            rescue.inputs.fetch_pinned_https('fixture', str(wrong_hash), len(data), '0' * 64,
+                opener=lambda url, headers: (Connection(), Response(data, 200, {'Content-Length': str(len(data))})))
+        self.assertEqual(wrong_hash.read_bytes(), data)
 
     def test_fixed_fetch_uses_exact_pins_and_rejects_invalid_destination(self):
         with self.assertRaises(rescue.Refusal):

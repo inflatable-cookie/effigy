@@ -853,18 +853,43 @@ def inspect_pre_rescue_originals(originals, records):
     """
     if not isinstance(originals, dict) or set(originals) != {'running_vm', 'boot', 'stopped_vm'}:
         raise Refusal('pre-rescue originals are incomplete')
-    from linux_diagnostic_proof import PRLCTL, PRLCTL_SHA256, check_vm, check_boot_id
-    host_argv = [PRLCTL, 'list', '--info', ACTIVATION_VM, '--json']
-    boot_argv = [PRLCTL, 'exec', ACTIVATION_VM, '/bin/cat', '/proc/sys/kernel/random/boot_id']
+    prlctl = '/Applications/Parallels Desktop.app/Contents/MacOS/prlctl'
+    tool_sha = '2f61a1c60db2d51591fb8479a248a982a81658f136f1501a94733b7a81731c57'
+    home = '/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm'
+    host_argv = [prlctl, 'list', '--info', ACTIVATION_VM, '--json']
+    boot_argv = [prlctl, 'exec', ACTIVATION_VM, '/bin/cat', '/proc/sys/kernel/random/boot_id']
     for name, argv in (('running_vm', host_argv), ('boot', boot_argv), ('stopped_vm', host_argv)):
         item = originals[name]
         _offline_streams(item, name, {'argv', 'tool_sha256'})
-        if item['argv'] != argv or item['tool_sha256'] != PRLCTL_SHA256:
+        if item['argv'] != argv or item['tool_sha256'] != tool_sha:
             raise Refusal('pre-rescue original has another source or argv')
+    def unique(pairs):
+        out = {}
+        for key, value in pairs:
+            if key in out:
+                raise Refusal('pre-rescue VM original has a duplicate key')
+            out[key] = value
+        return out
     try:
-        check_vm(originals['running_vm']['stdout'].encode(), 'running')
-        check_vm(originals['stopped_vm']['stdout'].encode(), 'stopped')
-        boot = check_boot_id(originals['boot']['stdout'].encode())
+        for name, state in (('running_vm', 'running'), ('stopped_vm', 'stopped')):
+            values = json.loads(originals[name]['stdout'], object_pairs_hook=unique)
+            if not isinstance(values, list) or len(values) != 1 or not isinstance(values[0], dict):
+                raise Refusal('pre-rescue VM original is incomplete')
+            vm = values[0]
+            if (vm.get('ID'), vm.get('State'), vm.get('Home'), vm.get('Home path')) != \
+                    (ACTIVATION_VM, state, home + '/', home + '/config.pvs'):
+                raise Refusal('pre-rescue VM identity or state differs')
+            hardware = vm.get('Hardware')
+            if not isinstance(hardware, dict):
+                raise Refusal('pre-rescue VM hardware is missing')
+            disks = [value for key, value in hardware.items() if re.fullmatch(r'hdd[0-9]+', key)]
+            if len(disks) != 1 or not isinstance(disks[0], dict) or \
+                    disks[0].get('image') != home + '/harddisk1.hdd' or disks[0].get('enabled') is not True:
+                raise Refusal('pre-rescue VM disk differs')
+        boot_text = originals['boot']['stdout']
+        if not boot_text.endswith('\n') or not BOOT_UUID.fullmatch(boot_text[:-1]):
+            raise Refusal('pre-rescue boot original is malformed')
+        boot = boot_text[:-1]
     except (ValueError, KeyError, TypeError) as exc:
         raise Refusal('pre-rescue VM or boot original is invalid') from exc
     if boot != records[0]['preboot_id'] or boot != records[1]['preboot_id']:
@@ -877,7 +902,7 @@ def inspect_activation_completion(activation):
 
     These records are source controls, not proof of provenance. The independent accounting
     premise remains unresolved: v1.47.2 quota_data_add can lose an allocation failure and
-    quota_compare_and_update can overwrite a scan error while closing the quota file.
+    quota_compare_and_update overwrites the scan return with the close result, although it separately flags a scan failure.
     """
     if not isinstance(activation, dict) or set(activation) != {'records', 'offline_originals', 'pre_originals'}:
         raise Refusal('activation completion requires records and offline originals')

@@ -591,10 +591,17 @@ it does not verify ISO bytes, rescue tools or a boot. The canonical ISO endpoint
 bytes. Future acquisition is limited to one exact pinned file on an exclusive removable 4 GiB
 fixture and an absolute 1,800 seconds including cleanup. This changes no native row or Stage2 bound.
 No payload was fetched.
-`linux_rescue_input.py` fixes the direct, non-redirecting URL and bounded stream primitive, but
-its ordinary entry refuses and it is not yet a Nucleus acquisition entry. The exclusive removable
-fixture identity, source-immutable proof dispatch, verifier/program custody, absolute deadline and
-production receipt are not established by this helper.
+`linux_rescue_input.py` fixes the direct, non-redirecting URL and bounded stream primitive; its
+ordinary entry refuses. The `qualification:linux:rescue-input-proof-only` selector is the fixed
+future Nucleus entry. It requires a merged pinned head and hash-pinned request, holds and rechecks
+the exclusive owned fixture's canonical Stash volume/device/inode/uid/mode identity, consumes an
+exclusive request-bound claim, verifies the pinned metadata with the pinned private-keyring tools,
+and supervises the one bounded stream under the 1,800-second deadline including cleanup. The
+4 GiB is a byte budget, not a kernel quota: the one image is capped while received and the fixture
+must start empty. The parent must independently verify that Stash is removable and pin the actual
+fixture and evidence roots in the Nucleus request. Source, path and environment alone cannot grant
+the external Nucleus launch. An interrupted fetch retains partial bytes and cannot produce a
+successful receipt. This source preparation acquired no image and changed no VM.
 
 **Offline activation, source-qualified.** For a future verified v1.47.2 toolset, the candidate offline sequence is `/sbin/e2fsck -f -n /dev/sda2`, `/sbin/tune2fs -O project -Q prjquota /dev/sda2`, `/sbin/tune2fs -E mount_opts=prjquota /dev/sda2`, then `/sbin/e2fsck -f -n /dev/sda2`, with the root unmounted throughout. The extended mount-option command replaces the whole stored option string: it is permitted only if a fresh, complete v1.47.2 `dumpe2fs` original proves that string empty; a nonempty or unknown string refuses. It does not replace the separate default mount-option bits. The [v1.47.2 superblock printer source](https://git.kernel.org/pub/scm/fs/ext2/e2fsprogs.git/plain/lib/e2p/ls.c?h=v1.47.2) has SHA-256 `692a03d286e7a2e7349af6568e3d582f74ed13b353dbf75961682fe2753f2f1d` and prints the extended option line only when nonempty. The historical 747 filesystem original, SHA-256 `27dcdc02341f7a890e32f2eb9066d0fdf3f4ed5bf8e461d968e5a21c09cc3b41`, has no such line; that is not a fresh precondition. Boot arguments or later mounts may override stored options, and the v6.1 kernel may ignore an unparseable stored string, so neither the command exit nor the string alone proves enforcement.
 
@@ -615,8 +622,8 @@ The independent candidate `e2fsck -f -n` is not admitted as a complete accountin
 `c409090140ccec5b5bf60e6c4a352d0ce2a6bd461aa1e21b5f0cbd6011c87c6c`), the checker accumulates
 inode charges through `quota_data_add`. In `mkquota.c` (hash above), that function returns void and
 skips a charge if `get_dq` cannot allocate its record. The same source's
-`quota_compare_and_update` assigns the scan error to `err`, then replaces it with the close result
-before returning. The [v1.47.2 unix.c](https://github.com/tytso/e2fsprogs/blob/v1.47.2/e2fsck/unix.c)
+`quota_compare_and_update` sets an inconsistency flag on a scan error but then replaces the scan
+return code with the close result before returning. The [v1.47.2 unix.c](https://github.com/tytso/e2fsprogs/blob/v1.47.2/e2fsck/unix.c)
 (SHA-256 `b13559bf6143b9efb2fa2cfe61d0c850936f4e9f0c6f019aaa8dac5e64b4ea0b`) skips quota
 comparison for invalid bitmaps or a zero quota inode, and asks `fix_problem` on a reported mismatch.
 The [problem handler](https://github.com/tytso/e2fsprogs/blob/v1.47.2/e2fsck/problem.c) (SHA-256
