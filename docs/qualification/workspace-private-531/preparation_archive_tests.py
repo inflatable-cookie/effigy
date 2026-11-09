@@ -1,5 +1,6 @@
 """Injected, local-only checks; no guest or network actions."""
 import hashlib
+import errno
 import io
 import json
 import os
@@ -206,6 +207,64 @@ class StageChecks(unittest.TestCase):
         self.assertEqual((self.root / 'stderr').read_bytes(), b'err\n')
         with self.assertRaises(FileExistsError):
             self.run_script('pass')
+
+    def test_fast_exit_identity_esrch_retains_original_streams_and_wait(self):
+        script = "import sys; sys.stdout.buffer.write(b'original-out\\x00'); sys.stderr.buffer.write(b'original-err\\x00')"
+        real_popen = subprocess.Popen
+        children = []
+        def spawn(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            return child
+        def vanished_after_exit(_pid):
+            children[0].wait(timeout=2)
+            raise ProcessLookupError(errno.ESRCH, 'vanished after exit')
+        with patch.object(stage.subprocess, 'Popen', side_effect=spawn):
+            result = stage.run_stage(self.root, [sys.executable, '-c', script], 2, 1024, {},
+                                     identity_probe=vanished_after_exit)
+        stdout, stderr = b'original-out\x00', b'original-err\x00'
+        self.assertEqual((self.root / 'stdout').read_bytes(), stdout)
+        self.assertEqual((self.root / 'stderr').read_bytes(), stderr)
+        self.assertEqual(result['streams']['stdout']['sha256'], hashlib.sha256(stdout).hexdigest())
+        self.assertEqual(result['streams']['stderr']['sha256'], hashlib.sha256(stderr).hexdigest())
+        self.assertEqual(result['waited_exit'], 0)
+        self.assertEqual(result['disposition'], 'unknown')
+        self.assertEqual(result['identity_probe']['status'], 'failed')
+        self.assertEqual(result['identity_probe']['error'], 'ProcessLookupError')
+        self.assertEqual(result['identity_probe']['errno'], errno.ESRCH)
+        process = json.loads((self.root / 'process.json').read_text())
+        self.assertIsNone(process['pgid'])
+        self.assertIsNone(process['session_id'])
+        self.assertEqual(json.loads((self.root / 'receipt.json').read_text()), result)
+        with self.assertRaises(FileExistsError):
+            stage.run_stage(self.root, [sys.executable, '-c', 'pass'], 2, 1024, {})
+
+    def test_live_identity_probe_failure_is_bounded_and_unknown(self):
+        result = stage.run_stage(self.root, [sys.executable, '-c', 'import time; time.sleep(10)'], 0.1, 1024, {},
+                                 identity_probe=lambda _pid: (_ for _ in ()).throw(PermissionError(1, 'denied')),
+                                 deadline=time.monotonic() + 0.1, cleanup_deadline=time.monotonic() + 1)
+        self.assertEqual(result['disposition'], 'unknown')
+        self.assertEqual(result['identity_probe']['error'], 'PermissionError')
+        self.assertEqual(result['identity_probe']['errno'], 1)
+        self.assertIsNotNone(result['waited_exit'])
+
+    def test_inherited_stream_after_identity_failure_stays_unknown_until_closed(self):
+        script = "import subprocess,sys; subprocess.Popen([sys.executable,'-c','import time; time.sleep(0.25)'])"
+        started = time.monotonic()
+        result = stage.run_stage(self.root, [sys.executable, '-c', script], 0.1, 1024, {},
+                                 identity_probe=lambda _pid: (_ for _ in ()).throw(OSError(5, 'probe failed')),
+                                 deadline=time.monotonic() + 0.1, cleanup_deadline=time.monotonic() + 1.5)
+        self.assertEqual(result['disposition'], 'unknown')
+        self.assertIsNotNone(result['waited_exit'])
+        self.assertEqual(result['identity_probe']['errno'], 5)
+        self.assertGreaterEqual(time.monotonic() - started, 0.2)
+        self.assertLess(time.monotonic() - started, 1.5)
+
+    def test_zero_output_cap_retains_no_bytes_and_records_cap(self):
+        result = stage.run_stage(self.root, [sys.executable, '-c', "print('x', flush=True)"], 2, 0, {})
+        self.assertEqual(result['disposition'], 'output-cap')
+        self.assertEqual((self.root / 'stdout').read_bytes(), b'')
+        self.assertGreater(result['observed_bytes']['stdout'], 0)
 
     def test_timeout_and_partial_output(self):
         result = self.run_script("import time; print('partial', flush=True); time.sleep(10)", timeout=0.2)

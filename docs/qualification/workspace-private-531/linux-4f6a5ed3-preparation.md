@@ -650,7 +650,11 @@ checked before and after the intent is written. `intent.json` is exclusive and
 spends the occurrence; `process.json`, the two streams and `receipt.json` are
 retained. A missing receipt, an interrupted transport or missing guest closure
 is unknown, not permission to replay. The primitive records local process
-closure only. For guest work, invoke the bound `preparation_guest.py` under the
+closure only. If the spawn-time identity probe fails, it still drains and hashes
+the original streams and records the directly waited exit, but leaves group and
+session identity absent and the disposition unknown; it does not advance a stage
+from exit status alone. Without verified group identity, cleanup is limited to
+the owned `Popen` child. For guest work, invoke the bound `preparation_guest.py` under the
 pinned SSH transport; its own deadline and identity record are guest-local. Its
 terminal receipt deliberately reports guest closure unknown: a process can
 escape a session, and an independently authenticated containment/closure
