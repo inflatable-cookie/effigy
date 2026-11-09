@@ -1,4 +1,4 @@
-"""Fixed read-only Parallels host-inventory helper and owned output grammar.
+"""Fixed Parallels host-inventory helper and owned output grammar.
 
 Production dispatch is exactly:
 
@@ -11,10 +11,13 @@ are local metadata.
 Remaining native gap: the numeric PARALLELS_API_VER is not in the permitted sources
 (the 27.1.0-58756 bundle ships no SDK headers). enumerate_inventory refuses Init
 rather than guessing. PRL_HANDLE sizeof is likewise unsourced; ctypes binding waits
-on the same later occurrence.
+on the same later occurrence. Session lifecycle APIs are required to reach getters
+and are not sourced as read-only. GetVmListEx read-only is inferred. LoginLocal
+state effect is not fetched. IsConnected's config-or-running sense is not stated.
 
 Allowlisted C API v17 names below are the only operations a later genuine read may
-call. Set*/Connect/Disconnect/Reg*/Unreg*/PrlVm_RegEx are excluded.
+call. Set*/Connect/Disconnect/Reg*/Unreg*/PrlVm_RegEx are excluded. The allowlist
+is not a claim that every name is a read.
 """
 import hashlib
 import plistlib
@@ -94,16 +97,35 @@ FORBIDDEN_BLOCK_TYPES = frozenset({
     PDE_GENERIC_NVME_DEVICE,
 })
 
-# Sourced read-only sequence for a later genuine occurrence. Not executed here.
-ALLOWLISTED_APIS = (
+# Session lifecycle. Required to reach getters. Not sourced as read-only.
+# Remaining native premises include LoginLocal's state effect.
+SESSION_APIS = (
     'PrlApi_InitEx', 'PrlApi_Deinit', 'PrlSrv_Create', 'PrlSrv_LoginLocal', 'PrlSrv_Logoff',
-    'PrlSrv_GetVmListEx', 'PrlJob_Wait', 'PrlJob_GetRetCode', 'PrlJob_GetResult',
+)
+# Remaining native premise: GetVmListEx read-only is inferred, not fetched from C API v17.
+INFERRED_LIST_APIS = ('PrlSrv_GetVmListEx',)
+# Job and handle plumbing used by both session setup and getters.
+JOB_APIS = (
+    'PrlJob_Wait', 'PrlJob_GetRetCode', 'PrlJob_GetResult',
     'PrlResult_GetParam', 'PrlHndlList_GetItemsCount', 'PrlHndlList_GetItem', 'PrlHandle_Free',
+)
+# Configuration getters sourced as reads (C API v17). IsConnected's config-or-running sense
+# is not stated and remains a native premise.
+CONFIG_READ_APIS = (
     'PrlVm_GetConfig', 'PrlVm_GetState', 'PrlVmInfo_GetState', 'PrlVmCfg_GetUuid',
     'PrlVmCfg_GetHomePath', 'PrlVmCfg_GetAllDevices', 'PrlVmCfg_GetDevsCount',
     'PrlVmDev_GetType', 'PrlVmDev_GetIfaceType', 'PrlVmDev_GetIndex', 'PrlVmDev_GetSysName',
     'PrlVmDev_GetImagePath', 'PrlVmDev_IsEnabled', 'PrlVmDev_IsConnected', 'PrlVmDev_IsRemote',
     'PrlVmDev_IsPassthrough', 'PrlVmDevHd_GetDiskType', 'PrlVmDev_GetEmulatedType',
+)
+# Union of names a later genuine occurrence may call. Not a claim the whole sequence is a read.
+ALLOWLISTED_APIS = SESSION_APIS + INFERRED_LIST_APIS + JOB_APIS + CONFIG_READ_APIS
+REMAINING_NATIVE_PREMISES = (
+    'PARALLELS_API_VER',
+    'PRL_HANDLE sizeof',
+    'PrlSrv_LoginLocal state effect',
+    'PrlSrv_GetVmListEx read-only inferred',
+    'PrlVmDev_IsConnected config-or-running',
 )
 
 SCALAR_KEYS = (
@@ -280,6 +302,8 @@ def read_inventory(transport=None, helper=HELPER, pin=None):
     record = {
         'tool_path': str(helper), 'tool_sha256': helper_sha256(helper),
         'tool_version': LIBRARY_VERSION, 'desktop_build': LIBRARY_VERSION + '-' + LIBRARY_BUILD,
+        # Observation that this dispatch is the inventory accessor, not a Set*/Connect.
+        # Not a claim that LoginLocal or InitEx are sourced as read-only.
         'api': 'PrlVmCfg_GetAllDevices', 'readonly': True, 'argv': argv,
         'status': status, 'exit': exit_code if isinstance(exit_code, int) else -1,
         'truncated': bool(truncated), 'output': bytes(output),

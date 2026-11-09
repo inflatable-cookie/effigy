@@ -14,9 +14,10 @@ stale/misreported presentation. That is not independent presentation proof.
 Premises, all required. premise_table reports each one on its own inputs, so a partial fact set shows
 which premises it establishes:
   mechanism     the mechanism is supported and pinned
-  host_read     one pinned read-only inventory, bounded, exit 0, bracketed by the same boot identity,
+  host_read     one pinned inventory dispatch, bounded, exit 0, bracketed by the same boot identity,
                 output in the owned grammar; exactly one enabled connected image-backed data disk,
-                canonical SystemName-to-image path, no extra/unknown/passthrough/ambiguous sources
+                canonical SystemName-to-image path, exactly one optical device matching the registered
+                config CdRom count, no extra/unknown/passthrough/ambiguous sources
   config        the registered VM has exactly one hard disk: hdd0, SATA index 0, the reviewed device
                 Uuid, enabled and connected, image-backed (not passthrough, not remote); every Hardware
                 child is a reviewed tag, and no element outside Hdd and CdRom carries a block-capable name
@@ -157,7 +158,7 @@ def _check_mechanism(association, supported, pins):
 
 
 def _check_inventory_devices(devices):
-    """Exactly one enabled connected image-backed HDD; no extra/unknown/passthrough/ambiguous sources."""
+    """Exactly one enabled connected image-backed HDD; exactly one optical; no extra/unknown/passthrough sources."""
     hdds = [d for d in devices if d['type'] == inventory.PDE_HARD_DISK]
     if len(hdds) != 1:
         raise Refusal('host inventory has %d hard disks; the association needs exactly one' % len(hdds))
@@ -171,6 +172,12 @@ def _check_inventory_devices(devices):
             or hdd['disk_type'] != inventory.PHD_EXPANDING_HARD_DISK
             or hdd['emulated_type'] != inventory.PDT_USE_IMAGE_FILE):
         raise Refusal('host inventory hard disk is not the reviewed image-backed disk')
+    opticals = [d for d in devices if d['type'] == inventory.PDE_OPTICAL_DISK]
+    names = [d['sys_name'] for d in opticals]
+    if len(set(names)) != len(names):
+        raise Refusal('host inventory has duplicate optical entries')
+    if len(opticals) != 1:
+        raise Refusal('host inventory has %d optical devices; the reviewed VM has exactly one' % len(opticals))
     cameras = [d for d in devices
                if d['sys_name'] == USB_CAMERA_RECORD['SystemName'] or d['type'] == inventory.PDE_CAMERA]
     if len(cameras) != 1:
@@ -185,7 +192,7 @@ def _check_inventory_devices(devices):
             raise Refusal('host inventory carries unknown or passthrough storage type %s' % device['type'])
         if device['emulated_type'] in (inventory.PDT_USE_REAL_DEVICE, inventory.PDT_USE_DIRECT_ASSIGN):
             raise Refusal('host inventory carries a real or passthrough block source')
-    return hdd
+    return {'hdd': hdd, 'optical_count': len(opticals)}
 
 
 def _check_host_read(association, pin):
@@ -229,14 +236,16 @@ def _check_host_read(association, pin):
         raise Refusal('host read VM state changed during the inventory')
     if parsed['state_before'] != inventory.VMS_RUNNING:
         raise Refusal('host read is not of the running VM')
-    hdd = _check_inventory_devices(parsed['devices'])
+    checked = _check_inventory_devices(parsed['devices'])
+    hdd = checked['hdd']
     host_serial = parsed.get('serial')
     guest = association.get('guest') or {}
     guest_serial = guest.get('parent_serial') or ''
     if host_serial and guest_serial and host_serial != guest_serial:
         raise Refusal('host serial observation does not match the guest parent serial')
     return {'sys_name': hdd['sys_name'], 'image_path': hdd['image_path'],
-            'serial': host_serial, 'sha256': hashlib.sha256(output).hexdigest()}
+            'serial': host_serial, 'sha256': hashlib.sha256(output).hexdigest(),
+            'optical_count': checked['optical_count']}
 
 
 def _check_hardware_content(hardware):
@@ -395,12 +404,17 @@ def _run(association, supported, pins):
 
     pin = step('mechanism', _check_mechanism, association, supported, pins)
     read = step('host_read', _check_host_read, association, pin)
-    step('config', _check_config, association)
+    config = step('config', _check_config, association)
     step('descriptor', _check_descriptor, association)
     guest_serial = step('guest_blocks', _check_guest, association)
+    if (read is not None and config is not None
+            and read['optical_count'] != config['cdrom_count']):
+        table = [(name, 'refuse', 'host inventory optical count differs from the config CdRom count')
+                 if name == 'host_read' else (name, status, reason)
+                 for name, status, reason in table]
+        return table, None
     if any(status != 'pass' for _, status, _ in table):
         return table, None
-    config = values['config']
     selection = values['descriptor']
     return table, {'mechanism': association['mechanism'], 'vm': REVIEWED['vm'],
                    'disk_uid': REVIEWED['disk_uid'], 'device_uuid': config['device_uuid'],

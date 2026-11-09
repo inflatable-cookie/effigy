@@ -315,7 +315,8 @@ Five premises are checked on their own inputs (`premise_table`):
   `PrlVmCfg_GetAllDevices` sequence, fixed argv `/usr/bin/python3 -I -B linux_disk_inventory.py inventory`, bounded
   owned `key=value` grammar (≤64 KiB), boot bracket, reviewed VM UUID and home, running VM state before and after,
   exactly one enabled connected image-backed SATA hdd0 whose `SystemName` `harddisk1.hdd` joins to
-  `{PVM_HOME}/harddisk1.hdd`, the reviewed USB camera, and no extra/unknown/passthrough/ambiguous block source.
+  `{PVM_HOME}/harddisk1.hdd`, exactly one `PDE_OPTICAL_DISK` matching the config's one `CdRom`, the
+  reviewed USB camera, and no extra/unknown/passthrough/ambiguous block source.
 - `config`: exactly one `Hdd` (hdd0, SATA index 0, reviewed device Uuid) that is enabled, connected, not passthrough,
   not remote, and `DiskType` 1. Every `Hardware` child is a reviewed tag. No element outside `Hdd` and `CdRom` carries
   a block-capable name at any depth (`Hdd`, `Disk`, `Scsi`, `Sata`, `VirtIOBlk`, ...). USB holds only the reviewed
@@ -384,20 +385,24 @@ mechanism is not evidence this inventory ran.
 
 **Closed enumeration and the trust limit.** A count of one hard disk on each side is not a bijection. Host closure is
 the SDK inventory plus the XML config (Hdd and CdRom subtrees, 17 reviewed tags, no block-capable element under an
-allowed tag). Presentation is the accepted narrow trust, not an independent proof: unreported or stale/misreported
-hypervisor presentation is undetectable. `test_bare_count_of_one_is_not_the_disk` still refuses physical, remote,
-disabled and disconnected disks.
+allowed tag). The inventory must carry exactly one `PDE_OPTICAL_DISK`, matching the registered config's one `CdRom`;
+zero, extra or duplicate optical entries refuse. Presentation is the accepted narrow trust, not an independent proof:
+unreported or stale/misreported hypervisor presentation is undetectable. `test_bare_count_of_one_is_not_the_disk`
+still refuses physical, remote, disabled and disconnected disks.
 
 **Fixed future read** (`linux_disk_inventory.py`). Production argv is exactly
 `/usr/bin/python3 -I -B linux_disk_inventory.py inventory`. Tests inject fixture transport; the helper refuses extra
 arguments, including a fixture path. This occurrence does not run it against the SDK. Sequence after the Init gap is
-filled, all read-only, no `Set*`/`Connect`/`Disconnect`/`Reg*`/`Unreg*`/`PrlVm_RegEx`:
+filled. Session lifecycle (`PrlApi_InitEx`/`Deinit`, `PrlSrv_Create`, `PrlSrv_LoginLocal`/`Logoff`) is required to
+reach the getters and is not sourced as read-only. Device-enumeration getters below are sourced as configuration
+reads. The later occurrence still excludes `Set*`/`Connect`/`Disconnect`/`Reg*`/`Unreg*`/`PrlVm_RegEx`.
 
 1. Authenticate `ParallelsVirtualizationSDK` bytes and Info.plist (`CFBundleShortVersionString` 27.1.0,
    `CFBundleVersion`/`PrlBuild` 58756) — local metadata, implemented.
-2. `PrlApi_InitEx(PARALLELS_API_VER, PAM_DESKTOP, 0, 0)` — refused here: `PARALLELS_API_VER` unsourced
-   (`phase=parallels-api-ver-unsourced`).
-3. `PrlSrv_Create`, `PrlSrv_LoginLocal` (port 0, `PSL_HIGH_SECURITY`), job wait, `PrlSrv_GetVmListEx` `nFlags` 0.
+2. `PrlApi_InitEx(PARALLELS_API_VER, PAM_DESKTOP, 0, 0)` — session setup, not sourced as read-only; refused here:
+   `PARALLELS_API_VER` unsourced (`phase=parallels-api-ver-unsourced`).
+3. `PrlSrv_Create`, `PrlSrv_LoginLocal` (port 0, `PSL_HIGH_SECURITY`), job wait — session setup; LoginLocal state
+   effect is not fetched. `PrlSrv_GetVmListEx` `nFlags` 0 — read-only sense inferred, remaining native premise.
 4. Per listed handle: `PrlVm_GetConfig`, `PrlVmCfg_GetUuid`, `PrlVmCfg_GetHomePath`. Select the reviewed UUID and
    home; zero or two matches refuse.
 5. `PrlVm_GetState` before; `PrlVmCfg_GetAllDevices` / `GetDevsCount`; per device `GetType`, `GetIfaceType`,
@@ -406,8 +411,9 @@ filled, all read-only, no `Set*`/`Connect`/`Disconnect`/`Reg*`/`Unreg*`/`PrlVm_R
 6. `PrlVm_GetState` after, same guest boot id. Logoff, Deinit, free handles.
 
 Output: owned `key=value` grammar, at most 64 KiB, exit 0. It closes the host inventory on the SDK's own parser, not
-the XML one. Remaining native premises: `PARALLELS_API_VER`, `PRL_HANDLE` sizeof, a later authorized genuine
-occurrence, Stage1 trust, filesystem approval/activation, E12 writer bounds, current candidate.
+the XML one. Remaining native premises: numeric `PARALLELS_API_VER`; `PRL_HANDLE` sizeof; `PrlSrv_LoginLocal` state
+effect; `PrlSrv_GetVmListEx` read-only inferred; `PrlVmDev_IsConnected` config-or-running sense; a later authorized
+genuine occurrence; Stage1 trust; filesystem approval/activation; E12 writer bounds; current candidate.
 
 Still unavailable: source-verified kernel hard limits, fresh signed Stage1 evidence, exact activation
 anchors and root installation authorization. No VM, SSH, account, service, build,

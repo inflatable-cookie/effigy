@@ -501,6 +501,20 @@ class ProductionInventoryControls(unittest.TestCase):
         self.assertNotIn('PrlVmDevHd_GetSerialNumber', inventory.ALLOWLISTED_APIS)
         self.assertNotIn('PrlVm_RegEx', inventory.ALLOWLISTED_APIS)
         self.assertIsNone(inventory.PARALLELS_API_VER)
+        self.assertEqual(inventory.SESSION_APIS, (
+            'PrlApi_InitEx', 'PrlApi_Deinit', 'PrlSrv_Create', 'PrlSrv_LoginLocal', 'PrlSrv_Logoff',
+        ))
+        for name in inventory.SESSION_APIS:
+            self.assertNotIn(name, inventory.CONFIG_READ_APIS)
+        self.assertEqual(inventory.INFERRED_LIST_APIS, ('PrlSrv_GetVmListEx',))
+        self.assertNotIn('PrlSrv_GetVmListEx', inventory.CONFIG_READ_APIS)
+        self.assertNotIn('PrlSrv_GetVmListEx', inventory.SESSION_APIS)
+        self.assertEqual(inventory.ALLOWLISTED_APIS,
+                         inventory.SESSION_APIS + inventory.INFERRED_LIST_APIS
+                         + inventory.JOB_APIS + inventory.CONFIG_READ_APIS)
+        self.assertIn('PrlSrv_LoginLocal state effect', inventory.REMAINING_NATIVE_PREMISES)
+        self.assertIn('PrlSrv_GetVmListEx read-only inferred', inventory.REMAINING_NATIVE_PREMISES)
+        self.assertIn('PrlVmDev_IsConnected config-or-running', inventory.REMAINING_NATIVE_PREMISES)
 
     def test_narrowly_bound_model_passes_through_setup_and_is_not_presentation_proof(self):
         result = setup.verify_disk_association(production_association())
@@ -512,6 +526,27 @@ class ProductionInventoryControls(unittest.TestCase):
         self.assertEqual({status for status, _ in table(production_association(),
                                                         setup.SUPPORTED_DISK_MECHANISMS, dal.PINS).values()},
                          {'pass'})
+
+    def test_optical_multiplicity_must_match_the_config_one_cdrom(self):
+        self.assertEqual(table(production_association(),
+                               setup.SUPPORTED_DISK_MECHANISMS, dal.PINS)['host_read'][0], 'pass')
+        setup.verify_disk_association(production_association())
+        default_optical = inventory_devices()[0]
+        cases = (
+            ('no optical', [d for d in inventory_devices() if d['type'] != inventory.PDE_OPTICAL_DISK]),
+            ('two optical', inventory_devices(extra=(dict(default_optical, index=1, sys_name='cdrom2.iso'),))),
+            ('two identical optical', inventory_devices(extra=(dict(default_optical),))),
+        )
+        for label, devices in cases:
+            with self.subTest(label):
+                read = host_read(output=inventory_text(devices=devices).encode())
+                self.assertEqual(table(valid_association(host_read=read))['host_read'][0], 'refuse')
+                with mock.patch.object(dal, 'PINS', TEST_PINS), self.assertRaises(Refusal):
+                    setup.verify_disk_association(valid_association(host_read=read), TEST_SUPPORTED)
+                prod = host_read(dal.PINS[dal.MECHANISM],
+                                 output=inventory_text(dal.PINS[dal.MECHANISM], devices=devices).encode())
+                with self.assertRaises(Refusal):
+                    setup.verify_disk_association(production_association(host_read=prod))
 
     def test_extra_matching_camera_or_unknown_storage_refuses_inventory(self):
         extra_camera = {'type': inventory.PDE_USB_DEVICE, 'index': 1, 'iface': -1,
