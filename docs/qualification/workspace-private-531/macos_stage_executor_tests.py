@@ -4508,6 +4508,8 @@ class GuestClosureNegativeTests(Fixture):
         self.assertEqual(by_id['c2-compare-route-echo']['closure'], 'not_dispatched')
 
     def test_exact_zero_output_cap_stops_the_echo(self):
+        """Shared primitive accepts cap 0 (retain no bytes, disposition output-cap). The echo cannot
+        close, so the probe is never reached."""
         calls = []
         inner = self.routed(self.status_and(**{'c2-route-echo': closed_guest(prep.ROUTE_ECHO)}), calls)
 
@@ -4518,9 +4520,13 @@ class GuestClosureNegativeTests(Fixture):
 
         stub = {'receipts': [], 'engine_id': None}
         with mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub):
-            with self.assertRaisesRegex(ex.Refusal, 'invalid argv, deadline, or output cap'):
-                self.execute('C2', transport, prior_ref=None, activation_id='act-c2-zerocap')
+            receipt = self.execute('C2', transport, prior_ref=None, activation_id='act-c2-zerocap')
+        self.assertEqual(receipt['closure'], 'stopped')
         self.assertNotIn('c2-guest-probe', [c[0] for c in calls])
+        by_id = {x['id']: x for x in receipt['steps']}
+        self.assertEqual(by_id['c2-route-echo']['closure'], 'unknown_retained')
+        self.assertEqual(by_id['c2-route-echo']['disposition'], 'output-cap')
+        self.assertNotIn('c2-guest-probe', by_id)
 
 class ColimaImagePinTests(unittest.TestCase):
     def test_the_real_manifest_pins_the_reviewed_image_and_its_cap(self):
