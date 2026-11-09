@@ -1185,6 +1185,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Keep private Compose interpolation permission checks portable across Linux
+  and macOS by applying unchanged octal masks directly to `st_mode`.
 - Verify the Linux artifact builder's remount-capability drop on Colima nerdctl
   from the native OCI spec of the same full container ID (effigy#768). nerdctl's
   compatibility inspect rebuilds CapDrop only from the 14 default capabilities,
