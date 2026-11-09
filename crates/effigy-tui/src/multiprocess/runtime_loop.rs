@@ -4,7 +4,7 @@ use crossterm::event::{self, Event, KeyEventKind};
 
 use super::config::{INPUT_POLL_WAIT, MAX_EVENTS_PER_TICK};
 use super::events::{drain_process_events, handle_key_event, KeyEventContext, LoopControl};
-use super::render::{render_ui, RenderUiState};
+use super::render::{main_areas, render_ui, RenderUiState};
 use super::view_model::build_active_view_model;
 use super::{MultiProcessTuiError, MultiProcessTuiOptions, SessionRuntime};
 
@@ -52,8 +52,16 @@ pub(super) fn run_event_loop_with_control(
         runtime.state.spinner_tick = runtime.state.spinner_tick.wrapping_add(1);
 
         let size = runtime.terminal.size()?;
-        let output_height = size.height.saturating_sub(9) as usize;
-        let output_width = size.width.saturating_sub(4) as usize;
+        let active_is_shell = runtime.state.active_process() == "shell";
+        let output_area = main_areas(
+            ratatui::layout::Rect::new(0, 0, size.width, size.height),
+            active_is_shell,
+            runtime.state.input_mode,
+        )[2];
+        let output_height = output_area.height as usize;
+        // Keep the scrollbar in its own column so output and the VT screen do
+        // not lose their final character to the thumb.
+        let output_width = output_area.width.saturating_sub(1) as usize;
         let active_view = build_active_view_model(
             &mut runtime.state,
             output_height,

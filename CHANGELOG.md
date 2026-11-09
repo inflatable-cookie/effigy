@@ -1965,6 +1965,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- Remove the frame around managed-session output, leave one blank row below
+  the outlined tabs, and reserve the scrollbar's own column.
+
 - Release process settlement refusals include bounded, payload-free diagnostic categories.
 
 - Worktree QA log archives follow the configured user scratch root for future teardowns.
