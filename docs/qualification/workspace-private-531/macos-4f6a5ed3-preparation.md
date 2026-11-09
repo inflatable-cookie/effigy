@@ -287,7 +287,7 @@ imported by `cmd/limactl/main_darwin.go:9`), krunkit sockets and Docker/Incus ru
 `check_colima_start` refuses a runtime or VM-type change; a future change to these
 fixed settings must requalify the inventory.
 
-For any eight-hex token, `COLIMA_HOME` is 51 bytes including the trailing slash
+For any eight-hex token, `COLIMA_HOME` is 50 bytes including the trailing slash
 used below. Plans list these nine paths (length excludes NUL):
 
 | Relative to `<control>/c/` | Full path bytes |
