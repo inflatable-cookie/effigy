@@ -342,6 +342,9 @@ The detached exit-141 writer waits for the returned caller to acknowledge its
 reaped client, then counts real writes at its original cadence. A fixed runtime
 does not imply a minimum number of writes on a loaded host. The proof retains
 its regular-file, no-SIGPIPE, write-count, elapsed-time and cleanup assertions.
+Terminal redaction fixtures wait for verified group closure and complete capture
+after leader exit before reading their final sink bytes. Leader exit alone does
+not prove the final PTY read or redactor flush has happened.
 
 An admission hook that tests EOF after report delivery consumes and records that
 complete frame before exiting without acknowledgement. Immediate exit races the
