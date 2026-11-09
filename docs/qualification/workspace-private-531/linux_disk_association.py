@@ -3,21 +3,26 @@
 Source controls only. This module checks the facts it is given: the registered config bytes, the
 descriptor bytes, one host inventory read and the guest block inventory. It opens no VM, image, host
 service or guest, and it runs no tool. A mechanism qualifies only when PINS names it: the exact helper
-bytes, version, Desktop build, allowlisted accessor, and the output grammar this module parses.
+bytes, tool version, Desktop build, the pinned list --info accessor, and the output grammar this
+module parses.
 
 parallels-host-inventory-trust-v1 is the accepted narrow Parallels trust premise (decision
 64b1fe6f v2): for pinned Desktop 27.1.0-58756 and registered VM 433c9e5b-…, a complete freshly
-authenticated source-validated host inventory is trusted to describe every block device presented to
-that same VM/guest boot. It assumes faithful hypervisor presentation and cannot detect unreported or
-stale/misreported presentation. That is not independent presentation proof.
+authenticated source-validated host configuration inventory is trusted to describe every block
+device presented to that same VM/guest boot. It assumes faithful hypervisor presentation and cannot
+detect unreported or stale/misreported presentation. The inventory evidence is the supported
+command-line configuration read (prlctl list --info --json, the route Parallels directs automation
+to since the SDK was withdrawn); it is configuration evidence, not independently observed runtime
+presentation. That is not independent presentation proof.
 
 Premises, all required. premise_table reports each one on its own inputs, so a partial fact set shows
 which premises it establishes:
   mechanism     the mechanism is supported and pinned
   host_read     one pinned inventory dispatch, bounded, exit 0, bracketed by the same boot identity,
-                output in the owned grammar; exactly one enabled connected image-backed data disk,
-                canonical SystemName-to-image path, exactly one optical device matching the registered
-                config CdRom count, no extra/unknown/passthrough/ambiguous sources
+                output in the retained CLI grammar; exactly the reviewed closed Hardware set with
+                one image-backed internal data disk (hdd0, sata:0, the reviewed expanding image),
+                exactly one optical section matching the registered config CdRom count, the reviewed
+                USB shape, and no extra/unknown/passthrough/ambiguous device section
   config        the registered VM has exactly one hard disk: hdd0, SATA index 0, the reviewed device
                 Uuid, enabled and connected, image-backed (not passthrough, not remote); every Hardware
                 child is a reviewed tag, and no element outside Hdd and CdRom carries a block-capable name
@@ -28,8 +33,9 @@ which premises it establishes:
                 controller, and the reviewed root is its partition; loop and ROM devices are classified out
                 by type, any other type refuses
 
-Serial is an informative observation when both sides carry it. It is not a required premise and does
-not require PrlVmDevHd_GetSerialNumber.
+Serial is an informative guest-side observation. The CLI configuration inventory carries no
+serial, so no host serial is compared and none is inferred; a guest serial disagreement still
+refuses.
 
 Not established by any premise: independent presentation proof; that the config device Uuid and the
 descriptor disk UID name the same image (different namespaces, no documented join); that guest ata1
@@ -42,10 +48,9 @@ the guest block observations of that same boot. It returns the complete record a
 it to setup.verify_disk_association. stored_facts/load_facts are its document form: the stage keeps
 the record (raw config, descriptor and host-read stdout/stderr as bounded base64 envelopes with
 length and digest) so a later consumer re-verifies the same facts instead of a reduced summary, and
-setup.verify_disk_association decodes it before the same premises run. The reader is dispatched only
-when its ABI sources are complete (linux_disk_inventory.reader_executable), so a native occurrence is
-not spent on an entry that is known to refuse; the exact limitation and the one supported next read
-are in linux_disk_inventory.SOURCE_GAP.
+setup.verify_disk_association decodes it before the same premises run. The reader is executable on
+the supported CLI route (linux_disk_inventory.reader_executable), so the handoff dispatches the
+fixed read instead of recording a limitation.
 """
 import base64
 import binascii
@@ -120,31 +125,28 @@ MECHANISM = 'parallels-host-inventory-trust-v1'
 UNSUPPORTED = ('unsupported controller-to-guest disk association: the mechanism is not the pinned '
                'parallels-host-inventory-trust-v1 read')
 NOT_ESTABLISHED = (
-    'accepted narrow Parallels trust is not independent presentation proof: the inventory cannot '
-    'detect unreported or stale or misreported hypervisor presentation; config device Uuid and '
-    'descriptor disk UID are different identifiers and no documented rule links them; ata1 is not '
-    'mapped to SATA position 0; the origin of the given bytes is not admitted here; image bodies '
-    'not read; a passing source control is not evidence a fresh host inventory ran')
+    'accepted narrow Parallels trust is not independent presentation proof: the CLI configuration '
+    'inventory is configuration evidence and cannot detect unreported or stale or misreported '
+    'hypervisor presentation; config device Uuid and descriptor disk UID are different identifiers '
+    'and no documented rule links them; ata1 is not mapped to SATA position 0; the origin of the '
+    'given bytes is not admitted here; image bodies not read; a passing source control is not '
+    'evidence a fresh host inventory ran')
 
-# Bound to the helper bytes, the installed SDK library, Desktop 27.1.0-58756, the reviewed VM/home,
-# and the owned inventory grammar. Other mechanisms stay unsupported.
+# Bound to the helper bytes, the installed Parallels Desktop CLI (27.1.0-58756), the reviewed VM/home,
+# and the retained CLI grammar. Other mechanisms stay unsupported.
 # The helper digest is a committed literal, not inventory.helper_digest() at import: a modified helper
 # cannot re-pin itself, and changing the helper without changing this literal refuses in
 # read_inventory('helper-bytes-differ').
-HELPER_SHA256 = 'c03c2bcdf2bd41b4ed3caa6325f9ef6a1c6c63db38bca57154f01171cdb328eb'
+HELPER_SHA256 = '958a56b9886c72e8e65ff70925a7ce64cd7e415170a3671a5b5181a6da46dff9'
 PINS = {
     MECHANISM: {
         'tool_path': str(inventory.HELPER),
         'sha256': HELPER_SHA256,
-        'version': inventory.LIBRARY_VERSION,
-        'desktop_build': inventory.LIBRARY_VERSION + '-' + inventory.LIBRARY_BUILD,
-        'api': 'PrlVmCfg_GetAllDevices',
+        'version': inventory.DESKTOP_VERSION,
+        'desktop_build': inventory.DESKTOP_VERSION + '-' + inventory.DESKTOP_BUILD,
+        'api': inventory.ACCESSOR,
         'argv': inventory.inventory_argv(),
         'max_bytes': inventory.MAX_BYTES,
-        'max_devices': inventory.MAX_DEVICES,
-        'library_path': inventory.LIBRARY_PATH,
-        'library_sha256': inventory.LIBRARY_SHA256,
-        'library_build': inventory.LIBRARY_BUILD,
         'home': REVIEWED['home'],
         'vm': REVIEWED['vm'],
         'trust': 'narrow-parallels-host-inventory',
@@ -188,46 +190,29 @@ def _check_mechanism(association, supported, pins):
     return pins[mechanism]
 
 
-def _check_inventory_devices(devices):
-    """Exactly one enabled connected image-backed HDD; exactly one optical; no extra/unknown/passthrough sources."""
-    hdds = [d for d in devices if d['type'] == inventory.PDE_HARD_DISK]
-    if len(hdds) != 1:
-        raise Refusal('host inventory has %d hard disks; the association needs exactly one' % len(hdds))
-    hdd = hdds[0]
-    if (hdd['index'] != 0 or hdd['iface'] != inventory.PMS_SATA
-            or hdd['sys_name'] != REVIEWED['system_name']):
-        raise Refusal('host inventory hard disk is not hdd0 at SATA position 0 of the reviewed bundle')
-    if hdd['image_path'] != REVIEWED['image_path']:
-        raise Refusal('host inventory image path is not the reviewed bundle')
-    if (hdd['enabled'] != 1 or hdd['connected'] != 1 or hdd['remote'] != 0 or hdd['passthrough'] != 0
-            or hdd['disk_type'] != inventory.PHD_EXPANDING_HARD_DISK
-            or hdd['emulated_type'] != inventory.PDT_USE_IMAGE_FILE):
-        raise Refusal('host inventory hard disk is not the reviewed image-backed disk')
-    opticals = [d for d in devices if d['type'] == inventory.PDE_OPTICAL_DISK]
-    names = [d['sys_name'] for d in opticals]
-    if len(set(names)) != len(names):
-        raise Refusal('host inventory has duplicate optical entries')
-    if len(opticals) != 1:
-        raise Refusal('host inventory has %d optical devices; the reviewed VM has exactly one' % len(opticals))
-    cameras = [d for d in devices
-               if d['sys_name'] == USB_CAMERA_RECORD['SystemName'] or d['type'] == inventory.PDE_CAMERA]
-    if len(cameras) != 1:
-        raise Refusal('host inventory has %d matching cameras; the reviewed VM has exactly one' % len(cameras))
-    usbs = [d for d in devices if d['type'] == inventory.PDE_USB_DEVICE]
-    if len(usbs) != 1 or usbs[0]['sys_name'] != USB_CAMERA_RECORD['SystemName']:
-        raise Refusal('host inventory USB storage is extra or is not the reviewed camera')
-    for device in devices:
-        if device['type'] in inventory.FORBIDDEN_BLOCK_TYPES:
-            raise Refusal('host inventory carries unknown or passthrough storage type %s' % device['type'])
-        if device['type'] not in inventory.ALLOWED_NON_DISK_TYPES and device['type'] != inventory.PDE_HARD_DISK:
-            raise Refusal('host inventory carries unknown or passthrough storage type %s' % device['type'])
-        if device['emulated_type'] in (inventory.PDT_USE_REAL_DEVICE, inventory.PDT_USE_DIRECT_ASSIGN):
-            raise Refusal('host inventory carries a real or passthrough block source')
+def _check_inventory_devices(parsed):
+    """The closed Hardware set: exactly one image-backed internal data disk, one optical section,
+    the reviewed USB shape; no extra/unknown/passthrough device section. The parser already refused
+    any section outside the reviewed closed set, any second hddN/cdromN and any field outside the
+    reviewed shapes; this premise re-derives the readings and binds them to the registered config."""
+    hardware = parsed['hardware']
+    hdds = [name for name in hardware if name.startswith('hdd')]
+    if hdds != ['hdd0']:
+        raise Refusal('host inventory has %d hard-disk sections; the association needs exactly hdd0' % len(hdds))
+    hdd = hardware['hdd0']
+    if (hdd['port'] != 'sata:0' or hdd['image'] != REVIEWED['image_path']
+            or hdd['type'] != 'expanded' or hdd['enabled'] is not True):
+        raise Refusal('host inventory hard disk is not the reviewed image-backed hdd0 at SATA position 0')
+    opticals = [name for name in hardware if name.startswith('cdrom')]
+    if opticals != ['cdrom0']:
+        raise Refusal('host inventory has %d optical sections; the reviewed VM has exactly one' % len(opticals))
+    if hardware['usb'] != inventory.USB_REVIEWED:
+        raise Refusal('host inventory USB is not the reviewed empty configured shape')
     return {'hdd': hdd, 'optical_count': len(opticals)}
 
 
 def _check_host_read(association, pin):
-    """One pinned inventory: helper bytes, accessor, bounds, exit, boot bracket, owned grammar."""
+    """One pinned inventory: helper bytes, accessor argv, bounds, exit, boot bracket, CLI grammar."""
     if pin is None:
         raise Refusal('no pinned host read, so no inventory is read')
     read = association.get('host_read')
@@ -237,10 +222,8 @@ def _check_host_read(association, pin):
         raise Refusal('host read tool is not the pinned bytes')
     if read.get('tool_version') != pin['version'] or read.get('desktop_build') != pin['desktop_build']:
         raise Refusal('host read tool version or Desktop build differs from the pin')
-    if read.get('api') != pin['api'] or read.get('readonly') is not True:
-        raise Refusal('host read is not the pinned read-only accessor')
-    if read.get('argv') != pin['argv']:
-        raise Refusal('host read argv is not the pinned inventory argv')
+    if read.get('api') != pin['api'] or read.get('argv') != pin['argv']:
+        raise Refusal('host read is not the pinned list --info accessor argv')
     if read.get('status') != 'ok' or read.get('exit') != 0 or read.get('truncated') is not False:
         raise Refusal('host read is truncated, failed or unknown')
     output = read.get('output')
@@ -261,21 +244,15 @@ def _check_host_read(association, pin):
         raise Refusal(str(exc)) from exc
     if parsed['vm'] != REVIEWED['vm']:
         raise Refusal('host read names another VM')
-    if parsed['home'] != REVIEWED['home']:
+    if parsed['home'] != REVIEWED['home'] + '/':
         raise Refusal('host read names another VM home')
-    if parsed['state_before'] != parsed['state_after']:
-        raise Refusal('host read VM state changed during the inventory')
-    if parsed['state_before'] != inventory.VMS_RUNNING:
+    if parsed['state'] != inventory.STATE_RUNNING:
         raise Refusal('host read is not of the running VM')
-    checked = _check_inventory_devices(parsed['devices'])
+    checked = _check_inventory_devices(parsed)
     hdd = checked['hdd']
-    host_serial = parsed.get('serial')
     guest = association.get('guest') or {}
-    guest_serial = guest.get('parent_serial') or ''
-    if host_serial and guest_serial and host_serial != guest_serial:
-        raise Refusal('host serial observation does not match the guest parent serial')
-    return {'sys_name': hdd['sys_name'], 'image_path': hdd['image_path'],
-            'serial': host_serial, 'sha256': hashlib.sha256(output).hexdigest(),
+    return {'sys_name': REVIEWED['system_name'], 'image_path': hdd['image'],
+            'sha256': hashlib.sha256(output).hexdigest(),
             'optical_count': checked['optical_count']}
 
 
@@ -450,7 +427,7 @@ def _run(association, supported, pins):
     return table, {'mechanism': association['mechanism'], 'vm': REVIEWED['vm'],
                    'disk_uid': REVIEWED['disk_uid'], 'device_uuid': config['device_uuid'],
                    'image_path': read['image_path'], 'system_name': read['sys_name'],
-                   'serial': read.get('serial') or guest_serial or '',
+                   'serial': guest_serial or '',
                    'top_guid': selection['top_guid'],
                    'chain': list(selection['chain']), 'extents': sorted(selection['images']),
                    'boot_id': association['boot_id'], 'read_sha256': read['sha256'],
@@ -481,12 +458,12 @@ def read_inventory(transport=None, pin=None, boot_id=None, read_boot_id=None):
 
 
 def reader_executable():
-    """True only when the pinned reader's own ABI sources are complete. Never a guess."""
+    """True: the pinned reader implements the supported CLI route in full. Never a guess."""
     return inventory.reader_executable()
 
 
 def reader_limitation():
-    """The exact external limitation and the one supported next read, in one line."""
+    """'none': the supported CLI read needs no further external source."""
     return inventory.reader_limitation()
 
 

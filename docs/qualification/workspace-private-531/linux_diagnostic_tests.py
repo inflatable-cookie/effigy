@@ -2047,8 +2047,43 @@ class EntryTests(unittest.TestCase):
             path.write_bytes(raw)
             path.chmod(0o400)
             digest = hashlib.sha256(raw).hexdigest()
-            with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(proof.main(['proof', str(path), digest]), 0)
+            # The handoff wiring is proved here on the real production path, through the real
+            # adapter and its closure: the fixture intercepts only the one host read at the
+            # supervised seam (stage.run_stage), records what association_dispatch passes — the
+            # run's resource monitor, the stage deadlines, the pinned inputs and the fixed
+            # environment — and returns the retained-grammar fixture bytes without launching any
+            # helper or prlctl process. The fixture's guest and config bytes are not the registered
+            # identity, so the handoff refuses at the config premise; a fixture cannot supply a
+            # positive pass (and never positive production provenance). The open-gate dispatch path
+            # is also exercised in DiskAssociationHandoff with retained-shape fixtures and fixture
+            # transports.
+            original_run = proof.stage.run_stage
+            staged = []
+
+            def bounded(root, argv, timeout, cap, hashes, **kwargs):
+                staged.append({'argv': list(argv), 'timeout': timeout, 'cap': cap,
+                               'monitor': kwargs.get('resource_monitor'),
+                               'deadline': kwargs.get('deadline'),
+                               'cleanup_deadline': kwargs.get('cleanup_deadline'),
+                               'environment': kwargs.get('environment'),
+                               'inputs': dict(hashes or {})})
+                if argv[4:5] == ['inventory']:
+                    step = Path(root)
+                    # The route creates its own recorded step before the dispatch. The fake must
+                    # not create it: assert it exists, is private and has no retained streams yet.
+                    self.assertTrue(step.is_dir(), 'the route did not create its step directory')
+                    self.assertEqual(step.stat().st_mode & 0o777, 0o700, 'the step is not private')
+                    self.assertFalse((step / 'stdout').exists(), 'stdout retained before the dispatch')
+                    self.assertFalse((step / 'stderr').exists(), 'stderr retained before the dispatch')
+                    (step / 'stdout').write_bytes(association_tests.cli_info_text().encode())
+                    (step / 'stderr').write_bytes(b'')
+                    return {'disposition': 'exited', 'waited_exit': 0}
+                return original_run(root, argv, timeout, cap, hashes, **kwargs)
+
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    patch.object(proof.disk_association, 'reader_executable', lambda: True), \
+                    patch.object(proof.stage, 'run_stage', side_effect=bounded):
+                self.assertEqual(proof.main(['proof', str(path), digest]), 1)
             self.assertEqual(state.read_text(), 'stopped')
             result = json.loads((evidence / 'linux-diagnostic-fixture01' / 'outcome.json').read_text())
             self.assertEqual(result['schema'], 'linux-diagnostic-observation-v6')
@@ -2058,7 +2093,12 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(result['before_extents']['a.hds']['logical'], 17 * 1024 * 1024)
             self.assertEqual(result['writable_top'], 'unknown')
             self.assertEqual(result['placement'], 'not evaluated')
-            self.assertEqual(result['findings'], [])
+            # The one finding is the handoff's own refusal on the fixture bytes: the read and
+            # bracket ran through the real supervised closure, and the fixture's descriptor is not
+            # the registered Parallels descriptor, so the handoff refuses at its host facts.
+            self.assertEqual(result['findings'],
+                             ['disk association: descriptor: descriptor root is not '
+                              'Parallels_disk_image Version 1.0'])
             self.assertEqual(result['transport']['status'], 'ready')
             self.assertEqual([row['classification'] for row in result['transport']['attempts']],
                              ['ready'])
@@ -2086,11 +2126,33 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(writer_bound['limits']['hard_quota'], 'not established')
             self.assertEqual(result['hard_quota'], 'not established')
             self.assertEqual(result['guest_association'],
-                             'not attempted: ' + proof.disk_association.reader_limitation())
-            # No native occurrence spends the host read while its ABI sources are unsourced, and no
-            # association record is produced for setup to consume.
-            self.assertFalse(proof.disk_association.reader_executable())
-            self.assertIsNone(result['disk_association'])
+                             'refused: descriptor: descriptor root is not Parallels_disk_image Version 1.0')
+            # The host read ran through the real supervised closure: the same monitor object, the
+            # same stage deadlines, the pinned inputs (the helper at its committed digest) and the
+            # fixed environment as every other prlctl dispatch in this occurrence, bounded by the
+            # stage route.
+            pin = proof.disk_association.PINS[proof.disk_association.MECHANISM]
+            inventory_rows = [row for row in staged if row['argv'][4:5] == ['inventory']]
+            self.assertEqual(len(inventory_rows), 1)
+            host_row = inventory_rows[0]
+            self.assertEqual(host_row['argv'], pin['argv'])
+            self.assertEqual(host_row['timeout'], proof.disk_inventory.INVENTORY_TIMEOUT)
+            self.assertEqual(host_row['cap'], proof.disk_inventory.MAX_BYTES)
+            list_rows = [row for row in staged if row['argv'][1:2] == ['list']]
+            self.assertTrue(list_rows)
+            reference = list_rows[0]
+            self.assertIsNotNone(host_row['monitor'])
+            self.assertIs(host_row['monitor'], reference['monitor'])
+            self.assertIsNotNone(host_row['deadline'])
+            self.assertEqual(host_row['deadline'], reference['deadline'])
+            self.assertIsNotNone(host_row['cleanup_deadline'])
+            self.assertEqual(host_row['cleanup_deadline'], reference['cleanup_deadline'])
+            self.assertLess(host_row['deadline'], host_row['cleanup_deadline'])
+            self.assertEqual(host_row['environment'], {'PATH': '/usr/bin:/bin', 'LANG': 'C'})
+            self.assertEqual(reference['environment'], host_row['environment'])
+            self.assertEqual(host_row['inputs'].get(pin['tool_path']), pin['sha256'])
+            self.assertIsNone(result.get('disk_association'))
+            self.assertIsNone(result.get('disk_association_result'))
             for route in guest_probe.route_ids():
                 original = evidence / 'linux-diagnostic-fixture01' / ('observation-%s.raw' % route)
                 self.assertTrue(original.is_file(), route)
@@ -2130,6 +2192,7 @@ class EntryTests(unittest.TestCase):
                  patch.object(proof, 'PAUSE', 0.05), patch.object(proof, 'RUN_WAIT', 0.6), \
                  patch.object(proof, 'READY_WAIT', 1), patch.object(proof, 'STATE_WAIT', 6), \
                  patch.object(proof, 'TRANSPORT_FLOOR', 0.3), \
+                 patch.object(proof.disk_association, 'reader_executable', lambda: False), \
                  patch.object(proof, 'STOP_OBSERVE', 1):
                 for index, (mode, expected, stops) in enumerate(self.MODES, 2):
                     with self.subTest(mode=mode):
@@ -2387,8 +2450,7 @@ class EntryTests(unittest.TestCase):
                             self.assertEqual(rows['block-lsblk'], guest_probe.MALFORMED)
                             self.assertEqual(rows['mountinfo'], guest_probe.MALFORMED)
                             self.assertEqual(rows['block-sysfs'], guest_probe.OBSERVED)
-                            self.assertEqual(result['guest_association'],
-                                             'not attempted: ' + proof.disk_association.reader_limitation())
+                            self.assertEqual(result['guest_association'], 'not attempted: none')
                             self.assertEqual(result['hard_quota'], 'not established')
 
 
@@ -2516,10 +2578,16 @@ class CheckoutBindingTests(unittest.TestCase):
 
     @contextlib.contextmanager
     def bound(self, entry):
-        """Point one loaded entry at this fixture's scratch root, fake transport and VM package."""
+        """Point one loaded entry at this fixture's scratch root, fake transport and VM package.
+
+        The disk-association handoff stays unattempted here through its own defensive seam: this
+        fixture's guest (a vda root) and config bytes are not the registered identity, so the
+        handoff cannot pass. The handoff's real dispatch path is exercised in
+        DiskAssociationHandoff with retained-shape fixtures; no prlctl process runs."""
         with patch.object(entry, 'SCRATCH', str(self.root)), patch.object(entry, 'PRLCTL', str(self.program)), \
              patch.object(entry, 'PRLCTL_SHA256', self.program_sha), \
-             patch.object(entry, 'SNAPSHOT_SHA', self.snapshot_sha), patch.object(entry.setup, 'PVM_HOME', str(self.home)):
+             patch.object(entry, 'SNAPSHOT_SHA', self.snapshot_sha), patch.object(entry.setup, 'PVM_HOME', str(self.home)), \
+             patch.object(entry.disk_association, 'reader_executable', lambda: False):
             yield
 
     def request(self, activation):
@@ -2714,15 +2782,10 @@ class DiskAssociationHandoff(unittest.TestCase):
     """The observation stage's one disk-association handoff, through production dispatch and setup.
 
     The guest block observations and the observed boot are the reviewed shapes; the transport is a
-    private fixture copy of the pinned-grammar output. A pass is source admission of the handoff
+    private fixture copy of the pinned CLI grammar. A pass is source admission of the handoff
     logic, never a native inventory or presentation proof.
     """
     BOOT = '6de5909b-25da-444a-9610-731ee1247b11'
-
-    @staticmethod
-    def reader_open():
-        """A control gate: the unsourced ABI constants are only patched inside a control."""
-        return patch.multiple(proof.disk_inventory, PARALLELS_API_VER=17, PRL_HANDLE_SIZE=8)
 
     def writer_bound(self, block, lsblk, root):
         return {'routes': [{'id': 'block-sysfs', 'status': guest_probe.OBSERVED,
@@ -2745,13 +2808,10 @@ class DiskAssociationHandoff(unittest.TestCase):
                     'stdout': association_tests.inventory_transport()(argv, stdin_path, timeout, cap)['stdout'],
                     'stderr': b''}
 
-        # The control opens the unsourced ABI gate so the wiring itself executes: the dispatch, the
-        # bracket and the handoff. That is a source control, not a claim the SDK read ran.
-        with self.reader_open():
-            handoff = proof.observe_association(
-                self.BOOT, read_boot, association_tests.config_xml(), identity_tests.doc(),
-                association_tests.descriptor_extents(),
-                self.writer_bound(block, lsblk, association_tests.guest_root_facts()), transport=transport)
+        handoff = proof.observe_association(
+            self.BOOT, read_boot, association_tests.config_xml(), identity_tests.doc(),
+            association_tests.descriptor_extents(),
+            self.writer_bound(block, lsblk, association_tests.guest_root_facts()), transport=transport)
         self.assertEqual(handoff['status'], 'verified')
         self.assertEqual(handoff['facts']['boot_id'], self.BOOT)
         self.assertEqual(handoff['facts']['host_read']['boot_ids'], [self.BOOT, self.BOOT])
@@ -2769,12 +2829,11 @@ class DiskAssociationHandoff(unittest.TestCase):
         """execute() stores handoff['facts'] as the fact document, so setup_plan E7* re-verifies the
         same facts; the reduced verify result is kept beside it and is never the stored record."""
         block, lsblk = association_tests.guest_block_observations()
-        with self.reader_open():
-            handoff = proof.observe_association(
-                self.BOOT, lambda: self.BOOT, association_tests.config_xml(), identity_tests.doc(),
-                association_tests.descriptor_extents(),
-                self.writer_bound(block, lsblk, association_tests.guest_root_facts()),
-                transport=association_tests.inventory_transport())
+        handoff = proof.observe_association(
+            self.BOOT, lambda: self.BOOT, association_tests.config_xml(), identity_tests.doc(),
+            association_tests.descriptor_extents(),
+            self.writer_bound(block, lsblk, association_tests.guest_root_facts()),
+            transport=association_tests.inventory_transport())
         stored = proof.stored_association(handoff)
         self.assertEqual(stored['disk_association_result'], handoff['result'])
         document = json.loads(json.dumps(stored['disk_association']))
@@ -2792,7 +2851,7 @@ class DiskAssociationHandoff(unittest.TestCase):
     def test_stage_handoff_refuses_a_moved_guest_boot(self):
         block, lsblk = association_tests.guest_block_observations()
         boots = iter([self.BOOT, '18ad4b3d-6b39-4d23-a9bd-51e9ca4f3ed4'])
-        with self.reader_open(), self.assertRaises(proof.disk_inventory.Refused) as caught:
+        with self.assertRaises(proof.disk_inventory.Refused) as caught:
             proof.observe_association(
                 self.BOOT, lambda: next(boots), association_tests.config_xml(), identity_tests.doc(),
                 association_tests.descriptor_extents(),
@@ -2800,27 +2859,65 @@ class DiskAssociationHandoff(unittest.TestCase):
                 transport=association_tests.inventory_transport())
         self.assertEqual(caught.exception.phase, 'boot-bracket-moved')
 
-    def test_stage_handoff_is_not_attempted_while_the_reader_is_unsourced(self):
+    def test_reader_is_executable_on_the_supported_cli_route(self):
+        """The supported CLI read removed the SDK scaffold from the dispatch path: the handoff
+        dispatches the fixed read instead of recording a limitation, and the accessors say so."""
+        self.assertTrue(proof.disk_association.reader_executable())
+        self.assertEqual(proof.disk_association.reader_limitation(), 'none')
+        self.assertEqual(proof.disk_inventory.PRLCTL_SHA256, proof.PRLCTL_SHA256)
         block, lsblk = association_tests.guest_block_observations()
-        dispatched = []
         handoff = proof.observe_association(
-            self.BOOT, lambda: self.BOOT, b'config', b'descriptor', {},
+            self.BOOT, lambda: self.BOOT, association_tests.config_xml(), identity_tests.doc(),
+            association_tests.descriptor_extents(),
             self.writer_bound(block, lsblk, association_tests.guest_root_facts()),
-            transport=lambda *args: dispatched.append(args))
-        self.assertEqual(handoff['status'], 'not attempted: ' + proof.disk_association.reader_limitation())
-        self.assertIsNone(handoff['result'])
-        self.assertEqual(dispatched, [])
+            transport=association_tests.inventory_transport())
+        self.assertEqual(handoff['status'], 'verified')
+
+    def test_production_transport_rechecks_the_fixed_route_and_returns_the_exact_shape(self):
+        """The stage's supervised route adapter: the fixed argv, stdin, timeout and cap are
+        re-checked before the dispatch, a foreign route refuses without dispatching, and a matching
+        dispatch returns the exact result shape the reader's contract expects."""
+        pin = proof.disk_association.PINS[proof.disk_association.MECHANISM]
+        dispatched = []
+
+        def dispatch(argv, timeout, cap):
+            dispatched.append((list(argv), timeout, cap))
+            return ({'disposition': 'exited', 'waited_exit': 0},
+                    association_tests.cli_info_text().encode(), b'stage-stderr')
+
+        transport = proof.association_transport(dispatch)
+        argv = list(pin['argv'])
+        result = transport(argv, None, proof.disk_inventory.INVENTORY_TIMEOUT,
+                           proof.disk_inventory.MAX_BYTES)
+        self.assertEqual(dispatched, [(argv, proof.disk_inventory.INVENTORY_TIMEOUT,
+                                       proof.disk_inventory.MAX_BYTES)])
+        self.assertEqual(result, {'disposition': 'exited', 'waited_exit': 0,
+                                  'stdout': association_tests.cli_info_text().encode(),
+                                  'stderr': b'stage-stderr'})
+        for label, args in (
+                ('foreign argv', (argv[:-1] + ['other'], None,
+                                  proof.disk_inventory.INVENTORY_TIMEOUT, proof.disk_inventory.MAX_BYTES)),
+                ('stdin bound', (argv, '/tmp/in', proof.disk_inventory.INVENTORY_TIMEOUT,
+                                 proof.disk_inventory.MAX_BYTES)),
+                ('foreign timeout', (argv, None, 10, proof.disk_inventory.MAX_BYTES)),
+                ('foreign cap', (argv, None, proof.disk_inventory.INVENTORY_TIMEOUT, 1024))):
+            with self.subTest(label), self.assertRaises(Refusal):
+                transport(*args)
+        self.assertEqual(dispatched, [(argv, proof.disk_inventory.INVENTORY_TIMEOUT,
+                                       proof.disk_inventory.MAX_BYTES)])
 
     def test_handoff_refuses_incomplete_guest_block_observations(self):
         block, lsblk = association_tests.guest_block_observations()
         writer_bound = self.writer_bound(block, lsblk, association_tests.guest_root_facts())
         writer_bound['routes'][1]['status'] = guest_probe.MALFORMED
-        with self.reader_open():
-            handoff = proof.observe_association(
-                self.BOOT, lambda: self.BOOT, b'config', b'descriptor', {}, writer_bound,
-                transport=lambda *args: None)
+        dispatched = []
+        handoff = proof.observe_association(
+            self.BOOT, lambda: self.BOOT, b'config', b'descriptor', {}, writer_bound,
+            transport=lambda *args: dispatched.append(args))
         self.assertEqual(handoff['status'],
                          'not attempted: the guest block observations did not complete for this boot')
+        self.assertIsNone(handoff['result'])
+        self.assertEqual(dispatched, [])
 
 
 if __name__ == '__main__':

@@ -240,11 +240,16 @@ def drain(procs, timeout, output_cap, monitor=None, poll=0.05):
     return failure, codes, {proc: {k: bytes(v) for k, v in streams[proc].items()} for proc in procs}
 
 
-def run_transfer(argv, stdin_path, timeout, output_cap, monitor=None, popen=subprocess.Popen):
-    """One bounded local process, stdin from a file. Exit status is the waited result, never closure."""
+def run_transfer(argv, stdin_path, timeout, output_cap, monitor=None, popen=subprocess.Popen,
+                 environment=None):
+    """One bounded local process, stdin from a file. Exit status is the waited result, never closure.
+    environment, when given, is the child's exact environment (the fixed Parallels CLI read pins
+    the retained LANG/PATH); the default inherits this process's environment."""
     stdin = open(stdin_path, 'rb') if stdin_path else subprocess.DEVNULL
     try:
-        proc = popen(argv, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        popen_kwargs = {} if environment is None else {'env': dict(environment)}
+        proc = popen(argv, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                     start_new_session=True, **popen_kwargs)
     finally:
         if stdin_path:
             stdin.close()

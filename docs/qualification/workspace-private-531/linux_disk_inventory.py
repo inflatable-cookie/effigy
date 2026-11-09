@@ -1,81 +1,114 @@
-"""Fixed Parallels host-inventory helper, its boot-bound reader and owned output grammar.
+"""Fixed Parallels host-inventory helper, its boot-bound reader and the supported CLI grammar.
 
 Production dispatch is exactly:
 
   /usr/bin/python3 -I -B THIS inventory
 
-No other arguments. Tests inject transport at read_inventory; this file never opens a
-VM, never dlopens the SDK, and never calls PrlApi_InitEx. Library hash and Info.plist
-are local metadata.
+No other arguments. The helper authenticates the installed Parallels Desktop command-line tool by
+content, runs the one bounded fixed read below, parses its exact output grammar and passes the
+original bytes through on success; every other outcome refuses with an exact phase. Tests inject
+transport at read_inventory and at the helper's dispatch seam; this file never opens a VM, never
+dlopens the SDK, and never calls PrlApi_InitEx.
 
-Exact external limitation (SOURCE_GAP). The numeric PARALLELS_API_VER and the
-PRL_HANDLE ABI are not in the permitted sources; the installed 27.1.0-58756 bundle
-ships no SDK headers. enumerate_inventory therefore verifies the installed library,
-then refuses Init instead of guessing, and reader_executable() reports that honestly so
-a caller does not spend a native occurrence on an entry known to refuse. The one
-concrete supported next read is named in SOURCE_GAP['next_read']; no SDK payload is
-downloaded, installed or executed here. Session lifecycle APIs are required to reach
-getters and are not sourced as read-only. GetVmListEx read-only is inferred.
-LoginLocal state effect is not fetched. IsConnected's config-or-running sense is not
-stated.
+Supported route. The Parallels Virtualization SDK is unsupported from Desktop 19.3.0 (Parallels KB
+130091, retained original sha256 9319861841e1c454…); Parallels directs automation to its
+command-line interface. The one fixed read is the documented configuration read
 
-read_inventory is the production reader entry. It binds the helper bytes to the
-caller's independent pin (never to a digest this file computes from itself), runs the
-one bounded dispatch, and accepts the result only inside the caller's already
-authenticated same-VM boot bracket: the caller's read_boot_id() is called once
-immediately before and once immediately after the dispatch and both must equal the
-boot identity that was authenticated for this VM. The selected VM UUID, home and
-library identity are derived from the helper's own output, so no caller constant or
-manually appended vm/boot field is a reading.
+  prlctl list --info <vm_uuid> --json
 
-Allowlisted C API v17 names below are the only operations a later genuine read may
-call. Set*/Connect/Disconnect/Reg*/Unreg*/PrlVm_RegEx are excluded. The allowlist
-is not a claim that every name is a read.
+("Displays the VM configuration information" for the VM selected by ID, JSON output; Parallels
+Desktop developers guide, list-virtual-machines, retained original sha256 79fc5b3cb70d05ffe…).
+The exact tool is pinned: bundle CLI
+`/Applications/Parallels Desktop.app/Contents/MacOS/prlctl`, sha256 2f61a1c60db2d5159…, the binary
+the genuine retained 747 occurrence ran, inside Desktop 27.1.0 build 58756 (the app Info.plist
+carries CFBundleShortVersionString 27.1.0 and CFBundleVersion 58756). The environment is the
+retained one (LANG=C, PATH=/usr/bin:/bin). `/usr/local/bin/prlctl` is a symlink to the vendor
+`parallels_wrapper`, which selects its tool from basename($0) and exits 9 for its own name; the
+canonical bundle path only, and an aliased or drifted binary refuses before any dispatch.
+
+The output grammar is the genuine retained 747 grammar (offline retained originals; no query ran
+to learn it): one JSON object in a one-element array naming the reviewed VM ID, `Home` with its
+trailing slash, `Home path` …/config.pvs, `State`, and a `Hardware` map whose keys are exactly the
+reviewed closed set cpu/memory/video/memory_quota/hdd0/cdrom0/usb/net0/sound0. Inside it, `hdd0`,
+`cdrom0` and `usb` must equal the reviewed shapes exactly; every other reviewed section must be a
+flat map of scalar leaves, so no storage device can hide under an allowed section. Exact schema
+checks stop at the inventory premises: other top-level metadata (Name, OS, Uptime, sharing
+sections, ...) is not pinned. A duplicate JSON key at any depth, an unknown Hardware section, a
+second hddN/cdromN, an extra field, a changed value or a non-scalar leaf refuses.
+
+read_inventory is the production reader entry. It binds the helper bytes to the caller's
+independent pin (never to a digest this file computes from itself), runs the one bounded dispatch
+of this helper, and accepts the result only inside the caller's already authenticated same-VM boot
+bracket: the caller's read_boot_id() is called once immediately before and once immediately after
+the dispatch and both must equal the boot identity that was authenticated for this VM. The
+selected VM UUID and home are derived from the helper's own output, so no caller constant or
+manually appended vm/boot field is a reading. The record keeps the exact bounded original
+stdout/stderr of the dispatch and its waited exit. Its argv field is the fixed helper dispatch
+route; its api field names the accessor — the documented `prlctl list --info --json` configuration
+read. Neither is a checked boolean: none of them asserts more than the api name, the argv, the
+waited exit and the bounded original streams establish. Configuration evidence is the accepted
+narrow Parallels trust (decision 64b1fe6f v2), not independently observed runtime presentation.
+
+SDK history, kept honest: the earlier SDK route (PrlApi_InitEx/LoginLocal/PrlVmCfg_GetAllDevices)
+was source-qualified but never executable — its numeric PARALLELS_API_VER and PRL_HANDLE ABI were
+never sourced, reader_executable() was False, no Init, Login or SDK read ever ran, and no receipt
+claims otherwise. The supported CLI route above replaces it on the required dispatch path; the
+SDK surface survey remains recorded in linux-setup.md as history.
 """
 import hashlib
+import json
+import os
 import plistlib
-import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import linux_transfer as transfers
 
 HELPER = Path(__file__).resolve()
 PYTHON = '/usr/bin/python3'
 INVENTORY_ARG = 'inventory'
 INVENTORY_TIMEOUT = 30
 MAX_BYTES = 64 * 1024
-MAX_DEVICES = 32
-MAX_STRING = 4096
 
-# Installed 27.1.0 build 58756. Hash is of the framework executable; libprl_sdk.11.dylib
-# is a symlink to the same bytes.
-LIBRARY_PATH = ('/Applications/Parallels Desktop.app/Contents/Frameworks/'
-                'ParallelsVirtualizationSDK.framework/Versions/11/ParallelsVirtualizationSDK')
-LIBRARY_SHA256 = '464af6b9ec6260d77a849d54c55cd1b74fdb9d1d64684fb5564a4aa54ff00123'
-INFO_PLIST = ('/Applications/Parallels Desktop.app/Contents/Frameworks/'
-              'ParallelsVirtualizationSDK.framework/Versions/11/Resources/Info.plist')
-LIBRARY_VERSION = '27.1.0'
-LIBRARY_BUILD = '58756'
+# The exact supported tool. Retained 747 occurrence input pin; matches the installed bundle today.
+PRLCTL = '/Applications/Parallels Desktop.app/Contents/MacOS/prlctl'
+PRLCTL_SHA256 = '2f61a1c60db2d51591fb8479a248a982a81658f136f1501a94733b7a81731c57'
+DESKTOP_INFO_PLIST = '/Applications/Parallels Desktop.app/Contents/Info.plist'
+DESKTOP_VERSION = '27.1.0'
+DESKTOP_BUILD = '58756'
+# The retained 747 occurrence environment: no locale or PATH variation in the fixed read.
+CLI_ENV = {'LANG': 'C', 'PATH': '/usr/bin:/bin'}
+ACCESSOR = 'prlctl list --info --json'
 
-# C API v17 PrlApi_InitEx(nVersion=PARALLELS_API_VER, ...). Numeric value not sourced.
-PARALLELS_API_VER = None
-# C API v17 PRL_HANDLE. The ABI size and the InitEx/PrlSrv_*/PrlVmCfg_* prototypes are not sourced
-# either, so no binding is written. None is "not sourced", never a guessed size.
-PRL_HANDLE_SIZE = None
+# The reviewed identity, from the retained 747 originals. linux_setup's constants must equal the
+# home; linux_disk_association carries the same reviewed literals and its tests check the equality.
+REVIEWED_VM = '433c9e5b-c7b9-469f-9633-24b4addcd3b5'
+REVIEWED_HOME = '/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm'
+REVIEWED_DISK_IMAGE = REVIEWED_HOME + '/harddisk1.hdd'
+# State of a running VM in the CLI grammar, as the retained originals carry it.
+STATE_RUNNING = 'running'
 
-# The exact external limitation, and the one concrete supported read that would close it. Nothing
-# here downloads, installs or executes an SDK: a later, separately briefed host-custodied step
-# reads the vendor archive and pins it by sha256 before this file binds it.
-SOURCE_GAP = {
-    'phase': 'parallels-api-ver-unsourced',
-    'missing': ('numeric PARALLELS_API_VER for PrlApi_InitEx',
-                'PRL_HANDLE ABI size and the PrlApi_InitEx/PrlSrv_*/PrlVmCfg_* prototypes',
-                'the reviewed job-wait, exit-code and PRL_HANDLE ownership sequence for one read'),
-    'next_read': ('the Parallels Virtualization SDK archive for Desktop 27.1.0-58756 (the PrlApi.h '
-                  'and PrlApiVersion.h constants plus the PRL_HANDLE and InitEx/Srv/Cfg '
-                  'prototypes), read once in a separately briefed host-custodied collection step '
-                  'and pinned by archive sha256 before use'),
-    'not_here': 'no SDK payload download, installation or execution in this source task',
+# The reviewed Hardware sections: the complete configured-device inventory of the retained grammar.
+HARDWARE_SECTIONS = frozenset({
+    'cpu', 'memory', 'video', 'memory_quota', 'hdd0', 'cdrom0', 'usb', 'net0', 'sound0',
+})
+# The reviewed data disk: the sole image-backed internal disk, SATA position 0, expanding image.
+# Values are the retained 747 grammar values, exact.
+HDD0_REVIEWED = {
+    'enabled': True, 'port': 'sata:0', 'image': REVIEWED_DISK_IMAGE,
+    'type': 'expanded', 'size': '131072Mb', 'online-compact': 'on',
 }
+# The reviewed optical device: counted, never treated as a disk.
+CDROM0_REVIEWED = {
+    'enabled': True, 'port': 'sata:1', 'image': '', 'state': 'disconnected',
+}
+# The reviewed USB section: no USB device is configured into this VM's inventory; the reviewed
+# virtual camera lives in the registered XML config, not in this CLI view.
+USB_REVIEWED = {'enabled': True}
+# The non-storage sections are checked for closure, not for their irrelevant values: each must be
+# a flat map of scalar leaves so nothing can hide under an allowed section.
+SCALAR_SECTIONS = frozenset({'cpu', 'memory', 'video', 'memory_quota', 'net0', 'sound0'})
 
 # Every phase read_inventory refuses with, so a caller names the outcome exactly.
 READ_PHASES = (
@@ -84,106 +117,23 @@ READ_PHASES = (
     'inventory-truncated', 'inventory-output-encoding', 'inventory-output-grammar',
     'inventory-vm-differs',
 )
-
-# C API v17 PRL_MASS_STORAGE_INTERFACE_TYPE / PRL_DEVICE_TYPE / disk and emulation enums.
-PMS_IDE, PMS_SCSI, PMS_SATA, PMS_NVME = 0, 1, 2, 3
-PDE_GENERIC_DEVICE = 0
-PDE_CLUSTERED_DEVICE = 1
-PDE_STORAGE_DEVICE = 2
-PDE_FLOPPY_DISK = 3
-PDE_MASSSTORAGE_DEVICE = 4
-PDE_OPTICAL_DISK = 5
-PDE_HARD_DISK = 6
-PDE_GENERIC_NETWORK_ADAPTER = 8
-PDE_GENERIC_PORT = 9
-PDE_SERIAL_PORT = 10
-PDE_PARALLEL_PORT = 11
-PDE_SOUND_DEVICE = 12
-PDE_MIXER_DEVICE = 13
-PDE_USB_DEVICE = 15
-PDE_PRINTER = 16
-PDE_GENERIC_PCI_DEVICE = 17
-PDE_GENERIC_SCSI_DEVICE = 18
-PDE_VIRTUAL_SNAPSHOT_DEVICE = 19
-PDE_PCI_VIDEO_ADAPTER = 20
-PDE_VIRTUAL_SHARED_FOLDERS_DEVICE = 21
-PDE_CAMERA = 22
-PDE_SMART_CARD_READER = 23
-PDE_GENERIC_NVME_DEVICE = 24
-PDE_HID_DEVICE = 25
-PDE_TPM_DEVICE = 26
-PHD_EXPANDING_HARD_DISK = 1
-PDT_USE_REAL_DEVICE = 0
-PDT_USE_IMAGE_FILE = 1
-PDT_USE_DIRECT_ASSIGN = 4
-PAM_DESKTOP = 1
-PSL_HIGH_SECURITY = 2
-PRL_ERR_SUCCESS = 0
-# C API v17 _VIRTUAL_MACHINE_STATE: VMS_RUNNING = 0x30000004.
-VMS_RUNNING = 0x30000004
-
-# Non-disk types a complete inventory may carry. Anything else is unknown storage.
-ALLOWED_NON_DISK_TYPES = frozenset({
-    PDE_OPTICAL_DISK, PDE_GENERIC_NETWORK_ADAPTER, PDE_GENERIC_PORT, PDE_SERIAL_PORT,
-    PDE_PARALLEL_PORT, PDE_SOUND_DEVICE, PDE_MIXER_DEVICE, PDE_USB_DEVICE, PDE_PRINTER,
-    PDE_VIRTUAL_SNAPSHOT_DEVICE, PDE_PCI_VIDEO_ADAPTER, PDE_VIRTUAL_SHARED_FOLDERS_DEVICE,
-    PDE_CAMERA, PDE_SMART_CARD_READER, PDE_HID_DEVICE, PDE_TPM_DEVICE,
-})
-# Extra/passthrough/ambiguous block sources. One PDE_HARD_DISK is checked on its own fields.
-FORBIDDEN_BLOCK_TYPES = frozenset({
-    PDE_GENERIC_DEVICE, PDE_CLUSTERED_DEVICE, PDE_STORAGE_DEVICE, PDE_FLOPPY_DISK,
-    PDE_MASSSTORAGE_DEVICE, PDE_GENERIC_PCI_DEVICE, PDE_GENERIC_SCSI_DEVICE,
-    PDE_GENERIC_NVME_DEVICE,
-})
-
-# Session lifecycle. Required to reach getters. Not sourced as read-only.
-# Remaining native premises include LoginLocal's state effect.
-SESSION_APIS = (
-    'PrlApi_InitEx', 'PrlApi_Deinit', 'PrlSrv_Create', 'PrlSrv_LoginLocal', 'PrlSrv_Logoff',
-)
-# Remaining native premise: GetVmListEx read-only is inferred, not fetched from C API v17.
-INFERRED_LIST_APIS = ('PrlSrv_GetVmListEx',)
-# Job and handle plumbing used by both session setup and getters.
-JOB_APIS = (
-    'PrlJob_Wait', 'PrlJob_GetRetCode', 'PrlJob_GetResult',
-    'PrlResult_GetParam', 'PrlHndlList_GetItemsCount', 'PrlHndlList_GetItem', 'PrlHandle_Free',
-)
-# Configuration getters sourced as reads (C API v17). IsConnected's config-or-running sense
-# is not stated and remains a native premise.
-CONFIG_READ_APIS = (
-    'PrlVm_GetConfig', 'PrlVm_GetState', 'PrlVmInfo_GetState', 'PrlVmCfg_GetUuid',
-    'PrlVmCfg_GetHomePath', 'PrlVmCfg_GetAllDevices', 'PrlVmCfg_GetDevsCount',
-    'PrlVmDev_GetType', 'PrlVmDev_GetIfaceType', 'PrlVmDev_GetIndex', 'PrlVmDev_GetSysName',
-    'PrlVmDev_GetImagePath', 'PrlVmDev_IsEnabled', 'PrlVmDev_IsConnected', 'PrlVmDev_IsRemote',
-    'PrlVmDev_IsPassthrough', 'PrlVmDevHd_GetDiskType', 'PrlVmDev_GetEmulatedType',
-)
-# Union of names a later genuine occurrence may call. Not a claim the whole sequence is a read.
-ALLOWLISTED_APIS = SESSION_APIS + INFERRED_LIST_APIS + JOB_APIS + CONFIG_READ_APIS
-REMAINING_NATIVE_PREMISES = (
-    'PARALLELS_API_VER',
-    'PRL_HANDLE sizeof',
-    'PrlSrv_LoginLocal state effect',
-    'PrlSrv_GetVmListEx read-only inferred',
-    'PrlVmDev_IsConnected config-or-running',
+# Helper-side phases: installed-tool custody and the inner dispatch, printed as status=refused.
+TOOL_PHASES = (
+    'tool-alias', 'tool-unavailable', 'tool-hash-mismatch', 'tool-plist-unavailable',
+    'tool-version-mismatch',
 )
 
-SCALAR_KEYS = (
-    'vm', 'home', 'library_path', 'library_sha256', 'library_version', 'library_build',
-    'state_before', 'state_after', 'device_count',
-)
-DEVICE_KEYS = (
-    'type', 'index', 'iface', 'sys_name', 'image_path',
-    'enabled', 'connected', 'remote', 'passthrough', 'disk_type', 'emulated_type',
-)
-INT_DEVICE_KEYS = (
-    'type', 'index', 'iface', 'enabled', 'connected', 'remote', 'passthrough',
-    'disk_type', 'emulated_type',
-)
-OPTIONAL_KEYS = ('serial',)
-KEY_RE = re.compile(r'^[a-z][a-z0-9_]*$')
-INT_RE = re.compile(r'^(?:0|-1|[1-9][0-9]*)$')
-SHA_RE = re.compile(r'^[0-9a-f]{64}$')
-UUID_RE = re.compile(r'^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$')
+UUID_HEX = frozenset('0123456789abcdef')
+
+
+def _is_uuid(value):
+    """Exact lowercase 8-4-4-4-12 hexadecimal VM identity, as the retained grammar carries it."""
+    if not isinstance(value, str) or len(value) != 36:
+        return False
+    parts = value.split('-')
+    if [len(part) for part in parts] != [8, 4, 4, 4, 12]:
+        return False
+    return all(char in UUID_HEX for part in parts for char in part)
 
 
 class GrammarError(ValueError):
@@ -203,192 +153,134 @@ def helper_digest(path=HELPER):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def missing_sources():
-    """The ABI facts this reader needs and does not have. None of them is guessed."""
-    missing = []
-    if PARALLELS_API_VER is None:
-        missing.append(SOURCE_GAP['missing'][0])
-    if PRL_HANDLE_SIZE is None:
-        missing.append(SOURCE_GAP['missing'][1])
-    return tuple(missing)
-
-
-def reader_executable():
-    """True only when every sourced ABI fact the one read needs is present."""
-    return not missing_sources()
-
-
-def reader_limitation():
-    """The exact external limitation in one line, for a caller that must not spend an occurrence."""
-    missing = missing_sources()
-    if not missing:
-        return 'none'
-    return ('host inventory reader is not executable: unsourced ' + '; '.join(missing)
-            + '; next fixed read: ' + SOURCE_GAP['next_read'])
-
-
 def inventory_argv(helper=HELPER):
     return [PYTHON, '-I', '-B', str(helper), INVENTORY_ARG]
 
 
-def _require(cond, message):
-    if not cond:
-        raise GrammarError(message)
+def cli_argv(vm=REVIEWED_VM, tool=PRLCTL):
+    """The one fixed read: the documented list --info configuration read, exact VM ID, JSON."""
+    return [tool, 'list', '--info', vm, '--json']
 
 
-def parse_output(text, pin):
-    """Parse the owned key=value grammar. pin supplies max_devices and library/home pins."""
-    _require(isinstance(text, str) and text.endswith('\n'),
-             'host read output is not newline-terminated')
-    fields = {}
-    for line in text[:-1].split('\n'):
-        key, sep, value = line.partition('=')
-        if not sep or key in fields or not KEY_RE.fullmatch(key) or not value or value != value.strip():
-            raise GrammarError('host read output line is malformed or repeated')
-        fields[key] = value
-    extra = set(fields) - set(SCALAR_KEYS) - set(OPTIONAL_KEYS)
-    serial = fields.get('serial')
-    try:
-        count = int(fields['device_count'])
-    except (KeyError, ValueError) as exc:
-        raise GrammarError('host read device_count is missing or malformed') from exc
-    _require(INT_RE.fullmatch(fields.get('device_count', '')) and 1 <= count <= pin['max_devices'],
-             'host read device_count is missing or over its bound')
-    expected = set(SCALAR_KEYS)
-    if serial is not None:
-        expected.add('serial')
-    for index in range(count):
-        for name in DEVICE_KEYS:
-            expected.add('dev_%d_%s' % (index, name))
-    if set(fields) != expected:
-        raise GrammarError('host read output fields differ from the pinned grammar')
-    extra_dev = [k for k in extra if k.startswith('dev_') and k not in expected]
-    _require(not extra_dev, 'host read output fields differ from the pinned grammar')
-    for key in ('state_before', 'state_after', 'library_build'):
-        _require(INT_RE.fullmatch(fields[key]) and not fields[key].startswith('-'),
-                 'host read %s is malformed' % key)
-    _require(UUID_RE.fullmatch(fields['vm']), 'host read vm is malformed')
-    _require(fields['home'] == pin['home'], 'host read names another VM home')
-    _require(fields['library_path'] == pin['library_path'], 'host read library is not the pinned bytes')
-    _require(SHA_RE.fullmatch(fields['library_sha256']) and fields['library_sha256'] == pin['library_sha256'],
-             'host read library is not the pinned bytes')
-    _require(fields['library_version'] == pin['version'] and fields['library_build'] == pin['library_build'],
-             'host read tool version or Desktop build differs from the pin')
-    devices = []
-    for index in range(count):
-        device = {}
-        for name in DEVICE_KEYS:
-            value = fields['dev_%d_%s' % (index, name)]
-            if name in INT_DEVICE_KEYS:
-                _require(INT_RE.fullmatch(value), 'host read device field %s is malformed' % name)
-                device[name] = int(value)
-            else:
-                device[name] = value
-        devices.append(device)
-    return {
-        'vm': fields['vm'], 'home': fields['home'],
-        'library_path': fields['library_path'], 'library_sha256': fields['library_sha256'],
-        'library_version': fields['library_version'], 'library_build': int(fields['library_build']),
-        'state_before': int(fields['state_before']), 'state_after': int(fields['state_after']),
-        'devices': devices, 'serial': serial,
-    }
+def reader_executable():
+    """True: every fact the one supported CLI read needs is sourced and implemented. The earlier
+    SDK route returned False here because its ABI was unsourced; that history is not this route."""
+    return True
 
 
-def render_output(vm, home, library_path, library_sha256, library_version, library_build,
-                  state_before, state_after, devices, serial=None):
-    """Owned grammar renderer. Used by controls; the helper prints this after a genuine read."""
-    lines = [
-        'vm=' + vm,
-        'home=' + home,
-        'library_path=' + library_path,
-        'library_sha256=' + library_sha256,
-        'library_version=' + library_version,
-        'library_build=' + str(library_build),
-        'state_before=' + str(state_before),
-        'state_after=' + str(state_after),
-        'device_count=' + str(len(devices)),
-    ]
-    for index, device in enumerate(devices):
-        for name in DEVICE_KEYS:
-            lines.append('dev_%d_%s=%s' % (index, name, device[name]))
-    if serial:
-        lines.append('serial=' + serial)
-    return '\n'.join(lines) + '\n'
+def reader_limitation():
+    """'none': the supported CLI read needs no further external source. Kept for the callers that
+    must not spend an occurrence on an entry known to refuse; no entry is known to refuse here."""
+    return 'none'
 
 
-def verify_installed_library(path=LIBRARY_PATH, plist_path=INFO_PLIST,
-                             expected_sha=LIBRARY_SHA256, expected_version=LIBRARY_VERSION,
-                             expected_build=LIBRARY_BUILD):
-    """Local metadata only: content hash and Info.plist. Does not dlopen or Init."""
-    try:
-        data = Path(path).read_bytes()
-    except OSError as exc:
-        raise Refused('library-unavailable') from exc
-    digest = hashlib.sha256(data).hexdigest()
-    if digest != expected_sha:
-        raise Refused('library-hash-mismatch')
-    try:
-        info = plistlib.loads(Path(plist_path).read_bytes())
-    except (OSError, plistlib.InvalidFileException) as exc:
-        raise Refused('library-plist-unavailable') from exc
-    version = str(info.get('CFBundleShortVersionString', ''))
-    build = str(info.get('CFBundleVersion', ''))
-    prl_build = str(info.get('PrlBuild', ''))
-    if version != expected_version or build != expected_build or prl_build != expected_build:
-        raise Refused('library-version-mismatch')
-    return {'path': path, 'sha256': digest, 'version': version, 'build': build}
-
-
-def enumerate_inventory(verify_library=verify_installed_library, api_ver=PARALLELS_API_VER,
-                        handle_size=PRL_HANDLE_SIZE):
-    """Authenticate the installed library, then refuse Init until the ABI is sourced."""
-    verify_library()
-    if api_ver is None:
-        raise Refused('parallels-api-ver-unsourced')
-    if handle_size is None:
-        raise Refused('prl-handle-abi-unsourced')
-    raise Refused('sdk-init-not-reached')
-
-
-def _boot_identity(value, when):
-    if not isinstance(value, str) or not UUID_RE.fullmatch(value):
-        raise Refused('boot-bracket-malformed', 'the %s guest boot original is not a boot identity' % when)
+def _unique_pairs(pairs):
+    """A JSON object decoder that refuses a repeated key at any depth."""
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise GrammarError('duplicate JSON key %r' % key)
+        value[key] = item
     return value
 
 
-def read_inventory(transport=None, pin=None, boot_id=None, read_boot_id=None):
-    """The production host-inventory read, bound to its pin and to the guest boot bracket.
+def _scalar(value):
+    return value is None or isinstance(value, (str, bool, int, float))
 
-    The helper bytes at pin['tool_path'] must equal pin['sha256']: the pin is the caller's reviewed
-    literal, never a digest this module computes from itself. boot_id is the boot identity the
-    caller already authenticated for this VM, and read_boot_id() returns fresh guest boot originals.
-    It is called once immediately before the one dispatch and once immediately after it, and both
-    originals must equal boot_id; a changed or malformed bracket refuses instead of being recorded.
 
-    The record's VM UUID, home and library identity are read from the helper's own output under the
-    pinned grammar. Every other outcome raises Refused with an exact phase (READ_PHASES); a
-    non-observation never becomes a host record. A passing parse of fixture bytes is not a native
-    receipt. The helper is not executed when transport is injected.
-    """
-    import linux_transfer as transfers
-    if not isinstance(pin, dict) or set(('tool_path', 'sha256', 'argv', 'api', 'home', 'vm', 'version',
-                                         'library_path', 'library_sha256', 'library_build',
-                                         'max_devices')) - set(pin):
-        raise Refused('pin-missing')
-    if not callable(read_boot_id):
-        raise Refused('boot-bracket-missing', 'no guest boot identity reader is bound')
-    boot_id = _boot_identity(boot_id, 'authenticated')
-    if helper_digest(pin['tool_path']) != pin['sha256']:
-        raise Refused('helper-bytes-differ', 'the helper at the pinned path is not the pinned bytes')
-    argv = inventory_argv(pin['tool_path'])
-    if argv != list(pin['argv']):
-        raise Refused('pin-missing', 'the pin does not name the fixed inventory argv')
-    before = _boot_identity(read_boot_id(), 'before')
-    if before != boot_id:
-        raise Refused('boot-bracket-moved', 'the boot identity before the host read is not the authenticated one')
-    if transport is None:
-        transport = transfers.run_transfer
-    result = transport(argv, None, INVENTORY_TIMEOUT, MAX_BYTES)
+def _flat_section(section, name):
+    if not isinstance(section, dict) or not section:
+        raise GrammarError('host read Hardware %s is not a reviewed flat section' % name)
+    for key, value in section.items():
+        if not isinstance(key, str) or not _scalar(value):
+            raise GrammarError('host read Hardware %s carries a non-scalar leaf %r' % (name, key))
+
+
+def _exact_section(section, reviewed, name):
+    if not isinstance(section, dict):
+        raise GrammarError('host read Hardware %s is not the reviewed section' % name)
+    if set(section) != set(reviewed):
+        raise GrammarError('host read Hardware %s fields differ from the reviewed shape' % name)
+    for key, expected in reviewed.items():
+        actual = section[key]
+        # Type-exact: JSON true is a Python bool and 1 is an int, so 1 can never stand in for the
+        # reviewed enabled flag (and 1.0 for an int) under Python's equal-value comparison.
+        if type(actual) is not type(expected) or actual != expected:
+            raise GrammarError('host read Hardware %s %s is not the reviewed value' % (name, key))
+
+
+def _expected_hdd0(pin):
+    """The reviewed data-disk shape with the image path bound to the pin's registered home."""
+    return dict(HDD0_REVIEWED, image=pin['home'] + '/harddisk1.hdd')
+
+
+def parse_output(text, pin):
+    """Parse the retained CLI grammar exactly. pin supplies the reviewed vm and home.
+
+    Returns the closed configured-device inventory: the VM identity, its home and home_path, the
+    state, and the Hardware map with hdd0/cdrom0/usb in their reviewed shapes and the remaining
+    reviewed sections as flat scalar maps. Anything outside the grammar refuses."""
+    if not isinstance(text, str):
+        raise GrammarError('host read output is not text')
+    try:
+        data = json.loads(text, object_pairs_hook=_unique_pairs)
+    except ValueError as exc:
+        raise GrammarError('host read output is not exact JSON: %s' % exc) from exc
+    if not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict):
+        raise GrammarError('host read output is not a one-VM JSON array')
+    vm = data[0]
+    if not _is_uuid(vm.get('ID')):
+        raise GrammarError('host read carries no VM identity')  # identity equality is the caller's phase
+    home = vm.get('Home')
+    if home != pin['home'] + '/':
+        raise GrammarError('host read names another VM home')
+    if vm.get('Home path') != pin['home'] + '/config.pvs':
+        raise GrammarError('host read home path is not the registered config.pvs')
+    state = vm.get('State')
+    if not isinstance(state, str) or not state:
+        raise GrammarError('host read carries no VM state')
+    hardware = vm.get('Hardware')
+    if not isinstance(hardware, dict) or set(hardware) != HARDWARE_SECTIONS:
+        raise GrammarError('host read Hardware is not the reviewed closed section set')
+    _exact_section(hardware.get('hdd0'), _expected_hdd0(pin), 'hdd0')
+    _exact_section(hardware.get('cdrom0'), CDROM0_REVIEWED, 'cdrom0')
+    _exact_section(hardware.get('usb'), USB_REVIEWED, 'usb')
+    for name in sorted(SCALAR_SECTIONS):
+        _flat_section(hardware.get(name), name)
+    return {'vm': vm['ID'], 'home': home, 'home_path': vm['Home path'], 'state': state,
+            'hardware': dict(hardware)}
+
+
+def verify_installed_cli(path=PRLCTL, plist_path=DESKTOP_INFO_PLIST, expected_sha=PRLCTL_SHA256,
+                         expected_version=DESKTOP_VERSION, expected_build=DESKTOP_BUILD):
+    """Local metadata only: the canonical bundle path, the content hash of the pinned CLI and the
+    app Info.plist version. Does not execute the tool."""
+    if os.path.realpath(path) != path or not os.path.isabs(path):
+        raise Refused('tool-alias', 'the CLI is not at its canonical bundle path')
+    try:
+        data = Path(path).read_bytes()
+    except OSError as exc:
+        raise Refused('tool-unavailable') from exc
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != expected_sha:
+        raise Refused('tool-hash-mismatch')
+    try:
+        info = plistlib.loads(Path(plist_path).read_bytes())
+    except (OSError, plistlib.InvalidFileException) as exc:
+        raise Refused('tool-plist-unavailable') from exc
+    version = str(info.get('CFBundleShortVersionString', ''))
+    build = str(info.get('CFBundleVersion', ''))
+    if version != expected_version or build != expected_build:
+        raise Refused('tool-version-mismatch')
+    return {'path': path, 'sha256': digest, 'version': version, 'build': build}
+
+
+def _checked_dispatch(argv, transport):
+    """One bounded waited dispatch; returns (text, raw bytes, stderr). Original streams, waited
+    exit, deadline and output cap are the evidence; anything else is refused with an exact phase.
+    An injected transport keeps the four-argument fixture contract."""
+    result = (transfers.run_transfer if transport is None else transport)(
+        argv, None, INVENTORY_TIMEOUT, MAX_BYTES)
     if not isinstance(result, dict):
         raise Refused('inventory-output-missing', 'the dispatch returned no process result')
     output = result.get('stdout')
@@ -402,13 +294,76 @@ def read_inventory(transport=None, pin=None, boot_id=None, read_boot_id=None):
         raise Refused('inventory-exit-nonzero', 'waited exit %r' % (exit_code,))
     if len(output) > MAX_BYTES:
         raise Refused('inventory-truncated', 'stdout is over the %d byte bound' % MAX_BYTES)
-    after = _boot_identity(read_boot_id(), 'after')
-    if after != boot_id:
-        raise Refused('boot-bracket-moved', 'the boot identity after the host read is not the authenticated one')
     try:
         text = bytes(output).decode('ascii')
     except UnicodeDecodeError as exc:
         raise Refused('inventory-output-encoding', 'stdout is not ASCII') from exc
+    return text, bytes(output), stderr
+
+
+def capture_inventory(transport=None):
+    """The helper's own production read: verify the installed CLI, run the one bounded fixed
+    dispatch in the retained environment, and parse its output under the reviewed grammar.
+
+    The transport seam is injectable for offline controls; the production transport is the same
+    supervised bounded process route the caller uses for this helper, carrying the retained CLI
+    environment. Returns (parsed, raw bytes); raw is the exact original stdout the helper passes
+    through on success."""
+    verify_installed_cli()
+    if transport is None:
+        transport = lambda argv, stdin_path, timeout, cap: transfers.run_transfer(
+            argv, stdin_path, timeout, cap, environment=CLI_ENV)
+    try:
+        text, raw, _ = _checked_dispatch(cli_argv(), transport)
+        parsed = parse_output(text, {'vm': REVIEWED_VM, 'home': REVIEWED_HOME})
+    except GrammarError as exc:
+        raise Refused('inventory-output-grammar', str(exc)) from exc
+    if parsed['vm'] != REVIEWED_VM:
+        raise Refused('inventory-vm-differs', 'the read names another VM')
+    return parsed, raw
+
+
+def _boot_identity(value, when):
+    if not isinstance(value, str) or not _is_uuid(value):
+        raise Refused('boot-bracket-malformed', 'the %s guest boot original is not a boot identity' % when)
+    return value
+
+
+def read_inventory(transport=None, pin=None, boot_id=None, read_boot_id=None):
+    """The production host-inventory read, bound to its pin and to the guest boot bracket.
+
+    The helper bytes at pin['tool_path'] must equal pin['sha256']: the pin is the caller's reviewed
+    literal, never a digest this module computes from itself. boot_id is the boot identity the
+    caller already authenticated for this VM, and read_boot_id() returns fresh guest boot originals.
+    It is called once immediately before the one dispatch and once immediately after it, and both
+    originals must equal boot_id; a changed or malformed bracket refuses instead of being recorded.
+
+    The record's VM UUID and home are read from the helper's own output under the pinned grammar.
+    Every other outcome raises Refused with an exact phase (READ_PHASES); a non-observation never
+    becomes a host record. A passing parse of fixture bytes is not a native receipt. The helper is
+    not executed when transport is injected. tool_version and desktop_build in the record are the
+    pinned build: the helper's own bytes are hash-pinned, and those bytes refuse any installed CLI
+    that is not the pinned tool, so a successful dispatch is bound to that identity by the argv,
+    the waited exit and the exact original streams.
+    """
+    if not isinstance(pin, dict) or set(('tool_path', 'sha256', 'argv', 'api', 'home', 'vm',
+                                         'version', 'desktop_build', 'max_bytes')) - set(pin):
+        raise Refused('pin-missing')
+    if not callable(read_boot_id):
+        raise Refused('boot-bracket-missing', 'no guest boot identity reader is bound')
+    boot_id = _boot_identity(boot_id, 'authenticated')
+    if helper_digest(pin['tool_path']) != pin['sha256']:
+        raise Refused('helper-bytes-differ', 'the helper at the pinned path is not the pinned bytes')
+    argv = inventory_argv(pin['tool_path'])
+    if argv != list(pin['argv']):
+        raise Refused('pin-missing', 'the pin does not name the fixed inventory argv')
+    before = _boot_identity(read_boot_id(), 'before')
+    if before != boot_id:
+        raise Refused('boot-bracket-moved', 'the boot identity before the host read is not the authenticated one')
+    text, output, stderr = _checked_dispatch(argv, transport)
+    after = _boot_identity(read_boot_id(), 'after')
+    if after != boot_id:
+        raise Refused('boot-bracket-moved', 'the boot identity after the host read is not the authenticated one')
     try:
         parsed = parse_output(text, pin)
     except GrammarError as exc:
@@ -417,16 +372,14 @@ def read_inventory(transport=None, pin=None, boot_id=None, read_boot_id=None):
         raise Refused('inventory-vm-differs', 'the read names another VM')
     return {
         'tool_path': pin['tool_path'], 'tool_sha256': pin['sha256'],
-        'tool_version': parsed['library_version'],
-        'desktop_build': parsed['library_version'] + '-' + str(parsed['library_build']),
-        # Observation that this dispatch is the inventory accessor, not a Set*/Connect.
-        # Not a claim that LoginLocal or InitEx are sourced as read-only.
-        'api': pin['api'], 'readonly': True, 'argv': argv,
+        'tool_version': pin['version'], 'desktop_build': pin['desktop_build'],
+        # argv is the fixed helper dispatch route; api names the documented read-only accessor
+        # (prlctl list --info --json). No boolean asserts more than the api name, the argv, the
+        # waited exit and the bounded original streams establish.
+        'api': pin['api'], 'argv': argv,
         'status': 'ok', 'exit': 0, 'truncated': False,
-        'output': bytes(output), 'stderr': b'' if not isinstance(stderr, (bytes, bytearray)) else bytes(stderr),
+        'output': output, 'stderr': b'' if not isinstance(stderr, (bytes, bytearray)) else bytes(stderr),
         'vm': parsed['vm'], 'home': parsed['home'], 'boot_ids': [before, after],
-        'library_path': parsed['library_path'], 'library_sha256': parsed['library_sha256'],
-        'library_version': parsed['library_version'],
     }
 
 
@@ -435,10 +388,13 @@ def main(argv):
         print('status=refused phase=usage', file=sys.stderr)
         return 2
     try:
-        enumerate_inventory()
+        _, raw = capture_inventory()
     except Refused as exc:
-        print('status=refused phase=%s' % exc.phase)
+        print('status=refused phase=%s' % (exc.phase + (' reason=' + exc.reason if exc.reason else ''),))
         return 3
+    sys.stdout.flush()
+    sys.stdout.buffer.write(raw)
+    sys.stdout.buffer.flush()
     return 0
 
 

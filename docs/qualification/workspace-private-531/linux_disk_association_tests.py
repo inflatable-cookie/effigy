@@ -1,15 +1,21 @@
 """Controls for the controller-to-guest association verifier (linux_disk_association).
 
 Portable controls use synthetic candidates shaped like the retained facts: a registered config excerpt,
-the documented descriptor shape from linux_disk_identity_tests, one host inventory and a guest inventory.
-TEST_PINS is a test-only mechanism used to isolate premise logic. Production PINS names
-parallels-host-inventory-trust-v1. No VM, host service, image, disk or guest is touched. A pass of
-the verifier on fixture bytes is source admission of the logic, not a fresh native inventory.
+the documented descriptor shape from linux_disk_identity_tests, one host inventory in the retained
+Parallels CLI grammar and a guest inventory. The retained-grammar fixture below is an offline byte
+copy of the genuine 747 `prlctl list --info --json` stdout (its recorded sha256 is asserted), so the
+parser is exercised against the genuine grammar; a fixture cannot supply positive production
+provenance. TEST_PINS is a test-only mechanism used to isolate premise logic. Production PINS names
+parallels-host-inventory-trust-v1. No VM, host service, image, disk or guest is touched, and no
+prlctl process runs. A pass of the verifier on fixture bytes is source admission of the logic, not a
+fresh native inventory.
 """
 import base64
 import hashlib
+import io
 import json
 import os
+import plistlib
 import subprocess
 import sys
 import tempfile
@@ -47,15 +53,14 @@ CHAIN = [TOP, '{22222222-2222-2222-2222-222222222222}', '{33333333-3333-3333-333
 EXTENTS = {CHAIN[0]: 'a.hds', CHAIN[1]: 'b.hds', CHAIN[2]: 'r.hds'}
 TEST_MECHANISM = 'test-disk'
 TEST_HELPER = '/test/linux_disk_inventory.py'
-TEST_LIBRARY = '/test/ParallelsVirtualizationSDK'
-TEST_LIBRARY_SHA = 'b' * 64
-TEST_ARGV = ['/usr/bin/python3', '-I', '-B', TEST_HELPER, 'inventory']
+TEST_TOOL = '/test/prlctl'
+TEST_ARGV = [TEST_TOOL, 'list', '--info', VM, '--json']
 TEST_PINS = {TEST_MECHANISM: {
-    'tool_path': TEST_HELPER, 'sha256': 'a' * 64, 'version': '27.1.0',
-    'desktop_build': '27.1.0-58756', 'api': 'PrlVmCfg_GetAllDevices',
-    'argv': TEST_ARGV, 'max_bytes': inventory.MAX_BYTES, 'max_devices': inventory.MAX_DEVICES,
-    'library_path': TEST_LIBRARY, 'library_sha256': TEST_LIBRARY_SHA,
-    'library_build': '58756', 'home': setup.PVM_HOME, 'vm': VM, 'trust': 'test-only',
+    'tool_path': TEST_HELPER, 'sha256': 'a' * 64, 'version': inventory.DESKTOP_VERSION,
+    'desktop_build': inventory.DESKTOP_VERSION + '-' + inventory.DESKTOP_BUILD,
+    'api': inventory.ACCESSOR,
+    'argv': TEST_ARGV, 'max_bytes': inventory.MAX_BYTES,
+    'home': setup.PVM_HOME, 'vm': VM, 'trust': 'test-only',
 }}
 TEST_SUPPORTED = frozenset({TEST_MECHANISM})
 CAMERA_SYS = dal.USB_CAMERA_RECORD['SystemName']
@@ -74,6 +79,77 @@ RETAINED_USB_CAMERA = ('<USB><Enabled>1</Enabled><Connected>1</Connected><Emulat
                        '<DeviceDescription></DeviceDescription><UsbType>2</UsbType></USB>')
 
 
+# The genuine retained 747 occurrence's `prlctl list --info <vm> --json` stdout (step-004, 4422 bytes),
+# as an offline base64 copy. Its recorded sha256 pins the bytes to the retained original. It is an
+# offline derivative for grammar controls only and supplies no fresh evidence.
+RETAINED_CLI_STDOUT_SHA256 = '08e8245f626b2a096c8b60167cf0ac04b936222a693bc6fd422385aab7ff175a'
+RETAINED_CLI_STDOUT_B64 = (
+    'WwoJewoJCSJJRCI6ICI0MzNjOWU1Yi1jN2I5LTQ2OWYtOTYzMy0yNGI0YWRkY2QzYjUiLAoJCSJOYW1lIjogIlVidW50dSAy'
+    'Ni4wNCBBUk02NCIsCgkJIkRlc2NyaXB0aW9uIjogIkVmZmlneSBMaW51eCBwcm9vZiBWTSBvbiBWYXVsdCIsCgkJIlR5cGUi'
+    'OiAiVk0iLAoJCSJTdGF0ZSI6ICJydW5uaW5nIiwKCQkiT1MiOiAidWJ1bnR1IiwKCQkiVGVtcGxhdGUiOiAibm8iLAoJCSJV'
+    'cHRpbWUiOiAiNjExIiwKCQkiSG9tZSBwYXRoIjogIlwvVm9sdW1lc1wvU3Rhc2hcL3BhcmFsbGVsc1wvVWJ1bnR1IDI2LjA0'
+    'IEFSTTY0LnB2bVwvY29uZmlnLnB2cyIsCgkJIkhvbWUiOiAiXC9Wb2x1bWVzXC9TdGFzaFwvcGFyYWxsZWxzXC9VYnVudHUg'
+    'MjYuMDQgQVJNNjQucHZtXC8iLAoJCSJSZXN0b3JlIEltYWdlIjogIiIsCgkJIkd1ZXN0VG9vbHMiOiB7CgkJCSJzdGF0ZSI6'
+    'ICJpbnN0YWxsZWQiLAoJCQkidmVyc2lvbiI6ICIyNy4xLjAtNTg3NTYiCgkJfSwKCQkiTW91c2UgYW5kIEtleWJvYXJkIjog'
+    'ewoJCQkiU21hcnQgbW91c2Ugb3B0aW1pemVkIGZvciBnYW1lcyI6ICJhdXRvIiwKCQkJIlN0aWNreSBtb3VzZSI6ICJvZmYi'
+    'LAoJCQkiU21vb3RoIHNjcm9sbGluZyI6ICJvZmYiLAoJCQkiS2V5Ym9hcmQgb3B0aW1pemF0aW9uIG1vZGUiOiAiYXV0byIK'
+    'CQl9LAoJCSJVU0IgYW5kIEJsdWV0b290aCI6IHsKCQkJIkF1dG9tYXRpYyBzaGFyaW5nIGNhbWVyYXMiOiAib24iLAoJCQki'
+    'QXV0b21hdGljIHNoYXJpbmcgYmx1ZXRvb3RoIjogIm9mZiIsCgkJCSJBdXRvbWF0aWMgc2hhcmluZyBzbWFydCBjYXJkcyI6'
+    'ICJvZmYiLAoJCQkiQXV0b21hdGljIHNoYXJpbmcgZ2FtZXBhZHMiOiAib24iLAoJCQkiU3VwcG9ydCBVU0IgMy4wIjogIm9u'
+    'IgoJCX0sCgkJIlN0YXJ0dXAgYW5kIFNodXRkb3duIjogewoJCQkiQXV0b3N0YXJ0IjogIm9mZiIsCgkJCSJBdXRvc3RhcnQg'
+    'ZGVsYXkiOiAwLAoJCQkiQXV0b3N0b3AiOiAic3VzcGVuZCIsCgkJCSJTdGFydHVwIHZpZXciOiAic2FtZSIsCgkJCSJPbiBz'
+    'aHV0ZG93biI6ICJjbG9zZSIsCgkJCSJPbiB3aW5kb3cgY2xvc2UiOiAic3VzcGVuZCIsCgkJCSJQYXVzZSBpZGxlIjogIm9m'
+    'ZiIsCgkJCSJVbmRvIGRpc2tzIjogIm9mZiIKCQl9LAoJCSJPcHRpbWl6YXRpb24iOiB7CgkJCSJGYXN0ZXIgdmlydHVhbCBt'
+    'YWNoaW5lIjogIm9uIiwKCQkJIkh5cGVydmlzb3IgdHlwZSI6ICJhcHBsZSIsCgkJCSJBZGFwdGl2ZSBoeXBlcnZpc29yIjog'
+    'Im9mZiIsCgkJCSJEaXNhYmxlZCBXaW5kb3dzIGxvZ28iOiAib24iLAoJCQkiQXV0byBjb21wcmVzcyB2aXJ0dWFsIGRpc2tz'
+    'IjogIm9mZiIsCgkJCSJOZXN0ZWQgdmlydHVhbGl6YXRpb24iOiAib2ZmIiwKCQkJIlBNVSB2aXJ0dWFsaXphdGlvbiI6ICJv'
+    'ZmYiLAoJCQkiTG9uZ2VyIGJhdHRlcnkgbGlmZSI6ICJvZmYiLAoJCQkiU2hvdyBiYXR0ZXJ5IHN0YXR1cyI6ICJvbiIKCQl9'
+    'LAoJCSJTZWN1cml0eSI6IHsKCQkJIkVuY3J5cHRlZCI6ICJubyIsCgkJCSJUUE0gZW5hYmxlZCI6ICJubyIsCgkJCSJUUE0g'
+    'dHlwZSI6ICJvZmYiLAoJCQkiUHJvdGVjdGVkIjogIm5vIiwKCQkJIkFyY2hpdmVkIjogIm5vIiwKCQkJIlBhY2tlZCI6ICJu'
+    'byIKCQl9LAoJCSJTbWFydCBHdWFyZCI6IHsKCQkJImVuYWJsZWQiOiBmYWxzZQoJCX0sCgkJIk1vZGFsaXR5IjogewoJCQki'
+    'T3BhY2l0eSAocGVyY2VudGFnZSkiOiA1MCwKCQkJIlN0YXkgb24gdG9wIjogIm9uIiwKCQkJIlNob3cgb24gYWxsIHNwYWNl'
+    'cyAiOiAib24iLAoJCQkiQ2FwdHVyZSBtb3VzZSBjbGlja3MiOiAib24iCgkJfSwKCQkiRnVsbHNjcmVlbiI6IHsKCQkJIlVz'
+    'ZSBhbGwgZGlzcGxheXMiOiAib2ZmIiwKCQkJIkFjdGl2YXRlIHNwYWNlcyBvbiBjbGljayI6ICJvbiIsCgkJCSJPcHRpbWl6'
+    'ZSBmb3IgZ2FtZXMiOiAib2ZmIiwKCQkJIkdhbW1hIGNvbnRyb2wiOiAib24iLAoJCQkiU2NhbGUgdmlldyBtb2RlIjogImF1'
+    'dG8iCgkJfSwKCQkiQ29oZXJlbmNlIjogewoJCQkiU2hvdyBXaW5kb3dzIHN5c3RyYXkgaW4gTWFjIG1lbnUiOiAib24iLAoJ'
+    'CQkiQXV0by1zd2l0Y2ggdG8gZnVsbCBzY3JlZW4iOiAib24iCgkJfSwKCQkiVGltZSBTeW5jaHJvbml6YXRpb24iOiB7CgkJ'
+    'CSJlbmFibGVkIjogdHJ1ZSwKCQkJIlNtYXJ0IG1vZGUiOiAib2ZmIiwKCQkJIkludGVydmFsIChpbiBzZWNvbmRzKSI6IDYw'
+    'LAoJCQkiVGltZXpvbmUgc3luY2hyb25pemF0aW9uIGRpc2FibGVkIjogIm9mZiIKCQl9LAoJCSJFeHBpcmF0aW9uIjogewoJ'
+    'CQkiZW5hYmxlZCI6IGZhbHNlCgkJfSwKCQkiQm9vdCBvcmRlciI6ICJoZGQwIGNkcm9tMCAiLAoJCSJCSU9TIHR5cGUiOiAi'
+    'ZWZpLWFybTY0IiwKCQkiRUZJIFNlY3VyZSBib290IjogIm9mZiIsCgkJIkFsbG93IHNlbGVjdCBib290IGRldmljZSI6ICJv'
+    'ZmYiLAoJCSJFeHRlcm5hbCBib290IGRldmljZSI6ICIiLAoJCSJTTUJJT1Mgc2V0dGluZ3MiOiB7CgkJCSJCSU9TIFZlcnNp'
+    'b24iOiAiIiwKCQkJIlN5c3RlbSBzZXJpYWwgbnVtYmVyIjogIiIsCgkJCSJCb2FyZCBNYW51ZmFjdHVyZXIiOiAiIgoJCX0s'
+    'CgkJIkhhcmR3YXJlIjogewoJCQkiY3B1IjogewoJCQkJImNwdXMiOiA2LAoJCQkJImF1dG8iOiAib2ZmIiwKCQkJCSJWVC14'
+    'IjogdHJ1ZSwKCQkJCSJob3RwbHVnIjogZmFsc2UsCgkJCQkiYWNjbCI6ICJoaWdoIiwKCQkJCSJtb2RlIjogIjY0IiwKCQkJ'
+    'CSJ0eXBlIjogImFybSIKCQkJfSwKCQkJIm1lbW9yeSI6IHsKCQkJCSJzaXplIjogIjE2Mzg0TWIiLAoJCQkJImF1dG8iOiAi'
+    'b2ZmIgoJCQl9LAoJCQkidmlkZW8iOiB7CgkJCQkiYWRhcHRlci10eXBlIjogInZpcnRpbyIsCgkJCQkic2l6ZSI6ICIwTWIi'
+    'LAoJCQkJIjNkLWFjY2VsZXJhdGlvbiI6ICJoaWdoZXN0IiwKCQkJCSJ2ZXJ0aWNhbC1zeW5jIjogIm9uIiwKCQkJCSJoaWdo'
+    'LXJlc29sdXRpb24iOiAib2ZmIiwKCQkJCSJoaWdoLXJlc29sdXRpb24taW4tZ3Vlc3QiOiAib24iLAoJCQkJIm5hdGl2ZS1z'
+    'Y2FsaW5nLWluLWd1ZXN0IjogIm9mZiIsCgkJCQkiYXV0b21hdGljLXZpZGVvLW1lbW9yeSI6ICJvbiIKCQkJfSwKCQkJIm1l'
+    'bW9yeV9xdW90YSI6IHsKCQkJCSJhdXRvIjogInllcyIKCQkJfSwKCQkJImhkZDAiOiB7CgkJCQkiZW5hYmxlZCI6IHRydWUs'
+    'CgkJCQkicG9ydCI6ICJzYXRhOjAiLAoJCQkJImltYWdlIjogIlwvVm9sdW1lc1wvU3Rhc2hcL3BhcmFsbGVsc1wvVWJ1bnR1'
+    'IDI2LjA0IEFSTTY0LnB2bVwvaGFyZGRpc2sxLmhkZCIsCgkJCQkidHlwZSI6ICJleHBhbmRlZCIsCgkJCQkic2l6ZSI6ICIx'
+    'MzEwNzJNYiIsCgkJCQkib25saW5lLWNvbXBhY3QiOiAib24iCgkJCX0sCgkJCSJjZHJvbTAiOiB7CgkJCQkiZW5hYmxlZCI6'
+    'IHRydWUsCgkJCQkicG9ydCI6ICJzYXRhOjEiLAoJCQkJImltYWdlIjogIiIsCgkJCQkic3RhdGUiOiAiZGlzY29ubmVjdGVk'
+    'IgoJCQl9LAoJCQkidXNiIjogewoJCQkJImVuYWJsZWQiOiB0cnVlCgkJCX0sCgkJCSJuZXQwIjogewoJCQkJImVuYWJsZWQi'
+    'OiB0cnVlLAoJCQkJInR5cGUiOiAic2hhcmVkIiwKCQkJCSJtYWMiOiAiMDAxQzQyQzJGOUYyIiwKCQkJCSJjYXJkIjogInZp'
+    'cnRpbyIKCQkJfSwKCQkJInNvdW5kMCI6IHsKCQkJCSJlbmFibGVkIjogdHJ1ZSwKCQkJCSJvdXRwdXQiOiAiRGVmYXVsdCIs'
+    'CgkJCQkibWl4ZXIiOiAiRGVmYXVsdCIKCQkJfQoJCX0sCgkJIkhvc3QgU2hhcmVkIEZvbGRlcnMiOiB7CgkJCSJlbmFibGVk'
+    'IjogZmFsc2UKCQl9LAoJCSJIb3N0IGRlZmluZWQgc2hhcmluZyI6ICJPZmYiLAoJCSJTaGFyZWQgUHJvZmlsZSI6IHsKCQkJ'
+    'ImVuYWJsZWQiOiBmYWxzZQoJCX0sCgkJIlNoYXJlZCBBcHBsaWNhdGlvbnMiOiB7CgkJCSJlbmFibGVkIjogdHJ1ZSwKCQkJ'
+    'Ikhvc3QtdG8tZ3Vlc3QgYXBwcyBzaGFyaW5nIjogIm9mZiIsCgkJCSJHdWVzdC10by1ob3N0IGFwcHMgc2hhcmluZyI6ICJv'
+    'ZmYiLAoJCQkiU2hvdyBndWVzdCBhcHBzIGZvbGRlciBpbiBEb2NrIjogIm9mZiIsCgkJCSJCb3VuY2UgZG9jayBpY29uIHdo'
+    'ZW4gYXBwIGZsYXNoZXMiOiAib24iCgkJfSwKCQkiU21hcnRNb3VudCI6IHsKCQkJImVuYWJsZWQiOiBmYWxzZQoJCX0sCgkJ'
+    'Ik5ldHdvcmsiOiB7CgkJCSJDb25kaXRpb25lZCI6ICJvZmYiLAoJCQkiaXBBZGRyZXNzZXMiOiBbXQoJCX0sCgkJIk1pc2Nl'
+    'bGxhbmVvdXMgU2hhcmluZyI6IHsKCQkJIlNoYXJlZCBjbGlwYm9hcmQgbW9kZSI6ICJvbiIsCgkJCSJTaGFyZWQgY2xvdWQi'
+    'OiAib2ZmIgoJCX0sCgkJIkFkdmFuY2VkIjogewoJCQkiVk0gaG9zdG5hbWUgc3luY2hyb25pemF0aW9uIjogIm9mZiIsCgkJ'
+    'CSJQdWJsaWMgU1NIIGtleXMgc3luY2hyb25pemF0aW9uIjogIm9mZiIsCgkJCSJTaG93IGRldmVsb3BlciB0b29scyI6ICJv'
+    'ZmYiLAoJCQkiU3dpcGUgZnJvbSBlZGdlcyI6ICJvZmYiLAoJCQkiU2hhcmUgaG9zdCBsb2NhdGlvbiI6ICJvbiIsCgkJCSJS'
+    'b3NldHRhIExpbnV4IjogIm9mZiIKCQl9Cgl9Cl0K'
+)
+RETAINED_CLI_STDOUT = base64.b64decode(RETAINED_CLI_STDOUT_B64)
+
+
 def config_xml(vm=VM, index='0', interface='2', system='harddisk1.hdd', uuid=DEVICE_UUID, extra='', tail='',
                usb=RETAINED_USB_CAMERA, **flags):
     """A registered-config excerpt in the retained shape: one Hdd under Hardware, one CdRom.
@@ -89,46 +165,51 @@ def config_xml(vm=VM, index='0', interface='2', system='harddisk1.hdd', uuid=DEV
             f'<SystemName>{system}</SystemName>{flag_xml}</Hdd>{usb}{extra}</Hardware>{tail}</ParallelsVirtualMachine>').encode()
 
 
-def inventory_devices(extra=(), **hdd_over):
-    hdd = {'type': inventory.PDE_HARD_DISK, 'index': 0, 'iface': inventory.PMS_SATA,
-           'sys_name': 'harddisk1.hdd', 'image_path': IMAGE_PATH,
-           'enabled': 1, 'connected': 1, 'remote': 0, 'passthrough': 0,
-           'disk_type': inventory.PHD_EXPANDING_HARD_DISK,
-           'emulated_type': inventory.PDT_USE_IMAGE_FILE}
-    hdd.update(hdd_over)
-    devices = [
-        {'type': inventory.PDE_OPTICAL_DISK, 'index': 0, 'iface': inventory.PMS_SATA,
-         'sys_name': 'cdrom1.iso', 'image_path': '-', 'enabled': 1, 'connected': 0,
-         'remote': 0, 'passthrough': 1, 'disk_type': -1, 'emulated_type': 1},
-        hdd,
-        {'type': inventory.PDE_USB_DEVICE, 'index': 0, 'iface': -1, 'sys_name': CAMERA_SYS,
-         'image_path': '-', 'enabled': 1, 'connected': 1, 'remote': 0, 'passthrough': 0,
-         'disk_type': -1, 'emulated_type': 3},
-    ]
-    devices.extend(extra)
-    return devices
+# ---- Host inventory fixtures: synthetic shapes of the retained 747 CLI grammar (test-only). ----
 
-
-def inventory_text(pin=None, devices=None, serial=SERIAL, **over):
-    pin = TEST_PINS[TEST_MECHANISM] if pin is None else pin
-    fields = {
-        'vm': VM, 'home': pin['home'], 'library_path': pin['library_path'],
-        'library_sha256': pin['library_sha256'], 'library_version': pin['version'],
-        'library_build': pin['library_build'], 'state_before': inventory.VMS_RUNNING,
-        'state_after': inventory.VMS_RUNNING,
-        'devices': inventory_devices() if devices is None else devices, 'serial': serial,
+def cli_hardware(**over):
+    """The reviewed closed Hardware set, values as the retained 747 step-004 carries them."""
+    hardware = {
+        'cpu': {'cpus': 6, 'auto': 'off', 'VT-x': True, 'hotplug': False, 'accl': 'high',
+                'mode': '64', 'type': 'arm'},
+        'memory': {'size': '16384Mb', 'auto': 'off'},
+        'video': {'adapter-type': 'virtio', 'size': '0Mb', '3d-acceleration': 'highest',
+                  'vertical-sync': 'on', 'high-resolution': 'off', 'high-resolution-in-guest': 'on',
+                  'native-scaling-in-guest': 'off', 'automatic-video-memory': 'on'},
+        'memory_quota': {'auto': 'yes'},
+        'hdd0': dict(inventory.HDD0_REVIEWED),
+        'cdrom0': dict(inventory.CDROM0_REVIEWED),
+        'usb': dict(inventory.USB_REVIEWED),
+        'net0': {'enabled': True, 'type': 'shared', 'mac': '001C42C2F9F2', 'card': 'virtio'},
+        'sound0': {'enabled': True, 'output': 'Default', 'mixer': 'Default'},
     }
-    fields.update(over)
-    return inventory.render_output(**fields)
+    hardware.update(over)
+    return hardware
+
+
+def cli_vm(pin=None, hardware=None, **over):
+    pin = dal.PINS[dal.MECHANISM] if pin is None else pin
+    vm = {'ID': VM, 'Name': 'Ubuntu 26.04 ARM64', 'Description': 'Effigy Linux proof VM on Vault',
+          'Type': 'VM', 'State': inventory.STATE_RUNNING, 'OS': 'ubuntu', 'Template': 'no',
+          'Home': pin['home'] + '/', 'Home path': pin['home'] + '/config.pvs',
+          'Hardware': cli_hardware() if hardware is None else hardware}
+    vm.update(over)
+    return vm
+
+
+def cli_info_text(pin=None, vm_count=1, **over):
+    """The one-VM JSON array the fixed read produces, with trailing newline as prlctl prints it."""
+    payload = [cli_vm(pin, **over) for _ in range(vm_count)]
+    return json.dumps(payload, indent=4) + '\n'
 
 
 def host_read(pin=None, **over):
     pin = TEST_PINS[TEST_MECHANISM] if pin is None else pin
     read = {'tool_path': pin['tool_path'], 'tool_sha256': pin['sha256'],
             'tool_version': pin['version'], 'desktop_build': pin['desktop_build'],
-            'api': pin['api'], 'argv': list(pin['argv']), 'readonly': True, 'status': 'ok',
+            'api': pin['api'], 'argv': list(pin['argv']), 'status': 'ok',
             'exit': 0, 'truncated': False, 'vm': VM, 'boot_ids': [BOOT, BOOT],
-            'output': inventory_text(pin).encode(), 'stderr': b''}
+            'output': cli_info_text(pin).encode(), 'stderr': b''}
     read.update(over)
     return read
 
@@ -231,9 +312,9 @@ def boot_reader(sequence):
 
 
 def inventory_transport(output=None, **over):
-    """A private fixture transport: the recorded copy of the pinned-grammar output, no process."""
+    """A private fixture transport: the recorded copy of the pinned CLI grammar, no process."""
     pin = dal.PINS[dal.MECHANISM]
-    stdout = inventory_text(pin) if output is None else output
+    stdout = cli_info_text(pin) if output is None else output
     if isinstance(stdout, str):
         stdout = stdout.encode()
     result = {'disposition': 'exited', 'waited_exit': 0, 'stdout': stdout, 'stderr': b''}
@@ -253,6 +334,12 @@ def disk_witness():
 
 def table(association, supported=TEST_SUPPORTED, pins=TEST_PINS):
     return {name: (status, reason) for name, status, reason in dal.premise_table(association, supported, pins)}
+
+
+def host_read_with(hardware=None, vm_count=1, pin=None, **vm_over):
+    """A host_read whose CLI payload carries the given Hardware section overrides."""
+    pin = dal.PINS[dal.MECHANISM] if pin is None else pin
+    return host_read(pin, output=cli_info_text(pin, vm_count=vm_count, hardware=hardware, **vm_over).encode())
 
 
 class DiskAssociationControls(unittest.TestCase):
@@ -291,6 +378,10 @@ class DiskAssociationControls(unittest.TestCase):
         self.assertEqual(dal.REVIEWED['home'], setup.PVM_HOME)
         self.assertEqual(dal.REVIEWED['image_path'], setup.PVM_HOME + '/' + setup.DISK_DIR)
         self.assertEqual(dal.REVIEWED['system_name'], setup.DISK_DIR)
+        self.assertEqual(inventory.REVIEWED_VM, setup.VM_UUID)
+        self.assertEqual(inventory.REVIEWED_HOME, setup.PVM_HOME)
+        self.assertEqual(inventory.PRLCTL_SHA256,
+                         '2f61a1c60db2d51591fb8479a248a982a81658f136f1501a94733b7a81731c57')
 
     def test_wrong_vm_refuses_config(self):
         self.assertRefusedAt('config', valid_association(config=config_xml(vm='00000000-0000-0000-0000-000000000000')))
@@ -472,8 +563,8 @@ class DiskAssociationControls(unittest.TestCase):
 
     def test_wrong_descriptor_disk_uid_refuses_descriptor_and_swapped_image_refuses_read(self):
         self.assertRefusedAt('descriptor', valid_association(descriptor=identity_tests.doc(uid_xml=f'<UID>{OTHER_UID}</UID>')))
-        swapped = host_read(output=inventory_text(devices=inventory_devices(
-            image_path='/Volumes/Stash/parallels/other.pvm/harddisk1.hdd')).encode())
+        swapped = host_read_with(hardware=cli_hardware(
+            hdd0=dict(inventory.HDD0_REVIEWED, image='/Volumes/Stash/parallels/other.pvm/harddisk1.hdd')))
         self.assertRefusedAt('host_read', valid_association(host_read=swapped))
 
     def test_stale_or_drifted_descriptor_and_extents_refuse(self):
@@ -510,36 +601,37 @@ class DiskAssociationControls(unittest.TestCase):
         self.assertRefusedAt('guest_blocks', valid_association(guest=guest(boot_id='other-boot')))
         self.assertRefusedAt('host_read', valid_association(host_read=host_read(boot_ids=[BOOT, 'other-boot'])))
 
-    def test_contradictory_serial_observation_refuses_and_absence_does_not(self):
-        self.assertRefusedAt('host_read', valid_association(host_read=host_read(
-            output=inventory_text(serial='S2').encode())))
+    def test_the_cli_inventory_has_no_serial_and_guest_disagreements_still_refuse(self):
+        """The CLI configuration inventory carries no serial: nothing is compared or inferred. A
+        guest-side disagreement between the probe and the sysfs read still refuses."""
+        self.assertEqual(set(inventory.parse_output(RETAINED_CLI_STDOUT.decode('ascii'),
+                                                    {'vm': inventory.REVIEWED_VM, 'home': inventory.REVIEWED_HOME})),
+                         {'vm', 'home', 'home_path', 'state', 'hardware'})
         self.assertEqual(table(valid_association(guest=guest(parent_serial='')))['guest_blocks'][0], 'pass')
         self.assertRefusedAt('guest_blocks', valid_association(guest=guest(sysfs_serial='S9')))
-        self.assertEqual(table(valid_association(host_read=host_read(
-            output=inventory_text(serial=None).encode())))['host_read'][0], 'pass')
 
-    def test_absent_sysfs_serial_is_not_a_disagreement(self):
-        self.assertEqual(table(valid_association())['guest_blocks'][0], 'pass')
-
-    def test_unsupported_tool_api_or_version_refuses_the_read(self):
+    def test_unsupported_accessor_argv_or_version_refuses_the_read(self):
         self.assertRefusedAt('host_read', valid_association(host_read=host_read(tool_sha256='b' * 64)))
-        self.assertRefusedAt('host_read', valid_association(host_read=host_read(api='PrlVm_RegEx')))
+        self.assertRefusedAt('host_read', valid_association(
+            host_read=host_read(api='prlctl exec --')))
         self.assertRefusedAt('host_read', valid_association(host_read=host_read(tool_version='26.0.0')))
         self.assertRefusedAt('host_read', valid_association(host_read=host_read(desktop_build='27.2.0')))
-        self.assertRefusedAt('host_read', valid_association(host_read=host_read(readonly=False)))
+        self.assertRefusedAt('host_read', valid_association(
+            host_read=host_read(argv=TEST_PINS[TEST_MECHANISM]['argv'] + ['--fixture'])))
 
     def test_truncated_failed_or_unknown_read_refuses(self):
+        text = cli_info_text()
         self.assertRefusedAt('host_read', valid_association(host_read=host_read(truncated=True)))
         self.assertRefusedAt('host_read', valid_association(host_read=host_read(status='unknown')))
         self.assertRefusedAt('host_read', valid_association(host_read=host_read(exit=1)))
-        self.assertRefusedAt('host_read', valid_association(host_read=host_read(output=b'x' * (inventory.MAX_BYTES + 1))))
-        self.assertRefusedAt('host_read', valid_association(host_read=host_read(
-            output=inventory_text().encode().rstrip(b'\n'))))
-        doubled = inventory_text().encode().replace(b'vm=' + VM.encode() + b'\n',
-                                                    b'vm=' + VM.encode() + b'\nvm=' + VM.encode() + b'\n', 1)
-        self.assertRefusedAt('host_read', valid_association(host_read=host_read(output=doubled)))
-        self.assertRefusedAt('host_read', valid_association(host_read=host_read(
-            output=inventory_text().encode() + b'extra=1\n')))
+        self.assertRefusedAt('host_read', valid_association(
+            host_read=host_read(output=b'x' * (inventory.MAX_BYTES + 1))))
+        self.assertRefusedAt('host_read', valid_association(
+            host_read=host_read(output=text[:len(text) // 2].encode())))
+        doubled = text.replace('"ID": ' + json.dumps(VM), '"ID": ' + json.dumps(VM) + ', "ID": ' + json.dumps(OTHER_VM), 1)
+        self.assertRefusedAt('host_read', valid_association(host_read=host_read(output=doubled.encode())))
+        self.assertRefusedAt('host_read', valid_association(
+            host_read=host_read(output=text.encode() + b'garbage\n')))
 
     def test_labels_and_caller_claims_are_not_evidence(self):
         association = valid_association(serial=SERIAL, verified=True, premises='all pass',
@@ -576,34 +668,36 @@ class ProductionInventoryControls(unittest.TestCase):
         import preparation_requests as requests
         self.assertIn('linux_disk_inventory.py', requests.REQUIRED_MODULE_NAMES)
 
-    def test_production_pin_binds_helper_bytes_library_vm_and_home(self):
+    def test_production_pin_binds_helper_bytes_cli_vm_and_home(self):
         pin = dal.PINS[dal.MECHANISM]
         self.assertEqual(pin['tool_path'], str(inventory.HELPER))
         self.assertEqual(pin['sha256'], dal.HELPER_SHA256)
         self.assertEqual(pin['sha256'], inventory.helper_digest(inventory.HELPER))
         self.assertEqual(pin['vm'], VM)
         self.assertEqual(pin['argv'], inventory.inventory_argv())
-        self.assertEqual(pin['library_path'], inventory.LIBRARY_PATH)
-        self.assertEqual(pin['library_sha256'], inventory.LIBRARY_SHA256)
+        self.assertEqual(pin['argv'][:4], [inventory.PYTHON, '-I', '-B', str(inventory.HELPER)])
+        self.assertEqual(inventory.cli_argv(), [inventory.PRLCTL, 'list', '--info', VM, '--json'])
+        self.assertEqual(inventory.PRLCTL, '/Applications/Parallels Desktop.app/Contents/MacOS/prlctl')
+        self.assertNotEqual(inventory.PRLCTL, '/usr/local/bin/prlctl')
+        self.assertEqual(pin['api'], 'prlctl list --info --json')
+        self.assertEqual(inventory.ACCESSOR, 'prlctl list --info --json')
         self.assertEqual(pin['home'], setup.PVM_HOME)
-        self.assertEqual(pin['api'], 'PrlVmCfg_GetAllDevices')
-        self.assertNotIn('PrlVmDevHd_GetSerialNumber', inventory.ALLOWLISTED_APIS)
-        self.assertNotIn('PrlVm_RegEx', inventory.ALLOWLISTED_APIS)
-        self.assertIsNone(inventory.PARALLELS_API_VER)
-        self.assertEqual(inventory.SESSION_APIS, (
-            'PrlApi_InitEx', 'PrlApi_Deinit', 'PrlSrv_Create', 'PrlSrv_LoginLocal', 'PrlSrv_Logoff',
-        ))
-        for name in inventory.SESSION_APIS:
-            self.assertNotIn(name, inventory.CONFIG_READ_APIS)
-        self.assertEqual(inventory.INFERRED_LIST_APIS, ('PrlSrv_GetVmListEx',))
-        self.assertNotIn('PrlSrv_GetVmListEx', inventory.CONFIG_READ_APIS)
-        self.assertNotIn('PrlSrv_GetVmListEx', inventory.SESSION_APIS)
-        self.assertEqual(inventory.ALLOWLISTED_APIS,
-                         inventory.SESSION_APIS + inventory.INFERRED_LIST_APIS
-                         + inventory.JOB_APIS + inventory.CONFIG_READ_APIS)
-        self.assertIn('PrlSrv_LoginLocal state effect', inventory.REMAINING_NATIVE_PREMISES)
-        self.assertIn('PrlSrv_GetVmListEx read-only inferred', inventory.REMAINING_NATIVE_PREMISES)
-        self.assertIn('PrlVmDev_IsConnected config-or-running', inventory.REMAINING_NATIVE_PREMISES)
+        self.assertEqual(inventory.CLI_ENV, {'LANG': 'C', 'PATH': '/usr/bin:/bin'})
+        self.assertEqual(inventory.STATE_RUNNING, 'running')
+        self.assertEqual(inventory.HDD0_REVIEWED['image'], setup.PVM_HOME + '/harddisk1.hdd')
+        self.assertEqual(inventory.USB_REVIEWED, {'enabled': True})
+
+    def test_the_supported_reader_is_executable_and_owes_no_source(self):
+        """The supported CLI route removed the SDK scaffold from the dispatch path. The SDK route was
+        never executable and never exercised; no receipt claims otherwise."""
+        self.assertTrue(dal.reader_executable())
+        self.assertTrue(inventory.reader_executable())
+        self.assertEqual(dal.reader_limitation(), 'none')
+        self.assertEqual(inventory.reader_limitation(), 'none')
+
+    def test_the_cli_hardware_set_is_the_retained_closed_set(self):
+        self.assertEqual(inventory.HARDWARE_SECTIONS,
+                         {'cpu', 'memory', 'video', 'memory_quota', 'hdd0', 'cdrom0', 'usb', 'net0', 'sound0'})
 
     def test_narrowly_bound_model_passes_through_setup_and_is_not_presentation_proof(self):
         result = setup.verify_disk_association(production_association())
@@ -616,85 +710,125 @@ class ProductionInventoryControls(unittest.TestCase):
                                                         setup.SUPPORTED_DISK_MECHANISMS, dal.PINS).values()},
                          {'pass'})
 
-    def test_optical_multiplicity_must_match_the_config_one_cdrom(self):
-        self.assertEqual(table(production_association(),
-                               setup.SUPPORTED_DISK_MECHANISMS, dal.PINS)['host_read'][0], 'pass')
-        setup.verify_disk_association(production_association())
-        default_optical = inventory_devices()[0]
-        cases = (
-            ('no optical', [d for d in inventory_devices() if d['type'] != inventory.PDE_OPTICAL_DISK]),
-            ('two optical', inventory_devices(extra=(dict(default_optical, index=1, sys_name='cdrom2.iso'),))),
-            ('two identical optical', inventory_devices(extra=(dict(default_optical),))),
-        )
-        for label, devices in cases:
+    def test_the_retained_747_stdout_parses_and_passes_every_premise_offline(self):
+        """The genuine retained step-004 CLI stdout, byte-pinned to its recorded sha256, drives the
+        full production premise table over fixture config/descriptor/guest bytes. This is an offline
+        derivative of the retained originals: no fresh evidence, no current inventory credit."""
+        self.assertEqual(len(RETAINED_CLI_STDOUT), 4422)
+        self.assertEqual(hashlib.sha256(RETAINED_CLI_STDOUT).hexdigest(), RETAINED_CLI_STDOUT_SHA256)
+        pin = dal.PINS[dal.MECHANISM]
+        read = host_read(pin, output=RETAINED_CLI_STDOUT)
+        association = production_association(host_read=read)
+        rows = table(association, setup.SUPPORTED_DISK_MECHANISMS, dal.PINS)
+        self.assertEqual({status for status, _ in rows.values()}, {'pass'}, rows)
+        result = setup.verify_disk_association(association)
+        self.assertEqual(result['vm'], VM)
+        self.assertEqual(result['system_name'], 'harddisk1.hdd')
+
+    def test_extra_or_unknown_device_section_refuses_inventory(self):
+        """A second disk, an unknown hardware section, a second USB entry and a nested hiding place
+        under an allowed section all refuse the read."""
+        cases = {
+            'second hard disk': cli_hardware(hdd1={'enabled': True, 'port': 'sata:2',
+                                                   'image': setup.PVM_HOME + '/harddisk2.hdd',
+                                                   'type': 'expanded', 'size': '131072Mb'}),
+            'unknown hardware section': cli_hardware(scsi0={'enabled': True}),
+            'usb host device entry': cli_hardware(usb={'enabled': True, 'SanDisk': {'attached': True}}),
+            'nested object under cpu': dict(cli_hardware(), cpu={'cpus': 6, 'hidden': {'image': 'x'}}),
+        }
+        for label, hardware in cases.items():
             with self.subTest(label):
-                read = host_read(output=inventory_text(devices=devices).encode())
+                read = host_read_with(hardware=hardware)
                 self.assertEqual(table(valid_association(host_read=read))['host_read'][0], 'refuse')
                 with mock.patch.object(dal, 'PINS', TEST_PINS), self.assertRaises(Refusal):
                     setup.verify_disk_association(valid_association(host_read=read), TEST_SUPPORTED)
                 prod = host_read(dal.PINS[dal.MECHANISM],
-                                 output=inventory_text(dal.PINS[dal.MECHANISM], devices=devices).encode())
+                                 output=cli_info_text(dal.PINS[dal.MECHANISM], hardware=hardware).encode())
                 with self.assertRaises(Refusal):
                     setup.verify_disk_association(production_association(host_read=prod))
 
-    def test_extra_matching_camera_or_unknown_storage_refuses_inventory(self):
-        extra_camera = {'type': inventory.PDE_USB_DEVICE, 'index': 1, 'iface': -1,
-                        'sys_name': CAMERA_SYS, 'image_path': '-', 'enabled': 1, 'connected': 1,
-                        'remote': 0, 'passthrough': 0, 'disk_type': -1, 'emulated_type': 3}
-        scsi = dict(extra_camera, type=inventory.PDE_GENERIC_SCSI_DEVICE, sys_name='scsi0')
-        usb_disk = dict(extra_camera, sys_name='SanDisk|0781|5581|high|--|1234')
-        extra_hdd = dict(inventory_devices()[1], index=1, sys_name='harddisk2.hdd',
-                         image_path=setup.PVM_HOME + '/harddisk2.hdd')
-        for label, extra in (('extra camera', extra_camera), ('generic scsi', scsi),
-                             ('usb disk', usb_disk), ('extra hdd', extra_hdd)):
+    def test_the_data_disk_must_be_the_reviewed_image_backed_hdd0(self):
+        """Any field of the one data disk that differs from the reviewed expanding image at SATA 0
+        refuses: port, image, type, size, compaction flag, enabled, an extra or missing field."""
+        cases = {
+            'other port': dict(inventory.HDD0_REVIEWED, port='sata:3'),
+            'other image': dict(inventory.HDD0_REVIEWED, image=setup.PVM_HOME + '/harddisk2.hdd'),
+            'plain disk type': dict(inventory.HDD0_REVIEWED, type='plain'),
+            'disabled disk': dict(inventory.HDD0_REVIEWED, enabled=False),
+            'changed size': dict(inventory.HDD0_REVIEWED, size='65536Mb'),
+            'compaction off': dict(inventory.HDD0_REVIEWED, **{'online-compact': 'off'}),
+            'extra field': dict(inventory.HDD0_REVIEWED, passthrough='0'),
+            'missing field': {k: v for k, v in inventory.HDD0_REVIEWED.items() if k != 'type'},
+        }
+        for label, hdd0 in cases.items():
             with self.subTest(label):
-                read = host_read(output=inventory_text(devices=inventory_devices(extra=(extra,))).encode())
-                self.assertEqual(table(valid_association(host_read=read))['host_read'][0], 'refuse')
-                with mock.patch.object(dal, 'PINS', TEST_PINS), self.assertRaises(Refusal):
-                    setup.verify_disk_association(valid_association(host_read=read), TEST_SUPPORTED)
-                prod = host_read(dal.PINS[dal.MECHANISM],
-                                 output=inventory_text(dal.PINS[dal.MECHANISM],
-                                                       devices=inventory_devices(extra=(extra,))).encode())
-                with self.assertRaises(Refusal):
-                    setup.verify_disk_association(production_association(host_read=prod))
-
-    def test_passthrough_or_real_device_refuses_inventory(self):
-        for over in ({'passthrough': 1}, {'emulated_type': inventory.PDT_USE_REAL_DEVICE},
-                     {'emulated_type': inventory.PDT_USE_DIRECT_ASSIGN}, {'remote': 1}):
-            with self.subTest(over=over):
-                read = host_read(output=inventory_text(devices=inventory_devices(**over)).encode())
+                read = host_read_with(hardware=cli_hardware(hdd0=hdd0))
                 self.assertEqual(table(valid_association(host_read=read))['host_read'][0], 'refuse')
 
-    def test_wrong_vm_home_boot_version_tool_or_library_refuses(self):
+    def test_a_boolean_field_will_not_accept_1_or_true_like_integers(self):
+        """The reviewed shape is type-exact: JSON true is a Python bool and 1 is an int, so a 1
+        cannot stand in for the reviewed enabled flag of any exact-shaped section."""
+        cases = {
+            'hdd0 enabled 1': cli_hardware(hdd0=dict(inventory.HDD0_REVIEWED, enabled=1)),
+            'cdrom0 enabled 1': cli_hardware(cdrom0=dict(inventory.CDROM0_REVIEWED, enabled=1)),
+            'usb enabled 1': cli_hardware(usb={'enabled': 1}),
+            'cdrom0 enabled 0': cli_hardware(cdrom0=dict(inventory.CDROM0_REVIEWED, enabled=0)),
+        }
+        for label, hardware in cases.items():
+            with self.subTest(label):
+                read = host_read_with(hardware=hardware)
+                self.assertEqual(table(valid_association(host_read=read))['host_read'][0], 'refuse')
+                with self.assertRaises(inventory.GrammarError):
+                    inventory.parse_output(cli_info_text(dal.PINS[dal.MECHANISM],
+                                                         hardware=hardware),
+                                           dal.PINS[dal.MECHANISM])
+
+    def test_the_optical_section_is_counted_and_never_a_disk(self):
+        missing = {k: v for k, v in cli_hardware().items() if k != 'cdrom0'}
+        second = dict(cli_hardware(), cdrom1=dict(inventory.CDROM0_REVIEWED, port='sata:3'))
+        altered = cli_hardware(cdrom0=dict(inventory.CDROM0_REVIEWED, state='connected'))
+        for label, hardware in (('no optical', missing), ('second optical', second), ('altered optical', altered)):
+            with self.subTest(label):
+                read = host_read_with(hardware=hardware)
+                self.assertEqual(table(valid_association(host_read=read))['host_read'][0], 'refuse')
+        self.assertEqual(table(valid_association())['host_read'][0], 'pass')
+
+    def test_wrong_vm_home_state_tool_or_helper_refuses(self):
         pin = TEST_PINS[TEST_MECHANISM]
-        self.assertEqual(table(valid_association(host_read=host_read(vm='00000000-0000-0000-0000-000000000000')))
-                         ['host_read'][0], 'refuse')
+        self.assertEqual(table(valid_association(host_read=host_read(vm=OTHER_VM)))['host_read'][0], 'refuse')
         self.assertEqual(table(valid_association(host_read=host_read(
-            output=inventory_text(home='/Volumes/Stash/parallels/other.pvm').encode())))['host_read'][0], 'refuse')
+            output=cli_info_text(pin, Home=pin['home']).encode())))['host_read'][0], 'refuse')
+        self.assertEqual(table(valid_association(host_read=host_read(
+            output=cli_info_text(pin, **{'Home path': pin['home'] + '/other.pvs'}).encode())))['host_read'][0],
+            'refuse')
+        self.assertEqual(table(valid_association(host_read=host_read(
+            output=cli_info_text(pin, State='stopped').encode())))['host_read'][0], 'refuse')
         self.assertEqual(table(valid_association(host_read=host_read(boot_ids=[BOOT, 'other'])))['host_read'][0], 'refuse')
         self.assertEqual(table(valid_association(host_read=host_read(tool_version='26.0.0')))['host_read'][0], 'refuse')
         self.assertEqual(table(valid_association(host_read=host_read(tool_sha256='c' * 64)))['host_read'][0], 'refuse')
-        self.assertEqual(table(valid_association(host_read=host_read(
-            output=inventory_text(library_sha256='c' * 64).encode())))['host_read'][0], 'refuse')
         self.assertEqual(table(valid_association(host_read=host_read(argv=pin['argv'] + ['--fixture'])))
                          ['host_read'][0], 'refuse')
 
-    def test_stale_missing_or_changed_state_refuses(self):
-        self.assertEqual(table(valid_association(host_read=host_read(
-            output=inventory_text(state_before=inventory.VMS_RUNNING,
-                                  state_after=0x30000001).encode())))['host_read'][0], 'refuse')
-        self.assertEqual(table(valid_association(host_read=host_read(
-            output=inventory_text(state_before=0x30000001, state_after=0x30000001).encode())))
-                         ['host_read'][0], 'refuse')
+    def test_stale_missing_or_changed_read_refuses(self):
         self.assertEqual(table(valid_association(host_read=host_read(status='ok', exit=1)))['host_read'][0], 'refuse')
+        self.assertEqual(table(valid_association(host_read=host_read(status='ok', truncated=True)))['host_read'][0],
+                         'refuse')
         self.assertEqual(table(valid_association(host_read=None))['host_read'][0], 'refuse')
 
-    def test_swapped_descriptor_chain_or_image_refuses(self):
-        drifted = dict(valid_association()['host'], chain=list(reversed(CHAIN)))
-        self.assertEqual(table(valid_association(host=drifted))['descriptor'][0], 'refuse')
-        other_path = host_read(output=inventory_text(devices=inventory_devices(
-            sys_name='harddisk2.hdd', image_path=setup.PVM_HOME + '/harddisk2.hdd')).encode())
-        self.assertEqual(table(valid_association(host_read=other_path))['host_read'][0], 'refuse')
+    def test_mismatched_cli_and_xml_refuse(self):
+        """The CLI inventory binds to the registered XML: another VM, another home or an image path
+        outside the reviewed bundle cannot pair with the reviewed config."""
+        pin = dal.PINS[dal.MECHANISM]
+        other_vm = host_read(pin, output=cli_info_text(pin, ID=OTHER_VM).encode())
+        self.assertEqual(table(production_association(host_read=other_vm),
+                               setup.SUPPORTED_DISK_MECHANISMS, dal.PINS)['host_read'][0], 'refuse')
+        other_home = host_read(pin, output=cli_info_text(
+            pin, Home='/Volumes/Stash/parallels/other.pvm/',
+            **{'Home path': '/Volumes/Stash/parallels/other.pvm/config.pvs'},
+            hardware=cli_hardware(hdd0=dict(inventory.HDD0_REVIEWED,
+                                            image='/Volumes/Stash/parallels/other.pvm/harddisk1.hdd'))).encode())
+        self.assertEqual(table(production_association(host_read=other_home),
+                               setup.SUPPORTED_DISK_MECHANISMS, dal.PINS)['host_read'][0], 'refuse')
 
     def test_extra_guest_disk_or_mapper_refuses(self):
         extra = guest_blocks() + [{'name': 'sdb', 'type': 'disk', 'path': '/dev/sdb', 'size': 1, 'pkname': None}]
@@ -703,38 +837,134 @@ class ProductionInventoryControls(unittest.TestCase):
         self.assertEqual(table(valid_association(guest=guest(blocks=extra)))['guest_blocks'][0], 'refuse')
         self.assertEqual(table(valid_association(guest=guest(blocks=mapper)))['guest_blocks'][0], 'refuse')
 
-    def test_malformed_partial_or_nested_inventory_refuses(self):
-        text = inventory_text()
-        self.assertEqual(table(valid_association(host_read=host_read(output=b'\xff\n')))['host_read'][0], 'refuse')
-        self.assertEqual(table(valid_association(host_read=host_read(output=b'device_count=1\n')))['host_read'][0],
-                         'refuse')
-        nested = text.replace('dev_1_sys_name=harddisk1.hdd', 'dev_1_sys_name=harddisk1.hdd\ndev_1_sys_name=x')
-        self.assertEqual(table(valid_association(host_read=host_read(output=nested.encode())))['host_read'][0],
-                         'refuse')
-        partial = '\n'.join(text.splitlines()[:-3]) + '\n'
-        self.assertEqual(table(valid_association(host_read=host_read(output=partial.encode())))['host_read'][0],
-                         'refuse')
+    def test_malformed_partial_or_ambiguous_cli_output_refuses(self):
+        pin = dal.PINS[dal.MECHANISM]
+        text = cli_info_text(pin)
+        cases = (
+            ('not ascii', b'\xff', 'inventory-output-encoding'),
+            ('empty', b'', 'inventory-output-grammar'),
+            ('not json', b'list: no such VM', 'inventory-output-grammar'),
+            ('two vms', cli_info_text(pin, vm_count=2).encode(), 'inventory-output-grammar'),
+            ('zero vms', b'[]', 'inventory-output-grammar'),
+            ('object not array', json.dumps(cli_vm(pin)).encode(), 'inventory-output-grammar'),
+            ('hardware not a map', cli_info_text(pin, hardware=[]).encode(), 'inventory-output-grammar'),
+            ('missing hardware section', cli_info_text(
+                pin, hardware={k: v for k, v in cli_hardware().items() if k != 'net0'}).encode(),
+             'inventory-output-grammar'),
+            ('duplicate id key', text.replace('"ID": ' + json.dumps(VM),
+                                              '"ID": ' + json.dumps(VM) + ', "ID": ' + json.dumps(OTHER_VM), 1).encode(),
+             'inventory-output-grammar'),
+            ('truncated json', text[:len(text) // 2].encode(), 'inventory-output-grammar'),
+            ('trailing garbage', text.encode() + b'extra\n', 'inventory-output-grammar'),
+        )
+        for label, payload, phase in cases:
+            with self.subTest(label):
+                self.assertIn(phase, inventory.READ_PHASES)
+                with self.assertRaises(inventory.Refused) as caught:
+                    dal.read_inventory(transport=inventory_transport(output=payload), boot_id=BOOT,
+                                       read_boot_id=boot_reader([BOOT, BOOT]))
+                self.assertEqual(caught.exception.phase, phase)
+        with self.assertRaises(inventory.Refused) as caught:
+            dal.read_inventory(transport=inventory_transport(), pin={}, boot_id=BOOT,
+                               read_boot_id=boot_reader([BOOT, BOOT]))
+        self.assertEqual(caught.exception.phase, 'pin-missing')
 
-    def test_absent_capability_refuses_init_without_guessing_api_ver(self):
-        with self.assertRaises(inventory.Refused) as caught:
-            inventory.enumerate_inventory(verify_library=lambda: {'path': 'x'}, api_ver=None)
-        self.assertEqual(caught.exception.phase, 'parallels-api-ver-unsourced')
-        with self.assertRaises(inventory.Refused) as caught:
-            inventory.enumerate_inventory(verify_library=lambda: (_ for _ in ()).throw(inventory.Refused('library-hash-mismatch')))
-        self.assertEqual(caught.exception.phase, 'library-hash-mismatch')
+    def test_installed_tool_custody_refuses_drift_alias_or_wrong_version_without_executing_it(self):
+        """The helper's custody check is local metadata: path, bytes, Info.plist. It never runs the
+        tool, and an aliased path, drifted bytes or a wrong plist version refuses before dispatch."""
+        fixture_root = Path(os.environ.get('TMPDIR') or tempfile.gettempdir())
+        with tempfile.TemporaryDirectory(dir=fixture_root) as scratch:
+            base = Path(scratch)
+            tool = base / 'prlctl'
+            tool.write_bytes(b'fake tool bytes')
+            plist = base / 'Info.plist'
+            plist.write_bytes(plistlib.dumps({'CFBundleShortVersionString': inventory.DESKTOP_VERSION,
+                                              'CFBundleVersion': inventory.DESKTOP_BUILD}))
+            fixture_sha = hashlib.sha256(b'fake tool bytes').hexdigest()
+            verified = inventory.verify_installed_cli(path=str(tool), plist_path=str(plist),
+                                                      expected_sha=fixture_sha)
+            self.assertEqual(verified, {'path': str(tool), 'sha256': fixture_sha,
+                                        'version': inventory.DESKTOP_VERSION, 'build': inventory.DESKTOP_BUILD})
+            alias = base / 'prlctl-alias'
+            alias.symlink_to(tool)
+            drifted = base / 'prlctl-drifted'
+            drifted.write_bytes(b'drifted bytes')
+            wrong_build = base / 'wrong-build.plist'
+            wrong_build.write_bytes(plistlib.dumps({'CFBundleShortVersionString': inventory.DESKTOP_VERSION,
+                                                    'CFBundleVersion': '99999'}))
+            cases = (
+                ('aliased tool', dict(path=str(alias), plist_path=str(plist), expected_sha=fixture_sha), 'tool-alias'),
+                ('missing tool', dict(path=str(base / 'absent'), plist_path=str(plist)), 'tool-unavailable'),
+                ('drifted tool', dict(path=str(drifted), plist_path=str(plist), expected_sha=fixture_sha),
+                 'tool-hash-mismatch'),
+                ('plist unavailable', dict(path=str(tool), plist_path=str(base / 'absent.plist'),
+                                           expected_sha=fixture_sha), 'tool-plist-unavailable'),
+                ('wrong build', dict(path=str(tool), plist_path=str(wrong_build), expected_sha=fixture_sha),
+                 'tool-version-mismatch'),
+            )
+            for label, kwargs, phase in cases:
+                with self.subTest(label):
+                    with self.assertRaises(inventory.Refused) as caught:
+                        inventory.verify_installed_cli(**kwargs)
+                    self.assertEqual(caught.exception.phase, phase)
 
     def test_helper_main_refuses_extra_args_and_does_not_accept_a_fixture_path(self):
         self.assertEqual(inventory.main([]), 2)
         self.assertEqual(inventory.main(['inventory', '--fixture', '/tmp/x']), 2)
         self.assertEqual(inventory.main(['inventory', str(inventory.HELPER)]), 2)
+        completed = subprocess.run(inventory.inventory_argv() + ['--fixture', '/tmp/x'],
+                                   stdin=subprocess.DEVNULL, capture_output=True, timeout=120)
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn(b'usage', completed.stderr)
 
-    def test_uninjected_dispatch_uses_fixed_argv_with_private_fixture_transport(self):
+    def test_the_real_entry_passes_through_exact_originals_and_refuses_with_a_phase(self):
+        """The production entry is the concrete reader: it verifies custody, runs the one bounded
+        dispatch through the injected seam, and writes the exact original bytes on success. A
+        failed or unparseable dispatch refuses with its phase and prints no output. Custody
+        verification reads the installed tool's local metadata only (canonical path, bytes, app
+        Info.plist) and never executes it. Fixture transport only; no prlctl process runs."""
+        pin_payload = cli_info_text(dal.PINS[dal.MECHANISM]).encode()
+        dispatched = []
+
+        def transport(argv, stdin_path, timeout, cap, **kwargs):
+            dispatched.append(argv)
+            self.assertEqual(argv, inventory.cli_argv())
+            self.assertIsNone(stdin_path)
+            self.assertEqual(timeout, inventory.INVENTORY_TIMEOUT)
+            self.assertEqual(cap, inventory.MAX_BYTES)
+            return {'disposition': 'exited', 'waited_exit': 0, 'stdout': pin_payload, 'stderr': b''}
+
+        written = []
+        with mock.patch.object(inventory.transfers, 'run_transfer', transport), \
+                mock.patch.object(sys, 'stdout') as stdout:
+            stdout.buffer.write = lambda data: written.append(data)
+            self.assertEqual(inventory.main(['inventory']), 0)
+            self.assertEqual(b''.join(written), pin_payload)
+        self.assertEqual(dispatched, [inventory.cli_argv()])
+
+        def failing(argv, stdin_path, timeout, cap, **kwargs):
+            return {'disposition': 'failed', 'waited_exit': 255, 'stdout': b'', 'stderr': b'boom'}
+
+        with mock.patch.object(inventory.transfers, 'run_transfer', failing), \
+                mock.patch('sys.stdout', new=io.StringIO()) as fake_out:
+            self.assertEqual(inventory.main(['inventory']), 3)
+        self.assertIn('status=refused phase=inventory-not-exited', fake_out.getvalue())
+
+        def unparseable(argv, stdin_path, timeout, cap, **kwargs):
+            return {'disposition': 'exited', 'waited_exit': 0, 'stdout': b'{"ID": ', 'stderr': b''}
+
+        with mock.patch.object(inventory.transfers, 'run_transfer', unparseable), \
+                mock.patch('sys.stdout', new=io.StringIO()) as fake_out:
+            self.assertEqual(inventory.main(['inventory']), 3)
+        self.assertIn('status=refused phase=inventory-output-grammar', fake_out.getvalue())
+
+    def test_pinned_dispatch_uses_the_fixed_argv_with_private_fixture_transport(self):
         seen = []
 
         def transport(argv, stdin_path, timeout, output_cap):
             seen.append((argv, stdin_path, timeout, output_cap))
-            return {'disposition': 'exited', 'waited_exit': 0, 'stdout': inventory_text(dal.PINS[dal.MECHANISM]).encode(),
-                    'stderr': b''}
+            return {'disposition': 'exited', 'waited_exit': 0,
+                    'stdout': cli_info_text(dal.PINS[dal.MECHANISM]).encode(), 'stderr': b''}
 
         boots = boot_reader([BOOT, BOOT])
         record = dal.read_inventory(transport=transport, boot_id=BOOT, read_boot_id=boots)
@@ -742,12 +972,13 @@ class ProductionInventoryControls(unittest.TestCase):
         self.assertEqual(record['argv'], inventory.inventory_argv())
         self.assertEqual(record['tool_path'], str(inventory.HELPER))
         self.assertEqual(record['tool_sha256'], dal.HELPER_SHA256)
-        self.assertEqual(record['api'], 'PrlVmCfg_GetAllDevices')
-        self.assertTrue(record['readonly'])
+        self.assertEqual(record['api'], inventory.ACCESSOR)
+        self.assertNotIn('readonly', record)
+        self.assertEqual(record['tool_version'], inventory.DESKTOP_VERSION)
+        self.assertEqual(record['desktop_build'], inventory.DESKTOP_VERSION + '-' + inventory.DESKTOP_BUILD)
         # The VM UUID and the boot bracket are readings of this dispatch, not caller constants.
         self.assertEqual(record['vm'], VM)
         self.assertEqual(record['boot_ids'], [BOOT, BOOT])
-        self.assertEqual(record['library_sha256'], dal.PINS[dal.MECHANISM]['library_sha256'])
         facts = production_association(host_read=record)
         result = setup.verify_disk_association(facts)
         self.assertEqual(result['mechanism'], dal.MECHANISM)
@@ -828,7 +1059,7 @@ class ProductionInventoryControls(unittest.TestCase):
     def test_a_non_observation_never_becomes_a_host_record(self):
         """Partial output, nonzero exit, a timeout, an over-cap read and a grammar break all refuse."""
         pin = dal.PINS[dal.MECHANISM]
-        text = inventory_text(pin)
+        text = cli_info_text(pin)
         cases = (
             ('timeout', dict(disposition='timeout', waited_exit=0, stdout=b''), 'inventory-not-exited'),
             ('output cap', dict(disposition='output-cap', waited_exit=0, stdout=text.encode()[:40]),
@@ -839,12 +1070,10 @@ class ProductionInventoryControls(unittest.TestCase):
             ('stub refusal', dict(waited_exit=3, stdout=b''), 'inventory-exit-nonzero'),
             ('missing stdout', dict(stdout=None), 'inventory-output-missing'),
             ('over the cap', dict(stdout=b'x' * (inventory.MAX_BYTES + 1)), 'inventory-truncated'),
-            ('not ascii', dict(stdout=b'vm=\xff\n'), 'inventory-output-encoding'),
-            ('partial output', dict(stdout=('\n'.join(text.splitlines()[:-3]) + '\n').encode()),
-             'inventory-output-grammar'),
-            ('repeated field', dict(stdout=text.encode() + b'vm=' + VM.encode() + b'\n'),
-             'inventory-output-grammar'),
-            ('another vm', dict(stdout=inventory_text(pin, vm=OTHER_VM).encode()), 'inventory-vm-differs'),
+            ('not ascii', dict(stdout=b'{\xff}'), 'inventory-output-encoding'),
+            ('partial output', dict(stdout=text[:len(text) // 2].encode()), 'inventory-output-grammar'),
+            ('repeated field', dict(stdout=(text.encode() + text[:20].encode())), 'inventory-output-grammar'),
+            ('another vm', dict(stdout=cli_info_text(pin, ID=OTHER_VM).encode()), 'inventory-vm-differs'),
         )
         for label, over, phase in cases:
             with self.subTest(label):
@@ -857,33 +1086,6 @@ class ProductionInventoryControls(unittest.TestCase):
             dal.read_inventory(transport=inventory_transport(), pin={}, boot_id=BOOT,
                                read_boot_id=boot_reader([BOOT, BOOT]))
         self.assertEqual(caught.exception.phase, 'pin-missing')
-
-    def test_the_init_stub_cannot_count_as_an_executable_reader(self):
-        """The production entry refuses before Init and prints nothing a reader accepts. Opening the
-        gate by patching the unsourced constants does not turn those bytes into an inventory read."""
-        self.assertFalse(dal.reader_executable())
-        self.assertIn('PARALLELS_API_VER', dal.reader_limitation())
-        self.assertIn(inventory.SOURCE_GAP['next_read'], dal.reader_limitation())
-        completed = subprocess.run(inventory.inventory_argv(), stdin=subprocess.DEVNULL,
-                                   capture_output=True, timeout=120)
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertNotIn(b'vm=', completed.stdout)
-        stub = (lambda argv, stdin_path, timeout, cap: {
-            'disposition': 'exited', 'waited_exit': completed.returncode,
-            'stdout': completed.stdout, 'stderr': completed.stderr})
-        with mock.patch.object(inventory, 'PARALLELS_API_VER', 17), \
-                mock.patch.object(inventory, 'PRL_HANDLE_SIZE', 8):
-            self.assertTrue(dal.reader_executable())
-            with self.assertRaises(inventory.Refused) as caught:
-                dal.read_inventory(transport=stub, boot_id=BOOT, read_boot_id=boot_reader([BOOT, BOOT]))
-            self.assertEqual(caught.exception.phase, 'inventory-exit-nonzero')
-            # The refused output is not a host record either: the association refuses it without one.
-            refused = dict(production_association(), host_read={'output': completed.stdout})
-            self.assertEqual({status for _, status, _ in
-                              dal.premise_table(refused, setup.SUPPORTED_DISK_MECHANISMS, dal.PINS)
-                              if status != 'pass'}, {'refuse'})
-            with self.assertRaises(Refusal):
-                setup.verify_disk_association(refused)
 
     def test_guest_facts_refuse_a_hidden_or_disagreeing_device(self):
         block, lsblk = guest_block_observations()
