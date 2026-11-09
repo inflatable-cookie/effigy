@@ -672,7 +672,8 @@ def observe(run, retain, guard, deadline, budget=BUDGET_SECONDS):
         if retained_error is not None:
             status, reasons = FAILED, reasons + [retained_error]
         row.update(status=status, exit=result.get('waited_exit'), disposition=result.get('disposition'),
-                   reasons=reasons, facts=facts, original=original, sha256=sha, bytes=len(raw))
+                   reasons=reasons, facts=facts, original=original, sha256=sha, bytes=len(raw),
+                   attempts=result.get('attempts', []))
         rows.append(row)
     guard()
     return summarize(rows)

@@ -1,0 +1,1 @@
+Linux diagnostic observations now retry bounded failures before fixed read-only programs produce output, retain every attempt, and read applied slice limits directly from cgroup v2 files, including explicit empty IO limits. Guest loopbacks are classified separately from VM devices; writable-top and hard-quota gates remain unchanged.
