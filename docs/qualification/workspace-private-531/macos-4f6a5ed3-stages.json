@@ -8,11 +8,21 @@
       "url": "https://github.com/abiosoft/colima-core/releases/download/v0.10.4/ubuntu-24.04-minimal-cloudimg-arm64-containerd.raw.gz"
     },
     "desktop_host": "unix:///Users/tom/.docker/run/docker.sock",
-    "ports_archive": "http://ports.ubuntu.com/ubuntu-ports",
-    "recipe_file": "docs/qualification/workspace-private-531/runtime.Dockerfile sha256 d290f70febe8ce9ba4cd3cc252a9786d8ee5fc4e82a6219ec0338c884486f514",
+    "ports_archive": "https://ports.ubuntu.com/ubuntu-ports",
+    "recipe_file": "docs/qualification/workspace-private-531/runtime.Dockerfile sha256 c00d5bd909e65969c70dc78b16781812a98e507c20a068cd573d70a20480fa1a",
     "route_echo": "a \"b\" 'c' $HOME {x} * ; ( ) \\ = \nd",
     "token": "eight lowercase hex, minted at C0 admission",
-    "token32": "32 lowercase hex, minted at C0 admission, names the guest context via guest_dir()"
+    "token32": "32 lowercase hex, minted at C0 admission, names the guest context via guest_dir()",
+    "runtime_image": {
+      "bytes": 38409328,
+      "index_sha256": "076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11",
+      "manifest_sha256": "a8fb2ba88181746111cbbe2969826d6546b71226785b196c93d2c3445a25000d",
+      "config_sha256": "5649198dfcca9dd6955ee455fdd6ba60734f28da600de2919a2f53da113a707c",
+      "layer_sha256": "771eed73ee82c7916df197c0fd7ef3ac4eedcb9a6318b10d2652948c6c4ca08f",
+      "layer_bytes": 27684607,
+      "deb_bytes": 10715540,
+      "deb_count": 22
+    }
   },
   "decision": "63c338e2-1c50-435e-9783-e78e9d8558e6",
   "decision_version": 2,
@@ -43,6 +53,7 @@
     "host_stage_dockerfile",
     "make_owned_dir",
     "prefetch_colima_image",
+    "prefetch_runtime_inputs",
     "read_cidfile",
     "read_iidfile",
     "render_guest_spec",
@@ -52,7 +63,7 @@
     "verify_tool_sha",
     "verify_tranche_summary"
   ],
-  "manifest": "macos-4f6a5ed3-stages-r5",
+  "manifest": "macos-4f6a5ed3-stages-r6",
   "observed_metadata": {
     "child": "linux-artifact-preparation.l0tx7tam/macos-metadata-rfzuiadz",
     "note": "local metadata only; not a running-engine or guest observation",
@@ -65,7 +76,7 @@
     "image_context.py": "af74047f640111907930273f7cc7a2b46eac4cb27943f0a512fccf56a1b3b322",
     "image_prepare.py": "882f9e44e7acd87e5ab94237feb7f19a452a3bbb86dd1cf208f311129847964f",
     "macos_metadata_tranche.py": "c204bfaa87c2534da05b62c5f10beda5d3196216ce40d6afffeb8dec2ef9d1a6",
-    "macos_preparation.py": "ead3a4522fdffb93ee50e6774c9f99b02d5afe51c46681f330dee303531fc983"
+    "macos_preparation.py": "e16c63e15705e3074d89945a3e703791a4c9251f3b2699c67b7e7c01b58f4f4a"
   },
   "proof_entry": {
     "baseline": {
@@ -154,6 +165,7 @@
     "desktop_context_dir",
     "desktop_host",
     "desktop_iidfile",
+    "desktop_input_dir",
     "guest_context",
     "guest_iidfile",
     "guest_spec",
@@ -468,7 +480,7 @@
     },
     {
       "backend": "colima",
-      "closure": "the helper receipt equals the recipe: sha d290f70f, 474 bytes, mode 0600, fsynced, readback equal",
+      "closure": "the helper receipt equals the recipe: sha c00d5bd9, 318 bytes, mode 0600, fsynced, readback equal",
       "download_cap_bytes": 0,
       "failure": "missing or partial receipt refuses; the Unknown guest directory is retained and never reused",
       "id": "C3",
@@ -539,19 +551,19 @@
     },
     {
       "backend": "colima",
-      "closure": "verify receipt equals the stage receipt. The build is bounded by a 900 second command envelope with a guest deadline of 840 seconds (timeout -k 5), leaving 55 seconds of host receipt margin. Closed needs a waited exit 0 and an iidfile ID that inspects as linux/arm64. C5 needs this closure and the identity check.",
-      "download_cap_bytes": 1073741824,
-      "failure": "no retry. A timeout, a deadline or non-zero build exit is Unknown and retained and never reaches C5. A daemon may keep building after the client is killed; no container or build closure is claimed.",
+      "closure": "verify receipt equals the stage receipt. The build is bounded by a 900 second command envelope with a guest deadline of 840 seconds (timeout -k 5), leaving 55 seconds of host receipt margin. Closed needs a waited exit 0 and an iidfile ID that inspects as linux/arm64. The build argv is --network none with additional contexts {guest_context}.oci (oci-layout) and {guest_context}.debs; FROM cannot contact a registry. C5 needs this closure and the identity check. Guest transfer of those input directories is not closed here.",
+      "download_cap_bytes": 0,
+      "failure": "no retry. A timeout, a deadline or non-zero build exit is Unknown and retained and never reaches C5. A daemon may keep building after the client is killed; no container or build closure is claimed. The guest still lacks a closed transfer of the host-fetched OCI layout and debs.",
       "id": "C4",
       "name": "one local-path runtime image build",
       "network_sources": [
-        "docker.io/library/ubuntu@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11",
-        "http://ports.ubuntu.com/ubuntu-ports"
+        "none"
       ],
       "reserve_seconds": 120,
       "retained_after_failure": [
         "guest context directory and its docker-config child (uncreated), never removed by pattern",
-        "guest iidfile and any partial image or build cache in containerd, never pruned"
+        "guest iidfile and any partial image or build cache in containerd, never pruned",
+        "{guest_context}.oci and {guest_context}.debs if present, never removed by pattern"
       ],
       "retention": "verify and build streams, nerdctl build --help, iidfile, inspect JSON, image ID",
       "seconds": 1200,
@@ -673,6 +685,12 @@
             "{guest_iidfile}",
             "--tag",
             "effigy-4f6a-runtime:r1",
+            "--network",
+            "none",
+            "--build-context",
+            "ubuntu=oci-layout://{guest_context}.oci",
+            "--build-context",
+            "debs={guest_context}.debs",
             "{guest_context}"
           ],
           "env": {
@@ -1162,21 +1180,46 @@
     },
     {
       "backend": "desktop",
-      "closure": "waited exit 0 for the build, then the iidfile ID inspects on this engine as linux/arm64 with the occurrence label. The docker build client has a 900 second host envelope; a kill or timeout is Unknown and retained, and no later step runs.",
-      "download_cap_bytes": 1073741824,
-      "failure": "no retry; a receipt mismatch refuses before build. No --pull is used: a missing base is pulled once by digest from the official registry under the download cap; a present base is used with no network. Daemon execution may outlive a killed client.",
+      "closure": "waited exit 0 for the build, then the iidfile ID inspects on this engine as linux/arm64 with the occurrence label. Inputs are the pinned Ubuntu 22.04 arm64 OCI blobs and offline apt debs, fetched and hashed on the host with exact size, then assembled as {desktop_input_dir}/oci and {desktop_input_dir}/debs. The docker build uses --network none and those additional contexts; FROM cannot contact a registry. The docker build client has a 840 second host envelope; a kill or timeout is Unknown and retained, and no later step runs.",
+      "download_cap_bytes": 38409328,
+      "failure": "no retry; a receipt mismatch, size, hash, architecture, encoding, redirect or exclusive-create refusal stops before build and retains the partial input. No --pull is used. Daemon execution may outlive a killed client.",
       "id": "D2",
-      "name": "runtime image into the Desktop engine",
+      "name": "runtime image into the Desktop engine from pinned local inputs",
       "network_sources": [
-        "docker.io/library/ubuntu@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11",
-        "http://ports.ubuntu.com/ubuntu-ports"
+        "https://registry-1.docker.io/v2/library/ubuntu/manifests/sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11",
+        "https://registry-1.docker.io/v2/library/ubuntu/manifests/sha256:a8fb2ba88181746111cbbe2969826d6546b71226785b196c93d2c3445a25000d",
+        "https://registry-1.docker.io/v2/library/ubuntu/blobs/sha256:5649198dfcca9dd6955ee455fdd6ba60734f28da600de2919a2f53da113a707c",
+        "https://registry-1.docker.io/v2/library/ubuntu/blobs/sha256:771eed73ee82c7916df197c0fd7ef3ac4eedcb9a6318b10d2652948c6c4ca08f",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/p/python3-defaults/python3_3.10.6-1~22.04.1_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/p/python3-defaults/python3-minimal_3.10.6-1~22.04.1_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/p/python3-defaults/libpython3-stdlib_3.10.6-1~22.04.1_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/p/python3.10/python3.10_3.10.12-1~22.04.18_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/p/python3.10/python3.10-minimal_3.10.12-1~22.04.18_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/p/python3.10/libpython3.10-minimal_3.10.12-1~22.04.18_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/p/python3.10/libpython3.10-stdlib_3.10.12-1~22.04.18_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/c/ca-certificates/ca-certificates_20260816ubuntu0.22.04.2_all.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/o/openssl/openssl_3.0.2-0ubuntu1.30_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/o/openssl/libssl3_3.0.2-0ubuntu1.30_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/e/expat/libexpat1_2.4.7-1ubuntu0.9_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/m/mpdecimal/libmpdec3_2.5.1-2build2_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/n/ncurses/libncursesw6_6.3-2ubuntu0.3_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/n/ncurses/libtinfo6_6.3-2ubuntu0.3_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/libn/libnsl/libnsl2_1.3.0-2build2_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/r/readline/libreadline8_8.1.2-1_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/r/readline/readline-common_8.1.2-1_all.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/s/sqlite3/libsqlite3-0_3.37.2-2ubuntu0.8_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/libt/libtirpc/libtirpc3_1.3.2-2ubuntu0.1_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/libt/libtirpc/libtirpc-common_1.3.2-2ubuntu0.1_all.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/d/db5.3/libdb5.3_5.3.28+dfsg1-0.8ubuntu3_arm64.deb",
+        "https://ports.ubuntu.com/ubuntu-ports/pool/main/m/media-types/media-types_7.0.0_all.deb"
       ],
       "reserve_seconds": 120,
       "retained_after_failure": [
         "Desktop build cache and the image named by the iidfile, retained by ID and label, never pruned",
-        "staged Dockerfile in {desktop_context_dir}"
+        "staged Dockerfile in {desktop_context_dir}",
+        "owned {desktop_input_dir} and any partial or verified OCI layout or deb in it, never removed or reused"
       ],
-      "retention": "build stream, iidfile, readback JSON, image ID",
+      "retention": "per-input size and sha256 in the prefetch helper result, build stream, iidfile, readback JSON, image ID",
       "seconds": 1200,
       "steps": [
         {
@@ -1202,6 +1245,28 @@
           "timeout_seconds": 30
         },
         {
+          "helper": "make_owned_dir",
+          "id": "d2-make-input-dir",
+          "inputs": [
+            "{desktop_input_dir}"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 10
+        },
+        {
+          "helper": "prefetch_runtime_inputs",
+          "id": "d2-prefetch-runtime-inputs",
+          "inputs": [
+            "{desktop_input_dir}"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 90
+        },
+        {
           "helper": "host_stage_dockerfile",
           "id": "d2-host-stage",
           "inputs": [
@@ -1211,7 +1276,7 @@
           "kind": "helper",
           "output_cap_bytes": 4096,
           "retries": 0,
-          "timeout_seconds": 30
+          "timeout_seconds": 10
         },
         {
           "argv": [
@@ -1226,6 +1291,12 @@
             "effigy-4f6a-desktop-runtime:{token}",
             "--iidfile",
             "{desktop_iidfile}",
+            "--network",
+            "none",
+            "--build-context",
+            "ubuntu=oci-layout://{desktop_input_dir}/oci",
+            "--build-context",
+            "debs={desktop_input_dir}/debs",
             "{desktop_context_dir}"
           ],
           "env": {
@@ -1241,7 +1312,7 @@
           "kind": "exec",
           "output_cap_bytes": 262144,
           "retries": 0,
-          "timeout_seconds": 900
+          "timeout_seconds": 840
         },
         {
           "helper": "read_iidfile",

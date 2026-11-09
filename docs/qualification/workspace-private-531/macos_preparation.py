@@ -28,7 +28,7 @@ DECISION_VERSION = 2
 SOCKET_LIMIT_BYTES = 104
 STAGE_CAP_SECONDS = 1200
 OUTPUT_CAP_BYTES = 256 * 1024
-RECIPE_SHA256 = 'd290f70febe8ce9ba4cd3cc252a9786d8ee5fc4e82a6219ec0338c884486f514'
+RECIPE_SHA256 = 'c00d5bd909e65969c70dc78b16781812a98e507c20a068cd573d70a20480fa1a'
 GIB = 1024 ** 3
 DOWNLOAD_CAP_MAX = 2 * GIB
 STORAGE_CAP_MAX = 8 * GIB
@@ -43,7 +43,8 @@ READINESS_STAGES = frozenset({'C0', 'D0'})
 # Every placeholder a manifest argv may contain. Anything else refuses at render time.
 SLOTS = frozenset({
     'control', 'colima_home', 'colima_cache_home', 'colima_docker_config', 'qualification_root',
-    'desktop_config', 'desktop_context_dir', 'desktop_host', 'desktop_iidfile', 'desktop_cidfile',
+    'desktop_config', 'desktop_context_dir', 'desktop_input_dir', 'desktop_host', 'desktop_iidfile',
+    'desktop_cidfile',
     'token', 'guest_spec', 'guest_verify_spec', 'guest_context', 'guest_iidfile', 'probe_source',
     'stage_source', 'verify_source', 'check_source', 'route_echo', 'image_id',
     'owned_container_ids', 'owned_image_id', 'owned_volume_name',
@@ -58,7 +59,7 @@ HELPERS = frozenset({
     'render_guest_spec', 'compare_route_echo', 'host_stage_dockerfile', 'verify_desktop_endpoint',
     'verify_frozen_artifacts', 'check_build_help', 'read_iidfile', 'check_image_identity',
     'check_runtime_facts', 'select_cleanup_targets', 'read_cidfile', 'check_cleanup_target',
-    'prefetch_colima_image',
+    'prefetch_colima_image', 'prefetch_runtime_inputs',
 })
 # Hostile on purpose. Every character class the sources use (quotes, $, braces, glob, parens,
 # semicolon, backslash, equals, newline) is present, and nothing that can redirect, pipe or
@@ -72,11 +73,12 @@ COLIMA_IMAGE_SHA512 = ('86fd0879941f890b72ad54709cd28d0b9c31638b3ba0201d3abd11ea
 COLIMA_IMAGE_BYTES = 446992920
 COLIMA_IMAGE_NAME = COLIMA_IMAGE_URL.rsplit('/', 1)[1]
 BASE_IMAGE = 'docker.io/library/ubuntu@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11'
-PORTS_ARCHIVE = 'http://ports.ubuntu.com/ubuntu-ports'
+PORTS_ARCHIVE = 'https://ports.ubuntu.com/ubuntu-ports'
 OFFICIAL_SOURCE_PREFIXES = (
     COLIMA_IMAGE_URL.rsplit('/', 1)[0] + '/',
-    'docker.io/library/ubuntu@sha256:',
-    PORTS_ARCHIVE,
+    'https://registry-1.docker.io/v2/library/ubuntu/',
+    'https://production.cloudfront.docker.com/',
+    PORTS_ARCHIVE + '/',
 )
 COLIMA_ENV_R2 = dict(set={'COLIMA_HOME': '{colima_home}'}, unset=['LIMA_HOME', 'DOCKER_HOST', 'DOCKER_CONTEXT'])
 COLIMA_ENV = dict(set={'COLIMA_HOME': '{colima_home}', 'COLIMA_CACHE_HOME': '{colima_cache_home}',
@@ -126,6 +128,7 @@ def control_paths(token):
         qualification_root=f'{control}/s',
         desktop_config=f'{control}/d/docker-config',
         desktop_context_dir=f'{control}/d/ctx',
+        desktop_input_dir=f'{control}/d/inputs',
         desktop_iidfile=f'{control}/d/image-id',
         desktop_cidfile=f'{control}/d/container-id',
         profile=PROFILE,
@@ -438,6 +441,15 @@ def check_engine_argv(argv):
                 'build platform must be linux/arm64')
         require('--iidfile' in sub and sub[sub.index('--iidfile') + 1] in ('{guest_iidfile}', '{desktop_iidfile}'),
                 'build must write the image ID to an owned iidfile')
+        require('--network' in sub and sub[sub.index('--network') + 1] == 'none',
+                'build must pass --network none so FROM cannot contact a registry')
+        contexts = [sub[i + 1] for i, a in enumerate(sub) if a == '--build-context']
+        if 'nerdctl' in argv:
+            expected_contexts = ['ubuntu=oci-layout://{guest_context}.oci', 'debs={guest_context}.debs']
+        else:
+            expected_contexts = ['ubuntu=oci-layout://{desktop_input_dir}/oci', 'debs={desktop_input_dir}/debs']
+        require(contexts == expected_contexts,
+                'build must name the local ubuntu oci-layout and debs additional contexts')
         # Provenance is bound in argv, one explicit form per backend. nerdctl (C4) requests the
         # max attestation; docker build (D2) disables attestations with the boolean form.
         expected = 'mode=max' if 'nerdctl' in argv else 'false'
@@ -637,7 +649,7 @@ def check_image_identity(inspect_out, image_id):
 
 def check_build_help(text):
     """Guest nerdctl build --help must list the flags the build argv uses."""
-    for flag in ('--iidfile', '--platform', '--provenance'):
+    for flag in ('--iidfile', '--platform', '--provenance', '--network', '--build-context'):
         require(flag in text, f'nerdctl build help lacks {flag}')
     return True
 
