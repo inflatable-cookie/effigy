@@ -176,6 +176,14 @@ declares the workspace in Acow's `infra/workspace.toml`. Not traced: `dev`'s own
 entry into `activate`. The 766 run shows `dev` reached the same producer, but
 the equivalence is source-traced for the detached form only, not executed.
 
+**Status contract.** The running state is read from `container stack status --json`
+through the route's pinned contract: field `runtime_running`, schema
+`effigy.container.status.v1`. The candidate emits that field from
+`status_report` (`crates/effigy-containers/src/report.rs`, candidate 5751ff9d).
+The acow and cbs routes keep their own `running` contract. A report that does not
+match the pinned field or schema refuses `status-unparsed` before any up. A live
+read at freeze must confirm it (`status_contract.live_check`, pending).
+
 **Passes.** Legacy first, modern second, one occurrence, one window. Each pass:
 identity probe (container and volume, read-only), protected capture, prior
 state of `stack` must be not running (a running stack refuses before any up),
@@ -221,6 +229,9 @@ same-source detached copy binding the same module hashes, and the e2e run.
 - Both: whether a stopped stack keeps its postgres container and volume (the
   identity probe uses `ps -a`). If not, the pre-up identity cannot be bound and
   the pin must change before arming.
+- Status contract: one read-only `container stack status --json` on the frozen
+  candidate, for a stopped and a running stack, must show `runtime_running` and
+  `effigy.container.status.v1`. The pin is `status_contract.live_check`.
 - Request resources: `legacy-postgres-container`, `legacy-postgres-volume`,
   `postgres-container`, `postgres-volume`, bound to actual identities.
 - Producer host facts: the artifact paths are `.effigy/linux-release/artifacts/effigy-aarch64-unknown-linux-gnu` and its `.receipt`. The active-version sidecar is not checked here.

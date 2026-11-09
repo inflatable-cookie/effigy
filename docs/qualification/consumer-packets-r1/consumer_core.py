@@ -421,14 +421,24 @@ def engine_argv(engine, *verb):
     return [engine['colima_binary'], 'nerdctl', '-p', engine['profile'], '--', *verb]
 
 
-def parse_running(text):
+def parse_running(text, field='running', schema=None):
+    """The running state of one environment, from its `status --json` report.
+
+    `field` and `schema` are the route's pinned status contract. The default is the
+    `running` field the acow and cbs routes were written against; a route that pins
+    another contract passes it explicitly, and a report that does not match refuses.
+    """
     try:
         body = json.loads(text)
     except ValueError:
         raise Refused('status-unparsed', 'status is not JSON')
-    if not isinstance(body, dict) or not isinstance(body.get('running'), bool):
-        raise Refused('status-unparsed', 'running state is not a bool')
-    return body['running']
+    if not isinstance(body, dict):
+        raise Refused('status-unparsed', 'status is not an object')
+    if schema is not None and body.get('schema') != schema:
+        raise Refused('status-unparsed', 'status schema differs from the pinned contract')
+    if not isinstance(body.get(field), bool):
+        raise Refused('status-unparsed', 'running state is not a bool in field ' + field)
+    return body[field]
 
 
 def parse_ids(text):
@@ -678,9 +688,9 @@ class Session:
         return self.transport(list(argv), self._label(label), self.checkout)
 
 
-def read_running(session, env, label):
+def read_running(session, env, label, field='running', schema=None):
     record = session.effigy(('container', env, 'status', '--json'), label)
-    return parse_running(stdout_text(record))
+    return parse_running(stdout_text(record), field, schema)
 
 
 def arm(route, tails, execute, request_path, request_sha256, evidence_dir, *, transport=None,

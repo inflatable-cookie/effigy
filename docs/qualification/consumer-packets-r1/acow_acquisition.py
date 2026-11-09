@@ -72,7 +72,12 @@ def produced_in_window(before, after):
     return (not before['present']) or after['mtime_ns'] != before['mtime_ns']
 
 
-def run_pass(session, engine, pin, request, name):
+def read_status(session, label, status):
+    """The running state, read through the route's pinned status contract."""
+    return core.read_running(session, ENVIRONMENT, label, status['field'], status['schema'])
+
+
+def run_pass(session, engine, pin, request, name, status):
     """One consumer pass. Identity and prior state are bound before the up."""
     roles = pin['roles']
     intent = request['prior_intent'][name]
@@ -82,7 +87,7 @@ def run_pass(session, engine, pin, request, name):
     identity = pin['identity']
     core.protected_check(baseline, baseline, identity['shared_container'],
                          identity['shared_volume'], identity['never_touch_volumes'])
-    observed = {ENVIRONMENT: core.read_running(session, ENVIRONMENT, name + '-pre-stack')}
+    observed = {ENVIRONMENT: read_status(session, name + '-pre-stack', status)}
     core.check_prior_intent({'prior_intent': intent}, observed)
     if intent[ENVIRONMENT] is not False:
         raise core.Refused('prior-running', name + ': stack already running before the window')
@@ -92,7 +97,7 @@ def run_pass(session, engine, pin, request, name):
     try:
         # Unknown until read: a failed up may still have started the stack.
         session.effigy(UP_TAIL, name + '-up')
-        observed[ENVIRONMENT] = core.read_running(session, ENVIRONMENT, name + '-status')
+        observed[ENVIRONMENT] = read_status(session, name + '-status', status)
     finally:
         for env in core.rollback_plan({ENVIRONMENT: False}, observed, started):
             session.effigy(DOWN_TAIL, name + '-rollback')
@@ -114,10 +119,11 @@ def execute(session, engine, manifest, request):
     intent = request['prior_intent']
     if set(intent) != set(PASSES) or any(set(intent[name]) != {ENVIRONMENT} for name in PASSES):
         raise core.Refused('prior-intent', 'intent must name stack for legacy and modern only')
+    status = pins['status_contract']
     legacy = run_pass(session, engine, {'identity': pins['identity'], 'roles': pins['roles']},
-                      request, 'legacy')
+                      request, 'legacy', status)
     modern_session = session.at(core.resolve_checkout(pins['modern']['checkout']))
-    modern = run_pass(modern_session, engine, pins['modern'], request, 'modern')
+    modern = run_pass(modern_session, engine, pins['modern'], request, 'modern', status)
     return {'status': 'passed', 'passes': {'legacy': legacy, 'modern': modern}}
 
 

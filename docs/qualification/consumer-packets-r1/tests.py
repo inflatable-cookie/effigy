@@ -1415,7 +1415,7 @@ class AcquisitionEngine:
                     write_artifact(cwd)
                 return self._record(short, '')
             if tail == acq.STATUS_TAIL:
-                return self._record(short, json.dumps({'running': self.running[name]}) + '\n')
+                return self._record(short, json.dumps(status_report(self.running[name])) + '\n')
             if tail == acq.DOWN_TAIL:
                 self.running[name] = False
                 return self._record(short, '')
@@ -1445,6 +1445,12 @@ class AcquisitionEngine:
 
     def ups(self):
         return [(name, short) for name, short, tail in self.calls if tail == list(acq.UP_TAIL)]
+
+
+def status_report(running):
+    """The candidate's `container status --json` shape for the acquisition route."""
+    return {'schema': 'effigy.container.status.v1', 'schema_version': 1, 'ok': True,
+            'runtime_running': running}
 
 
 def uuid_like():
@@ -1606,6 +1612,45 @@ def _():
     assert acq.produced_in_window(dict(ok, mtime_ns=0), ok) is True
 
 
+@check('ordinary acquisition: a status report in the old running shape refuses before any up')
+def _():
+    manifest = acquisition_manifest()
+    engine = AcquisitionEngine(manifest, produce=[])
+
+    def old_shape(argv, label, cwd):
+        if tuple(argv[1:]) == acq.STATUS_TAIL:
+            return engine._record(label, json.dumps({'running': False}) + '\n')
+        return engine(argv, label, cwd)
+    acq_refusal('acq-old-status', 'status-unparsed', manifest=manifest, engine=old_shape)
+    assert engine.ups() == [], 'an unreadable status must refuse before the up'
+
+
+@check('ordinary acquisition: a status report with another schema refuses before any up')
+def _():
+    manifest = acquisition_manifest()
+    engine = AcquisitionEngine(manifest, produce=[])
+
+    def other_schema(argv, label, cwd):
+        if tuple(argv[1:]) == acq.STATUS_TAIL:
+            return engine._record(label, json.dumps({'schema': 'effigy.container.status.v0',
+                                                     'runtime_running': False}) + '\n')
+        return engine(argv, label, cwd)
+    acq_refusal('acq-other-schema', 'status-unparsed', manifest=manifest, engine=other_schema)
+    assert engine.ups() == []
+
+
+@check('ordinary acquisition: the route reads the pinned runtime_running contract, not the old field')
+def _():
+    manifest = acquisition_manifest()
+    contract = manifest['routes'][acq.ROUTE]['status_contract']
+    assert contract['field'] == 'runtime_running'
+    assert contract['schema'] == 'effigy.container.status.v1'
+    assert core.parse_running(json.dumps(status_report(True)), contract['field'],
+                              contract['schema']) is True
+    expect_code('status-unparsed', lambda: core.parse_running(
+        json.dumps({'running': True}), contract['field'], contract['schema']))
+
+
 @check('ordinary acquisition: a symlinked artifact path refuses before any read or up')
 def _():
     manifest = acquisition_manifest()
@@ -1715,7 +1760,7 @@ if argv[:1] == ['container']:
         save()
         sys.exit(0)
     if argv == ['container', 'stack', 'status', '--json']:
-        print(json.dumps({'running': state['running'][name]}))
+        print(json.dumps({'schema': 'effigy.container.status.v1', 'runtime_running': state['running'][name]}))
         save()
         sys.exit(0)
     if argv == ['container', 'stack', 'down']:

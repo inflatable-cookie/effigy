@@ -312,6 +312,12 @@
         "postgres-volume": {
           "kind": "volume"
         }
+      },
+      "status_contract": {
+        "field": "runtime_running",
+        "schema": "effigy.container.status.v1",
+        "source": "crates/effigy-containers/src/report.rs status_report at candidate 5751ff9d: runtime_running from the container policy's runtime observation",
+        "live_check": "pending: one read-only effigy container stack status --json on the frozen candidate, at freeze, must show this field and schema for a stopped and a running stack"
       }
     }
   }
