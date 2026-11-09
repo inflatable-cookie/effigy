@@ -116,6 +116,10 @@ class VerifierChecks(unittest.TestCase):
         with self.assertRaises(Refusal):
             bound._invoke_candidate_setter('E19.0', 0, call)
         self.assertEqual(calls, [])
+        with patch.object(bound.ctypes, 'sizeof', return_value=4), \
+                self.assertRaisesRegex(Refusal, 'unsupported quota setter ABI'):
+            bound._invoke_candidate_setter('E8', CHARGED, call)
+        self.assertEqual(calls, [])
 
     def test_matching_originals_still_refuse_unproven_confinement_and_enforcement(self):
         with self.assertRaisesRegex(Refusal, 'enforcement and writer confinement are unproven'):

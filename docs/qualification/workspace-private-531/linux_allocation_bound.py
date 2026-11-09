@@ -70,6 +70,9 @@ def _invoke_candidate_setter(row, charged_bytes, call):
     before calling this function, then retain an independent post-observation.
     A successful syscall return alone is not proof of enforcement.
     """
+    if ctypes.sizeof(ctypes.c_void_p) != 8 or ctypes.sizeof(probe.DQBlk) != 72 or \
+            probe.DQBlk.valid.offset != 64:
+        raise Refusal('unsupported quota setter ABI')
     record = prospective_row_limit(row, charged_bytes)
     result = call(probe.Q_SETQUOTA, ROOT_DEVICE, PROJECT_ID, ctypes.byref(record))
     if not isinstance(result, tuple) or len(result) != 2 or type(result[0]) is not int or \
