@@ -76,6 +76,23 @@ def offline_version_plan():
             'e2fsck': ['/sbin/e2fsck', '-V']}
 
 
+def _offline_streams(item, label, keys):
+    if not isinstance(item, dict) or set(item) != keys | {'stdout', 'stderr', 'stdout_sha256',
+                                                          'stderr_sha256', 'exit'} or \
+            type(item['exit']) is not int or item['exit'] != 0:
+        raise Refusal(label + ' original or waited exit is missing')
+    for stream in ('stdout', 'stderr'):
+        value, digest = item[stream], item[stream + '_sha256']
+        if not isinstance(value, str) or not isinstance(digest, str) or not HEX64.fullmatch(digest):
+            raise Refusal(label + ' stream or hash is malformed')
+        try:
+            raw = value.encode('utf-8')
+        except UnicodeEncodeError as exc:
+            raise Refusal(label + ' stream is not UTF-8') from exc
+        if len(raw) > 128 * 1024 or hashlib.sha256(raw).hexdigest() != digest:
+            raise Refusal(label + ' stream is oversized or differs from its hash')
+
+
 def inspect_offline_versions(originals):
     """Check both retained streams and positive waited exits, without granting authority.
 
@@ -86,24 +103,42 @@ def inspect_offline_versions(originals):
         raise Refusal('offline tool originals are incomplete')
     for tool, banner_stream in (('tune2fs', 'stdout'), ('e2fsck', 'stderr')):
         item = originals[tool]
-        if not isinstance(item, dict) or set(item) != {'stdout', 'stderr', 'stdout_sha256',
-                                                        'stderr_sha256', 'exit'} or \
-                type(item['exit']) is not int or item['exit'] != 0:
-            raise Refusal(tool + ' original or waited exit is missing')
-        for stream in ('stdout', 'stderr'):
-            value, digest = item[stream], item[stream + '_sha256']
-            if not isinstance(value, str) or not isinstance(digest, str) or not HEX64.fullmatch(digest):
-                raise Refusal(tool + ' stream or hash is malformed')
-            try:
-                raw = value.encode('utf-8')
-            except UnicodeEncodeError as exc:
-                raise Refusal(tool + ' stream is not UTF-8') from exc
-            if len(raw) > 128 * 1024 or hashlib.sha256(raw).hexdigest() != digest:
-                raise Refusal(tool + ' stream is oversized or differs from its hash')
+        _offline_streams(item, tool, set())
         lines = item[banner_stream].splitlines()
         if not lines or not re.fullmatch(re.escape(tool) + r' 1\.47\.2 \([^()\r\n]+\)', lines[0]):
             raise Refusal(tool + ' version is missing or unsupported')
     return {'e2fsprogs_version': '1.47.2'}
+
+
+def offline_operation_plan():
+    """Fixed sequence for future review; these commands are never run here."""
+    return [('precheck', ['/sbin/e2fsck', '-f', '-n', ROOT_DEVICE]),
+            ('features', ['/sbin/tune2fs', '-O', 'project', '-Q', 'prjquota', ROOT_DEVICE]),
+            ('mount-options', ['/sbin/tune2fs', '-E', 'mount_opts=prjquota', ROOT_DEVICE]),
+            ('postcheck', ['/sbin/e2fsck', '-f', '-n', ROOT_DEVICE])]
+
+
+def inspect_offline_progress(boot_id, attempted, originals):
+    """Check an exact prospective sequence; supplied records cannot authorize it.
+
+    An independent durable, one-use record must establish every attempt, the
+    actual boot, unmounted device and original streams. A missing completion is
+    unknown and must not be treated as an unstarted step or retried.
+    """
+    if not isinstance(boot_id, str) or not BOOT_UUID.fullmatch(boot_id):
+        raise Refusal('offline boot identity is missing')
+    plan = offline_operation_plan()
+    if not isinstance(attempted, list) or not isinstance(originals, list) or \
+            len(attempted) != len(originals) or len(attempted) > len(plan):
+        raise Refusal('offline attempt is incomplete or interrupted')
+    for index, (name, argv) in enumerate(plan[:len(attempted)]):
+        if attempted[index] != name:
+            raise Refusal('offline attempt set or order differs')
+        item = originals[index]
+        _offline_streams(item, name, {'name', 'argv', 'boot_id'})
+        if item['name'] != name or item['argv'] != argv or item['boot_id'] != boot_id:
+            raise Refusal('offline operation, argv or boot identity differs')
+    return {'next': plan[len(attempted)][0] if len(attempted) < len(plan) else None}
 
 
 def validate_candidate_request(request):

@@ -121,6 +121,33 @@ class VerifierChecks(unittest.TestCase):
             with self.subTest(values=str(values)[:120]), self.assertRaises(Refusal):
                 bound.inspect_offline_versions(values)
 
+    def test_offline_steps_refuse_interruption_changed_commands_and_unknown_exits(self):
+        boot = '12345678-1234-1234-1234-123456789abc'
+        empty_hash = hashlib.sha256(b'').hexdigest()
+        plan = bound.offline_operation_plan()
+        records = [{'name': name, 'argv': argv, 'boot_id': boot, 'stdout': '', 'stderr': '',
+                    'stdout_sha256': empty_hash, 'stderr_sha256': empty_hash, 'exit': 0}
+                   for name, argv in plan]
+        names = [name for name, _ in plan]
+        for count in range(len(plan) + 1):
+            expected = names[count] if count < len(names) else None
+            self.assertEqual(bound.inspect_offline_progress(boot, names[:count], records[:count]),
+                             {'next': expected})
+        for count in range(1, len(plan) + 1):
+            with self.subTest(interrupted=names[count - 1]), self.assertRaises(Refusal):
+                bound.inspect_offline_progress(boot, names[:count], records[:count - 1])
+        cases = (dict(records[0], exit=None), dict(records[0], exit=1), dict(records[0], exit=False),
+                 dict(records[0], boot_id='00000000-0000-0000-0000-000000000000'),
+                 dict(records[0], argv=['/sbin/e2fsck', '-y', bound.ROOT_DEVICE]),
+                 dict(records[0], stdout='tampered'))
+        for record in cases:
+            with self.subTest(record=record), self.assertRaises(Refusal):
+                bound.inspect_offline_progress(boot, names[:1], [record])
+        with self.assertRaises(Refusal):
+            bound.inspect_offline_progress(boot, names[1:2], records[1:2])
+        with self.assertRaises(Refusal):
+            bound.inspect_offline_progress('unknown', [], [])
+
     def test_offline_superblock_candidate_refuses_foreign_dirty_or_nonempty_prestate(self):
         raw = bytearray(1024)
         struct.pack_into('<H', raw, 0x38, 0xef53)
