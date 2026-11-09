@@ -871,6 +871,15 @@ class AuthorizedKeyChecks(unittest.TestCase):
     def test_restricted_key_matching_e2_and_bound_expiry_passes(self):
         setup.check_authorized_keys(key_line(), E2_KEY, NOW, NOW + 3600)
 
+    def test_existing_key_contract_does_not_admit_a_forced_command(self):
+        stamp = datetime.datetime.fromtimestamp(NOW + 3600, tz=datetime.timezone.utc).strftime('%Y%m%d%H%M%S')
+        # The accepted key has no command option. A fixed command cannot be
+        # silently added to this existing contract to confine the other session.
+        setup.check_authorized_keys(key_line(), E2_KEY, NOW, NOW + 3600)
+        forced = key_line(options='restrict,expiry-time=' + stamp + ',command="/bin/true"')
+        with self.assertRaises(Refusal):
+            setup.check_authorized_keys(forced, E2_KEY, NOW, NOW + 3600)
+
     def test_each_stale_or_fabricated_field_refuses(self):
         stamp = datetime.datetime.fromtimestamp(NOW + 3600, tz=datetime.timezone.utc).strftime('%Y%m%d%H%M%S')
         cases = {
