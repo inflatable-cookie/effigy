@@ -1,0 +1,1 @@
+Colima C2–C6 proof stages now support launch-time windows naming their exact original predecessor receipts. Planning and launch verify the complete genuine chain before the claim, with C4’s first-use input directory required absent; existing stage budgets, steps and plain proof requests are unchanged.

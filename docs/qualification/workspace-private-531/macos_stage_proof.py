@@ -30,11 +30,10 @@ def unique_object(pairs):
 
 # D1 is reached only through a window request, which names the original D0 receipt it consumes.
 # D2, D3 and D4 are the same form, naming the original D1, D2 and D3 receipt they consume (each binds the chain below).
-# C1's window names the original executor C0 receipt it consumes; its plain request (a pre-created absolute-time
-# activation) stays supported. C2 to C6 are plain proof requests only: their window recipes are not reviewed
-# (window_recipe refuses them).
+# C1-C6 windows name their original executor predecessor; their plain requests
+# (pre-created absolute-time activations) stay supported.
 PROOF_STAGES = ('C0', 'D0', 'D1', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'D2', 'D3', 'D4')
-WINDOW_PRIOR = {'C1': 'C0', 'D1': 'D0', 'D2': 'D1', 'D3': 'D2', 'D4': 'D3'}
+WINDOW_PRIOR = {'C1': 'C0', 'C2': 'C1', 'C3': 'C2', 'C4': 'C3', 'C5': 'C4', 'C6': 'C5', 'D1': 'D0', 'D2': 'D1', 'D3': 'D2', 'D4': 'D3'}
 # The stages the plain proof entry refuses: every window stage whose plain request is not reviewed.
 # C1 keeps its plain request, so it is not window-only.
 WINDOW_ONLY = ('D1', 'D2', 'D3', 'D4')
@@ -416,8 +415,6 @@ def checked_prior(ref, bindings, manifest, expected_stage='D0'):
 
 def window_recipe(stage_id, bindings, options):
     """Prospective request. Directory identities must be captured after provisioning."""
-    if stage_id in ('C2', 'C3', 'C4', 'C5', 'C6'):
-        raise executor.Refusal(f'{stage_id} has no window recipe: it runs only as a plain proof request')
     base_options = {'activation_id', 'duration_seconds', 'evidence_root'}
     prior_stage = WINDOW_PRIOR.get(stage_id)
     if set(options) != base_options | ({'prior_receipt'} if prior_stage else set()):
@@ -448,6 +445,8 @@ def window_recipe(stage_id, bindings, options):
             observed[root] = list(executor.Pins.observe(root))
         except FileNotFoundError:
             observed[root] = None  # Explicit provisioning precondition; execution refuses it.
+    # C4 exclusively creates its host input directory. C2/C3/C5/C6 create no first-use host paths.
+    # Guest destinations remain checked by the authenticated stage helpers.
     # D0 creates these paths exclusively; their approved identity is absence. D2 creates desktop_input_dir.
     # D3's cidfile is written fresh by its run, so an existing one is a collision, not an adopted receipt.
     # C1 is first use of the token's cache, image directory, Docker config and Colima profile and VM state:
@@ -459,7 +458,8 @@ def window_recipe(stage_id, bindings, options):
                     else sorted({bindings['colima_cache_home'], bindings['colima_docker_config'],
                                  bindings['colima_cache_home'] + '/' + executor.COLIMA_IMAGE_DIR,
                                  bindings['colima_home'] + '/' + executor.prep.PROFILE,
-                                 bindings['colima_home'] + '/_lima'}) if stage_id == 'C1' else [])
+                                 bindings['colima_home'] + '/_lima'}) if stage_id == 'C1'
+                    else [bindings['colima_input_dir']] if stage_id == 'C4' else [])
     return dict(schema='macos-stage-window-v1', stage=stage_id, bindings=bindings,
                 bindings_sha256=executor.canon_sha(bindings), inputs=identity['inputs'],
                 inputs_sha256=identity['inputs_sha256'], manifest_sha256=identity['manifest_sha256'],
