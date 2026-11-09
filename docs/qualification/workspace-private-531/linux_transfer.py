@@ -1,9 +1,11 @@
 """Bounded local processes for setup rows, including the contained stdin transfer.
 
 A contained transfer is two local processes that run at once:
-- the supervisor start (prlctl exec of the root supervisor), whose payload reads a FIFO
-  in the guest stage directory and writes the file, and
-- the SSH writer, which waits for the FIFO and streams the bytes into it.
+- the supervisor start (prlctl exec of the root supervisor), whose payload is the fixed
+  broker writer: it reads the row FIFO inside the confined unit and performs the
+  allocating write, and
+- the SSH writer: one authenticated session whose qualification key is restricted to a
+  single forced command, so the requested argv can only name the reviewed row FIFO.
 
 SSH exit is only the writer's result. Closure comes from the supervisor candidate and
 the host's VM-route observation (linux_setup.host_credit), never from either process
@@ -25,20 +27,32 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import preparation_resources as resources
 from linux_supervisor import Refusal
+import linux_supervisor as supervisor
 
 MAX_DEADLINE = 1200
-WRITER_TOOLS = ('/usr/bin/env', '/bin/sh', '/bin/sleep', '/bin/cat', '/usr/bin/python3')
+# The two programs the forced-command writer can reach: the fixed interpreter and the installed
+# supervisor entry. There is no outer login shell, environment or PATH lookup in the reviewed form.
+WRITER_TOOLS = ('/usr/bin/python3', '/usr/local/libexec/effigy-stage-supervisor')
 WRITER_TOOL_MAX_BYTES = 32 * 1024 * 1024
-# Remote side of the writer. Polls for the FIFO, then streams stdin into it.
-WAIT_AND_CAT = ('n=0; while [ ! -p "$1" ]; do n=$((n+1)); [ "$n" -gt "$2" ] && exit 9; /bin/sleep 0.1; done; '
-                '/bin/cat > "$1"')
 
 
-def writer_remote_argv(fifo, attempts=1200):
-    """Remote argv for the writer. `attempts` bounds the FIFO poll (0.1 s each)."""
-    if not isinstance(attempts, int) or isinstance(attempts, bool) or not 0 < attempts <= 1200:
-        raise Refusal('writer poll attempts out of range')
-    return ['/usr/bin/env', '-i', '/bin/sh', '-c', WAIT_AND_CAT, 'sh', fifo, str(attempts)]
+def writer_remote_argv(fifo):
+    """The reviewed requested argv; the forced command re-parses exactly this shape."""
+    return supervisor.transfer_writer_argv(fifo)
+
+
+def forced_command():
+    """The one command the qualification key may run; it ignores a shell and every other argv."""
+    return supervisor.forced_command()
+
+
+def authorized_keys_command():
+    """The `command="..."` option value for the ephemeral qualification key."""
+    return 'command="%s"' % forced_command()
+
+
+def transfer_endpoint_reasons(original):
+    return supervisor.transfer_endpoint_reasons(original)
 
 
 def _read_writer_tool_identity(path, owner, boundary):
@@ -260,7 +274,8 @@ def run_contained_transfer(supervisor_argv, writer_argv, stdin_path, timeout, ou
     writer_out = streams[writer]
     result = {'supervisor_exit': sup_codes, 'writer_exit': writer_code, 'writer_stderr': writer_out['stderr'], 'writer_stdout': writer_out['stdout'],
               'supervisor_stdout': sup_out['stdout'], 'supervisor_stderr': sup_out['stderr'],
-              'candidate': None, 'payload_stdout': '', 'supervisor_result': None}
+              'candidate': None, 'payload_stdout': '', 'payload_stderr': '', 'confinement': None,
+              'supervisor_result': None}
     if failure is not None:
         result.update(disposition=failure[0], reason=failure[1])
         return result
@@ -269,6 +284,8 @@ def run_contained_transfer(supervisor_argv, writer_argv, stdin_path, timeout, ou
         result['supervisor_result'] = parsed
         result['candidate'] = parsed.get('candidate')
         result['payload_stdout'] = parsed.get('payload_stdout', '')
+        result['payload_stderr'] = parsed.get('payload_stderr', '')
+        result['confinement'] = parsed.get('confinement')
     if sup_codes != 0:
         result.update(disposition='failed', reason='supervisor exited nonzero')
     elif writer_code != 0:
@@ -292,6 +309,9 @@ def parse_supervisor_result(stdout):
     if 'payload_stdout_b64' in value:
         import base64
         value['payload_stdout'] = base64.b64decode(value.pop('payload_stdout_b64')).decode('utf-8', 'replace')
+    if 'payload_stderr_b64' in value:
+        import base64
+        value['payload_stderr'] = base64.b64decode(value.pop('payload_stderr_b64')).decode('utf-8', 'replace')
     return value
 
 

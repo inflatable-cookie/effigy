@@ -30,6 +30,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_receipts as receipts
+import linux_allocation_bound as allocation
+import linux_allocation_probe as probe
 import linux_setup as setup
 import linux_disk_identity as identity
 import linux_disk_association as disk_association
@@ -95,19 +97,24 @@ ACCOUNT_NAME = pwd.getpwuid(os.geteuid()).pw_name
 
 
 def show_text(state='inactive', result='success', status='0', invocation=INVOCATION, group='', load='loaded',
-              sub='dead'):
+              sub='dead', main_pid=0):
     """Real `systemctl show --property=...` shape: one key=value per line, empty values kept."""
     return '\n'.join([f'LoadState={load}', f'ActiveState={state}', f'SubState={sub}', f'Result={result}',
-                      f'ExecMainStatus={status}', f'InvocationID={invocation}', f'ControlGroup={group}']) + '\n'
+                      f'ExecMainStatus={status}', f'InvocationID={invocation}', f'ControlGroup={group}',
+                      f'MainPID={main_pid}']) + '\n'
 
 
 NOT_FOUND = show_text(load='not-found', state='inactive', result='success', status='', invocation='', group='')
 ACTIVE = show_text(state='active', result='success', status='0', group=GROUP, sub='running')
 
 
-def key_line(expiry_epoch=NOW + 3600, key=E2_KEY, options=None):
+def key_options(expiry_epoch=NOW + 3600):
     stamp = datetime.datetime.fromtimestamp(expiry_epoch, tz=datetime.timezone.utc).strftime('%Y%m%d%H%M%S')
-    opts = options if options is not None else 'restrict,expiry-time=' + stamp
+    return 'restrict,expiry-time=' + stamp + ',' + transfers.authorized_keys_command()
+
+
+def key_line(expiry_epoch=NOW + 3600, key=E2_KEY, options=None):
+    opts = options if options is not None else key_options(expiry_epoch)
     return (opts + ' ' + key + '\n').encode()
 
 
@@ -587,12 +594,45 @@ class SignedReceiptChecks(unittest.TestCase):
         self.assertIn('allowed-signers bytes differ', receipts.verify_signed_receipt(entry, 'E3', 'p' * 64, bad_trust, 'a' * 40)[1])
 
 
-class ContainedTransferChecks(unittest.TestCase):
-    """Real FIFOs and real processes. The supervisor and the SSH writer are local stand-ins."""
+INSTALLED_ENTRY = '/usr/local/libexec/effigy-stage-supervisor'
 
-    def stand_in_supervisor(self, root, payload_src, sleep=0.0, junk=0):
+
+def requested_command(fifo):
+    """The requested argv as the reviewed client sends it (the forced command ignores it)."""
+    return shlex.join(['/usr/bin/python3', '-I', '-B', INSTALLED_ENTRY, supervisor.TRANSFER_SUBCOMMAND, str(fifo)])
+
+
+def writer_fixture(test, root, create=True):
+    """Create the fixture row stage and select it for the real entry through its documented seam.
+
+    The entry bytes are the reviewed source, run as the local file that stands in for the installed
+    path; the forced command's own argv has no argument, and the requested argv arrives only as env.
+    """
+    stage_root = root / 'stage-root'
+    fifo = stage_root / 'E9a' / supervisor.TRANSFER_NAME
+    if create:
+        (stage_root / 'E9a').mkdir(parents=True, mode=0o711)
+        os.chmod(stage_root / 'E9a', 0o711)
+        os.chmod(stage_root, 0o711)
+        os.mkfifo(fifo)
+    env = patch.dict(os.environ, {'SSH_ORIGINAL_COMMAND': requested_command(fifo),
+                                  'EFFIGY_STAGE_ROOT': str(stage_root)})
+    env.start()
+    test.addCleanup(env.stop)
+    return fifo
+
+
+def forced_entry_argv():
+    """The forced command sshd runs: fixed argv, no caller argument."""
+    return [sys.executable, '-I', '-B', str(Path(setup.SUPERVISOR_SOURCE).resolve()), supervisor.TRANSFER_SUBCOMMAND]
+
+
+class ContainedTransferChecks(unittest.TestCase):
+    """Real FIFOs and real processes. The supervisor is a local stand-in; the writer is the real entry."""
+
+    def stand_in_supervisor(self, root, payload_src, sleep=0.0, junk=0, fifo=None):
         """A process that creates the stage FIFO, runs the payload, and prints the result line."""
-        fifo = root / 'transfer.fifo'
+        fifo = fifo or (root / 'transfer.fifo')
         lines = [
             'import os, json, subprocess, time',
             'fifo = %r' % str(fifo),
@@ -607,77 +647,119 @@ class ContainedTransferChecks(unittest.TestCase):
                      '"payload_stdout": p.stdout.decode()}))')
         return [sys.executable, '-c', '\n'.join(lines)]
 
-    def test_writer_waits_for_the_fifo_and_the_payload_receives_the_exact_bytes(self):
-        root = tmpdir('contained-ok-')
-        data = root / 'archive.bin'
-        data.write_bytes(os.urandom(200_000))
-        writer = transfers.writer_remote_argv(str(root / 'transfer.fifo'), attempts=300)
-        sup = self.stand_in_supervisor(root, 'cat "$1" > "$2" && %s "$2"' % SHA_CMD, sleep=0.3)
-        res = transfers.run_contained_transfer(sup, writer, str(data), 30, 1 << 22)
-        self.assertEqual(res['disposition'], 'exited', res)
-        self.assertEqual((root / 'dest.bin').read_bytes(), data.read_bytes())
-        self.assertEqual(res['writer_exit'], 0)
-        self.assertTrue(res['payload_stdout'].startswith(hashlib.sha256(data.read_bytes()).hexdigest()))
-        self.assertIsNotNone(res['candidate'])
+    def test_writer_streams_only_the_reviewed_row_fifo_after_the_payload_reads(self):
+        root = tmpdir('writer-ok-')
+        fifo = writer_fixture(self, root)
+        data = os.urandom(200_000)
+        received = {}
 
-    def test_writer_ignores_path_substitution_for_cat_and_sleep(self):
-        root = tmpdir('writer-path-')
-        marker = root / 'substitution-ran'
-        for name in ('cat', 'sleep'):
-            target = root / name
-            target.write_text('#!/bin/sh\n: > ' + shlex.quote(str(marker)) + '\nexit 1\n')
-            target.chmod(0o700)
-        fifo = root / 'transfer.fifo'
+        def reader():
+            import select
+            fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+            chunks, deadline = [], time.monotonic() + 20
+            try:
+                while time.monotonic() < deadline:
+                    ready, _, _ = select.select([fd], [], [], 0.2)
+                    if not ready:
+                        continue
+                    chunk = os.read(fd, 1 << 16)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+            finally:
+                os.close(fd)
+            received['data'] = b''.join(chunks)
+
+        thread = threading.Thread(target=reader)
+        thread.start()
+        self.assertEqual(supervisor.transfer_writer_main(
+            [supervisor.TRANSFER_SUBCOMMAND], environ={'SSH_ORIGINAL_COMMAND': requested_command(fifo),
+                                                       'EFFIGY_STAGE_ROOT': str(root / 'stage-root')},
+            stdin=io.BytesIO(data)), 0)
+        thread.join(timeout=10)
+        self.assertEqual(received['data'], data)
+
+    def test_forced_writer_refuses_any_other_command_or_path(self):
+        root = tmpdir('writer-refuse-')
+        fifo = writer_fixture(self, root)
+        stage_root = str(root / 'stage-root')
+        reviewed = requested_command(fifo)
+
+        def argv(path):
+            return shlex.join(['/usr/bin/python3', '-I', '-B', INSTALLED_ENTRY,
+                               supervisor.TRANSFER_SUBCOMMAND, path])
+        cases = ('', 'sh -c id', '/bin/sh -c cat', reviewed + ' extra', argv(stage_root + '/E9a/other.fifo'),
+                 argv('/etc/passwd'), argv('../E9a/transfer.fifo'), argv(stage_root + '/../E9a/transfer.fifo'),
+                 requested_command('/etc/passwd'), requested_command(stage_root + '/E9a/other.fifo'))
+        for original in cases:
+            with self.subTest(original=original), \
+                    patch.dict(os.environ, {'SSH_ORIGINAL_COMMAND': original,
+                                            'EFFIGY_STAGE_ROOT': stage_root}), patch.object(sys, 'stderr'):
+                self.assertEqual(supervisor.transfer_writer_main([supervisor.TRANSFER_SUBCOMMAND],
+                                                                 stdin=io.BytesIO(b'')), 3)
+        with patch.object(sys, 'stderr'):
+            self.assertEqual(supervisor.transfer_writer_main(['--approved-request'], stdin=io.BytesIO(b'')), 2)
+
+    def test_forced_writer_requires_the_root_owned_row_stage_and_a_fifo(self):
+        root = tmpdir('writer-custody-')
+        os.mkdir(root / 'stage-root', 0o711)
+        row = root / 'stage-root' / 'E9a'
+        os.mkdir(row, 0o755)
+        fifo = row / supervisor.TRANSFER_NAME
         os.mkfifo(fifo)
-        fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
-        try:
-            with patch.dict(os.environ, {'PATH': str(root)}):
-                result = subprocess.run(transfers.writer_remote_argv(str(fifo)), input=b'abc',
-                                        capture_output=True, timeout=10)
-                missing = subprocess.run(transfers.writer_remote_argv(str(root / 'absent'), attempts=1),
-                                         input=b'', capture_output=True, timeout=10)
-            self.assertEqual(result.returncode, 0)
-            self.assertEqual(os.read(fd, 3), b'abc')
-            self.assertEqual(missing.returncode, 9)
-            self.assertFalse(marker.exists())
-        finally:
-            os.close(fd)
+        environ = {'SSH_ORIGINAL_COMMAND': requested_command(fifo), 'EFFIGY_STAGE_ROOT': str(root / 'stage-root')}
+        with patch.object(sys, 'stderr'):
+            # A group/world-traversable or writable stage is not the reviewed root-owned 0711 row.
+            self.assertEqual(supervisor.transfer_writer_main([supervisor.TRANSFER_SUBCOMMAND], environ=environ,
+                                                             stdin=io.BytesIO(b''), deadline=1), 3)
+        os.chmod(row, 0o711)
+        os.unlink(fifo)
+        fifo.write_bytes(b'')
+        with patch.object(sys, 'stderr'):
+            self.assertEqual(supervisor.transfer_writer_main([supervisor.TRANSFER_SUBCOMMAND], environ=environ,
+                                                             stdin=io.BytesIO(b''), deadline=1), 3)
+        os.unlink(fifo)
+        with patch.object(sys, 'stderr'):
+            # A missing endpoint is waited for under the deadline, then reported as writer failure.
+            self.assertEqual(supervisor.transfer_writer_main([supervisor.TRANSFER_SUBCOMMAND], environ=environ,
+                                                             stdin=io.BytesIO(b''), deadline=0.3), 3)
 
     def test_writer_tool_observations_bind_canonical_identity_and_custody(self):
         root = tmpdir('writer-tools-')
         binary_dir = root / 'usr' / 'bin'
         binary_dir.mkdir(parents=True)
-        (root / 'bin').symlink_to('usr/bin')
-        for name in ('env', 'sh', 'sleep', 'cat', 'python3'):
+        for name in ('python3', 'effigy-stage-supervisor'):
             binary = binary_dir / name
             binary.write_bytes(('fixture-' + name).encode())
             binary.chmod(0o755)
-        paths = (binary_dir / 'env', root / 'bin' / 'sh', root / 'bin' / 'sleep', root / 'bin' / 'cat',
-                 binary_dir / 'python3')
+
         def observe():
-            return {name: transfers._writer_tool_identity(str(path), os.getuid(), str(root))
-                    for name, path in zip(transfers.WRITER_TOOLS, paths)}
+            return {name: transfers._writer_tool_identity(str(binary_dir / os.path.basename(name)),
+                                                          os.getuid(), str(root))
+                    for name in transfers.WRITER_TOOLS}
         before = observe()
         transfers._compare_writer_tool_observations(before, observe(), os.getuid())
         with self.assertRaises(Refusal):
-            transfers._writer_tool_identity(str(paths[0]), os.getuid() + 1, str(root))
+            transfers._writer_tool_identity(str(binary_dir / 'python3'), os.getuid() + 1, str(root))
         replacement = binary_dir / 'replacement'
         replacement.write_bytes(b'replaced')
         replacement.chmod(0o755)
-        os.replace(replacement, binary_dir / 'cat')
+        os.replace(replacement, binary_dir / 'python3')
         with self.assertRaisesRegex(Refusal, 'identity changed'):
             transfers._compare_writer_tool_observations(before, observe(), os.getuid())
-        (binary_dir / 'cat').chmod(0o777)
+        (binary_dir / 'python3').chmod(0o777)
         with self.assertRaises(Refusal):
             observe()
-        (binary_dir / 'cat').unlink()
+        (binary_dir / 'python3').unlink()
         with self.assertRaises(Refusal):
             observe()
         with self.assertRaises(Refusal):
             transfers._compare_writer_tool_observations(before, {}, os.getuid())
-        (binary_dir / 'cat').symlink_to('/bin/cat')
+        (binary_dir / 'python3').symlink_to('/bin/cat')
         with self.assertRaises(Refusal):
             observe()
+        self.assertNotIn('/bin/sh', transfers.WRITER_TOOLS,
+                         'the forced command is not a shell: no login shell is in the tool set')
 
     def test_fixed_writer_tool_entry_refuses_missing_custody_and_other_arguments(self):
         boot = '12345678-1234-1234-1234-123456789abc'
@@ -692,37 +774,338 @@ class ContainedTransferChecks(unittest.TestCase):
 
     def test_missing_fifo_is_a_writer_failure_not_closure(self):
         root = tmpdir('contained-nofifo-')
+        writer_fixture(self, root)
         data = root / 'archive.bin'
         data.write_bytes(b'x')
         sup = [sys.executable, '-c', 'import time; time.sleep(0.2)']
-        res = transfers.run_contained_transfer(sup, transfers.writer_remote_argv(str(root / 'absent.fifo'), attempts=3),
-                                               str(data), 20, 1 << 20)
-        self.assertEqual(res['writer_exit'], 9)
-        self.assertEqual(res['disposition'], 'writer-failed')
+        res = transfers.run_contained_transfer(sup, forced_entry_argv(), str(data), 3, 1 << 20)
+        self.assertNotEqual(res['writer_exit'], 0, 'a writer without its endpoint is never closure')
+        self.assertIn(res['disposition'], ('writer-failed', 'timeout'))
+        self.assertIsNone(res['candidate'])
 
     def test_output_past_the_cap_is_refused_as_partial(self):
         root = tmpdir('contained-cap-')
+        writer_fixture(self, root)
         data = root / 'archive.bin'
         data.write_bytes(b'abc')
-        sup = self.stand_in_supervisor(root, 'cat "$1" > "$2" && %s "$2"' % SHA_CMD, junk=5000)
-        res = transfers.run_contained_transfer(sup, transfers.writer_remote_argv(str(root / 'transfer.fifo'), attempts=100),
-                                               str(data), 20, 100)
+        sup = self.stand_in_supervisor(root, 'cat "$1" > "$2" && %s "$2"' % SHA_CMD, junk=5000,
+                                       fifo=root / 'stage-root' / 'E9a' / supervisor.TRANSFER_NAME)
+        res = transfers.run_contained_transfer(sup, forced_entry_argv(), str(data), 20, 100)
         self.assertEqual(res['disposition'], 'output-cap')
 
     def test_deadline_kills_both_processes(self):
         root = tmpdir('contained-deadline-')
+        writer_fixture(self, root)
         data = root / 'archive.bin'
         data.write_bytes(b'abc')
         sup = [sys.executable, '-c', 'import time; time.sleep(60)']
         started = time.monotonic()
-        res = transfers.run_contained_transfer(sup, transfers.writer_remote_argv(str(root / 'transfer.fifo'), attempts=600),
-                                               str(data), 2, 1 << 20)
+        res = transfers.run_contained_transfer(sup, forced_entry_argv(), str(data), 2, 1 << 20)
         self.assertEqual(res['disposition'], 'timeout')
         self.assertLess(time.monotonic() - started, 30)
 
     def test_parse_supervisor_result_requires_a_json_last_line(self):
         self.assertIsNone(transfers.parse_supervisor_result(b'not json'))
         self.assertEqual(transfers.parse_supervisor_result(b'noise\n{"a": 1}\n'), {'a': 1})
+
+
+class ConfinementChecks(unittest.TestCase):
+    """The payload unit's confinement is installed before the gate and observed from outside it."""
+
+    STATUS = ('Name:\tpython3\nUid:\t1001\t1001\t1001\t1001\nGid:\t1001\t1001\t1001\t1001\n'
+              'Groups:\t1001\nCapEff:\t0000000000000000\nCapPrm:\t0000000000000000\n'
+              'CapInh:\t0000000000000000\nNoNewPrivs:\t1\n')
+
+    def test_the_production_argv_installs_every_confinement_property_before_the_gate(self):
+        argv = supervisor.confined_run_argv(NONCE, 'effigy531', CWD, 60, ['/bin/true'])
+        for key, value in supervisor.CONFINEMENT.items():
+            self.assertIn('--property=%s=%s' % (key, value), argv)
+        separator = argv.index('--')
+        self.assertTrue(all(item.startswith('--property=') for item in argv[separator - 4:separator]))
+        plain = supervisor.run_argv(NONCE, 'effigy531', CWD, 60, ['/bin/true'])
+        self.assertNotIn('--property=PrivateUsers=identity', plain)
+        class Ops:
+            def version(self):
+                return 'systemd 259'
+
+            def cgroup2(self):
+                return 'cgroup2fs'
+        stage = fresh_row('conf-')
+        with self.assertRaisesRegex(Refusal, 'not the fixed confinement property set'):
+            supervisor.run_supervised(stage, {'nonce': NONCE, 'payload_user': 'effigy531',
+                                              'payload_uid': os.geteuid(), 'cwd': CWD,
+                                              'timeout_seconds': 5, 'argv': ['/bin/true'],
+                                              'stage_dir': str(stage), 'expected_boot_id': BOOT,
+                                              'confinement': {'PrivateUsers': 'no'}},
+                                      Ops(), lambda: 0.0, BOOT, {})
+        self.assertFalse(stage.exists(), 'a refused confinement leaves no stage')
+
+    def test_the_effective_unit_properties_are_the_four_fixed_values(self):
+        text = '\n'.join('%s=%s' % item for item in supervisor.CONFINEMENT.items()) + '\n'
+        self.assertEqual(supervisor.parse_properties(text, 'unit'), supervisor.CONFINEMENT)
+        self.assertEqual(supervisor.property_argv('unit')[-1],
+                         '--property=' + ','.join(supervisor.CONFINEMENT_PROPERTIES))
+        for change in ('PrivateUsers=no', 'NoNewPrivileges=no', 'SupplementaryGroups=docker',
+                       'CapabilityBoundingSet=cap_sys_resource', 'PrivateUsers=yes\nExtra=1'):
+            bad = text.replace('%s=%s' % ('PrivateUsers', 'identity'), change, 1) if change.startswith('Private') \
+                else text.replace(next('%s=%s' % (k, v) for k, v in supervisor.CONFINEMENT.items()
+                                       if change.startswith(k)), change, 1)
+            with self.subTest(change=change), self.assertRaises(Refusal):
+                supervisor.parse_properties(bad, 'unit')
+        with self.assertRaises(Refusal):
+            supervisor.parse_properties('LoadState=loaded\n', 'unit')
+        with self.assertRaises(Refusal):
+            supervisor.parse_properties(None, 'unit')
+
+    def test_process_facts_must_show_private_namespace_empty_caps_and_no_docker_group(self):
+        groups = 'docker:x:999:\nusers:x:100:\n'
+        facts = supervisor.confinement_from_process(self.STATUS, 'user:[4026532345]',
+                                                    'user:[4026531841]', groups, 1001)
+        self.assertEqual((facts['uid'], facts['cap_eff'], facts['docker_gid']), (1001, 0, 999))
+        cases = {
+            'other uid': (self.STATUS.replace('Uid:\t1001\t1001\t1001\t1001', 'Uid:\t0\t0\t0\t0'), 1001),
+            'bypass capability': (self.STATUS.replace('CapEff:\t0000000000000000', 'CapEff:\t0000000001000000', 1), 1001),
+            'permitted bypass': (self.STATUS.replace('CapPrm:\t0000000000000000', 'CapPrm:\t0000000001000000', 1), 1001),
+            'no new privileges off': (self.STATUS.replace('NoNewPrivs:\t1', 'NoNewPrivs:\t0'), 1001),
+            'docker group': (self.STATUS.replace('Groups:\t1001', 'Groups:\t1001\t999'), 1001),
+            'no uid': (self.STATUS, None),
+        }
+        for name, (status, uid) in cases.items():
+            with self.subTest(name), self.assertRaises(Refusal):
+                supervisor.confinement_from_process(status, 'user:[4026532345]', 'user:[4026531841]',
+                                                    groups, uid)
+        with self.subTest('initial namespace'), self.assertRaisesRegex(Refusal, 'initial user namespace'):
+            supervisor.confinement_from_process(self.STATUS, 'user:[4026531841]', 'user:[4026531841]',
+                                                groups, 1001)
+        with self.assertRaises(Refusal):
+            supervisor.confinement_from_process('Name:\tx\n', 'user:[1]', 'user:[2]', groups, 1001)
+
+    def test_a_payload_unit_without_a_main_process_is_unknown(self):
+        class Ops:
+            def show(self, argv):
+                return show_text(group=GROUP)
+
+            def proc(self, path):
+                raise AssertionError('must not read /proc without a main process')
+        with self.assertRaisesRegex(Refusal, 'no main process'):
+            supervisor._confined_process(Ops(), UNIT, 1001)
+
+
+class BrokerWriteChecks(unittest.TestCase):
+    """The fixed broker writer: one bounded exclusive allocation inside the charged scope."""
+
+    def setUp(self):
+        self.root = tmpdir('broker-write-')
+        self.stage = self.root / 'stage-root' / 'E9a'
+        self.stage.mkdir(parents=True, mode=0o711)
+        os.chmod(self.stage, 0o711)
+        os.chmod(self.root / 'stage-root', 0o711)
+        (self.root / 'inputs').mkdir()
+        self.fifo = self.stage / supervisor.TRANSFER_NAME
+        self.dest = self.root / 'inputs' / 'archive.tar'
+        for patcher in (patch.object(supervisor, 'STAGE_ROOT', str(self.root / 'stage-root')),
+                        patch.object(supervisor, 'BROKER_DEST_PREFIX', str(self.root) + '/'),
+                        patch.object(supervisor, '_broker_project_attributes',
+                                     lambda fd: (supervisor.BROKER_PROJECT_ID, supervisor.BROKER_PROJINHERIT))):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def clean(self, dest=True):
+        if os.path.lexists(self.fifo):
+            os.unlink(self.fifo)
+        if dest and os.path.lexists(self.dest):
+            os.unlink(self.dest)
+
+    def run_broker(self, data, digest=None, max_bytes=None, drop=None, open_fifo=True, reset_dest=True,
+                   inject_drop=True):
+        self.clean(dest=reset_dest)
+        if open_fifo:
+            os.mkfifo(self.fifo)
+            holder = {}
+
+            def writer():
+                try:
+                    with open(self.fifo, 'wb') as handle:
+                        handle.write(data)
+                except OSError:
+                    pass
+
+            thread = threading.Thread(target=writer, daemon=True)
+            thread.start()
+            self.addCleanup(thread.join, 5)
+        else:
+            thread = None
+        try:
+            arguments = {} if not inject_drop else {'drop': drop or (lambda: None)}
+            return supervisor.broker_write(str(self.dest), digest or hashlib.sha256(data).hexdigest(),
+                                           max_bytes or (1 << 20), str(self.fifo), 'E9a', os.getuid(),
+                                           **arguments)
+        finally:
+            if thread is not None:
+                thread.join(timeout=10)
+
+    def test_one_bounded_exclusive_write_into_the_charged_destination(self):
+        data = b'archive-bytes' * 1000
+        result = self.run_broker(data)
+        self.assertEqual(result['bytes'], len(data))
+        self.assertEqual(self.dest.read_bytes(), data)
+        self.assertEqual(self.dest.stat().st_mode & 0o777, 0o600)
+        with self.assertRaisesRegex(Refusal, 'already exists'):
+            self.run_broker(data, reset_dest=False)
+
+    def test_short_long_or_mismatched_transfers_are_refused(self):
+        data = b'x' * 100
+        good = hashlib.sha256(data).hexdigest()
+        for digest, max_bytes in (('a' * 64, 1 << 20), (good, 50)):
+            with self.subTest(digest=digest[:8], max_bytes=max_bytes), self.assertRaises(Refusal):
+                self.run_broker(data, digest=digest, max_bytes=max_bytes)
+
+    def test_project_reassignment_custody_and_root_or_foreign_paths_refuse(self):
+        with self.assertRaisesRegex(Refusal, 'outside the charged stage root'):
+            supervisor.broker_write('/tmp/elsewhere.tar', 'a' * 64, 1 << 20, str(self.fifo), 'E9a',
+                                    os.getuid(), drop=lambda: None)
+        with self.assertRaisesRegex(Refusal, 'not this row transfer FIFO'):
+            supervisor.broker_write(str(self.dest), 'a' * 64, 1 << 20, str(self.stage / 'other.fifo'),
+                                    'E9a', os.getuid(), drop=lambda: None)
+        with self.assertRaisesRegex(Refusal, 'byte ceiling'):
+            supervisor.broker_write(str(self.dest), 'a' * 64, 0, str(self.fifo), 'E9a', os.getuid(),
+                                    drop=lambda: None)
+        for project, flags in ((0, supervisor.BROKER_PROJINHERIT), (supervisor.BROKER_PROJECT_ID, 0)):
+            with self.subTest(project=project, flags=flags), \
+                    patch.object(supervisor, '_broker_project_attributes', lambda fd, p=project, f=flags: (p, f)), \
+                    self.assertRaisesRegex(Refusal, 'charged inheriting project'):
+                self.run_broker(b'x' * 10, open_fifo=False)
+        with patch.object(supervisor.os, 'geteuid', return_value=0), patch.object(sys, 'stderr'):
+            self.assertEqual(supervisor.broker_write_main(['E9a', str(self.dest), 'a' * 64, '1024',
+                                                           str(self.fifo), '1001']), 3)
+
+    def fake_capability_ops(self):
+        """The reviewed capability syscalls as a fake kernel, so the live default path can run here."""
+        calls = []
+
+        def capget(header, data):
+            calls.append('capget')
+            header._obj.version = supervisor.CAPABILITY_VERSION_3
+            return 0
+
+        def capset(header, data):
+            calls.append('capset')
+            return 0 if header._obj.version == supervisor.CAPABILITY_VERSION_3 else -1
+
+        def prctl(option, argument, *rest):
+            calls.append(('prctl', option, argument))
+            if option == supervisor.PR_SET_NO_NEW_PRIVS:
+                return 0
+            if option == supervisor.PR_GET_NO_NEW_PRIVS:
+                return 1
+            if option == supervisor.PR_CAP_AMBIENT:
+                return 0
+            return -1
+        return (capget, capset, prctl), calls
+
+    def test_the_live_entry_resolves_the_capability_syscalls_before_the_allocating_open(self):
+        ops, calls = self.fake_capability_ops()
+        data = b'live-broker-bytes'
+        with patch.object(supervisor, 'libc_capability_ops', return_value=ops):
+            result = self.run_broker(data, inject_drop=False)
+        self.assertEqual(result['bytes'], len(data))
+        self.assertEqual(self.dest.read_bytes(), data)
+        # no-new-privileges first, then the capability read, the drop and the verification read.
+        self.assertEqual(calls[0], ('prctl', supervisor.PR_SET_NO_NEW_PRIVS, 1))
+        self.assertGreaterEqual(calls.count('capget'), 2)
+        self.assertEqual(calls.count('capset'), 1)
+        self.assertIn(('prctl', supervisor.PR_GET_NO_NEW_PRIVS, 0), calls)
+
+    def test_the_live_entry_wires_the_drop_and_refuses_before_the_open_when_libc_lacks_it(self):
+        ops, calls = self.fake_capability_ops()
+        data = b'entry-bytes'
+        self.clean()
+        os.mkfifo(self.fifo)
+
+        def writer():
+            try:
+                with open(self.fifo, 'wb') as handle:
+                    handle.write(data)
+            except OSError:
+                pass
+
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        with patch.object(supervisor, 'libc_capability_ops', return_value=ops), \
+                patch.object(sys, 'stdout', new_callable=io.StringIO) as output:
+            self.assertEqual(supervisor.broker_write_main(
+                ['E9a', str(self.dest), hashlib.sha256(data).hexdigest(), str(1 << 20), str(self.fifo),
+                 str(os.getuid())]), 0)
+        thread.join(timeout=10)
+        self.assertEqual(self.dest.read_bytes(), data)
+        self.assertTrue(output.getvalue().startswith(hashlib.sha256(data).hexdigest()))
+        self.assertEqual(calls[0], ('prctl', supervisor.PR_SET_NO_NEW_PRIVS, 1))
+        self.clean()
+        with patch.object(supervisor.ctypes, 'CDLL', return_value=object()), \
+                patch.object(sys, 'stderr', new_callable=io.StringIO) as errors:
+            self.assertEqual(supervisor.broker_write_main(
+                ['E9a', str(self.dest), hashlib.sha256(data).hexdigest(), str(1 << 20), str(self.fifo),
+                 str(os.getuid())]), 3)
+        self.assertIn('capability calls are unavailable', errors.getvalue())
+        self.assertFalse(self.dest.exists(), 'an unavailable capability drop must refuse before any open')
+
+    def test_a_restored_quota_bypass_stops_the_write_before_it_opens(self):
+        def restored():
+            raise Refusal('quota-bypass capability remains present')
+        # The drop is re-checked before the allocating open, so no FIFO reader is needed here.
+        with self.assertRaisesRegex(Refusal, 'quota-bypass capability remains present'):
+            self.run_broker(b'x' * 10, drop=restored, open_fifo=False)
+        self.assertFalse(self.dest.exists(), 'no allocating open happens before the drop is re-checked')
+
+
+class WriterScopeChecks(unittest.TestCase):
+    """The writer bound: confinement, the sole std-uid channel and tool custody."""
+
+    def scope(self, **over):
+        uid = 1001
+        scope = {'boot_id': BOOT, 'row': 'E9a', 'unit': dict(supervisor.CONFINEMENT),
+                 'process': {'uid': uid, 'groups': [uid], 'cap_eff': 0, 'cap_prm': 0, 'no_new_privs': 1,
+                             'user_ns': 4026532345, 'init_user_ns': 4026531841, 'docker_gid': 999},
+                 'channel': {'forced_command': supervisor.forced_command(),
+                             'sha256': hashlib.sha256(supervisor.forced_command().encode()).hexdigest(),
+                             'key_lines': 1},
+                 'tools': writer_tools_fixture()}
+        scope.update(over)
+        return scope
+
+    def verify(self, scope, fx=None):
+        return allocation.verify_scope(scope, fx or {'boot_id': BOOT, 'uid': 1001,
+                                                     'root': setup.BASE, 'entries': {'.'}})
+
+    def test_the_fixed_confinement_custody_and_channel_are_admitted(self):
+        result = self.verify(self.scope())
+        self.assertEqual(result['uid'], 1001)
+        self.assertEqual(result['process']['user_ns'], 4026532345)
+
+    def test_docker_capability_namespace_and_channel_escapes_refuse(self):
+        cases = {
+            'docker group': {'process': dict(self.scope()['process'], groups=[1001, 999])},
+            'restored capability': {'process': dict(self.scope()['process'], cap_eff=1 << 24)},
+            'permitted capability': {'process': dict(self.scope()['process'], cap_prm=1 << 24)},
+            'no no-new-privileges': {'process': dict(self.scope()['process'], no_new_privs=0)},
+            'initial user namespace': {'process': dict(self.scope()['process'],
+                                                      user_ns=4026531841)},
+            'private users unset': {'unit': dict(supervisor.CONFINEMENT, PrivateUsers='no')},
+            'supplementary groups kept': {'unit': dict(supervisor.CONFINEMENT, SupplementaryGroups='docker')},
+            'shell forced command': {'channel': dict(self.scope()['channel'], forced_command='/bin/sh')},
+            'second key line': {'channel': dict(self.scope()['channel'], key_lines=2)},
+            'foreign tool owner': {'tools': {'/usr/bin/python3': dict(writer_tools_fixture()['/usr/bin/python3'],
+                                                                     uid=1001)}},
+            'writable tool': {'tools': {'/usr/bin/python3': dict(writer_tools_fixture()['/usr/bin/python3'],
+                                                                 mode=0o777)}},
+        }
+        for name, change in cases.items():
+            with self.subTest(name), self.assertRaises(Refusal):
+                self.verify(dict(self.scope(), **change))
+        with self.assertRaises(Refusal):
+            self.verify(dict(self.scope(), boot_id='another-boot'))
+        with self.assertRaises(Refusal):
+            self.verify(dict(self.scope(), tools={}))
 
 
 class RunTransferChecks(unittest.TestCase):
@@ -871,24 +1254,34 @@ class AuthorizedKeyChecks(unittest.TestCase):
     def test_restricted_key_matching_e2_and_bound_expiry_passes(self):
         setup.check_authorized_keys(key_line(), E2_KEY, NOW, NOW + 3600)
 
-    def test_existing_key_contract_does_not_admit_a_forced_command(self):
-        stamp = datetime.datetime.fromtimestamp(NOW + 3600, tz=datetime.timezone.utc).strftime('%Y%m%d%H%M%S')
-        # The accepted key has no command option. A fixed command cannot be
-        # silently added to this existing contract to confine the other session.
+    def test_qualification_key_is_restricted_to_the_one_forced_command(self):
+        # The 759 contract accepted `restrict` alone, which still permits an authenticated command
+        # channel outside the confined unit. The reviewed contract now requires the exact forced
+        # entry, so the same-uid session cannot obtain a shell or name another path.
+        self.assertIn('command="', key_options())
         setup.check_authorized_keys(key_line(), E2_KEY, NOW, NOW + 3600)
-        forced = key_line(options='restrict,expiry-time=' + stamp + ',command="/bin/true"')
-        with self.assertRaises(Refusal):
-            setup.check_authorized_keys(forced, E2_KEY, NOW, NOW + 3600)
+        stamp = datetime.datetime.fromtimestamp(NOW + 3600, tz=datetime.timezone.utc).strftime('%Y%m%d%H%M%S')
+        for options in ('restrict,expiry-time=' + stamp,                                          # no command at all
+                        'restrict,expiry-time=' + stamp + ',command="/bin/sh"',                   # a shell
+                        'restrict,expiry-time=' + stamp + ',command="/usr/bin/id"',               # another binary
+                        'restrict,expiry-time=' + stamp + ',' +
+                        transfers.authorized_keys_command().replace('--transfer-writer', '--approved-request'),
+                        'restrict,expiry-time=' + stamp + ',' + transfers.authorized_keys_command() + ',pty'):
+            with self.subTest(options=options), self.assertRaises(Refusal):
+                setup.check_authorized_keys(key_line(options=options), E2_KEY, NOW, NOW + 3600)
 
     def test_each_stale_or_fabricated_field_refuses(self):
         stamp = datetime.datetime.fromtimestamp(NOW + 3600, tz=datetime.timezone.utc).strftime('%Y%m%d%H%M%S')
+        command = transfers.authorized_keys_command()
         cases = {
-            'no restrict': (key_line(options='expiry-time=' + stamp), NOW + 3600),
+            'no restrict': (key_line(options='expiry-time=' + stamp + ',' + command), NOW + 3600),
             'other key': (key_line(key='ssh-ed25519 AAAAOTHERKEY effigy531@test'), NOW + 3600),
             'expiry beyond 24h': (key_line(expiry_epoch=NOW + 90000), NOW + 90000),
             'bound expiry differs': (key_line(), NOW + 60),
             'two lines': (key_line() + key_line(), NOW + 3600),
             'not ed25519': (key_line(key='ssh-rsa AAAATESTKEYBLOB effigy531@test'), NOW + 3600),
+            'extra option': (key_line(options='restrict,expiry-time=' + stamp + ',' + command + ',no-agent-forwarding'),
+                             NOW + 3600),
         }
         for name, (data, bound) in cases.items():
             with self.subTest(name), self.assertRaises(Refusal):
@@ -1495,8 +1888,70 @@ def disk_witness():
 
 
 def hard_limit_witness():
-    return {'mechanism': 'test-limit', 'limits': [setup.TRANSFER_CAP, setup.EXTRACT_CAP, setup.PAYLOAD_CAP],
+    return {'mechanism': 'test-limit',
+            'limits': [setup.TRANSFER_CAP, setup.EXTRACT_CAP, setup.PAYLOAD_CAP, setup.PLACEMENT_GROUP_CAP],
             'enforcement': 'kernel'}
+
+
+QUOTA_CHARGED = 34 << 20
+QUOTA_ENTRIES = (('.', 'dir', 1), ('inputs', 'dir', 1), ('inputs/archive.tar', 'reg', 1))
+
+
+def writer_tools_fixture():
+    """The fixed root-owned writer tool custody observation a charged row must bind."""
+    return {'/usr/bin/python3': {'uid': 0, 'nlink': 1, 'mode': 0o755, 'sha256': 'a' * 64},
+            '/usr/local/libexec/effigy-stage-supervisor': {'uid': 0, 'nlink': 1, 'mode': 0o755,
+                                                           'sha256': 'b' * 64}}
+
+
+def scope_fixture(uid=1001):
+    """The confinement observation the fixed payload unit and process must produce."""
+    return {'properties': dict(supervisor.CONFINEMENT),
+            'process': {'uid': uid, 'groups': [uid], 'cap_eff': 0, 'cap_prm': 0, 'no_new_privs': 1,
+                        'user_ns': 4026532345, 'init_user_ns': 4026531841, 'docker_gid': 999}}
+
+
+def quota_witness(row, nonce=None, charged=QUOTA_CHARGED, boot=BOOT, entries=QUOTA_ENTRIES, **over):
+    """A complete fixture witness in the fixed admin role's exact shape (kit 6.3 reservations)."""
+    limit = row['limit_bytes']
+    hard = charged + limit
+    features = ('has_journal ext_attr resize_inode dir_index orphan_file filetype needs_recovery extent '
+                '64bit flex_bg metadata_csum_seed sparse_super large_file huge_file dir_nlink extra_isize '
+                'metadata_csum orphan_present project quota')
+    texts = {
+        'mountinfo': '36 1 8:2 / / rw,relatime shared:1 - ext4 /dev/sda2 rw\n',
+        'dumpe2fs': 'Filesystem UUID:          d488be7b-682f-41ac-b79b-57bbf495a01d\n'
+                    'Filesystem features:      %s\nFilesystem state:         clean\n' % features,
+        'by-uuid': '../../sda2\n',
+        'quota': '\n'.join(['boot_id=' + boot, 'device=/dev/sda2', 'dev=8:2', 'project_id=531',
+                            'qb_unit_bytes=1024', 'getfmt_rc=0 getfmt_errno=0 fmt=4',
+                            'getquota_rc=0 getquota_errno=0',
+                            'bhard_qb=%d bsoft_qb=0 curspace_bytes=%d valid=3' % (hard // 1024, charged)]) + '\n',
+        'tree': '\n'.join(['boot_id=' + boot, 'root=' + setup.BASE, 'project_id=531'] +
+                           ['entry path=%s type=%s dev=8:2 ino=%d uid=1001 gid=0 mode=700 nlink=1 projid=531 '
+                            'xflags=%d blocks512=%d size=0' % (path, kind, 10 + index,
+                                                              probe.FS_XFLAG_PROJINHERIT if kind == 'dir' else 0,
+                                                              blocks)
+                            for index, (path, kind, blocks) in enumerate(entries)]) + '\n',
+    }
+    enforcement_text = 'status=refused phase=edquot bytes=%d\n' % limit
+    witness = {'mechanism': 'ext4-project-quota', 'row': row['quota']['row'],
+               'nonce': nonce or (row.get('quota_credit') or {}).get('nonce'), 'boot_id': boot,
+               'device': '/dev/sda2', 'project': 531, 'charged_bytes': charged, 'limit_bytes': limit,
+               'setter_exit': 0,
+               'custody': {'entry_sha256': hashlib.sha256(setup.SUPERVISOR_SOURCE.read_bytes()).hexdigest(),
+                           'approval_digest': (row.get('quota_credit') or {}).get('request_sha256') or 'c' * 64,
+                           'device': '/dev/sda2', 'project': 531},
+               'enforcement': {'argv': ['--enforce', allocation.QUOTA_ROOT_PROBE, str(limit)], 'exit': 3,
+                               'bytes_allocated': limit, 'phase': 'edquot', 'reservation_bytes': limit,
+                               'stdout': '', 'stderr': enforcement_text,
+                               'stdout_sha256': hashlib.sha256(b'').hexdigest(),
+                               'stderr_sha256': hashlib.sha256(enforcement_text.encode()).hexdigest()},
+               'observations': {route: {'text': texts[route],
+                                        'sha256': hashlib.sha256(texts[route].encode()).hexdigest(),
+                                        'exit': 0} for route in allocation.ROUTES}}
+    witness.update(over)
+    return witness
 
 
 def candidate_for(row_id):
@@ -1614,6 +2069,8 @@ class PlanFixture:
             'controls_payload': ['/bin/sh', '-c', 'true', 'sh'],
             'supervisor_installed': {'sha256': hashlib.sha256(setup.SUPERVISOR_SOURCE.read_bytes()).hexdigest()},
             'placements': self.module_placements(),
+            'allocation_entries': {'.', 'inputs', 'inputs/archive.tar'},
+            'writer_tools': writer_tools_fixture(),
         }
         if 'stage1' not in over:
             facts['stage1'] = self.stage1_fact()
@@ -1724,17 +2181,33 @@ class PlanChecks(unittest.TestCase):
         self.assertTrue(rows['E7a']['missing'])
         self.assertTrue(rows['E7c']['missing'])
 
-    def test_hard_limit_must_cover_each_payload_row_and_is_unset_by_default(self):
+    def test_every_allocating_row_belongs_to_a_fixed_quota_administration_request(self):
         rows = {r['id']: r for r in setup.setup_plan(self.fx.facts())}
-        self.assertTrue(any('hard-limit' in m or 'quota' in m for m in rows['E9a']['missing']))
-        with patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({'test-limit'})), \
-                patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', disk_controls.TEST_SUPPORTED), \
-                patch.object(disk_association, 'PINS', disk_controls.TEST_PINS):
-            rows = {r['id']: r for r in setup.setup_plan(self.fx.facts(hard_limit=hard_limit_witness(),
-                                                                       disk_association=disk_witness()))}
-        for rid in ('E9a', 'E9b', 'E8', 'E19.0'):
+        for rid, group in (('E8', 'E8'), ('E9a', 'E9a'), ('E9b', 'E9b'), ('E9c', 'E9c'),
+                           ('E19.0', 'E19'), ('EGO.0', 'EGO')):
             with self.subTest(rid=rid):
-                self.assertEqual(rows[rid]['missing'], [], rid)
+                self.assertEqual(rows[rid]['quota']['row'], group)
+                self.assertTrue(rows[rid]['quota_argv'], rid)
+                self.assertEqual(rows[rid]['quota_credit']['entry'], '--approved-quota')
+                self.assertFalse(rows[rid]['quota_credit']['sudoers'], 'no account privilege is created')
+        # A placement row is charged the aggregate group ceiling, never a per-file 40 MiB allowance.
+        self.assertEqual(rows['E19.0']['limit_bytes'], setup.PLACEMENT_GROUP_CAP)
+        self.assertEqual(setup.PLACEMENT_GROUP_CAP, 1 << 20)
+        # The witness is not pre-bound in facts: the plan requires the fixed role, its facts and the
+        # writer-bound observation, and the witness itself is only admitted when the row runs.
+        bare = {r['id']: r for r in setup.setup_plan(self.fx.facts(allocation_entries=None,
+                                                                   writer_tools=None))}
+        self.assertTrue(any('allocation facts' in m for m in bare['E9a']['missing']))
+        self.assertTrue(any('writer tool custody' in m for m in bare['E9a']['missing']))
+
+    def test_an_aggregate_placement_set_above_its_kit_ceiling_is_refused(self):
+        items = [{'guest_path': setup.BASE + '/inputs/p%d' % index, 'host_path': str(self.fx.dir / ('p%d' % index)),
+                  'sha256': 'a' * 64} for index in range(2)]
+        for index, item in enumerate(items):
+            (self.fx.dir / ('p%d' % index)).write_bytes(b'x' * (600 << 10))
+            item['sha256'] = hashlib.sha256(b'x' * (600 << 10)).hexdigest()
+        rows = {r['id']: r for r in setup.setup_plan(self.fx.facts(placements=items))}
+        self.assertTrue(any('aggregate ceiling' in m for m in rows['E19.0']['missing']))
 
     def test_plan_has_exact_root_and_contained_shapes(self):
         rows = {r['id']: r for r in setup.setup_plan(self.fx.facts())}
@@ -1927,7 +2400,7 @@ class ExecutorChecks(unittest.TestCase):
     def supported(self):
         return (patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', disk_controls.TEST_SUPPORTED),
                 patch.object(disk_association, 'PINS', disk_controls.TEST_PINS),
-                patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({'test-limit'})))
+                patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({'test-limit', allocation.MECHANISM})))
 
     def test_a_failed_stage_cleanup_halts_the_plan_after_credit(self):
         p1, p2, p3 = self.supported()
@@ -2045,12 +2518,18 @@ class ExecutorChecks(unittest.TestCase):
         self.assertEqual(result['halt'], 'E9a')
         self.assertIn('credit', result['reason'])
 
-    def test_polling_only_hard_limit_halts_the_network_row(self):
+    def test_an_unbound_quota_administration_halts_the_transfer_row(self):
         with patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', disk_controls.TEST_SUPPORTED), \
                 patch.object(disk_association, 'PINS', disk_controls.TEST_PINS):
-            result = execute(self.fx.facts(disk_association=disk_witness()), ok_runner())
+            result = execute(self.fx.facts(disk_association=disk_witness(), allocation_entries=None), ok_runner())
         self.assertEqual(result['halt'], 'E9a')
-        self.assertIn('hard-limit', result['reason'])
+        self.assertIn('allocation facts', result['reason'])
+
+    def test_a_polling_only_witness_is_never_the_row_bound(self):
+        # The pre-bound witness path still refuses a polling mechanism for a non-quota row.
+        with self.assertRaises(Refusal):
+            setup.verify_hard_limit({'mechanism': 'polling', 'limits': [setup.TRANSFER_CAP],
+                                     'enforcement': 'poll'}, setup.TRANSFER_CAP)
 
     def test_counter_loss_and_cap_during_a_row_halt(self):
         def shrink(row, stage, monitor):
@@ -2126,7 +2605,8 @@ def ok_runner(overrides=None):
         if row['effect'] in ('supervised', 'transfer'):
             payload = expect['stdout_sha'] + '  file\n' if 'stdout_sha' in expect else ''
             out = {'disposition': 'exited', 'waited_exit': 0, 'candidate': candidate_for(row['id']),
-                   'payload_stdout': payload, 'stdout': b'', 'stderr': b''}
+                   'payload_stdout': payload, 'payload_stderr': '', 'stdout': b'', 'stderr': b'',
+                   'confinement': scope_fixture()}
             if row['kind'] == 'contained-transfer':
                 out['writer_exit'] = 0
             return out
@@ -2143,14 +2623,20 @@ def ok_runner(overrides=None):
     return runner
 
 
+def quota_runner_ok(row, stage, monitor):
+    """The fixture's fixed admin role: a complete witness bound to this row and its one-use nonce."""
+    return quota_witness(row)
+
+
 def execute(facts, runner=None, observe_identity=None, observe_terminal=None, wall_clock=None, clock=None,
-            budget=18000, stage_root=None, stop_unit=None):
+            budget=18000, stage_root=None, stop_unit=None, quota_runner=None):
     identity = facts['identity']
     return setup.execute_plan(facts, runner or ok_runner(),
                               observe_identity or (lambda row: dict(identity)),
                               observe_terminal or (lambda row: {'show_text': show_text()}),
                               stage_root or tmpdir('plan-stage-'), clock or (lambda: 0.0),
-                              wall_clock or (lambda: NOW), budget, stop_unit=stop_unit or (lambda unit: 'exited'))
+                              wall_clock or (lambda: NOW), budget, stop_unit=stop_unit or (lambda unit: 'exited'),
+                              quota_admin=quota_runner or quota_runner_ok)
 
 
 # External anchors for the plan. In production the proof-entry activation (#694) binds them; the production
@@ -2466,7 +2952,14 @@ class RealSupervisorFlowChecks(unittest.TestCase):
 
 
 def real_transfer_row(root, archive, timeout=60, payload_exit=None):
-    stage = root / 'stage'
+    """A real contained transfer: the payload reads the row FIFO, the fixed writer streams into it.
+
+    The payload here is the local stand-in for the broker entry (the flow, credit and writer are the
+    real ones); the broker entry itself is controlled in `BrokerWriteChecks`.
+    """
+    stage = root / 'stage-root' / 'E9a'
+    (root / 'stage-root').mkdir(mode=0o711)
+    os.chmod(root / 'stage-root', 0o711)
     fifo = stage / supervisor.TRANSFER_NAME
     dest = root / 'dest.bin'
     script = 'cat "$1" > "$2" && %s "$2"' % SHA_CMD if payload_exit is None else 'exit %d' % payload_exit
@@ -2476,7 +2969,8 @@ def real_transfer_row(root, archive, timeout=60, payload_exit=None):
            'transfer': True}
     return {'kind': 'contained-transfer',
             'argv': [sys.executable, str(FakeSystemd.last_driver), json.dumps(req)],
-            'writer_argv': transfers.writer_remote_argv(str(fifo), attempts=max(10, timeout * 5)),
+            'writer_argv': [sys.executable, '-I', '-B',
+                            str(Path(setup.SUPERVISOR_SOURCE).resolve()), supervisor.TRANSFER_SUBCOMMAND],
             'stdin_path': str(archive), 'timeout_seconds': timeout, 'stdin_sha256': None,
             'credit': {'nonce': ROW_NONCES['E9a'], 'unit': supervisor.unit_name(ROW_NONCES['E9a'])}}, dest
 
@@ -2487,13 +2981,17 @@ class RealTransferFlowChecks(unittest.TestCase):
     def setUp(self):
         self.fake = FakeSystemd().use(self)
         FakeSystemd.last_driver = self.fake.driver
+        self.root = tmpdir('real-transfer-root-')
 
     def test_contained_transfer_delivers_the_bytes_and_is_credited_by_the_host(self):
-        root = tmpdir('real-transfer-')
+        root = self.root
         archive = root / 'archive.bin'
         archive.write_bytes(os.urandom(300_000))
         row, dest = real_transfer_row(root, archive, timeout=60)
-        out = setup.default_row_runner(row, None, None)
+        with patch.dict(os.environ, {'SSH_ORIGINAL_COMMAND': requested_command(
+                root / 'stage-root' / 'E9a' / supervisor.TRANSFER_NAME),
+                'EFFIGY_STAGE_ROOT': str(root / 'stage-root')}):
+            out = setup.default_row_runner(row, None, None)
         self.assertEqual(out['disposition'], 'exited', out)
         self.assertEqual(out['writer_exit'], 0)
         self.assertEqual(dest.read_bytes(), archive.read_bytes())
@@ -2505,24 +3003,30 @@ class RealTransferFlowChecks(unittest.TestCase):
         self.assertEqual(setup.host_credit(expected, out['candidate'], host), 'closed')
 
     def test_a_payload_that_never_reads_the_fifo_is_bounded_by_the_row_deadline(self):
-        root = tmpdir('real-transfer-stuck-')
+        root = self.root
         archive = root / 'archive.bin'
         archive.write_bytes(b'x' * 1000)
         row, dest = real_transfer_row(root, archive, timeout=3, payload_exit=0)
         started = time.monotonic()
-        out = setup.default_row_runner(row, None, None)
+        with patch.dict(os.environ, {'SSH_ORIGINAL_COMMAND': requested_command(
+                root / 'stage-root' / 'E9a' / supervisor.TRANSFER_NAME),
+                'EFFIGY_STAGE_ROOT': str(root / 'stage-root')}):
+            out = setup.default_row_runner(row, None, None)
         self.assertNotEqual(out['disposition'], 'exited')
         self.assertLess(time.monotonic() - started, row['timeout_seconds'] + 95)
         self.assertIsNone(out['candidate'])
 
     def test_a_failed_writer_is_never_closure(self):
-        root = tmpdir('real-transfer-writer-')
+        root = self.root
         archive = root / 'archive.bin'
         archive.write_bytes(b'abc')
         row, _ = real_transfer_row(root, archive, timeout=30)
-        row['writer_argv'] = transfers.writer_remote_argv(str(root / 'absent.fifo'), attempts=3)
-        out = setup.default_row_runner(row, None, None)
-        self.assertEqual(out['writer_exit'], 9)
+        row['writer_argv'] = forced_entry_argv()
+        with patch.dict(os.environ, {'SSH_ORIGINAL_COMMAND': requested_command(
+                root / 'stage-root' / 'E9a' / 'absent.fifo'),
+                'EFFIGY_STAGE_ROOT': str(root / 'stage-root')}):
+            out = setup.default_row_runner(row, None, None)
+        self.assertNotEqual(out['writer_exit'], 0)
         self.assertNotEqual(out['disposition'], 'exited')
 
 
@@ -2661,6 +3165,10 @@ class SshCallerChecks(unittest.TestCase):
         remote = shlex.split(row['argv'][-1])
         self.assertEqual(remote[:6], ['sudo', '-n', setup.SUPERVISOR_PYTHON, '-I', '-B', setup.SUPERVISOR_PATH])
         req = json.loads(row['credit']['request_json'])
+        # The stand-in systemd cannot install a private identity user namespace, so this end-to-end
+        # flow drops only the confinement observation; the confinement gate itself is controlled in
+        # ConfinementChecks with an injected ops object.
+        req.pop('confinement')
         root = tmpdir('ssh-caller-')
         req.update(stage_dir=str(root / 'stage-root' / 'E8'), payload_user=ACCOUNT_NAME, payload_uid=os.geteuid(),
                    expected_boot_id=BOOT)
@@ -2770,8 +3278,8 @@ class InstalledSupervisorChecks(unittest.TestCase):
                 names.update(alias.name.split('.')[0] for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.level == 0:
                 names.add(node.module.split('.')[0])
-        stdlib = {'ctypes', 'base64', 'fcntl', 'hashlib', 'json', 'math', 'os', 'pwd', 're', 'signal', 'stat',
-                  'struct', 'subprocess', 'sys', 'threading', 'time', 'pathlib'}
+        stdlib = {'ctypes', 'base64', 'errno', 'fcntl', 'hashlib', 'json', 'math', 'os', 'pwd', 're', 'signal',
+                  'stat', 'struct', 'subprocess', 'sys', 'threading', 'time', 'pathlib', 'shlex'}
         self.assertLessEqual(names, stdlib)
 
     def test_mirrored_constants_match_their_sources(self):
@@ -2839,13 +3347,13 @@ class QuotaBypassCandidateChecks(unittest.TestCase):
 
         try:
             device = os.fstat(parent).st_dev
-            result = supervisor._launch_candidate_quota_record(parent, 'intent.json', b'fixed', device,
+            result = supervisor.launch_quota_record(parent, 'intent.json', b'fixed', device,
                                                                time.monotonic() + 5, time.monotonic() + 7,
                                                                (capget, capset, prctl), project)
             self.assertEqual(result, {'waited_exit': 0})
             self.assertEqual((root / 'intent.json').read_bytes(), b'fixed')
             with self.assertRaisesRegex(Refusal, 'failed or its outcome is unknown'):
-                supervisor._launch_candidate_quota_record(parent, 'stdout', b'x', device,
+                supervisor.launch_quota_record(parent, 'stdout', b'x', device,
                                                            time.monotonic() + 5, time.monotonic() + 7,
                                                            (capget, capset, prctl), lambda fd: (0, 0))
             self.assertFalse((root / 'stdout').exists())
@@ -2853,14 +3361,14 @@ class QuotaBypassCandidateChecks(unittest.TestCase):
                 time.sleep(1)
                 return project(fd)
             with self.assertRaisesRegex(Refusal, 'deadline expired'):
-                supervisor._launch_candidate_quota_record(parent, 'stderr', b'x', device,
+                supervisor.launch_quota_record(parent, 'stderr', b'x', device,
                                                            time.monotonic() + 0.1, time.monotonic() + 2,
                                                            (capget, capset, prctl), slow_project)
             self.assertFalse((root / 'stderr').exists())
             with patch.object(supervisor.os, 'geteuid', return_value=0), \
                     patch.object(supervisor.os, 'fork') as fork:
                 with self.assertRaisesRegex(Refusal, 'test seams are refused for root'):
-                    supervisor._launch_candidate_quota_record(parent, 'stdout', b'x', device,
+                    supervisor.launch_quota_record(parent, 'stdout', b'x', device,
                                                                time.monotonic() + 5, time.monotonic() + 7,
                                                                (capget, capset, prctl), project)
                 fork.assert_not_called()
@@ -2903,22 +3411,22 @@ class QuotaBypassCandidateChecks(unittest.TestCase):
         try:
             device = os.fstat(parent).st_dev
             with patch.object(supervisor, '_row_write', side_effect=write):
-                supervisor._candidate_quota_broker_record(parent, 'intent.json', b'fixed', device, os.getuid(),
+                supervisor.broker_record(parent, 'intent.json', b'fixed', device, os.getuid(),
                                                            capget, capset, prctl, attrs)
             self.assertEqual((root / 'intent.json').read_bytes(), b'fixed')
             self.assertLess(events.index('set'), events.index('write'))
             self.assertEqual(events.count('attrs'), 2)
             with self.assertRaisesRegex(Refusal, 'custody differs'):
-                supervisor._candidate_quota_broker_record(parent, 'stdout', b'x', device + 1, os.getuid(),
+                supervisor.broker_record(parent, 'stdout', b'x', device + 1, os.getuid(),
                                                            capget, capset, prctl, attrs)
             with self.assertRaisesRegex(Refusal, 'project or inheritance differs'):
-                supervisor._candidate_quota_broker_record(parent, 'stdout', b'x', device, os.getuid(),
+                supervisor.broker_record(parent, 'stdout', b'x', device, os.getuid(),
                                                            capget, capset, prctl, lambda fd: (0, 0))
             with self.assertRaisesRegex(Refusal, 'drop failed or is unknown'):
-                supervisor._candidate_quota_broker_record(parent, 'stdout', b'x', device, os.getuid(),
+                supervisor.broker_record(parent, 'stdout', b'x', device, os.getuid(),
                                                            capget, lambda *args: -1, prctl, attrs)
             with self.assertRaisesRegex(Refusal, 'not fixed'):
-                supervisor._candidate_quota_broker_record(parent, '../other', b'x', device, os.getuid(),
+                supervisor.broker_record(parent, '../other', b'x', device, os.getuid(),
                                                            capget, capset, prctl, attrs)
             self.assertFalse((root / 'stdout').exists())
         finally:
@@ -2945,7 +3453,7 @@ class QuotaBypassCandidateChecks(unittest.TestCase):
             events.append((operation, arg))
             return 1 if operation == supervisor.PR_GET_NO_NEW_PRIVS else 0
 
-        supervisor._candidate_drop_quota_bypass(capget, capset, prctl)
+        supervisor.drop_quota_bypass(capget, capset, prctl)
         self.assertEqual(state, {'effective': 1, 'permitted': 1, 'inheritable': 0})
         self.assertEqual(events, [(supervisor.PR_SET_NO_NEW_PRIVS, 1),
                                   (supervisor.PR_CAP_AMBIENT, supervisor.PR_CAP_AMBIENT_CLEAR_ALL),
@@ -2954,11 +3462,11 @@ class QuotaBypassCandidateChecks(unittest.TestCase):
 
         state.update(effective=bit, permitted=bit, inheritable=bit)
         with self.assertRaisesRegex(Refusal, 'drop failed or is unknown'):
-            supervisor._candidate_drop_quota_bypass(capget, lambda *args: -1, prctl)
+            supervisor.drop_quota_bypass(capget, lambda *args: -1, prctl)
         with self.assertRaisesRegex(Refusal, 'remains present'):
-            supervisor._candidate_drop_quota_bypass(capget, lambda *args: 0, prctl)
+            supervisor.drop_quota_bypass(capget, lambda *args: 0, prctl)
         with self.assertRaisesRegex(Refusal, 'setup failed or is unknown'):
-            supervisor._candidate_drop_quota_bypass(capget, capset, lambda *args: None)
+            supervisor.drop_quota_bypass(capget, capset, lambda *args: None)
 
 
 class OriginalStreamChecks(unittest.TestCase):
@@ -3091,7 +3599,7 @@ class ExactApprovalAndCustodyChecks(unittest.TestCase):
     def test_approval_install_rejects_oversize_before_any_write(self):
         for size, reaches_write in ((1024 * 1024, True), (1024 * 1024 + 1, False)):
             data = 'x' * size
-            argv = ['installer', '/unused', hashlib.sha256(data.encode()).hexdigest(), data, '/unused']
+            argv = ['installer', '/unused', hashlib.sha256(data.encode()).hexdigest(), data, '/unused', 'norule']
             with self.subTest(size=size), patch.object(sys, 'argv', argv), \
                     patch.object(os, 'mkdir', side_effect=RuntimeError('write reached')) as mkdir:
                 if reaches_write:
@@ -3193,7 +3701,7 @@ class AuthenticatedObservationChecks(unittest.TestCase):
         with patch.object(setup, 'ARCHIVE_SHA256', fx.archive_sha), patch.object(setup, 'ARCHIVE_B_SHA256', fx.archive_b_sha), \
              patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', disk_controls.TEST_SUPPORTED), \
                 patch.object(disk_association, 'PINS', disk_controls.TEST_PINS), \
-             patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({'test-limit'})):
+             patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({'test-limit', allocation.MECHANISM})):
             facts = fx.facts(hard_limit=hard_limit_witness(), disk_association=disk_witness())
             rows = {r['id']: r for r in setup.setup_plan(facts)}
             fx.config.chmod(0o644)

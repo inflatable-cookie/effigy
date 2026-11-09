@@ -20,6 +20,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_allocation_bound as bound
 import linux_allocation_probe as probe
+import linux_supervisor as supervisor
 import linux_setup as setup
 import linux_setup_tests as lst
 from linux_supervisor import Refusal
@@ -40,6 +41,7 @@ ENTRIES = (
 )
 CHARGED = 34 << 20
 HARD = CHARGED + LIMIT
+NONCE = 'd' * 64
 
 
 def facts(**over):
@@ -73,7 +75,18 @@ def render(mount_dev='8:2', mount_fs='ext4', mount_source='/dev/sda2', mount_opt
                                                           probe.FS_XFLAG_PROJINHERIT if k == 'dir' else 0, b)
                            for i, (p, k, d, u, pr, n, b) in enumerate(entries)]) + '\n',
     }
-    return {'mechanism': MECH, 'observations': {r: original(texts[r]) for r in bound.ROUTES}}
+    enforcement_text = 'status=refused phase=edquot bytes=%d\n' % LIMIT
+    return {'mechanism': MECH, 'row': 'E9a', 'nonce': NONCE, 'boot_id': BOOT, 'device': bound.ROOT_DEVICE,
+            'project': bound.PROJECT_ID, 'charged_bytes': CHARGED, 'limit_bytes': LIMIT, 'setter_exit': 0,
+            'custody': {'entry_sha256': hashlib.sha256(bound.WRITER_HELPER.parent.joinpath(
+                'linux_supervisor.py').read_bytes()).hexdigest(),
+                        'approval_digest': 'e' * 64, 'device': bound.ROOT_DEVICE, 'project': bound.PROJECT_ID},
+            'enforcement': {'argv': ['--enforce', bound.QUOTA_ROOT_PROBE, str(LIMIT)], 'exit': 3,
+                            'bytes_allocated': LIMIT, 'phase': 'edquot', 'reservation_bytes': LIMIT,
+                            'stdout': '', 'stderr': enforcement_text,
+                            'stdout_sha256': hashlib.sha256(b'').hexdigest(),
+                            'stderr_sha256': hashlib.sha256(enforcement_text.encode()).hexdigest()},
+            'observations': {r: original(texts[r]) for r in bound.ROUTES}}
 
 
 def replace_original(witness, route, text=None, **changes):
@@ -177,52 +190,50 @@ class VerifierChecks(unittest.TestCase):
             with self.subTest(row=row, charged=charged), self.assertRaises(Refusal):
                 bound.prospective_row_limit(row, charged)
 
-    def test_fixed_candidate_setter_uses_only_the_project_block_limit(self):
-        calls = []
-        def call(cmd, device, project, address):
-            block = address._obj
-            calls.append((cmd, device, project, block.bhard, block.bsoft, block.valid))
-            return 0, 0
-        result = bound._invoke_candidate_setter('E8', CHARGED, call)
-        self.assertEqual(calls, [(probe.Q_SETQUOTA, bound.ROOT_DEVICE, bound.PROJECT_ID,
-                                  (CHARGED + (64 << 20)) // probe.QB_UNIT_BYTES, 0, bound.QIF_BLIMITS)])
-        self.assertEqual(result['setter_exit'], 0)
-        for result in (None, (-1, 5), (False, 0), (0, None)):
-            with self.subTest(result=result), self.assertRaisesRegex(Refusal, 'failed or its result is unknown'):
-                bound._invoke_candidate_setter('E8', CHARGED, lambda *args: result)
-        calls.clear()
+    def test_fixed_setter_builds_only_the_project_block_limit(self):
+        record = bound.quota_limit_record(CHARGED, 64 << 20)
+        self.assertEqual(record.bhard, (CHARGED + (64 << 20)) // probe.QB_UNIT_BYTES)
+        self.assertEqual((record.bsoft, record.valid), (0, bound.QIF_BLIMITS))
+        for charged, row in ((0, 0), (-1, LIMIT), (CHARGED, True), (1, LIMIT), (1 << 90, LIMIT)):
+            with self.subTest(charged=charged, row=row), self.assertRaises(Refusal):
+                bound.quota_limit_record(charged, row)
+        self.assertEqual(bound.quota_row_reservation('E19'), 1 << 20)
+        self.assertIn('E19', bound.QUOTA_GROUP_ROWS)
         with self.assertRaises(Refusal):
-            bound._invoke_candidate_setter('E19.0', 0, call)
-        self.assertEqual(calls, [])
-        with patch.object(bound.ctypes, 'sizeof', return_value=4), \
-                self.assertRaisesRegex(Refusal, 'unsupported quota setter ABI'):
-            bound._invoke_candidate_setter('E8', CHARGED, call)
-        self.assertEqual(calls, [])
+            bound.quota_row_reservation('E19.0')
 
-    def test_fixed_setter_reaches_real_adapter_with_injected_library_only(self):
-        calls = []
-        class FakeLibrary:
-            def quotactl(self, command, device, project, address):
-                calls.append((command.value & 0xffffffff, device, project.value,
-                              address._obj.bhard, address._obj.valid))
-                return 0
-        with patch.object(probe.ctypes, 'CDLL', return_value=FakeLibrary()):
-            result = bound._invoke_candidate_setter('E8', CHARGED, probe._quotactl)
-        self.assertEqual(result['setter_exit'], 0)
-        self.assertEqual(calls, [(0x80000802, b'/dev/sda2', 531,
-                                  (CHARGED + (64 << 20)) // 1024, bound.QIF_BLIMITS)])
-        with patch.object(probe.ctypes, 'CDLL', return_value=object()), \
-                self.assertRaisesRegex(Refusal, 'failed or its result is unknown'):
-            bound._invoke_candidate_setter('E8', CHARGED, probe._quotactl)
-        self.assertEqual(len(calls), 1)
+    def test_complete_witness_is_admitted_and_missing_enforcement_refuses(self):
+        witness = render()
+        result = self.verify(witness)
+        self.assertEqual((result['limit_bytes'], result['row']), (LIMIT, 'E9a'))
+        without = {k: v for k, v in witness.items() if k != 'enforcement'}
+        with self.assertRaisesRegex(Refusal, 'enforcement observation is missing'):
+            self.verify(without)
+        for change in ({'phase': 'ok'}, {'exit': 0}, {'bytes_allocated': LIMIT - 1},
+                       {'argv': ['--enforce', '/etc/passwd', str(LIMIT)]},
+                       {'stderr_sha256': '0' * 64}):
+            with self.subTest(change=change):
+                bad = dict(witness, enforcement=dict(witness['enforcement'], **change))
+                with self.assertRaises(Refusal):
+                    self.verify(bad)
 
-    def test_matching_originals_still_refuse_unproven_confinement_and_enforcement(self):
-        with self.assertRaisesRegex(Refusal, 'enforcement and writer confinement are unproven'):
-            self.verify()
+    def test_setter_and_approval_custody_are_part_of_the_bound(self):
+        witness = render()
+        for change in ({'setter_exit': 1}, {'custody': dict(witness['custody'], approval_digest='bad')},
+                       {'custody': dict(witness['custody'], entry_sha256='0' * 64)},
+                       {'custody': dict(witness['custody'], device='/dev/sdb2')},
+                       {'nonce': 'bad'}, {'boot_id': 'someone-else'}, {'limit_bytes': LIMIT + 1024},
+                       {'device': '/dev/sdb2'}, {'project': 530}):
+            with self.subTest(change=list(change)):
+                with self.assertRaises(Refusal):
+                    self.verify(dict(witness, **change))
 
-    def test_production_refuses_every_witness_because_nothing_is_admitted(self):
-        with self.assertRaises(Refusal):
-            setup.verify_hard_limit(render(), LIMIT, None, facts())
+    def test_production_admits_the_mechanism_but_still_requires_a_complete_witness(self):
+        with patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({MECH})):
+            self.assertEqual(setup.verify_hard_limit(render(), LIMIT, None, facts())['mechanism'], MECH)
+            incomplete = {k: v for k, v in render().items() if k != 'enforcement'}
+            with self.assertRaises(Refusal):
+                setup.verify_hard_limit(incomplete, LIMIT, None, facts())
         with self.assertRaises(Refusal):
             bound.verify(render(), LIMIT, facts(), frozenset())
 
@@ -286,14 +297,12 @@ class VerifierChecks(unittest.TestCase):
         for valid in (0, bound.QIF_BLIMITS, bound.QIF_SPACE, bound.QIF_BLIMITS | (1 << 2), 67):
             with self.subTest(valid=valid), self.assertRaisesRegex(Refusal, 'valid'):
                 self.verify(render(valid=valid))
-        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
-            self.verify(render(valid=bound.QIF_BLIMITS | bound.QIF_SPACE))
+        self.assertEqual(self.verify(render(valid=bound.QIF_BLIMITS | bound.QIF_SPACE))['mechanism'], MECH)
 
-    def test_limit_equal_to_headroom_still_refuses_and_one_byte_more_refuses(self):
+    def test_headroom_must_be_exactly_the_row_reservation(self):
         headroom = HARD - CHARGED
-        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
-            self.verify(limit=headroom)
-        with self.assertRaisesRegex(Refusal, 'exceeds the project headroom'):
+        self.assertEqual(self.verify(limit=headroom)['headroom_bytes'], headroom)
+        with self.assertRaisesRegex(Refusal, 'exceeds the project headroom|differs from the charged row'):
             self.verify(limit=headroom + 1)
         with self.assertRaisesRegex(Refusal, 'headroom exceeds the row ceiling'):
             self.verify(render(hard_qb=(1 << 30) // 1024))
@@ -336,8 +345,7 @@ class VerifierChecks(unittest.TestCase):
             self.verify(no_inherit)
         root_entries = (('.', 'dir', '8:2', 0, 531, 3, 8),) + ENTRIES[1:]
         rooted = render(entries=root_entries)
-        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
-            self.verify(rooted)
+        self.assertEqual(self.verify(rooted)['mechanism'], MECH)
         unsafe = replace_original(rooted, 'tree', text=rooted['observations']['tree']['text'].replace(
             'mode=700', 'mode=777', 1))
         with self.assertRaisesRegex(Refusal, 'writable by others'):
@@ -347,8 +355,7 @@ class VerifierChecks(unittest.TestCase):
         gate = ('inputs/gate.fifo', 'fifo', '8:2', 0, -1, 1, 0)
         payload = ('inputs/transfer.fifo', 'fifo', '8:2', UID, -1, 1, 0)
         fx = facts(entries={'.', 'inputs', 'inputs/archive.tar', 'inputs/gate.fifo', 'inputs/transfer.fifo'})
-        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
-            self.verify(render(entries=ENTRIES + (gate, payload)), fx=fx)
+        self.assertEqual(self.verify(render(entries=ENTRIES + (gate, payload)), fx=fx)['mechanism'], MECH)
         bad = (
             ('inputs/gate.fifo', 'fifo', '8:2', 0, -1, 1, 8),
             ('inputs/gate.fifo', 'fifo', '8:2', 0, -1, 2, 0),
@@ -379,9 +386,8 @@ class VerifierChecks(unittest.TestCase):
         fx = facts(entries={'.', 'inputs', 'inputs/archive.tar', 'inputs/second.tar'})
         with self.assertRaisesRegex(Refusal, 'below the tree bytes'):
             self.verify(render(entries=two_files, charged=CHARGED), fx=fx)
-        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
-            self.verify(render(entries=two_files, charged=(66 << 20),
-                               hard_qb=((66 << 20) + LIMIT) // 1024), fx=fx)
+        self.assertEqual(self.verify(render(entries=two_files, charged=(66 << 20),
+                               hard_qb=((66 << 20) + LIMIT) // 1024), fx=fx)['mechanism'], MECH)
 
     def test_facts_must_bind_boot_uid_root_and_exact_entries(self):
         for fx in (facts(boot_id=None), facts(boot_id=''), facts(uid=True), facts(uid=0), facts(root=''),
@@ -451,10 +457,8 @@ class HelperChecks(unittest.TestCase):
         self.assertIn('bhard_qb=%d' % (HARD // 1024), text)
         self.assertIn('qb_unit_bytes=1024', text)
         self.assertIn('dev=8:2', text)
-        witness = {'mechanism': MECH, 'observations': render()['observations']}
-        witness = replace_original(witness, 'quota', text=text)
-        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
-            bound.verify(witness, LIMIT, facts(), {MECH})
+        witness = replace_original(render(), 'quota', text=text)
+        self.assertEqual(bound.verify(witness, LIMIT, facts(), {MECH})['charged_bytes'], CHARGED)
 
     def test_kernel_refusal_is_printed_not_turned_into_a_zero_limit(self):
         lines = probe.quota_lines('/dev/sda2', 531, call=self.fake_call(0, 0, rc_quota=-1, errno=3),
@@ -502,8 +506,7 @@ class HelperChecks(unittest.TestCase):
         witness = render(entries=entries, tree_root=str(root), mount_dev=mount_dev, quota_dev=mount_dev)
         witness = replace_original(witness, 'tree', text='\n'.join(tree) + '\n')
         fx = facts(uid=os.getuid(), root=str(root), entries={f['path'] for f in fields})
-        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
-            bound.verify(witness, LIMIT, fx, {MECH})
+        self.assertEqual(bound.verify(witness, LIMIT, fx, {MECH})['mechanism'], MECH)
 
     def test_route_plan_binds_the_fixed_argv_and_the_helper_source(self):
         plan, digest = bound.route_plan(ROOT)
@@ -521,6 +524,172 @@ class HelperChecks(unittest.TestCase):
         self.assertEqual(set(route['dependencies']), {'linux_supervisor.py', 'preparation_resources.py'})
 
 
+class FixedPathChecks(unittest.TestCase):
+    """The installed entry, the verifier and the plan cannot drift on a path, table or mechanism."""
+
+    def test_fixed_paths_and_the_reservation_table_cannot_drift(self):
+        self.assertEqual(bound.ROW_RESERVATIONS, supervisor.QUOTA_ROWS)
+        self.assertEqual(bound.QUOTA_ROOT, supervisor.QUOTA_ROOT)
+        self.assertEqual(bound.PROJECT_ID, supervisor.QUOTA_PROJECT)
+        self.assertEqual(bound.QB_UNIT_BYTES, supervisor.QB_UNIT_BYTES)
+        self.assertEqual(bound.QUOTA_ROOT_PROBE,
+                         supervisor.QUOTA_ROOT + '/' + supervisor.QUOTA_PROBE_NAME)
+        self.assertEqual(bound._forced_command(), supervisor.forced_command())
+        self.assertEqual(setup.PLACEMENT_GROUP_CAP, supervisor.QUOTA_ROWS['E19'])
+        self.assertEqual(setup.BASE, supervisor.QUOTA_ROOT)
+        self.assertEqual(setup.SUPERVISOR_PATH, supervisor.SUPERVISOR_PATH)
+        self.assertEqual(setup.SUPERVISOR_SOURCE, Path(supervisor.__file__).resolve())
+
+
+class QuotaAdminChecks(unittest.TestCase):
+    """The fixed root quota-administration role, with every kernel/syscall boundary injected."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix='quota-admin-', dir=os.environ.get('TMPDIR')))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        (self.root / 'inputs').mkdir()
+        (self.root / 'inputs' / 'archive.tar').write_bytes(b'x' * 4096)
+        self.boot = '12345678-1234-1234-1234-123456789abc'
+        patcher = patch.object(supervisor, 'QUOTA_ROOT', str(self.root))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = patch.object(bound, 'QUOTA_ROOT_PROBE', str(self.root) + '/' + supervisor.QUOTA_PROBE_NAME)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = patch.object(supervisor, '_project_attributes',
+                               lambda fd: (bound.PROJECT_ID, probe.FS_XFLAG_PROJINHERIT))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = patch.object(supervisor, 'device_numbers', lambda device: '8:2')
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = patch.object(supervisor, 'device_pair', lambda info: (8, 2))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def state(self, **over):
+        state = {'hard': 0, 'cur': CHARGED, 'fmt': 4, 'rc_fmt': 0, 'rc_get': 0, 'rc_set': 0, 'probe': 'edquot'}
+        state.update(over)
+        return state
+
+    def ops(self, state, writes=None):
+        calls = []
+
+        def runner(argv, timeout):
+            calls.append(list(argv))
+            if argv[-1] == '/proc/self/mountinfo':
+                text = b'36 1 8:2 / / rw,relatime shared:1 - ext4 /dev/sda2 rw\n'
+            elif argv[0].endswith('readlink'):
+                text = b'../../sda2\n'
+            else:
+                text = ('Filesystem UUID:          d488be7b-682f-41ac-b79b-57bbf495a01d\n'
+                        'Filesystem features:      has_journal orphan_file project quota\n').encode()
+            return {'returncode': 0, 'stdout': text, 'stderr': b'', 'timed_out': False}
+
+        def quotactl(cmd, device, project, addr):
+            calls.append((cmd, device, project))
+            block = addr._obj
+            if cmd == probe.Q_SETQUOTA:
+                if state['rc_set'] != 0:
+                    return state['rc_set'], 122
+                state['hard'] = block.bhard * probe.QB_UNIT_BYTES
+                if writes is not None:
+                    writes.append(block.bhard)
+                return 0, 0
+            if cmd == probe.Q_GETFMT:
+                addr._obj.value = state['fmt']
+                return state['rc_fmt'], 0
+            block.bhard = state['hard'] // probe.QB_UNIT_BYTES
+            block.bsoft = 0
+            block.cur = state['cur'] // probe.QB_UNIT_BYTES
+            block.valid = bound.QIF_BLIMITS | bound.QIF_SPACE
+            return state['rc_get'], 0
+
+        def enforce(root, name, reservation, uid, gid):
+            calls.append(('enforce', name, reservation))
+            if state['probe'] == 'edquot':
+                return {'argv': ['--enforce', root + '/' + name, str(reservation)], 'exit': 3,
+                        'bytes_allocated': reservation, 'phase': 'edquot',
+                        'reservation_bytes': reservation, 'stdout': '',
+                        'stderr': 'status=refused phase=edquot bytes=%d\n' % reservation,
+                        'stdout_sha256': hashlib.sha256(b'').hexdigest(),
+                        'stderr_sha256': hashlib.sha256(
+                            ('status=refused phase=edquot bytes=%d\n' % reservation).encode()).hexdigest()}
+            return {'argv': ['--enforce', root + '/' + name, str(reservation)], 'exit': 5,
+                    'bytes_allocated': reservation, 'phase': 'no-edquot',
+                    'reservation_bytes': reservation, 'stdout': '',
+                    'stderr': 'status=failed phase=no-edquot\n',
+                    'stdout_sha256': hashlib.sha256(b'').hexdigest(),
+                    'stderr_sha256': hashlib.sha256(b'status=failed phase=no-edquot\n').hexdigest()}
+
+        ops = supervisor.QuotaOps(runner=runner, quotactl=quotactl, probe=enforce)
+        ops.account = lambda: (UID, UID)
+        return ops, calls
+
+    def request(self, row='E9a'):
+        return {'row': row, 'nonce': NONCE, 'boot_id': self.boot}
+
+    def test_the_fixed_role_sets_the_exact_row_headroom_and_emits_an_admissible_witness(self):
+        ops, calls = self.ops(self.state())
+        witness = supervisor.quota_admin(self.request(), ops, 'f' * 64)
+        self.assertEqual(witness['row'], 'E9a')
+        self.assertEqual(witness['limit_bytes'], bound.ROW_RESERVATIONS['E9a'])
+        self.assertEqual(witness['charged_bytes'], CHARGED)
+        self.assertEqual(witness['enforcement']['phase'], 'edquot')
+        self.assertEqual(set(witness['observations']), set(bound.ROUTES))
+        self.assertEqual((probe.Q_SETQUOTA, '/dev/sda2', 531) in calls, True)
+        fx = facts(boot_id=self.boot, root=str(self.root), uid=os.getuid(),
+                   entries={'.', 'inputs', 'inputs/archive.tar'})
+        result = bound.verify(witness, bound.ROW_RESERVATIONS['E9a'], fx, {MECH})
+        self.assertEqual(result['headroom_bytes'], bound.ROW_RESERVATIONS['E9a'])
+
+    def test_the_role_refuses_unknown_row_or_boot_and_a_failed_setter(self):
+        ops, calls = self.ops(self.state())
+        for request in (self.request('E19.0'), self.request('foreign'),
+                        dict(self.request(), boot_id='not-a-boot'),
+                        dict(self.request(), device='/dev/sdb2'),
+                        dict(self.request(), limit=1 << 20), {'row': 'E9a'}):
+            with self.subTest(request=request), self.assertRaises(Refusal):
+                supervisor.quota_admin(request, ops, 'f' * 64)
+        self.assertEqual(calls, [])
+        failing, calls = self.ops(self.state(rc_set=5))
+        with self.assertRaisesRegex(Refusal, 'setter failed'):
+            supervisor.quota_admin(self.request(), failing, 'f' * 64)
+        self.assertEqual([c for c in calls if c == 'enforce'], [])
+
+    def test_a_concurrent_charge_or_a_missing_edquot_never_credit_the_row(self):
+        ops, _ = self.ops(self.state())
+        inner = ops._quotactl
+        seen = {'gets': 0}
+
+        def moving_quota(cmd, device, project, addr):
+            result = inner(cmd, device, project, addr)
+            if cmd == probe.Q_GETQUOTA:
+                seen['gets'] += 1
+                if seen['gets'] >= 2:
+                    addr._obj.cur = (CHARGED + 4096) // probe.QB_UNIT_BYTES
+            return result
+        ops._quotactl = moving_quota
+        with self.assertRaisesRegex(Refusal, 'charge moved|headroom is not exactly'):
+            supervisor.quota_admin(self.request(), ops, 'f' * 64)
+        refused, _ = self.ops(self.state(probe='no-edquot'))
+        with self.assertRaisesRegex(Refusal, 'not refused with EDQUOT|row ceiling'):
+            supervisor.quota_admin(self.request(), refused, 'f' * 64)
+
+    def test_an_interrupted_probe_is_not_an_enforcement_observation(self):
+        for detail in ({'phase': 'no-edquot', 'bytes': bound.ROW_RESERVATIONS['E9a']},
+                       {'phase': 'edquot', 'bytes': bound.ROW_RESERVATIONS['E9a'] - 1},
+                       {'phase': 'edquot'}, None):
+            with self.subTest(detail=detail), self.assertRaises(Refusal):
+                supervisor.enforcement_probe(str(self.root), supervisor.QUOTA_PROBE_NAME,
+                                             bound.ROW_RESERVATIONS['E9a'], UID, UID,
+                                             writer=lambda reservation, d=detail: d)
+        with self.assertRaisesRegex(Refusal, 'test seams are refused for root runs'), \
+                patch.object(supervisor.os, 'geteuid', return_value=0):
+            supervisor.enforcement_probe(str(self.root), supervisor.QUOTA_PROBE_NAME, 4096, 0, 0,
+                                         writer=lambda reservation: {'phase': 'edquot', 'bytes': reservation})
+
+
 class InventoryChecks(unittest.TestCase):
     def test_allocation_modules_are_in_the_request_closure(self):
         import preparation_requests as requests
@@ -536,22 +705,33 @@ class ProductionPathChecks(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def test_allocation_witness_refuses_even_if_the_mechanism_is_admitted(self):
+    def test_the_plan_requires_the_fixed_quota_role_not_a_prebound_label(self):
         witness = render(tree_root=setup.BASE, boot=lst.BOOT, tree_boot=lst.BOOT, entries=ENTRIES)
         entries = {'.', 'inputs', 'inputs/archive.tar'}
         live = self.fx.facts(hard_limit=witness, allocation_entries=entries)
         with patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({MECH})), \
                 patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', frozenset({'test-disk'})):
             rows = {r['id']: r for r in setup.setup_plan(dict(live, disk_association=lst.disk_witness()))}
-        self.assertTrue(any('confinement are unproven' in m for m in rows['E9a']['missing']))
-        unset = {r['id']: r for r in setup.setup_plan(self.fx.facts(hard_limit=witness, allocation_entries=entries))}
-        self.assertTrue(any('hard' in m or 'kernel' in m for m in unset['E9a']['missing']))
+        # A pre-bound witness never opens a quota row: the plan demands the fixed admin request and
+        # the writer custody observation, and the witness is admitted only when the row runs.
+        self.assertEqual(rows['E9a']['missing'], [])
+        self.assertEqual(rows['E9a']['quota']['row'], 'E9a')
+        admitted = {r['id']: r for r in setup.setup_plan(self.fx.facts(hard_limit=witness,
+                                                                      allocation_entries=entries))}
+        self.assertEqual(admitted['E9a']['missing'], [])
+        without = {r['id']: r for r in setup.setup_plan(self.fx.facts(hard_limit=witness,
+                                                                      allocation_entries=entries,
+                                                                      writer_tools=None))}
+        self.assertTrue(any('writer tool custody' in m for m in without['E9a']['missing']))
 
-    def test_missing_exact_entries_refuses_the_hard_limit(self):
+    def test_missing_exact_entries_refuses_the_prebound_hard_limit_path(self):
         witness = render(tree_root=setup.BASE, boot=lst.BOOT, tree_boot=lst.BOOT)
         with patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({MECH})):
-            reason = setup._hard_limit_reason(self.fx.facts(hard_limit=witness), {'limit_bytes': LIMIT})
+            reason = setup._hard_limit_reason(self.fx.facts(hard_limit=witness, allocation_entries=None),
+                                             {'limit_bytes': LIMIT})
         self.assertIn('allocation facts are incomplete', reason)
+        with self.assertRaisesRegex(Refusal, 'allocation facts are incomplete'):
+            bound.verify(render(), LIMIT, {}, {MECH})
 
 
 if __name__ == '__main__':
