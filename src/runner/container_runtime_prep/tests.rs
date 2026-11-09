@@ -1786,51 +1786,66 @@ fn capture_compose_argv(
     output.stdout
 }
 
-// This proof needs the real offline Compose parser/hash implementation. A
-// missing host CLI/plugin is a reported precondition, never a skipped proof.
-fn require_compose_cli(root: &Path, policy: &EffectiveContainerPolicy) {
-    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_args(
-        root,
-        policy,
-        ["compose", "version", "--short"]
-            .map(OsString::from)
-            .to_vec(),
-        effigy_containers::ContainerAction::Status,
-        "Compose CLI proof precondition",
-    )
-    .expect("Compose CLI precondition invocation plan");
-    let mut budget = crate::runner::exec_command::BoundedCommandBudget::new(
-        std::time::Instant::now(),
+// Probe before fixture/environment setup so hosted detection is still visible.
+// Only a missing executable or the CLI's exact missing-plugin diagnostic can
+// authorize a hosted prerequisite skip. Other failures retain a failing proof.
+fn skip_hosted_missing_compose_cli(test_name: &str) -> bool {
+    let _environment = crate::contract_test_support::lock_test();
+    let args = ["compose", "version", "--short"].map(OsString::from);
+    let result = effigy_containers::exec::run_input_capture_until(
+        Path::new("."),
+        "docker",
+        &args,
+        &[],
         std::time::Instant::now() + Duration::from_secs(10),
-        4096,
-        4096,
     );
-    let output = budget
-        .run_command(
-            &plan.repo_root,
-            plan.program.as_os_str(),
-            &plan.args,
-            None,
-            &[],
-            crate::runner::exec_command::BoundedCommandPhase::WorkspacePreparation,
-        )
-        .unwrap_or_else(|error| {
-            panic!(
-        "host precondition: a working Docker Compose CLI/plugin is required for the offline \
-         predecessor hash proof; program={:?}, argv={:?}, probe error={error:?}",
-        plan.program, plan.args,
+    let detection = match &result {
+        Err(effigy_containers::exec::ContainerExecError::Launch { command, error })
+            if error.kind() == std::io::ErrorKind::NotFound =>
+        {
+            Some(format!("{command}: {error:?}"))
+        }
+        Ok(output) if !output.status.success() => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let absent = stderr.lines().any(|line| {
+                [
+                    "docker: 'compose' is not a docker command.",
+                    "docker: unknown command: docker compose",
+                    "docker: unknown command: compose",
+                ]
+                .contains(&line.trim())
+            });
+            absent.then(|| {
+                format!(
+                    "docker compose version --short: status={}, stderr={stderr}",
+                    output.status
+                )
+            })
+        }
+        _ => None,
+    };
+    if let Some(detection) = detection {
+        if crate::contract_test_support::hosted_prerequisite_skip(
+            test_name,
+            "Docker executable and Docker Compose CLI/plugin",
+            &detection,
+        ) {
+            return true;
+        }
+    }
+    let output = result.unwrap_or_else(|error| {
+        panic!(
+        "host precondition: a working Docker Compose CLI/plugin is required; probe error={error:?}"
     )
-        });
+    });
     assert!(
         output.status.success() && !output.stdout.is_empty(),
-        "host precondition: Docker Compose version probe failed; program={:?}, argv={:?}, \
-         status={}, stdout={}, stderr={}",
-        plan.program,
-        plan.args,
+        "host precondition: Docker Compose version probe failed; status={}, stdout={}, stderr={}",
         output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
+    false
 }
 
 // Hash the independently loaded canonical apply model. Older Compose versions
@@ -1905,9 +1920,18 @@ fn frozen_compose_expansion_refuses_unsealed_reads_and_temporary_environment_val
 /// environment's fenced publisher promoting the exact seal it retained.
 #[test]
 fn the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_publishes() {
+    if skip_hosted_missing_compose_cli(concat!(
+        module_path!(),
+        "::the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_publishes"
+    )) {
+        return;
+    }
     // Hash offline with the host Compose CLI; native guest qualification is
     // the integrated lifecycle gate, not this private-seal adapter proof.
-    let _backend = effigy_test_support::env::ScopedEnv::set("EFFIGY_COMPOSE_BACKEND", "docker");
+    let _backend = crate::contract_test_support::EnvGuard::set_many(&[(
+        "EFFIGY_COMPOSE_BACKEND",
+        Some("docker".to_owned()),
+    )]);
     let fixture = effigy_test_support::Fixture::new("effigy-predecessor-live-").expect("fixture");
     let checkout = fixture.path().join("checkout");
     let home = fixture.path().join("home/.effigy");
@@ -1926,7 +1950,6 @@ fn the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_pu
     .expect("compose file");
     effigy_containers::with_test_effigy_home(&home, || {
         let mut policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
-        require_compose_cli(&checkout, &policy);
         // Add frozen dependencies to the real generated catalog render. No
         // canonical file is written: the kernel seal/publisher owns all I/O.
         let render = policy.render.as_mut().unwrap();

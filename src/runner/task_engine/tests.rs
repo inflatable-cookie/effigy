@@ -1463,6 +1463,12 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
 
 #[test]
 fn reserved_child_receives_grant_at_handoff_fd() {
+    if crate::contract_test_support::run_in_isolated_test_process(
+        "runner::task_engine::tests::reserved_child_receives_grant_at_handoff_fd",
+    ) {
+        return;
+    }
+
     use effigy_kernel::run::{Reservation, Session};
     use effigy_kernel::supervise::Executable;
     use std::os::unix::fs::PermissionsExt;
@@ -1492,11 +1498,10 @@ fn reserved_child_receives_grant_at_handoff_fd() {
         Reservation::Fresh(ticket) => ticket,
         other => panic!("fresh reservation: {other:?}"),
     };
-    // This nextest process owns its environment and the shared test lock.
-    unsafe {
-        std::env::remove_var("EFFIGY_TEST_SECRETS_PASSPHRASE");
-        std::env::remove_var("EFFIGY_SECRET_PASSPHRASE");
-    }
+    let _environment = crate::contract_test_support::EnvGuard::set_many(&[
+        ("EFFIGY_TEST_SECRETS_PASSPHRASE", None),
+        ("EFFIGY_SECRET_PASSPHRASE", None),
+    ]);
     crate::runner::secret_session::forget_session_passphrase_for_tests();
     let grant = crate::runner::secret_session::activate_local_dev_secret_access(true);
     let invocation = effigy_cli::TaskInvocation {

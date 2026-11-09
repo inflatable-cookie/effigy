@@ -438,6 +438,13 @@ fn probe_state_up_refuses_unknown_without_starting_a_replacement() {
 #[cfg(unix)]
 #[test]
 fn gateway_identity_legacy_active_record_refused_by_status_up_down_and_managed_start() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
+    // The gateway library's operator fence requires an explicit fixture mark.
+    // This proof must not depend on nextest supplying its own ambient marker.
+    let _fixture = crate::contract_test_support::EnvGuard::set_many(&[(
+        "EFFIGY_TEST_GATEWAY_LEGACY_FIXTURE",
+        Some("1".to_owned()),
+    )]);
     struct OwnedChild(std::process::Child);
 
     impl Drop for OwnedChild {
@@ -505,6 +512,13 @@ fn gateway_identity_legacy_active_record_refused_by_status_up_down_and_managed_s
 #[cfg(unix)]
 #[test]
 fn gateway_identity_legacy_version_only_record_refused_by_status_up_down_and_managed_start() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
+    // The gateway library's operator fence requires an explicit fixture mark.
+    // This proof must not depend on nextest supplying its own ambient marker.
+    let _fixture = crate::contract_test_support::EnvGuard::set_many(&[(
+        "EFFIGY_TEST_GATEWAY_LEGACY_FIXTURE",
+        Some("1".to_owned()),
+    )]);
     let root = tempfile::tempdir().expect("private fixture directory");
     let home = root.path().join("home");
     let gateway_home = home.join(GATEWAY_DIR_NAME);
@@ -562,6 +576,13 @@ fn gateway_identity_legacy_version_only_record_refused_by_status_up_down_and_man
 #[cfg(unix)]
 #[test]
 fn gateway_identity_legacy_version_symlink_refused_by_status_up_down_and_managed_start() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
+    // The gateway library's operator fence requires an explicit fixture mark.
+    // This proof must not depend on nextest supplying its own ambient marker.
+    let _fixture = crate::contract_test_support::EnvGuard::set_many(&[(
+        "EFFIGY_TEST_GATEWAY_LEGACY_FIXTURE",
+        Some("1".to_owned()),
+    )]);
     use std::os::unix::fs::symlink;
     let root = tempfile::tempdir().expect("private fixture directory");
     let home = root.path().join("home");

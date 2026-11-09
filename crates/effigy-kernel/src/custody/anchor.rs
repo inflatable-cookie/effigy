@@ -347,28 +347,39 @@ pub(super) fn stop(
         if let Err(e) = crate::fault_point!(AnchorStop) {
             return Observed::Unknown(unknown(e));
         }
-        let refusal = Cell::new(None);
-        if let Observed::Unknown(reason) =
-            member_signal_recorded(r, anchor, anchor, libc::SIGKILL, &refusal)
-        {
-            // The anchor retires itself once its group has no live member, so it
-            // can exit between the liveness check above and this kill. Only a
-            // refusal whose own verification recorded that retirement is passed
-            // over. Closure is still proven below from the group, never from the
-            // anchor's exit.
-            if !refused_by_retirement(&reason, refusal.get()) {
-                // Keep the authority check's own classified cause. A generic
-                // member refusal hides which verification failed and makes a
-                // retirement race indistinguishable from a live mismatch.
-                return Observed::Unknown(match refusal.get() {
-                    Some(failure) => unknown(format!(
-                        "{}; anchor={}:{}",
-                        crate::custody::UNPROVEN_GROUP_CLOSURE,
-                        failure.stage,
-                        failure.category
-                    )),
-                    None => reason,
-                });
+        // A running anchor retires itself after its own positive group round.
+        // Racing that retirement with a kill can observe a live generation and
+        // then an unreadable nonce. Let it close; the full inventory below
+        // still has to prove closure within the caller's cleanup context.
+        // A stopped anchor cannot make progress, so retire it with the same
+        // fully verified signal path and refusal rules as before.
+        if matches!(
+            ident::process_state(anchor.pid),
+            Observed::Verified(ProcessState::Stopped, _)
+        ) {
+            let refusal = Cell::new(None);
+            if let Observed::Unknown(reason) =
+                member_signal_recorded(r, anchor, anchor, libc::SIGKILL, &refusal)
+            {
+                // The anchor retires itself once its group has no live member, so it
+                // can exit between the liveness check above and this kill. Only a
+                // refusal whose own verification recorded that retirement is passed
+                // over. Closure is still proven below from the group, never from the
+                // anchor's exit.
+                if !refused_by_retirement(&reason, refusal.get()) {
+                    // Keep the authority check's own classified cause. A generic
+                    // member refusal hides which verification failed and makes a
+                    // retirement race indistinguishable from a live mismatch.
+                    return Observed::Unknown(match refusal.get() {
+                        Some(failure) => unknown(format!(
+                            "{}; anchor={}:{}",
+                            crate::custody::UNPROVEN_GROUP_CLOSURE,
+                            failure.stage,
+                            failure.category
+                        )),
+                        None => reason,
+                    });
+                }
             }
         }
         if let Err(e) = crate::fault_point!(AnchorStopped) {

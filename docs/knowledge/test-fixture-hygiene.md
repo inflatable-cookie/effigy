@@ -261,6 +261,22 @@ protection at every length, as do aliases containing their bytes (contract 052).
 Tests of that boundary construct classification inputs directly, rather than
 relying on the test runner's environment.
 
+Native prerequisites remain part of a proof. The planner's ruling for task 812
+(2026-11-09, Nucleus question `71b475bca204ee3436eb0a4af8d3c44af8490fd9271fec08d139d3f25793f9ec`)
+permits a named prerequisite skip only when `GITHUB_ACTIONS=true` and a probe
+positively establishes that distinct loopback aliases or the selected real
+Compose backend are unavailable. Other probe errors remain failures. Local and
+milestone QA still fail when a prerequisite is missing; supported hosts execute
+every original assertion. This is not permission to substitute an adapter for a
+native-equivalence assertion.
+
+`hosted_prerequisite_skip` records the exact test, missing prerequisite and
+detection in stderr and `GITHUB_STEP_SUMMARY`; failure to publish either record
+fails the test. Narrow nextest success-output overrides expose those records in
+hosted logs. The author lists every gated test and observed skip in the PR.
+Call the helper before clearing a fixture's environment. Runner setup that
+could satisfy a prerequisite belongs to a separately approved workflow change.
+
 The disposable Docker command adapters model the production Compose
 invocation, including the detached bring-up's `--project-directory
 <render-dir>` pin: a value-taking long option is two tokens. An adapter whose
@@ -301,7 +317,17 @@ change can close it.
 Controlled capture clocks are local to their test thread. Companion capture or
 controller threads enter an explicitly shared clock; unrelated tests keep the
 wall clock. One-shot process-global cleanup tests run in their own test process,
-and publisher fault hooks belong to the thread that installs them.
+and publisher fault hooks belong to the thread that installs them. Follow retry
+budget overrides are scoped to the test thread and restored on drop. Proofs of
+fixed descriptor numbers or permanently adopted secret grants run their original
+assertions in an exact-test child process.
+
+All in-process fixture environment writers use the same reentrant guard. Setup
+and bounded read workers retain that ownership until their observations finish.
+Start a private server's deadline after acquiring the fixture environment, so
+waiting for another fixture cannot consume its serving budget. FIFO timeout
+fixtures release their owned writer and replace the FIFO after the assertion;
+the fragment deadline proof waits for actual read completion before teardown.
 
 Recorded-generation closure requires positive absence, zombie state or an
 identity mismatch. An unknown identity or state stays unresolved within the

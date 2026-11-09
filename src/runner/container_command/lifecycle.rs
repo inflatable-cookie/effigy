@@ -2668,6 +2668,7 @@ primary_service = "app"
 
     #[test]
     fn the_creation_load_captures_a_mount_created_during_preparation() {
+        let _environment = crate::contract_test_support::clean_fixture_environment();
         let root = temp_repo("workspace-mount-creation-plan", "direct");
         fs::write(
             root.join("effigy.toml"),

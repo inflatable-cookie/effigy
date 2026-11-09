@@ -63,6 +63,20 @@ fn private_http_release_fixture(
         while requested.len() < 2 && Instant::now() < deadline {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    // Accepted sockets inherit O_NONBLOCK on macOS. The
+                    // listener polls, but a request may arrive in fragments.
+                    stream
+                        .set_nonblocking(false)
+                        .expect("blocking HTTP request");
+                    let remaining = deadline
+                        .saturating_duration_since(Instant::now())
+                        .max(Duration::from_millis(1));
+                    stream
+                        .set_read_timeout(Some(remaining))
+                        .expect("bounded request");
+                    stream
+                        .set_write_timeout(Some(remaining))
+                        .expect("bounded response");
                     let mut request = Vec::new();
                     let mut chunk = [0_u8; 1024];
                     loop {
@@ -311,10 +325,10 @@ fn a_release_host_on_a_cold_cache_downloads_the_exact_target_without_a_builder()
 
 #[test]
 fn cold_release_acquisition_consumes_the_publisher_sidecar_over_private_http() {
-    let (base_url, server) = private_http_release_fixture(generated_linux_release_assets());
-    let _release_base = ReleaseBaseGuard::set(base_url);
     let (base, app, host) = release_world("publisher-consumer-http");
     let _home = home_guard(&base);
+    let (base_url, server) = private_http_release_fixture(generated_linux_release_assets());
+    let _release_base = ReleaseBaseGuard::set(base_url);
     RELEASE_FETCHES.with(|fetches| fetches.set(0));
 
     let first = acquire_linux_workspace_effigy_artifact_with(
@@ -397,10 +411,12 @@ fn release_acquisition_refuses_corrupt_or_missing_sidecars_over_private_http() {
             }
             _ => unreachable!(),
         }
+        let (base, app, host) = release_world(&format!("http-{case}"));
+        // Acquire fixture environment ownership before starting the server's
+        // deadline; another shared-process fixture may hold it for seconds.
+        let _home = home_guard(&base);
         let (base_url, server) = private_http_release_fixture(assets);
         let _release_base = ReleaseBaseGuard::set(base_url);
-        let (base, app, host) = release_world(&format!("http-{case}"));
-        let _home = home_guard(&base);
 
         let error = acquire_linux_workspace_effigy_artifact_with(
             &host,

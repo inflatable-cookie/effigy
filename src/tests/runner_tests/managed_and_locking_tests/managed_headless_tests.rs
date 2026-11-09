@@ -434,16 +434,53 @@ fn managed_headless_plain_environment_shows_host_processes_and_its_workload() {
     // The Linux workspace artifact is not this fixture's subject: readiness
     // probes exercise the exec path, and the environment stays plain because
     // this declared workspace publishes no guest here.
-    let _handoff = EnvGuard::set_many(&[(
-        "EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF",
-        Some("1".to_owned()),
-    )]);
+    let _handoff = EnvGuard::set_many(&[
+        (
+            "EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF",
+            Some("1".to_owned()),
+        ),
+        // Model the shared checkout mount: the guest writes its tracked PGID
+        // under /workspace and settlement reads the same file on the host.
+        (
+            "EFFIGY_TEST_FAKE_CONTAINER_ROOT",
+            Some(root.display().to_string()),
+        ),
+    ]);
 
     let run_root = root.clone();
     let run = std::thread::spawn(move || run_dev(&run_root, &["--headless"]));
     wait_for_file(&root, "api.pid");
     wait_for_file(&root, "worker.pid");
     wait_for_file(&root, "service.pid");
+    let marker = root.join(".effigy/runtime/managed-exec/dev+default/dev.pgid");
+    let tracked = fs::read_to_string(&marker)
+        .unwrap_or_else(|error| panic!("shared guest PGID marker {}: {error}", marker.display()));
+    let mut fields = tracked.split_whitespace();
+    let pgid: u32 = fields
+        .next()
+        .expect("tracked group PID")
+        .parse()
+        .expect("group PID");
+    assert!(
+        pgid > 1 && fields.next().is_some(),
+        "workload marker must contain a PGID and nonce"
+    );
+    #[cfg(target_os = "linux")]
+    let service_pid: u32 = fs::read_to_string(root.join("service.pid"))
+        .expect("service PID")
+        .trim()
+        .parse()
+        .expect("service PID number");
+    // Linux's setsid route isolates the fake guest just as the real guest
+    // does. macOS without setsid uses the documented leader-only fallback.
+    #[cfg(target_os = "linux")]
+    assert_eq!(
+        nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(service_pid as i32)))
+            .expect("live fixture service group")
+            .as_raw(),
+        pgid as i32,
+        "the service belongs to the group recorded through the shared checkout"
+    );
 
     let stop = run_dev(&root, &["stop"]).expect("stop settles the session");
     assert!(stop.contains("settled managed task `dev`"), "got: {stop}");

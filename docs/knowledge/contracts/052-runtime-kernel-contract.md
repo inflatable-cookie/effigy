@@ -1268,9 +1268,11 @@ workload closure and capture drain are verified. With an anchor, TERM plus
 CONT and then KILL target individually inventoried workload identities,
 checking the anchor and membership before every signal. KILL inventories
 repeat until closure, covering children forked during an earlier inventory.
-The anchor itself is excluded from workload closure and killed last, after
-no live workload member remains. Group closure is then verified, and only
-then is the leader reaped. Output EOF and exit are separate events; capture
+The anchor itself is excluded from workload closure and retires last: an active
+anchor completes its own positive group observation; a stopped anchor needs the
+verified signal path because it cannot observe its group. The owner still
+requires a positive full-group closure observation, within its cleanup context,
+after no live workload member remains. Only then is the leader reaped. Output EOF and exit are separate events; capture
 drains under its own deadline. Unanchored custody retains the unreaped-leader
 group-signal path. `ESRCH` proves absence; unreadable observations remain
 `Unknown`. Leader exit alone is never closure. A stop counts its window from

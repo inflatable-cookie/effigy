@@ -367,6 +367,7 @@ fn elf() -> Vec<u8> {
 }
 
 fn run(fault: Fault) -> usize {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let fixture = effigy_test_support::Fixture::new("workspace-reserved-").expect("fixture");
     std::fs::create_dir(fixture.path().join("home")).unwrap();
     effigy_containers::with_test_effigy_home(&fixture.path().join("home"), || {
@@ -410,10 +411,10 @@ home = "/home/vscode"
         let mut test_path = bin.as_os_str().to_os_string();
         test_path.push(":");
         test_path.push(inherited_path);
-        let _environment = effigy_test_support::env::ScopedEnv::set_many(&[
-            ("PATH", test_path),
-            ("EFFIGY_COMPOSE_BACKEND", "docker".into()),
-            ("DOCKER_CONTEXT", "fixture-context".into()),
+        let _environment = crate::contract_test_support::EnvGuard::set_many(&[
+            ("PATH", Some(test_path.into_string().expect("fixture PATH"))),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
+            ("DOCKER_CONTEXT", Some("fixture-context".into())),
         ]);
         let mut policy = effigy_containers::prepare_container_policy(&repo, Some("dev")).unwrap();
         policy.workspace_user = Some("vscode".into());
