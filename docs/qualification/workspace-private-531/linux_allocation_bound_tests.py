@@ -16,6 +16,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
@@ -1334,6 +1335,11 @@ class RescueInputChecks(unittest.TestCase):
         self.assertEqual(plan['destination'], fixture + '/' + rescue.NAME)
         self.assertEqual((plan['bytes'], plan['sha256'], plan['duration_seconds']),
                          (rescue.SIZE, rescue.SHA256, 1800))
+        # A plan made with injected fixture inputs cannot pass the uninjected binding comparison.
+        with patch.object(rescue_proof, 'source_inputs', return_value={'actual-input': '1' * 64}):
+            with self.assertRaisesRegex(rescue.Refusal, 'bindings drifted'):
+                rescue_proof.execute(plan, evidence + '/request', 'c' * 64, time.monotonic() + 60)
+        self.assertEqual(os.listdir(evidence), [])
         Path(fixture, 'foreign').write_bytes(b'x')
         with self.assertRaises(rescue.Refusal):
             rescue_proof.plan(fixture, evidence, 'a' * 40, 'b' * 64)
