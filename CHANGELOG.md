@@ -479,7 +479,8 @@ During v0.x, MINOR bumps may include breaking changes.
   dispatch runs through the same recorded-step call with the same inputs,
   resource monitor and stage deadlines as every other fixed prlctl call in the
   stage, behind an adapter that re-checks the fixed argv, stdin, timeout and
-  cap. The helper
+  cap; the entry control asserts the monitor, deadlines, pinned inputs and
+  environment that reach that dispatch. The helper
   verifies that tool custody by local metadata, runs the one bounded dispatch,
   parses the genuine retained 747 JSON grammar exactly (duplicate keys, an
   unknown or second hardware section, a changed data-disk/optical/USB field, a

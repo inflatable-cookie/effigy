@@ -2047,29 +2047,38 @@ class EntryTests(unittest.TestCase):
             path.write_bytes(raw)
             path.chmod(0o400)
             digest = hashlib.sha256(raw).hexdigest()
-            # The handoff wiring is proved here on the real production path: execute requests
-            # proof.association_transport (the stage's supervised-route adapter) and this fixture
-            # seam replaces it with a recording transport that refuses, so the wiring, the bracket's
-            # first fresh guest read and the refusal recording all run while no helper or prlctl
-            # process launches. The fixture's guest and config bytes are not the registered
-            # identity, so a fixture cannot supply a positive pass (and never positive production
-            # provenance); the open-gate dispatch path is exercised in DiskAssociationHandoff with
-            # retained-shape fixtures and fixture transports.
-            requested = []
+            # The handoff wiring is proved here on the real production path, through the real
+            # adapter and its closure: the fixture intercepts only the one host read at the
+            # supervised seam (stage.run_stage), records what association_dispatch passes — the
+            # run's resource monitor, the stage deadlines, the pinned inputs and the fixed
+            # environment — and returns the retained-grammar fixture bytes without launching any
+            # helper or prlctl process. The fixture's guest and config bytes are not the registered
+            # identity, so the handoff refuses at the config premise; a fixture cannot supply a
+            # positive pass (and never positive production provenance). The open-gate dispatch path
+            # is also exercised in DiskAssociationHandoff with retained-shape fixtures and fixture
+            # transports.
+            original_run = proof.stage.run_stage
+            staged = []
 
-            def recording_adapter(dispatch, pin=None):
-                requested.append(callable(dispatch))
-
-                def transport(argv, stdin_path, timeout, cap):
-                    raise Refusal('fixture: association transport seam')
-
-                return transport
+            def bounded(root, argv, timeout, cap, hashes, **kwargs):
+                staged.append({'argv': list(argv), 'timeout': timeout, 'cap': cap,
+                               'monitor': kwargs.get('resource_monitor'),
+                               'deadline': kwargs.get('deadline'),
+                               'cleanup_deadline': kwargs.get('cleanup_deadline'),
+                               'environment': kwargs.get('environment'),
+                               'inputs': dict(hashes or {})})
+                if argv[4:5] == ['inventory']:
+                    step = Path(root)
+                    step.mkdir(mode=0o700, exist_ok=True)
+                    (step / 'stdout').write_bytes(association_tests.cli_info_text().encode())
+                    (step / 'stderr').write_bytes(b'')
+                    return {'disposition': 'exited', 'waited_exit': 0}
+                return original_run(root, argv, timeout, cap, hashes, **kwargs)
 
             with contextlib.redirect_stdout(io.StringIO()), \
                     patch.object(proof.disk_association, 'reader_executable', lambda: True), \
-                    patch.object(proof, 'association_transport', recording_adapter):
+                    patch.object(proof.stage, 'run_stage', side_effect=bounded):
                 self.assertEqual(proof.main(['proof', str(path), digest]), 1)
-            self.assertEqual(requested, [True])
             self.assertEqual(state.read_text(), 'stopped')
             result = json.loads((evidence / 'linux-diagnostic-fixture01' / 'outcome.json').read_text())
             self.assertEqual(result['schema'], 'linux-diagnostic-observation-v6')
@@ -2079,8 +2088,12 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(result['before_extents']['a.hds']['logical'], 17 * 1024 * 1024)
             self.assertEqual(result['writable_top'], 'unknown')
             self.assertEqual(result['placement'], 'not evaluated')
-            # The one finding is the fixture seam's own refusal of the wired handoff transport.
-            self.assertEqual(result['findings'], ['disk association: fixture: association transport seam'])
+            # The one finding is the handoff's own refusal on the fixture bytes: the read and
+            # bracket ran through the real supervised closure, and the fixture's descriptor is not
+            # the registered Parallels descriptor, so the handoff refuses at its host facts.
+            self.assertEqual(result['findings'],
+                             ['disk association: descriptor: descriptor root is not '
+                              'Parallels_disk_image Version 1.0'])
             self.assertEqual(result['transport']['status'], 'ready')
             self.assertEqual([row['classification'] for row in result['transport']['attempts']],
                              ['ready'])
@@ -2107,10 +2120,32 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(writer_bound['facts']['filesystem_features']['project_feature'], 'present')
             self.assertEqual(writer_bound['limits']['hard_quota'], 'not established')
             self.assertEqual(result['hard_quota'], 'not established')
-            self.assertEqual(result['guest_association'], 'refused: fixture: association transport seam')
-            self.assertEqual(result['findings'], ['disk association: fixture: association transport seam'])
-            # execute built the handoff's transport from the stage's supervised-route adapter; the
-            # fixture seam refused it before any dispatch, and the refusal kept no record.
+            self.assertEqual(result['guest_association'],
+                             'refused: descriptor: descriptor root is not Parallels_disk_image Version 1.0')
+            # The host read ran through the real supervised closure: the same monitor object, the
+            # same stage deadlines, the pinned inputs (the helper at its committed digest) and the
+            # fixed environment as every other prlctl dispatch in this occurrence, bounded by the
+            # stage route.
+            pin = proof.disk_association.PINS[proof.disk_association.MECHANISM]
+            inventory_rows = [row for row in staged if row['argv'][4:5] == ['inventory']]
+            self.assertEqual(len(inventory_rows), 1)
+            host_row = inventory_rows[0]
+            self.assertEqual(host_row['argv'], pin['argv'])
+            self.assertEqual(host_row['timeout'], proof.disk_inventory.INVENTORY_TIMEOUT)
+            self.assertEqual(host_row['cap'], proof.disk_inventory.MAX_BYTES)
+            list_rows = [row for row in staged if row['argv'][1:2] == ['list']]
+            self.assertTrue(list_rows)
+            reference = list_rows[0]
+            self.assertIsNotNone(host_row['monitor'])
+            self.assertIs(host_row['monitor'], reference['monitor'])
+            self.assertIsNotNone(host_row['deadline'])
+            self.assertEqual(host_row['deadline'], reference['deadline'])
+            self.assertIsNotNone(host_row['cleanup_deadline'])
+            self.assertEqual(host_row['cleanup_deadline'], reference['cleanup_deadline'])
+            self.assertLess(host_row['deadline'], host_row['cleanup_deadline'])
+            self.assertEqual(host_row['environment'], {'PATH': '/usr/bin:/bin', 'LANG': 'C'})
+            self.assertEqual(reference['environment'], host_row['environment'])
+            self.assertEqual(host_row['inputs'].get(pin['tool_path']), pin['sha256'])
             self.assertIsNone(result.get('disk_association'))
             self.assertIsNone(result.get('disk_association_result'))
             for route in guest_probe.route_ids():

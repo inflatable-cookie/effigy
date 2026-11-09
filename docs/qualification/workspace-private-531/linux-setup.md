@@ -451,7 +451,9 @@ inventory does not carry. `linux_diagnostic_proof.observe_association` is the wi
 same-VM boot bracket it dispatches the reader through the occurrence's own supervised route —
 `association_transport` re-checks the fixed argv, stdin, timeout and cap and dispatches through the same
 recorded-step `stage.run_stage` call with the same inputs, environment, resource monitor and stage deadlines as
-every other fixed prlctl call in the stage — brackets it with two fresh guest boot originals, and feeds the record
+every other fixed prlctl call in the stage, and the entry control asserts exactly that: the run's resource monitor
+object, the bounded stage deadlines, the pinned inputs (the helper at its committed digest) and the fixed
+environment are what reach that dispatch — brackets it with two fresh guest boot originals, and feeds the record
 through production `setup.verify_disk_association`. The outcome's `disk_association` key holds the fact document
 (`linux_disk_association.stored_facts`: the raw config, descriptor and host-read stdout/stderr as bounded base64
 envelopes with their own length and digest), because `setup_plan` E7* re-verifies that key as facts and
