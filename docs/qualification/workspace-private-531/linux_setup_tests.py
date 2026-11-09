@@ -2422,6 +2422,34 @@ class ExecutorChecks(unittest.TestCase):
         self.assertIn('E9a', result['completed'])
         self.assertIn('E8', result['completed'])
 
+    def test_a_broken_project_assignment_witness_halts_the_plan_at_its_row(self):
+        p1, p2, p3 = self.supported()
+        nonce = nonce_for(setup.PROJECT_ROW)
+        broken = dict(project_witness(nonce='0' * 64), assigned=False)
+        outcome = {'disposition': 'exited', 'waited_exit': 0, 'candidate': None, 'stderr': b'',
+                   'stdout': (json.dumps(broken, sort_keys=True) + '\n').encode()}
+        with p1, p2, p3:
+            result = execute(self.chain(), ok_runner({setup.PROJECT_ROW: outcome}))
+        self.assertEqual(result['halt'], setup.PROJECT_ROW)
+        self.assertIn('project assignment', result['reason'])
+        wrong = dict(project_witness(), nonce=nonce)
+        outcome = dict(outcome, stdout=(json.dumps(wrong, sort_keys=True) + '\n').encode())
+        with p1, p2, p3:
+            result = execute(self.chain(), ok_runner({setup.PROJECT_ROW: outcome}))
+        self.assertEqual(result['halt'], setup.PROJECT_ROW)
+        self.assertIn('another nonce or boot', result['reason'])
+
+    def test_the_project_assignment_runs_between_base_and_its_subdirectories(self):
+        p1, p2, p3 = self.supported()
+        with p1, p2, p3:
+            facts = self.chain()
+            runner = ok_runner()
+            result = execute(facts, runner)
+        self.assertIsNone(result['halt'], result)
+        completed = result['completed']
+        self.assertLess(completed.index('E7b'), completed.index(setup.PROJECT_ROW))
+        self.assertLess(completed.index(setup.PROJECT_ROW), completed.index('E7c'))
+
     def test_identity_drift_halts_before_any_intent(self):
         runner = ok_runner()
         result = execute(self.fx.facts(), runner, observe_identity=lambda row: {
@@ -2589,6 +2617,46 @@ class ExecutorChecks(unittest.TestCase):
 
 CANNED = {'E3a': 'effigy531:x:1001:1001::/home/effigy531:/bin/bash\n',
           'E3b': 'effigy531 L 01/15/2027 0 99999 7 -1\n'}
+PROJECT_MOUNT_DEV = '8:2'
+
+
+def project_witness(boot=None, root=None, device=PROJECT_MOUNT_DEV, **over):
+    """A complete project-assignment witness for plan-execution controls.
+
+    The originals are rendered in the fixed role's own formats; nothing reads a device, a kernel or a
+    guest. Only the executor's admission path and its retained witness are exercised.
+    """
+    boot = boot or BOOT
+    root = root or setup.BASE
+
+    def original(text):
+        return {'text': text, 'sha256': hashlib.sha256(text.encode('utf-8')).hexdigest(), 'exit': 0}
+
+    observations = {
+        'mountinfo': original('36 1 %s / / rw,relatime shared:1 - ext4 /dev/sda2 rw\n' % device),
+        'dumpe2fs': original('Filesystem UUID:          %s\nFilesystem features:      has_journal extent '
+                             'project quota\n' % allocation.ROOT_UUID),
+        'by-uuid': original('/dev/sda2\n'),
+        'project': original('\n'.join([
+            'boot_id=' + boot, 'device=/dev/sda2', 'dev=' + device, 'project_id=531',
+            'qb_unit_bytes=1024', 'getfmt_rc=0 getfmt_errno=0 fmt=4', 'getquota_rc=0 getquota_errno=0',
+            'bhard_qb=0 bsoft_qb=0 curspace_bytes=0 curinodes=0 ihard=0 isoft=0 valid=3']) + '\n'),
+    }
+    witness = {'mechanism': supervisor.PROJECT_MECHANISM, 'assigned': True, 'nonce': NONCE,
+               'boot_id': boot, 'device': supervisor.PROJECT_DEVICE, 'project': supervisor.PROJECT_ID,
+               'projinherit': probe.FS_XFLAG_PROJINHERIT, 'root': root, 'abi': allocation.fsxattr_abi(),
+               'base': {'dev': device, 'ino': 4242, 'uid': 0, 'gid': 0, 'mode': 0o755, 'nlink': 2,
+                        'entries': []},
+               'attributes': {'before': probe.FSXATTR.pack(0, 0, 0, 0, 0, bytes(8)).hex(),
+                              'after': probe.FSXATTR.pack(probe.FS_XFLAG_PROJINHERIT, 0, 0,
+                                                          supervisor.PROJECT_ID, 0, bytes(8)).hex()},
+               'setter': {'ioctl': 'FS_IOC_FSSETXATTR', 'count': 1, 'exit': 0},
+               'custody': {'entry_sha256': hashlib.sha256(setup.SUPERVISOR_SOURCE.read_bytes()).hexdigest(),
+                           'approval_digest': 'f' * 64, 'device': supervisor.PROJECT_DEVICE,
+                           'project': supervisor.PROJECT_ID},
+               'observations': observations}
+    witness.update(over)
+    return witness
 
 
 def ok_runner(overrides=None):
@@ -2602,6 +2670,11 @@ def ok_runner(overrides=None):
             value = overrides[row['id']]
             return value(row, stage, monitor) if callable(value) else value
         expect = row['expect'] or {}
+        if row['id'] == setup.PROJECT_ROW:
+            # The fixed project-assignment role returns its own witness line; the executor admits it.
+            witness = project_witness(nonce=(row.get('credit') or {}).get('nonce') or NONCE)
+            return {'disposition': 'exited', 'waited_exit': 0, 'candidate': None,
+                    'stdout': (json.dumps(witness, sort_keys=True) + '\n').encode(), 'stderr': b''}
         if row['effect'] in ('supervised', 'transfer'):
             payload = expect['stdout_sha'] + '  file\n' if 'stdout_sha' in expect else ''
             out = {'disposition': 'exited', 'waited_exit': 0, 'candidate': candidate_for(row['id']),

@@ -486,6 +486,18 @@ QIF_BLIMITS, QIF_SPACE = 1 << 0, 1 << 1
 FS_IOC_FSGETXATTR = 0x801C581F
 FS_XFLAG_PROJINHERIT = 0x00000200
 QUOTA_ROUTES = ('mountinfo', 'dumpe2fs', 'by-uuid', 'quota', 'tree')
+# Fixed project-assignment route at the E7b/E7c boundary. The project, device and path come from this
+# table, never from a caller: the role cannot name another path, project or ioctl.
+PROJECT_ROOT = QUOTA_ROOT
+PROJECT_DEVICE = QUOTA_DEVICE
+PROJECT_ID = QUOTA_PROJECT
+PROJECT_MECHANISM = 'ext4-project-attribute'
+PROJECT_ROUTES = ('mountinfo', 'dumpe2fs', 'by-uuid', 'project')
+FSXATTR = struct.Struct('=5I8s')      # struct fsxattr: xflags, extsize, nextents, projid, cowextsize, pad
+FS_IOC_FSGETXATTR = 0x801C581F       # _IOR('X', 31, struct fsxattr)
+FS_IOC_FSSETXATTR = 0x401C5820       # _IOW('X', 32, struct fsxattr)
+FS_XFLAG_PROJINHERIT = 0x00000200
+IOC_READ, IOC_WRITE = 2, 1
 QUOTA_PROBE_NAME = '.effigy-quota-enforcement'
 DUMPS_ARGS = ('/usr/sbin/dumpe2fs', '-h', QUOTA_DEVICE)
 # Fixed row reservations. The installed root entry owns this table so the limit it sets and the host
@@ -545,6 +557,44 @@ def quota_admin_argv(digest, entry=None):
         raise Refusal('quota approval digest must be SHA256')
     path = entry or '/usr/local/libexec/effigy-stage-supervisor'
     return ['/usr/bin/python3', '-I', '-B', path, '--approved-quota', digest]
+
+
+def validate_project_request(request):
+    """A project request carries only a one-use nonce and the observed boot identity."""
+    if not isinstance(request, dict) or set(request) != {'nonce', 'boot_id'}:
+        raise Refusal('project request must contain only a nonce and boot identity')
+    nonce, boot = request['nonce'], request['boot_id']
+    if not isinstance(nonce, str) or not NONCE.fullmatch(nonce):
+        raise Refusal('project request nonce is invalid')
+    if not isinstance(boot, str) or not BOOT_UUID.fullmatch(boot):
+        raise Refusal('project request boot identity is invalid')
+    return nonce, boot
+
+
+def project_admin_argv(digest, entry=None):
+    """The fixed root entry argv: one approved, one-use project-assignment request digest."""
+    if not isinstance(digest, str) or not NONCE.fullmatch(digest):
+        raise Refusal('project approval digest must be SHA256')
+    path = entry or '/usr/local/libexec/effigy-stage-supervisor'
+    return ['/usr/bin/python3', '-I', '-B', path, '--approved-project', digest]
+
+
+def fsxattr_abi():
+    """The reviewed fsxattr ABI, derived from the kernel _IOC encoding rather than a caller.
+
+    linux/fs.h builds both requests as _IOC(<dir>, 'X', <nr>, struct fsxattr); the size field is the
+    28-byte structure. A different structure size, type byte, number or direction refuses before any
+    ioctl, so an incompatible kernel ABI cannot be mistaken for a project change.
+    """
+    size = FSXATTR.size
+
+    def request(direction, number):
+        return direction << 30 | size << 16 | ord('X') << 8 | number
+
+    get, setter = request(IOC_READ, 31), request(IOC_WRITE, 32)
+    if size != 28 or get != FS_IOC_FSGETXATTR or setter != FS_IOC_FSSETXATTR:
+        raise Refusal('fsxattr ioctl ABI differs from the reviewed kernel header')
+    return {'struct_size': size, 'get': get, 'set': setter}
 
 
 def _pairs(text, name):
@@ -657,6 +707,18 @@ class QuotaOps:
         if self._probe is not None:
             return self._probe(root, name, reservation, uid, gid)
         return enforcement_probe(root, name, reservation, uid, gid, deadline)
+
+    def fsgetxattr(self, fd):
+        """Read struct fsxattr from one held descriptor; a kernel refusal propagates."""
+        data = bytearray(FSXATTR.size)
+        fcntl.ioctl(fd, FS_IOC_FSGETXATTR, data)
+        return bytes(data)
+
+    def fssetxattr(self, fd, data):
+        """Write one reviewed fsxattr value; anything but the fixed structure size refuses."""
+        if not isinstance(data, (bytes, bytearray)) or len(data) != FSXATTR.size:
+            raise Refusal('project attribute value is not the reviewed structure size')
+        fcntl.ioctl(fd, FS_IOC_FSSETXATTR, bytes(data))
 
 
 def quota_get(ops, device=QUOTA_DEVICE, project=QUOTA_PROJECT, boot=None):
@@ -812,6 +874,217 @@ def quota_admin(request, ops, approval_digest, clock=time.monotonic, deadline_se
             'custody': {'entry_sha256': hashlib.sha256(Path(__file__).resolve().read_bytes()).hexdigest(),
                         'approval_digest': approval_digest, 'device': QUOTA_DEVICE, 'project': QUOTA_PROJECT},
             'observations': observations}
+
+
+def project_record(ops, boot, dev):
+    """One Q_GETFMT and Q_GETQUOTA for the fixed project, in the role's own key=value format.
+
+    The device pair comes from the bound root mount and the held BASE descriptor, not from a device
+    node a caller names. Kernel errors are printed, never turned into zero counters: an unavailable
+    project record refuses rather than reading as an unused project.
+    """
+    fmt = ctypes.c_uint32(0)
+    rc, err = ops.quotactl(Q_GETFMT, PROJECT_DEVICE, PROJECT_ID, ctypes.byref(fmt))
+    lines = ['boot_id=' + boot, 'device=' + PROJECT_DEVICE, 'dev=' + dev, 'project_id=%d' % PROJECT_ID,
+             'qb_unit_bytes=%d' % QB_UNIT_BYTES,
+             'getfmt_rc=%d getfmt_errno=%d fmt=%d' % (rc, err, fmt.value)]
+    record = _DQBlk()
+    rc, err = ops.quotactl(Q_GETQUOTA, PROJECT_DEVICE, PROJECT_ID, ctypes.byref(record))
+    lines.append('getquota_rc=%d getquota_errno=%d' % (rc, err))
+    if rc == 0:
+        lines.append('bhard_qb=%d bsoft_qb=%d curspace_bytes=%d curinodes=%d ihard=%d isoft=%d valid=%d' %
+                     (record.bhard, record.bsoft, record.cur * QB_UNIT_BYTES, record.curinodes,
+                      record.ihard, record.isoft, record.valid))
+    return '\n'.join(lines) + '\n'
+
+
+def project_root_mount(text):
+    """The single root mount of the bound native ext4 device, from the retained mountinfo original."""
+    found = []
+    for line in text.splitlines():
+        head, sep, tail = line.partition(' - ')
+        fields = head.split()
+        if not sep or len(fields) < 6 or len(tail.split()) < 2:
+            raise Refusal('mountinfo line is malformed')
+        if fields[4] == '/':
+            found.append({'dev': fields[2], 'options': set(fields[5].split(',')),
+                          'fstype': tail.split()[0], 'source': tail.split()[1]})
+    if len(found) != 1:
+        raise Refusal('root mount is absent or ambiguous')
+    mount = found[0]
+    if mount['fstype'] != 'ext4' or mount['source'] != PROJECT_DEVICE:
+        raise Refusal('root mount is not the native ext4 device')
+    if 'rw' not in mount['options'] or 'ro' in mount['options']:
+        raise Refusal('root mount is not writable')
+    return mount
+
+
+def project_features(text):
+    """The assigned pre-state needs the project and quota features already active on the root."""
+    uuid, features = None, None
+    for line in text.splitlines():
+        key, _, value = line.partition(':')
+        if key == 'Filesystem UUID':
+            uuid = value.strip()
+        elif key == 'Filesystem features':
+            features = set(value.split())
+    if uuid != ROOT_UUID:
+        raise Refusal('superblock UUID differs from the native root')
+    if features is None:
+        raise Refusal('superblock has no feature line')
+    missing = {'project', 'quota'} - features
+    if missing:
+        raise Refusal('root ext4 lacks ' + ','.join(sorted(missing)) +
+                      '; the offline activation has not happened')
+
+
+def project_unused(text):
+    """Refuse unless the project the kernel reports carries no limit and no charge.
+
+    A project id can be assigned to objects that are not under BASE, so the empty BASE set alone is
+    not the proof. This record is the independent one: project quota must be active and the project
+    must report zero blocks, zero inodes and no limit of any kind.
+    """
+    values = _pairs(text, 'project')
+    for key in ('getfmt_rc', 'fmt', 'getquota_rc', 'bhard_qb', 'bsoft_qb', 'curspace_bytes', 'curinodes',
+                'ihard', 'isoft', 'dev', 'boot_id', 'project_id'):
+        if key not in values:
+            raise Refusal('project record lacks ' + key)
+    try:
+        numbers = {key: int(values[key]) for key in
+                   ('getfmt_rc', 'fmt', 'getquota_rc', 'bhard_qb', 'bsoft_qb', 'curspace_bytes', 'curinodes',
+                    'ihard', 'isoft', 'project_id')}
+    except ValueError as exc:
+        raise Refusal('project record is malformed') from exc
+    if numbers['project_id'] != PROJECT_ID:
+        raise Refusal('project record names another project')
+    if numbers['getfmt_rc'] != 0 or numbers['fmt'] == 0:
+        raise Refusal('project quota format is not active on the root device')
+    if numbers['getquota_rc'] != 0:
+        raise Refusal('project record is unavailable; the project is not proven unused')
+    if any(numbers[key] != 0 for key in ('bhard_qb', 'bsoft_qb', 'ihard', 'isoft')):
+        raise Refusal('project already carries a quota limit; it is not unused')
+    if numbers['curspace_bytes'] or numbers['curinodes']:
+        raise Refusal('project is already charged; it is not unused')
+    return {'dev': values['dev'], 'boot_id': values['boot_id']}
+
+
+def open_project_root():
+    """Open the fixed BASE directory once: canonical path, no symlink, held descriptor."""
+    if os.path.realpath(PROJECT_ROOT) != PROJECT_ROOT:
+        raise Refusal('project root is not canonical: a symlink or alias is in its path')
+    return os.open(PROJECT_ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+
+
+def fixed_project_attributes(original):
+    """The exact fsxattr value for project 531 and inheritance; every unrelated field is preserved.
+
+    Only the project id and FS_XFLAG_PROJINHERIT change. A nonempty project, an already inheriting
+    directory or a nonzero padding refuses, so a repeated or foreign assignment cannot pass as this
+    one. Nothing here performs a syscall.
+    """
+    if not isinstance(original, (bytes, bytearray)) or len(original) != FSXATTR.size:
+        raise Refusal('project attribute original is malformed')
+    flags, extent, count, project, cowextent, padding = FSXATTR.unpack(bytes(original))
+    if project != 0 or flags & FS_XFLAG_PROJINHERIT or padding != b'\0' * 8:
+        raise Refusal('project attributes are not the empty pre-state')
+    return FSXATTR.pack(flags | FS_XFLAG_PROJINHERIT, extent, count, PROJECT_ID, cowextent, padding)
+
+
+def _project_base_identity(info):
+    return {'dev': '%d:%d' % (os.major(info.st_dev), os.minor(info.st_dev)), 'ino': info.st_ino,
+            'uid': info.st_uid, 'gid': info.st_gid, 'mode': stat.S_IMODE(info.st_mode),
+            'nlink': info.st_nlink}
+
+
+def project_assign(request, ops, approval_digest, clock=time.monotonic, deadline_seconds=600):
+    """The fixed root project-assignment role at the E7b/E7c boundary.
+
+    Order: bind one boot and the native root device from the retained mount/feature/uuid originals,
+    take the one BASE descriptor the plan creates, require it root-owned on that device with an exact
+    empty object set, read its original fsxattr, independently establish that project 531 carries no
+    limit and no charge, set only project 531 and inheritance, then re-open and re-read path and
+    descriptor identity and the resulting attributes. A missing, replaced, foreign, aliased or
+    already-assigned descriptor, an unavailable project record, a partial ioctl or an exceeded
+    deadline refuses; the witness is retained only for the complete route.
+    """
+    nonce, requested_boot = validate_project_request(request)
+    if not isinstance(approval_digest, str) or not NONCE.fullmatch(approval_digest):
+        raise Refusal('project approval digest must be SHA256')
+    abi = fsxattr_abi()
+    boot = read_boot(ops)
+    if boot != requested_boot:
+        raise Refusal('project request boot identity differs from this boot')
+    started = clock()
+    mountinfo = _quota_original(ops, 'mountinfo', ['/bin/cat', '/proc/self/mountinfo'], 30)
+    dumpe2fs = _quota_original(ops, 'dumpe2fs', DUMPS_ARGS, 60)
+    by_uuid = _quota_original(ops, 'by-uuid', ['/usr/bin/readlink', '/dev/disk/by-uuid/' + ROOT_UUID], 10)
+    mount = project_root_mount(mountinfo['text'])
+    project_features(dumpe2fs['text'])
+    if os.path.basename(by_uuid['text'].strip()) != PROJECT_DEVICE.rsplit('/', 1)[1]:
+        raise Refusal('by-uuid link does not resolve to the native root device')
+    if clock() - started > deadline_seconds:
+        raise Refusal('project assignment exceeded its deadline before any change')
+    descriptor = open_project_root()
+    try:
+        before_info = os.fstat(descriptor)
+        if not stat.S_ISDIR(before_info.st_mode):
+            raise Refusal('project root is not a directory')
+        if before_info.st_uid != os.geteuid() or before_info.st_mode & 0o022:
+            raise Refusal('project root is not owned by the fixed root route or is writable by others')
+        if _project_base_identity(before_info)['dev'] != mount['dev']:
+            raise Refusal('project root is not on the bound native root device')
+        entries = sorted(os.listdir(descriptor))
+        if entries:
+            raise Refusal('project root is not empty: %d objects already exist' % len(entries))
+        before = ops.fsgetxattr(descriptor)
+        fixed = fixed_project_attributes(before)
+        before_record = _original(project_record(ops, boot, mount['dev']))
+        if project_unused(before_record['text'])['boot_id'] != boot:
+            raise Refusal('project record is from another boot')
+        ops.fssetxattr(descriptor, fixed)
+    finally:
+        os.close(descriptor)
+    if clock() - started > deadline_seconds:
+        raise Refusal('project assignment exceeded its deadline before its independent re-read')
+    descriptor = open_project_root()
+    try:
+        after_info = os.fstat(descriptor)
+        after_entries = sorted(os.listdir(descriptor))
+        after = ops.fsgetxattr(descriptor)
+        after_record = _original(project_record(ops, boot, mount['dev']))
+    finally:
+        os.close(descriptor)
+    if _project_base_identity(after_info) != _project_base_identity(before_info) or \
+            _project_base_identity(os.lstat(PROJECT_ROOT)) != _project_base_identity(before_info):
+        raise Refusal('project root was replaced, aliased or recreated during the assignment')
+    if after_entries:
+        raise Refusal('project root gained objects during the assignment')
+    flags, extent, count, project, cowextent, padding = FSXATTR.unpack(after)
+    old_flags, old_extent, old_count, _, old_cowextent, old_padding = FSXATTR.unpack(before)
+    if project != PROJECT_ID or not flags & FS_XFLAG_PROJINHERIT:
+        raise Refusal('the kernel did not apply project 531 with inheritance')
+    if (flags, extent, count, cowextent, padding) != \
+            (old_flags | FS_XFLAG_PROJINHERIT, old_extent, old_count, old_cowextent, old_padding):
+        raise Refusal('the assignment changed a field outside the project and inheritance')
+    unused = project_unused(after_record['text'])
+    if unused['boot_id'] != boot or unused['dev'] != mount['dev']:
+        raise Refusal('the post-assignment project record is from another boot or device')
+    for original in (mountinfo, dumpe2fs, by_uuid, before_record, after_record):
+        if hashlib.sha256(original['text'].encode('utf-8', 'surrogateescape')).hexdigest() != original['sha256']:
+            raise Refusal('retained project original does not match its hash')
+    if clock() - started > deadline_seconds:
+        raise Refusal('project assignment exceeded its deadline')
+    identity = _project_base_identity(before_info)
+    return {'mechanism': PROJECT_MECHANISM, 'assigned': True, 'nonce': nonce, 'boot_id': boot,
+            'device': PROJECT_DEVICE, 'project': PROJECT_ID, 'projinherit': FS_XFLAG_PROJINHERIT,
+            'root': PROJECT_ROOT, 'abi': abi, 'base': dict(identity, entries=[]),
+            'attributes': {'before': bytes(before).hex(), 'after': bytes(after).hex()},
+            'setter': {'ioctl': 'FS_IOC_FSSETXATTR', 'count': 1, 'exit': 0},
+            'custody': {'entry_sha256': hashlib.sha256(Path(__file__).resolve().read_bytes()).hexdigest(),
+                        'approval_digest': approval_digest, 'device': PROJECT_DEVICE, 'project': PROJECT_ID},
+            'observations': {'mountinfo': mountinfo, 'dumpe2fs': dumpe2fs, 'by-uuid': by_uuid,
+                             'project': after_record}}
 
 
 def enforcement_refused(record, reservation):
@@ -1796,13 +2069,33 @@ def quota_admin_main(argv, ops=None):
     return 0
 
 
+def project_admin_main(argv, ops=None):
+    """Fixed root entry: one exact, provisioned, one-use project-assignment request digest."""
+    if len(argv) != 2 or argv[0] != '--approved-project':
+        raise Refusal('usage: --approved-project SHA256')
+    seam = os.environ.get('EFFIGY_APPROVAL_ROOT')
+    if seam is not None and os.geteuid() == 0:
+        raise Refusal('test seams are refused for root runs')
+    if seam is None and os.geteuid() != 0:
+        raise Refusal('project assignment requires the root route')
+    raw = consume_approved_request(argv[1], seam or AUTH_ROOT, os.geteuid() if seam else 0)
+    try:
+        request = json.loads(raw)
+    except ValueError as exc:
+        raise Refusal('approved project request is not an object') from exc
+    witness = project_assign(request, ops or QuotaOps(), argv[1])
+    print(json.dumps(witness, sort_keys=True, default=str))
+    return 0
+
+
 def main(argv):
-    """Installed entry: three fixed roles plus the one approved payload request.
+    """Installed entry: four fixed roles plus the one approved payload request.
 
     `--transfer-writer` is the forced command the qualification key can reach and it writes only the
     reviewed row FIFO. `--broker-write` is the confined payload that performs one row's allocating
-    write. `--approved-quota` is the root quota-administration role. `--approved-request` starts one
-    supervised payload. No argv selects a command, device, project, limit or path.
+    write. `--approved-quota` is the root quota-administration role. `--approved-project` is the root
+    project-assignment role for the E7b/E7c boundary. `--approved-request` starts one supervised
+    payload. No argv selects a command, device, project, limit or path.
     """
     if argv[:1] == ['--broker-write']:
         return broker_write_main(argv[1:])
@@ -1814,9 +2107,15 @@ def main(argv):
         except (Refusal, OSError, ValueError) as exc:
             print('status=refused phase=quota-admin reason=' + str(exc), file=sys.stderr)
             return 3
+    if argv[:1] == ['--approved-project']:
+        try:
+            return project_admin_main(argv)
+        except (Refusal, OSError, ValueError) as exc:
+            print('status=refused phase=project-assign reason=' + str(exc), file=sys.stderr)
+            return 3
     if len(argv) != 2 or argv[0] != '--approved-request':
         raise Refusal('usage: --approved-request SHA256 | --approved-quota SHA256 | '
-                      '--broker-write ... | --transfer-writer')
+                      '--approved-project SHA256 | --broker-write ... | --transfer-writer')
     approval_seam = os.environ.get('EFFIGY_APPROVAL_ROOT')
     if approval_seam is not None and os.geteuid() == 0:
         raise Refusal('test seams are refused for root runs')
