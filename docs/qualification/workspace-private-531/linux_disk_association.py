@@ -12,10 +12,13 @@ which premises it establishes:
   host_read     one pinned read-only accessor, bounded, exit 0, bracketed by the same boot identity,
                 output in the pinned grammar; yields the serial and the image UID it names
   config        the registered VM has exactly one hard disk: hdd0, SATA index 0, the reviewed device
-                Uuid; CD-ROM devices are counted and not treated as disks
+                Uuid, enabled and connected, image-backed (not passthrough, not remote); every Hardware
+                child is a reviewed tag, so an unknown device refuses; CD-ROM devices are counted and not
+                treated as disks
   descriptor    the descriptor bytes select the reviewed disk UID, the top, the chain and every extent
-  guest_blocks  the guest has exactly one whole disk, /dev/sda, and the reviewed root is its partition;
-                loop and ROM devices are classified out by type, any other type refuses
+  guest_blocks  the guest has exactly one whole disk, /dev/sda, non-removable and on the platform ATA
+                controller, and the reviewed root is its partition; loop and ROM devices are classified out
+                by type, any other type refuses
   serial        the host read serial and the guest parent serial are equal and non-empty
 
 Not established by any premise: that the config device Uuid and the descriptor disk UID name the same
@@ -43,7 +46,19 @@ REVIEWED = {
     'root_uuid': 'd488be7b-682f-41ac-b79b-57bbf495a01d',
     'root_parent': 'sda',
     'disk_path': '/dev/sda',
+    'disk_controller_prefix': '/sys/devices/platform/PRL4010:00/ata',
 }
+# Every Hardware child the registered config carries (the 747 retained config, before and after the
+# observation). A child outside this set is an unreviewed device and refuses: it may be a block source.
+HARDWARE_TAGS = frozenset({
+    'Cpu', 'Chipset', 'Clock', 'Memory', 'Video', 'HibernateState', 'VirtIO', 'VirtIOSerial',
+    'VirtIOInput', 'VirtIOVsock', 'CdRom', 'Hdd', 'NetworkAdapter', 'Sound', 'USB',
+    'UsbConnectHistory', 'TpmChip',
+})
+# The reviewed values of the one hard disk: an enabled, connected, image-backed (not passthrough, not
+# remote) plain disk. A physical or remote disk can match the count and the name and is still not this disk.
+HDD_REVIEWED_FIELDS = (('Enabled', '1'), ('Connected', '1'), ('Remote', '0'), ('Passthrough', '0'),
+                       ('DiskType', '1'))
 MAX_CONFIG_BYTES = 1024 * 1024
 PREMISES = ('mechanism', 'host_read', 'config', 'descriptor', 'guest_blocks', 'serial')
 UNSUPPORTED = ('unsupported controller-to-guest disk association: no source-verified host read of the '
@@ -51,7 +66,9 @@ UNSUPPORTED = ('unsupported controller-to-guest disk association: no source-veri
 NOT_ESTABLISHED = (
     'config device Uuid and descriptor disk UID are different identifiers and no documented rule '
     'links them; the pinned host read must name the image UID itself; ata1 is not mapped to SATA '
-    'position 0; the origin of the given bytes is not admitted here; image bodies not read')
+    'position 0; the origin of the given bytes is not admitted here; image bodies not read; the guest '
+    'presents no disk the registered config does not declare (the primary Parallels sources pinned for '
+    'this module do not state it, so a count of one on both sides is not a bijection)')
 
 # Source-verified host reads. Empty: no accessor is pinned. An entry names the exact tool bytes and
 # version, the Desktop build, the read-only accessor, the largest output, and the output fields.
@@ -136,6 +153,12 @@ def _check_config(association):
     identification = root.find('Identification')
     if identification is None or _text(identification, 'VmUuid', 'Identification').strip('{}').lower() != REVIEWED['vm']:
         raise Refusal('config VM is not the reviewed VM')
+    hardware = root.find('Hardware')
+    if hardware is None:
+        raise Refusal('config has no Hardware section')
+    unknown = sorted({child.tag for child in hardware} - HARDWARE_TAGS)
+    if unknown:
+        raise Refusal('config Hardware has unreviewed device elements: %s' % ', '.join(unknown))
     hdds = root.findall('Hardware/Hdd')
     if len(hdds) != 1:
         raise Refusal('config has %d hard disks; the association needs exactly one' % len(hdds))
@@ -143,6 +166,9 @@ def _check_config(association):
     if (_text(hdd, 'Index', 'Hdd') != '0' or _text(hdd, 'InterfaceType', 'Hdd') != REVIEWED['interface_sata']
             or _text(hdd, 'SystemName', 'Hdd') != REVIEWED['system_name']):
         raise Refusal('config hard disk is not hdd0 at SATA position 0 of the reviewed bundle')
+    for field, value in HDD_REVIEWED_FIELDS:
+        if _text(hdd, field, 'Hdd') != value:
+            raise Refusal('config hard disk %s is not the reviewed image-backed value %s' % (field, value))
     device_uuid = _text(hdd, 'Uuid', 'Hdd')
     if _lower(device_uuid) != _lower(REVIEWED['device_uuid']):
         raise Refusal('config device Uuid is not the reviewed device')
@@ -191,6 +217,11 @@ def _check_guest(association):
     disk = disks[0]
     if disk.get('path') != REVIEWED['disk_path'] or disk.get('size') != REVIEWED['root_size']:
         raise Refusal('guest /dev/sda path or size differs from the reviewed disk')
+    if disk.get('removable') not in (0, False):
+        raise Refusal('guest /dev/sda is removable or its removable flag is missing; not a fixed data disk')
+    controller = disk.get('controller') or ''
+    if not controller.startswith(REVIEWED['disk_controller_prefix']) or '/virtual/' in controller:
+        raise Refusal('guest /dev/sda is not on the reviewed platform ATA controller: %r' % controller)
     root = guest.get('root') or {}
     if (root.get('device') != REVIEWED['root_device'] or root.get('fstype') != REVIEWED['root_fstype']
             or root.get('uuid') != REVIEWED['root_uuid'] or root.get('parent') != REVIEWED['root_parent']):

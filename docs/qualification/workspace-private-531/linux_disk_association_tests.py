@@ -23,6 +23,14 @@ DEVICE_UUID = '{9447f202-8d43-4ec2-80c9-ce527b34bd9d}'
 BOOT = '6de5909b-25da-444a-9610-731ee1247b11'
 ROOT_UUID = 'd488be7b-682f-41ac-b79b-57bbf495a01d'
 SERIAL = 'BV9VAH2KP2Q4N4A04SN0'
+# The retained 747 sysfs controller of sda (the platform ATA host), from the block-sysfs original.
+CONTROLLER = '/sys/devices/platform/PRL4010:00/ata1/host0/target0:0:0/0:0:0:0'
+# The Hardware children of the retained registered config, before and after the observation.
+RETAINED_HARDWARE_TAGS = {
+    'Cpu', 'Chipset', 'Clock', 'Memory', 'Video', 'HibernateState', 'VirtIO', 'VirtIOSerial',
+    'VirtIOInput', 'VirtIOVsock', 'CdRom', 'Hdd', 'NetworkAdapter', 'Sound', 'USB',
+    'UsbConnectHistory', 'TpmChip',
+}
 TOP = '{11111111-1111-1111-1111-111111111111}'
 CHAIN = [TOP, '{22222222-2222-2222-2222-222222222222}', '{33333333-3333-3333-3333-333333333333}']
 EXTENTS = {CHAIN[0]: 'a.hds', CHAIN[1]: 'b.hds', CHAIN[2]: 'r.hds'}
@@ -33,12 +41,21 @@ TEST_PINS = {TEST_MECHANISM: {'tool_path': '/test/libprl_sdk.dylib', 'sha256': '
 TEST_SUPPORTED = frozenset({TEST_MECHANISM})
 
 
-def config_xml(vm=VM, index='0', interface='2', system='harddisk1.hdd', uuid=DEVICE_UUID, extra=''):
-    """A registered-config excerpt in the retained shape: one Hdd under Hardware, one CdRom."""
+# The retained 747 Hdd flags (Enabled, Connected, Remote, Passthrough, DiskType); overridden per control.
+RETAINED_HDD_FLAGS = {'Enabled': '1', 'Connected': '1', 'Remote': '0', 'Passthrough': '0', 'DiskType': '1'}
+
+
+def config_xml(vm=VM, index='0', interface='2', system='harddisk1.hdd', uuid=DEVICE_UUID, extra='', **flags):
+    """A registered-config excerpt in the retained shape: one Hdd under Hardware, one CdRom.
+
+    Keyword flags override the Hdd's retained flags, for example Passthrough='1' for a physical disk."""
+    values = dict(RETAINED_HDD_FLAGS, **flags)
+    flag_xml = ''.join(f'<{name}>{value}</{name}>' for name, value in values.items())
     return (f'<ParallelsVirtualMachine><Identification><VmUuid>{{{vm}}}</VmUuid></Identification>'
-            f'<Hardware><CdRom id="0"><Index>0</Index><InterfaceType>2</InterfaceType></CdRom>'
+            f'<Hardware><CdRom id="0"><Index>0</Index><Enabled>1</Enabled><Connected>0</Connected>'
+            f'<InterfaceType>2</InterfaceType><Passthrough>1</Passthrough></CdRom>'
             f'<Hdd id="1"><Uuid>{uuid}</Uuid><Index>{index}</Index><InterfaceType>{interface}</InterfaceType>'
-            f'<SystemName>{system}</SystemName></Hdd>{extra}</Hardware></ParallelsVirtualMachine>').encode()
+            f'<SystemName>{system}</SystemName>{flag_xml}</Hdd>{extra}</Hardware></ParallelsVirtualMachine>').encode()
 
 
 def host_read(**over):
@@ -52,7 +69,8 @@ def host_read(**over):
 
 
 def guest_blocks(**over):
-    blocks = [{'name': 'sda', 'type': 'disk', 'path': '/dev/sda', 'size': setup.ROOT_BYTES, 'pkname': None},
+    blocks = [{'name': 'sda', 'type': 'disk', 'path': '/dev/sda', 'size': setup.ROOT_BYTES, 'pkname': None,
+               'removable': 0, 'controller': CONTROLLER},
               {'name': 'sda1', 'type': 'part', 'pkname': 'sda', 'size': 2201600},
               {'name': 'sda2', 'type': 'part', 'pkname': 'sda', 'size': 266231775},
               {'name': 'sr0', 'type': 'rom', 'path': '/dev/sr0', 'size': 1073741312, 'pkname': None}]
@@ -133,6 +151,42 @@ class DiskAssociationControls(unittest.TestCase):
         extra = '<Hdd id="2"><Uuid>{55555555-5555-5555-5555-555555555555}</Uuid><Index>1</Index>' \
                 '<InterfaceType>2</InterfaceType><SystemName>harddisk2.hdd</SystemName></Hdd>'
         self.assertRefusedAt('config', valid_association(config=config_xml(extra=extra)))
+
+    def test_reviewed_hardware_tags_are_the_retained_closed_set(self):
+        self.assertEqual(dal.HARDWARE_TAGS, RETAINED_HARDWARE_TAGS)
+
+    def test_unreviewed_hardware_element_refuses_config(self):
+        for tag in ('Nvme', 'Floppy', 'Scsi'):
+            extra = f'<{tag} id="2"><Index>0</Index><Enabled>1</Enabled></{tag}>'
+            self.assertRefusedAt('config', valid_association(config=config_xml(extra=extra)))
+
+    def test_bare_count_of_one_is_not_the_disk(self):
+        """Both sides count one, so a counting heuristic accepts. The host source is not an image-backed disk."""
+        counterexamples = {
+            'physical passthrough disk': dict(Passthrough='1'),
+            'remote disk': dict(Remote='1'),
+            'disabled disk': dict(Enabled='0'),
+            'disconnected disk': dict(Connected='0'),
+            'non-plain disk type': dict(DiskType='2'),
+        }
+        for label, flags in counterexamples.items():
+            with self.subTest(label):
+                association = valid_association(config=config_xml(**flags))
+                rows = table(association)
+                self.assertEqual(rows['guest_blocks'][0], 'pass')
+                self.assertRefusedAt('config', association)
+                self.assertEqual(rows['config'][0], 'refuse')
+
+    def test_guest_disk_that_is_removable_or_off_the_platform_ata_refuses(self):
+        self.assertRefusedAt('guest_blocks', valid_association(guest=guest(blocks=[
+            dict(b, removable=1) if b['name'] == 'sda' else b for b in guest_blocks()])))
+        self.assertRefusedAt('guest_blocks', valid_association(guest=guest(blocks=[
+            dict(b, controller='/sys/devices/virtual/block/sda') if b['name'] == 'sda' else b for b in guest_blocks()])))
+        self.assertRefusedAt('guest_blocks', valid_association(guest=guest(blocks=[
+            dict(b, controller='/sys/devices/pci0000:00/0000:00:1c.0/usb1/1-1/block/sda') if b['name'] == 'sda' else b
+            for b in guest_blocks()])))
+        self.assertRefusedAt('guest_blocks', valid_association(guest=guest(blocks=[
+            {k: v for k, v in b.items() if k != 'controller'} if b['name'] == 'sda' else b for b in guest_blocks()])))
 
     def test_cdrom_is_counted_and_is_not_a_disk(self):
         self.assertEqual(table(valid_association())['config'][0], 'pass')

@@ -299,19 +299,50 @@ no live producer supplies a top observation (`top_observation` is None), and eve
 `EXTERNAL_ANCHORS`, which is unset in production.
 
 Controller-to-guest association is a fail-closed verifier in `linux_disk_association.py`, with `PINS` empty, so
-every association refuses. It has five premises, each checked on its own inputs (`premise_table`): `host_read`
+every association refuses. It has six premises, each checked on its own inputs (`premise_table`): `host_read`
 (one pinned read-only accessor, exact tool bytes and Desktop build, bounded output, boot bracket, and the serial
-and image UID the output names), `config` (exactly one hdd0 at SATA index 0 in the reviewed VM; CD-ROMs counted,
-not disks), `descriptor` (selected top, chain and every extent, from the descriptor bytes), `guest_blocks` (exactly
-one whole disk, `/dev/sda`, with the reviewed root partition on it; loop and ROM classified by type, anything
-else refuses) and `serial` (host read serial equals the guest parent serial).
+and image UID the output names), `config` (exactly one hdd0 at SATA index 0 in the reviewed VM, enabled, connected,
+image-backed (`Passthrough` 0, `Remote` 0, `DiskType` 1); every `Hardware` child is a reviewed tag, so an unknown
+device refuses; CD-ROMs counted, not disks), `descriptor` (selected top, chain and every extent, from the
+descriptor bytes), `guest_blocks` (exactly one whole disk, `/dev/sda`, non-removable and on the platform ATA
+controller `/sys/devices/platform/PRL4010:00/ata…`, with the reviewed root partition on it; loop and ROM classified
+by type, anything else refuses) and `serial` (host read serial equals the guest parent serial).
+
+Closed-enumeration alternative (not implemented): a count of one hard disk on each side is not a bijection. The
+premise it needs, that the guest presents no disk the registered config does not declare, is not in the pinned
+primary sources (below). The 747 retained config's `Hdd` and `CdRom` subtrees are identical before and after the
+observation, and the config's Hardware children are the 17 reviewed tags; `VirtIO`, `USB` and `UsbConnectHistory`
+carry no block device there. Those facts close the host side only.
+
+Primary sources pinned for this read (installed 27.1.0 build 58756): `prlctl` (`2f61a1c6…`) help, `prlctl list`
+(`-i` is "VM configuration information"; no runtime device-state field); `libprl_shared_apps.dylib` and
+`libPrlXmlModel.1.dylib` (config element names `Passthrough`, `DiskType`, `Enabled`, `Connected`, `Remote` exist,
+their semantics are not in the binary); `ParallelsVirtualizationSDK` (`464af6b9…`) exports no `PrlVmDevHd_*`
+accessor. Parallels docs, "Physical Hard Drive": passthrough is a mode of attaching a host drive
+(`--device-add hdd --device <real_name> --passthr`); the page says nothing about VM hardware being limited to
+the configuration.
 
 The upstream candidate, `PrlVmDevHd_GetSerialNumber`, is used by libvirt's Virtuozzo driver. It is not exported by the
-installed Parallels Desktop 27.1.0 SDK (`libprl_sdk.11.dylib`, sha256 `464af6b9…`); its only serial accessors are
-the VM SMBIOS serial and serial ports. So no pinned host read exists. Retained 748 facts establish the config and
-guest-block premises and descriptor self-consistency, not the link: the config device Uuid `{9447f202…}` differs
-from the descriptor disk UID `{44b5d35e…}`, and no documented rule joins them. Guest `ata1` is not mapped to SATA
-position 0, and the guest sysfs serial attribute is absent while the probe reports the parent serial.
+installed Parallels Desktop 27.1.0 SDK (`ParallelsVirtualizationSDK`, sha256 `464af6b9…`); its only serial accessors
+are the VM SMBIOS serial and serial ports. So no pinned host read exists.
+
+Replay of the retained 747 originals (transport observation, outcome sha256 `a99c3ac4…`; boot `6de5909b…`; no new
+native read) through `_run`: `config` pass (before config; the post config Hdd/CdRom subtree is identical),
+`descriptor` pass, `guest_blocks` pass (15 nodes; `/dev/sda` 137438953472 B, removable 0, controller
+`/sys/devices/platform/PRL4010:00/ata1/...`; `sda2` parent `sda`). `mechanism`, `host_read` and `serial` refuse:
+no pinned read, and no host artifact carries the guest serial `BV9VAH2KP2Q4N4A04SN0`. The config device Uuid
+`{9447f202…}` differs from the descriptor disk UID `{44b5d35e…}`, and no documented rule joins them. Guest `ata1` is
+not mapped to SATA position 0, and the guest sysfs serial attribute is absent while the probe reports the parent
+serial.
+
+Counterexample to the count heuristic: the config's one `Hdd` may be a physical (`Passthrough` 1) or disabled disk
+while the guest's one `/dev/sda` is a different device. The verifier now refuses that shape at `config`, and
+`linux_disk_association_tests.test_bare_count_of_one_is_not_the_disk` pins it. The one shape it cannot refuse from
+retained bytes is an image-backed config `Hdd` next to a guest disk the config does not declare. That is the
+missing premise. Smallest next fixed read: none is source-ready yet. The candidate is a bounded, boot-bracketed
+read of the registered VM's runtime device list, which needs a captured JSON grammar and a primary source that
+says it reflects presentation, not configuration. Until then `SUPPORTED_DISK_MECHANISMS` stays empty and 623 is
+not ready.
 
 Still unavailable: source-verified kernel hard limits, fresh signed Stage1 evidence, exact activation
 anchors and root installation authorization. No VM, SSH, account, service, build,
