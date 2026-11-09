@@ -38,12 +38,13 @@ import sys
 PR_SET_CHILD_SUBREAPER = 36
 
 ALLOWED = frozenset({'echo', 'probe', 'stage', 'verify', 'transfer', 'check-inputs', 'build-help', 'build',
-                     'read-iidfile', 'image-inspect', 'disposable-check', 'read-check-cid', 'container-list'})
+                     'read-iidfile', 'image-inspect', 'disposable-check', 'read-check-cid', 'container-list',
+                     'nerdctl-version', 'container-inspect', 'container-rm'})
 # Operations whose child is the pinned guest-inputs source and one hex spec.
 INPUT_MODES = frozenset({'transfer', 'check-inputs'})
 # Operations whose child is one exact reviewed remote command, rebuilt from a hex spec.
 REMOTE = frozenset({'build-help', 'build', 'read-iidfile', 'image-inspect', 'disposable-check', 'read-check-cid',
-                    'container-list'})
+                    'container-list', 'nerdctl-version', 'container-inspect', 'container-rm'})
 # C5's disposable check: the pinned check source's sha256, the one name shape and the one network-none form.
 CHECK_SOURCE_SHA256 = '5fcd965f2339afd885895d4e75684503d6077371089e3025f6c434e2536bdb28'
 CHECK_NAME = re.compile(r'^effigy-4f6a-check-[0-9a-f]{8}$')
@@ -424,14 +425,17 @@ def build_command(context):
 
 
 def check_run_command(context, name, image, source):
-    """C5's one disposable check: synchronous `nerdctl run --rm`, network none, no pull, the cidfile beside the
-    context. nerdctl writes the cidfile before creation and refuses an existing one, so the ID is the run's own."""
-    return ['sudo', '-n', 'nerdctl', 'run', '--pull=never', '--rm', '--network', 'none',
+    """C5's one disposable check: a synchronous `nerdctl run`, network none, no pull, the cidfile beside the context.
+    No --rm: the container stays for its exact-ID inspection, then the exact-ID removal. nerdctl writes the cidfile
+    during create and refuses an existing one, so the ID is this run's own."""
+    return ['sudo', '-n', 'nerdctl', 'run', '--pull=never', '--network', 'none',
             '--cidfile', context + '.check.cid', '--name', name, image, 'python3', '-I', '-c', source]
 
 
 CONTAINER_LIST = ['sudo', '-n', 'nerdctl', 'container', 'ls', '--all', '--no-trunc', '--quiet']
-CHECK_OPERATIONS = frozenset({'disposable-check', 'read-check-cid', 'container-list'})
+NERDCTL_VERSION = ['nerdctl', '--version']
+CHECK_OPERATIONS = frozenset({'disposable-check', 'read-check-cid', 'container-list', 'nerdctl-version',
+                              'container-inspect', 'container-rm'})
 
 
 def checked_check_remote(operation, argv):
@@ -440,6 +444,15 @@ def checked_check_remote(operation, argv):
     if operation == 'container-list':
         if argv != CONTAINER_LIST:
             raise Refusal('container list is not the exact reviewed form')
+        return argv
+    if operation == 'nerdctl-version':
+        if argv != NERDCTL_VERSION:
+            raise Refusal('nerdctl version is not the exact reviewed form')
+        return argv
+    if operation in ('container-inspect', 'container-rm'):
+        verb = ['container', 'inspect'] if operation == 'container-inspect' else ['container', 'rm']
+        if len(argv) != 6 or argv[:3] != ['sudo', '-n', 'nerdctl'] or argv[3:5] != verb or not CONTAINER_ID.fullmatch(argv[5]):
+            raise Refusal(f'{operation} is not the exact reviewed form for one full container ID')
         return argv
     if operation == 'read-check-cid':
         if len(argv) != 4 or argv[:3] != ['sudo', '-n', 'cat'] or not argv[3].endswith('.check.cid'):

@@ -46,7 +46,7 @@ BINDINGS = dict(
     desktop_host=prep.DESKTOP_HOST, token=TOKEN, guest_spec='{"parent":{}}',
     guest_verify_spec='{"parent":{}}', guest_context='/home/u/' + prep.guest_dir(TOKEN32),
     guest_iidfile='/home/u/' + prep.guest_dir(TOKEN32) + '.iid',
-    guest_check_cid='/home/u/' + prep.guest_dir(TOKEN32) + '.check.cid',
+    guest_check_cid='/home/u/' + prep.guest_dir(TOKEN32) + '.check.cid', check_container_id='a' * 64,
     probe_source='print(1)', stage_source='print(2)', verify_source='print(3)',
     transfer_source='print(4)', input_verify_source='print(5)', guest_input_spec='ab' * 8,
     guest_oci='/home/u/' + prep.guest_dir(TOKEN32) + '.oci',
@@ -893,6 +893,9 @@ class Manifest(unittest.TestCase):
                 if step['kind'] != 'exec':
                     continue
                 with self.subTest(step=step['id']):
+                    if step['argv'][0] == prep.BUILDX_LINK_TEMPLATE:  # the Buildx plugin's own owned link (D2)
+                        self.assertEqual(step['env']['set']['DOCKER_CONFIG'], '{desktop_config}')
+                        continue
                     self.assertEqual(step['argv'][0], prep.DOCKER)
                     self.assertEqual(step['env']['set']['DOCKER_HOST'], '{desktop_host}')
                     self.assertEqual(step['env']['set']['DOCKER_CONFIG'], '{desktop_config}')

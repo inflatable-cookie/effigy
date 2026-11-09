@@ -303,28 +303,38 @@ Colima (`colima`):
   fixed guest helper and its receipt carries the argv that ran. Download cap 38409328 bytes (the pinned
   OCI/deb set); storage cap 4 GiB; sources: the four Hub OCI URLs and the 22 `ports.ubuntu.com` deb URLs.
   Guarded windows, each with a 5 s kill grace: transfer 90 s in 125 s, pre-build re-derivation 35 s in 70 s, build
-  530 s in 590 s. Step total 1075 s inside the 1080 s budget.
-- **C5** one disposable check, 360 s stage, 60 s reserve (r10). Steps, all through the fixed guest helper
-  (`disposable-check`, `read-check-cid`, `container-list`) and the same colima ssh route as C4:
-  `c5-disposable-check` runs `timeout -k 5 200 sudo -n nerdctl run --pull=never --rm --network none --cidfile
-  {guest_check_cid} --name effigy-4f6a-check-{token} {image_id} python3 -I -c {check_source}` (200 s guest deadline,
-  240 s host envelope). `c5-check-facts` passes only with exit 0 and uid 0, Python 3, OpenSSL, a GNU C library loader
-  and coreutils. `c5-read-check-cid` reads `{guest_check_cid}` (one full container ID). `c5-container-list` runs
-  `sudo -n nerdctl container ls --all --no-trunc --quiet` (20 s guarded), and `c5-check-absent` closes only when the
-  exact full ID is not among those lines. Step total 290 s inside the 300 s budget after the reserve.
+  530 s in 590 s. The three small remote steps (build help, iidfile read, image inspect) run a 17 s guard with a 2 s
+  grace in their 20 s allowance, so the receipt margin is kept. Step total 1075 s inside the 1080 s budget.
+- **C5** one disposable check, 360 s stage, 60 s reserve (r10). Eleven steps, all guest steps through the fixed
+  guest helper over the colima ssh route, and host-side facts checks. In order:
+  `c5-guest-nerdctl-version` runs `nerdctl --version` (8 s, 2 s grace inside it) and `c5-check-nerdctl-version`
+  requires exactly the source-qualified `nerdctl version 2.3.1`; otherwise nothing runs. `c5-disposable-check` runs
+  `timeout -k 5 200 sudo -n nerdctl run --pull=never --network none --cidfile {guest_check_cid} --name
+  effigy-4f6a-check-{token} {image_id} python3 -I -c {check_source}` (no `--rm`: the container stays for inspection;
+  200 s guest deadline in a 240 s host envelope). `c5-check-facts` passes only with exit 0 and uid 0, Python 3,
+  OpenSSL, a GNU C library loader and coreutils. `c5-read-check-cid` reads `{guest_check_cid}`, one full container
+  ID. `c5-container-inspect` (`sudo -n nerdctl container inspect {check_container_id}`) and `c5-check-inspect` require
+  one object whose `Id` is that ID, whose `Image` is the predecessor image, and whose `State` is `exited` with
+  `ExitCode` 0. `c5-container-rm` removes that exact ID (`sudo -n nerdctl container rm {check_container_id}`, never
+  forced) and `c5-container-list` (`sudo -n nerdctl container ls --all --no-trunc --quiet`) with `c5-check-absent`
+  requires the ID to be absent from every full ID listed. Step total 293 s inside the 300 s budget after the reserve.
+  Each guarded step's host allowance contains its guard, grace and a 1 s receipt margin, and dispatch refuses when the
+  remaining allowance cannot contain the guard and grace.
   `{guest_check_cid}` is the C4 verify spec's context with `.check.cid` appended, read back from the C4 receipt's own
   spec file, whose sha256 the C4 helper recorded; the context must name this chain's token32.
-  Closure: a local ssh exit alone closes nothing. The check's helper envelope must close with waited exit 0 and
-  report the exact reviewed command, the facts must pass, the cidfile must hold one full ID, and that ID must be
-  absent from the listing after the run. A nonzero exit, a deadline, an unknown closure or a listing that still
-  carries the ID stops later effects and retains the cidfile and any container. Nothing is removed by name or pattern.
-  Source qualification (nerdctl v2.3.1 source; the guest's own nerdctl version is an unobserved native fact):
-  `nerdctl run` waits in `runAction` for the container and returns the container's exit status. `--rm` removal runs in
-  a deferred call before `runAction` returns, but a removal failure only logs a warning and leaves the exit status
-  unchanged, so removal is claimed only by the exact-ID absence. `--cidfile` is written during `Create`, before the
-  container is created, and an existing file is refused (a stat then a create, not an exclusive create). The `id`
-  filter's exact matching was not verified from source, so the absence check lists every ID with `--no-trunc --quiet`
-  and tests exact membership.
+  Closure: a local ssh exit alone closes nothing. Every guest step needs its authenticated helper envelope closed
+  with waited exit 0 and the reviewed command. A nonzero exit, a deadline, an unknown closure, a version other than
+  2.3.1, a container that is not exited with exit 0 or not from the predecessor image, a replaced container ID, a
+  removal that fails, or a listing that still carries the ID stops later effects. The cidfile, the container and its
+  residue are retained, and nothing is removed by name or pattern.
+  Source qualification (nerdctl v2.3.1 source; the guest's own nerdctl version is observed at run time, not assumed):
+  `nerdctl run` waits in `runAction` and returns the container's exit status. `--cidfile` is written during `Create`,
+  before the container is created, and an existing file is refused (stat then create, not an exclusive create).
+  `container rm` refuses a running container without force (`container %s is in %v status`), so the exited check
+  container is removed without force. The inspect fields are `Id`, `Image` and `State.Status`/`State.ExitCode`. The
+  `Image` field's content is not established as an image ID from source, so a mismatch fails closed and that is owed
+  as a native fact. The `id` filter's exact matching was not verified, so the listing is tested for exact membership.
+  Owed native facts: the guest's own nerdctl version, the `Image` field form, and the actual lifecycle on the guest.
 - **C6** observe only: `colima list --json`. No stop. A running VM is retained until a
   separate GO covers a stop.
 
@@ -337,9 +347,11 @@ Desktop (`desktop`), with the pinned env above:
   label observation (`volume ls --filter label=effigy.qual=<token>`) must be empty. After it, `volume inspect`
   of that exact printed name must carry the same name and this occurrence's label. Both streams are retained.
   Not a receipt unless the inspect closed. Window 300 s, reserve 60 s, storage cap 1 MiB, download 0.
-- **D2** runtime image, 1200 s stage, 120 s reserve. Steps: engine info, the Buildx link (`link_buildx_plugin`, before any fetch), make this
-  occurrence's input directory `{desktop_input_dir}` and build context `{desktop_context_dir}` (both fresh, below),
-  prefetch the pinned OCI blobs and 22 debs into the input directory, stage the Dockerfile, then
+- **D2** runtime image, 1200 s stage, 120 s reserve. Steps: engine info, the Buildx link (`link_buildx_plugin`, before any fetch), the plugin's own metadata
+  command through the owned link (`d2-buildx-metadata`, `docker-cli-plugin-metadata`, env as the Docker route, 10 s),
+  the metadata check (schema 0.1.0, vendor `Docker Inc.`, version `v0.37.1`), make this occurrence's input directory
+  `{desktop_input_dir}` and build context `{desktop_context_dir}` (both fresh, below), prefetch the pinned OCI blobs
+  and 22 debs into the input directory, stage the Dockerfile, a custody check of the same link and bytes, then
   `docker build --platform linux/arm64 --provenance=false --label effigy.qual=<token> --tag
   effigy-4f6a-desktop-runtime:<token> --iidfile {desktop_iidfile} --network none
   --build-context ubuntu=oci-layout://{desktop_input_dir}/oci
@@ -349,7 +361,7 @@ Desktop (`desktop`), with the pinned env above:
   Build host envelope 840 s, and a kill or timeout is Unknown. Then the iidfile is read, and
   `docker image inspect {image_id}` is checked for linux/arm64 and the occurrence label.
   Download cap 38409328 bytes; storage cap 2 GiB. Sources: the four Hub OCI URLs and the 22
-  `https://ports.ubuntu.com/ubuntu-ports/...` deb URLs. Step total 1080 s inside the 1080 s
+  `https://ports.ubuntu.com/ubuntu-ports/...` deb URLs. Step total 1074 s inside the 1080 s
   budget. The proof-entry window names the original D1 receipt and requires this occurrence's three destinations
   absent.
   **Buildx route and fresh occurrence (planner amendment for effigy#770).** The failed occurrence ran
@@ -360,8 +372,12 @@ Desktop (`desktop`), with the pinned env above:
   `a8638d2188cfd8bdfce7c1be2ce16aeeaf02c57b51443e9860799de5cf5ee105`, then creates one new `{desktop_config}/cli-plugins`
   directory whose only entry is a symlink to that plugin. A missing, changed or other plugin, or an existing link,
   refuses before any fetch. Nothing is read from a global config, and no legacy fallback is reachable from this stage.
-  The plugin's `version` capability call is not part of this source change: it contacts no engine, but that is not
-  source-established here, so it is owed before a native occurrence. Each activation's D2 outputs are fresh siblings of
+  The plugin's metadata command is the one Docker's discovery uses before it accepts a candidate (docker/cli
+  `cli-plugins/manager`: symlinks in `$DOCKER_CONFIG/cli-plugins` are accepted, and a candidate whose metadata is
+  invalid is not found). The buildx `main` runs `NewDockerCli` first; that source step is source-established only for
+  the metadata path, and the native run is owed. The plugin's bytes are part of the stable input set, so every launch
+  re-hashes them, and the custody check repeats the link and bytes before the build. Host-only helper steps in D2 are
+  5 s or less; every native exec clock is unchanged. Each activation's D2 outputs are fresh siblings of
   the original paths, derived from the verified activation by `d2_occurrence`: `{desktop_input_dir}-<suffix>`,
   `{desktop_context_dir}-<suffix>` (created by `d2-make-context-dir`) and `{desktop_iidfile}-<suffix>`. The original
   D0/D1 paths and every earlier payload, recipe, claim and receipt stay in place and are never deleted, reset or

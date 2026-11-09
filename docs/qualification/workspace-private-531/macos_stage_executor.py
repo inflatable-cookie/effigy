@@ -48,7 +48,7 @@ HELPER_PATH = HERE / 'macos_stage_helper.py'
 PROOF_PATH = HERE / 'macos_stage_proof.py'
 REPO_ROOT = HERE.parents[2]
 GUEST_CONTEXT_SHA256 = '5daf93e2ad3ba1cb1cfb5e860730720c21d3730dee4e2b292bc9feb66643e1fc'
-GUEST_HELPER_SHA256 = '9d265db2f9c10d7bc105d2397b9149e2cc6c9e36996868e2d9724604cf2743d3'
+GUEST_HELPER_SHA256 = '69239cd820934ca2f0b0e087a86fbb291fa3aad6b231e0b54c70537c08620985'
 GUEST_INPUTS_SHA256 = 'd2d0ea050f6d8b5ede4dcf07fbd3a7be65241b5b35d88830513cd07e76361af2'
 # Program files whose bytes the GO binds. Changing any of them after activation refuses before dispatch.
 PROGRAM_FILES = (HERE / 'macos_stage_executor.py', HERE / 'macos_preparation.py',
@@ -75,6 +75,9 @@ REMOTE_COMMAND_STEPS = {
     'c5-disposable-check': 'disposable-check',
     'c5-read-check-cid': 'read-check-cid',
     'c5-container-list': 'container-list',
+    'c5-guest-nerdctl-version': 'nerdctl-version',
+    'c5-container-inspect': 'container-inspect',
+    'c5-container-rm': 'container-rm',
 }
 STDIN_STEPS = {'recipe_file': 'recipe', 'guest_input_stream': 'guest_input_stream'}
 TOOL_PATHS = (prep.COLIMA, prep.DOCKER)
@@ -92,6 +95,13 @@ DESKTOP_APP_PLIST = DESKTOP_APP + '/Contents/Info.plist'
 DESKTOP_BUILDX = DESKTOP_APP + '/Contents/Resources/cli-plugins/docker-buildx'
 DESKTOP_BUILDX_SHA256 = 'a8638d2188cfd8bdfce7c1be2ce16aeeaf02c57b51443e9860799de5cf5ee105'
 DESKTOP_BUNDLE_VERSION = '4.92.0'
+# The bundled buildx module version (static build info of the pinned plugin) and the metadata its CLI discovery requires.
+DESKTOP_BUILDX_VERSION = 'v0.37.1'
+BUILDX_METADATA = {'SchemaVersion': '0.1.0', 'Vendor': 'Docker Inc.', 'Version': DESKTOP_BUILDX_VERSION}
+BUILDX_LINK_TEMPLATE = '{desktop_config}/cli-plugins/docker-buildx'
+# C5's guest container runtime: the nerdctl version the lifecycle source is qualified against. The guest's own
+# version is observed at run time; any other version stops C5 before the check runs.
+GUEST_NERDCTL_VERSION = '2.3.1'
 LINUX_ARTIFACT_DIR = '/Volumes/Stash/scratch/effigy/linux-artifact-preparation.l0tx7tam'
 # The original 688 C0 record for token 7deaf1b3, pinned by exact sha256 with the tranche summary it names.
 # C1 may bind it (not replay it) only through historical_binding: exact bytes, recorded tools and roots.
@@ -376,7 +386,7 @@ def step_environment(step, bindings):
     if argv0 == prep.COLIMA:
         env = {'PATH': f"{bindings['control']}/bin:{COLIMA_BASE_PATH}", 'LANG': 'C',
                'HOME': f"{bindings['control']}/h"}
-    elif argv0 == prep.DOCKER:
+    elif argv0 in (prep.DOCKER, BUILDX_LINK_TEMPLATE):
         env = {'PATH': DESKTOP_BASE_PATH, 'LANG': 'C'}
     else:
         raise Refusal(f"{step['id']}: executable must be a pinned tool")
@@ -1031,10 +1041,8 @@ def d2_occurrence(bindings, activation_id):
                 desktop_iidfile=bindings['desktop_iidfile'] + '-' + suffix)
 
 
-def h_link_buildx_plugin(ctx, step):
-    """D2's Buildx route, before any fetch. The Desktop bundle must carry the pinned version and the pinned buildx
-    must hash to its pin; then the private config gets one new cli-plugins directory holding one symlink to it. Nothing
-    is read from a global config, and an existing directory or link refuses rather than being adopted."""
+def verify_buildx_target():
+    """The Desktop bundle version and the pinned buildx: a regular executable whose bytes hash to the pin."""
     try:
         with open(DESKTOP_APP_PLIST, 'rb') as handle:
             version = plistlib.load(handle).get('CFBundleShortVersionString')
@@ -1048,6 +1056,96 @@ def h_link_buildx_plugin(ctx, step):
     digest = sha_file(DESKTOP_BUILDX)
     if digest != DESKTOP_BUILDX_SHA256:
         raise Refusal('the Desktop buildx plugin differs from its pinned sha256: refuse')
+    return dict(target=DESKTOP_BUILDX, sha256=digest, bundle_version=version, dev=info.st_dev, inode=info.st_ino)
+
+
+def verify_buildx_link(bindings):
+    """The private config's one buildx link: a symlink whose readlink is the pinned target, canonical, and the target's
+    identity as verified. Replacing either before the build refuses here."""
+    link = render1(BUILDX_LINK_TEMPLATE, bindings)
+    if not stat.S_ISLNK(os.lstat(link).st_mode):
+        raise Refusal('the private buildx route is not the owned symlink: refuse')
+    if os.readlink(link) != DESKTOP_BUILDX or os.path.realpath(link) != DESKTOP_BUILDX:
+        raise Refusal('the private buildx link does not resolve canonically to the pinned plugin: refuse')
+    return verify_buildx_target()
+
+
+def h_check_buildx_custody(ctx, step):
+    """Immediately before the build: the same link and the same bytes as the metadata step ran against."""
+    return verify_buildx_link(ctx['bindings'])
+
+
+def h_check_buildx_metadata(ctx, step):
+    """Docker's discovery requires this metadata from a candidate; a candidate that does not answer it is not a route."""
+    try:
+        data = json.loads(read_ref(ctx, step['inputs'][0]))
+    except ValueError as exc:
+        raise Refusal('the buildx metadata is not JSON: refuse before any fetch') from exc
+    if not isinstance(data, dict) or any(data.get(k) != v for k, v in BUILDX_METADATA.items()):
+        raise Refusal('the buildx metadata does not match the pinned schema, vendor and version: refuse before any fetch')
+    return {'verified': dict(BUILDX_METADATA)}
+
+
+def h_check_nerdctl_version(ctx, step):
+    """The guest's own runtime version, observed at run time, must be the one the lifecycle was source-qualified against."""
+    match = re.fullmatch(r'nerdctl version (\d+\.\d+\.\d+)\n?', read_ref(ctx, step['inputs'][0]))
+    if match is None or match.group(1) != GUEST_NERDCTL_VERSION:
+        raise ValueError('the guest nerdctl is not the source-qualified version: stopped before the check runs')
+    return {'version': GUEST_NERDCTL_VERSION}
+
+
+def h_check_container_inspect(ctx, step):
+    """The exact-ID inspection of the check container: its own ID, the predecessor image, a terminal exited state and
+    exit 0. Anything else (running, another image or ID, a non-zero exit) stops later effects with the container kept."""
+    try:
+        rows = json.loads(read_ref(ctx, step['inputs'][0]))
+    except ValueError as exc:
+        raise ValueError('the container inspection is not JSON') from exc
+    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+        raise ValueError('the container inspection must name exactly one container')
+    obj, state = rows[0], rows[0].get('State')
+    cid, image = ctx['bindings']['check_container_id'], ctx['bindings']['image_id']
+    if not isinstance(state, dict):
+        raise ValueError('the container inspection carries no state')
+    if obj.get('Id') != cid:
+        raise ValueError('the inspected container is not the cidfile container')
+    if obj.get('Image') != image:
+        raise ValueError('the check container was not created from the predecessor image')
+    if state.get('Status') != 'exited':
+        raise ValueError(f"the check container is not in a terminal exited state: {state.get('Status')!r}")
+    if type(state.get('ExitCode')) is not int or state.get('ExitCode') != 0:
+        raise ValueError('the check container did not exit 0')
+    return {'container_id': cid, 'image_id': image, 'status': 'exited', 'exit_code': 0}
+
+
+def guest_guard(argv):
+    """(kill grace, guest seconds) of the timeout guard that opens a colima ssh tail, or None."""
+    if argv[:1] != [prep.COLIMA] or '--' not in argv:
+        return None
+    tail = argv[argv.index('--') + 1:]
+    if tail[:1] != ['timeout'] or len(tail) < 4 or tail[1] != '-k' or not tail[2].isdigit() or not tail[3].isdigit():
+        return None
+    return int(tail[2]), int(tail[3])
+
+
+def check_guest_allowance(argv, remaining, step_id):
+    """Before dispatch: the step's remaining allowance must contain the whole guest guard, its kill grace and the
+    receipt margin. A guard that could outlive the allowance is never launched."""
+    guard = guest_guard(argv)
+    if guard is None:
+        return
+    grace, seconds = guard
+    need = grace + seconds
+    if remaining < need:
+        raise Refusal(f'{step_id}: the remaining allowance {remaining:.1f}s cannot contain the guest guard and its grace '
+                      f'({need}s): not dispatched')
+
+
+def h_link_buildx_plugin(ctx, step):
+    """D2's Buildx route, before any fetch. The Desktop bundle must carry the pinned version and the pinned buildx must
+    hash to its pin; then the private config gets one new cli-plugins directory holding one symlink to it. Nothing is read
+    from a global config, and an existing directory or link refuses rather than being adopted."""
+    target = verify_buildx_target()
     plugins = ctx['bindings']['desktop_config'] + '/cli-plugins'
     create_private_dir(plugins)
     link = plugins + '/docker-buildx'
@@ -1055,9 +1153,8 @@ def h_link_buildx_plugin(ctx, step):
         os.symlink(DESKTOP_BUILDX, link)
     except FileExistsError:
         raise Collision(f'collision: {link} exists; refuse, do not adopt')
-    if os.readlink(link) != DESKTOP_BUILDX or sha_file(link) != DESKTOP_BUILDX_SHA256:
-        raise Refusal('the private buildx link does not resolve to the pinned plugin')
-    return dict(link=link, target=DESKTOP_BUILDX, sha256=digest, bundle_version=version)
+    verify_buildx_link(ctx['bindings'])
+    return dict(link=link, target=target['target'], sha256=target['sha256'], bundle_version=target['bundle_version'])
 
 
 def h_read_iidfile(ctx, step):
@@ -1371,6 +1468,10 @@ HANDLERS = {
     'host_stage_dockerfile': h_host_stage_dockerfile,
     'read_iidfile': h_read_iidfile,
     'link_buildx_plugin': h_link_buildx_plugin,
+    'check_buildx_custody': h_check_buildx_custody,
+    'check_buildx_metadata': h_check_buildx_metadata,
+    'check_nerdctl_version': h_check_nerdctl_version,
+    'check_container_inspect': h_check_container_inspect,
     'check_image_identity': h_check_image_identity,
     'check_build_help': h_check_build_help,
     'check_runtime_facts': h_check_runtime_facts,
@@ -1683,7 +1784,7 @@ def stable_input_manifest(manifest_path=None):
     root = REPO_ROOT.resolve(strict=True)
     repo_paths = list(PROGRAM_FILES) + [Path(manifest_path), RECIPE_PATH,
                                         REPO_ROOT / 'effigy.toml', REPO_ROOT / 'config/tasks.toml']
-    machine_paths = [Path(sys.executable)] + list(map(Path, TOOL_PATHS))
+    machine_paths = [Path(sys.executable)] + list(map(Path, TOOL_PATHS)) + [Path(DESKTOP_BUILDX), Path(DESKTOP_APP_PLIST)]
     expected = {f'docs/qualification/workspace-private-531/{name}' for name in (
         'macos_stage_executor.py', 'macos_preparation.py', 'preparation_stage.py',
         'preparation_resources.py', 'macos_guest_context.py', 'macos_guest_helper.py',
@@ -2433,6 +2534,7 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                 if not isinstance(staged, dict) or not staged.get('path'):
                     raise Refusal(f"{step['id']}: {resolved['stdin']} was not staged: refuse")
                 stdin_path, stdin_sha = staged['path'], staged['sha256']
+            check_guest_allowance(resolved['argv'], step_deadline - clock(), step['id'])
             before = dict(monitor.last)
             result = transport(root=step_root, argv=resolved['argv'], timeout=step_deadline - now_mono,
                                output_cap=step['output_cap_bytes'], input_hashes=dict(inputs),

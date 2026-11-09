@@ -50,7 +50,7 @@ SLOTS = frozenset({
     'guest_input_spec', 'probe_source', 'stage_source', 'verify_source', 'transfer_source', 'input_verify_source',
     'check_source', 'route_echo', 'image_id',
     'owned_container_ids', 'owned_image_id', 'owned_volume_name',
-    'guest_check_cid',
+    'guest_check_cid', 'check_container_id',
     'guest_helper_hex', 'guest_nonce',
 })
 # Arguments that carry multi-line or JSON source through the Colima shell route.
@@ -66,6 +66,7 @@ HELPERS = frozenset({
     'verify_frozen_artifacts', 'check_build_help', 'read_iidfile', 'check_image_identity',
     'check_runtime_facts', 'select_cleanup_targets', 'read_cidfile', 'check_cleanup_target',
     'read_check_cid', 'check_container_absent', 'link_buildx_plugin',
+    'check_nerdctl_version', 'check_container_inspect', 'check_buildx_metadata', 'check_buildx_custody',
     'prefetch_colima_image', 'prefetch_runtime_inputs', 'render_input_specs', 'render_input_transfer',
     'check_input_transfer', 'check_input_verify',
 })
@@ -96,6 +97,8 @@ DOCKER_ENV = dict(set={'DOCKER_HOST': '{desktop_host}', 'DOCKER_CONFIG': '{deskt
                   unset=['DOCKER_CONTEXT'])
 REQUIRED_ENV_R2 = {COLIMA: COLIMA_ENV_R2, DOCKER: DOCKER_ENV}
 REQUIRED_ENV = {COLIMA: COLIMA_ENV, DOCKER: DOCKER_ENV}
+# The Desktop buildx plugin is reached only through the owned private-config link (a fixed template, never a caller path).
+BUILDX_LINK_TEMPLATE = '{desktop_config}/cli-plugins/docker-buildx'
 CHECK_SOURCE = (
     'import json,os,signal,ssl,subprocess,sys\n'
     'signal.alarm(120)\n'
@@ -468,7 +471,11 @@ def check_engine_argv(argv):
                 f'build provenance must be exactly --provenance={expected} for this backend')
     elif sub[0] == 'run':
         require('--pull=never' in sub, 'runtime checks use --pull=never')
-        require('--rm' in sub and sub[sub.index('--network') + 1] == 'none', 'disposable check: --rm, no network')
+        if 'nerdctl' in argv:  # C5: a synchronous run kept for its exact-ID inspection and removal
+            require('--rm' not in sub and sub[sub.index('--network') + 1] == 'none',
+                    'disposable check: a synchronous run with no --rm (exact-ID removal follows) and no network')
+        else:  # D3: the Desktop check removes itself on a normal exit
+            require('--rm' in sub and sub[sub.index('--network') + 1] == 'none', 'disposable check: --rm, no network')
         require(sub.index('python3') >= 1 and sub[sub.index('python3') - 1] == '{image_id}',
                 'runtime check must name the authenticated image ID, not a tag')
     elif sub[:2] == ['image', 'inspect']:
@@ -487,7 +494,11 @@ def check_engine_argv(argv):
     elif sub[:2] == ['volume', 'rm']:
         require(sub == ['volume', 'rm', '{owned_volume_name}'], 'volume removal names one receipted volume')
     elif sub[:2] == ['container', 'inspect']:
-        require(sub[-1] == '{owned_container_ids}', 'container inspect names the one receipted container')
+        require(sub[-1] in ('{owned_container_ids}', '{check_container_id}'),
+                'container inspect names one receipted or check container ID')
+    elif sub[:2] == ['container', 'rm']:
+        require(sub == ['container', 'rm', '{check_container_id}'],
+                'the check removal names only its exact container ID, never forced')
     elif sub[0] == 'rm':
         require(sub == ['rm', '{owned_container_ids}'], 'container removal names only the receipted container')
     return True
@@ -532,20 +543,29 @@ def check_guest_remote_command(tail, bindings):
             return True
         if tail == ['sudo', '-n', 'cat', cid]:
             return True
+    if tail == NERDCTL_VERSION:
+        return True
+    check_id = bindings.get('check_container_id')
+    if isinstance(check_id, str) and re.fullmatch(r'[0-9a-f]{64}', check_id):
+        if tail in (['sudo', '-n', 'nerdctl', 'container', 'inspect', check_id],
+                    ['sudo', '-n', 'nerdctl', 'container', 'rm', check_id]):
+            return True
     if tail == CONTAINER_LIST:
         return True
     raise ValueError('the remote command is not one of the reviewed C4 or C5 forms')
 
 
 CONTAINER_LIST = ['sudo', '-n', 'nerdctl', 'container', 'ls', '--all', '--no-trunc', '--quiet']
+NERDCTL_VERSION = ['nerdctl', '--version']
 
 
 def guest_check_command(context, token, image_id):
-    """C5's one disposable check, exactly as the fixed guest helper rebuilds it: synchronous --rm, network none, no
-    pull, the cidfile beside the context, the check's own name and the pinned check source."""
+    """C5's one disposable check, exactly as the fixed guest helper rebuilds it: a synchronous run, network none, no
+    pull, no --rm (the exact-ID inspection and removal follow), the cidfile beside the context, the check's own name and
+    the pinned check source."""
     require(isinstance(token, str) and TOKEN.fullmatch(token), 'the check name needs the eight-hex token')
     require(isinstance(image_id, str) and IMAGE_ID.fullmatch(image_id), 'the check image is the C4 image ID')
-    return ['sudo', '-n', 'nerdctl', 'run', '--pull=never', '--rm', '--network', 'none',
+    return ['sudo', '-n', 'nerdctl', 'run', '--pull=never', '--network', 'none',
             '--cidfile', context + '.check.cid', '--name', 'effigy-4f6a-check-' + token, image_id,
             'python3', '-I', '-c', CHECK_SOURCE]
 
@@ -584,8 +604,9 @@ def check_step(step, legacy=False):
     argv = step['argv']
     require(isinstance(argv, list) and argv and all(isinstance(a, str) for a in argv),
             f'{step["id"]}: argv must be a list, never a shell string')
-    require(argv[0] in REQUIRED_ENV, f'{step["id"]}: executable must be the pinned absolute tool')
-    pin = (REQUIRED_ENV_R2 if legacy else REQUIRED_ENV)[argv[0]]
+    require(argv[0] in REQUIRED_ENV or argv[0] == BUILDX_LINK_TEMPLATE,
+            f'{step["id"]}: executable must be the pinned absolute tool')
+    pin = DOCKER_ENV if argv[0] == BUILDX_LINK_TEMPLATE else (REQUIRED_ENV_R2 if legacy else REQUIRED_ENV)[argv[0]]
     env = step.get('env', {})
     for key, value in pin['set'].items():
         require(env.get('set', {}).get(key) == value, f'{step["id"]}: env {key} not pinned')
@@ -600,6 +621,22 @@ def check_step(step, legacy=False):
     if argv[0] == DOCKER or 'nerdctl' in argv:
         check_engine_argv(argv)
     check_guest_deadline(step)
+    check_guest_margin(step)
+    return True
+
+
+def check_guest_margin(step):
+    """A colima ssh guard is opened only where its kill grace and one second of receipt margin fit inside the step's
+    own host allowance, so the guest's own deadline always fires before the local client is killed."""
+    argv = step['argv']
+    if argv[:1] != [COLIMA] or '--' not in argv:
+        return True
+    tail = argv[argv.index('--') + 1:]
+    if tail[:1] != ['timeout'] or len(tail) < 4 or tail[1] != '-k':
+        return True
+    grace, seconds = int(tail[2]), int(tail[3])
+    require(step['timeout_seconds'] >= grace + seconds + 1,
+            f'{step["id"]}: the host allowance must contain the guest guard, its grace and a 1 second receipt margin')
     return True
 
 

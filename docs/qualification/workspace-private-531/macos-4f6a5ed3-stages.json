@@ -28,7 +28,17 @@
       "sha256": "a8638d2188cfd8bdfce7c1be2ce16aeeaf02c57b51443e9860799de5cf5ee105",
       "bundle_version": "4.92.0",
       "bundle_plist": "/Applications/Docker.app/Contents/Info.plist",
-      "route": "owned cli-plugins link in the private Docker config"
+      "route": "owned cli-plugins link in the private Docker config",
+      "version": "v0.37.1",
+      "metadata": {
+        "SchemaVersion": "0.1.0",
+        "Vendor": "Docker Inc.",
+        "Version": "v0.37.1"
+      }
+    },
+    "guest_nerdctl": {
+      "version": "2.3.1",
+      "observed_at": "run time, by c5-guest-nerdctl-version; source-qualified against nerdctl v2.3.1"
     }
   },
   "decision": "63c338e2-1c50-435e-9783-e78e9d8558e6",
@@ -52,11 +62,15 @@
   ],
   "helpers": [
     "check_build_help",
+    "check_buildx_custody",
+    "check_buildx_metadata",
     "check_cleanup_target",
     "check_container_absent",
+    "check_container_inspect",
     "check_image_identity",
     "check_input_transfer",
     "check_input_verify",
+    "check_nerdctl_version",
     "check_runtime_facts",
     "claim_intent",
     "compare_route_echo",
@@ -90,7 +104,7 @@
     "image_context.py": "af74047f640111907930273f7cc7a2b46eac4cb27943f0a512fccf56a1b3b322",
     "image_prepare.py": "882f9e44e7acd87e5ab94237feb7f19a452a3bbb86dd1cf208f311129847964f",
     "macos_metadata_tranche.py": "c204bfaa87c2534da05b62c5f10beda5d3196216ce40d6afffeb8dec2ef9d1a6",
-    "macos_preparation.py": "2e5676f960da6876f1dab4c0a4ff1365323bca7cbdbcbc04a7d125cc845f53c1",
+    "macos_preparation.py": "7afca631e525ef1f48d8b57f07aab09d0d994e8e9cc7b5d0ca344452b6331b66",
     "guest_inputs.py": "d2d0ea050f6d8b5ede4dcf07fbd3a7be65241b5b35d88830513cd07e76361af2"
   },
   "proof_entry": {
@@ -170,6 +184,7 @@
   },
   "retries": 0,
   "slots": [
+    "check_container_id",
     "check_source",
     "colima_cache_home",
     "colima_docker_config",
@@ -849,7 +864,7 @@
             "timeout",
             "-k",
             "2",
-            "20",
+            "17",
             "nerdctl",
             "build",
             "--help"
@@ -947,7 +962,7 @@
             "timeout",
             "-k",
             "2",
-            "20",
+            "17",
             "sudo",
             "-n",
             "cat",
@@ -992,7 +1007,7 @@
             "timeout",
             "-k",
             "2",
-            "20",
+            "17",
             "sudo",
             "-n",
             "nerdctl",
@@ -1035,9 +1050,9 @@
     },
     {
       "backend": "colima",
-      "closure": "a positive close needs, in order: the disposable check's authenticated helper envelope closed with a waited exit 0 and the facts it prints checked; the cidfile read through the guest helper as one full container ID; and the full ID listing of all containers, read through the guest helper, not carrying that ID. The run uses --rm and its own cidfile; nerdctl removes the container before run returns, and removal failure is only logged, so removal is claimed only by the exact-ID absence. The check's guest deadline is 200 seconds (timeout -k 5) inside a 240 second host envelope. A local ssh exit alone closes nothing. Stage steps total 290 seconds inside the 300 second budget after the reserve.",
+      "closure": "a positive close needs, in order: the guest nerdctl version observed through the helper equal to the source-qualified 2.3.1 (otherwise nothing runs); the check's helper envelope closed with waited exit 0, the reviewed command and facts that pass; the cidfile holding one full ID; an exact-ID inspection of that container (its own ID, the predecessor image, state exited, exit 0); the exact-ID removal (no force) closing with exit 0; and that ID absent from the complete listing after the removal. A local ssh exit alone closes nothing. Stage steps total 293 seconds inside the 300 second budget after the reserve.",
       "download_cap_bytes": 0,
-      "failure": "no retry; a nonzero exit, a deadline, a broken envelope or an unknown closure stops later effects and retains the cidfile and any container; nothing is removed by name or pattern.",
+      "failure": "no retry; a version mismatch, a nonzero exit, a deadline, a broken envelope, an unknown closure, a container that is not exited with exit 0 or not from the predecessor image, or a listing that still carries the ID stops later effects; the cidfile and any container are retained and nothing is removed by name or pattern.",
       "id": "C5",
       "name": "one disposable check",
       "network_sources": [
@@ -1045,11 +1060,54 @@
       ],
       "reserve_seconds": 60,
       "retained_after_failure": [
-        "container ID named by the guest cidfile effigy-531-image-<token32>.check.cid, retained if --rm did not remove it; the planned name effigy-4f6a-check-<token> is never removed by pattern"
+        "the check container by its exact ID from the guest cidfile effigy-531-image-<token32>.check.cid (no --rm: it stays until its exact-ID removal closes); the planned name effigy-4f6a-check-<token> is never removed by pattern"
       ],
-      "retention": "check stream and exit; facts parsed by check_runtime_facts; cidfile ID and the full container listing through the guest helper",
+      "retention": "check stream and exit; facts parsed by check_runtime_facts; version, cidfile, inspection, removal and listing through the guest helper",
       "seconds": 360,
       "steps": [
+        {
+          "argv": [
+            "/opt/homebrew/bin/colima",
+            "ssh",
+            "-p",
+            "effigy-4f6a-qual",
+            "--",
+            "timeout",
+            "-k",
+            "2",
+            "5",
+            "nerdctl",
+            "--version"
+          ],
+          "env": {
+            "set": {
+              "COLIMA_CACHE_HOME": "{colima_cache_home}",
+              "COLIMA_HOME": "{colima_home}",
+              "DOCKER_CONFIG": "{colima_docker_config}"
+            },
+            "unset": [
+              "LIMA_HOME",
+              "DOCKER_HOST",
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "c5-guest-nerdctl-version",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 8
+        },
+        {
+          "helper": "check_nerdctl_version",
+          "id": "c5-check-nerdctl-version",
+          "inputs": [
+            "c5-guest-nerdctl-version.stdout"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 2
+        },
         {
           "argv": [
             "/opt/homebrew/bin/colima",
@@ -1066,7 +1124,6 @@
             "nerdctl",
             "run",
             "--pull=never",
-            "--rm",
             "--network",
             "none",
             "--cidfile",
@@ -1111,7 +1168,7 @@
           "kind": "helper",
           "output_cap_bytes": 4096,
           "retries": 0,
-          "timeout_seconds": 10
+          "timeout_seconds": 2
         },
         {
           "argv": [
@@ -1123,7 +1180,7 @@
             "timeout",
             "-k",
             "2",
-            "8",
+            "5",
             "sudo",
             "-n",
             "cat",
@@ -1145,7 +1202,7 @@
           "kind": "exec",
           "output_cap_bytes": 262144,
           "retries": 0,
-          "timeout_seconds": 10
+          "timeout_seconds": 8
         },
         {
           "helper": "read_check_cid",
@@ -1156,7 +1213,7 @@
           "kind": "helper",
           "output_cap_bytes": 4096,
           "retries": 0,
-          "timeout_seconds": 5
+          "timeout_seconds": 2
         },
         {
           "argv": [
@@ -1168,7 +1225,90 @@
             "timeout",
             "-k",
             "2",
-            "15",
+            "6",
+            "sudo",
+            "-n",
+            "nerdctl",
+            "container",
+            "inspect",
+            "{check_container_id}"
+          ],
+          "env": {
+            "set": {
+              "COLIMA_CACHE_HOME": "{colima_cache_home}",
+              "COLIMA_HOME": "{colima_home}",
+              "DOCKER_CONFIG": "{colima_docker_config}"
+            },
+            "unset": [
+              "LIMA_HOME",
+              "DOCKER_HOST",
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "c5-container-inspect",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 9
+        },
+        {
+          "helper": "check_container_inspect",
+          "id": "c5-check-inspect",
+          "inputs": [
+            "c5-container-inspect.stdout"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 2
+        },
+        {
+          "argv": [
+            "/opt/homebrew/bin/colima",
+            "ssh",
+            "-p",
+            "effigy-4f6a-qual",
+            "--",
+            "timeout",
+            "-k",
+            "2",
+            "6",
+            "sudo",
+            "-n",
+            "nerdctl",
+            "container",
+            "rm",
+            "{check_container_id}"
+          ],
+          "env": {
+            "set": {
+              "COLIMA_CACHE_HOME": "{colima_cache_home}",
+              "COLIMA_HOME": "{colima_home}",
+              "DOCKER_CONFIG": "{colima_docker_config}"
+            },
+            "unset": [
+              "LIMA_HOME",
+              "DOCKER_HOST",
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "c5-container-rm",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 9
+        },
+        {
+          "argv": [
+            "/opt/homebrew/bin/colima",
+            "ssh",
+            "-p",
+            "effigy-4f6a-qual",
+            "--",
+            "timeout",
+            "-k",
+            "2",
+            "6",
             "sudo",
             "-n",
             "nerdctl",
@@ -1194,7 +1334,7 @@
           "kind": "exec",
           "output_cap_bytes": 262144,
           "retries": 0,
-          "timeout_seconds": 20
+          "timeout_seconds": 9
         },
         {
           "helper": "check_container_absent",
@@ -1205,7 +1345,7 @@
           "kind": "helper",
           "output_cap_bytes": 4096,
           "retries": 0,
-          "timeout_seconds": 5
+          "timeout_seconds": 2
         }
       ],
       "storage_cap_bytes": 0
@@ -1574,6 +1714,37 @@
           "timeout_seconds": 10
         },
         {
+          "argv": [
+            "{desktop_config}/cli-plugins/docker-buildx",
+            "docker-cli-plugin-metadata"
+          ],
+          "id": "d2-buildx-metadata",
+          "kind": "exec",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 10,
+          "env": {
+            "set": {
+              "DOCKER_HOST": "{desktop_host}",
+              "DOCKER_CONFIG": "{desktop_config}"
+            },
+            "unset": [
+              "DOCKER_CONTEXT"
+            ]
+          }
+        },
+        {
+          "helper": "check_buildx_metadata",
+          "id": "d2-check-buildx-metadata",
+          "inputs": [
+            "d2-buildx-metadata.stdout"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 2
+        },
+        {
           "helper": "make_owned_dir",
           "id": "d2-make-input-dir",
           "inputs": [
@@ -1582,7 +1753,7 @@
           "kind": "helper",
           "output_cap_bytes": 4096,
           "retries": 0,
-          "timeout_seconds": 10
+          "timeout_seconds": 5
         },
         {
           "helper": "make_owned_dir",
@@ -1593,7 +1764,7 @@
           "kind": "helper",
           "output_cap_bytes": 4096,
           "retries": 0,
-          "timeout_seconds": 10
+          "timeout_seconds": 5
         },
         {
           "helper": "prefetch_runtime_inputs",
@@ -1617,6 +1788,15 @@
           "output_cap_bytes": 4096,
           "retries": 0,
           "timeout_seconds": 10
+        },
+        {
+          "helper": "check_buildx_custody",
+          "id": "d2-check-buildx-custody",
+          "inputs": [],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 2
         },
         {
           "argv": [
@@ -1663,7 +1843,7 @@
           "kind": "helper",
           "output_cap_bytes": 4096,
           "retries": 0,
-          "timeout_seconds": 10
+          "timeout_seconds": 5
         },
         {
           "argv": [
@@ -1699,7 +1879,7 @@
           "kind": "helper",
           "output_cap_bytes": 4096,
           "retries": 0,
-          "timeout_seconds": 10
+          "timeout_seconds": 5
         }
       ],
       "storage_cap_bytes": 2147483648
@@ -2283,7 +2463,7 @@
     "r9": {
       "manifest": "macos-4f6a5ed3-stages-r9",
       "manifest_file_sha256": "478d86a85b069b24a32057dd6a1374a409c468e8ecff7d66f26504befc7bc6ef",
-      "note": "r10 replaces the raw C5 ssh run with the fixed guest helper: disposable-check (synchronous nerdctl run --rm, its own cidfile), read-check-cid and container-list with an exact full-ID absence check. C5 is admitted and C6 follows it. Other stages are unchanged."
+      "note": "r10 replaces the raw C5 ssh run with the fixed guest helper: the guest nerdctl version is observed and must be the source-qualified 2.3.1; the disposable run is a synchronous nerdctl run without --rm and its exact container is inspected, removed by exact ID and checked absent from the full listing. The Desktop Buildx route is discovered through its owned link, metadata-checked before the fetch and re-checked before the build. C5 is admitted and C6 follows it. Other stages are unchanged."
     }
   }
 }
