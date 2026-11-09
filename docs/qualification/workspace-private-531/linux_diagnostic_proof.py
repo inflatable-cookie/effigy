@@ -178,16 +178,17 @@ def observe_association(boot_id, read_boot_id, config, descriptor, extents, writ
                         transport=None):
     """The production disk-association handoff for one already observed boot.
 
-    No caller constant is a reading here. The pinned reader is dispatched only when its own ABI
-    sources are complete, so an entry known to refuse is not spent on a native occurrence; its one
-    bounded read is bracketed by two fresh guest boot originals of this same VM and boot; the
-    selected VM UUID and home come from the reader's own output; the registered config, descriptor
-    and extent inventory are the originals this occurrence retained; and the guest block
-    observations are the writer-bound reads of this same boot. The complete record then goes
-    through production setup.verify_disk_association. A refusal is raised, never softened into a
-    status.
+    No caller constant is a reading here. The pinned reader is the supported CLI configuration read
+    (prlctl list --info --json through the fixed helper); its one bounded read is bracketed by two
+    fresh guest boot originals of this same VM and boot; the selected VM UUID and home come from the
+    reader's own output; the registered config, descriptor and extent inventory are the originals
+    this occurrence retained; and the guest block observations are the writer-bound reads of this
+    same boot. The complete record then goes through production setup.verify_disk_association. A
+    refusal is raised, never softened into a status.
     """
     if not disk_association.reader_executable():
+        # Defensive seam: the accessor returns 'none' on the supported CLI route. If a limitation
+        # ever returns, this records it instead of spending an occurrence on a known refusal.
         return {'status': 'not attempted: ' + disk_association.reader_limitation(),
                 'facts': None, 'result': None}
     rows = writer_bound.get('routes') or []
@@ -580,12 +581,12 @@ def execute(request, request_path, request_hash):
         writer_bound = guest_probe.observe(
             lambda argv, limit, cap, end: call(['exec', setup.VM_UUID] + argv, limit, cap, end),
             retain_observation, guard, start_end)
-        # The disk-association handoff. The reader is dispatched only when its ABI sources are
-        # complete, so an entry known to refuse is not spent on this native occurrence. The
-        # writer-bound guest block reads must have completed for this same boot, and the complete
-        # fact document goes through production setup.verify_disk_association; that document is
-        # what the stored `disk_association` key holds, so setup_plan E7* re-verifies the same facts
-        # and the retained raw originals rather than a reduced summary.
+        # The disk-association handoff: the supported CLI configuration read, bracketed by two fresh
+        # guest boot originals of this same boot. The writer-bound guest block reads must have
+        # completed for this same boot, and the complete fact document goes through production
+        # setup.verify_disk_association; that document is what the stored `disk_association` key
+        # holds, so setup_plan E7* re-verifies the same facts and the retained raw originals rather
+        # than a reduced summary.
         try:
             handoff = observe_association(
                 boot_id, read_guest_boot,

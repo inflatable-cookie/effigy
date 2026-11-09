@@ -311,12 +311,16 @@ presentation.
 
 Five premises are checked on their own inputs (`premise_table`):
 
-- `mechanism` and `host_read`: the pinned helper bytes, Desktop 27.1.0-58756, library sha256 `464af6b9…`, allowlisted
-  `PrlVmCfg_GetAllDevices` sequence, fixed argv `/usr/bin/python3 -I -B linux_disk_inventory.py inventory`, bounded
-  owned `key=value` grammar (≤64 KiB), boot bracket, reviewed VM UUID and home, running VM state before and after,
-  exactly one enabled connected image-backed SATA hdd0 whose `SystemName` `harddisk1.hdd` joins to
-  `{PVM_HOME}/harddisk1.hdd`, exactly one `PDE_OPTICAL_DISK` matching the config's one `CdRom`, the
-  reviewed USB camera, and no extra/unknown/passthrough/ambiguous block source.
+- `mechanism` and `host_read`: the pinned helper bytes, the installed bundle CLI `/Applications/Parallels
+  Desktop.app/Contents/MacOS/prlctl` pinned to sha256 `2f61a1c6…` (Desktop 27.1.0-58756, the binary the retained
+  747 occurrence ran), fixed helper argv `/usr/bin/python3 -I -B linux_disk_inventory.py inventory`, the one fixed
+  read `prlctl list --info <vm_uuid> --json` in the retained environment (`LANG=C`, `PATH=/usr/bin:/bin`), bounded
+  retained CLI grammar (≤64 KiB ASCII JSON, duplicate keys refuse), boot bracket, reviewed VM UUID, home with its
+  trailing slash and `Home path` …/config.pvs, `State` `running`, Hardware exactly the reviewed closed section set
+  cpu/memory/video/memory_quota/hdd0/cdrom0/usb/net0/sound0, the data disk exactly the reviewed image-backed
+  expanding `hdd0` at `sata:0` whose `image` joins to `{PVM_HOME}/harddisk1.hdd`, exactly one optical section
+  `cdrom0` matching the config's one `CdRom` (counted, never a disk), the reviewed empty `usb` shape, and no extra,
+  unknown or passthrough device section (a nested object under an allowed section refuses).
 - `config`: exactly one `Hdd` (hdd0, SATA index 0, reviewed device Uuid) that is enabled, connected, not passthrough,
   not remote, and `DiskType` 1. Every `Hardware` child is a reviewed tag. No element outside `Hdd` and `CdRom` carries
   a block-capable name at any depth (`Hdd`, `Disk`, `Scsi`, `Sata`, `VirtIOBlk`, ...). USB holds only the reviewed
@@ -328,32 +332,41 @@ Five premises are checked on their own inputs (`premise_table`):
   `/sys/devices/platform/PRL4010:00/ata…`, with the reviewed root partition on it. Loop and ROM are classified by
   type; anything else (extra disk, mapper) refuses.
 
-Serial may appear as an informative observation. It is not a required premise and does not use
-`PrlVmDevHd_GetSerialNumber` (that symbol is not in the installed SDK).
+Serial is an informative guest-side observation (probe versus sysfs, a disagreement refusing). The CLI
+configuration inventory carries no serial, so no host serial is compared and none is inferred.
 
 **Source status of each value the verifier requires.** A value is source-qualified only where a primary source gives
-its meaning and numeric value. Anything else is observed in the retained config and stays unadmitted.
+its meaning. Anything else is observed in the retained originals and stays unadmitted.
 
 | Element and field | Required value | Source status |
 | --- | --- | --- |
-| `Hdd` `Passthrough` | 0 | Meaning sourced: `PrlVmDev_SetPassthrough` (C API v19) enables passthrough mode for optical or hard-disk devices. The boolean sense of `IsPassthrough` is by name. |
-| `Hdd` `Enabled`, `Connected` | 1 | Accessors `PrlVmDev_IsEnabled` and `IsConnected` exported. `IsConnected` does not say configuration or running state. The 1 is observed. |
-| `Hdd` `Remote` | 0 | `PrlVmDev_IsRemote` exported. Meaning not fetched. Observed. |
-| `Hdd` `DiskType` | 1 | Numeric enum sourced (C API v17, `_PRL_HARD_DISK_INTERNAL_FORMAT`): `PHD_PLAIN_HARD_DISK` = 0, `PHD_EXPANDING_HARD_DISK` = 1. So the retained disk is expanding, not plain. The XML-to-enum mapping is inferred. |
-| `Hdd` `InterfaceType` | 2 (SATA) | Numeric enum sourced (C API v17, `PRL_MASS_STORAGE_INTERFACE_TYPE`): `PMS_IDE` = 0, `PMS_SCSI` = 1, `PMS_SATA` = 2, `PMS_NVME` = 3. |
-| USB `EmulatedType` 3, `UsbType` 2, `SystemName` (full retained string) | reviewed camera, every field exact | Not numerically sourced. The whole record and the five history names are observed in the retained config. |
-| `CdRom` `Passthrough` 1 | not a disk | Observed. A passthrough optical drive is not a disk. The guest's `sr0` is ROM and refuses as a disk under `guest_blocks`. |
-| `Hardware` child tags (17) | closed set | Observed in the retained config. The element names exist in `libPrlXmlModel.1.dylib`. |
+| The fixed read itself | `prlctl list --info <vm_id> --json` | Sourced: the Parallels Desktop developers guide documents `list --info` as "Displays the VM configuration information", JSON with `--json`, selection by exact VM ID (retained original, sha256 `79fc5b3c…`). The supported route: Parallels KB 130091 (retained original, sha256 `93198618…`) states the Virtualization SDK is unsupported from Desktop 19.3.0 and directs automation to the CLI. |
+| CLI tool identity | bundle `prlctl`, sha256 `2f61a1c6…` | The genuine binary the retained 747 occurrence ran (its recorded input hash), inside Desktop 27.1.0-58756; the app `Info.plist` carries `CFBundleShortVersionString` 27.1.0 and `CFBundleVersion` 58756. `/usr/local/bin/prlctl` is a symlink to the vendor `parallels_wrapper`, so the canonical bundle path only. |
+| Output environment | `LANG=C`, `PATH=/usr/bin:/bin` | The retained 747 step environment. |
+| `ID`, `Home`, `Home path` | reviewed VM UUID, home with trailing slash, `…/config.pvs` | Observed in all four retained 747 CLI originals. `Home`'s trailing slash is part of the retained grammar. |
+| `State` | `running` | Observed (`stopped`/`running` across the retained steps). The one read is a single snapshot, so the earlier state-before/state-after premise is replaced by the boot bracket. |
+| `Hardware` key set | closed set of nine | Observed in the retained originals: cpu, memory, video, memory_quota, hdd0, cdrom0, usb, net0, sound0. Any other section, a second `hddN`/`cdromN` or a missing one refuses. |
+| `hdd0` fields | enabled, `sata:0`, `…/harddisk1.hdd`, `expanded`, `131072Mb`, `online-compact: on` | Observed in the retained originals, exact. The registered XML independently pins the same disk (device Uuid, Enabled/Connected/Remote/Passthrough, DiskType 1) and the two are bound by the shared image path and the config's device-namespace Uuid staying distinct. |
+| `cdrom0` fields | enabled, `sata:1`, empty image, `disconnected` | Observed, exact. Counted against the config's one `CdRom`; never a disk. |
+| `usb` fields | `enabled: true` only | Observed, exact: the CLI view carries no USB device. The reviewed virtual camera lives in the registered XML, whose camera record and connect history stay exact-field premises. |
+| Other Hardware sections | flat scalar maps | Observed shape. Their values are not inventory premises, but a nested object under an allowed section refuses, so nothing can hide there. |
+| XML fields (config premise) | the retained values | Self-contained under the same sources as before: `Passthrough` meaning sourced (C API v19 `PrlVmDev_SetPassthrough`); `DiskType` 1 = `PHD_EXPANDING_HARD_DISK` and `InterfaceType` 2 = `PMS_SATA` numerically sourced (C API v17); Enabled/Connected/Remote senses observed; camera record and connect-history names observed in the retained config. |
 
 **Replay of the retained 747 originals** (transport observation, outcome sha256 `a99c3ac4…`, boot `6de5909b…`; offline
-derivative, no fresh evidence) through `_run` without a host inventory: `config` pass, `descriptor` pass, `guest_blocks`
-pass. `host_read` refuses. Guest serial `BV9VAH2KP2Q4N4A04SN0` is present in the probe; sysfs sda serial is absent.
-The config device Uuid `{9447f202…}` and the descriptor disk UID `{44b5d35e…}` are different namespaces, and no
-documented rule joins them. Guest `ata1` is not mapped to SATA position 0. A passing source control of the named
-mechanism is not evidence this inventory ran.
+derivative, no fresh evidence) through `_run`: with the genuine retained step-004 CLI stdout (sha256 `08e8245f…`,
+byte-pinned in the association tests) as the host read over retained-shape config/descriptor/guest fixture bytes,
+every premise passes offline; with no host read, `config` pass, `descriptor` pass, `guest_blocks` pass and `host_read`
+refuses. Guest serial `BV9VAH2KP2Q4N4A04SN0` is present in the probe; sysfs sda serial is absent; the CLI inventory
+has no serial. The config device Uuid `{9447f202…}` and the descriptor disk UID `{44b5d35e…}` are different
+namespaces, and no documented rule joins them. Guest `ata1` is not mapped to SATA position 0. A passing source
+control or offline replay of the named mechanism is not evidence this inventory ran.
 
-**SDK surface.** Installed 27.1.0 build 58756, `ParallelsVirtualizationSDK` sha256 `464af6b9…`, 1270 exported symbols
-(`nm -gU`).
+**SDK surface (retained experimental history, not the dispatch path).** The earlier route was
+source-qualified against the installed SDK and never executed: `reader_executable()` was False, no Init, Login or
+SDK read ever ran, and no receipt claims otherwise. Parallels KB 130091 states the Virtualization SDK is unsupported
+from Desktop 19.3.0 and directs automation to the CLI, so the SDK route is retired from the required dispatch path
+(the supported CLI read below replaces it). The survey stays for the record. Installed 27.1.0 build 58756,
+`ParallelsVirtualizationSDK` sha256 `464af6b9…`, 1270 exported symbols (`nm -gU`).
 
 - *Disk serial:* none. Exports whose name contains "serial" (case-insensitive) number 10, all VM, server or serial-port:
   `PrlDispCfg_IsAddSerialPortOutputToReport`, `PrlDispCfg_SetAddSerialPortOutputToReport`,
@@ -384,56 +397,50 @@ mechanism is not evidence this inventory ran.
   `PRL_API_COMMAND_FLAGS`. The 27.1.0-58756 bundle ships no SDK headers.
 
 **Closed enumeration and the trust limit.** A count of one hard disk on each side is not a bijection. Host closure is
-the SDK inventory plus the XML config (Hdd and CdRom subtrees, 17 reviewed tags, no block-capable element under an
-allowed tag). The inventory must carry exactly one `PDE_OPTICAL_DISK`, matching the registered config's one `CdRom`;
-zero, extra or duplicate optical entries refuse. Presentation is the accepted narrow trust, not an independent proof:
-unreported or stale/misreported hypervisor presentation is undetectable. `test_bare_count_of_one_is_not_the_disk`
-still refuses physical, remote, disabled and disconnected disks.
+the CLI configuration inventory plus the XML config (Hdd and CdRom subtrees, 17 reviewed tags, no block-capable
+element under an allowed tag). The CLI Hardware key set is the retained grammar's complete configured-device
+inventory, closed to exactly nine reviewed sections; the inventory must carry exactly one optical section, matching
+the registered config's one `CdRom`; zero, extra or duplicate optical entries refuse, and a nested object under an
+allowed section refuses, so no storage device can hide under a reviewed name. Presentation is the accepted narrow
+trust, not an independent proof: unreported or stale/misreported hypervisor presentation is undetectable.
+`test_bare_count_of_one_is_not_the_disk` still refuses physical, remote, disabled and disconnected disks, and the
+CLI's exact `hdd0` shape refuses any field that differs from the reviewed expanding image at `sata:0`.
 
-**Fixed reader, boot-bound handoff and its exact external limitation** (`linux_disk_inventory.py`). Production argv
-is exactly `/usr/bin/python3 -I -B linux_disk_inventory.py inventory`. Tests inject fixture transport; the helper
-refuses extra arguments, including a fixture path. This occurrence does not run it against the SDK. Session lifecycle
-(`PrlApi_InitEx`/`Deinit`, `PrlSrv_Create`, `PrlSrv_LoginLocal`/`Logoff`) is required to reach the getters and is not
-sourced as read-only. Device-enumeration getters below are sourced as configuration reads. The later occurrence
-still excludes `Set*`/`Connect`/`Disconnect`/`Reg*`/`Unreg*`/`PrlVm_RegEx`.
+**Fixed reader, boot-bound handoff** (`linux_disk_inventory.py`). Production argv is exactly
+`/usr/bin/python3 -I -B linux_disk_inventory.py inventory`. Tests inject fixture transport; the helper refuses extra
+arguments, including a fixture path. This occurrence does not run it: no prlctl process, VM or SDK effect here.
 
-1. Authenticate `ParallelsVirtualizationSDK` bytes and Info.plist (`CFBundleShortVersionString` 27.1.0,
-   `CFBundleVersion`/`PrlBuild` 58756) — local metadata, implemented.
-2. `PrlApi_InitEx(PARALLELS_API_VER, PAM_DESKTOP, 0, 0)` — session setup, not sourced as read-only; refused here:
-   `PARALLELS_API_VER` unsourced (`phase=parallels-api-ver-unsourced`). `PRL_HANDLE_SIZE` is likewise `None`.
-   `reader_executable()` is False and `reader_limitation()` names the exact limitation in one line.
-3. `PrlSrv_Create`, `PrlSrv_LoginLocal` (port 0, `PSL_HIGH_SECURITY`), job wait — session setup; LoginLocal state
-   effect is not fetched. `PrlSrv_GetVmListEx` `nFlags` 0 — read-only sense inferred, remaining native premise.
-4. Per listed handle: `PrlVm_GetConfig`, `PrlVmCfg_GetUuid`, `PrlVmCfg_GetHomePath`. Select the reviewed UUID and
-   home; zero or two matches refuse.
-5. `PrlVm_GetState` before; `PrlVmCfg_GetAllDevices` / `GetDevsCount`; per device `GetType`, `GetIfaceType`,
-   `GetIndex`, `GetSysName`, `GetImagePath`, `IsEnabled`, `IsConnected`, `IsRemote`, `IsPassthrough`,
-   `PrlVmDevHd_GetDiskType` (hard disks), `GetEmulatedType`. `IsConnected`'s config-or-running sense is not stated.
-6. `PrlVm_GetState` after, same guest boot id. Logoff, Deinit, free handles.
+1. Authenticate the installed tool by local metadata only: the canonical bundle path (a symlink or alias refuses,
+   `tool-alias`), the `prlctl` bytes against the retained 747 input pin sha256 `2f61a1c6…` (`tool-hash-mismatch`),
+   and the app `Info.plist` `CFBundleShortVersionString` 27.1.0 / `CFBundleVersion` 58756
+   (`tool-plist-unavailable`, `tool-version-mismatch`). The tool is never executed by this check.
+2. Run the one bounded fixed read through the same supervised process route the caller uses:
+   `prlctl list --info <vm_uuid> --json` in the retained environment (`LANG=C`, `PATH=/usr/bin:/bin`), waited exit,
+   deadline and 64 KiB output cap. A failed, unwaited, over-cap or non-ASCII dispatch refuses with its exact phase.
+3. Parse the retained CLI grammar exactly: a one-VM JSON array (duplicate keys refuse at any depth) naming the
+   reviewed VM ID, `Home` with its trailing slash and `Home path` …/config.pvs, a `State` string, and Hardware with
+   exactly the reviewed nine sections; `hdd0`/`cdrom0`/`usb` exact reviewed shapes; the other reviewed sections flat
+   scalar maps. Any other shape refuses (`inventory-output-grammar`), and a read naming another VM refuses
+   (`inventory-vm-differs`). Top-level metadata outside the premises (Name, OS, Uptime, sharing sections) is not
+   pinned.
+4. On success the helper passes the exact original stdout bytes through and exits 0; on refusal it prints
+   `status=refused phase=…` and exits nonzero. Nothing else is ever emitted.
 
-Output: owned `key=value` grammar, at most 64 KiB, exit 0. It closes the host inventory on the SDK's own parser, not
-the XML one.
-
-**Exact external limitation, and the one supported next read.** The numeric `PARALLELS_API_VER` and the `PRL_HANDLE`
-ABI (size plus the `InitEx`/`PrlSrv_*`/`PrlVmCfg_*` prototypes) are not in the permitted sources: the installed
-27.1.0-58756 bundle ships no SDK headers, and no vendored copy is in this checkout. They are not inferred from the
-Desktop version and Init is not forced. The one concrete supported next read is the Parallels Virtualization SDK
-archive for Desktop 27.1.0-58756 (its `PrlApi.h` and `PrlApiVersion.h` constants and prototypes), read once in a
-separately briefed host-custodied collection step and pinned by archive sha256 before use
-(`linux_disk_inventory.SOURCE_GAP`). No SDK payload is downloaded, installed or executed here. An existing supported
-CLI/config-inventory route was not adopted: `prlctl list --info --json` is not source-proven to carry every field the
-closed enumeration needs (device type, interface, index, `SystemName`, image path, enabled/connected/remote/
-passthrough, disk and emulated type, optical and camera multiplicity), and a route that proves less than the accepted
-premise would be a weaker claim under the same trust.
+The output is the genuine CLI original (at most 64 KiB), not a re-rendering: the caller re-parses the same bytes
+with the same parser, so the stored fact document keeps the exact bounded stdout the dispatch produced.
 
 **Boot-bound handoff (implemented, source-only).** `read_inventory` is the production entry. It binds the helper at
 `pin['tool_path']` to `pin['sha256']`, runs the one bounded dispatch, and accepts the result only inside the caller's
 already authenticated same-VM boot bracket: `read_boot_id()` is called once immediately before and once immediately
-after the dispatch and both originals must equal the authenticated boot id. The selected VM UUID, home and library
-identity are read out of the helper's own output under the pinned grammar, so no caller constant and no manually
-appended `vm`/`boot_ids` field is a reading. Every other outcome raises one exact phase (`READ_PHASES`): missing or
-non-ASCII output, a nonzero or unwaited exit, a timeout, a resource or output-cap refusal, an over-cap or partial
-read, a repeated field and another VM all refuse instead of becoming a host record.
+after the dispatch and both originals must equal the authenticated boot id. The selected VM UUID and home are read
+out of the helper's own output under the pinned grammar, so no caller constant and no manually appended
+`vm`/`boot_ids` field is a reading. The record names the accessor by its exact pinned argv (the documented
+`prlctl list --info --json` configuration read) and carries no boolean that asserts more than the argv, the waited
+exit and the bounded original streams establish; `tool_version`/`desktop_build` are the pinned build, bound by the
+helper's own hash-pinned bytes refusing any installed CLI that is not the pinned tool. Every other outcome raises
+one exact phase (`READ_PHASES`): missing or non-ASCII output, a nonzero or unwaited exit, a timeout, a resource or
+output-cap refusal, an over-cap, partial or malformed read, and another VM all refuse instead of becoming a host
+record.
 
 `linux_disk_association.association_facts` assembles the complete record for one observation stage: that boot-bound
 host read, the current registered-config and descriptor originals, the extent inventory the stage itself observed and
@@ -446,19 +453,21 @@ through production `setup.verify_disk_association`. The outcome's `disk_associat
 (`linux_disk_association.stored_facts`: the raw config, descriptor and host-read stdout/stderr as bounded base64
 envelopes with their own length and digest), because `setup_plan` E7* re-verifies that key as facts and
 `verify_disk_association` decodes it before the same premises run; the reduced verify result is kept beside it as
-`disk_association_result` and is never the stored record. Because the reader is known to refuse, the stage does
-**not dispatch it**: it records `guest_association` as not attempted with the exact limitation and stores no record,
-so no native occurrence is spent on an entry that cannot yet read. Opening that gate is a control (`patch.multiple`
-on the unsourced constants), not a claim a read ran.
+`disk_association_result` and is never the stored record. The reader is executable on the supported CLI route, so
+the stage dispatches it; if the accessor ever reports a limitation again, the stage records `guest_association` as
+not attempted with that exact limitation and stores no record, so no native occurrence is spent on an entry known
+to refuse. The entry-level fixtures keep the handoff unattempted through that documented seam, because their guest
+and config bytes are not the registered identity; the handoff's real dispatch path is exercised with retained-shape
+fixtures and fixture transports, which are test-only and supply no production provenance.
 
 **Helper bytes are pinned independently.** `linux_disk_association.HELPER_SHA256` is a committed literal and
 `PINS['sha256']` binds to it; `read_inventory` verifies the file at the pinned path against it, so a modified helper
 cannot re-pin itself (`helper-bytes-differ`). `inventory.helper_digest` is a content digest for controls only, never
 authority.
 
-Remaining native premises: numeric `PARALLELS_API_VER`; `PRL_HANDLE` ABI size and prototypes; `PrlSrv_LoginLocal`
-state effect; `PrlSrv_GetVmListEx` read-only inferred; `PrlVmDev_IsConnected` config-or-running sense; a later
-authorized genuine occurrence; Stage1 trust; filesystem approval/activation; E12 writer bounds; current candidate.
+Remaining premises: a later authorized genuine occurrence (the fixed read has never run against the live VM in any
+source task); Stage1 trust; filesystem approval/activation; E12 writer bounds; current candidate. The retained
+originals are historical, and no current inventory credit follows from them.
 The numeric C API v17 enumeration values used by the verifier are carried from the earlier accepted review and are
 not re-cited in this checkout; the SDK header archive named above is also the source that would cite them.
 

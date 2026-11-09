@@ -468,42 +468,59 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- Route the fixed Parallels host-inventory reader through the supported CLI
+  instead of the withdrawn SDK (effigy#792). Parallels KB 130091 states the
+  Virtualization SDK is unsupported from Desktop 19.3.0 and directs automation
+  to the CLI, so the one fixed read is now the documented configuration read
+  `prlctl list --info <vm_uuid> --json`: the bundle CLI pinned to the exact
+  binary the retained 747 occurrence ran (Desktop 27.1.0-58756, canonical path
+  only — the `/usr/local/bin` wrapper alias refuses), executed in the retained
+  environment through the existing bounded supervised transport. The helper
+  verifies that tool custody by local metadata, runs the one bounded dispatch,
+  parses the genuine retained 747 JSON grammar exactly (duplicate keys, an
+  unknown or second hardware section, a changed data-disk/optical/USB field and
+  a nested object under an allowed section all refuse) and passes the exact
+  original stdout through, so stored fact documents keep the genuine CLI bytes
+  and the caller re-parses them with the same parser. The reader is now
+  executable and owes no external source; the SDK scaffold (`PARALLELS_API_VER`,
+  `PRL_HANDLE`, `SOURCE_GAP`) is retired from the dispatch path and kept only as
+  recorded history — that route was never executed and no receipt claims
+  otherwise. The association binds the CLI VM/home/hardware to the registered
+  XML, the sole image-backed internal data disk, the reviewed optical/USB
+  shapes and the boot bracket; it carries no host serial and infers none. The
+  inventory remains configuration evidence under the accepted narrow Parallels
+  trust, not independently observed presentation. Controls exercise the genuine
+  retained CLI stdout offline with fixture transport; no prlctl process, VM,
+  SDK or guest effect ran.
+
 - Bind the fixed Parallels host-inventory reader to its boot handoff (effigy#782).
   The helper bytes are pinned by a committed literal in `linux_disk_association`,
   not by a digest the helper computes from itself, so modified helper bytes
   refuse. `read_inventory` takes the stage's already authenticated boot identity
   and a guest boot-original reader, calls it once immediately before and once
-  immediately after the one bounded dispatch, and derives the selected VM UUID,
-  home and library identity from the helper's own output; a changed or malformed
-  bracket, a nonzero or unwaited exit, a timeout, a resource or output-cap
-  refusal, an over-cap, partial or non-ASCII read, a repeated field and another
-  VM all refuse rather than becoming a host record. The diagnostic observation
+  immediately after the one bounded dispatch, and derives the selected VM UUID
+  and home from the helper's own output; a changed or malformed bracket, a
+  nonzero or unwaited exit, a timeout, a resource or output-cap refusal, an
+  over-cap, partial or non-ASCII read, a malformed read and another VM all
+  refuse rather than becoming a host record. The diagnostic observation
   stage now assembles the complete association record inside its same-VM boot
-  bracket and feeds it through production `setup.verify_disk_association`; while
-  the SDK ABI is unsourced it does not dispatch the reader, so no native
-  occurrence is spent on an entry that cannot yet read. The outcome stores that
-  fact document (raw config, descriptor and host-read stdout/stderr as bounded
-  base64 envelopes with length and digest), because `setup_plan` E7* re-verifies
-  that key as facts; the reduced verify result is kept beside it and is never the
-  stored record. The exact external
-  limitation (numeric `PARALLELS_API_VER`, `PRL_HANDLE` ABI and prototypes) and
-  the one supported next read (the 27.1.0-58756 SDK header archive, collected in
-  a separately briefed host-custodied step and pinned by sha256) are recorded in
-  `SOURCE_GAP`. Controls use fixture transport; no SDK Init, VM or guest effect.
+  bracket and feeds it through production `setup.verify_disk_association`. The
+  outcome stores that fact document (raw config, descriptor and host-read
+  stdout/stderr as bounded base64 envelopes with length and digest), because
+  `setup_plan` E7* re-verifies that key as facts; the reduced verify result is
+  kept beside it and is never the stored record. Controls use fixture transport;
+  no VM or guest effect.
 
 - Source-admit the accepted narrow Parallels disk-association mechanism
   `parallels-host-inventory-trust-v1` (effigy#774). For pinned Desktop
   27.1.0-58756 and registered VM `433c9e5b-…`, a complete freshly authenticated
   host inventory is trusted to describe every block device presented to that
   same VM/guest boot; it cannot detect unreported or stale/misreported
-  presentation and is not independent presentation proof. `linux_disk_inventory.py`
-  owns the fixed argv, library pin, allowlisted APIs (session setup separate from
-  sourced configuration getters) and `key=value` grammar. Inventory completeness
+  presentation and is not independent presentation proof. Inventory completeness
   requires exactly one optical device matching the registered config's one CdRom.
-  The helper refuses `PrlApi_InitEx` until numeric `PARALLELS_API_VER` is sourced.
   Serial is an informative observation. Source admission of the verifier is not a
-  fresh read or native credit. Controls inject fixture transport; no VM, SDK Init,
-  or guest effect.
+  fresh read or native credit. Controls inject fixture transport; no VM or guest
+  effect.
 - Private Colima Recipe E producer entry (`linux_recipe_e_proof.py`,
   `test:qualification:linux-recipe-e`, launch
   `qualification:linux:recipe-e-proof-only`) binds an exact current-checkout
