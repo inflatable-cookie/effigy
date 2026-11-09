@@ -1,11 +1,17 @@
 """Fixed Colima guest-helper entry: echo, probe, stage, verify.
 
-Runs inside the guest as `python3 -I -B -c <this file> <operation> <nonce> ...`.
-Stdlib only. The host binds a one-use nonce before launch; this process records
-Linux /proc identity, runs the allowlisted operation as a contained child in the
-same session and group, waits, and emits a length-prefixed envelope. A local
-client exit is not this file's concern. Missing /proc, a setsid child, an
-unreaped child or a remaining group member leaves the trailer unable to close.
+The host launches this file as
+`python3 -I -B -c LAUNCHER <hex(this file)> <operation> <nonce> ...`.
+LAUNCHER is a one-argv exec of the hex payload; the helper bytes that cross the
+Colima route are [0-9a-f] only. Stdlib only. The host binds a one-use nonce
+before launch; this process records Linux /proc identity, runs the allowlisted
+operation as a contained child in the same session and group, waits, and emits a
+length-prefixed envelope. A local client exit is not this file's concern.
+Missing /proc, a setsid child, an unreaped child or a remaining contained
+process leaves the trailer unable to close.
+
+Fixture-only: EFFIGY_GUEST_HELPER_PROC relocates /proc for identity and cmdline
+reads. Production leaves it unset.
 """
 import hashlib
 import json
@@ -17,6 +23,9 @@ import sys
 
 ALLOWED = frozenset({'echo', 'probe', 'stage', 'verify'})
 NONCE = re.compile(r'^[0-9a-f]{64}$')
+HEX = re.compile(r'^[0-9a-f]+$')
+# One argv, no $, backticks, newlines or double quotes. Helper bytes travel as hex.
+LAUNCHER = "exec(__import__('binascii').unhexlify(__import__('sys').argv[1]))"
 MAGIC = b'EFFIGY-COLIMA-GUEST-1\n'
 HEADER_KEYS = ('nonce', 'operation', 'boot_id', 'pid', 'start_time', 'pgid', 'session_id', 'source_sha256')
 TRAILER_KEYS = ('waited_exit', 'child_pid', 'child_start_time', 'child_pgid', 'child_session_id',
@@ -101,58 +110,157 @@ def parse_envelope(data):
     return {'header': header, 'stdout': stdout, 'stderr': stderr, 'trailer': trailer}
 
 
+def resolved_proc(proc=None):
+    """Production reads /proc. Fixtures may relocate it via argument or EFFIGY_GUEST_HELPER_PROC."""
+    if proc:
+        return proc
+    return os.environ.get('EFFIGY_GUEST_HELPER_PROC') or PROC
+
+
+def _stat_fields(text):
+    fields = text[text.rfind(')') + 2:].split()
+    if len(fields) < 20:
+        return None
+    return {'ppid': int(fields[1]), 'pgid': int(fields[2]), 'session_id': int(fields[3]),
+            'start_time': int(fields[19])}
+
+
 def linux_identity(pid, proc=PROC):
     """boot_id plus /proc/<pid>/stat start_time, pgrp and session. Missing /proc refuses."""
-    boot_path = Path(proc) / 'sys/kernel/random/boot_id'
-    stat_path = Path(proc) / str(pid) / 'stat'
+    root = Path(proc)
+    boot_path = root / 'sys/kernel/random/boot_id'
+    stat_path = root / str(pid) / 'stat'
+    if not stat_path.is_file() and int(pid) == os.getpid():
+        stat_path = root / 'self' / 'stat'
     try:
         boot = boot_path.read_text().strip()
         text = stat_path.read_text()
     except OSError as exc:
         raise Refusal('guest boot or process identity unavailable') from exc
-    fields = text[text.rfind(')') + 2:].split()
-    if not boot or len(fields) < 20:
+    parsed = _stat_fields(text)
+    if not boot or parsed is None:
         raise Refusal('guest boot or process identity unavailable')
-    return {'boot_id': boot, 'pid': int(pid), 'pgid': int(fields[2]), 'session_id': int(fields[3]),
-            'start_time': int(fields[19])}
+    return {'boot_id': boot, 'pid': int(pid), 'pgid': parsed['pgid'], 'session_id': parsed['session_id'],
+            'start_time': parsed['start_time']}
 
 
-def group_members(pgid, exclude, proc=PROC):
-    """Pids in this process group. None means the walk was incomplete."""
+def _walk_proc(proc):
     root = Path(proc)
     try:
         entries = list(root.iterdir())
     except OSError:
         return None
-    found = []
+    found = {}
     for entry in entries:
         if not entry.name.isdigit():
-            continue
-        pid = int(entry.name)
-        if pid in exclude:
             continue
         try:
             text = (entry / 'stat').read_text()
         except OSError:
             return None
-        fields = text[text.rfind(')') + 2:].split()
-        if len(fields) < 4:
+        parsed = _stat_fields(text)
+        if parsed is None:
             return None
-        if int(fields[2]) == pgid:
-            found.append(pid)
+        found[int(entry.name)] = parsed
     return found
 
 
-def own_source_sha256():
-    """Bytes of this helper as launched: the -c program via linecache, else the file."""
-    import linecache
-    lines = linecache.getlines('<string>')
-    if lines:
-        return hashlib.sha256(''.join(lines).encode()).hexdigest()
-    path = sys.argv[0] if sys.argv else ''
-    if path not in ('-c', '', '<stdin>') and os.path.isfile(path):
-        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+def group_members(pgid, exclude, proc=PROC):
+    """Pids in this process group. None means the walk was incomplete."""
+    walked = _walk_proc(proc)
+    if walked is None:
+        return None
+    return [pid for pid, info in walked.items() if pid not in exclude and info['pgid'] == pgid]
+
+
+def contained_leftovers(parent, child_pid, exclude, proc=PROC):
+    """Pids still in the parent's group or session, or descended from the child. None if the walk failed."""
+    walked = _walk_proc(proc)
+    if walked is None:
+        return None
+    leftovers = []
+    for pid, info in walked.items():
+        if pid in exclude:
+            continue
+        if info['pgid'] == parent['pgid'] or info['session_id'] == parent['session_id']:
+            leftovers.append(pid)
+            continue
+        cur, seen = pid, set()
+        while cur and cur not in seen:
+            seen.add(cur)
+            if cur == child_pid:
+                leftovers.append(pid)
+                break
+            nxt = walked.get(cur)
+            if nxt is None:
+                break
+            cur = nxt['ppid']
+    return leftovers
+
+
+def _orig_argv_parts(proc=PROC):
+    orig = getattr(sys, 'orig_argv', None)
+    if orig:
+        return [p.encode() if isinstance(p, str) else p for p in orig]
+    path = Path(proc) / 'self' / 'cmdline'
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    parts = raw.split(b'\0')
+    if parts and parts[-1] == b'':
+        parts = parts[:-1]
+    return parts or None
+
+
+def _hex_payload(value):
+    if isinstance(value, bytes):
+        try:
+            value = value.decode('ascii')
+        except UnicodeDecodeError:
+            return None
+    if not isinstance(value, str) or not HEX.fullmatch(value):
+        return None
+    try:
+        return bytes.fromhex(value)
+    except ValueError:
+        return None
+
+
+def own_source_bytes(proc=PROC):
+    """Bytes of this helper as launched: hex payload after LAUNCHER, else the -c program, else the file.
+
+    `python3 -c LAUNCHER <hex> …` leaves the hex in sys.argv[1] even when orig_argv
+    (3.10+) and /proc/self/cmdline are absent, which is the Darwin 3.9 host.
+    """
+    parts = _orig_argv_parts(proc)
+    if parts:
+        try:
+            i = parts.index(b'-c')
+        except ValueError:
+            i = -1
+        if 0 <= i < len(parts) - 1:
+            program = parts[i + 1]
+            if program == LAUNCHER.encode():
+                if i + 2 >= len(parts):
+                    raise Refusal('helper source bytes unavailable')
+                decoded = _hex_payload(parts[i + 2])
+                if decoded is None:
+                    raise Refusal('helper source bytes unavailable')
+                return decoded
+            return program
+    path = globals().get('__file__')
+    if path and path not in ('<string>', '-c') and os.path.isfile(path):
+        return Path(path).read_bytes()
+    if sys.argv and sys.argv[0] in ('-c', '') and len(sys.argv) > 1:
+        decoded = _hex_payload(sys.argv[1])
+        if decoded is not None:
+            return decoded
     raise Refusal('helper source bytes unavailable')
+
+
+def own_source_sha256(proc=PROC):
+    return hashlib.sha256(own_source_bytes(proc=proc)).hexdigest()
 
 
 def evaluate_guest_closure(intent, header, trailer, inner_stdout, inner_stderr):
@@ -230,7 +338,7 @@ def run_contained(argv, stdin_bytes=None, proc=PROC):
         child_id = {'pid': child.pid, 'start_time': None, 'pgid': None, 'session_id': None, 'boot_id': None}
     out, err = child.communicate(stdin_bytes)
     waited = child.returncode
-    remaining = group_members(parent['pgid'], exclude={os.getpid()}, proc=proc)
+    remaining = contained_leftovers(parent, child.pid, exclude={os.getpid()}, proc=proc)
     trailer = {
         'waited_exit': waited,
         'child_pid': child_id['pid'],
@@ -238,7 +346,7 @@ def run_contained(argv, stdin_bytes=None, proc=PROC):
         'child_pgid': child_id['pgid'],
         'child_session_id': child_id['session_id'],
         'group_empty': remaining == [],
-        'unreaped': waited is None,
+        'unreaped': remaining is None,
         'stdout_sha256': hashlib.sha256(out).hexdigest(),
         'stderr_sha256': hashlib.sha256(err).hexdigest(),
     }
@@ -246,13 +354,17 @@ def run_contained(argv, stdin_bytes=None, proc=PROC):
 
 
 def operation_argv(argv):
-    """Strip the launcher. `python3 -c SOURCE op ...` leaves argv[0] == '-c'."""
-    if argv and argv[0] == '-c':
-        return argv[1:]
-    return argv[1:]
+    """Strip the python launcher and the hex payload. `-c HEX op ...` and `script.py op ...` both yield `op ...`."""
+    args = list(argv or [])
+    if args:
+        args = args[1:]
+    if args and args[0] not in ALLOWED and len(args) >= 2 and args[1] in ALLOWED:
+        args = args[1:]
+    return args
 
 
-def main(argv=None):
+def main(argv=None, proc=None):
+    proc = resolved_proc(proc)
     args = operation_argv(list(argv if argv is not None else sys.argv))
     if len(args) < 2:
         raise Refusal('fixed guest helper requires operation and nonce')
@@ -261,11 +373,11 @@ def main(argv=None):
         raise Refusal('step is not a fixed Colima guest helper')
     if not isinstance(nonce, str) or not NONCE.fullmatch(nonce):
         raise Refusal('nonce must be 256-bit lowercase hexadecimal')
-    source_sha = own_source_sha256()
+    source_sha = own_source_sha256(proc=proc)
     stdin_bytes = None
     if operation == 'stage':
         stdin_bytes = sys.stdin.buffer.read(8193)
-    parent, out, err, trailer = run_contained(inner_argv(operation, rest), stdin_bytes=stdin_bytes)
+    parent, out, err, trailer = run_contained(inner_argv(operation, rest), stdin_bytes=stdin_bytes, proc=proc)
     header = dict(nonce=nonce, operation=operation, source_sha256=source_sha,
                   boot_id=parent['boot_id'], pid=parent['pid'], start_time=parent['start_time'],
                   pgid=parent['pgid'], session_id=parent['session_id'])

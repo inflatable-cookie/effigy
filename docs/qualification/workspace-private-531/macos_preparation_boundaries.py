@@ -47,7 +47,7 @@ BINDINGS = dict(
     probe_source='print(1)', stage_source='print(2)', verify_source='print(3)',
     check_source=prep.CHECK_SOURCE, route_echo=prep.ROUTE_ECHO, image_id=IMAGE_ID,
     owned_container_ids=['abc123', 'def456'], owned_image_id=IMAGE_ID,
-    owned_volume_name=VOLUME, guest_helper_source='guest-helper-source',
+    owned_volume_name=VOLUME, guest_helper_hex='ab' * 8,
     guest_nonce='ab' * 32)
 
 
@@ -667,7 +667,9 @@ class RouteEchoOrder(unittest.TestCase):
         echo = next(s for s in stage_by_id('C2')['steps'] if s['id'] == 'c2-route-echo')
         self.assertEqual(echo['argv'][-1], '{route_echo}')
         self.assertEqual(echo['argv'][-3:-1], ['echo', '{guest_nonce}'])
-        self.assertIn('{guest_helper_source}', echo['argv'])
+        self.assertIn('{guest_helper_hex}', echo['argv'])
+        self.assertEqual(echo['argv'][echo['argv'].index('-c') + 1],
+                         "exec(__import__('binascii').unhexlify(__import__('sys').argv[1]))")
 
 
 class DeliveryParsers(unittest.TestCase):

@@ -123,8 +123,8 @@ def closed_guest(inner, err=b'', exit_code=0, **fields):
     def route(kw):
         argv = kw['argv']
         c_idx = argv.index('-c')
-        operation = fields.get('operation', argv[c_idx + 2])
-        nonce = fields.get('nonce', argv[c_idx + 3])
+        operation = fields.get('operation', argv[c_idx + 3])
+        nonce = fields.get('nonce', argv[c_idx + 4])
         payload = inner(kw) if callable(inner) else inner
         extra = {k: v for k, v in fields.items() if k not in ('operation', 'nonce')}
         envelope = closed_envelope(operation, nonce, payload, err, **extra)
@@ -953,9 +953,9 @@ class HelperDispatchTests(Fixture):
                          'af74047f640111907930273f7cc7a2b46eac4cb27943f0a512fccf56a1b3b322')
         self.assertEqual(ex.sha_file(ex.GUEST_CONTEXT_PATH), ex.GUEST_CONTEXT_SHA256)
         sources = ex.guest_source_bindings()
-        self.assertEqual(set(sources), {'probe_source', 'stage_source', 'verify_source', 'guest_helper_source'})
+        self.assertEqual(set(sources), {'probe_source', 'stage_source', 'verify_source', 'guest_helper_hex'})
         self.assertEqual(sources['probe_source'], ex.GUEST_CONTEXT_PATH.read_text())
-        self.assertEqual(sources['guest_helper_source'], ex.GUEST_HELPER_PATH.read_text())
+        self.assertEqual(sources['guest_helper_hex'], ex.GUEST_HELPER_PATH.read_bytes().hex())
 
     def test_read_iidfile_accepts_one_sha256_and_refuses_a_tag(self):
         good = self.write('iid', IMAGE + '\n')
@@ -1764,8 +1764,10 @@ class DispatchSweepTests(Fixture):
         self.assertEqual(receipt['guest_closure'], 'closed')
         self.assertFalse(receipt['closure_simulated'])
         self.assertEqual(calls[1][1][-1], prep.ROUTE_ECHO)  # the echo still carries the route constant last
-        self.assertEqual(calls[1][1][calls[1][1].index('-c') + 1], ex.GUEST_HELPER_PATH.read_text())
-        self.assertNotIn(ex.GUEST_CONTEXT_PATH.read_text(), calls[1][1])  # probe source is not on the echo
+        echo_argv = calls[1][1]
+        self.assertEqual(echo_argv[echo_argv.index('-c') + 1], helper.LAUNCHER)
+        self.assertEqual(echo_argv[echo_argv.index('-c') + 2], ex.GUEST_HELPER_PATH.read_bytes().hex())
+        self.assertNotIn(ex.GUEST_CONTEXT_PATH.read_text(), echo_argv)  # probe source is not on the echo
         self.assertEqual(calls[2][1][-1], ex.GUEST_CONTEXT_PATH.read_text())
         echoed = Path(self.stage_dir('C2', 'act-sweep-c2') + '/c2-route-echo/stdout')
         self.assertEqual(echoed.read_bytes(), prep.ROUTE_ECHO.encode())
@@ -1869,8 +1871,9 @@ class DispatchSweepTests(Fixture):
         self.assertFalse(receipt['closure_simulated'])
         self.assertEqual([c[0] for c in calls], ['c3-stage-context'])
         argv = calls[0][1]
-        self.assertEqual(argv[argv.index('-c') + 1], ex.GUEST_HELPER_PATH.read_text())
-        self.assertEqual(argv[argv.index('-c') + 2], 'stage')
+        self.assertEqual(argv[argv.index('-c') + 1], helper.LAUNCHER)
+        self.assertEqual(argv[argv.index('-c') + 2], ex.GUEST_HELPER_PATH.read_bytes().hex())
+        self.assertEqual(argv[argv.index('-c') + 3], 'stage')
         self.assertEqual(argv[-2], ex.GUEST_CONTEXT_PATH.read_text())
         self.assertEqual(argv[-1], spec)
         context = json.loads(Path(self.stage_dir('C3', 'act-c3-guest-1') + '/c3-stage-context/stdout').read_text())
@@ -2028,8 +2031,9 @@ class DispatchSweepTests(Fixture):
         self.assertEqual([c[0] for c in calls], ['c2-colima-status', 'c2-route-echo', 'c2-guest-probe'])
         self.assert_dispatch('C2', calls, self.run_bindings())
         probe_argv = calls[2][1]
-        self.assertEqual(probe_argv[probe_argv.index('-c') + 1], ex.GUEST_HELPER_PATH.read_text())
-        self.assertEqual(probe_argv[probe_argv.index('-c') + 2], 'probe')
+        self.assertEqual(probe_argv[probe_argv.index('-c') + 1], helper.LAUNCHER)
+        self.assertEqual(probe_argv[probe_argv.index('-c') + 2], ex.GUEST_HELPER_PATH.read_bytes().hex())
+        self.assertEqual(probe_argv[probe_argv.index('-c') + 3], 'probe')
         self.assertEqual(probe_argv[-1], ex.GUEST_CONTEXT_PATH.read_text())
         self.assertEqual(calls[1][1][-1], prep.ROUTE_ECHO)  # the echo carries only the route constant
         by_id = {x['id']: x for x in receipt['steps']}
@@ -2484,8 +2488,9 @@ class PinnedProbeTests(Fixture):
         step = ex.resolve_step(steps['c2-guest-probe'], dict(self.bindings, **ex.guest_source_bindings(),
                                                             guest_nonce='ab' * 32))
         argv = step['argv']
-        self.assertEqual(argv[argv.index('-c') + 1], ex.GUEST_HELPER_PATH.read_text())
-        self.assertEqual(argv[argv.index('-c') + 2], 'probe')
+        self.assertEqual(argv[argv.index('-c') + 1], helper.LAUNCHER)
+        self.assertEqual(argv[argv.index('-c') + 2], ex.GUEST_HELPER_PATH.read_bytes().hex())
+        self.assertEqual(argv[argv.index('-c') + 3], 'probe')
         self.assertEqual(argv[-1], ex.GUEST_CONTEXT_PATH.read_text())
         if sys.platform != 'darwin':
             self.skipTest('the fail-closed proof runs on the macOS host')
@@ -2498,7 +2503,10 @@ class PinnedProbeTests(Fixture):
                                      environment={'PATH': '/usr/bin:/bin', 'HOME': home})
         self.assertNotEqual(result['waited_exit'], 0)
         self.assertEqual(result['streams']['stdout']['bytes'], 0)  # no envelope is emitted without /proc
-        self.assertIn(b'refused:', Path(root, 'stderr').read_bytes())
+        stderr = Path(root, 'stderr').read_bytes()
+        self.assertIn(b'refused:', stderr)
+        self.assertIn(b'guest boot or process identity unavailable', stderr)
+        self.assertNotIn(b'helper source bytes unavailable', stderr)
 
 
 class FreshChainRootTests(Fixture):
@@ -3978,6 +3986,9 @@ class GuestClosureNegativeTests(Fixture):
                 'c2-route-echo': closed_guest(prep.ROUTE_ECHO, boot_id='boot-1'),
                 'c2-guest-probe': closed_guest(json.dumps({'parent': parent}), boot_id='boot-2'),
             }), 'act-c2-boot-drift')
+        receipt = json.loads(Path(self.stage_dir('C2', 'act-c2-boot-drift') + '/stage-receipt.json').read_text())
+        self.assertEqual(receipt['closure'], 'refused')
+        self.assertEqual(receipt['guest_closure'], 'unknown')
 
     def test_duplicate_nonce_refuses_on_the_second_guest_step(self):
         parent = self.guest_parent()

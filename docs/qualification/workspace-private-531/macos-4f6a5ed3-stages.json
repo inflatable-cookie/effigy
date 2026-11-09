@@ -52,7 +52,7 @@
     "verify_tool_sha",
     "verify_tranche_summary"
   ],
-  "manifest": "macos-4f6a5ed3-stages-r6",
+  "manifest": "macos-4f6a5ed3-stages-r7",
   "observed_metadata": {
     "child": "linux-artifact-preparation.l0tx7tam/macos-metadata-rfzuiadz",
     "note": "local metadata only; not a running-engine or guest observation",
@@ -65,7 +65,7 @@
     "image_context.py": "af74047f640111907930273f7cc7a2b46eac4cb27943f0a512fccf56a1b3b322",
     "image_prepare.py": "882f9e44e7acd87e5ab94237feb7f19a452a3bbb86dd1cf208f311129847964f",
     "macos_metadata_tranche.py": "c204bfaa87c2534da05b62c5f10beda5d3196216ce40d6afffeb8dec2ef9d1a6",
-    "macos_preparation.py": "2d946e07679bfac8c9b621352403ef38cd232be8128e664f0152a73ada9575e9"
+    "macos_preparation.py": "81efb43dac47d669612e0309c7eeb4edae94bc8a6eaed218c583e01ffb9dd336"
   },
   "proof_entry": {
     "baseline": {
@@ -155,7 +155,7 @@
     "desktop_host",
     "desktop_iidfile",
     "guest_context",
-    "guest_helper_source",
+    "guest_helper_hex",
     "guest_iidfile",
     "guest_nonce",
     "guest_spec",
@@ -400,7 +400,8 @@
             "-I",
             "-B",
             "-c",
-            "{guest_helper_source}",
+            "exec(__import__('binascii').unhexlify(__import__('sys').argv[1]))",
+            "{guest_helper_hex}",
             "echo",
             "{guest_nonce}",
             "{route_echo}"
@@ -449,7 +450,8 @@
             "-I",
             "-B",
             "-c",
-            "{guest_helper_source}",
+            "exec(__import__('binascii').unhexlify(__import__('sys').argv[1]))",
+            "{guest_helper_hex}",
             "probe",
             "{guest_nonce}",
             "{probe_source}"
@@ -520,7 +522,8 @@
             "-I",
             "-B",
             "-c",
-            "{guest_helper_source}",
+            "exec(__import__('binascii').unhexlify(__import__('sys').argv[1]))",
+            "{guest_helper_hex}",
             "stage",
             "{guest_nonce}",
             "{stage_source}",
@@ -594,7 +597,8 @@
             "-I",
             "-B",
             "-c",
-            "{guest_helper_source}",
+            "exec(__import__('binascii').unhexlify(__import__('sys').argv[1]))",
+            "{guest_helper_hex}",
             "verify",
             "{guest_nonce}",
             "{verify_source}",

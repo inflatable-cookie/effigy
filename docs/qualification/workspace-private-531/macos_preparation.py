@@ -47,12 +47,12 @@ SLOTS = frozenset({
     'token', 'guest_spec', 'guest_verify_spec', 'guest_context', 'guest_iidfile', 'probe_source',
     'stage_source', 'verify_source', 'check_source', 'route_echo', 'image_id',
     'owned_container_ids', 'owned_image_id', 'owned_volume_name',
-    'guest_helper_source', 'guest_nonce',
+    'guest_helper_hex', 'guest_nonce',
 })
 # Arguments that carry multi-line or JSON source through the Colima shell route.
+# guest_helper_hex is [0-9a-f] only and is not a source slot.
 SOURCE_SLOTS = frozenset({
     'probe_source', 'stage_source', 'verify_source', 'check_source', 'guest_spec', 'guest_verify_spec',
-    'guest_helper_source',
 })
 # Named host-side actions. Each is a pure or receipt-producing step, never a shell string.
 HELPERS = frozenset({
@@ -561,8 +561,8 @@ def check_effect_stage(stage):
 
 def check_route_order(stages):
     """No argument carrying source or JSON crosses the Colima shell route before c2 has proven
-    the route echo byte-for-byte. The echo itself may carry the pinned guest-helper source; other
-    source slots still cannot precede the compare. Desktop argv is exec'd directly and needs no
+    the route echo byte-for-byte. The helper itself crosses as hex plus a pinned one-argv launcher
+    (no `$`, backticks, newlines or double quotes). Desktop argv is exec'd directly and needs no
     route proof."""
     proven = False
     for stage in stages:
@@ -572,8 +572,6 @@ def check_route_order(stages):
             if step.get('kind') == 'exec' and step['argv'][0] == COLIMA and 'ssh' in step['argv']:
                 slots = set(SLOT.findall(' '.join(step['argv'])))
                 forbidden = slots & SOURCE_SLOTS
-                if step['id'] == 'c2-route-echo':
-                    forbidden = forbidden - {'guest_helper_source'}
                 if forbidden:
                     require(proven, f'{step["id"]}: source or JSON argument before the route echo proof')
     return True

@@ -43,7 +43,7 @@ HELPER_PATH = HERE / 'macos_stage_helper.py'
 PROOF_PATH = HERE / 'macos_stage_proof.py'
 REPO_ROOT = HERE.parents[2]
 GUEST_CONTEXT_SHA256 = '713cb10ea8ce2d5c15422650b3aa8abfe45ef5de1b0fa885219b70d3cab0f873'
-GUEST_HELPER_SHA256 = 'fcea577e8ff578cd1241f545a6e10cd5fdab1de282283567e9228732cb2fab83'
+GUEST_HELPER_SHA256 = '6efdc39d2336309ec26300ef28c1b7eeb2a78d1799dc25a42fc53b7d62496c7c'
 # Program files whose bytes the GO binds. Changing any of them after activation refuses before dispatch.
 PROGRAM_FILES = (HERE / 'macos_stage_executor.py', HERE / 'macos_preparation.py',
                  HERE / 'preparation_stage.py', HERE / 'preparation_resources.py', GUEST_CONTEXT_PATH,
@@ -124,7 +124,7 @@ PINNED_SOURCE_BINDINGS = {'probe_source': 'probe', 'stage_source': 'stage', 'ver
 # pinned guest helper. guest_nonce is minted once per fixed guest step before launch.
 DERIVED_BINDINGS = ('image_id', 'owned_container_ids', 'owned_image_id', 'owned_volume_name', 'token32',
                     'guest_spec', 'guest_verify_spec', 'guest_context', 'guest_iidfile', 'guest_nonce')
-NOT_SUPPLIED = DERIVED_BINDINGS + tuple(PINNED_SOURCE_BINDINGS) + ('guest_helper_source',)
+NOT_SUPPLIED = DERIVED_BINDINGS + tuple(PINNED_SOURCE_BINDINGS) + ('guest_helper_hex',)
 PLAN_PLACEHOLDERS = {k: f'<{k}>' for k in NOT_SUPPLIED}
 
 
@@ -137,7 +137,7 @@ def guest_source_bindings():
     if hashlib.sha256(helper).hexdigest() != GUEST_HELPER_SHA256:
         raise Refusal('the pinned Colima guest helper differs from its sha256: refuse')
     text = raw.decode()
-    return dict({slot: text for slot in PINNED_SOURCE_BINDINGS}, guest_helper_source=helper.decode())
+    return dict({slot: text for slot in PINNED_SOURCE_BINDINGS}, guest_helper_hex=helper.hex())
 
 
 def build_guest_spec(probe_parent, token32):
@@ -363,7 +363,7 @@ RUNTIME_DERIVED = {
     'probe_source': 'pinned: macos_guest_context.py probe (sha256 pinned in macos_stage_executor.py)',
     'stage_source': 'pinned: macos_guest_context.py stage (same pin)',
     'verify_source': 'pinned: macos_guest_context.py verify (same pin)',
-    'guest_helper_source': 'pinned: macos_guest_helper.py echo/probe/stage/verify (sha256 pinned in macos_stage_executor.py)',
+    'guest_helper_hex': 'pinned: macos_guest_helper.py as lowercase hex; -c program is guest_helper.LAUNCHER',
     'guest_nonce': 'minted once per fixed guest step before launch; bound into argv and the guest-intent record',
     'token32': 'minted once by the C0 origin step (mint_token32), read back from the verified C0 receipt by '
                'origin_token32 before C3 and C4 claim',
@@ -1200,11 +1200,13 @@ def fetch_colima_image(destination, pin, *, opener, checkpoint=None):
         conn.close()
 
 
-def _stage_guest_closure(steps_out):
-    """Stage-level guest closure: closed only when every dispatched guest step authenticated closed."""
+def _stage_guest_closure(steps_out, stage_closure='closed'):
+    """Stage-level guest closure: closed only when the stage closed and every dispatched guest step authenticated closed."""
     guest_steps = [step for step in steps_out if step.get('guest')]
     if not guest_steps:
         return 'not-applicable'
+    if stage_closure != 'closed':
+        return 'unknown'
     dispatched = [step for step in guest_steps if step.get('closure') != 'not_dispatched']
     if dispatched and all(step.get('closure') == 'closed' and step.get('guest_closure') == 'closed'
                           for step in dispatched):
@@ -1249,18 +1251,25 @@ def bind_guest_intent(ctx, step_id, step_root):
 
 
 def check_guest_helper_argv(resolved, intent):
-    """The rendered -c program must be the pinned helper, with this step's operation and nonce."""
+    """The rendered -c program must be the pinned launcher, then hex of the pinned helper, then operation and nonce."""
     argv = resolved['argv']
     try:
         c_idx = argv.index('-c')
     except ValueError as exc:
         raise Refusal(f"{resolved['id']}: fixed guest helper is not a python -c launch") from exc
-    source = argv[c_idx + 1]
-    if hashlib.sha256(source.encode()).hexdigest() != GUEST_HELPER_SHA256:
+    if c_idx + 4 >= len(argv):
+        raise Refusal(f"{resolved['id']}: fixed guest helper argv is short")
+    if argv[c_idx + 1] != guest_helper.LAUNCHER:
+        raise Refusal('guest helper launcher differs from its pin')
+    try:
+        helper_bytes = bytes.fromhex(argv[c_idx + 2])
+    except ValueError as exc:
+        raise Refusal('guest helper hex is not hexadecimal') from exc
+    if hashlib.sha256(helper_bytes).hexdigest() != GUEST_HELPER_SHA256:
         raise Refusal('guest helper source differs from its pin')
-    if argv[c_idx + 2] != intent['operation']:
+    if argv[c_idx + 3] != intent['operation']:
         raise Refusal('guest helper operation differs from the bound intent')
-    if argv[c_idx + 3] != intent['nonce']:
+    if argv[c_idx + 4] != intent['nonce']:
         raise Refusal('guest nonce not bound in argv')
 
 
@@ -2010,7 +2019,7 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                     engine_id=ctx['engine_id'], receipts=ctx['receipts'], steps=steps_out, origin=origin,
                     closure_simulated=bool(TEST_SEAM['simulate_guest_closure'] or force_simulation),
                     pinned=sorted(pins.items),
-                    guest_closure=_stage_guest_closure(steps_out))
+                    guest_closure=_stage_guest_closure(steps_out, closure))
         try:
             primitive.record(stage_root + '/stage-receipt.json', body)
             dfd = private_dir(stage_root)

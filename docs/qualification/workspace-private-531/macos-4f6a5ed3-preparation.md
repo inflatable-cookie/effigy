@@ -1,16 +1,28 @@
 # macOS 4f6a5ed3 preparation: Colima and Desktop stages
 
 Preparation only. It arms nothing and gives no proof credit. The executable plan is
-[macos-4f6a5ed3-stages.json](macos-4f6a5ed3-stages.json), manifest revision r6 (r6 section below). Each stage
+[macos-4f6a5ed3-stages.json](macos-4f6a5ed3-stages.json), manifest revision r7 (r7 section below). Each stage
 needs its own fresh GO under standing decision `63c338e2-1c50-435e-9783-e78e9d8558e6` v2,
 naming the stage, the manifest, source and input hashes, the engine identity and a window
 of at most 1200 seconds. The standing decision is not a blanket authority, and no GO is
 recorded here.
 
+## Revision r7 (supersedes r6 for the helper launch form; manifest `macos-4f6a5ed3-stages-r7`)
+
+The helper still establishes genuine guest closure. It no longer crosses the Colima route as Python
+source. The `-c` program is the pinned one-argv launcher
+`exec(__import__('binascii').unhexlify(__import__('sys').argv[1]))` (no `$`, backticks, newlines or double quotes).
+The helper bytes follow as lowercase hex. `own_source_sha256` hashes that decoded payload via
+`sys.orig_argv`, `/proc/self/cmdline`, or the `-c` hex in `sys.argv` (Darwin 3.9 has no `orig_argv`).
+A descendant that leaves the original group or session, or
+whose ppid chain still reaches the waited child, is a leftover: the trailer cannot close. A stage that
+refuses after a closed guest step reports stage-level `guest_closure: unknown`.
+
 ## Revision r6 (supersedes r5 for C2 and C3; manifest `macos-4f6a5ed3-stages-r6`)
 
 C2 and C3 are admitted. Their Colima `ssh` echo, probe and stage steps, and C4's verify step, run the pinned
-`macos_guest_helper.py` as `python3 -I -B -c <source> <operation> <nonce> …`. The helper records Linux `/proc`
+`macos_guest_helper.py`. r7 launches it as the pinned launcher plus hex; r6 used `-c <source>` directly.
+The helper records Linux `/proc`
 identity, runs one allowlisted payload as a contained child in the same session and group, waits, and emits a
 length-prefixed envelope. The host authenticates that envelope against a durable one-use intent written before
 launch: nonce, operation, helper source hash, boot, waited child exit 0, same session and group, empty group.
@@ -549,7 +561,8 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
   require the chain engine to be `ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd`, the engine 690 observed. An empty or
   default `docker info` template refuses.
 - **Guest sources (pinned).** The C2 echo, C2 probe, C3 stage and C4 verify run the reviewed
-  `macos_guest_helper.py` (sha256 `fcea577e…`) as `python3 -I -B -c <helper> <operation> <nonce> …`.
+  `macos_guest_helper.py` (sha256 `6efdc39d…`) as
+  `python3 -I -B -c <LAUNCHER> <hex(helper)> <operation> <nonce> …`.
   Probe, stage and verify then run the reviewed `macos_guest_context.py` (sha256 `713cb10e…`) as the
   contained child. That file is a copy of the historical `image_context.py` (sha256 `af74047f…`,
   unchanged), with one contract change: `stage` also reports the parent binding, so the C4 verify spec

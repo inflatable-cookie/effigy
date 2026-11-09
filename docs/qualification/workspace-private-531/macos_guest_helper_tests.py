@@ -8,8 +8,11 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys_path_insert = __import__('sys').path.insert(0, str(HERE))
@@ -19,11 +22,11 @@ import macos_stage_executor as ex  # noqa: E402
 
 
 NONCE = 'ab' * 32
-SOURCE = 'fcea577e8ff578cd1241f545a6e10cd5fdab1de282283567e9228732cb2fab83'
+SOURCE = '6efdc39d2336309ec26300ef28c1b7eeb2a78d1799dc25a42fc53b7d62496c7c'
 
 
-def fake_stat(pid, pgid, session, start):
-    fields = ['S', '0', str(pgid), str(session)] + ['0'] * 16
+def fake_stat(pid, pgid, session, start, ppid=0):
+    fields = ['S', str(ppid), str(pgid), str(session)] + ['0'] * 16
     fields[19] = str(start)
     return f'{pid} (python3) ' + ' '.join(fields) + '\n'
 
@@ -126,6 +129,11 @@ class ClosureEvaluationTests(unittest.TestCase):
 
 
 class InnerArgvTests(unittest.TestCase):
+    def test_hex_launcher_argv_yields_the_operation(self):
+        hex_arg = 'ab' * 8
+        self.assertEqual(helper.operation_argv(['-c', hex_arg, 'echo', NONCE, 'x'])[:2], ['echo', NONCE])
+        self.assertEqual(helper.operation_argv(['-c', 'echo', NONCE, 'x'])[:2], ['echo', NONCE])
+
     def test_echo_probe_stage_verify_shapes(self):
         echo = helper.inner_argv('echo', ['payload'])
         self.assertEqual(echo[-1], 'payload')
@@ -156,10 +164,10 @@ class ProcIdentityTests(unittest.TestCase):
         (self.proc / 'sys/kernel/random').mkdir(parents=True)
         (self.proc / 'sys/kernel/random/boot_id').write_text('boot-fixture\n')
 
-    def add_pid(self, pid, pgid, session, start):
+    def add_pid(self, pid, pgid, session, start, ppid=0):
         path = self.proc / str(pid)
         path.mkdir()
-        (path / 'stat').write_text(fake_stat(pid, pgid, session, start))
+        (path / 'stat').write_text(fake_stat(pid, pgid, session, start, ppid=ppid))
 
     def test_linux_identity_reads_boot_and_stat(self):
         self.add_pid(7, 7, 7, 4242)
@@ -184,9 +192,63 @@ class ProcIdentityTests(unittest.TestCase):
         self.add_pid(4, 8, 8, 3)
         self.assertEqual(sorted(helper.group_members(9, exclude={1}, proc=str(self.proc))), [3])
 
+    def test_setsid_descendant_is_a_contained_leftover(self):
+        parent = {'pgid': 10, 'session_id': 10}
+        self.add_pid(10, 10, 10, 1, ppid=1)
+        # child 11 is reaped; descendant 12 called setsid (own group and session) but ppid still 11
+        self.add_pid(12, 12, 12, 3, ppid=11)
+        leftover = helper.contained_leftovers(parent, 11, exclude={10}, proc=str(self.proc))
+        self.assertEqual(leftover, [12])
+
     def test_pinned_source_hash_matches_the_executor_pin(self):
         self.assertEqual(hashlib.sha256(ex.GUEST_HELPER_PATH.read_bytes()).hexdigest(), ex.GUEST_HELPER_SHA256)
         self.assertEqual(ex.GUEST_HELPER_SHA256, SOURCE)
+
+    def test_orig_argv_c_program_is_the_helper_source(self):
+        source = ex.GUEST_HELPER_PATH.read_text()
+        fake = [sys.executable, '-I', '-B', '-c', source, 'echo', NONCE, 'x']
+        with mock.patch.object(sys, 'orig_argv', fake, create=True):
+            self.assertEqual(helper.own_source_sha256(), SOURCE)
+
+    def test_launcher_hex_argv_hashes_the_decoded_helper(self):
+        raw = ex.GUEST_HELPER_PATH.read_bytes()
+        fake = [sys.executable, '-I', '-B', '-c', helper.LAUNCHER, raw.hex(), 'echo', NONCE, 'x']
+        with mock.patch.object(sys, 'orig_argv', fake, create=True):
+            self.assertEqual(helper.own_source_sha256(), SOURCE)
+
+    def test_c_launch_echo_emits_an_envelope(self):
+        raw = ex.GUEST_HELPER_PATH.read_bytes()
+        self_dir = self.proc / 'self'
+        self_dir.mkdir()
+        (self_dir / 'stat').write_text(fake_stat(1, 1, 1, 1))
+        cmdline = b'\0'.join([
+            sys.executable.encode(), b'-I', b'-B', b'-c', helper.LAUNCHER.encode(),
+            raw.hex().encode(), b'echo', NONCE.encode(), b'payload', b'',
+        ])
+        (self_dir / 'cmdline').write_bytes(cmdline)
+        env = dict(os.environ)
+        env['EFFIGY_GUEST_HELPER_PROC'] = str(self.proc)
+        completed = subprocess.run(
+            [sys.executable, '-I', '-B', '-c', helper.LAUNCHER, raw.hex(), 'echo', NONCE, 'payload'],
+            capture_output=True, env=env, cwd=self.tmp)
+        self.assertNotIn(b'helper source bytes unavailable', completed.stderr)
+        parsed = helper.parse_envelope(completed.stdout)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed['header']['source_sha256'], SOURCE)
+        self.assertEqual(parsed['header']['operation'], 'echo')
+        self.assertEqual(parsed['stdout'], b'payload')
+
+    def test_c_launch_without_proc_refuses_identity_not_source(self):
+        if sys.platform != 'darwin':
+            self.skipTest('the fail-closed identity proof runs on the macOS host')
+        raw = ex.GUEST_HELPER_PATH.read_bytes()
+        completed = subprocess.run(
+            [sys.executable, '-I', '-B', '-c', helper.LAUNCHER, raw.hex(), 'echo', NONCE, 'payload'],
+            capture_output=True)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(completed.stdout, b'')
+        self.assertIn(b'refused: guest boot or process identity unavailable', completed.stderr)
+        self.assertNotIn(b'helper source bytes unavailable', completed.stderr)
 
 
 class MainRefusalTests(unittest.TestCase):
