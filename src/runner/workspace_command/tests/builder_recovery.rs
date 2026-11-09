@@ -2251,39 +2251,46 @@ fn colima_retained_empty_compat_shape_is_admitted_only_by_its_native_witness() {
 /// capability alive. Ordinary auto-build replaces that exact owned builder; the
 /// restricted run refuses it before claim.
 #[test]
-fn colima_native_sys_admin_in_any_set_is_recovered_or_refused_before_claim() {
+fn colima_native_power_in_any_set_is_recovered_or_refused_before_claim() {
     let _lock = crate::contract_test_support::lock_test();
-    for set in [
-        "bounding",
-        "effective",
-        "inheritable",
-        "permitted",
-        "ambient",
-    ] {
-        let mut capabilities = json!({"bounding": NATIVE_DEFAULT_CAPS, "effective": NATIVE_DEFAULT_CAPS, "permitted": NATIVE_DEFAULT_CAPS});
-        capabilities[set] = json!(["CAP_SYS_ADMIN"]);
-        let fixture = Fixture::staged(true, false, "colima");
-        let plan = fixture.stage().expect("a staged source plan");
-        fixture.set_native_spec(json!({"process": {"capabilities": capabilities}}));
-        {
-            let _switch = EnvGuard::set_many(&[(
-                "EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING",
-                Some("1".to_owned()),
-            )]);
-            let error = fixture.task().expect_err(set);
-            assert!(
-                error.contains("refuses an old, writable or mismatched owned builder before claim"),
-                "{set}: {error}"
-            );
-            assert_eq!(fixture.activation_count(), 0, "{set}");
-            assert!(!fixture.root.join("state/build-effect").exists(), "{set}");
+    for power in ["CAP_SYS_ADMIN", "CAP_SYS_PTRACE"] {
+        for set in [
+            "bounding",
+            "effective",
+            "inheritable",
+            "permitted",
+            "ambient",
+        ] {
+            let mut capabilities = json!({"bounding": NATIVE_DEFAULT_CAPS, "effective": NATIVE_DEFAULT_CAPS, "permitted": NATIVE_DEFAULT_CAPS});
+            capabilities[set] = json!([power]);
+            let fixture = Fixture::staged(true, false, "colima");
+            let plan = fixture.stage().expect("a staged source plan");
+            fixture.set_native_spec(json!({"process": {"capabilities": capabilities}}));
+            {
+                let _switch = EnvGuard::set_many(&[(
+                    "EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING",
+                    Some("1".to_owned()),
+                )]);
+                let error = fixture.task().expect_err(&format!("{power} in {set}"));
+                assert!(
+                    error.contains(
+                        "refuses an old, writable or mismatched owned builder before claim"
+                    ),
+                    "{power} in {set}: {error}"
+                );
+                assert_eq!(fixture.activation_count(), 0, "{power} in {set}");
+                assert!(
+                    !fixture.root.join("state/build-effect").exists(),
+                    "{power} in {set}"
+                );
+            }
+            fixture
+                .task()
+                .unwrap_or_else(|error| panic!("{power} in {set}: {error}"));
+            assert_eq!(fixture.activation_count(), 1, "{power} in {set}");
+            assert_eq!(fixture.build_source(), plan.source, "{power} in {set}");
+            fixture.assert_preserved();
         }
-        fixture
-            .task()
-            .unwrap_or_else(|error| panic!("{set}: {error}"));
-        assert_eq!(fixture.activation_count(), 1, "{set}");
-        assert_eq!(fixture.build_source(), plan.source, "{set}");
-        fixture.assert_preserved();
     }
 }
 

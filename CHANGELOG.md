@@ -1095,8 +1095,9 @@ During v0.x, MINOR bumps may include breaking changes.
   compatibility inspect rebuilds CapDrop only from the 14 default capabilities,
   so a dropped SYS_ADMIN never appears there, and the owned builder was refused
   on every ordinary automatic acquisition. The native witness requires
-  CAP_SYS_ADMIN absent from bounding, effective, permitted, inheritable and
-  ambient, with CapAdd empty and the container unprivileged. A replaced ID,
+  no process capability beyond containerd's default set in bounding, effective,
+  permitted, inheritable or ambient (so CAP_SYS_ADMIN and any other added power
+  are refused), with CapAdd an empty list and the container unprivileged. A replaced ID,
   malformed or missing capability data, or a failed read refuses without
   replacing the builder. Docker keeps its CapDrop witness. No live engine, build
   or artifact is produced here.

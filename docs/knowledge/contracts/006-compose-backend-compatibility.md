@@ -310,8 +310,9 @@ backend-specific. Docker: HostConfig CapDrop contains SYS_ADMIN, CapAdd empty,
 Privileged false. Colima nerdctl: nerdctl's compatibility inspect rebuilds CapDrop
 only from the 14 default capabilities, so a dropped SYS_ADMIN is never listed there
 and the live report reads `CapDrop: []`. The witness is instead the native OCI spec
-of the same full ID (`nerdctl inspect --mode=native`), where CAP_SYS_ADMIN must be
-absent from bounding, effective, permitted, inheritable and ambient. Every entry
+of the same full ID (`nerdctl inspect --mode=native`), where no process capability
+beyond containerd's default set may appear in bounding, effective, permitted,
+inheritable or ambient; CAP_SYS_ADMIN is the case that matters for remount. Every entry
 must be a kernel capability name (the v6.12 uapi list), and the output must hold
 exactly one record for the verified ID with only the five OCI sets. The
 compatibility record must state `Privileged` as a boolean and `CapAdd` as a list,

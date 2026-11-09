@@ -958,6 +958,17 @@ mod legacy_admission_tests {
             assert_eq!(
                 super::native_capability_absent(
                     Some(&record),
+                    &native_inspect(id, capabilities.clone()),
+                    id
+                ),
+                Ok(false),
+                "{set} SYS_ADMIN"
+            );
+            // A known non-default capability outside bounding is power too.
+            capabilities[set] = serde_json::json!(["CAP_CHOWN", "CAP_SYS_PTRACE"]);
+            assert_eq!(
+                super::native_capability_absent(
+                    Some(&record),
                     &native_inspect(id, capabilities),
                     id
                 ),
@@ -1351,7 +1362,7 @@ pub fn verify_workspace_artifact_builder(
         }
         if !remount_capability_dropped {
             mismatched.push(
-                "SYS_ADMIN dropped (Docker CapDrop contains SYS_ADMIN, or nerdctl native spec sets exclude CAP_SYS_ADMIN; CapAdd empty, Privileged false)"
+                "SYS_ADMIN dropped (Docker CapDrop contains SYS_ADMIN, or nerdctl native spec holds no capability beyond the default set; CapAdd empty, Privileged false)"
                     .to_owned(),
             );
         }
@@ -1391,7 +1402,8 @@ pub struct ObservedWorkspaceArtifactBuilder {
     pub mounts_owned: bool,
     /// Whether the builder proves SYS_ADMIN is gone: on Docker, HostConfig
     /// CapDrop contains SYS_ADMIN; on Colima nerdctl, the same full ID's native
-    /// OCI spec omits CAP_SYS_ADMIN from every process capability set. CapAdd
+    /// OCI spec holds no process capability beyond containerd's default set, so
+    /// CAP_SYS_ADMIN is absent from every set. CapAdd
     /// must be empty and the container unprivileged either way. Observation
     /// records a leftover that predates the drop so recovery can replace it; it
     /// authorizes nothing on its own.
@@ -1692,6 +1704,28 @@ fn remount_capability_witness(
         .map_err(|reason| ContainerExecError::refused(CONTEXT, reason))
 }
 
+/// nerdctl builders run with containerd's default unix capabilities
+/// (`defaultUnixCaps` in containerd v2.3.1 `pkg/oci/spec.go`, sha256
+/// 7029327e775cf5bb1bfc632b45ecfdb63d7872201b973edf27e88866f907276c). Bounding,
+/// effective and permitted default to this set; inheritable and ambient default
+/// to empty. Any process capability beyond it is power added back.
+const NERDCTL_DEFAULT_CAPS: [&str; 14] = [
+    "CAP_CHOWN",
+    "CAP_DAC_OVERRIDE",
+    "CAP_FSETID",
+    "CAP_FOWNER",
+    "CAP_MKNOD",
+    "CAP_NET_RAW",
+    "CAP_SETGID",
+    "CAP_SETUID",
+    "CAP_SETFCAP",
+    "CAP_SETPCAP",
+    "CAP_NET_BIND_SERVICE",
+    "CAP_SYS_CHROOT",
+    "CAP_KILL",
+    "CAP_AUDIT_WRITE",
+];
+
 /// Every capability name the kernel's uapi header defines
 /// (`include/uapi/linux/capability.h`, v6.12, sha256
 /// ee832adca0d6db0866ddbf1dd3426c5a0df63901bf255bde77e4d8305cf5b5e0). A name
@@ -1807,7 +1841,7 @@ fn native_capability_absent(
                 .as_str()
                 .filter(|name| LINUX_CAPABILITY_NAMES.contains(name))
                 .ok_or_else(|| format!("native capability set `{set}` holds an unknown entry"))?;
-            absent &= name != "CAP_SYS_ADMIN";
+            absent &= NERDCTL_DEFAULT_CAPS.contains(&name);
         }
     }
     // This path reads the compatibility record strictly: a missing or malformed
