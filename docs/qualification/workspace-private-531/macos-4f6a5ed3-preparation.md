@@ -61,8 +61,15 @@ linux/arm64 manifest, config, one layer) and the 22 offline jammy python3 + ca-c
 hashed with exact size. They are assembled as `{desktop_input_dir}/oci` (an oci-layout) and
 `{desktop_input_dir}/debs`. The docker build uses `--network none` and
 `--build-context ubuntu=oci-layout://{desktop_input_dir}/oci` plus `debs={desktop_input_dir}/debs`.
-FROM cannot contact a registry. The recipe is `FROM ubuntu` / `COPY --from=debs` / `dpkg -i`, sha256
-`c00d5bd9…`, 318 bytes. D3 and D4 become statically admitted through predecessor D2.
+FROM cannot contact a registry. The recipe is `FROM ubuntu` / `COPY --from=debs` / three explicit `dpkg -i`
+invocations in pre-depends order: the 20 debs that have no in-set Pre-Depends, then `python3-minimal`, then `python3`.
+Each later invocation starts after the previous one has configured its packages. A 22-package `installed` count, then
+the unchanged loader, Python and coreutils checks, follow. Sha256 `8f1fa681…`, 1827 bytes. D3 and D4 become statically
+admitted through predecessor D2. The earlier 318-byte recipe (sha256 `c00d5bd9…`, one `dpkg -i /debs/*.deb` glob)
+failed the 775 Desktop build: `python3-minimal` and then `python3` were unpacked before their Pre-Depends were
+configured, so dpkg refused them. Its bytes stay as evidence and are no longer a reviewed input. The ordering control
+is `runtime_recipe_tests.py`: it reads the pinned deb metadata in `fixtures/runtime-deb-control.json` and runs the
+recipe's own dpkg segments against a private fake dpkg.
 
 C4's build argv is the same offline form with guest sibling paths `{guest_context}.oci` and
 `{guest_context}.debs`. r8 left C4 unadmitted for want of a closed transfer of those host-fetched inputs;
@@ -378,8 +385,12 @@ Desktop (`desktop`), with the pinned env above:
   the metadata path, and the native run is owed. The plugin's bytes are part of the stable input set, so every launch
   re-hashes them, and the custody check repeats the link and bytes before the build. Host-only helper steps in D2 are
   5 s or less; every native exec clock is unchanged. Each activation's D2 outputs are fresh siblings of
-  the original paths, derived from the verified activation by `d2_occurrence`: `{desktop_input_dir}-<suffix>`,
-  `{desktop_context_dir}-<suffix>` (created by `d2-make-context-dir`) and `{desktop_iidfile}-<suffix>`. The original
+  the original paths, derived from the verified activation by `d2_occurrence`: `{desktop_config}-<suffix>` (the private
+  Docker config, created exclusively and empty before the first D2 step; a collision, symlink or other foreign entry
+  refuses before any step), `{desktop_input_dir}-<suffix>`, `{desktop_context_dir}-<suffix>` (created by
+  `d2-make-context-dir`) and `{desktop_iidfile}-<suffix>`. D2's engine, metadata, build and readback steps run with
+  `DOCKER_CONFIG` set to the fresh config, and its `cli-plugins` link is made there. The 775 config and its link stay
+  untouched, and D3/D4 keep the original `d/docker-config`. The original
   D0/D1 paths and every earlier payload, recipe, claim and receipt stay in place and are never deleted, reset or
   adopted.
 - **D3** disposable check: `docker run --pull=never --rm --network none --label

@@ -47,7 +47,7 @@ GUEST_INPUTS_PATH = HERE / 'guest_inputs.py'
 HELPER_PATH = HERE / 'macos_stage_helper.py'
 PROOF_PATH = HERE / 'macos_stage_proof.py'
 REPO_ROOT = HERE.parents[2]
-GUEST_CONTEXT_SHA256 = '5daf93e2ad3ba1cb1cfb5e860730720c21d3730dee4e2b292bc9feb66643e1fc'
+GUEST_CONTEXT_SHA256 = 'b249da71cb3c211006f90047b8dc743a5e82e3dfe6967470f4f7a7ae0c68bbd8'
 GUEST_HELPER_SHA256 = '69239cd820934ca2f0b0e087a86fbb291fa3aad6b231e0b54c70537c08620985'
 GUEST_INPUTS_SHA256 = 'd2d0ea050f6d8b5ede4dcf07fbd3a7be65241b5b35d88830513cd07e76361af2'
 # Program files whose bytes the GO binds. Changing any of them after activation refuses before dispatch.
@@ -290,7 +290,7 @@ CHECK_KIND = {'d4-container-check': 'container', 'd4-volume-check': 'volume', 'd
 ACTIVATION_ID = re.compile(r'[A-Za-z0-9_.-]{8,64}')
 RECIPE_CAP_BYTES = 64 * 1024
 RECIPE_SHA256 = prep.RECIPE_SHA256
-RECIPE_BYTES = 318
+RECIPE_BYTES = 1827
 
 
 class Collision(Refusal):
@@ -978,7 +978,7 @@ def h_compare_route_echo(ctx, step):
 
 
 def h_render_guest_spec(ctx, step):
-    """C3 stages the reviewed recipe bytes (runtime.Dockerfile: exact sha, 318 bytes) as its stdin file, and
+    """C3 stages the reviewed recipe bytes (runtime.Dockerfile: exact sha, 1827 bytes) as its stdin file, and
     derives its guest spec from the C2 probe output and the chain's token32. C4 derives its verify spec from the
     C3 stage output; that context must carry the same token32, and the context and iidfile names come from it.
     Each derived value is written exclusively into this step's directory."""
@@ -1032,11 +1032,13 @@ def h_host_stage_dockerfile(ctx, step):
 
 
 def d2_occurrence(bindings, activation_id):
-    """D2's fresh, activation-derived outputs: its input directory, its build context and its iidfile, each a sibling
-    of the original D0/D1 path under the owned control root. The original paths keep their pinned D0/D1 identity and
-    every earlier payload, recipe and claim stays where it is; this occurrence creates only its own names, exclusively."""
+    """D2's fresh, activation-derived outputs: its private Docker config, input directory, build context and iidfile, each a
+    sibling of the original D0/D1 path under the owned control root. The original paths keep their pinned D0/D1 identity and
+    every earlier payload, recipe, plugin link and claim stays where it is; this occurrence creates only its own names,
+    exclusively. The fresh config is empty until D2's own Buildx link is made, so the 775 link is never re-entered."""
     suffix = hashlib.sha256(('d2-occurrence:' + activation_id).encode()).hexdigest()[:16]
-    return dict(desktop_input_dir=bindings['desktop_input_dir'] + '-' + suffix,
+    return dict(desktop_config=bindings['desktop_config'] + '-' + suffix,
+                desktop_input_dir=bindings['desktop_input_dir'] + '-' + suffix,
                 desktop_context_dir=bindings['desktop_context_dir'] + '-' + suffix,
                 desktop_iidfile=bindings['desktop_iidfile'] + '-' + suffix)
 
@@ -2407,7 +2409,7 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
     monitor = monitor_factory({'storage': cap}, [control])
     run_bindings = {k: v for k, v in bindings.items() if k not in NOT_SUPPLIED}
     run_bindings.update(guest_source_bindings())
-    if stage_id == 'D2':  # this occurrence's own input, context and iidfile; the original D0/D1 paths stay untouched
+    if stage_id == 'D2':  # this occurrence's own Docker config, input, context and iidfile; D0/D1 paths stay untouched
         run_bindings.update(d2_occurrence(bindings, go['activation_id']))
     if token32 is not None:
         run_bindings['token32'] = token32
@@ -2428,6 +2430,9 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
     steps_out, closure, error = [], 'closed', None
     halted = False  # set when a guest step's closure is unknown: later effects stop, pure host reads may run
     try:
+        if stage_id == 'D2':  # the fresh private Docker config is exclusive and empty before any D2 step; a collision refuses here
+            create_private_dir(run_bindings['desktop_config'])
+            pins.pin(run_bindings['desktop_config'])
         for step in stage['steps']:
             step_root = f"{stage_root}/{step['id']}"
             if halted:
