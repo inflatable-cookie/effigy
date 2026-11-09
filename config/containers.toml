@@ -2,10 +2,11 @@
 driver = "colima"
 startup = "detached"
 profile = "effigy-release"
-# The builder compiles this checkout's source. The release profile shares one
-# writable host mount into its VM, so a checkout outside that mount binds its
-# staged source closure there instead of a host path the VM cannot reach
-# (effigy#715). Inside a shared mount the checkout itself is the source.
+# The builder compiles this checkout's source. The `/workspace` bind is
+# read-only (effigy#749): compile output stays inside the owned builder and the
+# host transfers the three capped artifact roles. A checkout outside the
+# profile's shared mount binds its staged source closure there (effigy#715).
+# Inside a shared mount the checkout itself is the source.
 workspace_source = "staged"
 # Stable private builder protocol identity; upgrades reuse this project.
 # The builder owns one project per exact canonical checkout, including an
@@ -24,4 +25,4 @@ shutdown = "graceful"
 detach_timeout_secs = 10
 
 [containers."linux-release".host]
-mounts = ["./:/workspace"]
+mounts = ["./:/workspace:ro"]

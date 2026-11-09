@@ -76,7 +76,10 @@ Linux GNU compatibility policy:
   approved workflow edit replaces that step, so a publication needs that edit
   first (see the release contract).
 - Effigy now also has one local rehearsal path for this on developer machines:
-  `cargo run --bin effigy -- release:linux:rehearse`
+  `effigy release:linux:rehearse`. That selector uses the same checkout-owned
+  builder as `workspace:linux:artifact`: `/workspace` is read-only, compile
+  output stays in the builder's private tree, and the host publishes the capped
+  artifacts.
 
 Binary naming convention:
 

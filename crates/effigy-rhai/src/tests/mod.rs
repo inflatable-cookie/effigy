@@ -244,9 +244,6 @@ fn allowed_first_party_process_script(relative: &str, contents: &str) -> bool {
         "scripts/check-release-smoke.rhai" => {
             contents.contains("process::run(program, process_args)")
         }
-        "scripts/rehearse-linux-release-container.rhai" => {
-            contents.contains("process::run(\n    \"colima\",")
-        }
         "crates/effigy-manifest/tests/fixtures/workspace-app-bundle/scripts/dev/ui-setup.rhai"
         | "external/bundles/workspace-app/scripts/dev/ui-setup.rhai"
         | "external/bundles/underlay/scripts/dev/ui-setup.rhai" => {

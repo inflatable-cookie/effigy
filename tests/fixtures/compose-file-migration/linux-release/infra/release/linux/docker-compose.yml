@@ -5,8 +5,10 @@ services:
       dockerfile: infra/release/linux/Dockerfile
     working_dir: /workspace
     command: ["bash", "-lc", "while true; do sleep 3600; done"]
+    cap_drop:
+      - SYS_ADMIN
     volumes:
-      - ../../../:/workspace
+      - ../../../:/workspace:ro
       - cargo-registry:/root/.cargo/registry
       - cargo-git:/root/.cargo/git
 

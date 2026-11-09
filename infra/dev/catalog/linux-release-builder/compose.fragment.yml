@@ -8,7 +8,9 @@ services:
     - bash
     - -lc
     - while true; do sleep 3600; done
+    cap_drop:
+    - SYS_ADMIN
     volumes:
-    - '{{ repo_root }}:/workspace'
+    - '{{ repo_root }}:/workspace:ro'
     - '{{ project_name }}-cargo-registry:/root/.cargo/registry'
     - '{{ project_name }}-cargo-git:/root/.cargo/git'
