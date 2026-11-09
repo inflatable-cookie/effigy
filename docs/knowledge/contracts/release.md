@@ -194,6 +194,14 @@ Recipe E/native Linux platform input remains an outstanding prerequisite to
 #621–#623. #683 is readiness/preparation only; #684 owns metadata/start/stop
 only. Neither creates a Linux binary or satisfies a native proof.
 
+The [Colima preparation route](../../qualification/workspace-private-531/macos-4f6a5ed3-preparation.md#current-route-effigy830)
+can bind C2–C6 in one owner-launched chain occurrence against an existing C1
+receipt. Each stage retains its own activation, claim, limits and verified receipt;
+failure or unknown closure halts successors. The separate native smoke selector
+uses only newly owned resources and grants no sealed-stage or #621 proof credit.
+Tom's task #830 exploration approval (decision `581a7b56`, 2026-11-09) does not
+extend to the retained sealed q4 root, shared profiles or release/publication.
+
 Q-017 (Tom, 2026-11-01) sets v0.15 workspace-client qualification to
 noninteractive Level 1. Level 2—including guest attach, detach, reconnect,
 terminal input and resize, shared-lock tasks, pause and the remainder of the

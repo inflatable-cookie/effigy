@@ -829,7 +829,7 @@ class PlanTests(Fixture):
             before = tree(self.tmp)
             for stage in ('C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6'):
                 plan = ex.resolve_stage(stage, bindings, manifest)
-                self.assertEqual(len(plan['socket_paths']), 9)
+                self.assertEqual(len(plan['socket_paths']), 10)
                 self.assertIn('user-v2/qemu', {row['name'] for row in plan['socket_paths']})
                 for row in plan['socket_paths']:
                     self.assertEqual(row['bytes'], len(row['path'].encode()))
@@ -3311,7 +3311,7 @@ class FreshChainRootTests(Fixture):
         body = self.c0_body(c0)
         roots = ex.origin_roots(body, bindings, ex.load_manifest())
         self.assertEqual(set(roots), {'control', 'colima_home', 'qualification_root'})
-        self.assertEqual(roots['control']['entries'], ['bin', 'c', 'h', 's'])  # what C0 created and pinned
+        self.assertEqual(roots['control']['entries'], ['bin', 'c', 'h', 's', 't'])  # what C0 created and pinned
         self.assertEqual((roots['colima_home']['entries'], roots['qualification_root']['entries']), ([], []))
         for name, rec in roots.items():
             info = os.lstat(rec['path'])
@@ -6077,4 +6077,17 @@ class ProofEnvelopeTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
+    if len(sys.argv) == 2 and sys.argv[1] in ('--part=1', '--part=2'):
+        # Both selector steps use the same complete inventory, alternating cases.
+        # No class list can silently omit a newly added control.
+        def cases(suite):
+            for item in suite:
+                if isinstance(item, unittest.TestSuite):
+                    yield from cases(item)
+                else:
+                    yield item
+        complete = list(cases(unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])))
+        offset = int(sys.argv[1][-1]) - 1
+        result = unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(complete[offset::2]))
+        sys.exit(0 if result.wasSuccessful() else 1)
     unittest.main(verbosity=2)

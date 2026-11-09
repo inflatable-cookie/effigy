@@ -1,5 +1,84 @@
 # macOS 4f6a5ed3 preparation: Colima and Desktop stages
 
+## Current route (effigy#830)
+
+The C2–C6 sealed preparation is one chain request, consumed in one owner-launched
+proof occurrence. It uses the existing C1 receipt; every stage still gets its own
+launch-time activation, exclusive claim, unchanged budget/reserve/caps and original
+receipt. A failed or unknown stage stops all successors. The chain verifies each
+receipt before continuing, holds the original root identities throughout, and
+refuses source or machine-input drift between stages. Desktop windows are unchanged.
+The older revision notes below describe the historical preparation sequence.
+
+Prepare with `qualification:macos:proof-only -- plan-chain BINDINGS OPTIONS`.
+OPTIONS contains only `activation_id` (at most 60 characters), `evidence_root` and
+`prior_receipt` (the original C1 stage/path/sha256). Freeze the resulting request
+read-only and bind its SHA-256 to the later owner-launched proof occurrence.
+Execution uses `qualification:macos:chain-proof-only -- REQUEST SHA256`.
+No individual C2–C6 packet preparation is needed. The chain's total window is the
+sum of its stage windows; each stage retains its smaller deadline and reserve.
+
+`qualification:macos:colima-smoke` is deliberately **unsealed**. It requires an
+existing canonical TMPDIR below Stash scratch, creates a fresh token/control root
+and private claims/activation/evidence directories, runs C0/C1 and the same C2–C6
+chain, and stops only its own isolated profile in a finally block. It retains
+all evidence (also copied into the owned control root as `exploration-evidence`)
+and the stopped VM. The retained copies preserve original bytes and original
+run-directory references; they are exploratory archives, never sealed predecessors. `exploration.json` explicitly records `proof: false`.
+It consumes no Nucleus proof-only occurrence and supplies no #621 credit.
+Colima's HOME and all three temp variables point inside the owned control root;
+Lima's temporary forward-socket shape participates in the socket-length check.
+Fresh C1 starts pass `--port-forwarder none` and create an exclusive, fixed
+`_lima/_config/override.yaml` with an ignore rule for TCP/UDP ports 1–65535.
+Colima 0.10.3 alone emits an ignore rule for the wildcard guest address, which
+Lima treats as an exact wildcard-address match unless `guestIPMustBeZero: false`
+is set. Loopback guest DNS otherwise reaches Lima's hardcoded `/tmp`
+pseudoloopback sockets despite TMPDIR.
+The override is hashed into the start child's inputs. Colima SSH and the runtime's
+explicit Unix-socket forwarding remain available; automatic host TCP/UDP
+publication is unnecessary for these stages. Existing sealed C1 resources are
+never modified by this fresh-profile setup.
+
+BuildKit's Colima iidfile names the manifest digest. Its authenticated by-digest
+inspection must match that exact digest in RepoDigests before both immutable identities
+are bound to the disposable check: run by manifest, inspect by manifest or config. The chain verifier re-derives this mapping
+from both original streams. Nerdctl container inspection may report a mutable
+image display name; identity instead requires the authenticated by-digest create
+command, its exclusive cidfile and the exact inspected container ID. A conflicting
+immutable digest refuses. No display-name allowlist grants identity. Desktop keeps its direct config-ID comparison.
+
+After its direct child exits, the guest helper allows at most two seconds for
+adopted descendants to settle and reaps only its own kernel children. Remaining
+live descendants or unavailable observations stay unknown, with remaining PIDs
+recorded. A process disappearing during `/proc` enumeration is treated as exited;
+malformed or unreadable observations still refuse closure.
+
+Sealed-run plan: after review and merge, the planner freezes the request against the
+exact integrated program/tool hashes and the existing q4 C1 receipt under
+`mac-4f6a-b0544c12`, checks the C4 destination is absent, then launches one C2–C6
+proof occurrence. Exploration never touches that root. After the candidate freeze,
+#621 separately binds the Recipe A–E artifacts, baseline, guest artifact provenance,
+qualification-root identity and scoped native GO described in [producer.md](producer.md)
+and [README.md](README.md), then runs the single-backend full-session entry. The
+stage-chain receipt is a prerequisite, not a full-session result.
+
+## Native exploration, 2026-11-09
+
+The unsealed smoke closed C0–C6 on the owned control root
+`/Volumes/Stash/scratch/effigy/mac-4f6a-11a01580`, including the C4 offline build,
+C5 runtime facts, exact-container removal and C6 observation. Its profile then
+stopped with waited exit 0. The host log contains no automatic TCP forwarding or
+`/tmp/lima-*` pseudoloopback sockets. The longest planned socket path (91 bytes)
+was also bound successfully on this host before the start.
+
+Original receipts and streams are archived under that control root's
+`exploration-evidence`; earlier exploratory failures are copied under
+`earlier-exploration`. This is native smoke evidence only. The #621 full-session
+exploration, candidate freeze and sealed C2–C6/full-session occurrences remain
+separate work; no #621 qualification is claimed.
+
+## Historical revision notes
+
 Preparation only. It arms nothing and gives no proof credit. The executable plan is
 [macos-4f6a5ed3-stages.json](macos-4f6a5ed3-stages.json), manifest revision r9 (r9 section below). Each stage
 needs its own fresh GO under standing decision `63c338e2-1c50-435e-9783-e78e9d8558e6` v2,

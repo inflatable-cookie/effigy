@@ -1,0 +1,1 @@
+Fix Colima build identity checks by verifying the manifest-to-config digest relationship, disable Lima automatic forwarding that writes outside owned scratch, allow bounded guest descendant settlement, and add an unsealed native smoke selector and one-request C2–C6 chain preparation with per-stage receipts and limits.

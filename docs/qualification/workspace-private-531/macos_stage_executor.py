@@ -48,12 +48,13 @@ HELPER_PATH = HERE / 'macos_stage_helper.py'
 PROOF_PATH = HERE / 'macos_stage_proof.py'
 REPO_ROOT = HERE.parents[2]
 GUEST_CONTEXT_SHA256 = 'b249da71cb3c211006f90047b8dc743a5e82e3dfe6967470f4f7a7ae0c68bbd8'
-GUEST_HELPER_SHA256 = '69239cd820934ca2f0b0e087a86fbb291fa3aad6b231e0b54c70537c08620985'
+GUEST_HELPER_SHA256 = '45fc7d75360706edf2aa944d670bde41615f92522c9adbe6f4108202d9526296'
 GUEST_INPUTS_SHA256 = 'd2d0ea050f6d8b5ede4dcf07fbd3a7be65241b5b35d88830513cd07e76361af2'
 # Program files whose bytes the GO binds. Changing any of them after activation refuses before dispatch.
 PROGRAM_FILES = (HERE / 'macos_stage_executor.py', HERE / 'macos_preparation.py',
                  HERE / 'preparation_stage.py', HERE / 'preparation_resources.py', GUEST_CONTEXT_PATH,
-                 GUEST_HELPER_PATH, GUEST_INPUTS_PATH, HELPER_PATH, PROOF_PATH, HERE / 'runtime_image_inputs.py')
+                 GUEST_HELPER_PATH, GUEST_INPUTS_PATH, HELPER_PATH, PROOF_PATH, HERE / 'runtime_image_inputs.py',
+                 HERE / 'macos_colima_chain.py', HERE / 'macos_colima_smoke.py')
 # Allowlisted Colima guest-helper operations the manifest launches with a nonce. A local ssh client exit cannot
 # close these: each one's child runs inside the fixed helper and is authenticated by its envelope.
 FIXED_GUEST_STEPS = {
@@ -85,6 +86,10 @@ TOOL_PATHS = (prep.COLIMA, prep.DOCKER)
 ACTIVATIONS_DIR = prep.STASH + '/macos-stage-activations'
 CLAIMS_DIR = prep.STASH + '/macos-stage-claims'
 # Colima's PATH: the owned bin (pinned docker symlink) comes first, so its child docker is pinned.
+# Colima 0.10.3 emits a zero-range ignore rule for --port-forwarder none;
+# Lima appends its default TCP rule after it. Prepend a full-range owned override.
+LIMA_FORWARD_OVERRIDE = (b'portForwards:\n- guestIP: 0.0.0.0\n  guestIPMustBeZero: false\n  guestPortRange: [1, 65535]\n'
+                         b'  hostPortRange: [1, 65535]\n  proto: any\n  ignore: true\n')
 COLIMA_BASE_PATH = '/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin'
 DESKTOP_BASE_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
 DESKTOP_SOCKET = prep.DESKTOP_HOST[len('unix://'):]
@@ -154,7 +159,7 @@ PINNED_SOURCE_BINDINGS = {'probe_source': 'probe', 'stage_source': 'stage', 'ver
 # come from the C2 probe, the C3 stage output and the token32 the C0 minted; the transfer spec's layout comes from
 # the reviewed pin and its parent and name from that verified chain; pinned sources come from the pinned guest
 # helper. guest_nonce is minted once per fixed guest step before launch.
-DERIVED_BINDINGS = ('image_id', 'owned_container_ids', 'owned_image_id', 'owned_volume_name', 'token32',
+DERIVED_BINDINGS = ('image_config_id', 'image_id', 'owned_container_ids', 'owned_image_id', 'owned_volume_name', 'token32',
                     'guest_spec', 'guest_verify_spec', 'guest_context', 'guest_iidfile', 'guest_nonce',
                     'guest_oci', 'guest_debs', 'guest_input_spec', 'guest_check_cid', 'check_container_id',
                     'desktop_container_name')
@@ -386,7 +391,8 @@ def step_environment(step, bindings):
     argv0 = step['argv'][0]
     if argv0 == prep.COLIMA:
         env = {'PATH': f"{bindings['control']}/bin:{COLIMA_BASE_PATH}", 'LANG': 'C',
-               'HOME': f"{bindings['control']}/h"}
+               'HOME': f"{bindings['control']}/h",
+               **{key: f"{bindings['control']}/t" for key in ('TMPDIR', 'TMP', 'TEMP')}}
     elif argv0 in (prep.DOCKER, BUILDX_LINK_TEMPLATE):
         env = {'PATH': DESKTOP_BASE_PATH, 'LANG': 'C'}
     else:
@@ -762,7 +768,7 @@ def check_recorded_roots(prior, bindings, pins, *, first_use, manifest):
 def ensure_colima_path(control, pins):
     """Owned bin with a docker symlink to the pinned binary, and the owned HOME. An existing link's exact
     target is checked on every call, so a foreign docker never reaches a Colima child."""
-    for d in (f'{control}/bin', f'{control}/h'):
+    for d in (f'{control}/bin', f'{control}/h', f'{control}/t'):
         if not os.path.lexists(d):
             create_private_dir(d)
         pins.pin(d)
@@ -1038,7 +1044,12 @@ def h_make_owned_dir(ctx, step):
         create_private_dir(path)
         ctx['pins'].pin(path)
         made.append(path)
-    return {'created': made}
+    result = {'created': made}
+    if step.get('id') == 'c1-make-owned-dirs':
+        directory = ctx['bindings']['colima_home'] + '/_lima/_config'
+        path = write_new_file(directory, 'override.yaml', LIMA_FORWARD_OVERRIDE)
+        result['forwarding_override'] = dict(path=path, sha256=sha_file(path))
+    return result
 
 
 def h_claim_intent(ctx, step):
@@ -1208,7 +1219,17 @@ def h_check_container_inspect(ctx, step):
         raise ValueError('the container inspection carries no state')
     if obj.get('Id') != cid:
         raise ValueError('the inspected container is not the cidfile container')
-    if obj.get('Image') != image:
+    config = ctx['bindings'].get('image_config_id', image)
+    created = ctx['outputs'].get('c5-disposable-check', {})
+    expected = guest_helper.check_run_command(ctx['bindings']['guest_context'],
+                'effigy-4f6a-check-' + ctx['bindings']['token'], image, prep.CHECK_SOURCE)
+    if created.get('guest_closure') != 'closed' or created.get('guest_command') != expected:
+        raise ValueError('the container lacks an authenticated by-digest creation command')
+    # nerdctl's Docker-shaped inspection reports a mutable display name here.
+    # Identity comes from the authenticated create argv plus its exclusive cidfile,
+    # not a name allowlist. Refuse a contradictory immutable digest if supplied.
+    observed = obj.get('Image')
+    if not isinstance(observed, str) or not observed or (observed.rsplit('@', 1)[-1].startswith('sha256:') and observed.rsplit('@', 1)[-1] not in (image, config)):
         raise ValueError('the check container was not created from the predecessor image')
     if state.get('Status') != 'exited':
         raise ValueError(f"the check container is not in a terminal exited state: {state.get('Status')!r}")
@@ -1263,8 +1284,12 @@ def h_read_iidfile(ctx, step):
 
 
 def h_check_image_identity(ctx, step):
-    prep.check_image_identity(read_ref(ctx, step['inputs'][0]), ctx['bindings']['image_id'])
-    return {'verified': ctx['bindings']['image_id']}
+    image = prep.inspected_image_id(read_ref(ctx, step['inputs'][0]), ctx['bindings']['image_id'],
+                                    allow_repo_digest=step.get('id') == 'c4-check-image-identity')
+    result = {'verified': ctx['bindings']['image_id']}
+    if step.get('id') == 'c4-check-image-identity':
+        result['config_id'] = image
+    return result
 
 
 def h_check_build_help(ctx, step):
@@ -1892,7 +1917,8 @@ def stable_input_manifest(manifest_path=None):
         'macos_stage_executor.py', 'macos_preparation.py', 'preparation_stage.py',
         'preparation_resources.py', 'macos_guest_context.py', 'macos_guest_helper.py',
         'macos_stage_helper.py', 'macos_stage_proof.py', 'macos-4f6a5ed3-stages.json',
-        'runtime.Dockerfile', 'runtime_image_inputs.py', 'guest_inputs.py')}
+        'runtime.Dockerfile', 'runtime_image_inputs.py', 'guest_inputs.py',
+        'macos_colima_chain.py', 'macos_colima_smoke.py')}
     expected.update(('effigy.toml', 'config/tasks.toml'))
     try:
         declared = [Path(path).relative_to(REPO_ROOT).as_posix() for path in repo_paths]
@@ -2299,6 +2325,11 @@ def verify_creation(rec, body, manifest):
         helper = json.loads(Path(ev['path']).read_text())
         if step_id != 'c4-check-image-identity' or helper['result'].get('verified') != rec['id']:
             raise Refusal('image creation receipt is not the verified guest image')
+        built = prep.read_iidfile(read_checked_file(producer + '/c4-iidfile-read/stdout', must_be_in=producer, read_only=False).decode())
+        inspected = read_checked_file(producer + '/c4-image-inspect/stdout', must_be_in=producer, read_only=False).decode()
+        config = prep.inspected_image_id(inspected, built, allow_repo_digest=True)
+        if built != rec['id'] or helper['result'].get('config_id') != config:
+            raise Refusal('guest image config differs from the immutable build digest')
         return
     if CREATION_STEP.get(rec['kind']) != step_id:
         raise Refusal(f"{rec['kind']} creation receipt was not produced by its manifest step")
@@ -2538,6 +2569,11 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
         if len(images) != 1:
             raise Refusal('image receipt missing or ambiguous in the chain')
         run_bindings['image_id'] = images[0]['id']
+        if stage_id == 'C5':
+            inspected = read_checked_file(prior['stage_root'] + '/c4-image-inspect/stdout',
+                                          must_be_in=prior['stage_root'], read_only=False).decode()
+            run_bindings['image_config_id'] = prep.inspected_image_id(
+                inspected, images[0]['id'], allow_repo_digest=True)
     engine = prior['engine_id'] if prior else None
     ctx = dict(bindings=run_bindings, outputs={}, receipts=list((prior or {}).get('receipts', [])), selection=None,
                recipe=None, stage_root=stage_root, engine_id=engine, desktop_socket=desktop_socket, token32=token32,
@@ -2609,6 +2645,9 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                 monitor.check()
                 if clock() > step_deadline:
                     raise Refusal(f"{step['id']}: helper ran past its allowance")
+                if step['id'] == 'c1-make-owned-dirs':
+                    generated = result['forwarding_override']
+                    inputs[generated['path']] = generated['sha256']
                 if step['helper'] == 'read_iidfile' and step['id'] in IMAGE_ID_SETTERS:
                     ctx['bindings']['image_id'] = result['image_id']
                 evidence = dict(path=write_json_new(step_root, 'helper.json', dict(step=step['id'], result=result)))
@@ -2687,7 +2726,8 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                                                post_refusal=post_refusal))
             evidence = dict(path=step_root + '/receipt.json', sha256=checked_sha(step_root + '/receipt.json', must_be_in=stage_root))
             ctx['outputs'][step['id']] = dict(stdout=step_root + '/stdout', stderr=step_root + '/stderr',
-                                              exit=result.get('waited_exit'), disposition=result.get('disposition'))
+                                              exit=result.get('waited_exit'), disposition=result.get('disposition'),
+                                              guest_closure=result.get('guest_closure'), guest_command=result.get('guest_command'))
             item = dict(id=step['id'], kind='exec', closure=step_closure_value, guest=resolved['guest'],
                         closure_simulated=bool(TEST_SEAM['simulate_guest_closure'] and resolved['guest']),
                         argv=resolved['argv'], env_keys=sorted(resolved['env']),

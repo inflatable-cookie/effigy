@@ -156,6 +156,9 @@ Manifest r3 corrects the r2 Colima flags, route order, deadlines, caps and clean
 authority. It records only local metadata and gives no proof credit.
 The source-only executor for those stages is `macos_stage_executor.py`; see the
 preparation doc's Executor section. Nothing in it is armed.
+For current C2–C6 preparation, the [one-request Colima chain and unsealed native
+smoke selector](macos-4f6a5ed3-preparation.md#current-route-effigy830) keep each
+stage's original budgets, claims and receipts; exploratory results give no proof credit.
 
 Preparation and proof requests are different admissions. Assemble one concrete
 preparation request listing each unresolved backend fact, exact permitted probe
