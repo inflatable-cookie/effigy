@@ -393,10 +393,32 @@ Desktop (`desktop`), with the pinned env above:
   untouched, and D3/D4 keep the original `d/docker-config`. The original
   D0/D1 paths and every earlier payload, recipe, claim and receipt stay in place and are never deleted, reset or
   adopted.
-- **D3** disposable check: `docker run --pull=never --rm --network none --label
-  effigy.qual=<token> --name effigy-4f6a-dcheck-<token> --cidfile {desktop_cidfile}
-  {image_id} python3 -I -c {check_source}`, host envelope 240 s. The cidfile is read as
-  the container creation receipt, and the facts are checked.
+- **D3** disposable check: the activation derives a 16-hex SHA-256 suffix with the
+  d3-occurrence domain. Its name is effigy-4f6a-dcheck-<token>-<suffix> and its
+  cidfile is <control>/d/container-id-<suffix>. The window binds both identities,
+  checks absence and the D0 directory identities, and refuses a collision. The run
+  keeps --pull=never, --rm, --network none, the fixed label, image ID and check source.
+  The file is read as a full ID and its path and hash are bound to the creation receipt;
+  D4 rechecks them and the name before selecting an exact ID.
+  Docker CLI 29.8.0's
+  [run](https://github.com/docker/cli/blob/v29.8.0/cli/command/container/run.go)
+  calls createContainer; its
+  [create path](https://github.com/docker/cli/blob/v29.8.0/cli/command/container/create.go)
+  creates the cidfile, writes the returned ID and removes an unwritten file on failure.
+  The fixed client uses the existing private config and parent directory. Allow 8192
+  allocated bytes on the existing high-water monitor: the observed 4096-byte cidfile
+  block and one 4096-byte directory allocation. The control inventory permits only
+  that new owned regular file (at most 64 bytes and one block) and its parent metadata
+  change; other observed changes refuse. Sampling is not a kernel quota, and the
+  control-root counter does not measure engine or container storage.
+  The 779 occurrence remains failed and spent. Its original cidfile and D2 image are
+  preserved. Before any fresh D3, a separate bounded, receipt-based observation must
+  establish whether container
+  2a35eb59a74953c0c78c252a1fcbea83463cd488e9d701c2d3292ae366ee2f2f
+  on engine ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd, with the original
+  cidfile and effigy.qual=e272a9cc provenance, is terminal or retained. No supported
+  source-ready inspection for that failed, unclosed receipt is claimed here; this is
+  an outstanding gate, not evidence of absence or closure.
 - **D4** cleanup by creation receipt only (r4). Observations: engine (`docker info`), `ps -a`, `volume ls`,
   the complete image inventory (`image ls --all --no-trunc`), and the selected image's inspect by ID. The
   helper `select_cleanup_targets` selects only receipted creations on this engine. Each class (containers,
@@ -642,7 +664,7 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
     Ordinary execution still refuses. Plain proof request only; no window recipe.
   - D1 is statically admitted (r4). Its ordinary execution still refuses at the owner mechanism; its
     proof-only window names the original D0 receipt (see Executor).
-  - D3 and D4: in the proof entry as windows. D3 names the original D2 receipt and requires its cidfile absent;
+  - D3 and D4: in the proof entry as windows. D3 names the original D2 receipt and requires its activation-derived cidfile absent;
     D4 names the original D3 receipt, selects only receipted full IDs on this engine, and refuses a predecessor that
     did not close, so a failed predecessor cannot trigger cleanup. Native execution still needs a separate GO.
   - C5 and C6: admitted (r10). C5's check, cidfile read and container listing are fixed guest-helper operations

@@ -104,7 +104,7 @@
     "image_context.py": "af74047f640111907930273f7cc7a2b46eac4cb27943f0a512fccf56a1b3b322",
     "image_prepare.py": "882f9e44e7acd87e5ab94237feb7f19a452a3bbb86dd1cf208f311129847964f",
     "macos_metadata_tranche.py": "c204bfaa87c2534da05b62c5f10beda5d3196216ce40d6afffeb8dec2ef9d1a6",
-    "macos_preparation.py": "5e638111b8294e59c829831b3a33923bbe516d6a6082df5855a5ba966f49f126",
+    "macos_preparation.py": "2e95f29be7495d83da5be2ead3992f6345617f2ff126ee91e648c9cc916715ed",
     "guest_inputs.py": "d2d0ea050f6d8b5ede4dcf07fbd3a7be65241b5b35d88830513cd07e76361af2"
   },
   "proof_entry": {
@@ -193,6 +193,7 @@
     "control",
     "desktop_cidfile",
     "desktop_config",
+    "desktop_container_name",
     "desktop_context_dir",
     "desktop_host",
     "desktop_iidfile",
@@ -1934,7 +1935,7 @@
             "--label",
             "effigy.qual={token}",
             "--name",
-            "effigy-4f6a-dcheck-{token}",
+            "{desktop_container_name}",
             "--cidfile",
             "{desktop_cidfile}",
             "{image_id}",
@@ -1982,7 +1983,7 @@
           "timeout_seconds": 10
         }
       ],
-      "storage_cap_bytes": 0
+      "storage_cap_bytes": 8192
     },
     {
       "backend": "desktop",

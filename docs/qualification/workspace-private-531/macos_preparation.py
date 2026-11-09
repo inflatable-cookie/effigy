@@ -45,7 +45,7 @@ SLOTS = frozenset({
     'control', 'colima_home', 'colima_cache_home', 'colima_docker_config', 'qualification_root',
     'colima_input_dir',
     'desktop_config', 'desktop_context_dir', 'desktop_input_dir', 'desktop_host', 'desktop_iidfile',
-    'desktop_cidfile',
+    'desktop_cidfile', 'desktop_container_name',
     'token', 'guest_spec', 'guest_verify_spec', 'guest_context', 'guest_iidfile', 'guest_oci', 'guest_debs',
     'guest_input_spec', 'probe_source', 'stage_source', 'verify_source', 'transfer_source', 'input_verify_source',
     'check_source', 'route_echo', 'image_id',

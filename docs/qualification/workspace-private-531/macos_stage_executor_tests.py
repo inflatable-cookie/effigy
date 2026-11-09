@@ -464,7 +464,7 @@ class Fixture(unittest.TestCase):
         rows = lambda ids: '\n'.join(json.dumps({'ID': i}) for i in ids)
         if vol_rows is None:
             vol_rows = json.dumps({'Name': volume, 'Labels': 'effigy.qual=' + TOKEN}) + '\n'
-        container_inspect = json.dumps({'Id': CID, 'Name': '/effigy-4f6a-dcheck-' + TOKEN,
+        container_inspect = json.dumps({'Id': CID, 'Name': '/' + ex.d3_occurrence(dict(prep.control_paths(TOKEN), token=TOKEN), 'act-d3-0001')['desktop_container_name'],
                                         'Config': {'Labels': {'effigy.qual': TOKEN}}})
         if post_inventory is None:
             post_inventory = [i for i in inventory if i != IMAGE]
@@ -484,7 +484,7 @@ class Fixture(unittest.TestCase):
 
     def d3(self, prior, activation_id='act-d3-0001', calls=None):
         def write_cid(kw):
-            Path(kw['argv'][kw['argv'].index('--cidfile') + 1]).write_text(CID + '\n')
+            Path(kw['argv'][kw['argv'].index('--cidfile') + 1]).write_text(CID)
             return emit(FACTS)
         routes = {'d3-engine-info': emit(ENGINE_JSON), 'd3-disposable-check': write_cid}
         calls = [] if calls is None else calls
@@ -1117,11 +1117,18 @@ class HelperDispatchTests(Fixture):
             ex.h_check_runtime_facts(ctx_bad, {'inputs': ['c.stdout', 'c.exit']})
 
     def test_read_cidfile_needs_one_container_id(self):
-        cid = self.write('cid', CID + '\n')
-        self.assertEqual(ex.h_read_cidfile(self.ctx(), {'inputs': [cid]}), {'container_id': CID})
-        bad = self.write('cid2', 'nope')
+        self.d0()
+        activation_id = 'act-cid-0001'
+        cid = ex.d3_occurrence(self.bindings, activation_id)['desktop_cidfile']
+        Path(cid).write_text(CID)
+        ctx = self.ctx(activation_id=activation_id)
+        self.assertEqual(ex.h_read_cidfile(ctx, {'inputs': [cid]}),
+                         {'container_id': CID, 'path': cid, 'sha256': sha_bytes(CID.encode())})
+        Path(cid).write_text('nope')
         with self.assertRaises(ValueError):
-            ex.h_read_cidfile(self.ctx(), {'inputs': [bad]})
+            ex.h_read_cidfile(ctx, {'inputs': [cid]})
+        with self.assertRaises(ex.Refusal):
+            ex.h_read_cidfile(ctx, {'inputs': [self.tmp + '/other']})
 
     def test_make_owned_dir_refuses_paths_outside_the_control_root(self):
         ctx = self.ctx()
@@ -1407,9 +1414,9 @@ class GenuineChainTests(Fixture):
         d3, d3_ref = self.d3(d2_ref, calls=d3_calls)
         self.assertEqual(d3['closure'], 'closed')
         self.assertEqual({r['kind'] for r in d3['receipts']}, {'volume', 'image', 'container'})
-        self.assert_dispatch('D3', d3_calls, dict(self.bindings, image_id=IMAGE))
+        self.assert_dispatch('D3', d3_calls, dict(self.bindings, **ex.d3_occurrence(self.bindings, 'act-d3-0001'), image_id=IMAGE))
         volume = volume_for('act-d1-0001')
-        ps_rows = '\n'.join([json.dumps({'ID': CID, 'Names': 'effigy-4f6a-dcheck-' + TOKEN, 'Labels': 'effigy.qual=' + TOKEN}),
+        ps_rows = '\n'.join([json.dumps({'ID': CID, 'Names': ex.d3_occurrence(self.bindings, 'act-d3-0001')['desktop_container_name'], 'Labels': 'effigy.qual=' + TOKEN}),
                              json.dumps({'ID': 'b' * 64, 'Names': 'effigy-4f6a-dcheck-other', 'Labels': 'effigy.qual=' + TOKEN}),
                              json.dumps({'ID': 'c' * 64, 'Names': 'web', 'Labels': ''})])
         foreign_ps = '\n'.join([json.dumps({'ID': 'b' * 64, 'Names': 'effigy-4f6a-dcheck-other', 'Labels': 'effigy.qual=' + TOKEN}),
@@ -1438,7 +1445,7 @@ class GenuineChainTests(Fixture):
         _, d2_ref = self.d2(d1_ref)
         _, d3_ref = self.d3(d2_ref)
         volume = volume_for('act-d1-0001')
-        ps_rows = json.dumps({'ID': CID, 'Names': 'effigy-4f6a-dcheck-' + TOKEN, 'Labels': 'effigy.qual=' + TOKEN})
+        ps_rows = json.dumps({'ID': CID, 'Names': ex.d3_occurrence(self.bindings, 'act-d3-0001')['desktop_container_name'], 'Labels': 'effigy.qual=' + TOKEN})
         routes = self.d4_routes(volume, ps=ps_rows, post_ps=json.dumps({'ID': 'd' * 64, 'Names': 'new', 'Labels': ''}))
         with self.assertRaises(ex.Refusal) as caught:
             self.execute('D4', self.routed(routes, []), prior_ref=d3_ref, activation_id='act-d4-foreign')
@@ -5475,7 +5482,7 @@ class D34WindowTests(Fixture):
 
     def run_d3(self, path, digest, calls, cid_route=None):
         def write_cid(kw):
-            Path(kw['argv'][kw['argv'].index('--cidfile') + 1]).write_text(CID + '\n')
+            Path(kw['argv'][kw['argv'].index('--cidfile') + 1]).write_text(CID)
             return emit(FACTS)
         routes = {'d3-engine-info': emit(ENGINE_JSON), 'd3-disposable-check': cid_route or write_cid}
         with mock.patch.object(ex, 'default_transport', self.routed(routes, calls)), \
@@ -5494,7 +5501,7 @@ class D34WindowTests(Fixture):
         d2_ref = self.d2_ref()
         request = self.request('D3', d2_ref, 'd3-window-0001')
         self.assertEqual(request['prior_receipt'], d2_ref)
-        self.assertEqual(request['absent_paths'], [self.bindings['desktop_cidfile']])
+        self.assertEqual(request['absent_paths'], [ex.d3_occurrence(self.bindings, 'd3-window-0001')['desktop_cidfile']])
         path, digest = self.freeze(request, 'd3-window-request.json')
         calls = []
         code, receipt = self.run_d3(path, digest, calls)
@@ -5507,12 +5514,83 @@ class D34WindowTests(Fixture):
     def test_d3_window_refuses_an_existing_cidfile_before_the_claim(self):
         d2_ref = self.d2_ref()
         path, digest = self.freeze(self.request('D3', d2_ref, 'd3-present-0001'), 'd3-present.json')
-        Path(self.bindings['desktop_cidfile']).write_text(CID + '\n')
+        Path(ex.d3_occurrence(self.bindings, 'd3-present-0001')['desktop_cidfile']).write_text(CID)
         with mock.patch.object(ex, '_execute_stage') as effect, \
                 self.assertRaisesRegex(ex.Refusal, 'named destination is not absent'):
             proof.main(['proof', path, digest])
         effect.assert_not_called()
         self.assertFalse(os.path.lexists(self.tmp + '/claims/d3-present-0001.claim'))
+
+
+    def test_d3_real_monitor_and_fixed_fake_client(self):
+        """Exercise the plan and executor with a fixed local client, not fabricated receipts."""
+        d2_ref = self.d2_ref()
+        original = Path(self.bindings['desktop_cidfile'])
+        original.write_bytes(b'old occurrence')
+        prior_bytes = Path(d2_ref['path']).read_bytes()
+        seen = []
+        saved_monitor = ex.default_monitor
+        for mode in ('zero', 'finite', 'oversized', 'unexpected'):
+            activation = 'd3-control-' + mode
+            request = self.request('D3', d2_ref, activation)
+            path, digest = self.freeze(request, activation + '.json')
+            fake = Path(self.tmp) / ('docker-' + mode + '.py')
+            fake.write_text(
+                "import os,sys,time\n"
+                "a=sys.argv[1:]\n"
+                "if a[0]=='info': print(%r); sys.exit(0)\n" % ENGINE_JSON +
+                "p=a[a.index('--cidfile')+1]\n"
+                "with open(p,'wb') as f: f.write(%r); f.flush(); os.fsync(f.fileno())\n" %
+                (b'x' * 8192 if mode == 'oversized' else CID.encode()) +
+                ("open(os.path.join(os.path.dirname(p),'unexpected'),'wb').write(b'x')\n"
+                 if mode == 'unexpected' else '') +
+                "time.sleep(0.7)\nprint(%r)\n" % FACTS)
+
+            def fixed_transport(**kw):
+                argv = [sys.executable, '-I', '-B', str(fake)] + kw['argv'][1:]
+                return primitive.run_stage(kw['root'], argv, kw['timeout'], kw['output_cap'], kw['input_hashes'],
+                                           guest=False, cwd=kw['cwd'], environment=CHILD_ENV,
+                                           resource_monitor=kw['monitor'], deadline=kw['deadline'],
+                                           identity_probe=kw['identity_probe'])
+
+            def old_cap(limits, roots):
+                return saved_monitor({'storage': 0}, roots)
+            factory = old_cap if mode == 'zero' else ex.default_monitor
+            with mock.patch.object(ex, 'default_transport', fixed_transport), \
+                    mock.patch.object(ex, 'default_monitor', factory), \
+                    contextlib.redirect_stdout(io.StringIO()) as out:
+                code = proof.main(['proof', path, digest])
+            receipt = json.loads(out.getvalue())
+            seen.append(request['occurrence'])
+            if mode == 'finite':
+                self.assertEqual(code, 0)
+                self.assertEqual(receipt['closure'], 'closed')
+                self.assertEqual(next(r for r in receipt['receipts'] if r['kind'] == 'container')['name'],
+                                 request['occurrence']['desktop_container_name'])
+            else:
+                self.assertEqual(code, 1)
+                self.assertEqual(receipt['closure'], 'stopped')
+                step = next(s for s in receipt['steps'] if s['id'] == 'd3-disposable-check')
+                self.assertEqual(step['closure'], 'unknown_retained')
+            self.assertEqual(original.read_bytes(), b'old occurrence')
+            self.assertEqual(Path(d2_ref['path']).read_bytes(), prior_bytes)
+        self.assertEqual(len({row['desktop_cidfile'] for row in seen}), 4)
+        self.assertEqual(len({row['desktop_container_name'] for row in seen}), 4)
+
+
+    def test_d3_alias_and_readback_drift_refuse(self):
+        d2_ref = self.d2_ref()
+        request = self.request('D3', d2_ref, 'd3-alias-0001')
+        path, digest = self.freeze(request, 'd3-alias.json')
+        os.symlink(self.bindings['desktop_cidfile'], request['absent_paths'][0])
+        with self.assertRaisesRegex(ex.Refusal, 'named destination is not absent'):
+            self.run_d3(path, digest, [])
+        _, d3_ref = self.d3(d2_ref)
+        cidfile = ex.d3_occurrence(self.bindings, 'act-d3-0001')['desktop_cidfile']
+        Path(cidfile).write_text('b' * 64)
+        with self.assertRaises(ex.Refusal):
+            self.request('D4', d3_ref, 'd4-drift-0001')
+        self.assertFalse(os.path.lexists(self.tmp + '/claims/d4-drift-0001.claim'))
 
     def test_d3_window_names_only_the_d2_receipt_and_is_one_use(self):
         d2_ref = self.d2_ref()

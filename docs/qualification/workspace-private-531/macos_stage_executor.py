@@ -156,7 +156,8 @@ PINNED_SOURCE_BINDINGS = {'probe_source': 'probe', 'stage_source': 'stage', 'ver
 # helper. guest_nonce is minted once per fixed guest step before launch.
 DERIVED_BINDINGS = ('image_id', 'owned_container_ids', 'owned_image_id', 'owned_volume_name', 'token32',
                     'guest_spec', 'guest_verify_spec', 'guest_context', 'guest_iidfile', 'guest_nonce',
-                    'guest_oci', 'guest_debs', 'guest_input_spec', 'guest_check_cid', 'check_container_id')
+                    'guest_oci', 'guest_debs', 'guest_input_spec', 'guest_check_cid', 'check_container_id',
+                    'desktop_container_name')
 NOT_SUPPLIED = DERIVED_BINDINGS + tuple(PINNED_SOURCE_BINDINGS) + ('guest_helper_hex',)
 PLAN_PLACEHOLDERS = {k: f'<{k}>' for k in NOT_SUPPLIED}
 
@@ -871,6 +872,79 @@ def default_monitor(limits, roots):
     return monitor
 
 
+
+class D3ControlMonitor:
+    """Keep the normal high-water counter and refuse observed writes outside the one cidfile.
+
+    Sampling is not a quota: changes made and removed between samples are not observable.
+    The parent directory may allocate one block for its new entry.
+    """
+    def __init__(self, monitor, root, cidfile):
+        self.monitor, self.root, self.cidfile = monitor, root, cidfile
+        self.parent = os.path.dirname(cidfile)
+        self.initial = self._inventory()
+        if cidfile in self.initial:
+            raise Refusal('D3 cidfile already exists')
+        self.cid_identity = None
+        self.cid_disappeared = False
+
+    def _inventory(self):
+        out, stack = {}, [self.root]
+        while stack:
+            path = stack.pop()
+            info = os.lstat(path)
+            out[path] = info
+            if stat.S_ISDIR(info.st_mode):
+                with os.scandir(path) as entries:
+                    stack.extend(e.path for e in entries if e.name != '_lima')
+        return out
+
+    @property
+    def last(self):
+        return self.monitor.last
+
+    @property
+    def maxima(self):
+        return self.monitor.maxima
+
+    def check(self):
+        used = self.monitor.check()
+        try:
+            current = self._inventory()
+            if set(current) - set(self.initial) - {self.cidfile} or set(self.initial) - set(current):
+                raise Refusal('unexpected D3 control path change')
+            for path, before in self.initial.items():
+                after = current[path]
+                identity = lambda st: (st.st_dev, st.st_ino, st.st_uid, st.st_mode)
+                if identity(before) != identity(after):
+                    raise Refusal(f'D3 control path identity changed: {path}')
+                if path == self.parent:
+                    expected_links = before.st_nlink + (1 if self.cidfile in current else 0)
+                    if after.st_nlink not in (before.st_nlink, expected_links):
+                        raise Refusal('D3 cidfile directory link count drift')
+                    if after.st_blocks * 512 > before.st_blocks * 512 + 4096:
+                        raise Refusal('D3 cidfile directory growth exceeded')
+                elif before.st_nlink != after.st_nlink:
+                    raise Refusal(f'D3 control path link count changed: {path}')
+                elif (before.st_size, before.st_blocks, before.st_mtime_ns, before.st_ctime_ns) != (
+                        after.st_size, after.st_blocks, after.st_mtime_ns, after.st_ctime_ns):
+                    raise Refusal('unexpected D3 control path modification')
+            info = current.get(self.cidfile)
+            if info is None:
+                if self.cid_identity is not None:
+                    self.cid_disappeared = True
+            else:
+                identity = (info.st_dev, info.st_ino)
+                if (self.cid_disappeared or (self.cid_identity is not None and self.cid_identity != identity)
+                        or not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                        or info.st_nlink != 1 or info.st_size > 64 or info.st_blocks * 512 > 4096):
+                    raise Refusal('D3 cidfile identity or allocation drift')
+                self.cid_identity = identity
+        except OSError as exc:
+            raise Refusal('D3 control path observation failed') from exc
+        return used
+
+
 def start_identity(pid):
     """The spawn-time record: wall and monotonic time taken right after spawn, with no subprocess (a subprocess
     would block live monitoring). The kernel's process start time is not read; PID identity rests on the recorded
@@ -1043,6 +1117,15 @@ def d2_occurrence(bindings, activation_id):
                 desktop_iidfile=bindings['desktop_iidfile'] + '-' + suffix)
 
 
+
+def d3_occurrence(bindings, activation_id):
+    """Fresh identities for one D3 activation, under the original D0 control chain."""
+    if not isinstance(activation_id, str) or not ACTIVATION_ID.fullmatch(activation_id):
+        raise Refusal('invalid D3 activation identity')
+    suffix = hashlib.sha256(('d3-occurrence:' + activation_id).encode()).hexdigest()[:16]
+    return dict(desktop_cidfile=bindings['desktop_cidfile'] + '-' + suffix,
+                desktop_container_name=f"effigy-4f6a-dcheck-{bindings['token']}-{suffix}")
+
 def verify_buildx_target():
     """The Desktop bundle version and the pinned buildx: a regular executable whose bytes hash to the pin."""
     try:
@@ -1183,8 +1266,12 @@ def h_check_runtime_facts(ctx, step):
 
 
 def h_read_cidfile(ctx, step):
-    text = Path(render1(step['inputs'][0], ctx['bindings'])).read_text()
-    return {'container_id': prep.read_cidfile(text)}
+    path = render1(step['inputs'][0], ctx['bindings'])
+    if path != d3_occurrence(dict(prep.control_paths(ctx['bindings']['token']), token=ctx['bindings']['token']), ctx['activation_id'])['desktop_cidfile']:
+        raise Refusal('D3 cidfile readback path drift')
+    data = read_checked_file(path, must_be_in=ctx['bindings']['control'], read_only=False, max_bytes=64)
+    return {'container_id': prep.read_cidfile(data.decode()), 'path': path,
+            'sha256': hashlib.sha256(data).hexdigest()}
 
 
 FULL_ID = re.compile(r'[0-9a-f]{64}')
@@ -1511,8 +1598,8 @@ def volume_creation_receipt(create_stdout, token, inspect_text, engine_id):
                 created_at=row.get('CreatedAt'), labels=labels)
 
 
-def container_creation_receipt(token, container_id, engine_id):
-    return dict(kind='container', id=container_id, name=f'effigy-4f6a-dcheck-{token}',
+def container_creation_receipt(token, container_id, engine_id, name=None):
+    return dict(kind='container', id=container_id, name=name or f'effigy-4f6a-dcheck-{token}',
                 label=f'effigy.qual={token}', engine_id=engine_id)
 
 
@@ -2234,12 +2321,19 @@ def verify_creation(rec, body, manifest):
         expected = image_creation_receipt(body['token'], rec['id'], readback, body['engine_id'])
     else:
         helper = json.loads(Path(ev['path']).read_text())
-        if helper['result'].get('container_id') != rec['id']:
+        occurrence = d3_occurrence(dict(prep.control_paths(body['token']), token=body['token']), act)
+        cidfile = occurrence['desktop_cidfile']
+        result = helper['result']
+        data = read_checked_file(cidfile, must_be_in=prep.control_paths(body['token'])['control'],
+                                 read_only=False, max_bytes=64)
+        if (result != {'container_id': rec['id'], 'path': cidfile, 'sha256': hashlib.sha256(data).hexdigest()}
+                or prep.read_cidfile(data.decode()) != rec['id']):
             raise Refusal('container creation receipt is not the one its cidfile recorded')
-        name = f"effigy-4f6a-dcheck-{body['token']}"
-        if '--name' not in argv or argv[argv.index('--name') + 1] != name or '--cidfile' not in argv:
+        name = occurrence['desktop_container_name']
+        if ('--name' not in argv or argv[argv.index('--name') + 1] != name or '--cidfile' not in argv
+                or argv[argv.index('--cidfile') + 1] != occurrence['desktop_cidfile']):
             raise Refusal('the run intent does not name this container and its cidfile')
-        expected = container_creation_receipt(body['token'], rec['id'], body['engine_id'])
+        expected = container_creation_receipt(body['token'], rec['id'], body['engine_id'], name)
     comparable = {k: v for k, v in rec.items() if k not in ('evidence', 'stage')}
     if comparable != expected:
         raise Refusal(f"{rec['kind']} creation receipt differs from the one its outputs establish")
@@ -2384,8 +2478,13 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                 pins.pin(bindings[key])
             except OSError:
                 raise Refusal(f'{key}: the private Docker directory must exist and be pinned before effects')
-    if stage_id in ('D1', 'D2'):
+    if stage_id in ('D1', 'D2', 'D3'):
         check_d0_identities(d0_from_chain(prior), bindings, pins)
+    if stage_id == 'D3':
+        occurrence = d3_occurrence(bindings, go['activation_id'])
+        pins.pin(os.path.dirname(occurrence['desktop_cidfile']))
+        if os.path.lexists(occurrence['desktop_cidfile']):
+            raise Refusal('D3 cidfile already exists: refuse adoption')
     # One absolute monotonic deadline for the whole stage, bounded by the activation window.
     budget = min(stage['seconds'], (datetime.datetime.fromisoformat(go['expires_utc'].replace('Z', '+00:00')) - now).total_seconds())
     if outer_deadline is not None:
@@ -2407,10 +2506,14 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
     # One monitor for the whole stage: one baseline and one high-water mark across helpers and windows.
     cap = stage.get('storage_cap_bytes', 0)
     monitor = monitor_factory({'storage': cap}, [control])
+    if stage_id == 'D3':
+        monitor = D3ControlMonitor(monitor, control, occurrence['desktop_cidfile'])
     run_bindings = {k: v for k, v in bindings.items() if k not in NOT_SUPPLIED}
     run_bindings.update(guest_source_bindings())
     if stage_id == 'D2':  # this occurrence's own Docker config, input, context and iidfile; D0/D1 paths stay untouched
         run_bindings.update(d2_occurrence(bindings, go['activation_id']))
+    if stage_id == 'D3':
+        run_bindings.update(occurrence)
     if token32 is not None:
         run_bindings['token32'] = token32
     if stage_id == 'C5':
@@ -2498,7 +2601,8 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                 evidence['sha256'] = checked_sha(evidence['path'], must_be_in=stage_root)
                 if step['helper'] == 'read_cidfile':
                     ctx['receipts'].append(dict(container_creation_receipt(bindings['token'], result['container_id'],
-                                                                           ctx['engine_id']), evidence=evidence))
+                                                                           ctx['engine_id'],
+                                                                           ctx['bindings']['desktop_container_name']), evidence=evidence))
                 if step['helper'] == 'select_cleanup_targets':
                     ctx['selection'] = result
                 if step['id'] == 'c4-check-image-identity':
@@ -2523,6 +2627,8 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
             expected_command = None
             if fixed_guest or remote_guest:
                 bind_guest_intent(ctx, step['id'], step_root)
+            if step['id'] == 'd3-disposable-check' and os.path.lexists(occurrence['desktop_cidfile']):
+                raise Refusal('D3 cidfile appeared before dispatch')
             resolved = resolve_step(step, ctx['bindings'])
             if fixed_guest:
                 check_guest_helper_argv(resolved, ctx['guest_intent'])
