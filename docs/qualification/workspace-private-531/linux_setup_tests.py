@@ -2790,6 +2790,44 @@ class InstalledSupervisorChecks(unittest.TestCase):
         self.assertFalse((self.root / 'elsewhere').exists())
 
 
+class QuotaBypassCandidateChecks(unittest.TestCase):
+    def test_candidate_drops_and_rechecks_bypass_before_a_writer_can_run(self):
+        bit = supervisor.CAP_SYS_RESOURCE_BIT
+        state = {'effective': bit | 1, 'permitted': bit | 1, 'inheritable': bit}
+        events = []
+
+        def capget(header, data):
+            events.append('get')
+            for field, value in state.items():
+                setattr(data[0], field, value)
+            return 0
+
+        def capset(header, data):
+            events.append('set')
+            for field in state:
+                state[field] = getattr(data[0], field)
+            return 0
+
+        def prctl(operation, arg, *unused):
+            events.append((operation, arg))
+            return 1 if operation == supervisor.PR_GET_NO_NEW_PRIVS else 0
+
+        supervisor._candidate_drop_quota_bypass(capget, capset, prctl)
+        self.assertEqual(state, {'effective': 1, 'permitted': 1, 'inheritable': 0})
+        self.assertEqual(events, [(supervisor.PR_SET_NO_NEW_PRIVS, 1),
+                                  (supervisor.PR_CAP_AMBIENT, supervisor.PR_CAP_AMBIENT_CLEAR_ALL),
+                                  'get', 'set', 'get', (supervisor.PR_GET_NO_NEW_PRIVS, 0),
+                                  (supervisor.PR_CAP_AMBIENT, supervisor.PR_CAP_AMBIENT_IS_SET)])
+
+        state.update(effective=bit, permitted=bit, inheritable=bit)
+        with self.assertRaisesRegex(Refusal, 'drop failed or is unknown'):
+            supervisor._candidate_drop_quota_bypass(capget, lambda *args: -1, prctl)
+        with self.assertRaisesRegex(Refusal, 'remains present'):
+            supervisor._candidate_drop_quota_bypass(capget, lambda *args: 0, prctl)
+        with self.assertRaisesRegex(Refusal, 'setup failed or is unknown'):
+            supervisor._candidate_drop_quota_bypass(capget, capset, lambda *args: None)
+
+
 class OriginalStreamChecks(unittest.TestCase):
     def test_supervised_oversize_stream_is_refused_before_root_record_write(self):
         stage = fresh_row('stream-over-root-cap-')

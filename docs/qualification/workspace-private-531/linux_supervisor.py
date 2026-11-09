@@ -34,6 +34,7 @@ Credit remains host-owned: the candidate needs a separate authenticated terminal
 observation. SSH exit alone never establishes closure.
 """
 import base64
+import ctypes
 import hashlib
 import json
 import os
@@ -81,6 +82,10 @@ GATE_NAME = 'gate.fifo'
 TRANSFER_NAME = 'transfer.fifo'
 PAYLOAD_STDOUT_CAP = 65536
 ROOT_RECORD_CAP = 1024 * 1024
+CAP_SYS_RESOURCE_BIT = 1 << 24
+CAPABILITY_VERSION_3 = 0x20080522
+PR_SET_NO_NEW_PRIVS, PR_GET_NO_NEW_PRIVS, PR_CAP_AMBIENT = 38, 39, 47
+PR_CAP_AMBIENT_IS_SET, PR_CAP_AMBIENT_CLEAR_ALL = 1, 4
 PAYLOAD_ACCOUNT = 'effigy531'     # the one account a request may name; a request for any other account is refused
 STAGE_OWNER = 0                   # the stage root is root-owned in production
 # The only directory the installed entry creates row stages under. It is root-owned and mode 0711,
@@ -386,6 +391,40 @@ def _row_write(row_fd, name, data):
         output.write(data)
         output.flush()
         os.fsync(output.fileno())
+
+
+class _CapHeader(ctypes.Structure):
+    _fields_ = [('version', ctypes.c_uint32), ('pid', ctypes.c_int32)]
+
+
+class _CapData(ctypes.Structure):
+    _fields_ = [('effective', ctypes.c_uint32), ('permitted', ctypes.c_uint32),
+                ('inheritable', ctypes.c_uint32)]
+
+
+def _candidate_drop_quota_bypass(capget, capset, prctl):
+    """Source-only child preparation; no production entry invokes this candidate."""
+    if ctypes.sizeof(_CapHeader) != 8 or ctypes.sizeof(_CapData) != 12:
+        raise Refusal('unsupported capability ABI')
+    def expect(value, expected, phase):
+        if type(value) is not int or value != expected:
+            raise Refusal('quota-bypass capability ' + phase + ' failed or is unknown')
+    expect(prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), 0, 'no-new-privileges setup')
+    expect(prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0), 0, 'ambient clear')
+    header, data = _CapHeader(CAPABILITY_VERSION_3, 0), (_CapData * 2)()
+    expect(capget(ctypes.byref(header), data), 0, 'read')
+    if header.version != CAPABILITY_VERSION_3:
+        raise Refusal('unsupported capability version')
+    for field in ('effective', 'permitted', 'inheritable'):
+        setattr(data[0], field, getattr(data[0], field) & ~CAP_SYS_RESOURCE_BIT)
+    expect(capset(ctypes.byref(header), data), 0, 'drop')
+    after = (_CapData * 2)()
+    expect(capget(ctypes.byref(header), after), 0, 'verification')
+    if header.version != CAPABILITY_VERSION_3 or any(
+            getattr(after[0], field) & CAP_SYS_RESOURCE_BIT for field in ('effective', 'permitted', 'inheritable')):
+        raise Refusal('quota-bypass capability remains present')
+    expect(prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0), 1, 'no-new-privileges verification')
+    expect(prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_IS_SET, 24, 0, 0), 0, 'ambient verification')
 
 
 def _record_after_start(row_fd, name, data, ops, unit):
