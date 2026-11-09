@@ -641,9 +641,17 @@ no environment, no secrets, no logs and no unrelated inventory.
 Verdicts are recorded in one exclusive fsynced receipt beside the step originals:
 `terminal` (identity matches, state exited/dead), `nonterminal` (identity matches, state
 created/running/restarting/paused/removing — retained and reported, never stopped, killed,
-restarted or waited for), `absent` (only the supported exact-ID not-found answer: exit 1,
-empty stdout, the one stderr line `Error: No such container: <full id>` from the pinned
-CLI's own objectNotFound path, after a matched engine read), `mismatched` (a present object
+restarted or waited for), `absent` (only one source-qualified exact-ID byte pair after a
+matched engine read: exit 1 and stderr containing exactly one final LF. The pinned Docker CLI
+29.8.0 source at [`88096ef`](https://github.com/docker/cli/tree/88096ef00576baf72a9cb45caa45c0544c40e0a7)
+and its Moby client establish the local `Error: No such container: <full id>` form with empty
+stdout, while retained 794 establishes the daemon-wrapped pair: stdout is exactly one LF and
+stderr is `Error response from daemon: No such container: <full id>` plus one LF. The CLI's
+inspection command routes formatted output to stdout even when the inspect returns an error;
+its printer supplies the terminal line ending. The classifier admits only these two complete
+pairs. Additional bytes, lines, other IDs, transport/API/context errors and malformed outputs
+remain `unknown`; the retained bytes identify the observed daemon form, and do not authorize
+general error matching. `mismatched` (a present object
 whose ID, name, label or image differs — reported, never acted on), `refused` (fresh engine
 identity differs: the inspect is never dispatched), and `unknown` (daemon, context,
 transport, parse, malformed, ambiguous, timeout, cap or any other nonconforming shape,

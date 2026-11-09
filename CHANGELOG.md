@@ -8,6 +8,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Recognize Docker 29.8.0's exact daemon-wrapped full-ID not-found response in the
+  receipt-bound Desktop observation. Classification requires the source-qualified stdout
+  and stderr bytes, a waited exit 1 and a previously matched engine identity (effigy#795).
+
 - Make the ordinary Acow acquisition retest launchable on the real artifact path
   (effigy#790). The proof entry accepts one narrow external runtime binding
   (`--binding PATH --binding-sha256 sha256:HEX`), schema-strict, hash-pinned and

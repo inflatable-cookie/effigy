@@ -268,7 +268,7 @@ class Fixture(unittest.TestCase):
         info = json.dumps(ENGINE) if info is None else info
         scripted = inspect is not None or stderr is not None
         inspect = '' if inspect is None else inspect
-        stderr = obs.NOT_FOUND_PREFIX + CID + '\n' if stderr is None else stderr
+        stderr = 'Error: No such container: ' + CID + '\n' if stderr is None else stderr
         if inspect_exit is None:
             inspect_exit = 0 if scripted else 1  # the default answer is the supported absence
         # The lull keeps the fake from exiting instantly: a real CLI lives far longer, and on
@@ -383,13 +383,47 @@ class EntryAndVerdictTests(Fixture):
         self.assertIsNone(receipt['reason'])
 
     def test_proven_exact_id_absence(self):
-        missing = obs.NOT_FOUND_PREFIX + CID + '\n'
-        self.fake_docker(inspect='', stderr=missing, inspect_exit=1)
+        missing = 'Error response from daemon: No such container: ' + CID + '\n'
+        replay_stdout = b'\n'
+        replay_stderr = missing.encode()
+        self.assertEqual(len(replay_stdout), 1)
+        self.assertEqual(sha_bytes(replay_stdout), '01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b')
+        self.assertEqual(sha_bytes(replay_stderr), 'faea66841f12903eae6d1dee4d09e1d33298884c3a83a691f261d03d672409b8')
+        verdict, _ = obs.classify_inspection(
+            {'disposition': 'failed', 'waited_exit': 1}, replay_stdout, replay_stderr,
+            {'id': CID})
+        self.assertEqual(verdict, 'absent')
+        self.fake_docker(inspect='\n', stderr=missing, inspect_exit=1)
         self.assertEqual(self.run_entry(), 0)
         request, _, _ = self.request()
         receipt = self.receipt(request)
         self.assertEqual(receipt['verdict'], 'absent')
         self.assertIsNone(receipt['facts']['facts'])
+
+    def test_not_found_near_misses_stay_unknown(self):
+        prefix = b'Error response from daemon: No such container: '
+        expected = prefix + CID.encode() + b'\n'
+        cases = {
+            'stdout-extra': (b'warning\n', expected),
+            'stderr-extra-line': (b'\n', expected + b'warning\n'),
+            'stderr-extra-byte': (b'\n', expected[:-1] + b'!\n'),
+            'ansi': (b'\n', b'\x1b[31m' + expected),
+            'other-id': (b'\n', prefix + OTHER_CID.encode() + b'\n'),
+            'truncated-id': (b'\n', prefix + CID[:-1].encode() + b'\n'),
+            'no-final-lf': (b'\n', expected[:-1]),
+            'wrong-stdout': (b'', expected),
+            'wrong-disposition': (b'\n', expected, 'exited', 1),
+            'wrong-exit': (b'\n', expected, 'failed', 2),
+        }
+        for name, values in cases.items():
+            with self.subTest(case=name):
+                stdout, stderr = values[:2]
+                disposition = values[2] if len(values) > 2 else 'failed'
+                waited_exit = values[3] if len(values) > 3 else 1
+                verdict, _ = obs.classify_inspection(
+                    {'disposition': disposition, 'waited_exit': waited_exit},
+                    stdout, stderr, {'id': CID})
+                self.assertEqual(verdict, 'unknown')
 
     def test_wrong_engine_refuses_before_inspection(self):
         self.fake_docker(info=json.dumps(OTHER_ENGINE))
@@ -593,7 +627,7 @@ class RefusalOrderTests(Fixture):
         self.assert_no_effect()
 
     def test_replayed_request_refuses_at_the_claim(self):
-        self.fake_docker(inspect='', stderr=obs.NOT_FOUND_PREFIX + CID + '\n', inspect_exit=1)
+        self.fake_docker(inspect='\n', stderr='Error response from daemon: No such container: ' + CID + '\n', inspect_exit=1)
         request, path, sha = self.request()
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(obs.main(['obs', path, sha]), 0)

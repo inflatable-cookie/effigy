@@ -104,11 +104,14 @@ STEP_ARGVS = {
 STEP_ALLOWANCES = {'engine-identity': ENGINE_ALLOWANCE, 'container-inspect': INSPECT_ALLOWANCE}
 CHILD_ENV_SLOTS = ('PATH', 'LANG', 'DOCKER_CONFIG', 'DOCKER_HOST')
 CHILD_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
-# The supported exact-ID not-found answer, pinned from the pinned 29.8.0 CLI's own source:
-# moby client's objectNotFoundError prints "Error: No such container: <id>" and the CLI's
-# cobra printer emits that one line on stderr with exit 1 and empty stdout. Any other shape
-# (transport, daemon, timeout, extra text) stays unknown.
-NOT_FOUND_PREFIX = 'Error: No such container: '
+# Exact not-found lines established by the pinned Docker 29.8.0 CLI/Moby source and the
+# retained 794 receipt. Daemon API errors are rendered as "Error response from daemon: ";
+# the CLI's local object-not-found form remains supported too. Cobra writes the one terminal
+# LF to stderr, with empty stdout and exit 1. No normalization is performed.
+NOT_FOUND_PAIRS = (
+    (b'', b'Error: No such container: '),
+    (b'\n', b'Error response from daemon: No such container: '),
+)
 TERMINAL_STATES = frozenset({'exited', 'dead'})
 NONTERMINAL_STATES = frozenset({'created', 'running', 'restarting', 'paused', 'removing'})
 ESTABLISHED = frozenset({'terminal', 'nonterminal', 'absent', 'mismatched'})
@@ -550,9 +553,10 @@ def classify_inspection(result, stdout, stderr, container):
                                'disposition': result.get('disposition'),
                                'waited_exit': result.get('waited_exit')}
         return compare_facts(facts, container)
-    if (result.get('disposition') == 'failed' and result.get('waited_exit') == 1 and not stdout
-            and stderr.count(b'\n') == 1
-            and stderr.rstrip(b'\n') == (NOT_FOUND_PREFIX + container['id']).encode()):
+    expected_pairs = tuple((expected_stdout, prefix + container['id'].encode() + b'\n')
+                           for expected_stdout, prefix in NOT_FOUND_PAIRS)
+    if (result.get('disposition') == 'failed' and result.get('waited_exit') == 1
+            and (stdout, stderr) in expected_pairs):
         return 'absent', {'facts': None}
     reason = ('inspection is neither a well-formed response nor the supported exact-ID '
               'not-found answer')
