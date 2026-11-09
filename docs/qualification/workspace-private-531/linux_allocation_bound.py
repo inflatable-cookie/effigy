@@ -15,6 +15,7 @@ A witness carries the five route originals (text, sha256, waited exit). It is ve
 request facts: boot id, owned uid, stage root, and the exact entry set. Originals are hashed and
 checked for consistency with each other; a caller label is never enforcement.
 """
+import ctypes
 import hashlib
 import os
 import re
@@ -30,6 +31,10 @@ ROOT_FSTYPE = 'ext4'
 REQUIRED_FEATURES = frozenset({'project', 'quota'})
 PROJECT_ID = 531                                  # reserved for the stage tree; no other object may carry it
 QB_UNIT_BYTES = probe.QB_UNIT_BYTES
+# Candidate row reservations. E19 is deliberately omitted: its aggregate
+# 1 MiB ceiling cannot be enforced by independently resetting per-file limits.
+ROW_RESERVATIONS = {'E8': 64 << 20, 'E9a': 40 << 20, 'E9b': 500 << 20, 'E9c': 40 << 20}
+PROJECT_CEILING = 1 << 30
 # if_dqblk dqb_valid bits, linux/quota.h enum: QIF_BLIMITS_B = 0, QIF_SPACE_B = 1
 QIF_BLIMITS = 1 << 0
 QIF_SPACE = 1 << 1
@@ -37,6 +42,39 @@ ROOT_UID = 0                                      # the supervisor creates its g
 ROUTES = ('mountinfo', 'dumpe2fs', 'by-uuid', 'quota', 'tree')
 HELPER = Path(__file__).resolve().parent / 'linux_allocation_probe.py'
 HEX64 = re.compile(r'^[0-9a-f]{64}$')
+
+
+def prospective_row_limit(row, charged_bytes):
+    """Build fixed quota fields only; this does not authorize or invoke a setter.
+
+    The caller must obtain a genuine, current charge under exclusive custody.
+    No production route is armed to consume this prospective record.
+    """
+    if not isinstance(row, str) or row not in ROW_RESERVATIONS:
+        raise Refusal('row has no fixed project reservation')
+    if not isinstance(charged_bytes, int) or isinstance(charged_bytes, bool) or charged_bytes < 0:
+        raise Refusal('project charge is invalid')
+    reservation = ROW_RESERVATIONS[row]
+    if charged_bytes + reservation > PROJECT_CEILING:
+        raise Refusal('row reservation exceeds the project ceiling')
+    try:
+        return probe.limit_record(charged_bytes, reservation)
+    except probe.Refused as exc:
+        raise Refusal('row reservation is not representable') from exc
+
+
+def _invoke_candidate_setter(row, charged_bytes, call):
+    """Source-only fixed syscall boundary; no command entry or authority calls it.
+
+    The future root route must establish fresh preconditions and one-use authority
+    before calling this function, then retain an independent post-observation.
+    A successful syscall return alone is not proof of enforcement.
+    """
+    record = prospective_row_limit(row, charged_bytes)
+    result = call(probe.Q_SETQUOTA, ROOT_DEVICE, PROJECT_ID, ctypes.byref(record))
+    if not isinstance(result, tuple) or len(result) != 2 or type(result[0]) is not int or result[0] != 0:
+        raise Refusal('project quota setter failed or its result is unknown')
+    return {'setter_exit': 0, 'hard_qb': record.bhard}
 
 
 def helper_sha256(path=HELPER):

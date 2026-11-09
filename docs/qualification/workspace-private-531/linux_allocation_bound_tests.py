@@ -88,6 +88,35 @@ class VerifierChecks(unittest.TestCase):
     def verify(self, witness=None, limit=LIMIT, fx=None):
         return bound.verify(witness if witness is not None else render(), limit, fx or facts(), {MECH})
 
+    def test_fixed_row_limit_reservation_is_bounded_and_not_authority(self):
+        for row, reservation in bound.ROW_RESERVATIONS.items():
+            with self.subTest(row=row):
+                block = bound.prospective_row_limit(row, CHARGED)
+                self.assertEqual(block.bhard * probe.QB_UNIT_BYTES, CHARGED + reservation)
+                self.assertEqual(block.valid, bound.QIF_BLIMITS)
+        for row, charged in (('E19.0', 0), ('foreign', 0), ('E8', -1), ('E8', True),
+                             ('E8', 1), ('E9b', bound.PROJECT_CEILING)):
+            with self.subTest(row=row, charged=charged), self.assertRaises(Refusal):
+                bound.prospective_row_limit(row, charged)
+
+    def test_fixed_candidate_setter_uses_only_the_project_block_limit(self):
+        calls = []
+        def call(cmd, device, project, address):
+            block = address._obj
+            calls.append((cmd, device, project, block.bhard, block.bsoft, block.valid))
+            return 0, 0
+        result = bound._invoke_candidate_setter('E8', CHARGED, call)
+        self.assertEqual(calls, [(probe.Q_SETQUOTA, bound.ROOT_DEVICE, bound.PROJECT_ID,
+                                  (CHARGED + (64 << 20)) // probe.QB_UNIT_BYTES, 0, bound.QIF_BLIMITS)])
+        self.assertEqual(result['setter_exit'], 0)
+        for result in (None, (-1, 5), (False, 0)):
+            with self.subTest(result=result), self.assertRaisesRegex(Refusal, 'failed or its result is unknown'):
+                bound._invoke_candidate_setter('E8', CHARGED, lambda *args: result)
+        calls.clear()
+        with self.assertRaises(Refusal):
+            bound._invoke_candidate_setter('E19.0', 0, call)
+        self.assertEqual(calls, [])
+
     def test_matching_originals_still_refuse_unproven_confinement_and_enforcement(self):
         with self.assertRaisesRegex(Refusal, 'enforcement and writer confinement are unproven'):
             self.verify()
