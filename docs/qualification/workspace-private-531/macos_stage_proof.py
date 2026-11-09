@@ -29,9 +29,12 @@ def unique_object(pairs):
 
 
 # D1 is reached only through a window request, which names the original D0 receipt it consumes.
+# D2 is the same form, naming the original D1 receipt (which already binds the D0 chain).
 # C1, C2 and C3 are plain proof requests only: their window recipes are not reviewed (window_recipe refuses them).
-PROOF_STAGES = ('C0', 'D0', 'D1', 'C1', 'C2', 'C3')
-PROOF_STAGE_REFUSAL = 'proof entry supports only C0, D0, D1, C1, C2 or C3'
+PROOF_STAGES = ('C0', 'D0', 'D1', 'C1', 'C2', 'C3', 'D2')
+WINDOW_PRIOR = {'D1': 'D0', 'D2': 'D1'}
+PROOF_STAGE_NAMES = 'C0, D0, D1, C1, C2, C3 or D2'
+PROOF_STAGE_REFUSAL = 'proof entry supports only ' + PROOF_STAGE_NAMES
 
 DESKTOP_DISK = '/Users/tom/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw'
 DESKTOP_GROWTH_CAP = 512 * 1024 * 1024
@@ -396,14 +399,14 @@ def prospective(stage_id, bindings):
 
 
 
-def checked_prior(ref, bindings, manifest):
-    """The original D0 receipt a D1 window names: exact canonical path and hash, and its complete chain verified now
-    for this token, control root and endpoint. A different preparation head does not relabel it."""
-    if not isinstance(ref, dict) or set(ref) != {'stage', 'path', 'sha256'} or ref.get('stage') != 'D0':
-        raise executor.Refusal('D1 names the original D0 receipt by stage, path and sha256')
+def checked_prior(ref, bindings, manifest, expected_stage='D0'):
+    """The original predecessor receipt a window names: exact canonical path and hash, and its complete chain
+    verified now for this token, control root and endpoint. A different preparation head does not relabel it."""
+    if not isinstance(ref, dict) or set(ref) != {'stage', 'path', 'sha256'} or ref.get('stage') != expected_stage:
+        raise executor.Refusal(f'window names the original {expected_stage} receipt by stage, path and sha256')
     body = executor.read_receipt(ref)
-    executor.verify_receipt_tree(body, 'D0', executor.chain_key(bindings), manifest)
-    return dict(stage='D0', path=ref['path'], sha256=ref['sha256'])
+    executor.verify_receipt_tree(body, expected_stage, executor.chain_key(bindings), manifest)
+    return dict(stage=expected_stage, path=ref['path'], sha256=ref['sha256'])
 
 
 def window_recipe(stage_id, bindings, options):
@@ -411,10 +414,12 @@ def window_recipe(stage_id, bindings, options):
     if stage_id in ('C1', 'C2', 'C3'):
         raise executor.Refusal(f'{stage_id} has no window recipe: it runs only as a plain proof request')
     base_options = {'activation_id', 'duration_seconds', 'evidence_root'}
-    if set(options) != base_options | ({'prior_receipt'} if stage_id == 'D1' else set()):
+    prior_stage = WINDOW_PRIOR.get(stage_id)
+    if set(options) != base_options | ({'prior_receipt'} if prior_stage else set()):
         raise executor.Refusal('unsupported window options')
     identity = prospective(stage_id, bindings)
-    prior = checked_prior(options['prior_receipt'], bindings, executor.load_manifest()) if stage_id == 'D1' else None
+    prior = (checked_prior(options['prior_receipt'], bindings, executor.load_manifest(), prior_stage)
+             if prior_stage else None)
     manifest = executor.load_manifest()
     stage = executor.stage_of(manifest, stage_id)
     duration = options['duration_seconds']
@@ -428,7 +433,7 @@ def window_recipe(stage_id, bindings, options):
         raise executor.Refusal('evidence root must be canonical under scratch')
     roots = [executor.ACTIVATIONS_DIR, executor.CLAIMS_DIR, evidence,
              os.path.dirname(bindings['control']) if stage_id == 'C0' else bindings['control']]
-    if stage_id == 'D1':  # the Docker directories the original D0 chain created are pinned by identity
+    if stage_id in ('D1', 'D2'):  # the Docker directories the original D0 chain created are pinned by identity
         roots += [bindings['desktop_config'], bindings['desktop_context_dir']]
     if len(set(roots)) != len(roots):
         raise executor.Refusal('root alias')
@@ -438,9 +443,10 @@ def window_recipe(stage_id, bindings, options):
             observed[root] = list(executor.Pins.observe(root))
         except FileNotFoundError:
             observed[root] = None  # Explicit provisioning precondition; execution refuses it.
-    # D0 creates these paths exclusively; their approved identity is absence.
+    # D0 creates these paths exclusively; their approved identity is absence. D2 creates desktop_input_dir.
     absent_paths = ([os.path.dirname(bindings['desktop_config']), bindings['desktop_config'],
-                     bindings['desktop_context_dir']] if stage_id == 'D0' else [])
+                     bindings['desktop_context_dir']] if stage_id == 'D0'
+                    else [bindings['desktop_input_dir']] if stage_id == 'D2' else [])
     return dict(schema='macos-stage-window-v1', stage=stage_id, bindings=bindings,
                 bindings_sha256=executor.canon_sha(bindings), inputs=identity['inputs'],
                 inputs_sha256=identity['inputs_sha256'], manifest_sha256=identity['manifest_sha256'],
@@ -456,13 +462,13 @@ def window_recipe(stage_id, bindings, options):
 def execute_window(request, request_sha, manifest, inputs_hash, *, outer_deadline=None, monitor_factory=None,
                    force_simulation=False):
     options = {k: request[k] for k in ('activation_id', 'duration_seconds', 'evidence_root')}
-    if request['stage'] == 'D1':
+    if request['stage'] in WINDOW_PRIOR:
         options['prior_receipt'] = request['prior_receipt']
     expected = window_recipe(request['stage'], request['bindings'], options)
     if request != expected or any(value is None for value in expected['roots'].values()):
         raise executor.Refusal('window request, policy or root identity differs')
     if any(os.path.lexists(path) for path in request['absent_paths']):
-        raise executor.Refusal('D0 destination is not absent')
+        raise executor.Refusal('named destination is not absent')
     paths = (request['activation_path'], request['claim_path'], request['evidence_path'],
              request['evidence_root'] + '/' + request['stage'] + '-' + request['activation_id'],
              executor.CLAIMS_DIR + '/' + request['activation_id'] + '.claim')
@@ -476,7 +482,7 @@ def execute_window(request, request_sha, manifest, inputs_hash, *, outer_deadlin
                 raise executor.Refusal('root identity changed')
         pins.recheck()
         if any(os.path.lexists(path) for path in request['absent_paths']):
-            raise executor.Refusal('D0 destination is not absent')
+            raise executor.Refusal('named destination is not absent')
         executor.claim_activation('proof-' + request['activation_id'], request_sha)
         pins.recheck()
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -550,8 +556,8 @@ def main(argv):
     stage_id = request['stage']
     if stage_id not in PROOF_STAGES:
         raise executor.Refusal(PROOF_STAGE_REFUSAL)
-    if stage_id == 'D1' and not window:
-        raise executor.Refusal('D1 runs only through a window request that names its D0 receipt')
+    if stage_id in WINDOW_PRIOR and not window:
+        raise executor.Refusal(f'{stage_id} runs only through a window request that names its {WINDOW_PRIOR[stage_id]} receipt')
     manifest = executor.load_manifest()
     plan = executor.resolve_stage(stage_id, request['bindings'], manifest)
     if plan['static_admission']:

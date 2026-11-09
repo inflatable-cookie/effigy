@@ -262,6 +262,18 @@ def request(stage, **changes):
 
 
 class SupervisorArgvChecks(unittest.TestCase):
+    def test_candidate_confinement_properties_are_fixed_before_payload(self):
+        payload = ['/bin/echo', '--property=PrivateUsers=no']
+        ordinary = supervisor.run_argv(NONCE, 'effigy531', CWD, 60, payload)
+        candidate = supervisor._candidate_confined_run_argv(NONCE, 'effigy531', CWD, 60, payload)
+        separator = candidate.index('--')
+        self.assertEqual(candidate[:separator], ordinary[:ordinary.index('--')] + [
+            '--property=PrivateUsers=identity', '--property=NoNewPrivileges=yes'])
+        self.assertEqual(candidate[separator:], ['--'] + payload)
+        self.assertNotIn('--property=PrivateUsers=identity', ordinary)
+        with self.assertRaises(Refusal):
+            supervisor._candidate_confined_run_argv(NONCE, 'root', CWD, 60, payload)
+
     def test_transient_service_argv_has_no_scope_collect_wait_or_user_manager(self):
         argv = supervisor.run_argv(NONCE, 'effigy531', CWD, 60, supervisor.gate_argv('/g', ['/bin/true']))
         for flag in ('--service-type=exec', '--property=ExitType=cgroup', '--property=KillMode=control-group',
@@ -608,6 +620,76 @@ class ContainedTransferChecks(unittest.TestCase):
         self.assertTrue(res['payload_stdout'].startswith(hashlib.sha256(data.read_bytes()).hexdigest()))
         self.assertIsNotNone(res['candidate'])
 
+    def test_writer_ignores_path_substitution_for_cat_and_sleep(self):
+        root = tmpdir('writer-path-')
+        marker = root / 'substitution-ran'
+        for name in ('cat', 'sleep'):
+            target = root / name
+            target.write_text('#!/bin/sh\n: > ' + shlex.quote(str(marker)) + '\nexit 1\n')
+            target.chmod(0o700)
+        fifo = root / 'transfer.fifo'
+        os.mkfifo(fifo)
+        fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            with patch.dict(os.environ, {'PATH': str(root)}):
+                result = subprocess.run(transfers.writer_remote_argv(str(fifo)), input=b'abc',
+                                        capture_output=True, timeout=10)
+                missing = subprocess.run(transfers.writer_remote_argv(str(root / 'absent'), attempts=1),
+                                         input=b'', capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(os.read(fd, 3), b'abc')
+            self.assertEqual(missing.returncode, 9)
+            self.assertFalse(marker.exists())
+        finally:
+            os.close(fd)
+
+    def test_writer_tool_observations_bind_canonical_identity_and_custody(self):
+        root = tmpdir('writer-tools-')
+        binary_dir = root / 'usr' / 'bin'
+        binary_dir.mkdir(parents=True)
+        (root / 'bin').symlink_to('usr/bin')
+        for name in ('env', 'sh', 'sleep', 'cat', 'python3'):
+            binary = binary_dir / name
+            binary.write_bytes(('fixture-' + name).encode())
+            binary.chmod(0o755)
+        paths = (binary_dir / 'env', root / 'bin' / 'sh', root / 'bin' / 'sleep', root / 'bin' / 'cat',
+                 binary_dir / 'python3')
+        def observe():
+            return {name: transfers._writer_tool_identity(str(path), os.getuid(), str(root))
+                    for name, path in zip(transfers.WRITER_TOOLS, paths)}
+        before = observe()
+        transfers._compare_writer_tool_observations(before, observe(), os.getuid())
+        with self.assertRaises(Refusal):
+            transfers._writer_tool_identity(str(paths[0]), os.getuid() + 1, str(root))
+        replacement = binary_dir / 'replacement'
+        replacement.write_bytes(b'replaced')
+        replacement.chmod(0o755)
+        os.replace(replacement, binary_dir / 'cat')
+        with self.assertRaisesRegex(Refusal, 'identity changed'):
+            transfers._compare_writer_tool_observations(before, observe(), os.getuid())
+        (binary_dir / 'cat').chmod(0o777)
+        with self.assertRaises(Refusal):
+            observe()
+        (binary_dir / 'cat').unlink()
+        with self.assertRaises(Refusal):
+            observe()
+        with self.assertRaises(Refusal):
+            transfers._compare_writer_tool_observations(before, {}, os.getuid())
+        (binary_dir / 'cat').symlink_to('/bin/cat')
+        with self.assertRaises(Refusal):
+            observe()
+
+    def test_fixed_writer_tool_entry_refuses_missing_custody_and_other_arguments(self):
+        boot = '12345678-1234-1234-1234-123456789abc'
+        with patch.object(transfers.Path, 'read_text', return_value=boot), \
+                patch.object(transfers, 'fixed_writer_tool_observations', side_effect=Refusal('missing custody')) as read, \
+                patch.object(sys, 'stderr'):
+            self.assertEqual(transfers.writer_tool_main(['--observe-writer-tools']), 3)
+            read.assert_called_once()
+            read.reset_mock()
+            self.assertEqual(transfers.writer_tool_main(['--other']), 2)
+            read.assert_not_called()
+
     def test_missing_fifo_is_a_writer_failure_not_closure(self):
         root = tmpdir('contained-nofifo-')
         data = root / 'archive.bin'
@@ -788,6 +870,15 @@ class ProbeChecks(unittest.TestCase):
 class AuthorizedKeyChecks(unittest.TestCase):
     def test_restricted_key_matching_e2_and_bound_expiry_passes(self):
         setup.check_authorized_keys(key_line(), E2_KEY, NOW, NOW + 3600)
+
+    def test_existing_key_contract_does_not_admit_a_forced_command(self):
+        stamp = datetime.datetime.fromtimestamp(NOW + 3600, tz=datetime.timezone.utc).strftime('%Y%m%d%H%M%S')
+        # The accepted key has no command option. A fixed command cannot be
+        # silently added to this existing contract to confine the other session.
+        setup.check_authorized_keys(key_line(), E2_KEY, NOW, NOW + 3600)
+        forced = key_line(options='restrict,expiry-time=' + stamp + ',command="/bin/true"')
+        with self.assertRaises(Refusal):
+            setup.check_authorized_keys(forced, E2_KEY, NOW, NOW + 3600)
 
     def test_each_stale_or_fabricated_field_refuses(self):
         stamp = datetime.datetime.fromtimestamp(NOW + 3600, tz=datetime.timezone.utc).strftime('%Y%m%d%H%M%S')
@@ -1576,6 +1667,21 @@ class PlanChecks(unittest.TestCase):
         patcher_b.start()
         self.addCleanup(patcher_b.stop)
 
+    def test_e8_row_and_supervised_request_preserve_the_sixty_second_payload_clock(self):
+        row = next(row for row in setup._rows(self.fx.base()) if row['id'] == 'E8')
+        self.assertEqual(row['timeout_seconds'], 60)
+        self.assertEqual(json.loads(row['credit']['request_json'])['timeout_seconds'], 60)
+
+    def test_extra_go_receipt_cannot_expand_the_fixed_writer_set(self):
+        facts = self.fx.facts()
+        self.assertEqual(set(facts['go']), setup.SETUP_GO_GATES)
+        rows = setup._rows(facts)
+        self.assertEqual(sum(row['kind'] in ('vm-supervised', 'contained-transfer') for row in rows), 47)
+        facts['go']['unexpected'] = {}
+        result = execute(facts)
+        self.assertEqual(result['halt'], 'E3a')
+        self.assertIn('fixed setup GO receipt set', result['reason'])
+
     def test_no_go_receipt_halts_at_the_first_row(self):
         facts = self.fx.facts()
         facts['go'] = {}
@@ -1638,7 +1744,7 @@ class PlanChecks(unittest.TestCase):
         self.assertEqual(rows['E9a']['kind'], 'contained-transfer')
         self.assertEqual(rows['E9a']['argv'][:3], ['/usr/bin/ssh', '-F', str(self.fx.config)])
         remote = shlex.split(rows['E9a']['argv'][-1])
-        self.assertEqual(remote[:3], ['sudo', '-n', setup.SUPERVISOR_PATH])
+        self.assertEqual(remote[:6], ['sudo', '-n', setup.SUPERVISOR_PYTHON, '-I', '-B', setup.SUPERVISOR_PATH])
         self.assertIn('--approved-request', remote)
         self.assertEqual(rows['E9a']['writer_argv'][:5], ['/usr/bin/ssh', '-F', str(self.fx.config), setup.SSH_ALIAS, '--'])
         self.assertIn(supervisor.TRANSFER_NAME, shlex.join(rows['E9a']['writer_argv']))
@@ -2553,7 +2659,7 @@ class SshCallerChecks(unittest.TestCase):
         row = rows['E8']
         self.assertEqual(row['argv'][:3], ['/usr/bin/ssh', '-F', str(fx.config)])
         remote = shlex.split(row['argv'][-1])
-        self.assertEqual(remote[:3], ['sudo', '-n', setup.SUPERVISOR_PATH])
+        self.assertEqual(remote[:6], ['sudo', '-n', setup.SUPERVISOR_PYTHON, '-I', '-B', setup.SUPERVISOR_PATH])
         req = json.loads(row['credit']['request_json'])
         root = tmpdir('ssh-caller-')
         req.update(stage_dir=str(root / 'stage-root' / 'E8'), payload_user=ACCOUNT_NAME, payload_uid=os.geteuid(),
@@ -2572,7 +2678,7 @@ class SshCallerChecks(unittest.TestCase):
         (approval / (digest + '.json')).write_text(text)
         (approval / (digest + '.json')).chmod(0o600)
         env['EFFIGY_APPROVAL_ROOT'] = str(approval)
-        proc = subprocess.run([str(installed), '--approved-request', digest], capture_output=True,
+        proc = subprocess.run([sys.executable, '-I', '-B', str(installed), '--approved-request', digest], capture_output=True,
                               text=True, env=env, timeout=120)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         result = json.loads(proc.stdout.strip().splitlines()[-1])
@@ -2664,7 +2770,8 @@ class InstalledSupervisorChecks(unittest.TestCase):
                 names.update(alias.name.split('.')[0] for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.level == 0:
                 names.add(node.module.split('.')[0])
-        stdlib = {'ctypes', 'base64', 'hashlib', 'json', 'os', 'pwd', 're', 'stat', 'subprocess', 'sys', 'threading', 'time', 'pathlib'}
+        stdlib = {'ctypes', 'base64', 'fcntl', 'hashlib', 'json', 'math', 'os', 'pwd', 're', 'signal', 'stat',
+                  'struct', 'subprocess', 'sys', 'threading', 'time', 'pathlib'}
         self.assertLessEqual(names, stdlib)
 
     def test_mirrored_constants_match_their_sources(self):
@@ -2706,7 +2813,166 @@ class InstalledSupervisorChecks(unittest.TestCase):
         self.assertFalse((self.root / 'elsewhere').exists())
 
 
+class QuotaBypassCandidateChecks(unittest.TestCase):
+    def test_candidate_broker_child_waits_and_refuses_timeout_or_bad_project(self):
+        root = tmpdir('quota-broker-child-')
+        parent = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        state = {'effective': supervisor.CAP_SYS_RESOURCE_BIT,
+                 'permitted': supervisor.CAP_SYS_RESOURCE_BIT,
+                 'inheritable': supervisor.CAP_SYS_RESOURCE_BIT}
+
+        def capget(header, data):
+            for field, value in state.items():
+                setattr(data[0], field, value)
+            return 0
+
+        def capset(header, data):
+            for field in state:
+                state[field] = getattr(data[0], field)
+            return 0
+
+        def prctl(operation, arg, *unused):
+            return 1 if operation == supervisor.PR_GET_NO_NEW_PRIVS else 0
+
+        def project(fd):
+            return supervisor.BROKER_PROJECT_ID, supervisor.BROKER_PROJINHERIT
+
+        try:
+            device = os.fstat(parent).st_dev
+            result = supervisor._launch_candidate_quota_record(parent, 'intent.json', b'fixed', device,
+                                                               time.monotonic() + 5, time.monotonic() + 7,
+                                                               (capget, capset, prctl), project)
+            self.assertEqual(result, {'waited_exit': 0})
+            self.assertEqual((root / 'intent.json').read_bytes(), b'fixed')
+            with self.assertRaisesRegex(Refusal, 'failed or its outcome is unknown'):
+                supervisor._launch_candidate_quota_record(parent, 'stdout', b'x', device,
+                                                           time.monotonic() + 5, time.monotonic() + 7,
+                                                           (capget, capset, prctl), lambda fd: (0, 0))
+            self.assertFalse((root / 'stdout').exists())
+            def slow_project(fd):
+                time.sleep(1)
+                return project(fd)
+            with self.assertRaisesRegex(Refusal, 'deadline expired'):
+                supervisor._launch_candidate_quota_record(parent, 'stderr', b'x', device,
+                                                           time.monotonic() + 0.1, time.monotonic() + 2,
+                                                           (capget, capset, prctl), slow_project)
+            self.assertFalse((root / 'stderr').exists())
+            with patch.object(supervisor.os, 'geteuid', return_value=0), \
+                    patch.object(supervisor.os, 'fork') as fork:
+                with self.assertRaisesRegex(Refusal, 'test seams are refused for root'):
+                    supervisor._launch_candidate_quota_record(parent, 'stdout', b'x', device,
+                                                               time.monotonic() + 5, time.monotonic() + 7,
+                                                               (capget, capset, prctl), project)
+                fork.assert_not_called()
+        finally:
+            os.close(parent)
+
+    def test_candidate_broker_record_checks_custody_and_drops_before_write(self):
+        root = tmpdir('quota-broker-')
+        parent = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        bit = supervisor.CAP_SYS_RESOURCE_BIT
+        state = {'effective': bit, 'permitted': bit, 'inheritable': bit}
+        events = []
+        real_write = supervisor._row_write
+
+        def capget(header, data):
+            events.append('get')
+            for field, value in state.items():
+                setattr(data[0], field, value)
+            return 0
+
+        def capset(header, data):
+            events.append('set')
+            for field in state:
+                state[field] = getattr(data[0], field)
+            return 0
+
+        def prctl(operation, arg, *unused):
+            events.append('prctl')
+            return 1 if operation == supervisor.PR_GET_NO_NEW_PRIVS else 0
+
+        def attrs(fd):
+            events.append('attrs')
+            return supervisor.BROKER_PROJECT_ID, supervisor.BROKER_PROJINHERIT
+
+        def write(fd, name, data):
+            events.append('write')
+            self.assertFalse(any(value & bit for value in state.values()))
+            return real_write(fd, name, data)
+
+        try:
+            device = os.fstat(parent).st_dev
+            with patch.object(supervisor, '_row_write', side_effect=write):
+                supervisor._candidate_quota_broker_record(parent, 'intent.json', b'fixed', device, os.getuid(),
+                                                           capget, capset, prctl, attrs)
+            self.assertEqual((root / 'intent.json').read_bytes(), b'fixed')
+            self.assertLess(events.index('set'), events.index('write'))
+            self.assertEqual(events.count('attrs'), 2)
+            with self.assertRaisesRegex(Refusal, 'custody differs'):
+                supervisor._candidate_quota_broker_record(parent, 'stdout', b'x', device + 1, os.getuid(),
+                                                           capget, capset, prctl, attrs)
+            with self.assertRaisesRegex(Refusal, 'project or inheritance differs'):
+                supervisor._candidate_quota_broker_record(parent, 'stdout', b'x', device, os.getuid(),
+                                                           capget, capset, prctl, lambda fd: (0, 0))
+            with self.assertRaisesRegex(Refusal, 'drop failed or is unknown'):
+                supervisor._candidate_quota_broker_record(parent, 'stdout', b'x', device, os.getuid(),
+                                                           capget, lambda *args: -1, prctl, attrs)
+            with self.assertRaisesRegex(Refusal, 'not fixed'):
+                supervisor._candidate_quota_broker_record(parent, '../other', b'x', device, os.getuid(),
+                                                           capget, capset, prctl, attrs)
+            self.assertFalse((root / 'stdout').exists())
+        finally:
+            os.close(parent)
+
+    def test_candidate_drops_and_rechecks_bypass_before_a_writer_can_run(self):
+        bit = supervisor.CAP_SYS_RESOURCE_BIT
+        state = {'effective': bit | 1, 'permitted': bit | 1, 'inheritable': bit}
+        events = []
+
+        def capget(header, data):
+            events.append('get')
+            for field, value in state.items():
+                setattr(data[0], field, value)
+            return 0
+
+        def capset(header, data):
+            events.append('set')
+            for field in state:
+                state[field] = getattr(data[0], field)
+            return 0
+
+        def prctl(operation, arg, *unused):
+            events.append((operation, arg))
+            return 1 if operation == supervisor.PR_GET_NO_NEW_PRIVS else 0
+
+        supervisor._candidate_drop_quota_bypass(capget, capset, prctl)
+        self.assertEqual(state, {'effective': 1, 'permitted': 1, 'inheritable': 0})
+        self.assertEqual(events, [(supervisor.PR_SET_NO_NEW_PRIVS, 1),
+                                  (supervisor.PR_CAP_AMBIENT, supervisor.PR_CAP_AMBIENT_CLEAR_ALL),
+                                  'get', 'set', 'get', (supervisor.PR_GET_NO_NEW_PRIVS, 0),
+                                  (supervisor.PR_CAP_AMBIENT, supervisor.PR_CAP_AMBIENT_IS_SET)])
+
+        state.update(effective=bit, permitted=bit, inheritable=bit)
+        with self.assertRaisesRegex(Refusal, 'drop failed or is unknown'):
+            supervisor._candidate_drop_quota_bypass(capget, lambda *args: -1, prctl)
+        with self.assertRaisesRegex(Refusal, 'remains present'):
+            supervisor._candidate_drop_quota_bypass(capget, lambda *args: 0, prctl)
+        with self.assertRaisesRegex(Refusal, 'setup failed or is unknown'):
+            supervisor._candidate_drop_quota_bypass(capget, capset, lambda *args: None)
+
+
 class OriginalStreamChecks(unittest.TestCase):
+    def test_supervised_oversize_stream_is_refused_before_root_record_write(self):
+        stage = fresh_row('stream-over-root-cap-')
+        ops = FakeOps(stage, [NOT_FOUND, show_text()])
+        ops.run = lambda argv, timeout: dict(returncode=0, stdout=b'x' * (supervisor.ROOT_RECORD_CAP + 1),
+                                             stderr=b'', timed_out=False)
+        active = dict(kind='loaded', invocation_id=INVOCATION, control_group=GROUP, active_state='active')
+        with self.assertRaisesRegex(Refusal, 'fixed byte ceiling'):
+            supervised(stage, request(stage), ops, lambda: 0.0, BOOT, {}, Scripted([active], 1))
+        self.assertFalse((stage / 'stdout').exists())
+        self.assertTrue(any(call[0] == 'stop' for call in ops.calls))
+
     def test_binary_streams_round_trip_and_partial_output_never_credits(self):
         for data, candidate in ((b'\xff\x00', True), (b'x' * (supervisor.PAYLOAD_STDOUT_CAP + 1), False)):
             stage = fresh_row('stream-controls-')
@@ -2810,6 +3076,33 @@ class GateCustodyAndUmaskChecks(unittest.TestCase):
 
 
 class ExactApprovalAndCustodyChecks(unittest.TestCase):
+    def test_root_record_ceiling_refuses_before_creating_a_file(self):
+        root = tmpdir('root-record-cap-')
+        parent = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            with self.assertRaisesRegex(Refusal, 'fixed byte ceiling'):
+                supervisor._row_write(parent, 'too-large', b'x' * (supervisor.ROOT_RECORD_CAP + 1))
+            self.assertFalse((root / 'too-large').exists())
+            supervisor._row_write(parent, 'at-limit', b'x' * supervisor.ROOT_RECORD_CAP)
+            self.assertEqual((root / 'at-limit').stat().st_size, supervisor.ROOT_RECORD_CAP)
+        finally:
+            os.close(parent)
+
+    def test_approval_install_rejects_oversize_before_any_write(self):
+        for size, reaches_write in ((1024 * 1024, True), (1024 * 1024 + 1, False)):
+            data = 'x' * size
+            argv = ['installer', '/unused', hashlib.sha256(data.encode()).hexdigest(), data, '/unused']
+            with self.subTest(size=size), patch.object(sys, 'argv', argv), \
+                    patch.object(os, 'mkdir', side_effect=RuntimeError('write reached')) as mkdir:
+                if reaches_write:
+                    with self.assertRaisesRegex(RuntimeError, 'write reached'):
+                        exec(setup.APPROVAL_INSTALL, {})
+                    mkdir.assert_called_once()
+                else:
+                    with self.assertRaisesRegex(ValueError, 'fixed byte ceiling'):
+                        exec(setup.APPROVAL_INSTALL, {})
+                    mkdir.assert_not_called()
+
     def approval(self, raw=None):
         raw = raw or json.dumps({'nonce': NONCE}).encode()
         root = tmpdir('exact-approval-')

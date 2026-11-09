@@ -18,26 +18,34 @@ During v0.x, MINOR bumps may include breaking changes.
   a live or zombie descendant whose ppid chain still reaches the helper cannot
   close.
   A local `colima ssh` exit stays `guest_unknown`. C2 and C3 are admitted as
-  plain proof requests; C4 and D2 stay refused for engine-side network. Inner
-  streams replace the step records and the raw transport is retained.
+  plain proof requests. D2 is admitted on the host OCI/deb path from 756; C4
+  stays refused until guest transfer of those inputs. Inner streams replace the
+  step records and the raw transport is retained.
 
-- Prepare, and keep refused, the Linux artifact builder's host-write boundary
-  (effigy#743). Cargo intermediates now build in the builder's own fixed private
-  tree on its writable layer instead of inside the checkout the release profile
-  shares into the VM, and every writer that leaves something behind is bounded and
-  observed: the staged closure refuses above 512 MiB before its first write, the
-  export and its copy-back are refused above 200 MiB / 64 KiB / 4 KiB before the
-  copy, and a successful build publishes one `effigy.builder-write-boundary.v1`
-  record of the container's own view — contained mounts, the closure census, the
-  bound source's build-output tree (only the declared export, so a compiler still
-  writing the obsolete `linux-release/target` refuses by name), closed writers and
-  a settled tree. The build tree's VM-side storage is disclosed with its cap,
-  free-space floor and backing-disk implication rather than counted as a host
-  write. SO-host-write itself stays refused: the source bind is still writable, a
-  write removed before any observation leaves nothing to count, so production
-  execute refuses before the claim and the record claims no bound. The smallest
-  supported way to close it (read-only source plus one narrow export bind through
-  the maintained builder) is written down in `producer.md`.
+- Pin finite Ubuntu 22.04 arm64 OCI blobs and offline apt debs as the C4/D2 runtime-image
+  inputs, fetch and hash them with exact size on the host, and build with `--network none`
+  plus local `--build-context` oci-layout/debs so FROM cannot contact a registry
+  (effigy#756). D2 is admitted on that host path; C4 keeps the same argv shape but stays
+  refused until 754 closes guest transfer of those inputs. No image or package payload is
+  produced here.
+
+- Enforce the Linux artifact builder's host-write boundary (effigy#749, closing
+  the SO-host-write gap left by effigy#743). The `/workspace` source bind is
+  read-only and inspect requires HostConfig CapDrop to contain `SYS_ADMIN`
+  (CapAdd empty, Privileged false) so remount cannot restore writability; the
+  running builder's exact mount set is the one `/workspace` bind plus two owned
+  cargo cache volumes and nothing else; compile output stays in the owned
+  builder's private tree; after positive closure the host transfers the three
+  capped roles (200 MiB / 64 KiB / 4 KiB) while receiving and atomically
+  publishes a complete verified set. `export.released` is the observed leftover
+  staged-export release. The compiler has no writable host bind and cannot
+  choose the destination. A failed, oversize or interrupted transfer publishes
+  nothing. Ordinary auto-build may recover an owned leftover still carrying a
+  writable bind, extra host bind or missing SYS_ADMIN drop; restricted E14
+  refuses an old, writable or mismatched builder before claim.
+  `release:linux:rehearse` uses the same maintained producer and does not write
+  through `/workspace`. The cargo tree remains VM-side disclosed storage, not a
+  host-bind counter. Caps and floors are unchanged.
 
 - Secure existing gateway stdout/stderr logs to owner-only mode on the held
   descriptor before appending or giving them to the daemon child. Existing bytes

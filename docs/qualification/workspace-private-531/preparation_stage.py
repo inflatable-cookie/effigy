@@ -51,7 +51,7 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
     if not root.is_dir() or root.is_symlink() or info.st_uid != os.geteuid() or info.st_mode & 0o777 != 0o700:
         raise Refusal('stage directory must be owned and mode 0700')
     if (not isinstance(argv, list) or not argv or (not isinstance(argv[0], str) or not argv[0] or any(not isinstance(x, str) or '\x00' in x for x in argv))
-            or not 0 < timeout <= STAGE_TIMEOUT_CAP or not 0 < output_cap <= 64 * 1024 * 1024):
+            or not 0 < timeout <= STAGE_TIMEOUT_CAP or not 0 <= output_cap <= 64 * 1024 * 1024):
         raise Refusal('invalid argv, deadline, or output cap')
     if deadline is not None and deadline - time.monotonic() <= 0:
         raise Refusal('stage deadline already passed: refuse before launch')
@@ -126,11 +126,31 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
         child = subprocess.Popen(argv, stdin=stdin_file if stdin_file is not None else subprocess.DEVNULL,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
                                  cwd=cwd, env=environment, pass_fds=pass_fds)
-        identity = {'pid': child.pid, 'pgid': child.pid, 'session_id': child.pid,
-                    'deadline_monotonic': launch_limit}
+        identity = {'pid': child.pid, 'deadline_monotonic': launch_limit}
         result['process'] = identity
+        identity_verified = identity_probe is None
+        group_verified = identity_probe is None
+        if identity_probe is None:
+            identity.update(pgid=child.pid, session_id=child.pid)
         if identity_probe is not None:
-            identity.update(identity_probe(child.pid))
+            try:
+                observed = identity_probe(child.pid)
+                if not isinstance(observed, dict):
+                    raise Refusal('spawned child identity observation is not a record')
+                identity.update(observed)
+                identity_verified = True
+                group_verified = observed.get('pgid') == child.pid and observed.get('session_id') == child.pid
+                if (('pgid' in observed and observed['pgid'] != child.pid)
+                        or ('session_id' in observed and observed['session_id'] != child.pid)):
+                    raise Refusal('spawned child group or session identity is unexpected')
+                result['identity_probe'] = {'status': 'verified'}
+            except Exception as exc:
+                identity_verified = False
+                group_verified = False
+                identity.update(pgid=None, session_id=None)
+                result['identity_probe'] = {'status': 'failed', 'error': type(exc).__name__,
+                                            'errno': getattr(exc, 'errno', None), 'detail': str(exc)}
+                result['identity'] = 'unknown'
         record(root / 'process.json', identity)
         sel = selectors.DefaultSelector()
         for name in ('stdout', 'stderr'):
@@ -142,6 +162,14 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
         killed_at = None
 
         def stop_group():
+            if not group_verified:
+                # Popen still owns this unreaped direct child PID. No group/session
+                # signal is safe until those identities have been observed.
+                try:
+                    child.kill()
+                except ProcessLookupError:
+                    pass
+                return
             # Darwin: killpg on a zombie group leader with no live members raises
             # EPERM (PermissionError); ESRCH is ProcessLookupError. Both mean the
             # group is gone. A zombie leader with a live grandchild still accepts
@@ -205,7 +233,7 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
             except Exception as exc:
                 reason = 'resource-refusal'
                 result['resource_error'] = str(exc)
-        result.update(disposition='unknown' if exit_code is None else reason or ('exited' if exit_code == 0 else 'failed'),
+        result.update(disposition='unknown' if exit_code is None or not identity_verified else reason or ('exited' if exit_code == 0 else 'failed'),
                       waited_exit=exit_code, elapsed_seconds=time.monotonic() - start,
                       observed_bytes=counts)
         if fixed_context_query:

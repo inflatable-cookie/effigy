@@ -130,9 +130,17 @@ def write_bound(base, name, value):
 
 
 class Boundaries(unittest.TestCase):
+    def test_historical_531_recipe_stays_on_the_image_context_pin(self):
+        import image_context as context
+        historical = PACKET / 'runtime.Dockerfile.531'
+        current = PACKET / 'runtime.Dockerfile'
+        self.assertEqual(digest(historical), context.RECIPE_SHA256)
+        self.assertEqual(historical.stat().st_size, 474)
+        self.assertNotEqual(digest(current), context.RECIPE_SHA256)
+
     def test_private_guest_context_hash_exclusive_identity_and_retention(self):
         import image_context as context
-        recipe = (PACKET / 'runtime.Dockerfile').read_bytes()
+        recipe = (PACKET / 'runtime.Dockerfile.531').read_bytes()
         with tempfile.TemporaryDirectory(prefix='531-image-', dir=os.environ['TMPDIR']) as directory:
             parent = Path(directory)
             identity = context.binding(parent)
@@ -168,7 +176,7 @@ class Boundaries(unittest.TestCase):
                 for p in (control, shared, parent):
                     p.mkdir(mode=0o700)
                 recipe = root / 'recipe'
-                recipe.write_bytes((PACKET / 'runtime.Dockerfile').read_bytes())
+                recipe.write_bytes((PACKET / 'runtime.Dockerfile.531').read_bytes())
                 plan = dict(profile=preparation.PROFILE, colima_home=str(control / 'c'),
                     control=context.binding(control), shared=context.binding(shared),
                     engine_id='9ea86682-b930-4da6-9901-73681bd7ba85',

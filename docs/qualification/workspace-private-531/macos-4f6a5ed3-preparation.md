@@ -1,13 +1,29 @@
 # macOS 4f6a5ed3 preparation: Colima and Desktop stages
 
 Preparation only. It arms nothing and gives no proof credit. The executable plan is
-[macos-4f6a5ed3-stages.json](macos-4f6a5ed3-stages.json), manifest revision r7 (r7 section below). Each stage
+[macos-4f6a5ed3-stages.json](macos-4f6a5ed3-stages.json), manifest revision r8 (r8 section below). Each stage
 needs its own fresh GO under standing decision `63c338e2-1c50-435e-9783-e78e9d8558e6` v2,
 naming the stage, the manifest, source and input hashes, the engine identity and a window
 of at most 1200 seconds. The standing decision is not a blanket authority, and no GO is
 recorded here.
 
-## Revision r7 (supersedes r6 for the helper launch form; manifest `macos-4f6a5ed3-stages-r7`)
+## Revision r8 (supersedes r7 for D2 admission from 756; manifest `macos-4f6a5ed3-stages-r8`)
+
+Keeps the r7 helper launch (hex plus `PR_SET_CHILD_SUBREAPER`) and the r6/r7 C2/C3 guest-helper admission.
+D2 is admitted on the host path from 756: pinned Ubuntu 22.04 arm64 OCI blobs (Hub index, the one
+linux/arm64 manifest, config, one layer) and the 22 offline jammy python3 + ca-certificates debs, each
+hashed with exact size. They are assembled as `{desktop_input_dir}/oci` (an oci-layout) and
+`{desktop_input_dir}/debs`. The docker build uses `--network none` and
+`--build-context ubuntu=oci-layout://{desktop_input_dir}/oci` plus `debs={desktop_input_dir}/debs`.
+FROM cannot contact a registry. The recipe is `FROM ubuntu` / `COPY --from=debs` / `dpkg -i`, sha256
+`c00d5bd9…`, 318 bytes. D3 and D4 become statically admitted through predecessor D2.
+
+C4's build argv is the same offline form with guest sibling paths `{guest_context}.oci` and
+`{guest_context}.debs`. C4 itself downloads nothing. It stays unadmitted: the guest still has no closed
+transfer of those host-fetched inputs. C2 and C3 join C1 as plain proof requests. D2 is a window that
+names the original D1 receipt and requires `desktop_input_dir` absent.
+
+## Revision r7 (supersedes r6 for the helper launch form; historical manifest `macos-4f6a5ed3-stages-r7`)
 
 The helper still establishes genuine guest closure. It no longer crosses the Colima route as Python
 source. The `-c` program is the pinned one-argv launcher
@@ -20,7 +36,7 @@ ppid chain reaches the helper (other than the waited child) is leftover and the 
 close. A descendant reparented to init is not leftover evidence. A stage that
 refuses after a closed guest step reports stage-level `guest_closure: unknown`.
 
-## Revision r6 (supersedes r5 for C2 and C3; manifest `macos-4f6a5ed3-stages-r6`)
+## Revision r6 (supersedes r5 for C2 and C3; historical manifest `macos-4f6a5ed3-stages-r6`)
 
 C2 and C3 are admitted. Their Colima `ssh` echo, probe and stage steps, and C4's verify step, run the pinned
 `macos_guest_helper.py`. r7 launches it as the pinned launcher plus hex; r6 used `-c <source>` directly.
@@ -36,14 +52,15 @@ client-exit-only echo still lets compare read the captured bytes (quoting proof)
 `not_dispatched`. C3 derives `guest_spec` from the C2 probe parent and the C0 `token32`, stages the reviewed
 recipe on bounded stdin, and refuses if the stage reports a different parent.
 
-C4 and D2 stay unadmitted for engine-side network. C4's verify helper can close; `nerdctl build --help` remains
+r6 left C4 and D2 unadmitted for engine-side network. r8 admits D2 on the host OCI/deb path; C4 stays
+unadmitted for guest transfer of those inputs. C4's verify helper can close; `nerdctl build --help` remains
 `guest_unknown`. Ordinary entry stays refused. C2 and C3 join C1 as plain proof requests (no window recipe).
 
 | Step | Prerequisite | Closed when | Otherwise |
 | --- | --- | --- | --- |
 | `c2-route-echo` | pinned helper, one-use nonce, hostile `ROUTE_ECHO` last | authenticated envelope, waited child 0, same session/group, empty group, inner bytes = `ROUTE_ECHO` | local client exit, truncated/missing envelope, leftover group, unreaped, setsid, cap/timeout: Unknown; nonce/boot/source/PID mismatch: refuse; lost stdout: Unknown, compare skipped |
 | `c2-guest-probe` | closed echo and matching compare | same helper closure over the pinned probe source | not dispatched if the echo did not close |
-| `c3-stage-context` | closed C2, C0 `token32`, recipe pin | helper closure and reported parent = C2 parent | replaced parent refuses; C4/D2 still unadmitted |
+| `c3-stage-context` | closed C2, C0 `token32`, recipe pin | helper closure and reported parent = C2 parent | replaced parent refuses; C4 still unadmitted for guest transfer |
 | `c4-verify-context` | closed C3 | helper closure | engine-side help/build remain Unknown |
 
 No native C2/C3 occurrence. Unsupported remote/engine closures stay Unknown. No generic SSH executor.
@@ -70,9 +87,10 @@ The C1 cap is lowered to the exact size. Redirects follow only to `github.com`, 
 `release-assets.githubusercontent.com` over HTTPS, at most three hops. A partial file is retained, never used or reused,
 and an existing name, including a symlink, is a collision.
 
-C4 and D2 are not admitted. Their base-image pull and in-build apt fetches happen inside the engine build, so the runner
-sees no payload bytes and nothing bounds them. The one proposal, not implemented, is in the Static admission list below.
-C2 and C3 are admitted in r6 through the pinned guest helper; C5, D3 and D4 still wait on C4.
+C4 and D2 were not admitted in r5. Their base-image pull and in-build apt fetches happened inside the engine
+build, so the runner saw no payload bytes and nothing bounded them. r8 admits D2 on the host OCI/deb path
+(756). C2 and C3 are admitted in r6 through the pinned guest helper. C4 still needs guest transfer of the
+host-fetched inputs.
 
 ## Revision r4 (supersedes r3 for D1 and D4)
 
@@ -228,12 +246,13 @@ Colima (`colima`):
   context, `nerdctl build --help` and its flag check, then one local-path build:
   `timeout -k 5 840 sudo -n env DOCKER_CONFIG={guest_context}/docker-config nerdctl build
   --platform linux/arm64 --provenance=mode=max --iidfile {guest_iidfile} --tag
-  effigy-4f6a-runtime:r1 {guest_context}`. Host command envelope 900 s; the guest deadline
+  effigy-4f6a-runtime:r1 --network none --build-context ubuntu=oci-layout://{guest_context}.oci
+  --build-context debs={guest_context}.debs {guest_context}`. Host command envelope 900 s; the guest deadline
   is 840 s plus a 5 s kill grace, leaving 55 s of host receipt margin. Then the iidfile is
   read and checked as a `sha256:` ID, and `sudo -n nerdctl image inspect {image_id}` is
-  checked for linux/arm64. The tag is never used after the build. Download cap 1 GiB;
-  storage cap 4 GiB. Sources: the base digest `docker.io/library/ubuntu@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11`
-  and `http://ports.ubuntu.com/ubuntu-ports` for apt, anonymous through the empty config.
+  checked for linux/arm64. The tag is never used after the build. Download cap 0 (C4 does not
+  fetch); storage cap 4 GiB. Network sources: none. Guest transfer of `{guest_context}.oci` and
+  `{guest_context}.debs` is 754.
 - **C5** one disposable check, 360 s stage: `timeout -k 5 200 sudo -n nerdctl run --pull=never
   --rm --network none --name effigy-4f6a-check-{token} {image_id} python3 -I -c {check_source}`.
   Host envelope 240 s, so 35 s of receipt margin. The check raises an in-container alarm at
@@ -251,14 +270,20 @@ Desktop (`desktop`), with the pinned env above:
   label observation (`volume ls --filter label=effigy.qual=<token>`) must be empty. After it, `volume inspect`
   of that exact printed name must carry the same name and this occurrence's label. Both streams are retained.
   Not a receipt unless the inspect closed. Window 300 s, reserve 60 s, storage cap 1 MiB, download 0.
-- **D2** runtime image, 1200 s stage: stage the Dockerfile, then
+- **D2** runtime image, 1200 s stage, 120 s reserve. Steps: engine info, make `{desktop_input_dir}`,
+  prefetch the pinned OCI blobs and 22 debs into that directory, stage the Dockerfile, then
   `docker build --platform linux/arm64 --provenance=false --label effigy.qual=<token> --tag
-  effigy-4f6a-desktop-runtime:<token> --iidfile {desktop_iidfile} {desktop_context_dir}`.
+  effigy-4f6a-desktop-runtime:<token> --iidfile {desktop_iidfile} --network none
+  --build-context ubuntu=oci-layout://{desktop_input_dir}/oci
+  --build-context debs={desktop_input_dir}/debs {desktop_context_dir}`.
   `--provenance=false` is the documented boolean form that disables attestations. It is
   pinned so the image's provenance state is explicit, not left to the driver default.
-  Host envelope 900 s, and a kill or timeout is Unknown. Then the iidfile is read, and
+  Build host envelope 840 s, and a kill or timeout is Unknown. Then the iidfile is read, and
   `docker image inspect {image_id}` is checked for linux/arm64 and the occurrence label.
-  Download cap 1 GiB; storage cap 2 GiB. Sources as C4.
+  Download cap 38409328 bytes; storage cap 2 GiB. Sources: the four Hub OCI URLs and the 22
+  `https://ports.ubuntu.com/ubuntu-ports/...` deb URLs. Step total 1060 s inside the 1080 s
+  budget. The proof-entry window names the original D1 receipt and requires `desktop_input_dir`
+  absent.
 - **D3** disposable check: `docker run --pull=never --rm --network none --label
   effigy.qual=<token> --name effigy-4f6a-dcheck-<token> --cidfile {desktop_cidfile}
   {image_id} python3 -I -c {check_source}`, host envelope 240 s. The cidfile is read as
@@ -492,10 +517,14 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
   - C1: admitted statically (r5). Its one fetch is the pinned Colima image through the prefetch helper, with the exact
     size and sha512. Ordinary execution still refuses. It is in the proof entry (`PROOF_STAGES`) as a plain proof request
     only; its window recipe is refused, since the window recipe is not reviewed for C1.
-  - C4 and D2: refused. The engine build fetches the base image and apt packages, which the runner cannot observe or bound.
-    ONE proposal, not implemented: pin an exact-size base OCI archive and an offline apt bundle, fetch and hash each as the
-    Colima image is, load them through a fixed step, and build with no network. Effects: a new recipe hash, a new build argv,
-    two new pinned artifacts and a fresh GO. It changes no existing refusal.
+  - D2: admitted statically (r8 / 756). Its fetches are the pinned Ubuntu 22.04 arm64 OCI blobs and 22 offline debs,
+    hashed with exact size, then a `--network none` docker build from local `--build-context` oci-layout and debs.
+    Ordinary execution still refuses at the owner mechanism; its proof-only window names the original D1 receipt
+    and requires `desktop_input_dir` absent.
+  - C4: refused. The build argv is the offline `--network none --build-context` form with guest sibling
+    `{guest_context}.oci` and `{guest_context}.debs`, and C4 itself fetches nothing, but the guest still has
+    no closed transfer of those host-fetched inputs. C4 also needs the verified fresh C0-token32/C2/C3 chain;
+    no test seam closes it.
   - C2: admitted (r6). The pinned guest helper authenticates echo and probe closure. Ordinary
     execution still refuses. It is in the proof entry as a plain proof request; its window recipe
     is refused.
@@ -503,9 +532,9 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
     Ordinary execution still refuses. Plain proof request only; no window recipe.
   - D1 is statically admitted (r4). Its ordinary execution still refuses at the owner mechanism; its
     proof-only window names the original D0 receipt (see Executor).
-  - D4: its per-target contract is source-qualified, but its predecessor D3 needs D2 (engine-side network),
-    so D4 cannot run until D2 and D3 qualify.
-  - D3, C5 and C6: unadmitted because their predecessor is.
+  - D3 and D4: statically admitted through predecessor D2. They are not in the proof entry. Native
+    execution still needs a separate GO.
+  - C5 and C6: unadmitted because their predecessor C4 is.
 - **C0 (fresh tokens).** Its handlers are `verify_tool_sha` (the live colima and docker binaries
   against the sha256 the pinned 688 C0 record names) and `verify_tranche_summary` (the tranche
   summary against the sha the same record names). C0 creates its own roots under the scratch root
@@ -565,12 +594,13 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
 - **Guest sources (pinned).** The C2 echo, C2 probe, C3 stage and C4 verify run the reviewed
   `macos_guest_helper.py` (sha256 `806ca0a5…`) as
   `python3 -I -B -c <LAUNCHER> <hex(helper)> <operation> <nonce> …`.
-  Probe, stage and verify then run the reviewed `macos_guest_context.py` (sha256 `713cb10e…`) as the
+  Probe, stage and verify then run the reviewed `macos_guest_context.py` (sha256 `5daf93e2…`) as the
   contained child. That file is a copy of the historical `image_context.py` (sha256 `af74047f…`,
   unchanged), with one contract change: `stage` also reports the parent binding, so the C4 verify spec
   derives from the C3 output. The executor reads both sources from the pinned files and refuses a
   changed one. Both files are bound program files: the GO commits to their bytes, so a change after
-  activation refuses before any dispatch as an input drift.
+  activation refuses before any dispatch as an input drift. The pin is the content check; the binding
+  is what the activation commits to.
 - **Derived specs.** `render_guest_spec` builds C3's spec with `build_guest_spec` from the C2 probe's
   parent binding, the chain's `token32` and the recipe hash. In C4 it builds the verify spec with
   `build_verify_spec` from the C3 output; the spec's context must carry the same `token32`. The context
@@ -590,9 +620,10 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
   and C6), the C0 origin walk for C3 and C4, or the historical record (`HISTORICAL_C0`) say so. The fresh-chain
   root binding (`FreshChainRootTests`) replaces none of them: its C0, C1 and C2 runs are genuine receipts, and
   only the local children that stand in for the tools are controlled.
-- **Desktop context (D2).** `host_stage_dockerfile` writes the reviewed recipe exclusively as the build
-  context's `Dockerfile`, reads it back and compares it with the pin. An existing `Dockerfile` refuses:
-  nothing is adopted or overwritten.
+- **Desktop context (D2).** `prefetch_runtime_inputs` fetches the pinned OCI blobs and debs into the
+  empty owned `{desktop_input_dir}` and assembles the oci-layout. `host_stage_dockerfile` writes the
+  reviewed recipe exclusively as the build context's `Dockerfile`, reads it back and compares it with
+  the pin. An existing `Dockerfile` refuses: nothing is adopted or overwritten.
 - **Dispatch coverage (`CoverageLedgerTests`).** Every manifest step has one entry. The kinds are:
   `executed` (the adapter ran it with a real local child or the real handler, including D2's
   `host_stage_dockerfile`), `executed_stub_chain` (the adapter ran it with a stubbed predecessor),

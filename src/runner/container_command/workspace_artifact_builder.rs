@@ -5,16 +5,15 @@
 //! The one thing the build does refresh is the source it compiles. A VM reaches
 //! only the host paths its Colima profile shares, so a development checkout
 //! outside every shared mount binds its own staged source closure under the
-//! profile's writable mount (effigy#715). The closure is staged before anything
-//! renders or activates, proven through the container's own bind before the
-//! build, and only the verified artifact bytes are copied back to the caller.
+//! profile's mount (effigy#715). The closure is staged before anything renders
+//! or activates, proven through the container's own bind before the build, and
+//! only the verified artifact bytes reach the caller.
 //!
-//! Cargo intermediates are the build's own private tree inside the builder
-//! (effigy#743). They never land in the shared host bind, so the only bytes this
-//! build writes to the host are the staged source closure it did not have and
-//! the capped artifact export. The boundary is observed through the container's
-//! own view before and after the build and published as one machine-readable
-//! record, so a caller can bind the exact writers instead of an argv promise.
+//! Cargo intermediates and the three artifact roles stay in the build's own
+//! private tree inside the builder (effigy#743, effigy#749). The `/workspace`
+//! source bind is read-only: the compiler has no writable host bind. After
+//! positive closure the host transfers the three capped roles through a bounded
+//! stream and atomically publishes a complete verified set.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -29,12 +28,14 @@ use effigy_containers::exec::{
 };
 use effigy_containers::{
     load_container_policy, ContainerAction, EffectiveContainerPolicy, ARTIFACT_BINARY_CAP_BYTES,
-    ARTIFACT_EXPORT_DIR, ARTIFACT_RECEIPT_CAP_BYTES, ARTIFACT_SIDECAR_CAP_BYTES,
-    STAGED_SOURCE_CAP_BYTES,
+    ARTIFACT_RECEIPT_CAP_BYTES, ARTIFACT_SIDECAR_CAP_BYTES, STAGED_SOURCE_CAP_BYTES,
 };
 
 use crate::runner::environment;
 use crate::runner::error::RunnerError;
+use crate::runner::exec_command::{
+    BoundedCaptureFailure, BoundedCommandBudget, BoundedCommandPhase, BoundedScopedCaptureFailure,
+};
 use crate::runner::task_engine::TaskRun;
 
 use super::workspace_artifact_source;
@@ -91,6 +92,7 @@ impl ProbePhase {
                 "census",
                 "source_files",
                 "nested_workspace_mounts",
+                "source_bind_ro",
                 "build_output_entries",
                 "build_tree_mounts",
                 "build_tree_retained_bytes",
@@ -101,6 +103,7 @@ impl ProbePhase {
                 "census",
                 "source_files",
                 "nested_workspace_mounts",
+                "source_bind_ro",
                 "export_dir_entries",
                 "export_unexpected",
                 "export_unexpected_kind",
@@ -249,9 +252,15 @@ fn check_probe(probe: &Probe) -> Result<(), RunnerError> {
     let refuse = |reason: String| Err(RunnerError::task_invocation(reason));
     if probe.get("nested_workspace_mounts") != 0 {
         return refuse(format!(
-            "the builder mounts {} path(s) below `/workspace`; the source bind is not the only writable host surface",
+            "the builder mounts {} path(s) below `/workspace`; the source bind is not the only host surface",
             probe.get("nested_workspace_mounts")
         ));
+    }
+    if probe.get("source_bind_ro") != 1 {
+        return refuse(
+            "the builder's `/workspace` source bind is not read-only; compiler writes through it are not contained"
+                .to_owned(),
+        );
     }
     if probe.get("build_tree_retained_bytes") > BUILD_TREE_CAP_BYTES {
         return refuse(format!(
@@ -313,13 +322,13 @@ fn check_probe(probe: &Probe) -> Result<(), RunnerError> {
 fn unexpected_refusal(probe: &Probe) -> String {
     let cause = match probe.unexpected() {
         "target" => "the build wrote into `/workspace/.effigy/linux-release/target`, the cargo tree an older producer kept inside the bound source",
-        "tree" => "the build wrote into `/workspace/.effigy` outside its artifact service directory",
-        "service" => "the build wrote something other than the declared artifact export under `/workspace/.effigy/linux-release`",
-        "link" => "the build's service tree in the bound source holds a link or a non-directory where a directory belongs",
-        "missing" => "the build wrote no declared artifact export into the bound source",
-        _ => "the artifact export holds entries that are not artifact-shaped files",
+        "tree" => "the build wrote into `/workspace/.effigy` through the source bind",
+        "service" => "the build wrote something other than the declared artifact roles under `/workspace/.effigy/linux-release`",
+        "link" => "the bound source holds a link or a non-directory where a directory belongs",
+        "missing" => "the build wrote no declared artifact roles into the container-local tree",
+        _ => "the container-local artifact roles are not the three declared files",
     };
-    format!("{cause}; its writable host surface is not bounded")
+    format!("{cause}; compiler writes through the source bind are not contained")
 }
 
 /// The container-side script one probe runs. It carries no caller input: the
@@ -337,10 +346,6 @@ fn probe_script(
     script.push_str(&format!("inventory={}\n", quote(inventory)));
     script.push_str(&format!("inventory_digest={}\n", quote(inventory_digest)));
     script.push_str(&format!("tree={}\n", quote(BUILD_TREE_ROOT)));
-    script.push_str(&format!(
-        "export_dir={}\n",
-        quote(&format!("/workspace/{ARTIFACT_EXPORT_DIR}"))
-    ));
     script.push_str(&format!("name={}\n", quote(export_name)));
     script.push_str(&format!(
         "expected_files={source_files}\n{}\ncap={BUILD_TREE_CAP_BYTES}\nfloor={BUILD_TREE_HEADROOM_BYTES}\n",
@@ -375,7 +380,12 @@ else
   [ "$source_files" = "$expected_files" ] || { echo "file-count $source_files"; exit 44; }
   census=1
 fi
-nested=$(awk -v w="$workspace_target" 'index($5, w "/") == 1 {n++} END {print n+0}' /proc/self/mountinfo)"#;
+nested=$(awk -v w="$workspace_target" 'index($5, w "/") == 1 {n++} END {print n+0}' /proc/self/mountinfo)
+source_bind_ro=$(awk -v w="$workspace_target" '$5 == w {
+  n=split($6, a, ",")
+  for (i = 1; i <= n; i++) if (a[i] == "ro") found = 1
+}
+END { print found + 0 }' /proc/self/mountinfo)"#;
 
 /// Pre-build: the tree is the container's own layer, is inside its cap and has
 /// headroom, the bound source carries no build output of its own, and nothing
@@ -401,24 +411,18 @@ free=$(( $(df -P -k "$tree" | awk 'NR==2 {print $4}') * 1024 ))
 echo "census $census"
 echo "source_files $source_files"
 echo "nested_workspace_mounts $nested"
+echo "source_bind_ro $source_bind_ro"
 echo "build_output_entries $build_output_entries"
 echo "build_tree_mounts $covered"
 echo "build_tree_retained_bytes $retained"
 echo "build_tree_reset $reset"
 echo "build_tree_free_bytes $free""#;
 
-/// Post-build: the source is unchanged, the bound source carries nothing but
-/// the declared artifact export, no build process remains and the tree is
-/// settled.
-///
-/// `/workspace/.effigy` is the build's own service tree inside the bind. In a
-/// staged bind the closure excludes it by rule and staging clears it, so every
-/// entry the census finds there is this build's output: only `linux-release`,
-/// only `artifacts` below it, and only artifact-shaped names below that. A
-/// checkout bind's `.effigy` is Effigy's own private state instead, so there only
-/// the builder's `linux-release` directory is censused. The obsolete
-/// `linux-release/target` an older producer wrote into the bind, and any other
-/// path a compiler chose, are counted and named rather than pruned.
+/// Post-build: the source is unchanged and still read-only, the three artifact
+/// roles live in the container-local tree, no build process remains and the
+/// tree is settled. A compiler write through the source bind — the obsolete
+/// `linux-release/target`, any `.effigy` on a staged bind, a remount that made
+/// `/workspace` writable — is named and refused rather than published.
 const AFTER_SCRIPT: &str = r#"export_dir_entries=0
 export_unexpected=0
 export_unexpected_kind=artifacts
@@ -427,59 +431,30 @@ mark() {
   export_unexpected=$((export_unexpected + 1))
 }
 if [ "$census" = 1 ]; then
-  # A staged bind is the closure and nothing else: staging cleared this tree, so
-  # every entry below it now is this build's output.
-  if [ ! -e ./.effigy ] && [ ! -L ./.effigy ]; then
-    mark missing
-  elif [ ! -d ./.effigy ] || [ -L ./.effigy ]; then
-    mark link
-  else
-    for entry in ./.effigy/* ./.effigy/.[!.]*; do
-      if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then continue; fi
-      base=$(basename "$entry")
-      if [ "$base" != linux-release ] || [ ! -d "$entry" ] || [ -L "$entry" ]; then
-        mark tree
-      fi
-    done
+  # A staged bind is the closure and nothing else: the compiler has no writable
+  # host bind, so any `.effigy` here is a write that escaped containment.
+  if [ -e ./.effigy ] || [ -L ./.effigy ]; then
+    mark tree
   fi
 fi
-if [ ! -e ./.effigy/linux-release ] && [ ! -L ./.effigy/linux-release ]; then
-  mark service
-elif [ ! -d ./.effigy/linux-release ] || [ -L ./.effigy/linux-release ]; then
-  mark service
-else
-  for entry in ./.effigy/linux-release/* ./.effigy/linux-release/.[!.]*; do
-    if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then continue; fi
-    base=$(basename "$entry")
-    if [ "$base" = target ]; then
-      mark target
-    elif [ "$base" != artifacts ] || [ ! -d "$entry" ] || [ -L "$entry" ]; then
-      mark service
-    fi
-  done
+if [ -e ./.effigy/linux-release/target ] || [ -L ./.effigy/linux-release/target ]; then
+  mark target
 fi
-if [ ! -d "$export_dir" ] || [ -L "$export_dir" ]; then
+release_dir="$tree/target/${name#effigy-}/release"
+if [ ! -d "$release_dir" ] || [ -L "$release_dir" ]; then
   mark missing
-else
-  for entry in "$export_dir"/* "$export_dir"/.[!.]*; do
-    if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then continue; fi
-    export_dir_entries=$((export_dir_entries + 1))
-    base=$(basename "$entry")
-    if [ ! -f "$entry" ] || [ -L "$entry" ]; then
-      mark link
-    fi
-    case "$base" in
-      effigy-*) ;;
-      *) mark entry ;;
-    esac
-  done
+  echo "missing-export release-dir"; exit 53
 fi
-for file in "$name" "$name.receipt" "$name.active-version"; do
-  [ -f "$export_dir/$file" ] && [ ! -L "$export_dir/$file" ] || { echo "missing-export $file"; exit 53; }
+for file in effigy effigy.receipt effigy.active-version; do
+  path="$release_dir/$file"
+  if [ ! -f "$path" ] || [ -L "$path" ]; then
+    echo "missing-export $file"; exit 53
+  fi
+  export_dir_entries=$((export_dir_entries + 1))
 done
-binary=$(wc -c < "$export_dir/$name" | tr -d ' ')
-receipt=$(wc -c < "$export_dir/$name.receipt" | tr -d ' ')
-sidecar=$(wc -c < "$export_dir/$name.active-version" | tr -d ' ')
+binary=$(wc -c < "$release_dir/effigy" | tr -d ' ')
+receipt=$(wc -c < "$release_dir/effigy.receipt" | tr -d ' ')
+sidecar=$(wc -c < "$release_dir/effigy.active-version" | tr -d ' ')
 retained=$(du -sk "$tree" | awk '{print $1 * 1024}')
 [ "$retained" -le "$cap" ] || { echo "build-tree-over-cap $retained"; exit 54; }
 writers=0
@@ -497,6 +472,7 @@ free=$(( $(df -P -k "$tree" | awk 'NR==2 {print $4}') * 1024 ))
 echo "census $census"
 echo "source_files $source_files"
 echo "nested_workspace_mounts $nested"
+echo "source_bind_ro $source_bind_ro"
 echo "export_dir_entries $export_dir_entries"
 echo "export_unexpected $export_unexpected"
 echo "export_unexpected_kind $export_unexpected_kind"
@@ -580,7 +556,7 @@ fn run_probe(
     // another writer, not this build's starting state.
     if staged.is_some() && phase == ProbePhase::Before && probe.get("build_output_entries") != 0 {
         return Err(RunnerError::task_invocation(format!(
-            "the staged source already holds {} build-output entr(ies) this build did not write; its writable host surface is not attributable, so nothing was compiled",
+            "the staged source already holds {} build-output entr(ies) this build did not write; its source bind is not attributable, so nothing was compiled",
             probe.get("build_output_entries")
         )));
     }
@@ -626,10 +602,9 @@ fn run_builder_script(
 /// host-write count: releasing it returns filesystem space, not necessarily the
 /// Colima backing file's allocation.
 ///
-/// `scope` says what the record is not: the source bind stays writable in this
-/// task, and a writer that removes or restores what it wrote leaves no residual
-/// for this census. The record therefore reports residuals and never a bound on
-/// that surface, which is why the Recipe E entry keeps refusing it in production.
+/// `scope` names the finite-before-write host surfaces: staging/render, the
+/// host-capped three-role transfer, evidence, and destination publish. The
+/// cargo tree remains VM-side disclosed storage, not a host-bind counter.
 #[allow(clippy::too_many_arguments)]
 fn boundary_marker(
     triple: &str,
@@ -641,12 +616,10 @@ fn boundary_marker(
     before: &Probe,
     after: &Probe,
 ) -> String {
+    let release_dir = format!("{BUILD_TREE_ROOT}/target/{triple}/release");
     let marker = serde_json::json!({
         "schema": BOUNDARY_SCHEMA,
-        // What this record is and is not. It reports the writers it observed; it
-        // does not bound the writable source bind, because a write removed or
-        // restored before any observation leaves nothing to count.
-        "scope": "observed residuals only: not a cumulative bound on the writable source bind",
+        "scope": "finite-before-write: read-only source bind, host-capped three-role transfer, staging/render and evidence; cargo tree is VM-side disclosed storage",
         "target": triple,
         "no_change": {
             "switch": NO_CHANGE_ENV,
@@ -655,6 +628,7 @@ fn boundary_marker(
         },
         "source_bind": {
             "target": "/workspace",
+            "read_only": after.get("source_bind_ro") == 1,
             "nested_mounts": after.get("nested_workspace_mounts"),
             "census": after.get("census") == 1,
             "source_files": after.get("source_files"),
@@ -668,7 +642,7 @@ fn boundary_marker(
             "changed": staged.map(|staged| staged.changed).unwrap_or_default(),
         },
         "export": {
-            "directory": format!("/workspace/{ARTIFACT_EXPORT_DIR}"),
+            "directory": release_dir,
             "entries": after.get("export_dir_entries"),
             "unexpected": after.get("export_unexpected"),
             "binary_bytes": after.get("export_binary_bytes"),
@@ -681,8 +655,8 @@ fn boundary_marker(
             },
             "released": export_released,
         },
-        "copy_back": {
-            "mode": if staged.is_some() { "staged" } else { "checkout" },
+        "transfer": {
+            "mode": "host-capped",
             "bytes": copied_bytes,
         },
         "build_tree": {
@@ -699,6 +673,145 @@ fn boundary_marker(
         },
     });
     serde_json::to_string(&marker).unwrap_or_else(|_| String::from("{}"))
+}
+
+/// Host-controlled transfer of the three artifact roles. The compiler never
+/// chooses the destination: each role is streamed through a verified exec of
+/// `cat -- <container-path>` with that role's cap enforced while receiving.
+fn transfer_produced_artifact(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    binding: &VerifiedComposeContainer,
+    triple: &str,
+    active_version: &str,
+) -> Result<workspace_artifact_source::ProducedArtifact, RunnerError> {
+    let release = format!("{BUILD_TREE_ROOT}/target/{triple}/release");
+    let binary = transfer_role(
+        repo_root,
+        policy,
+        binding,
+        &format!("{release}/effigy"),
+        ARTIFACT_BINARY_CAP_BYTES,
+        "binary",
+    )?;
+    let receipt = transfer_role(
+        repo_root,
+        policy,
+        binding,
+        &format!("{release}/effigy.receipt"),
+        ARTIFACT_RECEIPT_CAP_BYTES,
+        "receipt",
+    )?;
+    let sidecar = transfer_role(
+        repo_root,
+        policy,
+        binding,
+        &format!("{release}/effigy.active-version"),
+        ARTIFACT_SIDECAR_CAP_BYTES,
+        "sidecar",
+    )?;
+    workspace_artifact_source::publish_produced_artifact(
+        repo_root,
+        triple,
+        active_version,
+        binary,
+        receipt,
+        sidecar,
+    )
+}
+
+fn transfer_role(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    binding: &VerifiedComposeContainer,
+    container_path: &str,
+    cap: u64,
+    role: &str,
+) -> Result<Vec<u8>, RunnerError> {
+    let mut args = ["exec", "-T", "builder", "cat", "--"]
+        .map(OsString::from)
+        .to_vec();
+    args.push(OsString::from(container_path));
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
+        repo_root,
+        policy,
+        args,
+        ContainerAction::Exec,
+        "workspace artifact transfer",
+    )?;
+    let exec_args = crate::runner::exec_command::verified_target_exec_args(&plan, binding.id())?;
+    let runtime = effigy_runtime::container_manager::runtime_invocation_plan(
+        repo_root,
+        policy,
+        "docker",
+        &exec_args,
+        ContainerAction::Exec,
+        "workspace artifact transfer",
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let origin = Instant::now();
+    let mut budget =
+        BoundedCommandBudget::new(origin, origin + transfer_role_deadline(), cap, 4096);
+    let capture = budget
+        .run_command(
+            &runtime.repo_root,
+            runtime.program.as_os_str(),
+            &runtime.args,
+            None,
+            &[],
+            BoundedCommandPhase::CommandExecution,
+        )
+        .map_err(|failure| transfer_capture_error(role, cap, failure))?;
+    if !capture.status.success() {
+        return Err(RunnerError::task_invocation(format!(
+            "artifact transfer of `{role}` failed with status {}; original artifact retained",
+            capture.status
+        )));
+    }
+    if capture.stdout.len() as u64 > cap {
+        return Err(RunnerError::task_invocation(format!(
+            "artifact transfer of `{role}` is {} bytes, above its declared {cap}-byte cap; original artifact retained",
+            capture.stdout.len()
+        )));
+    }
+    Ok(capture.stdout)
+}
+
+fn transfer_role_deadline() -> Duration {
+    const DEFAULT_SECS: u64 = 120;
+    let secs = std::env::var("EFFIGY_TEST_ARTIFACT_TRANSFER_DEADLINE_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .unwrap_or(DEFAULT_SECS);
+    Duration::from_secs(secs)
+}
+
+fn transfer_capture_error(
+    role: &str,
+    cap: u64,
+    failure: BoundedScopedCaptureFailure,
+) -> RunnerError {
+    let reason = match failure.failure {
+        BoundedCaptureFailure::Overflow {
+            limit_bytes,
+            retained_bytes,
+            ..
+        } => format!(
+            "artifact transfer of `{role}` exceeded its {limit_bytes}-byte cap after {retained_bytes} bytes; original artifact retained"
+        ),
+        BoundedCaptureFailure::Deadline => format!(
+            "artifact transfer of `{role}` exceeded its deadline; original artifact retained"
+        ),
+        BoundedCaptureFailure::Launch => {
+            format!("artifact transfer of `{role}` could not be launched; original artifact retained")
+        }
+        BoundedCaptureFailure::ReadFailure { .. }
+        | BoundedCaptureFailure::IncompleteOutput { .. } => format!(
+            "artifact transfer of `{role}` was interrupted before {cap} bytes; original artifact retained"
+        ),
+    };
+    RunnerError::task_invocation(reason)
 }
 
 fn no_change_requested(raw: Option<&str>) -> Result<bool, RunnerError> {
@@ -863,13 +976,12 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
         .map_err(RunnerError::from)
     {
         Ok(binding) => binding,
-        // A builder retained from the pre-staging declaration binds this
-        // checkout's own host path, which the profile cannot reach. The
-        // maintained activation replaces exactly this checkout's container with
-        // the staged bind; it is never adopted, exec'd or hand-removed.
-        Err(error) if staged.is_some() => {
-            // A never-started builder's refusal names its own cause; the strict
-            // running refusal would only repeat the missing `State.Status`.
+        // An owned leftover: the pre-staging checkout bind, or a writable
+        // `/workspace` from before the read-only declaration. Ordinary
+        // auto-build may recover it through the maintained lifecycle. Restricted
+        // E14 refuses before claim and cannot create, replace or reconfigure.
+        // A foreign, unreadable or otherwise unowned builder is never adopted.
+        Err(error) => {
             let observed =
                 match observed_workspace_artifact_builder(repo_root, &policy, &row, deadline) {
                     Ok(observed) => observed,
@@ -883,12 +995,21 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
             let checkout = effigy_core::worktree_scope::checkout_root(repo_root)
                 .canonicalize()
                 .unwrap_or_else(|_| repo_root.to_path_buf());
-            if observed.source != checkout {
+            let expected = staged
+                .as_ref()
+                .map(|(plan, _)| plan.source.clone())
+                .unwrap_or_else(|| checkout.clone());
+            let owned = observed.source == checkout || observed.source == expected;
+            let matching = observed.read_only
+                && observed.source == expected
+                && observed.mounts_owned
+                && observed.remount_capability_dropped;
+            if !owned || matching {
                 return Err(error);
             }
             if no_change {
                 return Err(RunnerError::task_invocation(
-                    "no-change workspace artifact build refuses to replace the owned builder container for its staged bind",
+                    "no-change workspace artifact build refuses an old, writable or mismatched owned builder before claim; it cannot create, replace or reconfigure it",
                 ));
             }
             // The transition replaces only the identity observed above. Listing
@@ -923,7 +1044,6 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
             };
             verify_workspace_artifact_builder(repo_root, &policy, replanned, deadline)?
         }
-        Err(error) => return Err(error),
     };
     let mut args = ["exec", "-T", "-w", "/workspace", "builder"]
         .map(OsString::from)
@@ -986,21 +1106,18 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
             output.status
         )));
     }
-    // The build wrote its artifact into the shared mount's export directory.
     // Only bytes its own producer receipt blesses for this target and version
     // reach the caller, and only while the source still matches what was
     // compiled: a caller edit or a changed staged tree during a long build
     // makes the artifact describe source that is no longer the recorded one.
-    // The host side of the same claim: the caller's tracked closure and the
-    // staged tree still carry exactly the bytes this build compiled.
     if let Some((plan, staged_source)) = &staged {
         workspace_artifact_source::verify_source_unchanged(plan, staged_source)?;
         check_interruption()?;
     }
-    // Nothing else may have changed in the bound source, the export may hold
-    // only the three declared names within their caps, and the build's writers
-    // must be closed — all observed through the container's own view before any
-    // byte is read back.
+    // The source bind is still read-only, the three roles live in the
+    // container-local tree within their caps, and the build's writers are
+    // closed — all observed through the container's own view before any byte
+    // is transferred.
     check_interruption()?;
     let after = run_probe(
         repo_root,
@@ -1012,18 +1129,18 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
         source_files,
     )?;
     check_interruption()?;
-    let mut copied_bytes = 0u64;
-    let mut export_released = false;
-    if let Some((plan, _staged_source)) = &staged {
-        let produced = workspace_artifact_source::restore_produced_artifact(
-            plan,
-            repo_root,
-            &triple,
-            &effigy_core::build_info::active_version(),
-        )?;
-        copied_bytes = produced.bytes;
-        export_released = produced.export_released;
-    }
+    let produced = transfer_produced_artifact(
+        repo_root,
+        &policy,
+        &binding,
+        &triple,
+        &effigy_core::build_info::active_version(),
+    )?;
+    let copied_bytes = produced.bytes;
+    let export_released = match &staged {
+        Some((plan, _)) => workspace_artifact_source::release_leftover_staged_export(plan)?,
+        None => true,
+    };
     check_interruption()?;
     println!(
         "{}",
@@ -1095,6 +1212,7 @@ mod tests {
             ("census", 1u64),
             ("source_files", 2134),
             ("nested_workspace_mounts", 0),
+            ("source_bind_ro", 1),
             ("build_output_entries", 0),
             ("build_tree_mounts", 0),
             ("build_tree_retained_bytes", 0),
@@ -1119,6 +1237,7 @@ mod tests {
             ("census", 1u64),
             ("source_files", 2134),
             ("nested_workspace_mounts", 0),
+            ("source_bind_ro", 1),
             ("export_dir_entries", 3),
             ("export_unexpected", 0),
             ("export_unexpected_kind", 0),
@@ -1193,7 +1312,7 @@ mod tests {
                 );
             let probe = parse_probe(&raw, ProbePhase::After).expect("parsed probe");
             let refusal = check_probe(&probe).expect_err("must refuse").to_string();
-            assert!(refusal.contains("not bounded"), "{kind}: {refusal}");
+            assert!(refusal.contains("not contained"), "{kind}: {refusal}");
             if kind != "entry" {
                 // Every surface the census can find has its own naming; only an
                 // entry inside the export directory is the artifact-shape case.
@@ -1223,6 +1342,7 @@ mod tests {
     fn every_unbounded_writer_refuses_at_its_declared_boundary() {
         let cases = [
             ("nested_workspace_mounts", 1u64),
+            ("source_bind_ro", 0),
             ("build_tree_free_bytes", BUILD_TREE_HEADROOM_BYTES - 1),
         ];
         for (key, value) in cases {
@@ -1235,6 +1355,7 @@ mod tests {
         }
         let cases = [
             ("nested_workspace_mounts", 1u64),
+            ("source_bind_ro", 0),
             ("export_unexpected", 1),
             ("export_binary_bytes", ARTIFACT_BINARY_CAP_BYTES + 1),
             ("export_receipt_bytes", 65537),
@@ -1266,9 +1387,8 @@ mod tests {
     /// only value that comes from the requested target.
     #[test]
     fn the_probe_scripts_census_the_whole_build_service_tree() {
-        // A staged bind's `.effigy` is build output, not source: the after-probe
-        // must count everything there, so a compiler that writes the obsolete
-        // cargo tree (or any other path) instead of the declared export refuses.
+        // A staged bind's `.effigy` is a write through the source bind: the
+        // after-probe names it, and the obsolete cargo tree path is its own case.
         let after = probe_script(
             ProbePhase::After,
             "effigy-aarch64-unknown-linux-gnu",
@@ -1276,12 +1396,14 @@ mod tests {
             "b".repeat(64).as_str(),
             2134,
         );
-        assert!(after.contains("./.effigy/linux-release"));
-        assert!(after.contains("base\" = target"));
+        assert!(after.contains("./.effigy/linux-release/target"));
+        assert!(after.contains("source_bind_ro"));
         assert!(after.contains("export_unexpected_kind"));
         assert!(after.contains("export_unexpected=$((export_unexpected + 1))"));
+        assert!(after.contains(BUILD_TREE_ROOT));
+        assert!(after.contains("release_dir=\"$tree/target/"));
         // The before-probe reports pre-existing build output instead of assuming
-        // the bind starts clean.
+        // the bind starts clean, and requires the source bind to be read-only.
         let before = probe_script(
             ProbePhase::Before,
             "effigy-aarch64-unknown-linux-gnu",
@@ -1291,6 +1413,7 @@ mod tests {
         );
         assert!(before.contains("build_output_entries="));
         assert!(before.contains("find ./.effigy"));
+        assert!(before.contains("source_bind_ro"));
     }
 
     #[test]
@@ -1308,12 +1431,14 @@ mod tests {
             assert!(script.contains(&BUILD_TREE_HEADROOM_BYTES.to_string()));
             assert!(script.contains("effigy-aarch64-unknown-linux-gnu"));
             assert!(script.contains("expected_files=2134"));
-            assert!(!script.contains("/workspace/.effigy/linux-release/target"));
+            assert!(script.contains("source_bind_ro"));
             match phase {
                 ProbePhase::Before => assert!(!script.contains("export_binary_bytes")),
                 ProbePhase::After => {
                     assert!(script.contains("export_binary_bytes"));
                     assert!(script.contains("build_tree_open_writers"));
+                    assert!(script.contains("./.effigy/linux-release/target"));
+                    assert!(script.contains("release_dir=\"$tree/target/"));
                 }
             }
         }
@@ -1340,9 +1465,10 @@ mod tests {
         assert!(
             marker["scope"]
                 .as_str()
-                .is_some_and(|text| text.contains("not a cumulative bound")),
+                .is_some_and(|text| text.contains("finite-before-write")),
             "{marker}"
         );
+        assert_eq!(marker["source_bind"]["read_only"], true);
         assert_eq!(
             marker["no_change"]["switch"],
             "EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING"
@@ -1359,7 +1485,12 @@ mod tests {
             ARTIFACT_BINARY_CAP_BYTES
         );
         assert_eq!(marker["export"]["released"], true);
-        assert_eq!(marker["copy_back"]["bytes"], 4096);
+        assert_eq!(
+            marker["export"]["directory"],
+            "/var/tmp/effigy-artifact-build/target/aarch64-unknown-linux-gnu/release"
+        );
+        assert_eq!(marker["transfer"]["bytes"], 4096);
+        assert_eq!(marker["transfer"]["mode"], "host-capped");
         assert_eq!(marker["staged"]["mode"], "checkout");
         assert!(marker["build_tree"]["storage"]
             .as_str()

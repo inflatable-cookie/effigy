@@ -245,7 +245,7 @@
       "id": "E8",
       "kind": "vm-supervised",
       "closure_basis": "supervised-contained",
-      "timeout_seconds": 900,
+      "timeout_seconds": 60,
       "go": "E8",
       "status": "blocked",
       "live_blockers": [

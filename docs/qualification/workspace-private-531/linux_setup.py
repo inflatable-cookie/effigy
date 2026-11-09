@@ -28,6 +28,7 @@ from linux_supervisor import Refusal, exclusive
 import linux_supervisor as supervisor
 import preparation_observations as observations
 import linux_disk_identity as identity
+import linux_allocation_bound as allocation
 import linux_disk_association as disk_association
 import preparation_resources as resources
 import linux_receipts
@@ -65,6 +66,7 @@ DROPIN_TEXT = ('Match User effigy531\n'
                '    X11Forwarding no\n'
                '    PermitTTY no\n')
 SUPERVISOR_PATH = '/usr/local/libexec/effigy-stage-supervisor'
+SUPERVISOR_PYTHON = '/usr/bin/python3'
 SUPERVISOR_SOURCE = Path(__file__).resolve().parent / 'linux_supervisor.py'
 ARCHIVE_NAME = 'inputs/archive.tar'
 ARCHIVE_SHA256 = '03df0b512b7536467cfb44f131619543d4e561e09aee29cab71be12445bfe867'   # candidate H (§6.3)
@@ -97,6 +99,8 @@ STAGE1_SYSTEM_STATES = frozenset({
 TRANSFER_CAP = 40 * 1024 * 1024            # E9 archive and E19 placements (brief: archive <= 40 MiB)
 EXTRACT_CAP = 500 * 1024 * 1024            # E9b extracted source (brief: extracted <= 500 MiB)
 PAYLOAD_CAP = 64 * 1024 * 1024             # E8 filesystem controls (brief: <= 64 MiB writes)
+E8_TIMEOUT_SECONDS = 60                   # existing E8 payload clock; reserves remain separate
+SETUP_GO_GATES = frozenset({'E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'E19', 'E-SUP'})
 # Mechanisms that have been source-verified. Empty: none is established yet.
 SUPPORTED_DISK_MECHANISMS = frozenset()
 SUPPORTED_HARD_LIMITS = frozenset()
@@ -516,15 +520,19 @@ def verify_disk_association(facts, supported=None):
     return disk_association.verify(facts, supported)
 
 
-def verify_hard_limit(witness, limit_bytes, supported=None):
+def verify_hard_limit(witness, limit_bytes, supported=None, facts=None):
     """A hard limit is established only by a source-verified, kernel-enforced mechanism.
 
-    Polling counters never qualify. Empty support means every witness refuses.
+    Polling counters never qualify. Empty support means every witness refuses. The kernel
+    project-quota mechanism verifies its originals against exact facts (see _allocation_facts).
     """
     supported = SUPPORTED_HARD_LIMITS if supported is None else supported
     mechanism = witness.get('mechanism') if isinstance(witness, dict) else None
     if mechanism not in supported:
         raise Refusal('no source-verified hard-limit mechanism; polling counters are not a quota')
+    if mechanism == allocation.MECHANISM:
+        bound = allocation.verify(witness, limit_bytes, facts or {}, supported)
+        return {'mechanism': mechanism, 'limit_bytes': limit_bytes, 'bound': bound}
     limits = witness.get('limits') or []
     if limit_bytes is None or limit_bytes not in limits or witness.get('enforcement') != 'kernel':
         raise Refusal('hard limit does not cover this row or is not kernel-enforced')
@@ -693,7 +701,7 @@ def _supervised_argv(fresh, row_id, payload_argv, cwd, timeout, cfg, transfer=Fa
                               'expiry': fresh.get('authorized_keys_expiry')}
     text = json.dumps(request, sort_keys=True)
     digest = _sha(text.encode('utf-8'))
-    remote = ['sudo', '-n', SUPERVISOR_PATH, '--approved-request', digest]
+    remote = ['sudo', '-n', SUPERVISOR_PYTHON, '-I', '-B', SUPERVISOR_PATH, '--approved-request', digest]
     return ssh_argv(cfg, remote), {'nonce': nonce, 'unit': supervisor.unit_name(nonce),
                                   'request_json': text, 'request_sha256': digest}
 
@@ -783,8 +791,9 @@ def _rows(fresh):
     # E8: the filesystem controls run as a supervised payload from the reviewed argv.
     payload = fresh.get('controls_payload')
     e8_ok = isinstance(payload, list) and payload and all(isinstance(a, str) and a for a in payload)
-    argv, credit = _supervised_argv(fresh, 'E8', list(payload), BASE, 900, cfg) if e8_ok else ([], None)
-    _row(rows, 'E8', 'vm-supervised', argv, 900, SUPERVISED_BASIS, 'E8', None, limit_bytes=PAYLOAD_CAP, credit=credit)
+    argv, credit = _supervised_argv(fresh, 'E8', list(payload), BASE, E8_TIMEOUT_SECONDS, cfg) if e8_ok else ([], None)
+    _row(rows, 'E8', 'vm-supervised', argv, E8_TIMEOUT_SECONDS, SUPERVISED_BASIS, 'E8', None,
+         limit_bytes=PAYLOAD_CAP, credit=credit)
     return rows
 
 
@@ -920,6 +929,8 @@ def setup_plan(fresh):
     import linux_stage1
     digest = plan_digest(rows, head, linux_stage1.digest_value(fresh.get('stage1')))
     gates = fresh.get('go') or {}
+    if not isinstance(gates, dict) or set(gates) != SETUP_GO_GATES:
+        global_missing.append('fixed setup GO receipt set is missing or has extra entries')
     identity = fresh.get('identity')
     output = fresh.get('probe_output')
     probe = None
@@ -995,10 +1006,17 @@ def setup_plan(fresh):
     return rows
 
 
+def _allocation_facts(fresh):
+    """Exact facts a kernel allocation bound must match: boot, owned uid, stage root and the current object set."""
+    identity = fresh.get('identity') or {}
+    return {'boot_id': identity.get('boot_id'), 'uid': fresh.get('effigy531_uid'), 'root': BASE,
+            'entries': fresh.get('allocation_entries')}
+
+
 def _hard_limit_reason(fresh, row):
     """None when a source-verified kernel limit covers this row; otherwise the refusal text."""
     try:
-        verify_hard_limit(fresh.get('hard_limit') or {}, row['limit_bytes'], None)
+        verify_hard_limit(fresh.get('hard_limit') or {}, row['limit_bytes'], None, _allocation_facts(fresh))
     except Refusal as exc:
         return str(exc)
     return None
@@ -1116,6 +1134,8 @@ def _stop_unit_via_vm(unit):
 APPROVAL_INSTALL = r"""
 import os, sys, stat, hashlib, subprocess
 root, digest, data, program = sys.argv[1:]
+if len(data.encode()) > 1024 * 1024:
+    raise ValueError('approval request exceeds the fixed byte ceiling')
 assert hashlib.sha256(data.encode()).hexdigest() == digest
 assert len(digest) == 64 and all(c in '0123456789abcdef' for c in digest)
 try: os.mkdir(root, 0o700)
@@ -1127,7 +1147,7 @@ try:
     assert not os.path.exists(root + '/' + digest + '.spent')
     out = os.open(digest + '.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
     with os.fdopen(out, 'wb') as f: f.write(data.encode()); f.flush(); os.fsync(f.fileno())
-    rule = 'effigy531 ALL=(root) NOPASSWD: ' + program + ' --approved-request ' + digest + '\n'
+    rule = 'effigy531 ALL=(root) NOPASSWD: /usr/bin/python3 -I -B ' + program + ' --approved-request ' + digest + '\n'
     path = '/etc/sudoers.d/effigy531-' + digest
     out = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o440)
     with os.fdopen(out, 'w') as f: f.write(rule)

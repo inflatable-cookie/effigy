@@ -774,6 +774,11 @@ mod legacy_admission_tests {
                     "containerd.io/restart.status": "running",
                 },
             },
+            "HostConfig": {
+                "Privileged": false,
+                "CapAdd": serde_json::Value::Null,
+                "CapDrop": ["SYS_ADMIN"],
+            },
             "NetworkSettings": {
                 "Bridge": "",
                 "SandboxID": "0d5d1c0a8d9dbfc0f9d3d6f6d8ba44a44ed8d5b2f7b3f2f5d9f7c1a9e6d3b8f0",
@@ -829,15 +834,53 @@ mod legacy_admission_tests {
         );
         assert_eq!(binding.scope, None);
         assert_eq!(
-            super::workspace_builder_source_bind(
+            super::workspace_builder_source_mount(
                 record.get("Mounts").and_then(|value| value.as_array())
             )
-            .as_deref(),
+            .as_ref()
+            .map(|(source, _)| source.as_path()),
             Some(checkout.as_path())
         );
         assert!(super::workspace_builder_has_no_published_ports(Some(
             &record
         )));
+        assert!(super::builder_cache_volumes_are_owned(
+            record.get("Mounts").and_then(|value| value.as_array()),
+            project
+        ));
+        assert!(super::builder_remount_capability_dropped(Some(&record)));
+    }
+
+    #[test]
+    fn running_inspect_refuses_an_extra_host_bind_and_a_missing_sys_admin_drop() {
+        let private = tempfile::tempdir().expect("private checkout");
+        let checkout = private.path().canonicalize().expect("canonical checkout");
+        let project = "effigy-artifact-builder-v1-co-0123456789ab";
+        let mut record = retained_nerdctl_inspect(project, &checkout, &checkout);
+        record["Mounts"]
+            .as_array_mut()
+            .expect("mounts")
+            .push(serde_json::json!({
+                "Type": "bind",
+                "Source": "/opt/extra",
+                "Destination": "/opt/extra",
+                "RW": true
+            }));
+        assert!(!super::builder_cache_volumes_are_owned(
+            record.get("Mounts").and_then(|value| value.as_array()),
+            project
+        ));
+        let mut record = retained_nerdctl_inspect(project, &checkout, &checkout);
+        record["HostConfig"]["CapDrop"] = serde_json::json!([]);
+        assert!(!super::builder_remount_capability_dropped(Some(&record)));
+        record["HostConfig"]["CapDrop"] = serde_json::json!(["SYS_ADMIN"]);
+        record["HostConfig"]["Privileged"] = serde_json::json!(true);
+        assert!(!super::builder_remount_capability_dropped(Some(&record)));
+        record["HostConfig"]["Privileged"] = serde_json::json!(false);
+        record["HostConfig"]["CapAdd"] = serde_json::json!(["SYS_PTRACE"]);
+        assert!(!super::builder_remount_capability_dropped(Some(&record)));
+        record.as_object_mut().expect("record").remove("HostConfig");
+        assert!(!super::builder_remount_capability_dropped(Some(&record)));
     }
 
     #[test]
@@ -867,10 +910,11 @@ mod legacy_admission_tests {
             "{error}"
         );
         assert_eq!(
-            super::workspace_builder_source_bind(
+            super::workspace_builder_source_mount(
                 record.get("Mounts").and_then(|value| value.as_array())
             )
-            .as_deref(),
+            .as_ref()
+            .map(|(source, _)| source.as_path()),
             Some(foreign.as_path())
         );
     }
@@ -1002,7 +1046,7 @@ pub fn verify_workspace_artifact_builder_declaration(
 }
 
 /// Strict builder execution authority: explicit checkout/scope labels, a full
-/// immutable identity and a writable source bind at /workspace. Unlike stack
+/// immutable identity and a read-only source bind at /workspace. Unlike stack
 /// reactivation this never adopts legacy unlabelled containers.
 pub fn verify_workspace_artifact_builder(
     repo_root: &Path,
@@ -1017,12 +1061,18 @@ pub fn verify_workspace_artifact_builder(
     let mut binding = inspected.binding;
     let checkout = inspected.checkout;
     let bind_matches = observed.as_deref() == Some(expected.as_path());
+    let read_only = inspected.source_read_only;
     let no_ports = inspected.no_ports;
     let working_dir_matches = inspected.working_dir_matches;
+    let mounts_owned = inspected.mounts_owned;
+    let remount_capability_dropped = inspected.remount_capability_dropped;
     if !ownership.owns(checkout.as_deref(), binding.scope.as_deref())
         || !bind_matches
+        || !read_only
         || !no_ports
         || !working_dir_matches
+        || !mounts_owned
+        || !remount_capability_dropped
     {
         let mut mismatched = Vec::new();
         if !ownership.owns(checkout.as_deref(), binding.scope.as_deref()) {
@@ -1031,21 +1081,37 @@ pub fn verify_workspace_artifact_builder(
         if !bind_matches {
             mismatched.push(match observed.as_deref() {
                 Some(observed) => format!(
-                    "one writable `/workspace` source bind at `{}` (observed `{}`)",
+                    "one read-only `/workspace` source bind at `{}` (observed `{}`)",
                     expected.display(),
                     observed.display()
                 ),
                 None => format!(
-                    "one writable `/workspace` source bind at `{}`",
+                    "one read-only `/workspace` source bind at `{}`",
                     expected.display()
                 ),
             });
+        }
+        if bind_matches && !read_only {
+            mismatched
+                .push("one read-only `/workspace` source bind (observed writable)".to_owned());
         }
         if !no_ports {
             mismatched.push("no published ports".to_owned());
         }
         if !working_dir_matches {
             mismatched.push("an owned Compose working directory".to_owned());
+        }
+        if !mounts_owned {
+            mismatched.push(
+                "exact owned mount set (one `/workspace` bind and two cargo cache volumes, nothing else)"
+                    .to_owned(),
+            );
+        }
+        if !remount_capability_dropped {
+            mismatched.push(
+                "SYS_ADMIN dropped (CapDrop contains SYS_ADMIN, CapAdd empty, Privileged false)"
+                    .to_owned(),
+            );
         }
         return Err(ContainerExecError::refused(
             "inspect workspace builder",
@@ -1074,6 +1140,17 @@ pub struct ObservedWorkspaceArtifactBuilder {
     pub id: String,
     pub source: PathBuf,
     pub never_started: bool,
+    /// Whether inspect reported `RW=false` on the one `/workspace` bind.
+    /// Observation records this so an owned writable builder can be refused or
+    /// recovered; it authorizes nothing on its own.
+    pub read_only: bool,
+    /// Whether inspect reported exactly the two owned cargo cache volumes plus
+    /// the one `/workspace` bind, and nothing else.
+    pub mounts_owned: bool,
+    /// Whether inspect reported HostConfig CapDrop contains SYS_ADMIN, CapAdd
+    /// empty, and Privileged false. Observation records a leftover that predates
+    /// the drop so recovery can replace it; it authorizes nothing on its own.
+    pub remount_capability_dropped: bool,
 }
 
 /// Observe one owned builder's identity and source. A listing that says
@@ -1105,13 +1182,16 @@ pub fn observed_workspace_artifact_builder(
     let source = inspected.workspace_source.ok_or_else(|| {
         ContainerExecError::refused(
             "inspect workspace builder",
-            "workspace builder binds no single writable `/workspace` source",
+            "workspace builder binds no single `/workspace` source",
         )
     })?;
     Ok(ObservedWorkspaceArtifactBuilder {
         id,
         source,
         never_started: false,
+        read_only: inspected.source_read_only,
+        mounts_owned: inspected.mounts_owned,
+        remount_capability_dropped: inspected.remount_capability_dropped,
     })
 }
 
@@ -1220,7 +1300,14 @@ fn observed_never_started_builder(
     let mounts = record
         .and_then(|record| record.get("Mounts"))
         .and_then(|value| value.as_array());
-    if workspace_builder_source_bind(mounts).as_deref() != Some(checkout.as_path()) {
+    let (workspace_source, source_read_only) =
+        workspace_builder_source_mount(mounts).ok_or_else(|| {
+            refuse(format!(
+                "binding unavailable: the owned `/workspace` bind is not `{}`",
+                checkout.display()
+            ))
+        })?;
+    if workspace_source.as_path() != checkout.as_path() {
         return Err(refuse(format!(
             "binding unavailable: the owned `/workspace` bind is not `{}`",
             checkout.display()
@@ -1253,6 +1340,9 @@ fn observed_never_started_builder(
         id: identity.id,
         source: checkout,
         never_started: true,
+        read_only: source_read_only,
+        mounts_owned: true,
+        remount_capability_dropped: builder_remount_capability_dropped(record),
     })
 }
 
@@ -1276,13 +1366,46 @@ fn builder_cache_volumes_are_owned(
         })
 }
 
+/// Inspect HostConfig proves the remount capability is gone before effects:
+/// SYS_ADMIN is dropped, nothing is added back, and the container is not
+/// privileged. A missing HostConfig is not proof of the drop.
+fn builder_remount_capability_dropped(record: Option<&serde_json::Value>) -> bool {
+    let Some(host) = record.and_then(|record| record.get("HostConfig")) else {
+        return false;
+    };
+    if host.get("Privileged").and_then(|value| value.as_bool()) != Some(false) {
+        return false;
+    }
+    let cap_add_empty = match host.get("CapAdd") {
+        None | Some(serde_json::Value::Null) => true,
+        Some(serde_json::Value::Array(caps)) => caps.is_empty(),
+        _ => false,
+    };
+    if !cap_add_empty {
+        return false;
+    }
+    host.get("CapDrop")
+        .and_then(|value| value.as_array())
+        .is_some_and(|caps| {
+            caps.iter().any(|cap| {
+                cap.as_str().is_some_and(|name| {
+                    name.eq_ignore_ascii_case("SYS_ADMIN")
+                        || name.eq_ignore_ascii_case("CAP_SYS_ADMIN")
+                })
+            })
+        })
+}
+
 struct InspectedWorkspaceBuilder {
     ownership: OwnershipContext,
     binding: VerifiedComposeContainer,
     checkout: Option<String>,
     workspace_source: Option<PathBuf>,
+    source_read_only: bool,
     no_ports: bool,
     working_dir_matches: bool,
+    mounts_owned: bool,
+    remount_capability_dropped: bool,
 }
 
 /// One strict inspection of a retained builder's full identity, plus the exact
@@ -1320,7 +1443,10 @@ fn inspect_workspace_artifact_builder(
     let mounts = record
         .and_then(|record| record.get("Mounts"))
         .and_then(|value| value.as_array());
-    let workspace_source = workspace_builder_source_bind(mounts);
+    let (workspace_source, source_read_only) = match workspace_builder_source_mount(mounts) {
+        Some((source, read_only)) => (Some(source), read_only),
+        None => (None, false),
+    };
     let no_ports = workspace_builder_has_no_published_ports(record);
     // Scoped checkout labels locate the owner, while Compose may name its
     // immutable render directory. A supplied working directory must still
@@ -1336,21 +1462,32 @@ fn inspect_workspace_artifact_builder(
             record.pointer("/Config/Labels/com.docker.compose.project.working_dir")
         }),
     );
+    let mounts_owned = builder_cache_volumes_are_owned(mounts, &policy.project_name);
+    let remount_capability_dropped = builder_remount_capability_dropped(record);
     Ok(InspectedWorkspaceBuilder {
         ownership,
         binding,
         checkout,
         workspace_source,
+        source_read_only,
         no_ports,
         working_dir_matches,
+        mounts_owned,
+        remount_capability_dropped,
     })
 }
 
-/// The one writable `/workspace` source the builder's mounts resolve to, with
-/// nothing mounted below it. A name, label or volume never substitutes for it,
-/// so a builder belonging to another checkout's source (or one bound to a VM
+/// The one `/workspace` source the builder's mounts resolve to, with nothing
+/// mounted below it. A name, label or volume never substitutes for it, so a
+/// builder belonging to another checkout's source (or one bound to a VM
 /// directory that does not exist on the host) is never adopted.
-fn workspace_builder_source_bind(mounts: Option<&Vec<serde_json::Value>>) -> Option<PathBuf> {
+///
+/// Identification does not require the bind to be writable: an owned read-write
+/// leftover is observed so the caller can refuse or recover it. Execution
+/// authority still requires `RW=false`.
+fn workspace_builder_source_mount(
+    mounts: Option<&Vec<serde_json::Value>>,
+) -> Option<(PathBuf, bool)> {
     let mounts = mounts?;
     let workspace_mounts = mounts
         .iter()
@@ -1370,15 +1507,15 @@ fn workspace_builder_source_bind(mounts: Option<&Vec<serde_json::Value>>) -> Opt
     let [mount] = workspace_mounts.as_slice() else {
         return None;
     };
-    if mount.get("Type").and_then(|value| value.as_str()) != Some("bind")
-        || mount.get("RW").and_then(|value| value.as_bool()) != Some(true)
-    {
+    if mount.get("Type").and_then(|value| value.as_str()) != Some("bind") {
         return None;
     }
-    mount
+    let read_only = mount.get("RW").and_then(|value| value.as_bool()) == Some(false);
+    let source = mount
         .get("Source")
         .and_then(|value| value.as_str())
-        .and_then(|value| Path::new(value).canonicalize().ok())
+        .and_then(|value| Path::new(value).canonicalize().ok())?;
+    Some((source, read_only))
 }
 
 /// Where this environment's builder source must be: the canonical checkout, or

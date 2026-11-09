@@ -34,12 +34,17 @@ Credit remains host-owned: the candidate needs a separate authenticated terminal
 observation. SSH exit alone never establishes closure.
 """
 import base64
+import ctypes
+import fcntl
 import hashlib
 import json
+import math
 import os
 import pwd
 import re
+import signal
 import stat
+import struct
 import subprocess
 import sys
 import threading
@@ -80,6 +85,13 @@ PROPERTIES = 'LoadState,ActiveState,SubState,Result,ExecMainStatus,InvocationID,
 GATE_NAME = 'gate.fifo'
 TRANSFER_NAME = 'transfer.fifo'
 PAYLOAD_STDOUT_CAP = 65536
+ROOT_RECORD_CAP = 1024 * 1024
+CAP_SYS_RESOURCE_BIT = 1 << 24
+CAPABILITY_VERSION_3 = 0x20080522
+PR_SET_NO_NEW_PRIVS, PR_GET_NO_NEW_PRIVS, PR_CAP_AMBIENT = 38, 39, 47
+PR_CAP_AMBIENT_IS_SET, PR_CAP_AMBIENT_CLEAR_ALL = 1, 4
+BROKER_PROJECT_ID, BROKER_PROJINHERIT = 531, 0x200
+BROKER_RECORD_NAMES = frozenset({'intent.json', 'stdout', 'stderr', 'supervisor.json'})
 PAYLOAD_ACCOUNT = 'effigy531'     # the one account a request may name; a request for any other account is refused
 STAGE_OWNER = 0                   # the stage root is root-owned in production
 # The only directory the installed entry creates row stages under. It is root-owned and mode 0711,
@@ -137,6 +149,19 @@ def run_argv(nonce, payload_user, cwd, timeout, argv):
     if any(f.split('=')[0] in FORBIDDEN_RUN_FLAGS for f in flags):
         raise Refusal('forbidden systemd-run flag')
     return ['systemd-run'] + flags + ['--'] + list(argv)
+
+
+def _candidate_confined_run_argv(nonce, payload_user, cwd, timeout, argv):
+    """Fixed prospective child configuration, not an admission or production entry.
+
+    The service manager must install both properties before exec. A future caller
+    must also prove the supported systemd/kernel versions, observe that setup and
+    exclude outside writers. Merely constructing this argv proves none of those.
+    """
+    command = run_argv(nonce, payload_user, cwd, timeout, argv)
+    separator = command.index('--')
+    return command[:separator] + ['--property=PrivateUsers=identity',
+                                  '--property=NoNewPrivileges=yes'] + command[separator:]
 
 
 def show_argv(unit):
@@ -377,12 +402,200 @@ def create_row(parent_fd, name, uid):
 
 
 def _row_write(row_fd, name, data):
+    if not isinstance(data, bytes) or len(data) > ROOT_RECORD_CAP:
+        raise Refusal('root record exceeds its fixed byte ceiling')
     fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=row_fd)
     with os.fdopen(fd, 'wb') as output:
         _set_mode(output.fileno(), 0o600, stat.S_ISREG)
         output.write(data)
         output.flush()
         os.fsync(output.fileno())
+
+
+class _CapHeader(ctypes.Structure):
+    _fields_ = [('version', ctypes.c_uint32), ('pid', ctypes.c_int32)]
+
+
+class _CapData(ctypes.Structure):
+    _fields_ = [('effective', ctypes.c_uint32), ('permitted', ctypes.c_uint32),
+                ('inheritable', ctypes.c_uint32)]
+
+
+def _candidate_drop_quota_bypass(capget, capset, prctl):
+    """Source-only child preparation; no production entry invokes this candidate."""
+    if ctypes.sizeof(_CapHeader) != 8 or ctypes.sizeof(_CapData) != 12:
+        raise Refusal('unsupported capability ABI')
+    def expect(value, expected, phase):
+        if type(value) is not int or value != expected:
+            raise Refusal('quota-bypass capability ' + phase + ' failed or is unknown')
+    expect(prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), 0, 'no-new-privileges setup')
+    expect(prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0), 0, 'ambient clear')
+    header, data = _CapHeader(CAPABILITY_VERSION_3, 0), (_CapData * 2)()
+    expect(capget(ctypes.byref(header), data), 0, 'read')
+    if header.version != CAPABILITY_VERSION_3:
+        raise Refusal('unsupported capability version')
+    for field in ('effective', 'permitted', 'inheritable'):
+        setattr(data[0], field, getattr(data[0], field) & ~CAP_SYS_RESOURCE_BIT)
+    expect(capset(ctypes.byref(header), data), 0, 'drop')
+    after = (_CapData * 2)()
+    expect(capget(ctypes.byref(header), after), 0, 'verification')
+    if header.version != CAPABILITY_VERSION_3 or any(
+            getattr(after[0], field) & CAP_SYS_RESOURCE_BIT for field in ('effective', 'permitted', 'inheritable')):
+        raise Refusal('quota-bypass capability remains present')
+    expect(prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0), 1, 'no-new-privileges verification')
+    expect(prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_IS_SET, 24, 0, 0), 0, 'ambient verification')
+
+
+def _broker_project_attributes(fd):
+    data = bytearray(28)
+    fcntl.ioctl(fd, 0x801c581f, data)
+    flags, _, _, project, _, _ = struct.unpack('=5I8s', data)
+    return project, flags
+
+
+def _candidate_quota_broker_record(row_fd, name, data, expected_dev, owner,
+                                   capget, capset, prctl, read_project=_broker_project_attributes):
+    """Source-only child body; no production entry or caller authority invokes it."""
+    if not isinstance(name, str) or name not in BROKER_RECORD_NAMES or \
+            not isinstance(data, bytes) or len(data) > ROOT_RECORD_CAP:
+        raise Refusal('broker record is not fixed or exceeds its byte ceiling')
+    if type(row_fd) is not int or type(expected_dev) is not int or type(owner) is not int:
+        raise Refusal('broker device or owner is invalid')
+    def observe_stat():
+        try:
+            return os.fstat(row_fd)
+        except OSError as exc:
+            raise Refusal('broker directory observation is unavailable') from exc
+    def observe_project():
+        try:
+            return read_project(row_fd)
+        except OSError as exc:
+            raise Refusal('broker project observation is unavailable') from exc
+    before = observe_stat()
+    if not stat.S_ISDIR(before.st_mode) or before.st_uid != owner or before.st_dev != expected_dev or \
+            before.st_mode & 0o022:
+        raise Refusal('broker directory custody differs')
+    project = observe_project()
+    if not isinstance(project, tuple) or len(project) != 2 or type(project[0]) is not int or \
+            type(project[1]) is not int or project[0] != BROKER_PROJECT_ID or \
+            not 0 <= project[1] <= 0xffffffff or not project[1] & BROKER_PROJINHERIT:
+        raise Refusal('broker directory project or inheritance differs')
+    _candidate_drop_quota_bypass(capget, capset, prctl)
+    after, post_project = observe_stat(), observe_project()
+    if (before.st_dev, before.st_ino, before.st_uid, before.st_mode) != \
+            (after.st_dev, after.st_ino, after.st_uid, after.st_mode) or post_project != project:
+        raise Refusal('broker directory changed after capability drop')
+    _row_write(row_fd, name, data)
+
+
+def _launch_candidate_quota_record(row_fd, name, data, expected_dev, deadline, cleanup_deadline,
+                                   test_capops=None, test_project=None):
+    """Launch one bounded candidate child; this is not wired to a production entry."""
+    testing = test_capops is not None or test_project is not None
+    if testing and os.geteuid() == 0:
+        raise Refusal('broker child test seams are refused for root runs')
+    if not testing and (os.geteuid() != 0 or sys.platform != 'linux'):
+        raise Refusal('broker child requires the supported root Linux route')
+    if type(deadline) not in (int, float) or type(cleanup_deadline) not in (int, float) or \
+            not math.isfinite(deadline) or not math.isfinite(cleanup_deadline):
+        raise Refusal('broker child deadline is invalid')
+    now = time.monotonic()
+    remaining = deadline - now
+    if not 0 < remaining or cleanup_deadline < deadline or \
+            cleanup_deadline - now > MAX_TIMEOUT + GATE_RESERVE_SECONDS + CLEANUP_RESERVE_SECONDS:
+        raise Refusal('broker child has no bounded remaining deadline')
+    if threading.active_count() != 1:
+        raise Refusal('broker child cannot fork with other threads running')
+    if testing:
+        if not isinstance(test_capops, tuple) or len(test_capops) != 3 or \
+                any(not callable(operation) for operation in test_capops) or not callable(test_project):
+            raise Refusal('broker child test seams are incomplete')
+        capget, capset, prctl = test_capops
+        read_project = test_project
+        owner = os.geteuid()
+    else:
+        libc = ctypes.CDLL(None, use_errno=True)
+        try:
+            capget, capset, prctl = libc.capget, libc.capset, libc.prctl
+        except AttributeError as exc:
+            raise Refusal('broker capability calls are unavailable') from exc
+        capget.argtypes = [ctypes.POINTER(_CapHeader), ctypes.POINTER(_CapData)]
+        capset.argtypes = [ctypes.POINTER(_CapHeader), ctypes.POINTER(_CapData)]
+        prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
+        for operation in (capget, capset, prctl):
+            operation.restype = ctypes.c_int
+        read_project, owner = _broker_project_attributes, 0
+
+    read_fd, write_fd = os.pipe()
+    try:
+        pid = os.fork()
+    except BaseException:
+        os.close(read_fd)
+        os.close(write_fd)
+        raise
+    if pid == 0:
+        os.close(read_fd)
+        try:
+            _candidate_quota_broker_record(row_fd, name, data, expected_dev, owner,
+                                           capget, capset, prctl, read_project)
+        except BaseException as exc:
+            try:
+                os.write(write_fd, str(exc).encode('utf-8', 'replace')[:512])
+            finally:
+                os._exit(3)
+        os._exit(0)
+
+    os.close(write_fd)
+    reaped = False
+    try:
+        while True:
+            try:
+                waited, status = os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError as exc:
+                reaped = True  # The PID may be reusable; never signal it after losing the wait.
+                raise Refusal('broker child wait status is unavailable') from exc
+            if waited == pid:
+                reaped = True
+                if time.monotonic() > deadline:
+                    raise Refusal('broker child completed after its deadline; outcome is unknown')
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise Refusal('broker child deadline expired; outcome is unknown')
+            time.sleep(min(0.01, remaining))
+        detail = os.read(read_fd, 512).decode('utf-8', 'replace')
+        if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0 or detail:
+            raise Refusal('broker child failed or its outcome is unknown: ' + detail)
+        return {'waited_exit': 0}
+    finally:
+        os.close(read_fd)
+        if not reaped:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            while time.monotonic() < cleanup_deadline:
+                try:
+                    waited, _ = os.waitpid(pid, os.WNOHANG)
+                except ChildProcessError as exc:
+                    reaped = True
+                    raise Refusal('broker child cleanup wait status is unavailable') from exc
+                if waited == pid:
+                    reaped = True
+                    break
+                time.sleep(min(0.01, max(0, cleanup_deadline - time.monotonic())))
+            if not reaped:
+                raise Refusal('broker child %d was not reaped within the cleanup reserve' % pid)
+
+
+def _record_after_start(row_fd, name, data, ops, unit):
+    try:
+        _row_write(row_fd, name, data)
+    except (Refusal, OSError):
+        # The unit may still be loaded. A failed bounded record never grants
+        # closure; attempt cleanup of this exact unit before propagating it.
+        ops.stop(stop_argv(unit))
+        raise
 
 
 def _make_fifo(row_fd, name, uid):
@@ -524,7 +737,7 @@ def _run_gated(stage, request, ops, clock, boot_id, seen_invocations, monitor, u
     finally:
         monitor.stop()
     for name in ('stdout', 'stderr'):
-        _row_write(row_fd, name, outcome[name])
+        _record_after_start(row_fd, name, outcome[name], ops, unit)
     timed_out = bool(outcome.get('timed_out')) or getattr(monitor, 'deadline_expired', False) or clock() > deadline
     if timed_out or disconnected:
         ops.stop(stop_argv(unit))
@@ -549,7 +762,8 @@ def _run_gated(stage, request, ops, clock, boot_id, seen_invocations, monitor, u
               'samples': samples, 'release_index': monitor.release_index, 'elapsed_seconds': clock() - start,
               'streams': {n: {'bytes': len(outcome[n]), 'sha256': hashlib.sha256(outcome[n]).hexdigest()}
                           for n in ('stdout', 'stderr')}}
-    _row_write(row_fd, 'supervisor.json', (json.dumps(record, sort_keys=True, indent=2, default=str) + '\n').encode())
+    _record_after_start(row_fd, 'supervisor.json',
+                        (json.dumps(record, sort_keys=True, indent=2, default=str) + '\n').encode(), ops, unit)
     return {'disposition': disposition, 'candidate': candidate, 'reason': reason, 'show': show,
             'samples': samples, 'payload_stdout': payload_stdout.decode('utf-8', 'replace'),
             'payload_stdout_b64': base64.b64encode(payload_stdout).decode('ascii'),

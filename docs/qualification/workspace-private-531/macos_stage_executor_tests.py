@@ -4,12 +4,12 @@ under $TMPDIR. STASH, the activation and claims directories, the tool binaries a
 are redirected into it, so no real evidence root or claim is touched.
 
 The genuine chain runs through execute_stage with real child processes: D0, then D1, D2, D3 and D4. D2 is
-unadmitted in source (download), so this suite lifts that admission through the test seam only; its context
-Dockerfile is staged by the production handler. C2 and C3 close through injected helper envelopes (no
-simulation). C4's verify can close the same way; its engine-side steps stay guest_unknown in production and
-are dispatched only under the labelled closure simulation. Predecessors are stubs, labelled as such. C5 and
-C6 cannot be reached through a genuine chain (C4 cannot close under the guest rule), so their dispatch tests
-replace only verify_chain, and say so. The chain verifier has its own negative tests on genuine receipts.
+admitted: its prefetch helper fetches the fixture's tiny genuine-byte stand-in for the pinned OCI+deb set
+(never the production payloads) and the production handler stages the Dockerfile. C2 and C3 close through
+injected helper envelopes (no simulation). C4's verify can close the same way; C4 stays unadmitted because
+the guest still has no closed transfer of those inputs. C5 and C6 cannot be reached through a genuine
+chain, so their dispatch tests replace only verify_chain, and say so. The chain verifier has its own
+negative tests on genuine receipts.
 
 Run: python3 -I -B macos_stage_executor_tests.py
 """
@@ -39,6 +39,7 @@ import macos_stage_executor as ex  # noqa: E402
 import macos_stage_proof as proof  # noqa: E402
 import preparation_resources as resources  # noqa: E402
 import preparation_stage as primitive  # noqa: E402
+import runtime_image_inputs as runtime_inputs  # noqa: E402
 
 TOKEN = '0a1b2c3d'
 ENGINE = ex.RECORDED_ENGINE_ID
@@ -62,6 +63,70 @@ RUN_PINNED = object()
 FAKE_IMAGE = b'effigy fixture image\n' * 64
 FAKE_PIN = dict(url=prep.COLIMA_IMAGE_URL, sha512=hashlib.sha512(FAKE_IMAGE).hexdigest(), bytes=len(FAKE_IMAGE),
                 name=prep.COLIMA_IMAGE_NAME)
+
+
+def _sha(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def _oci(data, media_type, url):
+    digest = 'sha256:' + _sha(data)
+    return dict(digest=digest, bytes=len(data), media_type=media_type, url=url), data
+
+
+def make_fake_runtime():
+    """Tiny genuine-byte stand-in for the pinned OCI blobs and each named deb. Hashes match the bytes."""
+    config_body = json.dumps({'os': 'linux', 'architecture': 'arm64', 'rootfs': {'type': 'layers',
+                              'diff_ids': ['sha256:' + '11' * 32]}}, separators=(',', ':')).encode()
+    layer_body = b'fake-ubuntu-layer\n'
+    config, config_bytes = _oci(config_body, 'application/vnd.oci.image.config.v1+json',
+                                'https://registry-1.docker.io/v2/library/ubuntu/blobs/' + 'sha256:' + _sha(config_body))
+    config['url'] = 'https://registry-1.docker.io/v2/library/ubuntu/blobs/' + config['digest']
+    layer, layer_bytes = _oci(layer_body, 'application/vnd.oci.image.layer.v1.tar+gzip',
+                              'https://registry-1.docker.io/v2/library/ubuntu/blobs/unused')
+    layer['url'] = 'https://registry-1.docker.io/v2/library/ubuntu/blobs/' + layer['digest']
+    manifest_body = json.dumps({
+        'schemaVersion': 2, 'mediaType': 'application/vnd.oci.image.manifest.v1+json',
+        'config': {'mediaType': config['media_type'], 'size': config['bytes'], 'digest': config['digest']},
+        'layers': [{'mediaType': layer['media_type'], 'size': layer['bytes'], 'digest': layer['digest']}],
+    }, separators=(',', ':')).encode()
+    manifest, manifest_bytes = _oci(manifest_body, 'application/vnd.oci.image.manifest.v1+json', 'unused')
+    manifest['url'] = 'https://registry-1.docker.io/v2/library/ubuntu/manifests/' + manifest['digest']
+    index_body = json.dumps({
+        'schemaVersion': 2, 'mediaType': 'application/vnd.oci.image.index.v1+json',
+        'manifests': [{'mediaType': manifest['media_type'], 'digest': manifest['digest'], 'size': manifest['bytes'],
+                       'platform': {'architecture': 'arm64', 'os': 'linux', 'variant': 'v8'}}],
+    }, separators=(',', ':')).encode()
+    index, index_bytes = _oci(index_body, 'application/vnd.oci.image.index.v1+json', 'unused')
+    index['url'] = 'https://registry-1.docker.io/v2/library/ubuntu/manifests/' + index['digest']
+    bodies = {index['url']: index_bytes, manifest['url']: manifest_bytes, config['url']: config_bytes,
+              layer['url']: layer_bytes}
+    debs = []
+    for i, item in enumerate(runtime_inputs.DEBS):
+        data = ('deb-%d\n' % i).encode()
+        url = 'https://ports.ubuntu.com/ubuntu-ports/fixture/' + item['name']
+        debs.append(dict(name=item['name'], bytes=len(data), sha256=_sha(data), url=url, path='fixture/' + item['name']))
+        bodies[url] = data
+    pin = dict(bytes=sum(x['bytes'] for x in (index, manifest, config, layer)) + sum(d['bytes'] for d in debs),
+               index=index, manifest=manifest, config=config, layer=layer, debs=tuple(debs),
+               oci_blobs=(index, manifest, config, layer))
+    return pin, bodies, dict(index=index_bytes, manifest=manifest_bytes, config=config_bytes, layer=layer_bytes)
+
+
+FAKE_RUNTIME_PIN, FAKE_RUNTIME_BODIES, FAKE_RUNTIME_BYTES = make_fake_runtime()
+
+
+def fake_runtime_opener(bodies=None, token=b'{"token":"fixture-token"}'):
+    """Opener that serves the fixture's tiny OCI/deb bytes. The token is not a payload."""
+    bodies = bodies if bodies is not None else FAKE_RUNTIME_BODIES
+
+    def opener(url, headers=None):
+        if url == runtime_inputs.AUTH_TOKEN_URL:
+            return FakeConnection(), FakeResponse(token)
+        if url not in bodies:
+            raise AssertionError('the fixture may only fetch a pinned runtime URL, got %s' % url)
+        return FakeConnection(), FakeResponse(bodies[url])
+    return opener
 
 
 class FakeResponse:
@@ -188,7 +253,9 @@ class Fixture(unittest.TestCase):
                                     (ex, 'TOOL_PATHS', (self.colima, self.docker)),
                                     (ex, 'DESKTOP_SOCKET', self.socket_path),
                                     (ex, 'colima_image_pin', lambda manifest: dict(FAKE_PIN)),
-                                    (ex, 'open_pinned_https', fake_opener())):
+                                    (ex, 'open_pinned_https', fake_opener()),
+                                    (runtime_inputs, 'runtime_image_pin', lambda manifest: dict(FAKE_RUNTIME_PIN)),
+                                    (runtime_inputs, 'open_runtime_https', fake_runtime_opener())):
             patcher = mock.patch.object(target, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -539,7 +606,7 @@ class FixedHelperTests(Fixture):
             request_path = self.tmp + '/proof-unadmitted'
             Path(request_path).write_text(json.dumps(unsupported, sort_keys=True))
             os.chmod(request_path, 0o400)
-            with self.assertRaisesRegex(ex.Refusal, 'supports only C0, D0, D1, C1, C2 or C3'):
+            with self.assertRaisesRegex(ex.Refusal, 'supports only C0, D0, D1, C1, C2, C3 or D2'):
                 proof.main(['proof', request_path, ex.sha_file(request_path)])
             oversized = self.tmp + '/proof-oversized'
             Path(oversized).write_bytes(b'x' * 65537)
@@ -712,20 +779,20 @@ class PlanTests(Fixture):
     def test_admission_is_exact_and_each_refusal_is_named(self):
         plans = {s['id']: ex.resolve_stage(s['id'], self.bindings) for s in ex.load_manifest()['stages']}
         self.assertEqual({k for k, v in plans.items() if not v['static_admission']},
-                         {'C0', 'C1', 'C2', 'C3', 'D0', 'D1'})
+                         {'C0', 'C1', 'C2', 'C3', 'D0', 'D1', 'D2', 'D3', 'D4'})
         for plan in plans.values():  # every resolved request carries the global refusal and its prerequisite
             self.assertEqual(plan['admission'][0], ex.OWNER_ACTIVATION_REASON)
             self.assertFalse(plan['execution']['admitted'])
             self.assertIn('owner-controlled', plan['execution']['prerequisite'])
         self.assertEqual(plans['D1']['static_admission'], [])
-        self.assertTrue(any('cannot run' in r for r in plans['D4']['static_admission']))
-        self.assertTrue(any('predecessor D2' in r for r in plans['D3']['static_admission']))
+        self.assertEqual(plans['D2']['static_admission'], [])
+        self.assertEqual(plans['D3']['static_admission'], [])
+        self.assertEqual(plans['D4']['static_admission'], [])
         self.assertTrue(any('predecessor C4' in r for r in plans['C5']['static_admission']))
         self.assertEqual(plans['C2']['static_admission'], [])
         self.assertEqual(plans['C3']['static_admission'], [])
         self.assertEqual(plans['C1']['static_admission'], [])  # the pinned image fetch is admitted; execution still refuses
-        self.assertTrue(any('ONE proposal' in r for r in plans['C4']['static_admission']))
-        self.assertTrue(any('host_stage_dockerfile' in r or 'download' in r for r in plans['D2']['static_admission']))
+        self.assertTrue(any('754' in r for r in plans['C4']['static_admission']))
 
     def test_every_helper_has_a_handler_or_an_explicit_reason(self):
         unimplemented = {'verify_frozen_artifacts'}
@@ -974,7 +1041,7 @@ class HelperDispatchTests(Fixture):
                                       {'inputs': ['x.stdout']})
 
     def test_check_build_help_needs_the_three_flags(self):
-        ok = self.write('help.out', '--iidfile --platform --provenance')
+        ok = self.write('help.out', '--iidfile --platform --provenance --network --build-context')
         self.assertEqual(ex.h_check_build_help(self.ctx(outputs={'h': {'stdout': ok}}), {'inputs': ['h.stdout']}),
                          {'verified': True})
         short = self.write('help2.out', '--iidfile')
@@ -1081,7 +1148,7 @@ class HelperDispatchTests(Fixture):
 
 
 class GenuineChainTests(Fixture):
-    """Every link is a real execution: D0, D1, D2 (admission lifted), D3, D4. Nothing is fabricated."""
+    """Every link is a real execution: D0, D1, D2, D3, D4. Nothing is fabricated."""
 
     def test_d0_observes_the_engine_and_closes(self):
         d0 = self.d0()
@@ -1272,6 +1339,10 @@ class GenuineChainTests(Fixture):
         self.assertEqual(d2['closure'], 'closed')
         self.assertEqual([r['kind'] for r in d2['receipts']], ['volume', 'image'])
         self.assertEqual(Path(self.bindings['desktop_context_dir'] + '/Dockerfile').read_bytes(), ex.RECIPE_PATH.read_bytes())
+        layout = Path(self.bindings['desktop_input_dir'] + '/oci')
+        self.assertEqual((layout / 'oci-layout').read_bytes(), b'{"imageLayoutVersion":"1.0.0"}\n')
+        self.assertTrue((layout / 'index.json').is_file())
+        self.assertEqual(len(list(Path(self.bindings['desktop_input_dir'] + '/debs').iterdir())), len(runtime_inputs.DEBS))
         self.assert_dispatch('D2', d2_calls, dict(self.bindings, image_id=IMAGE, owned_volume_name=volume_for('act-d1-0001')))
         d3, d3_ref = self.d3(d2_ref, calls=d3_calls)
         self.assertEqual(d3['closure'], 'closed')
@@ -1983,7 +2054,7 @@ class DispatchSweepTests(Fixture):
         self.assertIn('allowance', str(caught.exception))
         self.assertLess(_time.monotonic() - started, 5)
 
-    def test_c4_and_d2_are_refused_before_claim_by_their_static_reasons(self):
+    def test_c4_is_refused_before_claim_by_its_static_reason(self):
         with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}):  # the production admission, not the fixture's
             self._static_refusals()
 
@@ -2000,7 +2071,7 @@ class DispatchSweepTests(Fixture):
         self.assertEqual([c[0] for c in calls], ['c3-stage-context'])
 
     def _static_refusals(self):
-        for stage in ('C4', 'D2'):
+        for stage in ('C4',):
             with self.subTest(stage=stage), self.assertRaises(ex.Refusal) as caught:
                 calls = []
                 self.execute(stage, self.routed({}, calls), prior_ref=None, activation_id=f'act-unpin-{stage.lower()}')
@@ -2099,7 +2170,7 @@ class DispatchSweepTests(Fixture):
         staged = json.loads(self.stage_file('C3', 'act-sim-c3-for-c4', 'c3-stage-context/stdout').read_text())
         verify_inner = json.dumps({k: v for k, v in staged.items() if k != 'parent'})
         routes = {'c4-verify-context': closed_guest(verify_inner),
-                  'c4-nerdctl-build-help': emit('usage: nerdctl build --iidfile --platform --provenance'),
+                  'c4-nerdctl-build-help': emit('usage: nerdctl build --iidfile --platform --provenance --network --build-context'),
                   'c4-nerdctl-build': build, 'c4-iidfile-read': read_iid,
                   'c4-image-inspect': emit(json.dumps([{'Id': IMAGE, 'Os': 'linux', 'Architecture': 'arm64'}]))}
         calls = []
@@ -2990,6 +3061,8 @@ class CoverageLedgerTests(unittest.TestCase):
         'd1-volume-create': ('executed', 'GenuineChainTests.test_d1_creates_only_after_observing_the_engine_and_the_label_absent'),
         'd1-volume-inspect': ('executed', 'GenuineChainTests.test_d1_creates_only_after_observing_the_engine_and_the_label_absent'),
         'd2-engine-info': ('executed', 'GenuineChainTests.test_d2_d3_d4_chain_runs_end_to_end_with_no_fabricated_receipt'),
+        'd2-make-input-dir': ('executed', 'GenuineChainTests.test_d2_d3_d4_chain_runs_end_to_end_with_no_fabricated_receipt'),
+        'd2-prefetch-runtime-inputs': ('executed', 'GenuineChainTests.test_d2_d3_d4_chain_runs_end_to_end_with_no_fabricated_receipt'),
         'd2-host-stage': ('executed', 'GenuineChainTests.test_d2_positive_stages_the_dockerfile_then_builds_and_reads_back'),
         'd2-docker-build': ('executed', 'GenuineChainTests.test_d2_d3_d4_chain_runs_end_to_end_with_no_fabricated_receipt'),
         'd2-read-iidfile': ('executed', 'GenuineChainTests.test_d2_d3_d4_chain_runs_end_to_end_with_no_fabricated_receipt'),
@@ -3363,6 +3436,100 @@ class D1WindowTests(Fixture):
             proof.main(['proof', path, digest])
         effect.assert_not_called()
         self.assertFalse(os.path.lexists(self.tmp + '/claims/d1-swap-0001.claim'))
+
+
+class D2WindowTests(Fixture):
+    """D2 through the proof entry's window: the request names the original D1 receipt, pins the Docker
+    directories that D0 recorded, and requires desktop_input_dir absent. A non-window D2 request is refused."""
+
+    def request(self, prior, activation_id='d2-window-0001', **extra):
+        options = dict(activation_id=activation_id, duration_seconds=600, evidence_root=self.evidence)
+        if prior is not None:
+            options['prior_receipt'] = prior
+        options.update(extra)
+        return proof.window_recipe('D2', self.bindings, options)
+
+    def freeze(self, request, name='d2-window-request.json'):
+        path = self.tmp + '/' + name
+        Path(path).write_text(json.dumps(request, sort_keys=True))
+        os.chmod(path, 0o400)
+        return path, ex.sha_file(path)
+
+    def run_entry(self, path, digest, calls):
+        def write_iid(kw):
+            Path(kw['argv'][kw['argv'].index('--iidfile') + 1]).write_text(IMAGE + '\n')
+            return emit('')
+        routes = {'d2-engine-info': emit(ENGINE_JSON), 'd2-docker-build': write_iid, 'd2-readback': emit(READBACK)}
+        with mock.patch.object(ex, 'default_transport', self.routed(routes, calls)), \
+             mock.patch.object(ex, 'default_monitor', FixedHelperTests.quiet_monitor), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            code = proof.main(['proof', path, digest])
+        return code, json.loads(out.getvalue())
+
+    def test_d2_window_runs_through_the_entry_and_its_go_names_the_d1_receipt(self):
+        d0 = self.d0()
+        _, d1_ref = self.d1(d0)
+        request = self.request(d1_ref)
+        self.assertEqual(request['prior_receipt'], d1_ref)
+        self.assertEqual(request['absent_paths'], [self.bindings['desktop_input_dir']])
+        self.assertFalse(os.path.lexists(self.bindings['desktop_input_dir']))
+        path, digest = self.freeze(request)
+        calls = []
+        code, receipt = self.run_entry(path, digest, calls)
+        self.assertEqual(code, 0)
+        self.assertEqual(receipt['closure'], 'closed')
+        go = json.loads(Path(request['activation_path']).read_text())
+        self.assertEqual(go['prior_receipt'], d1_ref)
+        self.assertEqual([c[0] for c in calls], ['d2-engine-info', 'd2-docker-build', 'd2-readback'])
+        self.assertTrue(os.path.isdir(self.bindings['desktop_input_dir'] + '/oci'))
+        self.assertEqual(len(list(Path(self.bindings['desktop_input_dir'] + '/debs').iterdir())),
+                         len(runtime_inputs.DEBS))
+
+    def test_d2_window_is_one_use(self):
+        d0 = self.d0()
+        _, d1_ref = self.d1(d0)
+        path, digest = self.freeze(self.request(d1_ref))
+        self.run_entry(path, digest, [])
+        calls = []
+        with self.assertRaises(ex.Refusal):
+            self.run_entry(path, digest, calls)
+        self.assertEqual(calls, [])
+
+    def test_d2_window_without_a_d1_reference_or_with_a_wrong_hash_refuses(self):
+        d0 = self.d0()
+        _, d1_ref = self.d1(d0)
+        with self.assertRaises(ex.Refusal):
+            proof.window_recipe('D2', self.bindings, dict(activation_id='d2-noref-0001', duration_seconds=600,
+                                                          evidence_root=self.evidence))
+        with self.assertRaises(ex.Refusal):
+            self.request(dict(d1_ref, sha256='0' * 64), activation_id='d2-badhash-0001')
+        with self.assertRaises(ex.Refusal):  # a D0 receipt is not the D1 reference D2 names
+            self.request(dict(d1_ref, stage='D0'), activation_id='d2-wrongstage-0001')
+
+    def test_d2_non_window_request_refuses(self):
+        d0 = self.d0()
+        _, d1_ref = self.d1(d0)
+        inputs = ex.stable_input_manifest()[0]
+        path, sha = self.activation('D2', d1_ref, 'd2-legacy-0001')
+        request = {'stage': 'D2', 'activation_path': path, 'activation_sha256': sha, 'bindings': self.bindings,
+                   'evidence_root': self.evidence, 'inputs': inputs, 'inputs_sha256': ex.canon_sha(inputs),
+                   'manifest_sha256': ex.sha_file(ex.MANIFEST_PATH), 'source_sha256': ex.sha_file(ex.__file__)}
+        raw = self.tmp + '/d2-legacy-request.json'
+        Path(raw).write_text(json.dumps(request, sort_keys=True))
+        os.chmod(raw, 0o400)
+        with mock.patch.object(ex, '_execute_stage') as effect, self.assertRaisesRegex(ex.Refusal, 'only through a window'):
+            proof.main(['proof', raw, ex.sha_file(raw)])
+        effect.assert_not_called()
+
+    def test_d2_window_refuses_an_existing_input_dir_before_the_claim(self):
+        d0 = self.d0()
+        _, d1_ref = self.d1(d0)
+        path, digest = self.freeze(self.request(d1_ref, activation_id='d2-present-0001'))
+        os.mkdir(self.bindings['desktop_input_dir'], 0o700)
+        with mock.patch.object(ex, '_execute_stage') as effect, self.assertRaisesRegex(ex.Refusal, 'named destination is not absent'):
+            proof.main(['proof', path, digest])
+        effect.assert_not_called()
+        self.assertFalse(os.path.lexists(self.tmp + '/claims/d2-present-0001.claim'))
 
 
 class DesktopReadyTests(Fixture):
@@ -3743,6 +3910,8 @@ class OriginalD0EvidenceTests(unittest.TestCase):
 # The real pin function and opener, captured before any fixture swaps them.
 REAL_PIN = ex.colima_image_pin
 REAL_OPEN = ex.open_pinned_https
+REAL_RUNTIME_PIN = runtime_inputs.runtime_image_pin
+REAL_RUNTIME_OPEN = runtime_inputs.open_runtime_https
 
 
 def scripted_https(script, seen):
@@ -3761,6 +3930,302 @@ def scripted_https(script, seen):
         def close(self):
             pass
     return Connection
+
+
+class RuntimeImageInputTests(Fixture):
+    """Pinned Ubuntu 22.04 arm64 OCI blobs and offline debs: exact bytes, exclusive custody, every
+    refusal before or after the transfer. Tiny genuine-byte fixtures only; never the production payloads."""
+
+    def setUp(self):
+        super().setUp()
+        self.dest = self.bindings['desktop_input_dir']
+        os.makedirs(os.path.dirname(self.dest), 0o700, exist_ok=True)
+        os.mkdir(self.dest, 0o700)
+        self.monitor = mock.Mock(check=mock.Mock(return_value={'storage': 0}))
+        self.ctx = dict(bindings=self.bindings, manifest=ex.load_manifest(), monitor=self.monitor)
+
+    def fetch(self, pin=None, opener=None):
+        return runtime_inputs.fetch_runtime_inputs(self.dest, pin or FAKE_RUNTIME_PIN,
+                                                   opener=opener or fake_runtime_opener(),
+                                                   checkpoint=lambda: self.monitor.check())
+
+    def test_exact_bytes_are_fetched_once_into_the_owned_directory(self):
+        result = ex.h_prefetch_runtime_inputs(self.ctx, dict(inputs=[self.dest]))
+        self.assertEqual(result['bytes'], FAKE_RUNTIME_PIN['bytes'])
+        self.assertEqual(result['oci'], self.dest + '/oci')
+        self.assertEqual(result['debs'], self.dest + '/debs')
+        identities = [(f['bytes'], f['sha256']) for f in result['files']]
+        self.assertEqual(identities, runtime_inputs.pin_file_identities(FAKE_RUNTIME_PIN))
+        for f in result['files']:
+            self.assertEqual(hashlib.sha256(Path(f['path']).read_bytes()).hexdigest(), f['sha256'])
+            self.assertEqual(os.path.getsize(f['path']), f['bytes'])
+        self.assertEqual((Path(result['oci']) / 'oci-layout').read_bytes(), b'{"imageLayoutVersion":"1.0.0"}\n')
+        index = json.loads((Path(result['oci']) / 'index.json').read_bytes())
+        self.assertEqual(len(index['manifests']), 1)
+        self.assertEqual(index['manifests'][0]['digest'], FAKE_RUNTIME_PIN['manifest']['digest'])
+        self.assertEqual(index['manifests'][0]['platform']['architecture'], 'arm64')
+        self.assertEqual(len(list(Path(result['debs']).iterdir())), len(runtime_inputs.DEBS))
+        self.assertTrue(self.monitor.check.called)
+
+    def test_only_the_pinned_urls_and_the_token_are_fetched(self):
+        seen = []
+        inner = fake_runtime_opener()
+
+        def opener(url, headers=None):
+            seen.append(url)
+            return inner(url, headers)
+
+        self.fetch(opener=opener)
+        self.assertEqual(seen[0], runtime_inputs.AUTH_TOKEN_URL)
+        expected = {FAKE_RUNTIME_PIN[k]['url'] for k in ('index', 'manifest', 'config', 'layer')}
+        expected.update(d['url'] for d in FAKE_RUNTIME_PIN['debs'])
+        self.assertEqual(set(seen[1:]), expected)
+        self.assertNotIn('https://archive.ubuntu.com/ubuntu/pool/main/x.deb', seen)
+
+    def test_a_destination_off_the_reviewed_path_refuses(self):
+        other = os.path.dirname(self.dest) + '/other-inputs'
+        os.mkdir(other, 0o700)
+        with self.assertRaises(primitive.Refusal):
+            ex.h_prefetch_runtime_inputs(self.ctx, dict(inputs=[other]))
+        self.assertEqual(os.listdir(other), [])
+
+    def test_a_missing_or_nonempty_input_directory_refuses(self):
+        os.rmdir(self.dest)
+        with self.assertRaises(primitive.Refusal):
+            self.fetch()
+        os.mkdir(self.dest, 0o700)
+        Path(self.dest + '/leftover').write_bytes(b'x')
+        with self.assertRaises(primitive.Refusal):
+            self.fetch()
+        os.remove(self.dest + '/leftover')
+        os.rmdir(self.dest)
+        elsewhere = self.tmp + '/elsewhere-inputs'
+        os.mkdir(elsewhere, 0o700)
+        os.symlink(elsewhere, self.dest)
+        with self.assertRaises(primitive.Refusal):
+            self.fetch()
+        self.assertEqual(os.listdir(elsewhere), [])
+
+    def test_unknown_or_mismatched_length_refuses_before_any_payload_byte_is_written(self):
+        first = FAKE_RUNTIME_PIN['index']
+        for headers in ({'Content-Length': None}, {'Content-Length': str(first['bytes'] + 1)}):
+            bodies = dict(FAKE_RUNTIME_BODIES)
+            dest = self.tmp + '/len-' + str(headers.get('Content-Length'))
+            os.mkdir(dest, 0o700)
+
+            def opener(url, hdrs=None, headers=headers):
+                if url == runtime_inputs.AUTH_TOKEN_URL:
+                    return FakeConnection(), FakeResponse(b'{"token":"fixture-token"}')
+                if url == first['url']:
+                    return FakeConnection(), FakeResponse(FAKE_RUNTIME_BYTES['index'], headers=headers)
+                raise AssertionError('payload fetch must not start after a length refusal, got %s' % url)
+
+            with self.assertRaises(primitive.Refusal):
+                runtime_inputs.fetch_runtime_inputs(dest, FAKE_RUNTIME_PIN, opener=opener)
+            self.assertEqual(sorted(os.listdir(dest)), ['debs', 'oci'])
+            self.assertFalse(os.path.lexists(os.path.join(dest, 'oci', 'index.upstream.json')))
+
+    def test_encoding_chunking_and_status_refuse_before_write(self):
+        first = FAKE_RUNTIME_PIN['index']
+        cases = (
+            FakeResponse(FAKE_RUNTIME_BYTES['index'], headers={'Content-Encoding': 'gzip'}),
+            FakeResponse(FAKE_RUNTIME_BYTES['index'], headers={'Transfer-Encoding': 'chunked'}),
+            FakeResponse(FAKE_RUNTIME_BYTES['index'], status=500),
+            FakeResponse(FAKE_RUNTIME_BYTES['index'], status=404),
+        )
+        for i, response in enumerate(cases):
+            dest = self.tmp + '/enc-%d' % i
+            os.mkdir(dest, 0o700)
+
+            def opener(url, headers=None, response=response):
+                if url == runtime_inputs.AUTH_TOKEN_URL:
+                    return FakeConnection(), FakeResponse(b'{"token":"fixture-token"}')
+                if url == first['url']:
+                    return FakeConnection(), response
+                raise AssertionError('payload fetch must not start after an encoding or status refusal')
+
+            with self.assertRaises(primitive.Refusal):
+                runtime_inputs.fetch_runtime_inputs(dest, FAKE_RUNTIME_PIN, opener=opener)
+            self.assertFalse(os.path.lexists(os.path.join(dest, 'oci', 'index.upstream.json')))
+
+    def test_over_cap_and_short_bodies_refuse_and_retain_the_partial_file(self):
+        first = FAKE_RUNTIME_PIN['index']
+        body = FAKE_RUNTIME_BYTES['index']
+        dest = self.tmp + '/oversize'
+        os.mkdir(dest, 0o700)
+
+        def oversize(url, headers=None):
+            if url == runtime_inputs.AUTH_TOKEN_URL:
+                return FakeConnection(), FakeResponse(b'{"token":"fixture-token"}')
+            if url == first['url']:
+                return FakeConnection(), FakeResponse(body + b'x', headers={'Content-Length': str(len(body))})
+            raise AssertionError('later blobs must not be fetched after an oversize refusal')
+
+        with self.assertRaises(primitive.Refusal):
+            runtime_inputs.fetch_runtime_inputs(dest, FAKE_RUNTIME_PIN, opener=oversize)
+        self.assertTrue((Path(dest) / 'oci' / 'index.upstream.json').is_file())
+        dest2 = self.tmp + '/short'
+        os.mkdir(dest2, 0o700)
+
+        def short(url, headers=None):
+            if url == runtime_inputs.AUTH_TOKEN_URL:
+                return FakeConnection(), FakeResponse(b'{"token":"fixture-token"}')
+            if url == first['url']:
+                return FakeConnection(), FakeResponse(body[:-1], headers={'Content-Length': str(len(body))})
+            raise AssertionError('later blobs must not be fetched after a short-body refusal')
+
+        with self.assertRaises(primitive.Refusal):
+            runtime_inputs.fetch_runtime_inputs(dest2, FAKE_RUNTIME_PIN, opener=short)
+        self.assertEqual((Path(dest2) / 'oci' / 'index.upstream.json').read_bytes(), body[:-1])
+
+    def test_a_same_length_wrong_body_refuses_on_sha256(self):
+        first = FAKE_RUNTIME_PIN['index']
+        dest = self.tmp + '/wrong-digest'
+        os.mkdir(dest, 0o700)
+        wrong = b'z' * first['bytes']
+
+        def opener(url, headers=None):
+            if url == runtime_inputs.AUTH_TOKEN_URL:
+                return FakeConnection(), FakeResponse(b'{"token":"fixture-token"}')
+            if url == first['url']:
+                return FakeConnection(), FakeResponse(wrong)
+            raise AssertionError('later blobs must not be fetched after a digest refusal')
+
+        with self.assertRaises(primitive.Refusal):
+            runtime_inputs.fetch_runtime_inputs(dest, FAKE_RUNTIME_PIN, opener=opener)
+        self.assertEqual((Path(dest) / 'oci' / 'index.upstream.json').read_bytes(), wrong)
+
+    def test_an_existing_blob_name_is_a_collision_and_is_never_adopted(self):
+        data = b'pinned-sha256-bytes'
+        dest = self.tmp + '/artifact.blob'
+        self.assertEqual(runtime_inputs.prefetch_pinned_sha256(io.BytesIO(data), dest, len(data), _sha(data)),
+                         dict(bytes=len(data), sha256=_sha(data)))
+        with self.assertRaises(primitive.Refusal):
+            runtime_inputs.prefetch_pinned_sha256(io.BytesIO(data), dest, len(data), _sha(data))
+        self.assertEqual(Path(dest).read_bytes(), data)
+        os.remove(dest)
+        os.symlink(self.tmp + '/elsewhere.blob', dest)
+        with self.assertRaises(primitive.Refusal):
+            runtime_inputs.prefetch_pinned_sha256(io.BytesIO(data), dest, len(data), _sha(data))
+        self.assertFalse(os.path.lexists(self.tmp + '/elsewhere.blob'))
+
+    def test_wrong_architecture_in_the_index_or_config_refuses_and_retains(self):
+        amd64 = json.dumps({
+            'schemaVersion': 2, 'mediaType': 'application/vnd.oci.image.index.v1+json',
+            'manifests': [{'mediaType': FAKE_RUNTIME_PIN['manifest']['media_type'],
+                           'digest': FAKE_RUNTIME_PIN['manifest']['digest'],
+                           'size': FAKE_RUNTIME_PIN['manifest']['bytes'],
+                           'platform': {'architecture': 'amd64', 'os': 'linux'}}],
+        }, separators=(',', ':')).encode()
+        item, _ = _oci(amd64, 'application/vnd.oci.image.index.v1+json', 'unused')
+        item['url'] = 'https://registry-1.docker.io/v2/library/ubuntu/manifests/' + item['digest']
+        pin = dict(FAKE_RUNTIME_PIN, index=item, bytes=FAKE_RUNTIME_PIN['bytes'] - FAKE_RUNTIME_PIN['index']['bytes'] + item['bytes'])
+        bodies = dict(FAKE_RUNTIME_BODIES)
+        bodies[item['url']] = amd64
+        dest = self.tmp + '/amd64'
+        os.mkdir(dest, 0o700)
+        with self.assertRaises(primitive.Refusal) as caught:
+            runtime_inputs.fetch_runtime_inputs(dest, pin, opener=fake_runtime_opener(bodies))
+        self.assertIn('linux/arm64', str(caught.exception))
+        self.assertTrue((Path(dest) / 'oci' / 'index.upstream.json').is_file())
+        with self.assertRaises(primitive.Refusal) as caught:
+            runtime_inputs.verify_arm64_config(b'{"os":"linux","architecture":"amd64"}')
+        self.assertIn('linux/arm64', str(caught.exception))
+
+    def test_malformed_index_json_refuses_and_retains(self):
+        raw = b'{"this is not an index"'
+        item, _ = _oci(raw, 'application/vnd.oci.image.index.v1+json', 'unused')
+        item['url'] = 'https://registry-1.docker.io/v2/library/ubuntu/manifests/' + item['digest']
+        pin = dict(FAKE_RUNTIME_PIN, index=item,
+                   bytes=FAKE_RUNTIME_PIN['bytes'] - FAKE_RUNTIME_PIN['index']['bytes'] + item['bytes'])
+        bodies = dict(FAKE_RUNTIME_BODIES)
+        bodies[item['url']] = raw
+        dest = self.tmp + '/malformed'
+        os.mkdir(dest, 0o700)
+        with self.assertRaises(primitive.Refusal):
+            runtime_inputs.fetch_runtime_inputs(dest, pin, opener=fake_runtime_opener(bodies))
+        self.assertEqual((Path(dest) / 'oci' / 'index.upstream.json').read_bytes(), raw)
+
+    def test_token_over_cap_or_malformed_refuses_before_any_payload(self):
+        dest = self.tmp + '/token-cap'
+        os.mkdir(dest, 0o700)
+        with self.assertRaises(primitive.Refusal):
+            runtime_inputs.fetch_runtime_inputs(
+                dest, FAKE_RUNTIME_PIN, opener=fake_runtime_opener(token=b'{"token":"' + b'a' * 20000 + b'"}'))
+        self.assertEqual(os.listdir(dest), [])
+        dest2 = self.tmp + '/token-bad'
+        os.mkdir(dest2, 0o700)
+        with self.assertRaises(primitive.Refusal):
+            runtime_inputs.fetch_runtime_inputs(
+                dest2, FAKE_RUNTIME_PIN, opener=fake_runtime_opener(token=b'not-json'))
+        self.assertEqual(os.listdir(dest2), [])
+
+    def test_a_lost_live_counter_stops_the_transfer_with_the_partial_retained(self):
+        calls = []
+
+        def checkpoint():
+            calls.append(1)
+            raise primitive.Refusal('live counter lost')
+
+        with self.assertRaises(primitive.Refusal):
+            runtime_inputs.fetch_runtime_inputs(self.dest, FAKE_RUNTIME_PIN, opener=fake_runtime_opener(),
+                                                checkpoint=checkpoint)
+        self.assertEqual(calls, [1])
+        self.assertTrue(os.path.exists(self.dest + '/oci/index.upstream.json'))
+
+    def test_an_undeclared_url_is_never_fetched_by_the_fixture_opener(self):
+        with self.assertRaises(AssertionError):
+            fake_runtime_opener()('https://example.com/ubuntu.img', None)
+
+
+class RuntimeRedirectTests(Fixture):
+    """The real runtime opener, with http.client replaced by a scripted connection."""
+
+    def test_redirects_follow_only_allowlisted_https_hosts(self):
+        seen, headers_seen = [], []
+
+        class Connection:
+            def __init__(self, host, port, timeout=None, context=None):
+                seen.append(host)
+
+            def request(self, method, target, headers=None):
+                headers_seen.append(dict(headers or {}))
+                seen.append(target)
+
+            def getresponse(self):
+                if len(headers_seen) == 1:
+                    return FakeResponse(b'', 307, {'Location': 'https://production.cloudfront.docker.com/blob'})
+                return FakeResponse(b'ok')
+
+            def close(self):
+                pass
+
+        with mock.patch('http.client.HTTPSConnection', Connection):
+            conn, response = REAL_RUNTIME_OPEN(
+                'https://registry-1.docker.io/v2/library/ubuntu/blobs/sha256:' + 'ab' * 32,
+                {'Authorization': 'Bearer secret'})
+        self.assertEqual(response.status, 200)
+        self.assertEqual(seen[0], 'registry-1.docker.io')
+        self.assertEqual(seen[2], 'production.cloudfront.docker.com')
+        self.assertEqual(headers_seen[0].get('Authorization'), 'Bearer secret')
+        self.assertNotIn('Authorization', headers_seen[1])
+
+    def test_a_redirect_off_the_allowlist_or_off_https_refuses_before_connecting(self):
+        for location in ('https://evil.example/x', 'http://ports.ubuntu.com/x'):
+            seen = []
+            with mock.patch('http.client.HTTPSConnection', scripted_https(
+                    [FakeResponse(b'', 302, {'Location': location})], seen)):
+                with self.assertRaises(primitive.Refusal):
+                    REAL_RUNTIME_OPEN('https://ports.ubuntu.com/ubuntu-ports/pool/x.deb')
+            self.assertNotIn('evil.example', seen)
+            self.assertEqual(seen.count('ports.ubuntu.com'), 1)
+
+    def test_the_first_url_must_be_allowlisted(self):
+        seen = []
+        with mock.patch('http.client.HTTPSConnection', scripted_https([], seen)):
+            with self.assertRaises(primitive.Refusal):
+                REAL_RUNTIME_OPEN('https://archive.ubuntu.com/ubuntu/pool/x.deb')
+        self.assertEqual(seen, [])
 
 
 class ColimaImageFetchTests(Fixture):
@@ -3914,7 +4379,7 @@ class C1ProofEntryTests(Fixture):
         options = dict(activation_id='c1-window', duration_seconds=600, evidence_root=self.evidence)
         with self.assertRaisesRegex(ex.Refusal, 'no window recipe'):
             proof.window_recipe('C1', self.bindings, options)
-        with self.assertRaisesRegex(ex.Refusal, 'supports only C0, D0, D1, C1, C2 or C3'):
+        with self.assertRaisesRegex(ex.Refusal, 'supports only C0, D0, D1, C1, C2, C3 or D2'):
             proof.prospective('C4', self.bindings)
 
 
@@ -4057,7 +4522,6 @@ class GuestClosureNegativeTests(Fixture):
                 self.execute('C2', transport, prior_ref=None, activation_id='act-c2-zerocap')
         self.assertNotIn('c2-guest-probe', [c[0] for c in calls])
 
-
 class ColimaImagePinTests(unittest.TestCase):
     def test_the_real_manifest_pins_the_reviewed_image_and_its_cap(self):
         manifest = ex.load_manifest()
@@ -4081,9 +4545,36 @@ class ColimaImagePinTests(unittest.TestCase):
     def test_only_the_image_fetch_is_admitted_from_the_download_stages(self):
         manifest = ex.load_manifest()
         self.assertNotIn('C1', ex.UNADMITTED)
-        self.assertIn('ONE proposal', ex.UNADMITTED['C4'])
-        self.assertIn('ONE proposal', ex.UNADMITTED['D2'])
+        self.assertNotIn('D2', ex.UNADMITTED)
+        self.assertIn('754', ex.UNADMITTED['C4'])
         self.assertEqual(ex.stage_admission(ex.stage_of(manifest, 'C1')), [])
+        self.assertEqual(ex.stage_admission(ex.stage_of(manifest, 'D2')), [])
+
+
+class RuntimeImagePinTests(unittest.TestCase):
+    def test_the_real_manifest_pins_the_reviewed_oci_and_deb_set(self):
+        manifest = ex.load_manifest()
+        pin = REAL_RUNTIME_PIN(manifest)
+        self.assertEqual(pin['bytes'], runtime_inputs.INPUT_BYTES)
+        self.assertEqual(pin['index']['digest'], runtime_inputs.INDEX['digest'])
+        self.assertEqual(pin['layer']['bytes'], runtime_inputs.LAYER['bytes'])
+        self.assertEqual(len(pin['debs']), 22)
+        d2 = ex.stage_of(manifest, 'D2')
+        self.assertEqual(d2['download_cap_bytes'], pin['bytes'])
+        self.assertEqual(d2['network_sources'], list(runtime_inputs.NETWORK_SOURCES))
+        self.assertIn('prefetch_runtime_inputs', ex.HANDLERS)
+        self.assertEqual([s['id'] for s in d2['steps'] if s['kind'] == 'helper'],
+                         ['d2-make-input-dir', 'd2-prefetch-runtime-inputs', 'd2-host-stage',
+                          'd2-read-iidfile', 'd2-check-image-identity'])
+
+    def test_a_changed_size_or_digest_refuses_before_any_fetch(self):
+        manifest = ex.load_manifest()
+        for key, value in (('bytes', runtime_inputs.INPUT_BYTES + 1),
+                           ('layer_sha256', '0' * 64), ('deb_count', 21)):
+            changed = json.loads(json.dumps(manifest))
+            changed['binding_inputs']['runtime_image'][key] = value
+            with self.assertRaises(primitive.Refusal):
+                REAL_RUNTIME_PIN(changed)
 
 
 if __name__ == '__main__':

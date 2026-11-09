@@ -331,9 +331,15 @@ print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
             &callbacks(),
         )
         .unwrap();
-        // Only this run's root substitutes the container's mounted checkout.
+        // Substitute the container-local cargo tree and the mounted checkout
+        // with this run's fixture. The compiler never writes `/workspace`.
+        let tree = root.join("build-tree");
         let body = fs::read_to_string(&output)
             .unwrap()
+            .replace(
+                "/var/tmp/effigy-artifact-build",
+                &tree.display().to_string(),
+            )
             .replace("/workspace", &root.display().to_string());
         let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
         let result = Command::new("/bin/sh")
@@ -346,9 +352,11 @@ print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
             "{triple}: {}",
             String::from_utf8_lossy(&result.stderr)
         );
-        let artifact = root
-            .join(".effigy/linux-release/artifacts")
-            .join(format!("effigy-{triple}"));
+        let artifact = tree
+            .join("target")
+            .join(triple)
+            .join("release")
+            .join("effigy");
         assert_eq!(
             fs::read_to_string(&artifact).unwrap(),
             format!("{triple}\n")
