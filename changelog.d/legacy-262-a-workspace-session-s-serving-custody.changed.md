@@ -1,0 +1,1 @@
+**A workspace session's serving custody ends when its run closes.** The custody row recorded when the session run is adopted is deleted in the same journal transaction that closes the run, so a settled session is no longer an owner and no stale custody survives it. A crash before the close keeps the row, so a successor still finds the recorded owner.

@@ -1,6 +1,6 @@
 //! CLI command handler for `effigy changelog` subcommands.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use effigy_changelog as changelog;
 use effigy_cli::{ChangelogArgs, ChangelogSubcommand};
@@ -40,14 +40,13 @@ fn resolve_changelog_file(
     }
 }
 
-fn run_validate(file: &PathBuf, output_json: bool) -> Result<String, RunnerError> {
-    let raw_content =
-        std::fs::read_to_string(file).map_err(|e| RunnerError::task_invocation(e.to_string()))?;
+/// Read the changelog and the fragments beside it through the release source path.
+fn load_source(file: &Path) -> Result<changelog::ChangelogSource, RunnerError> {
+    changelog::load_source(file).map_err(|e| RunnerError::task_invocation(e.to_string()))
+}
 
-    let parsed =
-        changelog::parse(&raw_content).map_err(|e| RunnerError::task_invocation(e.to_string()))?;
-
-    let diagnostics = changelog::validate(&parsed, &raw_content);
+fn run_validate(file: &Path, output_json: bool) -> Result<String, RunnerError> {
+    let diagnostics = load_source(file)?.diagnostics;
 
     if output_json {
         let json = build_validate_json(&diagnostics);
@@ -86,14 +85,8 @@ fn run_format(file: &PathBuf, write: bool, _output_json: bool) -> Result<String,
     }
 }
 
-fn run_analyze(file: &PathBuf, output_json: bool) -> Result<String, RunnerError> {
-    let raw_content =
-        std::fs::read_to_string(file).map_err(|e| RunnerError::task_invocation(e.to_string()))?;
-
-    let parsed =
-        changelog::parse(&raw_content).map_err(|e| RunnerError::task_invocation(e.to_string()))?;
-
-    let analysis = changelog::analyze(&parsed);
+fn run_analyze(file: &Path, output_json: bool) -> Result<String, RunnerError> {
+    let analysis = changelog::analyze(&load_source(file)?.changelog);
 
     if output_json {
         return Ok(build_analyze_json(&analysis));
@@ -122,12 +115,8 @@ fn run_analyze(file: &PathBuf, output_json: bool) -> Result<String, RunnerError>
     Ok(output)
 }
 
-fn run_extract(file: &PathBuf, version: &str, _output_json: bool) -> Result<String, RunnerError> {
-    let raw_content =
-        std::fs::read_to_string(file).map_err(|e| RunnerError::task_invocation(e.to_string()))?;
-
-    let parsed =
-        changelog::parse(&raw_content).map_err(|e| RunnerError::task_invocation(e.to_string()))?;
+fn run_extract(file: &Path, version: &str, _output_json: bool) -> Result<String, RunnerError> {
+    let parsed = load_source(file)?.changelog;
 
     match changelog::extract_version(&parsed, version) {
         Some(notes) => Ok(notes),

@@ -1,0 +1,1 @@
+**`effigy state` captures moved out of `.effigy/state/`.** `.effigy/state/` is the kernel's private 0700 root; capture and apply context now live under `.effigy/state-captures/`. A checkout whose state root still carries a v0.14 mode is tightened to 0700 by its next effect.

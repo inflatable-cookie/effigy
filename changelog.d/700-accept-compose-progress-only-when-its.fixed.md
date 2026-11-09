@@ -1,0 +1,1 @@
+Accept Compose progress only when its image, service or container subject is a single supported name token. BuildKit and package-manager output that ends in words such as `start` or `built` stays in the captured runtime output and no longer opens a new live row for each log line (effigy#700).

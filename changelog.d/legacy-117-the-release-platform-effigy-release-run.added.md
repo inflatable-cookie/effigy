@@ -1,0 +1,1 @@
+The release platform: `effigy release run`, `resume`, `approve`, `receipt` and `release --plan`, with named `[release.identities]`, `[release.targets]`, `[release.artifacts]`, gate `stage` and `approve`, and checkpoints at every boundary. An existing shorthand `[release]` runs unchanged.

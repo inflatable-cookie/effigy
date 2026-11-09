@@ -1,0 +1,1 @@
+**Breaking:** **The service-catalog pack runtime is retired.** `effigy service pack` refuses with the replacement; add or change services with a catalog source (`infra/dev/catalog/`, a bundle's `catalog/`, or `[catalog.sources.<name>]`). `release.sync-catalog-pack-support-policy` is a manifest error.

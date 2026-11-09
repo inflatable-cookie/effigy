@@ -1,0 +1,1 @@
+**`effigy tasks status` reads the run journal and the task's gate** (`effigy.tasks-status.v3`). With no live or unresolved run the state is `not-recorded`; a durable run whose owner died reads `interrupted` with its recovery command.

@@ -1,0 +1,1 @@
+A shared service's restart-policy update reaches only a container whose full ID, shared project, declared service, running state and render label equal the render `up` just published. It is re-verified right before it is sent, and a missing, foreign, stale, changed or ambiguous container gets no update.

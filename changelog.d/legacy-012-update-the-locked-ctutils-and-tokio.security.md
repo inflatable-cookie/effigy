@@ -1,0 +1,1 @@
+Update the locked `ctutils` and Tokio dependencies to patched releases (`ctutils` 0.4.4 and Tokio 1.53.3) for RUSTSEC-2026-0385 and RUSTSEC-2026-0386. Cargo deny policy and runtime behavior remain unchanged.

@@ -125,6 +125,9 @@ pub enum FileMutationApply {
     SyncCargoLock {
         workspace_version: String,
     },
+    /// Delete a file the prepare folds into the release: a `changelog.d`
+    /// fragment. Its snapshot restores the exact bytes on rollback.
+    Remove,
 }
 
 #[derive(Debug, Clone)]

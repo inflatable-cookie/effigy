@@ -1,0 +1,1 @@
+Bun `deps status` and `doctor` now verify the consumer's `node_modules` symlink, which is the link. An absent machine-wide registration is expected; one pointing at another path is still reported as a conflict.

@@ -1,0 +1,1 @@
+Project container inventories refuse incomplete, duplicate or replaced full-ID inspect answers. Docker and Colima adapters also expose inventory and image inspection under one caller deadline; expired reads launch no engine process.

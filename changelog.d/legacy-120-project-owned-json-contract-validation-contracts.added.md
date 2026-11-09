@@ -1,0 +1,1 @@
+Project-owned JSON contract validation: `[contracts]` declares the schema index and selection contract, an index may carry `payload_schemas`, and `effigy contracts check-json --validate-selection` replaces `contracts validate-selection`.

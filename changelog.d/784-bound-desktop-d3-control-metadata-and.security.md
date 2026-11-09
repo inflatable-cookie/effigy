@@ -1,0 +1,1 @@
+Bound Desktop D3 control metadata and derive fresh runtime-check identities from each activation. The failed prior occurrence remains retained and requires a separate closure observation before a new native proof (effigy#784).

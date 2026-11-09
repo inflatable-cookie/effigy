@@ -1,0 +1,1 @@
+**Breaking:** **A shared service's connection environment reaches only its clients**, which resolve it through `host.docker.internal`. A local service that read a shared service's host and port variables no longer receives them.

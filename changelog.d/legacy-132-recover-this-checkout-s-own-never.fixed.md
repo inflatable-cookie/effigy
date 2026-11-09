@@ -1,0 +1,1 @@
+Recover this checkout's own never-started Linux builder (`Created`, empty inspect status) through the maintained activation when the staged source replaces its old direct bind, instead of refusing automatic artifact acquisition on the missing `State.Status`. The running parser keeps its refusal; the never-started shape is proven separately.

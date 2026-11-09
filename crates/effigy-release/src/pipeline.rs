@@ -230,6 +230,9 @@ pub struct ReleasePipelinePlan {
     pub changelog_in_use: bool,
     pub changelog_valid: bool,
     pub changelog_diagnostics: Vec<String>,
+    /// The valid `changelog.d` fragments this plan folds, with the bytes it
+    /// read. Prepare refuses unless the directory still holds exactly these.
+    pub changelog_fragments: Vec<changelog::Fragment>,
     pub unreleased_counts: BTreeMap<String, usize>,
     pub unreleased_empty: bool,
     /// Versions the changelog already records, for `--plan --version` and for
@@ -790,6 +793,20 @@ fn follow_cycle_error(identity: &str) -> ReleaseError {
     ))
 }
 
+/// Read the changelog and its adjacent fragments through the one source path
+/// every release surface shares (status, plan and prepare).
+pub(crate) fn load_changelog_source(
+    path: &Path,
+) -> Result<changelog::ChangelogSource, ReleaseError> {
+    changelog::load_source(path).map_err(|error| match error {
+        changelog::ChangelogError::Io { error, .. } => ReleaseError::TaskInvocation(format!(
+            "failed to read changelog {}: {error}",
+            path.display()
+        )),
+        other => ReleaseError::TaskInvocation(other.to_string()),
+    })
+}
+
 /// Resolve the whole pipeline, including each identity's next version, without
 /// mutating anything.
 pub fn plan_release_pipeline(root: &Path) -> Result<ReleasePipelinePlan, ReleaseError> {
@@ -798,23 +815,40 @@ pub fn plan_release_pipeline(root: &Path) -> Result<ReleasePipelinePlan, Release
     // Changelog bump rules apply only to `semver` identities (contract 054
     // §4.3), so a release with none neither reads nor is blocked by a
     // changelog: the file may be absent or unparseable.
-    let (parsed_changelog, changelog_valid, changelog_diagnostics) = if changelog_in_use {
-        let raw_changelog = std::fs::read_to_string(&pipeline.changelog_path).map_err(|error| {
-            ReleaseError::TaskInvocation(format!(
-                "failed to read changelog {}: {error}",
-                pipeline.changelog_path.display()
-            ))
-        })?;
-        let parsed = changelog::parse(&raw_changelog)
-            .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
-        let diagnostics = changelog::validate(&parsed, &raw_changelog)
+    let (
+        parsed_changelog,
+        changelog_valid,
+        changelog_diagnostics,
+        changelog_fragments,
+        fragment_blockers,
+    ) = if changelog_in_use {
+        let source = load_changelog_source(&pipeline.changelog_path)?;
+        // Each fragment problem names its file and remedy in the blocker
+        // the Run refuses with, not only in the diagnostics list.
+        let fragment_blockers = source
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.rule.starts_with("fragment-"))
+            .map(|diagnostic| match &diagnostic.suggestion {
+                Some(remedy) => format!("{} (fix: {remedy})", diagnostic.message),
+                None => diagnostic.message.clone(),
+            })
+            .collect::<Vec<_>>();
+        let diagnostics = source
+            .diagnostics
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
         let valid = diagnostics.is_empty();
-        (Some(parsed), valid, diagnostics)
+        (
+            Some(source.changelog),
+            valid,
+            diagnostics,
+            source.fragments.fragments,
+            fragment_blockers,
+        )
     } else {
-        (None, true, Vec::new())
+        (None, true, Vec::new(), Vec::new(), Vec::new())
     };
     let counts = parsed_changelog
         .as_ref()
@@ -834,6 +868,7 @@ pub fn plan_release_pipeline(root: &Path) -> Result<ReleasePipelinePlan, Release
                 changelog_diagnostics.len()
             ));
         }
+        blockers.extend(fragment_blockers);
         if unreleased_empty {
             blockers.push("unreleased changelog section has no entries".to_owned());
         }
@@ -906,6 +941,11 @@ pub fn plan_release_pipeline(root: &Path) -> Result<ReleasePipelinePlan, Release
     if changelog_in_use && seen_files.insert(pipeline.changelog_path.clone()) {
         files.push(pipeline.changelog_path.clone());
     }
+    for fragment in &changelog_fragments {
+        if seen_files.insert(fragment.path.clone()) {
+            files.push(fragment.path.clone());
+        }
+    }
     for sync in &pipeline.sync_files {
         if seen_files.insert(sync.path.clone()) {
             files.push(sync.path.clone());
@@ -921,6 +961,7 @@ pub fn plan_release_pipeline(root: &Path) -> Result<ReleasePipelinePlan, Release
         changelog_in_use,
         changelog_valid,
         changelog_diagnostics,
+        changelog_fragments,
         unreleased_counts: counts,
         unreleased_empty,
         existing_changelog_versions: parsed_changelog

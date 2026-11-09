@@ -1,0 +1,1 @@
+Workspace activation owners freeze the exact apply target, image platform and pinned guest artifact before additive staging. Activation requires verified exact-target binary readback, and v2 context receipts bind guest paths, source pins and version to the frozen decision. Ambiguous, foreign, changed-boot and uncertain installs cannot publish a successor.

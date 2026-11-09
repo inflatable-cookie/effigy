@@ -1,0 +1,1 @@
+Managed host listeners: `[[containers.<name>.host_processes]]` with `listener`, HTTP `readiness`, a `route` and `depends_on`. Effigy verifies the declared port, publishes the route and withdraws it after three consecutive probe misses.

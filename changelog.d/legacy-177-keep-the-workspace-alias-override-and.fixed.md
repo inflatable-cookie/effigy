@@ -1,0 +1,1 @@
+Keep the workspace alias override and canonical environment identity in frozen publication inputs. Enrolment credentials use the reserved environment generation independently of the guest context generation.

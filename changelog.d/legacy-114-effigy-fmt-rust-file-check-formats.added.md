@@ -1,0 +1,1 @@
+`effigy fmt rust <FILE>... [--check]` formats an explicit Rust file set with rustfmt and each file's nearest config; `effigy fmt-rust` is the built-in's explicit spelling when the repository owns the word `fmt`.

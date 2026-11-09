@@ -1,0 +1,1 @@
+**Bundle source steps name what they do, and warnings stay off `--json`.** A local `path` source reads `snapshotting local bundle <name>` and `snapshotted local bundle <name>`, not a fetch. Each source's step ends once, with ✓ or ✗ naming the failure. On a terminal, a warning or note from source acquisition prints above the spinner, and `--json` writes nothing to stderr for it.

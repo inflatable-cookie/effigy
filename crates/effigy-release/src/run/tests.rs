@@ -3022,3 +3022,5 @@ mod settlement_tests {
         );
     }
 }
+
+mod changelog_fragments;

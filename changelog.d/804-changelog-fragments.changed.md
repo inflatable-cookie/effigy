@@ -1,0 +1,1 @@
+Changelog entries are recorded as `changelog.d/` fragments, one per change. `effigy changelog validate`, `analyze` and `extract`, and the release `status`, `--plan` and prepare, read them beside `CHANGELOG.md`; prepare folds exactly the planned set into the new version section, deletes those fragments and leaves `[Unreleased]` empty (effigy#804).

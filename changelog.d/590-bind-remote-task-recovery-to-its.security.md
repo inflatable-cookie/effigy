@@ -1,0 +1,1 @@
+Bind remote task recovery to its selected backend executable and working directory. Missing or changed identity leaves cleanup unknown rather than selecting another executable after the owner exits (effigy#590).

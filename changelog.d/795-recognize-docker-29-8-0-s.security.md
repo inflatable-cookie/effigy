@@ -1,0 +1,1 @@
+Recognize Docker 29.8.0's exact daemon-wrapped full-ID not-found response in the receipt-bound Desktop observation. Classification requires the source-qualified stdout and stderr bytes, a waited exit 1 and a previously matched engine identity (effigy#795).

@@ -1,0 +1,1 @@
+Workspace startup refusal preserves primary and cleanup errors. A settlement error retains the stopped serving owner until explicit recovery or an owner-loss transition retries with a fresh cleanup budget.

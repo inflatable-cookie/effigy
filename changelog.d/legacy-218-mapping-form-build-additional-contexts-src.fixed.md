@@ -1,0 +1,1 @@
+Mapping-form `build.additional_contexts` (`src: ../frontend`) now resolve against the Compose file that names them, the same as sequence-form `src=../frontend`. After render the path stays checkout-rooted instead of being read against the generation directory. Remote, already-absolute, and `service:<name>` named-context values are unchanged.

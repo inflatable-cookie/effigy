@@ -1,0 +1,1 @@
+**Breaking:** **Sequences run on one typed engine.** `depends_on`, `retry`, `retry_delay_ms` and `fail_fast` are removed; order steps explicitly and note that a sequence stops on the first failure. Steps are child kernel runs that settle their descendants on timeout, stop, INT, TERM, HUP and owner loss.

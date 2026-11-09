@@ -1,0 +1,1 @@
+The built-in `effigy test` route owns the same suite sweep as a named test selector: after its last host suite it names, TERMs and KILLs any process that still carries the suite, and fails the route listing it. The marker rides the environment for Linux and a descriptor the suite's own shell opens for macOS, so a kernel custody payload still carries it.

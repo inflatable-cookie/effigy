@@ -1,0 +1,1 @@
+**`docs check` with explicit paths resolves them from the task's cwd**, so a nested `docs/effigy.toml` catalog can check its own files; `effigy skill run --repo <DIR>` accepts a bare target directory.

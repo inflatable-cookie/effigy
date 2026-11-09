@@ -1,0 +1,1 @@
+Add retained interpolation handoff to the existing kernel backup, binding the exact file descriptions to the Run and process before execution. Caller drop and Unknown preserve custody; helper loss preserves crash residue. Direct VM Compose and production Discard remain refused.

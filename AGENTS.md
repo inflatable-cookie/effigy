@@ -30,7 +30,7 @@ The plan (lanes, their documents and their order), leads, papercuts, brief draft
 - Dispatch product implementation and retirement work as Queue tasks with approved briefs. Chatterbox owns planning and knowledge maintenance.
 - Tom's standing authority (2026-09-30): "You have blanket approval from me, you don't need to keep asking." Chatterbox may brief, approve and dispatch bounded work within the agreed Effigy plan without asking per task. Preserve independent review, CI, prerequisites and closeout. Escalate material direction changes or actions outside the plan; the explicit workflow, release and destructive host-cleanup boundaries still apply.
 - File small recurring friction with Queue `papercut.add`; record unplanned ideas and observations with `lead.add`.
-- Add user-facing changes under `CHANGELOG.md` `[Unreleased]`.
+- Add user-facing changes as one fragment under `changelog.d/`, named `<task-number>-<slug>.<type>.md` with one paragraph and type `added`, `changed`, `fixed`, `removed` or `security`. Never edit `CHANGELOG.md` `[Unreleased]` directly; release prepare folds the fragments.
 
 ## Keep working
 

@@ -1,0 +1,1 @@
+The fixed-label spinner API: `Renderer::spinner` and `SpinnerHandle`. A step is driven by a `ProgressSource` (`steps::live_step`) or is one `steps::finish_line`, so a bare spinner with a canned label cannot be constructed.

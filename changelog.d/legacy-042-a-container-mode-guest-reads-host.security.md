@@ -1,0 +1,1 @@
+A container-mode guest reads host authority credentials only after the pinned peer verified: the client checks the context's server pin and negotiates the protocol first, then presents a capability or the enrolment credential whose bytes must match the digest the strict context pins. A mispinned peer receives no handshake and causes no credential read.

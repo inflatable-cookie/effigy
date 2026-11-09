@@ -1,0 +1,1 @@
+**A task run acquires a missing pinned source** non-interactively and bounded, instead of refusing. Read paths still never fetch: `effigy tasks` lists the checkout's own tasks and names the `effigy bundle sync` that adds bundle tasks. A source that is behind prints one line per source (`bundle updated <old> → <new>`) and the command continues on the new bytes.

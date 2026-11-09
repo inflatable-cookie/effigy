@@ -1,0 +1,1 @@
+Workspace guest publication now completes as a journalled obligation under the environment activation gate before publishing active or attaching task holders. Concurrent prepares and stops serialize; interrupted publication keeps immutable generations and cannot report a successful activation.

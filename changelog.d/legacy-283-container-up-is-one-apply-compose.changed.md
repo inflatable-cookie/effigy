@@ -1,0 +1,1 @@
+**`container up` is one apply.** `compose up -d --build --remove-orphans` from one render: an unchanged stack is not recreated, an edited image, environment or mount is applied by the next `up` with no `down` first, and a failed or interrupted `up` leaves nothing to clean because the next `up` reconciles from what is running.

@@ -1,0 +1,1 @@
+Predecessor compatibility of an unpublished render takes NoPredecessor only from a verified empty project listing. An unavailable inventory stays Unknown and grants nothing; a quiet fixture is not an empty observation (effigy#586).

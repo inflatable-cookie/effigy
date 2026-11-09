@@ -1,0 +1,1 @@
+Environment-aware deploy: `effigy deploy model [<ENV>]` and `effigy deploy export <PROVIDER> [<ENV>] --path <DIR>` resolve sparse overrides over the shared model and report `environment`, `provenance` and `missing`. Plans are offline and secret-free, and `apply`/`redeploy` refuse as not yet supported.

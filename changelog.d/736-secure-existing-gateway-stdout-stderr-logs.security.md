@@ -1,0 +1,1 @@
+Secure existing gateway stdout/stderr logs to owner-only mode on the held descriptor before appending or giving them to the daemon child. Existing bytes are preserved; unopened legacy files, directory permissions and raw diagnostic contents are not changed (effigy#736).
