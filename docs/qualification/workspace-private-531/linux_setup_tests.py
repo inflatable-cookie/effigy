@@ -2776,6 +2776,17 @@ class InstalledSupervisorChecks(unittest.TestCase):
 
 
 class OriginalStreamChecks(unittest.TestCase):
+    def test_supervised_oversize_stream_is_refused_before_root_record_write(self):
+        stage = fresh_row('stream-over-root-cap-')
+        ops = FakeOps(stage, [NOT_FOUND, show_text()])
+        ops.run = lambda argv, timeout: dict(returncode=0, stdout=b'x' * (supervisor.ROOT_RECORD_CAP + 1),
+                                             stderr=b'', timed_out=False)
+        active = dict(kind='loaded', invocation_id=INVOCATION, control_group=GROUP, active_state='active')
+        with self.assertRaisesRegex(Refusal, 'fixed byte ceiling'):
+            supervised(stage, request(stage), ops, lambda: 0.0, BOOT, {}, Scripted([active], 1))
+        self.assertFalse((stage / 'stdout').exists())
+        self.assertTrue(any(call[0] == 'stop' for call in ops.calls))
+
     def test_binary_streams_round_trip_and_partial_output_never_credits(self):
         for data, candidate in ((b'\xff\x00', True), (b'x' * (supervisor.PAYLOAD_STDOUT_CAP + 1), False)):
             stage = fresh_row('stream-controls-')
@@ -2879,6 +2890,18 @@ class GateCustodyAndUmaskChecks(unittest.TestCase):
 
 
 class ExactApprovalAndCustodyChecks(unittest.TestCase):
+    def test_root_record_ceiling_refuses_before_creating_a_file(self):
+        root = tmpdir('root-record-cap-')
+        parent = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            with self.assertRaisesRegex(Refusal, 'fixed byte ceiling'):
+                supervisor._row_write(parent, 'too-large', b'x' * (supervisor.ROOT_RECORD_CAP + 1))
+            self.assertFalse((root / 'too-large').exists())
+            supervisor._row_write(parent, 'at-limit', b'x' * supervisor.ROOT_RECORD_CAP)
+            self.assertEqual((root / 'at-limit').stat().st_size, supervisor.ROOT_RECORD_CAP)
+        finally:
+            os.close(parent)
+
     def test_approval_install_rejects_oversize_before_any_write(self):
         for size, reaches_write in ((1024 * 1024, True), (1024 * 1024 + 1, False)):
             data = 'x' * size

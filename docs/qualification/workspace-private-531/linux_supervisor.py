@@ -80,6 +80,7 @@ PROPERTIES = 'LoadState,ActiveState,SubState,Result,ExecMainStatus,InvocationID,
 GATE_NAME = 'gate.fifo'
 TRANSFER_NAME = 'transfer.fifo'
 PAYLOAD_STDOUT_CAP = 65536
+ROOT_RECORD_CAP = 1024 * 1024
 PAYLOAD_ACCOUNT = 'effigy531'     # the one account a request may name; a request for any other account is refused
 STAGE_OWNER = 0                   # the stage root is root-owned in production
 # The only directory the installed entry creates row stages under. It is root-owned and mode 0711,
@@ -377,12 +378,24 @@ def create_row(parent_fd, name, uid):
 
 
 def _row_write(row_fd, name, data):
+    if not isinstance(data, bytes) or len(data) > ROOT_RECORD_CAP:
+        raise Refusal('root record exceeds its fixed byte ceiling')
     fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=row_fd)
     with os.fdopen(fd, 'wb') as output:
         _set_mode(output.fileno(), 0o600, stat.S_ISREG)
         output.write(data)
         output.flush()
         os.fsync(output.fileno())
+
+
+def _record_after_start(row_fd, name, data, ops, unit):
+    try:
+        _row_write(row_fd, name, data)
+    except (Refusal, OSError):
+        # The unit may still be loaded. A failed bounded record never grants
+        # closure; attempt cleanup of this exact unit before propagating it.
+        ops.stop(stop_argv(unit))
+        raise
 
 
 def _make_fifo(row_fd, name, uid):
@@ -524,7 +537,7 @@ def _run_gated(stage, request, ops, clock, boot_id, seen_invocations, monitor, u
     finally:
         monitor.stop()
     for name in ('stdout', 'stderr'):
-        _row_write(row_fd, name, outcome[name])
+        _record_after_start(row_fd, name, outcome[name], ops, unit)
     timed_out = bool(outcome.get('timed_out')) or getattr(monitor, 'deadline_expired', False) or clock() > deadline
     if timed_out or disconnected:
         ops.stop(stop_argv(unit))
@@ -549,7 +562,8 @@ def _run_gated(stage, request, ops, clock, boot_id, seen_invocations, monitor, u
               'samples': samples, 'release_index': monitor.release_index, 'elapsed_seconds': clock() - start,
               'streams': {n: {'bytes': len(outcome[n]), 'sha256': hashlib.sha256(outcome[n]).hexdigest()}
                           for n in ('stdout', 'stderr')}}
-    _row_write(row_fd, 'supervisor.json', (json.dumps(record, sort_keys=True, indent=2, default=str) + '\n').encode())
+    _record_after_start(row_fd, 'supervisor.json',
+                        (json.dumps(record, sort_keys=True, indent=2, default=str) + '\n').encode(), ops, unit)
     return {'disposition': disposition, 'candidate': candidate, 'reason': reason, 'show': show,
             'samples': samples, 'payload_stdout': payload_stdout.decode('utf-8', 'replace'),
             'payload_stdout_b64': base64.b64encode(payload_stdout).decode('ascii'),
