@@ -51,7 +51,7 @@ ROUTES = ('mountinfo', 'dumpe2fs', 'by-uuid', 'quota', 'tree')
 ACTIVATION_MEDIUM = {
     'publisher': 'Ubuntu cdimage release metadata for 26.04',
     'product': 'ubuntu-26.04.1-live-server-arm64.iso',
-    'url': 'https://cdimage.ubuntu.com/releases/26.04/release/ubuntu-26.04.1-live-server-arm64.iso',
+    'url': 'https://cdimage.ubuntu.com/ubuntu/releases/26.04/release/ubuntu-26.04.1-live-server-arm64.iso',
     'iso_sha256': 'af78753c94b924c85c4964c670692a853f7c80299a4064e317edad95462e3168',
     'iso_bytes': 3076861952,
     'sums_sha256': '0daa248426442137c56a5122b89bda08e5854f565a6eed26dec5622094d3e5a3',
@@ -845,6 +845,33 @@ def inspect_activation_progress(records):
             'snapshot_id': next((item['snapshot_id'] for item in records if item['name'] == 'snapshot'), None)}
 
 
+def inspect_pre_rescue_originals(originals, records):
+    """Bind the named VM's running boot and stopped state to retained source-qualified reads.
+
+    This validates supplied bytes, not their origin; independent one-use custody is still required.
+    The stopped state carries no guest boot ID. The boot original was collected while running.
+    """
+    if not isinstance(originals, dict) or set(originals) != {'running_vm', 'boot', 'stopped_vm'}:
+        raise Refusal('pre-rescue originals are incomplete')
+    from linux_diagnostic_proof import PRLCTL, PRLCTL_SHA256, check_vm, check_boot_id
+    host_argv = [PRLCTL, 'list', '--info', ACTIVATION_VM, '--json']
+    boot_argv = [PRLCTL, 'exec', ACTIVATION_VM, '/bin/cat', '/proc/sys/kernel/random/boot_id']
+    for name, argv in (('running_vm', host_argv), ('boot', boot_argv), ('stopped_vm', host_argv)):
+        item = originals[name]
+        _offline_streams(item, name, {'argv', 'tool_sha256'})
+        if item['argv'] != argv or item['tool_sha256'] != PRLCTL_SHA256:
+            raise Refusal('pre-rescue original has another source or argv')
+    try:
+        check_vm(originals['running_vm']['stdout'].encode(), 'running')
+        check_vm(originals['stopped_vm']['stdout'].encode(), 'stopped')
+        boot = check_boot_id(originals['boot']['stdout'].encode())
+    except (ValueError, KeyError, TypeError) as exc:
+        raise Refusal('pre-rescue VM or boot original is invalid') from exc
+    if boot != records[0]['preboot_id'] or boot != records[1]['preboot_id']:
+        raise Refusal('pre-rescue originals do not bind the quiesced boot')
+    return {'vm_id': ACTIVATION_VM, 'preboot_id': boot}
+
+
 def inspect_activation_completion(activation):
     """Require the whole sequence and its offline originals; no quota credit is yet possible.
 
@@ -852,12 +879,13 @@ def inspect_activation_completion(activation):
     premise remains unresolved: v1.47.2 quota_data_add can lose an allocation failure and
     quota_compare_and_update can overwrite a scan error while closing the quota file.
     """
-    if not isinstance(activation, dict) or set(activation) != {'records', 'offline_originals'}:
+    if not isinstance(activation, dict) or set(activation) != {'records', 'offline_originals', 'pre_originals'}:
         raise Refusal('activation completion requires records and offline originals')
     records = activation['records']
     progress = inspect_activation_progress(records)
     if progress['next'] is not None:
         raise Refusal('activation is only a prefix, not completion')
+    inspect_pre_rescue_originals(activation['pre_originals'], records)
     rescue = next(item['boot_id'] for item in records if item['name'] == 'rescue-boot')
     names = [name for name, _ in offline_operation_plan()]
     if inspect_offline_progress(rescue, names, activation['offline_originals'])['next'] is not None:

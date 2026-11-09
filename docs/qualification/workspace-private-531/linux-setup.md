@@ -591,6 +591,10 @@ it does not verify ISO bytes, rescue tools or a boot. The canonical ISO endpoint
 bytes. Future acquisition is limited to one exact pinned file on an exclusive removable 4 GiB
 fixture and an absolute 1,800 seconds including cleanup. This changes no native row or Stage2 bound.
 No payload was fetched.
+`linux_rescue_input.py` fixes the direct, non-redirecting URL and bounded stream primitive, but
+its ordinary entry refuses and it is not yet a Nucleus acquisition entry. The exclusive removable
+fixture identity, source-immutable proof dispatch, verifier/program custody, absolute deadline and
+production receipt are not established by this helper.
 
 **Offline activation, source-qualified.** For a future verified v1.47.2 toolset, the candidate offline sequence is `/sbin/e2fsck -f -n /dev/sda2`, `/sbin/tune2fs -O project -Q prjquota /dev/sda2`, `/sbin/tune2fs -E mount_opts=prjquota /dev/sda2`, then `/sbin/e2fsck -f -n /dev/sda2`, with the root unmounted throughout. The extended mount-option command replaces the whole stored option string: it is permitted only if a fresh, complete v1.47.2 `dumpe2fs` original proves that string empty; a nonempty or unknown string refuses. It does not replace the separate default mount-option bits. The [v1.47.2 superblock printer source](https://git.kernel.org/pub/scm/fs/ext2/e2fsprogs.git/plain/lib/e2p/ls.c?h=v1.47.2) has SHA-256 `692a03d286e7a2e7349af6568e3d582f74ed13b353dbf75961682fe2753f2f1d` and prints the extended option line only when nonempty. The historical 747 filesystem original, SHA-256 `27dcdc02341f7a890e32f2eb9066d0fdf3f4ed5bf8e461d968e5a21c09cc3b41`, has no such line; that is not a fresh precondition. Boot arguments or later mounts may override stored options, and the v6.1 kernel may ignore an unparseable stored string, so neither the command exit nor the string alone proves enforcement.
 
@@ -599,6 +603,12 @@ The prospective pre-state additionally requires the complete 1,024-byte primary 
 The [v1.47.2 e2fsck manual source](https://git.kernel.org/pub/scm/fs/ext2/e2fsprogs.git/plain/e2fsck/e2fsck.8.in?h=v1.47.2) has SHA-256 `b1579b176628725c956bb0f6c63c6f2bf60902df43817c705bcddfe636115461` and specifies `-n` as read-only with negative answers. Proceed only after a positive waited exit of zero at each step; do not authorize repair or retry on failure or unknown. `tune2fs` can require a freshly checked filesystem, which a read-only check may not establish; if it refuses, stop rather than run repair. Even a failed or interrupted feature change may have written metadata. A separately reviewed boot configuration and positive enforcement observation remain necessary.
 
 The v1.47.2 `tune2fs` source calls quota usage computation without checking its return value. Its [quota computation source](https://git.kernel.org/pub/scm/fs/ext2/e2fsprogs.git/plain/lib/support/mkquota.c?h=v1.47.2), SHA-256 `81f9bcec788b67384b92577ac8a36738c320570e985a2aad9619883cc3caaeeb`, can return errors while opening or scanning inodes. A zero `tune2fs` exit is therefore not proof that the full quota scan succeeded. Retain complete stderr and require a separately source-qualified, independent accounting check before any limit can be credited; this check is not yet implemented.
+
+The completion consumer also checks complete hashed originals for the pinned Parallels `list --info`
+read while running and stopped and the running guest's `boot_id` read. The parsed VM identity and
+pre-rescue boot must match quiesce and snapshot; the stopped observation has no guest boot ID.
+These supplied originals remain source controls until independently authenticated one-use custody
+establishes their origin and the quiescence observation.
 
 The independent candidate `e2fsck -f -n` is not admitted as a complete accounting witness. In
 [v1.47.2 pass1.c](https://github.com/tytso/e2fsprogs/blob/v1.47.2/e2fsck/pass1.c) (SHA-256

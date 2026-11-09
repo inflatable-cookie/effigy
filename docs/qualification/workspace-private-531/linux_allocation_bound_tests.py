@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -23,6 +24,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_allocation_bound as bound
+import linux_rescue_input as rescue
 import linux_allocation_probe as probe
 import linux_supervisor as supervisor
 import linux_setup as setup
@@ -1221,22 +1223,44 @@ class ActivationRouteChecks(unittest.TestCase):
                     bound.inspect_activation_progress(records)
 
     def test_completion_requires_full_sequence_and_offline_originals_and_still_holds_accounting(self):
+        from linux_diagnostic_proof import PRLCTL, PRLCTL_SHA256
         empty = hashlib.sha256(b'').hexdigest()
         originals = [{'name': name, 'argv': argv, 'boot_id': RESCUE_BOOT, 'stdout': '', 'stderr': '',
                       'stdout_sha256': empty, 'stderr_sha256': empty, 'exit': 0}
                      for name, argv in bound.offline_operation_plan()]
         records = activation_records()
+        def source(argv, text):
+            return {'argv': argv, 'tool_sha256': PRLCTL_SHA256, 'stdout': text, 'stderr': '',
+                    'stdout_sha256': hashlib.sha256(text.encode()).hexdigest(),
+                    'stderr_sha256': empty, 'exit': 0}
+        def vm(state):
+            return json.dumps([{'ID': bound.ACTIVATION_VM, 'State': state,
+                                'Home': setup.PVM_HOME + '/', 'Home path': setup.PVM_HOME + '/config.pvs',
+                                'Hardware': {'hdd0': {'image': setup.PVM_HOME + '/harddisk1.hdd',
+                                                     'enabled': True}}}])
+        list_argv = [PRLCTL, 'list', '--info', bound.ACTIVATION_VM, '--json']
+        boot_argv = [PRLCTL, 'exec', bound.ACTIVATION_VM, '/bin/cat', '/proc/sys/kernel/random/boot_id']
+        pre = {'running_vm': source(list_argv, vm('running')), 'boot': source(boot_argv, BOOT_ID + '\n'),
+               'stopped_vm': source(list_argv, vm('stopped'))}
+        def completion(recs, off=originals, before=pre):
+            return bound.inspect_activation_completion({'records': recs, 'offline_originals': off,
+                                                         'pre_originals': before})
         with self.assertRaisesRegex(Refusal, 'accounting'):
-            bound.inspect_activation_completion({'records': records, 'offline_originals': originals})
+            completion(records)
         for count in range(len(records)):
             with self.subTest(count=count), self.assertRaises(Refusal):
-                bound.inspect_activation_completion({'records': records[:count], 'offline_originals': originals})
+                completion(records[:count])
         for bad in (originals[:-1], [dict(originals[0], argv=['wrong'])] + originals[1:],
                     [dict(originals[0], stdout='changed')] + originals[1:]):
             with self.assertRaises(Refusal):
-                bound.inspect_activation_completion({'records': records, 'offline_originals': bad})
+                completion(records, bad)
+        for before in (dict(pre, boot=source(boot_argv, OTHER_BOOT + '\n')),
+                       dict(pre, stopped_vm=source(list_argv, vm('running'))),
+                       dict(pre, running_vm=dict(pre['running_vm'], tool_sha256='0' * 64))):
+            with self.assertRaises(Refusal):
+                completion(records, before=before)
         with self.assertRaises(Refusal):
-            bound.inspect_activation_completion({'records': records + records[:1], 'offline_originals': originals})
+            completion(records + records[:1])
 
     def test_a_boundary_with_missing_or_extra_facts_refuses(self):
         records = activation_records()
@@ -1250,6 +1274,58 @@ class ActivationRouteChecks(unittest.TestCase):
         with self.assertRaises(Refusal):
             bound.inspect_activation_progress(activation_records() + activation_records(1))
 
+
+class RescueInputChecks(unittest.TestCase):
+    def test_unarmed_and_changed_url_refuse_without_transport(self):
+        result = subprocess.run([sys.executable, '-I', '-B', rescue.__file__], capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(b'ordinary rescue input execution is unarmed', result.stderr)
+        with self.assertRaises(rescue.Refusal):
+            rescue.main()
+        for url in ('https://example.com/', rescue.URL + '?other', rescue.URL.replace('https:', 'http:')):
+            with self.subTest(url=url), self.assertRaises(rescue.Refusal):
+                rescue.open_fixed_https(url)
+        with self.assertRaises(rescue.Refusal):
+            rescue.open_fixed_https(rescue.URL, {'Authorization': 'x'})
+
+    def test_bounded_transport_refuses_redirect_encoding_truncation_and_overflow(self):
+        data = b'fixture'
+        digest = hashlib.sha256(data).hexdigest()
+        root = Path(tempfile.mkdtemp(prefix='rescue-input-'))
+
+        class Response(io.BytesIO):
+            def __init__(self, body, status, headers):
+                super().__init__(body)
+                self.status, self.headers = status, headers
+            def getheader(self, key):
+                return self.headers.get(key)
+
+        class Connection:
+            def close(self):
+                pass
+
+        cases = ((302, {'Content-Length': str(len(data))}, data),
+                 (200, {'Content-Length': str(len(data)), 'Content-Encoding': 'gzip'}, data),
+                 (200, {'Content-Length': '0'}, data),
+                 (200, {'Content-Length': str(len(data))}, data[:-1]),
+                 (200, {'Content-Length': str(len(data))}, data + b'x'))
+        for index, (status, headers, body) in enumerate(cases):
+            with self.subTest(index=index), self.assertRaises(rescue.Refusal):
+                rescue.inputs.fetch_pinned_https('fixture', str(root / str(index)), len(data), digest,
+                    opener=lambda url, headers, response=Response(body, status, headers): (Connection(), response))
+        with self.assertRaises(rescue.Refusal):
+            rescue.inputs.fetch_pinned_https('fixture', str(root / 'collision'), 0, digest,
+                opener=lambda url, headers: (Connection(), Response(b'', 200, {'Content-Length': '0'})))
+
+    def test_fixed_fetch_uses_exact_pins_and_rejects_invalid_destination(self):
+        with self.assertRaises(rescue.Refusal):
+            rescue.fetch_fixed('/not-canonical/other', checkpoint=lambda: None)
+        with patch.object(rescue.inputs, 'fetch_pinned_https', return_value={'fixture': True}) as fetch:
+            result = rescue.fetch_fixed('/fixture/' + rescue.NAME, checkpoint=lambda: None)
+        self.assertEqual(result, {'fixture': True})
+        args, kwargs = fetch.call_args
+        self.assertEqual(args, (rescue.URL, '/fixture/' + rescue.NAME, rescue.SIZE, rescue.SHA256))
+        self.assertIs(kwargs['opener'], rescue.open_fixed_https)
 
 if __name__ == '__main__':
     unittest.main()
