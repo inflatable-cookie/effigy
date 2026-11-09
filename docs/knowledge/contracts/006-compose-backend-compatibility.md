@@ -302,8 +302,10 @@ incremental builds, and its builder is reused by its strictly verified
 immutable ID. This is a one-time namespace migration from `effigy-linux-release`
 and from the previously unscoped primary-checkout spelling, not a per-build
 change. Names never prove ownership: the full-ID, project, service, oneoff,
-running, checkout/scope, working-directory and writable-source-bind checks all
-stay in force, so a same-spelled impostor or a builder of another checkout's
+running, checkout/scope, working-directory, read-only source bind, exact owned
+mount set (one `/workspace` bind and two cargo cache volumes, nothing else) and
+SYS_ADMIN-drop (CapDrop contains SYS_ADMIN, CapAdd empty, Privileged false)
+checks all stay in force, so a same-spelled impostor or a builder of another checkout's
 source is refused rather than adopted. Artifact paths and the task interface
 are unchanged.
 

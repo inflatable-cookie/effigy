@@ -114,7 +114,7 @@ fn linux_release_renders_identically_before_and_after_migration() {
     assert!(compose.contains("context: '{{ repo_root }}'"), "{compose}");
     assert!(compose.contains("dockerfile: infra/release/linux/Dockerfile"));
     assert!(
-        compose.contains("'{{ repo_root }}:/workspace'"),
+        compose.contains("'{{ repo_root }}:/workspace:ro'"),
         "{compose}"
     );
     assert!(compose.contains("'{{ project_name }}-cargo-registry:/root/.cargo/registry'"));
