@@ -9,9 +9,11 @@ import ctypes
 import hashlib
 import os
 import shutil
+import struct
 import sys
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
@@ -98,6 +100,24 @@ class VerifierChecks(unittest.TestCase):
         for request in bad:
             with self.subTest(request=request), self.assertRaises(Refusal):
                 bound.validate_candidate_request(request)
+
+    def test_offline_superblock_candidate_refuses_foreign_dirty_or_nonempty_prestate(self):
+        raw = bytearray(1024)
+        struct.pack_into('<H', raw, 0x38, 0xef53)
+        struct.pack_into('<H', raw, 0x3a, 1)
+        struct.pack_into('<H', raw, 0x58, 256)
+        raw[0x68:0x78] = uuid.UUID(bound.ROOT_UUID).bytes
+        self.assertTrue(bound.inspect_candidate_superblock(bytes(raw))['stored_mount_options_empty'])
+        mutations = ((0x38, b'\0\0'), (0x3a, b'\0\0'), (0x58, b'\x80\0'),
+                     (0x60, b'\x04'), (0x64, b'\x00\x01'), (0x65, b'\x20'),
+                     (0x68, b'\0'), (0x200, b'p'), (0x23f, b'x'), (0x26c, b'\x01'))
+        for offset, value in mutations:
+            changed = bytearray(raw)
+            changed[offset:offset + len(value)] = value
+            with self.subTest(offset=offset), self.assertRaises(Refusal):
+                bound.inspect_candidate_superblock(bytes(changed))
+        with self.assertRaises(Refusal):
+            bound.inspect_candidate_superblock(bytes(raw[:-1]))
 
     def test_fixed_row_limit_reservation_is_bounded_and_not_authority(self):
         for row, reservation in bound.ROW_RESERVATIONS.items():

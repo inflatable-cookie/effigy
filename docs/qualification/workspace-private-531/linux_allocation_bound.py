@@ -19,6 +19,8 @@ import ctypes
 import hashlib
 import os
 import re
+import struct
+import uuid
 from pathlib import Path
 
 from linux_supervisor import Refusal
@@ -44,6 +46,28 @@ HELPER = Path(__file__).resolve().parent / 'linux_allocation_probe.py'
 WRITER_HELPER = Path(__file__).resolve().parent / 'linux_transfer.py'
 HEX64 = re.compile(r'^[0-9a-f]{64}$')
 BOOT_UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+
+
+def inspect_candidate_superblock(raw):
+    """Check a prospective offline pre-state; raw bytes alone grant no authority.
+
+    The caller must separately authenticate a complete original and verify its
+    checksum. The fixed layout is the v1.47.2 ext4 superblock, not a device read.
+    """
+    if not isinstance(raw, bytes) or len(raw) != 1024:
+        raise Refusal('superblock original must be exactly 1024 bytes')
+    magic, state, inode_size = (struct.unpack_from('<H', raw, offset)[0] for offset in (0x38, 0x3a, 0x58))
+    incompat, ro_compat = (struct.unpack_from('<I', raw, offset)[0] for offset in (0x60, 0x64))
+    project_inode = struct.unpack_from('<I', raw, 0x26c)[0]
+    if magic != 0xef53 or raw[0x68:0x78] != uuid.UUID(ROOT_UUID).bytes:
+        raise Refusal('superblock magic or UUID differs from the native root')
+    if inode_size != 256 or state != 1 or incompat & 4:
+        raise Refusal('superblock is not the expected clean offline pre-state')
+    if ro_compat & (0x100 | 0x2000) or project_inode != 0:
+        raise Refusal('project or quota features are already present')
+    if raw[0x200:0x240] != bytes(64):
+        raise Refusal('stored mount-option bytes are not entirely empty')
+    return {'uuid': ROOT_UUID, 'inode_size': inode_size, 'stored_mount_options_empty': True}
 
 
 def validate_candidate_request(request):
