@@ -18,10 +18,10 @@ fn shell_caret_visibility_toggles_in_ten_tick_windows() {
 }
 
 #[test]
-fn shell_cursor_position_clamps_to_inner_output_area() {
+fn shell_cursor_position_clamps_to_unframed_output_area() {
     let area = Rect::new(10, 20, 8, 6);
-    assert_eq!(shell_cursor_position(area, Some((1, 2))), Some((13, 22)));
-    assert_eq!(shell_cursor_position(area, Some((99, 99))), Some((16, 24)));
+    assert_eq!(shell_cursor_position(area, Some((1, 2))), Some((12, 21)));
+    assert_eq!(shell_cursor_position(area, Some((99, 99))), Some((17, 25)));
 }
 
 #[test]
@@ -29,11 +29,11 @@ fn shell_cursor_position_returns_none_for_missing_cursor_or_tiny_area() {
     let area = Rect::new(0, 0, 10, 5);
     assert_eq!(shell_cursor_position(area, None), None);
 
-    let too_narrow = Rect::new(0, 0, 2, 5);
-    assert_eq!(shell_cursor_position(too_narrow, Some((0, 0))), None);
+    let zero_width = Rect::new(0, 0, 0, 5);
+    assert_eq!(shell_cursor_position(zero_width, Some((0, 0))), None);
 
-    let too_short = Rect::new(0, 0, 5, 2);
-    assert_eq!(shell_cursor_position(too_short, Some((0, 0))), None);
+    let zero_height = Rect::new(0, 0, 5, 0);
+    assert_eq!(shell_cursor_position(zero_height, Some((0, 0))), None);
 }
 
 #[test]

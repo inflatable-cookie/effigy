@@ -4,8 +4,10 @@ use effigy_process::{ProcessSpec, ProcessSupervisor};
 
 use super::diagnostics::RuntimeDiagnostics;
 use super::lifecycle::init_terminal;
+use super::render::main_areas;
 use super::state::SessionState;
 use super::{MultiProcessTuiError, SessionRuntime};
+use crate::core::InputMode;
 use crate::terminal_text::config::{VT_PARSER_COLS, VT_PARSER_ROWS, VT_PARSER_SCROLLBACK};
 
 const PTY_TERMINAL_COLS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_COLS";
@@ -24,8 +26,13 @@ pub(super) fn prepare_runtime_session(
             return Err(error.into());
         }
     };
-    let cols = size.width.max(1).to_string();
-    let rows = size.height.max(1).to_string();
+    let output = main_areas(
+        ratatui::layout::Rect::new(0, 0, size.width, size.height),
+        true,
+        InputMode::Command,
+    )[2];
+    let cols = output.width.saturating_sub(1).max(1).to_string();
+    let rows = output.height.max(1).to_string();
     for process in &mut processes {
         if !process.pty {
             continue;

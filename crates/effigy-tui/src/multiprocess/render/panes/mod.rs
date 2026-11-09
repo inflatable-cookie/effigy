@@ -10,8 +10,6 @@ use super::super::state::ProcessStartupState;
 use crate::core::{InputMode, LogEntry, ProcessExitState};
 use crate::waits::EntryState;
 
-use super::header::panel_block;
-
 mod input;
 mod output;
 mod shell_cursor;
@@ -73,7 +71,16 @@ pub(super) fn render_output_pane(
         active_entry_wait,
     } = args;
     let active_is_shell = active_process == "shell";
-    let output_height = area.height.saturating_sub(2) as usize;
+    let content_area = Rect {
+        width: area.width.saturating_sub(1),
+        ..area
+    };
+    let scrollbar_area = Rect {
+        x: area.x.saturating_add(area.width.saturating_sub(1)),
+        width: u16::from(area.width > 0),
+        ..area
+    };
+    let output_height = content_area.height as usize;
     let lines = output_lines(
         active_logs,
         active_is_shell,
@@ -81,7 +88,6 @@ pub(super) fn render_output_pane(
         active_restart_count,
     );
 
-    let panel = panel_block(None, false, Color::DarkGray);
     let shell_inactive_style = if active_is_shell && !shell_capture_mode {
         Style::default()
             .fg(Color::DarkGray)
@@ -97,19 +103,17 @@ pub(super) fn render_output_pane(
             active_startup_state,
             active_entry_wait,
         ))
-        .block(panel)
         .style(shell_inactive_style)
     } else {
         Paragraph::new(lines)
-            .block(panel)
             .style(shell_inactive_style)
             .scroll((render_scroll_offset.min(u16::MAX as usize) as u16, 0))
             .wrap(Wrap { trim: false })
     };
-    frame.render_widget(logs, area);
+    frame.render_widget(logs, content_area);
 
     if active_is_shell && shell_capture_mode && should_show_shell_caret(spinner_tick) {
-        if let Some((cursor_x, cursor_y)) = shell_cursor_position(area, shell_cursor) {
+        if let Some((cursor_x, cursor_y)) = shell_cursor_position(content_area, shell_cursor) {
             frame.set_cursor_position((cursor_x, cursor_y));
         }
     }
@@ -120,7 +124,7 @@ pub(super) fn render_output_pane(
             .position(scroll_offset.min(max_offset));
         frame.render_stateful_widget(
             Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight),
-            area,
+            scrollbar_area,
             &mut scrollbar_state,
         );
     }
