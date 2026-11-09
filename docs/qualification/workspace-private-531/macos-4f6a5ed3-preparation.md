@@ -237,14 +237,91 @@ lowercase hex minted at C0. Owned children:
 - Desktop config `<control>/d/docker-config` and context `<control>/d/ctx`, both owned and empty.
 - Desktop image ID file `<control>/d/image-id` and container ID file `<control>/d/container-id`.
 
-Profile `effigy-4f6a-qual`. Socket paths, computed by the boundary test:
+Profile `q4`. The pure `resolve_stage` plan lists each derived host socket and its
+UTF-8 byte length, and refuses before activation, occurrence or claim when the path
+plus its NUL and a four-byte margin exceeds `UNIX_PATH_MAX=104`. The check covers
+the chain's profiles even when planning an earlier stage. Collisions, aliases and
+Builds paths also refuse; protected and historical resources are never adopted.
 
-- `ha.sock` and `ga.sock`: 87 bytes each.
-- `docker.sock`: 78 bytes.
+### Socket source qualification
 
-The limit is 104 bytes, so the margin is 16. Collisions, aliases, Builds paths and
-over-limit sockets refuse before any effect. `effigy`, `effigy-release` and any
-historical 531 resource are never adopted.
+Read-only source check for #816 (no Colima/Lima binary execution):
+
+| Repository | Tag | Resolved commit |
+| --- | --- | --- |
+| `abiosoft/colima` | `v0.10.3` | `00f6c297e92a82c04a4ab507db0a61435650d7e8` |
+| `lima-vm/lima` | `v2.2.1` | `27bc4c4b101e27994e01e36566a0f2091bbca507` |
+
+Lima's installed Cellar directory is `/opt/homebrew/Cellar/lima/2.2.1`.
+Static binary SHA256: Colima `55278419bd4288e4ab11eb30be13f5e655f3886c0979b68e435df910dbc9bbdf`;
+limactl `e79b14815dc7e51629e064dba950120c4c9323e2b8ba6a52fe816b15f7f9803d`.
+Sources retained for review under this run's owned
+`/Volumes/Stash/scratch/effigy/775dd65d/source.LGWcCoKr/{colima,lima}`.
+
+Derivation at those commits:
+
+- Colima [config/files.go:49–57,129–140](https://github.com/abiosoft/colima/blob/00f6c297e92a82c04a4ab507db0a61435650d7e8/config/files.go#L49-L140)
+  reads `COLIMA_HOME` and adds `_lima` when `LIMA_HOME` is unset;
+  [config/profile.go:31–35,58–73](https://github.com/abiosoft/colima/blob/00f6c297e92a82c04a4ab507db0a61435650d7e8/config/profile.go#L31-L73)
+  adds `colima-` for the instance and the short profile for its config directory.
+- Lima [pkg/limatype/dirnames/dirnames.go:53–59,82–91](https://github.com/lima-vm/lima/blob/27bc4c4b101e27994e01e36566a0f2091bbca507/pkg/limatype/dirnames/dirnames.go#L53-L91)
+  derives the instance and `_networks` directories.
+  [pkg/limatype/filenames/filenames.go:55–64,97–105](https://github.com/lima-vm/lima/blob/27bc4c4b101e27994e01e36566a0f2091bbca507/pkg/limatype/filenames/filenames.go#L55-L105)
+  names SSH, HA, GA and the OpenSSH 16-digit temporary suffix. The instance creation
+  refusal uses that longest name in [pkg/instance/create.go:38–43](https://github.com/lima-vm/lima/blob/27bc4c4b101e27994e01e36566a0f2091bbca507/pkg/instance/create.go#L38-L43).
+  SSH joins at `pkg/sshutil/sshutil.go:538,550,572,581`; HA at
+  `pkg/instance/start.go:229`; GA at `pkg/hostagent/hostagent.go:766`.
+- Colima [environment/vm/lima/yaml.go:137–141,253–266](https://github.com/abiosoft/colima/blob/00f6c297e92a82c04a4ab507db0a61435650d7e8/environment/vm/lima/yaml.go#L137-L266)
+  selects `user-v2` and forwards containerd/buildkitd. Their host paths come from
+  [environment/container/containerd/containerd.go:20–28](https://github.com/abiosoft/colima/blob/00f6c297e92a82c04a4ab507db0a61435650d7e8/environment/container/containerd/containerd.go#L20-L28).
+- Lima [pkg/networks/usernet/config.go:20–45](https://github.com/lima-vm/lima/blob/27bc4c4b101e27994e01e36566a0f2091bbca507/pkg/networks/usernet/config.go#L20-L45)
+  derives `<name>_<fd|qemu|ep>.sock`; [pkg/networks/usernet/recoincile.go:35–60](https://github.com/lima-vm/lima/blob/27bc4c4b101e27994e01e36566a0f2091bbca507/pkg/networks/usernet/recoincile.go#L35-L60)
+  requests all three, including the QEMU-named listener even for VZ. The VZ attach
+  path uses the named network at `pkg/driver/vz/vm_darwin.go:178–181,417–439`.
+
+The fixed chain uses VZ/containerd, named user-v2 and no mounts. VZ's serial output
+is a file (`pkg/driver/vz/vm_darwin.go:376–384`), and its VM sockets use the
+Virtualization framework rather than filesystem socket names (`:821–824`).
+QEMU's serial/QMP/TPM and indexed `virtiofsd-%d.sock`, external-driver sockets (VZ registers internally in `pkg/driver/vz/register.go:15`,
+imported by `cmd/limactl/main_darwin.go:9`), krunkit sockets and Docker/Incus runtime forwards are outside this chain.
+`check_colima_start` refuses a runtime or VM-type change; a future change to these
+fixed settings must requalify the inventory.
+
+For any eight-hex token, `COLIMA_HOME` is 50 bytes including the trailing slash
+used below. Plans list these nine paths (length excludes NUL):
+
+| Relative to `<control>/c/` | Full path bytes |
+| --- | --- |
+| `_lima/colima-q4/ssh.sock` | 74 |
+| `_lima/colima-q4/ssh.sock.1234567890123456` | 91 |
+| `_lima/colima-q4/ha.sock` | 73 |
+| `_lima/colima-q4/ga.sock` | 73 |
+| `q4/containerd.sock` | 68 |
+| `q4/buildkitd.sock` | 67 |
+| `_lima/_networks/user-v2/user-v2_fd.sock` | 89 |
+| `_lima/_networks/user-v2/user-v2_qemu.sock` | 91 |
+| `_lima/_networks/user-v2/user-v2_ep.sock` | 89 |
+
+The longest path uses 92 bytes including NUL, leaving 12 bytes before the limit,
+well beyond the reserved four-byte margin. The #813 SSH temporary path remains
+105 bytes before NUL and is refused by the pure planner with its full path and length.
+
+### Fresh C1 after #813
+
+A fresh C0 is required, with a new eight-hex token, new owned roots, a newly minted
+token32, and fresh manifest/source/input pins and stage activations. Then run C1
+once against that accepted C0 receipt. No native occurrence is authorized here.
+
+The accepted #787 C0 for `9b47cb21` cannot supply new bindings: `validate_bindings`
+requires the token's exact `control_paths`; `chain_key` binds token and control;
+`verify_receipt_tree` checks that key; `origin_roots` requires the exact C0-created
+roots and `check_recorded_roots` checks their device/inode identities. A new manifest
+does not loosen these checks. Keeping the old token/root fails C1 first-use checks on its retained cache and
+Docker config even though the shorter profile names a different instance. New
+leaf bindings for that token are not supported. The smallest supported route is
+a new token and C0; the existing control-root layout stays unchanged.
+Do not delete, adopt or reuse #813's partial state, claim or activation under
+`/Volumes/Stash/scratch/effigy/mac-4f6a-9b47cb21`.
 
 ## Executable rules
 
@@ -283,13 +360,13 @@ Colima (`colima`):
 - **C0** admission (unchanged from r2): tool hashes against the tranche, tranche summary
   check, intent claim, owned roots created 0700 and empty, `colima start --help`.
 - **C1** start, 900 s stage: `c1-make-owned-dirs` (cache, Docker config and `effigy-image`), then
-  `c1-prefetch-colima-image` (210 s, the pinned image, see r5), then `colima start -p effigy-4f6a-qual --runtime containerd
+  `c1-prefetch-colima-image` (210 s, the pinned image, see r5), then `colima start -p q4 --runtime containerd
   --vm-type vz --arch aarch64 --cpus 2 --memory 2 --disk 20 --root-disk 20 --mount none --disk-image {image}
   --ssh-config=false --activate=false` (600 s). The step budget is 30 + 210 + 600 = 840 s, the stage cap less the 60 s
   reserve. Download cap 446992920 bytes (the exact pinned size); storage cap 8 GiB. Source:
   `https://github.com/abiosoft/colima-core/releases/download/v0.10.4/ubuntu-24.04-minimal-cloudimg-arm64-containerd.raw.gz`,
   sha512 `86fd0879…`.
-- **C2** identity, 300 s stage: `colima status -p effigy-4f6a-qual --json`,
+- **C2** identity, 300 s stage: `colima status -p q4 --json`,
   the pinned guest helper `echo` of the hostile constant, the byte comparison, then the
   guest parent probe through the same helper. Nothing else crosses the route until the
   comparison passes. The echo and probe close only on an authenticated helper envelope.

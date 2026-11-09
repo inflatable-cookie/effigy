@@ -121,9 +121,18 @@ class PathControls(unittest.TestCase):
             prep.check_paths(paths, existing=set())
 
     def test_oversized_socket_refused(self):
-        paths = dict(PATHS, lima_ha_socket=prep.STASH + '/' + 'x' * 80 + '/ha.sock')
+        paths = dict(PATHS, colima_home=prep.STASH + '/' + 'x' * 80)
         with self.assertRaises(ValueError):
             prep.check_paths(paths, existing=set())
+
+    def test_socket_margin_and_utf8_bytes(self):
+        tail = '/_lima/_networks/user-v2/user-v2_qemu.sock'
+        home = '/' + 'x' * (99 - len(tail) - 1)
+        rows = prep.check_socket_paths(home)
+        self.assertEqual(max(row['bytes'] for row in rows), 99)
+        for extra in ('x', 'é'):
+            with self.assertRaisesRegex(ValueError, 'UNIX_PATH_MAX=104'):
+                prep.check_socket_paths(home + extra)
 
     def test_existing_profile_refused_and_protected_names_never_planned(self):
         self.assertTrue(prep.check_profiles(['effigy', 'effigy-release']))

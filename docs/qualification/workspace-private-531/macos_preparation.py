@@ -17,7 +17,7 @@ import re
 
 STASH = '/Volumes/Stash/scratch/effigy'
 BUILDS = '/Volumes/Builds'
-PROFILE = 'effigy-4f6a-qual'
+PROFILE = 'q4'
 COLIMA = '/opt/homebrew/bin/colima'
 DOCKER = '/usr/local/bin/docker'
 DESKTOP_HOST = 'unix:///Users/tom/.docker/run/docker.sock'
@@ -26,6 +26,7 @@ DECISION = '63c338e2-1c50-435e-9783-e78e9d8558e6'
 DECISION_VERSION = 2
 # macOS sun_path is 104 bytes including the NUL: encoded paths must stay below it.
 SOCKET_LIMIT_BYTES = 104
+SOCKET_MARGIN_BYTES = 4
 STAGE_CAP_SECONDS = 1200
 OUTPUT_CAP_BYTES = 256 * 1024
 RECIPE_SHA256 = '8f1fa681851648430543cc0d0cd3573bfef191b3809cc447846de10821af2cc2'
@@ -152,6 +153,30 @@ def control_paths(token):
     )
 
 
+def socket_paths(home, profile):
+    """Pinned Colima v0.10.3 / Lima v2.2.1: VZ, containerd, user-v2, no host mounts.
+    Source receipt and exclusions: macos-4f6a5ed3-preparation.md, Socket source qualification.
+    """
+    instance = f'{home}/_lima/colima-{profile}'
+    return {name: f'{instance}/{name}' for name in (
+        'ssh.sock', 'ssh.sock.1234567890123456', 'ha.sock', 'ga.sock',
+    )} | {f'colima/{name}': f'{home}/{profile}/{name}' for name in (
+        'containerd.sock', 'buildkitd.sock',
+    )} | {f'user-v2/{kind}': f'{home}/_lima/_networks/user-v2/user-v2_{kind}.sock'
+         for kind in ('fd', 'qemu', 'ep')}
+
+
+def check_socket_paths(home, profile=PROFILE):
+    rows = []
+    for name, path in socket_paths(home, profile).items():
+        size = len(path.encode('utf-8'))
+        require(size + 1 + SOCKET_MARGIN_BYTES <= SOCKET_LIMIT_BYTES,
+                f'{name}: {path} is {size} bytes (+1 NUL +{SOCKET_MARGIN_BYTES} margin); '
+                f'UNIX_PATH_MAX={SOCKET_LIMIT_BYTES}')
+        rows.append(dict(name=name, path=path, bytes=size))
+    return rows
+
+
 def check_paths(paths, existing):
     """Refuse Builds, aliases, collisions and socket paths at or over the limit."""
     for key, value in paths.items():
@@ -161,9 +186,7 @@ def check_paths(paths, existing):
         require(not value.startswith(BUILDS), f'{key} must not use Builds')
         require('..' not in value.split('/'), f'{key} must be canonical')
         require(value not in existing, f'{key} collides with an existing path')
-    for key in ('lima_ha_socket', 'lima_ga_socket', 'docker_socket'):
-        require(len(paths[key].encode('utf-8')) < SOCKET_LIMIT_BYTES,
-                f'{key} exceeds the Unix socket limit')
+    check_socket_paths(paths['colima_home'], paths['profile'])
     require(paths['profile'] == PROFILE, 'planned profile only')
     return paths
 
@@ -426,6 +449,9 @@ def check_colima_start(argv):
     true, so the forbidden global writes are disabled with the =false form (bool flags do not
     take a separate value). --mount none returns nil mounts, so no $HOME mount is added."""
     require(argv[1:2] == ['start'], 'colima start expected')
+    for flag, value in (('--runtime', 'containerd'), ('--vm-type', 'vz')):
+        require(argv.count(flag) == 1 and argv[argv.index(flag) + 1:argv.index(flag) + 2] == [value],
+                f'socket inventory requires {flag} {value}')
     require('--cpu' not in argv and '--cpus' in argv, 'colima start takes --cpus (0.10.3), not --cpu')
     require('--ssh-config=false' in argv, 'C1 must pass --ssh-config=false (default writes ~/.ssh/config)')
     require('--activate=false' in argv, 'C1 must pass --activate=false (default switches the active context)')
