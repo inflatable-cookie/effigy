@@ -38,9 +38,11 @@ import ctypes
 import fcntl
 import hashlib
 import json
+import math
 import os
 import pwd
 import re
+import signal
 import stat
 import struct
 import subprocess
@@ -471,6 +473,106 @@ def _candidate_quota_broker_record(row_fd, name, data, expected_dev, owner,
             (after.st_dev, after.st_ino, after.st_uid, after.st_mode) or post_project != project:
         raise Refusal('broker directory changed after capability drop')
     _row_write(row_fd, name, data)
+
+
+def _launch_candidate_quota_record(row_fd, name, data, expected_dev, deadline, cleanup_deadline,
+                                   test_capops=None, test_project=None):
+    """Launch one bounded candidate child; this is not wired to a production entry."""
+    testing = test_capops is not None or test_project is not None
+    if testing and os.geteuid() == 0:
+        raise Refusal('broker child test seams are refused for root runs')
+    if not testing and (os.geteuid() != 0 or sys.platform != 'linux'):
+        raise Refusal('broker child requires the supported root Linux route')
+    if type(deadline) not in (int, float) or type(cleanup_deadline) not in (int, float) or \
+            not math.isfinite(deadline) or not math.isfinite(cleanup_deadline):
+        raise Refusal('broker child deadline is invalid')
+    now = time.monotonic()
+    remaining = deadline - now
+    if not 0 < remaining or cleanup_deadline < deadline or \
+            cleanup_deadline - now > MAX_TIMEOUT + GATE_RESERVE_SECONDS + CLEANUP_RESERVE_SECONDS:
+        raise Refusal('broker child has no bounded remaining deadline')
+    if threading.active_count() != 1:
+        raise Refusal('broker child cannot fork with other threads running')
+    if testing:
+        if not isinstance(test_capops, tuple) or len(test_capops) != 3 or \
+                any(not callable(operation) for operation in test_capops) or not callable(test_project):
+            raise Refusal('broker child test seams are incomplete')
+        capget, capset, prctl = test_capops
+        read_project = test_project
+        owner = os.geteuid()
+    else:
+        libc = ctypes.CDLL(None, use_errno=True)
+        try:
+            capget, capset, prctl = libc.capget, libc.capset, libc.prctl
+        except AttributeError as exc:
+            raise Refusal('broker capability calls are unavailable') from exc
+        capget.argtypes = [ctypes.POINTER(_CapHeader), ctypes.POINTER(_CapData)]
+        capset.argtypes = [ctypes.POINTER(_CapHeader), ctypes.POINTER(_CapData)]
+        prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
+        for operation in (capget, capset, prctl):
+            operation.restype = ctypes.c_int
+        read_project, owner = _broker_project_attributes, 0
+
+    read_fd, write_fd = os.pipe()
+    try:
+        pid = os.fork()
+    except BaseException:
+        os.close(read_fd)
+        os.close(write_fd)
+        raise
+    if pid == 0:
+        os.close(read_fd)
+        try:
+            _candidate_quota_broker_record(row_fd, name, data, expected_dev, owner,
+                                           capget, capset, prctl, read_project)
+        except BaseException as exc:
+            try:
+                os.write(write_fd, str(exc).encode('utf-8', 'replace')[:512])
+            finally:
+                os._exit(3)
+        os._exit(0)
+
+    os.close(write_fd)
+    reaped = False
+    try:
+        while True:
+            try:
+                waited, status = os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError as exc:
+                reaped = True  # The PID may be reusable; never signal it after losing the wait.
+                raise Refusal('broker child wait status is unavailable') from exc
+            if waited == pid:
+                reaped = True
+                if time.monotonic() > deadline:
+                    raise Refusal('broker child completed after its deadline; outcome is unknown')
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise Refusal('broker child deadline expired; outcome is unknown')
+            time.sleep(min(0.01, remaining))
+        detail = os.read(read_fd, 512).decode('utf-8', 'replace')
+        if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0 or detail:
+            raise Refusal('broker child failed or its outcome is unknown: ' + detail)
+        return {'waited_exit': 0}
+    finally:
+        os.close(read_fd)
+        if not reaped:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            while time.monotonic() < cleanup_deadline:
+                try:
+                    waited, _ = os.waitpid(pid, os.WNOHANG)
+                except ChildProcessError as exc:
+                    reaped = True
+                    raise Refusal('broker child cleanup wait status is unavailable') from exc
+                if waited == pid:
+                    reaped = True
+                    break
+                time.sleep(min(0.01, max(0, cleanup_deadline - time.monotonic())))
+            if not reaped:
+                raise Refusal('broker child %d was not reaped within the cleanup reserve' % pid)
 
 
 def _record_after_start(row_fd, name, data, ops, unit):

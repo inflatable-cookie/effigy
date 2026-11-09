@@ -2792,6 +2792,59 @@ class InstalledSupervisorChecks(unittest.TestCase):
 
 
 class QuotaBypassCandidateChecks(unittest.TestCase):
+    def test_candidate_broker_child_waits_and_refuses_timeout_or_bad_project(self):
+        root = tmpdir('quota-broker-child-')
+        parent = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        state = {'effective': supervisor.CAP_SYS_RESOURCE_BIT,
+                 'permitted': supervisor.CAP_SYS_RESOURCE_BIT,
+                 'inheritable': supervisor.CAP_SYS_RESOURCE_BIT}
+
+        def capget(header, data):
+            for field, value in state.items():
+                setattr(data[0], field, value)
+            return 0
+
+        def capset(header, data):
+            for field in state:
+                state[field] = getattr(data[0], field)
+            return 0
+
+        def prctl(operation, arg, *unused):
+            return 1 if operation == supervisor.PR_GET_NO_NEW_PRIVS else 0
+
+        def project(fd):
+            return supervisor.BROKER_PROJECT_ID, supervisor.BROKER_PROJINHERIT
+
+        try:
+            device = os.fstat(parent).st_dev
+            result = supervisor._launch_candidate_quota_record(parent, 'intent.json', b'fixed', device,
+                                                               time.monotonic() + 5, time.monotonic() + 7,
+                                                               (capget, capset, prctl), project)
+            self.assertEqual(result, {'waited_exit': 0})
+            self.assertEqual((root / 'intent.json').read_bytes(), b'fixed')
+            with self.assertRaisesRegex(Refusal, 'failed or its outcome is unknown'):
+                supervisor._launch_candidate_quota_record(parent, 'stdout', b'x', device,
+                                                           time.monotonic() + 5, time.monotonic() + 7,
+                                                           (capget, capset, prctl), lambda fd: (0, 0))
+            self.assertFalse((root / 'stdout').exists())
+            def slow_project(fd):
+                time.sleep(1)
+                return project(fd)
+            with self.assertRaisesRegex(Refusal, 'deadline expired'):
+                supervisor._launch_candidate_quota_record(parent, 'stderr', b'x', device,
+                                                           time.monotonic() + 0.1, time.monotonic() + 2,
+                                                           (capget, capset, prctl), slow_project)
+            self.assertFalse((root / 'stderr').exists())
+            with patch.object(supervisor.os, 'geteuid', return_value=0), \
+                    patch.object(supervisor.os, 'fork') as fork:
+                with self.assertRaisesRegex(Refusal, 'test seams are refused for root'):
+                    supervisor._launch_candidate_quota_record(parent, 'stdout', b'x', device,
+                                                               time.monotonic() + 5, time.monotonic() + 7,
+                                                               (capget, capset, prctl), project)
+                fork.assert_not_called()
+        finally:
+            os.close(parent)
+
     def test_candidate_broker_record_checks_custody_and_drops_before_write(self):
         root = tmpdir('quota-broker-')
         parent = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
