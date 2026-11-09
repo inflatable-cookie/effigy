@@ -1090,6 +1090,17 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Verify the Linux artifact builder's remount-capability drop on Colima nerdctl
+  from the native OCI spec of the same full container ID (effigy#768). nerdctl's
+  compatibility inspect rebuilds CapDrop only from the 14 default capabilities,
+  so a dropped SYS_ADMIN never appears there, and the owned builder was refused
+  on every ordinary automatic acquisition. The native witness requires
+  CAP_SYS_ADMIN absent from bounding, effective, permitted, inheritable and
+  ambient, with CapAdd empty and the container unprivileged. A replaced ID,
+  malformed or missing capability data, or a failed read refuses without
+  replacing the builder. Docker keeps its CapDrop witness. No live engine, build
+  or artifact is produced here.
+
 - Bind the private Colima Recipe E entry to three roles: preparation source,
   a clean candidate checkout the producer runs in, and that checkout's own host
   binary with a source receipt that `install:local` now writes. The Homebrew

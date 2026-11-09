@@ -22,7 +22,12 @@ def owned_mounts(source, rw):
         {'Type': 'volume', 'Name': p + '-cargo-git', 'Destination': '/root/.cargo/git', 'RW': True},
     ]
 def owned_host_config():
+    # nerdctl's compatibility view never lists a dropped SYS_ADMIN (only the 14
+    # default capabilities are rebuilt there), so its owned builder reads empty.
+    if os.environ.get('EFFIGY_COMPOSE_BACKEND') == 'colima':
+        return {'Privileged': False, 'CapAdd': [], 'CapDrop': []}
     return {'Privileged': False, 'CapAdd': None, 'CapDrop': ['SYS_ADMIN']}
+DEFAULT_CAPS = ['CAP_CHOWN', 'CAP_DAC_OVERRIDE', 'CAP_FSETID', 'CAP_FOWNER', 'CAP_MKNOD', 'CAP_NET_RAW', 'CAP_SETGID', 'CAP_SETUID', 'CAP_SETFCAP', 'CAP_SETPCAP', 'CAP_NET_BIND_SERVICE', 'CAP_SYS_CHROOT', 'CAP_KILL', 'CAP_AUDIT_WRITE']
 def trace(phase):
     with (state / 'timing').open('a') as f:
         f.write(json.dumps([time.monotonic(), os.getpid(), phase, args]) + '\n')
@@ -56,6 +61,22 @@ if cmd == 'ps':
         print(line)
         if mode == 'multiple_rows' and project == os.environ['EFFIGY_RECOVERY_PROJECT']: print(line)
     sys.exit(0)
+if cmd == 'inspect' and '--mode=native' in args:
+    # nerdctl's native view of the full ID: the stored OCI spec. The default is
+    # the builder's default capability sets with no SYS_ADMIN anywhere; tests
+    # replace its Spec (or ID) through state files, never through the caller.
+    if mode == 'native_fail': sys.exit(27)
+    row = json.loads(identity.read_text())[0]
+    native = {'ID': row['Id'], 'Name': row['Name'], 'Config': row['Config'], 'Spec': {'process': {'capabilities': {'bounding': DEFAULT_CAPS, 'effective': DEFAULT_CAPS, 'permitted': DEFAULT_CAPS}}}}
+    spec_override = state / 'native-spec.json'
+    if spec_override.exists():
+        text = spec_override.read_text()
+        if text == 'absent': native.pop('Spec')
+        else: native['Spec'] = json.loads(text)
+    id_override = state / 'native-id'
+    if id_override.exists(): native['ID'] = id_override.read_text()
+    print(json.dumps([native]))
+    sys.exit(0)
 if cmd == 'inspect':
     if mode == 'inspect_fail': sys.exit(20)
     if mode == 'malformed_inspect': print('not JSON'); sys.exit(0)
@@ -88,6 +109,10 @@ if cmd == 'inspect':
     sys.exit(0)
 if cmd == 'up':
     if mode == 'up_fail': sys.exit(21)
+    # A replacement is a new container: its stored spec is the default one, not
+    # the native record the test gave the one it replaced.
+    (state / 'native-spec.json').unlink(missing_ok=True)
+    (state / 'native-id').unlink(missing_ok=True)
     generated = next(a for a in args if a.endswith('.generated.compose.yml'))
     compose = pathlib.Path(generated).read_text()
     (state / 'last-up-compose').write_text(compose)
@@ -565,7 +590,14 @@ esac
             }
             let bind = expected_workspace_source(&policy, &root);
             let project = &policy.project_name;
-            let identity = json!([{"Id": "a".repeat(64), "Name": format!("/{project}-builder-1"), "State": {"Running": true, "Status": "running"}, "Config": {"Labels": labels}, "HostConfig": {"Privileged": false, "CapAdd": Value::Null, "CapDrop": ["SYS_ADMIN"]}, "Mounts": [{"Type": "bind", "Source": bind, "Destination": "/workspace", "Mode": "ro", "RW": false}, {"Type": "volume", "Name": format!("{project}-cargo-registry"), "Destination": "/root/.cargo/registry", "RW": true}, {"Type": "volume", "Name": format!("{project}-cargo-git"), "Destination": "/root/.cargo/git", "RW": true}], "NetworkSettings": {"Ports": {}}}]);
+            // nerdctl's compatibility view of the owned builder: no SYS_ADMIN drop
+            // is ever listed there. Its witness is the native spec (see the fake).
+            let host_config = if backend == "colima" {
+                json!({"Privileged": false, "CapAdd": [], "CapDrop": []})
+            } else {
+                json!({"Privileged": false, "CapAdd": Value::Null, "CapDrop": ["SYS_ADMIN"]})
+            };
+            let identity = json!([{"Id": "a".repeat(64), "Name": format!("/{project}-builder-1"), "State": {"Running": true, "Status": "running"}, "Config": {"Labels": labels}, "HostConfig": host_config, "Mounts": [{"Type": "bind", "Source": bind, "Destination": "/workspace", "Mode": "ro", "RW": false}, {"Type": "volume", "Name": format!("{project}-cargo-registry"), "Destination": "/root/.cargo/registry", "RW": true}, {"Type": "volume", "Name": format!("{project}-cargo-git"), "Destination": "/root/.cargo/git", "RW": true}], "NetworkSettings": {"Ports": {}}}]);
             std::fs::write(root.join("state/identity.json"), identity.to_string()).unwrap();
             write_legacy_partial_marker(&root, &policy);
         }
@@ -2163,6 +2195,182 @@ fn no_change_reuses_a_matching_read_only_owned_builder() {
     assert_eq!(fixture.activation_count(), 0);
     assert!(fixture.root.join("state/build-effect").exists());
     fixture.assert_preserved();
+}
+
+/// The default process capability sets of a Colima builder's stored spec. A
+/// `cap_drop: [SYS_ADMIN]` container that never held SYS_ADMIN keeps these.
+const NATIVE_DEFAULT_CAPS: [&str; 14] = [
+    "CAP_CHOWN",
+    "CAP_DAC_OVERRIDE",
+    "CAP_FSETID",
+    "CAP_FOWNER",
+    "CAP_MKNOD",
+    "CAP_NET_RAW",
+    "CAP_SETGID",
+    "CAP_SETUID",
+    "CAP_SETFCAP",
+    "CAP_SETPCAP",
+    "CAP_NET_BIND_SERVICE",
+    "CAP_SYS_CHROOT",
+    "CAP_KILL",
+    "CAP_AUDIT_WRITE",
+];
+
+impl Fixture {
+    /// Replace the native (OCI) spec the fake reports for the builder's ID.
+    fn set_native_spec(&self, spec: Value) {
+        std::fs::write(self.root.join("state/native-spec.json"), spec.to_string()).unwrap();
+    }
+}
+
+/// Colima's retained owned builder: its compatibility record reads
+/// `CapDrop: []`, the live report, so the native spec alone can witness the
+/// dropped SYS_ADMIN. Admission must hold with it and must refuse without it.
+#[test]
+fn colima_retained_empty_compat_shape_is_admitted_only_by_its_native_witness() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::staged(true, false, "colima");
+    fixture.stage().expect("a staged source plan");
+    let _switch =
+        EnvGuard::set_many(&[("EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING", Some("1".to_owned()))]);
+    fixture
+        .task()
+        .expect("the exact owned builder with a complete native witness is admitted");
+    assert_eq!(fixture.activation_count(), 0);
+    assert!(fixture.root.join("state/build-effect").exists());
+    fixture.assert_preserved();
+}
+
+/// A native spec that still holds SYS_ADMIN in any process set is the remount
+/// capability alive. Ordinary auto-build replaces that exact owned builder; the
+/// restricted run refuses it before claim.
+#[test]
+fn colima_native_sys_admin_in_any_set_is_recovered_or_refused_before_claim() {
+    let _lock = crate::contract_test_support::lock_test();
+    for set in [
+        "bounding",
+        "effective",
+        "inheritable",
+        "permitted",
+        "ambient",
+    ] {
+        let mut capabilities = json!({"bounding": NATIVE_DEFAULT_CAPS, "effective": NATIVE_DEFAULT_CAPS, "permitted": NATIVE_DEFAULT_CAPS});
+        capabilities[set] = json!(["CAP_SYS_ADMIN"]);
+        let fixture = Fixture::staged(true, false, "colima");
+        let plan = fixture.stage().expect("a staged source plan");
+        fixture.set_native_spec(json!({"process": {"capabilities": capabilities}}));
+        {
+            let _switch = EnvGuard::set_many(&[(
+                "EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING",
+                Some("1".to_owned()),
+            )]);
+            let error = fixture.task().expect_err(set);
+            assert!(
+                error.contains("refuses an old, writable or mismatched owned builder before claim"),
+                "{set}: {error}"
+            );
+            assert_eq!(fixture.activation_count(), 0, "{set}");
+            assert!(!fixture.root.join("state/build-effect").exists(), "{set}");
+        }
+        fixture
+            .task()
+            .unwrap_or_else(|error| panic!("{set}: {error}"));
+        assert_eq!(fixture.activation_count(), 1, "{set}");
+        assert_eq!(fixture.build_source(), plan.source, "{set}");
+        fixture.assert_preserved();
+    }
+}
+
+/// No positive native witness is no admission: a missing spec, a replaced full
+/// ID, malformed capability data or a failed native read refuses the builder
+/// with its concrete cause, on both the restricted and the ordinary path, and
+/// never replaces it.
+#[test]
+fn colima_native_witness_gaps_refuse_without_replacing_the_builder() {
+    let _lock = crate::contract_test_support::lock_test();
+    // (case, native Spec override, replaced ID digit, forced fake mode, cause)
+    type GapCase = (
+        &'static str,
+        Option<Value>,
+        Option<char>,
+        Option<&'static str>,
+        &'static str,
+    );
+    let cases: [GapCase; 5] = [
+        (
+            "absent_spec",
+            None,
+            None,
+            None,
+            "has no Spec.process.capabilities",
+        ),
+        (
+            "replaced_id",
+            None,
+            Some('c'),
+            None,
+            "different full container ID",
+        ),
+        (
+            "malformed_entry",
+            Some(json!({"process": {"capabilities": {"bounding": ["SYS_ADMIN"]}}})),
+            None,
+            None,
+            "unknown entry",
+        ),
+        (
+            "native_read_fails",
+            None,
+            None,
+            Some("native_fail"),
+            "failed",
+        ),
+        (
+            "missing_bounding",
+            Some(json!({"process": {"capabilities": {"effective": NATIVE_DEFAULT_CAPS}}})),
+            None,
+            None,
+            "no bounding set",
+        ),
+    ];
+    for (case, spec, replaced, mode, reason) in cases {
+        let fixture = Fixture::staged(true, false, "colima");
+        fixture.stage().expect("a staged source plan");
+        match spec {
+            Some(spec) => fixture.set_native_spec(spec),
+            None if case == "absent_spec" => {
+                std::fs::write(fixture.root.join("state/native-spec.json"), "absent").unwrap()
+            }
+            None => {}
+        }
+        if let Some(digit) = replaced {
+            let id = digit.to_string().repeat(64);
+            std::fs::write(fixture.root.join("state/native-id"), id).unwrap();
+        }
+        if let Some(mode) = mode {
+            std::fs::write(fixture.root.join("state/mode"), mode).unwrap();
+        }
+        for required in [true, false] {
+            let _switch = required.then(|| {
+                EnvGuard::set_many(&[(
+                    "EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING",
+                    Some("1".to_owned()),
+                )])
+            });
+            let error = fixture.task().expect_err(case);
+            assert!(
+                error.contains(reason),
+                "{case} (required={required}): {error}"
+            );
+            assert_eq!(
+                fixture.activation_count(),
+                0,
+                "{case} (required={required})"
+            );
+            assert!(!fixture.root.join("state/build-effect").exists(), "{case}");
+        }
+        fixture.assert_preserved();
+    }
 }
 
 fn assert_staged_source_refuses_before_build(case: &str) {

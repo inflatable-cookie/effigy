@@ -304,9 +304,18 @@ and from the previously unscoped primary-checkout spelling, not a per-build
 change. Names never prove ownership: the full-ID, project, service, oneoff,
 running, checkout/scope, working-directory, read-only source bind, exact owned
 mount set (one `/workspace` bind and two cargo cache volumes, nothing else) and
-SYS_ADMIN-drop (CapDrop contains SYS_ADMIN, CapAdd empty, Privileged false)
-checks all stay in force, so a same-spelled impostor or a builder of another checkout's
-source is refused rather than adopted. Artifact paths and the task interface
+SYS_ADMIN-drop checks all stay in force, so a same-spelled impostor or a builder
+of another checkout's source is refused rather than adopted. The drop witness is
+backend-specific. Docker: HostConfig CapDrop contains SYS_ADMIN, CapAdd empty,
+Privileged false. Colima nerdctl: nerdctl's compatibility inspect rebuilds CapDrop
+only from the 14 default capabilities, so a dropped SYS_ADMIN is never listed there
+and the live report reads `CapDrop: []`. The witness is instead the native OCI spec
+of the same full ID (`nerdctl inspect --mode=native`), where CAP_SYS_ADMIN must be
+absent from bounding, effective, permitted, inheritable and ambient. CapAdd must
+be empty and the container unprivileged. `nerdctl exec` inherits the stored spec's
+process sets (only `exec --privileged` rewrites them), so that is the boundary the
+witness observes. A missing, malformed, replaced-ID or failed native read refuses
+the builder without replacing it. Artifact paths and the task interface
 are unchanged.
 
 A refused builder observation names the concrete cause (malformed JSON, a wrong

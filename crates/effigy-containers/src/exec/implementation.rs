@@ -774,10 +774,12 @@ mod legacy_admission_tests {
                     "containerd.io/restart.status": "running",
                 },
             },
+            // The live report: nerdctl's compatibility view rebuilds CapDrop from
+            // the default capability set, so a dropped SYS_ADMIN is never listed.
             "HostConfig": {
                 "Privileged": false,
-                "CapAdd": serde_json::Value::Null,
-                "CapDrop": ["SYS_ADMIN"],
+                "CapAdd": [],
+                "CapDrop": [],
             },
             "NetworkSettings": {
                 "Bridge": "",
@@ -848,7 +850,56 @@ mod legacy_admission_tests {
             record.get("Mounts").and_then(|value| value.as_array()),
             project
         ));
-        assert!(super::builder_remount_capability_dropped(Some(&record)));
+        // Docker's witness cannot be met by the nerdctl compatibility shape...
+        assert!(!super::builder_remount_capability_dropped(Some(&record)));
+        // ...the native OCI spec of the same full ID is the witness that is.
+        let id = record["Id"].as_str().expect("id");
+        assert_eq!(
+            super::native_capability_absent(
+                Some(&record),
+                &native_inspect(id, default_capabilities()),
+                id
+            ),
+            Ok(true)
+        );
+    }
+
+    /// The OCI process capability sets nerdctl stores for the builder. Compose
+    /// `cap_drop: [SYS_ADMIN]` on a container never granted SYS_ADMIN leaves
+    /// these sets at the default 14 capabilities.
+    fn default_capabilities() -> serde_json::Value {
+        let defaults = [
+            "CAP_CHOWN",
+            "CAP_DAC_OVERRIDE",
+            "CAP_FSETID",
+            "CAP_FOWNER",
+            "CAP_MKNOD",
+            "CAP_NET_RAW",
+            "CAP_SETGID",
+            "CAP_SETUID",
+            "CAP_SETFCAP",
+            "CAP_SETPCAP",
+            "CAP_NET_BIND_SERVICE",
+            "CAP_SYS_CHROOT",
+            "CAP_KILL",
+            "CAP_AUDIT_WRITE",
+        ];
+        serde_json::json!({
+            "bounding": defaults,
+            "effective": defaults,
+            "permitted": defaults,
+        })
+    }
+
+    /// One native inspect of `id`, as `nerdctl container inspect --mode=native`
+    /// prints it: the containerd-native record with its OCI `Spec`.
+    fn native_inspect(id: &str, capabilities: serde_json::Value) -> Vec<u8> {
+        serde_json::json!([{
+            "ID": id,
+            "Spec": {"process": {"capabilities": capabilities}},
+        }])
+        .to_string()
+        .into_bytes()
     }
 
     #[test]
@@ -870,7 +921,10 @@ mod legacy_admission_tests {
             record.get("Mounts").and_then(|value| value.as_array()),
             project
         ));
+        // Docker's compatibility record names the drop; without it, refuse.
         let mut record = retained_nerdctl_inspect(project, &checkout, &checkout);
+        record["HostConfig"]["CapDrop"] = serde_json::json!(["SYS_ADMIN"]);
+        assert!(super::builder_remount_capability_dropped(Some(&record)));
         record["HostConfig"]["CapDrop"] = serde_json::json!([]);
         assert!(!super::builder_remount_capability_dropped(Some(&record)));
         record["HostConfig"]["CapDrop"] = serde_json::json!(["SYS_ADMIN"]);
@@ -881,6 +935,102 @@ mod legacy_admission_tests {
         assert!(!super::builder_remount_capability_dropped(Some(&record)));
         record.as_object_mut().expect("record").remove("HostConfig");
         assert!(!super::builder_remount_capability_dropped(Some(&record)));
+    }
+
+    #[test]
+    fn native_witness_refuses_sys_admin_in_any_process_capability_set() {
+        let private = tempfile::tempdir().expect("private checkout");
+        let checkout = private.path().canonicalize().expect("canonical checkout");
+        let project = "effigy-artifact-builder-v1-co-0123456789ab";
+        let record = retained_nerdctl_inspect(project, &checkout, &checkout);
+        let id = record["Id"].as_str().expect("id");
+        // The exec path inherits the stored sets, so any one of them holding
+        // SYS_ADMIN is the remount capability still being available.
+        for set in [
+            "bounding",
+            "effective",
+            "inheritable",
+            "permitted",
+            "ambient",
+        ] {
+            let mut capabilities = default_capabilities();
+            capabilities[set] = serde_json::json!(["CAP_CHOWN", "CAP_SYS_ADMIN"]);
+            assert_eq!(
+                super::native_capability_absent(
+                    Some(&record),
+                    &native_inspect(id, capabilities),
+                    id
+                ),
+                Ok(false),
+                "{set}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_witness_refuses_privilege_and_add_back() {
+        let private = tempfile::tempdir().expect("private checkout");
+        let checkout = private.path().canonicalize().expect("canonical checkout");
+        let project = "effigy-artifact-builder-v1-co-0123456789ab";
+        let id = "80b63d97762b5a4858fe316356c54ac41007ddb19309a88028cf1b41a8613cce";
+        let mut record = retained_nerdctl_inspect(project, &checkout, &checkout);
+        record["HostConfig"]["Privileged"] = serde_json::json!(true);
+        assert_eq!(
+            super::native_capability_absent(
+                Some(&record),
+                &native_inspect(id, default_capabilities()),
+                id
+            ),
+            Ok(false)
+        );
+        let mut record = retained_nerdctl_inspect(project, &checkout, &checkout);
+        record["HostConfig"]["CapAdd"] = serde_json::json!(["SYS_PTRACE"]);
+        assert_eq!(
+            super::native_capability_absent(
+                Some(&record),
+                &native_inspect(id, default_capabilities()),
+                id
+            ),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn native_witness_refuses_missing_malformed_or_replaced_identity() {
+        let private = tempfile::tempdir().expect("private checkout");
+        let checkout = private.path().canonicalize().expect("canonical checkout");
+        let project = "effigy-artifact-builder-v1-co-0123456789ab";
+        let record = retained_nerdctl_inspect(project, &checkout, &checkout);
+        let id = record["Id"].as_str().expect("id");
+        let other = "b".repeat(64);
+        let reject = |output: Vec<u8>, case: &str| {
+            assert!(
+                super::native_capability_absent(Some(&record), &output, id).is_err(),
+                "{case} must refuse"
+            );
+        };
+        reject(
+            native_inspect(&other, default_capabilities()),
+            "replaced id",
+        );
+        reject(b"not json".to_vec(), "non-JSON");
+        reject(b"[]".to_vec(), "no record");
+        reject(
+            serde_json::json!([{"ID": id}]).to_string().into_bytes(),
+            "no Spec",
+        );
+        reject(
+            native_inspect(id, serde_json::json!({"effective": ["CAP_CHOWN"]})),
+            "no bounding set",
+        );
+        let mut scalar = default_capabilities();
+        scalar["effective"] = serde_json::json!("CAP_CHOWN");
+        reject(native_inspect(id, scalar), "scalar set");
+        for entry in ["SYS_ADMIN", "cap_sys_admin", "CAP_Sys_Admin", ""] {
+            let mut capabilities = default_capabilities();
+            capabilities["bounding"] = serde_json::json!(["CAP_CHOWN", entry]);
+            reject(native_inspect(id, capabilities), entry);
+        }
     }
 
     #[test]
@@ -1109,7 +1259,7 @@ pub fn verify_workspace_artifact_builder(
         }
         if !remount_capability_dropped {
             mismatched.push(
-                "SYS_ADMIN dropped (CapDrop contains SYS_ADMIN, CapAdd empty, Privileged false)"
+                "SYS_ADMIN dropped (Docker CapDrop contains SYS_ADMIN, or nerdctl native spec sets exclude CAP_SYS_ADMIN; CapAdd empty, Privileged false)"
                     .to_owned(),
             );
         }
@@ -1147,9 +1297,12 @@ pub struct ObservedWorkspaceArtifactBuilder {
     /// Whether inspect reported exactly the two owned cargo cache volumes plus
     /// the one `/workspace` bind, and nothing else.
     pub mounts_owned: bool,
-    /// Whether inspect reported HostConfig CapDrop contains SYS_ADMIN, CapAdd
-    /// empty, and Privileged false. Observation records a leftover that predates
-    /// the drop so recovery can replace it; it authorizes nothing on its own.
+    /// Whether the builder proves SYS_ADMIN is gone: on Docker, HostConfig
+    /// CapDrop contains SYS_ADMIN; on Colima nerdctl, the same full ID's native
+    /// OCI spec omits CAP_SYS_ADMIN from every process capability set. CapAdd
+    /// must be empty and the container unprivileged either way. Observation
+    /// records a leftover that predates the drop so recovery can replace it; it
+    /// authorizes nothing on its own.
     pub remount_capability_dropped: bool,
 }
 
@@ -1336,13 +1489,15 @@ fn observed_never_started_builder(
             "binding unavailable: the Compose working directory is not this checkout's".to_owned(),
         ));
     }
+    let remount_capability_dropped =
+        remount_capability_witness(repo_root, policy, &identity.id, record, deadline)?;
     Ok(ObservedWorkspaceArtifactBuilder {
         id: identity.id,
         source: checkout,
         never_started: true,
         read_only: source_read_only,
         mounts_owned: true,
-        remount_capability_dropped: builder_remount_capability_dropped(record),
+        remount_capability_dropped,
     })
 }
 
@@ -1366,25 +1521,35 @@ fn builder_cache_volumes_are_owned(
         })
 }
 
-/// Inspect HostConfig proves the remount capability is gone before effects:
-/// SYS_ADMIN is dropped, nothing is added back, and the container is not
-/// privileged. A missing HostConfig is not proof of the drop.
-fn builder_remount_capability_dropped(record: Option<&serde_json::Value>) -> bool {
+/// Whether the compatibility record is unprivileged and adds nothing back.
+/// A missing HostConfig is not proof of either.
+fn host_is_unprivileged_without_add_back(record: Option<&serde_json::Value>) -> bool {
     let Some(host) = record.and_then(|record| record.get("HostConfig")) else {
         return false;
     };
     if host.get("Privileged").and_then(|value| value.as_bool()) != Some(false) {
         return false;
     }
-    let cap_add_empty = match host.get("CapAdd") {
+    match host.get("CapAdd") {
         None | Some(serde_json::Value::Null) => true,
         Some(serde_json::Value::Array(caps)) => caps.is_empty(),
         _ => false,
-    };
-    if !cap_add_empty {
+    }
+}
+
+/// Docker's witness: HostConfig CapDrop names SYS_ADMIN, nothing is added back,
+/// and the container is not privileged. Docker lists the names it was asked to
+/// drop, so a missing HostConfig is not proof of the drop.
+///
+/// nerdctl's compatibility inspect cannot report this: it rebuilds CapDrop from
+/// the default capability set only, and SYS_ADMIN is not in that set. Colima
+/// nerdctl therefore uses [`remount_capability_witness`] instead.
+fn builder_remount_capability_dropped(record: Option<&serde_json::Value>) -> bool {
+    if !host_is_unprivileged_without_add_back(record) {
         return false;
     }
-    host.get("CapDrop")
+    record
+        .and_then(|record| record.pointer("/HostConfig/CapDrop"))
         .and_then(|value| value.as_array())
         .is_some_and(|caps| {
             caps.iter().any(|cap| {
@@ -1394,6 +1559,116 @@ fn builder_remount_capability_dropped(record: Option<&serde_json::Value>) -> boo
                 })
             })
         })
+}
+
+/// Whether the exact owned builder proves the remount capability is gone on the
+/// backend that runs it.
+///
+/// On Colima nerdctl the witness is the stored OCI spec of the same full ID. Its
+/// process capability sets are what the builder runs with, and `nerdctl exec`
+/// copies that stored `Process` (only `--privileged` rewrites the sets), so the
+/// restriction the exec path inherits is the one observed here. Compose
+/// `cap_drop` reaches the spec through `WithDroppedCapabilities`, which removes
+/// the name from bounding, effective, permitted and inheritable.
+///
+/// A missing, malformed, or other-identity native record is an error; only a
+/// complete record that still holds CAP_SYS_ADMIN is `Ok(false)`.
+fn remount_capability_witness(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    id: &str,
+    record: Option<&serde_json::Value>,
+    deadline: Instant,
+) -> Result<bool, ContainerExecError> {
+    const CONTEXT: &str = "inspect workspace builder";
+    if !matches!(
+        crate::compose::resolve_compose_backend_for_repo(repo_root, policy),
+        crate::compose::ComposeBackend::ColimaNerdctl
+    ) {
+        return Ok(builder_remount_capability_dropped(record));
+    }
+    let remaining = super::process::remaining_until_deadline(deadline, CONTEXT)?;
+    let output = run_runtime_command_capture_for_policy_with_absolute_deadline(
+        repo_root,
+        policy,
+        &inspect_native_spec_args(id),
+        CONTEXT,
+        deadline,
+        remaining,
+    )?;
+    native_capability_absent(record, &output.stdout, id)
+        .map_err(|reason| ContainerExecError::refused(CONTEXT, reason))
+}
+
+/// Decide the nerdctl witness from one native inspect of the full `id`.
+///
+/// OCI omits an empty capability set (`omitempty`), so an absent set reads as
+/// empty. An absent `bounding` set, a missing `process` or `capabilities`
+/// object, a non-list set or any entry that is not an upper-case `CAP_` name is
+/// malformed. The compatibility record must still be unprivileged with nothing
+/// added back.
+fn native_capability_absent(
+    record: Option<&serde_json::Value>,
+    native_output: &[u8],
+    id: &str,
+) -> Result<bool, String> {
+    let raw: serde_json::Value = serde_json::from_slice(native_output)
+        .map_err(|error| format!("native inspect output is not JSON: {error}"))?;
+    let native = raw
+        .as_array()
+        .and_then(|records| records.first())
+        .ok_or_else(|| "native inspect returned no container record".to_owned())?;
+    if native.get("ID").and_then(|value| value.as_str()) != Some(id) {
+        return Err(
+            "native inspect reports a different full container ID than the verified binding"
+                .to_owned(),
+        );
+    }
+    let capabilities = native
+        .pointer("/Spec/process/capabilities")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| "native inspect has no Spec.process.capabilities".to_owned())?;
+    if !capabilities.contains_key("bounding") {
+        return Err("native Spec.process.capabilities has no bounding set".to_owned());
+    }
+    let mut absent = true;
+    for set in [
+        "bounding",
+        "effective",
+        "inheritable",
+        "permitted",
+        "ambient",
+    ] {
+        let Some(value) = capabilities.get(set) else {
+            continue;
+        };
+        let names = value
+            .as_array()
+            .ok_or_else(|| format!("native capability set `{set}` is not a list"))?;
+        for name in names {
+            let name = name
+                .as_str()
+                .filter(|name| {
+                    name.starts_with("CAP_")
+                        && name
+                            .bytes()
+                            .all(|byte| byte.is_ascii_uppercase() || byte == b'_')
+                })
+                .ok_or_else(|| format!("native capability set `{set}` holds an unknown entry"))?;
+            absent &= name != "CAP_SYS_ADMIN";
+        }
+    }
+    Ok(absent && host_is_unprivileged_without_add_back(record))
+}
+
+/// Native inspect of one full immutable ID. The compatibility record is only
+/// the identity source; this read never follows a name.
+fn inspect_native_spec_args(id: &str) -> [OsString; 3] {
+    [
+        OsString::from("inspect"),
+        OsString::from("--mode=native"),
+        OsString::from(id),
+    ]
 }
 
 struct InspectedWorkspaceBuilder {
@@ -1463,7 +1738,8 @@ fn inspect_workspace_artifact_builder(
         }),
     );
     let mounts_owned = builder_cache_volumes_are_owned(mounts, &policy.project_name);
-    let remount_capability_dropped = builder_remount_capability_dropped(record);
+    let remount_capability_dropped =
+        remount_capability_witness(repo_root, policy, binding.id(), record, deadline)?;
     Ok(InspectedWorkspaceBuilder {
         ownership,
         binding,
