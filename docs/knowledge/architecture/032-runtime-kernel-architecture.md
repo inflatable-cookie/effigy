@@ -35,7 +35,7 @@ Dependency rules, enforced by `qa:architecture`:
 
 `rusqlite` is already a workspace dependency (the kernel pins it directly since
 v0.15 removed the `effigy-codegraph` crate). The kernel API is synchronous. Engines that use Tokio call it from blocking
-contexts.
+contexts. All three direct declarations use rusqlite 0.41.1 with `bundled`, resolving to libsqlite3-sys 0.39.1 and SQLite 3.54.1. This is the patched bundle for [RUSTSEC-2026-0459](https://github.com/RustSec/advisory-db/blob/6eb98d98f50780211f7cb6d5b252d13566b9c0c2/crates/libsqlite3-sys/RUSTSEC-2026-0459.md); store schema, migrations and WAL behavior are unchanged.
 
 ## Modules
 

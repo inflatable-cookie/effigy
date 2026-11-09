@@ -8,6 +8,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Update bundled SQLite to 3.54.1 through rusqlite 0.41.1 and libsqlite3-sys 0.39.1, fixing RUSTSEC-2026-0459 (CVE-2026-119375). The store schema, migrations and WAL policy are unchanged.
+
 - Recognize Docker 29.8.0's exact daemon-wrapped full-ID not-found response in the
   receipt-bound Desktop observation. Classification requires the source-qualified stdout
   and stderr bytes, a waited exit 1 and a previously matched engine identity (effigy#795).
