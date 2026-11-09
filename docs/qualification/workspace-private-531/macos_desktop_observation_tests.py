@@ -271,7 +271,10 @@ class Fixture(unittest.TestCase):
         stderr = obs.NOT_FOUND_PREFIX + CID + '\n' if stderr is None else stderr
         if inspect_exit is None:
             inspect_exit = 0 if scripted else 1  # the default answer is the supported absence
-        lines = ['#!/bin/sh', f"printf '%s\\n' \"$*\" >> '{self.argv_log}'"]
+        # The lull keeps the fake from exiting instantly: a real CLI lives far longer, and on
+        # macOS an exited child has already left its process group, so the spawn-time identity
+        # probe would race a zero-length child and honestly record unknown.
+        lines = ['#!/bin/sh', f"printf '%s\\n' \"$*\" >> '{self.argv_log}'", 'sleep 0.2']
         if prefix:
             lines.append(prefix)
         lines += [
