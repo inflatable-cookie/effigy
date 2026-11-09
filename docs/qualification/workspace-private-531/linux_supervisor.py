@@ -151,6 +151,19 @@ def run_argv(nonce, payload_user, cwd, timeout, argv):
     return ['systemd-run'] + flags + ['--'] + list(argv)
 
 
+def _candidate_confined_run_argv(nonce, payload_user, cwd, timeout, argv):
+    """Fixed prospective child configuration, not an admission or production entry.
+
+    The service manager must install both properties before exec. A future caller
+    must also prove the supported systemd/kernel versions, observe that setup and
+    exclude outside writers. Merely constructing this argv proves none of those.
+    """
+    command = run_argv(nonce, payload_user, cwd, timeout, argv)
+    separator = command.index('--')
+    return command[:separator] + ['--property=PrivateUsers=identity',
+                                  '--property=NoNewPrivileges=yes'] + command[separator:]
+
+
 def show_argv(unit):
     return ['systemctl', 'show', unit, '--property=' + PROPERTIES]
 

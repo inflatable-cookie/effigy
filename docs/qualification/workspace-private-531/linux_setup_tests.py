@@ -262,6 +262,18 @@ def request(stage, **changes):
 
 
 class SupervisorArgvChecks(unittest.TestCase):
+    def test_candidate_confinement_properties_are_fixed_before_payload(self):
+        payload = ['/bin/echo', '--property=PrivateUsers=no']
+        ordinary = supervisor.run_argv(NONCE, 'effigy531', CWD, 60, payload)
+        candidate = supervisor._candidate_confined_run_argv(NONCE, 'effigy531', CWD, 60, payload)
+        separator = candidate.index('--')
+        self.assertEqual(candidate[:separator], ordinary[:ordinary.index('--')] + [
+            '--property=PrivateUsers=identity', '--property=NoNewPrivileges=yes'])
+        self.assertEqual(candidate[separator:], ['--'] + payload)
+        self.assertNotIn('--property=PrivateUsers=identity', ordinary)
+        with self.assertRaises(Refusal):
+            supervisor._candidate_confined_run_argv(NONCE, 'root', CWD, 60, payload)
+
     def test_transient_service_argv_has_no_scope_collect_wait_or_user_manager(self):
         argv = supervisor.run_argv(NONCE, 'effigy531', CWD, 60, supervisor.gate_argv('/g', ['/bin/true']))
         for flag in ('--service-type=exec', '--property=ExitType=cgroup', '--property=KillMode=control-group',
