@@ -1064,13 +1064,12 @@ def activation_records(count=None):
     for index, step in enumerate(bound.activation_plan()[:count]):
         name = step['name']
         record = {'name': name, 'disposition': 'exited', 'waited_exit': 0,
-                  'boot_id': RESCUE_BOOT if name in bound.RESCUE_BOUNDARIES or name in
-                  ('snapshot', 'quiesce') else BOOT_ID}
+                  'boot_id': None if name == 'snapshot' else (RESCUE_BOOT if name in bound.RESCUE_BOUNDARIES else (BOOT_ID if name == 'quiesce' else OTHER_BOOT))}
         if name == 'quiesce':
-            record.update(rows_idle=True, writers_stopped=True)
+            record.update(rows_idle=True, writers_stopped=True, vm_id=bound.ACTIVATION_VM, preboot_id=BOOT_ID)
         elif name == 'snapshot':
             record.update(snapshot_id='{4d475daf-8aa1-497a-9a38-355f21fcd867}', space_bytes=64 << 30,
-                          quiescent=True)
+                          quiescent=True, vm_id=bound.ACTIVATION_VM, preboot_id=BOOT_ID)
         elif name == 'rescue-boot':
             record.update(medium_sha256=bound.ACTIVATION_MEDIUM['iso_sha256'],
                           tools={'tune2fs': bound.OFFLINE_TOOL_VERSION, 'e2fsck': bound.OFFLINE_TOOL_VERSION},
@@ -1199,6 +1198,24 @@ class ActivationRouteChecks(unittest.TestCase):
                 records = activation_records()
                 target = next(item for item in records if item['name'] == name)
                 target.update(change)
+                with self.assertRaises(Refusal):
+                    bound.inspect_activation_progress(records)
+
+    def test_pre_rescue_and_returned_boot_continuity(self):
+        for name, changes in (
+            ('quiesce', {'vm_id': 'other'}),
+            ('quiesce', {'preboot_id': OTHER_BOOT}),
+            ('snapshot', {'vm_id': 'other'}),
+            ('snapshot', {'preboot_id': OTHER_BOOT}),
+            ('snapshot', {'boot_id': BOOT_ID}),
+            ('rescue-boot', {'boot_id': BOOT_ID}),
+            ('return-boot', {'boot_id': BOOT_ID}),
+            ('quota', {'boot_id': BOOT_ID}),
+            ('enforce', {'boot_id': BOOT_ID}),
+        ):
+            with self.subTest(name=name, changes=changes):
+                records = activation_records()
+                next(item for item in records if item['name'] == name).update(changes)
                 with self.assertRaises(Refusal):
                     bound.inspect_activation_progress(records)
 

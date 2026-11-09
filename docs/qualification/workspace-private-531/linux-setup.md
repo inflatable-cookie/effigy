@@ -562,7 +562,7 @@ in `linux_allocation_bound.ACTIVATION_MEDIUM`):
 | Product | `ubuntu-26.04.1-live-server-arm64.iso` (aarch64, EFI-bootable, casper 26.04.2 + subiquity snap) | Vended by the Ubuntu release metadata |
 | ISO SHA-256 | `af78753c94b924c85c4964c670692a853f7c80299a4064e317edad95462e3168` | Vended in the signed `SHA256SUMS` (SHA-256 `0daa2484…`, 2691 bytes) |
 | ISO size | 3,076,861,952 bytes (2.87 GiB) | Vended `Content-Length`; **exceeds the earlier prospective 2 GiB acquisition ceiling** |
-| Publisher signature | detached `SHA256SUMS.gpg`, SHA-256 `bfa9b6e8…`, 833 bytes, signature packet key id `D94AA3F0EFE21092`, digest algo 10 | Recorded. Full-fingerprint verification needs the publisher key, which is **not** imported globally here; it is a separate bounded step |
+| Publisher signature | detached `SHA256SUMS.gpg`, SHA-256 `bfa9b6e8…`, 833 bytes, signature packet key id `D94AA3F0EFE21092`, digest algo 10 | Recorded. Verified against the full Ubuntu publisher fingerprint in an owned private keyring; see below |
 | Tools | `e2fsprogs 1.47.2-3ubuntu4` (ship `e2fsck`/`tune2fs`) | Vended in the release manifest (SHA-256 `ad43a500…`), and **the same upstream release as the pinned v1.47.2 sources** — the version gate the offline plan requires |
 | Attachment | `set <vm> --device-set cdrom0 --image <absolute iso>`, `--device-connect cdrom0` | Vendor CLI help text of the installed Desktop 27.1.0 build (`prlctl`, already pinned to `2f61a1c6…`) |
 | Boot | `set <vm> --device-bootorder "cdrom0 hdd0"`, `start <vm>`; `--select-boot-device on` and `--bios-type efi-arm64` exist for the same purpose | Same vendor CLI help text |
@@ -577,6 +577,20 @@ limitation: the fallbacks are a second bounded metadata read of a different offi
 image, or a planner decision to leave the native root unchanged. No `prlctl`, SDK, SSH or guest
 command is invented beyond the help text above, and no boot, attach, snapshot or console action runs
 here.
+
+**Publisher verification (2026-11-09).** The original release metadata and detached signature,
+manifest, public key and verifier streams are retained in `ubuntu-2604-metadata/`. The canonical
+metadata endpoint is `https://cdimage.ubuntu.com/ubuntu/releases/26.04/release/`: the earlier path
+redirects there. The signed sums, signature and manifest match the hashes above. The Ubuntu
+[image verification documentation](https://documentation.ubuntu.com/security/software-integrity/image-verification/)
+publishes the full fingerprint `843938DF228D22F7B3742BC0D94AA3F0EFE21092`. The public key fetched
+from `keyserver.ubuntu.com` has SHA-256 `337fa0013bb263aebcef98fa7b7af18e186d89565a5019f7295beb42ebee5290`.
+GnuPG 2.5.24 imported it into an owned private keyring and `gpgv` verified the detached signature,
+returning zero and the full fingerprint in `VALIDSIG`. This verifies the signed checksum metadata;
+it does not verify ISO bytes, rescue tools or a boot. The canonical ISO endpoint reports 3,076,861,952
+bytes. Future acquisition is limited to one exact pinned file on an exclusive removable 4 GiB
+fixture and an absolute 1,800 seconds including cleanup. This changes no native row or Stage2 bound.
+No payload was fetched.
 
 **Offline activation, source-qualified.** For a future verified v1.47.2 toolset, the candidate offline sequence is `/sbin/e2fsck -f -n /dev/sda2`, `/sbin/tune2fs -O project -Q prjquota /dev/sda2`, `/sbin/tune2fs -E mount_opts=prjquota /dev/sda2`, then `/sbin/e2fsck -f -n /dev/sda2`, with the root unmounted throughout. The extended mount-option command replaces the whole stored option string: it is permitted only if a fresh, complete v1.47.2 `dumpe2fs` original proves that string empty; a nonempty or unknown string refuses. It does not replace the separate default mount-option bits. The [v1.47.2 superblock printer source](https://git.kernel.org/pub/scm/fs/ext2/e2fsprogs.git/plain/lib/e2p/ls.c?h=v1.47.2) has SHA-256 `692a03d286e7a2e7349af6568e3d582f74ed13b353dbf75961682fe2753f2f1d` and prints the extended option line only when nonempty. The historical 747 filesystem original, SHA-256 `27dcdc02341f7a890e32f2eb9066d0fdf3f4ed5bf8e461d968e5a21c09cc3b41`, has no such line; that is not a fresh precondition. Boot arguments or later mounts may override stored options, and the v6.1 kernel may ignore an unparseable stored string, so neither the command exit nor the string alone proves enforcement.
 
