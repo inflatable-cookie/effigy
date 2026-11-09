@@ -1346,6 +1346,38 @@ class RescueInputChecks(unittest.TestCase):
         with self.assertRaises(rescue.Refusal):
             rescue_proof.plan(evidence, evidence, 'a' * 40, 'b' * 64)
 
+    def test_proof_dispatch_uses_fixed_commands_and_failed_fixture_cannot_issue_receipt(self):
+        fixture = tempfile.mkdtemp(prefix='rescue-dispatch-fixture-')
+        evidence = tempfile.mkdtemp(prefix='rescue-dispatch-evidence-')
+        sources = {'fixture-source': '0' * 64}
+        calls = []
+        status = ('[GNUPG:] VALIDSIG ' + rescue.FINGERPRINT + ' 2026-08-27 1 0 4 0 1 10 00 '
+                  + rescue.FINGERPRINT + '\n')
+        def fake_stage(root, argv, *args, **kwargs):
+            calls.append(argv)
+            if len(calls) == 1:
+                Path(argv[7]).write_bytes(b'fixture keyring')
+            elif len(calls) == 2:
+                Path(root, 'stdout').write_text(status)
+            else:
+                return {'disposition': 'failed', 'waited_exit': 1}
+            return {'disposition': 'exited', 'waited_exit': 0}
+        def fake_git(argv, **kwargs):
+            return b'a' * 40 + b'\n' if 'rev-parse' in argv else b''
+        with patch.object(rescue_proof, 'source_inputs', return_value=sources), \
+                patch.object(rescue_proof.stage, 'run_stage', side_effect=fake_stage), \
+                patch.object(rescue_proof.subprocess, 'check_output', side_effect=fake_git):
+            request = rescue_proof.plan(fixture, evidence, 'a' * 40, 'b' * 64)
+            with self.assertRaisesRegex(rescue.Refusal, 'acquisition failed'):
+                rescue_proof.execute(request, evidence + '/request', 'c' * 64, time.monotonic() + 60)
+        self.assertEqual(calls[0][:3], [rescue_proof.GPG, '--no-options', '--homedir'])
+        self.assertEqual(calls[1][:4], [rescue_proof.GPGV, '--keyring', calls[0][7], '--status-fd'])
+        self.assertEqual(calls[2][:5], [request['python'], '-I', '-B', '-c', rescue_proof.CHILD])
+        self.assertEqual(calls[2][6], request['destination'])
+        occurrence = Path(evidence, 'rescue-' + 'b' * 64)
+        self.assertFalse((occurrence / 'result.json').exists())
+        self.assertEqual(os.listdir(fixture), [])
+
     def test_bounded_transport_refuses_redirect_encoding_truncation_and_overflow(self):
         data = b'fixture'
         digest = hashlib.sha256(data).hexdigest()
