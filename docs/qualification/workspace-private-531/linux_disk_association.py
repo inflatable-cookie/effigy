@@ -14,7 +14,7 @@ which premises it establishes:
   config        the registered VM has exactly one hard disk: hdd0, SATA index 0, the reviewed device
                 Uuid, enabled and connected, image-backed (not passthrough, not remote); every Hardware
                 child is a reviewed tag, and no element outside Hdd and CdRom carries a block-capable name
-                at any depth; USB holds only the reviewed virtual camera; CD-ROM devices are counted and not
+                at any depth; USB holds exactly one device, the retained camera, every field exact; the connect history names only the reviewed virtual devices; CD-ROM devices are counted and not
                 treated as disks
   descriptor    the descriptor bytes select the reviewed disk UID, the top, the chain and every extent
   guest_blocks  the guest has exactly one whole disk, /dev/sda, non-removable and on the platform ATA
@@ -67,8 +67,23 @@ HDD_REVIEWED_FIELDS = (('Enabled', '1'), ('Connected', '1'), ('Remote', '0'), ('
 BLOCK_WORDS = ('hdd', 'cdrom', 'floppy', 'disk', 'scsi', 'sata', 'nvme', 'storage', 'optical', 'block', 'blk',
                'mass', 'ata')
 BLOCK_PREFIXES = ('ide',)
-# The reviewed USB content: the one virtual camera, and only virtual devices in the connect history.
-USB_CAMERA = {'EmulatedType': '3', 'UsbType': '2', 'SystemName': 'VIRTUAL@UVC@'}
+# The reviewed USB device: the retained virtual camera, every field exact. Its SystemName carries a host camera
+# identifier, so another suffix is a different device and refuses. Taken from the 747 retained registered config.
+USB_CAMERA_RECORD = {
+    'Enabled': '1', 'Connected': '1', 'EmulatedType': '3', 'UsbType': '2',
+    'SystemName': 'VIRTUAL@UVC@|203a|fff9|high|--|6C707041-05AC-0011-0007-000000000001',
+    'UserFriendlyName': 'Virtual Video Camera', 'Remote': '0', 'AutoConnect': '1', 'ConnectReason': '0',
+    'DeviceDescription': '',
+}
+# The connect-history names the retained config carries. Only these virtual devices may appear; Location and
+# Timestamp vary and are not identity.
+USB_HISTORY_NAMES = frozenset({
+    'VIRTUAL@MOUSE@|203a|fffc|full|--|PW3.0',
+    'VIRTUAL@KEYBOARD@|203a|fffb|full|--|PW3.0',
+    'VIRTUAL@UVC@|203a|fff9|high|--|98BA9681-B85F-4A7F-A15E-9AB9CDBF5350',
+    'VIRTUAL@UVC@|203a|fff9|high|--|769D7766-AD2D-4FBA-9418-1F1A00000001',
+    'VIRTUAL@UVC@|203a|fff9|high|--|6C707041-05AC-0011-0007-000000000001',
+})
 MAX_CONFIG_BYTES = 1024 * 1024
 PREMISES = ('mechanism', 'host_read', 'config', 'descriptor', 'guest_blocks', 'serial')
 UNSUPPORTED = ('unsupported controller-to-guest disk association: no source-verified host read of the '
@@ -159,14 +174,28 @@ def _check_hardware_content(hardware):
             low = node.tag.lower()
             if any(word in low for word in BLOCK_WORDS) or low.startswith(BLOCK_PREFIXES):
                 raise Refusal('config %s carries a block-capable element %s' % (child.tag, node.tag))
-    for usb in hardware.findall('USB'):
-        if (_text(usb, 'EmulatedType', 'USB') != USB_CAMERA['EmulatedType']
-                or _text(usb, 'UsbType', 'USB') != USB_CAMERA['UsbType']
-                or not _text(usb, 'SystemName', 'USB').startswith(USB_CAMERA['SystemName'])):
-            raise Refusal('config USB device is not the reviewed virtual camera; a USB disk or other device refuses')
+    usb = hardware.findall('USB')
+    if len(usb) != 1:
+        raise Refusal('config has %d USB devices; the reviewed VM has exactly one, the virtual camera' % len(usb))
+    _check_exact_record(usb[0], USB_CAMERA_RECORD, 'USB')
+    if len(hardware.findall('UsbConnectHistory')) > 1:
+        raise Refusal('config has more than one USB connect history section')
     for port in hardware.findall('UsbConnectHistory/USBPort'):
-        if not _text(port, 'SystemName', 'USBPort').startswith('VIRTUAL@'):
-            raise Refusal('config USB connect history names a non-virtual device')
+        if set(child.tag for child in port) - {'Location', 'SystemName', 'Timestamp'}:
+            raise Refusal('config USB connect history entry carries an unreviewed field')
+        if _text(port, 'SystemName', 'USBPort') not in USB_HISTORY_NAMES:
+            raise Refusal('config USB connect history names a device outside the reviewed set')
+    if len(hardware.findall('CdRom')) != 1:
+        raise Refusal('config has %d optical devices; the reviewed VM has exactly one' % len(hardware.findall('CdRom')))
+
+
+def _check_exact_record(node, record, where):
+    """Every field of the node is in the record, once, with the reviewed value; nothing extra and nothing missing."""
+    if sorted(child.tag for child in node) != sorted(record):
+        raise Refusal('config %s fields differ from the reviewed record (extra, missing or repeated)' % where)
+    for tag, value in record.items():
+        if (node.findtext(tag) or '') != value:
+            raise Refusal('config %s %s is not the reviewed value' % (where, tag))
 
 
 def _check_config(association):

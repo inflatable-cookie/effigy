@@ -307,7 +307,8 @@ Controller-to-guest association is a fail-closed verifier in `linux_disk_associa
 - `config`: exactly one `Hdd` (hdd0, SATA index 0, reviewed device Uuid) that is enabled, connected, not passthrough,
   not remote, and `DiskType` 1. Every `Hardware` child is a reviewed tag. No element outside `Hdd` and `CdRom` carries
   a block-capable name at any depth (`Hdd`, `Disk`, `Scsi`, `Sata`, `VirtIOBlk`, ...). USB holds only the reviewed
-  virtual camera, and the connect history names only `VIRTUAL@` devices. `CdRom` is counted, not treated as a disk.
+  camera record (every field exact, `SystemName` included), and the connect history names only the five retained
+  virtual devices. The config has exactly one `USB` device and one `CdRom`; `CdRom` is counted, not treated as a disk.
 - `descriptor`: selected top, chain and every extent, from the descriptor bytes.
 - `guest_blocks`: exactly one whole disk, `/dev/sda`, non-removable, on the platform ATA controller
   `/sys/devices/platform/PRL4010:00/ata…`, with the reviewed root partition on it. Loop and ROM are classified by
@@ -324,7 +325,7 @@ its meaning and numeric value. Anything else is observed in the retained config 
 | `Hdd` `Remote` | 0 | `PrlVmDev_IsRemote` exported. Meaning not fetched. Observed. |
 | `Hdd` `DiskType` | 1 | Numeric enum sourced (C API v17, `_PRL_HARD_DISK_INTERNAL_FORMAT`): `PHD_PLAIN_HARD_DISK` = 0, `PHD_EXPANDING_HARD_DISK` = 1. So the retained disk is expanding, not plain. The XML-to-enum mapping is inferred. |
 | `Hdd` `InterfaceType` | 2 (SATA) | Not numerically sourced. The product CLI names `sata`, `ide`, `scsi` for `--iface`. `PrlVmDev_GetIfaceType` uses `PRL_MASS_STORAGE_INTERFACE_TYPE`, whose values were not located. |
-| USB `EmulatedType` 3, `UsbType` 2, `SystemName` `VIRTUAL@UVC@` | reviewed camera | Not numerically sourced. The `VIRTUAL@` prefix is observed. |
+| USB `EmulatedType` 3, `UsbType` 2, `SystemName` (full retained string) | reviewed camera, every field exact | Not numerically sourced. The whole record and the five history names are observed in the retained config. |
 | `CdRom` `Passthrough` 1 | not a disk | Observed. A passthrough optical drive is not a disk. The guest's `sr0` is ROM and refuses as a disk under `guest_blocks`. |
 | `Hardware` child tags (17) | closed set | Observed in the retained config. The element names exist in `libPrlXmlModel.1.dylib`. |
 

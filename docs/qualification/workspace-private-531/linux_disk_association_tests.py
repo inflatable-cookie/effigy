@@ -46,8 +46,16 @@ TEST_SUPPORTED = frozenset({TEST_MECHANISM})
 RETAINED_HDD_FLAGS = {'Enabled': '1', 'Connected': '1', 'Remote': '0', 'Passthrough': '0', 'DiskType': '1'}
 
 
+# The retained virtual camera, every field, as the 747 registered config carries it. Literal, not the module's.
+RETAINED_USB_CAMERA = ('<USB><Enabled>1</Enabled><Connected>1</Connected><EmulatedType>3</EmulatedType>'
+                       '<SystemName>VIRTUAL@UVC@|203a|fff9|high|--|6C707041-05AC-0011-0007-000000000001</SystemName>'
+                       '<UserFriendlyName>Virtual Video Camera</UserFriendlyName><Remote>0</Remote>'
+                       '<AutoConnect>1</AutoConnect><ConnectReason>0</ConnectReason>'
+                       '<DeviceDescription></DeviceDescription><UsbType>2</UsbType></USB>')
+
+
 def config_xml(vm=VM, index='0', interface='2', system='harddisk1.hdd', uuid=DEVICE_UUID, extra='', tail='',
-               **flags):
+               usb=RETAINED_USB_CAMERA, **flags):
     """A registered-config excerpt in the retained shape: one Hdd under Hardware, one CdRom.
 
     Keyword flags override the Hdd's retained flags, for example Passthrough='1' for a physical disk. `tail` is
@@ -58,7 +66,7 @@ def config_xml(vm=VM, index='0', interface='2', system='harddisk1.hdd', uuid=DEV
             f'<Hardware><CdRom id="0"><Index>0</Index><Enabled>1</Enabled><Connected>0</Connected>'
             f'<InterfaceType>2</InterfaceType><Passthrough>1</Passthrough></CdRom>'
             f'<Hdd id="1"><Uuid>{uuid}</Uuid><Index>{index}</Index><InterfaceType>{interface}</InterfaceType>'
-            f'<SystemName>{system}</SystemName>{flag_xml}</Hdd>{extra}</Hardware>{tail}</ParallelsVirtualMachine>').encode()
+            f'<SystemName>{system}</SystemName>{flag_xml}</Hdd>{usb}{extra}</Hardware>{tail}</ParallelsVirtualMachine>').encode()
 
 
 def host_read(**over):
@@ -112,6 +120,9 @@ class DiskAssociationControls(unittest.TestCase):
         self.assertEqual(table(association, supported, pins)[premise][0], 'refuse', table(association, supported, pins))
         with self.assertRaises(Refusal):
             dal.verify(association, supported, pins)
+        # The production integration, with the same pins: the gate must refuse too.
+        with mock.patch.object(dal, 'PINS', pins), self.assertRaises(Refusal):
+            setup.verify_disk_association(association, supported)
 
     def test_production_gate_refuses_the_complete_candidate(self):
         self.assertEqual(dal.PINS, {})
@@ -232,11 +243,37 @@ class DiskAssociationControls(unittest.TestCase):
                 self.assertRefusedAt('config', valid_association(config=config_xml(extra=extra)))
 
     def test_reviewed_usb_camera_and_virtual_history_pass_config(self):
-        extra = ('<USB><Enabled>1</Enabled><Connected>1</Connected><EmulatedType>3</EmulatedType><UsbType>2</UsbType>'
-                 '<SystemName>VIRTUAL@UVC@|203a|fff9|high|--|6C707041</SystemName></USB>'
-                 '<UsbConnectHistory><USBPort><SystemName>VIRTUAL@MOUSE@|203a|fffc|full|--|PW3.0</SystemName>'
-                 '</USBPort></UsbConnectHistory>')
-        self.assertEqual(table(valid_association(config=config_xml(extra=extra)))['config'][0], 'pass')
+        history = ('<UsbConnectHistory><USBPort><Location>03000000</Location>'
+                   '<SystemName>VIRTUAL@MOUSE@|203a|fffc|full|--|PW3.0</SystemName><Timestamp>1794172717586</Timestamp>'
+                   '</USBPort><USBPort><SystemName>VIRTUAL@UVC@|203a|fff9|high|--|6C707041-05AC-0011-0007-000000000001'
+                   '</SystemName></USBPort></UsbConnectHistory>')
+        association = valid_association(config=config_xml(extra=history))
+        self.assertEqual(table(association)['config'][0], 'pass')
+        with mock.patch.object(dal, 'PINS', TEST_PINS):
+            self.assertEqual(setup.verify_disk_association(association, TEST_SUPPORTED)['serial'], SERIAL)
+
+    def test_second_or_altered_usb_camera_refuses_config_through_the_integration(self):
+        """Both counts are one for the disk; the USB device is what differs. Each shape refuses at config."""
+        second_matching = RETAINED_USB_CAMERA
+        second_other_suffix = RETAINED_USB_CAMERA.replace('6C707041-05AC-0011-0007-000000000001', 'AAAAAAAA-0000-0000-0000-000000000002')
+        altered_suffix_only = RETAINED_USB_CAMERA.replace('6C707041-05AC-0011-0007-000000000001', 'AAAAAAAA-0000-0000-0000-000000000002')
+        extra_child = RETAINED_USB_CAMERA.replace('</USB>', '<Serial>X</Serial></USB>')
+        missing_field = RETAINED_USB_CAMERA.replace('<ConnectReason>0</ConnectReason>', '')
+        for label, usb, extra in (
+                ('second matching camera', RETAINED_USB_CAMERA, second_matching),
+                ('second camera, other suffix', RETAINED_USB_CAMERA, second_other_suffix),
+                ('single camera, altered suffix', altered_suffix_only, ''),
+                ('camera with an extra field', extra_child, ''),
+                ('camera with a missing field', missing_field, '')):
+            with self.subTest(label):
+                association = valid_association(config=config_xml(usb=usb, extra=extra))
+                self.assertEqual(table(association)['guest_blocks'][0], 'pass')
+                self.assertRefusedAt('config', association)
+
+    def test_usb_history_name_outside_the_reviewed_set_refuses(self):
+        history = ('<UsbConnectHistory><USBPort><SystemName>VIRTUAL@UVC@|203a|fff9|high|--|NOT-REVIEWED</SystemName>'
+                   '</USBPort></UsbConnectHistory>')
+        self.assertRefusedAt('config', valid_association(config=config_xml(extra=history)))
 
     def test_bare_count_of_one_is_not_the_disk(self):
         """Both sides count one, so a counting heuristic accepts. The host source is not an image-backed disk."""
