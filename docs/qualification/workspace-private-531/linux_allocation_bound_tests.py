@@ -7,6 +7,9 @@ mount, quota, tune2fs, account or service is touched. A passing control is sourc
 """
 import ctypes
 import hashlib
+import inspect
+import io
+import json
 import os
 import shutil
 import struct
@@ -14,6 +17,7 @@ import sys
 import tempfile
 import unittest
 import uuid
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -732,6 +736,483 @@ class ProductionPathChecks(unittest.TestCase):
         self.assertIn('allocation facts are incomplete', reason)
         with self.assertRaisesRegex(Refusal, 'allocation facts are incomplete'):
             bound.verify(render(), LIMIT, {}, {MECH})
+
+
+class ProjectAssignmentChecks(unittest.TestCase):
+    """The fixed project-assignment role, run through the uninjected production dispatcher.
+
+    Only the kernel and transport boundaries are faked: the subprocess runner, quotactl and the two
+    fsxattr ioctls. Approval consumption, request validation, the role body, the retained witness, its
+    admission and the plan's expectation are the production code paths.
+    """
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix='project-assign-', dir=os.environ.get('TMPDIR')))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.base = self.root / 'BASE'
+        self.base.mkdir()
+        self.approvals = self.root / 'approvals'
+        self.approvals.mkdir(mode=0o700)
+        self.attributes = {}
+        self.sets = []
+        info = self.base.stat()
+        self.device = '%d:%d' % (os.major(info.st_dev), os.minor(info.st_dev))
+        self.mount_source = bound.ROOT_DEVICE
+        self.features = 'has_journal ext_attr 64bit project quota'
+        self.quota = {'fmt': 4, 'fmt_rc': 0, 'rc': 0, 'cur': 0, 'curinodes': 0,
+                      'bhard': 0, 'bsoft': 0, 'ihard': 0, 'isoft': 0}
+        self.during_set = None
+        patchers = [patch.object(supervisor, 'PROJECT_ROOT', str(self.base)),
+                    patch.object(bound, 'PROJECT_ROOT', str(self.base)),
+                    patch.object(supervisor, '_subprocess_runner', self.runner),
+                    patch.object(supervisor.QuotaOps, 'read', lambda ops_self, path: BOOT_ID + '\n'),
+                    patch.object(supervisor.QuotaOps, 'quotactl', self.quotactl),
+                    patch.object(supervisor.fcntl, 'ioctl', self.ioctl)]
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def runner(self, argv, timeout):
+        if argv == ['/bin/cat', '/proc/self/mountinfo']:
+            text = '36 1 %s / / rw,relatime shared:1 - ext4 %s rw\n' % (self.device, self.mount_source)
+        elif argv == ['/usr/sbin/dumpe2fs', '-h', bound.ROOT_DEVICE]:
+            text = 'Filesystem UUID:          %s\nFilesystem features:      %s\n' % (bound.ROOT_UUID, self.features)
+        elif argv == ['/usr/bin/readlink', '/dev/disk/by-uuid/' + bound.ROOT_UUID]:
+            text = self.mount_source + '\n'
+        else:
+            raise AssertionError('unexpected fixed route: %r' % (argv,))
+        return {'returncode': 0, 'stdout': text.encode(), 'stderr': b''}
+
+    def quotactl(self, cmd, device, project, addr):
+        self.assertEqual(device, bound.ROOT_DEVICE)
+        self.assertEqual(project, bound.PROJECT_ID)
+        if cmd == supervisor.Q_GETFMT:
+            addr._obj.value = self.quota['fmt']
+            return self.quota['fmt_rc'], 0
+        record = addr._obj
+        for name in ('bhard', 'bsoft', 'cur', 'ihard', 'isoft', 'curinodes'):
+            setattr(record, name, self.quota[name])
+        record.valid = 3
+        return self.quota['rc'], 0
+
+    def ioctl(self, fd, request, data):
+        key = os.fstat(fd).st_ino
+        if request == supervisor.FS_IOC_FSGETXATTR:
+            data[:] = self.attributes.get(key, supervisor.FSXATTR.pack(0, 0, 0, 0, 0, bytes(8)))
+            return 0
+        if request == supervisor.FS_IOC_FSSETXATTR:
+            if self.during_set is not None:
+                self.during_set()
+            self.sets.append(key)
+            self.attributes[key] = bytes(data)
+            return 0
+        raise AssertionError('unexpected ioctl %#x' % request)
+
+    def dispatch(self, request=None):
+        body = json.dumps({'nonce': os.urandom(32).hex(), 'boot_id': BOOT_ID} if request is None else request,
+                          sort_keys=True)
+        digest = hashlib.sha256(body.encode()).hexdigest()
+        record = self.approvals / (digest + '.json')
+        record.write_text(body)
+        record.chmod(0o600)
+        out, err = io.StringIO(), io.StringIO()
+        with patch.dict(os.environ, {'EFFIGY_APPROVAL_ROOT': str(self.approvals)}), \
+                redirect_stdout(out), redirect_stderr(err):
+            code = supervisor.main(['--approved-project', digest])
+        return code, out.getvalue(), err.getvalue(), digest
+
+    def witness(self):
+        code, out, err, digest = self.dispatch()
+        self.assertEqual(code, 0, err)
+        return json.loads(out.strip().splitlines()[-1]), digest
+
+    def test_the_uninjected_dispatcher_assigns_only_the_fixed_project(self):
+        witness, digest = self.witness()
+        admitted = bound.verify_project_assignment(
+            witness, {'boot_id': BOOT_ID, 'root': str(self.base), 'device': bound.ROOT_DEVICE,
+                      'uid': os.geteuid()})
+        self.assertTrue(admitted['assigned'])
+        self.assertEqual(admitted['approval_digest'], digest)
+        self.assertEqual(self.sets, list(self.attributes))
+        flags, extent, count, project, cowextent, padding = supervisor.FSXATTR.unpack(
+            self.attributes[self.sets[0]])
+        self.assertEqual(project, bound.PROJECT_ID)
+        self.assertEqual(flags, probe.FS_XFLAG_PROJINHERIT)
+        self.assertEqual((extent, count, cowextent, padding), (0, 0, 0, bytes(8)))
+        self.assertEqual(os.listdir(self.base), [], 'the assignment must not create an object')
+
+    def test_the_witness_line_satisfies_the_plan_expectation(self):
+        code, out, _err, _digest = self.dispatch()
+        self.assertEqual(code, 0)
+        row = {'id': setup.PROJECT_ROW, 'effect': 'bootstrap', 'expect': setup.PROJECT_ROW_EXPECT}
+        self.assertTrue(setup._expect_met(row, {'stdout': out.encode()}))
+
+    def test_the_role_refuses_a_nonempty_base_and_leaves_it_unchanged(self):
+        (self.base / 'inputs').mkdir()
+        code, _out, err, _digest = self.dispatch()
+        self.assertEqual(code, 3)
+        self.assertIn('not empty', err)
+        self.assertEqual(self.sets, [])
+
+    def test_an_already_assigned_or_inheriting_prestate_refuses(self):
+        for original in (supervisor.FSXATTR.pack(0, 0, 0, bound.PROJECT_ID, 0, bytes(8)),
+                         supervisor.FSXATTR.pack(probe.FS_XFLAG_PROJINHERIT, 0, 0, 0, 0, bytes(8))):
+            with self.subTest(original=original.hex()):
+                self.attributes.clear()
+                self.sets = []
+                self.attributes[self.base.stat().st_ino] = original
+                code, _out, err, _digest = self.dispatch()
+                self.assertEqual(code, 3)
+                self.assertIn('empty pre-state', err)
+                self.assertEqual(self.sets, [])
+
+    def test_an_unavailable_or_charged_project_record_refuses_before_the_set(self):
+        for change, message in (({'rc': -1}, 'project record'), ({'cur': 4096}, 'already charged'),
+                                ({'bhard': 8}, 'already carries a quota limit'),
+                                ({'fmt': 0}, 'quota format is not active')):
+            with self.subTest(change=change):
+                self.quota = {'fmt': 4, 'fmt_rc': 0, 'rc': 0, 'cur': 0, 'curinodes': 0,
+                              'bhard': 0, 'bsoft': 0, 'ihard': 0, 'isoft': 0}
+                self.quota.update(change)
+                self.attributes.clear()
+                self.sets = []
+                code, _out, err, _digest = self.dispatch()
+                self.assertEqual(code, 3)
+                self.assertIn(message, err)
+                self.assertEqual(self.sets, [], 'no attribute may change without the unused proof')
+
+    def test_a_partial_ioctl_refuses_and_keeps_no_witness(self):
+        def refuse(fd, request, data):
+            self.assertEqual(request, supervisor.FS_IOC_FSSETXATTR)
+            raise OSError(25, 'inappropriate ioctl')
+        self.attributes.clear()
+        with patch.object(supervisor.fcntl, 'ioctl',
+                          lambda fd, request, data: refuse(fd, request, data) if
+                          request == supervisor.FS_IOC_FSSETXATTR else
+                          self.ioctl(fd, request, data)):
+            code, out, err, _digest = self.dispatch()
+        self.assertEqual(code, 3)
+        self.assertIn('inappropriate ioctl', err)
+        self.assertEqual(out, '')
+
+    def test_a_replaced_base_descriptor_is_refused(self):
+        def replace():
+            os.rename(str(self.base), str(self.root / 'BASE-moved'))
+            self.base.mkdir()
+        self.during_set = replace
+        code, _out, err, _digest = self.dispatch()
+        self.assertEqual(code, 3)
+        self.assertIn('replaced, aliased or recreated', err)
+
+    def test_wrong_boot_device_or_medium_refuses_before_the_set(self):
+        code, _out, err, _digest = self.dispatch({'nonce': os.urandom(32).hex(), 'boot_id': OTHER_BOOT})
+        self.assertEqual(code, 3)
+        self.assertIn('boot identity differs', err)
+        self.mount_source = '/dev/sda1'
+        code, _out, err, _digest = self.dispatch()
+        self.assertEqual(code, 3)
+        self.assertIn('not the native ext4 device', err)
+        self.mount_source = bound.ROOT_DEVICE
+        self.features = 'has_journal ext_attr 64bit'
+        code, _out, err, _digest = self.dispatch()
+        self.assertEqual(code, 3)
+        self.assertIn('offline activation has not happened', err)
+        self.assertEqual(self.sets, [])
+
+    def test_a_foreign_or_aliased_root_refuses(self):
+        alias = self.root / 'alias'
+        alias.symlink_to(self.base)
+        with patch.object(supervisor, 'PROJECT_ROOT', str(alias)), \
+                patch.object(bound, 'PROJECT_ROOT', str(alias)):
+            code, _out, err, _digest = self.dispatch()
+        self.assertEqual(code, 3)
+        self.assertIn('not canonical', err)
+
+    def test_the_request_cannot_name_a_path_project_device_or_limit(self):
+        code, _out, err, _digest = self.dispatch({'nonce': os.urandom(32).hex(), 'boot_id': BOOT_ID,
+                                                  'project': 77, 'device': '/dev/sdb1'})
+        self.assertEqual(code, 3)
+        self.assertIn('only a nonce and boot identity', err)
+        self.assertEqual(self.sets, [])
+
+    def test_the_role_requires_its_arguments_and_a_usable_kernel_abi(self):
+        request = {'nonce': os.urandom(32).hex(), 'boot_id': BOOT_ID}
+        signature = inspect.signature(supervisor.project_assign)
+        for name in ('request', 'ops', 'approval_digest'):
+            with self.subTest(name=name):
+                self.assertIs(signature.parameters[name].default, inspect.Parameter.empty)
+        with self.assertRaises(TypeError):
+            supervisor.project_assign(request, supervisor.QuotaOps())
+        verifier = inspect.signature(bound.verify_project_assignment)
+        self.assertEqual(set(verifier.parameters), {'witness', 'facts'})
+        for name in ('witness', 'facts'):
+            self.assertIs(verifier.parameters[name].default, inspect.Parameter.empty)
+        self.assertEqual(bound.fsxattr_abi(), supervisor.fsxattr_abi())
+        with patch.object(supervisor, 'FSXATTR', struct.Struct('=4I8s')), \
+                self.assertRaises(Refusal):
+            supervisor.fsxattr_abi()
+        self.assertEqual(supervisor.FS_IOC_FSGETXATTR, 0x801C581F)
+        self.assertEqual(supervisor.FS_IOC_FSSETXATTR, 0x401C5820)
+
+    def test_the_witness_is_refused_when_any_fact_drifts(self):
+        witness, _digest = self.witness()
+        facts = {'boot_id': BOOT_ID, 'root': str(self.base), 'device': bound.ROOT_DEVICE,
+                 'uid': os.geteuid()}
+        bound.verify_project_assignment(witness, facts)
+        cases = (
+            ('assigned', False, {'assigned': False}),
+            ('device', '/dev/sda1', {'device': '/dev/sda1'}),
+            ('project', 7, {'project': 7}),
+            ('root', '/tmp', {'root': '/tmp'}),
+            ('nonce', 'x', {'nonce': 'x'}),
+            ('abi', {'struct_size': 24, 'get': 1, 'set': 2}, {'abi': {'struct_size': 24, 'get': 1, 'set': 2}}),
+            ('custody', {}, {'custody': {}}),
+            ('setter', {'ioctl': 'FS_IOC_FSSETXATTR', 'count': 2, 'exit': 0},
+             {'setter': {'ioctl': 'FS_IOC_FSSETXATTR', 'count': 2, 'exit': 0}}),
+            ('setter-exit', {'ioctl': 'FS_IOC_FSSETXATTR', 'count': 1, 'exit': 9},
+             {'setter': {'ioctl': 'FS_IOC_FSSETXATTR', 'count': 1, 'exit': 9}}),
+            ('base-entries', ['inputs'], {'base': dict(witness['base'], entries=['inputs'])}),
+            ('base-uid', 1001, {'base': dict(witness['base'], uid=1001)}),
+            ('facts-uid', 0, {'uid': 0}),
+            ('base-mode', 0o777, {'base': dict(witness['base'], mode=0o777)}),
+            ('before', supervisor.FSXATTR.pack(0, 4, 0, 0, 0, bytes(8)).hex(),
+             {'attributes': {'before': supervisor.FSXATTR.pack(0, 4, 0, 0, 0, bytes(8)).hex(),
+                             'after': witness['attributes']['after']}}),
+            ('after', supervisor.FSXATTR.pack(probe.FS_XFLAG_PROJINHERIT, 0, 0, 531, 4, bytes(8)).hex(),
+             {'attributes': {'before': witness['attributes']['before'],
+                             'after': supervisor.FSXATTR.pack(probe.FS_XFLAG_PROJINHERIT, 0, 0, 531, 4,
+                                                              bytes(8)).hex()}}),
+            ('extra', 1, {'extra': 1}),
+        )
+        for label, _value, change in cases:
+            with self.subTest(case=label):
+                drifted = dict(witness, **change)
+                with self.assertRaises(Refusal):
+                    bound.verify_project_assignment(drifted, facts)
+        for label, witness_change in (
+                ('foreign-boot', {'boot_id': OTHER_BOOT}),
+                ('charged-project', {'observations': replace_original(
+                    witness, 'project', text=witness['observations']['project']['text']
+                    .replace('curspace_bytes=0', 'curspace_bytes=4096'))['observations']}),
+                ('missing-feature', {'observations': replace_original(
+                    witness, 'dumpe2fs', text=witness['observations']['dumpe2fs']['text']
+                    .replace('project quota', ''))['observations']}),
+                ('foreign-device-mount', {'observations': replace_original(
+                    witness, 'mountinfo', text=witness['observations']['mountinfo']['text']
+                    .replace('ext4 /dev/sda2', 'ext4 /dev/sdb2'))['observations']})):
+            with self.subTest(case=label):
+                with self.assertRaises(Refusal):
+                    bound.verify_project_assignment(dict(witness, **witness_change), facts)
+        with self.assertRaises(Refusal):
+            bound.verify_project_assignment(witness, {'boot_id': BOOT_ID, 'root': str(self.base),
+                                                       'device': '/dev/sda1', 'uid': os.geteuid()})
+
+
+class ProjectPlanWiringChecks(unittest.TestCase):
+    """The assignment is wired into the real plan at the E7b/E7c boundary, not only a builder."""
+
+    def setUp(self):
+        self.fx = lst.PlanFixture()
+        self.addCleanup(shutil.rmtree, self.fx.dir, True)
+        patcher = patch.object(setup, 'ARCHIVE_SHA256', self.fx.archive_sha)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_plan_assigns_the_project_after_base_and_before_its_subdirectories(self):
+        rows = [row['id'] for row in setup._rows(self.fx.facts())]
+        self.assertLess(rows.index('E7b'), rows.index('E-SUP'))
+        self.assertLess(rows.index('E-SUP'), rows.index(setup.PROJECT_ROW))
+        self.assertLess(rows.index(setup.PROJECT_ROW), rows.index('E7c'))
+        self.assertIn(setup.PROJECT_ROW, setup.BOOTSTRAP_ROOT)
+
+    def test_the_row_carries_the_fixed_role_argv_and_its_one_use_request(self):
+        row = next(row for row in setup._rows(self.fx.facts()) if row['id'] == setup.PROJECT_ROW)
+        self.assertEqual(row['argv'], setup.project_row_argv(row))
+        self.assertEqual(row['credit']['entry'], '--approved-project')
+        self.assertFalse(row['credit']['sudoers'])
+        self.assertEqual(json.loads(row['credit']['request_json']),
+                         {'nonce': row['credit']['nonce'], 'boot_id': self.fx.facts()['identity']['boot_id']})
+        self.assertIn('--approved-project', ' '.join(row['argv']))
+        self.assertEqual(row['project'], {'device': supervisor.PROJECT_DEVICE,
+                                          'project': supervisor.PROJECT_ID, 'uid': 0})
+
+    def test_a_missing_nonce_or_uninstalled_entry_keeps_the_row_empty(self):
+        rows = {r['id']: r for r in setup.setup_plan(self.fx.facts(row_nonces={}))}
+        self.assertEqual(rows[setup.PROJECT_ROW]['argv'], [])
+        self.assertTrue(rows[setup.PROJECT_ROW]['missing'])
+        without = {r['id']: r for r in setup.setup_plan(self.fx.facts(supervisor_installed=None))}
+        self.assertTrue(any('installed reviewed entry' in m for m in without[setup.PROJECT_ROW]['missing']))
+
+    def test_an_edited_argv_cannot_pass_the_executor(self):
+        facts = self.fx.facts(disk_association=lst.disk_witness())
+        row = next(r for r in setup._rows(facts) if r['id'] == setup.PROJECT_ROW)
+        edited = dict(row, argv=list(row['argv']) + ['--project', '7'])
+        self.assertNotEqual(edited['argv'], setup.project_row_argv(edited))
+        with self.assertRaises(Refusal):
+            setup.project_row_argv(dict(row, credit={'request_sha256': 'x'}))
+        self.assertEqual(row['timeout_seconds'], 60)
+
+
+BOOT_ID = '11111111-2222-3333-4444-555555555555'
+OTHER_BOOT = '99999999-8888-7777-6666-555555555555'
+RESCUE_BOOT = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+
+
+def activation_records(count=None):
+    """A complete, exact activation sequence for the fixed boundaries (fixture facts)."""
+    records = []
+    for index, step in enumerate(bound.activation_plan()[:count]):
+        name = step['name']
+        record = {'name': name, 'disposition': 'exited', 'waited_exit': 0,
+                  'boot_id': RESCUE_BOOT if name in bound.RESCUE_BOUNDARIES or name in
+                  ('snapshot', 'quiesce') else BOOT_ID}
+        if name == 'quiesce':
+            record.update(rows_idle=True, writers_stopped=True)
+        elif name == 'snapshot':
+            record.update(snapshot_id='{4d475daf-8aa1-497a-9a38-355f21fcd867}', space_bytes=64 << 30,
+                          quiescent=True)
+        elif name == 'rescue-boot':
+            record.update(medium_sha256=bound.ACTIVATION_MEDIUM['iso_sha256'],
+                          tools={'tune2fs': bound.OFFLINE_TOOL_VERSION, 'e2fsck': bound.OFFLINE_TOOL_VERSION},
+                          root_unmounted=True)
+        elif name in ('precheck', 'features'):
+            record.update(root_unmounted=True)
+        elif name == 'mount-options':
+            record.update(root_unmounted=True, stored_options_empty=True)
+        elif name == 'postcheck':
+            record.update(root_unmounted=True, features_active=True)
+        elif name == 'return-boot':
+            record.update(root_mounted_rw=True)
+        elif name == 'project-assign':
+            record.update(assigned=True)
+        elif name == 'quota':
+            record.update(limit_set=True)
+        elif name == 'enforce':
+            record.update(phase='edquot')
+        records.append(record)
+    return records
+
+
+class ActivationRouteChecks(unittest.TestCase):
+    """The fixed activation sequence, its boundaries and its refuse-don't-resume rules."""
+
+    def test_the_plan_composes_the_accepted_offline_argv_without_running_them(self):
+        plan = bound.activation_plan()
+        self.assertEqual([step['name'] for step in plan], [name for name, _k, _r in bound.ACTIVATION_BOUNDARIES])
+        offline = dict(bound.offline_operation_plan())
+        for step in plan:
+            if step['kind'] == 'offline':
+                self.assertEqual(step['argv'], offline[step['name']])
+            else:
+                self.assertIsNone(step['argv'])
+        self.assertEqual([step['name'] for step in plan if step['argv']],
+                         ['precheck', 'features', 'mount-options', 'postcheck'])
+
+    def test_the_recorded_medium_ships_the_source_qualified_toolset(self):
+        self.assertEqual(bound.ACTIVATION_MEDIUM['e2fsprogs'].split('-')[0], bound.OFFLINE_TOOL_VERSION)
+        self.assertEqual(len(bound.ACTIVATION_MEDIUM['iso_sha256']), 64)
+        self.assertGreater(bound.ACTIVATION_MEDIUM['iso_bytes'], 2 << 30)
+
+    def test_a_complete_sequence_is_accepted_and_names_the_next_boundary(self):
+        records = activation_records()
+        result = bound.inspect_activation_progress(records)
+        self.assertIsNone(result['next'])
+        self.assertEqual(result['completed'], [step['name'] for step in bound.activation_plan()])
+        self.assertEqual(result['snapshot_id'], records[1]['snapshot_id'])
+        for count in range(1, len(records)):
+            with self.subTest(count=count):
+                partial = bound.inspect_activation_progress(records[:count])
+                self.assertEqual(partial['next'], bound.activation_plan()[count]['name'])
+
+    def test_an_interrupted_boundary_is_unknown_and_never_resumes(self):
+        records = activation_records()
+        for index, step in enumerate(records):
+            for disposition in ('unknown', 'refused', 'timed-out'):
+                with self.subTest(boundary=step['name'], disposition=disposition):
+                    broken = [dict(item) for item in records[:index + 1]]
+                    broken[index]['disposition'] = disposition
+                    with self.assertRaises(Refusal):
+                        bound.inspect_activation_progress(broken)
+
+    def test_every_boundary_must_carry_a_zero_waited_exit(self):
+        records = activation_records()
+        for index, step in enumerate(records):
+            for broken_exit in (1, 3, 137, -1, None, '0', 0.0, True):
+                with self.subTest(boundary=step['name'], waited_exit=broken_exit):
+                    broken = [dict(item) for item in records[:index + 1]]
+                    broken[index]['waited_exit'] = broken_exit
+                    with self.assertRaisesRegex(Refusal, 'positive waited exit'):
+                        bound.inspect_activation_progress(broken)
+            with self.subTest(boundary=step['name'], waited_exit='missing'):
+                broken = [dict(item) for item in records[:index + 1]]
+                del broken[index]['waited_exit']
+                with self.assertRaisesRegex(Refusal, 'missing or unexpected facts'):
+                    bound.inspect_activation_progress(broken)
+
+    def test_the_offline_steps_need_a_zero_exit_not_only_an_exited_label(self):
+        records = activation_records()
+        offline = [step['name'] for step in bound.activation_plan() if step['kind'] == 'offline']
+        self.assertEqual(offline, ['precheck', 'features', 'mount-options', 'postcheck'])
+        for name in offline:
+            with self.subTest(boundary=name):
+                broken = [dict(item) for item in records]
+                target = next(item for item in broken if item['name'] == name)
+                target['waited_exit'] = 1
+                with self.assertRaisesRegex(Refusal, name + ' has no positive waited exit'):
+                    bound.inspect_activation_progress(broken)
+        # A nonzero exit before the offline steps is refused at that boundary, not carried forward.
+        for index, step in enumerate(records):
+            with self.subTest(boundary=step['name'], prefix=index + 1):
+                broken = [dict(item) for item in records[:index + 1]]
+                broken[index]['waited_exit'] = 1
+                with self.assertRaisesRegex(Refusal, 'nothing resumes or restores'):
+                    bound.inspect_activation_progress(broken)
+
+    def test_a_repeated_or_unplanned_boundary_refuses(self):
+        records = activation_records()
+        repeated = records[:4] + [dict(records[3])]
+        with self.assertRaises(Refusal):
+            bound.inspect_activation_progress(repeated)
+        restore = dict(records[-1], name='restore')
+        with self.assertRaises(Refusal):
+            bound.inspect_activation_progress(records[:-1] + [restore])
+
+    def test_wrong_boot_tools_options_or_snapshot_refuses(self):
+        cases = (
+            ('snapshot-id', 'snapshot', {'snapshot_id': 'latest'}),
+            ('snapshot-space', 'snapshot', {'space_bytes': 0}),
+            ('snapshot-quiescent', 'snapshot', {'quiescent': False}),
+            ('medium', 'rescue-boot', {'medium_sha256': '0' * 64}),
+            ('tools', 'rescue-boot', {'tools': {'tune2fs': '1.47.3', 'e2fsck': '1.47.3'}}),
+            ('unmounted', 'precheck', {'root_unmounted': False}),
+            ('options', 'mount-options', {'stored_options_empty': False}),
+            ('features', 'postcheck', {'features_active': False}),
+            ('mounted', 'return-boot', {'root_mounted_rw': False}),
+            ('assigned', 'project-assign', {'assigned': False}),
+            ('limit', 'quota', {'limit_set': False}),
+            ('enforce', 'enforce', {'phase': 'ok'}),
+            ('offline-boot', 'features', {'boot_id': BOOT_ID}),
+            ('returned-boot', 'project-assign', {'boot_id': RESCUE_BOOT}),
+        )
+        for label, name, change in cases:
+            with self.subTest(case=label):
+                records = activation_records()
+                target = next(item for item in records if item['name'] == name)
+                target.update(change)
+                with self.assertRaises(Refusal):
+                    bound.inspect_activation_progress(records)
+
+    def test_a_boundary_with_missing_or_extra_facts_refuses(self):
+        records = activation_records()
+        del records[0]['rows_idle']
+        with self.assertRaises(Refusal):
+            bound.inspect_activation_progress(records)
+        records = activation_records(2)
+        records[1]['extra'] = 1
+        with self.assertRaises(Refusal):
+            bound.inspect_activation_progress(records)
+        with self.assertRaises(Refusal):
+            bound.inspect_activation_progress(activation_records() + activation_records(1))
 
 
 if __name__ == '__main__':

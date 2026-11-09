@@ -133,7 +133,7 @@ All three backend inputs/GO-index stay **UNARMED** pending actual GOs, accepted
 placement and planner-bound aggregate execution. Consumer/install/production/
 merge authority is unchanged.
 
-## Setup adapter status (source-only, revision 12)
+## Setup adapter status (source-only, revision 13)
 
 Pure controls, no effect. Files: `linux_setup.py` (Stage1 entry bound to the registered
 home, admission verifiers, setup plan, executor, host credit, `ssh_argv`),
@@ -141,8 +141,9 @@ home, admission verifiers, setup plan, executor, host credit, `ssh_argv`),
 candidate producer, root entry point), `linux_transfer.py` (bounded local processes, the
 contained stdin transfer), `linux_receipts.py` (OpenSSH-signed admission receipts),
 `linux-setup-probe.sh` (read-only probe, hash bound), `linux-setup-stages.json` (ledger
-checked against the plan), `linux_setup_tests.py` (192 controls, including real-process flows;
-`test:qualification:linux-setup`).
+checked against the plan), `linux_setup_tests.py` (220 controls, including real-process flows;
+`test:qualification:linux-setup`). Revision 13 adds the `E7p` project-assignment row between `E7b` and
+`E7c` and moves the reviewed-entry install (`E-SUP`) ahead of that boundary.
 
 Preparation request hashing and Linux guest placement share the explicit
 `preparation_requests.REQUIRED_MODULE_NAMES` inventory. It covers the staged
@@ -428,7 +429,7 @@ The block inventory records a partition's `removable` as `na`, not as a value: t
 
 These are observations, not bounds. `guest_writer_bound.limits` states what the facts cannot establish: `MemoryMax` is a byte bound of one control group and `IOWriteBandwidthMax` (the brief's `IOWriteMax` shorthand) a per-device write rate in bytes per second, so neither is an aggregate allocation; the IOPS properties are per-device rates too; `RLIMIT_FSIZE`, sampled counters and post-growth checks are not a filesystem allocation quota. `SUPPORTED_DISK_MECHANISMS`, `EXTERNAL_ANCHORS`, the E8/E9 setup gates and writable-top, readiness, placement and guest-association stay unchanged and unset. `SUPPORTED_HARD_LIMITS` now admits `ext4-project-quota` at the source level (see *Integrated writer boundary* below); admission is not a grant, because a bound is credited only from a complete, retained witness and the 747 native root has neither feature. A root kernel name may match this guest's history and a serial or size may look alike, but no host/guest serial equality, association or controller proof is inferred: additional disks and partitions stay listed, and a device-mapper or otherwise virtual root is recorded as an ambiguous controller rather than resolved by name. An ambiguous or unresolved root, a cross-inventory disagreement or any failed, malformed or skipped read makes the receipt `complete: false` and `not eligible` with the reason in `findings`; only a resolved, fully observed occurrence can read as eligible for a later reviewed correlation mechanism. The retained 719 evidence stays historical: it carries the earlier probe fields, no writer-bound reads, and is never upgraded to these facts.
 
-### Allocation bound (source-only, unadmitted)
+### Allocation bound (source-only; admitted mechanism, unapplied natively)
 
 `linux_allocation_bound.py` checks candidate observations for a potential retained-allocation mechanism on the native root: ext4 project quota (`quota` and `project` features, one reserved project id on the stage tree `BASE`, inherited). A hard project limit can bound charged allocation only when enforcement, inheritance and writer custody are established. The current witness does not establish those facts and cannot authorize a native run. The verifier takes five route originals (`mountinfo`, `dumpe2fs -h`, `by-uuid`, the fixed `quota` helper output with Q_GETFMT and Q_GETQUOTA, and the fixed `tree` helper output with lstat and FS_IOC_FSGETXATTR per entry). It checks each original's hash and exit, then matches them against exact request facts: boot id, owned uid, `BASE` and the exact entry set. Accepted witnesses must show a writable native ext4 root, a quota record whose `valid` bits mark both block limit and space usage, a project limit with headroom exactly equal to the row reservation, one device on every entry, the project id on every directory and file, and project inheritance on every directory, with no hardlinked file, symlink or foreign object. Root-owned directories must not be writable by group or others; other entries must match the payload owner. The supervisor's gate and transfer FIFOs under `BASE/stage` are admitted as blockless single-link entries owned by the payload uid or root: they allocate nothing, so they add no charge, and their project id is not read because opening a FIFO can block. Kernel charge must be at least the tree's bytes. `route_plan` binds the fixed argv and the helper's SHA-256; nothing here runs them.
 
@@ -473,10 +474,11 @@ The reviewed E6 key contract is now `restrict`, an `expiry-time` inside 24 hours
 
 The writers for E8, E9a/E9c, E9b, E19 and EGO now use one fixed, quota-charged route. Nothing in this route starts a VM, opens SSH, changes a filesystem feature, sets a real quota or writes to the guest, and no native fact is manufactured.
 
-**Three fixed roles in the installed entry.** `linux_supervisor.py` is installed once by E-SUP and recognises only four fixed argv shapes; none of them accepts a command, device, project, limit or path chosen by a caller.
+**Four fixed roles in the installed entry.** `linux_supervisor.py` is installed once by E-SUP and recognises only five fixed argv shapes; none of them accepts a command, device, project, limit or path chosen by a caller.
 
 - Quota administration: `--approved-quota SHA256`. A root role invoked through `prlctl exec`, consuming one exact, provisioned, one-use approval record (`consume_approved_request`). The request is only `{row, nonce, boot_id}`; the device, project and reservation come from the installed table (`QUOTA_ROWS`), which `linux_allocation_bound` imports so the setter and the verifier cannot drift. It retains the fixed mount/feature/device/quota/tree originals, sets the project block limit to `charged + reservation`, re-reads and requires the headroom to be exactly the row reservation (a concurrent charge refuses), then runs the enforcement probe.
 - Bounded broker writer: `--broker-write ROW DEST SHA256 MAX FIFO UID`, the payload of every transfer row. It validates the fixed destination under the charged root and the row's own stage FIFO, checks the parent directory's project and inheritance and its custody, re-runs the capability drop through the reviewed `capget`/`capset`/`prctl` operations resolved from libc (`default_bypass_drop`; a libc without them refuses before any open), and only then opens the destination exclusively (`O_EXCL|O_NOFOLLOW`, mode 0600), streams at most the row ceiling and requires the reviewed digest. It prints the digest and destination in the shape the row expectation already checks.
+- Project assignment: `--approved-project SHA256`. A root role invoked through `prlctl exec` at the E7b/E7c boundary (row `E7p`), consuming one exact one-use approval record whose only fields are the nonce and the boot. Path, device, project and ioctl come from the installed table; the role and its verifier are described in the activation packet below.
 - Transfer writer: `--transfer-writer`, the one forced command the qualification key can reach. `SSH_ORIGINAL_COMMAND` is parsed as an argv and must be exactly the reviewed `/usr/bin/python3 -I -B /usr/local/libexec/effigy-stage-supervisor --transfer-writer STAGE_ROOT/<row>/transfer.fifo`; anything else refuses. It waits under the absolute deadline for the root-owned 0711 row stage, requires the endpoint to be that FIFO, and copies stdin into it. The allocating write stays in the confined unit, so the same-uid session can never create or name a file.
 
 **Enforcement observation.** A quota record, a format bit or a zero syscall result is not enforcement. After setting the limit, the root role forks one child that drops to the payload uid and gid, clears its supplementary groups, sets `no_new_privs` and empties every capability set, re-reads those facts, fills exactly the row reservation in one fixed file under the charged root and attempts one more 4 KiB block. `EDQUOT` is the observation; a successful extra block, another errno, an unreaped child or a leftover file refuses. The child unlinks the file and the role re-reads the charge and tree, requiring both unchanged. The witness the role prints is exactly what `linux_allocation_bound.verify` admits: five retained originals matched against the boot, owned uid, `BASE` and the exact object set, the exact headroom, the setter and approval custody and this enforcement record. A caller label, a stale or foreign original and a missing field all refuse.
@@ -485,22 +487,98 @@ The writers for E8, E9a/E9c, E9b, E19 and EGO now use one fixed, quota-charged r
 
 **Reservations.** Per row: E8 64 MiB, E9a 40 MiB, E9b 500 MiB, E9c 40 MiB. E19 and EGO are aggregate kit ceilings of 1 MiB for the whole fixed placement set (kit 6.3), not a per-file allowance: the plan refuses a set whose host bytes exceed the ceiling, and the row binds the group reservation. E12 has no reservation and stays unadmitted.
 
-**Where the source stops.** These are source qualifications exercised through injected syscall and transport boundaries with fixture-positive witnesses; they are not an observation of the guest. A native occurrence still needs the exact kernel ABI, the installed systemd applying the properties, the quota feature actually present and enforced, the real tool identities and the terminal closure the executor already requires. The retained 747 root has neither feature, so that occurrence refuses at the fixed route with `lacks project,quota; enforcement is not provisioned`. Feature activation, rescue media and return capability, snapshot identity, space and quiescence, placement and association, Stage1 trust and any genuine native enforcement observation remain explicit future binding prerequisites, and a material filesystem change still needs independent review and a separate operator ruling.
+**Where the source stops.** These are source qualifications exercised through injected syscall and transport boundaries with fixture-positive witnesses; they are not an observation of the guest. #761's admitted source roles are the fixed quota setter, the confined broker writer and its forced transfer command, the E8/E9 rows and the E19/EGO 1 MiB aggregate placement ceiling; this task adds the fixed project-assignment role. What is still unapplied is the native activation, the project assignment on this VM and E12; the packet below states that route, its guard and its exact remaining bindings. A native occurrence still needs the exact kernel ABI, the installed systemd applying the properties, the quota feature actually present and enforced, the real tool identities and the terminal closure the executor already requires. The retained 747 root has neither feature, so that occurrence refuses at the fixed route with `lacks project,quota; enforcement is not provisioned`. Feature activation, a *verified* rescue boot and return, snapshot identity, space and quiescence, placement and association, Stage1 trust and any genuine native enforcement observation remain explicit future binding prerequisites, and a material filesystem change still needs independent review and a separate operator ruling.
 
-#### Prospective native-root route (not ready for an operator decision)
+#### Activation and recovery packet (source-only; one proposal, no effect)
 
-No snapshot, boot, filesystem change or restore is authorized by this document. The retained 747 observation is historical; the VM identity, snapshot/extent inventory, free space, filesystem identity, boot and tool capabilities must be bound again before any later action. The existing native-root placement remains the only route considered here.
+This packet resolves the two gaps #759/#761 left open on the native-root route: the project
+assignment had no operation at the E7b/E7c boundary, and the rescue/return mechanism was an
+unspecified boot. It adds the fixed assignment role and wires it into the real plan, records one
+source-qualified rescue/return candidate with its exact identity, and states the material decision
+the operator would take. **No snapshot, boot, filesystem feature, mount option, project, quota or
+key changes here, and no image is downloaded.** The native root is unchanged and the retained 747
+facts are historical, not liveness.
 
-| Stage | Known and missing prerequisites | Effect, ceiling and interruption |
+**What the source now covers, and what it does not.** The admitted source roles from #761 are
+unchanged: `--approved-quota` (fixed headroom setter), `--broker-write` (confined allocating writer
+with the libc capability drop), `--transfer-writer` (the one forced command the qualification key
+reaches) and the E8/E9/E19 payload rows, with E19/EGO carrying a **1 MiB aggregate kit 6.3 placement
+ceiling for the whole set** — never a per-file allowance. New here: `--approved-project`, a fourth
+fixed role, and the `E7p` row that runs it between `E7b` (root-owned `BASE`) and `E7c` (its 11
+subdirectories). Still **unapplied**: the offline activation itself, the project assignment on this
+VM, and E12's engine/apt/download writes, which have no reservation and stay held. None of this is a
+native observation, a bound in force, or enforcement credit.
+
+**The assignment at the E7b/E7c boundary (`E7p`).** The row runs
+`python3 -I -B /usr/local/libexec/effigy-stage-supervisor --approved-project SHA256` through the
+fixed root route, consuming one provisioned, one-use record whose only fields are the nonce and the
+observed boot; path, device, project and ioctl come from the installed table. The role binds one
+boot, then takes the mount, feature and by-uuid originals, opens **one** `BASE` descriptor
+(`O_DIRECTORY|O_NOFOLLOW` on a canonical path), and requires: root-route ownership, a mode not
+writable by group or others, the bound native device, and an **exactly empty object set**. It then
+reads `FS_IOC_FSGETXATTR` and refuses a pre-state with a nonzero project, `FS_XFLAG_PROJINHERIT`
+already set or nonzero padding; independently reads the project-531 record and refuses any limit or
+any charge (that record, not the feature bit, is the unused-project proof — absence of the feature
+proves nothing); writes exactly one `FS_IOC_FSSETXATTR` preserving every unrelated field; and
+independently re-opens and re-reads path and descriptor identity plus the resulting attributes.
+Missing, replaced, aliased, recreated or foreign descriptors, a nonempty or already-assigned input,
+an unavailable record, a partial ioctl, a changed unrelated field or an exceeded deadline all
+refuse. `linux_allocation_bound.verify_project_assignment` admits the retained witness only with the
+one-use nonce, the fixed `fsxattr` ABI (28-byte structure, `0x801C581F`/`0x401C5820`), the four
+hashed originals, the empty pre-state, the single positive ioctl and the installed-entry custody; the
+executor also recomputes the row's argv from its own credit, so an edited argument cannot pass. The
+[Linux v6.1 filesystem ABI source](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/include/uapi/linux/fs.h?h=v6.1)
+(SHA-256 `ebeb4fb4685a1b202a0581c32748df216f5b90a173d8324a0b25910fbeef47c2`) and the
+[ext4 inode-allocation source](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/fs/ext4/ialloc.c?h=v6.1)
+(SHA-256 `3fd3159053a8cb89e74a792817c064fd0d290fd08c29ab2a0d62092c4c2c0d2b`) support the ordering and
+field set; neither establishes this guest's kernel. Installing the reviewed entry before `E7p`
+(`E-SUP` now precedes the boundary) is the only order change: the install writes only
+`/usr/local/libexec` and touches neither `BASE` nor a stage row.
+
+**The activation sequence and its guard.** `activation_plan()` composes the accepted
+`offline_operation_plan()` argv unchanged and adds the boundaries around them; constructing it runs
+nothing. The boundaries are `quiesce`, `snapshot`, `rescue-boot`, `precheck`, `features`,
+`mount-options`, `postcheck`, `return-boot`, `project-assign`, `quota`, `enforce`.
+`inspect_activation_progress` refuses an out-of-order, repeated, unrecorded, refused or unknown
+boundary and any boundary that is not in the plan (a restore or a retry): an interrupted step is
+never a partial success and nothing resumes or rolls back automatically. Every boundary also has
+to carry the waited exit of the command that performed it, and it must be exactly zero: a nonzero,
+missing, boolean or non-integer exit refuses exactly like an unknown boundary, so an `exited`
+label alone is never a completion, and the offline steps' hashed streams stay the separate
+requirement the accepted `inspect_offline_progress` guard already enforces. It also refuses a step
+from the wrong boot (the four offline steps must share the rescue boot, the four later boundaries the
+returned normal boot, which must differ), a medium or tool set other than the recorded one, a nonempty stored
+mount-option string at the point of replacement, a snapshot without an exact identity, positive
+space and quiescence, a `return-boot` without a writable root, and an enforcement record that is not
+an `EDQUOT` refusal. Supplied records are not authority: the snapshot, medium, rescue boot,
+unmounted device and every waited exit still need independently authenticated, durable one-use
+custody.
+
+**Source-qualified rescue/return candidate** (one, from two official vendor metadata sets; recorded
+in `linux_allocation_bound.ACTIVATION_MEDIUM`):
+
+| Fact | Value | Status |
 | --- | --- | --- |
-| Quiesce and retain | VM `433c9e5b-c7b9-469f-9633-24b4addcd3b5`, root UUID and 128 GiB disk were observed; fresh ownership, complete extent/snapshot identities, available space and a one-use snapshot boundary are missing. | Stop all writers and retain originals before a single snapshot; no snapshot or space ceiling has yet been established. Do not proceed on unknown identity, space or completion. |
-| Offline check and feature change | A trusted rescue boot capable of keeping `/dev/sda2` unmounted, with verified tool provenance and a way back to normal boot, is not established. Obtain and verify that specific capability under a separately bounded acquisition plan before proposing any boot. `dumpe2fs 1.47.2` was observed; the `tune2fs` and `e2fsck` versions and supported options remain unobserved. | Offline checks and feature changes can modify filesystem metadata and repairs can change data. The repair scope, space and time ceilings are not established. An interruption or nonzero/unknown exit leaves the filesystem unqualified; do not resume automatically. |
-| Normal boot, project and row limits | Fixed project assignment, quota setter, enforcement observation, escape-resistant child and exclusive writer custody are missing. Feature bits or `Q_GETFMT` alone do not prove enforcement. | Set and independently observe the fixed project and per-row hard limit only through a separately reviewed one-use route. A full quota yields a failed operation, not success. Each row must retain its original deadline and reservation. |
-| Closure or rollback | Positive waited exits, independent originals, exact object set and terminal closure are required. A snapshot identity and rollback procedure are not yet bound. | Retain pre/post originals and the snapshot. Restoring it would lose changes since the snapshot; never assume that is harmless. Unknown, interrupted or failed steps remain held for a separate recovery decision. |
+| Product | `ubuntu-26.04.1-live-server-arm64.iso` (aarch64, EFI-bootable, casper 26.04.2 + subiquity snap) | Vended by the Ubuntu release metadata |
+| ISO SHA-256 | `af78753c94b924c85c4964c670692a853f7c80299a4064e317edad95462e3168` | Vended in the signed `SHA256SUMS` (SHA-256 `0daa2484…`, 2691 bytes) |
+| ISO size | 3,076,861,952 bytes (2.87 GiB) | Vended `Content-Length`; **exceeds the earlier prospective 2 GiB acquisition ceiling** |
+| Publisher signature | detached `SHA256SUMS.gpg`, SHA-256 `bfa9b6e8…`, 833 bytes, signature packet key id `D94AA3F0EFE21092`, digest algo 10 | Recorded. Full-fingerprint verification needs the publisher key, which is **not** imported globally here; it is a separate bounded step |
+| Tools | `e2fsprogs 1.47.2-3ubuntu4` (ship `e2fsck`/`tune2fs`) | Vended in the release manifest (SHA-256 `ad43a500…`), and **the same upstream release as the pinned v1.47.2 sources** — the version gate the offline plan requires |
+| Attachment | `set <vm> --device-set cdrom0 --image <absolute iso>`, `--device-connect cdrom0` | Vendor CLI help text of the installed Desktop 27.1.0 build (`prlctl`, already pinned to `2f61a1c6…`) |
+| Boot | `set <vm> --device-bootorder "cdrom0 hdd0"`, `start <vm>`; `--select-boot-device on` and `--bios-type efi-arm64` exist for the same purpose | Same vendor CLI help text |
+| Return | `stop <vm>`, `set --device-bootorder "hdd0 cdrom0"`, `--device-disconnect cdrom0`, `start <vm>` | Same vendor CLI help text |
 
-The single missing rescue prerequisite is a verified, architecture-compatible boot medium that can access the identified root offline, contains the qualified e2fsprogs tools, and has an observed path back to the normal VM boot configuration. A future acquisition task may inspect at most three official vendor metadata sets, select one compatible candidate, and acquire at most 2 GiB within 600 seconds into an owned fixture after separate authorization. It must retain the publisher's signing-key provenance, signed manifest, image hash, size, tool versions and boot/return instructions; a missing or failed check stops acquisition. No image is selected, downloaded or booted here, and this plan does not establish that a suitable medium exists.
+The live session's shell entry is an **operator console interaction**, not an automation: there is
+no assumed guest tool, account, key or SSH service in the live environment (the manifest ships
+`openssh-server` but nothing proves it is configured or reachable, and no network credential is
+authorized). Before any device write the operator must observe, on the VM console, that the live
+session offers a root shell with `e2fsprogs 1.47.2`. If it does not, the route stops as an external
+limitation: the fallbacks are a second bounded metadata read of a different official aarch64 live
+image, or a planner decision to leave the native root unchanged. No `prlctl`, SDK, SSH or guest
+command is invented beyond the help text above, and no boot, attach, snapshot or console action runs
+here.
 
-For a future verified v1.47.2 toolset, the candidate offline sequence is `/sbin/e2fsck -f -n /dev/sda2`, `/sbin/tune2fs -O project -Q prjquota /dev/sda2`, `/sbin/tune2fs -E mount_opts=prjquota /dev/sda2`, then `/sbin/e2fsck -f -n /dev/sda2`, with the root unmounted throughout. The extended mount-option command replaces the whole stored option string: it is permitted only if a fresh, complete v1.47.2 `dumpe2fs` original proves that string empty; a nonempty or unknown string refuses. It does not replace the separate default mount-option bits. The [v1.47.2 superblock printer source](https://git.kernel.org/pub/scm/fs/ext2/e2fsprogs.git/plain/lib/e2p/ls.c?h=v1.47.2) has SHA-256 `692a03d286e7a2e7349af6568e3d582f74ed13b353dbf75961682fe2753f2f1d` and prints the extended option line only when nonempty. The historical 747 filesystem original, SHA-256 `27dcdc02341f7a890e32f2eb9066d0fdf3f4ed5bf8e461d968e5a21c09cc3b41`, has no such line; that is not a fresh precondition. Boot arguments or later mounts may override stored options, and the v6.1 kernel may ignore an unparseable stored string, so neither the command exit nor the string alone proves enforcement.
+**Offline activation, source-qualified.** For a future verified v1.47.2 toolset, the candidate offline sequence is `/sbin/e2fsck -f -n /dev/sda2`, `/sbin/tune2fs -O project -Q prjquota /dev/sda2`, `/sbin/tune2fs -E mount_opts=prjquota /dev/sda2`, then `/sbin/e2fsck -f -n /dev/sda2`, with the root unmounted throughout. The extended mount-option command replaces the whole stored option string: it is permitted only if a fresh, complete v1.47.2 `dumpe2fs` original proves that string empty; a nonempty or unknown string refuses. It does not replace the separate default mount-option bits. The [v1.47.2 superblock printer source](https://git.kernel.org/pub/scm/fs/ext2/e2fsprogs.git/plain/lib/e2p/ls.c?h=v1.47.2) has SHA-256 `692a03d286e7a2e7349af6568e3d582f74ed13b353dbf75961682fe2753f2f1d` and prints the extended option line only when nonempty. The historical 747 filesystem original, SHA-256 `27dcdc02341f7a890e32f2eb9066d0fdf3f4ed5bf8e461d968e5a21c09cc3b41`, has no such line; that is not a fresh precondition. Boot arguments or later mounts may override stored options, and the v6.1 kernel may ignore an unparseable stored string, so neither the command exit nor the string alone proves enforcement.
 
 The prospective pre-state additionally requires the complete 1,024-byte primary superblock from byte offset 1,024 of the independently bound device. Its 64 stored mount-option bytes at offsets `0x200..0x23f` must all be zero, not merely have a leading NUL; the UUID, clean state, 256-byte inode size and absent project/quota features and project quota inode must match too. The [v1.47.2 ext2fs layout](https://git.kernel.org/pub/scm/fs/ext2/e2fsprogs.git/plain/lib/ext2fs/ext2_fs.h?h=v1.47.2) has SHA-256 `6acb20acf7ae2c811b3526ff8cd38b0b79ec185bacdd9471b44645b8673b48bc`. The source-only parser checks these fields against fixture bytes; it neither reads the device nor verifies the superblock checksum, and it grants no authority. A later fixed read must retain the original and hash, authenticate the device and checksum independently, and refuse incomplete or unknown results.
 
@@ -510,11 +588,50 @@ The v1.47.2 `tune2fs` source calls quota usage computation without checking its 
 
 The fixed source-only operation plan and progress guard check exact command order, one rescue-boot identity, both hashed streams and a positive waited exit for every recorded attempt. A started step without its completion, an altered command or a changed boot refuses; no repair or retry is added. Supplied records alone do not establish that every attempt was recorded, that the root is unmounted, or that the snapshot is available. Those require independently authenticated, durable one-use custody before any future operation.
 
-The prospective project assignment must occur after E7b creates root-owned `BASE` and before E7c creates its 11 subdirectories: one held `BASE` directory descriptor on the freshly bound device, with an exact empty object set and an independently established unused project 531. The existing plan has no operation at that boundary, so it cannot currently perform this route. Read its original `FS_IOC_FSGETXATTR`, preserve unrelated fields, set project 531 and `FS_XFLAG_PROJINHERIT` using `FS_IOC_FSSETXATTR`, and retain an independent post-read. The [Linux v6.1 filesystem ABI source](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/include/uapi/linux/fs.h?h=v6.1) has SHA-256 `ebeb4fb4685a1b202a0581c32748df216f5b90a173d8324a0b25910fbeef47c2`. A pure candidate builds those fixed attribute bytes only from a project-zero, non-inheriting original; it does not invoke the ioctl. No recursive `chattr` or project assignment entry is wired. The absence of the feature alone does not prove project 531 is unused; that proof and descriptor custody are still missing.
+**Material decision packet (the operator's, not this task's).** If it proceeds, the following would
+change, and each item is bounded rather than open-ended:
+
+- Objects changed: one Parallels snapshot of VM `433c9e5b-c7b9-469f-9633-24b4addcd3b5`; the
+  native root's ext4 metadata (project and quota features, project-quota inode, stored
+  `mount_opts=prjquota`, one project 531 + inheritance attribute on `BASE`); the injected row
+  limits; the VM's device boot order and CD/DVD attachment, restored after the session.
+- Pre-checks that must be fresh (not 747): running/stopped state and identity, complete extent and
+  snapshot inventory, free space, root UUID and clean state, the 1,024-byte primary superblock with
+  all-zero `0x200..0x23f` stored options, `tune2fs`/`e2fsck` versions in the *rescue* session, and
+  an unused project 531 record.
+- Evidence-backed ceilings: the 1 MiB E19/EGO aggregate; per-row E8 64 MiB, E9a 40 MiB, E9b 500 MiB,
+  E9c 40 MiB; 1 GiB configuration growth allowance; 128 GiB virtual disk. Proposed risk budgets, not
+  evidence: a 4 GiB owned acquisition fixture and 1,800 s to acquire the 2.87 GiB image; 300 s to
+  quiesce; 300 s for the one snapshot; 900 s for the offline session including both checks and both
+  `tune2fs` steps; 300 s for the normal-boot return. Facts that still need a pinned read: the
+  rescue-session `tune2fs`/`e2fsck` capability banner and its `-E mount_opts` acceptance, the
+  guest kernel's ABI and enforcement behaviour, and the live session's shell entry.
+- Stops: any missing or changed pre-check, a nonempty stored mount-option string, a refused or
+  nonzero `e2fsck -n`, a `tune2fs` refusal (including "run e2fsck first" — no repair is authorized),
+  a snapshot whose identity, space or quiescence is unknown, a rescue session that is not on the
+  recorded medium or does not hold the root unmounted, a return to a boot whose root is not writable,
+  and any unknown or interrupted boundary.
+- Retained originals: the pre-quiesce observation set, the snapshot identity and its size accounting,
+  the medium's hash/size/signature, both `e2fsck -n` and both `tune2fs` streams with waited exits,
+  the post-activation `dumpe2fs`, the `E7p` witness with its pre/post attributes, and the first row's
+  quota witness and enforcement record.
+- Metric: a sampled threshold is not a hard quota, and logical bytes are not physical allocation. The admitted per-row metric is retained allocation charged to project 531; it does not bound cumulative writes, the transfer stream, root-owned records outside `BASE` or E12's engine, apt and download writes.
+- Recovery: the snapshot is the only rollback object, and restoring it **discards every change made
+  after it**, including anything the VM or its other users wrote while it ran. There is no automatic
+  restore, no repair retry and no resume after an unknown result; an unknown or failed activation is
+  held for a separate recovery decision with the filesystem explicitly unqualified.
+
+**Exact remaining native bindings** (nothing here substitutes for them): a fresh positively observed
+rescue session on this medium holding `/dev/sda2` unmounted with the 1.47.2 tools; the four offline
+steps with authenticated one-use custody and positive waited exits; a distinct returned normal boot
+with a writable native root; the `E7p` assignment occurrence; the first `--approved-quota` row with
+its `EDQUOT` enforcement observation; the controller-to-guest disk association and Stage1 trust that
+`E7p` and every later row still require; and an independent accounting check, because a zero
+`tune2fs` exit is not proof that its quota scan succeeded.
 
 A source-only writer-tool entry now reads only the five fixed executable paths, resolves canonical targets, checks root-owned non-writable path custody and a bounded regular executable, and records identity and SHA-256. The fixed route binds the entry and its local dependencies; independent before/after originals must match exactly. This is not an admission: actual guest tool identities, the outer SSH login shell and its loader/environment are still unobserved, no immutable tool anchors are present, and no production call is wired. The entry cannot prove all incidental system allocation or control other same-UID processes. A later bound preparation route must collect and retain originals under the same absolute deadline, with positive waited exits, before evaluating the writer's regular-file output boundary.
 
-A source-only broker-child candidate sets no-new-privileges, clears ambient capabilities, removes `CAP_SYS_RESOURCE` from its effective, permitted and inheritable sets, and re-reads all of those facts before any proposed allocating write. The [Linux v6.1 capability ABI](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/include/uapi/linux/capability.h?h=v6.1) has SHA-256 `6c7bea828893cc9a10b0e4ca67643f0fcbdd40ae79319018c57908e080e36424`, and the [prctl ABI](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/include/uapi/linux/prctl.h?h=v6.1) has SHA-256 `fa548afed1d7593f53aedd2ba1a849caedef7856167d1d1da0f8d93487a32698`. The [v6.1 capability exec source](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/security/commoncap.c?h=v6.1), SHA-256 `1adc9b772a8ee45551d782d740e037244a448c6bcf1d50327df3eea2774ebf2b`, intersects new permitted capabilities with the prior set under no-new-privileges. Source controls inject capability calls; no real capability change is performed here. A source-only fixed child body checks one of four record names, the held directory owner/device and project inheritance, drops and rechecks that capability, rechecks the directory, and only then creates the exclusive bounded record. Its fixed candidate launcher uses one child, the caller's absolute deadline and cleanup reserve, and a positive waited exit. On timeout it kills only that child and attempts a bounded reap; an unreaped PID is retained for reconciliation and never grants closure. Controls use fixture descriptors and injected capability calls; no guest child was run, no production entry is wired, and these controls supply no authority. All earlier allocating opens including directory and FIFO creation, authenticated project custody, charged metadata and the separate one-time installer remain unproved and held.
+The broker child sets no-new-privileges, clears ambient capabilities, removes `CAP_SYS_RESOURCE` from its effective, permitted and inheritable sets, and re-reads all of those facts before any proposed allocating write. The [Linux v6.1 capability ABI](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/include/uapi/linux/capability.h?h=v6.1) has SHA-256 `6c7bea828893cc9a10b0e4ca67643f0fcbdd40ae79319018c57908e080e36424`, and the [prctl ABI](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/include/uapi/linux/prctl.h?h=v6.1) has SHA-256 `fa548afed1d7593f53aedd2ba1a849caedef7856167d1d1da0f8d93487a32698`. The [v6.1 capability exec source](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/security/commoncap.c?h=v6.1), SHA-256 `1adc9b772a8ee45551d782d740e037244a448c6bcf1d50327df3eea2774ebf2b`, intersects new permitted capabilities with the prior set under no-new-privileges. Source controls inject capability calls; no real capability change is performed here. A source-only fixed child body checks one of four record names, the held directory owner/device and project inheritance, drops and rechecks that capability, rechecks the directory, and only then creates the exclusive bounded record. Its fixed candidate launcher uses one child, the caller's absolute deadline and cleanup reserve, and a positive waited exit. On timeout it kills only that child and attempts a bounded reap; an unreaped PID is retained for reconciliation and never grants closure. This child, its launcher and the drop are the installed `--broker-write` payload of every transfer row (integrated by #761), not a candidate: the payload argv installs the confinement, the unit properties are read back before the gate opens, and `default_bypass_drop` resolves the same reviewed libc operations. What remains unproved is native: the guest's capability behaviour, the installed systemd's application of the properties, and every allocating open outside this child (directory and FIFO creation by the root supervisor, the approved-request records, charged metadata and the separate one-time installer). Controls use fixture descriptors and injected capability calls, run no guest child and supply no authority.
 
 The [Linux v6.1 ext4 inode-allocation source](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/fs/ext4/ialloc.c?h=v6.1), SHA-256 `3fd3159053a8cb89e74a792817c064fd0d290fd08c29ab2a0d62092c4c2c0d2b`, assigns a new inode its parent's project when the project feature and inheritance flag are present. That source supports the candidate's ordering; it does not establish the actual guest kernel or account for directories and FIFOs created earlier by the parent supervisor.
 

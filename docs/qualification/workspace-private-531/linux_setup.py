@@ -122,8 +122,15 @@ SUDOERS_TEXT = '# No general supervisor grant; exact one-use rules installed onl
 SUDOERS_SCRIPT = 'set -e; umask 022; printf "%s" "$1" > "$2"; chmod 0440 "$2"; visudo -cf "$2" >/dev/null; sha256sum "$2"'
 IDENTITY_KEYS = ('vm', 'boot_id', 'host_key_fp')
 UNIT_STATE_PROPERTIES = '--property=LoadState,ActiveState,SubState,Result,ExecMainStatus,InvocationID,ControlGroup'
-BOOTSTRAP_ROOT = frozenset({'E3a', 'E3b', 'E3c', 'E4', 'E4v', 'E5a', 'E5b', 'E5c', 'E6a', 'E6', 'E7a', 'E7b', 'E7c',
-                            'E-SUP', 'E-SUDO'})
+BOOTSTRAP_ROOT = frozenset({'E3a', 'E3b', 'E3c', 'E4', 'E4v', 'E5a', 'E5b', 'E5c', 'E6a', 'E6', 'E7a', 'E7b',
+                            'E7p', 'E7c', 'E-SUP', 'E-SUDO'})
+# The fixed project-assignment row runs between E7b (root-owned BASE) and E7c (its 11 subdirectories),
+# so every directory E7c creates inherits project 531. The supervisor is installed first (E-SUP) because
+# the assignment is one of its fixed roles; the install writes only /usr/local/libexec.
+PROJECT_ROW = 'E7p'
+PROJECT_ROW_EXPECT = {'stdout_regex': r'\{"abi": \{.*\}, "assigned": true, .*"device": "/dev/sda2", '
+                                     r'"mechanism": "ext4-project-attribute", "nonce": "[0-9a-f]{64}", '
+                                     r'.*"project": 531, "projinherit": 512, .*\}\n'}
 
 
 def _sha(data):
@@ -680,12 +687,12 @@ def _quota_membership(row_id):
 
 
 def _row(rows, row_id, kind, argv, seconds, basis, go, expect=None, stdin=None, stdin_sha=None,
-         limit_bytes=None, credit=None, writer_argv=None, quota=None):
+         limit_bytes=None, credit=None, writer_argv=None, quota=None, project=None):
     effect = {'vm-root': 'bootstrap', 'vm-supervised': 'supervised', 'contained-transfer': 'transfer'}[kind]
     rows.append({'id': row_id, 'kind': kind, 'effect': effect, 'argv': argv, 'writer_argv': writer_argv or [],
                  'timeout_seconds': seconds, 'closure_basis': basis, 'go': go, 'expect': expect,
                  'stdin_path': stdin, 'stdin_sha256': stdin_sha, 'needs_hard_limit': limit_bytes is not None,
-                 'limit_bytes': limit_bytes, 'credit': credit, 'quota': quota})
+                 'limit_bytes': limit_bytes, 'credit': credit, 'quota': quota, 'project': project})
 
 
 def _stage(row_id):
@@ -767,6 +774,39 @@ def _quota_credit(row, fresh):
                   'entry': '--approved-quota'}
 
 
+def _project_credit(fresh):
+    """The fixed project-assignment argv and one-use approval credit for the E7b/E7c boundary.
+
+    The request names only a nonce and the observed boot: the path, device, project and ioctl come from
+    the installed role's own table. Nothing here chooses a project or a limit.
+    """
+    nonces = fresh.get('row_nonces')
+    base = nonces.get(PROJECT_ROW) if isinstance(nonces, dict) else None
+    boot = (fresh.get('identity') or {}).get('boot_id')
+    if not isinstance(base, str) or not HEX64.fullmatch(base) or not boot:
+        return None, None
+    request = {'nonce': _sha((base + ':project').encode()), 'boot_id': boot}
+    text = json.dumps(request, sort_keys=True)
+    digest = _sha(text.encode('utf-8'))
+    argv = _vm(*supervisor.project_admin_argv(digest, SUPERVISOR_PATH))
+    return argv, {'nonce': request['nonce'], 'unit': None, 'request_json': text,
+                  'request_sha256': digest, 'program': SUPERVISOR_PATH, 'sudoers': False,
+                  'entry': '--approved-project'}
+
+
+def project_row_argv(row):
+    """Recompute the fixed project-assignment argv from the row's own bound credit.
+
+    The executor compares the row's argv with this result, so a missing call argument or an edited
+    argv cannot pass as the reviewed operation.
+    """
+    credit = row.get('credit') or {}
+    digest = credit.get('request_sha256')
+    if not isinstance(digest, str) or not HEX64.fullmatch(digest):
+        raise Refusal('project-assignment credit is not digest-bound')
+    return _vm(*supervisor.project_admin_argv(digest, SUPERVISOR_PATH))
+
+
 def _rows(fresh):
     """Argv and expectations from facts. Each live value is consumed here or refused by the plan."""
     rows = []
@@ -796,9 +836,15 @@ def _rows(fresh):
     rows[-1]['key_error'] = key_error
     _row(rows, 'E7a', 'vm-root', BOOTSTRAP_EXACT['E7a'], 20, VM_BASIS, 'E7', EXPECT['E7a'])
     _row(rows, 'E7b', 'vm-root', BOOTSTRAP_EXACT['E7b'], 20, VM_BASIS, 'E7', EXPECT['E7b'])
-    _row(rows, 'E7c', 'vm-root', BOOTSTRAP_EXACT['E7c'], 60, VM_BASIS, 'E7', EXPECT['E7c'])
+    # The reviewed entry is installed before the boundary it serves: E7p is one of its fixed roles, and
+    # the install writes only /usr/local/libexec, so it does not touch BASE or any row stage.
     _row(rows, 'E-SUP', 'vm-root', supervisor_install_argv(), 60, VM_BASIS, 'E-SUP',
          {'stdout_sha': _file_sha(SUPERVISOR_SOURCE)})
+    project_argv, project_credit = _project_credit(fresh)
+    _row(rows, PROJECT_ROW, 'vm-root', project_argv or [], 60, VM_BASIS, 'E7', PROJECT_ROW_EXPECT,
+         credit=project_credit, project={'device': supervisor.PROJECT_DEVICE,
+                                        'project': supervisor.PROJECT_ID, 'uid': 0})
+    _row(rows, 'E7c', 'vm-root', BOOTSTRAP_EXACT['E7c'], 60, VM_BASIS, 'E7', EXPECT['E7c'])
     _row(rows, 'E-SUDO', 'vm-root', BOOTSTRAP_EXACT['E-SUDO'], 30, VM_BASIS, 'E-SUP',
          {'stdout_sha': _sha(SUDOERS_TEXT.encode())})
     files = fresh.get('ssh_files') or {}
@@ -939,7 +985,7 @@ def plan_digest(rows, expected_head, stage1_before=None):
     """
     body = [[r['id'], r['kind'], r['argv'], r['writer_argv'], r['timeout_seconds'], r['closure_basis'],
              r['expect'], r['stdin_sha256'], r['limit_bytes'], r['credit'], r.get('quota'),
-             r.get('quota_argv'), r.get('quota_credit')] for r in rows
+             r.get('quota_argv'), r.get('quota_credit'), r.get('project')] for r in rows
             if not r['id'].startswith('EGO.') and r['id'] != 'EGO']
     return _sha(json.dumps({'head': expected_head, 'candidate_h': CANDIDATE_H_HEAD, 'stage1': stage1_before,
                             'rows': body}, sort_keys=True).encode())
@@ -1036,11 +1082,17 @@ def setup_plan(fresh):
             missing.append('docker group present (probe)')
         if rid == 'E6' and not row['argv']:
             missing.append('authorized_keys: ' + (row.get('key_error') or 'not bound'))
-        if rid in ('E7a', 'E7b', 'E7c'):
+        if rid in ('E7a', 'E7b', 'E7p', 'E7c'):
             try:
                 verify_disk_association(fresh.get('disk_association'))
             except Refusal as exc:
                 missing.append(str(exc))
+        if rid == PROJECT_ROW:
+            installed = fresh.get('supervisor_installed') or {}
+            if not row['argv']:
+                missing.append('fixed project-assignment request (row nonce and boot identity)')
+            if installed.get('sha256') != _file_sha(SUPERVISOR_SOURCE):
+                missing.append('project assignment needs the installed reviewed entry (E-SUP bound)')
         if row['kind'] in ('vm-supervised', 'contained-transfer'):
             if not row['argv']:
                 missing.append('payload request (effigy531 uid and a row nonce from the facts)'
@@ -1421,6 +1473,12 @@ def execute_plan(facts, runner, observe_identity, observe_terminal, stage_root, 
                 return halt('bootstrap argv differs from the exact reviewed operation')
             if row['id'] == 'E-SUP' and row['argv'] != supervisor_install_argv():
                 return halt('supervisor install argv differs from the reviewed source')
+            if row['id'] == PROJECT_ROW:
+                try:
+                    if row['argv'] != project_row_argv(row):
+                        return halt('project-assignment argv differs from the reviewed operation')
+                except Refusal as exc:
+                    return halt('project-assignment argv: ' + str(exc))
         try:
             observed = observe_identity(row)
         except (Refusal, OSError, ValueError) as exc:
@@ -1453,7 +1511,8 @@ def execute_plan(facts, runner, observe_identity, observe_terminal, stage_root, 
         exclusive(stage / 'intent.json', (json.dumps({'id': row['id'], 'kind': row['kind'], 'argv': row['argv'],
                                                       'writer_argv': row['writer_argv'], 'stdin_sha256': stdin_sha,
                                                       'expect': row['expect'], 'credit': row['credit'],
-                                                      'quota': row.get('quota'), 'quota_argv': row.get('quota_argv')},
+                                                      'quota': row.get('quota'), 'quota_argv': row.get('quota_argv'),
+                                                      'project': row.get('project')},
                                                      sort_keys=True, indent=2) + '\n').encode())
         if row['limit_bytes'] is not None and row.get('quota') is not None:
             try:
@@ -1484,6 +1543,24 @@ def execute_plan(facts, runner, observe_identity, observe_terminal, stage_root, 
             return halt('row refused: ' + str(exc))
         for name in ('stdout', 'stderr', 'writer_stdout', 'writer_stderr'):
             exclusive(stage / name, outcome.get(name, b'') or b'')
+        if row.get('project'):
+            # The project assignment is admitted here, from the witness the fixed role printed for this
+            # exact boot, device and one-use request. A caller label cannot open it, and the row's own
+            # exit is not the admission: only the complete witness is.
+            try:
+                witness = json.loads((outcome.get('stdout') or b'').decode('utf-8', 'strict'))
+                if witness.get('nonce') != (row.get('credit') or {}).get('nonce') or \
+                        witness.get('boot_id') != observed.get('boot_id'):
+                    raise Refusal('project witness names another nonce or boot')
+                exclusive(stage / 'project-witness.json',
+                          (json.dumps(witness, sort_keys=True, indent=2) + '\n').encode())
+                bound_project = allocation.verify_project_assignment(
+                    witness, {'boot_id': observed.get('boot_id'), 'root': BASE,
+                              'device': row['project']['device'], 'uid': row['project']['uid']})
+            except (Refusal, KeyError, TypeError, ValueError, UnicodeError) as exc:
+                return halt('project assignment: ' + str(exc))
+            exclusive(stage / 'project-assignment.json',
+                      (json.dumps(bound_project, sort_keys=True, indent=2) + '\n').encode())
         closure, credit_note = 'unknown', None
         if row['effect'] in ('supervised', 'transfer') and outcome.get('disposition') == 'exited' \
                 and outcome.get('candidate') is not None and row['credit']:

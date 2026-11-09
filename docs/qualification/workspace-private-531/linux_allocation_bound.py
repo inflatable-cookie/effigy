@@ -9,14 +9,20 @@ It does not bound writers outside the tree, such as root-owned system paths or D
 
 Observed 2026-11-08 (747 originals): root ext4 with neither feature and no quota tools. That is
 absence. The verifier refuses it, and nothing here enables, mounts, or provisions anything.
-Production admits no mechanism (linux_setup.SUPPORTED_HARD_LIMITS is empty), so every witness refuses.
+`linux_setup.SUPPORTED_HARD_LIMITS` admits the mechanism as source-qualified, and admission is not a
+grant: a row is credited only from a complete witness produced by the fixed `--approved-quota` role.
 
 A witness carries the five route originals (text, sha256, waited exit). It is verified against exact
 request facts: boot id, owned uid, stage root, and the exact entry set. Originals are hashed and
 checked for consistency with each other; a caller label is never enforcement.
+
+The same module holds the E7b/E7c project-assignment verifier and the ordered activation route with
+its progress guard. Those are source qualifications and controls: they observe nothing on this VM and
+grant no snapshot, boot, filesystem, project, quota or native credit.
 """
 import ctypes
 import hashlib
+import json
 import os
 import re
 import struct
@@ -24,7 +30,7 @@ import uuid
 from pathlib import Path
 
 from linux_supervisor import Refusal, QUOTA_ROWS as ROW_RESERVATIONS, QUOTA_GROUP_ROWS, \
-    quota_row_reservation, quota_limit_record
+    quota_row_reservation, quota_limit_record, PROJECT_MECHANISM, PROJECT_ROUTES, PROJECT_ROOT
 import linux_allocation_probe as probe
 
 MECHANISM = 'ext4-project-quota'
@@ -40,6 +46,37 @@ QIF_BLIMITS = 1 << 0
 QIF_SPACE = 1 << 1
 ROOT_UID = 0                                      # the supervisor creates its gate FIFO as root
 ROUTES = ('mountinfo', 'dumpe2fs', 'by-uuid', 'quota', 'tree')
+# The fixed activation medium, recorded from the Ubuntu 26.04 release metadata (see linux-setup.md).
+# It is one recorded candidate, not an acquired image: no bytes are downloaded by this module.
+ACTIVATION_MEDIUM = {
+    'publisher': 'Ubuntu cdimage release metadata for 26.04',
+    'product': 'ubuntu-26.04.1-live-server-arm64.iso',
+    'url': 'https://cdimage.ubuntu.com/releases/26.04/release/ubuntu-26.04.1-live-server-arm64.iso',
+    'iso_sha256': 'af78753c94b924c85c4964c670692a853f7c80299a4064e317edad95462e3168',
+    'iso_bytes': 3076861952,
+    'sums_sha256': '0daa248426442137c56a5122b89bda08e5854f565a6eed26dec5622094d3e5a3',
+    'manifest_sha256': 'ad43a50074efc81bc77c4ef20339f4897fc8264eea5196655fe240fab0d6c86e',
+    'signature_sha256': 'bfa9b6e8b87298c3dfed6310029e370c4bd5f553175fb2c57705cd11bfb84086',
+    'signature_keyid': 'D94AA3F0EFE21092',
+    'e2fsprogs': '1.47.2-3ubuntu4',
+}
+OFFLINE_TOOL_VERSION = '1.47.2'
+# One exact ordered activation sequence. Each boundary names the facts a record must carry; an
+# unlisted boundary (for example a restore) is not part of this route and refuses.
+ACTIVATION_BOUNDARIES = (
+    ('quiesce', 'precondition', ('rows_idle', 'writers_stopped')),
+    ('snapshot', 'operator-effect', ('snapshot_id', 'space_bytes', 'quiescent')),
+    ('rescue-boot', 'operator-effect', ('medium_sha256', 'tools', 'root_unmounted')),
+    ('precheck', 'offline', ('root_unmounted',)),
+    ('features', 'offline', ('root_unmounted',)),
+    ('mount-options', 'offline', ('root_unmounted', 'stored_options_empty')),
+    ('postcheck', 'offline', ('root_unmounted', 'features_active')),
+    ('return-boot', 'operator-effect', ('root_mounted_rw',)),
+    ('project-assign', 'fixed-entry', ('assigned',)),
+    ('quota', 'fixed-entry', ('limit_set',)),
+    ('enforce', 'observation', ('phase',)),
+)
+RESCUE_BOUNDARIES = frozenset({'rescue-boot', 'precheck', 'features', 'mount-options', 'postcheck'})
 HELPER = Path(__file__).resolve().parent / 'linux_allocation_probe.py'
 WRITER_HELPER = Path(__file__).resolve().parent / 'linux_transfer.py'
 HEX64 = re.compile(r'^[0-9a-f]{64}$')
@@ -218,12 +255,12 @@ def writer_tool_route(helper=WRITER_HELPER):
             'dependencies': {name: helper_sha256(Path(helper).parent / name) for name in dependencies}}
 
 
-def _originals(witness):
+def _originals(witness, routes=ROUTES):
     observations = witness.get('observations')
-    if not isinstance(observations, dict) or set(observations) != set(ROUTES):
+    if not isinstance(observations, dict) or set(observations) != set(routes):
         raise Refusal('allocation observation set is incomplete')
     texts = {}
-    for route in ROUTES:
+    for route in routes:
         item = observations[route]
         if not isinstance(item, dict):
             raise Refusal(route + ' original is not a record')
@@ -540,3 +577,246 @@ def _forced_command():
 def witness_digest(witness):
     """Stable digest of a complete witness, so a receipt can bind the exact retained bytes."""
     return hashlib.sha256(json.dumps(witness, sort_keys=True).encode('utf-8')).hexdigest()
+
+
+# ---------------------------------------------------------------- project assignment (E7b/E7c)
+
+def fsxattr_abi():
+    """The reviewed fsxattr ABI, derived here so a drift from the installed role refuses.
+
+    linux/fs.h encodes both requests as _IOC(<dir>, 'X', <nr>, struct fsxattr) and the size field is
+    the 28-byte structure. This derivation never reads the guest kernel: it is the fixed header shape
+    the role must use, and the installed role's own derivation must equal it.
+    """
+    size = probe.FSXATTR.size
+
+    def request(direction, number):
+        return direction << 30 | size << 16 | ord('X') << 8 | number
+
+    get, setter = request(2, 31), request(1, 32)
+    if size != 28 or get != probe.FS_IOC_FSGETXATTR or setter != probe.FS_IOC_FSSETXATTR:
+        raise Refusal('fsxattr ioctl ABI differs from the reviewed kernel header')
+    return {'struct_size': size, 'get': get, 'set': setter}
+
+
+def project_facts(facts):
+    """The exact facts a project-assignment witness must match: one boot, the reviewed root and device."""
+    if not isinstance(facts, dict) or set(facts) != {'boot_id', 'root', 'device', 'uid'}:
+        raise Refusal('project assignment facts are incomplete: boot, root, device and uid are required')
+    boot, root, device, uid = facts['boot_id'], facts['root'], facts['device'], facts['uid']
+    if type(uid) is not int or uid < 0:
+        raise Refusal('project assignment owner fact is invalid')
+    # The plan's boot identity is the same value the writer-bound facts use: any non-empty, bounded,
+    # trimmed identity. The guest role still requires the kernel's UUID form before any change.
+    if not isinstance(boot, str) or not boot or len(boot) > 64 or boot != boot.strip():
+        raise Refusal('project assignment boot identity is missing')
+    if root != PROJECT_ROOT or device != ROOT_DEVICE:
+        raise Refusal('project assignment facts name another root or device')
+    return boot, root, device, uid
+
+
+def _project_record(text, boot, dev):
+    """Refuse unless the retained project record is active, unconfigured and uncharged."""
+    values = _pairs(text, 'project')
+    keys = ('getfmt_rc', 'fmt', 'getquota_rc', 'bhard_qb', 'bsoft_qb', 'curspace_bytes', 'curinodes',
+            'ihard', 'isoft', 'project_id', 'dev', 'boot_id')
+    missing = [key for key in keys if key not in values]
+    if missing:
+        raise Refusal('project record lacks ' + ','.join(missing))
+    try:
+        numbers = {key: int(values[key]) for key in keys if key != 'dev' and key != 'boot_id'}
+    except ValueError as exc:
+        raise Refusal('project record is malformed') from exc
+    if numbers['project_id'] != PROJECT_ID or values['dev'] != dev or values['boot_id'] != boot:
+        raise Refusal('project record is from another boot, device or project')
+    if numbers['getfmt_rc'] != 0 or numbers['fmt'] == 0:
+        raise Refusal('project quota format is not active on the root device')
+    if numbers['getquota_rc'] != 0:
+        raise Refusal('project record is unavailable; the project is not proven unused')
+    if any(numbers[key] != 0 for key in ('bhard_qb', 'bsoft_qb', 'ihard', 'isoft')):
+        raise Refusal('project already carries a quota limit; it is not unused')
+    if numbers['curspace_bytes'] or numbers['curinodes']:
+        raise Refusal('project is already charged; it is not unused')
+    return {'dev': values['dev'], 'boot_id': values['boot_id'], 'project': PROJECT_ID}
+
+
+def _fsxattr_value(hextext, label):
+    if not isinstance(hextext, str) or not re.fullmatch(r'[0-9a-f]{56}', hextext):
+        raise Refusal(label + ' attribute value is not the fixed 28-byte structure')
+    return probe.FSXATTR.unpack(bytes.fromhex(hextext))
+
+
+def verify_project_assignment(witness, facts):
+    """Admit one complete project-assignment witness for the E7b/E7c boundary.
+
+    The witness must show one boot, the bound native root device, a root-owned empty BASE on that
+    device, an empty pre-state attribute original, an independently read project record with no limit
+    and no charge, exactly one FS_IOC_FSSETXATTR, and an independent re-read whose project and
+    inheritance are set while every other attribute field is unchanged. A caller label, another
+    boot/device/project, a nonempty or replaced directory, a missing original and an unavailable
+    project proof all refuse. The witness is evidence about one occurrence; it is not a native proof.
+    """
+    boot, root, device, uid = project_facts(facts)
+    if not isinstance(witness, dict):
+        raise Refusal('project assignment witness is missing')
+    shape = {'mechanism', 'assigned', 'nonce', 'boot_id', 'device', 'project', 'projinherit', 'root', 'abi',
+             'base', 'attributes', 'setter', 'custody', 'observations'}
+    if set(witness) != shape:
+        raise Refusal('project assignment witness has an unexpected shape')
+    if witness['mechanism'] != PROJECT_MECHANISM:
+        raise Refusal('project assignment mechanism is not admitted')
+    if witness['assigned'] is not True or witness['boot_id'] != boot:
+        raise Refusal('project assignment is unassigned or from another boot')
+    if witness['device'] != device or witness['project'] != PROJECT_ID or \
+            witness['projinherit'] != probe.FS_XFLAG_PROJINHERIT or witness['root'] != root:
+        raise Refusal('project assignment names another device, project, flag or root')
+    if not isinstance(witness['nonce'], str) or not HEX64.fullmatch(witness['nonce']):
+        raise Refusal('project assignment has no one-use nonce')
+    if witness['abi'] != fsxattr_abi():
+        raise Refusal('project assignment used another fsxattr ABI')
+    texts = _originals(witness, PROJECT_ROUTES)
+    mount = _root_mount(texts['mountinfo'])
+    _check_superblock(texts['dumpe2fs'])
+    if os.path.basename(texts['by-uuid'].strip()) != ROOT_DEVICE.rsplit('/', 1)[1]:
+        raise Refusal('by-uuid link does not resolve to the native root device')
+    _project_record(texts['project'], boot, mount['dev'])
+    base = witness['base']
+    if not isinstance(base, dict) or set(base) != {'dev', 'ino', 'uid', 'gid', 'mode', 'nlink', 'entries'}:
+        raise Refusal('project root identity is missing or has an unexpected shape')
+    if base['dev'] != mount['dev']:
+        raise Refusal('project root is not on the bound root device')
+    if base['uid'] != uid or type(base['mode']) is not int or base['mode'] & 0o022:
+        raise Refusal('project root is not owned by the fixed root route or is writable by others')
+    if type(base['ino']) is not int or base['ino'] <= 0 or type(base['nlink']) is not int or base['nlink'] < 2:
+        raise Refusal('project root descriptor identity is incomplete')
+    if base['entries'] != []:
+        raise Refusal('project root was not empty when the project was assigned')
+    attributes = witness['attributes']
+    if not isinstance(attributes, dict) or set(attributes) != {'before', 'after'}:
+        raise Refusal('project attribute originals are missing')
+    old_flags, old_extent, old_count, old_project, old_cowextent, old_padding = \
+        _fsxattr_value(attributes['before'], 'original')
+    flags, extent, count, project, cowextent, padding = _fsxattr_value(attributes['after'], 'resulting')
+    if old_project != 0 or old_flags & probe.FS_XFLAG_PROJINHERIT or old_padding != bytes(8):
+        raise Refusal('the original attributes were not the empty pre-state')
+    if project != PROJECT_ID or not flags & probe.FS_XFLAG_PROJINHERIT:
+        raise Refusal('the resulting attributes do not carry project 531 with inheritance')
+    if (flags, extent, count, cowextent, padding) != \
+            (old_flags | probe.FS_XFLAG_PROJINHERIT, old_extent, old_count, old_cowextent, old_padding):
+        raise Refusal('the assignment changed a field outside the project and inheritance')
+    setter = witness['setter']
+    if not isinstance(setter, dict) or set(setter) != {'ioctl', 'count', 'exit'} or \
+            setter['ioctl'] != 'FS_IOC_FSSETXATTR' or setter['count'] != 1 or setter['exit'] != 0:
+        raise Refusal('the project assignment is not exactly one positive ioctl')
+    custody = witness['custody']
+    entry_sha = hashlib.sha256((Path(__file__).resolve().parent / 'linux_supervisor.py').read_bytes()).hexdigest()
+    if not isinstance(custody, dict) or set(custody) != {'entry_sha256', 'approval_digest', 'device', 'project'} \
+            or custody['entry_sha256'] != entry_sha or \
+            not isinstance(custody['approval_digest'], str) or not HEX64.fullmatch(custody['approval_digest']) \
+            or custody['device'] != ROOT_DEVICE or custody['project'] != PROJECT_ID:
+        raise Refusal('the witness does not carry the fixed role entry and one-use approval custody')
+    return {'mechanism': PROJECT_MECHANISM, 'assigned': True, 'nonce': witness['nonce'], 'boot_id': boot,
+            'device': ROOT_DEVICE, 'project': PROJECT_ID, 'root': root, 'base': dict(base),
+            'attributes': {'before': attributes['before'], 'after': attributes['after']},
+            'approval_digest': custody['approval_digest']}
+
+
+# ---------------------------------------------------------------- activation route
+
+def activation_plan():
+    """The fixed activation boundaries in order, with the accepted offline argv composed in place.
+
+    Constructing this list runs nothing. The offline boundaries reuse offline_operation_plan()'s exact
+    argv objects, so the accepted commands and this route cannot drift.
+    """
+    offline = dict(offline_operation_plan())
+    return [{'name': name, 'kind': kind, 'requires': tuple(requires), 'argv': offline.get(name)}
+            for name, kind, requires in ACTIVATION_BOUNDARIES]
+
+
+def inspect_activation_progress(records):
+    """Check one exact activation sequence and refuse every interrupted or unrecorded boundary.
+
+    Supplied records are never authority: the caller must independently authenticate the snapshot,
+    the medium, the rescue boot and the unmounted device. Every boundary must also carry the waited
+    exit of the command that performed it, and it must be exactly zero: a nonzero, missing, boolean or
+    non-integer exit is a failed or unknown result and refuses just as a refused or unknown
+    disposition does. What this guard refuses is an out-of-order, repeated, unrecorded, refused or
+    unknown boundary and any boundary that is not in the plan (including a restore or a retry). An
+    interruption is therefore never a partial success, and nothing resumes or rolls back
+    automatically after an unknown result.
+    """
+    plan = activation_plan()
+    if not isinstance(records, list) or len(records) > len(plan):
+        raise Refusal('activation record set is incomplete or longer than the plan')
+    rescue_boot = normal_boot = None
+    for item, step in zip(records, plan):
+        name = step['name']
+        if not isinstance(item, dict) or item.get('name') != name:
+            raise Refusal('activation boundary set or order differs at ' + name)
+        if set(item) != {'name', 'boot_id', 'disposition', 'waited_exit'} | set(step['requires']):
+            raise Refusal('activation boundary ' + name + ' has missing or unexpected facts')
+        exit_code = item['waited_exit']
+        if type(exit_code) is not int or exit_code != 0:
+            raise Refusal('activation boundary ' + name + ' has no positive waited exit (non-zero, missing or '
+                          'unknown); its outcome is unknown and nothing resumes or restores automatically')
+        if item['disposition'] != 'exited':
+            raise Refusal('activation boundary ' + name + ' did not complete; its outcome is unknown and '
+                          'nothing resumes or restores automatically')
+        boot = item['boot_id']
+        if not isinstance(boot, str) or not boot or len(boot) > 64 or boot != boot.strip():
+            raise Refusal('activation boundary ' + name + ' has no boot identity')
+        if name in RESCUE_BOUNDARIES and name != 'rescue-boot':
+            if boot != rescue_boot:
+                raise Refusal('activation boundary ' + name + ' is from another boot than the rescue boot')
+        elif name in ('return-boot', 'project-assign', 'quota', 'enforce'):
+            if rescue_boot is None:
+                raise Refusal('activation left no rescue boot identity to return from')
+            if boot == rescue_boot:
+                raise Refusal('activation boundary ' + name + ' is not on the returned normal boot')
+        if name == 'quiesce':
+            if item['rows_idle'] is not True or item['writers_stopped'] is not True:
+                raise Refusal('activation started while writers were not stopped and idle')
+        elif name == 'snapshot':
+            if not isinstance(item['snapshot_id'], str) or not re.fullmatch(r'\{[0-9a-f-]{36}\}', item['snapshot_id']):
+                raise Refusal('the retained snapshot has no exact identity')
+            if type(item['space_bytes']) is not int or item['space_bytes'] <= 0:
+                raise Refusal('snapshot space is not a positive observed byte count')
+            if item['quiescent'] is not True:
+                raise Refusal('the snapshot was not taken from a quiescent filesystem')
+        elif name == 'rescue-boot':
+            if item['medium_sha256'] != ACTIVATION_MEDIUM['iso_sha256']:
+                raise Refusal('the rescue boot is not the recorded medium')
+            if item['tools'] != {'tune2fs': OFFLINE_TOOL_VERSION, 'e2fsck': OFFLINE_TOOL_VERSION}:
+                raise Refusal('the rescue tools are not the source-qualified e2fsprogs version')
+            if item['root_unmounted'] is not True:
+                raise Refusal('the rescue boot does not hold the root offline')
+            rescue_boot = boot
+        elif name in ('precheck', 'features', 'postcheck'):
+            if item['root_unmounted'] is not True:
+                raise Refusal('offline step ' + name + ' did not run with the root unmounted')
+            if name == 'postcheck' and item['features_active'] is not True:
+                raise Refusal('the postcheck does not show the project and quota features active')
+        elif name == 'mount-options':
+            if item['root_unmounted'] is not True:
+                raise Refusal('the stored mount-option change did not run with the root unmounted')
+            if item['stored_options_empty'] is not True:
+                raise Refusal('the stored mount-option string was not proven empty before it was replaced')
+        elif name == 'return-boot':
+            if item['root_mounted_rw'] is not True:
+                raise Refusal('the normal boot did not return the root mounted writable')
+            normal_boot = boot
+        elif name == 'project-assign':
+            if item['assigned'] is not True:
+                raise Refusal('the project assignment did not report an assignment')
+        elif name == 'quota':
+            if item['limit_set'] is not True:
+                raise Refusal('the quota boundary did not set a row limit')
+        elif name == 'enforce':
+            if item['phase'] != 'edquot':
+                raise Refusal('the enforcement observation is not an EDQUOT refusal')
+    if normal_boot is not None and rescue_boot is not None and normal_boot == rescue_boot:
+        raise Refusal('the activation never returned to a distinct normal boot')
+    return {'completed': [item['name'] for item in records],
+            'next': plan[len(records)]['name'] if len(records) < len(plan) else None,
+            'snapshot_id': next((item['snapshot_id'] for item in records if item['name'] == 'snapshot'), None)}
