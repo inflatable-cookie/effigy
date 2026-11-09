@@ -2181,6 +2181,24 @@ class PlanChecks(unittest.TestCase):
         self.assertTrue(rows['E7a']['missing'])
         self.assertTrue(rows['E7c']['missing'])
 
+    def test_a_stored_observation_record_satisfies_the_e7_gate(self):
+        """The E7 rows re-verify the stored fact document a diagnostic occurrence keeps; the reduced
+        verify result cannot stand in for it."""
+        witness = disk_controls.valid_association()
+        stored = json.loads(json.dumps(disk_association.stored_facts(witness)))
+        result = disk_controls.dal.verify(witness, disk_controls.TEST_SUPPORTED, disk_controls.TEST_PINS)
+        with patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', disk_controls.TEST_SUPPORTED), \
+                patch.object(disk_association, 'PINS', disk_controls.TEST_PINS):
+            memory = {r['id']: r for r in setup.setup_plan(self.fx.facts(disk_association=witness))}
+            document = {r['id']: r for r in setup.setup_plan(self.fx.facts(disk_association=stored))}
+            reduced = {r['id']: r for r in setup.setup_plan(self.fx.facts(disk_association=result))}
+        rows = ('E7a', 'E7b', 'E7p', 'E7c')
+        self.assertEqual({rid: document[rid]['missing'] for rid in rows},
+                         {rid: memory[rid]['missing'] for rid in rows})
+        self.assertEqual([reason for rid in rows for reason in document[rid]['missing']
+                          if 'host read' in reason], [])
+        self.assertTrue(any('host read' in reason for reason in reduced['E7a']['missing']))
+
     def test_every_allocating_row_belongs_to_a_fixed_quota_administration_request(self):
         rows = {r['id']: r for r in setup.setup_plan(self.fx.facts())}
         for rid, group in (('E8', 'E8'), ('E9a', 'E9a'), ('E9b', 'E9b'), ('E9c', 'E9c'),

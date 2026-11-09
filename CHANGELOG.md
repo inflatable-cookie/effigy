@@ -468,6 +468,29 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- Bind the fixed Parallels host-inventory reader to its boot handoff (effigy#782).
+  The helper bytes are pinned by a committed literal in `linux_disk_association`,
+  not by a digest the helper computes from itself, so modified helper bytes
+  refuse. `read_inventory` takes the stage's already authenticated boot identity
+  and a guest boot-original reader, calls it once immediately before and once
+  immediately after the one bounded dispatch, and derives the selected VM UUID,
+  home and library identity from the helper's own output; a changed or malformed
+  bracket, a nonzero or unwaited exit, a timeout, a resource or output-cap
+  refusal, an over-cap, partial or non-ASCII read, a repeated field and another
+  VM all refuse rather than becoming a host record. The diagnostic observation
+  stage now assembles the complete association record inside its same-VM boot
+  bracket and feeds it through production `setup.verify_disk_association`; while
+  the SDK ABI is unsourced it does not dispatch the reader, so no native
+  occurrence is spent on an entry that cannot yet read. The outcome stores that
+  fact document (raw config, descriptor and host-read stdout/stderr as bounded
+  base64 envelopes with length and digest), because `setup_plan` E7* re-verifies
+  that key as facts; the reduced verify result is kept beside it and is never the
+  stored record. The exact external
+  limitation (numeric `PARALLELS_API_VER`, `PRL_HANDLE` ABI and prototypes) and
+  the one supported next read (the 27.1.0-58756 SDK header archive, collected in
+  a separately briefed host-custodied step and pinned by sha256) are recorded in
+  `SOURCE_GAP`. Controls use fixture transport; no SDK Init, VM or guest effect.
+
 - Source-admit the accepted narrow Parallels disk-association mechanism
   `parallels-host-inventory-trust-v1` (effigy#774). For pinned Desktop
   27.1.0-58756 and registered VM `433c9e5b-…`, a complete freshly authenticated
