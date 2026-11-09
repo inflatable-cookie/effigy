@@ -1545,7 +1545,9 @@ exit 0
 echo admit
 IFS= read -r line
 echo "ok 1"
-sleep 2
+# Model a malformed acknowledgement from a retained hook; its owner ends
+# the hook after refusing the frame, without a timer or a sleep child.
+while IFS= read -r line; do :; done
 "#,
             "an acknowledgement is `ack <seq>`",
             "custodians",

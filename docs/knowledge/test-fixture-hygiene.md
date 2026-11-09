@@ -345,6 +345,11 @@ An admission hook that tests EOF after report delivery consumes and records that
 complete frame before exiting without acknowledgement. Immediate exit races the
 decision poll, frame write and EOF read, so it cannot select one error branch.
 
+Umask proofs run in exact-test child processes: restoring the old mask does not
+protect another thread that creates a file during the mutation. Trusted unit
+fixtures establish and assert their directory/file permissions before testing a
+stale executable, so an unsafe directory cannot select an earlier refusal.
+
 Recorded-generation closure requires positive absence, zombie state or an
 identity mismatch. An unknown identity or state stays unresolved within the
 fixture's existing wait bound; repeated failed observations do not prove closure.
