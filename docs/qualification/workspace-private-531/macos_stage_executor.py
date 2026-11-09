@@ -29,6 +29,7 @@ sys.path.insert(0, str(HERE))
 
 import macos_preparation as prep  # noqa: E402
 import preparation_stage as primitive  # noqa: E402
+import runtime_image_inputs as runtime_inputs  # noqa: E402
 from preparation_resources import Monitor  # noqa: E402
 
 Refusal = primitive.Refusal
@@ -40,11 +41,11 @@ GUEST_CONTEXT_PATH = HERE / 'macos_guest_context.py'
 HELPER_PATH = HERE / 'macos_stage_helper.py'
 PROOF_PATH = HERE / 'macos_stage_proof.py'
 REPO_ROOT = HERE.parents[2]
-GUEST_CONTEXT_SHA256 = '713cb10ea8ce2d5c15422650b3aa8abfe45ef5de1b0fa885219b70d3cab0f873'
+GUEST_CONTEXT_SHA256 = '5daf93e2ad3ba1cb1cfb5e860730720c21d3730dee4e2b292bc9feb66643e1fc'
 # Program files whose bytes the GO binds. Changing any of them after activation refuses before dispatch.
 PROGRAM_FILES = (HERE / 'macos_stage_executor.py', HERE / 'macos_preparation.py',
                  HERE / 'preparation_stage.py', HERE / 'preparation_resources.py', GUEST_CONTEXT_PATH, HELPER_PATH,
-                 PROOF_PATH)
+                 PROOF_PATH, HERE / 'runtime_image_inputs.py')
 TOOL_PATHS = (prep.COLIMA, prep.DOCKER)
 # Read-only, hash-bound requests carry scope, not authority; activation is an external Nucleus precondition.
 ACTIVATIONS_DIR = prep.STASH + '/macos-stage-activations'
@@ -85,25 +86,21 @@ RECORDED_ENGINE_ID = 'ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd'
 PRIOR = {'C1': 'C0', 'C2': 'C1', 'C3': 'C2', 'C4': 'C3', 'C5': 'C4', 'C6': 'C5',
          'D1': 'D0', 'D2': 'D1', 'D3': 'D2', 'D4': 'D3'}
 PATH_BINDINGS = ('control', 'colima_home', 'colima_cache_home', 'colima_docker_config', 'qualification_root',
-                 'desktop_config', 'desktop_context_dir', 'desktop_iidfile', 'desktop_cidfile')
-# The download cap is payload bytes (the runner's own fetches). C1's one fetch is the pinned Colima image, admitted
-# through the prefetch helper with its exact size. C4 and D2 pull the base image and apt packages inside the engine
-# build, so the runner observes no payload bytes and nothing bounds them; they stay refused with one proposal.
-ENGINE_SIDE_NETWORK = ('C4 and D2 fetch the base image and apt packages inside the engine build: the runner sees no '
-                       'payload bytes and the manifest pins no size, so the download cap cannot be enforced. ONE proposal, '
-                       'not implemented: pin an exact-size base OCI archive and an offline apt bundle, fetch and hash each '
-                       'as the Colima image is, load them through a fixed step, and build with no network. That changes '
-                       'the recipe hash and the build argv and needs a fresh GO')
+                 'desktop_config', 'desktop_context_dir', 'desktop_input_dir', 'desktop_iidfile', 'desktop_cidfile')
+# The download cap is payload bytes (the runner's own fetches). C1's one fetch is the pinned Colima image. D2's
+# fetches are the pinned Ubuntu 22.04 arm64 OCI blobs and offline apt debs. C4's guest build argv is the same
+# offline --network=none --build-context form, but the guest still has no closed transfer of those host-fetched
+# inputs (754 owns guest-helper process closure, C2/C3 and step_closure).
+C4_GUEST_INPUTS = ('C4 guest build argv is the offline --network=none --build-context form, but the guest still has '
+                   'no closed transfer of the host-fetched OCI layout and debs into {guest_context}.oci and '
+                   '{guest_context}.debs (754 owns guest-helper process closure, C2/C3 and step_closure). C4 also '
+                   'needs the verified fresh C0-token32/C2/C3 chain; no test seam closes it')
 UNADMITTED = {
     'C2': ('multi-effect guest stage: the guest closure is unknown after the route echo, so the probe is not '
            'reachable through this adapter; the probe source itself is pinned (macos_guest_context.py)'),
     'C3': ('guest_spec is derived from the C2 probe output and the token32 that the C0 origin mints; '
            'C2 is unadmitted'),
-    'C4': ENGINE_SIDE_NETWORK,
-    'D2': ENGINE_SIDE_NETWORK,
-    'D4': ('D4 cleanup is source-qualified (per-target engine and inspect checks, complete image inventory), but '
-           'its predecessor D3 needs D2, which is unadmitted for its engine-side network: '
-           'D4 cannot run until D2 and D3 qualify'),
+    'C4': C4_GUEST_INPUTS,
 }
 # Ordinary execution stays refused; the separate proof entry has an external Nucleus launch precondition.
 # 'simulate_guest_closure' is test-only: it treats a guest step that exits 0 as closed, so the stage loop can be
@@ -194,7 +191,7 @@ CHECK_KIND = {'d4-container-check': 'container', 'd4-volume-check': 'volume', 'd
 ACTIVATION_ID = re.compile(r'[A-Za-z0-9_.-]{8,64}')
 RECIPE_CAP_BYTES = 64 * 1024
 RECIPE_SHA256 = prep.RECIPE_SHA256
-RECIPE_BYTES = 474
+RECIPE_BYTES = 318
 
 
 class Collision(Refusal):
@@ -390,7 +387,7 @@ def runtime_preconditions(stage_id, bindings):
                                       'recorded: path shape, device, inode, uid, 0700 mode, first-use entries')
         pre['recorded_roots_source'] = ('688 C0 receipt, token 7deaf1b3 (roots_final), for the recorded token only; '
                                         "otherwise the chain's own verified C0 creation record")
-    if stage_id == 'D1':
+    if stage_id in ('D1', 'D2'):
         pre['d0_identities'] = ('the control root and the two Docker directories must carry the identities the verified '
                                 'original D0 chain recorded; the predecessor receipt is named by the activation (prior_receipt)')
     if stage_id in ('D1', 'D2', 'D3', 'D4'):
@@ -870,7 +867,7 @@ def h_compare_route_echo(ctx, step):
 
 
 def h_render_guest_spec(ctx, step):
-    """C3 stages the reviewed recipe bytes (runtime.Dockerfile: exact sha, 474 bytes) as its stdin file, and
+    """C3 stages the reviewed recipe bytes (runtime.Dockerfile: exact sha, 318 bytes) as its stdin file, and
     derives its guest spec from the C2 probe output and the chain's token32. C4 derives its verify spec from the
     C3 stage output; that context must carry the same token32, and the context and iidfile names come from it.
     Each derived value is written exclusively into this step's directory."""
@@ -998,6 +995,19 @@ def h_check_cleanup_target(ctx, step):
 HALT_SAFE_HELPERS = frozenset({'compare_route_echo'})
 
 # Helper handlers. Anything absent here is unadmitted with its reason (stage_admission).
+def h_prefetch_runtime_inputs(ctx, step):
+    """The pinned Ubuntu 22.04 arm64 OCI blobs and offline apt debs, fetched into the owned empty input directory
+    and assembled as a local oci-layout plus a flat debs directory. The build then uses --build-context and
+    --network=none; FROM cannot contact a registry."""
+    pin = runtime_inputs.runtime_image_pin(ctx['manifest'])
+    destination = render1(step['inputs'][0], ctx['bindings'])
+    if destination != ctx['bindings']['desktop_input_dir']:
+        raise Refusal('prefetch destination differs from the reviewed desktop input path')
+    result = runtime_inputs.fetch_runtime_inputs(destination, pin, opener=runtime_inputs.open_runtime_https,
+                                                 checkpoint=lambda: ctx['monitor'].check())
+    return dict(bytes=result['bytes'], oci=result['oci'], debs=result['debs'])
+
+
 def h_prefetch_colima_image(ctx, step):
     """The one pinned Colima image, fetched once into the owned, empty effigy-image directory. The fixed path and the
     reviewed pin are checked first; the live monitor samples growth per chunk. Colima starts from this file with
@@ -1023,6 +1033,7 @@ HANDLERS = {
     'make_owned_dir': h_make_owned_dir,
     'claim_intent': h_claim_intent,
     'prefetch_colima_image': h_prefetch_colima_image,
+    'prefetch_runtime_inputs': h_prefetch_runtime_inputs,
     'verify_desktop_endpoint': h_verify_desktop_endpoint,
     'compare_route_echo': h_compare_route_echo,
     'render_guest_spec': h_render_guest_spec,
@@ -1233,7 +1244,8 @@ def stable_input_manifest(manifest_path=None):
     expected = {f'docs/qualification/workspace-private-531/{name}' for name in (
         'macos_stage_executor.py', 'macos_preparation.py', 'preparation_stage.py',
         'preparation_resources.py', 'macos_guest_context.py', 'macos_stage_helper.py',
-        'macos_stage_proof.py', 'macos-4f6a5ed3-stages.json', 'runtime.Dockerfile')}
+        'macos_stage_proof.py', 'macos-4f6a5ed3-stages.json', 'runtime.Dockerfile',
+        'runtime_image_inputs.py')}
     expected.update(('effigy.toml', 'config/tasks.toml'))
     try:
         declared = [Path(path).relative_to(REPO_ROOT).as_posix() for path in repo_paths]
@@ -1702,8 +1714,8 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                 pins.pin(bindings[key])
             except OSError:
                 raise Refusal(f'{key}: the private Docker directory must exist and be pinned before effects')
-    if stage_id == 'D1':
-        check_d0_identities(prior, bindings, pins)  # the roots the original D0 chain created, before any effect
+    if stage_id in ('D1', 'D2'):
+        check_d0_identities(d0_from_chain(prior), bindings, pins)
     # One absolute monotonic deadline for the whole stage, bounded by the activation window.
     budget = min(stage['seconds'], (datetime.datetime.fromisoformat(go['expires_utc'].replace('Z', '+00:00')) - now).total_seconds())
     if outer_deadline is not None:
@@ -1935,6 +1947,17 @@ def post_cleanup_compare(ctx):
         raise Refusal('a selected object is still present after cleanup: refuse')
     if any(post[key] != ctx['pre_foreign'][key] for key in ('containers', 'volumes', 'images')):
         raise Refusal('foreign list changed across cleanup: refuse, the observation is retained')
+
+
+def d0_from_chain(prior):
+    """The D0 receipt at the root of a Desktop chain. Each receipt was already verified recursively."""
+    cur = prior
+    while cur.get('stage') != 'D0':
+        ref = cur.get('prior')
+        if not isinstance(ref, dict):
+            raise Refusal('the chain has no D0 origin: refuse')
+        cur = read_receipt(ref)
+    return cur
 
 
 def d0_identities(prior, bindings):

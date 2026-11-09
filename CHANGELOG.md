@@ -8,6 +8,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Pin finite Ubuntu 22.04 arm64 OCI blobs and offline apt debs as the C4/D2 runtime-image
+  inputs, fetch and hash them with exact size on the host, and build with `--network none`
+  plus local `--build-context` oci-layout/debs so FROM cannot contact a registry
+  (effigy#756). D2 is admitted on that host path; C4 keeps the same argv shape but stays
+  refused until 754 closes guest transfer of those inputs. No image or package payload is
+  produced here.
+
 - Prepare, and keep refused, the Linux artifact builder's host-write boundary
   (effigy#743). Cargo intermediates now build in the builder's own fixed private
   tree on its writable layer instead of inside the checkout the release profile

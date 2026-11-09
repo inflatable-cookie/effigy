@@ -39,6 +39,7 @@ BINDINGS = dict(
     qualification_root=PATHS['qualification_root'],
     desktop_config=PATHS['desktop_config'],
     desktop_context_dir=PATHS['desktop_context_dir'],
+    desktop_input_dir=PATHS['desktop_input_dir'],
     desktop_iidfile=PATHS['desktop_iidfile'],
     desktop_cidfile=PATHS['desktop_cidfile'],
     desktop_host=prep.DESKTOP_HOST, token=TOKEN, guest_spec='{"parent":{}}',
@@ -289,12 +290,16 @@ class ProvenanceBinding(unittest.TestCase):
     def nerdctl(self, *provenance):
         return SSH + ['timeout', '-k', '5', '840', 'sudo', '-n', 'env', 'DOCKER_CONFIG={guest_context}/docker-config',
                       'nerdctl', 'build', '--platform', 'linux/arm64', '--iidfile', '{guest_iidfile}',
-                      '--tag', 'effigy-4f6a-runtime:r1', *provenance, '{guest_context}']
+                      '--tag', 'effigy-4f6a-runtime:r1', *provenance, '--network', 'none',
+                      '--build-context', 'ubuntu=oci-layout://{guest_context}.oci',
+                      '--build-context', 'debs={guest_context}.debs', '{guest_context}']
 
     def docker(self, *provenance):
         return [prep.DOCKER, 'build', '--platform', 'linux/arm64', '--label', 'effigy.qual={token}',
                 '--tag', 'effigy-4f6a-desktop-runtime:{token}', '--iidfile', '{desktop_iidfile}',
-                *provenance, '{desktop_context_dir}']
+                *provenance, '--network', 'none',
+                '--build-context', 'ubuntu=oci-layout://{desktop_input_dir}/oci',
+                '--build-context', 'debs={desktop_input_dir}/debs', '{desktop_context_dir}']
 
     def test_manifest_builds_bind_their_backend_provenance(self):
         c4 = next(s for s in stage_by_id('C4')['steps'] if s['id'] == 'c4-nerdctl-build')
@@ -328,6 +333,14 @@ class ProvenanceBinding(unittest.TestCase):
         with self.assertRaises(ValueError) as refused:
             prep.check_build_help('--iidfile --platform')
         self.assertIn('--provenance', str(refused.exception))
+
+    def test_nerdctl_help_without_network_or_build_context_is_refused(self):
+        with self.assertRaises(ValueError) as refused:
+            prep.check_build_help('--iidfile --platform --provenance')
+        self.assertIn('--network', str(refused.exception))
+        with self.assertRaises(ValueError) as refused:
+            prep.check_build_help('--iidfile --platform --provenance --network')
+        self.assertIn('--build-context', str(refused.exception))
 
 
 class GoAndDrift(unittest.TestCase):
@@ -501,8 +514,12 @@ class ColimaGlobalDefaults(unittest.TestCase):
 class DockerBuildAndRunFlags(unittest.TestCase):
     """docker build --pull is boolean (buildx reference); docker run --pull takes always|missing|never."""
 
-    BUILD = [prep.DOCKER, 'build', '--platform', 'linux/arm64', '--label', 'effigy.qual={token}',
+    BUILD = [prep.DOCKER, 'build', '--platform', 'linux/arm64', '--provenance=false',
+             '--label', 'effigy.qual={token}',
              '--tag', 'effigy-4f6a-desktop-runtime:{token}', '--iidfile', '{desktop_iidfile}',
+             '--network', 'none',
+             '--build-context', 'ubuntu=oci-layout://{desktop_input_dir}/oci',
+             '--build-context', 'debs={desktop_input_dir}/debs',
              '{desktop_context_dir}']
     RUN = [prep.DOCKER, 'run', '--pull=never', '--rm', '--network', 'none', '--label', 'effigy.qual={token}',
            '--name', 'effigy-4f6a-dcheck-{token}', '--cidfile', '{desktop_cidfile}', '{image_id}',
@@ -512,7 +529,22 @@ class DockerBuildAndRunFlags(unittest.TestCase):
         build = next(x for x in stage_by_id('D2')['steps'] if x['id'] == 'd2-docker-build')['argv']
         self.assertFalse(any(a.startswith('--pull') for a in build))
         self.assertIn('--iidfile', build)
+        self.assertEqual(build[build.index('--network') + 1], 'none')
+        self.assertIn('ubuntu=oci-layout://{desktop_input_dir}/oci', build)
+        self.assertIn('debs={desktop_input_dir}/debs', build)
         self.assertTrue(prep.check_engine_argv(build))
+        c4 = next(s for s in stage_by_id('C4')['steps'] if s['id'] == 'c4-nerdctl-build')['argv']
+        self.assertEqual(c4[c4.index('--network') + 1], 'none')
+        self.assertIn('ubuntu=oci-layout://{guest_context}.oci', c4)
+        self.assertTrue(prep.check_engine_argv(c4))
+
+    def test_build_without_network_none_or_local_contexts_refused(self):
+        without_net = [a for a in self.BUILD if a not in ('--network', 'none')]
+        with self.assertRaises(ValueError):
+            prep.check_engine_argv(without_net)
+        without_ctx = [a for a in self.BUILD if 'oci-layout' not in a and not a.startswith('debs=') and a != '--build-context']
+        with self.assertRaises(ValueError):
+            prep.check_engine_argv(without_ctx)
 
     def test_unsupported_build_pull_forms_refused(self):
         for pull in ('--pull=never', '--pull=always', '--pull=missing'):
@@ -606,7 +638,7 @@ class EffectStageCaps(unittest.TestCase):
                 self.assertTrue(prep.check_effect_stage(stage))
 
     def test_download_only_from_pinned_official_sources(self):
-        base = dict(stage_by_id('C4'))
+        base = dict(stage_by_id('D2'))
         self.assertTrue(prep.check_effect_stage(base))
         with self.assertRaises(ValueError):
             prep.check_effect_stage(dict(base, network_sources=['https://example.com/ubuntu.img']))
@@ -614,7 +646,7 @@ class EffectStageCaps(unittest.TestCase):
             prep.check_effect_stage(dict(base, network_sources=['docker.io/library/ubuntu:latest']))
 
     def test_download_or_storage_over_the_cap_refused(self):
-        base = dict(stage_by_id('C4'))
+        base = dict(stage_by_id('D2'))
         with self.assertRaises(ValueError):
             prep.check_effect_stage(dict(base, download_cap_bytes=prep.DOWNLOAD_CAP_MAX + 1))
         with self.assertRaises(ValueError):
@@ -628,10 +660,28 @@ class EffectStageCaps(unittest.TestCase):
         with self.assertRaises(ValueError):
             prep.check_effect_stage(dict(stage_by_id('D2'), retained_after_failure=[]))
 
-    def test_base_image_digest_matches_the_reviewed_recipe(self):
+    def test_base_image_digest_matches_the_reviewed_pin(self):
+        import runtime_image_inputs as runtime_inputs
         recipe = (HERE / 'runtime.Dockerfile').read_text()
-        self.assertIn(prep.BASE_IMAGE.split('@', 1)[1], recipe)
-        self.assertEqual(prep.BASE_IMAGE.split('@', 1)[1], 'sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11')
+        digest = prep.BASE_IMAGE.split('@', 1)[1]
+        self.assertEqual(digest, 'sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11')
+        self.assertEqual('sha256:' + MANIFEST['binding_inputs']['runtime_image']['index_sha256'], digest)
+        self.assertEqual(runtime_inputs.INDEX['digest'], digest)
+        self.assertIn('FROM ubuntu\n', recipe)
+        self.assertIn('COPY --from=debs', recipe)
+        self.assertNotIn('apt-get', recipe)
+
+    def test_d2_sources_and_cap_match_the_reviewed_pin(self):
+        import runtime_image_inputs as runtime_inputs
+        d2 = stage_by_id('D2')
+        self.assertEqual(d2['download_cap_bytes'], runtime_inputs.INPUT_BYTES)
+        self.assertEqual(d2['network_sources'], list(runtime_inputs.NETWORK_SOURCES))
+        self.assertEqual(len(d2['network_sources']), 26)
+        c4 = stage_by_id('C4')
+        self.assertEqual(c4['download_cap_bytes'], 0)
+        self.assertEqual(c4['network_sources'], ['none'])
+        self.assertEqual(MANIFEST['binding_inputs']['runtime_image']['bytes'], runtime_inputs.INPUT_BYTES)
+        self.assertEqual(MANIFEST['binding_inputs']['runtime_image']['deb_count'], len(runtime_inputs.DEBS))
 
 
 class RouteEchoOrder(unittest.TestCase):
@@ -662,7 +712,7 @@ class RouteEchoOrder(unittest.TestCase):
             prep.check_route_order(stages)
 
     def test_route_echo_is_compared_byte_for_byte(self):
-        self.assertTrue(prep.check_build_help('--iidfile --platform --provenance'))
+        self.assertTrue(prep.check_build_help('--iidfile --platform --provenance --network --build-context'))
         echo = next(s for s in stage_by_id('C2')['steps'] if s['id'] == 'c2-route-echo')
         self.assertEqual(echo['argv'][-1], '{route_echo}')
         self.assertEqual(echo['argv'][-3:-1], ['printf', '%s'])
