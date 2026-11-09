@@ -36,7 +36,7 @@ def run(argv, *, manifest=None, roots=core.EVIDENCE_ROOTS, transport=None, git=N
     argv = list(argv)
     if (len(argv) != 7 or argv[0] not in ROUTES or argv[1] != '--request'
             or argv[3] != '--sha256' or argv[5] != '--evidence-dir'):
-        raise core.Refused('unarmed', 'proof entry needs {acow|cbs}, --request, --sha256 and --evidence-dir')
+        raise core.Refused('unarmed', 'proof entry needs {acow|cbs|acow-acquisition}, --request, --sha256 and --evidence-dir')
     return ROUTES[argv[0]].run(argv[2], argv[4], argv[6], manifest=manifest, roots=roots,
                                transport=transport, git=git, now_ns=now_ns)
 
