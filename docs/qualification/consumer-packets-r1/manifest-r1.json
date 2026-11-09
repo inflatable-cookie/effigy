@@ -2,7 +2,7 @@
   "schema": "effigy.qualification.consumer-packets.r1",
   "task": "effigy#757",
   "status": "prepared-unarmed",
-  "note": "Source-visible pins only. The candidate, positive624 predecessor, helper head, window, provenance, container and volume identities, and the resolved bundle revision are NOT pinned here: a hash-pinned request binds them and an authenticated proof-entry record must name that request. Remaining reviewed pins are consumer-config facts observed at freeze (CBS project label, CBS count tail and baselines, CBS bundle prefix and digest) and the status --json running-field contract on both routes. A 'pending' value refuses that route before any read.",
+  "note": "Source-visible pins only. The candidate, positive624 predecessor, helper head, window, merged commit, container and volume identities, and the resolved bundle revision are NOT pinned here: the hash-pinned request binds them. The proof entry checks what it can observe (request digest, packet HEAD, installed bytes, consumer closure, window, identities) and takes the rest on the Nucleus launch precondition from effigy#739. Remaining reviewed pins are consumer-config facts observed at freeze (CBS project label, CBS count tail and baselines, CBS bundle prefix and digest) and the status --json running-field contract on both routes. A 'pending' value refuses that route before any read.",
   "consumed_windows": [],
   "routes": {
     "acow": {

@@ -1,23 +1,33 @@
 #!/usr/bin/env python3
-"""Fail-closed controls for the r1 consumer packets (task effigy#757).
+"""Fail-closed controls for the r1 consumer packets (task effigy#757, armed by effigy#760).
 
-Source and fixture only. Every route is driven through its real entry boundary
-(`main` or `run`) with an injected fixture transport, an injected fixture git
-reader and an injected authenticated-provenance callable. The one real child
-runner is exercised only against harmless `sys.executable -I -c` fixture
-children, which the runner's own process-group cleanup owns. No test touches a
-real engine, VM, consumer checkout, row, secret or network.
+Three kinds of control, none of them touching a real engine, VM, consumer
+checkout, row, secret or network.
+
+1. Gate controls. Each route runs through `arm` with an injected fixture engine
+   transport and an injected fixture git reader. A refusal must come from the
+   named gate, before the first effect where the gate reads no child.
+2. Supervision controls. The real `Supervisor`, which drives the shipped
+   `preparation_stage.run_stage`, runs harmless `sys.executable -I -c` children
+   for stream capture, caps, deadlines, waited exits and escaping descendants.
+3. End-to-end controls. A fixture effigy/Colima binary, a real git checkout at
+   the reviewed closure and the real supervisor run each route through
+   `proof_entry.run`. The request is bound to the packet's real HEAD and real
+   module bytes. This is the reached-the-supervisor proof. It is fixture
+   evidence only, not consumer, native or engine credit.
 
 Fixtures are fresh directories under TMPDIR (`tempfile.mkdtemp`). Nothing is
-written outside them.
+written outside them. Fixture children are stopped by their recorded PIDs.
 """
 import contextlib
 import copy
+import hashlib
 import importlib.util
 import io
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -32,6 +42,7 @@ import acow  # noqa: E402
 import acow_battery  # noqa: E402
 import cbs  # noqa: E402
 import consumer_core as core  # noqa: E402
+import proof_entry  # noqa: E402
 
 FAILURES = []
 PASSED = []
@@ -52,6 +63,10 @@ CBS_VOLUME = 'fixture-cbs-volume'
 ROOT = Path(os.path.realpath(tempfile.mkdtemp(prefix='consumer-packets-tests-')))
 for _route in ('acow', 'cbs'):
     (ROOT / 'checkouts' / _route).mkdir(parents=True, exist_ok=True)
+(ROOT / 'bin').mkdir(parents=True, exist_ok=True)
+FIXTURE_BIN = ROOT / 'bin' / 'effigy'
+FIXTURE_BIN.write_bytes(b'fixture candidate C, harmless bytes\n')
+FIXTURE_BIN_SHA = core.sha256_file(FIXTURE_BIN)
 
 
 def check(name):
@@ -114,7 +129,7 @@ def fixture_manifest():
     return manifest
 
 
-def request_for(manifest, route, prior_intent):
+def request_for(manifest, route, prior_intent, merged=M, helper_head=H):
     pins = manifest['routes'][route]
     if route == 'acow':
         resources = [
@@ -130,10 +145,10 @@ def request_for(manifest, route, prior_intent):
     return {
         'schema': core.REQUEST_SCHEMA,
         'route': route,
-        'candidate': {'source_commit': CAND, 'binary_sha256': SHA,
-                      'install_identity': {'path': '/fixture/bin/effigy',
-                                           'version': 'fixture-C', 'sha256': SHA}},
-        'helpers': {'head': H, 'modules': core.module_hashes()},
+        'candidate': {'source_commit': CAND, 'binary_sha256': FIXTURE_BIN_SHA,
+                      'install_identity': {'path': str(FIXTURE_BIN), 'version': 'fixture-C',
+                                           'sha256': FIXTURE_BIN_SHA}},
+        'helpers': {'head': helper_head, 'modules': core.module_hashes()},
         'predecessor': {'receipt_sha256': SHA2, 'same_candidate_commit': CAND},
         'consumer': {
             'selected_head': HEAD,
@@ -142,7 +157,7 @@ def request_for(manifest, route, prior_intent):
             'bundle': {'resolved_revision': H,
                        'content_digest': pins['consumer']['bundle']['content_digest']},
         },
-        'provenance': {'merged_commit': M, 'source_immutable_head': H},
+        'provenance': {'merged_commit': merged, 'source_immutable_head': helper_head},
         'window': {'id': WINDOW_ID[route], 'token_sha256': TOKEN,
                    'start_monotonic_ns': START, 'deadline_monotonic_ns': START + 600 * NS},
         'budgets': copy.deepcopy(pins['budgets']),
@@ -151,29 +166,18 @@ def request_for(manifest, route, prior_intent):
     }
 
 
-def record_for(request, digest, **changes):
-    record = {
-        'authenticated': True,
-        'request_sha256': digest,
-        'merged_commit': M,
-        'source_immutable_head': H,
-        'candidate': copy.deepcopy(request['candidate']),
-        'predecessor': {'receipt_sha256': SHA2, 'same_candidate_commit': CAND,
-                        'status': 'positive'},
-        'window': {'id': request['window']['id'], 'token_sha256': TOKEN},
-    }
-    record.update(changes)
-    return record
-
-
-def fake_git(manifest, route, head=HEAD, status='', blobs=None, calls=None):
-    """Object ids and status only. Blobs default to the reviewed closure."""
+def fake_git(manifest, route, head=HEAD, status='', blobs=None, calls=None, helper=M):
+    """Object ids and status only. The packet checkout reads as the merged commit."""
     closure = dict(manifest['routes'][route]['consumer']['relevant_inputs'])
     closure.update(blobs or {})
     log = calls if calls is not None else []
 
     def git(args, cwd):
-        log.append((list(args), cwd))
+        log.append((list(args), str(cwd)))
+        if str(cwd) == str(core.DIR):
+            if list(args) == ['rev-parse', 'HEAD']:
+                return helper + '\n'
+            raise AssertionError('unexpected packet-checkout read %r' % (args,))
         if list(args) == ['rev-parse', 'HEAD']:
             return head + '\n'
         if list(args) == ['status', '--porcelain']:
@@ -196,7 +200,7 @@ def cbs_counts():
 
 
 class FakeEngine:
-    """A deterministic engine. Asserts every call runs from the pinned checkout."""
+    """A deterministic engine transport. Asserts every call runs from the pinned checkout."""
 
     def __init__(self, route, children, running, counts=None, containers=None,
                  volumes=None, fail=None, on_up=None, fail_after=None):
@@ -233,7 +237,7 @@ class FakeEngine:
     def __call__(self, argv, label, cwd):
         short = label.split('-', 1)[1] if label[:3].isdigit() and label[3:4] == '-' else label
         self.calls.append((short, list(argv[1:])))
-        if cwd != self.cwd:
+        if str(cwd) != self.cwd:
             raise AssertionError('child not run from the pinned checkout: %r' % (cwd,))
         if short in self.fail:
             raise core.Refused(self.fail[short], short)
@@ -299,17 +303,9 @@ def forbidden_transport(argv, label, cwd):
     raise AssertionError('a child ran on a path that must refuse first: ' + label)
 
 
-AUTO = object()
-
-
-def run_entry(module, route, request, name, *, engine=None, record_changes=None,
-              auth=AUTO, git=None, manifest=None, now=NOW):
-    """Drive `run` with fixture authority.
-
-    `auth=AUTO` gives a record built from the PRISTINE fixture request, so a
-    mutated request always differs from its record. `auth=None` means no
-    authenticated channel at all.
-    """
+def run_entry(module, route, request, name, *, engine=None, git=None, manifest=None,
+              now=NOW, sha=None):
+    """Drive `run` with fixture transport and fixture git. `sha` overrides the bound digest."""
     folder = ROOT / name
     folder.mkdir(parents=True, exist_ok=True)
     manifest = manifest if manifest is not None else fixture_manifest()
@@ -317,12 +313,8 @@ def run_entry(module, route, request, name, *, engine=None, record_changes=None,
     request_path = folder / 'request.json'
     request_path.write_bytes(raw)
     digest = core.sha256_bytes(raw)
-    if auth is AUTO:
-        pristine = request_for(manifest, route, request['prior_intent'])
-        record = record_for(pristine, digest, **(record_changes or {}))
-        auth = lambda ctx: record if ctx['request_sha256'] == digest else {'authenticated': False}  # noqa: E731
     evidence = folder / 'evidence'
-    result = module.run(str(request_path), str(evidence), authenticate=auth,
+    result = module.run(str(request_path), digest if sha is None else sha, str(evidence),
                         transport=engine or forbidden_transport, manifest=manifest,
                         git=git or fake_git(manifest, route), now_ns=now,
                         roots=(str(ROOT),))
@@ -330,7 +322,7 @@ def run_entry(module, route, request, name, *, engine=None, record_changes=None,
 
 
 def refusal_run(module, route, request, name, code, **kwargs):
-    """The refusal must come from the entry boundary.
+    """The refusal must come from the named gate.
 
     A refusal before the evidence claim leaves no evidence. A refusal after it
     spends the occurrence and records the same code, so a retry cannot reuse it.
@@ -361,10 +353,29 @@ def no_child(*args, **kwargs):
     raise AssertionError('a child process was started')
 
 
+def stop_recorded(pid):
+    """Stop one fixture process by the PID this test recorded. Never a pattern."""
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def wait_gone(pid, seconds=3.0):
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    return False
+
+
 # ---------------------------------------------------------------- committed state
 
 
-@check('committed routes refuse for pending route pins before any authority check')
+@check('committed routes refuse for pending route pins before any request is read')
 def _():
     manifest = core.load_manifest()
     for route in ('acow', 'cbs'):
@@ -376,7 +387,7 @@ def _():
     assert core.pending_pins(fixture_manifest()) == []
 
 
-@check('unarmed CLI refuses ordinary invocation before any child or read')
+@check('unarmed CLIs refuse every ordinary invocation before any child or read')
 def _():
     original = subprocess.Popen
     subprocess.Popen = no_child
@@ -386,6 +397,11 @@ def _():
             with contextlib.redirect_stdout(out):
                 assert module.main([]) == 2
             assert json.loads(out.getvalue())['code'] == 'unarmed'
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            assert proof_entry.main([]) == 2
+        assert json.loads(out.getvalue())['code'] == 'unarmed'
+        expect_code('unarmed', lambda: proof_entry.run(['acow', '--request', 'x']))
     finally:
         subprocess.Popen = original
 
@@ -394,28 +410,22 @@ def _():
 def _():
     folder = ROOT / 'committed'
     folder.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps(request_for(fixture_manifest(), 'acow',
+                                 {'hybrid': True, 'stack': False})).encode()
     request_path = folder / 'request.json'
-    request_path.write_text(json.dumps(request_for(fixture_manifest(), 'acow',
-                                                   {'hybrid': True, 'stack': False})))
+    request_path.write_bytes(raw)
     original = subprocess.Popen
     subprocess.Popen = no_child
     out = io.StringIO()
     try:
         with contextlib.redirect_stdout(out):
-            assert acow.main(['--request', str(request_path),
-                              '--evidence-dir', str(folder / 'evidence')]) == 2
+            assert proof_entry.main(['acow', '--request', str(request_path),
+                                     '--sha256', core.sha256_bytes(raw),
+                                     '--evidence-dir', str(folder / 'evidence')]) == 2
     finally:
         subprocess.Popen = original
     assert json.loads(out.getvalue())['code'] == 'route-pins-pending'
     assert not (folder / 'evidence').exists()
-
-
-@check('armed entry without an authenticated channel refuses before any read')
-def _():
-    manifest = fixture_manifest()
-    request = request_for(manifest, 'acow', {'hybrid': True, 'stack': False})
-    refusal_run(acow, 'acow', request, 'no-channel', 'nucleus-provenance-unavailable',
-                auth=None, manifest=manifest, engine=forbidden_transport)
 
 
 @check('committed Acow pins reconcile with the reviewed 5f466914 packet')
@@ -441,77 +451,73 @@ def _():
     assert pins['consumer']['bundle']['content_digest'].startswith('pending')
 
 
-# ---------------------------------------------------------------- provenance and authority
+# ---------------------------------------------------------------- request digest and bindings
 
 
-@check('authenticated record must name this request and nothing else')
+@check('request bytes must match the SHA-256 argument before anything is read or run')
 def _():
     manifest = fixture_manifest()
     request = request_for(manifest, 'acow', {'hybrid': True, 'stack': False})
-    refusal_run(acow, 'acow', request, 'other-digest', 'provenance-mismatch',
-                auth=lambda ctx: record_for(request, 'sha256:' + '0' * 64),
-                engine=forbidden_transport)
-    refusal_run(acow, 'acow', request, 'unauth', 'nucleus-provenance-unavailable',
-                auth=lambda ctx: {'authenticated': False}, engine=forbidden_transport)
-    refusal_run(acow, 'acow', request, 'wrong-merge', 'provenance-mismatch',
-                record_changes={'merged_commit': 'a' * 40}, engine=forbidden_transport)
-    refusal_run(acow, 'acow', mutated('acow', {'hybrid': True, 'stack': False},
-                                      lambda r: r['provenance'].update(merged_commit='b' * 40)),
-                'request-merge', 'provenance-mismatch', engine=forbidden_transport)
+    refusal_run(acow, 'acow', request, 'digest-other', 'request-sha-mismatch', manifest=manifest,
+                sha='sha256:' + '0' * 64, engine=forbidden_transport)
+    refusal_run(acow, 'acow', request, 'digest-bare', 'request-sha-mismatch', manifest=manifest,
+                sha='f' * 64, engine=forbidden_transport)
+    expect_code('request-sha-mismatch', lambda: core.load_request(str(ROOT / 'digest-other' / 'request.json'), 'x'))
 
 
-@check('wrong or stale candidate C refuses before any child')
+@check('a helper head that differs from the source head, or stale module bytes, refuses before claim')
 def _():
     base = {'hybrid': True, 'stack': False}
-    refusal_run(acow, 'acow', mutated('acow', base, lambda r: None), 'stale-c',
-                'candidate-mismatch', record_changes={'candidate': {
-                    'source_commit': 'a' * 40, 'binary_sha256': SHA,
-                    'install_identity': {'path': '/fixture/bin/effigy', 'version': 'fixture-C',
-                                         'sha256': SHA}}}, engine=forbidden_transport)
-    refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['candidate'].update(
-        binary_sha256='sha256:' + '2' * 64)), 'request-binary', 'candidate-mismatch',
-        engine=forbidden_transport)
-
-
-@check('stale positive624, receipt for another C, and failed predecessor refuse')
-def _():
-    base = {'hybrid': True, 'stack': False}
-    refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['predecessor'].update(
-        receipt_sha256='sha256:' + '3' * 64)), 'stale-receipt', 'predecessor-mismatch',
-        engine=forbidden_transport)
-    refusal_run(acow, 'acow', mutated('acow', base, lambda r: None), 'other-c-receipt',
-                'predecessor-mismatch', record_changes={'predecessor': {
-                    'receipt_sha256': SHA2, 'same_candidate_commit': 'a' * 40,
-                    'status': 'positive'}}, engine=forbidden_transport)
-    refusal_run(acow, 'acow', mutated('acow', base, lambda r: None), 'failed-predecessor',
-                'predecessor-not-positive', record_changes={'predecessor': {
-                    'receipt_sha256': SHA2, 'same_candidate_commit': CAND,
-                    'status': 'failed'}}, engine=forbidden_transport)
-
-
-@check('helper head, on-disk module hashes and window binding must match the record')
-def _():
-    base = {'hybrid': True, 'stack': False}
-    refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['helpers'].update(
-        head='a' * 40)), 'helper-head', 'helper-mismatch', engine=forbidden_transport)
+    refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['helpers'].update(head='a' * 40)),
+                'helper-head', 'helper-mismatch', engine=forbidden_transport)
     refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['helpers'].update(
         modules={name: SHA for name in core.ENTRY_MODULES})), 'helper-modules',
         'helper-mismatch', engine=forbidden_transport)
-    refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['window'].update(
-        token_sha256='sha256:' + '4' * 64)), 'window-token', 'window-mismatch',
+
+
+@check('the packet checkout must be the request merged commit, observed after the claim')
+def _():
+    base = {'hybrid': True, 'stack': False}
+    refusal_run(acow, 'acow', request_for(fixture_manifest(), 'acow', base, merged='b' * 40),
+                'merged-substituted', 'provenance-mismatch', engine=forbidden_transport)
+    refusal_run(acow, 'acow', request_for(fixture_manifest(), 'acow', base, merged='not-a-commit'),
+                'merged-malformed', 'provenance-mismatch', engine=forbidden_transport)
+
+
+@check('an installed candidate whose bytes differ from the request refuses before claim')
+def _():
+    base = {'hybrid': True, 'stack': False}
+    wrong = 'sha256:' + '2' * 64
+    refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['candidate'].update(
+        binary_sha256=wrong, install_identity=dict(r['candidate']['install_identity'], sha256=wrong))),
+        'candidate-bytes', 'candidate-mismatch', engine=forbidden_transport)
+    refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['candidate']['install_identity'].update(
+        sha256=wrong)), 'candidate-install-split', 'candidate-mismatch', engine=forbidden_transport)
+    refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['candidate']['install_identity'].update(
+        path='relative/effigy')), 'candidate-relative', 'candidate-mismatch', engine=forbidden_transport)
+
+
+@check('stale positive624, a receipt for another candidate, and malformed receipts refuse before claim')
+def _():
+    base = {'hybrid': True, 'stack': False}
+    refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['predecessor'].update(
+        same_candidate_commit='a' * 40)), 'other-c-receipt', 'predecessor-mismatch',
         engine=forbidden_transport)
-    refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['window'].update(
-        token_sha256='not-a-digest')), 'window-missing', 'window-missing',
-        record_changes={'window': {'id': WINDOW_ID['acow'], 'token_sha256': 'not-a-digest'}},
+    refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['predecessor'].update(
+        receipt_sha256='not-a-digest')), 'malformed-receipt', 'predecessor-mismatch',
         engine=forbidden_transport)
 
 
-@check('window bounds, expiry and one-use refuse before any child')
+@check('window bounds, expiry, one-use and token digest refuse before claim')
 def _():
     base = {'hybrid': True, 'stack': False}
     refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['window'].update(
         deadline_monotonic_ns=START + 10_000 * NS)), 'window-span', 'window-bounds',
         engine=forbidden_transport)
+    refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['window'].update(
+        token_sha256='not-a-digest')), 'window-token', 'window-missing', engine=forbidden_transport)
+    refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['window'].update(
+        start_monotonic_ns='soon')), 'window-type', 'window-missing', engine=forbidden_transport)
     refusal_run(acow, 'acow', mutated('acow', base, lambda r: None), 'window-expired',
                 'window-expired', now=START + 600 * NS + 1, engine=forbidden_transport)
     manifest = fixture_manifest()
@@ -520,11 +526,14 @@ def _():
                 'window-consumed', manifest=manifest, engine=forbidden_transport)
 
 
-@check('budgets above the route caps refuse before any child')
+@check('budgets above the route caps, and unequal stream caps, refuse before claim')
 def _():
-    refusal_run(acow, 'acow', mutated('acow', {'hybrid': True, 'stack': False},
-                                      lambda r: r['budgets'].update(stdout_cap_bytes=10 ** 9)),
-                'budget', 'budget-exceeded', engine=forbidden_transport)
+    base = {'hybrid': True, 'stack': False}
+    refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['budgets'].update(
+        stdout_cap_bytes=10 ** 9, stderr_cap_bytes=10 ** 9)), 'budget', 'budget-exceeded',
+        engine=forbidden_transport)
+    refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['budgets'].update(
+        stderr_cap_bytes=1024)), 'budget-split', 'budget-exceeded', engine=forbidden_transport)
 
 
 @check('resource roles and kinds must be the pinned set')
@@ -534,7 +543,7 @@ def _():
                 'resource-mismatch', engine=forbidden_transport)
 
 
-@check('a symlinked consumer checkout refuses before any read')
+@check('a symlinked consumer checkout refuses before claim')
 def _():
     manifest = fixture_manifest()
     link = ROOT / 'checkouts' / 'acow-link'
@@ -549,7 +558,7 @@ def _():
 # ---------------------------------------------------------------- consumer closure
 
 
-@check('include, closure and bundle drift refuse before any child')
+@check('include, closure and bundle drift refuse after claim, with the occurrence spent')
 def _():
     base = {'hybrid': True, 'stack': False}
     refusal_run(acow, 'acow', mutated('acow', base, lambda r: r['consumer'].update(
@@ -580,8 +589,10 @@ def _():
 
 @check('git reads are an allowlist of object ids and status, never content')
 def _():
-    expect_code('git-not-allowlisted', lambda: core.default_git(['show', 'HEAD:effigy.toml'], str(ROOT)))
-    expect_code('git-not-allowlisted', lambda: core.default_git(['cat-file', '-p', 'HEAD'], str(ROOT)))
+    expect_code('git-not-allowlisted', lambda: core.check_git_args(['show', 'HEAD:effigy.toml']))
+    expect_code('git-not-allowlisted', lambda: core.check_git_args(['cat-file', '-p', 'HEAD']))
+    expect_code('git-not-allowlisted', lambda: core.check_git_args(['rev-parse', 'HEAD~1']))
+    core.check_git_args(['rev-parse', 'HEAD:infra/workspace.toml'])
 
 
 # ---------------------------------------------------------------- engine identity and protection
@@ -697,7 +708,7 @@ def _():
     manifest = fixture_manifest()
     request = request_for(manifest, 'acow', {'hybrid': True, 'stack': False})
     engine = FakeEngine('acow', ROOT / 'up-fail' / 'children',
-                        {'hybrid': True, 'stack': False}, fail={'container-up': 'child-failed'})
+                        {'hybrid': True, 'stack': False}, fail={'hybrid-1-up': 'child-failed'})
     refusal_run(acow, 'acow', request, 'up-fail', 'child-failed', manifest=manifest,
                 engine=engine)
     assert engine.running['hybrid'] is True
@@ -786,12 +797,11 @@ def _():
     run_entry(cbs, 'cbs', request, 'twice', engine=first, manifest=manifest)
     before = (ROOT / 'twice' / 'evidence' / 'occurrence.json').read_text()
     second = FakeEngine('cbs', ROOT / 'twice-2' / 'children', {'dev': False})
+    raw = (ROOT / 'twice' / 'request.json').read_bytes()
     expect_code('evidence-exists', lambda: cbs.run(
-        str(ROOT / 'twice' / 'request.json'), str(ROOT / 'twice' / 'evidence'),
-        authenticate=lambda ctx: record_for(request, core.sha256_bytes(
-            (ROOT / 'twice' / 'request.json').read_bytes())),
-        transport=second, manifest=manifest, git=fake_git(manifest, 'cbs'),
-        now_ns=NOW, roots=(str(ROOT),)))
+        str(ROOT / 'twice' / 'request.json'), core.sha256_bytes(raw),
+        str(ROOT / 'twice' / 'evidence'), transport=second, manifest=manifest,
+        git=fake_git(manifest, 'cbs'), now_ns=NOW, roots=(str(ROOT),)))
     assert (ROOT / 'twice' / 'evidence' / 'occurrence.json').read_text() == before
 
 
@@ -819,82 +829,328 @@ def _():
         assert not forbidden.search(' '.join(tail)), tail
 
 
-@check('the pinned checkout reaches the child as its working directory')
+# ---------------------------------------------------------------- supervision, real children
+
+
+def supervisor(name, *, cap=262144, reserve=core.RESERVE_S, seconds=60, step=900):
+    budgets = {'step_timeout_s': step, 'stdout_cap_bytes': cap, 'stderr_cap_bytes': cap}
+    end = time.monotonic_ns() + seconds * NS
+    return core.Supervisor(end, budgets, ROOT / 'sup' / name, reserve_s=reserve)
+
+
+def py(code):
+    return [sys.executable, '-I', '-c', code]
+
+
+@check('the pinned checkout reaches a supervised child as its working directory')
 def _():
-    out = ROOT / 'cwd-probe'
-    rec = core.run_child([sys.executable, '-I', '-c', 'import os; print(os.getcwd())'],
-                         timeout_s=30, stdout_cap=4096, stderr_cap=4096, out_dir=out,
-                         label='cwd', cwd=checkout_of('acow'))
+    sup = supervisor('cwd')
+    (ROOT / 'sup').mkdir(exist_ok=True)
+    rec = sup.child(py('import os; print(os.getcwd())'), 'cwd-probe', checkout_of('acow'))
     assert Path(rec['streams']['stdout']['path']).read_text().strip() == checkout_of('acow')
 
 
-# ---------------------------------------------------------------- positive fixtures
-
-
-@check('fixture-positive Acow: prior-stopped stack started, prior-running hybrid stays')
+@check('the supervisor keeps stdout and stderr separate, with hashes and a positive waited exit')
 def _():
-    manifest = fixture_manifest()
-    engine = FakeEngine('acow', ROOT / 'acow-positive' / 'children',
-                        {'hybrid': True, 'stack': False})
-    request = request_for(manifest, 'acow', {'hybrid': True, 'stack': False})
-    result, evidence = run_entry(acow, 'acow', request, 'acow-positive', engine=engine,
-                                 manifest=manifest)
-    assert result['status'] == 'passed', result
-    assert result['started'] == ['stack'], result
-    labels = engine.labels()
-    assert 'pre-hybrid' in labels and 'pre-stack' in labels, labels
-    assert labels.index('hybrid-1-up') < labels.index('container-up') < labels.index('hybrid-2-up')
-    assert 'rollback-stack' in labels and 'rollback-hybrid' not in labels, labels
-    assert engine.running == {'hybrid': True, 'stack': False}
-    occurrence = json.loads((evidence / 'occurrence.json').read_text())
-    assert occurrence['status'] == 'passed' and occurrence['spent'] is False
-    assert (evidence / 'binding.json').exists()
-    assert (evidence / 'closure.json').exists()
-    assert 'rev-parse' in (evidence / 'closure.json').read_text()
-
-
-@check('fixture-positive CBS: detached app-shell, forward, counts, scoped rollback')
-def _():
-    manifest = fixture_manifest()
-    engine = FakeEngine('cbs', ROOT / 'cbs-positive' / 'children', {'dev': False})
-    request = request_for(manifest, 'cbs', {'dev': False})
-    result, _ = run_entry(cbs, 'cbs', request, 'cbs-positive', engine=engine, manifest=manifest)
-    assert result['status'] == 'passed' and result['started'] == ['dev'], result
-    assert engine.running == {'dev': False}
-    assert 'rollback-dev' in engine.labels(), engine.labels()
-
-
-@check('the production runner reports over-cap streams, deadline breach and failed exits')
-def _():
-    out = ROOT / 'runner'
-    expect_code('over-cap-stream', lambda: core.run_child(
-        [sys.executable, '-I', '-c', 'import sys; sys.stdout.write("x" * 5000)'],
-        timeout_s=30, stdout_cap=100, stderr_cap=100, out_dir=out, label='overcap'))
-    record = json.loads((out / 'overcap.record.json').read_text())
-    assert record['streams']['stdout']['truncated'] is True
-    assert record['streams']['stdout']['bytes'] == 100
-    started = time.monotonic()
-    expect_code('deadline-exceeded', lambda: core.run_child(
-        [sys.executable, '-I', '-c', 'import time; time.sleep(60)'],
-        timeout_s=1, stdout_cap=100, stderr_cap=100, out_dir=out, label='deadline'))
-    assert time.monotonic() - started < 30
-    assert json.loads((out / 'deadline.record.json').read_text())['exit'] < 0
-    expect_code('child-failed', lambda: core.run_child(
-        [sys.executable, '-I', '-c', 'import sys; sys.exit(3)'],
-        timeout_s=30, stdout_cap=100, stderr_cap=100, out_dir=out, label='fail'))
-    assert json.loads((out / 'fail.record.json').read_text())['exit'] == 3
-
-
-@check('the runner keeps stdout and stderr separate with the waited exit')
-def _():
-    rec = core.run_child(
-        [sys.executable, '-I', '-c',
-         'import sys; sys.stdout.write("out-bytes"); sys.stderr.write("err-bytes")'],
-        timeout_s=30, stdout_cap=1024, stderr_cap=1024, out_dir=ROOT / 'runner-pass',
-        label='pass')
-    assert rec['exit'] == 0
+    (ROOT / 'sup').mkdir(exist_ok=True)
+    sup = supervisor('split')
+    rec = sup.child(py('import sys; sys.stdout.write("out-bytes"); sys.stderr.write("err-bytes")'),
+                    'split', str(ROOT))
+    assert rec['disposition'] == 'exited' and rec['waited_exit'] == 0, rec
     assert Path(rec['streams']['stdout']['path']).read_bytes() == b'out-bytes'
     assert Path(rec['streams']['stderr']['path']).read_bytes() == b'err-bytes'
+    for name in ('stdout', 'stderr'):
+        stream = rec['streams'][name]
+        assert stream['sha256'] == hashlib.sha256(Path(stream['path']).read_bytes()).hexdigest(), name
+
+
+@check('over-cap output refuses with the capped bytes and the receipt kept')
+def _():
+    (ROOT / 'sup').mkdir(exist_ok=True)
+    sup = supervisor('overcap', cap=100)
+    expect_code('over-cap-stream', lambda: sup.child(py('import sys; sys.stdout.write("x" * 5000)'),
+                                                     'overcap', str(ROOT)))
+    receipt = json.loads((ROOT / 'sup' / 'overcap' / 'overcap' / 'receipt.json').read_text())
+    assert receipt['disposition'] == 'output-cap'
+    assert receipt['streams']['stdout']['bytes'] == 100, receipt['streams']
+
+
+@check('a zero stream cap refuses before any child starts, and leaves no intent')
+def _():
+    (ROOT / 'sup').mkdir(exist_ok=True)
+    sup = supervisor('zerocap', cap=0)
+    expect_code('supervision-refused', lambda: sup.child(py('print("never")'), 'zero', str(ROOT)))
+    assert not (ROOT / 'sup' / 'zerocap' / 'zero' / 'intent.json').exists()
+    assert not (ROOT / 'sup' / 'zerocap' / 'zero' / 'stdout').exists()
+
+
+@check('a blocked child is stopped at the window deadline and its exit is waited')
+def _():
+    (ROOT / 'sup').mkdir(exist_ok=True)
+    sup = supervisor('blocked', reserve=1, seconds=4)
+    started = time.monotonic()
+    expect_code('deadline-exceeded', lambda: sup.child(py('import time; time.sleep(60)'),
+                                                       'blocked', str(ROOT)))
+    assert time.monotonic() - started < 15
+    receipt = json.loads((ROOT / 'sup' / 'blocked' / 'blocked' / 'receipt.json').read_text())
+    assert receipt['disposition'] == 'timeout' and receipt['waited_exit'] is not None, receipt
+
+
+@check('a child that exits nonzero refuses as child-failed with its exit recorded')
+def _():
+    (ROOT / 'sup').mkdir(exist_ok=True)
+    sup = supervisor('failed')
+    expect_code('child-failed', lambda: sup.child(py('import sys; sys.exit(3)'), 'fail', str(ROOT)))
+    receipt = json.loads((ROOT / 'sup' / 'failed' / 'fail' / 'receipt.json').read_text())
+    assert receipt['waited_exit'] == 3
+
+
+@check('the supervisor samples resources while a child is blocked, not only at exit')
+def _():
+    (ROOT / 'sup').mkdir(exist_ok=True)
+    sup = supervisor('sample')
+    rec = sup.child(py('import time; time.sleep(1)'), 'sample', str(ROOT))
+    usage = rec.get('resource_usage') or {}
+    assert usage.get('window_ms', 0) >= 500, usage
+
+
+@check('an escaping descendant holding the inherited pipe refuses, and is stopped by its recorded PID')
+def _():
+    (ROOT / 'sup').mkdir(exist_ok=True)
+    sup = supervisor('escape', reserve=1, seconds=4)
+    code = ('import subprocess, sys\n'
+            'g = subprocess.Popen([sys.executable, "-I", "-c", "import time; time.sleep(60)"], '
+            'start_new_session=True)\n'
+            'print(g.pid, flush=True)\n')
+    pid = None
+    try:
+        expect_code('deadline-exceeded', lambda: sup.child(py(code), 'escape', str(ROOT)))
+        receipt = json.loads((ROOT / 'sup' / 'escape' / 'escape' / 'receipt.json').read_text())
+        assert receipt['disposition'] == 'timeout', receipt
+        pid = int((ROOT / 'sup' / 'escape' / 'escape' / 'stdout').read_text().split()[0])
+    finally:
+        if pid is not None:
+            stop_recorded(pid)
+            assert wait_gone(pid), 'fixture descendant survived its recorded stop'
+
+
+@check('a same-group descendant holding the pipe is stopped with the group and the window refuses')
+def _():
+    (ROOT / 'sup').mkdir(exist_ok=True)
+    sup = supervisor('group', reserve=1, seconds=4)
+    code = ('import subprocess, sys\n'
+            'g = subprocess.Popen([sys.executable, "-I", "-c", "import time; time.sleep(60)"])\n'
+            'print(g.pid, flush=True)\n')
+    pid = None
+    try:
+        expect_code('deadline-exceeded', lambda: sup.child(py(code), 'group', str(ROOT)))
+        receipt = json.loads((ROOT / 'sup' / 'group' / 'group' / 'receipt.json').read_text())
+        assert receipt['disposition'] == 'timeout', receipt
+        pid = int((ROOT / 'sup' / 'group' / 'group' / 'stdout').read_text().split()[0])
+    finally:
+        if pid is not None:
+            stop_recorded(pid)
+            assert wait_gone(pid), 'fixture descendant survived its recorded stop'
+
+
+@check('every non-waited-zero disposition maps to a refusal code, and only exited passes')
+def _():
+    def rec(disposition, exit_code=0):
+        return {'label': 'x', 'disposition': disposition, 'waited_exit': exit_code}
+    core.disposition_refusal(rec('exited', 0))
+    for disposition, code in (('failed', 'child-failed'), ('timeout', 'deadline-exceeded'),
+                              ('output-cap', 'over-cap-stream'),
+                              ('resource-refusal', 'resource-refusal'),
+                              ('unknown', 'child-unreaped'), ('local-error', 'child-unreaped'),
+                              ('context-output-refused', 'child-unreaped')):
+        expect_code(code, lambda d=disposition: core.disposition_refusal(rec(d, None)))
+    expect_code('child-unreaped', lambda: core.disposition_refusal(rec('exited', None)))
+
+
+# ---------------------------------------------------------------- end to end, real supervisor
+
+
+FIXTURE_ENGINE = '''#!PYTHON -I
+"""Harmless fixture engine. Serves the effigy and colima surfaces from state.json."""
+import json
+import sys
+from pathlib import Path
+
+STATE = Path(__file__).with_name('state.json')
+state = json.loads(STATE.read_text())
+argv = sys.argv[1:]
+
+
+def save():
+    STATE.write_text(json.dumps(state, sort_keys=True))
+
+
+def match(box, flt):
+    if flt.startswith('label=com.docker.compose.project='):
+        return box['project'] == flt.split('=', 2)[2]
+    if flt.startswith('label=com.docker.compose.service='):
+        return box['service'] == flt.split('=', 2)[2]
+    return False
+
+
+if argv[:1] == ['container']:
+    env = argv[argv.index('--system') + 1] if '--system' in argv else argv[1]
+    if 'status' in argv:
+        print(json.dumps({'running': state['running'][env]}))
+    elif 'up' in argv:
+        state['running'][env] = True
+        save()
+    elif 'down' in argv:
+        state['running'][env] = False
+        save()
+    sys.exit(0)
+rest = argv[argv.index('--') + 1:]
+verb = rest[0]
+if verb == 'ps':
+    filters = [rest[i + 1] for i, item in enumerate(rest) if item == '--filter']
+    rows = [b['id'] for b in state['containers'] if all(match(b, f) for f in filters)]
+    print('\\n'.join(sorted(rows)))
+elif verb == 'volume':
+    print('\\n'.join(sorted(state['volumes'])))
+elif verb == 'inspect':
+    box = next(b for b in state['containers'] if b['id'] == rest[-1])
+    print('\\n'.join('volume ' + name for name in box['mounts']))
+elif verb == 'exec':
+    table = rest[-1].split(' FROM ', 1)[1].replace('`', '').strip()
+    print(state['counts'][table])
+else:
+    sys.exit(2)
+'''
+
+
+def e2e_fixture(route, name, manifest, prior_intent):
+    """A real git checkout at the reviewed closure, and the fixture engine bound to state."""
+    base = ROOT / name
+    checkout = base / 'checkout'
+    checkout.mkdir(parents=True, exist_ok=True)
+    env = {'GIT_CONFIG_NOSYSTEM': '1', 'HOME': str(base), 'PATH': os.environ.get('PATH', '')}
+    run_git = lambda *args: subprocess.run(  # noqa: E731
+        ['/usr/bin/git', '-C', str(checkout), *args], capture_output=True, text=True,
+        check=True, env=env).stdout
+    run_git('init', '-q')
+    for path in manifest['routes'][route]['consumer']['relevant_inputs']:
+        target = checkout / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('fixture closure input ' + path + '\n')
+    run_git('add', '-A')
+    run_git('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid',
+            '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'fixture closure')
+    head = run_git('rev-parse', 'HEAD').strip()
+    blobs = {path: run_git('rev-parse', 'HEAD:' + path).strip()
+             for path in manifest['routes'][route]['consumer']['relevant_inputs']}
+    pins = manifest['routes'][route]
+    pins['checkout'] = str(checkout)
+    pins['consumer']['relevant_inputs'] = blobs
+    script = base / 'bin' / 'effigy'
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text(FIXTURE_ENGINE.replace('PYTHON', sys.executable))
+    script.chmod(0o755)
+    pins['engine']['colima_binary'] = str(script)
+    counts = (acow if route == 'acow' else cbs).expected_counts(manifest)
+    if route == 'acow':
+        identity = pins['identity']
+        containers = [
+            {'id': PG_ID, 'project': identity['project'], 'service': identity['service'],
+             'mounts': [identity['volume']]},
+            {'id': identity['shared_container'], 'project': None, 'service': None, 'mounts': []},
+        ]
+        volumes = sorted(set([identity['volume'], identity['shared_volume']]
+                             + identity['never_touch_volumes']))
+    else:
+        identity = pins['identity']
+        containers = [{'id': DB_ID, 'project': identity['project'], 'service': identity['service'],
+                       'mounts': [CBS_VOLUME]}]
+        volumes = [CBS_VOLUME]
+    state = {'running': dict(prior_intent), 'counts': counts,
+             'containers': containers, 'volumes': volumes}
+    (base / 'bin' / 'state.json').write_text(json.dumps(state, sort_keys=True))
+    return checkout, head, script
+
+
+def e2e_request(route, manifest, prior_intent, head, script):
+    request = request_for(manifest, route, prior_intent,
+                          merged=packet_head(), helper_head=packet_head())
+    request['consumer']['selected_head'] = head
+    request['consumer']['relevant_inputs'] = copy.deepcopy(
+        manifest['routes'][route]['consumer']['relevant_inputs'])
+    now = time.monotonic_ns()
+    request['window'].update(start_monotonic_ns=now, deadline_monotonic_ns=now + 600 * NS)
+    digest = core.sha256_file(script)
+    request['candidate'].update(binary_sha256=digest)
+    request['candidate']['install_identity'].update(path=str(script), sha256=digest)
+    return request
+
+
+def packet_head():
+    """The real HEAD of the packet's own repository: the merged commit a launch would pin."""
+    return subprocess.run(['/usr/bin/git', 'rev-parse', 'HEAD'], cwd=str(DIR),
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
+def e2e_run(route, name, prior_intent):
+    manifest = fixture_manifest()
+    checkout, head, script = e2e_fixture(route, name, manifest, prior_intent)
+    request = e2e_request(route, manifest, prior_intent, head, script)
+    folder = ROOT / name
+    folder.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps(request, sort_keys=True).encode()
+    request_path = folder / 'request.json'
+    request_path.write_bytes(raw)
+    evidence = folder / 'evidence'
+    result = proof_entry.run([route, '--request', str(request_path), '--sha256',
+                              core.sha256_bytes(raw), '--evidence-dir', str(evidence)],
+                             manifest=manifest, roots=(str(ROOT),))
+    state = json.loads((script.parent / 'state.json').read_text())
+    return result, evidence, state
+
+
+@check('end to end Acow: a fully bound occurrence reaches the real supervisor and settles')
+def _():
+    result, evidence, state = e2e_run('acow', 'e2e-acow', {'hybrid': False, 'stack': False})
+    assert result['status'] == 'passed' and result['started'] == ['hybrid', 'stack'], result
+    assert state['running'] == {'hybrid': False, 'stack': False}, state
+    occurrence = json.loads((evidence / 'occurrence.json').read_text())
+    assert occurrence['status'] == 'passed' and occurrence['spent'] is False
+    children = sorted(p.name for p in (evidence / 'children').iterdir())
+    assert any(name.startswith('git-') for name in children), children
+    assert any(name.endswith('-hybrid-1-up') for name in children), children
+    for child in children:
+        receipt = json.loads((evidence / 'children' / child / 'receipt.json').read_text())
+        assert receipt['disposition'] == 'exited' and receipt['waited_exit'] == 0, (child, receipt)
+    closure = json.loads((evidence / 'closure.json').read_text())
+    assert len(closure['reads']) >= 2 and all('stdout' in read for read in closure['reads'])
+
+
+@check('end to end CBS: detached app-shell, forward, counts and scoped rollback reach the supervisor')
+def _():
+    result, evidence, state = e2e_run('cbs', 'e2e-cbs', {'dev': False})
+    assert result['status'] == 'passed' and result['started'] == ['dev'], result
+    assert state['running'] == {'dev': False}, state
+    assert (evidence / 'binding.json').exists() and (evidence / 'closure.json').exists()
+
+
+@check('end to end: the packet only runs through the fixed proof entry, with the request digest bound')
+def _():
+    manifest = fixture_manifest()
+    checkout, head, script = e2e_fixture('cbs', 'e2e-digest', manifest, {'dev': False})
+    request = e2e_request('cbs', manifest, {'dev': False}, head, script)
+    folder = ROOT / 'e2e-digest'
+    folder.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps(request, sort_keys=True).encode()
+    request_path = folder / 'request.json'
+    request_path.write_bytes(raw)
+    expect_code('request-sha-mismatch', lambda: proof_entry.run(
+        ['cbs', '--request', str(request_path), '--sha256', 'sha256:' + '0' * 64,
+         '--evidence-dir', str(folder / 'evidence')], manifest=manifest, roots=(str(ROOT),)))
+    assert not (folder / 'evidence').exists()
+
+
+# ---------------------------------------------------------------- evidence and request files
 
 
 @check('evidence roots refuse symlinks, relative paths and outside directories')
@@ -912,11 +1168,11 @@ def _():
     dup = ROOT / 'dup' / 'request.json'
     dup.parent.mkdir(parents=True, exist_ok=True)
     dup.write_text('{"schema": "a", "schema": "b"}')
-    expect_code('duplicate-key', lambda: core.load_request(str(dup)))
+    expect_code('duplicate-key', lambda: core.load_request(str(dup), core.sha256_file(dup)))
     big = ROOT / 'big' / 'request.json'
     big.parent.mkdir(parents=True, exist_ok=True)
     big.write_text('x' * (core.MAX_REQUEST_BYTES + 1))
-    expect_code('file-too-large', lambda: core.load_request(str(big)))
+    expect_code('file-too-large', lambda: core.load_request(str(big), core.sha256_file(big)))
     request = request_for(fixture_manifest(), 'acow', {'hybrid': True, 'stack': False})
     request['extra'] = 1
     expect_code('request-shape', lambda: core.validate_request_shape(request, 'acow'))
