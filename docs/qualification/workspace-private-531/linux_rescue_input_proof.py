@@ -66,12 +66,28 @@ def root_identity(path):
 
 
 def source_inputs():
-    values = {str(HERE / name): digest(HERE / name) for name in SOURCES}
-    for name, expected in META_HASHES.items():
-        path = META / name
-        if digest(path) != expected:
-            raise stage.Refusal('release metadata differs from its pin: ' + name)
-        values[str(path)] = expected
+    """Return stable repository roles separately from canonical machine paths."""
+    root = REPO.resolve(strict=True)
+    repository = {}
+    paths = [(HERE / name, 'docs/qualification/workspace-private-531/' + name) for name in SOURCES]
+    paths += [(META / name, 'docs/qualification/workspace-private-531/ubuntu-2604-metadata/' + name) for name in META_HASHES]
+    paths += [(root / 'config/tasks.toml', 'config/tasks.toml')]
+    expected_roles = {role for _, role in paths}
+    if len(expected_roles) != len(paths):
+        raise stage.Refusal('repository input roles collide')
+    for path, role in paths:
+        try:
+            resolved = path.resolve(strict=True)
+            if resolved != root / role or not resolved.is_file():
+                raise ValueError('alias or escape')
+            value = digest(resolved)
+        except (OSError, ValueError) as exc:
+            raise stage.Refusal('invalid repository input: ' + role) from exc
+        expected = META_HASHES.get(Path(role).name) if 'ubuntu-2604-metadata/' in role else None
+        if expected is not None and value != expected:
+            raise stage.Refusal('release metadata differs from its pin: ' + Path(role).name)
+        repository[role] = value
+    values = {'repository': repository}
     for path, expected in ((GPG, GPG_SHA), (GPGV, GPGV_SHA)):
         try:
             valid = os.path.realpath(path) == path and digest(path) == expected
@@ -82,11 +98,22 @@ def source_inputs():
         values[path] = expected
     git = os.path.realpath('/usr/bin/git')
     values[git] = digest(git)
-    task_config = REPO / 'config/tasks.toml'
-    values[str(task_config)] = digest(task_config)
     python = os.path.realpath(sys.executable)
     values[python] = digest(python)
-    return values
+    values['machine'] = {key: value for key, value in values.items() if key != 'repository'}
+    return {'repository': repository, 'machine': values['machine']}
+
+
+def runtime_inputs(identity):
+    current = source_inputs()
+    if current != identity:
+        raise stage.Refusal('pinned source inputs changed')
+    root = REPO.resolve(strict=True)
+    paths = {role: root / role for role in identity['repository']}
+    runtime = {str(paths[role].resolve(strict=True)): value for role, value in identity['repository'].items()}
+    if set(runtime) & set(identity['machine']):
+        raise stage.Refusal('repository and machine input roles collide')
+    return runtime | identity['machine']
 
 
 def plan(fixture, evidence, head, nonce):
@@ -119,6 +146,11 @@ def verified_signature(result, status):
             and valid[0][2] == rescue.FINGERPRINT and valid[0][-1] == rescue.FINGERPRINT)
 
 
+def metadata_matches(sums, manifest):
+    return (sums.splitlines().count(rescue.SHA256 + ' *' + rescue.NAME) == 1 and
+            manifest.splitlines().count('e2fsprogs\t1.47.2-3ubuntu4') == 1)
+
+
 def execute(request, request_path, request_hash, deadline):
     """External Nucleus proof launch only. Input files describe scope; they grant no authority."""
     if request != plan(request['fixture'], request['evidence'], request['head'], request['nonce']):
@@ -145,7 +177,7 @@ def execute(request, request_path, request_hash, deadline):
         home = root / 'keyring-home'
         home.mkdir(mode=0o700)
         keyring = root / 'ubuntu.gpg'
-        inputs = dict(request['inputs'])
+        inputs = runtime_inputs(request['inputs'])
         inputs[request_path] = request_hash
         def call(index, argv, end):
             held_now = os.fstat(held)
@@ -156,7 +188,7 @@ def execute(request, request_path, request_hash, deadline):
                 raise stage.Refusal('bound root identity changed')
             step = root / ('step-%02d' % index)
             step.mkdir(mode=0o700)
-            return stage.run_stage(step, argv, min(1800, max(0.001, end - time.monotonic())), 65536,
+            return stage.run_stage(step, argv, min(1800, max(0.001, end - time.monotonic() - 30)), 65536,
                                    inputs, deadline=end, cleanup_deadline=deadline)
         reserve_end = deadline - 30
         dearmor = call(1, [GPG, '--no-options', '--homedir', str(home), '--batch', '--dearmor',
@@ -171,7 +203,7 @@ def execute(request, request_path, request_hash, deadline):
             raise stage.Refusal('publisher detached signature was not verified with the full fingerprint')
         sums = (META / 'SHA256SUMS').read_text()
         manifest = (META / 'ubuntu-26.04.1-live-server-arm64.manifest').read_text()
-        if sums.splitlines().count(rescue.SHA256 + ' *' + rescue.NAME) != 1 or manifest.splitlines().count('e2fsprogs\t1.47.2-3ubuntu4') != 1:
+        if not metadata_matches(sums, manifest):
             raise stage.Refusal('signed image pin or tool manifest differs')
         child = [request['python'], '-I', '-B', '-c', CHILD, str(HERE), request['destination'], str(reserve_end)]
         result = call(3, child, reserve_end)

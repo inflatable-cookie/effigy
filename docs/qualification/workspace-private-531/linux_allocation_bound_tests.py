@@ -1286,6 +1286,106 @@ class ActivationRouteChecks(unittest.TestCase):
 
 
 class RescueInputChecks(unittest.TestCase):
+    def test_cross_checkout_request_identity_and_dispatch_paths(self):
+        temp_root = Path(tempfile.mkdtemp(prefix='rescue-relocation-', dir=os.environ['TMPDIR']))
+        source_root = Path(rescue_proof.REPO)
+        roles = [*(('docs/qualification/workspace-private-531/' + name) for name in rescue_proof.SOURCES),
+                 *(('docs/qualification/workspace-private-531/ubuntu-2604-metadata/' + name)
+                   for name in rescue_proof.META_HASHES), 'config/tasks.toml']
+
+        def make_checkout(name):
+            root = temp_root / name
+            for role in roles:
+                target = root / role
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_root / role, target)
+            subprocess.run(['/usr/bin/git', 'init', '-q', str(root)], check=True)
+            subprocess.run(['/usr/bin/git', '-C', str(root), 'add', '--', *roles], check=True)
+            env = dict(os.environ, GIT_AUTHOR_NAME='Fixture', GIT_AUTHOR_EMAIL='fixture@example.invalid',
+                       GIT_COMMITTER_NAME='Fixture', GIT_COMMITTER_EMAIL='fixture@example.invalid',
+                       GIT_AUTHOR_DATE='2026-01-01T00:00:00Z', GIT_COMMITTER_DATE='2026-01-01T00:00:00Z')
+            subprocess.run(['/usr/bin/git', '-C', str(root), 'commit', '-q', '-m', 'fixed rescue inputs'],
+                           check=True, env=env)
+            return root
+
+        first, second = make_checkout('checkout-one'), make_checkout('checkout-two')
+        first_head = subprocess.check_output(['/usr/bin/git', '-C', str(first), 'rev-parse', 'HEAD']).decode().strip()
+        second_head = subprocess.check_output(['/usr/bin/git', '-C', str(second), 'rev-parse', 'HEAD']).decode().strip()
+        self.assertEqual(first_head, second_head)
+        self.assertEqual(subprocess.check_output(['/usr/bin/git', '-C', str(first), 'status', '--porcelain']), b'')
+        self.assertEqual(subprocess.check_output(['/usr/bin/git', '-C', str(second), 'status', '--porcelain']), b'')
+
+        def checkout_paths(root):
+            here = root / 'docs/qualification/workspace-private-531'
+            return patch.object(rescue_proof, 'REPO', root), patch.object(rescue_proof, 'HERE', here), \
+                patch.object(rescue_proof, 'META', here / 'ubuntu-2604-metadata')
+
+        fixture = tempfile.mkdtemp(prefix='rescue-input-', dir=os.environ['TMPDIR'])
+        evidence = tempfile.mkdtemp(prefix='rescue-evidence-', dir=os.environ['TMPDIR'])
+        with checkout_paths(first)[0], checkout_paths(first)[1], checkout_paths(first)[2]:
+            stable_first = rescue_proof.source_inputs()
+            old_first = {str(first / role): value for role, value in stable_first['repository'].items()}
+            request = rescue_proof.plan(fixture, evidence, first_head, 'b' * 64)
+        with checkout_paths(second)[0], checkout_paths(second)[1], checkout_paths(second)[2]:
+            stable_second = rescue_proof.source_inputs()
+            old_second = {str(second / role): value for role, value in stable_second['repository'].items()}
+            self.assertNotEqual(old_first, old_second)
+            self.assertEqual(stable_first, stable_second)
+            runtime = rescue_proof.runtime_inputs(request['inputs'])
+            self.assertTrue(all(key.startswith(str(second) + '/') for key in runtime
+                                if key.endswith('.py') or key.endswith('.toml') or '/ubuntu-2604-metadata/' in key))
+            for malformed in (
+                    dict(request['inputs'], repository=dict(request['inputs']['repository'], extra='0' * 64)),
+                    dict(request['inputs'], repository={}),
+                    dict(request['inputs'], repository={'../escape': '0' * 64}),
+                    dict(request['inputs'], machine=dict(request['inputs']['machine'], **{str(second / roles[0]): '0' * 64}))):
+                with self.assertRaises(rescue.Refusal):
+                    rescue_proof.runtime_inputs(malformed)
+
+            calls = []
+            valid_status = ('[GNUPG:] VALIDSIG ' + rescue.FINGERPRINT +
+                            ' 2026-08-27 1 0 4 0 1 10 00 ' + rescue.FINGERPRINT + '\n')
+            def fake_stage(root, argv, *args, **kwargs):
+                calls.append((argv, args[2]))
+                if len(calls) == 1:
+                    Path(argv[7]).write_bytes(b'fixture keyring')
+                elif len(calls) == 2:
+                    Path(root, 'stdout').write_text(valid_status)
+                else:
+                    return {'disposition': 'failed', 'waited_exit': 1}
+                return {'disposition': 'exited', 'waited_exit': 0}
+            with patch.object(rescue_proof.stage, 'run_stage', side_effect=fake_stage):
+                wrong_head = dict(request, head='c' * 40)
+                with self.assertRaisesRegex(rescue.Refusal, 'source head changed'):
+                    rescue_proof.execute(wrong_head, evidence + '/wrong-request', 'd' * 64,
+                                         time.monotonic() + 60)
+                with self.assertRaisesRegex(rescue.Refusal, 'acquisition failed'):
+                    rescue_proof.execute(request, evidence + '/request', 'c' * 64, time.monotonic() + 60)
+                with self.assertRaises(FileExistsError):
+                    rescue_proof.execute(request, evidence + '/request', 'd' * 64, time.monotonic() + 60)
+            self.assertEqual(len(calls), 3)
+            self.assertIn(str(second / roles[0]), calls[0][1])
+            self.assertEqual(set(os.listdir(evidence)), {'rescue-' + 'b' * 64 + '.claim',
+                                                        'rescue-' + 'b' * 64})
+
+    def test_rescue_root_refuses_foreign_and_non_private_directories(self):
+        foreign = '/Volumes/Other/rescue-root'
+        with self.assertRaisesRegex(rescue.Refusal, 'canonical under removable Stash'):
+            rescue_proof.root_identity(foreign)
+        public = tempfile.mkdtemp(prefix='rescue-public-root-', dir=os.environ['TMPDIR'])
+        os.chmod(public, 0o755)
+        with self.assertRaisesRegex(rescue.Refusal, 'mode-0700'):
+            rescue_proof.root_identity(public)
+
+    def test_signed_image_and_manifest_pins_must_agree(self):
+        sums = (rescue_proof.META / 'SHA256SUMS').read_text()
+        manifest = (rescue_proof.META / 'ubuntu-26.04.1-live-server-arm64.manifest').read_text()
+        self.assertTrue(rescue_proof.metadata_matches(sums, manifest))
+        self.assertEqual(rescue.NAME, 'ubuntu-26.04.1-live-server-arm64.iso')
+        self.assertEqual(rescue.SIZE, 3076861952)
+        self.assertFalse(rescue_proof.metadata_matches(sums, manifest.replace(
+            'e2fsprogs\t1.47.2-3ubuntu4', 'e2fsprogs\t1.47.2-3ubuntu5')))
+
     def test_unarmed_and_changed_url_refuse_without_transport(self):
         result = subprocess.run([sys.executable, '-I', '-B', rescue.__file__], capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 2)
@@ -1365,6 +1465,7 @@ class RescueInputChecks(unittest.TestCase):
         def fake_git(argv, **kwargs):
             return b'a' * 40 + b'\n' if 'rev-parse' in argv else b''
         with patch.object(rescue_proof, 'source_inputs', return_value=sources), \
+                patch.object(rescue_proof, 'runtime_inputs', return_value={'/fixture-source': '0' * 64}), \
                 patch.object(rescue_proof.stage, 'run_stage', side_effect=fake_stage), \
                 patch.object(rescue_proof.subprocess, 'check_output', side_effect=fake_git):
             request = rescue_proof.plan(fixture, evidence, 'a' * 40, 'b' * 64)
