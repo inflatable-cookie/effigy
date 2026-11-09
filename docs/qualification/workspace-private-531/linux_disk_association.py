@@ -56,8 +56,10 @@ HARDWARE_TAGS = frozenset({
     'VirtIOInput', 'VirtIOVsock', 'CdRom', 'Hdd', 'NetworkAdapter', 'Sound', 'USB',
     'UsbConnectHistory', 'TpmChip',
 })
-# The reviewed values of the one hard disk: an enabled, connected, image-backed (not passthrough, not
-# remote) plain disk. A physical or remote disk can match the count and the name and is still not this disk.
+# The reviewed values of the one hard disk: enabled, connected, image-backed (not passthrough, not remote),
+# DiskType 1. The C API v17 enum has 1 = PHD_EXPANDING_HARD_DISK; the XML-to-enum mapping is inferred.
+# Remote and Enabled/Connected meanings are observed, not sourced (see linux-setup.md). A physical or remote
+# disk can match the count and the name and is still not this disk.
 HDD_REVIEWED_FIELDS = (('Enabled', '1'), ('Connected', '1'), ('Remote', '0'), ('Passthrough', '0'),
                        ('DiskType', '1'))
 # A block device can hide under an allowed tag (VirtIOBlk, a SCSI or SATA controller, a disk under USB), so

@@ -9,6 +9,7 @@ association: no pinned host read exists.
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_disk_association as dal
@@ -180,6 +181,26 @@ class DiskAssociationControls(unittest.TestCase):
                 association = valid_association(config=config_xml(extra=extra))
                 self.assertEqual(table(association)['config'][0], 'refuse', table(association)['config'])
                 self.assertEqual(table(association)['guest_blocks'][0], 'pass')
+
+    def test_real_setup_gate_refuses_each_counterexample_and_admits_only_the_pinned_candidate(self):
+        """Through setup.verify_disk_association, the production integration, not the module alone."""
+        disk_usb = ('<USB><Enabled>1</Enabled><Connected>1</Connected><EmulatedType>1</EmulatedType>'
+                    '<UsbType>0</UsbType><SystemName>SanDisk|0781|5581|high|--|1234</SystemName></USB>')
+        counterexamples = {
+            'bare count, physical disk': valid_association(config=config_xml(Passthrough='1')),
+            'bare count, remote disk': valid_association(config=config_xml(Remote='1')),
+            'bare count, disabled disk': valid_association(config=config_xml(Enabled='0')),
+            'disk hidden under USB': valid_association(config=config_xml(extra=disk_usb)),
+            'guest disk removable': valid_association(guest=guest(blocks=[
+                dict(b, removable=1) if b['name'] == 'sda' else b for b in guest_blocks()])),
+        }
+        with mock.patch.object(dal, 'PINS', TEST_PINS):
+            for label, facts in counterexamples.items():
+                with self.subTest(label), self.assertRaises(Refusal):
+                    setup.verify_disk_association(facts, TEST_SUPPORTED)
+            self.assertEqual(setup.verify_disk_association(valid_association(), TEST_SUPPORTED)['serial'], SERIAL)
+        with self.assertRaises(Refusal):
+            setup.verify_disk_association(valid_association(), TEST_SUPPORTED)
 
     def test_reviewed_usb_camera_and_virtual_history_pass_config(self):
         extra = ('<USB><Enabled>1</Enabled><Connected>1</Connected><EmulatedType>3</EmulatedType><UsbType>2</UsbType>'
