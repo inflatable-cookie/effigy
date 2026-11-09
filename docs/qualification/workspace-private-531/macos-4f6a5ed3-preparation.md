@@ -416,9 +416,10 @@ Desktop (`desktop`), with the pinned env above:
   establish whether container
   2a35eb59a74953c0c78c252a1fcbea83463cd488e9d701c2d3292ae366ee2f2f
   on engine ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd, with the original
-  cidfile and effigy.qual=e272a9cc provenance, is terminal or retained. No supported
-  source-ready inspection for that failed, unclosed receipt is claimed here; this is
-  an outstanding gate, not evidence of absence or closure.
+  cidfile and effigy.qual=e272a9cc provenance, is terminal or retained. That
+  source-ready observation entry now exists (see the Executor section); it is source
+  only and unarmed, and until its own pinned proof-only launch records a native receipt,
+  this stays an outstanding gate, not evidence of absence or closure.
 - **D4** cleanup by creation receipt only (r4). Observations: engine (`docker info`), `ps -a`, `volume ls`,
   the complete image inventory (`image ls --all --no-trunc`), and the selected image's inspect by ID. The
   helper `select_cleanup_targets` selects only receipted creations on this engine. Each class (containers,
@@ -528,6 +529,24 @@ Gates:
 
 `macos_stage_executor.py` is the stage runner. This source preparation starts no native backend.
 
+### The C1 window names its original C0 receipt
+
+C1's launch-time window carries `prior_receipt`: the exact path and sha256 of the original executor C0
+receipt of this token's chain. The plan and the launch both verify that complete chain then
+(`checked_prior`, then the chain verifier in execution): a closed, non-simulated executor chain bound to
+this token, control root and endpoint, whose C0 origin minted the chain's `token32` and recorded the owned
+roots. A window ref is exactly those three keys and never carries `historical`, so the pinned 688 C0 record
+stays a plain-request binding only: a fixture record, a doctored or simulated receipt, another token's
+chain or a changed hash refuses at the plan and again at launch. The request binds the control root
+identity; execution re-derives the three owned roots from the verified C0 creation record (first-use
+entries included) before the claim. The C1 `absent_paths` are the token's first-use `cache`,
+`cache/effigy-image`, `docker-config`, Colima profile directory and `_lima` VM state under `colima_home`:
+any of them present refuses before the request claim, so no cache, config, image or profile state is
+adopted. The GO is written at launch for the requested duration — at most the 900-second stage with the
+60-second reserve shared by prefetch and start. Every C1 runtime gate, the exact pinned image and the
+fixed start flags are unchanged, and the plain C1 request keeps its pre-created absolute-time activation
+route. C1 execution itself remains a separate proof-only launch.
+
 ### Desktop readiness before D1
 
 The prospective `plan-ready BINDINGS OPTIONS` request binds the original D0 receipt, its three
@@ -575,6 +594,76 @@ allocated-growth threshold, alongside the private-root monitor. Samples are not 
 quota. The launcher process group does not contain the app or daemon's entire lifetime; Desktop may
 remain running after a timeout. No descendant-closure or complete resource certificate is claimed.
 Fixture simulations are labelled and their D1 receipts cannot be consumed as native chain evidence.
+
+### The failed 779 Desktop observation (source only)
+
+[macos_desktop_observation.py](macos_desktop_observation.py) is one fixed, proof-only,
+receipt-bound observation entry for the exact container the failed 779 D3 disposable check
+left behind. It is not a stage of the manifest, grants no qualification credit, and cannot
+make 779 pass, mint D3 creation credit, authorize adoption or removal, refund the consumed
+allowance or count toward effigy#622. Source only: nothing is armed, and no native
+observation has run.
+
+The entry consumes the genuine retained 779 record by exact SHA-256 — the parent retention
+index, the retained bindings, the failed D3 stage receipt, the failed step receipt with its
+empty original streams, the resource observations, the original run intent, the retained
+cidfile, the D2 prepared-image receipt and the original engine read — and derives the
+observed identity block from those bytes: container full ID, name effigy-4f6a-dcheck-e272a9cc,
+label effigy.qual=e272a9cc, prepared image sha256:8abc0af…, engine ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd
+and the original D0 control paths. Every derived value must equal its pinned constant, so
+the bytes and the review agree or the entry refuses. Nothing is inferred from age or list
+emptiness, and no closure fact is claimed from the failed receipt's later state.
+
+`plan EVIDENCE_ROOT ACTIVATION_ID` is read-only: it verifies the reviewed 29.8.0 Docker CLI
+bytes, re-derives the whole record, holds and checks the original D0 chain's root identities,
+and prints the request. The request binds the merged helper source (the executor's program
+set plus this entry), the tool and config identities, the ten retained originals, the
+derived container/engine identity, the D0 receipt reference, the frozen root identities and
+one finite 120-second window, and it carries a `requiresOperatorGo` disclosure of exactly
+the two read-only operations. External provenance remains the existing Nucleus exact
+merged-commit source-immutable proof-only launch under recorded same-sequence authority;
+the request file is a hash-pinned binding, not an activation. The execute form refuses any
+request that differs from a fresh derivation before the one-use `obs779-` claim and before
+any child runs.
+
+Execution holds the three original D0 roots by identity, starts a strict live watch over the
+whole control tree (any sampled change kills the child and is retained as a refusal;
+sampling is not a quota), and runs at most two fixed children through the shared
+preparation_stage supervision with separate original streams, waited exits, input-hash
+custody, process identity and per-step allowances inside the one monotonic deadline: one
+`docker info --format {{json .ID}}` engine-identity read (30 s) and, only after that read
+closes with exactly the recorded engine ID, one exact full-ID `docker container inspect`
+with a template that selects only `Id`, `Name`, `Image`, `Config.Labels` and `State`
+(60 s). Both children run with the original intent's pinned Desktop env (owned private
+config, observed endpoint, no inherited context) and no shell. The inspect template requests
+no environment, no secrets, no logs and no unrelated inventory.
+
+Verdicts are recorded in one exclusive fsynced receipt beside the step originals:
+`terminal` (identity matches, state exited/dead), `nonterminal` (identity matches, state
+created/running/restarting/paused/removing — retained and reported, never stopped, killed,
+restarted or waited for), `absent` (only the supported exact-ID not-found answer: exit 1,
+empty stdout, the one stderr line `Error: No such container: <full id>` from the pinned
+CLI's own objectNotFound path, after a matched engine read), `mismatched` (a present object
+whose ID, name, label or image differs — reported, never acted on), `refused` (fresh engine
+identity differs: the inspect is never dispatched), and `unknown` (daemon, context,
+transport, parse, malformed, ambiguous, timeout, cap or any other nonconforming shape,
+which stays unknown and retained). A replayed request refuses at its already-spent claim.
+
+Controls run through `effigy
+test:qualification:workspace-private:macos-desktop-observation`: retained-shape fixture
+originals and one supervised harmless fake Docker that records every argv it is given,
+covering exact terminal match, still-running retention, proven exact-ID absence, wrong
+engine (refusing before the inspect), wrong name/label/image/ID-in-response, malformed and
+ambiguous responses, unrecognised status, transport and other nonzero failures, a bounded
+timeout, missing, altered and unindexed originals, an original-intent mismatch, source/tool
+drift after freeze, a control swap after freeze, replay, alias and nested evidence roots,
+request canonicality, invalid activation ids, live mutation detection, separate per-step
+originals, and that only the two fixed read-only argv forms exist at all. Tests stay under
+$TMPDIR; the production entry keeps only its own literal constants and cannot be pointed at
+a caller root. Compile runs through
+`effigy check:qualification:workspace-private:macos-desktop-observation:compile`.
+The proof-only entry is `effigy qualification:macos:desktop-observation-proof-only`.
+Not proven: any native execution. The entry has never run against the real engine.
 
 - **Activation.** The ordinary `execute_stage` entry refuses. The separate
   `qualification:macos:proof-only -- REQUEST SHA256` entry is only for an actual Nucleus proof-only
@@ -627,18 +716,21 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
   approval, provision the private activation, claims and evidence directories and the C0 parent or D0
   control root first. Create an options JSON containing exactly `activation_id` (fresh, 8–64 safe
   characters), `duration_seconds` (integer greater than the stage reserve and at most its stage
-  seconds and 1200), and canonical `evidence_root`. With the bindings JSON described above, run:
+  seconds and 1200), canonical `evidence_root`, and — for every stage whose window consumes a
+  predecessor (D1–D4 and C1) — `prior_receipt`, the exact path and sha256 of that original receipt.
+  With the bindings JSON described above, run:
 
   ```sh
   effigy qualification:macos:proof-only -- plan-window D0 /absolute/path/to/bindings.json /absolute/path/to/options.json
   ```
 
-  Use C0 in place of D0 when appropriate. Save the output unchanged as a read-only request under
-  scratch, retain its exact bytes and SHA-256, and pin the merged K, selector
+  Use C0 in place of D0 when appropriate, and C1 with its original executor C0 receipt as `prior_receipt`
+  (see Executor); C2–C6 stay plain proof requests with no window recipe. Save the output unchanged as a
+  read-only request under scratch, retain its exact bytes and SHA-256, and pin the merged K, selector
   `qualification:macos:proof-only -- /absolute/path/to/request.json REQUEST_SHA256` and request hash
   in Nucleus. Null root identities are provisioning preconditions: rerun the plan after provisioning,
-  before freezing the request. The D0 `absent_paths` are fixed creation destinations and must remain
-  absent through launch; existing directories and symlinks refuse before the request claim. Check all
+  before freezing the request. The D0 and C1 `absent_paths` are fixed first-use destinations and must
+  remain absent through launch; existing directories and symlinks refuse before the request claim. Check all
   named destinations are unused. The native operator answer and
   actual proof-only launch remain necessary. At launch the request claim is spent even on an uncertain
   or partial write; retain the claim, activation, proof evidence and stage evidence, and never retry it.
@@ -647,8 +739,9 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
 - **Static admission.** C0 and D0 have no remaining static helper refusal. Their actual execution still
   needs the external proof-only precondition and all runtime checks. Remaining refusals:
   - C1: admitted statically (r5). Its one fetch is the pinned Colima image through the prefetch helper, with the exact
-    size and sha512. Ordinary execution still refuses. It is in the proof entry (`PROOF_STAGES`) as a plain proof request
-    only; its window recipe is refused, since the window recipe is not reviewed for C1.
+    size and sha512. Ordinary execution still refuses. It is in the proof entry (`PROOF_STAGES`) as a plain proof
+    request (the pre-created absolute-time activation) and as a launch-time window that names its original executor
+    C0 receipt (see Executor). C2–C6 remain plain proof requests only; their window recipes are refused.
   - D2: admitted statically (r8 / 756). Its fetches are the pinned Ubuntu 22.04 arm64 OCI blobs and 22 offline debs,
     hashed with exact size, then a `--network none` docker build from local `--build-context` oci-layout and debs.
     Ordinary execution still refuses at the owner mechanism; its proof-only window names the original D1 receipt
@@ -806,6 +899,9 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
 - **RecipeE and 686**: G1 and G2 wait on the Linux recipe and its artifacts.
 - **Native proof of the executor**: the controls are injected and local. Running any
   admitted stage needs its own owner GO, and the executor has not run natively.
+- **Failed-779 observation**: the source-ready observation entry exists and its controls
+  pass, but no native observation receipt exists. Any fresh D3 stays gated on that
+  separately pinned, receipt-based observation of the exact failed container.
 - **Colima `docker` child**: the owned link is the enforcement. Every Colima step re-checks
   the link's target and refuses a different one.
 - **Nerdctl `--provenance=mode=max`**: the guest `build --help` check proves the flag
@@ -827,3 +923,8 @@ under the test-only seams described in the Executor section; `macos_guest_helper
 `guest_inputs_tests.py`: 29 cases over the framing, caps, receive, readback and guest layout re-derivation,
 one of them in a real child process).
 Its shared primitive change is covered by `effigy test:qualification:linux-preparation`.
+The failed-779 Desktop observation entry runs through
+`effigy test:qualification:workspace-private:macos-desktop-observation`
+(`macos_desktop_observation_tests.py`: 35 cases, retained-shape fixture originals and one
+supervised harmless fake Docker child, no native action) and compiles through
+`effigy check:qualification:workspace-private:macos-desktop-observation:compile`.
