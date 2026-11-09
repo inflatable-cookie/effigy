@@ -9,8 +9,8 @@ admitted: its prefetch helper fetches the fixture's tiny genuine-byte stand-in f
 injected helper envelopes (no simulation). C4 runs through its production path too: the reviewed host
 handlers run in-process, the pinned guest transfer and pre-build re-derivation run against this fixture's own
 owned parent directory, and only the transport is substituted. Its guest steps close on authenticated
-envelopes, never on a simulation. C5 and C6 cannot be reached through a genuine chain (C5's remote run is
-still the local ssh client's), so their dispatch tests replace only verify_chain, and say so. The chain
+envelopes, never on a simulation. ColimaWindowChainTests extends the genuine chain through C5 and C6 using private guest-tool doubles.
+Older isolated dispatch tests replace verify_chain and say so. The chain
 verifier has its own negative tests on genuine receipts.
 
 Run: python3 -I -B macos_stage_executor_tests.py
@@ -5021,7 +5021,7 @@ class RedirectPolicyTests(Fixture):
 
 class C1ProofEntryTests(Fixture):
     """C1 is admitted in the proof entry as a plain request. Its window needs its original C0 receipt, and its
-    prospective data binds the same pinned inputs the executor plans. C2-C6 keep plain-request-only windows."""
+    prospective data binds the same pinned inputs the executor plans. C2-C6 also keep their plain requests."""
 
     def test_c1_prospective_data_binds_the_pinned_inputs(self):
         self.assertIn('C1', proof.PROOF_STAGES)
@@ -5030,11 +5030,11 @@ class C1ProofEntryTests(Fixture):
         self.assertEqual(data['inputs_sha256'], ex.canon_sha(ex.stable_input_manifest()[0]))
         self.assertEqual(data['bindings_sha256'], ex.canon_sha(self.bindings))
 
-    def test_c1_window_names_its_c0_and_unreviewed_windows_still_refuse(self):
+    def test_colima_windows_require_their_predecessor(self):
         options = dict(activation_id='c1-window', duration_seconds=600, evidence_root=self.evidence)
         with self.assertRaisesRegex(ex.Refusal, 'unsupported window options'):  # a C1 window names its C0 receipt
             proof.window_recipe('C1', self.bindings, options)
-        with self.assertRaisesRegex(ex.Refusal, 'no window recipe'):
+        with self.assertRaisesRegex(ex.Refusal, 'unsupported window options'):
             proof.window_recipe('C4', self.bindings, options)
         with self.assertRaisesRegex(ex.Refusal, 'supports only C0, D0, D1, C1, C2, C3, C4, C5, C6, D2, D3 or D4'):
             proof.prospective('C9', self.bindings)
@@ -5284,8 +5284,121 @@ class C1WindowTests(Fixture):
         self.assertEqual(receipt['prior']['stage'], 'C0')
 
 
+class ColimaWindowChainTests(Fixture):
+    """Real executor receipts and chain verification; only tools/guest transport are private doubles."""
+
+    use_historical = C1WindowTests.use_historical
+    run_c0 = C1WindowTests.run_c0
+    freeze = C1WindowTests.freeze
+    c4_routes = DispatchSweepTests.c4_routes
+    c4_transfer = DispatchSweepTests.c4_transfer
+    c4_guest_route = staticmethod(DispatchSweepTests.c4_guest_route)
+    c4_check = DispatchSweepTests.c4_check
+    c4_verify = DispatchSweepTests.c4_verify
+    c4_remote = DispatchSweepTests.c4_remote
+    c4_command = staticmethod(DispatchSweepTests.c4_command)
+    c5_env = DispatchSweepTests.c5_env
+    reap_leftover = DispatchSweepTests.reap_leftover
+
+    def test_c2_through_c6_windows_verify_original_chains_before_claim_and_keep_stage_policy(self):
+        bindings, c0, prior = self.run_c0('f0f0f082', 'windows-c0')
+        self.bindings = bindings
+        c1 = self.execute('C1', self.routed({'c1-colima-start': emit('started')}, []),
+                          prior_ref=prior, activation_id='windows-c1')
+        self.assertEqual(c1['closure'], 'closed')
+        prior = self.ref('C1', 'windows-c1')
+        manifest = ex.load_manifest()
+        policy = json.dumps(manifest, sort_keys=True)
+        parent = self.guest_parent()
+        env = self.c5_env()
+
+        def guest(kw):
+            argv = kw['argv']
+            index = argv.index(helper.LAUNCHER)
+            args = [str(HERE), argv[index + 2], argv[index + 3], argv[index + 4], json.dumps(env), ex.GUEST_HELPER_SHA256]
+            return 'import sys\nsys.argv = %r\n' % (['shim'] + args) + GUEST_SHIM
+
+        for stage in ('C2', 'C3', 'C4', 'C5', 'C6'):
+            with self.subTest(stage=stage):
+                spec = ex.stage_of(manifest, stage)
+                options = dict(activation_id='windows-' + stage.lower(), duration_seconds=spec['seconds'],
+                               evidence_root=self.evidence, prior_receipt=prior)
+                request = proof.window_recipe(stage, bindings, options)
+                self.assertEqual(request['prior_receipt'], prior)
+                self.assertEqual(request['absent_paths'], [bindings['colima_input_dir']] if stage == 'C4' else [])
+                body = Path(prior['path']).read_bytes()
+                for bad in (None, dict(prior, stage='D0'), dict(prior, historical=True),
+                            dict(prior, sha256='0' * 64)):
+                    bad_options = dict(options, prior_receipt=bad)
+                    if bad is None:
+                        del bad_options['prior_receipt']
+                    with self.assertRaises(ex.Refusal):
+                        proof.window_recipe(stage, bindings, bad_options)
+                # A rehashed simulated receipt is still forbidden, even with an exact byte reference.
+                simulated = dict(json.loads(body), closure_simulated=True)
+                Path(prior['path']).write_text(json.dumps(simulated))
+                with self.assertRaises(ex.Refusal):
+                    proof.window_recipe(stage, bindings,
+                                        dict(options, prior_receipt=dict(prior, sha256=ex.sha_file(prior['path']))))
+                # Launch rechecks the frozen reference before either request or stage claim.
+                with mock.patch.object(ex, 'claim_activation') as claim, self.assertRaises(ex.Refusal):
+                    proof.execute_window(request, ex.canon_sha(request), manifest, request['inputs_sha256'])
+                claim.assert_not_called()
+                self.assertFalse(os.path.lexists(request['activation_path']))
+                Path(prior['path']).write_bytes(body)
+                if stage == 'C4':
+                    os.mkdir(bindings['colima_input_dir'], 0o700)
+                    with mock.patch.object(ex, 'claim_activation') as claim, self.assertRaisesRegex(ex.Refusal, 'not absent'):
+                        proof.execute_window(request, ex.canon_sha(request), manifest, request['inputs_sha256'])
+                    claim.assert_not_called()
+                    os.rmdir(bindings['colima_input_dir'])
+                calls = []
+                if stage == 'C2':
+                    transport = self.routed({'c2-colima-status': emit('{"status":"running"}'),
+                                             'c2-route-echo': closed_guest(prep.ROUTE_ECHO),
+                                             'c2-guest-probe': closed_guest(json.dumps({'parent': parent}))}, calls)
+                elif stage == 'C3':
+                    def stage_context(kw):
+                        spec = json.loads(kw['argv'][-1])
+                        context = spec['parent']['path'] + '/' + spec['name']
+                        os.mkdir(context, 0o700)
+                        Path(context, 'Dockerfile').write_bytes(ex.RECIPE_PATH.read_bytes())
+                        return closed_guest(json.dumps(dict(parent=spec['parent'], path=context,
+                                                            sha256=spec['sha256'])))(kw)
+                    transport = self.routed({'c3-stage-context': stage_context}, calls)
+                elif stage == 'C4':
+                    staged = json.loads(Path(prior['path']).parent.joinpath('c3-stage-context/stdout').read_text())
+                    transport = self.routed(self.c4_routes(staged), calls)
+                elif stage == 'C5':
+                    transport = self.routed({step: guest for step in (
+                        'c5-guest-nerdctl-version', 'c5-disposable-check', 'c5-read-check-cid',
+                        'c5-container-inspect', 'c5-container-rm', 'c5-container-list')}, calls)
+                else:
+                    transport = self.routed({'c6-colima-list': emit('retained')}, calls)
+                path, digest = self.freeze(request, stage + '-window.json')
+                with mock.patch.object(ex, 'default_transport', transport), \
+                     mock.patch.object(ex, 'default_monitor', FixedHelperTests.quiet_monitor), \
+                     contextlib.redirect_stdout(io.StringIO()) as out:
+                    code = proof.main(['proof', path, digest])
+                self.assertEqual(code, 0, out.getvalue())
+                receipt = json.loads(out.getvalue())
+                self.assertEqual(receipt['closure'], 'closed', receipt)
+                self.assertFalse(receipt['closure_simulated'])
+                self.assertEqual([step['id'] for step in receipt['steps']], [step['id'] for step in spec['steps']])
+                go = json.loads(Path(request['activation_path']).read_text())
+                self.assertEqual(go['prior_receipt'], prior)
+                self.assertEqual((datetime.datetime.fromisoformat(go['expires_utc']) -
+                                  datetime.datetime.fromisoformat(go['issued_utc'])).total_seconds(), spec['seconds'])
+                self.assertEqual(json.dumps(ex.load_manifest(), sort_keys=True), policy)
+                prior = self.ref(stage, options['activation_id'])
+                ex.verify_receipt_tree(ex.read_receipt(prior), stage, ex.chain_key(bindings), manifest)
+                with mock.patch.object(ex, 'claim_activation') as claim, self.assertRaises(ex.Refusal):
+                    proof.execute_window(request, digest, manifest, request['inputs_sha256'])
+                claim.assert_not_called()  # one use, including C6's retain-and-observe operation
+
+
 class C2C3ProofEntryTests(Fixture):
-    """C2 and C3 are admitted in the proof entry as plain requests. They have no window recipe."""
+    """C2 and C3 are admitted in the proof entry as plain requests. Their windows also require the original predecessor."""
 
     def test_c2_and_c3_prospective_data_bind_the_pinned_inputs(self):
         for stage in ('C2', 'C3'):
@@ -5295,10 +5408,10 @@ class C2C3ProofEntryTests(Fixture):
                 self.assertEqual(data['stage'], stage)
                 self.assertEqual(data['inputs_sha256'], ex.canon_sha(ex.stable_input_manifest()[0]))
 
-    def test_c2_and_c3_have_no_window_recipe(self):
+    def test_c2_and_c3_windows_require_a_predecessor(self):
         options = dict(activation_id='c2-window', duration_seconds=300, evidence_root=self.evidence)
         for stage in ('C2', 'C3'):
-            with self.subTest(stage=stage), self.assertRaisesRegex(ex.Refusal, 'no window recipe'):
+            with self.subTest(stage=stage), self.assertRaisesRegex(ex.Refusal, 'unsupported window options'):
                 proof.window_recipe(stage, self.bindings, options)
 
 
@@ -5564,7 +5677,7 @@ class C5HelperFormTests(unittest.TestCase):
                 self.assertGreaterEqual(step['timeout_seconds'], sum(guard) + 1, step['id'])
 
 class C5C6ProofEntryTests(Fixture):
-    """C5 and C6 are admitted proof entries as plain requests, with no window: they consume the C4 and C5 receipts."""
+    """C5 and C6 are admitted proof entries as plain requests, or windows: they consume the C4 and C5 receipts."""
 
     def test_c5_and_c6_prospective_data_bind_the_pinned_inputs(self):
         for stage in ('C5', 'C6'):
@@ -5574,10 +5687,10 @@ class C5C6ProofEntryTests(Fixture):
                 self.assertEqual(data['stage'], stage)
                 self.assertEqual(data['inputs_sha256'], ex.canon_sha(ex.stable_input_manifest()[0]))
 
-    def test_c5_and_c6_have_no_window_recipe(self):
+    def test_c5_and_c6_windows_require_a_predecessor(self):
         options = dict(activation_id='c5-window', duration_seconds=300, evidence_root=self.evidence)
         for stage in ('C5', 'C6'):
-            with self.subTest(stage=stage), self.assertRaisesRegex(ex.Refusal, 'no window recipe'):
+            with self.subTest(stage=stage), self.assertRaisesRegex(ex.Refusal, 'unsupported window options'):
                 proof.window_recipe(stage, self.bindings, options)
 
 

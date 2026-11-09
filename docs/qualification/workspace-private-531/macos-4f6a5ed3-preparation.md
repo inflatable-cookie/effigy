@@ -50,7 +50,7 @@ outside the helper; its own daemon work is not claimed by the helper, and its co
 build's RUN steps; FROM cannot contact a registry because the base layer and debs arrive as local additional
 contexts. The base image digest, the 22.04 platform assertions and the finite package closure are unchanged.
 
-C4 joins C1, C2 and C3 as a plain proof request (no window recipe). C5 and C6 remain unadmitted, now because
+At r9, C4 joined C1, C2 and C3 as a plain proof request; current windows are described under Executor. C5 and C6 remain unadmitted, now because
 C5's remote `nerdctl run` and its guest observations are still manifest exec steps the local ssh client carries.
 
 ## Revision r8 (supersedes r7 for D2 admission from 756; manifest `macos-4f6a5ed3-stages-r8`)
@@ -107,7 +107,7 @@ recipe on bounded stdin, and refuses if the stage reports a different parent.
 
 r6 left C4 and D2 unadmitted for engine-side network. r8 admits D2 on the host OCI/deb path; C4 stays
 unadmitted for guest transfer of those inputs. C4's verify helper can close; `nerdctl build --help` remains
-`guest_unknown`. Ordinary entry stays refused. C2 and C3 join C1 as plain proof requests (no window recipe).
+`guest_unknown`. Ordinary entry stays refused. At r6, C2 and C3 joined C1 as plain proof requests; current windows are described under Executor.
 
 | Step | Prerequisite | Closed when | Otherwise |
 | --- | --- | --- | --- |
@@ -606,7 +606,7 @@ Gates:
 
 `macos_stage_executor.py` is the stage runner. This source preparation starts no native backend.
 
-### The C1 window names its original C0 receipt
+### Colima windows name their original predecessor receipts
 
 C1's launch-time window carries `prior_receipt`: the exact path and sha256 of the original executor C0
 receipt of this token's chain. The plan and the launch both verify that complete chain then
@@ -623,6 +623,18 @@ adopted. The GO is written at launch for the requested duration — at most the 
 60-second reserve shared by prefetch and start. Every C1 runtime gate, the exact pinned image and the
 fixed start flags are unchanged, and the plain C1 request keeps its pre-created absolute-time activation
 route. C1 execution itself remains a separate proof-only launch.
+
+C2–C6 use the same launch-time window mechanism: C2 names C1, C3 names C2, C4 names C3,
+C5 names C4 and C6 names C5. Each `prior_receipt` is exactly `{stage, path, sha256}`;
+planning and launch verify the complete genuine, closed, non-simulated chain back to C0.
+C4 additionally requires `{colima_input_dir}` absent before the request claim. C2, C3, C5 and C6
+create no first-use host destinations; guest destination checks remain in the authenticated helpers.
+Every stage keeps its own seconds, reserve, steps, caps, fetch pins and closure rules. C2 still checks
+the hostile route echo before the probe, C3 derives from that probe and C0's token32, C4 transfers
+only the fixed finite inputs, and C6 retains and observes without stopping. Plain requests remain
+supported. No executor change is needed: the existing launcher re-runs `window_recipe` before the
+claim, and the executor already verifies these predecessor chains and dispatches these exact stages.
+Each native execution requires its own Nucleus source-immutable proof launch.
 
 ### Desktop readiness before D1
 
@@ -802,19 +814,19 @@ Not proven: any native execution. The entry has never run against the real engin
   control root first. Create an options JSON containing exactly `activation_id` (fresh, 8–64 safe
   characters), `duration_seconds` (integer greater than the stage reserve and at most its stage
   seconds and 1200), canonical `evidence_root`, and — for every stage whose window consumes a
-  predecessor (D1–D4 and C1) — `prior_receipt`, the exact path and sha256 of that original receipt.
+  predecessor (D1–D4 and C1–C6) — `prior_receipt`, the exact `{stage, path, sha256}` of that original receipt.
   With the bindings JSON described above, run:
 
   ```sh
   effigy qualification:macos:proof-only -- plan-window D0 /absolute/path/to/bindings.json /absolute/path/to/options.json
   ```
 
-  Use C0 in place of D0 when appropriate, and C1 with its original executor C0 receipt as `prior_receipt`
-  (see Executor); C2–C6 stay plain proof requests with no window recipe. Save the output unchanged as a
+  Use C0 in place of D0 when appropriate. C1–C6 each name their original executor predecessor
+  (C0–C5 respectively) as `prior_receipt` (see Executor). Save the output unchanged as a
   read-only request under scratch, retain its exact bytes and SHA-256, and pin the merged K, selector
   `qualification:macos:proof-only -- /absolute/path/to/request.json REQUEST_SHA256` and request hash
   in Nucleus. Null root identities are provisioning preconditions: rerun the plan after provisioning,
-  before freezing the request. The D0 and C1 `absent_paths` are fixed first-use destinations and must
+  before freezing the request. The D0, C1 and C4 `absent_paths` are fixed first-use destinations and must
   remain absent through launch; existing directories and symlinks refuse before the request claim. Check all
   named destinations are unused. The native operator answer and
   actual proof-only launch remain necessary. At launch the request claim is spent even on an uncertain
@@ -826,7 +838,7 @@ Not proven: any native execution. The entry has never run against the real engin
   - C1: admitted statically (r5). Its one fetch is the pinned Colima image through the prefetch helper, with the exact
     size and sha512. Ordinary execution still refuses. It is in the proof entry (`PROOF_STAGES`) as a plain proof
     request (the pre-created absolute-time activation) and as a launch-time window that names its original executor
-    C0 receipt (see Executor). C2–C6 remain plain proof requests only; their window recipes are refused.
+    C0 receipt (see Executor). C2–C6 also support windows naming their original predecessor receipts.
   - D2: admitted statically (r8 / 756). Its fetches are the pinned Ubuntu 22.04 arm64 OCI blobs and 22 offline debs,
     hashed with exact size, then a `--network none` docker build from local `--build-context` oci-layout and debs.
     Ordinary execution still refuses at the owner mechanism; its proof-only window names the original D1 receipt
@@ -834,19 +846,18 @@ Not proven: any native execution. The entry has never run against the real engin
   - C4: admitted (r9). It fetches the same pinned OCI/deb set D2 fetches into `{colima_input_dir}`, frames it
     as one fixed finite transfer, streams it to the guest through the fixed helper, re-derives the guest layout
     twice (on receive and immediately before the build), and runs every remote command through the same helper.
-    Ordinary execution still refuses at the owner mechanism. Plain proof request only; no window recipe.
+    Ordinary execution still refuses at the owner mechanism. Plain proof request or window naming its original predecessor receipt.
   - C2: admitted (r6). The pinned guest helper authenticates echo and probe closure. Ordinary
-    execution still refuses. It is in the proof entry as a plain proof request; its window recipe
-    is refused.
+    execution still refuses. It is in the proof entry as a plain proof request or window naming its original C1 receipt.
   - C3: admitted (r6). `guest_spec` derives from the C2 probe output and the `token32` that C0 mints.
-    Ordinary execution still refuses. Plain proof request only; no window recipe.
+    Ordinary execution still refuses. Plain proof request or window naming its original predecessor receipt.
   - D1 is statically admitted (r4). Its ordinary execution still refuses at the owner mechanism; its
     proof-only window names the original D0 receipt (see Executor).
   - D3 and D4: in the proof entry as windows. D3 names the original D2 receipt and requires its activation-derived cidfile absent;
     D4 names the original D3 receipt, selects only receipted full IDs on this engine, and refuses a predecessor that
     did not close, so a failed predecessor cannot trigger cleanup. Native execution still needs a separate GO.
   - C5 and C6: admitted (r10). C5's check, cidfile read and container listing are fixed guest-helper operations
-    (see C5). C6 follows C5. Both are plain proof requests only, with no window recipe.
+    (see C5). C6 follows C5. Both support plain proof requests and windows naming C4 and C5 respectively.
 - **C0 (fresh tokens).** Its handlers are `verify_tool_sha` (the live colima and docker binaries
   against the sha256 the pinned 688 C0 record names) and `verify_tranche_summary` (the tranche
   summary against the sha the same record names). C0 creates its own roots under the scratch root
