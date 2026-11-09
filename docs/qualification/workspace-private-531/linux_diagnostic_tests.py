@@ -26,6 +26,11 @@ import linux_engine_inputs_tests as engine_tests
 from preparation_stage import Refusal
 
 
+SESSION_REFUSAL = (b'Unable to open new session in this virtual machine. Make sure your '
+                   b'virtual machine has finished booting, runs the latest version of '
+                   b'Parallels Tools, and is not isolated from the host OS.')
+SESSION_INVALID = b'PrlJob_GetRetCode: Invalid argument. An invalid argument was passed.\n'
+
 ZERO = '{00000000-0000-0000-0000-000000000000}'
 GUID_A = '{11111111-1111-1111-1111-111111111111}'
 GUID_B = '{22222222-2222-2222-2222-222222222222}'
@@ -508,8 +513,10 @@ class MetadataAccountingTests(unittest.TestCase):
                              proof.DURATION - proof.RESERVE)
         # Transport retries, the systemd wait and the first boot-id read share one readiness
         # window: the per-attempt limit and floor cannot extend it.
-        self.assertLessEqual(proof.TRANSPORT_WAIT, proof.READY_WAIT)
-        self.assertLess(proof.TRANSPORT_FLOOR, proof.READY_WAIT)
+        self.assertEqual(proof.READY_WAIT, 120)
+        self.assertEqual(proof.TRANSPORT_WAIT, 20)
+        self.assertEqual(proof.TRANSPORT_FLOOR, 5)
+        self.assertEqual(proof.PAUSE, 5)
 
     def test_retained_snapshot_bytes_bind_complete_canonical_inventory(self):
         raw = (SOURCE_DIR / 'fixtures' / 'retained-snapshot-list.json').read_bytes()
@@ -572,25 +579,27 @@ class MetadataAccountingTests(unittest.TestCase):
         ready = {'disposition': 'exited', 'waited_exit': 0}
         self.assertEqual(proof.classify_transport(
             ready, b'linux-diagnostic-transport-ready\n', b''), 'ready')
-        # The exact 745 step-005 stderr is the one retryable shape: empty stdout, a nonzero
-        # waited exit, and this source-qualified Parallels session refusal.
-        self.assertEqual(len(proof.TRANSPORT_UNAVAILABLE), 186)
-        self.assertEqual(hashlib.sha256(proof.TRANSPORT_UNAVAILABLE).hexdigest(),
+        # Retained 745/817 chatter is fixture evidence, not an error-message allowlist.
+        self.assertEqual(len(SESSION_REFUSAL), 186)
+        self.assertEqual(hashlib.sha256(SESSION_REFUSAL).hexdigest(),
                          'eb32a763e139394434311247ab0eceaefb923123285632bcc29b6d4b631efd80')
         refused = {'disposition': 'failed', 'waited_exit': 255}
         self.assertEqual(proof.classify_transport(
-            refused, b'', proof.TRANSPORT_UNAVAILABLE + b'\n'), 'unavailable')
+            refused, b'', SESSION_REFUSAL + b'\n'), 'unavailable')
+        for stderr in (SESSION_INVALID, b'other error\n', b'', b'x' * 2048):
+            self.assertEqual(proof.classify_transport(refused, b'', stderr), 'unavailable')
         for result, stdout, stderr in (
                 (ready, b'ready\n', b''),
                 (ready, b'linux-diagnostic-transport-ready\nextra\n', b''),
                 (ready, b'linux-diagnostic-transport-ready\n', b'warning\n'),
                 (refused, b'linux-diagnostic-transport-ready\n',
-                 proof.TRANSPORT_UNAVAILABLE + b'\n'),
-                (refused, b'partial', proof.TRANSPORT_UNAVAILABLE + b'\n'),
+                 SESSION_REFUSAL + b'\n'),
+                (refused, b'partial', SESSION_REFUSAL + b'\n'),
                 ({'disposition': 'timeout', 'waited_exit': -9}, b'', b''),
                 ({'disposition': 'failed', 'waited_exit': None}, b'',
-                 proof.TRANSPORT_UNAVAILABLE),
-                ({'disposition': 'failed', 'waited_exit': 3}, b'', b'other error\n')):
+                 SESSION_REFUSAL),
+                ({'disposition': 'unknown', 'waited_exit': 3}, b'', b''),
+                (refused, b'', b'x' * 2049)):
             with self.subTest(result=result, stdout=stdout, stderr=stderr):
                 with self.assertRaises(Refusal):
                     proof.classify_transport(result, stdout, stderr)
@@ -1895,6 +1904,20 @@ elif args[0] == 'exec' and args[2:4] == ['/bin/echo', %(sentinel)r]:
         (root / 'transport-ready').write_text('1')
         print(%(transport_refusal)r, file=sys.stderr, end='')
         sys.exit(255)
+    if mode in ('transport_817', 'transport_exhausted'):
+        counter = root / 'transport-count'
+        seen = int(counter.read_text()) if counter.exists() else 0
+        counter.write_text(str(seen + 1))
+        if mode == 'transport_exhausted' or seen < 3:
+            print(%(transport_invalid)r if seen >= 2 else %(transport_refusal)r,
+                  file=sys.stderr, end='')
+            sys.exit(255)
+    if mode == 'transport_timeout':
+        time.sleep(2)
+    if mode == 'transport_stdout':
+        print('partial'); sys.exit(3)
+    if mode == 'transport_oversize':
+        print('x' * 2049, file=sys.stderr); sys.exit(3)
     if mode == 'transport_error':
         print('parallels: unexpected transport error', file=sys.stderr)
         sys.exit(3)
@@ -1973,6 +1996,12 @@ class EntryTests(unittest.TestCase):
         ('transport_retry', 0, 1),
         ('transport_refused', 1, 1),
         ('transport_error', 1, 1),
+        ('transport_817', 0, 1),
+        ('transport_exhausted', 1, 1),
+        ('transport_timeout', 1, 1),
+        ('transport_unknown', 1, 1),
+        ('transport_stdout', 1, 1),
+        ('transport_oversize', 1, 1),
         ('transport_wrong_output', 1, 1),
         ('readiness_starting', 1, 1),
         ('readiness_degraded', 1, 1),
@@ -2032,8 +2061,9 @@ class EntryTests(unittest.TestCase):
                                       'probe': probe_output, 'starting_probe': starting_probe,
                                       'cap': diagnostic.CAP,
                                       'sentinel': proof.TRANSPORT_SENTINEL,
+                                      'transport_invalid': SESSION_INVALID.decode(),
                                       'transport_refusal':
-                                          (proof.TRANSPORT_UNAVAILABLE + b'\n').decode(),
+                                          (SESSION_REFUSAL + b'\n').decode(),
                                       'routes': route_text(),
                                       'mode_routes': {'writer_bound_absent': route_text(ABSENT_ROUTES),
                                                       'writer_bound_malformed': route_text(MALFORMED_ROUTES)}})
@@ -2050,7 +2080,7 @@ class EntryTests(unittest.TestCase):
             (home / 'config.pvs.backup').write_bytes(b'original-backup')
             (home / 'config.pvs.e13c235b').unlink(missing_ok=True)
             for leftover in ('config.pvs.backup.tmp', 'starting-lists', 'boot-reads',
-                             'transport-ready', 'stop-while-starting'):
+                             'transport-ready', 'transport-count', 'stop-while-starting'):
                 (root / leftover).unlink(missing_ok=True)
             log.write_text('')
 
@@ -2286,6 +2316,8 @@ class EntryTests(unittest.TestCase):
             cases = {name: (expected, stops) for name, expected, stops in self.MODES}
             original_run = proof.stage.run_stage
 
+            readiness_bounds = []
+
             def bounded(*args, **kwargs):
                 argv = args[1]
                 if argv[1:2] == ['start'] and scenario.read_text() == 'start_prelaunch':
@@ -2303,7 +2335,17 @@ class EntryTests(unittest.TestCase):
                     args = (args[0], argv, 0.2) + args[3:]
                 if argv[1:2] == ['stop'] and scenario.read_text() == 'stop_timeout':
                     args = (args[0], argv, 0.2) + args[3:]
-                return original_run(*args, **kwargs)
+                if any(program in argv for program in
+                       ('/bin/echo', '/usr/bin/systemctl', '/bin/cat')):
+                    readiness_bounds.append((argv, args[2], kwargs['deadline']))
+                echo = '/bin/echo' in argv
+                mode = scenario.read_text()
+                if echo and mode == 'transport_timeout':
+                    args = (args[0], argv, 0.2) + args[3:]
+                result = original_run(*args, **kwargs)
+                if echo and mode == 'transport_unknown':
+                    result['disposition'] = 'unknown'
+                return result
 
             with patch.object(proof.stage, 'run_stage', side_effect=bounded), \
                  patch.object(proof, 'PAUSE', 0.05), patch.object(proof, 'RUN_WAIT', 0.6), \
@@ -2314,6 +2356,7 @@ class EntryTests(unittest.TestCase):
                 for index, (mode, expected, stops) in enumerate(self.MODES, 2):
                     with self.subTest(mode=mode):
                         reset(mode)
+                        readiness_bounds.clear()
                         item = proof.plan(str(evidence), 'fixture%02d' % index, head)
                         item_path = root / ('request-%02d.json' % index)
                         item_raw = json.dumps(item).encode()
@@ -2443,18 +2486,23 @@ class EntryTests(unittest.TestCase):
                             return [(path.name, json.loads((path / 'intent.json').read_text())['argv'])
                                     for path in sorted(destination.glob('step-*'))]
 
-                        if mode == 'transport_retry':
-                            # One transient session refusal, then the exact echo sentinel, then
-                            # systemd readiness and the same-boot routes inside one deadline.
+                        if mode in ('transport_retry', 'transport_817'):
+                            # Retained boot-time failures, then sentinel and same-boot routes.
+                            # All echoes, systemd and the first boot read use one absolute end.
+                            window = readiness_bounds[:len(result['transport']['attempts']) + 2]
+                            self.assertEqual(len({end for _, _, end in window}), 1)
+                            self.assertTrue(all(limit <= 1 for argv, limit, _ in window
+                                                if '/bin/echo' in argv))
                             self.assertEqual(result['transport']['status'], 'ready')
                             attempts = result['transport']['attempts']
                             self.assertEqual([row['classification'] for row in attempts],
-                                             ['unavailable', 'ready'])
+                                             (['unavailable'] * 3 + ['ready'] if mode == 'transport_817'
+                                              else ['unavailable', 'ready']))
                             self.assertEqual((attempts[0]['waited_exit'],
                                               attempts[0]['stdout']['bytes']), (255, 0))
                             first = destination / attempts[0]['step']
                             self.assertEqual((first / 'stderr').read_bytes(),
-                                             proof.TRANSPORT_UNAVAILABLE + b'\n')
+                                             SESSION_REFUSAL + b'\n')
                             self.assertEqual(hashlib.sha256((first / 'stderr').read_bytes()).hexdigest(),
                                              attempts[0]['stderr']['sha256'])
                             self.assertEqual(hashlib.sha256((first / 'stdout').read_bytes()).hexdigest(),
@@ -2463,19 +2511,22 @@ class EntryTests(unittest.TestCase):
                             steps = step_argv()
                             echoes = [name for name, argv in steps if '/bin/echo' in argv]
                             systemd = [name for name, argv in steps if '/usr/bin/systemctl' in argv]
-                            self.assertEqual((len(echoes), len(systemd)), (2, 1))
+                            self.assertEqual((len(echoes), len(systemd)), (4 if mode == 'transport_817' else 2, 1))
+                            if mode == 'transport_817':
+                                self.assertEqual(attempts[2]['stderr']['text'], SESSION_INVALID.decode())
                             self.assertLess(echoes[-1], systemd[0])
                             self.assertEqual(result['readiness'], 'running')
                             self.assertEqual(result['findings'], [])
                             self.assertIn('config', result['post'])
-                        if mode in ('transport_refused', 'transport_error',
-                                    'transport_wrong_output'):
-                            # A non-transient answer or an exhausted shared deadline refuses with
+                        if mode in ('transport_refused', 'transport_error', 'transport_exhausted',
+                                    'transport_wrong_output', 'transport_timeout', 'transport_unknown',
+                                    'transport_stdout', 'transport_oversize'):
+                            # An invalid answer or an exhausted shared deadline refuses with
                             # no later route: systemd, probe and writer reads never run.
                             self.assertFalse(result.get('probe'))
                             self.assertFalse(result.get('readiness_observation'))
                             self.assertEqual(result['transport']['status'],
-                                             'exhausted' if mode == 'transport_refused'
+                                             'exhausted' if mode in ('transport_refused', 'transport_error', 'transport_exhausted')
                                              else 'refused')
                             self.assertTrue(any('guest transport' in finding
                                                 for finding in result['findings']))
@@ -2485,10 +2536,25 @@ class EntryTests(unittest.TestCase):
                                                  for path in destination.iterdir()))
                             self.assertEqual(result['stop_count'], 1)
                             self.assertIn('config', result['post'])
-                            if mode == 'transport_refused':
+                            if mode in ('transport_refused', 'transport_error', 'transport_exhausted'):
                                 self.assertTrue(all(row['classification'] == 'unavailable'
                                                     for row in result['transport']['attempts']))
-                                self.assertGreater(len(result['transport']['attempts']), 1)
+                                attempts = result['transport']['attempts']
+                                self.assertEqual(len({end for _, _, end in readiness_bounds}), 1)
+                                self.assertGreater(len(attempts), 2)
+                                self.assertEqual(result['transport']['stderr_classes'],
+                                                 sorted({row['stderr']['text'] for row in attempts}))
+                                if mode == 'transport_exhausted':
+                                    self.assertEqual(len(result['transport']['stderr_classes']), 2)
+                                for row in attempts:
+                                    step = destination / row['step']
+                                    for stream in ('stdout', 'stderr'):
+                                        raw = (step / stream).read_bytes()
+                                        self.assertEqual(hashlib.sha256(raw).hexdigest(), row[stream]['sha256'])
+                                    self.assertEqual(row['stderr']['text'],
+                                                     (step / 'stderr').read_bytes().decode())
+                                self.assertEqual(len(attempts), sum('/bin/echo' in argv
+                                                                  for _, argv in step_argv()))
                             else:
                                 self.assertEqual(
                                     [row['classification'] for row in

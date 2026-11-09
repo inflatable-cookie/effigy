@@ -1,0 +1,1 @@
+Linux diagnostic guest-transport readiness now retries bounded failed probes with empty stdout throughout its existing shared readiness window, without depending on Parallels error wording. Each attempt retains bounded stderr text and stream hashes, and exhaustion reports the distinct stderr classes while preserving strict sentinel checks and all existing deadlines.
