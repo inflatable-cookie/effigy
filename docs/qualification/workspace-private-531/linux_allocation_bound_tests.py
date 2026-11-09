@@ -109,7 +109,7 @@ class VerifierChecks(unittest.TestCase):
         self.assertEqual(calls, [(probe.Q_SETQUOTA, bound.ROOT_DEVICE, bound.PROJECT_ID,
                                   (CHARGED + (64 << 20)) // probe.QB_UNIT_BYTES, 0, bound.QIF_BLIMITS)])
         self.assertEqual(result['setter_exit'], 0)
-        for result in (None, (-1, 5), (False, 0)):
+        for result in (None, (-1, 5), (False, 0), (0, None)):
             with self.subTest(result=result), self.assertRaisesRegex(Refusal, 'failed or its result is unknown'):
                 bound._invoke_candidate_setter('E8', CHARGED, lambda *args: result)
         calls.clear()
@@ -297,6 +297,11 @@ class HelperChecks(unittest.TestCase):
             addr._obj.valid = 3
             return rc_quota, errno if rc_quota else 0
         return call
+
+    def test_command_entry_refuses_setter_before_kernel_call(self):
+        with patch.object(probe, '_quotactl') as call, patch.object(sys, 'stderr'):
+            self.assertEqual(probe.main(['set', bound.ROOT_DEVICE, str(bound.PROJECT_ID)]), 2)
+            call.assert_not_called()
 
     def test_prospective_limit_reserves_exact_row_and_changes_only_block_limits(self):
         record = probe.limit_record(CHARGED, LIMIT)

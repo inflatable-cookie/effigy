@@ -72,7 +72,8 @@ def _invoke_candidate_setter(row, charged_bytes, call):
     """
     record = prospective_row_limit(row, charged_bytes)
     result = call(probe.Q_SETQUOTA, ROOT_DEVICE, PROJECT_ID, ctypes.byref(record))
-    if not isinstance(result, tuple) or len(result) != 2 or type(result[0]) is not int or result[0] != 0:
+    if not isinstance(result, tuple) or len(result) != 2 or type(result[0]) is not int or \
+            type(result[1]) is not int or result[0] != 0:
         raise Refusal('project quota setter failed or its result is unknown')
     return {'setter_exit': 0, 'hard_qb': record.bhard}
 
