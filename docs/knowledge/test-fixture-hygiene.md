@@ -296,6 +296,17 @@ profile mounts `/Volumes/Builds/scratch`. The profile's `colima.yaml` has
 needs a profile restart. Its gate is Q-016 in `questions.md`; no repository
 change can close it.
 
+## Shared-process controls
+
+Controlled capture clocks are local to their test thread. Companion capture or
+controller threads enter an explicitly shared clock; unrelated tests keep the
+wall clock. One-shot process-global cleanup tests run in their own test process,
+and publisher fault hooks belong to the thread that installs them.
+
+Recorded-generation closure requires positive absence, zombie state or an
+identity mismatch. An unknown identity or state stays unresolved within the
+fixture's existing wait bound; repeated failed observations do not prove closure.
+
 ## Kernel fault fixtures
 
 The kernel fault-injection sweep is no longer an exception: it runs in the

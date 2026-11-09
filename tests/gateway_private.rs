@@ -4736,6 +4736,12 @@ fn wait_for_listener_generation(
     previous: &str,
     timeout: Duration,
 ) -> Value {
+    let log_path = path.with_file_name(
+        path.file_name()
+            .expect("listener state filename")
+            .to_string_lossy()
+            .replace(".listener.json", ".log"),
+    );
     let deadline = Instant::now() + timeout;
     loop {
         if let Ok(bytes) = fs::read(path) {
@@ -4758,7 +4764,10 @@ fn wait_for_listener_generation(
         }
         assert!(
             Instant::now() < deadline,
-            "successor generation did not become ready"
+            "successor generation did not become ready: state={:?}; log={:?}; routes={:?}",
+            fs::read_to_string(path),
+            fs::read_to_string(&log_path),
+            RouteTable::load(route_table_path)
         );
         thread::sleep(Duration::from_millis(25));
     }

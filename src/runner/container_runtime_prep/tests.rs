@@ -1786,6 +1786,98 @@ fn capture_compose_argv(
     output.stdout
 }
 
+// This proof needs the real offline Compose parser/hash implementation. A
+// missing host CLI/plugin is a reported precondition, never a skipped proof.
+fn require_compose_cli(root: &Path, policy: &EffectiveContainerPolicy) {
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_args(
+        root,
+        policy,
+        ["compose", "version", "--short"]
+            .map(OsString::from)
+            .to_vec(),
+        effigy_containers::ContainerAction::Status,
+        "Compose CLI proof precondition",
+    )
+    .expect("Compose CLI precondition invocation plan");
+    let mut budget = crate::runner::exec_command::BoundedCommandBudget::new(
+        std::time::Instant::now(),
+        std::time::Instant::now() + Duration::from_secs(10),
+        4096,
+        4096,
+    );
+    let output = budget
+        .run_command(
+            &plan.repo_root,
+            plan.program.as_os_str(),
+            &plan.args,
+            None,
+            &[],
+            crate::runner::exec_command::BoundedCommandPhase::WorkspacePreparation,
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+        "host precondition: a working Docker Compose CLI/plugin is required for the offline \
+         predecessor hash proof; program={:?}, argv={:?}, probe error={error:?}",
+        plan.program, plan.args,
+    )
+        });
+    assert!(
+        output.status.success() && !output.stdout.is_empty(),
+        "host precondition: Docker Compose version probe failed; program={:?}, argv={:?}, \
+         status={}, stdout={}, stderr={}",
+        plan.program,
+        plan.args,
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+// Hash the independently loaded canonical apply model. Older Compose versions
+// hash unresolved env_file metadata when given source files directly, unlike
+// create/up, which hashes the resolved service environment.
+fn hash_resolved_compose_model(
+    root: &Path,
+    policy: &EffectiveContainerPolicy,
+    project_directory: &std::ffi::OsStr,
+    model: &[u8],
+) -> std::collections::BTreeMap<String, String> {
+    let args = vec![
+        OsString::from("compose"),
+        OsString::from("--project-directory"),
+        project_directory.to_owned(),
+        OsString::from("-f"),
+        OsString::from("-"),
+        OsString::from("-p"),
+        OsString::from(&policy.project_name),
+        OsString::from("config"),
+        OsString::from("--hash"),
+        OsString::from("*"),
+    ];
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_args(
+        root,
+        policy,
+        args,
+        effigy_containers::ContainerAction::Status,
+        "canonical resolved-model hash proof",
+    )
+    .unwrap();
+    let output = effigy_containers::exec::run_input_capture_until(
+        &plan.repo_root,
+        plan.program.to_str().unwrap(),
+        &plan.args,
+        model,
+        std::time::Instant::now() + Duration::from_secs(30),
+    )
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    super::parse_service_config_hashes(&output.stdout).unwrap()
+}
+
 #[test]
 fn frozen_compose_expansion_refuses_unsealed_reads_and_temporary_environment_values() {
     let names = vec!["checkout/compose.yml".to_owned()];
@@ -1834,6 +1926,7 @@ fn the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_pu
     .expect("compose file");
     effigy_containers::with_test_effigy_home(&home, || {
         let mut policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        require_compose_cli(&checkout, &policy);
         // Add frozen dependencies to the real generated catalog render. No
         // canonical file is written: the kernel seal/publisher owns all I/O.
         let render = policy.render.as_mut().unwrap();
@@ -2018,20 +2111,22 @@ fn the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_pu
 
         let mut config_argv = apply_prefix.to_vec();
         config_argv.extend(["config", "--format", "json"].map(OsString::from));
-        let mut hash_argv = apply_prefix.to_vec();
-        hash_argv.extend(["config", "--hash", "*"].map(OsString::from));
-        let canonical_config: serde_json::Value =
-            serde_json::from_slice(&capture_compose_argv(&checkout, &policy, config_argv)).unwrap();
-        let canonical_hashes = super::parse_service_config_hashes(&capture_compose_argv(
-            &checkout,
-            &policy,
-            hash_argv.clone(),
-        ))
-        .unwrap();
         assert_eq!(
             &apply_argv[..apply_argv.len() - 4],
-            &hash_argv[..hash_argv.len() - 3],
-            "hashing uses the actual apply's ordered -f/project prefix"
+            &config_argv[..config_argv.len() - 3],
+            "the canonical model uses the actual apply's ordered -f/project prefix"
+        );
+        let canonical_model = capture_compose_argv(&checkout, &policy, config_argv);
+        let canonical_config: serde_json::Value = serde_json::from_slice(&canonical_model).unwrap();
+        // Compose create/up hashes a resolved service environment. Compose
+        // 5.1.3's raw config --hash instead hashes env_file metadata, so load
+        // the exact canonical apply inputs first, then ask the same backend to
+        // hash that resolved model. No preflight adapter computes this oracle.
+        let canonical_hashes = hash_resolved_compose_model(
+            &checkout,
+            &policy,
+            apply_argv[2].as_os_str(),
+            &canonical_model,
         );
         assert_eq!(
             canonical_config["services"]["app"]["environment"]["FROZEN_ENV"],

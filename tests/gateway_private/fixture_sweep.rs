@@ -129,22 +129,76 @@ fn leader_holds(record: &Record) -> bool {
     live(record.pid).is_some_and(|leader| holds(&leader, &record.boot, &record.start))
 }
 
-/// Whether `pid` is a zombie: it has exited and only waits to be reaped.
-fn is_zombie(pid: u32) -> bool {
-    Command::new("ps")
-        .args(["-o", "stat=", "-p", &pid.to_string()])
-        .output()
-        .map(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .starts_with('Z')
-        })
-        .unwrap_or(false)
+/// Whether a recorded process remains live or closure is still unresolved.
+fn holds_alive(pid: u32, boot: &str, start: &GatewayStartIdentity) -> bool {
+    recorded_liveness(
+        read_live_process_identity(pid),
+        effigy_kernel::ident::process_state(pid),
+        boot,
+        start,
+    )
 }
 
-/// Whether `pid` still holds `boot` and `start` and has not exited.
-fn holds_alive(pid: u32, boot: &str, start: &GatewayStartIdentity) -> bool {
-    live(pid).is_some_and(|live| holds(&live, boot, start)) && !is_zombie(pid)
+fn recorded_liveness(
+    identity: io::Result<LiveProcessIdentity>,
+    state: effigy_kernel::observe::Observed<effigy_kernel::ident::ProcessState>,
+    boot: &str,
+    start: &GatewayStartIdentity,
+) -> bool {
+    use effigy_kernel::{ident::ProcessState, observe::Observed};
+    if identity.is_ok_and(|identity| !holds(&identity, boot, start)) {
+        return false;
+    }
+    match state {
+        Observed::Absent(_) | Observed::Verified(ProcessState::Zombie, _) => false,
+        Observed::Verified(..) => true,
+        Observed::Unknown(_) => true,
+    }
+}
+
+#[test]
+fn recorded_identity_and_state_unknown_never_prove_closure() {
+    use effigy_kernel::observe::{Observed, UnknownReason};
+    for reason in [UnknownReason::PermissionDenied, UnknownReason::Injected] {
+        assert!(recorded_liveness(
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "identity unavailable"
+            )),
+            Observed::Unknown(reason),
+            "recorded-boot",
+            &GatewayStartIdentity::Linux { start_ticks: 1 },
+        ));
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn recorded_zombie_is_not_a_live_survivor() {
+    let mut child = Command::new("/bin/sh")
+        .args(["-c", "exit 0"])
+        .spawn()
+        .expect("owned zombie control");
+    let pid = child.id();
+    let identity = live(pid).expect("unreaped child identity");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let is_zombie = || {
+        matches!(
+            effigy_kernel::ident::process_state(pid),
+            effigy_kernel::observe::Observed::Verified(
+                effigy_kernel::ident::ProcessState::Zombie,
+                _
+            )
+        )
+    };
+    while !is_zombie() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    let zombie = is_zombie();
+    let alive = holds_alive(pid, &identity.boot_identity, &identity.start_identity);
+    child.wait().expect("reap owned zombie control");
+    assert!(zombie, "the exited child must remain a zombie until reaped");
+    assert!(!alive, "an unreaped child cannot be a live survivor");
 }
 
 /// Whether `process` began at or after the record's leader in the same boot.

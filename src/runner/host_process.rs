@@ -912,6 +912,11 @@ fn wait_for_listener_state(
                         return Ok(ListenerWait::Ready(Box::new(state)));
                     }
                 }
+                "stopped" => {
+                    return Err(RunnerError::task_invocation(format!(
+                        "managed host listener `{process_name}` was stopped before readiness"
+                    )));
+                }
                 "failed" => {
                     return Ok(ListenerWait::Withheld {
                         diagnostic: state.diagnostic.clone().unwrap_or_default(),
@@ -3061,6 +3066,29 @@ mod tests {
     }
 
     #[test]
+    fn listener_wait_reports_a_stopped_generation_while_its_supervisor_still_exists() {
+        let dir = tempfile::tempdir().expect("listener fixture");
+        let path = dir.path().join("app.listener.json");
+        write_private_json(&path, &published_listener_state("activation", "stopped"))
+            .expect("terminal listener state");
+        let started = Instant::now();
+        let result = wait_for_listener_state(
+            &path,
+            "app",
+            "fixture|web|app",
+            &dir.path().join("routes.json"),
+            Some(started + Duration::from_secs(1)),
+            |_| {},
+        );
+        let error = match result {
+            Err(error) => error.to_string(),
+            Ok(_) => panic!("a terminal stopped generation cannot become ready"),
+        };
+        assert!(error.contains("stopped before readiness"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
     fn pane_listener_observation_binds_the_owner_run_and_custody_generation() {
         let run = effigy_kernel::id::RunId::new(1, [8; 10]).unwrap();
         let nonce = format!("{run}:4");
@@ -3582,7 +3610,7 @@ os.execv('/bin/sleep', ['sleep', '60'])
             &fixture.checkout,
             vec![host_process(
                 "app",
-                "/usr/bin/python3 generation.py",
+                "exec /usr/bin/python3 generation.py",
                 HostProcessRestart::OnFailure,
             )],
         );
@@ -4158,6 +4186,12 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         child: &str,
         timeout_secs: u64,
     ) -> EffectiveHostProcess {
+        // HTTPServer's server_bind resolves getfqdn before listen. These
+        // loopback readiness fixtures have no dependency on host reverse DNS.
+        let child = format!(
+            "import http.server, socketserver\nclass NoReverseDnsServer(http.server.HTTPServer):\n    def server_bind(self):\n        socketserver.TCPServer.server_bind(self)\n        self.server_name, self.server_port = self.server_address[:2]\n{}",
+            child.replace("http.server.HTTPServer", "NoReverseDnsServer")
+        );
         let mut process = host_process(
             name,
             &format!("exec python3 -c '{}'", child.trim()),
@@ -4407,7 +4441,7 @@ while True:
         let fixture = fixture();
         let domain = "status-mismatch.host.test";
         let child = format!(
-            "print(\"vite: internal server error\", flush=True)\n{}",
+            "import socket\ndef refuse_reverse_dns(host):\n    raise AssertionError(\"numeric fixture called reverse DNS\")\nsocket.getfqdn = refuse_reverse_dns\nprint(\"vite: internal server error\", flush=True)\n{}",
             STATUS_500_LISTENER_CHILD.trim()
         );
         let (_gateway_home, policy) =

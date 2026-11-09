@@ -56,14 +56,22 @@ fn assert_gone(root: &std::path::Path, files: &[&str]) {
             continue;
         };
         let pid: u32 = raw.trim().parse().expect("recorded pid");
+        // A Linux orphan may remain a zombie until PID 1 reaps it; it owns no work.
+        let gone = || {
+            matches!(
+                effigy_kernel::ident::process_state(pid),
+                effigy_kernel::observe::Observed::Absent(_)
+                    | effigy_kernel::observe::Observed::Verified(
+                        effigy_kernel::ident::ProcessState::Zombie,
+                        _
+                    )
+            )
+        };
         let deadline = Instant::now() + Duration::from_secs(5);
-        while effigy_process::process_is_running(pid) && Instant::now() < deadline {
+        while !gone() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert!(
-            !effigy_process::process_is_running(pid),
-            "`{file}` pid {pid} survived the settle"
-        );
+        assert!(gone(), "`{file}` pid {pid} survived the settle");
         println!("[fixture] `{file}`: pid {pid} exited");
     }
 }

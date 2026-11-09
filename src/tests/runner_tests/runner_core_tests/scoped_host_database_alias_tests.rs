@@ -122,14 +122,9 @@ fn effective_alias_in(checkout: &Path, environment: Option<&str>, label: &str) -
 /// service listens on an OS-assigned port and answers, because the proof asks
 /// the recorded upstream whether it is alive.
 fn publish_alias_route(checkout: &Path, domain: &str) -> u16 {
+    let address = next_free_alias_address();
     let database = fake_database("alias-service");
-    publish_alias_route_with_endpoint(
-        checkout,
-        domain,
-        next_free_alias_address(),
-        5432,
-        database.port,
-    );
+    publish_alias_route_with_endpoint(checkout, domain, address, 5432, database.port);
     database.port
 }
 
@@ -161,12 +156,16 @@ fn reserve_alias_addresses(count: usize) -> Vec<Ipv4Addr> {
         RESERVED.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeSet::new()));
     let mut reserved = reserved.lock().unwrap_or_else(|poison| poison.into_inner());
     let mut found = Vec::new();
+    let mut unavailable = 0;
+    let mut first_bind_error = None;
     for last in 1..=50u8 {
         let address = Ipv4Addr::new(127, 1, 0, last);
         if reserved.contains(&address) {
             continue;
         }
-        if TcpListener::bind((address, 5432)).is_err() {
+        if let Err(error) = TcpListener::bind((address, 5432)) {
+            unavailable += 1;
+            first_bind_error.get_or_insert_with(|| format!("{address}:5432: {error:?}"));
             continue;
         }
         reserved.insert(address);
@@ -178,7 +177,10 @@ fn reserve_alias_addresses(count: usize) -> Vec<Ipv4Addr> {
     assert_eq!(
         found.len(),
         count,
-        "free loopback alias addresses on port 5432: found {found:?}"
+        "host precondition: {count} distinct 127.1.0.1–127.1.0.50 loopback aliases must support \
+         binding port 5432; found {found:?}; {unavailable} bind probes failed; \
+         first error: {first_bind_error:?}. macOS requires these aliases to be configured \
+         externally; this fixture never changes host network configuration"
     );
     found
 }
@@ -406,12 +408,14 @@ fn write_connect_manifest(checkout: &Path, dns_port: u16) {
 /// listener: this machine shares its loopback pool with other work, and fixture
 /// timing is not the thing under test.
 fn connect_task_manifest(checkout: &Path, dns_port: u16) -> String {
+    // /dev/tcp is Bash syntax; /bin/sh is dash on hosted Ubuntu. Avoid login
+    // startup files changing the fixture's declared environment.
     let out = checkout.join("reached.txt");
     format!(
         r#"{MANIFEST}
 [tasks.connect]
 run_in = "host"
-run = "sh -lc 'url=$DATABASE_URL; rest=$(printf %s $url | cut -d@ -f2); host=$(printf %s $rest | cut -d: -f1); port=$(printf %s $rest | cut -d: -f2 | cut -d/ -f1); ip=$(dig +short +time=2 +tries=3 @127.0.0.1 -p $DNS_PORT $host | head -1); echo $host > $OUT; echo $port >> $OUT; echo $ip >> $OUT; if [ -z $ip ]; then exit 4; fi; tries=0; while [ $tries -lt 50 ]; do if exec 3<>/dev/tcp/$ip/$port 2>/dev/null; then head -c 128 <&3 >> $OUT; exit 0; fi; tries=$((tries+1)); sleep 0.1; done; exit 5'"
+run = "/bin/bash -c 'url=$DATABASE_URL; rest=$(printf %s $url | cut -d@ -f2); host=$(printf %s $rest | cut -d: -f1); port=$(printf %s $rest | cut -d: -f2 | cut -d/ -f1); ip=$(dig +short +time=2 +tries=3 @127.0.0.1 -p $DNS_PORT $host | head -1); echo $host > $OUT; echo $port >> $OUT; echo $ip >> $OUT; if [ -z $ip ]; then exit 4; fi; tries=0; while [ $tries -lt 50 ]; do if exec 3<>/dev/tcp/$ip/$port 2>/dev/null; then head -c 128 <&3 >> $OUT; exit 0; fi; tries=$((tries+1)); sleep 0.1; done; exit 5'"
 env = {{ DATABASE_URL = "postgres://app:secret@postgres.acme.test:5432/app", DNS_PORT = "{dns_port}", OUT = "{}" }}
 "#,
         out.display()

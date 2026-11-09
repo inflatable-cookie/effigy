@@ -332,7 +332,17 @@ impl Drop for AdapterlessSetup {
     }
 }
 
-/// A plain server (`python3 -m http.server "$PORT" --bind "$HOST"`) needs no
+// Keep the standard directory handler and threaded server without its ambient
+// reverse-DNS lookup between bind and listen. The fixture owns a numeric HOST.
+const DIRECTORY_SERVER: &str = r#"import http.server, os, socketserver
+class Server(http.server.ThreadingHTTPServer):
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+http.server.test(HandlerClass=http.server.SimpleHTTPRequestHandler, ServerClass=Server, port=int(os.environ["PORT"]), bind=os.environ["HOST"])
+"#;
+
+/// A plain Python directory server reading only `HOST` and `PORT` needs no
 /// adapter: Effigy verifies its reserved address against the child generation,
 /// publishes the route, keeps the reserved port across a restart and settles on
 /// `down`.
@@ -347,11 +357,12 @@ fn managed_host_adapterless_listener_publishes_a_plain_servers_route_and_restart
     let profile = "adapterless-plain";
     let domain = "adapterless-plain.host.test";
     let manifest = format!(
-        "[[containers.web.host_processes]]\nname = {}\nrun = 'exec python3 -m http.server \"$PORT\" --bind \"$HOST\"'\nrestart = \"always\"\nrestart_delay_ms = 100\n\n{}",
+        "[[containers.web.host_processes]]\nname = {}\nrun = 'exec python3 directory-server.py'\nrestart = \"always\"\nrestart_delay_ms = 100\n\n{}",
         toml_quote(LISTENER_NAME),
         listener_declaration(domain, "127.0.0.1:0", 30)
     );
     let checkout = adapterless_environment(setup.fixture.path(), profile, &manifest);
+    fs::write(checkout.join("directory-server.py"), DIRECTORY_SERVER).expect("directory server");
     let cleanup = setup.cleanup(&effects, &checkout, profile);
     let state_path = listener_state_path(&checkout, profile, LISTENER_NAME);
     let log_path = listener_log_path(&checkout, profile, LISTENER_NAME);
@@ -691,11 +702,29 @@ fn managed_host_listener_watch_mode_respawn_keeps_the_route_served() {
     let profile = "adapterless-watch";
     let domain = "adapterless-watch.host.test";
     let manifest = format!(
-        "[[containers.web.host_processes]]\nname = {}\nrun = 'while :; do python3 -m http.server \"$PORT\" --bind \"$HOST\" & pid=$!; sleep 2; kill \"$pid\" 2>/dev/null; wait \"$pid\" 2>/dev/null; done'\nrestart = \"never\"\n\n{}",
+        "[[containers.web.host_processes]]\nname = {}\nrun = 'exec python3 watch.py'\nrestart = \"never\"\n\n{}",
         toml_quote(LISTENER_NAME),
         listener_declaration(domain, "127.0.0.1:0", 30)
     );
     let checkout = adapterless_environment(setup.fixture.path(), profile, &manifest);
+    fs::write(checkout.join("directory-server.py"), DIRECTORY_SERVER).expect("directory server");
+    fs::write(
+        checkout.join("watch.py"),
+        r#"import os, pathlib, subprocess, sys, time
+while True:
+    child = subprocess.Popen([sys.executable, "directory-server.py"])
+    pathlib.Path("serving.pid.new").write_text(str(child.pid))
+    pathlib.Path("serving.pid.new").replace("serving.pid")
+    while not pathlib.Path("respawn").exists():
+        if child.poll() is not None:
+            raise SystemExit(child.returncode)
+        time.sleep(0.02)
+    pathlib.Path("respawn").unlink()
+    child.terminate()
+    child.wait()
+"#,
+    )
+    .expect("controlled watch-mode server");
     let cleanup = setup.cleanup(&effects, &checkout, profile);
     let state_path = listener_state_path(&checkout, profile, LISTENER_NAME);
     let routes_path = setup.private_gateway.join("routes.json");
@@ -709,14 +738,25 @@ fn managed_host_listener_watch_mode_respawn_keeps_the_route_served() {
     let generation = state["generation"].clone();
     let child_pid = state["child_pid"].clone();
     assert_eq!(state["status"], "ready", "{state}");
-    // The serving process is respawned every two seconds; the route keeps
-    // reaching the reserved port across at least one respawn.
-    wait_for_file_contains(
-        &listener_log_path(&checkout, profile, LISTENER_NAME),
-        "is ready at",
-        Duration::from_secs(10),
-    );
-    thread::sleep(Duration::from_secs(4));
+    // Hold each server until verified HTTPS has exercised it. A timer can
+    // kill a cold Python before it listens on a busy hosted runner.
+    let serving_pid = checkout.join("serving.pid");
+    let first_server = fs::read_to_string(&serving_pid).expect("initial serving PID");
+    let initial_body = setup.verified_https(domain);
+    assert!(initial_body.contains("Directory listing"), "{initial_body}");
+    fs::write(checkout.join("respawn"), "restart").expect("release first serving process");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let successor = fs::read_to_string(&serving_pid).expect("serving PID");
+        if successor != first_server {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "watch mode never replaced its serving process"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
     let body = setup.verified_https(domain);
     assert!(body.contains("Directory listing"), "{body}");
     let after = read_json_file(&state_path);
@@ -2084,14 +2124,22 @@ fn managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent(
     owner.child.kill().expect("interrupt the owner");
     owner.child.wait().expect("reap the interrupted owner");
 
+    // Observe the watchdog's completed stop pass before asking whether its
+    // recorded members remain. An in-flight identity sample can disappear
+    // during exit and appear again as an unreaped zombie on Linux.
+    fixture_sweep::wait_for_watchdog_exit(&root, owner_pid, WATCHDOG_EXIT_BUDGET)
+        .expect("the owner's watchdog finished its ledger writes and its stop pass");
     let deadline = Instant::now() + Duration::from_secs(20);
-    while fixture_sweep::any_alive(&recorded) && Instant::now() < deadline {
+    loop {
+        if !fixture_sweep::any_alive(&recorded) && !fixture_sweep::any_alive(&recorded) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the watchdog must stop every recorded generation after its owner was interrupted: {recorded:?}"
+        );
         thread::sleep(Duration::from_millis(50));
     }
-    assert!(
-        !fixture_sweep::any_alive(&recorded),
-        "the watchdog must stop every recorded generation after its owner was interrupted: {recorded:?}"
-    );
     eprintln!(
         "interrupted-parent proof: owner interrupted; watchdog stopped {} recorded generations",
         recorded.len()
@@ -2104,8 +2152,6 @@ fn managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent(
     // the racer (effigy#617). The owner's fixture never dropped, so its tree
     // is removed here, only after the watchdog's identity-bound exit receipt
     // and the kernel helper settlement both name this root quiescent.
-    fixture_sweep::wait_for_watchdog_exit(&root, owner_pid, WATCHDOG_EXIT_BUDGET)
-        .expect("the owner's watchdog finished its ledger writes and its stop pass");
     effigy_test_support::process::close_root(&root)
         .expect("the owner's kernel helpers settled before its fixture root is removed");
     fs::remove_dir_all(&root).expect("remove the interrupted owner's fixture root");

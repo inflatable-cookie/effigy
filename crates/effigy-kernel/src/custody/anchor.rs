@@ -357,7 +357,18 @@ pub(super) fn stop(
             // over. Closure is still proven below from the group, never from the
             // anchor's exit.
             if !refused_by_retirement(&reason, refusal.get()) {
-                return Observed::Unknown(reason);
+                // Keep the authority check's own classified cause. A generic
+                // member refusal hides which verification failed and makes a
+                // retirement race indistinguishable from a live mismatch.
+                return Observed::Unknown(match refusal.get() {
+                    Some(failure) => unknown(format!(
+                        "{}; anchor={}:{}",
+                        crate::custody::UNPROVEN_GROUP_CLOSURE,
+                        failure.stage,
+                        failure.category
+                    )),
+                    None => reason,
+                });
             }
         }
         if let Err(e) = crate::fault_point!(AnchorStopped) {

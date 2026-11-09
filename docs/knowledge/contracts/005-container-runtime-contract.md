@@ -424,6 +424,10 @@ the same bounded child-output tail, and the declared budget is not spent on a
 question the child has already answered: a `500` where `200` is required ends
 the start, it does not wait out `timeout_secs`.
 
+A terminal `stopped` listener record ends an in-flight readiness wait immediately.
+The supervisor's process identity can remain observable as a Linux zombie after
+stop; that does not make the listener still starting or spend its readiness budget.
+
 ## Per-route exposure
 
 Exposure is decided per declared route target, not per activation. `up`

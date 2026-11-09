@@ -566,11 +566,12 @@ pub(crate) mod test_hooks {
     static STAGED: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
     /// The helper, after verification and before it hands the receipt back.
     static VERIFIED: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
-    /// The publisher, inside the objects gate, immediately before its
-    /// exclusive no-replace move.
-    static PROMOTE: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
-    /// The publisher, inside the objects gate, before it consumes a receipt.
-    static CONSUME: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
+    thread_local! {
+        // Publication runs on the arming test's thread. A sibling publisher
+        // must never consume its hook or plant a winner in the wrong fixture.
+        static PROMOTE: std::cell::RefCell<Option<Box<dyn FnOnce() + Send>>> = const { std::cell::RefCell::new(None) };
+        static CONSUME: std::cell::RefCell<Option<Box<dyn FnOnce() + Send>>> = const { std::cell::RefCell::new(None) };
+    }
 
     pub(crate) fn lease(hook: impl FnOnce() + Send + 'static) {
         *LEASE
@@ -578,9 +579,7 @@ pub(crate) mod test_hooks {
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(hook));
     }
     pub(crate) fn promote(hook: impl FnOnce() + Send + 'static) {
-        *PROMOTE
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(hook));
+        PROMOTE.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
     }
     pub(crate) fn staged(hook: impl FnOnce() + Send + 'static) {
         *STAGED
@@ -593,15 +592,16 @@ pub(crate) mod test_hooks {
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(hook));
     }
     pub(crate) fn consume(hook: impl FnOnce() + Send + 'static) {
-        *CONSUME
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(hook));
+        CONSUME.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
     }
     pub(super) fn lease_point() {
         run(&LEASE);
     }
     pub(crate) fn promote_point() {
-        run(&PROMOTE);
+        let hook = PROMOTE.with(|slot| slot.borrow_mut().take());
+        if let Some(hook) = hook {
+            hook();
+        }
     }
     pub(super) fn staged_point() {
         run(&STAGED);
@@ -610,7 +610,10 @@ pub(crate) mod test_hooks {
         run(&VERIFIED);
     }
     pub(crate) fn consume_point() {
-        run(&CONSUME);
+        let hook = CONSUME.with(|slot| slot.borrow_mut().take());
+        if let Some(hook) = hook {
+            hook();
+        }
     }
     fn run(hook: &Mutex<Option<Box<dyn FnOnce() + Send>>>) {
         let hook = hook

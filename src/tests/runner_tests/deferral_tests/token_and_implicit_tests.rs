@@ -657,8 +657,8 @@ fn run_manifest_task_composer_global_exec_handoff_local_deferral_resolves_the_gl
 /// The composer global vendor bin preference keys on the raw semantic command
 /// prefix only. A handoff-local deferral that merely wraps `composer global
 /// exec` inside a larger command must not gain the synthetic vendor/bin PATH,
-/// so the wrapped composer stays unresolvable and the fixture composer never
-/// runs.
+/// so its shell receives no synthetic vendor/bin PATH. Record that launch
+/// directly: hosted machines may already have Composer on their system PATH.
 #[test]
 fn run_manifest_task_container_handoff_wrapped_composer_gets_no_vendor_bin_path() {
     let _guard = lock_test();
@@ -679,11 +679,22 @@ fn run_manifest_task_container_handoff_wrapped_composer_gets_no_vendor_bin_path(
             log = composer_log.display(),
         ),
     );
+    let shell_path = root.join("record-shell");
+    let path_log = root.join("shell-path.log");
+    let command_log = root.join("shell-command.log");
+    write_executable(
+        &shell_path,
+        &format!(
+            "#!/bin/sh\nprintf '%s' \"$PATH\" > '{path}'\nprintf '%s' \"$2\" > '{command}'\nexit 127\n",
+            path = path_log.display(),
+            command = command_log.display(),
+        ),
+    );
     let context = container_handoff_context(&root);
     let _env = EnvGuard::set_many(&[
         ("COMPOSER_HOME", Some(composer_home.display().to_string())),
-        ("SHELL", Some("/bin/sh".to_owned())),
-        // Composer must be discoverable only from the synthetic vendor/bin.
+        ("SHELL", Some(shell_path.display().to_string())),
+        // Pin the inherited PATH; the recording shell executes no host tools.
         ("PATH", Some("/usr/bin:/bin".to_owned())),
     ]);
 
@@ -702,9 +713,21 @@ fn run_manifest_task_container_handoff_wrapped_composer_gets_no_vendor_bin_path(
         RunnerError::TaskCommandFailure { code, .. } => assert_eq!(code, Some(127)),
         other => panic!("unexpected error: {other}"),
     }
+    let shell_path_value = fs::read_to_string(&path_log).expect("recorded shell PATH");
+    assert_eq!(shell_path_value, "/usr/bin:/bin");
+    assert!(
+        !shell_path_value.contains(&composer_bin.display().to_string()),
+        "a wrapped Composer command must not receive the vendor bin: {shell_path_value}"
+    );
+    let shell_command = fs::read_to_string(&command_log).expect("recorded shell command");
+    assert!(
+        shell_command
+            .contains("printf wrapped; composer global exec effigy 'missing-task' '--watch'"),
+        "the shell receives the original wrapped command: {shell_command}"
+    );
     assert!(
         !composer_log.exists(),
-        "the wrapped composer must stay unresolvable, so the fixture composer must not run"
+        "recording the wrapped launch must not execute the fixture composer"
     );
 }
 

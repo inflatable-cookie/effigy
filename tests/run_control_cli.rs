@@ -1488,7 +1488,12 @@ fn admission_protocol_v2_reports_every_workload_group_and_the_terminal_result() 
     // checkout and the boot.
     let status = fixture.status_json(&run_id);
     assert_eq!(status["evidence_source"], "foreground-terminal-record.v1");
-    assert_eq!(status["state"], "succeeded");
+    assert_eq!(
+        status["state"],
+        "succeeded",
+        "terminal status: {status}; command: {}",
+        text(&output)
+    );
     assert_eq!(status["phase"], "closed");
     assert_eq!(status["cleanup"], "complete");
     assert_eq!(status["exit_code"], 0);

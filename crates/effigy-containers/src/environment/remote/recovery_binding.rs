@@ -186,7 +186,7 @@ mod tests {
             .prefix("signal-backend-binding-")
             .tempdir_in(scratch)
             .unwrap();
-        let root = fixture.path();
+        let root = fixture.path().canonicalize().unwrap();
         let binary = root.join("backend");
         let workdir = root.join("work");
         std::fs::create_dir(&workdir).unwrap();
@@ -217,13 +217,13 @@ mod tests {
             .prefix("signal-hostcli-binding-")
             .tempdir_in(scratch)
             .unwrap();
-        let root = fixture.path();
+        let root = fixture.path().canonicalize().unwrap();
         let binary = root.join("backend");
         std::fs::write(&binary, b"#!/bin/sh\nexit 0\n").unwrap();
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
         let deadline = || Instant::now() + Duration::from_secs(5);
         let binding =
-            RecoveryBinding::capture_selected("docker", &binary, root, deadline()).unwrap();
+            RecoveryBinding::capture_selected("docker", &binary, &root, deadline()).unwrap();
         let encoded = serde_json::to_value(&binding).unwrap();
         let mut cli = HostCli {
             workdir: root.to_path_buf(),
