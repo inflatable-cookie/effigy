@@ -10,15 +10,21 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Enforce the Linux artifact builder's host-write boundary (effigy#749, closing
   the SO-host-write gap left by effigy#743). The `/workspace` source bind is
-  read-only and `SYS_ADMIN` is dropped so remount cannot restore writability;
-  compile output stays in the owned builder's private tree; after positive
-  closure the host transfers the three capped roles (200 MiB / 64 KiB / 4 KiB)
-  while receiving and atomically publishes a complete verified set. The compiler
-  has no writable host bind and cannot choose the destination. A failed, oversize
-  or interrupted transfer publishes nothing. Ordinary auto-build may recover an
-  owned leftover still carrying a writable bind; restricted E14 refuses an old,
-  writable or mismatched builder before claim. The cargo tree remains VM-side
-  disclosed storage, not a host-bind counter. Caps and floors are unchanged.
+  read-only and inspect requires HostConfig CapDrop to contain `SYS_ADMIN`
+  (CapAdd empty, Privileged false) so remount cannot restore writability; the
+  running builder's exact mount set is the one `/workspace` bind plus two owned
+  cargo cache volumes and nothing else; compile output stays in the owned
+  builder's private tree; after positive closure the host transfers the three
+  capped roles (200 MiB / 64 KiB / 4 KiB) while receiving and atomically
+  publishes a complete verified set. `export.released` is the observed leftover
+  staged-export release. The compiler has no writable host bind and cannot
+  choose the destination. A failed, oversize or interrupted transfer publishes
+  nothing. Ordinary auto-build may recover an owned leftover still carrying a
+  writable bind, extra host bind or missing SYS_ADMIN drop; restricted E14
+  refuses an old, writable or mismatched builder before claim.
+  `release:linux:rehearse` uses the same maintained producer and does not write
+  through `/workspace`. The cargo tree remains VM-side disclosed storage, not a
+  host-bind counter. Caps and floors are unchanged.
 
 - Secure existing gateway stdout/stderr logs to owner-only mode on the held
   descriptor before appending or giving them to the daemon child. Existing bytes

@@ -12,6 +12,17 @@ import atexit, json, os, pathlib, re, subprocess, sys, time
 root = pathlib.Path(os.environ['EFFIGY_RECOVERY_ROOT'])
 state = root / 'state'
 args = sys.argv[1:]
+def project_name():
+    return os.environ['EFFIGY_RECOVERY_PROJECT']
+def owned_mounts(source, rw):
+    p = project_name()
+    return [
+        {'Type': 'bind', 'Source': str(source), 'Destination': '/workspace', 'Mode': 'ro' if not rw else '', 'RW': bool(rw)},
+        {'Type': 'volume', 'Name': p + '-cargo-registry', 'Destination': '/root/.cargo/registry', 'RW': True},
+        {'Type': 'volume', 'Name': p + '-cargo-git', 'Destination': '/root/.cargo/git', 'RW': True},
+    ]
+def owned_host_config():
+    return {'Privileged': False, 'CapAdd': None, 'CapDrop': ['SYS_ADMIN']}
 def trace(phase):
     with (state / 'timing').open('a') as f:
         f.write(json.dumps([time.monotonic(), os.getpid(), phase, args]) + '\n')
@@ -99,7 +110,7 @@ if cmd == 'up':
     if mode == 'up_empty_source':
         source = str(state / 'empty-vm-directory')
         pathlib.Path(source).mkdir(exist_ok=True)
-    identity.write_text(json.dumps([{'Id': 'a'*64, 'Name': '/' + os.environ['EFFIGY_RECOVERY_PROJECT'] + '-builder-1', 'State': {'Running': True, 'Status': 'running'}, 'Config': {'Labels': labels}, 'Mounts': [{'Type': 'bind', 'Source': source, 'Destination': '/workspace', 'Mode': 'ro' if not rw else '', 'RW': rw}], 'NetworkSettings': {'Ports': {}}}],))
+    identity.write_text(json.dumps([{'Id': 'a'*64, 'Name': '/' + os.environ['EFFIGY_RECOVERY_PROJECT'] + '-builder-1', 'State': {'Running': True, 'Status': 'running'}, 'Config': {'Labels': labels}, 'HostConfig': owned_host_config(), 'Mounts': owned_mounts(source, rw), 'NetworkSettings': {'Ports': {}}}],))
     sys.exit(0)
 if cmd == 'rm':
     identity.unlink(missing_ok=True)
@@ -115,6 +126,22 @@ if cmd == 'exec':
         path = tail[tail.index('--') + 1]
         mapped = path.replace('/var/tmp/effigy-artifact-build', str(state / 'build-tree'))
         mapped = mapped.replace('/workspace', json.loads(identity.read_text())[0]['Mounts'][0]['Source'])
+        if mode == 'transfer_fail':
+            sys.exit(1)
+        if mode == 'transfer_endless':
+            time.sleep(30)
+            sys.exit(0)
+        if mode == 'transfer_partial':
+            data = pathlib.Path(mapped).read_bytes() if pathlib.Path(mapped).exists() else b'partial'
+            sys.stdout.buffer.write(data[: max(1, len(data) // 2)])
+            sys.exit(1)
+        if mode == 'transfer_oversize' and path.endswith('effigy.active-version'):
+            data = pathlib.Path(mapped).read_bytes() if pathlib.Path(mapped).exists() else b'v'
+            sys.stdout.buffer.write(data + b'x' * 5000)
+            sys.exit(0)
+        if mode == 'transfer_replaced' and path.endswith('/effigy') and 'active-version' not in path and not path.endswith('.receipt'):
+            sys.stdout.buffer.write(b'replaced-while-transferring\n')
+            sys.exit(0)
         sys.stdout.buffer.write(pathlib.Path(mapped).read_bytes())
         sys.exit(0)
     if len(tail) != 4 or tail[1:3] != ['sh', '-lc']: sys.exit(25)
@@ -537,7 +564,8 @@ esac
                 .trim());
             }
             let bind = expected_workspace_source(&policy, &root);
-            let identity = json!([{"Id": "a".repeat(64), "Name": format!("/{}-builder-1", policy.project_name), "State": {"Running": true, "Status": "running"}, "Config": {"Labels": labels}, "Mounts": [{"Type": "bind", "Source": bind, "Destination": "/workspace", "Mode": "ro", "RW": false}], "NetworkSettings": {"Ports": {}}}]);
+            let project = &policy.project_name;
+            let identity = json!([{"Id": "a".repeat(64), "Name": format!("/{project}-builder-1"), "State": {"Running": true, "Status": "running"}, "Config": {"Labels": labels}, "HostConfig": {"Privileged": false, "CapAdd": Value::Null, "CapDrop": ["SYS_ADMIN"]}, "Mounts": [{"Type": "bind", "Source": bind, "Destination": "/workspace", "Mode": "ro", "RW": false}, {"Type": "volume", "Name": format!("{project}-cargo-registry"), "Destination": "/root/.cargo/registry", "RW": true}, {"Type": "volume", "Name": format!("{project}-cargo-git"), "Destination": "/root/.cargo/git", "RW": true}], "NetworkSettings": {"Ports": {}}}]);
             std::fs::write(root.join("state/identity.json"), identity.to_string()).unwrap();
             write_legacy_partial_marker(&root, &policy);
         }
@@ -1273,6 +1301,51 @@ fn recovery_cannot_publish_failed_wrong_target_or_unchanged_old_output() {
 }
 
 #[test]
+fn transfer_failures_preserve_the_prior_artifact() {
+    let _lock = crate::contract_test_support::lock_test();
+    let _deadline = EnvGuard::set_many(&[(
+        "EFFIGY_TEST_ARTIFACT_TRANSFER_DEADLINE_SECS",
+        Some("1".to_owned()),
+    )]);
+    for (mode, fragment) in [
+        ("transfer_fail", "failed with status"),
+        ("transfer_partial", "failed with status"),
+        ("transfer_endless", "exceeded its deadline"),
+        ("transfer_oversize", "byte cap"),
+        ("transfer_replaced", "does not carry the digest"),
+    ] {
+        let fixture = Fixture::new(true, true, "docker");
+        fixture.mode(mode);
+        let artifact = fixture
+            .root
+            .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+        write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
+        let error = fixture.task().expect_err(mode);
+        assert_eq!(
+            read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact))
+                .as_deref(),
+            Some(STALE_IDENTITY),
+            "mode={mode} error={error}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&artifact).unwrap(),
+            "stale bytes",
+            "mode={mode}"
+        );
+        assert!(
+            error.contains(fragment),
+            "mode={mode} expected `{fragment}` error={error}"
+        );
+        assert!(
+            error.contains("original artifact retained")
+                || error.contains("does not carry the digest"),
+            "mode={mode} error={error}"
+        );
+        fixture.assert_preserved();
+    }
+}
+
+#[test]
 fn first_activation_failure_retains_old_output_without_destructive_recovery() {
     let _lock = crate::contract_test_support::lock_test();
     let fixture = Fixture::new(false, false, "docker");
@@ -1982,23 +2055,83 @@ fn ordinary_auto_build_recovers_an_owned_writable_source_bind() {
     fixture.assert_preserved();
 }
 
+/// Ordinary auto-build recovers an owned leftover whose inspect is missing the
+/// exact mount set or SYS_ADMIN drop: the maintained activation replaces it.
+#[test]
+fn ordinary_auto_build_recovers_an_owned_extra_bind_or_missing_sys_admin_drop() {
+    let _lock = crate::contract_test_support::lock_test();
+    for case in [
+        "extra_host_bind",
+        "missing_cap_drop",
+        "privileged",
+        "cap_add",
+    ] {
+        let fixture = Fixture::staged(true, false, "docker");
+        let plan = fixture.stage().expect("a staged source plan");
+        mutate_inspect_mismatch(&fixture, case);
+        fixture
+            .task()
+            .unwrap_or_else(|error| panic!("{case}: {error}"));
+        assert_eq!(fixture.activation_count(), 1, "{case}");
+        assert_eq!(fixture.build_source(), plan.source, "{case}");
+        let identity: Value = serde_json::from_slice(
+            &std::fs::read(fixture.root.join("state/identity.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(identity[0]["Mounts"].as_array().unwrap().len(), 3, "{case}");
+        assert_eq!(
+            identity[0]["HostConfig"]["Privileged"],
+            json!(false),
+            "{case}"
+        );
+        assert_eq!(
+            identity[0]["HostConfig"]["CapDrop"],
+            json!(["SYS_ADMIN"]),
+            "{case}"
+        );
+        fixture.assert_preserved();
+    }
+}
+
+fn mutate_inspect_mismatch(fixture: &Fixture, case: &str) {
+    match case {
+        "writable_bind" => fixture.mutate(|row| {
+            row["Mounts"][0]["RW"] = json!(true);
+            row["Mounts"][0]["Mode"] = json!("");
+        }),
+        "pre_staging" => fixture.mutate(|row| row["Mounts"][0]["Source"] = json!(fixture.root)),
+        "extra_host_bind" => fixture.mutate(|row| {
+            row["Mounts"].as_array_mut().unwrap().push(json!({
+                "Type": "bind",
+                "Source": fixture.root.join("state"),
+                "Destination": "/opt/extra",
+                "RW": true
+            }));
+        }),
+        "missing_cap_drop" => fixture.mutate(|row| row["HostConfig"]["CapDrop"] = json!([])),
+        "privileged" => fixture.mutate(|row| row["HostConfig"]["Privileged"] = json!(true)),
+        "cap_add" => fixture.mutate(|row| row["HostConfig"]["CapAdd"] = json!(["SYS_PTRACE"])),
+        _ => unreachable!("{case}"),
+    }
+}
+
 /// Restricted E14 (`EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING=1`) refuses an old,
 /// writable or mismatched owned builder before claim and cannot create,
 /// replace or reconfigure it.
 #[test]
 fn no_change_refuses_an_old_writable_or_mismatched_owned_builder_before_claim() {
     let _lock = crate::contract_test_support::lock_test();
-    for case in ["writable_bind", "pre_staging"] {
+    for case in [
+        "writable_bind",
+        "pre_staging",
+        "extra_host_bind",
+        "missing_cap_drop",
+        "privileged",
+        "cap_add",
+    ] {
         let fixture = Fixture::staged(true, false, "docker");
         fixture.stage().expect("a staged source plan");
-        match case {
-            "writable_bind" => fixture.mutate(|row| {
-                row["Mounts"][0]["RW"] = json!(true);
-                row["Mounts"][0]["Mode"] = json!("");
-            }),
-            "pre_staging" => fixture.mutate(|row| row["Mounts"][0]["Source"] = json!(fixture.root)),
-            _ => unreachable!(),
-        }
+        mutate_inspect_mismatch(&fixture, case);
         let _switch =
             EnvGuard::set_many(&[("EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING", Some("1".to_owned()))]);
         let error = fixture.task().expect_err(case);
@@ -2789,6 +2922,7 @@ impl Fixture {
                 "Pid": 0, "ExitCode": 0, "Error": "", "StartedAt": "", "FinishedAt": ""
             },
             "Config": {"Labels": labels},
+            "HostConfig": {"Privileged": false, "CapAdd": Value::Null, "CapDrop": ["SYS_ADMIN"]},
             "Mounts": [
                 {"Type": "bind", "Source": self.root, "Destination": "/workspace", "RW": true},
                 {"Type": "volume", "Name": format!("{project}-cargo-registry"), "Destination": "/root/.cargo/registry", "RW": true},

@@ -208,8 +208,9 @@ test checks this against git and the binary hash (`test:install:local`).
 ### The host-write boundary (effigy#749)
 
 **SO-host-write is enforced.** The compiler has no writable host bind:
-`/workspace` is declared and rendered read-only, and `cap_drop: [SYS_ADMIN]`
-stops remount from restoring writability. Compile output stays in the owned
+`/workspace` is declared and rendered read-only, and inspect requires HostConfig
+CapDrop to contain `SYS_ADMIN`, CapAdd empty and Privileged false so remount
+cannot restore writability. Compile output stays in the owned
 builder's private tree. After positive closure the host transfers the three
 capped roles (`cat -- <container-path>` with each role's cap enforced while
 receiving) and atomically publishes a complete verified set into the caller's

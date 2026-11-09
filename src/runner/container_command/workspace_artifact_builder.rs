@@ -751,7 +751,7 @@ fn transfer_role(
     .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let origin = Instant::now();
     let mut budget =
-        BoundedCommandBudget::new(origin, origin + Duration::from_secs(120), cap, 4096);
+        BoundedCommandBudget::new(origin, origin + transfer_role_deadline(), cap, 4096);
     let capture = budget
         .run_command(
             &runtime.repo_root,
@@ -775,6 +775,16 @@ fn transfer_role(
         )));
     }
     Ok(capture.stdout)
+}
+
+fn transfer_role_deadline() -> Duration {
+    const DEFAULT_SECS: u64 = 120;
+    let secs = std::env::var("EFFIGY_TEST_ARTIFACT_TRANSFER_DEADLINE_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .unwrap_or(DEFAULT_SECS);
+    Duration::from_secs(secs)
 }
 
 fn transfer_capture_error(
@@ -990,7 +1000,11 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
                 .map(|(plan, _)| plan.source.clone())
                 .unwrap_or_else(|| checkout.clone());
             let owned = observed.source == checkout || observed.source == expected;
-            if !owned || (observed.read_only && observed.source == expected) {
+            let matching = observed.read_only
+                && observed.source == expected
+                && observed.mounts_owned
+                && observed.remount_capability_dropped;
+            if !owned || matching {
                 return Err(error);
             }
             if no_change {
@@ -1123,10 +1137,10 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
         &effigy_core::build_info::active_version(),
     )?;
     let copied_bytes = produced.bytes;
-    let export_released = produced.export_released;
-    if let Some((plan, _)) = &staged {
-        let _ = workspace_artifact_source::release_leftover_staged_export(plan)?;
-    }
+    let export_released = match &staged {
+        Some((plan, _)) => workspace_artifact_source::release_leftover_staged_export(plan)?,
+        None => true,
+    };
     check_interruption()?;
     println!(
         "{}",

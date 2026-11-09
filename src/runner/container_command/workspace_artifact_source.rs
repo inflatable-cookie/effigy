@@ -838,8 +838,6 @@ pub(in crate::runner) fn verify_source_unchanged(
 pub(in crate::runner) struct ProducedArtifact {
     /// Exact bytes the host-capped transfer published into the checkout.
     pub bytes: u64,
-    /// Whether any leftover staged export was released after publication.
-    pub export_released: bool,
 }
 
 /// Publish one verified transferred artifact set into the caller's checkout, in
@@ -935,10 +933,7 @@ pub(in crate::runner) fn publish_produced_artifact(
         copied += contents.len() as u64;
         write_file_atomically(&dest, &contents, executable)?;
     }
-    Ok(ProducedArtifact {
-        bytes: copied,
-        export_released: true,
-    })
+    Ok(ProducedArtifact { bytes: copied })
 }
 
 fn refuse_alias(path: &Path, label: &str, directory: bool) -> Result<(), RunnerError> {

@@ -93,7 +93,6 @@ diagnostics on an owned synthetic tree; it does not replace the live check.
 | `release.gates.smoke` | genuine exception | 8 | Same: `config/release.toml` gate caller. |
 | `scripts/release/checks.sh` | genuine exception | 8 | Release check caller: it proves `cargo install --git … --tag` of the released binary, which is Cargo's own install surface. |
 | `scripts/build-linux-workspace-artifact.rhai` | genuine exception | 8 | Container build: the Linux release artifact is built inside the release container with a container-local `CARGO_TARGET_DIR`. |
-| `scripts/rehearse-linux-release-container.rhai` | genuine exception | 8 | Container build: same release container rehearse, and it runs the built binary inside it. |
 | `scripts/worktree-lifecycle.sh` | genuine exception | 8 | Paseo worktree setup/teardown hook (a warm-merge-style hook) pins `CARGO_TARGET_DIR=target/worktree-hooks` so `CARGO_TARGET_DIR` and `.cargo/config.toml` cannot move the staged binary between the two shells. |
 | `scripts/test-inventory.py` | transitioned | — | The census helper (effigy#555) spells its two Cargo words for the routes it drives — `cargo metadata` through `scripts/oxide-selector.sh exec --` and `cargo nextest list` through the selector's own nextest route; it never builds outside Oxide and never runs a test body. |
 | `scripts/test_hygiene_guards.py` | genuine exception | 8 | Cargo is the subject: owned synthetic-tree proofs of the Cargo-route detector; every `cargo` word is a fixture string or assertion, and the cases run the copied detector rather than Cargo. |
