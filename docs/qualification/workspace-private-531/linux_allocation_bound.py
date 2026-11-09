@@ -465,6 +465,9 @@ def verify(witness, limit_bytes, facts, supported):
         raise Refusal('stage root is not a directory')
     if charged < tree_bytes:
         raise Refusal('kernel charge is below the tree bytes; accounting does not cover the tree')
+    if charged > tree_bytes:
+        raise Refusal('kernel charge %d exceeds the owned tree census %d bytes; unowned allocation is '
+                      'charged to the project' % (charged, tree_bytes))
     reasons = _enforcement_reasons(witness, row, boot, nonce, limit_bytes)
     if reasons:
         raise Refusal(reasons[0])
@@ -898,14 +901,20 @@ def inspect_pre_rescue_originals(originals, records):
 
 
 def inspect_activation_completion(activation):
-    """Require the whole sequence and its offline originals; no quota credit is yet possible.
+    """Require the whole sequence, its offline originals and the fresh-project accounting witness.
 
-    These records are source controls, not proof of provenance. The independent accounting
-    premise remains unresolved: v1.47.2 quota_data_add can lose an allocation failure and
-    quota_compare_and_update overwrites the scan return with the close result, although it separately flags a scan failure.
+    These records are source controls, not proof of provenance. The v1.47.2 quota scan itself cannot
+    prove completeness (quota_data_add can lose a charge; quota_compare_and_update can overwrite the
+    scan return with the close result), so completion also requires the independent fresh-project
+    witness: complete offline inode-field coverage proving that no inode carried project 531 or the
+    inheritance flag before the features were enabled, bound to this exact rescue boot
+    (linux_allocation_witness). The E7p project-record zero anchor and the exact charge/census
+    equality at every row read stay separate, later gates.
     """
-    if not isinstance(activation, dict) or set(activation) != {'records', 'offline_originals', 'pre_originals'}:
-        raise Refusal('activation completion requires records and offline originals')
+    if not isinstance(activation, dict) or set(activation) != {'records', 'offline_originals',
+                                                              'pre_originals', 'accounting'}:
+        raise Refusal('activation completion requires records, offline originals, pre-rescue originals '
+                      'and the fresh-project accounting witness')
     records = activation['records']
     progress = inspect_activation_progress(records)
     if progress['next'] is not None:
@@ -915,4 +924,7 @@ def inspect_activation_completion(activation):
     names = [name for name, _ in offline_operation_plan()]
     if inspect_offline_progress(rescue, names, activation['offline_originals'])['next'] is not None:
         raise Refusal('offline operations are incomplete')
-    raise Refusal('independent complete quota accounting is not established')
+    import linux_allocation_witness as witness
+    accounting = witness.verify_fresh_project_witness(activation['accounting'], rescue)
+    return {'completed': progress['completed'], 'snapshot_id': progress['snapshot_id'],
+            'accounting': accounting}
