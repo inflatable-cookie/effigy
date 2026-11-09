@@ -46,6 +46,11 @@ QUALIFICATION = DIR.parent
 MANIFEST = DIR / 'manifest-r1.json'
 MANIFEST_SCHEMA = 'effigy.qualification.consumer-packets.r1'
 REQUEST_SCHEMA = 'effigy.qualification.consumer-packet.request.v1'
+# The one external runtime binding document (effigy#790). It carries a route's
+# reviewed frozen pins to the real CLI, hash-pinned on argv, so a concrete
+# request can arm the shipped entry without editing reviewed source or
+# committing pins. Only routes that declare the schema accept one.
+BINDING_SCHEMA = 'effigy.qualification.consumer-packets.route-binding.v1'
 PENDING = 'pending'
 # Every module this packet executes, relative to docs/qualification. The two
 # supervisor modules are the shared 531 primitive, imported and hash-bound, not copied.
@@ -73,9 +78,10 @@ REQUEST_KEYS = frozenset({
     'schema', 'route', 'candidate', 'helpers', 'predecessor', 'consumer',
     'provenance', 'window', 'budgets', 'resources', 'prior_intent',
 })
-# Keys a route adds to REQUEST_KEYS. Only the ordinary acquisition check has one:
-# its second consumer checkout (modern) is bound beside the first (legacy).
-ROUTE_EXTRA_KEYS = {'acow-acquisition': frozenset({'modern_consumer'})}
+# Keys a route adds to REQUEST_KEYS. Only the ordinary acquisition check has
+# extras: its second consumer checkout (modern) and the host producer binding
+# (effigy#790) are bound beside the first (legacy) consumer.
+ROUTE_EXTRA_KEYS = {'acow-acquisition': frozenset({'modern_consumer', 'producer'})}
 # Stage disposition to refusal code. `exited` with a waited zero is the only success.
 DISPOSITION_CODES = {
     'failed': 'child-failed',
@@ -173,6 +179,44 @@ def load_manifest(path=MANIFEST):
     return manifest
 
 
+def check_binding_keys(obj, keys, what):
+    """Exact keys with the binding's own refusal codes."""
+    if not isinstance(obj, dict) or set(obj) != set(keys):
+        raise Refused('binding-shape', '%s keys are not the reviewed set' % what)
+
+
+def load_binding(path, expected_sha256, route):
+    """The route's external runtime binding, after its exact bytes match argv.
+
+    Schema-strict, one route, no pending value. Every malformed, duplicate,
+    unknown, cross-route, altered or still-pending form refuses here, before
+    the request is read and before any evidence claim or child.
+    """
+    if not isinstance(expected_sha256, str) or not SHA256_TAG.fullmatch(expected_sha256):
+        raise Refused('binding-sha-mismatch', 'expected digest is not sha256:<64 hex>')
+    raw = read_bounded_bytes(path, MAX_REQUEST_BYTES)
+    if sha256_bytes(raw) != expected_sha256:
+        raise Refused('binding-sha-mismatch', 'binding bytes differ from the expected digest')
+    doc = parse_json_strict(raw)
+    check_binding_keys(doc, {'schema', 'route', 'pins', 'consumed_windows'}, 'binding')
+    if doc['schema'] != BINDING_SCHEMA:
+        raise Refused('binding-schema', str(doc['schema']))
+    if doc['route'] != route:
+        raise Refused('binding-route', 'binding names %s, not %s' % (doc['route'], route))
+    pins = doc['pins']
+    if not isinstance(pins, dict):
+        raise Refused('binding-shape', 'pins is not an object')
+    pending = pending_pins(pins)
+    if pending:
+        raise Refused('route-pins-pending',
+                      '%d pins pending, first: %s' % (len(pending), pending[0]))
+    consumed = doc['consumed_windows']
+    if not isinstance(consumed, list) or any(
+            not isinstance(item, str) or not ID_RE.fullmatch(item) for item in consumed):
+        raise Refused('binding-shape', 'consumed_windows is not a list of window ids')
+    return doc
+
+
 def pending_pins(node, prefix=''):
     """Dotted paths of every pin still `pending`. Empty means concrete."""
     found = []
@@ -187,9 +231,9 @@ def pending_pins(node, prefix=''):
     return found
 
 
-def require_route_frozen(manifest, route):
+def require_route_frozen(pins, route):
     """Refuse while the route's own source pins are pending. Runs before the request is read."""
-    pending = pending_pins(manifest['routes'][route])
+    pending = pending_pins(pins)
     if pending:
         raise Refused('route-pins-pending',
                       '%d pins pending, first: %s' % (len(pending), pending[0]))
@@ -266,28 +310,28 @@ def verify_install(request):
     return real
 
 
-def check_window(request, manifest, now_ns, route):
+def check_window(request, pins, consumed_windows, now_ns, route):
     """Absolute monotonic bounds, one use, and the route's maximum span."""
     window = request['window']
     if not ID_RE.fullmatch(str(window['id'])):
         raise Refused('window-missing', 'window id is malformed')
     if not SHA256_TAG.fullmatch(str(window['token_sha256'])):
         raise Refused('window-missing', 'one-use token digest is missing')
-    if window['id'] in manifest.get('consumed_windows', []):
+    if window['id'] in consumed_windows:
         raise Refused('window-consumed', window['id'])
     start = window['start_monotonic_ns']
     deadline = window['deadline_monotonic_ns']
     if not (isinstance(start, int) and isinstance(deadline, int)):
         raise Refused('window-missing', 'monotonic bounds are not integers')
-    span_ns = manifest['routes'][route]['max_window_seconds'] * 1_000_000_000
+    span_ns = pins['max_window_seconds'] * 1_000_000_000
     if deadline <= start or deadline - start > span_ns:
         raise Refused('window-bounds', 'deadline outside the route span')
     if now_ns >= deadline:
         raise Refused('window-expired', 'deadline already passed')
 
 
-def check_budgets(request, manifest, route):
-    caps = manifest['routes'][route]['budgets']
+def check_budgets(request, pins, route):
+    caps = pins['budgets']
     budgets = request['budgets']
     check_exact_keys(budgets, set(caps), 'budgets')
     for key, cap in caps.items():
@@ -299,9 +343,9 @@ def check_budgets(request, manifest, route):
         raise Refused('budget-exceeded', 'stream caps must be equal for the stage primitive')
 
 
-def check_resources(request, manifest, route):
+def check_resources(request, pins, route):
     """The resource roles and kinds the route pins. Identities are probed at the engine."""
-    pinned = manifest['routes'][route]['resources']
+    pinned = pins['resources']
     listed = {}
     for item in request['resources']:
         check_exact_keys(item, {'role', 'kind', 'identity'}, 'resource')
@@ -354,9 +398,9 @@ def verify_helper_head(git, request):
         raise Refused('provenance-mismatch', 'packet checkout HEAD is not the merged commit')
 
 
-def verify_consumer(git, request, manifest, route, checkout):
+def verify_consumer(git, request, pins, checkout):
     """The route's own consumer block, at its pinned checkout."""
-    verify_consumer_block(git, request['consumer'], manifest['routes'][route]['consumer'], checkout)
+    verify_consumer_block(git, request['consumer'], pins['consumer'], checkout)
 
 
 def verify_consumer_block(git, consumer, pins, checkout):
@@ -523,6 +567,9 @@ def within_root(path, roots):
     resolved = Path(path)
     if not resolved.is_absolute():
         raise Refused('evidence-root', 'evidence dir must be absolute')
+    for root in roots:
+        if not Path(root).is_dir():
+            raise Refused('evidence-root', 'allowed evidence root is absent: %s' % root)
     for ancestor in [resolved] + list(resolved.parents):
         if ancestor.is_symlink():
             raise Refused('evidence-root', 'symlink ancestor: %s' % ancestor)
@@ -538,6 +585,8 @@ def claim_evidence(path, roots):
         os.mkdir(resolved, 0o700)
     except FileExistsError:
         raise Refused('evidence-exists', 'evidence directory already exists: %s' % resolved)
+    except OSError as exc:
+        raise Refused('evidence-root', 'cannot claim evidence directory: %s' % exc)
     return resolved
 
 
@@ -555,8 +604,12 @@ def write_occurrence(evidence_dir, status, detail):
     return body
 
 
-def write_binding(evidence_dir, request_sha256, request, modules):
-    """Retain the bindings the occurrence ran against, before any child."""
+def write_binding(evidence_dir, request_sha256, request, modules, binding_sha256=None):
+    """Retain the bindings the occurrence ran against, before any child.
+
+    `binding_sha256` records an external runtime binding when the launch
+    supplied one, so the occurrence names the pins it actually ran under.
+    """
     body = {
         'request_sha256': request_sha256,
         'provenance': request['provenance'],
@@ -565,6 +618,8 @@ def write_binding(evidence_dir, request_sha256, request, modules):
         'window': {'id': request['window']['id'], 'token_sha256': request['window']['token_sha256']},
         'modules': modules,
     }
+    if binding_sha256 is not None:
+        body['binding_sha256'] = binding_sha256
     write_exclusive(Path(evidence_dir) / 'binding.json',
                     json.dumps(body, indent=2, sort_keys=True) + '\n')
 
@@ -694,43 +749,57 @@ def read_running(session, env, label, field='running', schema=None):
 
 
 def arm(route, tails, execute, request_path, request_sha256, evidence_dir, *, transport=None,
-        manifest=None, git=None, now_ns=None, roots=EVIDENCE_ROOTS, verify_more=None):
+        manifest=None, git=None, now_ns=None, roots=EVIDENCE_ROOTS, verify_more=None,
+        binding=None, binding_sha256=None, pre_claim=None):
     """The armed sequence. Every gate that reads no child runs before the evidence claim.
 
     A refusal before the claim leaves no evidence. A refusal or failure after it
     spends the occurrence and records its code, so a retry cannot reuse it.
     `transport` and `git` default to the supervised production path. `verify_more`,
     when a route gives one, runs the route's further closure reads with the same
-    recording reader, still before any engine or consumer effect.
+    recording reader, still before any engine or consumer effect. `binding`, when
+    the launch supplied one, replaces only the route's own frozen pins; the
+    committed manifest stays authoritative for everything it still pins. A route
+    may give `pre_claim`, which runs its remaining pre-claim checks after the
+    candidate bytes are verified and before the evidence claim.
     """
     manifest = manifest if manifest is not None else load_manifest()
-    require_route_frozen(manifest, route)
+    pins = manifest['routes'][route]
+    consumed = manifest.get('consumed_windows', [])
+    if binding is not None:
+        pins = binding['pins']
+        # The committed manifest's consumed windows stay authoritative: the
+        # binding may only add one-use burns, never reopen a spent window.
+        consumed = sorted(set(consumed) | set(binding['consumed_windows']))
+    require_route_frozen(pins, route)
     request, digest = load_request(request_path, request_sha256)
     validate_request_shape(request, route)
     check_bindings(request)
     now = monotonic_now() if now_ns is None else now_ns
-    check_window(request, manifest, now, route)
-    check_budgets(request, manifest, route)
-    check_resources(request, manifest, route)
-    checkout = resolve_checkout(manifest['routes'][route]['checkout'])
+    check_window(request, pins, consumed, now, route)
+    check_budgets(request, pins, route)
+    check_resources(request, pins, route)
+    checkout = resolve_checkout(pins['checkout'])
     binary = verify_install(request)
+    if pre_claim is not None:
+        pre_claim(request, pins)
     evidence = claim_evidence(evidence_dir, roots)
     try:
         sup = Supervisor(request['window']['deadline_monotonic_ns'], request['budgets'],
                          evidence / 'children')
         reads = []
         reader = recording_git(git or sup.git, reads)
-        write_binding(evidence, digest, request, module_hashes())
+        write_binding(evidence, digest, request, module_hashes(), binding_sha256)
         try:
             verify_helper_head(reader, request)
-            verify_consumer(reader, request, manifest, route, checkout)
+            verify_consumer(reader, request, pins, checkout)
             if verify_more is not None:
-                verify_more(reader, request, manifest)
+                verify_more(reader, request, manifest, pins)
         finally:
             write_closure(evidence, reads)
-        engine = manifest['routes'][route]['engine']
+        engine = pins['engine']
         session = Session(transport or sup.transport, binary, checkout, tails, engine)
-        result = execute(session, engine, manifest, request)
+        result = execute(session, engine, pins, request)
     except Refused as exc:
         write_occurrence(evidence, exc.code, exc.detail)
         raise

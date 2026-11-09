@@ -52,15 +52,15 @@ def count_argv(engine, db_id, database, table):
                             'SELECT COUNT(*) FROM `%s`.`%s`' % (database, table))
 
 
-def expected_counts(manifest):
+def expected_counts(pins):
     return {'%s.%s' % (db, table): pin['baseline'] + pin['delta']
-            for db, tables in sorted(manifest['routes'][ROUTE]['counts'].items())
+            for db, tables in sorted(pins['counts'].items())
             for table, pin in sorted(tables.items())}
 
 
-def observe_counts(session, engine, manifest, db_id):
+def observe_counts(session, engine, pins, db_id):
     counts = {}
-    for key in sorted(expected_counts(manifest)):
+    for key in sorted(expected_counts(pins)):
         database, table = key.split('.', 1)
         record = session.engine_call(count_argv(engine, db_id, database, table),
                                      'count-%s-%s' % (database, table))
@@ -76,8 +76,8 @@ def read_dev_status(session, label):
     return core.parse_running(core.stdout_text(record))
 
 
-def execute(session, engine, manifest, request):
-    identity = manifest['routes'][ROUTE]['identity']
+def execute(session, engine, pins, request):
+    identity = pins['identity']
     intent = request['prior_intent']
     if set(intent) != {SYSTEM}:
         raise core.Refused('prior-intent', 'intent must name exactly the dev system')
@@ -94,8 +94,8 @@ def execute(session, engine, manifest, request):
         session.effigy(('container', 'up', '--detach', '--system', SYSTEM), 'app-shell-up')
         observed[SYSTEM] = read_dev_status(session, 'app-shell-status')
         session.effigy(FORWARD_TAIL, 'level1-forward')
-        counts = observe_counts(session, engine, manifest, db_id)
-        core.counts_match(counts, expected_counts(manifest))
+        counts = observe_counts(session, engine, pins, db_id)
+        core.counts_match(counts, expected_counts(pins))
     finally:
         for name in core.rollback_plan(intent, observed, started):
             session.effigy(('container', 'down', '--system', SYSTEM), 'rollback-' + name)
