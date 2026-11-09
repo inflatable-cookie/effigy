@@ -317,7 +317,9 @@ change can close it.
 Controlled capture clocks are local to their test thread. Companion capture or
 controller threads enter an explicitly shared clock; unrelated tests keep the
 wall clock. One-shot process-global cleanup tests run in their own test process,
-and publisher fault hooks belong to the thread that installs them. Follow retry
+and publisher fault hooks belong to the thread that installs them. Preflight
+staging hooks are bound to their owned state root, including across the sealing
+helper thread; a sibling root must never consume another fixture’s handoff. Follow retry
 budget overrides are scoped to the test thread and restored on drop. Proofs of
 fixed descriptor numbers or permanently adopted secret grants run their original
 assertions in an exact-test child process.
