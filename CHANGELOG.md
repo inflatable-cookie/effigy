@@ -8,6 +8,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Recognize Docker 29.8.0's exact daemon-wrapped full-ID not-found response in the
+  receipt-bound Desktop observation. Classification requires the source-qualified stdout
+  and stderr bytes, a waited exit 1 and a previously matched engine identity (effigy#795).
+
 - Deliver a source-ready, receipt-bound observation entry for the failed Desktop check
   container left by effigy#779. `macos_desktop_observation.py` consumes the retained
   failure record by exact hash, binds the original D0 Desktop context, and runs at most
