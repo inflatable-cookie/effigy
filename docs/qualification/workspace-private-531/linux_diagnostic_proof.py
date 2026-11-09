@@ -19,6 +19,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import linux_diagnostic as diagnostic
 import linux_diagnostic_probe as guest_probe
+import linux_disk_association as disk_association
+import linux_disk_inventory as disk_inventory
 import linux_setup as setup
 import preparation_stage as stage
 
@@ -172,6 +174,36 @@ def parse_unique(pairs):
     return value
 
 
+def observe_association(boot_id, read_boot_id, config, descriptor, extents, writer_bound,
+                        transport=None):
+    """The production disk-association handoff for one already observed boot.
+
+    No caller constant is a reading here. The pinned reader is dispatched only when its own ABI
+    sources are complete, so an entry known to refuse is not spent on a native occurrence; its one
+    bounded read is bracketed by two fresh guest boot originals of this same VM and boot; the
+    selected VM UUID and home come from the reader's own output; the registered config, descriptor
+    and extent inventory are the originals this occurrence retained; and the guest block
+    observations are the writer-bound reads of this same boot. The complete record then goes
+    through production setup.verify_disk_association. A refusal is raised, never softened into a
+    status.
+    """
+    if not disk_association.reader_executable():
+        return {'status': 'not attempted: ' + disk_association.reader_limitation(),
+                'facts': None, 'result': None}
+    rows = writer_bound.get('routes') or []
+    if (guest_probe.status_of(rows, 'block-sysfs') != guest_probe.OBSERVED
+            or guest_probe.status_of(rows, 'block-lsblk') != guest_probe.OBSERVED):
+        return {'status': 'not attempted: the guest block observations did not complete for this boot',
+                'facts': None, 'result': None}
+    facts = disk_association.association_facts(
+        boot_id=boot_id, read_boot_id=read_boot_id, config=config, descriptor=descriptor,
+        extents=extents, block=guest_probe.facts_of(rows, 'block-sysfs'),
+        lsblk=guest_probe.facts_of(rows, 'block-lsblk'),
+        root=(writer_bound.get('facts') or {}).get('root') or {}, transport=transport)
+    return {'status': 'verified', 'facts': facts,
+            'result': setup.verify_disk_association(facts)}
+
+
 def read_request(path, expected):
     if os.path.realpath(path) != path or not path.startswith(SCRATCH + '/'):
         raise stage.Refusal('request must be canonical under Stash scratch')
@@ -322,6 +354,7 @@ def execute(request, request_path, request_hash):
     outcome = {'schema': 'linux-diagnostic-observation-v6', 'request_sha256': request_hash,
                'head': actual, 'candidate_h': setup.CANDIDATE_H_HEAD, 'launched_at': launched_at,
                'writable_top': 'unknown', 'guest_association': 'unknown',
+               'disk_association': None,
                'readiness': 'not evaluated', 'readiness_observation': None,
                'transport': {'sentinel': TRANSPORT_SENTINEL, 'status': 'not attempted',
                              'attempts': []},
@@ -507,8 +540,9 @@ def execute(request, request_path, request_hash):
         if outcome['probe_fields']['boot_id'] != boot_id:
             raise stage.Refusal('probe boot identity differs from readiness')
         # The writer-bound capability reads share this boot-complete occurrence and its
-        # deadlines. They are observations only: no field here feeds writable_top,
-        # guest_association, readiness, placement, hard_quota or any setup gate.
+        # deadlines. They are observations only: no field here feeds writable_top, readiness,
+        # placement, hard_quota or any setup gate. The one disk-association handoff below reads
+        # the guest block observations of this same boot and nothing else from them.
         def guard():
             if private_root(str(root)) != request['root_identity']:
                 raise stage.Refusal('evidence root identity changed')
@@ -518,17 +552,38 @@ def execute(request, request_path, request_hash):
             stage.exclusive(path, data)
             return path.name
 
-        before_routes_result, before_routes_raw = call(
-            ['exec', setup.VM_UUID, '/bin/cat', '/proc/sys/kernel/random/boot_id'], 5, 256, start_end)
-        if not good(before_routes_result) or check_boot_id(before_routes_raw) != boot_id:
+        def read_guest_boot():
+            """One fresh guest boot original; a partial or failed read is not an identity."""
+            result, raw = call(['exec', setup.VM_UUID, '/bin/cat',
+                                '/proc/sys/kernel/random/boot_id'], 5, 256, start_end)
+            if not good(result):
+                raise stage.Refusal('guest boot identity read did not complete')
+            return check_boot_id(raw)
+
+        before_routes = read_guest_boot()
+        if before_routes != boot_id:
             raise stage.Refusal('boot identity before writer routes differs from readiness')
         outcome['boot_binding']['route_window_start'] = boot_id
         writer_bound = guest_probe.observe(
             lambda argv, limit, cap, end: call(['exec', setup.VM_UUID] + argv, limit, cap, end),
             retain_observation, guard, start_end)
-        after_routes_result, after_routes_raw = call(
-            ['exec', setup.VM_UUID, '/bin/cat', '/proc/sys/kernel/random/boot_id'], 5, 256, start_end)
-        if not good(after_routes_result) or check_boot_id(after_routes_raw) != boot_id:
+        # The disk-association handoff. The reader is dispatched only when its ABI sources are
+        # complete, so an entry known to refuse is not spent on this native occurrence. The
+        # writer-bound guest block reads must have completed for this same boot, and the complete
+        # record goes through production setup.verify_disk_association.
+        try:
+            handoff = observe_association(
+                boot_id, read_guest_boot,
+                (destination / 'before-config').read_bytes(),
+                (destination / 'before-descriptor').read_bytes(),
+                outcome.get('before_extents') or {}, writer_bound)
+            outcome['guest_association'] = handoff['status']
+            outcome['disk_association'] = handoff['result']
+        except (stage.Refusal, disk_association.Refusal, disk_inventory.Refused, OSError) as exc:
+            outcome['guest_association'] = 'refused: ' + str(exc)
+            outcome['findings'].append('disk association: ' + str(exc))
+        after_routes = read_guest_boot()
+        if after_routes != boot_id:
             writer_bound['complete'] = False
             writer_bound['findings'].append('boot identity changed during writer route window')
             outcome['findings'].append('writer route window boot identity differs from readiness')

@@ -6,13 +6,17 @@ TEST_PINS is a test-only mechanism used to isolate premise logic. Production PIN
 parallels-host-inventory-trust-v1. No VM, host service, image, disk or guest is touched. A pass of
 the verifier on fixture bytes is source admission of the logic, not a fresh native inventory.
 """
+import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_disk_association as dal
+import linux_disk_identity as identity
 import linux_disk_identity_tests as identity_tests
 import linux_disk_inventory as inventory
 import linux_setup as setup
@@ -23,6 +27,8 @@ DISK_UID = setup.DISK_UID
 OTHER_UID = '{11111111-2222-3333-4444-555555555555}'
 DEVICE_UUID = '{9447f202-8d43-4ec2-80c9-ce527b34bd9d}'
 BOOT = '6de5909b-25da-444a-9610-731ee1247b11'
+OTHER_BOOT = '18ad4b3d-6b39-4d23-a9bd-51e9ca4f3ed4'
+OTHER_VM = '00000000-0000-0000-0000-000000000000'
 ROOT_UUID = 'd488be7b-682f-41ac-b79b-57bbf495a01d'
 SERIAL = 'BV9VAH2KP2Q4N4A04SN0'
 # The retained 747 sysfs controller of sda (the platform ATA host), from the block-sysfs original.
@@ -46,7 +52,7 @@ TEST_PINS = {TEST_MECHANISM: {
     'desktop_build': '27.1.0-58756', 'api': 'PrlVmCfg_GetAllDevices',
     'argv': TEST_ARGV, 'max_bytes': inventory.MAX_BYTES, 'max_devices': inventory.MAX_DEVICES,
     'library_path': TEST_LIBRARY, 'library_sha256': TEST_LIBRARY_SHA,
-    'library_build': '58756', 'home': setup.PVM_HOME, 'trust': 'test-only',
+    'library_build': '58756', 'home': setup.PVM_HOME, 'vm': VM, 'trust': 'test-only',
 }}
 TEST_SUPPORTED = frozenset({TEST_MECHANISM})
 CAMERA_SYS = dal.USB_CAMERA_RECORD['SystemName']
@@ -158,6 +164,84 @@ def production_association(**over):
     association = valid_association(mechanism=dal.MECHANISM, host_read=host_read(pin))
     association.update(over)
     return association
+
+
+# The guest block observations of the reviewed boot, in the two writer-bound read shapes: the fixed
+# sysfs inventory and the documented lsblk inventory. Sizes agree because both describe one boot.
+SDA_SECTORS = setup.ROOT_BYTES // 512
+SDA_SYSPATH = CONTROLLER
+
+
+def sysfs_block(name, maj_min, sectors, partition, parent, removable, syspath, serial=None):
+    row = {'name': name, 'maj_min': maj_min, 'partition': partition, 'sectors': sectors,
+           'read_only': 0, 'removable': removable, 'syspath': syspath,
+           'controller_path': syspath.split('/block/')[0], 'controller_kind': 'ata',
+           'controller_components': [], 'parent': parent}
+    if partition == 0:
+        row['serial'] = ({'status': 'observed', 'hex': '', 'bytes': len(serial or ''), 'text': serial}
+                         if serial else {'status': 'missing'})
+        row['model'] = {'status': 'missing'}
+        row['vendor'] = {'status': 'missing'}
+    return row
+
+
+def guest_block_observations(extra_sysfs=(), extra_lsblk=()):
+    """The reviewed boot's two guest inventories, plus any extra device a control injects."""
+    disks = [
+        ('sda', '8:0', SDA_SECTORS, 0, None, 0, SDA_SYSPATH + '/block/sda', SERIAL),
+        ('sda1', '8:1', 4096, 1, 'sda', {'status': 'not-applicable'}, SDA_SYSPATH + '/block/sda/sda1', None),
+        ('sda2', '8:2', SDA_SECTORS - 4096, 1, 'sda', {'status': 'not-applicable'},
+         SDA_SYSPATH + '/block/sda/sda2', None),
+        ('sr0', '11:0', 2048, 0, None, 1, '/sys/devices/platform/PLATFORM:00/ata2/block/sr0', None),
+        ('loop0', '7:0', 2, 0, None, 0, '/sys/devices/virtual/block/loop0', None),
+    ]
+    blocks = {row[0]: sysfs_block(*row) for row in disks}
+    nodes = {}
+    for name, majmin, sectors, partition, parent, removable, syspath, serial in disks:
+        nodes[name] = {'name': name, 'maj_min': majmin, 'parent': parent,
+                       'type': 'loop' if name.startswith('loop') else ('rom' if name.startswith('sr') else
+                                                                      ('part' if partition else 'disk')),
+                       'bytes': sectors * 512, 'fstype': None, 'uuid': None, 'mountpoint': None}
+    nodes['sda2'].update(fstype='ext4', uuid=ROOT_UUID)
+    for name, record in extra_sysfs:
+        blocks[name] = record
+    for name, record in extra_lsblk:
+        nodes[name] = record
+    return blocks, nodes
+
+
+def guest_root_facts():
+    return {'status': 'resolved', 'device': 'sda2', 'fstype': 'ext4', 'filesystem_uuid': ROOT_UUID,
+            'ancestry': ['sda2', 'sda'], 'controller_kind': 'ata',
+            'controller_path': SDA_SYSPATH, 'reasons': []}
+
+
+def boot_reader(sequence):
+    """A guest boot-original reader over a fixed sequence; a control reads what it returns."""
+    values = list(sequence)
+
+    def read():
+        if not values:
+            raise AssertionError('the boot bracket reader was called more times than the control allows')
+        return values.pop(0)
+    return read
+
+
+def inventory_transport(output=None, **over):
+    """A private fixture transport: the recorded copy of the pinned-grammar output, no process."""
+    pin = dal.PINS[dal.MECHANISM]
+    stdout = inventory_text(pin) if output is None else output
+    if isinstance(stdout, str):
+        stdout = stdout.encode()
+    result = {'disposition': 'exited', 'waited_exit': 0, 'stdout': stdout, 'stderr': b''}
+    result.update(over)
+    return lambda argv, stdin_path, timeout, cap: dict(result)
+
+
+def descriptor_extents():
+    """The extent inventory the stage would observe for the documented descriptor's chain."""
+    selection = identity.select_top(identity_tests.doc())
+    return {value['file']: {'path': '/x/' + value['file'], 'guid': guid} for guid, value in selection['images'].items()}
 
 
 def disk_witness():
@@ -492,7 +576,9 @@ class ProductionInventoryControls(unittest.TestCase):
     def test_production_pin_binds_helper_bytes_library_vm_and_home(self):
         pin = dal.PINS[dal.MECHANISM]
         self.assertEqual(pin['tool_path'], str(inventory.HELPER))
-        self.assertEqual(pin['sha256'], inventory.helper_sha256())
+        self.assertEqual(pin['sha256'], dal.HELPER_SHA256)
+        self.assertEqual(pin['sha256'], inventory.helper_digest(inventory.HELPER))
+        self.assertEqual(pin['vm'], VM)
         self.assertEqual(pin['argv'], inventory.inventory_argv())
         self.assertEqual(pin['library_path'], inventory.LIBRARY_PATH)
         self.assertEqual(pin['library_sha256'], inventory.LIBRARY_SHA256)
@@ -647,17 +733,197 @@ class ProductionInventoryControls(unittest.TestCase):
             return {'disposition': 'exited', 'waited_exit': 0, 'stdout': inventory_text(dal.PINS[dal.MECHANISM]).encode(),
                     'stderr': b''}
 
-        record = dal.read_inventory(transport=transport)
+        boots = boot_reader([BOOT, BOOT])
+        record = dal.read_inventory(transport=transport, boot_id=BOOT, read_boot_id=boots)
         self.assertEqual(seen, [(inventory.inventory_argv(), None, inventory.INVENTORY_TIMEOUT, inventory.MAX_BYTES)])
         self.assertEqual(record['argv'], inventory.inventory_argv())
         self.assertEqual(record['tool_path'], str(inventory.HELPER))
-        self.assertEqual(record['tool_sha256'], inventory.helper_sha256())
+        self.assertEqual(record['tool_sha256'], dal.HELPER_SHA256)
         self.assertEqual(record['api'], 'PrlVmCfg_GetAllDevices')
         self.assertTrue(record['readonly'])
-        facts = production_association(host_read=dict(record, vm=VM, boot_ids=[BOOT, BOOT]))
+        # The VM UUID and the boot bracket are readings of this dispatch, not caller constants.
+        self.assertEqual(record['vm'], VM)
+        self.assertEqual(record['boot_ids'], [BOOT, BOOT])
+        self.assertEqual(record['library_sha256'], dal.PINS[dal.MECHANISM]['library_sha256'])
+        facts = production_association(host_read=record)
         result = setup.verify_disk_association(facts)
         self.assertEqual(result['mechanism'], dal.MECHANISM)
         self.assertIn('not evidence a fresh host inventory ran', result['not_established'])
+
+    def test_helper_pin_is_an_independent_literal_not_a_self_hash(self):
+        """A modified helper cannot re-pin itself: the digest is a committed literal in the consumer."""
+        fixture_root = Path(os.environ.get('TMPDIR') or tempfile.gettempdir())
+        with tempfile.TemporaryDirectory(dir=fixture_root) as scratch:
+            copy = Path(scratch) / 'linux_disk_inventory.py'
+            copy.write_bytes(inventory.HELPER.read_bytes() + b'\n# modified helper bytes\n')
+            self.assertNotEqual(inventory.helper_digest(copy), dal.HELPER_SHA256)
+            pin = dict(dal.PINS[dal.MECHANISM], tool_path=str(copy),
+                       argv=inventory.inventory_argv(copy))
+            with self.assertRaises(inventory.Refused) as caught:
+                dal.read_inventory(transport=inventory_transport(), pin=pin, boot_id=BOOT,
+                                   read_boot_id=boot_reader([BOOT, BOOT]))
+            self.assertEqual(caught.exception.phase, 'helper-bytes-differ')
+
+    def test_complete_fixture_flow_through_production_dispatch_and_setup(self):
+        """One complete association record from the production dispatch and boot bracket, fed through
+        setup.verify_disk_association with production PINS. Fixture library/transport bytes only."""
+        block, lsblk = guest_block_observations()
+        facts = dal.association_facts(
+            boot_id=BOOT, read_boot_id=boot_reader([BOOT, BOOT]),
+            config=config_xml(), descriptor=identity_tests.doc(), extents=descriptor_extents(),
+            block={'blocks': block}, lsblk={'nodes': lsblk}, root=guest_root_facts(),
+            transport=inventory_transport())
+        self.assertEqual(facts['mechanism'], dal.MECHANISM)
+        self.assertEqual(facts['host_read']['vm'], VM)
+        self.assertEqual(facts['host_read']['boot_ids'], [BOOT, BOOT])
+        self.assertEqual(facts['guest']['boot_id'], BOOT)
+        self.assertEqual([row['name'] for row in facts['guest']['blocks']],
+                         ['loop0', 'sda', 'sda1', 'sda2', 'sr0'])
+        result = setup.verify_disk_association(facts)
+        self.assertEqual(result['mechanism'], dal.MECHANISM)
+        self.assertEqual(result['vm'], VM)
+        self.assertEqual(result['system_name'], 'harddisk1.hdd')
+        self.assertEqual(result['boot_id'], BOOT)
+        self.assertEqual(result['serial'], SERIAL)
+        self.assertEqual(result['trust'], 'narrow-parallels-host-inventory')
+        self.assertIn('not independent presentation proof', result['not_established'])
+
+    def test_boot_bracket_must_be_the_authenticated_one(self):
+        block, lsblk = guest_block_observations()
+
+        def attempt(reads, boot=BOOT):
+            return dal.association_facts(
+                boot_id=boot, read_boot_id=boot_reader(reads),
+                config=config_xml(), descriptor=identity_tests.doc(), extents=descriptor_extents(),
+                block={'blocks': block}, lsblk={'nodes': lsblk}, root=guest_root_facts(),
+                transport=inventory_transport())
+
+        cases = (
+            ('changed before', [OTHER_BOOT, BOOT]),
+            ('changed after', [BOOT, OTHER_BOOT]),
+            ('malformed before', ['not-a-boot-id', BOOT]),
+            ('no reader', None),
+        )
+        for label, reads in cases:
+            with self.subTest(label):
+                if reads is None:
+                    with self.assertRaises(inventory.Refused) as caught:
+                        dal.association_facts(
+                            boot_id=BOOT, read_boot_id=None, config=config_xml(),
+                            descriptor=identity_tests.doc(), extents=descriptor_extents(),
+                            block={'blocks': block}, lsblk={'nodes': lsblk}, root=guest_root_facts(),
+                            transport=inventory_transport())
+                    self.assertEqual(caught.exception.phase, 'boot-bracket-missing')
+                    continue
+                with self.assertRaises(inventory.Refused) as caught:
+                    attempt(reads)
+                self.assertIn(caught.exception.phase, ('boot-bracket-moved', 'boot-bracket-malformed'))
+        with self.assertRaises(inventory.Refused) as caught:
+            attempt([BOOT, BOOT], boot='not-a-boot-id')
+        self.assertEqual(caught.exception.phase, 'boot-bracket-malformed')
+
+    def test_a_non_observation_never_becomes_a_host_record(self):
+        """Partial output, nonzero exit, a timeout, an over-cap read and a grammar break all refuse."""
+        pin = dal.PINS[dal.MECHANISM]
+        text = inventory_text(pin)
+        cases = (
+            ('timeout', dict(disposition='timeout', waited_exit=0, stdout=b''), 'inventory-not-exited'),
+            ('output cap', dict(disposition='output-cap', waited_exit=0, stdout=text.encode()[:40]),
+             'inventory-not-exited'),
+            ('resource refusal', dict(disposition='resource-refusal', waited_exit=0, stdout=b''),
+             'inventory-not-exited'),
+            ('nonzero exit', dict(waited_exit=1), 'inventory-exit-nonzero'),
+            ('stub refusal', dict(waited_exit=3, stdout=b''), 'inventory-exit-nonzero'),
+            ('missing stdout', dict(stdout=None), 'inventory-output-missing'),
+            ('over the cap', dict(stdout=b'x' * (inventory.MAX_BYTES + 1)), 'inventory-truncated'),
+            ('not ascii', dict(stdout=b'vm=\xff\n'), 'inventory-output-encoding'),
+            ('partial output', dict(stdout=('\n'.join(text.splitlines()[:-3]) + '\n').encode()),
+             'inventory-output-grammar'),
+            ('repeated field', dict(stdout=text.encode() + b'vm=' + VM.encode() + b'\n'),
+             'inventory-output-grammar'),
+            ('another vm', dict(stdout=inventory_text(pin, vm=OTHER_VM).encode()), 'inventory-vm-differs'),
+        )
+        for label, over, phase in cases:
+            with self.subTest(label):
+                self.assertIn(phase, inventory.READ_PHASES)
+                with self.assertRaises(inventory.Refused) as caught:
+                    dal.read_inventory(transport=inventory_transport(**over), boot_id=BOOT,
+                                       read_boot_id=boot_reader([BOOT, BOOT]))
+                self.assertEqual(caught.exception.phase, phase)
+        with self.assertRaises(inventory.Refused) as caught:
+            dal.read_inventory(transport=inventory_transport(), pin={}, boot_id=BOOT,
+                               read_boot_id=boot_reader([BOOT, BOOT]))
+        self.assertEqual(caught.exception.phase, 'pin-missing')
+
+    def test_the_init_stub_cannot_count_as_an_executable_reader(self):
+        """The production entry refuses before Init and prints nothing a reader accepts. Opening the
+        gate by patching the unsourced constants does not turn those bytes into an inventory read."""
+        self.assertFalse(dal.reader_executable())
+        self.assertIn('PARALLELS_API_VER', dal.reader_limitation())
+        self.assertIn(inventory.SOURCE_GAP['next_read'], dal.reader_limitation())
+        completed = subprocess.run(inventory.inventory_argv(), stdin=subprocess.DEVNULL,
+                                   capture_output=True, timeout=120)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertNotIn(b'vm=', completed.stdout)
+        stub = (lambda argv, stdin_path, timeout, cap: {
+            'disposition': 'exited', 'waited_exit': completed.returncode,
+            'stdout': completed.stdout, 'stderr': completed.stderr})
+        with mock.patch.object(inventory, 'PARALLELS_API_VER', 17), \
+                mock.patch.object(inventory, 'PRL_HANDLE_SIZE', 8):
+            self.assertTrue(dal.reader_executable())
+            with self.assertRaises(inventory.Refused) as caught:
+                dal.read_inventory(transport=stub, boot_id=BOOT, read_boot_id=boot_reader([BOOT, BOOT]))
+            self.assertEqual(caught.exception.phase, 'inventory-exit-nonzero')
+            # The refused output is not a host record either: the association refuses it without one.
+            refused = dict(production_association(), host_read={'output': completed.stdout})
+            self.assertEqual({status for _, status, _ in
+                              dal.premise_table(refused, setup.SUPPORTED_DISK_MECHANISMS, dal.PINS)
+                              if status != 'pass'}, {'refuse'})
+            with self.assertRaises(Refusal):
+                setup.verify_disk_association(refused)
+
+    def test_guest_facts_refuse_a_hidden_or_disagreeing_device(self):
+        block, lsblk = guest_block_observations()
+        cases = (
+            ('device in one inventory only',
+             {'blocks': dict(block, sdb=sysfs_block('sdb', '8:16', 8, 0, None, 0, SDA_SYSPATH + '/block/sdb'))},
+             {'nodes': lsblk}),
+            ('size disagrees', {'blocks': dict(block, sda=dict(block['sda'], sectors=1))}, {'nodes': lsblk}),
+            ('major disagrees', {'blocks': dict(block, sda=dict(block['sda'], maj_min='9:0'))}, {'nodes': lsblk}),
+            ('undocumented type', {'blocks': block}, {'nodes': dict(lsblk, sda=dict(lsblk['sda'], type=''))}),
+        )
+        for label, observed_block, observed_lsblk in cases:
+            with self.subTest(label):
+                with self.assertRaises(Refusal):
+                    dal.guest_facts(BOOT, observed_block, observed_lsblk, guest_root_facts())
+        with self.assertRaises(Refusal):
+            dal.guest_facts(BOOT, {'blocks': {}}, {'nodes': lsblk}, guest_root_facts())
+        extra = sysfs_block('crypt0', '253:0', 8, 0, None, 0, '/sys/devices/virtual/block/crypt0')
+        node = {'name': 'crypt0', 'maj_min': '253:0', 'parent': None, 'type': 'crypt', 'bytes': 4096,
+                'fstype': None, 'uuid': None, 'mountpoint': None}
+        block, lsblk = guest_block_observations(extra_sysfs=(('crypt0', extra),),
+                                                extra_lsblk=(('crypt0', node),))
+        facts = dal.guest_facts(BOOT, {'blocks': block}, {'nodes': lsblk}, guest_root_facts())
+        # The mapper forwards the unknown class; guest_blocks is what refuses it.
+        self.assertIn('crypt', {row['type'] for row in facts['blocks']})
+        with self.assertRaises(Refusal):
+            dal.verify(dict(valid_association(), guest=facts))
+
+    def test_unobserved_extent_or_missing_originals_refuse_the_handoff(self):
+        block, lsblk = guest_block_observations()
+        with self.assertRaises(Refusal):
+            dal.host_facts(identity_tests.doc(), {})
+        with self.assertRaises(Refusal):
+            dal.host_facts(identity_tests.doc(), {'a.hds': {}})
+        self.assertEqual(sorted(dal.host_facts(identity_tests.doc(), descriptor_extents())['extents'].values()),
+                         ['a.hds', 'b.hds', 'r.hds'])
+        for config, descriptor in ((b'', identity_tests.doc()), (config_xml(), b'')):
+            with self.assertRaises(Refusal):
+                dal.association_facts(
+                    boot_id=BOOT, read_boot_id=boot_reader([BOOT, BOOT]), config=config,
+                    descriptor=descriptor, extents=descriptor_extents(),
+                    block={'blocks': block}, lsblk={'nodes': lsblk}, root=guest_root_facts(),
+                    transport=inventory_transport())
 
     def test_retained_747_replay_is_offline_and_supplies_no_fresh_evidence(self):
         """747/748 retained shape establishes config/descriptor/guest only. No fresh inventory."""

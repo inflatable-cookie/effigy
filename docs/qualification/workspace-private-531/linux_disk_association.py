@@ -35,8 +35,17 @@ Not established by any premise: independent presentation proof; that the config 
 descriptor disk UID name the same image (different namespaces, no documented join); that guest ata1
 is SATA position 0; the origin of the bytes given here; image bodies and encryption. Size/model/name
 agreement is not evidence. Source admission of this logic is not evidence a fresh read ran.
+
+The production handoff is association_facts: one boot-bound host inventory read (read_inventory),
+the current registered-config and descriptor originals, the extent inventory the stage observed and
+the guest block observations of that same boot. It returns the complete record and the caller feeds
+it to setup.verify_disk_association. The reader is dispatched only when its ABI sources are complete
+(linux_disk_inventory.reader_executable), so a native occurrence is not spent on an entry that is
+known to refuse; the exact limitation and the one supported next read are in
+linux_disk_inventory.SOURCE_GAP.
 """
 import hashlib
+import re
 import xml.etree.ElementTree as ET
 
 import linux_disk_identity as identity
@@ -96,6 +105,7 @@ USB_HISTORY_NAMES = frozenset({
     'VIRTUAL@UVC@|203a|fff9|high|--|6C707041-05AC-0011-0007-000000000001',
 })
 MAX_CONFIG_BYTES = 1024 * 1024
+BOOT_ID = re.compile(r'^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$')
 PREMISES = ('mechanism', 'host_read', 'config', 'descriptor', 'guest_blocks')
 MECHANISM = 'parallels-host-inventory-trust-v1'
 UNSUPPORTED = ('unsupported controller-to-guest disk association: the mechanism is not the pinned '
@@ -109,10 +119,14 @@ NOT_ESTABLISHED = (
 
 # Bound to the helper bytes, the installed SDK library, Desktop 27.1.0-58756, the reviewed VM/home,
 # and the owned inventory grammar. Other mechanisms stay unsupported.
+# The helper digest is a committed literal, not inventory.helper_digest() at import: a modified helper
+# cannot re-pin itself, and changing the helper without changing this literal refuses in
+# read_inventory('helper-bytes-differ').
+HELPER_SHA256 = 'c03c2bcdf2bd41b4ed3caa6325f9ef6a1c6c63db38bca57154f01171cdb328eb'
 PINS = {
     MECHANISM: {
         'tool_path': str(inventory.HELPER),
-        'sha256': inventory.helper_sha256(),
+        'sha256': HELPER_SHA256,
         'version': inventory.LIBRARY_VERSION,
         'desktop_build': inventory.LIBRARY_VERSION + '-' + inventory.LIBRARY_BUILD,
         'api': 'PrlVmCfg_GetAllDevices',
@@ -123,6 +137,7 @@ PINS = {
         'library_sha256': inventory.LIBRARY_SHA256,
         'library_build': inventory.LIBRARY_BUILD,
         'home': REVIEWED['home'],
+        'vm': REVIEWED['vm'],
         'trust': 'narrow-parallels-host-inventory',
     },
 }
@@ -130,6 +145,13 @@ PINS = {
 
 def _lower(value):
     return value.lower() if isinstance(value, str) else value
+
+
+def _require_boot(value, when):
+    """A boot identity this stage authenticated; another principal's string is not one."""
+    if not isinstance(value, str) or not BOOT_ID.fullmatch(value):
+        raise Refusal('the guest boot identity %s is missing or malformed' % when)
+    return value
 
 
 def _leaf(child, where):
@@ -218,7 +240,7 @@ def _check_host_read(association, pin):
     boot = association.get('boot_id')
     if not isinstance(boot, str) or not boot or read.get('boot_ids') != [boot, boot]:
         raise Refusal('host read is not bracketed by the guest boot identity')
-    if read.get('vm') != REVIEWED['vm']:
+    if read.get('vm') != pin['vm']:
         raise Refusal('host read names another VM')
     try:
         text = output.decode('ascii')
@@ -442,6 +464,106 @@ def verify(association, supported=frozenset(), pins=None):
     return result
 
 
-def read_inventory(transport=None):
-    """Production inventory dispatch. Tests inject fixture transport; never a native receipt."""
-    return inventory.read_inventory(transport=transport)
+def read_inventory(transport=None, pin=None, boot_id=None, read_boot_id=None):
+    """Production inventory dispatch: the pinned helper, inside the caller's authenticated boot
+    bracket. Tests inject fixture transport; never a native receipt."""
+    return inventory.read_inventory(transport=transport, pin=PINS[MECHANISM] if pin is None else pin,
+                                    boot_id=boot_id, read_boot_id=read_boot_id)
+
+
+def reader_executable():
+    """True only when the pinned reader's own ABI sources are complete. Never a guess."""
+    return inventory.reader_executable()
+
+
+def reader_limitation():
+    """The exact external limitation and the one supported next read, in one line."""
+    return inventory.reader_limitation()
+
+
+def host_facts(descriptor, extents):
+    """The host-side top, chain and extent record for the descriptor premise, from the descriptor
+    bytes this stage observed and its own extent inventory. A chain image the observed inventory does
+    not carry refuses: the record may not name an extent the stage did not see."""
+    try:
+        selection = identity.select_top(descriptor)
+    except identity.Refusal as exc:
+        raise Refusal('descriptor: ' + str(exc)) from exc
+    if not isinstance(extents, dict) or not extents:
+        raise Refusal('the observed extent inventory is missing')
+    files = {guid: value['file'] for guid, value in selection['images'].items()}
+    if set(files.values()) - set(extents):
+        raise Refusal('the descriptor chain names an extent the observed inventory does not carry')
+    return {'top_guid': selection['top_guid'], 'chain': list(selection['chain']), 'extents': files}
+
+
+def _guest_type(node, name):
+    """The documented lsblk TYPE field is the only source of a device class here."""
+    kind = node.get('type') if isinstance(node, dict) else None
+    if not isinstance(kind, str) or not kind:
+        raise Refusal('guest block %s has no documented lsblk type' % name)
+    return kind
+
+
+def guest_facts(boot_id, block, lsblk, root):
+    """The guest side of one association, from the writer-bound observations of that same boot.
+
+    The fixed sysfs read supplies the device size, removable flag, parent and controller path; the
+    documented lsblk read supplies the device type. Both describe this one boot, so a device named by
+    one inventory and not the other, a differing major:minor, or a differing size refuses instead of
+    being dropped: a mapper may not hide a device from the verifier. Unclassified device types are
+    forwarded, so guest_blocks refuses them rather than this mapper deciding they are harmless.
+    """
+    boot_id = _require_boot(boot_id, 'of the guest facts')
+    blocks = block.get('blocks') if isinstance(block, dict) else None
+    nodes = lsblk.get('nodes') if isinstance(lsblk, dict) else None
+    if not isinstance(blocks, dict) or not isinstance(nodes, dict) or not blocks or not nodes:
+        raise Refusal('the guest block observations are missing')
+    if set(blocks) != set(nodes):
+        missing = sorted(set(blocks) ^ set(nodes))
+        raise Refusal('the two guest block inventories name different devices: %s' % ', '.join(missing[:8]))
+    rows = []
+    for name in sorted(blocks):
+        sysfs, node = blocks[name], nodes[name]
+        if sysfs.get('maj_min') != node.get('maj_min'):
+            raise Refusal('guest block %s major:minor differs between the two inventories' % name)
+        sectors = sysfs.get('sectors')
+        if type(sectors) is not int or sectors < 0 or sectors * 512 != node.get('bytes'):
+            raise Refusal('guest block %s size differs between the two inventories' % name)
+        removable = sysfs.get('removable')
+        rows.append({'name': name, 'type': _guest_type(node, name), 'path': '/dev/' + name,
+                     'size': sectors * 512,
+                     'removable': removable if type(removable) is int else removable,
+                     'pkname': sysfs.get('parent'), 'controller': sysfs.get('controller_path')})
+    facts_root = root if isinstance(root, dict) else {}
+    device = facts_root.get('device')
+    if not isinstance(device, str) or device not in blocks:
+        raise Refusal('the guest root device is not in the observed block inventory')
+    whole = blocks.get(blocks[device].get('parent'))
+    serial = whole.get('serial') if isinstance(whole, dict) else None
+    serial = serial.get('text') if isinstance(serial, dict) and serial.get('status') == 'observed' else None
+    return {'boot_id': boot_id, 'parent_serial': serial or '', 'sysfs_serial': serial,
+            'root': {'device': '/dev/' + device, 'fstype': facts_root.get('fstype'),
+                     'uuid': facts_root.get('filesystem_uuid'),
+                     'parent': blocks[device].get('parent')},
+            'blocks': rows}
+
+
+def association_facts(boot_id, read_boot_id, config, descriptor, extents, block, lsblk, root,
+                      transport=None, pin=None):
+    """The complete association record for one observation stage, not a receipt.
+
+    One boot-bound host inventory read, the current registered-config and descriptor originals, the
+    extent inventory the stage observed and the guest block observations of the same boot. The
+    caller feeds the returned record to setup.verify_disk_association; nothing here decides that the
+    association holds, and a caller constant is never a reading.
+    """
+    if not isinstance(config, (bytes, bytearray)) or not config:
+        raise Refusal('the registered config original is missing')
+    if not isinstance(descriptor, (bytes, bytearray)) or not descriptor:
+        raise Refusal('the descriptor original is missing')
+    read = read_inventory(transport=transport, pin=pin, boot_id=boot_id, read_boot_id=read_boot_id)
+    return {'mechanism': MECHANISM, 'boot_id': _require_boot(boot_id, 'of the association'),
+            'config': bytes(config), 'descriptor': bytes(descriptor), 'host_read': read,
+            'host': host_facts(bytes(descriptor), extents),
+            'guest': guest_facts(boot_id, block, lsblk, root)}

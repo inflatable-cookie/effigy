@@ -390,17 +390,18 @@ zero, extra or duplicate optical entries refuse. Presentation is the accepted na
 unreported or stale/misreported hypervisor presentation is undetectable. `test_bare_count_of_one_is_not_the_disk`
 still refuses physical, remote, disabled and disconnected disks.
 
-**Fixed future read** (`linux_disk_inventory.py`). Production argv is exactly
-`/usr/bin/python3 -I -B linux_disk_inventory.py inventory`. Tests inject fixture transport; the helper refuses extra
-arguments, including a fixture path. This occurrence does not run it against the SDK. Sequence after the Init gap is
-filled. Session lifecycle (`PrlApi_InitEx`/`Deinit`, `PrlSrv_Create`, `PrlSrv_LoginLocal`/`Logoff`) is required to
-reach the getters and is not sourced as read-only. Device-enumeration getters below are sourced as configuration
-reads. The later occurrence still excludes `Set*`/`Connect`/`Disconnect`/`Reg*`/`Unreg*`/`PrlVm_RegEx`.
+**Fixed reader, boot-bound handoff and its exact external limitation** (`linux_disk_inventory.py`). Production argv
+is exactly `/usr/bin/python3 -I -B linux_disk_inventory.py inventory`. Tests inject fixture transport; the helper
+refuses extra arguments, including a fixture path. This occurrence does not run it against the SDK. Session lifecycle
+(`PrlApi_InitEx`/`Deinit`, `PrlSrv_Create`, `PrlSrv_LoginLocal`/`Logoff`) is required to reach the getters and is not
+sourced as read-only. Device-enumeration getters below are sourced as configuration reads. The later occurrence
+still excludes `Set*`/`Connect`/`Disconnect`/`Reg*`/`Unreg*`/`PrlVm_RegEx`.
 
 1. Authenticate `ParallelsVirtualizationSDK` bytes and Info.plist (`CFBundleShortVersionString` 27.1.0,
    `CFBundleVersion`/`PrlBuild` 58756) — local metadata, implemented.
 2. `PrlApi_InitEx(PARALLELS_API_VER, PAM_DESKTOP, 0, 0)` — session setup, not sourced as read-only; refused here:
-   `PARALLELS_API_VER` unsourced (`phase=parallels-api-ver-unsourced`).
+   `PARALLELS_API_VER` unsourced (`phase=parallels-api-ver-unsourced`). `PRL_HANDLE_SIZE` is likewise `None`.
+   `reader_executable()` is False and `reader_limitation()` names the exact limitation in one line.
 3. `PrlSrv_Create`, `PrlSrv_LoginLocal` (port 0, `PSL_HIGH_SECURITY`), job wait — session setup; LoginLocal state
    effect is not fetched. `PrlSrv_GetVmListEx` `nFlags` 0 — read-only sense inferred, remaining native premise.
 4. Per listed handle: `PrlVm_GetConfig`, `PrlVmCfg_GetUuid`, `PrlVmCfg_GetHomePath`. Select the reviewed UUID and
@@ -411,9 +412,51 @@ reads. The later occurrence still excludes `Set*`/`Connect`/`Disconnect`/`Reg*`/
 6. `PrlVm_GetState` after, same guest boot id. Logoff, Deinit, free handles.
 
 Output: owned `key=value` grammar, at most 64 KiB, exit 0. It closes the host inventory on the SDK's own parser, not
-the XML one. Remaining native premises: numeric `PARALLELS_API_VER`; `PRL_HANDLE` sizeof; `PrlSrv_LoginLocal` state
-effect; `PrlSrv_GetVmListEx` read-only inferred; `PrlVmDev_IsConnected` config-or-running sense; a later authorized
-genuine occurrence; Stage1 trust; filesystem approval/activation; E12 writer bounds; current candidate.
+the XML one.
+
+**Exact external limitation, and the one supported next read.** The numeric `PARALLELS_API_VER` and the `PRL_HANDLE`
+ABI (size plus the `InitEx`/`PrlSrv_*`/`PrlVmCfg_*` prototypes) are not in the permitted sources: the installed
+27.1.0-58756 bundle ships no SDK headers, and no vendored copy is in this checkout. They are not inferred from the
+Desktop version and Init is not forced. The one concrete supported next read is the Parallels Virtualization SDK
+archive for Desktop 27.1.0-58756 (its `PrlApi.h` and `PrlApiVersion.h` constants and prototypes), read once in a
+separately briefed host-custodied collection step and pinned by archive sha256 before use
+(`linux_disk_inventory.SOURCE_GAP`). No SDK payload is downloaded, installed or executed here. An existing supported
+CLI/config-inventory route was not adopted: `prlctl list --info --json` is not source-proven to carry every field the
+closed enumeration needs (device type, interface, index, `SystemName`, image path, enabled/connected/remote/
+passthrough, disk and emulated type, optical and camera multiplicity), and a route that proves less than the accepted
+premise would be a weaker claim under the same trust.
+
+**Boot-bound handoff (implemented, source-only).** `read_inventory` is the production entry. It binds the helper at
+`pin['tool_path']` to `pin['sha256']`, runs the one bounded dispatch, and accepts the result only inside the caller's
+already authenticated same-VM boot bracket: `read_boot_id()` is called once immediately before and once immediately
+after the dispatch and both originals must equal the authenticated boot id. The selected VM UUID, home and library
+identity are read out of the helper's own output under the pinned grammar, so no caller constant and no manually
+appended `vm`/`boot_ids` field is a reading. Every other outcome raises one exact phase (`READ_PHASES`): missing or
+non-ASCII output, a nonzero or unwaited exit, a timeout, a resource or output-cap refusal, an over-cap or partial
+read, a repeated field and another VM all refuse instead of becoming a host record.
+
+`linux_disk_association.association_facts` assembles the complete record for one observation stage: that boot-bound
+host read, the current registered-config and descriptor originals, the extent inventory the stage itself observed and
+the guest block observations of the same boot (`guest_facts`, which refuses a device one inventory names and the other
+does not, a disagreeing major:minor or size, or an undocumented device type; an unknown device class is forwarded so
+`guest_blocks` refuses it rather than the mapper hiding it). `host_facts` refuses a descriptor chain image the observed
+inventory does not carry. `linux_diagnostic_proof.observe_association` is the wired stage entry: inside the existing
+same-VM boot bracket it dispatches the reader, brackets it with two fresh guest boot originals, and feeds the record
+through production `setup.verify_disk_association`, recording `guest_association` and the verified result (or the
+refusal) in the outcome. Because the reader is known to refuse, the stage does **not dispatch it**: it records
+`guest_association` as not attempted with the exact limitation, so no native occurrence is spent on an entry that
+cannot yet read. Opening that gate is a control (`patch.multiple` on the unsourced constants), not a claim a read ran.
+
+**Helper bytes are pinned independently.** `linux_disk_association.HELPER_SHA256` is a committed literal and
+`PINS['sha256']` binds to it; `read_inventory` verifies the file at the pinned path against it, so a modified helper
+cannot re-pin itself (`helper-bytes-differ`). `inventory.helper_digest` is a content digest for controls only, never
+authority.
+
+Remaining native premises: numeric `PARALLELS_API_VER`; `PRL_HANDLE` ABI size and prototypes; `PrlSrv_LoginLocal`
+state effect; `PrlSrv_GetVmListEx` read-only inferred; `PrlVmDev_IsConnected` config-or-running sense; a later
+authorized genuine occurrence; Stage1 trust; filesystem approval/activation; E12 writer bounds; current candidate.
+The numeric C API v17 enumeration values used by the verifier are carried from the earlier accepted review and are
+not re-cited in this checkout; the SDK header archive named above is also the source that would cite them.
 
 Still unavailable: source-verified kernel hard limits, fresh signed Stage1 evidence, exact activation
 anchors and root installation authorization. No VM, SSH, account, service, build,
