@@ -88,11 +88,9 @@ class VerifierChecks(unittest.TestCase):
     def verify(self, witness=None, limit=LIMIT, fx=None):
         return bound.verify(witness if witness is not None else render(), limit, fx or facts(), {MECH})
 
-    def test_valid_kernel_bounded_witness_admits_with_remaining_headroom(self):
-        result = self.verify()
-        self.assertEqual(result['limit_bytes'], LIMIT)
-        self.assertEqual(result['remaining_after_bytes'], HARD - CHARGED - LIMIT)
-        self.assertEqual(result['entries'], 3)
+    def test_matching_originals_still_refuse_unproven_confinement_and_enforcement(self):
+        with self.assertRaisesRegex(Refusal, 'enforcement and writer confinement are unproven'):
+            self.verify()
 
     def test_production_refuses_every_witness_because_nothing_is_admitted(self):
         with self.assertRaises(Refusal):
@@ -120,12 +118,14 @@ class VerifierChecks(unittest.TestCase):
         missing = dict(good, observations={k: v for k, v in good['observations'].items() if k != 'tree'})
         extra = dict(good, observations=dict(good['observations'], other=original('x')))
         bad_exit = replace_original(good, 'mountinfo', exit=1)
+        false_exit = replace_original(good, 'mountinfo', exit=False)
         not_record = dict(good, observations=dict(good['observations'], dumpe2fs='text'))
         refused_text = 'status=refused phase=open-reg errno=13\n'
         refused_line = replace_original(good, 'tree', text=refused_text,
                                         sha256=hashlib.sha256(refused_text.encode()).hexdigest())
         for label, witness in (('tampered', tampered), ('missing', missing), ('extra', extra),
-                               ('exit', bad_exit), ('record', not_record), ('helper-refused', refused_line)):
+                               ('exit', bad_exit), ('false-exit', false_exit), ('record', not_record),
+                               ('helper-refused', refused_line)):
             with self.subTest(label), self.assertRaises(Refusal):
                 self.verify(witness)
 
@@ -155,14 +155,16 @@ class VerifierChecks(unittest.TestCase):
                 self.verify(render(**change))
 
     def test_quota_valid_bits_must_mark_both_block_limit_and_space_usage(self):
-        for valid in (0, bound.QIF_BLIMITS, bound.QIF_SPACE, bound.QIF_BLIMITS | (1 << 2)):  # QIF_ILIMITS_B = 2
+        for valid in (0, bound.QIF_BLIMITS, bound.QIF_SPACE, bound.QIF_BLIMITS | (1 << 2), 67):
             with self.subTest(valid=valid), self.assertRaisesRegex(Refusal, 'valid'):
                 self.verify(render(valid=valid))
-        self.assertEqual(self.verify(render(valid=bound.QIF_BLIMITS | bound.QIF_SPACE))['entries'], 3)
+        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
+            self.verify(render(valid=bound.QIF_BLIMITS | bound.QIF_SPACE))
 
-    def test_limit_equal_to_headroom_admits_and_one_byte_more_refuses(self):
+    def test_limit_equal_to_headroom_still_refuses_and_one_byte_more_refuses(self):
         headroom = HARD - CHARGED
-        self.assertEqual(self.verify(limit=headroom)['remaining_after_bytes'], 0)
+        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
+            self.verify(limit=headroom)
         with self.assertRaisesRegex(Refusal, 'exceeds the project headroom'):
             self.verify(limit=headroom + 1)
         with self.assertRaisesRegex(Refusal, 'headroom exceeds the row ceiling'):
@@ -202,7 +204,8 @@ class VerifierChecks(unittest.TestCase):
         gate = ('inputs/gate.fifo', 'fifo', '8:2', 0, -1, 1, 0)
         payload = ('inputs/transfer.fifo', 'fifo', '8:2', UID, -1, 1, 0)
         fx = facts(entries={'.', 'inputs', 'inputs/archive.tar', 'inputs/gate.fifo', 'inputs/transfer.fifo'})
-        self.assertEqual(self.verify(render(entries=ENTRIES + (gate, payload)), fx=fx)['entries'], 5)
+        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
+            self.verify(render(entries=ENTRIES + (gate, payload)), fx=fx)
         bad = (
             ('inputs/gate.fifo', 'fifo', '8:2', 0, -1, 1, 8),
             ('inputs/gate.fifo', 'fifo', '8:2', 0, -1, 2, 0),
@@ -233,8 +236,9 @@ class VerifierChecks(unittest.TestCase):
         fx = facts(entries={'.', 'inputs', 'inputs/archive.tar', 'inputs/second.tar'})
         with self.assertRaisesRegex(Refusal, 'below the tree bytes'):
             self.verify(render(entries=two_files, charged=CHARGED), fx=fx)
-        self.assertEqual(self.verify(render(entries=two_files, charged=(66 << 20),
-                                            hard_qb=((66 << 20) + LIMIT) // 1024), fx=fx)['entries'], 4)
+        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
+            self.verify(render(entries=two_files, charged=(66 << 20),
+                               hard_qb=((66 << 20) + LIMIT) // 1024), fx=fx)
 
     def test_facts_must_bind_boot_uid_root_and_exact_entries(self):
         for fx in (facts(boot_id=None), facts(boot_id=''), facts(uid=True), facts(root=''),
@@ -284,7 +288,8 @@ class HelperChecks(unittest.TestCase):
         self.assertIn('dev=8:2', text)
         witness = {'mechanism': MECH, 'observations': render()['observations']}
         witness = replace_original(witness, 'quota', text=text)
-        self.assertEqual(bound.verify(witness, LIMIT, facts(), {MECH})['limit_bytes'], LIMIT)
+        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
+            bound.verify(witness, LIMIT, facts(), {MECH})
 
     def test_kernel_refusal_is_printed_not_turned_into_a_zero_limit(self):
         lines = probe.quota_lines('/dev/sda2', 531, call=self.fake_call(0, 0, rc_quota=-1, errno=3),
@@ -332,7 +337,8 @@ class HelperChecks(unittest.TestCase):
         witness = render(entries=entries, tree_root=str(root), mount_dev=mount_dev, quota_dev=mount_dev)
         witness = replace_original(witness, 'tree', text='\n'.join(tree) + '\n')
         fx = facts(uid=os.getuid(), root=str(root), entries={f['path'] for f in fields})
-        self.assertEqual(bound.verify(witness, LIMIT, fx, {MECH})['entries'], len(entries))
+        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
+            bound.verify(witness, LIMIT, fx, {MECH})
 
     def test_route_plan_binds_the_fixed_argv_and_the_helper_source(self):
         plan, digest = bound.route_plan(ROOT)
@@ -358,14 +364,14 @@ class ProductionPathChecks(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def test_allocation_witness_clears_payload_rows_only_when_the_mechanism_is_admitted(self):
+    def test_allocation_witness_refuses_even_if_the_mechanism_is_admitted(self):
         witness = render(tree_root=setup.BASE, boot=lst.BOOT, tree_boot=lst.BOOT, entries=ENTRIES)
         entries = {'.', 'inputs', 'inputs/archive.tar'}
         live = self.fx.facts(hard_limit=witness, allocation_entries=entries)
         with patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({MECH})), \
                 patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', frozenset({'test-disk'})):
             rows = {r['id']: r for r in setup.setup_plan(dict(live, disk_association=lst.disk_witness()))}
-        self.assertFalse([m for m in rows['E9a']['missing'] if 'hard-limit' in m or 'kernel' in m])
+        self.assertTrue(any('confinement are unproven' in m for m in rows['E9a']['missing']))
         unset = {r['id']: r for r in setup.setup_plan(self.fx.facts(hard_limit=witness, allocation_entries=entries))}
         self.assertTrue(any('hard' in m or 'kernel' in m for m in unset['E9a']['missing']))
 

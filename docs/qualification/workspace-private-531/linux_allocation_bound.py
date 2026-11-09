@@ -65,7 +65,7 @@ def _originals(witness):
         if not isinstance(item, dict):
             raise Refusal(route + ' original is not a record')
         text, digest, code = item.get('text'), item.get('sha256'), item.get('exit')
-        if not isinstance(text, str) or not HEX64.fullmatch(digest or '') or code != 0:
+        if not isinstance(text, str) or not HEX64.fullmatch(digest or '') or type(code) is not int or code != 0:
             raise Refusal(route + ' original is incomplete or its command failed')
         if hashlib.sha256(text.encode('utf-8')).hexdigest() != digest:
             raise Refusal(route + ' original does not match its retained hash')
@@ -181,8 +181,10 @@ def verify(witness, limit_bytes, facts, supported):
     hard = _int(quota.get('bhard_qb'), 'bhard_qb') * QB_UNIT_BYTES
     charged = _int(quota.get('curspace_bytes'), 'curspace_bytes')
     valid = _int(quota.get('valid'), 'valid')
-    if not valid & QIF_BLIMITS or not valid & QIF_SPACE:
+    if valid < 0 or valid & ~0x3f or not valid & QIF_BLIMITS or not valid & QIF_SPACE:
         raise Refusal('quota record does not mark its block limit and space usage valid')
+    if charged < 0:
+        raise Refusal('project charge is negative')
     if hard <= 0:
         raise Refusal('project has no active hard block limit')
     headroom = hard - charged
@@ -224,6 +226,8 @@ def verify(witness, limit_bytes, facts, supported):
         raise Refusal('stage root is not a directory')
     if charged < tree_bytes:
         raise Refusal('kernel charge is below the tree bytes; accounting does not cover the tree')
-    return {'mechanism': MECHANISM, 'limit_bytes': limit_bytes, 'project_id': PROJECT_ID,
-            'device': ROOT_DEVICE, 'boot_id': boot, 'charged_bytes': charged,
-            'remaining_after_bytes': headroom - limit_bytes, 'entries': len(entries)}
+    # An owner in the initial user namespace can change project attributes. A
+    # pre-run tree and a quota format do not establish confinement or limit
+    # enforcement throughout the row. Never promote these observations to a
+    # hard-bound witness until both have an independently reviewed proof.
+    raise Refusal('project quota enforcement and writer confinement are unproven')
