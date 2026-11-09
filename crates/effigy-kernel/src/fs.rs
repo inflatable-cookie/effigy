@@ -122,6 +122,27 @@ mod gateway_log_tests {
 
     #[test]
     fn gateway_log_secures_new_files_with_restrictive_umask() {
+        // umask is process-global; isolate the restrictive mask from sibling tests.
+        if std::env::var_os("EFFIGY_TEST_ISOLATED_UMASK").is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "fs::gateway_log_tests::gateway_log_secures_new_files_with_restrictive_umask",
+                    "--nocapture",
+                ])
+                .env_clear()
+                .env("TMPDIR", std::env::temp_dir())
+                .env("EFFIGY_TEST_ISOLATED_UMASK", "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "isolated proof failed: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
         let root = tempfile::tempdir().unwrap();
         // SAFETY: restored before assertions and no child process is started.
         let old_umask = unsafe { libc::umask(0o777) };

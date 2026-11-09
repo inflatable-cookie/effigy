@@ -126,11 +126,12 @@ impl Fixture {
 
     /// A hook command. It runs through `sh <script>`, never by exec of the
     /// file just written: a sibling test's fork can still hold that file's
-    /// write descriptor, and exec would wait on `ETXTBSY`.
+    /// write descriptor, and exec would wait on `ETXTBSY`. Replace the command
+    /// shell so it cannot retain a second reader when the hook closes stdin.
     fn hook(&self, name: &str, body: &str) -> String {
         let path = self.repo.join(name);
         fs::write(&path, body).expect("hook");
-        format!("/bin/sh '{}'", path.display())
+        format!("exec /bin/sh '{}'", path.display())
     }
 
     fn effigy(&self, args: &[&str]) -> Command {

@@ -257,6 +257,9 @@ Injection rules:
 - managed tasks that set `secrets = "required"` receive declared
   `targets = ["tasks"]` values across their child process launches, even when
   the child shell commands do not spell out the env names directly
+- schema-sensitive and Effigy-injected secrets remain protected at any length;
+  unprovenanced ambient host-process values qualify at eight bytes or more,
+  excluding signed ASCII decimal integers (052 K12 classification boundary)
 - managed host process launches receive those task secrets through the child
   process environment, outside the rendered shell command and argv; captured
   headless log output drops terminal controls and then redacts the resolved

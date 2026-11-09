@@ -1006,7 +1006,8 @@ mod tests {
                     libc::_exit(4);
                 }
                 libc::close(other_slave);
-                libc::close(other_master);
+                // Linux hangs up the slave when its final master closes. Keep
+                // this unrelated terminal live while checking its identity.
                 if libc::isatty(libc::STDIN_FILENO) != 0
                     || libc::isatty(libc::STDERR_FILENO) != 0
                     || libc::isatty(libc::STDOUT_FILENO) != 1
@@ -1014,6 +1015,7 @@ mod tests {
                     libc::_exit(5);
                 }
                 let resolved = super::controlling_terminal();
+                libc::close(other_master);
                 libc::close(kept);
                 let Some(resolved) = resolved else {
                     libc::_exit(6);

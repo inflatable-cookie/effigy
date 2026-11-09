@@ -247,28 +247,19 @@ still exercises the real stack-to-listener switch and its ownership assertions.
 
 ## The fixture CLI environment
 
-A fixture's `effigy` CLI processes never inherit the ambient coding-agent and
-queue-harness environment. Those values (`AI_AGENT=pi`, `NORTHSTAR_BASE_BRANCH`,
-`CLICOLOR=1`, session paths and tokens) carry no provenance, so Effigy's child
-environment classifier marks them secret; a short one then refuses every host
-process whose argv mentions it (the substring `pi` is inside `api`, the digit
-`1` is inside almost any hashed binary path), and output redaction rewrites
-the same values inside a child's captured output, where the proofs read
-published domains and recorded pids.
-`tests/gateway_private.rs::fixture_environment_command` and the managed-matrix
-case command remove the families (the whole `CARGO_*` family - the
-fixture binary's path is itself under the cargo target directory, so
-`CARGO_TARGET_DIR` and nextest's `CARGO_BIN_EXE_*` collide with any argv
-that names the binary - plus `NEXTEST_*`,
-`CLAUDE_CODE_*`, `PI_*`, `PASEO_*`, `NORTHSTAR_*`, `AI_AGENT`, `CLAUDECODE`,
-`CLAUDE_AGENT_SDK_VERSION`, `CLICOLOR`, `CLICOLOR_FORCE`, `FORCE_COLOR`,
-`LS_COLORS`, `LSCOLORS`) before any fixture `effigy` invocation, and every
-daemon, supervisor and workload child inherits the stripped environment.
-In-process runner fixtures share the test process's own environment, so an
-ambient-sensitive one strips the same families for its duration through
-`contract_test_support::strip_ambient_agent_environment`. A new ambient
-variable of this class is added to the strip list, not worked around in a
-proof.
+Fixtures that need a clean CLI environment clear it and copy only their declared
+host-tool and runtime inputs. `fixture_environment_command`, managed-matrix case
+commands and in-process `clean_fixture_environment` use an allowlist; new
+agent, runner or queue variables cannot silently enter a fixture. Fixture-specific
+values are supplied explicitly after that boundary. Do not extend a strip list
+when a new ambient variable appears.
+
+The product classifier independently handles ordinary ambient settings: values
+shorter than eight bytes and signed ASCII decimal integers are not inferred to be
+secrets. Schema-declared sensitive values and Effigy-injected secrets keep full
+protection at every length, as do aliases containing their bytes (contract 052).
+Tests of that boundary construct classification inputs directly, rather than
+relying on the test runner's environment.
 
 The disposable Docker command adapters model the production Compose
 invocation, including the detached bring-up's `--project-directory

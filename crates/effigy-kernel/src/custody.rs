@@ -68,8 +68,11 @@ impl SecretValue {
     pub(crate) fn bytes(&self) -> &[u8] {
         &self.0
     }
-    /// Whether the value is one line: line-framed transports (an env file)
-    /// cannot carry a newline. Reveals nothing else about the value.
+    /// Test an alias without exposing the credential bytes.
+    pub fn occurs_in(&self, value: &[u8]) -> bool {
+        value.windows(self.0.len()).any(|part| part == self.0)
+    }
+    /// Whether the value is one line for a line-framed transport.
     pub fn is_single_line(&self) -> bool {
         !self.0.contains(&b'\n')
     }

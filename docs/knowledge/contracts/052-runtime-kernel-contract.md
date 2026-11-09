@@ -822,7 +822,11 @@ read-only connection (`mode=ro`), so a writer beside the read is
 no obstacle: WAL already gives one consistent committed state, and a crashed
 writer's uncommitted frames are invisible to the reader and left untouched. The
 read never asks for a read-only shared-memory index: that left the index
-unwritable and the next write in this process failed. A
+unwritable and the next write in this process failed. SQLite may update read
+marks in an existing shared-memory index, including its modification time;
+this is WAL synchronization, not a persistent state write. Its type, owner,
+mode, identity and length remain unchanged. No read may create a side file or
+change the database or WAL bytes or metadata. A
 checkpointed store without side files is an immutable open, which needs no lock
 and no index. A read that fails is `Unknown`: the foreground path warns once and
 proceeds, and `runs` reports the journal as unavailable rather than refusing.
@@ -1568,16 +1572,18 @@ only where identity, byte offset and text exactly match its canonical read;
 missing, stale or expired style data renders plain. TUI typed ingest renders
 those spans directly, without ANSI interpretation or a second redactor.
 
-Tom's 2026-10-31 launcher ruling classifies ambient `CLAUDE_CODE_*` as a
-non-secret switch namespace only for the exact values `0`, `1`, `true`, `false`.
-Switch names are bounded to 128 ASCII alphanumeric/underscore bytes with a
-nonempty suffix. Case-insensitive `TOKEN`, `KEY`, `SECRET`, `PASSWORD`,
-`CREDENTIAL` and `AUTH` name segments override the namespace. Schema sensitivity
-and aliases containing a known secret also override all metadata exceptions.
-Non-boolean values and unknown names outside the namespace remain Secret;
-the established exact launcher flags keep their closed-domain classification.
-The custody argv guard is unchanged. This policy avoids an expanding list of
-individual Claude flags without trusting arbitrary environment values.
+Ambient host-process values without schema or literal provenance qualify for
+secret protection only at eight or more bytes, excluding ASCII decimal integers
+(an optional `+` or `-` followed by digits). Short switches and numeric settings
+cannot provide useful credential evidence: matching them as substrings would
+refuse unrelated argv and corrupt ordinary output. This is a classification
+boundary, not a credential-strength guarantee. Applications with short or numeric
+credentials must declare them sensitive in their environment schema.
+Schema-sensitive values and Effigy-supplied `EnvValue::Secret` values retain full
+argv refusal and output redaction at every nonempty length. Their aliases also
+remain protected, including aliases in otherwise plain metadata or literals.
+The kernel custody guard itself applies to every classified secret unchanged;
+no launcher namespace or growing switch-name exception is needed.
 
 Canonical shared-lock reads intentionally return `WouldBlock` during writer
 commit. TUI followers retry on their next poll without blocking all panes;

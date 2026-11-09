@@ -425,7 +425,13 @@ fn prepare(
         .settle(&cleanup, &mut SourceSettlement)
         .map_err(|err| error(&manifest, err.to_string()))?;
     if settled.cleanup() != CleanupOutcome::Complete {
-        return Err(error(&manifest, "source preparation cleanup is incomplete; retry `effigy bundle sync` to settle the prior run"));
+        return Err(error(
+            &manifest,
+            format!(
+                "source preparation cleanup is incomplete: {}; retry `effigy bundle sync` to settle the prior run",
+                settled.unresolved().join("; ")
+            ),
+        ));
     }
     if let Err(record_error) = completion {
         return Err(error(

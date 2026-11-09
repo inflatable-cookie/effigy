@@ -1827,18 +1827,16 @@ fn classify_environment(
         .filter(|(_, secret)| **secret)
         .map(|(key, _)| key.as_str())
         .collect::<BTreeSet<_>>();
-    let known: Vec<Vec<u8>> = environment
+    let known: Vec<SecretValue> = environment
         .iter()
-        .filter_map(|(key, value)| {
-            if !secret_names.contains(key.to_str()?) {
-                return None;
+        .filter_map(|(key, value)| match value {
+            EnvValue::Secret(value) => Some(Ok(value.clone())),
+            EnvValue::Plain(value) if secret_names.contains(key.to_str()?) && !value.is_empty() => {
+                Some(SecretValue::new(value.as_bytes().to_vec()))
             }
-            match value {
-                EnvValue::Plain(value) if !value.is_empty() => Some(value.as_bytes().to_vec()),
-                EnvValue::Secret(_) | EnvValue::Plain(_) => None,
-            }
+            EnvValue::Plain(_) => None,
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
     environment
         .into_iter()
         .map(|(key, value)| {
@@ -1846,16 +1844,13 @@ fn classify_environment(
                 return Ok((key, value));
             };
             let name = key.to_str().unwrap_or("");
-            let contains_secret = known.iter().any(|secret| {
-                value
-                    .as_bytes()
-                    .windows(secret.len())
-                    .any(|bytes| bytes == secret)
-            });
+            let contains_secret = known
+                .iter()
+                .any(|secret| secret.occurs_in(value.as_bytes()));
             let plain = schema.get(name).map(|secret| !secret).unwrap_or_else(|| {
                 literals.contains_key(name)
                     || nonsecret_host_environment(name)
-                    || nonsecret_launcher_flag(name, &value)
+                    || !ambient_credential_candidate(value.as_bytes())
             });
             let value = if value.is_empty() || (plain && !contains_secret) {
                 EnvValue::Plain(value)
@@ -1867,30 +1862,15 @@ fn classify_environment(
         .collect()
 }
 
-/// Owner-approved launcher switch provenance: a closed boolean domain and
-/// namespace, never arbitrary Claude environment values. Secret-bearing name
-/// segments, schema sensitivity and known-secret aliases take precedence.
-fn nonsecret_launcher_flag(name: &str, value: &std::ffi::OsStr) -> bool {
-    if !matches!(value.to_str(), Some("0" | "1" | "true" | "false")) {
-        return false;
-    }
-    let known = matches!(
-        name,
-        "CLAUDECODE" | "AI_AGENT" | "COREPACK_ENABLE_AUTO_PIN" | "COREPACK_ENABLE_DOWNLOAD_PROMPT"
-    );
-    let switch = name.strip_prefix("CLAUDE_CODE_").is_some_and(|suffix| {
-        !suffix.is_empty()
-            && name.len() <= 128
-            && suffix
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-    });
-    (known || switch)
-        && !name.split('_').any(|segment| {
-            ["TOKEN", "KEY", "SECRET", "PASSWORD", "CREDENTIAL", "AUTH"]
-                .iter()
-                .any(|secret| segment.eq_ignore_ascii_case(secret))
-        })
+/// Ambient settings are evidence of a credential only beyond the short-value
+/// and decimal-integer domains. Explicit sensitivity and known aliases always
+/// override this heuristic; the custody guard never relaxes classified secrets.
+fn ambient_credential_candidate(value: &[u8]) -> bool {
+    let digits = value
+        .strip_prefix(b"+")
+        .or_else(|| value.strip_prefix(b"-"))
+        .unwrap_or(value);
+    value.len() >= 8 && !(!digits.is_empty() && digits.iter().all(u8::is_ascii_digit))
 }
 
 /// Only transport/session facts with established non-secret meaning. All
@@ -1901,29 +1881,16 @@ fn nonsecret_host_environment(name: &str) -> bool {
         "EFFIGY_MANAGED_HOST_LISTENER_BIND"
             | "EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE"
             | "EFFIGY_MANAGED_HOST_LISTENER_GENERATION"
-            | "EFFIGY_ADMITTED"
-            | "EFFIGY_DEFER_DEPTH"
-            | "EFFIGY_INTERNAL_TASK_SECRET_GENERATION_ACTIVE"
-            | "NEXTEST"
             | "NEXTEST_RUN_ID"
             | "NEXTEST_TEST_GROUP"
-            | "NEXTEST_TEST_GROUP_SLOT"
-            | "NEXTEST_TEST_GLOBAL_SLOT"
             | "NEXTEST_PROFILE"
             | "NEXTEST_TEST_NAME"
             | "NEXTEST_BINARY_ID"
-            | "NEXTEST_TOTAL_ATTEMPTS"
-            | "RUST_RECURSION_COUNT"
-            | "NEXTEST_ATTEMPT"
             | "NEXTEST_EXECUTION_MODE"
-            | "CARGO_INCREMENTAL"
             | "CARGO_MANIFEST_DIR"
             | "CARGO_MANIFEST_PATH"
             | "CARGO_PKG_NAME"
             | "CARGO_PKG_VERSION"
-            | "CARGO_PKG_VERSION_MAJOR"
-            | "CARGO_PKG_VERSION_MINOR"
-            | "CARGO_PKG_VERSION_PATCH"
             | "CARGO_PKG_VERSION_PRE"
             | "CARGO_PKG_AUTHORS"
             | "CARGO_PKG_DESCRIPTION"
@@ -1932,18 +1899,12 @@ fn nonsecret_host_environment(name: &str) -> bool {
             | "CARGO_PKG_LICENSE"
             | "CARGO_PKG_LICENSE_FILE"
             | "CARGO_PKG_RUST_VERSION"
-            | "MallocNanoZone"
             | "XPC_SERVICE_NAME"
-            | "XPC_FLAGS"
-            | "OSLogRateLimit"
-            | "NoDefaultCurrentDirectoryInExePath"
             | "LESS"
             | "PASEO_AGENT_CWD"
             | "PASEO_AGENT_ID"
             | "PASEO_CLI"
             | "PASEO_HOME"
-            | "CODEX_CI"
-            | "CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS"
             | "LC_ALL"
             | "LC_CTYPE"
             | "LC_MESSAGES"
@@ -1958,7 +1919,6 @@ fn nonsecret_host_environment(name: &str) -> bool {
             | "SHELL"
             | "PWD"
             | "OLDPWD"
-            | "SHLVL"
             | "_"
             | "LANG"
             | "TMPDIR"
@@ -1968,21 +1928,8 @@ fn nonsecret_host_environment(name: &str) -> bool {
             | "COLORTERM"
             | "TERM_PROGRAM"
             | "TERM_PROGRAM_VERSION"
-            | "CI"
-            | "NO_COLOR"
-            | "CARGO_TERM_COLOR"
-            | "CLICOLOR"
-            | "CLICOLOR_FORCE"
-            | "FORCE_COLOR"
-            | "EFFIGY_MANAGED_TUI"
-            | "EFFIGY_MANAGED_HEADLESS"
             // A host process's own output is followed as plain lines from its
             // log, so a nested Effigy there is in a pane too (effigy#729).
-            | "EFFIGY_MANAGED_PANE"
-            | "EFFIGY_MANAGED_PANE_ANSI"
-            | "EFFIGY_COLOR"
-            | "ANSI_COLORS_DISABLED"
-            | "NODE_DISABLE_COLORS"
             | "HOST"
             | "PORT"
             | "EFFIGY_HOST_PROCESS_CONTAINER"
@@ -2895,7 +2842,7 @@ mod tests {
             ("CARGO_PKG_VERSION_PATCH", "1"),
             ("TOKEN", "hidden-value"),
             ("ALIAS", "prefix-hidden-value-suffix"),
-            ("UNKNOWN", "opaque"),
+            ("UNKNOWN", "opaque-value"),
             ("MODE", "dev"),
             ("PUBLIC", "hello"),
             ("LC_TOKEN", "opaque-too"),
@@ -2946,96 +2893,65 @@ mod tests {
     }
 
     #[test]
-    fn launcher_flags_preserve_provenance_without_refusing_ordinary_argv() {
-        use effigy_kernel::custody::EnvValue;
-        let flags = [
-            ("CLAUDECODE", "1"),
-            ("CLAUDE_CODE_CHILD_SESSION", "1"),
-            ("CLAUDE_CODE_SESSION_ATTENDED", "1"),
-            ("CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS", "1"),
-            ("CLAUDE_CODE_UNRECOGNIZED_SWITCH", "1"),
-            ("AI_AGENT", "1"),
-            ("COREPACK_ENABLE_AUTO_PIN", "0"),
-            ("COREPACK_ENABLE_DOWNLOAD_PROMPT", "0"),
-            ("PASEO_AGENT_ID", "agent-id"),
-        ];
-        let environment = || {
-            flags
-                .into_iter()
-                .map(|(key, value)| (key.into(), EnvValue::Plain(value.into())))
-                .collect()
-        };
-        let classified =
-            super::classify_environment(environment(), &Default::default(), &Default::default())
-                .unwrap();
-        assert!(classified
-            .values()
-            .all(|value| matches!(value, EnvValue::Plain(_))));
-        let sensitive = super::classify_environment(
-            environment(),
+    fn ambient_values_qualify_without_name_exceptions() {
+        use effigy_kernel::custody::{EnvValue, SecretValue};
+        use std::ffi::OsStr;
+        let values = [
+            ("ACCEPT_EULA", "Y"),
+            ("DOTNET_MULTILEVEL_LOOKUP", "0"),
+            ("FOO", "1"),
+            ("AGENT", "pi"),
+            ("BOOLEAN", "false"),
+            ("SEVEN", "abcdefg"),
+            ("EIGHT", "abcdefgh"),
+            ("DECIMAL", "+12345678901234567890"),
+            ("NEGATIVE", "-123456789"),
+            ("MIXED", "1234567x"),
+            ("SHORT_SECRET", "Y"),
+            ("ALIAS", "prefix-Y-suffix"),
+            ("OWN_ALIAS", "prefix-Z-suffix"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.into(), EnvValue::Plain(v.into())))
+        .chain([(
+            "OWN".into(),
+            EnvValue::Secret(SecretValue::new(b"Z".to_vec()).unwrap()),
+        )])
+        .collect();
+        let classified = super::classify_environment(
+            values,
             &Default::default(),
-            &[("CLAUDECODE".into(), true)].into_iter().collect(),
+            &[("SHORT_SECRET".into(), true)].into_iter().collect(),
         )
         .unwrap();
-        assert!(matches!(
-            sensitive.get(std::ffi::OsStr::new("CLAUDECODE")),
-            Some(EnvValue::Secret(_))
-        ));
-        // The same known secret value cannot be declassified through an alias.
-        assert!(matches!(
-            sensitive.get(std::ffi::OsStr::new("AI_AGENT")),
-            Some(EnvValue::Secret(_))
-        ));
-        let namespace_sensitive = super::classify_environment(
-            environment(),
-            &Default::default(),
-            &[("CLAUDE_CODE_UNRECOGNIZED_SWITCH".into(), true)]
-                .into_iter()
-                .collect(),
-        )
-        .unwrap();
-        for name in [
-            "CLAUDE_CODE_UNRECOGNIZED_SWITCH",
-            "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS",
+        for key in [
+            "DOTNET_MULTILEVEL_LOOKUP",
+            "FOO",
+            "AGENT",
+            "BOOLEAN",
+            "SEVEN",
+            "DECIMAL",
+            "NEGATIVE",
         ] {
-            assert!(matches!(
-                namespace_sensitive.get(std::ffi::OsStr::new(name)),
-                Some(EnvValue::Secret(_))
-            ));
+            assert!(
+                matches!(classified.get(OsStr::new(key)), Some(EnvValue::Plain(_))),
+                "{key}"
+            );
         }
-        let suspicious = super::classify_environment(
-            [
-                (
-                    "CLAUDECODE".into(),
-                    EnvValue::Plain("credential-value".into()),
-                ),
-                ("CLAUDE_TOKEN".into(), EnvValue::Plain("1".into())),
-                ("PASEO_TOKEN".into(), EnvValue::Plain("0".into())),
-                ("CLAUDE_CODE_API_KEY".into(), EnvValue::Plain("1".into())),
-                ("CLAUDE_CODE_api_kEy".into(), EnvValue::Plain("1".into())),
-                ("CLAUDE_CODE_TOKEN".into(), EnvValue::Plain("0".into())),
-                ("CLAUDE_CODE_SECRET".into(), EnvValue::Plain("true".into())),
-                (
-                    "CLAUDE_CODE_PASSWORD".into(),
-                    EnvValue::Plain("false".into()),
-                ),
-                ("CLAUDE_CODE_CREDENTIAL".into(), EnvValue::Plain("1".into())),
-                ("CLAUDE_CODE_AUTH".into(), EnvValue::Plain("1".into())),
-                (
-                    "CLAUDE_CODE_UNKNOWN".into(),
-                    EnvValue::Plain("opaque".into()),
-                ),
-                ("OTHER_BOOLEAN_SWITCH".into(), EnvValue::Plain("1".into())),
-            ]
-            .into_iter()
-            .collect(),
-            &Default::default(),
-            &Default::default(),
-        )
-        .unwrap();
-        assert!(suspicious
-            .values()
-            .all(|value| matches!(value, EnvValue::Secret(_))));
+        for key in [
+            "ACCEPT_EULA",
+            "EIGHT",
+            "MIXED",
+            "SHORT_SECRET",
+            "ALIAS",
+            "OWN",
+            "OWN_ALIAS",
+        ] {
+            assert!(
+                matches!(classified.get(OsStr::new(key)), Some(EnvValue::Secret(_))),
+                "{key}"
+            );
+        }
     }
 
     /// The replace step waits for the predecessor's gate flock, not just its

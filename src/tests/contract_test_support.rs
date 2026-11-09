@@ -170,43 +170,28 @@ pub(super) fn wait_for_path_exists(path: &Path, timeout: Duration, label: &str) 
     }
 }
 
-/// The ambient coding-agent and queue-harness environment a developer shell
-/// carries (`AI_AGENT=pi`, branch names, session paths and tokens) has no
-/// provenance, so Effigy's child classifier marks it secret: a short value
-/// then refuses host-process spawns whose argv mentions it (`pi` is inside
-/// `api`, a digit is inside any hashed binary path) and output redaction
-/// rewrites asserted content. In-process runner fixtures share the test
-/// process's environment, so an ambient-sensitive fixture strips the
-/// families for its own duration instead of passing them to Effigy.
-pub(super) fn strip_ambient_agent_environment() -> EnvGuard {
-    const FAMILIES: [&str; 5] = ["CARGO_", "NEXTEST_", "CLAUDE_CODE_", "PI_", "PASEO_"];
-    const EXACT: [&str; 8] = [
-        "AI_AGENT",
-        "CLAUDECODE",
-        "CLAUDE_AGENT_SDK_VERSION",
-        "CLICOLOR",
-        "CLICOLOR_FORCE",
-        "FORCE_COLOR",
-        "LS_COLORS",
-        "LSCOLORS",
+/// In-process fixtures retain only the host facilities they explicitly need.
+/// Fixture-specific values are installed after this guard and restored before it.
+pub(super) fn clean_fixture_environment() -> EnvGuard {
+    const ALLOWED: &[&str] = &[
+        "PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "TERM", "OXIDE_POOL",
     ];
-    let mut entries: Vec<(String, Option<String>)> = Vec::new();
-    for (key, _) in std::env::vars_os() {
-        let Some(name) = key.to_str() else { continue };
-        let hits = FAMILIES.iter().any(|family| name.starts_with(family)) || EXACT.contains(&name);
-        if hits {
-            entries.push((name.to_owned(), None));
-        }
-    }
-    let borrowed: Vec<(&str, Option<String>)> = entries
-        .iter()
-        .map(|(key, value)| (key.as_str(), value.clone()))
+    let lock = lock_test();
+    let original: Vec<_> = std::env::vars_os()
+        .filter(|(key, _)| !key.to_str().is_some_and(|key| ALLOWED.contains(&key)))
+        .map(|(key, value)| {
+            std::env::remove_var(&key);
+            (key, Some(value))
+        })
         .collect();
-    EnvGuard::set_many(&borrowed)
+    EnvGuard {
+        original,
+        _lock: lock,
+    }
 }
 
 pub(super) struct EnvGuard {
-    original: Vec<(String, Option<std::ffi::OsString>)>,
+    original: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>,
     // Holds the global test lock so concurrent tests that mutate process env
     // serialize against each other (and against `with_cwd`). The lock is
     // reentrant, so callers that already hold it don't deadlock.
@@ -218,7 +203,7 @@ impl EnvGuard {
         let lock = lock_test();
         let mut original = Vec::with_capacity(entries.len());
         for (key, value) in entries {
-            original.push(((*key).to_owned(), std::env::var_os(key)));
+            original.push((std::ffi::OsString::from(*key), std::env::var_os(key)));
             match value {
                 Some(v) => std::env::set_var(key, v),
                 None => std::env::remove_var(key),
@@ -279,4 +264,22 @@ pub(super) fn assert_waits_for_path_mutator(reader: fn(Box<dyn FnOnce() + Send>)
         "fixture must wait for the active PATH mutator"
     );
     result.expect("fixture succeeds after PATH restoration");
+}
+
+#[test]
+fn clean_fixture_environment_excludes_unknown_values_and_restores_them() {
+    let _unknown = EnvGuard::set_many(&[(
+        "EFFIGY_FIXTURE_UNKNOWN_AMBIENT",
+        Some("unexpected-runner-value".to_owned()),
+    )]);
+    let path = std::env::var_os("PATH");
+    {
+        let _clean = clean_fixture_environment();
+        assert!(std::env::var_os("EFFIGY_FIXTURE_UNKNOWN_AMBIENT").is_none());
+        assert_eq!(std::env::var_os("PATH"), path);
+    }
+    assert_eq!(
+        std::env::var("EFFIGY_FIXTURE_UNKNOWN_AMBIENT").unwrap(),
+        "unexpected-runner-value"
+    );
 }
