@@ -1112,6 +1112,29 @@ def broker_record(row_fd, name, data, expected_dev, owner,
     _row_write(row_fd, name, data)
 
 
+def libc_capability_ops():
+    """The reviewed capability syscall handles, or a refusal when libc does not expose them.
+
+    One resolver so the broker child and the live broker writer cannot disagree about the ABI.
+    """
+    libc = ctypes.CDLL(None, use_errno=True)
+    try:
+        capget, capset, prctl = libc.capget, libc.capset, libc.prctl
+    except AttributeError as exc:
+        raise Refusal('broker capability calls are unavailable') from exc
+    capget.argtypes = [ctypes.POINTER(_CapHeader), ctypes.POINTER(_CapData)]
+    capset.argtypes = [ctypes.POINTER(_CapHeader), ctypes.POINTER(_CapData)]
+    prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
+    for operation in (capget, capset, prctl):
+        operation.restype = ctypes.c_int
+    return capget, capset, prctl
+
+
+def default_bypass_drop():
+    """The live drop: resolve the capability syscalls, then re-read the result before any write."""
+    drop_quota_bypass(*libc_capability_ops())
+
+
 def launch_quota_record(row_fd, name, data, expected_dev, deadline, cleanup_deadline,
                         test_capops=None, test_project=None):
     """Launch one bounded broker child; a timeout kills only that child and never grants closure."""
@@ -1138,16 +1161,7 @@ def launch_quota_record(row_fd, name, data, expected_dev, deadline, cleanup_dead
         read_project = test_project
         owner = os.geteuid()
     else:
-        libc = ctypes.CDLL(None, use_errno=True)
-        try:
-            capget, capset, prctl = libc.capget, libc.capset, libc.prctl
-        except AttributeError as exc:
-            raise Refusal('broker capability calls are unavailable') from exc
-        capget.argtypes = [ctypes.POINTER(_CapHeader), ctypes.POINTER(_CapData)]
-        capset.argtypes = [ctypes.POINTER(_CapHeader), ctypes.POINTER(_CapData)]
-        prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
-        for operation in (capget, capset, prctl):
-            operation.restype = ctypes.c_int
+        capget, capset, prctl = libc_capability_ops()
         read_project, owner = _broker_project_attributes, 0
 
     read_fd, write_fd = os.pipe()
@@ -1303,14 +1317,16 @@ def _broker_parent_fd(destination):
         raise
 
 
-def broker_write(destination, expected_sha256, max_bytes, fifo, row, uid, source=None,
+def broker_write(destination, expected_sha256, max_bytes, fifo, row, uid,
                  drop=None, parent_fd=None, clock=time.monotonic, deadline=900):
     """Stream one bounded file into the charged project as the payload, with custody checked first.
 
     The allocating open happens only after the parent's project/inheritance, custody and the
-    process's own confinement are re-read with every capability set emptied. The write is exclusive,
-    never follows a link, stops at `max_bytes` and must hash to the reviewed bytes; a short, long,
-    mismatched or partially written file refuses and leaves its charge visible.
+    process's own confinement are re-read with every capability set emptied. The live path resolves
+    the capability syscalls itself (`default_bypass_drop`); `drop` is a control seam and is the only
+    way to replace that step. The write is exclusive, never follows a link, stops at `max_bytes` and
+    must hash to the reviewed bytes; a short, long, mismatched or partially written file refuses and
+    leaves its charge visible.
     """
     if not isinstance(expected_sha256, str) or not HEX64.fullmatch(expected_sha256):
         raise Refusal('broker expected digest is invalid')
@@ -1324,7 +1340,7 @@ def broker_write(destination, expected_sha256, max_bytes, fifo, row, uid, source
     own = parent_fd is None
     try:
         before = os.fstat(parent)
-        (drop or drop_quota_bypass)()
+        (drop or default_bypass_drop)()
         with open(fifo, 'rb') as stream:
             try:
                 fd = os.open(os.path.basename(destination),

@@ -916,7 +916,8 @@ class BrokerWriteChecks(unittest.TestCase):
         if dest and os.path.lexists(self.dest):
             os.unlink(self.dest)
 
-    def run_broker(self, data, digest=None, max_bytes=None, drop=None, open_fifo=True, reset_dest=True):
+    def run_broker(self, data, digest=None, max_bytes=None, drop=None, open_fifo=True, reset_dest=True,
+                   inject_drop=True):
         self.clean(dest=reset_dest)
         if open_fifo:
             os.mkfifo(self.fifo)
@@ -935,9 +936,10 @@ class BrokerWriteChecks(unittest.TestCase):
         else:
             thread = None
         try:
+            arguments = {} if not inject_drop else {'drop': drop or (lambda: None)}
             return supervisor.broker_write(str(self.dest), digest or hashlib.sha256(data).hexdigest(),
                                            max_bytes or (1 << 20), str(self.fifo), 'E9a', os.getuid(),
-                                           drop=drop or (lambda: None))
+                                           **arguments)
         finally:
             if thread is not None:
                 thread.join(timeout=10)
@@ -976,6 +978,76 @@ class BrokerWriteChecks(unittest.TestCase):
         with patch.object(supervisor.os, 'geteuid', return_value=0), patch.object(sys, 'stderr'):
             self.assertEqual(supervisor.broker_write_main(['E9a', str(self.dest), 'a' * 64, '1024',
                                                            str(self.fifo), '1001']), 3)
+
+    def fake_capability_ops(self):
+        """The reviewed capability syscalls as a fake kernel, so the live default path can run here."""
+        calls = []
+
+        def capget(header, data):
+            calls.append('capget')
+            header._obj.version = supervisor.CAPABILITY_VERSION_3
+            return 0
+
+        def capset(header, data):
+            calls.append('capset')
+            return 0 if header._obj.version == supervisor.CAPABILITY_VERSION_3 else -1
+
+        def prctl(option, argument, *rest):
+            calls.append(('prctl', option, argument))
+            if option == supervisor.PR_SET_NO_NEW_PRIVS:
+                return 0
+            if option == supervisor.PR_GET_NO_NEW_PRIVS:
+                return 1
+            if option == supervisor.PR_CAP_AMBIENT:
+                return 0
+            return -1
+        return (capget, capset, prctl), calls
+
+    def test_the_live_entry_resolves_the_capability_syscalls_before_the_allocating_open(self):
+        ops, calls = self.fake_capability_ops()
+        data = b'live-broker-bytes'
+        with patch.object(supervisor, 'libc_capability_ops', return_value=ops):
+            result = self.run_broker(data, inject_drop=False)
+        self.assertEqual(result['bytes'], len(data))
+        self.assertEqual(self.dest.read_bytes(), data)
+        # no-new-privileges first, then the capability read, the drop and the verification read.
+        self.assertEqual(calls[0], ('prctl', supervisor.PR_SET_NO_NEW_PRIVS, 1))
+        self.assertGreaterEqual(calls.count('capget'), 2)
+        self.assertEqual(calls.count('capset'), 1)
+        self.assertIn(('prctl', supervisor.PR_GET_NO_NEW_PRIVS, 0), calls)
+
+    def test_the_live_entry_wires_the_drop_and_refuses_before_the_open_when_libc_lacks_it(self):
+        ops, calls = self.fake_capability_ops()
+        data = b'entry-bytes'
+        self.clean()
+        os.mkfifo(self.fifo)
+
+        def writer():
+            try:
+                with open(self.fifo, 'wb') as handle:
+                    handle.write(data)
+            except OSError:
+                pass
+
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        with patch.object(supervisor, 'libc_capability_ops', return_value=ops), \
+                patch.object(sys, 'stdout', new_callable=io.StringIO) as output:
+            self.assertEqual(supervisor.broker_write_main(
+                ['E9a', str(self.dest), hashlib.sha256(data).hexdigest(), str(1 << 20), str(self.fifo),
+                 str(os.getuid())]), 0)
+        thread.join(timeout=10)
+        self.assertEqual(self.dest.read_bytes(), data)
+        self.assertTrue(output.getvalue().startswith(hashlib.sha256(data).hexdigest()))
+        self.assertEqual(calls[0], ('prctl', supervisor.PR_SET_NO_NEW_PRIVS, 1))
+        self.clean()
+        with patch.object(supervisor.ctypes, 'CDLL', return_value=object()), \
+                patch.object(sys, 'stderr', new_callable=io.StringIO) as errors:
+            self.assertEqual(supervisor.broker_write_main(
+                ['E9a', str(self.dest), hashlib.sha256(data).hexdigest(), str(1 << 20), str(self.fifo),
+                 str(os.getuid())]), 3)
+        self.assertIn('capability calls are unavailable', errors.getvalue())
+        self.assertFalse(self.dest.exists(), 'an unavailable capability drop must refuse before any open')
 
     def test_a_restored_quota_bypass_stops_the_write_before_it_opens(self):
         def restored():
