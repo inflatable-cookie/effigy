@@ -43,9 +43,10 @@ bracket: the caller's read_boot_id() is called once immediately before and once 
 the dispatch and both must equal the boot identity that was authenticated for this VM. The
 selected VM UUID and home are derived from the helper's own output, so no caller constant or
 manually appended vm/boot field is a reading. The record keeps the exact bounded original
-stdout/stderr of the dispatch and its waited exit; it names the accessor by its exact pinned argv
-(the documented list --info read) and never carries a checked boolean that asserts more than the
-argv, the waited exit and the bounded streams establish. Configuration evidence is the accepted
+stdout/stderr of the dispatch and its waited exit. Its argv field is the fixed helper dispatch
+route; its api field names the accessor — the documented `prlctl list --info --json` configuration
+read. Neither is a checked boolean: none of them asserts more than the api name, the argv, the
+waited exit and the bounded original streams establish. Configuration evidence is the accepted
 narrow Parallels trust (decision 64b1fe6f v2), not independently observed runtime presentation.
 
 SDK history, kept honest: the earlier SDK route (PrlApi_InitEx/LoginLocal/PrlVmCfg_GetAllDevices)
@@ -372,9 +373,9 @@ def read_inventory(transport=None, pin=None, boot_id=None, read_boot_id=None):
     return {
         'tool_path': pin['tool_path'], 'tool_sha256': pin['sha256'],
         'tool_version': pin['version'], 'desktop_build': pin['desktop_build'],
-        # The accessor is named by its exact pinned argv: the documented read-only configuration
-        # read prlctl list --info --json. No boolean asserts more than the argv, the waited exit
-        # and the bounded original streams establish.
+        # argv is the fixed helper dispatch route; api names the documented read-only accessor
+        # (prlctl list --info --json). No boolean asserts more than the api name, the argv, the
+        # waited exit and the bounded original streams establish.
         'api': pin['api'], 'argv': argv,
         'status': 'ok', 'exit': 0, 'truncated': False,
         'output': output, 'stderr': b'' if not isinstance(stderr, (bytes, bytearray)) else bytes(stderr),

@@ -920,8 +920,9 @@ class ProductionInventoryControls(unittest.TestCase):
     def test_the_real_entry_passes_through_exact_originals_and_refuses_with_a_phase(self):
         """The production entry is the concrete reader: it verifies custody, runs the one bounded
         dispatch through the injected seam, and writes the exact original bytes on success. A
-        failed or unparseable dispatch refuses with its phase and prints no output. Fixture
-        transport only; no prlctl process runs."""
+        failed or unparseable dispatch refuses with its phase and prints no output. Custody
+        verification reads the installed tool's local metadata only (canonical path, bytes, app
+        Info.plist) and never executes it. Fixture transport only; no prlctl process runs."""
         pin_payload = cli_info_text(dal.PINS[dal.MECHANISM]).encode()
         dispatched = []
 
@@ -957,7 +958,7 @@ class ProductionInventoryControls(unittest.TestCase):
             self.assertEqual(inventory.main(['inventory']), 3)
         self.assertIn('status=refused phase=inventory-output-grammar', fake_out.getvalue())
 
-    def test_uninjected_dispatch_uses_fixed_argv_with_private_fixture_transport(self):
+    def test_pinned_dispatch_uses_the_fixed_argv_with_private_fixture_transport(self):
         seen = []
 
         def transport(argv, stdin_path, timeout, output_cap):

@@ -434,8 +434,9 @@ with the same parser, so the stored fact document keeps the exact bounded stdout
 already authenticated same-VM boot bracket: `read_boot_id()` is called once immediately before and once immediately
 after the dispatch and both originals must equal the authenticated boot id. The selected VM UUID and home are read
 out of the helper's own output under the pinned grammar, so no caller constant and no manually appended
-`vm`/`boot_ids` field is a reading. The record names the accessor by its exact pinned argv (the documented
-`prlctl list --info --json` configuration read) and carries no boolean that asserts more than the argv, the waited
+`vm`/`boot_ids` field is a reading. The record's `argv` is the fixed helper dispatch route and its
+`api` names the accessor (the documented
+`prlctl list --info --json` configuration read); it carries no boolean that asserts more than the api name, the argv, the waited
 exit and the bounded original streams establish; `tool_version`/`desktop_build` are the pinned build, bound by the
 helper's own hash-pinned bytes refusing any installed CLI that is not the pinned tool. Every other outcome raises
 one exact phase (`READ_PHASES`): missing or non-ASCII output, a nonzero or unwaited exit, a timeout, a resource or
@@ -451,7 +452,8 @@ inventory does not carry. `linux_diagnostic_proof.observe_association` is the wi
 same-VM boot bracket it dispatches the reader through the occurrence's own supervised route —
 `association_transport` re-checks the fixed argv, stdin, timeout and cap and dispatches through the same
 recorded-step `stage.run_stage` call with the same inputs, environment, resource monitor and stage deadlines as
-every other fixed prlctl call in the stage, and the entry control asserts exactly that: the run's resource monitor
+every other fixed prlctl call in the stage, and the entry control asserts exactly that: the route's own created
+step directory, the run's resource monitor
 object, the bounded stage deadlines, the pinned inputs (the helper at its committed digest) and the fixed
 environment are what reach that dispatch — brackets it with two fresh guest boot originals, and feeds the record
 through production `setup.verify_disk_association`. The outcome's `disk_association` key holds the fact document

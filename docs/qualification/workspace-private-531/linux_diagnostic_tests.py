@@ -2069,7 +2069,12 @@ class EntryTests(unittest.TestCase):
                                'inputs': dict(hashes or {})})
                 if argv[4:5] == ['inventory']:
                     step = Path(root)
-                    step.mkdir(mode=0o700, exist_ok=True)
+                    # The route creates its own recorded step before the dispatch. The fake must
+                    # not create it: assert it exists, is private and has no retained streams yet.
+                    self.assertTrue(step.is_dir(), 'the route did not create its step directory')
+                    self.assertEqual(step.stat().st_mode & 0o777, 0o700, 'the step is not private')
+                    self.assertFalse((step / 'stdout').exists(), 'stdout retained before the dispatch')
+                    self.assertFalse((step / 'stderr').exists(), 'stderr retained before the dispatch')
                     (step / 'stdout').write_bytes(association_tests.cli_info_text().encode())
                     (step / 'stderr').write_bytes(b'')
                     return {'disposition': 'exited', 'waited_exit': 0}
