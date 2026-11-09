@@ -205,6 +205,114 @@
           }
         }
       }
+    },
+    "acow-acquisition": {
+      "max_window_seconds": 3600,
+      "budgets": {
+        "step_timeout_s": 1680,
+        "stdout_cap_bytes": 67108864,
+        "stderr_cap_bytes": 67108864
+      },
+      "checkout": "/Users/tom/Dev/legacy/sites/acowtancy",
+      "consumer": {
+        "includes": [
+          "effigy.toml"
+        ],
+        "relevant_inputs": {
+          "effigy.toml": "pending: legacy effigy.toml blob at the selected head"
+        },
+        "reference_observation": "legacy HEAD 089ff931 tree 49555d09, effigy.toml sha256 f10ec496 observed 2026-11-09 (effigy#766 preflight); the blob id is read at freeze",
+        "bundle": {
+          "approved_revision_prefix": "pending: legacy Underlay active-source revision (version_hint 8121cfc2, observed 2026-11-09)",
+          "content_digest": "pending: legacy Underlay bundle content digest, from the activation receipt"
+        }
+      },
+      "engine": {
+        "kind": "colima-nerdctl",
+        "colima_binary": "/opt/homebrew/bin/colima",
+        "profile": "effigy"
+      },
+      "identity": {
+        "project": "acowtancy-decodelabs",
+        "service": "pending: legacy postgres service label, from engine evidence at freeze",
+        "volume": "pending: legacy postgres data volume, from engine evidence at freeze",
+        "shared_container": "c47a64b6fc1fe688e3ce503a27704fb978580c22bd4d8c2f7083e509ceb0e6d9",
+        "shared_volume": "effigy-shared-mariadb-0721de3e-mysql-data",
+        "never_touch_volumes": [
+          "pending: every legacy named volume, from engine evidence at freeze",
+          "effigy-shared-mariadb-0721de3e-mysql-data"
+        ],
+        "citation": "project acowtancy-decodelabs observed Up 2026-11-09 (effigy#766 preflight); shared MariaDB identities as the acow route"
+      },
+      "roles": {
+        "container": "legacy-postgres-container",
+        "volume": "legacy-postgres-volume"
+      },
+      "modern": {
+        "checkout": "/Users/tom/Dev/projects/acowtancy",
+        "consumer": {
+          "includes": [
+            "infra/workspace.toml",
+            "infra/tasks.toml",
+            "infra/deploy.toml",
+            "infra/secrets.toml",
+            "infra/bootstrap.toml",
+            "state/acowtancy.state.toml"
+          ],
+          "relevant_inputs": {
+            "effigy.toml": "pending: modern blob at the selected head, read at freeze",
+            "infra/workspace.toml": "pending: modern blob at the selected head, read at freeze",
+            "infra/tasks.toml": "pending: modern blob at the selected head, read at freeze",
+            "infra/deploy.toml": "pending: modern blob at the selected head, read at freeze",
+            "infra/secrets.toml": "pending: modern blob at the selected head, read at freeze",
+            "infra/bootstrap.toml": "pending: modern blob at the selected head, read at freeze",
+            "state/acowtancy.state.toml": "pending: modern blob at the selected head, read at freeze",
+            "scripts/tasks/worktree-container-attach.ts": "pending: modern blob at the selected head, read at freeze",
+            "state/schema/202608221002__baseline_auth.sql": "pending: modern blob at the selected head, read at freeze",
+            "state/schema/202608221003__baseline_learning.sql": "pending: modern blob at the selected head, read at freeze",
+            "state/schema/202608221010__baseline_engagement.sql": "pending: modern blob at the selected head, read at freeze",
+            "state/schema/202608221011__baseline_billing.sql": "pending: modern blob at the selected head, read at freeze"
+          },
+          "reference_observation": "modern HEAD 16c706ba observed 2026-11-09 (effigy#766 preflight); infra/workspace.toml sha256 f1f6ad3a",
+          "bundle": {
+            "approved_revision_prefix": "808adad",
+            "content_digest": "sha256:28c920404c34cc46d223b061b694903634b592f99a9f10f06f4f9f8f0058975d"
+          }
+        },
+        "identity": {
+          "project": "acowtancy-dev",
+          "service": "postgres",
+          "volume": "acowtancy-dev-postgres-data",
+          "shared_container": "c47a64b6fc1fe688e3ce503a27704fb978580c22bd4d8c2f7083e509ceb0e6d9",
+          "shared_volume": "effigy-shared-mariadb-0721de3e-mysql-data",
+          "never_touch_volumes": [
+            "acowtancy-dev-postgres-data",
+            "acowtancy-dev-silo-data",
+            "acowtancy-dev-dbgate-data",
+            "effigy-shared-mariadb-0721de3e-mysql-data",
+            "effigy-shared-mariadb-0721de3e-legacy_mysql-data"
+          ],
+          "citation": "5f466914 packet manifest-r1.json protected_state and common.py PRIMARY_* constants"
+        },
+        "roles": {
+          "container": "postgres-container",
+          "volume": "postgres-volume"
+        }
+      },
+      "resources": {
+        "legacy-postgres-container": {
+          "kind": "container"
+        },
+        "legacy-postgres-volume": {
+          "kind": "volume"
+        },
+        "postgres-container": {
+          "kind": "container"
+        },
+        "postgres-volume": {
+          "kind": "volume"
+        }
+      }
     }
   }
 }

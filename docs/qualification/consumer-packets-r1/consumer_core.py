@@ -54,6 +54,7 @@ ENTRY_MODULES = (
     'consumer-packets-r1/proof_entry.py',
     'consumer-packets-r1/acow.py',
     'consumer-packets-r1/cbs.py',
+    'consumer-packets-r1/acow_acquisition.py',
     'workspace-private-531/preparation_stage.py',
     'workspace-private-531/preparation_resources.py',
 )
@@ -72,6 +73,9 @@ REQUEST_KEYS = frozenset({
     'schema', 'route', 'candidate', 'helpers', 'predecessor', 'consumer',
     'provenance', 'window', 'budgets', 'resources', 'prior_intent',
 })
+# Keys a route adds to REQUEST_KEYS. Only the ordinary acquisition check has one:
+# its second consumer checkout (modern) is bound beside the first (legacy).
+ROUTE_EXTRA_KEYS = {'acow-acquisition': frozenset({'modern_consumer'})}
 # Stage disposition to refusal code. `exited` with a waited zero is the only success.
 DISPOSITION_CODES = {
     'failed': 'child-failed',
@@ -198,13 +202,14 @@ def check_exact_keys(obj, keys, what):
 
 def validate_request_shape(request, route):
     """Strict shape only. Values are checked by `check_bindings` and the observations."""
-    check_exact_keys(request, REQUEST_KEYS, 'request')
+    extra = ROUTE_EXTRA_KEYS.get(route, frozenset())
+    check_exact_keys(request, REQUEST_KEYS | extra, 'request')
     if request['schema'] != REQUEST_SCHEMA:
         raise Refused('request-schema', str(request['schema']))
     if request['route'] != route:
         raise Refused('request-route', 'expected %s' % route)
     for key in ('candidate', 'helpers', 'predecessor', 'consumer',
-                'provenance', 'window', 'budgets', 'prior_intent'):
+                'provenance', 'window', 'budgets', 'prior_intent') + tuple(sorted(extra)):
         if not isinstance(request[key], dict):
             raise Refused('request-shape', key + ' is not an object')
     if not isinstance(request['resources'], list):
@@ -350,9 +355,12 @@ def verify_helper_head(git, request):
 
 
 def verify_consumer(git, request, manifest, route, checkout):
+    """The route's own consumer block, at its pinned checkout."""
+    verify_consumer_block(git, request['consumer'], manifest['routes'][route]['consumer'], checkout)
+
+
+def verify_consumer_block(git, consumer, pins, checkout):
     """Selected clean head, declared include set, and every closure blob at that head."""
-    pins = manifest['routes'][route]['consumer']
-    consumer = request['consumer']
     check_exact_keys(consumer, {'selected_head', 'relevant_inputs', 'includes', 'bundle'},
                      'consumer')
     if consumer['includes'] != pins['includes']:
@@ -584,6 +592,10 @@ class Supervisor:
         self.calls = 0
 
     def child(self, argv, label, cwd, rollback=False):
+        # The stage primitive accepts a zero cap and then kills the child at its first byte.
+        # The packet refuses it before any record exists, as the route budgets do.
+        if self.budgets['stdout_cap_bytes'] < 1 or self.budgets['stderr_cap_bytes'] < 1:
+            raise Refused('supervision-refused', '%s: stream caps must be at least one byte' % label)
         self.children.mkdir(parents=True, exist_ok=True)
         root = self.children / label
         try:
@@ -633,7 +645,7 @@ class Session:
     label, so each original stream stays separate and unique.
     """
 
-    def __init__(self, transport, binary, checkout, tails, engine):
+    def __init__(self, transport, binary, checkout, tails, engine, sequence=None):
         if not os.path.isabs(binary):
             raise Refused('argv-not-pinned', 'binary must be absolute')
         self.transport = transport
@@ -641,11 +653,17 @@ class Session:
         self.checkout = checkout
         self.tails = frozenset(tails)
         self.engine = engine
-        self.calls = 0
+        # One counter per occurrence, shared by `at`, so labels never collide across checkouts.
+        self.sequence = sequence if sequence is not None else [0]
 
     def _label(self, label):
-        self.calls += 1
-        return '%03d-%s' % (self.calls, label)
+        self.sequence[0] += 1
+        return '%03d-%s' % (self.sequence[0], label)
+
+    def at(self, checkout):
+        """The same transport, binary, allowlist and sequence, at another pinned checkout."""
+        return Session(self.transport, self.binary, checkout, self.tails, self.engine,
+                       self.sequence)
 
     def effigy(self, tail, label):
         tail = tuple(tail)
@@ -666,12 +684,14 @@ def read_running(session, env, label):
 
 
 def arm(route, tails, execute, request_path, request_sha256, evidence_dir, *, transport=None,
-        manifest=None, git=None, now_ns=None, roots=EVIDENCE_ROOTS):
+        manifest=None, git=None, now_ns=None, roots=EVIDENCE_ROOTS, verify_more=None):
     """The armed sequence. Every gate that reads no child runs before the evidence claim.
 
     A refusal before the claim leaves no evidence. A refusal or failure after it
     spends the occurrence and records its code, so a retry cannot reuse it.
-    `transport` and `git` default to the supervised production path.
+    `transport` and `git` default to the supervised production path. `verify_more`,
+    when a route gives one, runs the route's further closure reads with the same
+    recording reader, still before any engine or consumer effect.
     """
     manifest = manifest if manifest is not None else load_manifest()
     require_route_frozen(manifest, route)
@@ -694,6 +714,8 @@ def arm(route, tails, execute, request_path, request_sha256, evidence_dir, *, tr
         try:
             verify_helper_head(reader, request)
             verify_consumer(reader, request, manifest, route, checkout)
+            if verify_more is not None:
+                verify_more(reader, request, manifest)
         finally:
             write_closure(evidence, reads)
         engine = manifest['routes'][route]['engine']

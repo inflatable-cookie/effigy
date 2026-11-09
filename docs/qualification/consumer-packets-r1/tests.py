@@ -27,6 +27,7 @@ import io
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -39,6 +40,7 @@ DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(DIR))
 
 import acow  # noqa: E402
+import acow_acquisition as acq  # noqa: E402
 import acow_battery  # noqa: E402
 import cbs  # noqa: E402
 import consumer_core as core  # noqa: E402
@@ -51,6 +53,7 @@ START = 5_000
 NOW = START + 1
 CAND = 'c' * 40
 HEAD = '1' * 40
+HEAD2 = '2' * 40
 H = 'd' * 40
 M = 'e' * 40
 SHA = 'sha256:' + 'f' * 64
@@ -1257,6 +1260,602 @@ def _():
     except RuntimeError:
         return
     raise AssertionError('accepted a packet with no SCRATCH binding')
+
+
+# ---------------------------------------------------------------- ordinary acquisition (effigy#785)
+
+ACQ_NAMES = {'legacy': 'acquisition-legacy', 'modern': 'acquisition-modern'}
+LEG_PG = 'a1' * 32
+LEG_SVC = 'legacy-db'
+LEG_VOL = 'legacy-pg-volume'
+for _name in ACQ_NAMES.values():
+    (ROOT / 'checkouts' / _name).mkdir(parents=True, exist_ok=True)
+
+
+def acquisition_manifest():
+    manifest = fixture_manifest()
+    route = manifest['routes'][acq.ROUTE]
+    route['checkout'] = checkout_of(ACQ_NAMES['legacy'])
+    route['identity'].update(service=LEG_SVC, volume=LEG_VOL,
+                             never_touch_volumes=[LEG_VOL, route['identity']['shared_volume']])
+    route['consumer']['bundle']['approved_revision_prefix'] = 'd' * 7
+    route['modern']['checkout'] = checkout_of(ACQ_NAMES['modern'])
+    route['modern']['consumer']['bundle']['approved_revision_prefix'] = 'd' * 7
+    return manifest
+
+
+def consumer_block(pins, head):
+    return {'selected_head': head,
+            'relevant_inputs': copy.deepcopy(pins['relevant_inputs']),
+            'includes': copy.deepcopy(pins['includes']),
+            'bundle': {'resolved_revision': H, 'content_digest': pins['bundle']['content_digest']}}
+
+
+def acquisition_request(manifest, prior, legacy_head=HEAD, modern_head=HEAD2, merged=M,
+                        helper_head=H, binary=None):
+    route = manifest['routes'][acq.ROUTE]
+    binary = str(FIXTURE_BIN) if binary is None else binary
+    digest = FIXTURE_BIN_SHA if binary == str(FIXTURE_BIN) else core.sha256_file(binary)
+    return {
+        'schema': core.REQUEST_SCHEMA,
+        'route': acq.ROUTE,
+        'candidate': {'source_commit': CAND, 'binary_sha256': digest,
+                      'install_identity': {'path': binary, 'version': 'fixture-C', 'sha256': digest}},
+        'helpers': {'head': helper_head, 'modules': core.module_hashes()},
+        'predecessor': {'receipt_sha256': SHA2, 'same_candidate_commit': CAND},
+        'consumer': consumer_block(route['consumer'], legacy_head),
+        'modern_consumer': consumer_block(route['modern']['consumer'], modern_head),
+        'provenance': {'merged_commit': merged, 'source_immutable_head': helper_head},
+        'window': {'id': 'fixture-window-acquisition', 'token_sha256': TOKEN,
+                   'start_monotonic_ns': START, 'deadline_monotonic_ns': START + 600 * NS},
+        'budgets': copy.deepcopy(route['budgets']),
+        'resources': [
+            {'role': 'legacy-postgres-container', 'kind': 'container', 'identity': LEG_PG},
+            {'role': 'legacy-postgres-volume', 'kind': 'volume', 'identity': LEG_VOL},
+            {'role': 'postgres-container', 'kind': 'container', 'identity': PG_ID},
+            {'role': 'postgres-volume', 'kind': 'volume',
+             'identity': route['modern']['identity']['volume']},
+        ],
+        'prior_intent': copy.deepcopy(prior),
+    }
+
+
+ACQ_INTENT = {'legacy': {'stack': False}, 'modern': {'stack': False}}
+
+
+def acquisition_git(manifest, calls=None, legacy_head=HEAD, modern_head=HEAD2, modern_status='',
+                    modern_closure=None):
+    route = manifest['routes'][acq.ROUTE]
+    closures = {
+        checkout_of(ACQ_NAMES['legacy']): (legacy_head, '', route['consumer']['relevant_inputs']),
+        checkout_of(ACQ_NAMES['modern']): (modern_head, modern_status,
+                                           modern_closure or route['modern']['consumer']['relevant_inputs']),
+    }
+    log = calls if calls is not None else []
+
+    def git(args, cwd):
+        log.append((list(args), str(cwd)))
+        if str(cwd) == str(core.DIR):
+            if list(args) == ['rev-parse', 'HEAD']:
+                return M + '\n'
+            raise AssertionError('unexpected packet-checkout read %r' % (args,))
+        head, status, closure = closures[str(cwd)]
+        if list(args) == ['rev-parse', 'HEAD']:
+            return head + '\n'
+        if list(args) == ['status', '--porcelain']:
+            return status
+        if len(args) == 2 and args[0] == 'rev-parse' and args[1].startswith('HEAD:'):
+            path = args[1][len('HEAD:'):]
+            if path not in closure:
+                raise core.Refused('input-drift', 'no blob at ' + path)
+            return closure[path] + '\n'
+        raise AssertionError('unexpected git read %r' % (args,))
+    return git
+
+
+def write_artifact(checkout):
+    """What the producer leaves behind: artifact bytes and a receipt naming the target."""
+    path = Path(checkout) / acq.ARTIFACT
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b'fixture linux artifact bytes\n')
+    Path(str(path) + '.receipt').write_text('release_triple=%s\n' % acq.TARGET)
+    stamp = time.time_ns()
+    os.utime(path, ns=(stamp, stamp))
+
+
+def reset_checkouts():
+    """Each control starts with no producer output in the fixture checkouts."""
+    for name in ACQ_NAMES.values():
+        effigy = Path(checkout_of(name)) / '.effigy'
+        if effigy.is_symlink() or effigy.is_file():
+            os.unlink(effigy)
+        elif effigy.is_dir():
+            shutil.rmtree(effigy)
+
+
+class AcquisitionEngine:
+    """Harmless transport for the acquisition route. Stack state and artifacts are per checkout."""
+
+    def __init__(self, manifest, *, running=None, produce=None, fail_up=None):
+        reset_checkouts()
+        route = manifest['routes'][acq.ROUTE]
+        self.names = {checkout_of(name): key for key, name in ACQ_NAMES.items()}
+        self.running = {'legacy': False, 'modern': False}
+        self.running.update(running or {})
+        self.produce = set(produce if produce is not None else ['legacy', 'modern'])
+        self.fail_up = dict(fail_up or {})
+        self.children = ROOT / 'acq-children' / uuid_like()
+        self.containers = [
+            {'id': LEG_PG, 'project': route['identity']['project'], 'service': LEG_SVC,
+             'mounts': [LEG_VOL]},
+            {'id': PG_ID, 'project': route['modern']['identity']['project'],
+             'service': route['modern']['identity']['service'],
+             'mounts': [route['modern']['identity']['volume']]},
+            {'id': route['identity']['shared_container'], 'project': None, 'service': None,
+             'mounts': []},
+        ]
+        self.volumes = {LEG_VOL, route['identity']['shared_volume']} | set(
+            route['modern']['identity']['never_touch_volumes']) | {
+            route['modern']['identity']['volume'], route['modern']['identity']['shared_volume']}
+        self.calls = []
+
+    def __call__(self, argv, label, cwd):
+        name = self.names.get(str(cwd))
+        if name is None:
+            raise AssertionError('child not run from a pinned checkout: %r' % (cwd,))
+        short = label.split('-', 1)[1] if label[:3].isdigit() and label[3:4] == '-' else label
+        self.calls.append((name, short, list(argv[1:])))
+        if argv[1] == 'container':
+            tail = tuple(argv[1:])
+            if tail == acq.UP_TAIL:
+                if name in self.fail_up:
+                    raise core.Refused(self.fail_up[name], short)
+                self.running[name] = True
+                if name in self.produce:
+                    write_artifact(cwd)
+                return self._record(short, '')
+            if tail == acq.STATUS_TAIL:
+                return self._record(short, json.dumps({'running': self.running[name]}) + '\n')
+            if tail == acq.DOWN_TAIL:
+                self.running[name] = False
+                return self._record(short, '')
+            raise AssertionError('tail outside the route: %r' % (tail,))
+        return self._record(short, self._engine_output(argv))
+
+    def _record(self, short, text):
+        self.children.mkdir(parents=True, exist_ok=True)
+        path = self.children / (short + '.stdout')
+        path.write_text(text)
+        return {'label': short, 'exit': 0, 'cwd': '', 'streams': {'stdout': {'path': str(path)}}}
+
+    def _engine_output(self, argv):
+        rest = argv[argv.index('--') + 1:]
+        verb = rest[0]
+        if verb == 'ps':
+            filters = [rest[i + 1] for i, item in enumerate(rest) if item == '--filter']
+            rows = [box['id'] for box in self.containers
+                    if all(FakeEngine._match(box, f) for f in filters)]
+            return '\n'.join(sorted(rows)) + ('\n' if rows else '')
+        if verb == 'volume':
+            return '\n'.join(sorted(self.volumes)) + '\n'
+        if verb == 'inspect':
+            box = next(b for b in self.containers if b['id'] == rest[-1])
+            return ''.join('volume %s\n' % name for name in box['mounts'])
+        raise AssertionError('unexpected engine verb ' + verb)
+
+    def ups(self):
+        return [(name, short) for name, short, tail in self.calls if tail == list(acq.UP_TAIL)]
+
+
+def uuid_like():
+    return hashlib.sha256(os.urandom(16)).hexdigest()[:16]
+
+
+def acq_refusal(name, code, *, prior=ACQ_INTENT, engine=None, git=None, manifest=None,
+                request=None):
+    manifest = manifest if manifest is not None else acquisition_manifest()
+    request = request if request is not None else acquisition_request(manifest, prior)
+    engine = engine if engine is not None else AcquisitionEngine(manifest)
+    refusal_run(acq, acq.ROUTE, request, name, code, engine=engine, manifest=manifest,
+                git=git or acquisition_git(manifest))
+    return engine
+
+
+def acq_passed(name, *, prior=ACQ_INTENT, engine=None, manifest=None):
+    manifest = manifest if manifest is not None else acquisition_manifest()
+    request = acquisition_request(manifest, prior)
+    engine = engine if engine is not None else AcquisitionEngine(manifest)
+    result, evidence = run_entry(acq, acq.ROUTE, request, name, engine=engine, manifest=manifest,
+                                 git=acquisition_git(manifest))
+    return result, evidence, engine
+
+
+@check('ordinary acquisition: committed route refuses for pending pins before any request read')
+def _():
+    expect_code('route-pins-pending', lambda: acq.run(
+        str(ROOT / 'no-such-request.json'), SHA, str(ROOT / 'no-such-evidence')))
+    assert acq.main([]) == 2
+
+
+@check('ordinary acquisition: the entry is the one fixed route and refuses unknown argv')
+def _():
+    expect_code('unarmed', lambda: proof_entry.run(['acow-acquisition', '--request', 'x']))
+    assert proof_entry.ROUTES['acow-acquisition'] is acq
+
+
+@check('ordinary acquisition: a request for another route refuses on shape, not on pins')
+def _():
+    manifest = acquisition_manifest()
+    request = acquisition_request(manifest, ACQ_INTENT)
+    request['route'] = 'acow'
+    expect_code('request-route', lambda: core.validate_request_shape(request, acq.ROUTE))
+
+
+@check('ordinary acquisition: modern_consumer is a shape key only on this route')
+def _():
+    manifest = acquisition_manifest()
+    request = acquisition_request(manifest, ACQ_INTENT)
+    core.validate_request_shape(request, acq.ROUTE)
+    plain = request_for(manifest, 'acow', {'stack': False})
+    plain['modern_consumer'] = copy.deepcopy(request['modern_consumer'])
+    expect_code('request-shape', lambda: core.validate_request_shape(plain, 'acow'))
+    dropped = copy.deepcopy(request)
+    del dropped['modern_consumer']
+    expect_code('request-shape', lambda: core.validate_request_shape(dropped, acq.ROUTE))
+
+
+@check('ordinary acquisition: both passes run the detached ordinary form in their own checkouts')
+def _():
+    result, evidence, engine = acq_passed('acq-happy')
+    assert result['status'] == 'passed', result
+    assert [name for name, _ in engine.ups()] == ['legacy', 'modern'], engine.ups()
+    assert [label for label, _, _ in engine.calls if label == 'legacy'][0] == 'legacy'
+    for name in ('legacy', 'modern'):
+        assert result['passes'][name]['artifact']['after']['receipt_names_target'] is True
+        assert result['passes'][name]['artifact']['before'] == {'present': False}
+    assert engine.running == {'legacy': False, 'modern': False}, 'the window stops what it started'
+    occurrence = json.loads((evidence / 'occurrence.json').read_text())
+    assert occurrence['status'] == 'passed' and occurrence['spent'] is False, occurrence
+
+
+@check('ordinary acquisition: a build exit alone is not handoff success')
+def _():
+    engine = AcquisitionEngine(acquisition_manifest(), produce=[])
+    acq_refusal('acq-exit-only', 'handoff-missing', engine=engine)
+    assert engine.ups() == [('legacy', 'legacy-up')], engine.ups()
+
+
+@check('ordinary acquisition: a legacy refusal skips modern and nothing retries')
+def _():
+    engine = AcquisitionEngine(acquisition_manifest(), fail_up={'legacy': 'child-failed'})
+    acq_refusal('acq-legacy-fails', 'child-failed', engine=engine)
+    assert engine.ups() == [('legacy', 'legacy-up')], engine.ups()
+    assert not any(name == 'modern' for name, _, _ in engine.calls), 'modern must not start'
+
+
+@check('ordinary acquisition: an unknown legacy closure skips modern')
+def _():
+    engine = AcquisitionEngine(acquisition_manifest(), fail_up={'legacy': 'child-unreaped'})
+    acq_refusal('acq-legacy-unknown', 'child-unreaped', engine=engine)
+    assert not any(name == 'modern' for name, _, _ in engine.calls), 'modern must not start'
+
+
+@check('ordinary acquisition: a modern failure keeps the legacy pass and spends the window')
+def _():
+    engine = AcquisitionEngine(acquisition_manifest(), fail_up={'modern': 'child-failed'})
+    acq_refusal('acq-modern-fails', 'child-failed', engine=engine)
+    assert engine.ups() == [('legacy', 'legacy-up'), ('modern', 'modern-up')], engine.ups()
+
+
+@check('ordinary acquisition: a stack already running before the window is refused before any up')
+def _():
+    engine = AcquisitionEngine(acquisition_manifest(), running={'legacy': True})
+    acq_refusal('acq-prior-running', 'prior-running', prior={'legacy': {'stack': True},
+                                                              'modern': {'stack': False}},
+                engine=engine)
+    assert engine.ups() == [], 'a running stack must not be brought up again'
+    assert engine.running['legacy'] is True, 'pre-existing running state is preserved'
+
+
+@check('ordinary acquisition: prior intent must name stack for both passes exactly')
+def _():
+    engine = AcquisitionEngine(acquisition_manifest())
+    acq_refusal('acq-intent-shape', 'prior-intent', prior={'legacy': {'stack': False}},
+                engine=engine)
+    assert engine.ups() == []
+
+
+@check('ordinary acquisition: modern closure drift refuses before any engine or up effect')
+def _():
+    manifest = acquisition_manifest()
+    closure = copy.deepcopy(manifest['routes'][acq.ROUTE]['modern']['consumer']['relevant_inputs'])
+    key = sorted(closure)[0]
+    closure[key] = 'b' * 40
+    engine = AcquisitionEngine(manifest)
+    git = acquisition_git(manifest, modern_closure=closure)
+    acq_refusal('acq-modern-drift', 'input-drift', manifest=manifest, engine=engine, git=git)
+    assert engine.calls == [], 'closure drift must refuse before any child'
+
+
+@check('ordinary acquisition: a dirty modern checkout refuses before any child')
+def _():
+    manifest = acquisition_manifest()
+    engine = AcquisitionEngine(manifest)
+    acq_refusal('acq-modern-dirty', 'consumer-dirty', manifest=manifest, engine=engine,
+                git=acquisition_git(manifest, modern_status=' M effigy.toml\n'))
+    assert engine.calls == []
+
+
+@check('ordinary acquisition: a foreign legacy container refuses before the up')
+def _():
+    manifest = acquisition_manifest()
+    engine = AcquisitionEngine(manifest, produce=[])
+    engine.containers[0] = dict(engine.containers[0], id='b2' * 32)
+    acq_refusal('acq-foreign', 'resource-mismatch', manifest=manifest, engine=engine)
+    assert engine.ups() == [], 'an unbound container must refuse before any up'
+
+
+@check('ordinary acquisition: a receipt that does not name the target is not produced')
+def _():
+    base = {'present': True, 'mtime_ns': 1, 'size': 1, 'sha256': 'x', 'receipt_names_target': False}
+    assert acq.produced_in_window({'present': False}, base) is False
+    ok = dict(base, receipt_names_target=True)
+    assert acq.produced_in_window({'present': False}, ok) is True
+    assert acq.produced_in_window(dict(base, receipt_names_target=True), dict(ok, mtime_ns=1)) \
+        is False, 'an unmoved stale artifact is not this window output'
+    assert acq.produced_in_window(dict(ok, mtime_ns=0), ok) is True
+
+
+@check('ordinary acquisition: a symlinked artifact path refuses before any read or up')
+def _():
+    manifest = acquisition_manifest()
+    engine = AcquisitionEngine(manifest, produce=[])
+    link_dir = checkout_of(ACQ_NAMES['legacy']) + '/.effigy/linux-release'
+    target_dir = ROOT / 'elsewhere'
+    target_dir.mkdir(parents=True, exist_ok=True)
+    base = Path(checkout_of(ACQ_NAMES['legacy'])) / '.effigy'
+    base.mkdir(parents=True, exist_ok=True)
+    os.symlink(target_dir, link_dir)
+    try:
+        acq_refusal('acq-symlink', 'artifact-symlink', manifest=manifest, engine=engine)
+        assert engine.ups() == []
+    finally:
+        os.unlink(link_dir)
+
+
+@check('ordinary acquisition: the session refuses any tail outside the three allowed forms')
+def _():
+    manifest = acquisition_manifest()
+    session = core.Session(forbidden_transport, str(FIXTURE_BIN), checkout_of(ACQ_NAMES['legacy']),
+                           acq.TAILS, manifest['routes'][acq.ROUTE]['engine'])
+    expect_code('argv-not-allowlisted', lambda: session.effigy(
+        ('container', 'stack', 'up', '--detach', '--repo', '/x'), 'bad'))
+    expect_code('argv-not-allowlisted', lambda: session.effigy(
+        ('container', 'hybrid', 'up', '--detach'), 'bad-env'))
+    expect_code('argv-not-allowlisted', lambda: session.effigy(
+        ('dev',), 'bad-dev'))
+
+
+@check('ordinary acquisition: the window is one use, bounded, and unexpired')
+def _():
+    manifest = acquisition_manifest()
+    manifest['consumed_windows'] = ['fixture-window-acquisition']
+    engine = AcquisitionEngine(manifest)
+    acq_refusal('acq-consumed', 'window-consumed', manifest=manifest, engine=engine)
+    assert engine.calls == []
+    manifest = acquisition_manifest()
+    request = acquisition_request(manifest, ACQ_INTENT)
+    request['window']['deadline_monotonic_ns'] = START + 3601 * NS
+    refusal_run(acq, acq.ROUTE, request, 'acq-span', 'window-bounds', engine=AcquisitionEngine(manifest),
+                manifest=manifest, git=acquisition_git(manifest))
+    manifest = acquisition_manifest()
+    refusal_run(acq, acq.ROUTE, acquisition_request(manifest, ACQ_INTENT), 'acq-expired', 'window-expired',
+                engine=AcquisitionEngine(manifest), manifest=manifest, git=acquisition_git(manifest),
+                now=START + 600 * NS)
+
+
+@check('ordinary acquisition: the packet keeps the acow and cbs routes unchanged in shape')
+def _():
+    for route in ('acow', 'cbs'):
+        assert 'modern_consumer' not in core.ROUTE_EXTRA_KEYS.get(route, frozenset())
+    assert set(core.REQUEST_KEYS) == {
+        'schema', 'route', 'candidate', 'helpers', 'predecessor', 'consumer',
+        'provenance', 'window', 'budgets', 'resources', 'prior_intent'}
+    assert 'consumer-packets-r1/acow_acquisition.py' in core.ENTRY_MODULES
+
+
+@check('ordinary acquisition: a same-source detached copy computes the same module hashes')
+def _():
+    base = ROOT / 'portable'
+    shutil.rmtree(base, ignore_errors=True)
+    for name in ('consumer-packets-r1', 'workspace-private-531'):
+        shutil.copytree(core.QUALIFICATION / name, base / name,
+                        ignore=shutil.ignore_patterns('__pycache__'))
+    code = ('import json, sys; sys.path.insert(0, sys.argv[1]); import consumer_core as c; '
+            'print(json.dumps(c.module_hashes(), sort_keys=True))')
+    out = subprocess.run([sys.executable, '-I', '-B', '-c', code, str(base / 'consumer-packets-r1')],
+                         capture_output=True, text=True, check=True).stdout
+    assert json.loads(out) == core.module_hashes(), 'a detached copy must bind the same modules'
+
+
+# Fixture CLI for the end-to-end acquisition controls. One script stands for the effigy
+# binary and the Colima engine: `container` argv is the route's ordinary form run in the
+# checkout named by cwd, and `nerdctl` argv is a read through the pinned profile.
+FIXTURE_ACQ_CLI = '''#!PYTHON -I
+"""Harmless fixture CLI. The producer writes only a fixture artifact and receipt under cwd."""
+import json
+import os
+import sys
+from pathlib import Path
+
+STATE = Path(__file__).resolve().parent / 'state.json'
+TARGET = 'aarch64-unknown-linux-gnu'
+ARTIFACT = Path('.effigy/linux-release/artifacts/effigy-' + TARGET)
+argv = sys.argv[1:]
+state = json.loads(STATE.read_text())
+name = os.path.basename(os.getcwd())
+
+
+def save():
+    STATE.write_text(json.dumps(state, sort_keys=True))
+
+
+if argv[:1] == ['container']:
+    state['log'].append([name, argv])
+    if argv == ['container', 'stack', 'up', '--detach']:
+        if name in state['fail_up']:
+            save()
+            sys.exit(1)
+        state['running'][name] = True
+        if name in state['produce']:
+            path = Path(os.getcwd()) / ARTIFACT
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'fixture linux artifact bytes\\n')
+            Path(str(path) + '.receipt').write_text('release_triple=%s\\n' % TARGET)
+        save()
+        sys.exit(0)
+    if argv == ['container', 'stack', 'status', '--json']:
+        print(json.dumps({'running': state['running'][name]}))
+        save()
+        sys.exit(0)
+    if argv == ['container', 'stack', 'down']:
+        state['running'][name] = False
+        save()
+        sys.exit(0)
+    sys.exit(2)
+rest = argv[argv.index('--') + 1:]
+verb = rest[0]
+state['log'].append([name, argv])
+save()
+if verb == 'ps':
+    filters = [rest[i + 1] for i, item in enumerate(rest) if item == '--filter']
+
+    def match(box, flt):
+        if flt.startswith('label=com.docker.compose.project='):
+            return box['project'] == flt.split('=', 2)[2]
+        if flt.startswith('label=com.docker.compose.service='):
+            return box['service'] == flt.split('=', 2)[2]
+        return False
+    rows = [b['id'] for b in state['containers'] if all(match(b, f) for f in filters)]
+    print('\\n'.join(sorted(rows)))
+elif verb == 'volume':
+    print('\\n'.join(sorted(state['volumes'])))
+elif verb == 'inspect':
+    box = next(b for b in state['containers'] if b['id'] == rest[-1])
+    print('\\n'.join('volume ' + name for name in box['mounts']))
+else:
+    sys.exit(2)
+'''
+
+
+def acq_e2e(name, *, prior=ACQ_INTENT, produce=('legacy', 'modern'), fail_up=()):
+    """A real git checkout per consumer at its reviewed closure, and the fixture CLI bound to state."""
+    base = ROOT / name
+    manifest = acquisition_manifest()
+    route = manifest['routes'][acq.ROUTE]
+    env = {'GIT_CONFIG_NOSYSTEM': '1', 'HOME': str(base), 'PATH': os.environ.get('PATH', '')}
+    heads = {}
+    blobs = {}
+    checkouts = {'legacy': base / 'legacy', 'modern': base / 'modern'}
+    closures = {'legacy': route['consumer']['relevant_inputs'],
+                'modern': route['modern']['consumer']['relevant_inputs']}
+    for key, checkout in checkouts.items():
+        checkout.mkdir(parents=True, exist_ok=True)
+        run_git = lambda *args, c=checkout: subprocess.run(  # noqa: E731
+            ['/usr/bin/git', '-C', str(c), *args], capture_output=True, text=True,
+            check=True, env=env).stdout
+        run_git('init', '-q')
+        for path in closures[key]:
+            target = checkout / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('fixture closure input ' + path + '\n')
+        run_git('add', '-A')
+        run_git('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid',
+                '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'fixture closure')
+        heads[key] = run_git('rev-parse', 'HEAD').strip()
+        blobs[key] = {path: run_git('rev-parse', 'HEAD:' + path).strip() for path in closures[key]}
+    route['checkout'] = str(checkouts['legacy'])
+    route['modern']['checkout'] = str(checkouts['modern'])
+    route['consumer']['relevant_inputs'] = blobs['legacy']
+    route['modern']['consumer']['relevant_inputs'] = blobs['modern']
+    script = base / 'bin' / 'effigy'
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text(FIXTURE_ACQ_CLI.replace('PYTHON', sys.executable))
+    script.chmod(0o755)
+    route['engine']['colima_binary'] = str(script)
+    containers = [
+        {'id': LEG_PG, 'project': route['identity']['project'], 'service': LEG_SVC,
+         'mounts': [LEG_VOL]},
+        {'id': PG_ID, 'project': route['modern']['identity']['project'],
+         'service': route['modern']['identity']['service'],
+         'mounts': [route['modern']['identity']['volume']]},
+        {'id': route['identity']['shared_container'], 'project': None, 'service': None,
+         'mounts': []},
+    ]
+    volumes = sorted(set([LEG_VOL, route['identity']['shared_volume']]
+                         + route['modern']['identity']['never_touch_volumes']
+                         + route['identity']['never_touch_volumes']))
+    state = {'running': {'legacy': False, 'modern': False}, 'produce': list(produce),
+             'fail_up': list(fail_up), 'containers': containers, 'volumes': volumes, 'log': []}
+    (base / 'bin' / 'state.json').write_text(json.dumps(state, sort_keys=True))
+    now = time.monotonic_ns()
+    packet = packet_head()
+    request = acquisition_request(manifest, prior, legacy_head=heads['legacy'],
+                                  modern_head=heads['modern'], merged=packet, helper_head=packet,
+                                  binary=str(script))
+    request['window'].update(start_monotonic_ns=now, deadline_monotonic_ns=now + 600 * NS)
+    folder = base
+    raw = json.dumps(request, sort_keys=True).encode()
+    request_path = folder / 'request.json'
+    request_path.write_bytes(raw)
+    result = proof_entry.run([acq.ROUTE, '--request', str(request_path), '--sha256',
+                              core.sha256_bytes(raw), '--evidence-dir', str(folder / 'evidence')],
+                             manifest=manifest, roots=(str(ROOT),))
+    state = json.loads((base / 'bin' / 'state.json').read_text())
+    return result, folder / 'evidence', state
+
+
+@check('ordinary acquisition: end to end, a cold producer runs in both checkouts through the real supervisor')
+def _():
+    result, evidence, state = acq_e2e('acq-e2e-happy')
+    assert result['status'] == 'passed', result
+    ups = [name for name, argv in state['log'] if argv == ['container', 'stack', 'up', '--detach']]
+    assert ups == ['legacy', 'modern'], ups
+    assert state['running'] == {'legacy': False, 'modern': False}, state['running']
+    for name in ('legacy', 'modern'):
+        artifact = ROOT / 'acq-e2e-happy' / name / acq.ARTIFACT
+        assert artifact.read_bytes() == b'fixture linux artifact bytes\n'
+    occurrence = json.loads((evidence / 'occurrence.json').read_text())
+    assert occurrence['status'] == 'passed', occurrence
+    assert (evidence / 'closure.json').is_file() and (evidence / 'binding.json').is_file()
+
+
+@check('ordinary acquisition: end to end, an up that writes no artifact is refused and the window spent')
+def _():
+    result = None
+    try:
+        acq_e2e('acq-e2e-no-artifact', produce=('modern',))
+    except core.Refused as exc:
+        assert exc.code == 'handoff-missing', exc.code
+        result = 'refused'
+    assert result == 'refused'
+    evidence = ROOT / 'acq-e2e-no-artifact' / 'evidence'
+    occurrence = json.loads((evidence / 'occurrence.json').read_text())
+    assert occurrence['status'] == 'handoff-missing' and occurrence['spent'] is True, occurrence
+
+
+@check('ordinary acquisition: end to end, a failed legacy up never starts modern')
+def _():
+    try:
+        acq_e2e('acq-e2e-legacy-fails', fail_up=('legacy',))
+    except core.Refused as exc:
+        assert exc.code == 'child-failed', exc.code
+    else:
+        raise AssertionError('a failed legacy up must refuse')
+    state = json.loads((ROOT / 'acq-e2e-legacy-fails' / 'bin' / 'state.json').read_text())
+    ups = [name for name, argv in state['log'] if argv == ['container', 'stack', 'up', '--detach']]
+    assert ups == ['legacy'], ups
+
 
 
 def main():

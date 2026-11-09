@@ -77,6 +77,7 @@ shared supervision file was changed.
 | `proof_entry.py` | The one fixed proof entry: `{acow\|cbs} --request PATH --sha256 DIGEST --evidence-dir DIR` |
 | `acow.py` | Acow route: hybrid/container/hybrid phases, Level 1 forward, eight-table counts, scoped rollback, protected-identity check. `main` refuses unarmed |
 | `cbs.py` | CBS route: detached app-shell, Level 1 forward, named counts, scoped rollback, volumes-kept check. `main` refuses unarmed |
+| `acow_acquisition.py` | Ordinary Acow Linux-artifact acquisition check (effigy#785): legacy then modern detached `container stack up`, handoff proof by produced artifact plus running stack. `main` refuses unarmed |
 | `acow_battery.py` | Test-only harness: runs the unchanged historical Acow boundary battery with only its fixture SCRATCH relocated under TMPDIR |
 | `manifest-r1.json` | Source-visible pins; pending values refuse their route |
 | `tests.py` | Gate controls through `arm` with fixture engine and git; supervision controls on harmless children; end-to-end fixture runs through `proof_entry.run` |
@@ -89,6 +90,7 @@ shared supervision file was changed.
 | `check:qualification:consumer-packets:compile` | compile all packet modules in memory | None |
 | `qualification:acow-consumer:proof-only` | `proof_entry.py acow {args}` | Refuses before the request is read while the route is unarmed |
 | `qualification:cbs-consumer:proof-only` | `proof_entry.py cbs {args}` | Refuses before the request is read while the route is unarmed |
+| `qualification:acow-acquisition:proof-only` | `proof_entry.py acow-acquisition {args}` | Refuses before the request is read while the route is unarmed |
 | `test:qualification:acow` | `acow_battery.py` → historical `boundaries.py` (150 checks) | Historical bytes unchanged; fixture SCRATCH under TMPDIR, restored on exit |
 
 ## Armed sequence
@@ -153,3 +155,83 @@ per evidence directory, because the directory is claimed exclusively.
   fixture engine from the run TMPDIR, against a fixture git checkout.
 - The trust precondition is not verified by code. It is the external Nucleus
   launch that effigy#739 also relies on.
+
+## Ordinary acquisition check (effigy#785)
+
+Source and controls only. `acow_acquisition.py` is a separate route, not a mode
+in `acow`. It keeps the aggregate, privacy and continuity gates of the Acow
+route out of its path, because it checks one thing: the ordinary automatic
+Linux-artifact producer, reached through a detached ordinary form.
+
+**Form.** `container stack up --detach` in each checkout, cwd set to that
+checkout, with no `--repo` and no `--command`. Chosen over `dev`: `dev` is a TUI
+and needs a PTY (Level 2), and no reviewed PTY interface is in this packet. The
+form reaches the producer by source: `container <env> up` calls
+`environment::activate` (`container_command/lifecycle.rs`), which calls
+`prepare_workspace_artifact` on every activation. That function acquires only
+for an environment that declares an operator workspace
+(`operator_workspace_for_policy`, `prepare_workspace_artifact_with`). Hybrid
+never probes or acquires, so hybrid detach is refused as a check form. Stack
+declares the workspace in Acow's `infra/workspace.toml`. Not traced: `dev`'s own
+entry into `activate`. The 766 run shows `dev` reached the same producer, but
+the equivalence is source-traced for the detached form only, not executed.
+
+**Passes.** Legacy first, modern second, one occurrence, one window. Each pass:
+identity probe (container and volume, read-only), protected capture, prior
+state of `stack` must be not running (a running stack refuses before any up),
+artifact stat before, `up --detach`, `status --json`, artifact stat after,
+rollback (`down`) of the stack this pass started, protected check. A pass
+passes only when the up exits zero, the stack is observed running, and the
+producer wrote a receipted artifact in this window (new file, or mtime moved,
+receipt naming `aarch64-unknown-linux-gnu`). A build exit alone refuses as
+`handoff-missing`. A legacy refusal or unknown closure never starts modern.
+
+**Closures.** Both consumer closures are read before any engine or consumer
+effect, through `core.arm`'s `verify_more` hook with the same recording reader.
+The request carries a second block, `modern_consumer`. Only this route allows
+that key (`ROUTE_EXTRA_KEYS`).
+
+**Budgets.** Step timeout 1680 s and 64 MiB per stream, from the reviewed
+effigy#766 ordinary run (1800 s wall less a 120 s closeout; 64 MiB cap). Window
+3600 s. These are not new numbers; they are the maintained route's.
+
+**Restore.** Each pass ends with the stack in its prior state. A successful
+pass ends with `down`, the same as the Acow route's rollback. The window does
+not leave a stack it started running.
+
+**Controls.** `tests.py` drives the real `arm`, `Session`, `Supervisor` and
+`preparation_stage.run_stage` with a harmless fixture CLI. End-to-end controls
+run real git checkouts at the reviewed closures and a fixture CLI that writes a
+fixture artifact on `up`. They cover: unarmed refusal, request shape and
+`modern_consumer` scope, both passes in order, build exit alone refused, legacy
+failed and unknown skipping modern, modern failure, prior running refused before
+any up, prior intent shape, modern closure drift, dirty modern checkout, foreign
+container, receipt and stale-mtime logic, symlinked artifact path, session
+allowlist, window one-use, span and expiry, unchanged acow and cbs request shape,
+same-source detached copy binding the same module hashes, and the e2e run.
+
+**Unresolved pins (block arming; read at freeze, never guessed).**
+- Legacy: `effigy.toml` blob at the selected head; `includes`; service label and
+  data volume and every named volume for project `acowtancy-decodelabs`; the
+  bundle revision prefix (observed `8121cfc2`, 2026-11-09) and content digest.
+  Also confirm the legacy `stack` environment declares an operator workspace.
+  Its bundle is outside the tracked repo, so it is not read here.
+- Modern: closure blobs at the selected head (main moved from `e23ed290e` to
+  `16c706ba`); the bundle prefix and digest are the reviewed acow values.
+- Both: whether a stopped stack keeps its postgres container and volume (the
+  identity probe uses `ps -a`). If not, the pre-up identity cannot be bound and
+  the pin must change before arming.
+- Request resources: `legacy-postgres-container`, `legacy-postgres-volume`,
+  `postgres-container`, `postgres-volume`, bound to actual identities.
+- Producer host facts: the artifact paths are `.effigy/linux-release/artifacts/effigy-aarch64-unknown-linux-gnu` and its `.receipt`. The active-version sidecar is not checked here.
+- Hooks: any ordinary startup hook in either consumer that writes to protected
+  resources. Not inspected in this source task; the parent must bind the real
+  protected window before any request.
+- Candidate: product Cprime `5751ff9d`, tree `71fad36b`, the signed binary
+  `efb96b23`, and its install receipt. The request binds these; the manifest
+  does not.
+
+**Not claimed.** No consumer, engine, VM, build or native run. No full625,
+624, 621-623, RecipeE, Level 2 or release credit. No Linux artifact or prebuild
+credit. The route is UNARMED until its pins are concrete and a Nucleus
+proof-only launch at the merged commit supplies the request.
