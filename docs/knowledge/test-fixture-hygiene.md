@@ -336,6 +336,11 @@ listeners use OS-assigned ports. Status-contract fixtures retain the explicit
 port declarations they assert. A shared CLI cohort exercises those lifecycle
 proofs together and retains the JSON failure and private backend call logs.
 
+The detached exit-141 writer waits for the returned caller to acknowledge its
+reaped client, then counts real writes at its original cadence. A fixed runtime
+does not imply a minimum number of writes on a loaded host. The proof retains
+its regular-file, no-SIGPIPE, write-count, elapsed-time and cleanup assertions.
+
 Recorded-generation closure requires positive absence, zombie state or an
 identity mismatch. An unknown identity or state stays unresolved within the
 fixture's existing wait bound; repeated failed observations do not prove closure.
