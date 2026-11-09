@@ -185,6 +185,12 @@ def execute(request, request_path, request_hash, deadline):
             raise stage.Refusal('acquired image identity, type or size differs')
         if output != {'bytes': rescue.SIZE, 'sha256': rescue.SHA256} or os.listdir(request['fixture']) != [rescue.NAME]:
             raise stage.Refusal('acquisition output or fixture entries differ')
+        if time.monotonic() >= deadline or source_inputs() != request['inputs']:
+            raise stage.Refusal('deadline or pinned source inputs changed before receipt')
+        final_head = subprocess.check_output(['/usr/bin/git', '-C', str(REPO), 'rev-parse', 'HEAD'], timeout=10).decode().strip()
+        final_dirty = subprocess.check_output(['/usr/bin/git', '-C', str(REPO), 'status', '--porcelain'], timeout=10)
+        if final_head != head or final_dirty or time.monotonic() >= deadline:
+            raise stage.Refusal('source checkout changed or deadline expired before receipt')
         stage.record(root / 'result.json', {'status': 'acquired', 'request_sha256': request_hash,
                                            'head': head, 'image': output, 'vm_effect': False})
         return root

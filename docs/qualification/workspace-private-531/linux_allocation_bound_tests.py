@@ -1381,6 +1381,16 @@ class RescueInputChecks(unittest.TestCase):
                 opener=lambda url, headers: (Connection(), Response(data, 200, {'Content-Length': str(len(data))})))
         self.assertEqual(wrong_hash.read_bytes(), data)
 
+    def test_existing_image_refuses_before_opening_transport(self):
+        root = Path(tempfile.mkdtemp(prefix='rescue-collision-'))
+        destination = root / rescue.NAME
+        destination.write_bytes(b'existing')
+        with patch.object(rescue.inputs, 'fetch_pinned_https') as fetch:
+            with self.assertRaisesRegex(rescue.Refusal, 'before network'):
+                rescue.fetch_fixed(str(destination), checkpoint=lambda: None)
+            fetch.assert_not_called()
+        self.assertEqual(destination.read_bytes(), b'existing')
+
     def test_fixed_fetch_uses_exact_pins_and_rejects_invalid_destination(self):
         with self.assertRaises(rescue.Refusal):
             rescue.fetch_fixed('/not-canonical/other', checkpoint=lambda: None)

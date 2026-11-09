@@ -48,6 +48,8 @@ def fetch_fixed(destination, *, checkpoint):
         raise Refusal('fixed fetch requires an absolute destination and a deadline checkpoint')
     if os.path.realpath(destination) != destination or os.path.basename(destination) != NAME:
         raise Refusal('destination is not the canonical fixed image path')
+    if os.path.lexists(destination):
+        raise Refusal('image destination already exists; refuse before network access')
     checkpoint()
     return inputs.fetch_pinned_https(URL, destination, SIZE, SHA256, opener=open_fixed_https,
                                      checkpoint=checkpoint)
