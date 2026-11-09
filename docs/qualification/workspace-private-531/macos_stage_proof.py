@@ -30,10 +30,10 @@ def unique_object(pairs):
 
 # D1 is reached only through a window request, which names the original D0 receipt it consumes.
 # D2 is the same form, naming the original D1 receipt (which already binds the D0 chain).
-# C1, C2 and C3 are plain proof requests only: their window recipes are not reviewed (window_recipe refuses them).
-PROOF_STAGES = ('C0', 'D0', 'D1', 'C1', 'C2', 'C3', 'D2')
+# C1, C2, C3 and C4 are plain proof requests only: their window recipes are not reviewed (window_recipe refuses them).
+PROOF_STAGES = ('C0', 'D0', 'D1', 'C1', 'C2', 'C3', 'C4', 'D2')
 WINDOW_PRIOR = {'D1': 'D0', 'D2': 'D1'}
-PROOF_STAGE_NAMES = 'C0, D0, D1, C1, C2, C3 or D2'
+PROOF_STAGE_NAMES = 'C0, D0, D1, C1, C2, C3, C4 or D2'
 PROOF_STAGE_REFUSAL = 'proof entry supports only ' + PROOF_STAGE_NAMES
 
 DESKTOP_DISK = '/Users/tom/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw'
@@ -411,7 +411,7 @@ def checked_prior(ref, bindings, manifest, expected_stage='D0'):
 
 def window_recipe(stage_id, bindings, options):
     """Prospective request. Directory identities must be captured after provisioning."""
-    if stage_id in ('C1', 'C2', 'C3'):
+    if stage_id in ('C1', 'C2', 'C3', 'C4'):
         raise executor.Refusal(f'{stage_id} has no window recipe: it runs only as a plain proof request')
     base_options = {'activation_id', 'duration_seconds', 'evidence_root'}
     prior_stage = WINDOW_PRIOR.get(stage_id)

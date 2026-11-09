@@ -6,10 +6,12 @@ are redirected into it, so no real evidence root or claim is touched.
 The genuine chain runs through execute_stage with real child processes: D0, then D1, D2, D3 and D4. D2 is
 admitted: its prefetch helper fetches the fixture's tiny genuine-byte stand-in for the pinned OCI+deb set
 (never the production payloads) and the production handler stages the Dockerfile. C2 and C3 close through
-injected helper envelopes (no simulation). C4's verify can close the same way; C4 stays unadmitted because
-the guest still has no closed transfer of those inputs. C5 and C6 cannot be reached through a genuine
-chain, so their dispatch tests replace only verify_chain, and say so. The chain verifier has its own
-negative tests on genuine receipts.
+injected helper envelopes (no simulation). C4 runs through its production path too: the reviewed host
+handlers run in-process, the pinned guest transfer and pre-build re-derivation run against this fixture's own
+owned parent directory, and only the transport is substituted. Its guest steps close on authenticated
+envelopes, never on a simulation. C5 and C6 cannot be reached through a genuine chain (C5's remote run is
+still the local ssh client's), so their dispatch tests replace only verify_chain, and say so. The chain
+verifier has its own negative tests on genuine receipts.
 
 Run: python3 -I -B macos_stage_executor_tests.py
 """
@@ -33,6 +35,7 @@ from unittest import mock
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import guest_inputs  # noqa: E402
 import macos_guest_helper as helper  # noqa: E402
 import macos_preparation as prep  # noqa: E402
 import macos_stage_executor as ex  # noqa: E402
@@ -163,8 +166,9 @@ def emit(text, exit_code=0, err=''):
     return 'import sys\nsys.stdout.write(%r)\nsys.stderr.write(%r)\nsys.exit(%d)\n' % (text, err, exit_code)
 
 
-def closed_envelope(operation, nonce, inner_stdout, inner_stderr=b'', **fields):
-    """A production helper envelope. Tests inject this through the real establish_guest_closure path."""
+def closed_envelope(operation, nonce, inner_stdout, inner_stderr=b'', command=None, **fields):
+    """A production helper envelope. Tests inject this through the real establish_guest_closure path.
+    command is the argv a fixed remote command reports having run."""
     if isinstance(inner_stdout, str):
         inner_stdout = inner_stdout.encode()
     if isinstance(inner_stderr, str):
@@ -173,6 +177,8 @@ def closed_envelope(operation, nonce, inner_stdout, inner_stderr=b'', **fields):
                   pid=fields.get('pid', 11), start_time=fields.get('start_time', 100),
                   pgid=fields.get('pgid', 11), session_id=fields.get('session_id', 11),
                   source_sha256=fields.get('source_sha256', ex.GUEST_HELPER_SHA256))
+    if command is not None:
+        header['command'] = list(command)
     trailer = dict(waited_exit=fields.get('waited_exit', 0), child_pid=fields.get('child_pid', 12),
                    child_start_time=fields.get('child_start_time', 101),
                    child_pgid=fields.get('child_pgid', header['pgid']),
@@ -183,7 +189,7 @@ def closed_envelope(operation, nonce, inner_stdout, inner_stderr=b'', **fields):
     return helper.format_envelope(header, inner_stdout, inner_stderr, trailer)
 
 
-def closed_guest(inner, err=b'', exit_code=0, **fields):
+def closed_guest(inner, err=b'', exit_code=0, command=None, **fields):
     """Routed transport: the local child writes an authenticated helper envelope for this step's nonce."""
     def route(kw):
         argv = kw['argv']
@@ -192,7 +198,7 @@ def closed_guest(inner, err=b'', exit_code=0, **fields):
         nonce = fields.get('nonce', argv[c_idx + 4])
         payload = inner(kw) if callable(inner) else inner
         extra = {k: v for k, v in fields.items() if k not in ('operation', 'nonce')}
-        envelope = closed_envelope(operation, nonce, payload, err, **extra)
+        envelope = closed_envelope(operation, nonce, payload, err, command=command, **extra)
         return ('import sys\nsys.stdout.buffer.write(%r)\nsys.stderr.buffer.write(%r)\nsys.exit(%d)\n'
                 % (envelope, b'', exit_code))
     return route
@@ -359,7 +365,12 @@ class Fixture(unittest.TestCase):
                 raw = steps[step]['argv']
                 if '{guest_nonce}' in raw:
                     bindings['guest_nonce'] = argv[raw.index('{guest_nonce}')]
+                elif step in ex.REMOTE_COMMAND_STEPS:
+                    bindings['guest_nonce'] = argv[argv.index('-c') + 4]
                 expected = ex.resolve_step(steps[step], bindings)
+                if step in ex.REMOTE_COMMAND_STEPS:
+                    expected = dict(expected, argv=ex.dispatch_guest_command(
+                        expected, bindings, bindings['guest_nonce']))
                 self.assertEqual(argv, expected['argv'], step)
                 self.assertEqual(env, expected['env'], step)
 
@@ -602,12 +613,13 @@ class FixedHelperTests(Fixture):
                 os.chmod(request_path, 0o400)
                 with self.subTest(field=field), self.assertRaises(ex.Refusal):
                     proof.main(['proof', request_path, ex.sha_file(request_path)])
-            unsupported = dict(request, stage='C4')  # C4 stays outside the proof entry (engine-side network)
+            unsupported = dict(request, stage='C7')  # not a reviewed proof stage
             request_path = self.tmp + '/proof-unadmitted'
             Path(request_path).write_text(json.dumps(unsupported, sort_keys=True))
             os.chmod(request_path, 0o400)
-            with self.assertRaisesRegex(ex.Refusal, 'supports only C0, D0, D1, C1, C2, C3 or D2'):
+            with self.assertRaisesRegex(ex.Refusal, 'supports only C0, D0, D1, C1, C2, C3, C4 or D2'):
                 proof.main(['proof', request_path, ex.sha_file(request_path)])
+
             oversized = self.tmp + '/proof-oversized'
             Path(oversized).write_bytes(b'x' * 65537)
             os.chmod(oversized, 0o400)
@@ -779,7 +791,7 @@ class PlanTests(Fixture):
     def test_admission_is_exact_and_each_refusal_is_named(self):
         plans = {s['id']: ex.resolve_stage(s['id'], self.bindings) for s in ex.load_manifest()['stages']}
         self.assertEqual({k for k, v in plans.items() if not v['static_admission']},
-                         {'C0', 'C1', 'C2', 'C3', 'D0', 'D1', 'D2', 'D3', 'D4'})
+                         {'C0', 'C1', 'C2', 'C3', 'C4', 'D0', 'D1', 'D2', 'D3', 'D4'})
         for plan in plans.values():  # every resolved request carries the global refusal and its prerequisite
             self.assertEqual(plan['admission'][0], ex.OWNER_ACTIVATION_REASON)
             self.assertFalse(plan['execution']['admitted'])
@@ -788,11 +800,12 @@ class PlanTests(Fixture):
         self.assertEqual(plans['D2']['static_admission'], [])
         self.assertEqual(plans['D3']['static_admission'], [])
         self.assertEqual(plans['D4']['static_admission'], [])
-        self.assertTrue(any('predecessor C4' in r for r in plans['C5']['static_admission']))
+        self.assertTrue(any('predecessor C5' in r for r in plans['C6']['static_admission']))
+        self.assertEqual(plans['C4']['static_admission'], [])
         self.assertEqual(plans['C2']['static_admission'], [])
         self.assertEqual(plans['C3']['static_admission'], [])
         self.assertEqual(plans['C1']['static_admission'], [])  # the pinned image fetch is admitted; execution still refuses
-        self.assertTrue(any('754' in r for r in plans['C4']['static_admission']))
+        self.assertTrue(any('local ssh client' in r for r in plans['C5']['static_admission']))
 
     def test_every_helper_has_a_handler_or_an_explicit_reason(self):
         unimplemented = {'verify_frozen_artifacts'}
@@ -1006,22 +1019,28 @@ class HelperDispatchTests(Fixture):
         stage_out = {'parent': {'path': '/g', 'device': 1, 'inode': 2, 'uid': 501},
                      'path': '/g/effigy-531-image-' + '0' * 31 + '1', 'device': 3, 'inode': 4, 'uid': 501,
                      'file_device': 5, 'file_inode': 6, 'sha256': ex.RECIPE_SHA256}
-        spec = json.loads(ex.build_verify_spec(json.dumps(stage_out)))
+        spec = json.loads(ex.build_verify_spec(json.dumps(stage_out), FAKE_RUNTIME_PIN))
         self.assertEqual(spec['name'], 'effigy-531-image-' + '0' * 31 + '1')
         self.assertEqual(spec['parent'], stage_out['parent'])
+        self.assertEqual(spec['layout'], guest_inputs.pin_layout(FAKE_RUNTIME_PIN))
         self.assertNotIn('parent', spec['context'])
         with self.assertRaises(ex.Refusal):
-            ex.build_verify_spec(json.dumps({k: v for k, v in stage_out.items() if k != 'parent'}))
+            ex.build_verify_spec(json.dumps({k: v for k, v in stage_out.items() if k != 'parent'}), FAKE_RUNTIME_PIN)
         with self.assertRaises(ex.Refusal):
-            ex.build_verify_spec(json.dumps(dict(stage_out, path='/elsewhere/effigy-531-image-' + '0' * 31 + '1')))
+            ex.build_verify_spec(json.dumps(dict(stage_out, path='/elsewhere/effigy-531-image-' + '0' * 31 + '1')),
+                                 FAKE_RUNTIME_PIN)
 
     def test_the_historical_531_helper_is_unchanged_and_the_macos_copy_is_pinned(self):
         self.assertEqual(ex.sha_file(HERE / 'image_context.py'),
                          'af74047f640111907930273f7cc7a2b46eac4cb27943f0a512fccf56a1b3b322')
         self.assertEqual(ex.sha_file(ex.GUEST_CONTEXT_PATH), ex.GUEST_CONTEXT_SHA256)
+        self.assertEqual(ex.sha_file(ex.GUEST_INPUTS_PATH), ex.GUEST_INPUTS_SHA256)
         sources = ex.guest_source_bindings()
-        self.assertEqual(set(sources), {'probe_source', 'stage_source', 'verify_source', 'guest_helper_hex'})
+        self.assertEqual(set(sources), {'probe_source', 'stage_source', 'verify_source', 'transfer_source',
+                                        'input_verify_source', 'guest_helper_hex'})
         self.assertEqual(sources['probe_source'], ex.GUEST_CONTEXT_PATH.read_text())
+        self.assertEqual(sources['transfer_source'], ex.GUEST_INPUTS_PATH.read_text())
+        self.assertEqual(sources['input_verify_source'], ex.GUEST_INPUTS_PATH.read_text())
         self.assertEqual(sources['guest_helper_hex'], ex.GUEST_HELPER_PATH.read_bytes().hex())
 
     def test_read_iidfile_accepts_one_sha256_and_refuses_a_tag(self):
@@ -1953,26 +1972,6 @@ class DispatchSweepTests(Fixture):
         self.assertEqual(recipe.read_bytes(), ex.RECIPE_PATH.read_bytes())
         self.assert_dispatch('C3', calls, dict(self.run_bindings(), guest_spec=spec, token32=self.T32))
 
-    def test_c4_derives_its_verify_spec_from_the_c3_output_and_its_verify_runs_the_pinned_source(self):
-        c3, c3_calls, _ = self.run_c3('act-c3-for-c4')
-        c3_root = self.stage_dir('C3', 'act-c3-for-c4')
-        stub = {'receipts': [], 'engine_id': None, 'stage_root': c3_root, 'steps': c3['steps']}
-        prior = dict(stage='C3', path=c3_root + '/stage-receipt.json', sha256=ex.sha_file(c3_root + '/stage-receipt.json'))
-        calls = []
-        staged = json.loads(Path(c3_root + '/c3-stage-context/stdout').read_text())
-        inner = json.dumps({k: v for k, v in staged.items() if k != 'parent'})
-        with mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub), \
-                mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32):
-            c4 = self.execute('C4', self.routed({'c4-verify-context': closed_guest(inner),
-                                                 'c4-nerdctl-build-help': emit('usage')}, calls),
-                              prior_ref=prior, activation_id='act-c4-guest-1')
-        self.assertEqual(c4['closure'], 'guest_unknown')  # verify can close; the engine-side help cannot
-        self.assertEqual([c[0] for c in calls], ['c4-verify-context', 'c4-nerdctl-build-help'])
-        verified = json.loads(Path(self.stage_dir('C4', 'act-c4-guest-1') + '/c4-verify-context/stdout').read_text())
-        self.assertEqual(verified, {k: v for k, v in staged.items() if k != 'parent'})
-        spec = Path(self.stage_dir('C4', 'act-c4-guest-1') + '/c4-render-verify-spec/c4-render-verify-spec.json')
-        self.assertEqual(json.loads(spec.read_text())['name'], Path(staged['path']).name)
-
     def test_c2_unknown_route_echo_timeout_stops_before_the_probe_is_reached(self):
         """The echo's allowance runs out: its closure is unknown, so the stage stops and the probe is never reached."""
         routes = {'c2-colima-status': emit('{"status":"running"}'), 'c2-route-echo': 'import time; time.sleep(30)'}
@@ -1987,62 +1986,374 @@ class DispatchSweepTests(Fixture):
         self.assertEqual(by_id['c2-route-echo']['closure'], 'unknown_retained')
         self.assertNotIn('c2-guest-probe', by_id)
 
-    def run_c4(self, activation_id, transport_for):
-        """C4 through the stage loop over a stub C3 predecessor, which is C3 run through the loop. transport_for(calls)
-        builds the transport for this run. The token32 origin is stubbed (tested separately)."""
+    # C4 through the production path. The reviewed host handlers run in-process; the guest transfer and the
+    # pre-build re-derivation run the pinned guest source against this fixture's own owned parent directory; and
+    # only the transport is substituted (one authenticated envelope per guest step, naming the command that ran).
+    # No engine, VM, SSH, network or native effect runs.
+
+    def c4_fixture(self, activation_id):
+        """A genuine closed C3 predecessor for C4, and the context it staged."""
         c3, _, _ = self.run_c3(activation_id + '-c3')
-        c3_root = self.stage_dir('C3', activation_id + '-c3')
-        stub = {'receipts': [], 'engine_id': None, 'stage_root': c3_root, 'steps': c3['steps']}
-        prior = dict(stage='C3', path=c3_root + '/stage-receipt.json', sha256=ex.sha_file(c3_root + '/stage-receipt.json'))
+        root = self.stage_dir('C3', activation_id + '-c3')
+        stub = {'receipts': [], 'engine_id': None, 'stage_root': root, 'steps': c3['steps']}
+        prior = dict(stage='C3', path=root + '/stage-receipt.json', sha256=ex.sha_file(root + '/stage-receipt.json'))
+        staged = json.loads(Path(root + '/c3-stage-context/stdout').read_text())
+        return stub, prior, staged
+
+    @staticmethod
+    def c4_entries(staged):
+        spec = guest_inputs.transfer_spec(FAKE_RUNTIME_PIN, staged['parent'], Path(staged['path']).name)
+        return guest_inputs.layout_entries(spec['layout'], FAKE_RUNTIME_BYTES['index'])[0]
+
+    def c4_transfer(self, tamper=None):
+        """The pinned guest transfer handler over the dispatched stream and this fixture's real guest parent.
+        A guest refusal is a non-zero guest exit with its reason on stderr, exactly as in the guest."""
+        def produce(kw):
+            spec = guest_inputs.canonical_spec(kw['argv'][-1])
+            with open(kw['stdin_path'], 'rb') as stream:
+                receipt = guest_inputs.transfer(spec, stream)
+            return json.dumps(tamper(receipt) if tamper is not None else receipt, sort_keys=True)
+        return self.c4_guest_route(produce)
+
+    def c4_check(self, tamper=None):
+        """The pinned guest pre-build re-derivation over the directories the transfer wrote."""
+        def produce(kw):
+            spec = guest_inputs.canonical_spec(kw['argv'][-1])
+            receipt = guest_inputs.check_inputs(spec)
+            return json.dumps(tamper(receipt) if tamper is not None else receipt, sort_keys=True)
+        return self.c4_guest_route(produce)
+
+    @staticmethod
+    def c4_guest_route(produce):
+        def route(kw):
+            try:
+                receipt = produce(kw)
+            except (guest_inputs.Refusal, OSError, ValueError) as exc:
+                return emit('', 2, 'refused: ' + str(exc))
+            return closed_guest(receipt)(kw)
+        return route
+
+    @staticmethod
+    def c4_command(kw):
+        """The reviewed remote argv that crossed in the step's hex spec."""
+        return json.loads(bytes.fromhex(kw['argv'][-1]).decode())['argv']
+
+    def c4_remote(self, payload, **fields):
+        """One authenticated envelope whose header names the command the helper ran."""
+        def route(kw):
+            command = self.c4_command(kw)
+            text = payload(kw, command) if callable(payload) else payload
+            return closed_guest(text, command=command, **fields)(kw)
+        return route
+
+    def c4_verify(self, staged):
+        return closed_guest(json.dumps({k: v for k, v in staged.items() if k != 'parent'}))
+
+    def c4_routes(self, staged, *, transfer=None, check=None, help_text=None, build=None):
+        def write_iid(kw, command):
+            Path(command[command.index('--iidfile') + 1]).write_text(IMAGE + '\n')
+            return ''
+        return {
+            'c4-transfer-inputs': transfer or self.c4_transfer(),
+            'c4-verify-context': self.c4_verify(staged),
+            'c4-verify-inputs': check or self.c4_check(),
+            'c4-nerdctl-build-help': self.c4_remote(
+                help_text if help_text is not None else
+                'usage: nerdctl build --iidfile --platform --provenance --network --build-context'),
+            'c4-nerdctl-build': self.c4_remote(build or write_iid),
+            'c4-iidfile-read': self.c4_remote(lambda kw, command: Path(command[3]).read_text()),
+            'c4-image-inspect': self.c4_remote(
+                json.dumps([{'Id': IMAGE, 'Os': 'linux', 'Architecture': 'arm64'}])),
+        }
+
+    def run_c4(self, activation_id='act-c4-closed', routes_for=None, transport_for=None):
+        stub, prior, staged = self.c4_fixture(activation_id)
+        routes = (routes_for or (lambda value: self.c4_routes(value)))(staged)
         calls = []
+        transport = self.routed(routes, calls) if transport_for is None else transport_for(routes, calls)
         with mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub), \
                 mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32):
-            receipt = self.execute('C4', transport_for(calls), prior_ref=prior, activation_id=activation_id)
-        return receipt, calls
+            receipt = self.execute('C4', transport, prior_ref=prior, activation_id=activation_id)
+        return receipt, calls, staged
 
-    NOT_DISPATCHED_AFTER_C4_VERIFY = ('c4-nerdctl-build-help', 'c4-check-build-help', 'c4-nerdctl-build',
-                                      'c4-iidfile-read', 'c4-read-iidfile', 'c4-image-inspect', 'c4-check-image-identity')
-    NOT_DISPATCHED_AFTER_C4_HELP = ('c4-check-build-help', 'c4-nerdctl-build',
-                                    'c4-iidfile-read', 'c4-read-iidfile', 'c4-image-inspect', 'c4-check-image-identity')
+    def test_c4_stage_closes_with_the_production_transfer_and_remote_commands(self):
+        receipt, calls, staged = self.run_c4()
+        self.assertEqual(receipt['closure'], 'closed')
+        self.assertEqual(receipt['guest_closure'], 'closed')
+        self.assertFalse(receipt['closure_simulated'])
+        manifest_steps = [s['id'] for s in ex.stage_of(ex.load_manifest(), 'C4')['steps']]
+        self.assertEqual([x['id'] for x in receipt['steps']], manifest_steps)
+        self.assertEqual([c[0] for c in calls], ['c4-transfer-inputs', 'c4-verify-context', 'c4-verify-inputs',
+                                                 'c4-nerdctl-build-help', 'c4-nerdctl-build', 'c4-iidfile-read',
+                                                 'c4-image-inspect'])
+        by_id = {x['id']: x for x in receipt['steps']}
+        for step in ('c4-transfer-inputs', 'c4-verify-inputs', 'c4-nerdctl-build'):
+            self.assertEqual(by_id[step]['closure'], 'closed', step)
+            self.assertEqual(by_id[step]['guest_closure'], 'closed', step)
+            self.assertFalse(by_id[step]['closure_simulated'], step)
+        entries = self.c4_entries(staged)
+        root = self.stage_dir('C4', 'act-c4-closed')
+        transfer = json.loads(Path(root + '/c4-transfer-inputs/stdout').read_text())
+        verify = json.loads(Path(root + '/c4-verify-inputs/stdout').read_text())
+        self.assertEqual(transfer['entries'], entries)
+        self.assertEqual(verify['entries'], entries)
+        self.assertEqual(transfer['derived']['total_bytes'], sum(entry['bytes'] for entry in entries))
+        self.assertEqual(transfer['dirs'], verify['dirs'])
+        # The build ran the exact reviewed nerdctl argv the guest reported, with local contexts only.
+        build = by_id['c4-nerdctl-build']['guest_command']
+        self.assertEqual(build, prep.guest_build_command(staged['path']))
+        self.assertEqual(build[build.index('--network') + 1], 'none')
+        self.assertFalse([a for a in build if a.startswith('--pull')])
+        self.assertEqual([a for a in build if a.startswith('ubuntu=') or a.startswith('debs=')],
+                         ['ubuntu=oci-layout://' + staged['path'] + '.oci',
+                          'debs=' + staged['path'] + '.debs'])
+        self.assertEqual(by_id['c4-nerdctl-build-help']['guest_command'], ['nerdctl', 'build', '--help'])
+        self.assertEqual(by_id['c4-iidfile-read']['guest_command'],
+                         ['sudo', '-n', 'cat', staged['path'] + '.iid'])
+        self.assertEqual(by_id['c4-image-inspect']['guest_command'],
+                         ['sudo', '-n', 'nerdctl', 'image', 'inspect', IMAGE])
+        # The transfer dispatched the framed stream the render step recorded, and nothing else.
+        render = json.loads(Path(root + '/c4-render-input-transfer/helper.json').read_text())['result']
+        self.assertEqual(by_id['c4-transfer-inputs']['stdin_sha256'], render['sha256'])
+        self.assertEqual(by_id['c4-transfer-inputs']['transfer_stream']['sha256'], render['sha256'])
+        self.assertEqual(Path(root + '/c4-render-input-transfer/transfer.bin').stat().st_size, render['bytes'])
+        self.assert_dispatch('C4', calls, dict(self.run_bindings(), token32=self.T32,
+                                                guest_verify_spec=self.stage_file(
+                                                    'C4', 'act-c4-closed',
+                                                    'c4-render-verify-spec/c4-render-verify-spec.json').read_text(),
+                                                guest_context=staged['path'],
+                                                guest_iidfile=staged['path'] + '.iid',
+                                                guest_input_spec=Path(
+                                                    root + '/c4-render-input-specs/guest-input-spec.hex').read_text(),
+                                                guest_oci=staged['path'] + '.oci',
+                                                guest_debs=staged['path'] + '.debs', image_id=IMAGE))
+        # The receipt re-derives its own transfer from the retained spec, host inputs, stream and guest receipts.
+        body = json.loads(Path(root + '/stage-receipt.json').read_text())
+        ex.verify_c4_inputs(root, body, ex.load_manifest())
 
-    def test_production_c4_clean_verify_halts_before_the_build(self):
-        def transport_for(calls):
-            staged = json.loads(Path(self.stage_dir('C3', 'act-c4-pos-c3') + '/c3-stage-context/stdout').read_text())
-            inner = json.dumps({k: v for k, v in staged.items() if k != 'parent'})
-            return self.routed({'c4-verify-context': closed_guest(inner),
-                                'c4-nerdctl-build-help': emit('usage')}, calls)
-        receipt, calls = self.run_c4('act-c4-pos', transport_for)
+    def test_c4_refuses_before_the_claim_when_the_reviewed_pin_changes(self):
+        stub, prior, staged = self.c4_fixture('act-c4-pin')
+        changed = dict(FAKE_RUNTIME_PIN, debs=tuple(dict(deb, bytes=deb['bytes'] + 1) for deb in FAKE_RUNTIME_PIN['debs']))
+        calls = []
+        with mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub), \
+                mock.patch.object(runtime_inputs, 'runtime_image_pin', lambda manifest: dict(changed)), \
+                mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32):
+            with self.assertRaisesRegex(ex.Refusal, 'prefetch|pin|size'):
+                self.execute('C4', self.routed(self.c4_routes(staged), calls), prior_ref=prior,
+                             activation_id='act-c4-pin')
+        self.assertEqual([c[0] for c in calls], [])
+
+    def test_c4_stops_before_the_build_when_a_host_input_is_replaced(self):
+        def replace():
+            victim = sorted(Path(self.bindings['colima_input_dir'] + '/debs').iterdir())[0]
+            os.chmod(victim, 0o600)
+            victim.write_bytes(b'x' * victim.stat().st_size)
+        self.assert_replaced_input_refused(replace, 'source differs from its pinned sha256', 'act-c4-host-replaced')
+
+    def test_c4_stops_before_the_build_when_a_host_input_disappears(self):
+        def remove():
+            sorted(Path(self.bindings['colima_input_dir'] + '/debs').iterdir())[0].unlink()
+        self.assert_replaced_input_refused(remove, 'missing or extra inputs', 'act-c4-host-gone')
+
+    def assert_replaced_input_refused(self, tamper, reason, activation_id):
+        stub, prior, staged = self.c4_fixture(activation_id)
+        calls = []
+        original = ex.HANDLERS['render_input_transfer']
+
+        def tampering(ctx, step):
+            tamper()
+            return original(ctx, step)
+        with mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub), \
+                mock.patch.dict(ex.HANDLERS, {'render_input_transfer': tampering}), \
+                mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32):
+            with self.assertRaisesRegex(ex.Refusal, reason):
+                self.execute('C4', self.routed(self.c4_routes(staged), calls), prior_ref=prior,
+                             activation_id=activation_id)
+        self.assertNotIn('c4-transfer-inputs', [call[0] for call in calls])
+
+    def test_c4_refuses_a_transfer_receipt_that_names_other_inputs(self):
+        def tamper(receipt):
+            receipt = json.loads(json.dumps(receipt))
+            receipt['entries'][0]['sha256'] = 'ab' * 32
+            return receipt
+        routes_for = lambda staged: self.c4_routes(staged, transfer=self.c4_transfer(tamper))
+        with self.assertRaisesRegex(ex.Refusal, 'entries differ'):
+            self.run_c4('act-c4-badentry', routes_for)
+        self.assertFalse(os.path.exists(self.stage_dir('C4', 'act-c4-badentry') + '/c4-nerdctl-build'))
+
+    def test_c4_stops_before_the_build_when_a_guest_input_directory_is_replaced(self):
+        stub, prior, staged = self.c4_fixture('act-c4-replaced')
+        calls = []
+
+        def before(kw):
+            if kw['step'] == 'c4-verify-inputs':
+                debs = Path(staged['path'] + '.debs')
+                debs.rename(str(debs) + '.moved')
+                os.mkdir(debs, 0o700)
+        with mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub), \
+                mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32):
+            receipt = self.execute('C4', self.routed(self.c4_routes(staged), calls, before=before),
+                                   prior_ref=prior, activation_id='act-c4-replaced')
         self.assertEqual(receipt['closure'], 'guest_unknown')
-        self.assertEqual([c[0] for c in calls], ['c4-verify-context', 'c4-nerdctl-build-help'])
         by_id = {x['id']: x for x in receipt['steps']}
-        self.assertEqual(by_id['c4-render-verify-spec']['closure'], 'closed')
-        self.assertEqual(by_id['c4-verify-context']['closure'], 'closed')
-        self.assertFalse(by_id['c4-verify-context']['closure_simulated'])
-        self.assertEqual(by_id['c4-nerdctl-build-help']['closure'], 'guest_unknown')
-        for step in self.NOT_DISPATCHED_AFTER_C4_HELP:
-            self.assertEqual(by_id[step]['closure'], 'not_dispatched', step)
-        self.assertFalse(any(a == 'nerdctl' and c[0] == 'c4-nerdctl-build' for c in calls for a in c[1]))
-
-    def test_c4_unknown_guest_closure_on_a_nonzero_client_exit_halts_and_dispatches_nothing_after(self):
-        receipt, calls = self.run_c4('act-c4-nonzero', lambda calls: self.routed(
-            {'c4-verify-context': emit('', 2, 'verify refused')}, calls))
-        self.assertEqual(receipt['closure'], 'guest_unknown')  # a client exit proves nothing about the guest
-        self.assertEqual([c[0] for c in calls], ['c4-verify-context'])
-        by_id = {x['id']: x for x in receipt['steps']}
-        self.assertEqual(by_id['c4-verify-context']['closure'], 'guest_unknown')
-        self.assertEqual(Path(self.stage_dir('C4', 'act-c4-nonzero') + '/c4-verify-context/stderr').read_text(),
-                         'verify refused')
-        for step in self.NOT_DISPATCHED_AFTER_C4_VERIFY:
+        self.assertEqual(by_id['c4-verify-inputs']['closure'], 'guest_unknown')
+        self.assertEqual([c[0] for c in calls], ['c4-transfer-inputs', 'c4-verify-context', 'c4-verify-inputs'])
+        self.assertIn('missing or extra entries',
+                      Path(self.stage_dir('C4', 'act-c4-replaced') + '/c4-verify-inputs/stderr').read_text())
+        for step in ('c4-check-input-verify', 'c4-nerdctl-build-help', 'c4-nerdctl-build', 'c4-iidfile-read',
+                     'c4-image-inspect'):
             self.assertEqual(by_id[step]['closure'], 'not_dispatched', step)
 
-    def test_c4_unknown_guest_closure_on_a_timeout_stops_the_stage(self):
-        receipt, calls = self.run_c4('act-c4-timeout', lambda calls: self.cap('c4-verify-context', 1.0)(
-            self.routed({'c4-verify-context': 'import time; time.sleep(30)'}, calls)))
+    def test_c4_stops_without_a_later_effect_when_the_transfer_closure_is_unknown(self):
+        stub, prior, staged = self.c4_fixture('act-c4-transfer-timeout')
+        calls = []
+        routes = self.c4_routes(staged)
+        routes['c4-transfer-inputs'] = 'import time; time.sleep(30)'
+        with mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub), \
+                mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32):
+            receipt = self.execute('C4', self.cap('c4-transfer-inputs', 1.0)(self.routed(routes, calls)),
+                                   prior_ref=prior, activation_id='act-c4-transfer-timeout')
         self.assertEqual(receipt['closure'], 'stopped')
-        self.assertEqual([c[0] for c in calls], ['c4-verify-context'])
+        self.assertEqual(receipt['guest_closure'], 'unknown')
+        self.assertEqual([c[0] for c in calls], ['c4-transfer-inputs'])
         by_id = {x['id']: x for x in receipt['steps']}
-        self.assertEqual(by_id['c4-verify-context']['closure'], 'unknown_retained')
-        self.assertNotIn('c4-nerdctl-build', by_id)
+        self.assertEqual(by_id['c4-transfer-inputs']['closure'], 'unknown_retained')
+        for step in ('c4-verify-context', 'c4-verify-inputs', 'c4-nerdctl-build', 'c4-iidfile-read',
+                     'c4-image-inspect'):
+            self.assertNotIn(step, by_id)
+
+    def test_c4_stops_before_the_build_when_the_guest_helper_did_not_close(self):
+        stub, prior, staged = self.c4_fixture('act-c4-nonzero')
+        calls = []
+        routes = self.c4_routes(staged)
+        routes['c4-transfer-inputs'] = emit('', 2, 'transfer refused')
+        with mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub), \
+                mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32):
+            receipt = self.execute('C4', self.routed(routes, calls), prior_ref=prior,
+                                   activation_id='act-c4-nonzero')
+        self.assertEqual(receipt['closure'], 'guest_unknown')  # a local client exit proves nothing about the guest
+        self.assertEqual([c[0] for c in calls], ['c4-transfer-inputs'])
+        self.assertEqual(Path(self.stage_dir('C4', 'act-c4-nonzero') + '/c4-transfer-inputs/stderr').read_text(),
+                         'transfer refused')
+
+    def test_c4_stops_before_the_build_when_a_build_flag_is_unsupported(self):
+        routes_for = lambda staged: self.c4_routes(staged, help_text='usage: nerdctl build --iidfile')
+        with self.assertRaisesRegex(ex.Refusal, 'nerdctl build help lacks'):
+            self.run_c4('act-c4-noflag', routes_for)
+        self.assertFalse(os.path.exists(self.stage_dir('C4', 'act-c4-noflag') + '/c4-nerdctl-build'))
+
+    def test_c4_stops_after_a_nonzero_build(self):
+        self.assert_build_unknown('nonzero', self.c4_remote('', exit_code=1))
+
+    def test_c4_stops_after_a_lost_or_unreaped_build(self):
+        self.assert_build_unknown('unreaped', self.c4_remote('', child_pgid=99, group_empty=False))
+
+    def assert_build_unknown(self, name, build_route):
+        stub, prior, staged = self.c4_fixture('act-c4-build-' + name)
+        calls = []
+
+        def write_iid(kw, command):
+            Path(command[command.index('--iidfile') + 1]).write_text(IMAGE + '\n')
+            return ''
+        routes = self.c4_routes(staged, build=write_iid)
+        routes['c4-nerdctl-build'] = build_route
+        with mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub), \
+                mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32):
+            receipt = self.execute('C4', self.routed(routes, calls), prior_ref=prior,
+                                   activation_id='act-c4-build-' + name)
+        self.assertEqual(receipt['closure'], 'guest_unknown')
+        self.assertEqual([c[0] for c in calls], ['c4-transfer-inputs', 'c4-verify-context', 'c4-verify-inputs',
+                                                 'c4-nerdctl-build-help', 'c4-nerdctl-build'])
+        by_id = {x['id']: x for x in receipt['steps']}
+        self.assertEqual(by_id['c4-nerdctl-build']['closure'], 'guest_unknown')
+        self.assertEqual(by_id['c4-iidfile-read']['closure'], 'not_dispatched')
+        self.assertEqual(by_id['c4-image-inspect']['closure'], 'not_dispatched')
+        self.assertNotIn('c4-read-iidfile', [x['id'] for x in receipt['steps'] if x.get('closure') == 'closed'])
+
+    def test_every_c4_remote_dispatch_rebuilds_the_reviewed_command_in_the_fixed_helper(self):
+        """The production dispatch and the fixed helper agree for every C4 remote command.
+
+        The manifest states each reviewed argv; the executor re-renders it as the fixed helper launch and appends
+        the same command as bounded hex; the helper decodes that argv and rebuilds the command it will run. This
+        control runs the real dispatch output back through the helper's own argv builder, so a dispatch shape the
+        helper refuses (or a command it would have altered) fails here rather than only in a stubbed envelope."""
+        context = '/root/effigy-531-image-' + self.T32
+        manifest = ex.load_manifest()
+        c4 = ex.stage_of(manifest, 'C4')
+        bindings = dict(self.run_bindings(), guest_context=context, guest_iidfile=context + '.iid', image_id=IMAGE)
+        steps = {step['id']: step for step in c4['steps']}
+        self.assertEqual(sorted(ex.REMOTE_COMMAND_STEPS),
+                         sorted(['c4-image-inspect', 'c4-iidfile-read', 'c4-nerdctl-build',
+                                 'c4-nerdctl-build-help']))
+        for step_id, operation in sorted(ex.REMOTE_COMMAND_STEPS.items()):
+            with self.subTest(step=step_id):
+                resolved = ex.resolve_step(steps[step_id], bindings)
+                _, reviewed = ex.guest_remote_tail(resolved, bindings)
+                dispatched = ex.dispatch_guest_command(resolved, bindings, 'ab' * 32)
+                # The helper is launched as `python3 -I -B -c LAUNCHER <hex> <operation> <nonce> <spec>`; the launcher
+                # execs the decoded helper, so the helper's own argv is what this reconstructs.
+                c_idx = dispatched.index('-c')
+                self.assertEqual(dispatched[c_idx + 1], helper.LAUNCHER)
+                launched = [dispatched[c_idx], dispatched[c_idx + 2]] + dispatched[c_idx + 3:]
+                args = helper.operation_argv(launched)
+                self.assertEqual(args[0], operation)
+                self.assertEqual(args[1], 'ab' * 32)
+                rebuilt = helper.inner_argv(operation, args[2:])
+                self.assertEqual(rebuilt, reviewed, step_id)
+                # And the guest-side spec really is the reviewed command, canonically encoded.
+                self.assertEqual(json.loads(bytes.fromhex(dispatched[-1]).decode()), {'argv': reviewed})
+                # The review guard: the helper refuses a command that is not the reviewed one for this step.
+                tampered = reviewed + ['--pull']
+                spec = json.dumps({'argv': tampered}, sort_keys=True, separators=(',', ':')).encode().hex()
+                with self.assertRaises(helper.Refusal):
+                    helper.inner_argv(operation, [spec])
+
+    def test_c4_refuses_a_remote_command_that_is_not_the_reviewed_form(self):
+        context = '/root/effigy-531-image-' + self.T32
+        bindings = dict(self.bindings, image_id='effigy-4f6a-runtime:r1', guest_context=context)
+        resolved = {'id': 'c4-image-inspect', 'argv': [prep.COLIMA, 'ssh', '-p', prep.PROFILE, '--',
+                                                       'sudo', '-n', 'nerdctl', 'image', 'inspect',
+                                                       'effigy-4f6a-runtime:r1'], 'env': {}}
+        with self.assertRaisesRegex(ValueError, 'reviewed C4 forms'):
+            ex.guest_remote_tail(resolved, bindings)
+        # A command that names another context refuses too: the four reviewed shapes are the only ones allowed.
+        resolved = {'id': 'c4-nerdctl-build', 'argv': [prep.COLIMA, 'ssh', '-p', prep.PROFILE, '--',
+                                                       'sudo', '-n', 'env', 'DOCKER_CONFIG=/other/docker-config',
+                                                       'nerdctl', 'build'], 'env': {}}
+        with self.assertRaisesRegex(ValueError, 'reviewed C4 forms'):
+            ex.guest_remote_tail(resolved, bindings)
+
+    def test_c4_refuses_a_build_spec_that_is_not_the_pinned_platform(self):
+        context = '/root/effigy-531-image-' + self.T32
+        good = prep.guest_build_command(context)
+        self.assertTrue(prep.check_guest_remote_command(good, dict(self.bindings, guest_context=context)))
+        for changed in ([a if a != 'linux/arm64' else 'linux/amd64' for a in good],
+                        [a if a != '--provenance=mode=max' else '--provenance=false' for a in good],
+                        good + ['--pull'],
+                        [a for a in good if a not in ('--network', 'none')]):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                prep.check_guest_remote_command(changed, dict(self.bindings, guest_context=context))
+
+    def test_c4_chain_verifier_refuses_a_tampered_stream_or_guest_receipt(self):
+        receipt, _, _ = self.run_c4('act-c4-verify')
+        root = self.stage_dir('C4', 'act-c4-verify')
+        body = json.loads(Path(root + '/stage-receipt.json').read_text())
+        ex.verify_c4_inputs(root, body, ex.load_manifest())
+        stream = Path(root + '/c4-render-input-transfer/transfer.bin')
+        original = stream.read_bytes()
+        stream.write_bytes(original[:-1] + b'x')
+        with self.assertRaisesRegex(ex.Refusal, 'stream differs'):
+            ex.verify_c4_inputs(root, body, ex.load_manifest())
+        stream.write_bytes(original)
+        stdout = Path(root + '/c4-transfer-inputs/stdout')
+        saved = stdout.read_bytes()
+        altered = json.loads(saved)
+        altered['derived']['total_bytes'] += 1
+        stdout.write_bytes(json.dumps(altered).encode())
+        with self.assertRaisesRegex(ex.Refusal, 'derived facts'):
+            ex.verify_c4_inputs(root, body, ex.load_manifest())
+        stdout.write_bytes(saved)
+        ex.verify_c4_inputs(root, body, ex.load_manifest())
 
     def test_a_helper_blocked_in_a_native_read_is_interrupted_at_its_allowance(self):
         import time as _time
@@ -2054,7 +2365,7 @@ class DispatchSweepTests(Fixture):
         self.assertIn('allowance', str(caught.exception))
         self.assertLess(_time.monotonic() - started, 5)
 
-    def test_c4_is_refused_before_claim_by_its_static_reason(self):
+    def test_c5_is_refused_before_claim_by_its_static_reason(self):
         with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}):  # the production admission, not the fixture's
             self._static_refusals()
 
@@ -2071,7 +2382,7 @@ class DispatchSweepTests(Fixture):
         self.assertEqual([c[0] for c in calls], ['c3-stage-context'])
 
     def _static_refusals(self):
-        for stage in ('C4',):
+        for stage in ('C5',):
             with self.subTest(stage=stage), self.assertRaises(ex.Refusal) as caught:
                 calls = []
                 self.execute(stage, self.routed({}, calls), prior_ref=None, activation_id=f'act-unpin-{stage.lower()}')
@@ -2146,64 +2457,42 @@ class DispatchSweepTests(Fixture):
         self.assertEqual(receipt['closure'], 'closed')
         return receipt
 
-    def test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order(self):
-        parent = self.guest_parent()
-        c2 = self.sim_c2_body(parent)
-        spec = ex.build_guest_spec(parent, self.T32)
-        stdin_seen = []
-        with self.simulated(), mock.patch.object(ex, 'verify_chain', lambda *a, **k: c2), \
-                mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32):
-            c3 = self.execute('C3', self.routed({'c3-stage-context': closed_guest(self.c3_inner(parent))}, []),
-                              prior_ref=None, activation_id='act-sim-c3-for-c4')
-        self.assertEqual(c3['closure'], 'closed')
-        iid = {}
-
-        def build(kw):
-            path = kw['argv'][kw['argv'].index('--iidfile') + 1]
-            Path(path).write_text(IMAGE + '\n')  # nerdctl build's own iidfile, written in the guest
-            iid['path'] = path
-            return emit('')
-
-        def read_iid(kw):
-            return emit(Path(kw['argv'][-1]).read_text())  # cat of the iidfile the build wrote
-
-        staged = json.loads(self.stage_file('C3', 'act-sim-c3-for-c4', 'c3-stage-context/stdout').read_text())
-        verify_inner = json.dumps({k: v for k, v in staged.items() if k != 'parent'})
-        routes = {'c4-verify-context': closed_guest(verify_inner),
-                  'c4-nerdctl-build-help': emit('usage: nerdctl build --iidfile --platform --provenance --network --build-context'),
-                  'c4-nerdctl-build': build, 'c4-iidfile-read': read_iid,
-                  'c4-image-inspect': emit(json.dumps([{'Id': IMAGE, 'Os': 'linux', 'Architecture': 'arm64'}]))}
+    def test_c4_closure_simulation_dispatches_every_step_in_order(self):
+        stub, prior, staged = self.c4_fixture('act-sim-c4')
         calls = []
-        with self.simulated(), mock.patch.object(ex, 'verify_chain', lambda *a, **k: c3), \
+        with self.simulated(), mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub), \
                 mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32):
-            receipt = self.execute('C4', self.routed(routes, calls, before=lambda kw: stdin_seen.append((kw['step'], kw['stdin_path']))),
-                                   prior_ref=None, activation_id='act-sim-c4')
+            receipt = self.execute('C4', self.routed(self.c4_routes(staged), calls), prior_ref=prior,
+                                   activation_id='act-sim-c4')
         self.assertEqual(receipt['closure'], 'closed')
-        self.assertEqual([x['id'] for x in receipt['steps']], [
-            'c4-render-verify-spec', 'c4-verify-context', 'c4-nerdctl-build-help', 'c4-check-build-help',
-            'c4-nerdctl-build', 'c4-iidfile-read', 'c4-read-iidfile', 'c4-image-inspect', 'c4-check-image-identity'])
-        self.assertEqual([c[0] for c in calls], ['c4-verify-context', 'c4-nerdctl-build-help', 'c4-nerdctl-build',
-                                                 'c4-iidfile-read', 'c4-image-inspect'])
-        self.assertTrue(all(kind is None for _, kind in stdin_seen))  # the C4 commands take no stdin
-        context = json.loads(self.stage_file('C3', 'act-sim-c3-for-c4', 'c3-stage-context/stdout').read_text())
-        verify_spec = self.stage_file('C4', 'act-sim-c4', 'c4-render-verify-spec/c4-render-verify-spec.json').read_text()
-        expected = dict(self.run_bindings(), guest_spec=spec, guest_verify_spec=verify_spec,
-                        guest_context=context['path'], guest_iidfile=context['path'] + '.iid', image_id=IMAGE)
-        self.assert_dispatch('C4', calls, expected)
-        self.assertEqual(calls[2][1][calls[2][1].index('--iidfile') + 1], context['path'] + '.iid')
-        self.assertEqual(json.loads(verify_spec)['name'], 'effigy-531-image-' + self.T32)
+        self.assertTrue(receipt['closure_simulated'])
+        manifest_steps = [s['id'] for s in ex.stage_of(ex.load_manifest(), 'C4')['steps']]
+        self.assertEqual([x['id'] for x in receipt['steps']], manifest_steps)
+        self.assertEqual([c[0] for c in calls], ['c4-transfer-inputs', 'c4-verify-context', 'c4-verify-inputs',
+                                                 'c4-nerdctl-build-help', 'c4-nerdctl-build', 'c4-iidfile-read',
+                                                 'c4-image-inspect'])
         by_id = {x['id']: x for x in receipt['steps']}
-        self.assertEqual(json.loads(self.stage_file('C4', 'act-sim-c4', 'c4-read-iidfile/helper.json').read_text())['result'],
-                         {'image_id': IMAGE})
-        self.assertEqual(by_id['c4-check-image-identity']['closure'], 'closed')
-        self.assertEqual(self.stage_file('C4', 'act-sim-c4', 'c4-iidfile-read/stdout').read_text(), IMAGE + '\n')
         self.assertTrue(by_id['c4-nerdctl-build']['closure_simulated'])
+        # The build's dispatched argv is the fixed helper launch carrying the reviewed command as hex, never the
+        # bare nerdctl argv: the whole remote invocation is contained.
+        dispatched = next(c[1] for c in calls if c[0] == 'c4-nerdctl-build')
+        self.assertNotIn('nerdctl', dispatched)
+        self.assertEqual(json.loads(bytes.fromhex(dispatched[-1]).decode())['argv'],
+                         prep.guest_build_command(staged['path']))
+        self.assertEqual(json.loads(self.stage_file('C4', 'act-sim-c4',
+                                                    'c4-render-verify-spec/c4-render-verify-spec.json').read_text())['layout'],
+                         guest_inputs.pin_layout(FAKE_RUNTIME_PIN))
+        # A simulated receipt is never a chain receipt.
+        root = self.stage_dir('C4', 'act-sim-c4')
+        with self.assertRaisesRegex(ex.Refusal, 'simulated'):
+            ex.verify_receipt_tree(json.loads(Path(root + '/stage-receipt.json').read_text()), 'C4',
+                                   ex.chain_key(self.bindings), ex.load_manifest())
 
     def test_static_admission_and_owner_refusal_still_refuse_with_the_simulation_on(self):
         calls = []
         with self.simulated():
             with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}):
-                for stage in ('C4',):
+                for stage in ('C5',):
                     with self.subTest(stage=stage), self.assertRaises(ex.Refusal) as caught:
                         self.execute(stage, self.routed({}, calls), prior_ref=None, activation_id=f'act-simadm-{stage}')
                     self.assertIn('stage unadmitted', str(caught.exception))
@@ -2994,14 +3283,15 @@ class FreshChainRootTests(Fixture):
             with self.assertRaisesRegex(ex.Refusal, 'no owner-controlled activation mechanism'):
                 ex.execute_stage('C1', bindings, activation_path=path, activation_sha256=sha,
                                  evidence_root=self.evidence, transport=self.routed({}, calls), utc_now=NOW)
-        # C1 is admitted now (its one fetch is pinned). A still-unadmitted stage keeps the static refusal, before any claim.
-        c4_path, c4_sha = self.activation('C4', c0_ref, 'fresh-c4-refused', bindings=bindings)
+        # C1 and C4 are admitted now (their fetches are pinned). A still-unadmitted stage keeps the static refusal,
+        # before any claim.
+        c5_path, c5_sha = self.activation('C5', c0_ref, 'fresh-c5-refused', bindings=bindings)
         with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}):
             with self.assertRaisesRegex(ex.Refusal, 'stage unadmitted'):
-                ex.execute_stage('C4', bindings, activation_path=c4_path, activation_sha256=c4_sha,
+                ex.execute_stage('C5', bindings, activation_path=c5_path, activation_sha256=c5_sha,
                                  evidence_root=self.evidence, transport=self.routed({}, calls), utc_now=NOW)
         self.assertEqual(calls, [])
-        self.assert_no_claim('C4', 'fresh-c4-refused')
+        self.assert_no_claim('C5', 'fresh-c5-refused')
 
     def test_a_chain_that_is_not_this_tokens_origin_refuses_before_the_roots_are_read(self):
         self.use_historical({})
@@ -3038,15 +3328,23 @@ class CoverageLedgerTests(unittest.TestCase):
         'c2-guest-probe': ('executed', 'DispatchSweepTests.test_c2_route_echo_is_the_first_guest_effect_and_no_source_payload_is_dispatched'),
         'c3-render-guest-spec': ('executed_stub_chain', 'DispatchSweepTests.test_c3_runs_the_pinned_stage_source_with_the_reviewed_recipe_as_its_stdin'),
         'c3-stage-context': ('executed_stub_chain', 'DispatchSweepTests.test_c3_runs_the_pinned_stage_source_with_the_reviewed_recipe_as_its_stdin'),
-        'c4-render-verify-spec': ('executed_stub_chain', 'DispatchSweepTests.test_production_c4_clean_verify_halts_before_the_build'),
-        'c4-verify-context': ('executed_stub_chain', 'DispatchSweepTests.test_production_c4_clean_verify_halts_before_the_build'),
-        'c4-nerdctl-build-help': ('executed_closure_simulated', 'DispatchSweepTests.test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order'),
-        'c4-check-build-help': ('executed_closure_simulated', 'DispatchSweepTests.test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order'),
-        'c4-nerdctl-build': ('executed_closure_simulated', 'DispatchSweepTests.test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order'),
-        'c4-iidfile-read': ('executed_closure_simulated', 'DispatchSweepTests.test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order'),
-        'c4-read-iidfile': ('executed_closure_simulated', 'DispatchSweepTests.test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order'),
-        'c4-image-inspect': ('executed_closure_simulated', 'DispatchSweepTests.test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order'),
-        'c4-check-image-identity': ('executed_closure_simulated', 'DispatchSweepTests.test_c4_closure_simulation_dispatches_every_verify_and_build_step_in_order'),
+        'c4-render-verify-spec': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
+        'c4-make-input-dir': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
+        'c4-prefetch-runtime-inputs': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
+        'c4-render-input-specs': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
+        'c4-render-input-transfer': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
+        'c4-transfer-inputs': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
+        'c4-check-input-transfer': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
+        'c4-verify-context': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
+        'c4-verify-inputs': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
+        'c4-check-input-verify': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
+        'c4-nerdctl-build-help': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
+        'c4-check-build-help': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
+        'c4-nerdctl-build': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
+        'c4-iidfile-read': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
+        'c4-read-iidfile': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
+        'c4-image-inspect': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
+        'c4-check-image-identity': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
         'c5-disposable-check': ('executed_stub_chain', 'DispatchSeamTests.test_c5_guest_exit_stops_as_guest_unknown_and_never_closes'),
         'c5-check-facts': ('helper_direct', 'HelperDispatchTests.test_check_runtime_facts_needs_exit_zero_and_root_facts'),
         'c6-colima-list': ('executed_stub_chain', 'DispatchSeamTests.test_c6_host_step_dispatches_under_the_recorded_roots_and_closes'),
@@ -3950,7 +4248,8 @@ class RuntimeImageInputTests(Fixture):
                                                    checkpoint=lambda: self.monitor.check())
 
     def test_exact_bytes_are_fetched_once_into_the_owned_directory(self):
-        result = ex.h_prefetch_runtime_inputs(self.ctx, dict(inputs=[self.dest]))
+        result = ex.h_prefetch_runtime_inputs(dict(self.ctx, pins=ex.Pins()),
+                                              dict(id='d2-prefetch-runtime-inputs', inputs=[self.dest]))
         self.assertEqual(result['bytes'], FAKE_RUNTIME_PIN['bytes'])
         self.assertEqual(result['oci'], self.dest + '/oci')
         self.assertEqual(result['debs'], self.dest + '/debs')
@@ -3986,7 +4285,11 @@ class RuntimeImageInputTests(Fixture):
         other = os.path.dirname(self.dest) + '/other-inputs'
         os.mkdir(other, 0o700)
         with self.assertRaises(primitive.Refusal):
-            ex.h_prefetch_runtime_inputs(self.ctx, dict(inputs=[other]))
+            ex.h_prefetch_runtime_inputs(dict(self.ctx, pins=ex.Pins()),
+                                         dict(id='d2-prefetch-runtime-inputs', inputs=[other]))
+        with self.assertRaises(primitive.Refusal):
+            ex.h_prefetch_runtime_inputs(dict(self.ctx, pins=ex.Pins()),
+                                         dict(id='c4-prefetch-runtime-inputs', inputs=[self.dest]))
         self.assertEqual(os.listdir(other), [])
 
     def test_a_missing_or_nonempty_input_directory_refuses(self):
@@ -4379,8 +4682,10 @@ class C1ProofEntryTests(Fixture):
         options = dict(activation_id='c1-window', duration_seconds=600, evidence_root=self.evidence)
         with self.assertRaisesRegex(ex.Refusal, 'no window recipe'):
             proof.window_recipe('C1', self.bindings, options)
-        with self.assertRaisesRegex(ex.Refusal, 'supports only C0, D0, D1, C1, C2, C3 or D2'):
-            proof.prospective('C4', self.bindings)
+        with self.assertRaisesRegex(ex.Refusal, 'no window recipe'):
+            proof.window_recipe('C4', self.bindings, options)
+        with self.assertRaisesRegex(ex.Refusal, 'supports only C0, D0, D1, C1, C2, C3, C4 or D2'):
+            proof.prospective('C9', self.bindings)
 
 
 class C2C3ProofEntryTests(Fixture):
@@ -4548,13 +4853,17 @@ class ColimaImagePinTests(unittest.TestCase):
             with self.assertRaises(primitive.Refusal):
                 REAL_PIN(changed)
 
-    def test_only_the_image_fetch_is_admitted_from_the_download_stages(self):
+    def test_only_the_reviewed_fetches_are_admitted_from_the_download_stages(self):
         manifest = ex.load_manifest()
-        self.assertNotIn('C1', ex.UNADMITTED)
-        self.assertNotIn('D2', ex.UNADMITTED)
-        self.assertIn('754', ex.UNADMITTED['C4'])
-        self.assertEqual(ex.stage_admission(ex.stage_of(manifest, 'C1')), [])
-        self.assertEqual(ex.stage_admission(ex.stage_of(manifest, 'D2')), [])
+        for stage_id in ('C1', 'C4', 'D2'):
+            self.assertNotIn(stage_id, ex.UNADMITTED)
+            self.assertEqual(ex.stage_admission(ex.stage_of(manifest, stage_id)), [], stage_id)
+        self.assertIn('C5', ex.UNADMITTED)
+        # C4 fetches the same pinned OCI/deb set D2 fetches, with the same cap and the same official sources.
+        self.assertEqual(ex.stage_of(manifest, 'C4')['download_cap_bytes'],
+                         manifest['binding_inputs']['runtime_image']['bytes'])
+        self.assertEqual(ex.stage_of(manifest, 'C4')['network_sources'],
+                         ex.stage_of(manifest, 'D2')['network_sources'])
 
 
 class RuntimeImagePinTests(unittest.TestCase):
