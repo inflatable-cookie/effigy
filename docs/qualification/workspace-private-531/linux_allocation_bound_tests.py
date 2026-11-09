@@ -101,6 +101,26 @@ class VerifierChecks(unittest.TestCase):
             with self.subTest(request=request), self.assertRaises(Refusal):
                 bound.validate_candidate_request(request)
 
+    def test_offline_versions_require_both_original_streams_and_waited_success(self):
+        def item(stdout, stderr, exit=0):
+            return {'stdout': stdout, 'stderr': stderr, 'exit': exit,
+                    'stdout_sha256': hashlib.sha256(stdout.encode()).hexdigest(),
+                    'stderr_sha256': hashlib.sha256(stderr.encode()).hexdigest()}
+        tune = item('tune2fs 1.47.2 (1-Jan-2025)\nFilesystem UUID: x\n', '')
+        check = item('', 'e2fsck 1.47.2 (1-Jan-2025)\nUsing EXT2FS Library\n')
+        originals = {'tune2fs': tune, 'e2fsck': check}
+        self.assertEqual(bound.offline_version_plan(), {'tune2fs': ['/sbin/tune2fs', '-l', '/dev/sda2'],
+                                                       'e2fsck': ['/sbin/e2fsck', '-V']})
+        self.assertEqual(bound.inspect_offline_versions(originals), {'e2fsprogs_version': '1.47.2'})
+        invalid = ({'tune2fs': tune}, dict(originals, e2fsck=item('', '', exit=0)),
+                   dict(originals, tune2fs=item('tune2fs 1.47.1 (date)\n', '')),
+                   dict(originals, e2fsck=item('', 'e2fsck 1.47.2 (date)\n', exit=False)),
+                   dict(originals, e2fsck=dict(check, stderr_sha256='0' * 64)),
+                   dict(originals, tune2fs=item('tune2fs 1.47.2 (date)\n', 'x' * (128 * 1024 + 1))))
+        for values in invalid:
+            with self.subTest(values=str(values)[:120]), self.assertRaises(Refusal):
+                bound.inspect_offline_versions(values)
+
     def test_offline_superblock_candidate_refuses_foreign_dirty_or_nonempty_prestate(self):
         raw = bytearray(1024)
         struct.pack_into('<H', raw, 0x38, 0xef53)

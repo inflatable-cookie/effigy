@@ -70,6 +70,42 @@ def inspect_candidate_superblock(raw):
     return {'uuid': ROOT_UUID, 'inode_size': inode_size, 'stored_mount_options_empty': True}
 
 
+def offline_version_plan():
+    """Fixed future read-only observations; constructing them runs nothing."""
+    return {'tune2fs': ['/sbin/tune2fs', '-l', ROOT_DEVICE],
+            'e2fsck': ['/sbin/e2fsck', '-V']}
+
+
+def inspect_offline_versions(originals):
+    """Check both retained streams and positive waited exits, without granting authority.
+
+    The caller must independently bind the executables, device, boot and
+    observation route. A matching banner is not a capability or enforcement proof.
+    """
+    if not isinstance(originals, dict) or set(originals) != {'tune2fs', 'e2fsck'}:
+        raise Refusal('offline tool originals are incomplete')
+    for tool, banner_stream in (('tune2fs', 'stdout'), ('e2fsck', 'stderr')):
+        item = originals[tool]
+        if not isinstance(item, dict) or set(item) != {'stdout', 'stderr', 'stdout_sha256',
+                                                        'stderr_sha256', 'exit'} or \
+                type(item['exit']) is not int or item['exit'] != 0:
+            raise Refusal(tool + ' original or waited exit is missing')
+        for stream in ('stdout', 'stderr'):
+            value, digest = item[stream], item[stream + '_sha256']
+            if not isinstance(value, str) or not isinstance(digest, str) or not HEX64.fullmatch(digest):
+                raise Refusal(tool + ' stream or hash is malformed')
+            try:
+                raw = value.encode('utf-8')
+            except UnicodeEncodeError as exc:
+                raise Refusal(tool + ' stream is not UTF-8') from exc
+            if len(raw) > 128 * 1024 or hashlib.sha256(raw).hexdigest() != digest:
+                raise Refusal(tool + ' stream is oversized or differs from its hash')
+        lines = item[banner_stream].splitlines()
+        if not lines or not re.fullmatch(re.escape(tool) + r' 1\.47\.2 \([^()\r\n]+\)', lines[0]):
+            raise Refusal(tool + ' version is missing or unsupported')
+    return {'e2fsprogs_version': '1.47.2'}
+
+
 def validate_candidate_request(request):
     """Validate a prospective request's shape, without granting authority."""
     if not isinstance(request, dict) or set(request) != {'row', 'nonce', 'boot_id'}:
