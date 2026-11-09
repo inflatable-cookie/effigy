@@ -39,11 +39,16 @@ agreement is not evidence. Source admission of this logic is not evidence a fres
 The production handoff is association_facts: one boot-bound host inventory read (read_inventory),
 the current registered-config and descriptor originals, the extent inventory the stage observed and
 the guest block observations of that same boot. It returns the complete record and the caller feeds
-it to setup.verify_disk_association. The reader is dispatched only when its ABI sources are complete
-(linux_disk_inventory.reader_executable), so a native occurrence is not spent on an entry that is
-known to refuse; the exact limitation and the one supported next read are in
-linux_disk_inventory.SOURCE_GAP.
+it to setup.verify_disk_association. stored_facts/load_facts are its document form: the stage keeps
+the record (raw config, descriptor and host-read stdout/stderr as bounded base64 envelopes with
+length and digest) so a later consumer re-verifies the same facts instead of a reduced summary, and
+setup.verify_disk_association decodes it before the same premises run. The reader is dispatched only
+when its ABI sources are complete (linux_disk_inventory.reader_executable), so a native occurrence is
+not spent on an entry that is known to refuse; the exact limitation and the one supported next read
+are in linux_disk_inventory.SOURCE_GAP.
 """
+import base64
+import binascii
 import hashlib
 import re
 import xml.etree.ElementTree as ET
@@ -106,6 +111,10 @@ USB_HISTORY_NAMES = frozenset({
 })
 MAX_CONFIG_BYTES = 1024 * 1024
 BOOT_ID = re.compile(r'^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$')
+# The document form one observation stage stores for a later consumer. It keeps the raw originals
+# (config, descriptor and the host read's stdout/stderr) as bounded base64 envelopes with their own
+# length and digest, so a stored record re-verifies through the same premises and is not a summary.
+FACTS_SCHEMA = 'parallels-disk-association-facts-v1'
 PREMISES = ('mechanism', 'host_read', 'config', 'descriptor', 'guest_blocks')
 MECHANISM = 'parallels-host-inventory-trust-v1'
 UNSUPPORTED = ('unsupported controller-to-guest disk association: the mechanism is not the pinned '
@@ -567,3 +576,65 @@ def association_facts(boot_id, read_boot_id, config, descriptor, extents, block,
             'config': bytes(config), 'descriptor': bytes(descriptor), 'host_read': read,
             'host': host_facts(bytes(descriptor), extents),
             'guest': guest_facts(boot_id, block, lsblk, root)}
+
+
+def _wrap_bytes(value, where, allow_empty=False):
+    if not isinstance(value, (bytes, bytearray)) or (not value and not allow_empty):
+        raise Refusal('the association %s original is missing' % where)
+    data = bytes(value)
+    return {'encoding': 'base64', 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
+            'data': base64.b64encode(data).decode('ascii')}
+
+
+def _unwrap_bytes(value, where, allow_empty=False):
+    if not isinstance(value, dict) or set(value) != {'encoding', 'bytes', 'sha256', 'data'} \
+            or value.get('encoding') != 'base64':
+        raise Refusal('the association %s has no document encoding' % where)
+    try:
+        data = base64.b64decode(value['data'].encode('ascii'), validate=True)
+    except (AttributeError, ValueError, binascii.Error) as exc:
+        raise Refusal('the association %s is not base64' % where) from exc
+    if (not data and not allow_empty) or len(data) != value.get('bytes') \
+            or hashlib.sha256(data).hexdigest() != value.get('sha256'):
+        raise Refusal('the association %s differs from its own document' % where)
+    return data
+
+
+def stored_facts(facts):
+    """The JSON-safe document form of one complete association record.
+
+    A stage stores this so a later consumer re-verifies the same facts rather than a reduced
+    summary. It keeps the raw registered-config and descriptor originals and the host read's raw
+    stdout/stderr with their own length and digest. It is not a receipt and grants nothing: the
+    premises re-derive everything from these bytes.
+    """
+    if not isinstance(facts, dict) or not isinstance(facts.get('host_read'), dict):
+        raise Refusal('the association record is missing')
+    document = dict(facts)
+    document['host_read'] = dict(facts['host_read'])
+    for where in ('config', 'descriptor'):
+        document[where] = _wrap_bytes(facts.get(where), where)
+    for name in ('output', 'stderr'):
+        document['host_read'][name] = _wrap_bytes(document['host_read'].get(name),
+                                                  'host read ' + name, allow_empty=(name == 'stderr'))
+    document['schema'] = FACTS_SCHEMA
+    return document
+
+
+def load_facts(document):
+    """Restore a record stored by stored_facts. This is a decode boundary, not a bypass: every
+    premise still re-derives its own facts from the restored bytes, and an in-memory record is
+    passed through unchanged so the verifier stays strict."""
+    if not isinstance(document, dict):
+        raise Refusal('the association record is missing')
+    if document.get('schema') != FACTS_SCHEMA:
+        return document
+    facts = dict(document)
+    facts.pop('schema')
+    facts['host_read'] = dict(document.get('host_read') or {})
+    for where in ('config', 'descriptor'):
+        facts[where] = _unwrap_bytes(document.get(where), where)
+    for name in ('output', 'stderr'):
+        facts['host_read'][name] = _unwrap_bytes(facts['host_read'].get(name), 'host read ' + name,
+                                                 allow_empty=(name == 'stderr'))
+    return facts

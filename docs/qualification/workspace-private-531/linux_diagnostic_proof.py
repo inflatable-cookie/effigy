@@ -204,6 +204,19 @@ def observe_association(boot_id, read_boot_id, config, descriptor, extents, writ
             'result': setup.verify_disk_association(facts)}
 
 
+def stored_association(handoff):
+    """The outcome keys one handoff contributes.
+
+    `disk_association` holds the complete fact document (raw originals included), which is exactly
+    what `setup.setup_plan` E7* re-verifies; the reduced verify result is kept beside it for reading
+    and is never the stored record. A handoff that was not attempted stores nothing.
+    """
+    if not isinstance(handoff, dict) or handoff.get('facts') is None:
+        return {'disk_association': None, 'disk_association_result': None}
+    return {'disk_association': disk_association.stored_facts(handoff['facts']),
+            'disk_association_result': handoff.get('result')}
+
+
 def read_request(path, expected):
     if os.path.realpath(path) != path or not path.startswith(SCRATCH + '/'):
         raise stage.Refusal('request must be canonical under Stash scratch')
@@ -354,7 +367,7 @@ def execute(request, request_path, request_hash):
     outcome = {'schema': 'linux-diagnostic-observation-v6', 'request_sha256': request_hash,
                'head': actual, 'candidate_h': setup.CANDIDATE_H_HEAD, 'launched_at': launched_at,
                'writable_top': 'unknown', 'guest_association': 'unknown',
-               'disk_association': None,
+               'disk_association': None, 'disk_association_result': None,
                'readiness': 'not evaluated', 'readiness_observation': None,
                'transport': {'sentinel': TRANSPORT_SENTINEL, 'status': 'not attempted',
                              'attempts': []},
@@ -570,7 +583,9 @@ def execute(request, request_path, request_hash):
         # The disk-association handoff. The reader is dispatched only when its ABI sources are
         # complete, so an entry known to refuse is not spent on this native occurrence. The
         # writer-bound guest block reads must have completed for this same boot, and the complete
-        # record goes through production setup.verify_disk_association.
+        # fact document goes through production setup.verify_disk_association; that document is
+        # what the stored `disk_association` key holds, so setup_plan E7* re-verifies the same facts
+        # and the retained raw originals rather than a reduced summary.
         try:
             handoff = observe_association(
                 boot_id, read_guest_boot,
@@ -578,7 +593,7 @@ def execute(request, request_path, request_hash):
                 (destination / 'before-descriptor').read_bytes(),
                 outcome.get('before_extents') or {}, writer_bound)
             outcome['guest_association'] = handoff['status']
-            outcome['disk_association'] = handoff['result']
+            outcome.update(stored_association(handoff))
         except (stage.Refusal, disk_association.Refusal, disk_inventory.Refused, OSError) as exc:
             outcome['guest_association'] = 'refused: ' + str(exc)
             outcome['findings'].append('disk association: ' + str(exc))

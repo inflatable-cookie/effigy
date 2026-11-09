@@ -6,6 +6,9 @@ TEST_PINS is a test-only mechanism used to isolate premise logic. Production PIN
 parallels-host-inventory-trust-v1. No VM, host service, image, disk or guest is touched. A pass of
 the verifier on fixture bytes is source admission of the logic, not a fresh native inventory.
 """
+import base64
+import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -125,7 +128,7 @@ def host_read(pin=None, **over):
             'tool_version': pin['version'], 'desktop_build': pin['desktop_build'],
             'api': pin['api'], 'argv': list(pin['argv']), 'readonly': True, 'status': 'ok',
             'exit': 0, 'truncated': False, 'vm': VM, 'boot_ids': [BOOT, BOOT],
-            'output': inventory_text(pin).encode()}
+            'output': inventory_text(pin).encode(), 'stderr': b''}
     read.update(over)
     return read
 
@@ -924,6 +927,52 @@ class ProductionInventoryControls(unittest.TestCase):
                     descriptor=descriptor, extents=descriptor_extents(),
                     block={'blocks': block}, lsblk={'nodes': lsblk}, root=guest_root_facts(),
                     transport=inventory_transport())
+
+    def test_stored_record_reverifies_through_production_setup(self):
+        """The stored fact document, not a reduced verify result, is what the setup rows re-verify.
+
+        A stage keeps one JSON document; setup_plan E7* calls setup.verify_disk_association on that
+        key, so a reduced summary must not be able to stand in for it and a stored document must
+        re-verify to the same association.
+        """
+        block, lsblk = guest_block_observations()
+        facts = dal.association_facts(
+            boot_id=BOOT, read_boot_id=boot_reader([BOOT, BOOT]),
+            config=config_xml(), descriptor=identity_tests.doc(), extents=descriptor_extents(),
+            block={'blocks': block}, lsblk={'nodes': lsblk}, root=guest_root_facts(),
+            transport=inventory_transport())
+        result = setup.verify_disk_association(facts)
+        stored = json.loads(json.dumps(dal.stored_facts(facts)))
+        self.assertEqual(stored['schema'], dal.FACTS_SCHEMA)
+        self.assertEqual(stored['host_read']['output']['bytes'], len(facts['host_read']['output']))
+        self.assertEqual(stored['host_read']['output']['sha256'],
+                         hashlib.sha256(facts['host_read']['output']).hexdigest())
+        self.assertEqual(setup.verify_disk_association(stored), result)
+        self.assertEqual(dal.load_facts(stored)['config'], config_xml())
+        # A reduced verify result is not facts and is refused by the same consumer entry.
+        with self.assertRaises(Refusal):
+            setup.verify_disk_association(result)
+
+        def reseal(document, field, data):
+            document[field] = {'encoding': 'base64', 'bytes': len(data),
+                               'sha256': hashlib.sha256(data).hexdigest(),
+                               'data': base64.b64encode(data).decode('ascii')}
+
+        # A stored original that disagrees with its own envelope, or loses the envelope, refuses; a
+        # correctly resealed but different original is not a bypass, because the premise re-derives
+        # its own facts from those bytes and refuses it.
+        for label, mutate in (
+                ('config resealed as another document',
+                 lambda doc: reseal(doc, 'config', b'<ParallelsVirtualMachine/>')),
+                ('stdout digest', lambda doc: doc['host_read']['output'].update(sha256='0' * 64)),
+                ('length', lambda doc: doc['descriptor'].update(bytes=1)),
+                ('no envelope', lambda doc: doc['descriptor'].clear()),
+                ('no schema', lambda doc: doc.pop('schema'))):
+            with self.subTest(label):
+                tampered = json.loads(json.dumps(stored))
+                mutate(tampered)
+                with self.assertRaises(Refusal):
+                    setup.verify_disk_association(tampered)
 
     def test_retained_747_replay_is_offline_and_supplies_no_fresh_evidence(self):
         """747/748 retained shape establishes config/descriptor/guest only. No fresh inventory."""

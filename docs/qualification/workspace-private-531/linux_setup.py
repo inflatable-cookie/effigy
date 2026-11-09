@@ -531,9 +531,14 @@ def stage1_run(request, after, transport, clock=time.monotonic, started_at=None,
 
 
 def verify_disk_association(facts, supported=None):
-    """Fail closed unless every linux_disk_association premise passes on a complete bound observation."""
+    """Fail closed unless every linux_disk_association premise passes on a complete bound observation.
+
+    A record stored by `linux_disk_association.stored_facts` (the document one observation stage
+    keeps) is decoded here first, so the setup rows re-verify the same facts the stage observed
+    rather than a reduced summary.
+    """
     supported = SUPPORTED_DISK_MECHANISMS if supported is None else supported
-    return disk_association.verify(facts, supported)
+    return disk_association.verify(disk_association.load_facts(facts), supported)
 
 
 def verify_hard_limit(witness, limit_bytes, supported=None, facts=None):

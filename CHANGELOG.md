@@ -477,7 +477,11 @@ During v0.x, MINOR bumps may include breaking changes.
   stage now assembles the complete association record inside its same-VM boot
   bracket and feeds it through production `setup.verify_disk_association`; while
   the SDK ABI is unsourced it does not dispatch the reader, so no native
-  occurrence is spent on an entry that cannot yet read. The exact external
+  occurrence is spent on an entry that cannot yet read. The outcome stores that
+  fact document (raw config, descriptor and host-read stdout/stderr as bounded
+  base64 envelopes with length and digest), because `setup_plan` E7* re-verifies
+  that key as facts; the reduced verify result is kept beside it and is never the
+  stored record. The exact external
   limitation (numeric `PARALLELS_API_VER`, `PRL_HANDLE` ABI and prototypes) and
   the one supported next read (the 27.1.0-58756 SDK header archive, collected in
   a separately briefed host-custodied step and pinned by sha256) are recorded in

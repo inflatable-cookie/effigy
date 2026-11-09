@@ -2765,6 +2765,30 @@ class DiskAssociationHandoff(unittest.TestCase):
         self.assertIn('not evidence a fresh host inventory ran',
                       handoff['result']['not_established'])
 
+    def test_stored_outcome_record_is_what_setup_reverifies(self):
+        """execute() stores handoff['facts'] as the fact document, so setup_plan E7* re-verifies the
+        same facts; the reduced verify result is kept beside it and is never the stored record."""
+        block, lsblk = association_tests.guest_block_observations()
+        with self.reader_open():
+            handoff = proof.observe_association(
+                self.BOOT, lambda: self.BOOT, association_tests.config_xml(), identity_tests.doc(),
+                association_tests.descriptor_extents(),
+                self.writer_bound(block, lsblk, association_tests.guest_root_facts()),
+                transport=association_tests.inventory_transport())
+        stored = proof.stored_association(handoff)
+        self.assertEqual(stored['disk_association_result'], handoff['result'])
+        document = json.loads(json.dumps(stored['disk_association']))
+        self.assertEqual(document['schema'], proof.disk_association.FACTS_SCHEMA)
+        self.assertEqual(proof.setup.verify_disk_association(document), handoff['result'])
+        self.assertEqual(document['host_read']['output']['bytes'],
+                         len(handoff['facts']['host_read']['output']))
+        self.assertEqual(document['host_read']['stderr']['bytes'],
+                         len(handoff['facts']['host_read']['stderr']))
+        with self.assertRaises(proof.disk_association.Refusal):
+            proof.setup.verify_disk_association(stored['disk_association_result'])
+        gap = proof.stored_association({'status': 'not attempted', 'facts': None, 'result': None})
+        self.assertEqual(gap, {'disk_association': None, 'disk_association_result': None})
+
     def test_stage_handoff_refuses_a_moved_guest_boot(self):
         block, lsblk = association_tests.guest_block_observations()
         boots = iter([self.BOOT, '18ad4b3d-6b39-4d23-a9bd-51e9ca4f3ed4'])

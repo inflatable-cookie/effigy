@@ -442,10 +442,14 @@ does not, a disagreeing major:minor or size, or an undocumented device type; an 
 `guest_blocks` refuses it rather than the mapper hiding it). `host_facts` refuses a descriptor chain image the observed
 inventory does not carry. `linux_diagnostic_proof.observe_association` is the wired stage entry: inside the existing
 same-VM boot bracket it dispatches the reader, brackets it with two fresh guest boot originals, and feeds the record
-through production `setup.verify_disk_association`, recording `guest_association` and the verified result (or the
-refusal) in the outcome. Because the reader is known to refuse, the stage does **not dispatch it**: it records
-`guest_association` as not attempted with the exact limitation, so no native occurrence is spent on an entry that
-cannot yet read. Opening that gate is a control (`patch.multiple` on the unsourced constants), not a claim a read ran.
+through production `setup.verify_disk_association`. The outcome's `disk_association` key holds the fact document
+(`linux_disk_association.stored_facts`: the raw config, descriptor and host-read stdout/stderr as bounded base64
+envelopes with their own length and digest), because `setup_plan` E7* re-verifies that key as facts and
+`verify_disk_association` decodes it before the same premises run; the reduced verify result is kept beside it as
+`disk_association_result` and is never the stored record. Because the reader is known to refuse, the stage does
+**not dispatch it**: it records `guest_association` as not attempted with the exact limitation and stores no record,
+so no native occurrence is spent on an entry that cannot yet read. Opening that gate is a control (`patch.multiple`
+on the unsourced constants), not a claim a read ran.
 
 **Helper bytes are pinned independently.** `linux_disk_association.HELPER_SHA256` is a committed literal and
 `PINS['sha256']` binds to it; `read_inventory` verifies the file at the pinned path against it, so a modified helper
