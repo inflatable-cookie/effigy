@@ -546,6 +546,7 @@ def verify_hard_limit(witness, limit_bytes, supported=None, facts=None):
         raise Refusal('no source-verified hard-limit mechanism; polling counters are not a quota')
     if mechanism == allocation.MECHANISM:
         bound = allocation.verify(witness, limit_bytes, facts or {}, supported)
+        allocation.inspect_activation_completion((facts or {}).get('activation'))
         return {'mechanism': mechanism, 'limit_bytes': limit_bytes, 'bound': bound}
     limits = witness.get('limits') or []
     if limit_bytes is None or limit_bytes not in limits or witness.get('enforcement') != 'kernel':
@@ -1140,7 +1141,7 @@ def _allocation_facts(fresh):
     """Exact facts a kernel allocation bound must match: boot, owned uid, stage root and the current object set."""
     identity = fresh.get('identity') or {}
     return {'boot_id': identity.get('boot_id'), 'uid': fresh.get('effigy531_uid'), 'root': BASE,
-            'entries': fresh.get('allocation_entries')}
+            'entries': fresh.get('allocation_entries'), 'activation': fresh.get('activation')}
 
 
 def _hard_limit_reason(fresh, row):

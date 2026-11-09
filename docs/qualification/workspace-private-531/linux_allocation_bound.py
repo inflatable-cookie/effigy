@@ -843,3 +843,23 @@ def inspect_activation_progress(records):
     return {'completed': [item['name'] for item in records],
             'next': plan[len(records)]['name'] if len(records) < len(plan) else None,
             'snapshot_id': next((item['snapshot_id'] for item in records if item['name'] == 'snapshot'), None)}
+
+
+def inspect_activation_completion(activation):
+    """Require the whole sequence and its offline originals; no quota credit is yet possible.
+
+    These records are source controls, not proof of provenance. The independent accounting
+    premise remains unresolved: v1.47.2 quota_data_add can lose an allocation failure and
+    quota_compare_and_update can overwrite a scan error while closing the quota file.
+    """
+    if not isinstance(activation, dict) or set(activation) != {'records', 'offline_originals'}:
+        raise Refusal('activation completion requires records and offline originals')
+    records = activation['records']
+    progress = inspect_activation_progress(records)
+    if progress['next'] is not None:
+        raise Refusal('activation is only a prefix, not completion')
+    rescue = next(item['boot_id'] for item in records if item['name'] == 'rescue-boot')
+    names = [name for name, _ in offline_operation_plan()]
+    if inspect_offline_progress(rescue, names, activation['offline_originals'])['next'] is not None:
+        raise Refusal('offline operations are incomplete')
+    raise Refusal('independent complete quota accounting is not established')

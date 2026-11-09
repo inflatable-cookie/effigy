@@ -234,7 +234,8 @@ class VerifierChecks(unittest.TestCase):
 
     def test_production_admits_the_mechanism_but_still_requires_a_complete_witness(self):
         with patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({MECH})):
-            self.assertEqual(setup.verify_hard_limit(render(), LIMIT, None, facts())['mechanism'], MECH)
+            with self.assertRaisesRegex(Refusal, 'activation completion'):
+                setup.verify_hard_limit(render(), LIMIT, None, facts())
             incomplete = {k: v for k, v in render().items() if k != 'enforcement'}
             with self.assertRaises(Refusal):
                 setup.verify_hard_limit(incomplete, LIMIT, None, facts())
@@ -1218,6 +1219,24 @@ class ActivationRouteChecks(unittest.TestCase):
                 next(item for item in records if item['name'] == name).update(changes)
                 with self.assertRaises(Refusal):
                     bound.inspect_activation_progress(records)
+
+    def test_completion_requires_full_sequence_and_offline_originals_and_still_holds_accounting(self):
+        empty = hashlib.sha256(b'').hexdigest()
+        originals = [{'name': name, 'argv': argv, 'boot_id': RESCUE_BOOT, 'stdout': '', 'stderr': '',
+                      'stdout_sha256': empty, 'stderr_sha256': empty, 'exit': 0}
+                     for name, argv in bound.offline_operation_plan()]
+        records = activation_records()
+        with self.assertRaisesRegex(Refusal, 'accounting'):
+            bound.inspect_activation_completion({'records': records, 'offline_originals': originals})
+        for count in range(len(records)):
+            with self.subTest(count=count), self.assertRaises(Refusal):
+                bound.inspect_activation_completion({'records': records[:count], 'offline_originals': originals})
+        for bad in (originals[:-1], [dict(originals[0], argv=['wrong'])] + originals[1:],
+                    [dict(originals[0], stdout='changed')] + originals[1:]):
+            with self.assertRaises(Refusal):
+                bound.inspect_activation_completion({'records': records, 'offline_originals': bad})
+        with self.assertRaises(Refusal):
+            bound.inspect_activation_completion({'records': records + records[:1], 'offline_originals': originals})
 
     def test_a_boundary_with_missing_or_extra_facts_refuses(self):
         records = activation_records()

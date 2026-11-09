@@ -600,6 +600,23 @@ The [v1.47.2 e2fsck manual source](https://git.kernel.org/pub/scm/fs/ext2/e2fspr
 
 The v1.47.2 `tune2fs` source calls quota usage computation without checking its return value. Its [quota computation source](https://git.kernel.org/pub/scm/fs/ext2/e2fsprogs.git/plain/lib/support/mkquota.c?h=v1.47.2), SHA-256 `81f9bcec788b67384b92577ac8a36738c320570e985a2aad9619883cc3caaeeb`, can return errors while opening or scanning inodes. A zero `tune2fs` exit is therefore not proof that the full quota scan succeeded. Retain complete stderr and require a separately source-qualified, independent accounting check before any limit can be credited; this check is not yet implemented.
 
+The independent candidate `e2fsck -f -n` is not admitted as a complete accounting witness. In
+[v1.47.2 pass1.c](https://github.com/tytso/e2fsprogs/blob/v1.47.2/e2fsck/pass1.c) (SHA-256
+`c409090140ccec5b5bf60e6c4a352d0ce2a6bd461aa1e21b5f0cbd6011c87c6c`), the checker accumulates
+inode charges through `quota_data_add`. In `mkquota.c` (hash above), that function returns void and
+skips a charge if `get_dq` cannot allocate its record. The same source's
+`quota_compare_and_update` assigns the scan error to `err`, then replaces it with the close result
+before returning. The [v1.47.2 unix.c](https://github.com/tytso/e2fsprogs/blob/v1.47.2/e2fsck/unix.c)
+(SHA-256 `b13559bf6143b9efb2fa2cfe61d0c850936f4e9f0c6f019aaa8dac5e64b4ea0b`) skips quota
+comparison for invalid bitmaps or a zero quota inode, and asks `fix_problem` on a reported mismatch.
+The [problem handler](https://github.com/tytso/e2fsprogs/blob/v1.47.2/e2fsck/problem.c) (SHA-256
+`169335a934df2fa0e45b75cab24515a1e27c7c7834c14cb3f89951d074189532`) marks a refused correction
+invalid; that does not recover an unreported charge or scan failure. Thus a zero exit and complete
+streams alone cannot prove this scan complete. The completion consumer checks every boundary and
+both hashed streams and exact argv for all four offline operations, then refuses accounting credit.
+The setup hard-limit admission invokes that consumer; neither a completion label nor an EDQUOT
+observation overrides the refusal. No filesystem read or repair is run here.
+
 The fixed source-only operation plan and progress guard check exact command order, one rescue-boot identity, both hashed streams and a positive waited exit for every recorded attempt. A started step without its completion, an altered command or a changed boot refuses; no repair or retry is added. Supplied records alone do not establish that every attempt was recorded, that the root is unmounted, or that the snapshot is available. Those require independently authenticated, durable one-use custody before any future operation.
 
 **Material decision packet (the operator's, not this task's).** If it proceeds, the following would
