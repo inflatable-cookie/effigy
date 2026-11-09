@@ -237,6 +237,25 @@ fn probe_guard_and_observer_death_matrix_has_no_owned_survivors_or_writes() {
         }
     }
 }
+// On-demand stress control for the descendant release ordering: the leader
+// exits naturally, its reparented descendant is reaped by the OS, and the
+// observer resumes past its own deadline. Run with `--run-ignored only`.
+#[test]
+#[ignore = "stress control for the descendant release ordering; run on demand"]
+fn probe_descendant_release_ordering_stress_control() {
+    let handles: Vec<_> = (0..6)
+        .map(|_| {
+            std::thread::spawn(|| {
+                for _ in 0..15 {
+                    checked_control::matrix_stop("descendant").unwrap();
+                }
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().unwrap();
+    }
+}
 #[test]
 fn probe_guard_dead_before_ack_never_releases_barrier() {
     let home = tempfile::tempdir().unwrap();
@@ -621,6 +640,30 @@ mod checked_control {
         }
     }
 
+    // A pid that is still listed in its group, or mid-exit, is an in-flight
+    // closure round, not closure: the group inventory reports it as unproven
+    // when the OS reaps or tears it down between the listing and the state read.
+    // The observer's deadline has already passed while it was held, so a release
+    // that accepts such a pid leaves no later round to prove closure. On macOS
+    // identity reads report a zombie as absent and state reads report an exiting
+    // pid as absent, so neither is a stable proof; only ESRCH from the
+    // process-table existence probe is.
+    fn wait_absent(id: &ProcessIdentity) -> bool {
+        let until = Instant::now() + BOUND;
+        loop {
+            // SAFETY: signal zero observes existence of the recorded pid only.
+            let gone = unsafe { libc::kill(id.pid as i32, 0) } == -1
+                && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+            if gone {
+                return true;
+            }
+            if Instant::now() >= until {
+                return false;
+            }
+            std::thread::sleep(POLL);
+        }
+    }
+
     struct Control {
         child: Child,
         output: UnixStream,
@@ -902,8 +945,16 @@ mod checked_control {
             }
             eprintln!("control {mode}/observer-stop: exact observer positively stopped after checked marker");
         }
-        for id in &owner.workload {
-            assert!(wait_closed(id), "owned workload survived");
+        // The leader stays unreaped by its owner until release, so its zombie
+        // is the accounted exit. Other workloads are reparented and reaped by
+        // the OS, so they are awaited to absence (see `wait_absent`).
+        for (index, id) in owner.workload.iter().enumerate() {
+            let closed = if index == 0 {
+                wait_closed(id)
+            } else {
+                wait_absent(id)
+            };
+            assert!(closed, "owned workload survived");
         }
         assert!(
             start.elapsed() < Duration::from_secs(3),
