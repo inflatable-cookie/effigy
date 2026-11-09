@@ -1,10 +1,10 @@
 """Kernel-enforced allocation bound for the Linux setup stage tree (source controls only).
 
-Mechanism `ext4-project-quota`: the native root ext4 filesystem carries the `quota` and `project`
-features with project quota active, and one reserved project id (PROJECT_ID) is set with inheritance
-on the stage tree. The kernel refuses any block allocation for that project past its hard limit.
-This bounds RETAINED ALLOCATION of the tree (extents charged to the project). It does not bound
-cumulative writes: an overwrite or a delete-and-rewrite allocates nothing new and is not counted.
+Mechanism candidate `ext4-project-quota`: a native ext4 project quota may bound charged allocation
+when limit enforcement and writer custody are independently established. Root may bypass a hard
+limit and an inode owner may change project attributes; the current route proves neither boundary.
+The intended metric is RETAINED ALLOCATION of the tree (extents charged to the project), not
+cumulative writes: an overwrite or a delete-and-rewrite can reuse allocation and is not counted.
 It does not bound writers outside the tree, such as root-owned system paths or Docker storage.
 
 Observed 2026-11-08 (747 originals): root ext4 with neither feature and no quota tools. That is
@@ -198,7 +198,7 @@ def _facts(facts):
 
 
 def verify(witness, limit_bytes, facts, supported):
-    """Return the admitted bound, or raise Refusal. Every check reads an original or an exact fact."""
+    """Check originals and exact facts, then refuse while enforcement and custody are unproven."""
     mechanism = witness.get('mechanism') if isinstance(witness, dict) else None
     if mechanism != MECHANISM or mechanism not in supported:
         raise Refusal('allocation mechanism is not admitted')
