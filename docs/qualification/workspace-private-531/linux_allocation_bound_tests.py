@@ -300,7 +300,7 @@ class VerifierChecks(unittest.TestCase):
                                hard_qb=((66 << 20) + LIMIT) // 1024), fx=fx)
 
     def test_facts_must_bind_boot_uid_root_and_exact_entries(self):
-        for fx in (facts(boot_id=None), facts(boot_id=''), facts(uid=True), facts(root=''),
+        for fx in (facts(boot_id=None), facts(boot_id=''), facts(uid=True), facts(uid=0), facts(root=''),
                    facts(entries=None), facts(entries={'inputs'})):
             with self.subTest(fx=fx), self.assertRaises(Refusal):
                 self.verify(fx=fx)

@@ -1650,6 +1650,16 @@ class PlanChecks(unittest.TestCase):
         self.assertEqual(row['timeout_seconds'], 60)
         self.assertEqual(json.loads(row['credit']['request_json'])['timeout_seconds'], 60)
 
+    def test_extra_go_receipt_cannot_expand_the_fixed_writer_set(self):
+        facts = self.fx.facts()
+        self.assertEqual(set(facts['go']), setup.SETUP_GO_GATES)
+        rows = setup._rows(facts)
+        self.assertEqual(sum(row['kind'] in ('vm-supervised', 'contained-transfer') for row in rows), 47)
+        facts['go']['unexpected'] = {}
+        result = execute(facts)
+        self.assertEqual(result['halt'], 'E3a')
+        self.assertIn('fixed setup GO receipt set', result['reason'])
+
     def test_no_go_receipt_halts_at_the_first_row(self):
         facts = self.fx.facts()
         facts['go'] = {}

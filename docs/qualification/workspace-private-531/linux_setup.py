@@ -99,6 +99,7 @@ TRANSFER_CAP = 40 * 1024 * 1024            # E9 archive and E19 placements (brie
 EXTRACT_CAP = 500 * 1024 * 1024            # E9b extracted source (brief: extracted <= 500 MiB)
 PAYLOAD_CAP = 64 * 1024 * 1024             # E8 filesystem controls (brief: <= 64 MiB writes)
 E8_TIMEOUT_SECONDS = 60                   # existing E8 payload clock; reserves remain separate
+SETUP_GO_GATES = frozenset({'E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'E19', 'E-SUP'})
 # Mechanisms that have been source-verified. Empty: none is established yet.
 SUPPORTED_DISK_MECHANISMS = frozenset()
 SUPPORTED_HARD_LIMITS = frozenset()
@@ -927,6 +928,8 @@ def setup_plan(fresh):
     import linux_stage1
     digest = plan_digest(rows, head, linux_stage1.digest_value(fresh.get('stage1')))
     gates = fresh.get('go') or {}
+    if not isinstance(gates, dict) or set(gates) != SETUP_GO_GATES:
+        global_missing.append('fixed setup GO receipt set is missing or has extra entries')
     identity = fresh.get('identity')
     output = fresh.get('probe_output')
     probe = None
