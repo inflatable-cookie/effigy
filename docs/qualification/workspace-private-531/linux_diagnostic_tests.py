@@ -1746,7 +1746,8 @@ class WriterBoundObservationTests(unittest.TestCase):
         # The setup source admits only the witness-gated quota mechanism; this observation never
         # turns a diagnostic fact into setup, placement or hard-quota credit.
         self.assertEqual(proof.setup.SUPPORTED_HARD_LIMITS, frozenset({proof.setup.allocation.MECHANISM}))
-        self.assertEqual(proof.setup.SUPPORTED_DISK_MECHANISMS, frozenset())
+        self.assertEqual(proof.setup.SUPPORTED_DISK_MECHANISMS,
+                         frozenset({proof.setup.disk_association.MECHANISM}))
         self.assertIsNone(proof.setup.EXTERNAL_ANCHORS)
         self.assertEqual(proof.setup.SUPPORTED_TOP_MECHANISMS, frozenset({'parallels-descriptor-selection-v1'}))
         self.assertIn('linux_diagnostic_probe.py', proof.SOURCES)

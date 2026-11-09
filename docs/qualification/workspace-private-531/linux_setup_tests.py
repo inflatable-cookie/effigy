@@ -2133,7 +2133,7 @@ class PlanChecks(unittest.TestCase):
         facts = self.fx.facts()
         self.assertEqual(set(facts['go']), setup.SETUP_GO_GATES)
         rows = setup._rows(facts)
-        self.assertEqual(sum(row['kind'] in ('vm-supervised', 'contained-transfer') for row in rows), 47)
+        self.assertEqual(sum(row['kind'] in ('vm-supervised', 'contained-transfer') for row in rows), 48)
         facts['go']['unexpected'] = {}
         result = execute(facts)
         self.assertEqual(result['halt'], 'E3a')

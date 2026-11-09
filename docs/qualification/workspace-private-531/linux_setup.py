@@ -108,8 +108,10 @@ SETUP_GO_GATES = frozenset({'E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'E19', 'E-
 # verify only credits a complete witness (retained originals, exact facts, a genuine EDQUOT
 # enforcement observation, setter/approval custody and an exact headroom). The 2026-11-08 native
 # root lacks the project and quota features, so a live run refuses at the fixed route with that
-# exact reason. Disk association and the writable top stay unadmitted.
-SUPPORTED_DISK_MECHANISMS = frozenset()
+# exact reason. Disk association admits parallels-host-inventory-trust-v1 at the source level:
+# admission is not a fresh inventory or native credit. The writable top stays the descriptor
+# metadata mechanism.
+SUPPORTED_DISK_MECHANISMS = frozenset({disk_association.MECHANISM})
 SUPPORTED_HARD_LIMITS = frozenset({allocation.MECHANISM})
 SUPPORTED_TOP_MECHANISMS = frozenset({identity.MECHANISM})   # the only implemented top selection: descriptor metadata
 CANDIDATE_H_HEAD = '4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02'   # source-bound candidate H, distinct from K
@@ -224,7 +226,7 @@ def verify_writable_top(observation, descriptor):
     The selection (linux_disk_identity.select_top) is the only source. An observation must name a
     supported mechanism and the same GUID and complete result digest, or it is stale or fabricated and
     refuses. The descriptor's disk UID must be the reviewed disk; this is an identity equality check
-    only, not disk-to-guest correlation (verify_disk_association stays closed). A file name, a bare
+    only, not disk-to-guest correlation (verify_disk_association is a separate gate). A file name, a bare
     GUID or a mechanism string is not evidence on its own.
     """
     if not isinstance(observation, dict) or observation.get('mechanism') not in SUPPORTED_TOP_MECHANISMS:
@@ -529,7 +531,7 @@ def stage1_run(request, after, transport, clock=time.monotonic, started_at=None,
 
 
 def verify_disk_association(facts, supported=None):
-    """Fail closed unless every linux_disk_association premise passes; an empty gate refuses everything."""
+    """Fail closed unless every linux_disk_association premise passes on a complete bound observation."""
     supported = SUPPORTED_DISK_MECHANISMS if supported is None else supported
     return disk_association.verify(facts, supported)
 

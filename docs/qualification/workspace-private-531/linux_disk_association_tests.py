@@ -1,10 +1,10 @@
 """Controls for the controller-to-guest association verifier (linux_disk_association).
 
 Portable controls use synthetic candidates shaped like the retained facts: a registered config excerpt,
-the documented descriptor shape from linux_disk_identity_tests, one host read and a guest inventory.
-TEST_PINS is a test-only mechanism; PINS in production stays empty, and a control asserts that. No VM,
-host service, image, disk or guest is touched. A pass here shows the premise logic only, not a host/guest
-association: no pinned host read exists.
+the documented descriptor shape from linux_disk_identity_tests, one host inventory and a guest inventory.
+TEST_PINS is a test-only mechanism used to isolate premise logic. Production PINS names
+parallels-host-inventory-trust-v1. No VM, host service, image, disk or guest is touched. A pass of
+the verifier on fixture bytes is source admission of the logic, not a fresh native inventory.
 """
 import sys
 import unittest
@@ -14,6 +14,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_disk_association as dal
 import linux_disk_identity_tests as identity_tests
+import linux_disk_inventory as inventory
 import linux_setup as setup
 from linux_supervisor import Refusal
 
@@ -36,10 +37,20 @@ TOP = '{11111111-1111-1111-1111-111111111111}'
 CHAIN = [TOP, '{22222222-2222-2222-2222-222222222222}', '{33333333-3333-3333-3333-333333333333}']
 EXTENTS = {CHAIN[0]: 'a.hds', CHAIN[1]: 'b.hds', CHAIN[2]: 'r.hds'}
 TEST_MECHANISM = 'test-disk'
-TEST_PINS = {TEST_MECHANISM: {'tool_path': '/test/libprl_sdk.dylib', 'sha256': 'a' * 64, 'version': '27.1.0',
-                              'desktop_build': '27.1.0-58756', 'api': 'PrlVmDevHd_GetSerialNumber',
-                              'max_bytes': 256, 'fields': ('serial', 'image_uid')}}
+TEST_HELPER = '/test/linux_disk_inventory.py'
+TEST_LIBRARY = '/test/ParallelsVirtualizationSDK'
+TEST_LIBRARY_SHA = 'b' * 64
+TEST_ARGV = ['/usr/bin/python3', '-I', '-B', TEST_HELPER, 'inventory']
+TEST_PINS = {TEST_MECHANISM: {
+    'tool_path': TEST_HELPER, 'sha256': 'a' * 64, 'version': '27.1.0',
+    'desktop_build': '27.1.0-58756', 'api': 'PrlVmCfg_GetAllDevices',
+    'argv': TEST_ARGV, 'max_bytes': inventory.MAX_BYTES, 'max_devices': inventory.MAX_DEVICES,
+    'library_path': TEST_LIBRARY, 'library_sha256': TEST_LIBRARY_SHA,
+    'library_build': '58756', 'home': setup.PVM_HOME, 'trust': 'test-only',
+}}
 TEST_SUPPORTED = frozenset({TEST_MECHANISM})
+CAMERA_SYS = dal.USB_CAMERA_RECORD['SystemName']
+IMAGE_PATH = setup.PVM_HOME + '/' + setup.DISK_DIR
 
 
 # The retained 747 Hdd flags (Enabled, Connected, Remote, Passthrough, DiskType); overridden per control.
@@ -69,12 +80,46 @@ def config_xml(vm=VM, index='0', interface='2', system='harddisk1.hdd', uuid=DEV
             f'<SystemName>{system}</SystemName>{flag_xml}</Hdd>{usb}{extra}</Hardware>{tail}</ParallelsVirtualMachine>').encode()
 
 
-def host_read(**over):
-    read = {'tool_path': TEST_PINS[TEST_MECHANISM]['tool_path'], 'tool_sha256': 'a' * 64,
-            'tool_version': '27.1.0', 'desktop_build': '27.1.0-58756',
-            'api': 'PrlVmDevHd_GetSerialNumber', 'readonly': True, 'status': 'ok', 'exit': 0,
-            'truncated': False, 'vm': VM, 'boot_ids': [BOOT, BOOT],
-            'output': b'serial=' + SERIAL.encode() + b'\nimage_uid=' + DISK_UID.encode() + b'\n'}
+def inventory_devices(extra=(), **hdd_over):
+    hdd = {'type': inventory.PDE_HARD_DISK, 'index': 0, 'iface': inventory.PMS_SATA,
+           'sys_name': 'harddisk1.hdd', 'image_path': IMAGE_PATH,
+           'enabled': 1, 'connected': 1, 'remote': 0, 'passthrough': 0,
+           'disk_type': inventory.PHD_EXPANDING_HARD_DISK,
+           'emulated_type': inventory.PDT_USE_IMAGE_FILE}
+    hdd.update(hdd_over)
+    devices = [
+        {'type': inventory.PDE_OPTICAL_DISK, 'index': 0, 'iface': inventory.PMS_SATA,
+         'sys_name': 'cdrom1.iso', 'image_path': '-', 'enabled': 1, 'connected': 0,
+         'remote': 0, 'passthrough': 1, 'disk_type': -1, 'emulated_type': 1},
+        hdd,
+        {'type': inventory.PDE_USB_DEVICE, 'index': 0, 'iface': -1, 'sys_name': CAMERA_SYS,
+         'image_path': '-', 'enabled': 1, 'connected': 1, 'remote': 0, 'passthrough': 0,
+         'disk_type': -1, 'emulated_type': 3},
+    ]
+    devices.extend(extra)
+    return devices
+
+
+def inventory_text(pin=None, devices=None, serial=SERIAL, **over):
+    pin = TEST_PINS[TEST_MECHANISM] if pin is None else pin
+    fields = {
+        'vm': VM, 'home': pin['home'], 'library_path': pin['library_path'],
+        'library_sha256': pin['library_sha256'], 'library_version': pin['version'],
+        'library_build': pin['library_build'], 'state_before': inventory.VMS_RUNNING,
+        'state_after': inventory.VMS_RUNNING,
+        'devices': inventory_devices() if devices is None else devices, 'serial': serial,
+    }
+    fields.update(over)
+    return inventory.render_output(**fields)
+
+
+def host_read(pin=None, **over):
+    pin = TEST_PINS[TEST_MECHANISM] if pin is None else pin
+    read = {'tool_path': pin['tool_path'], 'tool_sha256': pin['sha256'],
+            'tool_version': pin['version'], 'desktop_build': pin['desktop_build'],
+            'api': pin['api'], 'argv': list(pin['argv']), 'readonly': True, 'status': 'ok',
+            'exit': 0, 'truncated': False, 'vm': VM, 'boot_ids': [BOOT, BOOT],
+            'output': inventory_text(pin).encode()}
     read.update(over)
     return read
 
@@ -107,6 +152,14 @@ def valid_association(**over):
     return association
 
 
+def production_association(**over):
+    """A complete candidate for the production pin. Fixture bytes, not a native receipt."""
+    pin = dal.PINS[dal.MECHANISM]
+    association = valid_association(mechanism=dal.MECHANISM, host_read=host_read(pin))
+    association.update(over)
+    return association
+
+
 def disk_witness():
     return valid_association()
 
@@ -124,14 +177,13 @@ class DiskAssociationControls(unittest.TestCase):
         with mock.patch.object(dal, 'PINS', pins), self.assertRaises(Refusal):
             setup.verify_disk_association(association, supported)
 
-    def test_production_gate_refuses_the_complete_candidate(self):
-        self.assertEqual(dal.PINS, {})
-        self.assertEqual(setup.SUPPORTED_DISK_MECHANISMS, frozenset())
+    def test_production_gate_refuses_the_test_mechanism(self):
+        self.assertEqual(set(dal.PINS), {dal.MECHANISM})
+        self.assertEqual(setup.SUPPORTED_DISK_MECHANISMS, frozenset({dal.MECHANISM}))
         with self.assertRaises(Refusal):
             setup.verify_disk_association(valid_association())
         with self.assertRaises(Refusal):
             dal.verify(valid_association(), frozenset(), dal.PINS)
-        # A mechanism named in the gate but not pinned still refuses, and so does a pin without the gate.
         with self.assertRaises(Refusal):
             dal.verify(valid_association(), TEST_SUPPORTED, {})
         with self.assertRaises(Refusal):
@@ -149,6 +201,9 @@ class DiskAssociationControls(unittest.TestCase):
         self.assertEqual(dal.REVIEWED['vm'], setup.VM_UUID)
         self.assertEqual(dal.REVIEWED['disk_uid'], setup.DISK_UID)
         self.assertEqual(dal.REVIEWED['root_size'], setup.ROOT_BYTES)
+        self.assertEqual(dal.REVIEWED['home'], setup.PVM_HOME)
+        self.assertEqual(dal.REVIEWED['image_path'], setup.PVM_HOME + '/' + setup.DISK_DIR)
+        self.assertEqual(dal.REVIEWED['system_name'], setup.DISK_DIR)
 
     def test_wrong_vm_refuses_config(self):
         self.assertRefusedAt('config', valid_association(config=config_xml(vm='00000000-0000-0000-0000-000000000000')))
@@ -328,10 +383,11 @@ class DiskAssociationControls(unittest.TestCase):
         self.assertEqual(table(valid_association())['config'][0], 'pass')
         self.assertEqual(dal.verify(valid_association(), TEST_SUPPORTED, TEST_PINS)['device_uuid'], DEVICE_UUID)
 
-    def test_wrong_descriptor_disk_uid_refuses_descriptor_and_read(self):
+    def test_wrong_descriptor_disk_uid_refuses_descriptor_and_swapped_image_refuses_read(self):
         self.assertRefusedAt('descriptor', valid_association(descriptor=identity_tests.doc(uid_xml=f'<UID>{OTHER_UID}</UID>')))
-        read = host_read(output=b'serial=' + SERIAL.encode() + b'\nimage_uid=' + OTHER_UID.encode() + b'\n')
-        self.assertRefusedAt('host_read', valid_association(host_read=read))
+        swapped = host_read(output=inventory_text(devices=inventory_devices(
+            image_path='/Volumes/Stash/parallels/other.pvm/harddisk1.hdd')).encode())
+        self.assertRefusedAt('host_read', valid_association(host_read=swapped))
 
     def test_stale_or_drifted_descriptor_and_extents_refuse(self):
         other_top = identity_tests.doc(top_node='<TopGUID>{22222222-2222-2222-2222-222222222222}</TopGUID>')
@@ -367,22 +423,20 @@ class DiskAssociationControls(unittest.TestCase):
         self.assertRefusedAt('guest_blocks', valid_association(guest=guest(boot_id='other-boot')))
         self.assertRefusedAt('host_read', valid_association(host_read=host_read(boot_ids=[BOOT, 'other-boot'])))
 
-    def test_contradictory_or_missing_serial_refuses(self):
-        self.assertRefusedAt('serial', valid_association(host_read=host_read(
-            output=b'serial=S2\nimage_uid=' + DISK_UID.encode() + b'\n')))
-        self.assertRefusedAt('guest_blocks', valid_association(guest=guest(parent_serial='')))
+    def test_contradictory_serial_observation_refuses_and_absence_does_not(self):
+        self.assertRefusedAt('host_read', valid_association(host_read=host_read(
+            output=inventory_text(serial='S2').encode())))
+        self.assertEqual(table(valid_association(guest=guest(parent_serial='')))['guest_blocks'][0], 'pass')
         self.assertRefusedAt('guest_blocks', valid_association(guest=guest(sysfs_serial='S9')))
-        self.assertRefusedAt('host_read', valid_association(host_read=host_read(
-            output=b'image_uid=' + DISK_UID.encode() + b'\n')))
-        self.assertRefusedAt('host_read', valid_association(host_read=host_read(
-            output=b'serial=\nimage_uid=' + DISK_UID.encode() + b'\n')))
+        self.assertEqual(table(valid_association(host_read=host_read(
+            output=inventory_text(serial=None).encode())))['host_read'][0], 'pass')
 
     def test_absent_sysfs_serial_is_not_a_disagreement(self):
         self.assertEqual(table(valid_association())['guest_blocks'][0], 'pass')
 
     def test_unsupported_tool_api_or_version_refuses_the_read(self):
         self.assertRefusedAt('host_read', valid_association(host_read=host_read(tool_sha256='b' * 64)))
-        self.assertRefusedAt('host_read', valid_association(host_read=host_read(api='PrlVmDev_GetFriendlyName')))
+        self.assertRefusedAt('host_read', valid_association(host_read=host_read(api='PrlVm_RegEx')))
         self.assertRefusedAt('host_read', valid_association(host_read=host_read(tool_version='26.0.0')))
         self.assertRefusedAt('host_read', valid_association(host_read=host_read(desktop_build='27.2.0')))
         self.assertRefusedAt('host_read', valid_association(host_read=host_read(readonly=False)))
@@ -391,18 +445,20 @@ class DiskAssociationControls(unittest.TestCase):
         self.assertRefusedAt('host_read', valid_association(host_read=host_read(truncated=True)))
         self.assertRefusedAt('host_read', valid_association(host_read=host_read(status='unknown')))
         self.assertRefusedAt('host_read', valid_association(host_read=host_read(exit=1)))
-        self.assertRefusedAt('host_read', valid_association(host_read=host_read(output=b'x' * 300)))
-        self.assertRefusedAt('host_read', valid_association(host_read=host_read(output=b'serial=S1\nimage_uid=' + DISK_UID.encode())))
+        self.assertRefusedAt('host_read', valid_association(host_read=host_read(output=b'x' * (inventory.MAX_BYTES + 1))))
         self.assertRefusedAt('host_read', valid_association(host_read=host_read(
-            output=b'serial=S1\nserial=S1\nimage_uid=' + DISK_UID.encode() + b'\n')))
+            output=inventory_text().encode().rstrip(b'\n'))))
+        doubled = inventory_text().encode().replace(b'vm=' + VM.encode() + b'\n',
+                                                    b'vm=' + VM.encode() + b'\nvm=' + VM.encode() + b'\n', 1)
+        self.assertRefusedAt('host_read', valid_association(host_read=host_read(output=doubled)))
         self.assertRefusedAt('host_read', valid_association(host_read=host_read(
-            output=b'serial=S1\nimage_uid=' + DISK_UID.encode() + b'\nextra=1\n')))
+            output=inventory_text().encode() + b'extra=1\n')))
 
     def test_labels_and_caller_claims_are_not_evidence(self):
-        association = valid_association(serial=SERIAL, verified=True, premises='all pass', read_sha256='0' * 64)
+        association = valid_association(serial=SERIAL, verified=True, premises='all pass',
+                                        read_sha256='0' * 64, trust=True)
         del association['host_read']
         self.assertRefusedAt('host_read', association)
-        self.assertRefusedAt('serial', association)
 
     def test_mechanism_must_be_supported_and_pinned(self):
         self.assertRefusedAt('mechanism', valid_association(), supported=frozenset(), pins=TEST_PINS)
@@ -422,10 +478,197 @@ class DiskAssociationControls(unittest.TestCase):
         self.assertEqual(rows['guest_blocks'][0], 'pass')
         self.assertEqual(rows['mechanism'][0], 'refuse')
         self.assertEqual(rows['host_read'][0], 'refuse')
-        self.assertEqual(rows['serial'][0], 'refuse')
+        self.assertNotIn('serial', rows)
         self.assertNotEqual(DEVICE_UUID.lower(), DISK_UID.lower())
         with self.assertRaises(Refusal):
             dal.verify(config_only, frozenset(), {})
+
+
+class ProductionInventoryControls(unittest.TestCase):
+    def test_inventory_module_is_in_the_request_closure(self):
+        import preparation_requests as requests
+        self.assertIn('linux_disk_inventory.py', requests.REQUIRED_MODULE_NAMES)
+
+    def test_production_pin_binds_helper_bytes_library_vm_and_home(self):
+        pin = dal.PINS[dal.MECHANISM]
+        self.assertEqual(pin['tool_path'], str(inventory.HELPER))
+        self.assertEqual(pin['sha256'], inventory.helper_sha256())
+        self.assertEqual(pin['argv'], inventory.inventory_argv())
+        self.assertEqual(pin['library_path'], inventory.LIBRARY_PATH)
+        self.assertEqual(pin['library_sha256'], inventory.LIBRARY_SHA256)
+        self.assertEqual(pin['home'], setup.PVM_HOME)
+        self.assertEqual(pin['api'], 'PrlVmCfg_GetAllDevices')
+        self.assertNotIn('PrlVmDevHd_GetSerialNumber', inventory.ALLOWLISTED_APIS)
+        self.assertNotIn('PrlVm_RegEx', inventory.ALLOWLISTED_APIS)
+        self.assertIsNone(inventory.PARALLELS_API_VER)
+        self.assertEqual(inventory.SESSION_APIS, (
+            'PrlApi_InitEx', 'PrlApi_Deinit', 'PrlSrv_Create', 'PrlSrv_LoginLocal', 'PrlSrv_Logoff',
+        ))
+        for name in inventory.SESSION_APIS:
+            self.assertNotIn(name, inventory.CONFIG_READ_APIS)
+        self.assertEqual(inventory.INFERRED_LIST_APIS, ('PrlSrv_GetVmListEx',))
+        self.assertNotIn('PrlSrv_GetVmListEx', inventory.CONFIG_READ_APIS)
+        self.assertNotIn('PrlSrv_GetVmListEx', inventory.SESSION_APIS)
+        self.assertEqual(inventory.ALLOWLISTED_APIS,
+                         inventory.SESSION_APIS + inventory.INFERRED_LIST_APIS
+                         + inventory.JOB_APIS + inventory.CONFIG_READ_APIS)
+        self.assertIn('PrlSrv_LoginLocal state effect', inventory.REMAINING_NATIVE_PREMISES)
+        self.assertIn('PrlSrv_GetVmListEx read-only inferred', inventory.REMAINING_NATIVE_PREMISES)
+        self.assertIn('PrlVmDev_IsConnected config-or-running', inventory.REMAINING_NATIVE_PREMISES)
+
+    def test_narrowly_bound_model_passes_through_setup_and_is_not_presentation_proof(self):
+        result = setup.verify_disk_association(production_association())
+        self.assertEqual(result['mechanism'], dal.MECHANISM)
+        self.assertEqual(result['trust'], 'narrow-parallels-host-inventory')
+        self.assertEqual(result['image_path'], IMAGE_PATH)
+        self.assertIn('not independent presentation proof', result['not_established'])
+        self.assertIn('not evidence a fresh host inventory ran', result['not_established'])
+        self.assertEqual({status for status, _ in table(production_association(),
+                                                        setup.SUPPORTED_DISK_MECHANISMS, dal.PINS).values()},
+                         {'pass'})
+
+    def test_optical_multiplicity_must_match_the_config_one_cdrom(self):
+        self.assertEqual(table(production_association(),
+                               setup.SUPPORTED_DISK_MECHANISMS, dal.PINS)['host_read'][0], 'pass')
+        setup.verify_disk_association(production_association())
+        default_optical = inventory_devices()[0]
+        cases = (
+            ('no optical', [d for d in inventory_devices() if d['type'] != inventory.PDE_OPTICAL_DISK]),
+            ('two optical', inventory_devices(extra=(dict(default_optical, index=1, sys_name='cdrom2.iso'),))),
+            ('two identical optical', inventory_devices(extra=(dict(default_optical),))),
+        )
+        for label, devices in cases:
+            with self.subTest(label):
+                read = host_read(output=inventory_text(devices=devices).encode())
+                self.assertEqual(table(valid_association(host_read=read))['host_read'][0], 'refuse')
+                with mock.patch.object(dal, 'PINS', TEST_PINS), self.assertRaises(Refusal):
+                    setup.verify_disk_association(valid_association(host_read=read), TEST_SUPPORTED)
+                prod = host_read(dal.PINS[dal.MECHANISM],
+                                 output=inventory_text(dal.PINS[dal.MECHANISM], devices=devices).encode())
+                with self.assertRaises(Refusal):
+                    setup.verify_disk_association(production_association(host_read=prod))
+
+    def test_extra_matching_camera_or_unknown_storage_refuses_inventory(self):
+        extra_camera = {'type': inventory.PDE_USB_DEVICE, 'index': 1, 'iface': -1,
+                        'sys_name': CAMERA_SYS, 'image_path': '-', 'enabled': 1, 'connected': 1,
+                        'remote': 0, 'passthrough': 0, 'disk_type': -1, 'emulated_type': 3}
+        scsi = dict(extra_camera, type=inventory.PDE_GENERIC_SCSI_DEVICE, sys_name='scsi0')
+        usb_disk = dict(extra_camera, sys_name='SanDisk|0781|5581|high|--|1234')
+        extra_hdd = dict(inventory_devices()[1], index=1, sys_name='harddisk2.hdd',
+                         image_path=setup.PVM_HOME + '/harddisk2.hdd')
+        for label, extra in (('extra camera', extra_camera), ('generic scsi', scsi),
+                             ('usb disk', usb_disk), ('extra hdd', extra_hdd)):
+            with self.subTest(label):
+                read = host_read(output=inventory_text(devices=inventory_devices(extra=(extra,))).encode())
+                self.assertEqual(table(valid_association(host_read=read))['host_read'][0], 'refuse')
+                with mock.patch.object(dal, 'PINS', TEST_PINS), self.assertRaises(Refusal):
+                    setup.verify_disk_association(valid_association(host_read=read), TEST_SUPPORTED)
+                prod = host_read(dal.PINS[dal.MECHANISM],
+                                 output=inventory_text(dal.PINS[dal.MECHANISM],
+                                                       devices=inventory_devices(extra=(extra,))).encode())
+                with self.assertRaises(Refusal):
+                    setup.verify_disk_association(production_association(host_read=prod))
+
+    def test_passthrough_or_real_device_refuses_inventory(self):
+        for over in ({'passthrough': 1}, {'emulated_type': inventory.PDT_USE_REAL_DEVICE},
+                     {'emulated_type': inventory.PDT_USE_DIRECT_ASSIGN}, {'remote': 1}):
+            with self.subTest(over=over):
+                read = host_read(output=inventory_text(devices=inventory_devices(**over)).encode())
+                self.assertEqual(table(valid_association(host_read=read))['host_read'][0], 'refuse')
+
+    def test_wrong_vm_home_boot_version_tool_or_library_refuses(self):
+        pin = TEST_PINS[TEST_MECHANISM]
+        self.assertEqual(table(valid_association(host_read=host_read(vm='00000000-0000-0000-0000-000000000000')))
+                         ['host_read'][0], 'refuse')
+        self.assertEqual(table(valid_association(host_read=host_read(
+            output=inventory_text(home='/Volumes/Stash/parallels/other.pvm').encode())))['host_read'][0], 'refuse')
+        self.assertEqual(table(valid_association(host_read=host_read(boot_ids=[BOOT, 'other'])))['host_read'][0], 'refuse')
+        self.assertEqual(table(valid_association(host_read=host_read(tool_version='26.0.0')))['host_read'][0], 'refuse')
+        self.assertEqual(table(valid_association(host_read=host_read(tool_sha256='c' * 64)))['host_read'][0], 'refuse')
+        self.assertEqual(table(valid_association(host_read=host_read(
+            output=inventory_text(library_sha256='c' * 64).encode())))['host_read'][0], 'refuse')
+        self.assertEqual(table(valid_association(host_read=host_read(argv=pin['argv'] + ['--fixture'])))
+                         ['host_read'][0], 'refuse')
+
+    def test_stale_missing_or_changed_state_refuses(self):
+        self.assertEqual(table(valid_association(host_read=host_read(
+            output=inventory_text(state_before=inventory.VMS_RUNNING,
+                                  state_after=0x30000001).encode())))['host_read'][0], 'refuse')
+        self.assertEqual(table(valid_association(host_read=host_read(
+            output=inventory_text(state_before=0x30000001, state_after=0x30000001).encode())))
+                         ['host_read'][0], 'refuse')
+        self.assertEqual(table(valid_association(host_read=host_read(status='ok', exit=1)))['host_read'][0], 'refuse')
+        self.assertEqual(table(valid_association(host_read=None))['host_read'][0], 'refuse')
+
+    def test_swapped_descriptor_chain_or_image_refuses(self):
+        drifted = dict(valid_association()['host'], chain=list(reversed(CHAIN)))
+        self.assertEqual(table(valid_association(host=drifted))['descriptor'][0], 'refuse')
+        other_path = host_read(output=inventory_text(devices=inventory_devices(
+            sys_name='harddisk2.hdd', image_path=setup.PVM_HOME + '/harddisk2.hdd')).encode())
+        self.assertEqual(table(valid_association(host_read=other_path))['host_read'][0], 'refuse')
+
+    def test_extra_guest_disk_or_mapper_refuses(self):
+        extra = guest_blocks() + [{'name': 'sdb', 'type': 'disk', 'path': '/dev/sdb', 'size': 1, 'pkname': None}]
+        mapper = guest_blocks() + [{'name': 'sda2_crypt', 'type': 'crypt', 'path': '/dev/mapper/sda2_crypt',
+                                    'size': 1, 'pkname': 'sda2'}]
+        self.assertEqual(table(valid_association(guest=guest(blocks=extra)))['guest_blocks'][0], 'refuse')
+        self.assertEqual(table(valid_association(guest=guest(blocks=mapper)))['guest_blocks'][0], 'refuse')
+
+    def test_malformed_partial_or_nested_inventory_refuses(self):
+        text = inventory_text()
+        self.assertEqual(table(valid_association(host_read=host_read(output=b'\xff\n')))['host_read'][0], 'refuse')
+        self.assertEqual(table(valid_association(host_read=host_read(output=b'device_count=1\n')))['host_read'][0],
+                         'refuse')
+        nested = text.replace('dev_1_sys_name=harddisk1.hdd', 'dev_1_sys_name=harddisk1.hdd\ndev_1_sys_name=x')
+        self.assertEqual(table(valid_association(host_read=host_read(output=nested.encode())))['host_read'][0],
+                         'refuse')
+        partial = '\n'.join(text.splitlines()[:-3]) + '\n'
+        self.assertEqual(table(valid_association(host_read=host_read(output=partial.encode())))['host_read'][0],
+                         'refuse')
+
+    def test_absent_capability_refuses_init_without_guessing_api_ver(self):
+        with self.assertRaises(inventory.Refused) as caught:
+            inventory.enumerate_inventory(verify_library=lambda: {'path': 'x'}, api_ver=None)
+        self.assertEqual(caught.exception.phase, 'parallels-api-ver-unsourced')
+        with self.assertRaises(inventory.Refused) as caught:
+            inventory.enumerate_inventory(verify_library=lambda: (_ for _ in ()).throw(inventory.Refused('library-hash-mismatch')))
+        self.assertEqual(caught.exception.phase, 'library-hash-mismatch')
+
+    def test_helper_main_refuses_extra_args_and_does_not_accept_a_fixture_path(self):
+        self.assertEqual(inventory.main([]), 2)
+        self.assertEqual(inventory.main(['inventory', '--fixture', '/tmp/x']), 2)
+        self.assertEqual(inventory.main(['inventory', str(inventory.HELPER)]), 2)
+
+    def test_uninjected_dispatch_uses_fixed_argv_with_private_fixture_transport(self):
+        seen = []
+
+        def transport(argv, stdin_path, timeout, output_cap):
+            seen.append((argv, stdin_path, timeout, output_cap))
+            return {'disposition': 'exited', 'waited_exit': 0, 'stdout': inventory_text(dal.PINS[dal.MECHANISM]).encode(),
+                    'stderr': b''}
+
+        record = dal.read_inventory(transport=transport)
+        self.assertEqual(seen, [(inventory.inventory_argv(), None, inventory.INVENTORY_TIMEOUT, inventory.MAX_BYTES)])
+        self.assertEqual(record['argv'], inventory.inventory_argv())
+        self.assertEqual(record['tool_path'], str(inventory.HELPER))
+        self.assertEqual(record['tool_sha256'], inventory.helper_sha256())
+        self.assertEqual(record['api'], 'PrlVmCfg_GetAllDevices')
+        self.assertTrue(record['readonly'])
+        facts = production_association(host_read=dict(record, vm=VM, boot_ids=[BOOT, BOOT]))
+        result = setup.verify_disk_association(facts)
+        self.assertEqual(result['mechanism'], dal.MECHANISM)
+        self.assertIn('not evidence a fresh host inventory ran', result['not_established'])
+
+    def test_retained_747_replay_is_offline_and_supplies_no_fresh_evidence(self):
+        """747/748 retained shape establishes config/descriptor/guest only. No fresh inventory."""
+        rows = table(dict(production_association(), host_read=None),
+                     setup.SUPPORTED_DISK_MECHANISMS, dal.PINS)
+        self.assertEqual(rows['config'][0], 'pass')
+        self.assertEqual(rows['descriptor'][0], 'pass')
+        self.assertEqual(rows['guest_blocks'][0], 'pass')
+        self.assertEqual(rows['host_read'][0], 'refuse')
+        with self.assertRaises(Refusal):
+            setup.verify_disk_association(dict(production_association(), host_read=None))
 
 
 if __name__ == '__main__':
