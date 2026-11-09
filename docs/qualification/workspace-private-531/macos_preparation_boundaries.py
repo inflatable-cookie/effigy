@@ -46,6 +46,7 @@ BINDINGS = dict(
     desktop_host=prep.DESKTOP_HOST, token=TOKEN, guest_spec='{"parent":{}}',
     guest_verify_spec='{"parent":{}}', guest_context='/home/u/' + prep.guest_dir(TOKEN32),
     guest_iidfile='/home/u/' + prep.guest_dir(TOKEN32) + '.iid',
+    guest_check_cid='/home/u/' + prep.guest_dir(TOKEN32) + '.check.cid',
     probe_source='print(1)', stage_source='print(2)', verify_source='print(3)',
     transfer_source='print(4)', input_verify_source='print(5)', guest_input_spec='ab' * 8,
     guest_oci='/home/u/' + prep.guest_dir(TOKEN32) + '.oci',

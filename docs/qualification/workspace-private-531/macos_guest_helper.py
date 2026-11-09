@@ -38,11 +38,16 @@ import sys
 PR_SET_CHILD_SUBREAPER = 36
 
 ALLOWED = frozenset({'echo', 'probe', 'stage', 'verify', 'transfer', 'check-inputs', 'build-help', 'build',
-                     'read-iidfile', 'image-inspect'})
+                     'read-iidfile', 'image-inspect', 'disposable-check', 'read-check-cid', 'container-list'})
 # Operations whose child is the pinned guest-inputs source and one hex spec.
 INPUT_MODES = frozenset({'transfer', 'check-inputs'})
 # Operations whose child is one exact reviewed remote command, rebuilt from a hex spec.
-REMOTE = frozenset({'build-help', 'build', 'read-iidfile', 'image-inspect'})
+REMOTE = frozenset({'build-help', 'build', 'read-iidfile', 'image-inspect', 'disposable-check', 'read-check-cid',
+                    'container-list'})
+# C5's disposable check: the pinned check source's sha256, the one name shape and the one network-none form.
+CHECK_SOURCE_SHA256 = '5fcd965f2339afd885895d4e75684503d6077371089e3025f6c434e2536bdb28'
+CHECK_NAME = re.compile(r'^effigy-4f6a-check-[0-9a-f]{8}$')
+CONTAINER_ID = re.compile(r'^[0-9a-f]{64}$')
 # The reviewed hex spec is bounded: it is the layout, the caps and one fixed argv, never a payload.
 SPEC_CAP_BYTES = 64 * 1024
 IMAGE_ID = re.compile(r'^sha256:[0-9a-f]{64}$')
@@ -418,10 +423,57 @@ def build_command(context):
             '--build-context', 'debs=' + context + '.debs', context]
 
 
+def check_run_command(context, name, image, source):
+    """C5's one disposable check: synchronous `nerdctl run --rm`, network none, no pull, the cidfile beside the
+    context. nerdctl writes the cidfile before creation and refuses an existing one, so the ID is the run's own."""
+    return ['sudo', '-n', 'nerdctl', 'run', '--pull=never', '--rm', '--network', 'none',
+            '--cidfile', context + '.check.cid', '--name', name, image, 'python3', '-I', '-c', source]
+
+
+CONTAINER_LIST = ['sudo', '-n', 'nerdctl', 'container', 'ls', '--all', '--no-trunc', '--quiet']
+CHECK_OPERATIONS = frozenset({'disposable-check', 'read-check-cid', 'container-list'})
+
+
+def checked_check_remote(operation, argv):
+    """C5's three fixed forms. The run's own name, image and source are read from the spec and must rebuild to
+    exactly the reviewed command; the check source is pinned by sha256 before it is accepted."""
+    if operation == 'container-list':
+        if argv != CONTAINER_LIST:
+            raise Refusal('container list is not the exact reviewed form')
+        return argv
+    if operation == 'read-check-cid':
+        if len(argv) != 4 or argv[:3] != ['sudo', '-n', 'cat'] or not argv[3].endswith('.check.cid'):
+            raise Refusal('check ID read is not the exact reviewed form')
+        if not CONTEXT.fullmatch(argv[3][:-len('.check.cid')]):
+            raise Refusal('check ID read is not the exact reviewed form')
+        return argv
+    # disposable-check: the cidfile, name, image and source are the only variables; each is checked first.
+    if len(argv) < 2 or '--cidfile' not in argv or '--name' not in argv:
+        raise Refusal('disposable check is not the exact reviewed form')
+    cidfile = argv[argv.index('--cidfile') + 1] if argv.index('--cidfile') + 1 < len(argv) else ''
+    if not cidfile.endswith('.check.cid') or not CONTEXT.fullmatch(cidfile[:-len('.check.cid')]):
+        raise Refusal('disposable check cidfile is not beside the reviewed context')
+    context = cidfile[:-len('.check.cid')]
+    name_at = argv.index('--name') + 1
+    if name_at >= len(argv) or not CHECK_NAME.fullmatch(argv[name_at]) or name_at + 1 >= len(argv):
+        raise Refusal('disposable check name is not the reviewed shape')
+    image = argv[name_at + 1]
+    if not IMAGE_ID.fullmatch(image) or len(argv) < 5:
+        raise Refusal('disposable check image is not an image ID')
+    source = argv[-1]
+    if hashlib.sha256(source.encode()).hexdigest() != CHECK_SOURCE_SHA256:
+        raise Refusal('disposable check source differs from its pin')
+    if argv != check_run_command(context, argv[name_at], image, source):
+        raise Refusal('disposable check is not the exact reviewed command')
+    return argv
+
+
 def checked_remote(operation, spec):
     """Rebuild one reviewed remote command from its spec and require the spec to be exactly that command.
     Nothing caller-chosen reaches a guest child: only these fixed forms can run."""
     argv = spec['argv']
+    if operation in CHECK_OPERATIONS:
+        return checked_check_remote(operation, argv)
     if (not isinstance(argv, list) or not argv or len(argv) > 24
             or any(not isinstance(a, str) or not a or len(a) > 512 or '\x00' in a or '\n' in a for a in argv)):
         raise Refusal('remote command argv is malformed')

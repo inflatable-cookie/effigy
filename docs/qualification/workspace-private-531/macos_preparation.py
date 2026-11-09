@@ -50,6 +50,7 @@ SLOTS = frozenset({
     'guest_input_spec', 'probe_source', 'stage_source', 'verify_source', 'transfer_source', 'input_verify_source',
     'check_source', 'route_echo', 'image_id',
     'owned_container_ids', 'owned_image_id', 'owned_volume_name',
+    'guest_check_cid',
     'guest_helper_hex', 'guest_nonce',
 })
 # Arguments that carry multi-line or JSON source through the Colima shell route.
@@ -64,6 +65,7 @@ HELPERS = frozenset({
     'render_guest_spec', 'compare_route_echo', 'host_stage_dockerfile', 'verify_desktop_endpoint',
     'verify_frozen_artifacts', 'check_build_help', 'read_iidfile', 'check_image_identity',
     'check_runtime_facts', 'select_cleanup_targets', 'read_cidfile', 'check_cleanup_target',
+    'read_check_cid', 'check_container_absent', 'link_buildx_plugin',
     'prefetch_colima_image', 'prefetch_runtime_inputs', 'render_input_specs', 'render_input_transfer',
     'check_input_transfer', 'check_input_verify',
 })
@@ -522,7 +524,30 @@ def check_guest_remote_command(tail, bindings):
     if (tail == ['sudo', '-n', 'nerdctl', 'image', 'inspect', image_id]
             and isinstance(image_id, str) and IMAGE_ID.fullmatch(image_id)):
         return True
-    raise ValueError('the remote command is not one of the reviewed C4 forms')
+    # C5: the disposable check, its cidfile read and the full container listing, under the guest context's sibling.
+    cid = bindings.get('guest_check_cid')
+    if cid is not None:
+        require(cid == context + '.check.cid', 'the check cidfile must sit beside the guest context')
+        if tail == guest_check_command(context, bindings.get('token'), image_id):
+            return True
+        if tail == ['sudo', '-n', 'cat', cid]:
+            return True
+    if tail == CONTAINER_LIST:
+        return True
+    raise ValueError('the remote command is not one of the reviewed C4 or C5 forms')
+
+
+CONTAINER_LIST = ['sudo', '-n', 'nerdctl', 'container', 'ls', '--all', '--no-trunc', '--quiet']
+
+
+def guest_check_command(context, token, image_id):
+    """C5's one disposable check, exactly as the fixed guest helper rebuilds it: synchronous --rm, network none, no
+    pull, the cidfile beside the context, the check's own name and the pinned check source."""
+    require(isinstance(token, str) and TOKEN.fullmatch(token), 'the check name needs the eight-hex token')
+    require(isinstance(image_id, str) and IMAGE_ID.fullmatch(image_id), 'the check image is the C4 image ID')
+    return ['sudo', '-n', 'nerdctl', 'run', '--pull=never', '--rm', '--network', 'none',
+            '--cidfile', context + '.check.cid', '--name', 'effigy-4f6a-check-' + token, image_id,
+            'python3', '-I', '-c', CHECK_SOURCE]
 
 
 def check_guest_deadline(step):

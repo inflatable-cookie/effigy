@@ -22,6 +22,13 @@
       "layer_bytes": 27684607,
       "deb_bytes": 10715540,
       "deb_count": 22
+    },
+    "desktop_buildx": {
+      "path": "/Applications/Docker.app/Contents/Resources/cli-plugins/docker-buildx",
+      "sha256": "a8638d2188cfd8bdfce7c1be2ce16aeeaf02c57b51443e9860799de5cf5ee105",
+      "bundle_version": "4.92.0",
+      "bundle_plist": "/Applications/Docker.app/Contents/Info.plist",
+      "route": "owned cli-plugins link in the private Docker config"
     }
   },
   "decision": "63c338e2-1c50-435e-9783-e78e9d8558e6",
@@ -46,6 +53,7 @@
   "helpers": [
     "check_build_help",
     "check_cleanup_target",
+    "check_container_absent",
     "check_image_identity",
     "check_input_transfer",
     "check_input_verify",
@@ -53,9 +61,11 @@
     "claim_intent",
     "compare_route_echo",
     "host_stage_dockerfile",
+    "link_buildx_plugin",
     "make_owned_dir",
     "prefetch_colima_image",
     "prefetch_runtime_inputs",
+    "read_check_cid",
     "read_cidfile",
     "read_iidfile",
     "render_guest_spec",
@@ -67,7 +77,7 @@
     "verify_tool_sha",
     "verify_tranche_summary"
   ],
-  "manifest": "macos-4f6a5ed3-stages-r9",
+  "manifest": "macos-4f6a5ed3-stages-r10",
   "observed_metadata": {
     "child": "linux-artifact-preparation.l0tx7tam/macos-metadata-rfzuiadz",
     "note": "local metadata only; not a running-engine or guest observation",
@@ -80,7 +90,7 @@
     "image_context.py": "af74047f640111907930273f7cc7a2b46eac4cb27943f0a512fccf56a1b3b322",
     "image_prepare.py": "882f9e44e7acd87e5ab94237feb7f19a452a3bbb86dd1cf208f311129847964f",
     "macos_metadata_tranche.py": "c204bfaa87c2534da05b62c5f10beda5d3196216ce40d6afffeb8dec2ef9d1a6",
-    "macos_preparation.py": "bc0adfa86e84ecb40c182ec69ccfe1796f47b85d69f20ba12338d1f2c9e14d83",
+    "macos_preparation.py": "2e5676f960da6876f1dab4c0a4ff1365323bca7cbdbcbc04a7d125cc845f53c1",
     "guest_inputs.py": "d2d0ea050f6d8b5ede4dcf07fbd3a7be65241b5b35d88830513cd07e76361af2"
   },
   "proof_entry": {
@@ -172,6 +182,7 @@
     "desktop_host",
     "desktop_iidfile",
     "desktop_input_dir",
+    "guest_check_cid",
     "guest_context",
     "guest_debs",
     "guest_helper_hex",
@@ -1024,9 +1035,9 @@
     },
     {
       "backend": "colima",
-      "closure": "waited exit 0 with --rm removal; the check exits 0 only with uid 0, Python 3, OpenSSL, the GNU C library loader and coreutils facts. Its inner alarm is 120 seconds and the guest deadline is 200 seconds (timeout -k 5), inside a 240 second host envelope.",
+      "closure": "a positive close needs, in order: the disposable check's authenticated helper envelope closed with a waited exit 0 and the facts it prints checked; the cidfile read through the guest helper as one full container ID; and the full ID listing of all containers, read through the guest helper, not carrying that ID. The run uses --rm and its own cidfile; nerdctl removes the container before run returns, and removal failure is only logged, so removal is claimed only by the exact-ID absence. The check's guest deadline is 200 seconds (timeout -k 5) inside a 240 second host envelope. A local ssh exit alone closes nothing. Stage steps total 290 seconds inside the 300 second budget after the reserve.",
       "download_cap_bytes": 0,
-      "failure": "no retry; a leftover with the planned name is retained, not removed by pattern. A deadline is Unknown and retained.",
+      "failure": "no retry; a nonzero exit, a deadline, a broken envelope or an unknown closure stops later effects and retains the cidfile and any container; nothing is removed by name or pattern.",
       "id": "C5",
       "name": "one disposable check",
       "network_sources": [
@@ -1034,9 +1045,9 @@
       ],
       "reserve_seconds": 60,
       "retained_after_failure": [
-        "container effigy-4f6a-check-<token> if --rm did not remove it, retained by name"
+        "container ID named by the guest cidfile effigy-531-image-<token32>.check.cid, retained if --rm did not remove it; the planned name effigy-4f6a-check-<token> is never removed by pattern"
       ],
-      "retention": "check stream and exit; facts parsed by check_runtime_facts",
+      "retention": "check stream and exit; facts parsed by check_runtime_facts; cidfile ID and the full container listing through the guest helper",
       "seconds": 360,
       "steps": [
         {
@@ -1058,6 +1069,8 @@
             "--rm",
             "--network",
             "none",
+            "--cidfile",
+            "{guest_check_cid}",
             "--name",
             "effigy-4f6a-check-{token}",
             "{image_id}",
@@ -1078,15 +1091,15 @@
               "DOCKER_CONTEXT"
             ]
           },
-          "guest_deadline": {
-            "kill_grace_seconds": 5,
-            "seconds": 200
-          },
           "id": "c5-disposable-check",
           "kind": "exec",
           "output_cap_bytes": 262144,
           "retries": 0,
-          "timeout_seconds": 240
+          "timeout_seconds": 240,
+          "guest_deadline": {
+            "kill_grace_seconds": 5,
+            "seconds": 200
+          }
         },
         {
           "helper": "check_runtime_facts",
@@ -1099,6 +1112,100 @@
           "output_cap_bytes": 4096,
           "retries": 0,
           "timeout_seconds": 10
+        },
+        {
+          "argv": [
+            "/opt/homebrew/bin/colima",
+            "ssh",
+            "-p",
+            "effigy-4f6a-qual",
+            "--",
+            "timeout",
+            "-k",
+            "2",
+            "8",
+            "sudo",
+            "-n",
+            "cat",
+            "{guest_check_cid}"
+          ],
+          "env": {
+            "set": {
+              "COLIMA_CACHE_HOME": "{colima_cache_home}",
+              "COLIMA_HOME": "{colima_home}",
+              "DOCKER_CONFIG": "{colima_docker_config}"
+            },
+            "unset": [
+              "LIMA_HOME",
+              "DOCKER_HOST",
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "c5-read-check-cid",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 10
+        },
+        {
+          "helper": "read_check_cid",
+          "id": "c5-check-cid",
+          "inputs": [
+            "c5-read-check-cid.stdout"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 5
+        },
+        {
+          "argv": [
+            "/opt/homebrew/bin/colima",
+            "ssh",
+            "-p",
+            "effigy-4f6a-qual",
+            "--",
+            "timeout",
+            "-k",
+            "2",
+            "15",
+            "sudo",
+            "-n",
+            "nerdctl",
+            "container",
+            "ls",
+            "--all",
+            "--no-trunc",
+            "--quiet"
+          ],
+          "env": {
+            "set": {
+              "COLIMA_CACHE_HOME": "{colima_cache_home}",
+              "COLIMA_HOME": "{colima_home}",
+              "DOCKER_CONFIG": "{colima_docker_config}"
+            },
+            "unset": [
+              "LIMA_HOME",
+              "DOCKER_HOST",
+              "DOCKER_CONTEXT"
+            ]
+          },
+          "id": "c5-container-list",
+          "kind": "exec",
+          "output_cap_bytes": 262144,
+          "retries": 0,
+          "timeout_seconds": 20
+        },
+        {
+          "helper": "check_container_absent",
+          "id": "c5-check-absent",
+          "inputs": [
+            "c5-container-list.stdout"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 5
         }
       ],
       "storage_cap_bytes": 0
@@ -1456,10 +1563,32 @@
           "timeout_seconds": 30
         },
         {
+          "helper": "link_buildx_plugin",
+          "id": "d2-link-buildx-plugin",
+          "inputs": [
+            "{desktop_config}"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 10
+        },
+        {
           "helper": "make_owned_dir",
           "id": "d2-make-input-dir",
           "inputs": [
             "{desktop_input_dir}"
+          ],
+          "kind": "helper",
+          "output_cap_bytes": 4096,
+          "retries": 0,
+          "timeout_seconds": 10
+        },
+        {
+          "helper": "make_owned_dir",
+          "id": "d2-make-context-dir",
+          "inputs": [
+            "{desktop_context_dir}"
           ],
           "kind": "helper",
           "output_cap_bytes": 4096,
@@ -2150,6 +2279,11 @@
     "readiness_stage_sha256": {
       "C0": "5eec2ae2d70e2b1cfc3bd01d9d3eb190439b4f327e19f9ebbfadcdcffa1f2bae",
       "D0": "91bad78ace3fe277b17b069d32d59a95cc97448b6c8df77dd3ab4f513cfeedbd"
+    },
+    "r9": {
+      "manifest": "macos-4f6a5ed3-stages-r9",
+      "manifest_file_sha256": "478d86a85b069b24a32057dd6a1374a409c468e8ecff7d66f26504befc7bc6ef",
+      "note": "r10 replaces the raw C5 ssh run with the fixed guest helper: disposable-check (synchronous nerdctl run --rm, its own cidfile), read-check-cid and container-list with an exact full-ID absence check. C5 is admitted and C6 follows it. Other stages are unchanged."
     }
   }
 }

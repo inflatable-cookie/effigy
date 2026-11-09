@@ -21,6 +21,8 @@ import hashlib
 import io
 import json
 import os
+import plistlib
+import re
 from pathlib import Path
 import shutil
 import socket
@@ -48,6 +50,7 @@ TOKEN = '0a1b2c3d'
 ENGINE = ex.RECORDED_ENGINE_ID
 IMAGE = 'sha256:' + 'ab' * 32
 CID = 'a' * 64
+OTHER_ID = 'b' * 64
 NOW = datetime.datetime.now(datetime.timezone.utc)
 MIB = 1024 * 1024
 CHILD_ENV = {'PATH': '/usr/bin:/bin:/usr/sbin:/sbin'}
@@ -265,6 +268,20 @@ class Fixture(unittest.TestCase):
             patcher = mock.patch.object(target, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        # The Desktop Buildx route is a fixture: a plugin and a bundle plist of known bytes, pinned to their own sha256.
+        # The host's Docker.app is never read by a test.
+        desktop = self.tmp + '/desktop'
+        os.mkdir(desktop, 0o700)
+        plugin = desktop + '/docker-buildx'
+        Path(plugin).write_bytes(b'fake desktop buildx\n')
+        os.chmod(plugin, 0o755)
+        plist = desktop + '/Info.plist'
+        Path(plist).write_bytes(plistlib.dumps({'CFBundleShortVersionString': ex.DESKTOP_BUNDLE_VERSION}))
+        for target, name, value in ((ex, 'DESKTOP_BUILDX', plugin), (ex, 'DESKTOP_APP_PLIST', plist),
+                                    (ex, 'DESKTOP_BUILDX_SHA256', hashlib.sha256(b'fake desktop buildx\n').hexdigest())):
+            patcher = mock.patch.object(target, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.bindings = self.make_bindings(TOKEN)
         os.mkdir(self.bindings['control'], 0o700)
         # Test-only seams: execution in production is refused (no owner mechanism), and stages whose
@@ -286,6 +303,10 @@ class Fixture(unittest.TestCase):
         b.update(desktop_host=prep.DESKTOP_HOST, token=token, check_source=prep.CHECK_SOURCE,
                  route_echo=prep.ROUTE_ECHO)
         return b
+
+    def d2_out(self, activation_id='act-d2-0001'):
+        """The fresh D2 occurrence this activation derives: its input directory, build context and iidfile."""
+        return ex.d2_occurrence(self.bindings, activation_id)
 
     def ref(self, stage, activation_id):
         root = self.stage_dir(stage, activation_id)
@@ -617,7 +638,7 @@ class FixedHelperTests(Fixture):
             request_path = self.tmp + '/proof-unadmitted'
             Path(request_path).write_text(json.dumps(unsupported, sort_keys=True))
             os.chmod(request_path, 0o400)
-            with self.assertRaisesRegex(ex.Refusal, 'supports only C0, D0, D1, C1, C2, C3, C4 or D2'):
+            with self.assertRaisesRegex(ex.Refusal, 'supports only C0, D0, D1, C1, C2, C3, C4, C5, C6, D2, D3 or D4'):
                 proof.main(['proof', request_path, ex.sha_file(request_path)])
 
             oversized = self.tmp + '/proof-oversized'
@@ -791,7 +812,7 @@ class PlanTests(Fixture):
     def test_admission_is_exact_and_each_refusal_is_named(self):
         plans = {s['id']: ex.resolve_stage(s['id'], self.bindings) for s in ex.load_manifest()['stages']}
         self.assertEqual({k for k, v in plans.items() if not v['static_admission']},
-                         {'C0', 'C1', 'C2', 'C3', 'C4', 'D0', 'D1', 'D2', 'D3', 'D4'})
+                         {'C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'D0', 'D1', 'D2', 'D3', 'D4'})
         for plan in plans.values():  # every resolved request carries the global refusal and its prerequisite
             self.assertEqual(plan['admission'][0], ex.OWNER_ACTIVATION_REASON)
             self.assertFalse(plan['execution']['admitted'])
@@ -800,12 +821,12 @@ class PlanTests(Fixture):
         self.assertEqual(plans['D2']['static_admission'], [])
         self.assertEqual(plans['D3']['static_admission'], [])
         self.assertEqual(plans['D4']['static_admission'], [])
-        self.assertTrue(any('predecessor C5' in r for r in plans['C6']['static_admission']))
+        self.assertEqual(plans['C6']['static_admission'], [])
         self.assertEqual(plans['C4']['static_admission'], [])
         self.assertEqual(plans['C2']['static_admission'], [])
         self.assertEqual(plans['C3']['static_admission'], [])
         self.assertEqual(plans['C1']['static_admission'], [])  # the pinned image fetch is admitted; execution still refuses
-        self.assertTrue(any('local ssh client' in r for r in plans['C5']['static_admission']))
+        self.assertEqual(plans['C5']['static_admission'], [])
 
     def test_every_helper_has_a_handler_or_an_explicit_reason(self):
         unimplemented = {'verify_frozen_artifacts'}
@@ -1357,12 +1378,12 @@ class GenuineChainTests(Fixture):
         d2, d2_ref = self.d2(d1_ref, calls=d2_calls)
         self.assertEqual(d2['closure'], 'closed')
         self.assertEqual([r['kind'] for r in d2['receipts']], ['volume', 'image'])
-        self.assertEqual(Path(self.bindings['desktop_context_dir'] + '/Dockerfile').read_bytes(), ex.RECIPE_PATH.read_bytes())
-        layout = Path(self.bindings['desktop_input_dir'] + '/oci')
+        self.assertEqual(Path(self.d2_out()['desktop_context_dir'] + '/Dockerfile').read_bytes(), ex.RECIPE_PATH.read_bytes())
+        layout = Path(self.d2_out()['desktop_input_dir'] + '/oci')
         self.assertEqual((layout / 'oci-layout').read_bytes(), b'{"imageLayoutVersion":"1.0.0"}\n')
         self.assertTrue((layout / 'index.json').is_file())
-        self.assertEqual(len(list(Path(self.bindings['desktop_input_dir'] + '/debs').iterdir())), len(runtime_inputs.DEBS))
-        self.assert_dispatch('D2', d2_calls, dict(self.bindings, image_id=IMAGE, owned_volume_name=volume_for('act-d1-0001')))
+        self.assertEqual(len(list(Path(self.d2_out()['desktop_input_dir'] + '/debs').iterdir())), len(runtime_inputs.DEBS))
+        self.assert_dispatch('D2', d2_calls, dict(self.bindings, **self.d2_out(), image_id=IMAGE, owned_volume_name=volume_for('act-d1-0001')))
         d3, d3_ref = self.d3(d2_ref, calls=d3_calls)
         self.assertEqual(d3['closure'], 'closed')
         self.assertEqual({r['kind'] for r in d3['receipts']}, {'volume', 'image', 'container'})
@@ -1443,19 +1464,20 @@ class GenuineChainTests(Fixture):
         self.assertEqual(steps['d2-docker-build']['closure'], 'unknown_retained')
         self.assertNotIn('d2-read-iidfile', steps)
         self.assertNotIn('image', [r['kind'] for r in receipt['receipts']])
-        self.assertEqual(Path(self.bindings['desktop_context_dir'] + '/Dockerfile').read_bytes(), ex.RECIPE_PATH.read_bytes())
+        self.assertEqual(Path(self.d2_out('act-d2-unknown')['desktop_context_dir'] + '/Dockerfile').read_bytes(), ex.RECIPE_PATH.read_bytes())
 
-    def test_d2_refuses_a_pre_existing_dockerfile_before_the_build(self):
+    def test_d2_refuses_a_pre_existing_occurrence_directory_before_the_build(self):
         d0 = self.d0()
         _, d1_ref = self.d1(d0)
-        Path(self.bindings['desktop_context_dir'] + '/Dockerfile').write_text('stale')
+        out = self.d2_out('act-d2-stale')
+        os.mkdir(out['desktop_context_dir'], 0o700)  # an earlier occurrence's directory is a collision, never adopted
+        Path(out['desktop_context_dir'] + '/Dockerfile').write_text('stale')
         calls = []
         with self.assertRaises(ex.Refusal):
             self.d2(d1_ref, activation_id='act-d2-stale', calls=calls)
         self.assertEqual([c[0] for c in calls], ['d2-engine-info'])
         self.assertEqual(json.loads(Path(self.stage_dir('D2', 'act-d2-stale') + '/stage-receipt.json').read_text())['closure'], 'refused')
-        self.assertEqual(Path(self.bindings['desktop_context_dir'] + '/Dockerfile').read_text(), 'stale')
-
+        self.assertEqual(Path(out['desktop_context_dir'] + '/Dockerfile').read_text(), 'stale')
 
 class ChainVerifierTests(Fixture):
     """The verifier refuses fabricated, altered or incomplete chains. Each test changes one thing in a
@@ -1572,9 +1594,8 @@ class ChainVerifierTests(Fixture):
 
 
 class DispatchSeamTests(Fixture):
-    """C5 and C6 cannot be reached through a genuine chain: C4 cannot close under the guest rule. Their
-    dispatch is exercised with verify_chain replaced by a stub that supplies only the receipts the stage
-    reads. This is labelled dispatch, not chain verification."""
+    """C6 is dispatched with verify_chain replaced by a stub that supplies only the receipts the stage reads.
+    This is labelled dispatch, not chain verification. C5 runs on the genuine C4 receipt (C5ChainTests)."""
 
     def setUp(self):
         super().setUp()
@@ -1601,20 +1622,6 @@ class DispatchSeamTests(Fixture):
         self.assertEqual(receipt['closure'], 'closed')
         self.assert_dispatch('C6', calls, self.bindings)
         self.assertEqual(os.readlink(self.bindings['control'] + '/bin/docker'), prep.DOCKER)
-
-    def test_c5_guest_exit_stops_as_guest_unknown_and_never_closes(self):
-        stub = {'receipts': [dict(kind='image', id=IMAGE, name=None, label=None, engine_id=None,
-                                  evidence=dict(path=self.tmp + '/x', sha256='0' * 64))], 'engine_id': None}
-        calls = []
-        with mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub):
-            receipt = self.execute('C5', self.routed({'c5-disposable-check': emit('')}, calls), prior_ref=None,
-                               activation_id='act-c5-0001')
-        self.assertEqual(receipt['closure'], 'guest_unknown')
-        self.assertEqual([c[0] for c in calls], ['c5-disposable-check'])
-        by_id = {x['id']: x for x in receipt['steps']}
-        self.assertEqual(by_id['c5-disposable-check']['closure'], 'guest_unknown')
-        self.assertEqual(by_id['c5-check-facts']['closure'], 'not_dispatched')  # facts are not read from an unknown run
-        self.assertTrue(calls[0][1][0].endswith('colima'))
 
 
 class DispatchSweepTests(Fixture):
@@ -2281,10 +2288,12 @@ class DispatchSweepTests(Fixture):
         manifest = ex.load_manifest()
         c4 = ex.stage_of(manifest, 'C4')
         bindings = dict(self.run_bindings(), guest_context=context, guest_iidfile=context + '.iid', image_id=IMAGE)
-        steps = {step['id']: step for step in c4['steps']}
+        steps = {step['id']: step for stage in ('C4', 'C5') for step in ex.stage_of(manifest, stage)['steps']}
+        bindings['guest_check_cid'] = context + '.check.cid'
         self.assertEqual(sorted(ex.REMOTE_COMMAND_STEPS),
                          sorted(['c4-image-inspect', 'c4-iidfile-read', 'c4-nerdctl-build',
-                                 'c4-nerdctl-build-help']))
+                                 'c4-nerdctl-build-help', 'c5-container-list', 'c5-disposable-check',
+                                 'c5-read-check-cid']))
         for step_id, operation in sorted(ex.REMOTE_COMMAND_STEPS.items()):
             with self.subTest(step=step_id):
                 resolved = ex.resolve_step(steps[step_id], bindings)
@@ -2314,13 +2323,13 @@ class DispatchSweepTests(Fixture):
         resolved = {'id': 'c4-image-inspect', 'argv': [prep.COLIMA, 'ssh', '-p', prep.PROFILE, '--',
                                                        'sudo', '-n', 'nerdctl', 'image', 'inspect',
                                                        'effigy-4f6a-runtime:r1'], 'env': {}}
-        with self.assertRaisesRegex(ValueError, 'reviewed C4 forms'):
+        with self.assertRaisesRegex(ValueError, 'reviewed C4 or C5 forms'):
             ex.guest_remote_tail(resolved, bindings)
         # A command that names another context refuses too: the four reviewed shapes are the only ones allowed.
         resolved = {'id': 'c4-nerdctl-build', 'argv': [prep.COLIMA, 'ssh', '-p', prep.PROFILE, '--',
                                                        'sudo', '-n', 'env', 'DOCKER_CONFIG=/other/docker-config',
                                                        'nerdctl', 'build'], 'env': {}}
-        with self.assertRaisesRegex(ValueError, 'reviewed C4 forms'):
+        with self.assertRaisesRegex(ValueError, 'reviewed C4 or C5 forms'):
             ex.guest_remote_tail(resolved, bindings)
 
     def test_c4_refuses_a_build_spec_that_is_not_the_pinned_platform(self):
@@ -2386,7 +2395,7 @@ class DispatchSweepTests(Fixture):
             with self.subTest(stage=stage), self.assertRaises(ex.Refusal) as caught:
                 calls = []
                 self.execute(stage, self.routed({}, calls), prior_ref=None, activation_id=f'act-unpin-{stage.lower()}')
-            self.assertIn('stage unadmitted', str(caught.exception))
+            self.assertIn('C4 receipt', str(caught.exception))
             self.assertEqual(calls, [])
             self.assertFalse(os.path.exists(self.tmp + f'/claims/act-unpin-{stage.lower()}.claim'))
 
@@ -2495,7 +2504,7 @@ class DispatchSweepTests(Fixture):
                 for stage in ('C5',):
                     with self.subTest(stage=stage), self.assertRaises(ex.Refusal) as caught:
                         self.execute(stage, self.routed({}, calls), prior_ref=None, activation_id=f'act-simadm-{stage}')
-                    self.assertIn('stage unadmitted', str(caught.exception))
+                    self.assertIn('C4 receipt', str(caught.exception))
             with mock.patch.dict(ex.TEST_SEAM, {'owner_activation': False}), self.assertRaises(ex.Refusal) as caught:
                 self.execute('C2', self.routed({}, calls), prior_ref=None, activation_id='act-simowner-c2')
             self.assertIn('no owner-controlled activation mechanism', str(caught.exception))
@@ -2509,6 +2518,125 @@ class DispatchSweepTests(Fixture):
         with self.assertRaises(ex.Refusal) as caught:
             ex.verify_receipt_tree(json.loads(Path(path).read_text()), 'C2', None, ex.load_manifest())
         self.assertIn('simulated', str(caught.exception))
+
+
+# C5 on the genuine C4 receipt (C4 runs for real through run_c4; C5 reads its receipt from disk).
+    def run_c5(self, make_routes, activation_id='act-c5-0001'):
+        _, _, staged = self.run_c4()
+        c4_ref = self.ref('C4', 'act-c4-closed')
+        body = json.loads(Path(c4_ref['path']).read_text())
+        context = staged['path']
+        calls = []
+        transport = self.routed(make_routes(context), calls)
+        with mock.patch.object(ex, 'verify_chain', lambda *a, **k: body), \
+                mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32):
+            receipt = self.execute('C5', transport, prior_ref=c4_ref, activation_id=activation_id)
+        return receipt, calls, context
+
+    @staticmethod
+    def cmd(context):
+        return prep.guest_check_command(context, TOKEN, IMAGE)
+
+    def good_routes(self, context, *, check=None, cid=CID + '\n', listing=OTHER_ID + '\n'):
+        return {
+            'c5-disposable-check': check or closed_guest(FACTS, command=self.cmd(context)),
+            'c5-read-check-cid': closed_guest(cid, command=['sudo', '-n', 'cat', context + '.check.cid']),
+            'c5-container-list': closed_guest(listing, command=list(helper.CONTAINER_LIST)),
+        }
+
+    def test_c5_closes_on_the_exact_predecessor_image_cid_and_absence(self):
+        receipt, calls, context = self.run_c5(lambda c: self.good_routes(c))
+        self.assertEqual(receipt['closure'], 'closed')
+        self.assertEqual(receipt['guest_closure'], 'closed')
+        self.assertEqual([c[0] for c in calls], ['c5-disposable-check', 'c5-read-check-cid', 'c5-container-list'])
+        manifest_steps = [s['id'] for s in ex.stage_of(ex.load_manifest(), 'C5')['steps']]
+        self.assertEqual([x['id'] for x in receipt['steps']], manifest_steps)
+        by_id = {x['id']: x for x in receipt['steps']}
+        for step in ('c5-disposable-check', 'c5-read-check-cid', 'c5-container-list'):
+            self.assertEqual(by_id[step]['closure'], 'closed', step)
+            self.assertEqual(by_id[step]['guest_closure'], 'closed', step)
+            self.assertFalse(by_id[step]['closure_simulated'], step)
+        self.assertEqual(by_id['c5-disposable-check']['guest_command'], self.cmd(context))
+        self.assertEqual(by_id['c5-read-check-cid']['guest_command'], ['sudo', '-n', 'cat', context + '.check.cid'])
+        self.assertEqual(by_id['c5-container-list']['guest_command'], list(helper.CONTAINER_LIST))
+        # The check is dispatched as the fixed helper's disposable-check operation, rebuilt from the hex spec.
+        c_idx = calls[0][1].index('-c')
+        self.assertEqual(calls[0][1][c_idx + 3], 'disposable-check')
+        spec = json.loads(bytes.fromhex(calls[0][1][-1]).decode())['argv']
+        self.assertEqual(spec[spec.index('--cidfile') + 1], context + '.check.cid')
+        self.assertEqual(spec[spec.index('--network') + 1], 'none')
+        self.assertIn('--rm', spec)
+        self.assertIn('--pull=never', spec)
+        self.assertEqual(spec[-1], prep.CHECK_SOURCE)
+        # The checked ID is the cidfile's exact full ID; the absence is observed for that ID in a foreign listing.
+        read = json.loads(Path(self.stage_dir('C5', 'act-c5-0001') + '/c5-check-cid/helper.json').read_text())
+        self.assertEqual(read['result'], {'container_id': CID})
+        absent = json.loads(Path(self.stage_dir('C5', 'act-c5-0001') + '/c5-check-absent/helper.json').read_text())
+        self.assertEqual(absent['result'], {'container_id': CID, 'absent': True})
+
+    def test_c5_listing_that_still_carries_the_check_container_refuses_and_is_retained(self):
+        with self.assertRaisesRegex(ex.Refusal, 'still listed after its run'):
+            self.run_c5(lambda c: self.good_routes(c, listing=CID + '\n' + OTHER_ID + '\n'), 'act-c5-still')
+        receipt = json.loads(Path(self.stage_dir('C5', 'act-c5-still') + '/stage-receipt.json').read_text())
+        self.assertEqual(receipt['closure'], 'refused')
+        self.assertIn('still listed', receipt['error'])
+
+    def test_c5_nonzero_check_stops_before_any_cidfile_read_or_listing(self):
+        receipt, calls, context = self.run_c5(
+            lambda c: self.good_routes(c, check=closed_guest(FACTS, command=self.cmd(c), waited_exit=1)), 'act-c5-nonzero')
+        self.assertEqual(receipt['closure'], 'guest_unknown')
+        self.assertEqual([c[0] for c in calls], ['c5-disposable-check'])
+        by_id = {x['id']: x for x in receipt['steps']}
+        self.assertEqual(by_id['c5-disposable-check']['guest_closure'], 'unknown')
+        self.assertEqual(by_id['c5-read-check-cid']['closure'], 'not_dispatched')
+        self.assertEqual(by_id['c5-container-list']['closure'], 'not_dispatched')
+
+    def test_c5_unauthenticated_check_output_is_guest_unknown_and_stops(self):
+        receipt, calls, _ = self.run_c5(lambda c: self.good_routes(c, check=emit(FACTS)), 'act-c5-noenv')
+        self.assertEqual(receipt['closure'], 'guest_unknown')
+        self.assertEqual([c[0] for c in calls], ['c5-disposable-check'])
+
+    def test_c5_leftover_process_in_the_group_stays_unknown_and_stops(self):
+        """A check child that leaves a live process behind in its group is contained by no closure: the envelope reports
+        the group non-empty, so the step stays guest_unknown and no cidfile read or listing runs."""
+        receipt, calls, _ = self.run_c5(
+            lambda c: self.good_routes(c, check=closed_guest(FACTS, command=self.cmd(c), group_empty=False)), 'act-c5-leftover')
+        self.assertEqual(receipt['closure'], 'guest_unknown')
+        self.assertEqual([c[0] for c in calls], ['c5-disposable-check'])
+
+    def test_c5_unreaped_check_child_stays_unknown_and_stops(self):
+        receipt, calls, _ = self.run_c5(
+            lambda c: self.good_routes(c, check=closed_guest(FACTS, command=self.cmd(c), unreaped=True)), 'act-c5-unreaped')
+        self.assertEqual(receipt['closure'], 'guest_unknown')
+        self.assertEqual([c[0] for c in calls], ['c5-disposable-check'])
+
+    def test_c5_envelope_that_reports_another_command_refuses(self):
+        other = ['sudo', '-n', 'nerdctl', 'run', '--rm']
+        with self.assertRaisesRegex(ex.Refusal, 'ran another command'):
+            self.run_c5(lambda c: self.good_routes(c, check=closed_guest(FACTS, command=other)), 'act-c5-other')
+
+    def test_c5_cidfile_that_is_not_one_full_id_refuses_before_the_listing(self):
+        with self.assertRaisesRegex(ex.Refusal, 'does not hold one full container ID'):
+            self.run_c5(lambda c: self.good_routes(c, cid='abc\n'), 'act-c5-badcid')
+        receipt = json.loads(Path(self.stage_dir('C5', 'act-c5-badcid') + '/stage-receipt.json').read_text())
+        self.assertEqual(receipt['closure'], 'refused')
+
+    def test_c5_listing_with_any_line_that_is_not_a_full_id_refuses(self):
+        with self.assertRaisesRegex(ex.Refusal, 'not one full ID per line'):
+            self.run_c5(lambda c: self.good_routes(c, listing='web\n' + OTHER_ID + '\n'), 'act-c5-badlist')
+
+    def test_c5_refuses_a_predecessor_spec_that_differs_from_its_recorded_hash_before_the_claim(self):
+        _, _, staged = self.run_c4('act-c4-tamper')
+        c4_root = self.stage_dir('C4', 'act-c4-tamper')
+        body = json.loads(Path(c4_root + '/stage-receipt.json').read_text())
+        spec = Path(c4_root + '/c4-render-verify-spec/c4-render-verify-spec.json')
+        spec.write_bytes(spec.read_bytes().replace(b'effigy-531-image-', b'effigy-531-image-x'))
+        with mock.patch.object(ex, 'verify_chain', lambda *a, **k: body), \
+                mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32), \
+                self.assertRaisesRegex(ex.Refusal, 'hash its helper recorded'):
+            self.execute('C5', self.routed(self.good_routes(staged['path']), []), prior_ref=self.ref('C4', 'act-c4-tamper'),
+                         activation_id='act-c5-tamper')
+        self.assertFalse(os.path.lexists(self.tmp + '/claims/act-c5-tamper.claim'))
 
 
 @contextlib.contextmanager
@@ -3283,11 +3411,10 @@ class FreshChainRootTests(Fixture):
             with self.assertRaisesRegex(ex.Refusal, 'no owner-controlled activation mechanism'):
                 ex.execute_stage('C1', bindings, activation_path=path, activation_sha256=sha,
                                  evidence_root=self.evidence, transport=self.routed({}, calls), utc_now=NOW)
-        # C1 and C4 are admitted now (their fetches are pinned). A still-unadmitted stage keeps the static refusal,
-        # before any claim.
+        # C1 and C4 are admitted now (their fetches are pinned). C5 without its C4 receipt refuses before any claim.
         c5_path, c5_sha = self.activation('C5', c0_ref, 'fresh-c5-refused', bindings=bindings)
         with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}):
-            with self.assertRaisesRegex(ex.Refusal, 'stage unadmitted'):
+            with self.assertRaisesRegex(ex.Refusal, 'C4 receipt'):
                 ex.execute_stage('C5', bindings, activation_path=c5_path, activation_sha256=c5_sha,
                                  evidence_root=self.evidence, transport=self.routed({}, calls), utc_now=NOW)
         self.assertEqual(calls, [])
@@ -3345,7 +3472,11 @@ class CoverageLedgerTests(unittest.TestCase):
         'c4-read-iidfile': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
         'c4-image-inspect': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
         'c4-check-image-identity': ('executed', 'DispatchSweepTests.test_c4_stage_closes_with_the_production_transfer_and_remote_commands'),
-        'c5-disposable-check': ('executed_stub_chain', 'DispatchSeamTests.test_c5_guest_exit_stops_as_guest_unknown_and_never_closes'),
+        'c5-disposable-check': ('executed_stub_chain', 'DispatchSweepTests.test_c5_closes_on_the_exact_predecessor_image_cid_and_absence'),
+        'c5-read-check-cid': ('executed_stub_chain', 'DispatchSweepTests.test_c5_closes_on_the_exact_predecessor_image_cid_and_absence'),
+        'c5-check-cid': ('executed_stub_chain', 'DispatchSweepTests.test_c5_closes_on_the_exact_predecessor_image_cid_and_absence'),
+        'c5-container-list': ('executed_stub_chain', 'DispatchSweepTests.test_c5_closes_on_the_exact_predecessor_image_cid_and_absence'),
+        'c5-check-absent': ('executed_stub_chain', 'DispatchSweepTests.test_c5_closes_on_the_exact_predecessor_image_cid_and_absence'),
         'c5-check-facts': ('helper_direct', 'HelperDispatchTests.test_check_runtime_facts_needs_exit_zero_and_root_facts'),
         'c6-colima-list': ('executed_stub_chain', 'DispatchSeamTests.test_c6_host_step_dispatches_under_the_recorded_roots_and_closes'),
         'd0-make-owned-dirs': ('executed', 'GenuineChainTests.test_d0_observes_the_engine_and_closes'),
@@ -3360,6 +3491,8 @@ class CoverageLedgerTests(unittest.TestCase):
         'd1-volume-inspect': ('executed', 'GenuineChainTests.test_d1_creates_only_after_observing_the_engine_and_the_label_absent'),
         'd2-engine-info': ('executed', 'GenuineChainTests.test_d2_d3_d4_chain_runs_end_to_end_with_no_fabricated_receipt'),
         'd2-make-input-dir': ('executed', 'GenuineChainTests.test_d2_d3_d4_chain_runs_end_to_end_with_no_fabricated_receipt'),
+        'd2-link-buildx-plugin': ('executed', 'D2BuildxRouteTests.test_the_link_is_one_owned_symlink_to_the_pinned_plugin_before_the_fetch'),
+        'd2-make-context-dir': ('executed', 'GenuineChainTests.test_d2_d3_d4_chain_runs_end_to_end_with_no_fabricated_receipt'),
         'd2-prefetch-runtime-inputs': ('executed', 'GenuineChainTests.test_d2_d3_d4_chain_runs_end_to_end_with_no_fabricated_receipt'),
         'd2-host-stage': ('executed', 'GenuineChainTests.test_d2_positive_stages_the_dockerfile_then_builds_and_reads_back'),
         'd2-docker-build': ('executed', 'GenuineChainTests.test_d2_d3_d4_chain_runs_end_to_end_with_no_fabricated_receipt'),
@@ -3769,8 +3902,9 @@ class D2WindowTests(Fixture):
         _, d1_ref = self.d1(d0)
         request = self.request(d1_ref)
         self.assertEqual(request['prior_receipt'], d1_ref)
-        self.assertEqual(request['absent_paths'], [self.bindings['desktop_input_dir']])
-        self.assertFalse(os.path.lexists(self.bindings['desktop_input_dir']))
+        self.assertEqual(request['absent_paths'], sorted(self.d2_out('d2-window-0001').values()))
+        for path in request['absent_paths']:
+            self.assertFalse(os.path.lexists(path))
         path, digest = self.freeze(request)
         calls = []
         code, receipt = self.run_entry(path, digest, calls)
@@ -3779,8 +3913,8 @@ class D2WindowTests(Fixture):
         go = json.loads(Path(request['activation_path']).read_text())
         self.assertEqual(go['prior_receipt'], d1_ref)
         self.assertEqual([c[0] for c in calls], ['d2-engine-info', 'd2-docker-build', 'd2-readback'])
-        self.assertTrue(os.path.isdir(self.bindings['desktop_input_dir'] + '/oci'))
-        self.assertEqual(len(list(Path(self.bindings['desktop_input_dir'] + '/debs').iterdir())),
+        self.assertTrue(os.path.isdir(self.d2_out('d2-window-0001')['desktop_input_dir'] + '/oci'))
+        self.assertEqual(len(list(Path(self.d2_out('d2-window-0001')['desktop_input_dir'] + '/debs').iterdir())),
                          len(runtime_inputs.DEBS))
 
     def test_d2_window_is_one_use(self):
@@ -3823,7 +3957,7 @@ class D2WindowTests(Fixture):
         d0 = self.d0()
         _, d1_ref = self.d1(d0)
         path, digest = self.freeze(self.request(d1_ref, activation_id='d2-present-0001'))
-        os.mkdir(self.bindings['desktop_input_dir'], 0o700)
+        os.mkdir(self.d2_out('d2-present-0001')['desktop_input_dir'], 0o700)
         with mock.patch.object(ex, '_execute_stage') as effect, self.assertRaisesRegex(ex.Refusal, 'named destination is not absent'):
             proof.main(['proof', path, digest])
         effect.assert_not_called()
@@ -4684,7 +4818,7 @@ class C1ProofEntryTests(Fixture):
             proof.window_recipe('C1', self.bindings, options)
         with self.assertRaisesRegex(ex.Refusal, 'no window recipe'):
             proof.window_recipe('C4', self.bindings, options)
-        with self.assertRaisesRegex(ex.Refusal, 'supports only C0, D0, D1, C1, C2, C3, C4 or D2'):
+        with self.assertRaisesRegex(ex.Refusal, 'supports only C0, D0, D1, C1, C2, C3, C4, C5, C6, D2, D3 or D4'):
             proof.prospective('C9', self.bindings)
 
 
@@ -4855,10 +4989,10 @@ class ColimaImagePinTests(unittest.TestCase):
 
     def test_only_the_reviewed_fetches_are_admitted_from_the_download_stages(self):
         manifest = ex.load_manifest()
-        for stage_id in ('C1', 'C4', 'D2'):
+        for stage_id in ('C1', 'C4', 'C5', 'C6', 'D2'):
             self.assertNotIn(stage_id, ex.UNADMITTED)
             self.assertEqual(ex.stage_admission(ex.stage_of(manifest, stage_id)), [], stage_id)
-        self.assertIn('C5', ex.UNADMITTED)
+        self.assertEqual(ex.UNADMITTED, {})
         # C4 fetches the same pinned OCI/deb set D2 fetches, with the same cap and the same official sources.
         self.assertEqual(ex.stage_of(manifest, 'C4')['download_cap_bytes'],
                          manifest['binding_inputs']['runtime_image']['bytes'])
@@ -4879,8 +5013,8 @@ class RuntimeImagePinTests(unittest.TestCase):
         self.assertEqual(d2['network_sources'], list(runtime_inputs.NETWORK_SOURCES))
         self.assertIn('prefetch_runtime_inputs', ex.HANDLERS)
         self.assertEqual([s['id'] for s in d2['steps'] if s['kind'] == 'helper'],
-                         ['d2-make-input-dir', 'd2-prefetch-runtime-inputs', 'd2-host-stage',
-                          'd2-read-iidfile', 'd2-check-image-identity'])
+                         ['d2-link-buildx-plugin', 'd2-make-input-dir', 'd2-make-context-dir',
+                          'd2-prefetch-runtime-inputs', 'd2-host-stage', 'd2-read-iidfile', 'd2-check-image-identity'])
 
     def test_a_changed_size_or_digest_refuses_before_any_fetch(self):
         manifest = ex.load_manifest()
@@ -4890,6 +5024,277 @@ class RuntimeImagePinTests(unittest.TestCase):
             changed['binding_inputs']['runtime_image'][key] = value
             with self.assertRaises(primitive.Refusal):
                 REAL_RUNTIME_PIN(changed)
+
+
+
+
+class C5HelperFormTests(unittest.TestCase):
+    """The three C5 remote forms, as the fixed helper and the production dispatch check them. A form that is not
+    exactly reviewed refuses before any guest child could run."""
+
+    CTX = '/home/u/effigy-531-image-' + '1' * 32
+    IMG = 'sha256:' + 'ab' * 32
+
+    def run_argv(self, **changes):
+        argv = helper.check_run_command(self.CTX, 'effigy-4f6a-check-0a1b2c3d', self.IMG, prep.CHECK_SOURCE)
+        for index, value in changes.items():
+            argv[int(index)] = value
+        return argv
+
+    def test_the_reviewed_forms_are_accepted_by_the_helper_and_the_production_builder(self):
+        argv = self.run_argv()
+        self.assertEqual(helper.checked_remote('disposable-check', {'argv': argv}), argv)
+        self.assertEqual(argv, prep.guest_check_command(self.CTX, '0a1b2c3d', self.IMG))
+        self.assertEqual(helper.checked_remote('read-check-cid', {'argv': ['sudo', '-n', 'cat', self.CTX + '.check.cid']}),
+                         ['sudo', '-n', 'cat', self.CTX + '.check.cid'])
+        self.assertEqual(helper.checked_remote('container-list', {'argv': list(helper.CONTAINER_LIST)}),
+                         list(helper.CONTAINER_LIST))
+
+    def test_a_changed_check_source_image_name_cidfile_or_flag_refuses(self):
+        base = helper.check_run_command(self.CTX, 'effigy-4f6a-check-0a1b2c3d', self.IMG, prep.CHECK_SOURCE)
+        cases = [
+            base[:-1] + [prep.CHECK_SOURCE + '\n'],  # the pinned source, with one byte added
+            base[:-5] + ['sha256:' + 'AB' * 32] + base[-4:],  # an image ID that is not lowercase hex
+            base[:-6] + ['effigy-4f6a-check-XYZ'] + base[-5:],  # a name outside the reviewed shape
+            base[:base.index('--cidfile') + 1] + ['/etc/x.check.cid'] + base[base.index('--cidfile') + 2:],
+            base[:base.index('--network') + 1] + ['host'] + base[base.index('--network') + 2:],
+            base + ['--privileged'],
+        ]
+        for argv in cases:
+            with self.subTest(argv=argv[:12]), self.assertRaises(helper.Refusal):
+                helper.checked_remote('disposable-check', {'argv': argv})
+
+    def test_a_read_or_listing_with_any_extra_argument_refuses(self):
+        with self.assertRaises(helper.Refusal):
+            helper.checked_remote('read-check-cid', {'argv': ['sudo', '-n', 'cat', '/etc/passwd']})
+        with self.assertRaises(helper.Refusal):
+            helper.checked_remote('container-list', {'argv': list(helper.CONTAINER_LIST) + ['--filter', 'name=x']})
+
+    def test_the_production_check_refuses_any_tail_that_is_not_reviewed(self):
+        bindings = dict(token='0a1b2c3d', image_id=self.IMG, guest_context=self.CTX,
+                        guest_check_cid=self.CTX + '.check.cid', check_source=prep.CHECK_SOURCE)
+        self.assertTrue(prep.check_guest_remote_command(prep.guest_check_command(self.CTX, '0a1b2c3d', self.IMG), bindings))
+        self.assertTrue(prep.check_guest_remote_command(list(helper.CONTAINER_LIST), bindings))
+        for tail in (['sudo', '-n', 'cat', '/etc/shadow'], prep.guest_check_command(self.CTX, '0a1b2c3d', 'sha256:' + 'cd' * 32),
+                     prep.guest_check_command(self.CTX, '0a1b2c3d', self.IMG)[:-1] + ['x']):
+            with self.subTest(tail=tail[:4]), self.assertRaises(ValueError):
+                prep.check_guest_remote_command(tail, bindings)
+
+    def test_the_check_pin_is_the_reviewed_source_and_the_helper_agrees_with_it(self):
+        self.assertEqual(hashlib.sha256(prep.CHECK_SOURCE.encode()).hexdigest(), helper.CHECK_SOURCE_SHA256)
+        self.assertEqual(hashlib.sha256(prep.CHECK_SOURCE.encode()).hexdigest(),
+                         ex.load_manifest()['binding_inputs']['check_source_sha256'])
+
+    def test_the_manifest_c5_steps_fit_their_stage_budget_and_keep_their_guest_clocks(self):
+        stage = ex.stage_of(ex.load_manifest(), 'C5')
+        total = sum(step['timeout_seconds'] for step in stage['steps'])
+        self.assertLessEqual(total, stage['seconds'] - stage['reserve_seconds'])
+        run = stage['steps'][0]
+        self.assertEqual(run['guest_deadline'], {'kill_grace_seconds': 5, 'seconds': 200})
+        self.assertEqual(run['timeout_seconds'], 240)
+        self.assertEqual(run['argv'][run['argv'].index('--') + 1:run['argv'].index('--') + 5], ['timeout', '-k', '5', '200'])
+
+
+class C5C6ProofEntryTests(Fixture):
+    """C5 and C6 are admitted proof entries as plain requests, with no window: they consume the C4 and C5 receipts."""
+
+    def test_c5_and_c6_prospective_data_bind_the_pinned_inputs(self):
+        for stage in ('C5', 'C6'):
+            with self.subTest(stage=stage):
+                self.assertIn(stage, proof.PROOF_STAGES)
+                data = proof.prospective(stage, self.bindings)
+                self.assertEqual(data['stage'], stage)
+                self.assertEqual(data['inputs_sha256'], ex.canon_sha(ex.stable_input_manifest()[0]))
+
+    def test_c5_and_c6_have_no_window_recipe(self):
+        options = dict(activation_id='c5-window', duration_seconds=300, evidence_root=self.evidence)
+        for stage in ('C5', 'C6'):
+            with self.subTest(stage=stage), self.assertRaisesRegex(ex.Refusal, 'no window recipe'):
+                proof.window_recipe(stage, self.bindings, options)
+
+
+class D2BuildxRouteTests(Fixture):
+    """D2's Buildx route and its fresh occurrence, through the stage loop. The Desktop bundle, plist and plugin are
+    fixtures pinned to their own bytes. Each refusal happens before the fetch: no input, context or iidfile is created,
+    and the legacy builder is never reached."""
+
+    def d1_ref(self):
+        _, ref = self.d1(self.d0())
+        return ref
+
+    def test_the_link_is_one_owned_symlink_to_the_pinned_plugin_before_the_fetch(self):
+        receipt, _ = self.d2(self.d1_ref(), activation_id='act-d2-link')
+        self.assertEqual(receipt['closure'], 'closed')
+        link = self.bindings['desktop_config'] + '/cli-plugins/docker-buildx'
+        self.assertEqual(os.readlink(link), ex.DESKTOP_BUILDX)
+        ids = [s['id'] for s in receipt['steps']]
+        self.assertLess(ids.index('d2-link-buildx-plugin'), ids.index('d2-prefetch-runtime-inputs'))
+        self.assertLess(ids.index('d2-make-context-dir'), ids.index('d2-host-stage'))
+        self.assertTrue(os.path.isdir(self.d2_out('act-d2-link')['desktop_input_dir'] + '/oci'))
+
+    def test_a_changed_plugin_refuses_before_any_fetch_and_creates_nothing(self):
+        calls = []
+        with mock.patch.object(ex, 'DESKTOP_BUILDX_SHA256', '0' * 64), \
+                self.assertRaisesRegex(ex.Refusal, 'pinned sha256'):
+            self.d2(self.d1_ref(), activation_id='act-d2-badsha', calls=calls)
+        self.assertEqual([c[0] for c in calls], ['d2-engine-info'])
+        self.assertFalse(os.path.lexists(self.bindings['desktop_config'] + '/cli-plugins'))
+        self.assertFalse(os.path.lexists(self.d2_out('act-d2-badsha')['desktop_input_dir']))
+
+    def test_a_changed_bundle_version_refuses_before_any_fetch(self):
+        Path(ex.DESKTOP_APP_PLIST).write_bytes(plistlib.dumps({'CFBundleShortVersionString': '4.91.0'}))
+        calls = []
+        with self.assertRaisesRegex(ex.Refusal, 'bundle version'):
+            self.d2(self.d1_ref(), activation_id='act-d2-version', calls=calls)
+        self.assertEqual([c[0] for c in calls], ['d2-engine-info'])
+
+    def test_a_missing_plugin_is_the_legacy_fallback_shape_and_refuses_before_the_build(self):
+        calls = []
+        with mock.patch.object(ex, 'DESKTOP_BUILDX', self.tmp + '/no-such-buildx'), \
+                self.assertRaisesRegex(ex.Refusal, 'is missing'):
+            self.d2(self.d1_ref(), activation_id='act-d2-missing', calls=calls)
+        self.assertNotIn('d2-docker-build', [c[0] for c in calls])
+        self.assertFalse(os.path.lexists(self.bindings['desktop_config'] + '/cli-plugins'))
+
+    def test_an_existing_plugin_link_is_a_collision_and_is_never_adopted(self):
+        d1 = self.d1_ref()  # D0 creates the private config directory
+        plugins = self.bindings['desktop_config'] + '/cli-plugins'
+        os.mkdir(plugins, 0o700)
+        os.symlink(self.colima, plugins + '/docker-buildx')
+        with self.assertRaisesRegex(ex.Refusal, 'refuse, do not adopt'):
+            self.d2(d1, activation_id='act-d2-adopt')
+        self.assertEqual(os.readlink(plugins + '/docker-buildx'), self.colima)
+
+    def test_each_activation_derives_fresh_occurrence_paths_never_the_original_ones(self):
+        first = ex.d2_occurrence(self.bindings, 'occ-a')
+        second = ex.d2_occurrence(self.bindings, 'occ-b')
+        self.assertEqual(first, ex.d2_occurrence(self.bindings, 'occ-a'))  # derived, not random
+        self.assertEqual(len(set(first.values()) | set(second.values())), 6)
+        originals = {self.bindings[k] for k in ('desktop_input_dir', 'desktop_context_dir', 'desktop_iidfile')}
+        for path in list(first.values()) + list(second.values()):
+            self.assertNotIn(path, originals)
+            self.assertTrue(path.startswith(self.bindings['control'] + '/'))
+
+    def test_the_original_d0_d1_paths_and_their_earlier_payloads_are_never_touched(self):
+        d1_ref = self.d1_ref()  # D0 creates the original context directory
+        original = self.bindings['desktop_context_dir']
+        Path(original + '/Dockerfile').write_text('earlier payload')
+        receipt, _ = self.d2(d1_ref, activation_id='act-d2-keep')
+        self.assertEqual(receipt['closure'], 'closed')
+        self.assertFalse(os.path.lexists(self.bindings['desktop_input_dir']))
+        self.assertEqual(Path(original + '/Dockerfile').read_text(), 'earlier payload')
+
+
+class D34WindowTests(Fixture):
+    """D3 and D4 through the proof entry's window, each naming the receipt it consumes (D2 for D3, D3 for D4). A window
+    whose predecessor did not close is refused before any claim, so a failed predecessor cannot trigger cleanup."""
+
+    def request(self, stage, prior, activation_id):
+        options = dict(activation_id=activation_id, duration_seconds=300, evidence_root=self.evidence, prior_receipt=prior)
+        return proof.window_recipe(stage, self.bindings, options)
+
+    def freeze(self, request, name):
+        path = self.tmp + '/' + name
+        Path(path).write_text(json.dumps(request, sort_keys=True))
+        os.chmod(path, 0o400)
+        return path, ex.sha_file(path)
+
+    def run_d3(self, path, digest, calls, cid_route=None):
+        def write_cid(kw):
+            Path(kw['argv'][kw['argv'].index('--cidfile') + 1]).write_text(CID + '\n')
+            return emit(FACTS)
+        routes = {'d3-engine-info': emit(ENGINE_JSON), 'd3-disposable-check': cid_route or write_cid}
+        with mock.patch.object(ex, 'default_transport', self.routed(routes, calls)), \
+                mock.patch.object(ex, 'default_monitor', FixedHelperTests.quiet_monitor), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            code = proof.main(['proof', path, digest])
+        return code, json.loads(out.getvalue())
+
+    def d2_ref(self):
+        d0 = self.d0()
+        _, d1_ref = self.d1(d0)
+        _, d2_ref = self.d2(d1_ref)
+        return d2_ref
+
+    def test_d3_window_runs_through_the_entry_and_its_go_names_the_d2_receipt(self):
+        d2_ref = self.d2_ref()
+        request = self.request('D3', d2_ref, 'd3-window-0001')
+        self.assertEqual(request['prior_receipt'], d2_ref)
+        self.assertEqual(request['absent_paths'], [self.bindings['desktop_cidfile']])
+        path, digest = self.freeze(request, 'd3-window-request.json')
+        calls = []
+        code, receipt = self.run_d3(path, digest, calls)
+        self.assertEqual(code, 0)
+        self.assertEqual(receipt['closure'], 'closed')
+        self.assertEqual([c[0] for c in calls], ['d3-engine-info', 'd3-disposable-check'])
+        go = json.loads(Path(request['activation_path']).read_text())
+        self.assertEqual(go['prior_receipt'], d2_ref)
+
+    def test_d3_window_refuses_an_existing_cidfile_before_the_claim(self):
+        d2_ref = self.d2_ref()
+        path, digest = self.freeze(self.request('D3', d2_ref, 'd3-present-0001'), 'd3-present.json')
+        Path(self.bindings['desktop_cidfile']).write_text(CID + '\n')
+        with mock.patch.object(ex, '_execute_stage') as effect, \
+                self.assertRaisesRegex(ex.Refusal, 'named destination is not absent'):
+            proof.main(['proof', path, digest])
+        effect.assert_not_called()
+        self.assertFalse(os.path.lexists(self.tmp + '/claims/d3-present-0001.claim'))
+
+    def test_d3_window_names_only_the_d2_receipt_and_is_one_use(self):
+        d2_ref = self.d2_ref()
+        with self.assertRaisesRegex(ex.Refusal, 'original D2 receipt'):
+            self.request('D3', dict(d2_ref, stage='D1'), 'd3-wrong-0001')
+        path, digest = self.freeze(self.request('D3', d2_ref, 'd3-once-0001'), 'd3-once.json')
+        self.run_d3(path, digest, [])
+        calls = []
+        with self.assertRaises(ex.Refusal):
+            self.run_d3(path, digest, calls)
+        self.assertEqual(calls, [])
+
+    def test_d4_window_refuses_a_failed_d3_predecessor_before_any_cleanup(self):
+        d2_ref = self.d2_ref()
+        calls = []
+        failed = self.execute('D3', self.routed({'d3-engine-info': emit(ENGINE_JSON),
+                                                  'd3-disposable-check': emit(FACTS, exit_code=1)}, calls),
+                              prior_ref=d2_ref, activation_id='act-d3-failed')
+        self.assertNotEqual(failed['closure'], 'closed')
+        failed_ref = self.ref('D3', 'act-d3-failed')
+        with self.assertRaises(ex.Refusal):
+            self.request('D4', failed_ref, 'd4-failed-0001')
+        self.assertFalse(os.path.lexists(self.tmp + '/claims/d4-failed-0001.claim'))
+        self.assertFalse(any(c[0].startswith('d4-') for c in calls))
+
+    def test_d4_window_names_the_d3_receipt_only(self):
+        d2_ref = self.d2_ref()
+        _, d3_ref = self.d3(d2_ref)
+        request = self.request('D4', d3_ref, 'd4-window-0001')
+        self.assertEqual(request['prior_receipt'], d3_ref)
+        with self.assertRaisesRegex(ex.Refusal, 'original D3 receipt'):
+            self.request('D4', dict(d3_ref, stage='D2'), 'd4-wrongstage-0001')
+
+
+class ProofEnvelopeTests(unittest.TestCase):
+    """The containing selector clock holds the largest declared stage plus margin, and no stage clock was widened."""
+
+    def selector_ms(self):
+        text = (HERE.parents[2] / 'config/tasks.toml').read_text()
+        line = next(l for l in text.splitlines() if l.startswith('"qualification:macos:proof-only"'))
+        return int(re.search(r'timeout_ms = (\d+)', line).group(1))
+
+    def test_the_proof_selector_contains_the_largest_declared_proof_stage(self):
+        stages = {s['id']: s for s in ex.load_manifest()['stages'] if s['id'] in proof.PROOF_STAGES}
+        largest = max(stage['seconds'] for stage in stages.values())
+        self.assertEqual(largest, 1200)  # C4 and D2: 1200 seconds including the 120-second reserve
+        self.assertGreaterEqual(self.selector_ms(), (largest + 60) * 1000)
+        self.assertLessEqual(self.selector_ms(), (largest + 300) * 1000)  # margin, not a widened native allowance
+
+    def test_the_new_proof_stages_keep_their_declared_clocks(self):
+        manifest = ex.load_manifest()
+        self.assertEqual({k: (ex.stage_of(manifest, k)['seconds'], ex.stage_of(manifest, k)['reserve_seconds'])
+                          for k in ('C4', 'C5', 'C6', 'D2', 'D3', 'D4')},
+                         {'C4': (1200, 120), 'C5': (360, 60), 'C6': (120, 60), 'D2': (1200, 120),
+                          'D3': (360, 60), 'D4': (600, 60)})
+
 
 
 if __name__ == '__main__':

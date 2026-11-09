@@ -16,6 +16,7 @@ import datetime
 import hashlib
 import json
 import os
+import plistlib
 from pathlib import Path
 import re
 import stat
@@ -47,7 +48,7 @@ HELPER_PATH = HERE / 'macos_stage_helper.py'
 PROOF_PATH = HERE / 'macos_stage_proof.py'
 REPO_ROOT = HERE.parents[2]
 GUEST_CONTEXT_SHA256 = '5daf93e2ad3ba1cb1cfb5e860730720c21d3730dee4e2b292bc9feb66643e1fc'
-GUEST_HELPER_SHA256 = '204d44b778fa96c09ff6d2d4ce3f4db12e5aabf2d037dd3d5f9088ee5a7fe347'
+GUEST_HELPER_SHA256 = '9d265db2f9c10d7bc105d2397b9149e2cc6c9e36996868e2d9724604cf2743d3'
 GUEST_INPUTS_SHA256 = 'd2d0ea050f6d8b5ede4dcf07fbd3a7be65241b5b35d88830513cd07e76361af2'
 # Program files whose bytes the GO binds. Changing any of them after activation refuses before dispatch.
 PROGRAM_FILES = (HERE / 'macos_stage_executor.py', HERE / 'macos_preparation.py',
@@ -71,6 +72,9 @@ REMOTE_COMMAND_STEPS = {
     'c4-nerdctl-build': 'build',
     'c4-iidfile-read': 'read-iidfile',
     'c4-image-inspect': 'image-inspect',
+    'c5-disposable-check': 'disposable-check',
+    'c5-read-check-cid': 'read-check-cid',
+    'c5-container-list': 'container-list',
 }
 STDIN_STEPS = {'recipe_file': 'recipe', 'guest_input_stream': 'guest_input_stream'}
 TOOL_PATHS = (prep.COLIMA, prep.DOCKER)
@@ -81,6 +85,13 @@ CLAIMS_DIR = prep.STASH + '/macos-stage-claims'
 COLIMA_BASE_PATH = '/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin'
 DESKTOP_BASE_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
 DESKTOP_SOCKET = prep.DESKTOP_HOST[len('unix://'):]
+# D2's Buildx route. Docker Desktop's bundled buildx is the one plugin the private config may reach: an owned
+# cli-plugins link to it, pinned by sha256 and by the Desktop bundle version. A legacy builder fallback is not a route.
+DESKTOP_APP = '/Applications/Docker.app'
+DESKTOP_APP_PLIST = DESKTOP_APP + '/Contents/Info.plist'
+DESKTOP_BUILDX = DESKTOP_APP + '/Contents/Resources/cli-plugins/docker-buildx'
+DESKTOP_BUILDX_SHA256 = 'a8638d2188cfd8bdfce7c1be2ce16aeeaf02c57b51443e9860799de5cf5ee105'
+DESKTOP_BUNDLE_VERSION = '4.92.0'
 LINUX_ARTIFACT_DIR = '/Volumes/Stash/scratch/effigy/linux-artifact-preparation.l0tx7tam'
 # The original 688 C0 record for token 7deaf1b3, pinned by exact sha256 with the tranche summary it names.
 # C1 may bind it (not replay it) only through historical_binding: exact bytes, recorded tools and roots.
@@ -115,16 +126,11 @@ PRIOR = {'C1': 'C0', 'C2': 'C1', 'C3': 'C2', 'C4': 'C3', 'C5': 'C4', 'C6': 'C5',
 PATH_BINDINGS = ('control', 'colima_home', 'colima_cache_home', 'colima_docker_config', 'qualification_root',
                  'colima_input_dir',
                  'desktop_config', 'desktop_context_dir', 'desktop_input_dir', 'desktop_iidfile', 'desktop_cidfile')
-# C4 now closes its own path: it fetches the pinned OCI/deb set into an owned host directory, writes one fixed
-# finite transfer stream, sends it to the guest through the fixed helper, and re-derives the guest layout before
-# the offline build. C5's remote nerdctl run and its guest observations are still exec steps the local ssh client
-# carries, so that stage's guest closure is unknown and it is not admitted here.
-C5_GUEST_RUN = ('C5 remote nerdctl run and its guest observations are still manifest exec steps the local ssh client '
-                'carries: their guest closure is unknown, so the stage cannot close. Routing them through the fixed '
-                'guest helper is not part of the C4 runtime-input transfer work')
-UNADMITTED = {
-    'C5': C5_GUEST_RUN,
-}
+# C4 closes its own path: it fetches the pinned OCI/deb set into an owned host directory, writes one fixed finite
+# transfer stream, sends it to the guest through the fixed helper, and re-derives the guest layout before the offline
+# build. C5's disposable check and its cidfile and container-listing observations are fixed guest-helper operations
+# too, so C5 and C6 are admitted; the closure rules are in the manifest.
+UNADMITTED = {}
 # Ordinary execution stays refused; the separate proof entry has an external Nucleus launch precondition.
 # 'simulate_guest_closure' is test-only: it treats a guest step that exits 0 as closed, so the stage loop can be
 # driven past a guest step under controlled transport. Every receipt it writes says so, and the chain verifier refuses
@@ -140,7 +146,7 @@ PINNED_SOURCE_BINDINGS = {'probe_source': 'probe', 'stage_source': 'stage', 'ver
 # helper. guest_nonce is minted once per fixed guest step before launch.
 DERIVED_BINDINGS = ('image_id', 'owned_container_ids', 'owned_image_id', 'owned_volume_name', 'token32',
                     'guest_spec', 'guest_verify_spec', 'guest_context', 'guest_iidfile', 'guest_nonce',
-                    'guest_oci', 'guest_debs', 'guest_input_spec')
+                    'guest_oci', 'guest_debs', 'guest_input_spec', 'guest_check_cid', 'check_container_id')
 NOT_SUPPLIED = DERIVED_BINDINGS + tuple(PINNED_SOURCE_BINDINGS) + ('guest_helper_hex',)
 PLAN_PLACEHOLDERS = {k: f'<{k}>' for k in NOT_SUPPLIED}
 
@@ -447,6 +453,9 @@ RUNTIME_DERIVED = {
                          'the chain token32 context',
     'guest_context': 'the C3 context path that the C4 verify spec reports',
     'guest_iidfile': 'the C3 context path with .iid appended, a sibling in the guest parent',
+    'guest_check_cid': 'C5: the C4 verify spec context path with .check.cid appended, a sibling in the guest parent',
+    'check_container_id': 'C5: the one full container ID the guest cidfile holds after the check run, read through the '
+                          'guest helper; the listing must not carry it after the run',
 }
 
 
@@ -458,9 +467,12 @@ def runtime_preconditions(stage_id, bindings):
                prior=('closed executor receipt chain back to D0; C1 may instead bind the pinned 688 C0 record '
                       'through historical_binding (exact sha, recorded tools and roots), never by replay'),
                identity='owned directories pinned by device and inode and rechecked before every step')
-    if stage_id in ('C3', 'C4'):
+    if stage_id in ('C3', 'C4', 'C5'):
         pre['token32'] = ('the C0 origin token32 read from the verified C0 receipt beneath this chain, for this token; '
                           'a historical C0 minted none and refuses, checked before the claim')
+    if stage_id == 'C5':
+        pre['guest_context'] = ('the context path the verified C4 verify spec reports, read back from the C4 receipt\'s '
+                                'own spec file, whose name must be this chain\'s token32 context')
     if stage_id == 'C0' and bindings.get('token') == RECORDED_TOKEN:
         pre['recorded_token'] = ('refuse: the recorded token\'s C0 is historical; C1 binds the pinned 688 record, '
                                  'and make_owned_dir would refuse the existing roots')
@@ -1009,6 +1021,45 @@ def h_host_stage_dockerfile(ctx, step):
     return dict(path=target, sha256=RECIPE_SHA256, bytes=len(data))
 
 
+def d2_occurrence(bindings, activation_id):
+    """D2's fresh, activation-derived outputs: its input directory, its build context and its iidfile, each a sibling
+    of the original D0/D1 path under the owned control root. The original paths keep their pinned D0/D1 identity and
+    every earlier payload, recipe and claim stays where it is; this occurrence creates only its own names, exclusively."""
+    suffix = hashlib.sha256(('d2-occurrence:' + activation_id).encode()).hexdigest()[:16]
+    return dict(desktop_input_dir=bindings['desktop_input_dir'] + '-' + suffix,
+                desktop_context_dir=bindings['desktop_context_dir'] + '-' + suffix,
+                desktop_iidfile=bindings['desktop_iidfile'] + '-' + suffix)
+
+
+def h_link_buildx_plugin(ctx, step):
+    """D2's Buildx route, before any fetch. The Desktop bundle must carry the pinned version and the pinned buildx
+    must hash to its pin; then the private config gets one new cli-plugins directory holding one symlink to it. Nothing
+    is read from a global config, and an existing directory or link refuses rather than being adopted."""
+    try:
+        with open(DESKTOP_APP_PLIST, 'rb') as handle:
+            version = plistlib.load(handle).get('CFBundleShortVersionString')
+        info = os.lstat(DESKTOP_BUILDX)
+    except (OSError, ValueError) as exc:  # a missing or unreadable bundle: the legacy-builder shape never runs
+        raise Refusal('the Docker Desktop bundle or its buildx plugin is missing: refuse before any fetch') from exc
+    if version != DESKTOP_BUNDLE_VERSION:
+        raise Refusal(f'Docker Desktop bundle version {version!r} differs from the pinned {DESKTOP_BUNDLE_VERSION}')
+    if not stat.S_ISREG(info.st_mode) or not info.st_mode & stat.S_IXUSR:
+        raise Refusal('the pinned buildx plugin is not an executable regular file')
+    digest = sha_file(DESKTOP_BUILDX)
+    if digest != DESKTOP_BUILDX_SHA256:
+        raise Refusal('the Desktop buildx plugin differs from its pinned sha256: refuse')
+    plugins = ctx['bindings']['desktop_config'] + '/cli-plugins'
+    create_private_dir(plugins)
+    link = plugins + '/docker-buildx'
+    try:
+        os.symlink(DESKTOP_BUILDX, link)
+    except FileExistsError:
+        raise Collision(f'collision: {link} exists; refuse, do not adopt')
+    if os.readlink(link) != DESKTOP_BUILDX or sha_file(link) != DESKTOP_BUILDX_SHA256:
+        raise Refusal('the private buildx link does not resolve to the pinned plugin')
+    return dict(link=link, target=DESKTOP_BUILDX, sha256=digest, bundle_version=version)
+
+
 def h_read_iidfile(ctx, step):
     ref = step['inputs'][0]
     text = read_ref(ctx, ref) if ref.endswith('.stdout') else Path(render1(ref, ctx['bindings'])).read_text()
@@ -1035,6 +1086,33 @@ def h_check_runtime_facts(ctx, step):
 def h_read_cidfile(ctx, step):
     text = Path(render1(step['inputs'][0], ctx['bindings'])).read_text()
     return {'container_id': prep.read_cidfile(text)}
+
+
+FULL_ID = re.compile(r'[0-9a-f]{64}')
+
+
+def h_read_check_cid(ctx, step):
+    """C5's check container ID: the guest cidfile holds one full ID and nothing else. It becomes the exact ID the
+    absence check and the removal observation name; nothing is selected from a name, a label or a list."""
+    text = read_ref(ctx, step['inputs'][0])
+    cid = text[:-1] if text.endswith('\n') else text
+    if not FULL_ID.fullmatch(cid):
+        raise ValueError('the check cidfile does not hold one full container ID')
+    ctx['bindings']['check_container_id'] = cid
+    return {'container_id': cid}
+
+
+def h_check_container_absent(ctx, step):
+    """Exact-ID absence: the complete listing of every container, read through the guest helper, has one full ID per
+    line, and the check's own ID is not among them after the run. A name, a prefix or an empty listing is not
+    enough, and a listing that is not exactly full IDs refuses."""
+    cid = ctx['bindings']['check_container_id']
+    lines = read_ref(ctx, step['inputs'][0]).splitlines()
+    if any(not FULL_ID.fullmatch(line) for line in lines):
+        raise ValueError('the container listing is not one full ID per line')
+    if cid in lines:
+        raise ValueError('the check container is still listed after its run: retained, not removed')
+    return {'container_id': cid, 'absent': True}
 
 
 def h_select_cleanup_targets(ctx, step):
@@ -1292,10 +1370,13 @@ HANDLERS = {
     'render_guest_spec': h_render_guest_spec,
     'host_stage_dockerfile': h_host_stage_dockerfile,
     'read_iidfile': h_read_iidfile,
+    'link_buildx_plugin': h_link_buildx_plugin,
     'check_image_identity': h_check_image_identity,
     'check_build_help': h_check_build_help,
     'check_runtime_facts': h_check_runtime_facts,
     'read_cidfile': h_read_cidfile,
+    'read_check_cid': h_read_check_cid,
+    'check_container_absent': h_check_container_absent,
     'select_cleanup_targets': h_select_cleanup_targets,
     'check_cleanup_target': h_check_cleanup_target,
     'verify_tool_sha': lambda ctx, step: {'verified': verify_tool_sha(TOOL_PATHS)},
@@ -1570,9 +1651,10 @@ def establish_guest_closure(result, intent, step_root):
                                 for key in ('boot_id', 'pid', 'start_time', 'pgid', 'session_id')}
     if 'command' in parsed['header']:
         command = parsed['header']['command']
+        # The one multi-line argument a reviewed command carries is the pinned check source, matched exactly.
         if (not isinstance(command, list) or not command or len(command) > 24
-                or any(not isinstance(a, str) or not a or len(a) > 512 or '\x00' in a or '\n' in a
-                       for a in command)):
+                or any(not isinstance(a, str) or not a or '\x00' in a
+                       or (a != prep.CHECK_SOURCE and (len(a) > 512 or '\n' in a)) for a in command)):
             raise Refusal('the guest-reported command is malformed')
         result['guest_command'] = list(command)
     return result
@@ -2131,6 +2213,27 @@ def verify_chain(go, stage_id, bindings, manifest):
     return body
 
 
+def c4_guest_context(body, token32):
+    """C5's guest context, read back from the verified C4 chain: the verify spec C4 rendered must hash to the
+    value its helper recorded and must name this chain's token32 context. Nothing is taken from a caller."""
+    steps = {step['id']: step for step in body['steps']}
+    step = steps.get('c4-render-verify-spec')
+    if step is None or step.get('closure') != 'closed':
+        raise Refusal('the C4 verify spec did not close: refuse')
+    recorded = read_helper_result(body['stage_root'], step)
+    path = f"{body['stage_root']}/c4-render-verify-spec/c4-render-verify-spec.json"
+    data = read_checked_file(path, must_be_in=body['stage_root'], read_only=False)
+    if hashlib.sha256(data).hexdigest() != recorded.get('sha256') or len(data) != recorded.get('bytes'):
+        raise Refusal('the C4 verify spec differs from the hash its helper recorded: refuse')
+    spec = json.loads(data.decode())
+    if not isinstance(spec, dict) or spec.get('name') != f'effigy-531-image-{token32}':
+        raise Refusal('the C4 verify spec does not name this chain\'s context: refuse')
+    context = spec['context']['path']
+    if not isinstance(context, str) or not context.startswith('/') or context != spec['parent']['path'] + '/' + spec['name']:
+        raise Refusal('the C4 verify spec context is not under its guest parent: refuse')
+    return context
+
+
 def execute_stage(stage_id, bindings, **kwargs):
     """Ordinary entry remains unactivated; the existing seam is for controlled tests only."""
     if not TEST_SEAM['owner_activation']:
@@ -2162,7 +2265,9 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                           manifest_path=manifest_path, inputs=identity, now=now)
     prior = verify_chain(go, stage_id, bindings, manifest)
     # The guest stages take their token32 from the verified C0 origin, before the claim: a chain without one refuses.
-    token32 = origin_token32(prior, bindings['token']) if stage_id in ('C3', 'C4') else None
+    token32 = origin_token32(prior, bindings['token']) if stage_id in ('C3', 'C4', 'C5') else None
+    # C5's guest context comes from the verified C4 spec, also read before the claim: a refusal spends nothing.
+    guest_context = c4_guest_context(prior, token32) if stage_id == 'C5' else None
     pins = Pins()
     control = bindings['control']
     if stage_id in ('C1', 'C2', 'C3', 'C4', 'C5', 'C6'):
@@ -2201,8 +2306,13 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
     monitor = monitor_factory({'storage': cap}, [control])
     run_bindings = {k: v for k, v in bindings.items() if k not in NOT_SUPPLIED}
     run_bindings.update(guest_source_bindings())
+    if stage_id == 'D2':  # this occurrence's own input, context and iidfile; the original D0/D1 paths stay untouched
+        run_bindings.update(d2_occurrence(bindings, go['activation_id']))
     if token32 is not None:
         run_bindings['token32'] = token32
+    if stage_id == 'C5':
+        run_bindings['guest_context'] = guest_context
+        run_bindings['guest_check_cid'] = guest_context + '.check.cid'
     if stage_id in ('C5', 'D3', 'D4'):
         images = [r for r in (prior or {}).get('receipts', []) if r['kind'] == 'image']
         if len(images) != 1:

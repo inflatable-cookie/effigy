@@ -1102,6 +1102,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Finish the source preparation for the macOS Colima and Desktop runtime checks (effigy#769). C5's disposable
+  check runs through the fixed guest helper with its own cidfile, and closes only on an exact-ID absence after
+  its synchronous `--rm` run. D3 and D4 are proof-entry windows bound to their predecessors, and C5 and C6 are
+  plain proof requests. D2 links Docker Desktop's pinned Buildx into the private config and creates fresh
+  per-activation outputs, so a failed occurrence is never replayed. The proof selector clock now covers the
+  largest declared proof stage. Source only; no native run.
+
 - Bind the private Colima Recipe E entry to three roles: preparation source,
   a clean candidate checkout the producer runs in, and that checkout's own host
   binary with a source receipt that `install:local` now writes. The Homebrew
