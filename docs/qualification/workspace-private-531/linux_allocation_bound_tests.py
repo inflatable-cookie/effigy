@@ -88,6 +88,16 @@ class VerifierChecks(unittest.TestCase):
     def verify(self, witness=None, limit=LIMIT, fx=None):
         return bound.verify(witness if witness is not None else render(), limit, fx or facts(), {MECH})
 
+    def test_candidate_request_is_exact_and_never_supplies_device_or_limit(self):
+        good = {'row': 'E8', 'nonce': 'a' * 64, 'boot_id': '12345678-1234-1234-1234-123456789abc'}
+        self.assertEqual(bound.validate_candidate_request(good), good)
+        bad = (dict(good, row='E19.0'), dict(good, nonce='bad'), dict(good, boot_id='unknown'),
+               dict(good, device=bound.ROOT_DEVICE), dict(good, project=bound.PROJECT_ID),
+               dict(good, limit=LIMIT), {'row': 'E8'})
+        for request in bad:
+            with self.subTest(request=request), self.assertRaises(Refusal):
+                bound.validate_candidate_request(request)
+
     def test_fixed_row_limit_reservation_is_bounded_and_not_authority(self):
         for row, reservation in bound.ROW_RESERVATIONS.items():
             with self.subTest(row=row):

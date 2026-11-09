@@ -25,15 +25,15 @@ from linux_supervisor import Refusal
 
 MAX_DEADLINE = 1200
 # Remote side of the writer. Polls for the FIFO, then streams stdin into it.
-WAIT_AND_CAT = ('n=0; while [ ! -p "$1" ]; do n=$((n+1)); [ "$n" -gt "$2" ] && exit 9; sleep 0.1; done; '
-                'cat > "$1"')
+WAIT_AND_CAT = ('n=0; while [ ! -p "$1" ]; do n=$((n+1)); [ "$n" -gt "$2" ] && exit 9; /bin/sleep 0.1; done; '
+                '/bin/cat > "$1"')
 
 
 def writer_remote_argv(fifo, attempts=1200):
     """Remote argv for the writer. `attempts` bounds the FIFO poll (0.1 s each)."""
     if not isinstance(attempts, int) or isinstance(attempts, bool) or not 0 < attempts <= 1200:
         raise Refusal('writer poll attempts out of range')
-    return ['/bin/sh', '-c', WAIT_AND_CAT, 'sh', fifo, str(attempts)]
+    return ['/usr/bin/env', '-i', '/bin/sh', '-c', WAIT_AND_CAT, 'sh', fifo, str(attempts)]
 
 
 def _kill_group(proc):

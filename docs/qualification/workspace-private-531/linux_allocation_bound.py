@@ -42,6 +42,20 @@ ROOT_UID = 0                                      # the supervisor creates its g
 ROUTES = ('mountinfo', 'dumpe2fs', 'by-uuid', 'quota', 'tree')
 HELPER = Path(__file__).resolve().parent / 'linux_allocation_probe.py'
 HEX64 = re.compile(r'^[0-9a-f]{64}$')
+BOOT_UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+
+
+def validate_candidate_request(request):
+    """Validate a prospective request's shape, without granting authority."""
+    if not isinstance(request, dict) or set(request) != {'row', 'nonce', 'boot_id'}:
+        raise Refusal('quota request must contain only row, nonce and boot identity')
+    row, nonce, boot = request['row'], request['nonce'], request['boot_id']
+    if not isinstance(row, str) or row not in ROW_RESERVATIONS:
+        raise Refusal('row has no fixed project reservation')
+    if not isinstance(nonce, str) or not HEX64.fullmatch(nonce) or \
+            not isinstance(boot, str) or not BOOT_UUID.fullmatch(boot):
+        raise Refusal('quota request nonce or boot identity is invalid')
+    return {'row': row, 'nonce': nonce, 'boot_id': boot}
 
 
 def prospective_row_limit(row, charged_bytes):

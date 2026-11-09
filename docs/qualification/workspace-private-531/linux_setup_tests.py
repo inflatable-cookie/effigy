@@ -608,6 +608,29 @@ class ContainedTransferChecks(unittest.TestCase):
         self.assertTrue(res['payload_stdout'].startswith(hashlib.sha256(data.read_bytes()).hexdigest()))
         self.assertIsNotNone(res['candidate'])
 
+    def test_writer_ignores_path_substitution_for_cat_and_sleep(self):
+        root = tmpdir('writer-path-')
+        marker = root / 'substitution-ran'
+        for name in ('cat', 'sleep'):
+            target = root / name
+            target.write_text('#!/bin/sh\n: > ' + shlex.quote(str(marker)) + '\nexit 1\n')
+            target.chmod(0o700)
+        fifo = root / 'transfer.fifo'
+        os.mkfifo(fifo)
+        fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            with patch.dict(os.environ, {'PATH': str(root)}):
+                result = subprocess.run(transfers.writer_remote_argv(str(fifo)), input=b'abc',
+                                        capture_output=True, timeout=10)
+                missing = subprocess.run(transfers.writer_remote_argv(str(root / 'absent'), attempts=1),
+                                         input=b'', capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(os.read(fd, 3), b'abc')
+            self.assertEqual(missing.returncode, 9)
+            self.assertFalse(marker.exists())
+        finally:
+            os.close(fd)
+
     def test_missing_fifo_is_a_writer_failure_not_closure(self):
         root = tmpdir('contained-nofifo-')
         data = root / 'archive.bin'
