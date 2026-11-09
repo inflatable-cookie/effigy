@@ -240,6 +240,29 @@ native allowance, unrestricted cleanup, release, tag or publication, new
 frontier or by-request profile, or product or threat-scope change. #706 remains
 failed with its actual successful evidence and is not replayed.
 
+### Native Linux disk-presentation premise — 2026-11-09
+
+Tom's board decision `64b1fe6f-9f7e-44b0-bded-254967c26615` v2 answers:
+"Accept the narrow Parallels trust premise for v0.15". For the pinned trusted
+Parallels Desktop 27.1.0 build 58756 and registered Stash VM
+`433c9e5b-c7b9-469f-9633-24b4addcd3b5`, qualification may trust a complete,
+freshly authenticated, source-validated host device inventory to describe every
+block device presented to that same VM and guest boot. This assumes faithful
+hypervisor presentation; it does not independently detect an unreported device
+or stale or misreported presentation by Parallels.
+
+Association still requires an exclusive image-backed data disk, canonical
+image/descriptor/extent custody and the authenticated guest's exclusive direct
+root-to-disk chain. Unknown, extra, passthrough, ambiguous, replaced or stale
+inputs refuse. Counts, size/model/name agreement, invented serial equality,
+different UUID namespaces or an assumed `ata1`/SATA mapping do not suffice.
+
+The ruling settles this trust premise only. The actual mechanism and bounded
+inventory read still require implementation, independent source review and
+fresh evidence. Disk custody, native-root placement, writer confinement,
+snapshot/filesystem decisions, candidate binding and receipt/window gates
+remain. It launches nothing and grants no native credit or publication authority.
+
 ## Governing v0.15 direction — 2026-10-18
 
 Tom's answered Queue decision `5bcf44e4-7e9d-49ee-99d1-c6a46b47a93b`

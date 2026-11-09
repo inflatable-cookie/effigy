@@ -37,6 +37,7 @@ BINDINGS = dict(
     colima_cache_home=PATHS['colima_cache_home'],
     colima_docker_config=PATHS['colima_docker_config'],
     qualification_root=PATHS['qualification_root'],
+    colima_input_dir=PATHS['colima_input_dir'],
     desktop_config=PATHS['desktop_config'],
     desktop_context_dir=PATHS['desktop_context_dir'],
     desktop_input_dir=PATHS['desktop_input_dir'],
@@ -45,7 +46,11 @@ BINDINGS = dict(
     desktop_host=prep.DESKTOP_HOST, token=TOKEN, guest_spec='{"parent":{}}',
     guest_verify_spec='{"parent":{}}', guest_context='/home/u/' + prep.guest_dir(TOKEN32),
     guest_iidfile='/home/u/' + prep.guest_dir(TOKEN32) + '.iid',
+    guest_check_cid='/home/u/' + prep.guest_dir(TOKEN32) + '.check.cid', check_container_id='a' * 64,
     probe_source='print(1)', stage_source='print(2)', verify_source='print(3)',
+    transfer_source='print(4)', input_verify_source='print(5)', guest_input_spec='ab' * 8,
+    guest_oci='/home/u/' + prep.guest_dir(TOKEN32) + '.oci',
+    guest_debs='/home/u/' + prep.guest_dir(TOKEN32) + '.debs',
     check_source=prep.CHECK_SOURCE, route_echo=prep.ROUTE_ECHO, image_id=IMAGE_ID,
     owned_container_ids=['abc123', 'def456'], owned_image_id=IMAGE_ID,
     owned_volume_name=VOLUME, guest_helper_hex='ab' * 8,
@@ -584,12 +589,40 @@ class DockerBuildAndRunFlags(unittest.TestCase):
 
 
 class GuestDeadlines(unittest.TestCase):
-    def test_c4_build_keeps_the_900_second_command_bound_with_a_guest_deadline_inside(self):
-        build = next(s for s in stage_by_id('C4')['steps'] if s['id'] == 'c4-nerdctl-build')
-        self.assertEqual(build['timeout_seconds'], 900)
-        self.assertEqual(build['guest_deadline'], dict(seconds=840, kill_grace_seconds=5))
-        self.assertEqual(900 - 840 - 5, 55)
-        self.assertTrue(prep.check_guest_deadline(build))
+    # Every guarded C4 window: the flag check has no guard, the three bounded guest commands each carry one.
+    C4_GUARDED = {'c4-transfer-inputs': (125, 90, 5), 'c4-verify-inputs': (70, 35, 5),
+                  'c4-nerdctl-build': (590, 530, 5)}
+
+    def test_c4_guest_windows_keep_their_command_bounds_inside_the_stage(self):
+        steps = {s['id']: s for s in stage_by_id('C4')['steps']}
+        for step_id, (host, seconds, grace) in self.C4_GUARDED.items():
+            with self.subTest(step=step_id):
+                step = steps[step_id]
+                at = step['argv'].index('--') + 1
+                self.assertEqual(step['argv'][at:at + 4], ['timeout', '-k', str(grace), str(seconds)])
+                self.assertEqual(step['timeout_seconds'], host)
+                self.assertEqual(step['guest_deadline'], dict(seconds=seconds, kill_grace_seconds=grace))
+                self.assertEqual(host - seconds - grace, 55 if step_id == 'c4-nerdctl-build' else 30)
+                self.assertTrue(prep.check_guest_deadline(step))
+                # The wrapped command is the fixed guest operation or the reviewed remote command, never a bare
+                # timeout argument: the two helper launches start the pinned interpreter, the build starts sudo.
+                expected = ['sudo', '-n'] if step_id == 'c4-nerdctl-build' else ['python3', '-I']
+                self.assertEqual(step['argv'][at + 4:at + 6], expected)
+        self.assertEqual(steps['c4-transfer-inputs']['stdin'], 'guest_input_stream')
+        # A guard that lost its timeout wrapper, or a step that reads as five bare timeout arguments, refuses.
+        for step_id in self.C4_GUARDED:
+            with self.subTest(unwrapped=step_id):
+                step = steps[step_id]
+                at = step['argv'].index('--') + 1
+                unwrapped = dict(step, argv=step['argv'][:at] + step['argv'][at + 4:])
+                with self.assertRaises(ValueError):
+                    prep.check_guest_deadline(unwrapped)
+                shifted = dict(step, argv=step['argv'][:at] + ['5', '35'] + step['argv'][at + 2:])
+                with self.assertRaises(ValueError):
+                    prep.check_guest_deadline(shifted)
+        # The stage still fits its budget with the reserve.
+        self.assertLessEqual(sum(s['timeout_seconds'] for s in steps.values()),
+                             stage_by_id('C4')['seconds'] - stage_by_id('C4')['reserve_seconds'])
 
     def test_remote_build_without_a_guest_deadline_refused(self):
         build = next(s for s in stage_by_id('C4')['steps'] if s['id'] == 'c4-nerdctl-build')
@@ -599,17 +632,23 @@ class GuestDeadlines(unittest.TestCase):
         self.assertTrue(prep.check_guest_deadline(dict(without, argv=SSH + ['nerdctl', 'build', '--help'])))
 
     def test_guest_deadline_without_receipt_margin_refused(self):
-        build = next(s for s in stage_by_id('C4')['steps'] if s['id'] == 'c4-nerdctl-build')
-        widened = [a if a != '840' else '880' for a in build['argv']]
-        with self.assertRaises(ValueError) as refused:
-            prep.check_guest_deadline(dict(build, argv=widened, guest_deadline=dict(seconds=880, kill_grace_seconds=5)))
-        self.assertIn('receipt', str(refused.exception))
+        for step_id, (host, seconds, grace) in GuestDeadlines.C4_GUARDED.items():
+            with self.subTest(step=step_id):
+                step = next(s for s in stage_by_id('C4')['steps'] if s['id'] == step_id)
+                widened = [a if a != str(seconds) else str(host - grace - 5) for a in step['argv']]
+                with self.assertRaises(ValueError) as refused:
+                    prep.check_guest_deadline(dict(step, argv=widened, guest_deadline=dict(
+                        seconds=host - grace - 5, kill_grace_seconds=grace)))
+                self.assertIn('receipt', str(refused.exception))
 
     def test_guest_deadline_not_wrapping_the_remote_command_refused(self):
-        build = next(s for s in stage_by_id('C4')['steps'] if s['id'] == 'c4-nerdctl-build')
-        unwrapped = dict(build, argv=[a for a in build['argv'] if a not in ('timeout', '-k', '5', '840')])
-        with self.assertRaises(ValueError):
-            prep.check_guest_deadline(unwrapped)
+        for step_id, (host, seconds, grace) in GuestDeadlines.C4_GUARDED.items():
+            with self.subTest(step=step_id):
+                step = next(s for s in stage_by_id('C4')['steps'] if s['id'] == step_id)
+                at = step['argv'].index('--') + 1
+                unwrapped = dict(step, argv=step['argv'][:at] + step['argv'][at + 4:])
+                with self.assertRaises(ValueError):
+                    prep.check_guest_deadline(unwrapped)
 
     def test_timeout_before_remote_terminal_evidence_is_unknown_and_stops_the_chain(self):
         record = dict(waited_exit=None, outcome='deadline_exceeded')
@@ -672,15 +711,17 @@ class EffectStageCaps(unittest.TestCase):
         self.assertIn('COPY --from=debs', recipe)
         self.assertNotIn('apt-get', recipe)
 
-    def test_d2_sources_and_cap_match_the_reviewed_pin(self):
+    def test_the_reviewed_fetches_match_the_pinned_inputs(self):
         import runtime_image_inputs as runtime_inputs
-        d2 = stage_by_id('D2')
-        self.assertEqual(d2['download_cap_bytes'], runtime_inputs.INPUT_BYTES)
-        self.assertEqual(d2['network_sources'], list(runtime_inputs.NETWORK_SOURCES))
-        self.assertEqual(len(d2['network_sources']), 26)
-        c4 = stage_by_id('C4')
-        self.assertEqual(c4['download_cap_bytes'], 0)
-        self.assertEqual(c4['network_sources'], ['none'])
+        for stage_id in ('D2', 'C4'):
+            with self.subTest(stage=stage_id):
+                stage = stage_by_id(stage_id)
+                self.assertEqual(stage['download_cap_bytes'], runtime_inputs.INPUT_BYTES)
+                self.assertEqual(stage['network_sources'], list(runtime_inputs.NETWORK_SOURCES))
+                self.assertEqual(len(stage['network_sources']), 26)
+        # C4 stages the same pinned inputs on the host and transfers them; it never fetches anything else.
+        self.assertEqual({s['id'] for s in stage_by_id('C4')['steps'] if 'prefetch_runtime_inputs' == s.get('helper')},
+                         {'c4-prefetch-runtime-inputs'})
         self.assertEqual(MANIFEST['binding_inputs']['runtime_image']['bytes'], runtime_inputs.INPUT_BYTES)
         self.assertEqual(MANIFEST['binding_inputs']['runtime_image']['deb_count'], len(runtime_inputs.DEBS))
 
@@ -852,6 +893,9 @@ class Manifest(unittest.TestCase):
                 if step['kind'] != 'exec':
                     continue
                 with self.subTest(step=step['id']):
+                    if step['argv'][0] == prep.BUILDX_LINK_TEMPLATE:  # the Buildx plugin's own owned link (D2)
+                        self.assertEqual(step['env']['set']['DOCKER_CONFIG'], '{desktop_config}')
+                        continue
                     self.assertEqual(step['argv'][0], prep.DOCKER)
                     self.assertEqual(step['env']['set']['DOCKER_HOST'], '{desktop_host}')
                     self.assertEqual(step['env']['set']['DOCKER_CONFIG'], '{desktop_config}')

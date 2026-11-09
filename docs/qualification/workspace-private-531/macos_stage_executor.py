@@ -16,6 +16,7 @@ import datetime
 import hashlib
 import json
 import os
+import plistlib
 from pathlib import Path
 import re
 import stat
@@ -29,6 +30,7 @@ sys.path.insert(0, str(HERE))
 
 import macos_guest_helper as guest_helper  # noqa: E402
 import macos_preparation as prep  # noqa: E402
+import guest_inputs  # noqa: E402
 import preparation_stage as primitive  # noqa: E402
 import runtime_image_inputs as runtime_inputs  # noqa: E402
 from preparation_resources import Monitor  # noqa: E402
@@ -37,25 +39,47 @@ Refusal = primitive.Refusal
 MANIFEST_PATH = HERE / 'macos-4f6a5ed3-stages.json'
 RECIPE_PATH = HERE / 'runtime.Dockerfile'
 SCHEMA = 'macos-stage-executor-receipt/2'
-# The guest helper that the C2 probe, C3 stage and C4 verify argv run in the guest. Pinned by sha256.
+# The guest helper that the C2 probe, C3 stage, C4 verify and the C4 transfer and remote commands run in the
+# guest. Pinned by sha256.
 GUEST_CONTEXT_PATH = HERE / 'macos_guest_context.py'
 GUEST_HELPER_PATH = HERE / 'macos_guest_helper.py'
+GUEST_INPUTS_PATH = HERE / 'guest_inputs.py'
 HELPER_PATH = HERE / 'macos_stage_helper.py'
 PROOF_PATH = HERE / 'macos_stage_proof.py'
 REPO_ROOT = HERE.parents[2]
 GUEST_CONTEXT_SHA256 = '5daf93e2ad3ba1cb1cfb5e860730720c21d3730dee4e2b292bc9feb66643e1fc'
-GUEST_HELPER_SHA256 = '806ca0a5558766035643e9446fd99294c033d4bdabfcd7ff8a9ac0d49469e941'
+GUEST_HELPER_SHA256 = '69239cd820934ca2f0b0e087a86fbb291fa3aad6b231e0b54c70537c08620985'
+GUEST_INPUTS_SHA256 = 'd2d0ea050f6d8b5ede4dcf07fbd3a7be65241b5b35d88830513cd07e76361af2'
 # Program files whose bytes the GO binds. Changing any of them after activation refuses before dispatch.
 PROGRAM_FILES = (HERE / 'macos_stage_executor.py', HERE / 'macos_preparation.py',
                  HERE / 'preparation_stage.py', HERE / 'preparation_resources.py', GUEST_CONTEXT_PATH,
-                 GUEST_HELPER_PATH, HELPER_PATH, PROOF_PATH, HERE / 'runtime_image_inputs.py')
-# Allowlisted Colima guest-helper operations. A local ssh client exit cannot close these.
+                 GUEST_HELPER_PATH, GUEST_INPUTS_PATH, HELPER_PATH, PROOF_PATH, HERE / 'runtime_image_inputs.py')
+# Allowlisted Colima guest-helper operations the manifest launches with a nonce. A local ssh client exit cannot
+# close these: each one's child runs inside the fixed helper and is authenticated by its envelope.
 FIXED_GUEST_STEPS = {
     'c2-route-echo': 'echo',
     'c2-guest-probe': 'probe',
     'c3-stage-context': 'stage',
+    'c4-transfer-inputs': 'transfer',
     'c4-verify-context': 'verify',
+    'c4-verify-inputs': 'check-inputs',
 }
+# C4's remote commands are reviewed in the manifest as the exact sudo/nerdctl argv. The executor re-renders each
+# one through the fixed helper, which rebuilds the same command from a bounded hex spec and reports the argv it
+# ran, so the receipt proves the command and its containment rather than a local client's exit.
+REMOTE_COMMAND_STEPS = {
+    'c4-nerdctl-build-help': 'build-help',
+    'c4-nerdctl-build': 'build',
+    'c4-iidfile-read': 'read-iidfile',
+    'c4-image-inspect': 'image-inspect',
+    'c5-disposable-check': 'disposable-check',
+    'c5-read-check-cid': 'read-check-cid',
+    'c5-container-list': 'container-list',
+    'c5-guest-nerdctl-version': 'nerdctl-version',
+    'c5-container-inspect': 'container-inspect',
+    'c5-container-rm': 'container-rm',
+}
+STDIN_STEPS = {'recipe_file': 'recipe', 'guest_input_stream': 'guest_input_stream'}
 TOOL_PATHS = (prep.COLIMA, prep.DOCKER)
 # Read-only, hash-bound requests carry scope, not authority; activation is an external Nucleus precondition.
 ACTIVATIONS_DIR = prep.STASH + '/macos-stage-activations'
@@ -64,6 +88,20 @@ CLAIMS_DIR = prep.STASH + '/macos-stage-claims'
 COLIMA_BASE_PATH = '/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin'
 DESKTOP_BASE_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
 DESKTOP_SOCKET = prep.DESKTOP_HOST[len('unix://'):]
+# D2's Buildx route. Docker Desktop's bundled buildx is the one plugin the private config may reach: an owned
+# cli-plugins link to it, pinned by sha256 and by the Desktop bundle version. A legacy builder fallback is not a route.
+DESKTOP_APP = '/Applications/Docker.app'
+DESKTOP_APP_PLIST = DESKTOP_APP + '/Contents/Info.plist'
+DESKTOP_BUILDX = DESKTOP_APP + '/Contents/Resources/cli-plugins/docker-buildx'
+DESKTOP_BUILDX_SHA256 = 'a8638d2188cfd8bdfce7c1be2ce16aeeaf02c57b51443e9860799de5cf5ee105'
+DESKTOP_BUNDLE_VERSION = '4.92.0'
+# The bundled buildx module version (static build info of the pinned plugin) and the metadata its CLI discovery requires.
+DESKTOP_BUILDX_VERSION = 'v0.37.1'
+BUILDX_METADATA = {'SchemaVersion': '0.1.0', 'Vendor': 'Docker Inc.', 'Version': DESKTOP_BUILDX_VERSION}
+BUILDX_LINK_TEMPLATE = '{desktop_config}/cli-plugins/docker-buildx'
+# C5's guest container runtime: the nerdctl version the lifecycle source is qualified against. The guest's own
+# version is observed at run time; any other version stops C5 before the check runs.
+GUEST_NERDCTL_VERSION = '2.3.1'
 LINUX_ARTIFACT_DIR = '/Volumes/Stash/scratch/effigy/linux-artifact-preparation.l0tx7tam'
 # The original 688 C0 record for token 7deaf1b3, pinned by exact sha256 with the tranche summary it names.
 # C1 may bind it (not replay it) only through historical_binding: exact bytes, recorded tools and roots.
@@ -96,18 +134,13 @@ RECORDED_ENGINE_ID = 'ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd'
 PRIOR = {'C1': 'C0', 'C2': 'C1', 'C3': 'C2', 'C4': 'C3', 'C5': 'C4', 'C6': 'C5',
          'D1': 'D0', 'D2': 'D1', 'D3': 'D2', 'D4': 'D3'}
 PATH_BINDINGS = ('control', 'colima_home', 'colima_cache_home', 'colima_docker_config', 'qualification_root',
+                 'colima_input_dir',
                  'desktop_config', 'desktop_context_dir', 'desktop_input_dir', 'desktop_iidfile', 'desktop_cidfile')
-# The download cap is payload bytes (the runner's own fetches). C1's one fetch is the pinned Colima image. D2's
-# fetches are the pinned Ubuntu 22.04 arm64 OCI blobs and offline apt debs. C4's guest build argv is the same
-# offline --network=none --build-context form, but the guest still has no closed transfer of those host-fetched
-# inputs (754 owns guest-helper process closure, C2/C3 and step_closure).
-C4_GUEST_INPUTS = ('C4 guest build argv is the offline --network=none --build-context form, but the guest still has '
-                   'no closed transfer of the host-fetched OCI layout and debs into {guest_context}.oci and '
-                   '{guest_context}.debs (754 owns guest-helper process closure, C2/C3 and step_closure). C4 also '
-                   'needs the verified fresh C0-token32/C2/C3 chain; no test seam closes it')
-UNADMITTED = {
-    'C4': C4_GUEST_INPUTS,
-}
+# C4 closes its own path: it fetches the pinned OCI/deb set into an owned host directory, writes one fixed finite
+# transfer stream, sends it to the guest through the fixed helper, and re-derives the guest layout before the offline
+# build. C5's disposable check and its cidfile and container-listing observations are fixed guest-helper operations
+# too, so C5 and C6 are admitted; the closure rules are in the manifest.
+UNADMITTED = {}
 # Ordinary execution stays refused; the separate proof entry has an external Nucleus launch precondition.
 # 'simulate_guest_closure' is test-only: it treats a guest step that exits 0 as closed, so the stage loop can be
 # driven past a guest step under controlled transport. Every receipt it writes says so, and the chain verifier refuses
@@ -115,26 +148,36 @@ UNADMITTED = {
 TEST_SEAM = {'owner_activation': False, 'admit_unadmitted': False, 'simulate_guest_closure': False}
 OWNER_ACTIVATION_REASON = ('no owner-controlled activation mechanism exists in the ordinary entry; a file that the '
                            'same account can create and chmod grants no authority, so execution is refused')
-PINNED_SOURCE_BINDINGS = {'probe_source': 'probe', 'stage_source': 'stage', 'verify_source': 'verify'}
+PINNED_SOURCE_BINDINGS = {'probe_source': 'probe', 'stage_source': 'stage', 'verify_source': 'verify',
+                          'transfer_source': 'transfer', 'input_verify_source': 'check-inputs'}
 # Never caller-supplied. Each is produced by this run or by the verified chain: the guest specs and context names
-# come from the C2 probe, the C3 stage output and the token32 the C0 origin minted; pinned sources come from the
-# pinned guest helper. guest_nonce is minted once per fixed guest step before launch.
+# come from the C2 probe, the C3 stage output and the token32 the C0 minted; the transfer spec's layout comes from
+# the reviewed pin and its parent and name from that verified chain; pinned sources come from the pinned guest
+# helper. guest_nonce is minted once per fixed guest step before launch.
 DERIVED_BINDINGS = ('image_id', 'owned_container_ids', 'owned_image_id', 'owned_volume_name', 'token32',
-                    'guest_spec', 'guest_verify_spec', 'guest_context', 'guest_iidfile', 'guest_nonce')
+                    'guest_spec', 'guest_verify_spec', 'guest_context', 'guest_iidfile', 'guest_nonce',
+                    'guest_oci', 'guest_debs', 'guest_input_spec', 'guest_check_cid', 'check_container_id')
 NOT_SUPPLIED = DERIVED_BINDINGS + tuple(PINNED_SOURCE_BINDINGS) + ('guest_helper_hex',)
 PLAN_PLACEHOLDERS = {k: f'<{k}>' for k in NOT_SUPPLIED}
 
 
 def guest_source_bindings():
     """Pinned guest sources. A changed file refuses: each sha must equal its pin."""
-    raw = GUEST_CONTEXT_PATH.read_bytes()
-    if hashlib.sha256(raw).hexdigest() != GUEST_CONTEXT_SHA256:
-        raise Refusal('the pinned guest helper differs from its sha256: refuse')
+    context = GUEST_CONTEXT_PATH.read_bytes()
+    if hashlib.sha256(context).hexdigest() != GUEST_CONTEXT_SHA256:
+        raise Refusal('the pinned guest context helper differs from its sha256: refuse')
     helper = GUEST_HELPER_PATH.read_bytes()
     if hashlib.sha256(helper).hexdigest() != GUEST_HELPER_SHA256:
         raise Refusal('the pinned Colima guest helper differs from its sha256: refuse')
-    text = raw.decode()
-    return dict({slot: text for slot in PINNED_SOURCE_BINDINGS}, guest_helper_hex=helper.hex())
+    inputs = GUEST_INPUTS_PATH.read_bytes()
+    if hashlib.sha256(inputs).hexdigest() != GUEST_INPUTS_SHA256:
+        raise Refusal('the pinned guest-input transfer source differs from its sha256: refuse')
+    sources = {slot: text.decode() for slot, text in (('probe_source', context), ('stage_source', context),
+                                                      ('verify_source', context), ('transfer_source', inputs),
+                                                      ('input_verify_source', inputs))}
+    if set(sources) != set(PINNED_SOURCE_BINDINGS):
+        raise Refusal('pinned guest source slots differ from the reviewed roles')
+    return dict(sources, guest_helper_hex=helper.hex())
 
 
 def build_guest_spec(probe_parent, token32):
@@ -147,8 +190,9 @@ def build_guest_spec(probe_parent, token32):
                            sha256=RECIPE_SHA256), sort_keys=True)
 
 
-def build_verify_spec(stage_stdout):
-    """C4's verify spec, derived from the C3 stage output: the parent it reported, the context name, the context."""
+def build_verify_spec(stage_stdout, pin):
+    """C4's verify spec, derived from the C3 stage output: the parent it reported, the context name, the context,
+    and the reviewed input layout the guest must find beside it before the build."""
     result = json.loads(stage_stdout)
     if not isinstance(result, dict) or not isinstance(result.get('parent'), dict):
         raise Refusal('the C3 stage must report the parent binding')
@@ -156,7 +200,53 @@ def build_verify_spec(stage_stdout):
     name = Path(result['path']).name
     if not re.fullmatch(r'effigy-531-image-[0-9a-f]{32}', name) or result['path'] != parent['path'] + '/' + name:
         raise Refusal('the C3 stage must report its own context under the parent')
-    return json.dumps(dict(parent=parent, name=name, context=result), sort_keys=True)
+    return json.dumps(dict(parent=parent, name=name, context=result, layout=guest_inputs.pin_layout(pin)),
+                      sort_keys=True)
+
+
+def guest_remote_tail(resolved, bindings, guarded=None):
+    """The manifest's reviewed remote argv for one C4 command, with its optional guest timeout guard.
+    Only the four exact reviewed forms pass; anything else refuses before a guest child could run."""
+    argv = resolved['argv']
+    if argv[:1] != [prep.COLIMA] or argv[1:2] != ['ssh'] or '--' not in argv:
+        raise Refusal(f"{resolved['id']}: a fixed remote command runs through the Colima ssh route")
+    tail = argv[argv.index('--') + 1:]
+    guard = []
+    if tail[:1] == ['timeout']:
+        guard, tail = tail[:4], tail[4:]
+        if len(guard) != 4 or not guard[2].isdigit() or not guard[3].isdigit():
+            raise Refusal(f"{resolved['id']}: guest timeout guard is malformed")
+    prep.check_guest_remote_command(tail, bindings)
+    return guard, tail
+
+
+def dispatch_guest_command(resolved, bindings, nonce):
+    """Re-render one reviewed C4 remote command as the fixed helper launch that runs it.
+
+    The command travels as bounded hex, so only [0-9a-f] crosses the route. The helper rebuilds the same command
+    from it and records the argv it ran, so the receipt carries the remote command and its containment."""
+    if resolved['id'] not in REMOTE_COMMAND_STEPS:
+        raise Refusal(f"{resolved['id']}: not a fixed remote command")
+    guard, tail = guest_remote_tail(resolved, bindings)
+    spec = json.dumps(dict(argv=tail), sort_keys=True, separators=(',', ':')).encode().hex()
+    return [prep.COLIMA, 'ssh', '-p', prep.PROFILE, '--', *guard, 'python3', '-I', '-B', '-c',
+            guest_helper.LAUNCHER, bindings['guest_helper_hex'], REMOTE_COMMAND_STEPS[resolved['id']], nonce, spec]
+
+
+def check_remote_dispatch(argv, intent):
+    """The dispatched argv is the fixed helper launch of the reviewed command for this step's bound intent."""
+    if [a for a in argv if not a or '\x00' in a or '\n' in a]:
+        raise Refusal('the dispatched guest command carries an empty or multi-line argument')
+    if argv[:1] != [prep.COLIMA] or argv[1:2] != ['ssh']:
+        raise Refusal('a fixed remote command dispatches through the Colima ssh route only')
+    try:
+        c_idx = argv.index('-c')
+    except ValueError as exc:
+        raise Refusal('a fixed remote command dispatches through the fixed guest helper') from exc
+    if c_idx + 4 >= len(argv) or argv[c_idx + 1] != guest_helper.LAUNCHER:
+        raise Refusal('a fixed remote command dispatches through the pinned launcher')
+    if argv[c_idx + 3] != intent['operation'] or argv[c_idx + 4] != intent['nonce']:
+        raise Refusal('the dispatched guest command is not bound to this step intent')
 
 
 def executor_origin(body):
@@ -296,7 +386,7 @@ def step_environment(step, bindings):
     if argv0 == prep.COLIMA:
         env = {'PATH': f"{bindings['control']}/bin:{COLIMA_BASE_PATH}", 'LANG': 'C',
                'HOME': f"{bindings['control']}/h"}
-    elif argv0 == prep.DOCKER:
+    elif argv0 in (prep.DOCKER, BUILDX_LINK_TEMPLATE):
         env = {'PATH': DESKTOP_BASE_PATH, 'LANG': 'C'}
     else:
         raise Refusal(f"{step['id']}: executable must be a pinned tool")
@@ -317,6 +407,10 @@ def resolve_step(step, bindings):
         return out
     out.update(argv=prep.render(step['argv'], bindings), env=step_environment(step, bindings),
                guest=step['argv'][0] == prep.COLIMA and 'ssh' in step['argv'])
+    if step['id'] in FIXED_GUEST_STEPS:
+        out['guest_operation'] = FIXED_GUEST_STEPS[step['id']]
+    if step['id'] in REMOTE_COMMAND_STEPS:
+        out['guest_operation'] = REMOTE_COMMAND_STEPS[step['id']]
     if 'guest_deadline' in step:
         out['guest_deadline'] = step['guest_deadline']
     if 'stdin' in step:
@@ -369,6 +463,9 @@ RUNTIME_DERIVED = {
                          'the chain token32 context',
     'guest_context': 'the C3 context path that the C4 verify spec reports',
     'guest_iidfile': 'the C3 context path with .iid appended, a sibling in the guest parent',
+    'guest_check_cid': 'C5: the C4 verify spec context path with .check.cid appended, a sibling in the guest parent',
+    'check_container_id': 'C5: the one full container ID the guest cidfile holds after the check run, read through the '
+                          'guest helper; the listing must not carry it after the run',
 }
 
 
@@ -380,9 +477,12 @@ def runtime_preconditions(stage_id, bindings):
                prior=('closed executor receipt chain back to D0; C1 may instead bind the pinned 688 C0 record '
                       'through historical_binding (exact sha, recorded tools and roots), never by replay'),
                identity='owned directories pinned by device and inode and rechecked before every step')
-    if stage_id in ('C3', 'C4'):
+    if stage_id in ('C3', 'C4', 'C5'):
         pre['token32'] = ('the C0 origin token32 read from the verified C0 receipt beneath this chain, for this token; '
                           'a historical C0 minted none and refuses, checked before the claim')
+    if stage_id == 'C5':
+        pre['guest_context'] = ('the context path the verified C4 verify spec reports, read back from the C4 receipt\'s '
+                                'own spec file, whose name must be this chain\'s token32 context')
     if stage_id == 'C0' and bindings.get('token') == RECORDED_TOKEN:
         pre['recorded_token'] = ('refuse: the recorded token\'s C0 is historical; C1 binds the pinned 688 record, '
                                  'and make_owned_dir would refuse the existing roots')
@@ -896,7 +996,8 @@ def h_render_guest_spec(ctx, step):
         ctx['bindings']['guest_spec'] = spec
         return dict(ctx['recipe'], spec_sha256=hashlib.sha256(spec.encode()).hexdigest())
     if step['id'] == 'c4-render-verify-spec':
-        spec = build_verify_spec(read_ref(ctx, 'c3-stage-context.stdout'))
+        pin = runtime_inputs.runtime_image_pin(ctx['manifest'])
+        spec = build_verify_spec(read_ref(ctx, 'c3-stage-context.stdout'), pin)
         parsed = json.loads(spec)
         if parsed['name'] != f'effigy-531-image-{token32}':
             raise Refusal('the C3 context does not carry the token32 this chain minted')
@@ -930,6 +1031,132 @@ def h_host_stage_dockerfile(ctx, step):
     return dict(path=target, sha256=RECIPE_SHA256, bytes=len(data))
 
 
+def d2_occurrence(bindings, activation_id):
+    """D2's fresh, activation-derived outputs: its input directory, its build context and its iidfile, each a sibling
+    of the original D0/D1 path under the owned control root. The original paths keep their pinned D0/D1 identity and
+    every earlier payload, recipe and claim stays where it is; this occurrence creates only its own names, exclusively."""
+    suffix = hashlib.sha256(('d2-occurrence:' + activation_id).encode()).hexdigest()[:16]
+    return dict(desktop_input_dir=bindings['desktop_input_dir'] + '-' + suffix,
+                desktop_context_dir=bindings['desktop_context_dir'] + '-' + suffix,
+                desktop_iidfile=bindings['desktop_iidfile'] + '-' + suffix)
+
+
+def verify_buildx_target():
+    """The Desktop bundle version and the pinned buildx: a regular executable whose bytes hash to the pin."""
+    try:
+        with open(DESKTOP_APP_PLIST, 'rb') as handle:
+            version = plistlib.load(handle).get('CFBundleShortVersionString')
+        info = os.lstat(DESKTOP_BUILDX)
+    except (OSError, ValueError) as exc:  # a missing or unreadable bundle: the legacy-builder shape never runs
+        raise Refusal('the Docker Desktop bundle or its buildx plugin is missing: refuse before any fetch') from exc
+    if version != DESKTOP_BUNDLE_VERSION:
+        raise Refusal(f'Docker Desktop bundle version {version!r} differs from the pinned {DESKTOP_BUNDLE_VERSION}')
+    if not stat.S_ISREG(info.st_mode) or not info.st_mode & stat.S_IXUSR:
+        raise Refusal('the pinned buildx plugin is not an executable regular file')
+    digest = sha_file(DESKTOP_BUILDX)
+    if digest != DESKTOP_BUILDX_SHA256:
+        raise Refusal('the Desktop buildx plugin differs from its pinned sha256: refuse')
+    return dict(target=DESKTOP_BUILDX, sha256=digest, bundle_version=version, dev=info.st_dev, inode=info.st_ino)
+
+
+def verify_buildx_link(bindings):
+    """The private config's one buildx link: a symlink whose readlink is the pinned target, canonical, and the target's
+    identity as verified. Replacing either before the build refuses here."""
+    link = render1(BUILDX_LINK_TEMPLATE, bindings)
+    if not stat.S_ISLNK(os.lstat(link).st_mode):
+        raise Refusal('the private buildx route is not the owned symlink: refuse')
+    if os.readlink(link) != DESKTOP_BUILDX or os.path.realpath(link) != DESKTOP_BUILDX:
+        raise Refusal('the private buildx link does not resolve canonically to the pinned plugin: refuse')
+    return verify_buildx_target()
+
+
+def h_check_buildx_custody(ctx, step):
+    """Immediately before the build: the same link and the same bytes as the metadata step ran against."""
+    return verify_buildx_link(ctx['bindings'])
+
+
+def h_check_buildx_metadata(ctx, step):
+    """Docker's discovery requires this metadata from a candidate; a candidate that does not answer it is not a route."""
+    try:
+        data = json.loads(read_ref(ctx, step['inputs'][0]))
+    except ValueError as exc:
+        raise Refusal('the buildx metadata is not JSON: refuse before any fetch') from exc
+    if not isinstance(data, dict) or any(data.get(k) != v for k, v in BUILDX_METADATA.items()):
+        raise Refusal('the buildx metadata does not match the pinned schema, vendor and version: refuse before any fetch')
+    return {'verified': dict(BUILDX_METADATA)}
+
+
+def h_check_nerdctl_version(ctx, step):
+    """The guest's own runtime version, observed at run time, must be the one the lifecycle was source-qualified against."""
+    match = re.fullmatch(r'nerdctl version (\d+\.\d+\.\d+)\n?', read_ref(ctx, step['inputs'][0]))
+    if match is None or match.group(1) != GUEST_NERDCTL_VERSION:
+        raise ValueError('the guest nerdctl is not the source-qualified version: stopped before the check runs')
+    return {'version': GUEST_NERDCTL_VERSION}
+
+
+def h_check_container_inspect(ctx, step):
+    """The exact-ID inspection of the check container: its own ID, the predecessor image, a terminal exited state and
+    exit 0. Anything else (running, another image or ID, a non-zero exit) stops later effects with the container kept."""
+    try:
+        rows = json.loads(read_ref(ctx, step['inputs'][0]))
+    except ValueError as exc:
+        raise ValueError('the container inspection is not JSON') from exc
+    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+        raise ValueError('the container inspection must name exactly one container')
+    obj, state = rows[0], rows[0].get('State')
+    cid, image = ctx['bindings']['check_container_id'], ctx['bindings']['image_id']
+    if not isinstance(state, dict):
+        raise ValueError('the container inspection carries no state')
+    if obj.get('Id') != cid:
+        raise ValueError('the inspected container is not the cidfile container')
+    if obj.get('Image') != image:
+        raise ValueError('the check container was not created from the predecessor image')
+    if state.get('Status') != 'exited':
+        raise ValueError(f"the check container is not in a terminal exited state: {state.get('Status')!r}")
+    if type(state.get('ExitCode')) is not int or state.get('ExitCode') != 0:
+        raise ValueError('the check container did not exit 0')
+    return {'container_id': cid, 'image_id': image, 'status': 'exited', 'exit_code': 0}
+
+
+def guest_guard(argv):
+    """(kill grace, guest seconds) of the timeout guard that opens a colima ssh tail, or None."""
+    if argv[:1] != [prep.COLIMA] or '--' not in argv:
+        return None
+    tail = argv[argv.index('--') + 1:]
+    if tail[:1] != ['timeout'] or len(tail) < 4 or tail[1] != '-k' or not tail[2].isdigit() or not tail[3].isdigit():
+        return None
+    return int(tail[2]), int(tail[3])
+
+
+def check_guest_allowance(argv, remaining, step_id):
+    """Before dispatch: the step's remaining allowance must contain the whole guest guard, its kill grace and the
+    receipt margin. A guard that could outlive the allowance is never launched."""
+    guard = guest_guard(argv)
+    if guard is None:
+        return
+    grace, seconds = guard
+    need = grace + seconds
+    if remaining < need:
+        raise Refusal(f'{step_id}: the remaining allowance {remaining:.1f}s cannot contain the guest guard and its grace '
+                      f'({need}s): not dispatched')
+
+
+def h_link_buildx_plugin(ctx, step):
+    """D2's Buildx route, before any fetch. The Desktop bundle must carry the pinned version and the pinned buildx must
+    hash to its pin; then the private config gets one new cli-plugins directory holding one symlink to it. Nothing is read
+    from a global config, and an existing directory or link refuses rather than being adopted."""
+    target = verify_buildx_target()
+    plugins = ctx['bindings']['desktop_config'] + '/cli-plugins'
+    create_private_dir(plugins)
+    link = plugins + '/docker-buildx'
+    try:
+        os.symlink(DESKTOP_BUILDX, link)
+    except FileExistsError:
+        raise Collision(f'collision: {link} exists; refuse, do not adopt')
+    verify_buildx_link(ctx['bindings'])
+    return dict(link=link, target=target['target'], sha256=target['sha256'], bundle_version=target['bundle_version'])
+
+
 def h_read_iidfile(ctx, step):
     ref = step['inputs'][0]
     text = read_ref(ctx, ref) if ref.endswith('.stdout') else Path(render1(ref, ctx['bindings'])).read_text()
@@ -956,6 +1183,33 @@ def h_check_runtime_facts(ctx, step):
 def h_read_cidfile(ctx, step):
     text = Path(render1(step['inputs'][0], ctx['bindings'])).read_text()
     return {'container_id': prep.read_cidfile(text)}
+
+
+FULL_ID = re.compile(r'[0-9a-f]{64}')
+
+
+def h_read_check_cid(ctx, step):
+    """C5's check container ID: the guest cidfile holds one full ID and nothing else. It becomes the exact ID the
+    absence check and the removal observation name; nothing is selected from a name, a label or a list."""
+    text = read_ref(ctx, step['inputs'][0])
+    cid = text[:-1] if text.endswith('\n') else text
+    if not FULL_ID.fullmatch(cid):
+        raise ValueError('the check cidfile does not hold one full container ID')
+    ctx['bindings']['check_container_id'] = cid
+    return {'container_id': cid}
+
+
+def h_check_container_absent(ctx, step):
+    """Exact-ID absence: the complete listing of every container, read through the guest helper, has one full ID per
+    line, and the check's own ID is not among them after the run. A name, a prefix or an empty listing is not
+    enough, and a listing that is not exactly full IDs refuses."""
+    cid = ctx['bindings']['check_container_id']
+    lines = read_ref(ctx, step['inputs'][0]).splitlines()
+    if any(not FULL_ID.fullmatch(line) for line in lines):
+        raise ValueError('the container listing is not one full ID per line')
+    if cid in lines:
+        raise ValueError('the check container is still listed after its run: retained, not removed')
+    return {'container_id': cid, 'absent': True}
 
 
 def h_select_cleanup_targets(ctx, step):
@@ -1009,14 +1263,173 @@ HALT_SAFE_HELPERS = frozenset({'compare_route_echo'})
 def h_prefetch_runtime_inputs(ctx, step):
     """The pinned Ubuntu 22.04 arm64 OCI blobs and offline apt debs, fetched into the owned empty input directory
     and assembled as a local oci-layout plus a flat debs directory. The build then uses --build-context and
-    --network=none; FROM cannot contact a registry."""
+    --network=none; FROM cannot contact a registry. The destination is one of the two reviewed input roots: D2's
+    Desktop directory, or C4's Colima staging directory that the transfer stream is written from. Each is pinned
+    by identity here, before any later step reads or copies it."""
     pin = runtime_inputs.runtime_image_pin(ctx['manifest'])
     destination = render1(step['inputs'][0], ctx['bindings'])
-    if destination != ctx['bindings']['desktop_input_dir']:
-        raise Refusal('prefetch destination differs from the reviewed desktop input path')
+    allowed = {'d2-prefetch-runtime-inputs': 'desktop_input_dir',
+               'c4-prefetch-runtime-inputs': 'colima_input_dir'}
+    if allowed.get(step['id']) is None or destination != ctx['bindings'][allowed[step['id']]]:
+        raise Refusal('prefetch destination differs from the reviewed input path for this stage')
     result = runtime_inputs.fetch_runtime_inputs(destination, pin, opener=runtime_inputs.open_runtime_https,
                                                  checkpoint=lambda: ctx['monitor'].check())
+    ctx['pins'].pin(destination)
     return dict(bytes=result['bytes'], oci=result['oci'], debs=result['debs'], files=result['files'])
+
+
+def host_input_entries(root, spec):
+    """The exact file identities the prefetched host input root must hold, derived again from its own upstream
+    index. The index is read by descriptor and must be the pinned one; nothing here trusts a directory listing."""
+    upstream = read_checked_file(os.path.join(root, guest_inputs.UPSTREAM_PATH), must_be_in=root, read_only=False,
+                                 max_bytes=spec['layout']['index']['bytes'])
+    return guest_inputs.layout_entries(spec['layout'], upstream)
+
+
+def check_host_input_tree(root, entries):
+    """The prefetched host input root holds exactly the reviewed inputs: the fixed directory set, one owned regular
+    file per entry, no link, no extra or hidden entry. A missing or extra input refuses before the stream is written."""
+    expected = sorted(entry['path'] for entry in entries)
+    found, directories = [], []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        relative = os.path.relpath(dirpath, root)
+        if relative != '.':
+            info = os.lstat(dirpath)
+            if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or info.st_uid != os.geteuid()
+                    or stat.S_IMODE(info.st_mode) != 0o700):
+                raise Refusal('the host input directory set is not owned 0700 directories')
+            directories.append(relative)
+        for name in sorted(filenames):
+            path = os.path.join(dirpath, name)
+            info = os.lstat(path)
+            if (not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode) or info.st_uid != os.geteuid()
+                    or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) not in (0o600, 0o400)):
+                raise Refusal('a host input is not one owned private regular file')
+            found.append(os.path.relpath(path, root))
+    if sorted(directories) != sorted(['oci', 'oci/blobs', 'oci/blobs/sha256', 'debs']):
+        raise Refusal('the host input root directory set differs from the reviewed layout')
+    if sorted(found) != expected:
+        raise Refusal('the host input root holds missing or extra inputs')
+    return True
+
+
+def h_render_input_specs(ctx, step):
+    """C4's fixed finite transfer representation: the reviewed OCI metadata/blob/deb identities, the verified
+    guest parent and context name, and the exact caps. One hex spec serves the guest transfer and the guest's own
+    pre-build re-derivation, so both reduce to the same reviewed bytes."""
+    if step['inputs'][0] != 'mode=transfer':
+        raise Refusal('the input spec is rendered for the transfer mode only')
+    destination = render1(step['inputs'][1], ctx['bindings'])
+    if destination != ctx['bindings']['colima_input_dir']:
+        raise Refusal('the input spec names another host input root')
+    verify = json.loads(ctx['bindings']['guest_verify_spec'])
+    pin = runtime_inputs.runtime_image_pin(ctx['manifest'])
+    spec = guest_inputs.transfer_spec(pin, verify['parent'], verify['name'])
+    data = guest_inputs.spec_bytes(spec)
+    if len(data) > RECIPE_CAP_BYTES:
+        raise Refusal('the input spec exceeds the recipe cap')
+    encoded = data.hex()
+    write_new_file(ctx['step_root'], 'guest-input-spec.hex', encoded.encode())
+    ctx['bindings']['guest_input_spec'] = encoded
+    ctx['bindings']['guest_oci'] = spec['parent']['path'] + '/' + spec['name'] + '.oci'
+    ctx['bindings']['guest_debs'] = spec['parent']['path'] + '/' + spec['name'] + '.debs'
+    ctx['guest_input_spec'] = spec
+    return dict(sha256=hashlib.sha256(encoded.encode()).hexdigest(), spec_sha256=hashlib.sha256(data).hexdigest(),
+                bytes=len(data), name=spec['name'], total_bytes=guest_inputs.pinned_bytes(spec['layout']))
+
+
+def h_render_input_transfer(ctx, step):
+    """Write the one fixed finite transfer stream from the pinned prefetch.
+
+    Every payload is re-read by descriptor and re-hashed while the stream is written, the per-input and aggregate
+    caps are enforced before and during each copy, and the live monitor samples per chunk. No caller names a source,
+    destination, filename or archive."""
+    if step['inputs'][0] != 'mode=transfer':
+        raise Refusal('the transfer stream is rendered from the reviewed prefetch only')
+    root = ctx['bindings']['colima_input_dir']
+    spec = ctx['guest_input_spec']
+    entries, generated = host_input_entries(root, spec)
+    check_host_input_tree(root, entries)
+    sources = {entry['path']: generated[entry['path']] if entry['path'] in generated
+               else os.path.join(root, entry['path']) for entry in entries}
+    path = os.path.join(ctx['step_root'], 'transfer.bin')
+    result = guest_inputs.write_stream(path, entries, sources, spec['limits'],
+                                       checkpoint=lambda: ctx['monitor'].check())
+    txid = checked_sha(path, must_be_in=ctx['stage_root'])
+    if txid != result['sha256'] or os.stat(path).st_size != result['bytes']:
+        raise Refusal('the transfer stream readback differs from what was written')
+    ctx['guest_input_stream'] = dict(path=path, sha256=result['sha256'], bytes=result['bytes'])
+    ctx['guest_input_entries'] = entries
+    return dict(path=path, bytes=result['bytes'], sha256=result['sha256'], entries=len(entries),
+                entries_sha256=canon_sha(entries), total_bytes=result['total_bytes'])
+
+
+def validate_input_receipt(receipt, spec, entries, paths):
+    """One guest input receipt against the reviewed inputs. The parent, context, entry identities, derived OCI
+    facts and directory identities are all re-derived here; an assertion from the guest alone is never enough."""
+    if not isinstance(receipt, dict) or set(receipt) != {'parent', 'context', 'dirs', 'entries', 'derived'}:
+        raise Refusal('the guest input receipt is not the reviewed form')
+    if receipt['parent'] != spec['parent'] or receipt['context'] != spec['name']:
+        raise Refusal('the guest input receipt names another parent or context')
+    if receipt['entries'] != entries:
+        raise Refusal('the guest input receipt entries differ from the reviewed inputs')
+    layout = spec['layout']
+    expected = dict(index_sha256=guest_inputs.hex_digest(layout['index']['digest']),
+                    manifest_digest=layout['manifest']['digest'], manifest_bytes=layout['manifest']['bytes'],
+                    config_digest=layout['config']['digest'], layer_digest=layout['layer']['digest'],
+                    platform='linux/arm64', deb_count=len(layout['debs']),
+                    total_bytes=sum(entry['bytes'] for entry in entries))
+    if receipt['derived'] != expected:
+        raise Refusal('the guest input receipt derived facts differ from the reviewed layout')
+    dirs = receipt['dirs']
+    if not isinstance(dirs, list) or len(dirs) != 2 or [row.get('path') for row in dirs] != paths:
+        raise Refusal('the guest input receipt does not name the two fixed sibling directories')
+    expected_rows = [sorted(entry['path'][len('oci/'):] for entry in entries if entry['path'].startswith('oci/')),
+                     sorted(entry['path'][len('debs/'):] for entry in entries if entry['path'].startswith('debs/'))]
+    for row, names in zip(dirs, expected_rows):
+        if not isinstance(row, dict) or set(row) != {'path', 'device', 'inode', 'uid', 'mode', 'entries'}:
+            raise Refusal('a guest input directory row is malformed')
+        if (type(row['device']) is not int or type(row['inode']) is not int or type(row['uid']) is not int
+                or row['mode'] != 0o700 or row['uid'] != os.geteuid()):
+            raise Refusal('a guest input directory identity is not an owned 0700 directory')
+        if sorted(row['entries']) != names:
+            raise Refusal('a guest input directory holds other files than the reviewed inputs')
+    return dict(verified=True, total_bytes=expected['total_bytes'], entries_sha256=canon_sha(entries),
+                dirs_sha256=canon_sha(dirs), dirs=dirs)
+
+
+def h_check_input_transfer(ctx, step):
+    """The transfer step's own guest receipt: the exact reviewed inputs arrived, in the reviewed layout, under the
+    verified parent and context."""
+    text = read_ref(ctx, step['inputs'][0])
+    try:
+        receipt = json.loads(text)
+    except ValueError as exc:
+        raise Refusal('the transfer output is not one guest input receipt') from exc
+    result = validate_input_receipt(receipt, ctx['guest_input_spec'], ctx['guest_input_entries'],
+                                    [ctx['bindings']['guest_oci'], ctx['bindings']['guest_debs']])
+    ctx['guest_input_dirs'] = result.pop('dirs')
+    return result
+
+
+def h_check_input_verify(ctx, step):
+    """The guest's pre-build re-derivation: the same receipt, re-checked against the same inputs and the directory
+    identities the transfer recorded. A tree that changed after the transfer refuses before the build."""
+    text = read_ref(ctx, step['inputs'][0])
+    try:
+        receipt = json.loads(text)
+    except ValueError as exc:
+        raise Refusal('the input re-derivation output is not one guest input receipt') from exc
+    result = validate_input_receipt(receipt, ctx['guest_input_spec'], ctx['guest_input_entries'],
+                                    [ctx['bindings']['guest_oci'], ctx['bindings']['guest_debs']])
+    dirs = result.pop('dirs')
+    recorded = ctx.get('guest_input_dirs')
+    if not isinstance(recorded, list) or [row.get('path') for row in dirs] != [row.get('path') for row in recorded]:
+        raise Refusal('the pre-build re-derivation names another guest input pair')
+    for row, before in zip(dirs, recorded):
+        if (row['device'], row['inode']) != (before['device'], before['inode']):
+            raise Refusal('a guest input directory was replaced after the transfer')
+    return result
 
 
 def h_prefetch_colima_image(ctx, step):
@@ -1045,15 +1458,26 @@ HANDLERS = {
     'claim_intent': h_claim_intent,
     'prefetch_colima_image': h_prefetch_colima_image,
     'prefetch_runtime_inputs': h_prefetch_runtime_inputs,
+    'render_input_specs': h_render_input_specs,
+    'render_input_transfer': h_render_input_transfer,
+    'check_input_transfer': h_check_input_transfer,
+    'check_input_verify': h_check_input_verify,
     'verify_desktop_endpoint': h_verify_desktop_endpoint,
     'compare_route_echo': h_compare_route_echo,
     'render_guest_spec': h_render_guest_spec,
     'host_stage_dockerfile': h_host_stage_dockerfile,
     'read_iidfile': h_read_iidfile,
+    'link_buildx_plugin': h_link_buildx_plugin,
+    'check_buildx_custody': h_check_buildx_custody,
+    'check_buildx_metadata': h_check_buildx_metadata,
+    'check_nerdctl_version': h_check_nerdctl_version,
+    'check_container_inspect': h_check_container_inspect,
     'check_image_identity': h_check_image_identity,
     'check_build_help': h_check_build_help,
     'check_runtime_facts': h_check_runtime_facts,
     'read_cidfile': h_read_cidfile,
+    'read_check_cid': h_read_check_cid,
+    'check_container_absent': h_check_container_absent,
     'select_cleanup_targets': h_select_cleanup_targets,
     'check_cleanup_target': h_check_cleanup_target,
     'verify_tool_sha': lambda ctx, step: {'verified': verify_tool_sha(TOOL_PATHS)},
@@ -1247,7 +1671,9 @@ def step_closure(result, guest):
 
 def bind_guest_intent(ctx, step_id, step_root):
     """Durable one-use nonce and operation binding, written before the guest helper is launched."""
-    operation = FIXED_GUEST_STEPS[step_id]
+    operation = FIXED_GUEST_STEPS.get(step_id) or REMOTE_COMMAND_STEPS.get(step_id)
+    if operation is None:
+        raise Refusal(f'{step_id}: not a fixed guest-helper step')
     nonce = os.urandom(32).hex()
     used = ctx.setdefault('guest_nonces', set())
     if nonce in used:
@@ -1324,6 +1750,14 @@ def establish_guest_closure(result, intent, step_root):
     result['guest_closure'] = closure
     result['guest_identity'] = {key: parsed['header'].get(key)
                                 for key in ('boot_id', 'pid', 'start_time', 'pgid', 'session_id')}
+    if 'command' in parsed['header']:
+        command = parsed['header']['command']
+        # The one multi-line argument a reviewed command carries is the pinned check source, matched exactly.
+        if (not isinstance(command, list) or not command or len(command) > 24
+                or any(not isinstance(a, str) or not a or '\x00' in a
+                       or (a != prep.CHECK_SOURCE and (len(a) > 512 or '\n' in a)) for a in command)):
+            raise Refusal('the guest-reported command is malformed')
+        result['guest_command'] = list(command)
     return result
 
 
@@ -1350,12 +1784,12 @@ def stable_input_manifest(manifest_path=None):
     root = REPO_ROOT.resolve(strict=True)
     repo_paths = list(PROGRAM_FILES) + [Path(manifest_path), RECIPE_PATH,
                                         REPO_ROOT / 'effigy.toml', REPO_ROOT / 'config/tasks.toml']
-    machine_paths = [Path(sys.executable)] + list(map(Path, TOOL_PATHS))
+    machine_paths = [Path(sys.executable)] + list(map(Path, TOOL_PATHS)) + [Path(DESKTOP_BUILDX), Path(DESKTOP_APP_PLIST)]
     expected = {f'docs/qualification/workspace-private-531/{name}' for name in (
         'macos_stage_executor.py', 'macos_preparation.py', 'preparation_stage.py',
         'preparation_resources.py', 'macos_guest_context.py', 'macos_guest_helper.py',
         'macos_stage_helper.py', 'macos_stage_proof.py', 'macos-4f6a5ed3-stages.json',
-        'runtime.Dockerfile', 'runtime_image_inputs.py')}
+        'runtime.Dockerfile', 'runtime_image_inputs.py', 'guest_inputs.py')}
     expected.update(('effigy.toml', 'config/tasks.toml'))
     try:
         declared = [Path(path).relative_to(REPO_ROOT).as_posix() for path in repo_paths]
@@ -1435,7 +1869,11 @@ def run_fixed_helper(stage_id, step, ctx, inputs, manifest_path, monitor, step_d
     if stage_id == 'C0':
         helper_inputs[HISTORICAL_C0['path']] = HISTORICAL_C0['sha256']
         helper_inputs[HISTORICAL_C0['tranche_path']] = HISTORICAL_C0['tranche_sha256']
-    request = dict(stage=stage_id, step=step['id'], bindings=ctx['bindings'], inputs=helper_inputs,
+    # Pinned guest source text is not part of a fixed C0/D0 helper's operation: it is kept out of the request so the
+    # hash-bound request stays inside its reviewed size bound.
+    helper_bindings = {key: value for key, value in ctx['bindings'].items()
+                       if key not in PINNED_SOURCE_BINDINGS and key != 'guest_helper_hex'}
+    request = dict(stage=stage_id, step=step['id'], bindings=helper_bindings, inputs=helper_inputs,
                    claim=ctx['claim'], anchor=anchor, anchor_fd=anchor_fd, anchor_identity=identity,
                    endpoint=endpoint, manifest_path=str(Path(manifest_path).resolve()),
                    historical=HISTORICAL_C0, historical_root=LINUX_ARTIFACT_DIR,
@@ -1643,15 +2081,19 @@ def verify_receipt_tree(body, stage_id, key, manifest):
             pin = colima_image_pin(manifest)
             if helper.get('result') != dict(bytes=pin['bytes'], sha512=pin['sha512']):
                 raise Refusal('c1 prefetch result differs from the pinned Colima image')
-        elif step['id'] == 'd2-prefetch-runtime-inputs':
+        elif step['id'] in ('d2-prefetch-runtime-inputs', 'c4-prefetch-runtime-inputs'):
             helper = json.loads(read_checked_file(ev['path'], must_be_in=root, read_only=False))
             pin = runtime_inputs.runtime_image_pin(manifest)
             result = helper.get('result') or {}
             files = result.get('files')
             recorded = [(f.get('bytes'), f.get('sha256')) for f in files] if isinstance(files, list) else None
             if result.get('bytes') != pin['bytes'] or recorded != runtime_inputs.pin_file_identities(pin):
-                raise Refusal('d2 prefetch result differs from the pinned input identities')
-    # 4. Creation receipts: each is re-derived field by field from its producing stage's own receipt, the
+                raise Refusal(f"{step['id']}: prefetch result differs from the pinned input identities")
+    # 4. C4's runtime-input transfer is re-derived from its own retained spec, host inputs, stream and guest
+    #    receipts. A missing, replaced, partial or extra input refuses here, not only during the run.
+    if stage_id == 'C4':
+        verify_c4_inputs(root, body, manifest)
+    # 5. Creation receipts: each is re-derived field by field from its producing stage's own receipt, the
     #    step's intent and original streams, and must match the stored receipt exactly.
     for rec in body['receipts']:
         verify_creation(rec, body, manifest)
@@ -1660,6 +2102,83 @@ def verify_receipt_tree(body, stage_id, key, manifest):
 
 CREATION_STEP = {'volume': 'd1-volume-inspect', 'image': 'd2-check-image-identity', 'container': 'd3-read-cidfile'}
 CREATION_INTENT_STEP = {'volume': 'd1-volume-create', 'image': 'd2-docker-build', 'container': 'd3-disposable-check'}
+
+
+def read_helper_result(root, step):
+    helper = json.loads(read_checked_file(step['evidence']['path'], must_be_in=root, read_only=False))
+    if helper.get('step') != step['id'] or not isinstance(helper.get('result'), dict):
+        raise Refusal(f"{step['id']}: helper record is malformed")
+    return helper['result']
+
+
+def verify_c4_inputs(root, body, manifest):
+    """C4's runtime-input transfer, re-derived from its own retained evidence.
+
+    The spec must be the reviewed layout for this pin under the verified chain's parent and name; the entry
+    identities are derived again from the retained upstream index; the framed stream is the one the step recorded
+    and dispatched; and both guest receipts are re-checked against those inputs. A missing, replaced, partial or
+    extra input, a stream that is not the dispatched stdin, or a guest directory replaced after the transfer
+    refuses here as well as during the run."""
+    steps = {step['id']: step for step in body['steps']}
+    required = ('c4-render-input-specs', 'c4-render-input-transfer', 'c4-transfer-inputs',
+                'c4-check-input-transfer', 'c4-verify-inputs', 'c4-check-input-verify')
+    for step_id in required:
+        if steps.get(step_id, {}).get('closure') != 'closed':
+            raise Refusal(f'{step_id}: the C4 input transfer did not close')
+    pin = runtime_inputs.runtime_image_pin(manifest)
+    layout = guest_inputs.pin_layout(pin)
+    render_spec = read_helper_result(root, steps['c4-render-input-specs'])
+    spec_path = f"{root}/c4-render-input-specs/guest-input-spec.hex"
+    if checked_sha(spec_path, must_be_in=root) != render_spec.get('sha256'):
+        raise Refusal('the recorded input spec file differs from its hash')
+    encoded = read_checked_file(spec_path, must_be_in=root, read_only=False).decode()
+    try:
+        spec = guest_inputs.canonical_spec(encoded)
+    except guest_inputs.Refusal as exc:
+        raise Refusal(str(exc)) from exc
+    if spec['layout'] != layout or render_spec.get('total_bytes') != guest_inputs.pinned_bytes(layout):
+        raise Refusal('the recorded input spec differs from the reviewed pin for this stage')
+    if render_spec.get('spec_sha256') != hashlib.sha256(guest_inputs.spec_bytes(spec)).hexdigest():
+        raise Refusal('the recorded input spec sha256 differs from the spec it names')
+    prefetch = read_helper_result(root, steps['c4-prefetch-runtime-inputs'])
+    input_root = os.path.dirname(str(prefetch.get('oci') or ''))
+    if not input_root or os.path.realpath(input_root) != input_root:
+        raise Refusal('the prefetch record does not name the retained host input root')
+    entries, generated = host_input_entries(input_root, spec)
+    check_host_input_tree(input_root, entries)
+    stream = read_helper_result(root, steps['c4-render-input-transfer'])
+    if (stream.get('entries_sha256') != canon_sha(entries)
+            or stream.get('total_bytes') != sum(entry['bytes'] for entry in entries)):
+        raise Refusal('the recorded transfer stream differs from the reviewed input identities')
+    stream_path = f"{root}/c4-render-input-transfer/transfer.bin"
+    if (checked_sha(stream_path, must_be_in=root) != stream.get('sha256')
+            or os.stat(stream_path).st_size != stream.get('bytes')):
+        raise Refusal('the retained transfer stream differs from its recorded hash or size')
+    dispatched = steps['c4-transfer-inputs']
+    if dispatched.get('stdin_sha256') != stream.get('sha256'):
+        raise Refusal('the transfer step did not dispatch this stream as its stdin')
+    if (dispatched.get('transfer_stream') or {}).get('sha256') != stream.get('sha256'):
+        raise Refusal('the transfer step records another stream than the one rendered')
+    paths = [spec['parent']['path'] + '/' + spec['name'] + '.oci',
+             spec['parent']['path'] + '/' + spec['name'] + '.debs']
+    receipts = {}
+    for name, step_id in (('transfer', 'c4-transfer-inputs'), ('verify', 'c4-verify-inputs')):
+        text = read_checked_file(f'{root}/{step_id}/stdout', must_be_in=root, read_only=False).decode()
+        try:
+            receipt = json.loads(text)
+        except ValueError as exc:
+            raise Refusal(f'{step_id}: output is not one guest input receipt') from exc
+        receipts[name] = validate_input_receipt(receipt, spec, entries, paths)
+    for step_id, name in (('c4-check-input-transfer', 'transfer'), ('c4-check-input-verify', 'verify')):
+        recorded = read_helper_result(root, steps[step_id])
+        if recorded != {key: receipts[name][key] for key in ('verified', 'total_bytes', 'entries_sha256',
+                                                             'dirs_sha256')}:
+            raise Refusal(f'{step_id}: recorded result differs from the guest receipt it checked')
+    before = [tuple(row[k] for k in ('device', 'inode', 'uid')) for row in receipts['transfer']['dirs']]
+    after = [tuple(row[k] for k in ('device', 'inode', 'uid')) for row in receipts['verify']['dirs']]
+    if before != after:
+        raise Refusal('a guest input directory was replaced between the transfer and the pre-build check')
+    return True
 
 
 def verify_creation(rec, body, manifest):
@@ -1795,6 +2314,27 @@ def verify_chain(go, stage_id, bindings, manifest):
     return body
 
 
+def c4_guest_context(body, token32):
+    """C5's guest context, read back from the verified C4 chain: the verify spec C4 rendered must hash to the
+    value its helper recorded and must name this chain's token32 context. Nothing is taken from a caller."""
+    steps = {step['id']: step for step in body['steps']}
+    step = steps.get('c4-render-verify-spec')
+    if step is None or step.get('closure') != 'closed':
+        raise Refusal('the C4 verify spec did not close: refuse')
+    recorded = read_helper_result(body['stage_root'], step)
+    path = f"{body['stage_root']}/c4-render-verify-spec/c4-render-verify-spec.json"
+    data = read_checked_file(path, must_be_in=body['stage_root'], read_only=False)
+    if hashlib.sha256(data).hexdigest() != recorded.get('sha256') or len(data) != recorded.get('bytes'):
+        raise Refusal('the C4 verify spec differs from the hash its helper recorded: refuse')
+    spec = json.loads(data.decode())
+    if not isinstance(spec, dict) or spec.get('name') != f'effigy-531-image-{token32}':
+        raise Refusal('the C4 verify spec does not name this chain\'s context: refuse')
+    context = spec['context']['path']
+    if not isinstance(context, str) or not context.startswith('/') or context != spec['parent']['path'] + '/' + spec['name']:
+        raise Refusal('the C4 verify spec context is not under its guest parent: refuse')
+    return context
+
+
 def execute_stage(stage_id, bindings, **kwargs):
     """Ordinary entry remains unactivated; the existing seam is for controlled tests only."""
     if not TEST_SEAM['owner_activation']:
@@ -1826,7 +2366,9 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                           manifest_path=manifest_path, inputs=identity, now=now)
     prior = verify_chain(go, stage_id, bindings, manifest)
     # The guest stages take their token32 from the verified C0 origin, before the claim: a chain without one refuses.
-    token32 = origin_token32(prior, bindings['token']) if stage_id in ('C3', 'C4') else None
+    token32 = origin_token32(prior, bindings['token']) if stage_id in ('C3', 'C4', 'C5') else None
+    # C5's guest context comes from the verified C4 spec, also read before the claim: a refusal spends nothing.
+    guest_context = c4_guest_context(prior, token32) if stage_id == 'C5' else None
     pins = Pins()
     control = bindings['control']
     if stage_id in ('C1', 'C2', 'C3', 'C4', 'C5', 'C6'):
@@ -1865,8 +2407,13 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
     monitor = monitor_factory({'storage': cap}, [control])
     run_bindings = {k: v for k, v in bindings.items() if k not in NOT_SUPPLIED}
     run_bindings.update(guest_source_bindings())
+    if stage_id == 'D2':  # this occurrence's own input, context and iidfile; the original D0/D1 paths stay untouched
+        run_bindings.update(d2_occurrence(bindings, go['activation_id']))
     if token32 is not None:
         run_bindings['token32'] = token32
+    if stage_id == 'C5':
+        run_bindings['guest_context'] = guest_context
+        run_bindings['guest_check_cid'] = guest_context + '.check.cid'
     if stage_id in ('C5', 'D3', 'D4'):
         images = [r for r in (prior or {}).get('receipts', []) if r['kind'] == 'image']
         if len(images) != 1:
@@ -1966,18 +2513,28 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                 continue
             create_private_dir(step_root)
             pins.pin(step_root)
-            if step['id'] in FIXED_GUEST_STEPS:
+            fixed_guest = step['id'] in FIXED_GUEST_STEPS
+            remote_guest = step['id'] in REMOTE_COMMAND_STEPS
+            expected_command = None
+            if fixed_guest or remote_guest:
                 bind_guest_intent(ctx, step['id'], step_root)
             resolved = resolve_step(step, ctx['bindings'])
-            if step['id'] in FIXED_GUEST_STEPS:
+            if fixed_guest:
                 check_guest_helper_argv(resolved, ctx['guest_intent'])
+            if remote_guest:
+                _, expected_command = guest_remote_tail(resolved, ctx['bindings'])
+                dispatched = dispatch_guest_command(resolved, ctx['bindings'], ctx['guest_intent']['nonce'])
+                check_remote_dispatch(dispatched, ctx['guest_intent'])
+                resolved = dict(resolved, argv=dispatched)
             if resolved['argv'][0] == prep.COLIMA:
                 ensure_colima_path(control, pins)
             stdin_path = stdin_sha = None
-            if resolved.get('stdin') == 'recipe_file':
-                if ctx['recipe'] is None:
-                    raise Refusal(f"{step['id']}: stdin recipe was not staged: refuse")
-                stdin_path, stdin_sha = ctx['recipe']['path'], ctx['recipe']['sha256']
+            if 'stdin' in resolved:
+                staged = ctx.get(STDIN_STEPS.get(resolved['stdin'], ''))
+                if not isinstance(staged, dict) or not staged.get('path'):
+                    raise Refusal(f"{step['id']}: {resolved['stdin']} was not staged: refuse")
+                stdin_path, stdin_sha = staged['path'], staged['sha256']
+            check_guest_allowance(resolved['argv'], step_deadline - clock(), step['id'])
             before = dict(monitor.last)
             result = transport(root=step_root, argv=resolved['argv'], timeout=step_deadline - now_mono,
                                output_cap=step['output_cap_bytes'], input_hashes=dict(inputs),
@@ -1985,10 +2542,14 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                                monitor=monitor, deadline=step_deadline, cleanup_deadline=deadline, step=step['id'],
                                stdin_path=stdin_path, stdin_sha256=stdin_sha,
                                identity_probe=start_identity)
-            if step['id'] in FIXED_GUEST_STEPS and resolved['guest']:
+            if (fixed_guest or remote_guest) and resolved['guest']:
                 result = establish_guest_closure(result, ctx['guest_intent'], step_root)
                 if result.get('guest_closure') == 'closed' and result.get('guest_identity', {}).get('boot_id'):
                     ctx['guest_boot_id'] = result['guest_identity']['boot_id']
+                if remote_guest and result.get('guest_closure') == 'closed':
+                    # The command that actually ran, from the authenticated envelope, must be the reviewed one.
+                    if result.get('guest_command') != expected_command:
+                        raise Refusal(f"{step['id']}: the guest ran another command than the reviewed one")
             step_closure_value = step_closure(result, resolved['guest'])
             post_refusal = None
             try:
@@ -2013,6 +2574,12 @@ def _execute_stage(stage_id, bindings, *, activation_path, activation_sha256, ev
                 item['transport_streams'] = result['transport_streams']
             if result.get('guest_identity') is not None:
                 item['guest_identity'] = result['guest_identity']
+            if result.get('guest_command') is not None:
+                item['guest_command'] = result['guest_command']
+            if step['id'] == 'c4-transfer-inputs':
+                stream = ctx.get('guest_input_stream') or {}
+                item['stdin_sha256'] = stdin_sha
+                item['transfer_stream'] = dict(sha256=stream.get('sha256'), bytes=stream.get('bytes'))
             steps_out.append(item)
             if step_closure_value == 'guest_unknown':
                 halted = True  # the client's exit proves nothing about the guest: no further effects

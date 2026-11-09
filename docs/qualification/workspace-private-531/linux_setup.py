@@ -96,14 +96,21 @@ STAGE1_SYSTEM_STATES = frozenset({
     'initializing', 'starting', 'running', 'degraded', 'maintenance',
     'stopping', 'offline', 'unknown',
 })
-TRANSFER_CAP = 40 * 1024 * 1024            # E9 archive and E19 placements (brief: archive <= 40 MiB)
+TRANSFER_CAP = 40 * 1024 * 1024            # E9a/E9c archive (brief: archive <= 40 MiB)
+# E19 and EGO are aggregate kit ceilings (kit 6.3: E19 placements <= 1 MiB), not per-file allowances.
+PLACEMENT_GROUP_CAP = allocation.ROW_RESERVATIONS['E19']
 EXTRACT_CAP = 500 * 1024 * 1024            # E9b extracted source (brief: extracted <= 500 MiB)
 PAYLOAD_CAP = 64 * 1024 * 1024             # E8 filesystem controls (brief: <= 64 MiB writes)
 E8_TIMEOUT_SECONDS = 60                   # existing E8 payload clock; reserves remain separate
 SETUP_GO_GATES = frozenset({'E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'E19', 'E-SUP'})
-# Mechanisms that have been source-verified. Empty: none is established yet.
+# Mechanisms that have been source-verified.
+# ext4-project-quota is admitted as a source-qualified mechanism: admission is not a grant, because
+# verify only credits a complete witness (retained originals, exact facts, a genuine EDQUOT
+# enforcement observation, setter/approval custody and an exact headroom). The 2026-11-08 native
+# root lacks the project and quota features, so a live run refuses at the fixed route with that
+# exact reason. Disk association and the writable top stay unadmitted.
 SUPPORTED_DISK_MECHANISMS = frozenset()
-SUPPORTED_HARD_LIMITS = frozenset()
+SUPPORTED_HARD_LIMITS = frozenset({allocation.MECHANISM})
 SUPPORTED_TOP_MECHANISMS = frozenset({identity.MECHANISM})   # the only implemented top selection: descriptor metadata
 CANDIDATE_H_HEAD = '4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02'   # source-bound candidate H, distinct from K
 # External anchors: the preparation head K, candidate H, the probe transcript sha and the allowed-signers
@@ -115,8 +122,15 @@ SUDOERS_TEXT = '# No general supervisor grant; exact one-use rules installed onl
 SUDOERS_SCRIPT = 'set -e; umask 022; printf "%s" "$1" > "$2"; chmod 0440 "$2"; visudo -cf "$2" >/dev/null; sha256sum "$2"'
 IDENTITY_KEYS = ('vm', 'boot_id', 'host_key_fp')
 UNIT_STATE_PROPERTIES = '--property=LoadState,ActiveState,SubState,Result,ExecMainStatus,InvocationID,ControlGroup'
-BOOTSTRAP_ROOT = frozenset({'E3a', 'E3b', 'E3c', 'E4', 'E4v', 'E5a', 'E5b', 'E5c', 'E6a', 'E6', 'E7a', 'E7b', 'E7c',
-                            'E-SUP', 'E-SUDO'})
+BOOTSTRAP_ROOT = frozenset({'E3a', 'E3b', 'E3c', 'E4', 'E4v', 'E5a', 'E5b', 'E5c', 'E6a', 'E6', 'E7a', 'E7b',
+                            'E7p', 'E7c', 'E-SUP', 'E-SUDO'})
+# The fixed project-assignment row runs between E7b (root-owned BASE) and E7c (its 11 subdirectories),
+# so every directory E7c creates inherits project 531. The supervisor is installed first (E-SUP) because
+# the assignment is one of its fixed roles; the install writes only /usr/local/libexec.
+PROJECT_ROW = 'E7p'
+PROJECT_ROW_EXPECT = {'stdout_regex': r'\{"abi": \{.*\}, "assigned": true, .*"device": "/dev/sda2", '
+                                     r'"mechanism": "ext4-project-attribute", "nonce": "[0-9a-f]{64}", '
+                                     r'.*"project": 531, "projinherit": 512, .*\}\n'}
 
 
 def _sha(data):
@@ -540,19 +554,28 @@ def verify_hard_limit(witness, limit_bytes, supported=None, facts=None):
 
 
 def check_authorized_keys(keys, e2_public_key, now, expiry):
-    """One restricted Ed25519 line, expiring within a day, whose key is the E2 key."""
+    """One restricted Ed25519 line restricted to the one forced command, expiring within a day.
+
+    The qualification key is an ephemeral credential for the fixed setup operations, not a user
+    shell. `restrict` alone disables forwarding, PTY and user rc but still leaves an authenticated
+    command channel, so the reviewed contract also requires the exact `command="..."` forced entry
+    (OpenSSH 9.9p2 sshd.8). A general shell, a different command or any other option refuses.
+    """
     if not isinstance(keys, bytes) or not keys.endswith(b'\n') or keys.count(b'\n') != 1:
         raise Refusal('authorized_keys must be one newline-terminated line')
     line = keys.decode('utf-8')[:-1]
-    match = re.fullmatch(r'restrict,expiry-time=(\d{14}) (ssh-ed25519) ([A-Za-z0-9+/=]+)(?: [^\n]*)?', line)
+    match = re.fullmatch(r'restrict,expiry-time=(\d{14}),(command="[^"\n]*") (ssh-ed25519) '
+                         r'([A-Za-z0-9+/=]+)(?: [^\n]*)?', line)
     if not match:
-        raise Refusal('authorized_keys line is not the restricted ssh-ed25519 form')
+        raise Refusal('authorized_keys line is not the restricted forced-command ssh-ed25519 form')
+    if match.group(2) != transfers.authorized_keys_command():
+        raise Refusal('authorized_keys forced command is not the one reviewed writer entry')
     stamp = datetime.datetime.strptime(match.group(1), '%Y%m%d%H%M%S')
     expiry_epoch = calendar.timegm(stamp.timetuple())
     if expiry_epoch != expiry or not 0 < expiry_epoch - now <= KEY_LIFETIME_SECONDS:
         raise Refusal('embedded expiry-time differs from the bound expiry or exceeds 24 hours')
     parts = e2_public_key.split() if isinstance(e2_public_key, str) else []
-    if len(parts) < 2 or parts[0] != 'ssh-ed25519' or parts[1] != match.group(3):
+    if len(parts) < 2 or parts[0] != match.group(3) or parts[1] != match.group(4):
         raise Refusal('authorized_keys key is not the E2 public key')
 
 
@@ -655,13 +678,21 @@ def supervisor_install_argv(source=None, path=None):
                path or SUPERVISOR_PATH)
 
 
+def _quota_membership(row_id):
+    """The fixed admin row and reservation an allocating row belongs to (E19/EGO are aggregates)."""
+    group = 'E19' if row_id.startswith('E19') else 'EGO' if row_id.startswith('EGO') else row_id
+    if group not in allocation.ROW_RESERVATIONS:
+        return None
+    return {'row': group, 'reservation_bytes': allocation.ROW_RESERVATIONS[group]}
+
+
 def _row(rows, row_id, kind, argv, seconds, basis, go, expect=None, stdin=None, stdin_sha=None,
-         limit_bytes=None, credit=None, writer_argv=None):
+         limit_bytes=None, credit=None, writer_argv=None, quota=None, project=None):
     effect = {'vm-root': 'bootstrap', 'vm-supervised': 'supervised', 'contained-transfer': 'transfer'}[kind]
     rows.append({'id': row_id, 'kind': kind, 'effect': effect, 'argv': argv, 'writer_argv': writer_argv or [],
                  'timeout_seconds': seconds, 'closure_basis': basis, 'go': go, 'expect': expect,
                  'stdin_path': stdin, 'stdin_sha256': stdin_sha, 'needs_hard_limit': limit_bytes is not None,
-                 'limit_bytes': limit_bytes, 'credit': credit})
+                 'limit_bytes': limit_bytes, 'credit': credit, 'quota': quota, 'project': project})
 
 
 def _stage(row_id):
@@ -683,7 +714,10 @@ def _supervised_argv(fresh, row_id, payload_argv, cwd, timeout, cfg, transfer=Fa
         return [], None
     request = {'nonce': nonce, 'payload_user': ACCOUNT, 'payload_uid': uid, 'cwd': cwd,
                'timeout_seconds': timeout, 'argv': payload_argv, 'stage_dir': _stage(row_id),
-               'expected_boot_id': identity['boot_id'], 'transfer': transfer}
+               'expected_boot_id': identity['boot_id'], 'transfer': transfer,
+               # The payload unit is confined before the gate opens (linux_supervisor.parse_properties
+               # and _confined_process), so every allocating write happens inside the observed bound.
+               'confinement': dict(supervisor.CONFINEMENT), 'quota': _quota_membership(row_id)}
     # Explicit host-to-guest map, also bound by the plan GO. No inferred guest paths.
     mapped = {}
     for item in (fresh.get('placements') or []):
@@ -706,10 +740,71 @@ def _supervised_argv(fresh, row_id, payload_argv, cwd, timeout, cfg, transfer=Fa
                                   'request_json': text, 'request_sha256': digest}
 
 
-def _transfer_payload(row_id, dest):
-    """The guest payload that reads the stage FIFO into `dest` and reports its sha256."""
-    return ['/bin/sh', '-c', 'cat "$1" > "$2" && sha256sum "$2"', 'sh',
-            _stage(row_id) + '/' + supervisor.TRANSFER_NAME, dest]
+def _transfer_payload(row_id, dest, sha256, max_bytes, uid):
+    """The fixed broker payload: it reads the row FIFO inside the confined unit and allocates `dest`."""
+    return supervisor.broker_write_argv(row_id, dest, sha256, max_bytes,
+                                        _stage(row_id) + '/' + supervisor.TRANSFER_NAME, uid)
+
+
+def _placement_bytes(items):
+    """Host byte sizes of a bound placement set; a missing or unreadable file refuses."""
+    total = 0
+    for item in items:
+        path = item.get('host_path') if isinstance(item, dict) else None
+        if not isinstance(path, str) or not Path(path).is_file():
+            raise Refusal('placement host bytes are not bound')
+        total += Path(path).stat().st_size
+    return total
+
+
+def _quota_credit(row, fresh):
+    """The fixed root admin argv and one-use approval credit for one allocating row."""
+    quota = row.get('quota')
+    nonces = fresh.get('row_nonces')
+    base = nonces.get(row['id']) if isinstance(nonces, dict) else None
+    boot = (fresh.get('identity') or {}).get('boot_id')
+    if not quota or not isinstance(base, str) or not HEX64.fullmatch(base) or not boot:
+        return None, None
+    request = {'row': quota['row'], 'nonce': _sha((base + ':quota').encode()), 'boot_id': boot}
+    text = json.dumps(request, sort_keys=True)
+    digest = _sha(text.encode('utf-8'))
+    argv = _vm(*supervisor.quota_admin_argv(digest, SUPERVISOR_PATH))
+    return argv, {'nonce': request['nonce'], 'unit': None, 'request_json': text,
+                  'request_sha256': digest, 'program': SUPERVISOR_PATH, 'sudoers': False,
+                  'entry': '--approved-quota'}
+
+
+def _project_credit(fresh):
+    """The fixed project-assignment argv and one-use approval credit for the E7b/E7c boundary.
+
+    The request names only a nonce and the observed boot: the path, device, project and ioctl come from
+    the installed role's own table. Nothing here chooses a project or a limit.
+    """
+    nonces = fresh.get('row_nonces')
+    base = nonces.get(PROJECT_ROW) if isinstance(nonces, dict) else None
+    boot = (fresh.get('identity') or {}).get('boot_id')
+    if not isinstance(base, str) or not HEX64.fullmatch(base) or not boot:
+        return None, None
+    request = {'nonce': _sha((base + ':project').encode()), 'boot_id': boot}
+    text = json.dumps(request, sort_keys=True)
+    digest = _sha(text.encode('utf-8'))
+    argv = _vm(*supervisor.project_admin_argv(digest, SUPERVISOR_PATH))
+    return argv, {'nonce': request['nonce'], 'unit': None, 'request_json': text,
+                  'request_sha256': digest, 'program': SUPERVISOR_PATH, 'sudoers': False,
+                  'entry': '--approved-project'}
+
+
+def project_row_argv(row):
+    """Recompute the fixed project-assignment argv from the row's own bound credit.
+
+    The executor compares the row's argv with this result, so a missing call argument or an edited
+    argv cannot pass as the reviewed operation.
+    """
+    credit = row.get('credit') or {}
+    digest = credit.get('request_sha256')
+    if not isinstance(digest, str) or not HEX64.fullmatch(digest):
+        raise Refusal('project-assignment credit is not digest-bound')
+    return _vm(*supervisor.project_admin_argv(digest, SUPERVISOR_PATH))
 
 
 def _rows(fresh):
@@ -741,9 +836,15 @@ def _rows(fresh):
     rows[-1]['key_error'] = key_error
     _row(rows, 'E7a', 'vm-root', BOOTSTRAP_EXACT['E7a'], 20, VM_BASIS, 'E7', EXPECT['E7a'])
     _row(rows, 'E7b', 'vm-root', BOOTSTRAP_EXACT['E7b'], 20, VM_BASIS, 'E7', EXPECT['E7b'])
-    _row(rows, 'E7c', 'vm-root', BOOTSTRAP_EXACT['E7c'], 60, VM_BASIS, 'E7', EXPECT['E7c'])
+    # The reviewed entry is installed before the boundary it serves: E7p is one of its fixed roles, and
+    # the install writes only /usr/local/libexec, so it does not touch BASE or any row stage.
     _row(rows, 'E-SUP', 'vm-root', supervisor_install_argv(), 60, VM_BASIS, 'E-SUP',
          {'stdout_sha': _file_sha(SUPERVISOR_SOURCE)})
+    project_argv, project_credit = _project_credit(fresh)
+    _row(rows, PROJECT_ROW, 'vm-root', project_argv or [], 60, VM_BASIS, 'E7', PROJECT_ROW_EXPECT,
+         credit=project_credit, project={'device': supervisor.PROJECT_DEVICE,
+                                        'project': supervisor.PROJECT_ID, 'uid': 0})
+    _row(rows, 'E7c', 'vm-root', BOOTSTRAP_EXACT['E7c'], 60, VM_BASIS, 'E7', EXPECT['E7c'])
     _row(rows, 'E-SUDO', 'vm-root', BOOTSTRAP_EXACT['E-SUDO'], 30, VM_BASIS, 'E-SUP',
          {'stdout_sha': _sha(SUDOERS_TEXT.encode())})
     files = fresh.get('ssh_files') or {}
@@ -755,37 +856,44 @@ def _rows(fresh):
     tree_digest = expected_tree_digest(archive['path']) if archive_ok else None
     # E9a: the archive streams over SSH into a FIFO that a supervised payload reads.
     dest = BASE + '/' + ARCHIVE_NAME
-    argv, credit = _supervised_argv(fresh, 'E9a', _transfer_payload('E9a', dest), BASE, 900, cfg, transfer=True) \
+    payload = _transfer_payload('E9a', dest, ARCHIVE_SHA256, TRANSFER_CAP, (fresh.get('effigy531_uid') or 0)) \
+        if archive_ok and isinstance(fresh.get('effigy531_uid'), int) else []
+    argv, credit = _supervised_argv(fresh, 'E9a', payload, BASE, 900, cfg, transfer=True) \
         if archive_ok else ([], None)
     writer = ssh_argv(cfg, writer_remote_argv(_stage('E9a') + '/' + supervisor.TRANSFER_NAME)) \
         if archive_ok else []
     _row(rows, 'E9a', 'contained-transfer', argv, 900, SUPERVISED_BASIS, 'E9', {'stdout_sha': ARCHIVE_SHA256},
          stdin=archive.get('path') if archive_ok else None, stdin_sha=ARCHIVE_SHA256, limit_bytes=TRANSFER_CAP,
-         credit=credit, writer_argv=writer)
+         credit=credit, writer_argv=writer, quota=_quota_membership('E9a'))
     # E9c: the old-source B archive streams the same contained way to its own destination.
     archive_b = fresh.get('archive_b') or {}
     b_ok = bool(ssh_ok and archive_b.get('path') and archive_b.get('sha256') == ARCHIVE_B_SHA256)
     dest_b = BASE + '/inputs/archive-B.tar'
-    argv, credit = _supervised_argv(fresh, 'E9c', _transfer_payload('E9c', dest_b), BASE, 900, cfg, transfer=True) \
+    payload = _transfer_payload('E9c', dest_b, ARCHIVE_B_SHA256, TRANSFER_CAP, (fresh.get('effigy531_uid') or 0)) \
+        if b_ok and isinstance(fresh.get('effigy531_uid'), int) else []
+    argv, credit = _supervised_argv(fresh, 'E9c', payload, BASE, 900, cfg, transfer=True) \
         if b_ok else ([], None)
     writer = ssh_argv(cfg, writer_remote_argv(_stage('E9c') + '/' + supervisor.TRANSFER_NAME)) if b_ok else []
     _row(rows, 'E9c', 'contained-transfer', argv, 900, SUPERVISED_BASIS, 'E9', {'stdout_sha': ARCHIVE_B_SHA256},
          stdin=archive_b.get('path') if b_ok else None, stdin_sha=ARCHIVE_B_SHA256, limit_bytes=TRANSFER_CAP,
-         credit=credit, writer_argv=writer)
+         credit=credit, writer_argv=writer, quota=_quota_membership('E9c'))
     # E9b: the extraction and its tree digest run as a supervised payload.
     argv, credit = _supervised_argv(fresh, 'E9b', ['/bin/sh', '-c', remote_extract_script(), 'sh', dest,
                                                    BASE + '/source'], BASE, 300, cfg) if archive_ok else ([], None)
     _row(rows, 'E9b', 'vm-supervised', argv, 300, SUPERVISED_BASIS, 'E9',
-         {'stdout_sha': tree_digest} if tree_digest else None, limit_bytes=EXTRACT_CAP, credit=credit)
+         {'stdout_sha': tree_digest} if tree_digest else None, limit_bytes=EXTRACT_CAP, credit=credit,
+         quota=_quota_membership('E9b'))
     # E19: one contained transfer per reviewed placement.
     placements = fresh.get('placements') or []
     if not placements:
-        _row(rows, 'E19', 'contained-transfer', [], 300, SUPERVISED_BASIS, 'E19', None, limit_bytes=TRANSFER_CAP)
+        _row(rows, 'E19', 'contained-transfer', [], 300, SUPERVISED_BASIS, 'E19', None,
+             limit_bytes=PLACEMENT_GROUP_CAP)
     for index, item in enumerate(placements):
         _placement_row(rows, fresh, cfg, 'E19.' + str(index), item)
     go_placements = fresh.get('go_placements') or []
     if not go_placements:
-        _row(rows, 'EGO', 'contained-transfer', [], 300, SUPERVISED_BASIS, 'E19', None, limit_bytes=TRANSFER_CAP)
+        _row(rows, 'EGO', 'contained-transfer', [], 300, SUPERVISED_BASIS, 'E19', None,
+             limit_bytes=PLACEMENT_GROUP_CAP)
     for index, item in enumerate(go_placements):
         _placement_row(rows, fresh, cfg, 'EGO.' + str(index), item)
     # E8: the filesystem controls run as a supervised payload from the reviewed argv.
@@ -793,20 +901,31 @@ def _rows(fresh):
     e8_ok = isinstance(payload, list) and payload and all(isinstance(a, str) and a for a in payload)
     argv, credit = _supervised_argv(fresh, 'E8', list(payload), BASE, E8_TIMEOUT_SECONDS, cfg) if e8_ok else ([], None)
     _row(rows, 'E8', 'vm-supervised', argv, E8_TIMEOUT_SECONDS, SUPERVISED_BASIS, 'E8', None,
-         limit_bytes=PAYLOAD_CAP, credit=credit)
+         limit_bytes=PAYLOAD_CAP, credit=credit, quota=_quota_membership('E8'))
+    for row in rows:
+        if row.get('quota'):
+            row['quota_argv'], row['quota_credit'] = _quota_credit(row, fresh)
     return rows
 
 
 def _placement_row(rows, fresh, cfg, row_id, item):
-    """One contained transfer that places a reviewed host file at its guest path, sha256 checked on both sides."""
+    """One contained transfer that places a reviewed host file at its guest path, hash checked on both sides.
+
+    E19 and EGO are aggregate groups: the row's charged ceiling is the group reservation (kit 6.3),
+    and each placement must fit inside it. There is no per-file 40 MiB allowance.
+    """
+    uid = fresh.get('effigy531_uid')
     ok = bool(cfg and HEX64.fullmatch(item.get('sha256', '') or '') and item.get('guest_path')
-              and item.get('host_path') and item['guest_path'].startswith(BASE + '/'))
-    argv, credit = _supervised_argv(fresh, row_id, _transfer_payload(row_id, item.get('guest_path', '')),
-                                    BASE, 300, cfg, transfer=True) if ok else ([], None)
+              and item.get('host_path') and item['guest_path'].startswith(BASE + '/')
+              and isinstance(uid, int) and not isinstance(uid, bool))
+    payload = _transfer_payload(row_id, item.get('guest_path', ''), item.get('sha256', ''),
+                               PLACEMENT_GROUP_CAP, uid or 0) if ok else []
+    argv, credit = _supervised_argv(fresh, row_id, payload, BASE, 300, cfg, transfer=True) if ok else ([], None)
     writer = ssh_argv(cfg, writer_remote_argv(_stage(row_id) + '/' + supervisor.TRANSFER_NAME)) if ok else []
     _row(rows, row_id, 'contained-transfer', argv, 300, SUPERVISED_BASIS, 'E19',
          {'stdout_sha': item.get('sha256')}, stdin=item.get('host_path') if ok else None,
-         stdin_sha=item.get('sha256') if ok else None, limit_bytes=TRANSFER_CAP, credit=credit, writer_argv=writer)
+         stdin_sha=item.get('sha256') if ok else None, limit_bytes=PLACEMENT_GROUP_CAP, credit=credit,
+         writer_argv=writer, quota=_quota_membership(row_id))
 
 
 def go_index_bytes(go):
@@ -865,7 +984,8 @@ def plan_digest(rows, expected_head, stage1_before=None):
     digest. Everything else that changes what runs is included.
     """
     body = [[r['id'], r['kind'], r['argv'], r['writer_argv'], r['timeout_seconds'], r['closure_basis'],
-             r['expect'], r['stdin_sha256'], r['limit_bytes'], r['credit']] for r in rows
+             r['expect'], r['stdin_sha256'], r['limit_bytes'], r['credit'], r.get('quota'),
+             r.get('quota_argv'), r.get('quota_credit'), r.get('project')] for r in rows
             if not r['id'].startswith('EGO.') and r['id'] != 'EGO']
     return _sha(json.dumps({'head': expected_head, 'candidate_h': CANDIDATE_H_HEAD, 'stage1': stage1_before,
                             'rows': body}, sort_keys=True).encode())
@@ -962,11 +1082,17 @@ def setup_plan(fresh):
             missing.append('docker group present (probe)')
         if rid == 'E6' and not row['argv']:
             missing.append('authorized_keys: ' + (row.get('key_error') or 'not bound'))
-        if rid in ('E7a', 'E7b', 'E7c'):
+        if rid in ('E7a', 'E7b', 'E7p', 'E7c'):
             try:
                 verify_disk_association(fresh.get('disk_association'))
             except Refusal as exc:
                 missing.append(str(exc))
+        if rid == PROJECT_ROW:
+            installed = fresh.get('supervisor_installed') or {}
+            if not row['argv']:
+                missing.append('fixed project-assignment request (row nonce and boot identity)')
+            if installed.get('sha256') != _file_sha(SUPERVISOR_SOURCE):
+                missing.append('project assignment needs the installed reviewed entry (E-SUP bound)')
         if row['kind'] in ('vm-supervised', 'contained-transfer'):
             if not row['argv']:
                 missing.append('payload request (effigy531 uid and a row nonce from the facts)'
@@ -995,9 +1121,13 @@ def setup_plan(fresh):
         if rid == 'E9a' and not _archive_bound(fresh.get('archive'), ARCHIVE_SHA256):
             missing.append('pinned archive path and sha256 (' + ARCHIVE_SHA256[:8] + '...)')
         if row['limit_bytes'] is not None:
-            reason = _hard_limit_reason(fresh, row)
+            reason = _limit_reason(fresh, row)
             if reason:
                 missing.append(reason)
+            if row.get('quota') and row.get('quota_argv'):
+                installed = fresh.get('supervisor_installed') or {}
+                if installed.get('sha256') != _file_sha(SUPERVISOR_SOURCE):
+                    missing.append('quota administration needs the installed reviewed entry (E-SUP bound)')
         if row['go']:
             ok, reason = verify_signed_receipt(gates.get(row['go']), row['go'], digest, trust, head)
             if not ok:
@@ -1020,6 +1150,41 @@ def _hard_limit_reason(fresh, row):
     except Refusal as exc:
         return str(exc)
     return None
+
+
+def _limit_reason(fresh, row):
+    """The plan-side gate for a row's allocation bound.
+
+    A quota row needs the fixed admin request, the exact ownered entry set and the writer tool
+    custody observation before it can run; the admin witness itself is produced and verified at the
+    row, so a caller label never opens the gate. A non-quota row keeps the pre-bound witness path.
+    """
+    if row['limit_bytes'] is None:
+        return None
+    quota = row.get('quota')
+    if quota is None:
+        return _hard_limit_reason(fresh, row)
+    reasons = []
+    if allocation.MECHANISM not in SUPPORTED_HARD_LIMITS:
+        reasons.append('no source-verified hard-limit mechanism; polling counters are not a quota')
+    if not row.get('quota_argv'):
+        reasons.append('fixed quota administration request (row nonce and boot identity)')
+    if not fresh.get('allocation_entries'):
+        reasons.append('allocation facts (the exact ownered entry set)')
+    if not fresh.get('writer_tools'):
+        reasons.append('writer tool custody observation')
+    group = quota['row']
+    if group in allocation.QUOTA_GROUP_ROWS:
+        key = 'placements' if group == 'E19' else 'go_placements'
+        try:
+            total = _placement_bytes(fresh.get(key) or [])
+        except Refusal as exc:
+            reasons.append(str(exc))
+        else:
+            if total > quota['reservation_bytes']:
+                reasons.append('placement set requires %d bytes, above the %d-byte aggregate ceiling'
+                               % (total, quota['reservation_bytes']))
+    return '; '.join(reasons) if reasons else None
 
 
 def advance_allowed(receipt, closure, basis):
@@ -1133,7 +1298,7 @@ def _stop_unit_via_vm(unit):
 # Fixed source and argv; no guest-provided script, path or sudo wildcard is accepted.
 APPROVAL_INSTALL = r"""
 import os, sys, stat, hashlib, subprocess
-root, digest, data, program = sys.argv[1:]
+root, digest, data, program, mode = sys.argv[1:]
 if len(data.encode()) > 1024 * 1024:
     raise ValueError('approval request exceeds the fixed byte ceiling')
 assert hashlib.sha256(data.encode()).hexdigest() == digest
@@ -1147,19 +1312,32 @@ try:
     assert not os.path.exists(root + '/' + digest + '.spent')
     out = os.open(digest + '.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
     with os.fdopen(out, 'wb') as f: f.write(data.encode()); f.flush(); os.fsync(f.fileno())
-    rule = 'effigy531 ALL=(root) NOPASSWD: /usr/bin/python3 -I -B ' + program + ' --approved-request ' + digest + '\n'
-    path = '/etc/sudoers.d/effigy531-' + digest
-    out = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o440)
-    with os.fdopen(out, 'w') as f: f.write(rule)
-    subprocess.run(['/usr/sbin/visudo', '-cf', path], check=True)
+    if mode == 'rule':
+        rule = 'effigy531 ALL=(root) NOPASSWD: /usr/bin/python3 -I -B ' + program + ' --approved-request ' + digest + '\n'
+        path = '/etc/sudoers.d/effigy531-' + digest
+        out = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o440)
+        with os.fdopen(out, 'w') as f: f.write(rule)
+        subprocess.run(['/usr/sbin/visudo', '-cf', path], check=True)
+    else:
+        assert mode == 'norule'
 finally: os.close(fd)
 """
 
 
-def approval_install_argv(row):
-    credit = row['credit']
+def approval_install_argv(credit):
+    """One fixed root provisioning step: the exact request bytes and, when needed, its narrow rule.
+
+    A `prlctl exec` row already runs as root, so its credit sets `sudoers: False` and no account
+    privilege is created for it. The supervised payload request keeps the one exact one-use rule.
+    """
+    if not isinstance(credit, dict) or not HEX64.fullmatch(credit.get('request_sha256', '') or ''):
+        raise Refusal('approval credit is not digest-bound')
+    program = credit.get('program') or SUPERVISOR_PATH
+    if program != SUPERVISOR_PATH:
+        raise Refusal('approval installer only provisions the reviewed entry')
     return _vm('/usr/bin/python3', '-I', '-c', APPROVAL_INSTALL, supervisor.AUTH_ROOT,
-               credit['request_sha256'], credit['request_json'], SUPERVISOR_PATH)
+               credit['request_sha256'], credit['request_json'], program,
+               'rule' if credit.get('sudoers', True) else 'norule')
 
 
 def default_row_runner(row, stage, monitor):
@@ -1170,7 +1348,7 @@ def default_row_runner(row, stage, monitor):
     returned for the executor's precondition check.
     """
     if row.get('credit') and row['credit'].get('request_json'):
-        approval = transfers.run_transfer(approval_install_argv(row), None, 30, OUTPUT_CAP, monitor)
+        approval = transfers.run_transfer(approval_install_argv(row['credit']), None, 30, OUTPUT_CAP, monitor)
         for stream in ('stdout', 'stderr'):
             exclusive(Path(stage) / ('approval.' + stream), approval[stream])
         exclusive(Path(stage) / 'approval.exit', str(approval['waited_exit']).encode())
@@ -1182,13 +1360,14 @@ def default_row_runner(row, stage, monitor):
                                                transport_seconds, OUTPUT_CAP, monitor)
         return {'disposition': res['disposition'], 'reason': res['reason'], 'waited_exit': res['supervisor_exit'],
                 'writer_exit': res['writer_exit'], 'candidate': res['candidate'],
-                'payload_stdout': res['payload_stdout'], 'stdout': res['supervisor_stdout'],
-                'stderr': res['supervisor_stderr'], 'writer_stdout': res.get('writer_stdout', b''),
-                'writer_stderr': res['writer_stderr']}
+                'payload_stdout': res['payload_stdout'], 'payload_stderr': res.get('payload_stderr', ''),
+                'stdout': res['supervisor_stdout'], 'stderr': res['supervisor_stderr'],
+                'writer_stdout': res.get('writer_stdout', b''), 'writer_stderr': res['writer_stderr'],
+                'confinement': res.get('confinement')}
     out = transfers.run_transfer(row['argv'], None, transport_seconds, OUTPUT_CAP, monitor)
     result = {'disposition': out['disposition'], 'reason': out['reason'], 'waited_exit': out['waited_exit'],
-              'writer_exit': None, 'candidate': None, 'payload_stdout': '', 'stdout': out['stdout'],
-              'stderr': out['stderr']}
+              'writer_exit': None, 'candidate': None, 'payload_stdout': '', 'payload_stderr': '',
+              'stdout': out['stdout'], 'stderr': out['stderr'], 'confinement': None}
     if row['kind'] == 'vm-supervised' and out['disposition'] == 'exited':
         parsed = transfers.parse_supervisor_result(out['stdout'])
         if parsed is None or parsed.get('disposition') != 'exited':
@@ -1197,6 +1376,7 @@ def default_row_runner(row, stage, monitor):
         else:
             result['candidate'] = parsed.get('candidate')
             result['payload_stdout'] = parsed.get('payload_stdout', '')
+            result['confinement'] = parsed.get('confinement')
     return result
 
 
@@ -1222,16 +1402,62 @@ def _expect_met(row, outcome):
     return False
 
 
+def default_quota_runner(row, stage, monitor):
+    """The fixed quota-administration step for one row: provision, run, retain, return the witness.
+
+    The approval record and the admin argv are the plan's fixed ones (the caller cannot name a
+    device, project or limit). Both streams and the witness are retained in the row stage before the
+    witness is returned to the admission check.
+    """
+    credit = row.get('quota_credit') or {}
+    approval = transfers.run_transfer(approval_install_argv(credit), None, 30, OUTPUT_CAP, monitor)
+    for name in ('stdout', 'stderr'):
+        exclusive(Path(stage) / ('quota-approval.' + name), approval[name] or b'')
+    exclusive(Path(stage) / 'quota-approval.exit', str(approval['waited_exit']).encode())
+    if approval['disposition'] != 'exited' or approval['waited_exit'] != 0:
+        raise Refusal('exact root request provisioning failed; no quota limit was set')
+    result = transfers.run_transfer(row['quota_argv'], None, 120, OUTPUT_CAP, monitor)
+    for name in ('stdout', 'stderr'):
+        exclusive(Path(stage) / ('quota-admin.' + name), result[name] or b'')
+    exclusive(Path(stage) / 'quota-admin.exit', str(result['waited_exit']).encode())
+    if result['disposition'] != 'exited' or result['waited_exit'] != 0:
+        raise Refusal('quota administration did not exit cleanly; the row headroom is unknown')
+    try:
+        witness = json.loads(result['stdout'].decode('utf-8', 'strict'))
+    except (ValueError, UnicodeError) as exc:
+        raise Refusal('quota administration returned no witness') from exc
+    if not isinstance(witness, dict):
+        raise Refusal('quota administration witness is not an object')
+    return witness
+
+
+def _scope(row, facts, observed, outcome):
+    """The writer-bound observation for one charged row, from the supervisor's own unit reads."""
+    conf = outcome.get('confinement')
+    if not isinstance(conf, dict) or not isinstance(conf.get('properties'), dict) \
+            or not isinstance(conf.get('process'), dict):
+        return None
+    command = transfers.forced_command()
+    keys = facts.get('authorized_keys') or b''
+    return {'boot_id': observed.get('boot_id'), 'row': row['quota']['row'],
+            'unit': conf['properties'], 'process': conf['process'],
+            'channel': {'forced_command': command, 'sha256': _sha(command.encode('utf-8')),
+                        'key_lines': keys.count(b'\n') if isinstance(keys, bytes) else 0},
+            'tools': facts.get('writer_tools') or {}}
+
+
 def execute_plan(facts, runner, observe_identity, observe_terminal, stage_root, clock, wall_clock, budget_seconds,
-                 stop_unit=None):
+                 stop_unit=None, quota_admin=None):
     """Build the plan from the facts and run it row by row through every gate.
 
     The executor never takes a row list from the caller. Gates, in order, halt with the row
     id: missing facts; bootstrap allowlist and exact argv; identity re-observation; credential
-    (pinned ssh files, key expiry) for transfer rows; budget; hard limit; resource accounting;
-    stdin hash; one-use intent; runner; expectation on the payload stdout; host credit for
-    payload rows; writer exit for transfer rows.
+    (pinned ssh files, key expiry) for transfer rows; budget; resource accounting; stdin hash;
+    one-use intent; for an allocating row the fixed quota-administration role and its admitted
+    witness; runner; expectation on the payload stdout; the writer-bound scope for allocating
+    rows; host credit for payload rows; writer exit for transfer rows.
     """
+    admin = quota_admin or default_quota_runner
     rows = setup_plan(facts)
     started = clock()
     completed = []
@@ -1247,6 +1473,12 @@ def execute_plan(facts, runner, observe_identity, observe_terminal, stage_root, 
                 return halt('bootstrap argv differs from the exact reviewed operation')
             if row['id'] == 'E-SUP' and row['argv'] != supervisor_install_argv():
                 return halt('supervisor install argv differs from the reviewed source')
+            if row['id'] == PROJECT_ROW:
+                try:
+                    if row['argv'] != project_row_argv(row):
+                        return halt('project-assignment argv differs from the reviewed operation')
+                except Refusal as exc:
+                    return halt('project-assignment argv: ' + str(exc))
         try:
             observed = observe_identity(row)
         except (Refusal, OSError, ValueError) as exc:
@@ -1261,8 +1493,10 @@ def execute_plan(facts, runner, observe_identity, observe_terminal, stage_root, 
         remaining = budget_seconds - (clock() - started)
         if row['timeout_seconds'] + STAGE_ADMISSION_RESERVE + STAGE_REPORT_RESERVE > remaining:
             return halt('total budget exhausted')
-        if row['limit_bytes'] is not None and _hard_limit_reason(facts, row):
-            return halt('hard limit: ' + _hard_limit_reason(facts, row))
+        if row['limit_bytes'] is not None and row.get('quota') is None:
+            reason = _hard_limit_reason(facts, row)
+            if reason:
+                return halt('hard limit: ' + reason)
         try:
             monitor = resources.Monitor(facts['resource_accounting']['limits'],
                                         resources.CounterFiles(facts['resource_accounting']['counter_files']))
@@ -1276,8 +1510,28 @@ def execute_plan(facts, runner, observe_identity, observe_terminal, stage_root, 
         stage.mkdir(mode=0o700)
         exclusive(stage / 'intent.json', (json.dumps({'id': row['id'], 'kind': row['kind'], 'argv': row['argv'],
                                                       'writer_argv': row['writer_argv'], 'stdin_sha256': stdin_sha,
-                                                      'expect': row['expect'], 'credit': row['credit']},
+                                                      'expect': row['expect'], 'credit': row['credit'],
+                                                      'quota': row.get('quota'), 'quota_argv': row.get('quota_argv'),
+                                                      'project': row.get('project')},
                                                      sort_keys=True, indent=2) + '\n').encode())
+        if row['limit_bytes'] is not None and row.get('quota') is not None:
+            try:
+                witness = admin(row, stage, monitor)
+                if witness.get('nonce') != (row.get('quota_credit') or {}).get('nonce') or \
+                        witness.get('boot_id') != observed.get('boot_id'):
+                    raise Refusal('quota witness names another nonce or boot')
+                if witness.get('row') != row['quota']['row']:
+                    raise Refusal('quota witness names another row')
+                exclusive(stage / 'quota-witness.json',
+                          (json.dumps(witness, sort_keys=True, indent=2) + '\n').encode())
+                monitor.check()
+                bound = verify_hard_limit(witness, row['limit_bytes'], None, _allocation_facts(facts))
+            except resources.Refusal as exc:
+                return halt('resource refusal during quota administration: ' + str(exc))
+            except (Refusal, OSError, KeyError, TypeError, ValueError) as exc:
+                return halt('hard limit: ' + str(exc))
+            exclusive(stage / 'hard-limit.json',
+                      (json.dumps(bound, sort_keys=True, indent=2) + '\n').encode())
         if row.get('credit') and row['credit'].get('request_json'):
             preparation_requests.write_request(stage / 'mapped-request.json', json.loads(row['credit']['request_json']))
         try:
@@ -1289,6 +1543,24 @@ def execute_plan(facts, runner, observe_identity, observe_terminal, stage_root, 
             return halt('row refused: ' + str(exc))
         for name in ('stdout', 'stderr', 'writer_stdout', 'writer_stderr'):
             exclusive(stage / name, outcome.get(name, b'') or b'')
+        if row.get('project'):
+            # The project assignment is admitted here, from the witness the fixed role printed for this
+            # exact boot, device and one-use request. A caller label cannot open it, and the row's own
+            # exit is not the admission: only the complete witness is.
+            try:
+                witness = json.loads((outcome.get('stdout') or b'').decode('utf-8', 'strict'))
+                if witness.get('nonce') != (row.get('credit') or {}).get('nonce') or \
+                        witness.get('boot_id') != observed.get('boot_id'):
+                    raise Refusal('project witness names another nonce or boot')
+                exclusive(stage / 'project-witness.json',
+                          (json.dumps(witness, sort_keys=True, indent=2) + '\n').encode())
+                bound_project = allocation.verify_project_assignment(
+                    witness, {'boot_id': observed.get('boot_id'), 'root': BASE,
+                              'device': row['project']['device'], 'uid': row['project']['uid']})
+            except (Refusal, KeyError, TypeError, ValueError, UnicodeError) as exc:
+                return halt('project assignment: ' + str(exc))
+            exclusive(stage / 'project-assignment.json',
+                      (json.dumps(bound_project, sort_keys=True, indent=2) + '\n').encode())
         closure, credit_note = 'unknown', None
         if row['effect'] in ('supervised', 'transfer') and outcome.get('disposition') == 'exited' \
                 and outcome.get('candidate') is not None and row['credit']:
@@ -1313,6 +1585,19 @@ def execute_plan(facts, runner, observe_identity, observe_terminal, stage_root, 
             return halt('cleanup of the stage unit did not exit cleanly: ' + str(cleanup))
         if not advance_allowed(receipt, closure, row['closure_basis']):
             return halt('held: no advance credit' + (' (' + credit_note + ')' if credit_note else ''))
+        if row['limit_bytes'] is not None and row.get('quota') is not None:
+            # A row that would advance must also show the writer bound: the confined unit's
+            # effective properties, the payload process's own namespace/capability/groups facts and
+            # the sole std-uid channel. A failed row is held on its own receipt above.
+            try:
+                scope = _scope(row, facts, observed, outcome)
+                if scope is None:
+                    raise Refusal('the payload unit returned no confinement observation')
+                exclusion = allocation.verify_scope(scope, _allocation_facts(facts))
+            except (Refusal, KeyError, TypeError, ValueError) as exc:
+                return halt('writer bound: ' + str(exc))
+            exclusive(stage / 'writer-scope.json',
+                      (json.dumps(exclusion, sort_keys=True, indent=2) + '\n').encode())
         completed.append(row['id'])
     return {'completed': completed, 'halt': None, 'reason': None}
 

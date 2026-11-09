@@ -157,6 +157,32 @@
       "needs_hard_limit": false
     },
     {
+      "id": "E-SUP",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 60,
+      "go": "E-SUP",
+      "status": "template",
+      "live_blockers": [],
+      "effect": "bootstrap",
+      "needs_hard_limit": false,
+      "effect_note": "argv embeds the reviewed supervisor source as base64 (no staging route); root install still a separate GO; installed before E7p because the project assignment is one of its fixed roles"
+    },
+    {
+      "id": "E7p",
+      "kind": "vm-root",
+      "closure_basis": "vm-waited-exit-postobserved",
+      "timeout_seconds": 60,
+      "go": "E7",
+      "status": "blocked",
+      "live_blockers": [
+        "controller-to-guest disk association (no source-verified mechanism yet)"
+      ],
+      "effect": "bootstrap",
+      "needs_hard_limit": false,
+      "effect_note": "fixed project 531 with inheritance on the root-owned empty BASE between E7b and E7c: exactly one FS_IOC_FSSETXATTR, an independently read unused-project record, an independent re-read, and a one-use root request"
+    },
+    {
       "id": "E7c",
       "kind": "vm-root",
       "closure_basis": "vm-waited-exit-postobserved",
@@ -168,18 +194,6 @@
       ],
       "effect": "bootstrap",
       "needs_hard_limit": false
-    },
-    {
-      "id": "E-SUP",
-      "kind": "vm-root",
-      "closure_basis": "vm-waited-exit-postobserved",
-      "timeout_seconds": 60,
-      "go": "E-SUP",
-      "status": "template",
-      "live_blockers": [],
-      "effect": "bootstrap",
-      "needs_hard_limit": false,
-      "effect_note": "argv embeds the reviewed supervisor source as base64 (no staging route); root install still a separate GO"
     },
     {
       "id": "E-SUDO",
@@ -301,6 +315,7 @@
       "E6",
       "E7a",
       "E7b",
+      "E7p",
       "E7c",
       "E-SUP",
       "E9a",

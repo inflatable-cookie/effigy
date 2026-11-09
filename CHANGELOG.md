@@ -17,17 +17,29 @@ During v0.x, MINOR bumps may include breaking changes.
   `PR_SET_CHILD_SUBREAPER` before spawn and refuses if `prctl` fails; after wait
   a live or zombie descendant whose ppid chain still reaches the helper cannot
   close.
-  A local `colima ssh` exit stays `guest_unknown`. C2 and C3 are admitted as
-  plain proof requests. D2 is admitted on the host OCI/deb path from 756; C4
-  stays refused until guest transfer of those inputs. Inner streams replace the
-  step records and the raw transport is retained.
+  A local `colima ssh` exit stays `guest_unknown`. C2, C3 and C4 are admitted as
+  plain proof requests. D2 is admitted on the host OCI/deb path from 756. Inner
+  streams replace the step records and the raw transport is retained.
 
 - Pin finite Ubuntu 22.04 arm64 OCI blobs and offline apt debs as the C4/D2 runtime-image
   inputs, fetch and hash them with exact size on the host, and build with `--network none`
   plus local `--build-context` oci-layout/debs so FROM cannot contact a registry
-  (effigy#756). D2 is admitted on that host path; C4 keeps the same argv shape but stays
-  refused until 754 closes guest transfer of those inputs. No image or package payload is
+  (effigy#756). D2 is admitted on that host path. No image or package payload is
   produced here.
+
+- Close the C4 runtime-input transfer and entry (effigy#765, closing the gap left by
+  effigy#754 and effigy#756). C4 fetches the pinned OCI/deb set into an owned host input
+  root, frames it once as a fixed finite stream of the exact allowlisted file identities
+  with per-input, aggregate and framing caps enforced while copying, and streams it to the
+  guest through the fixed helper, which writes `{guest_context}.oci` and
+  `{guest_context}.debs` exclusively, re-hashes the readback and re-derives the OCI
+  relationships. A second guest check re-derives the same layout immediately before the
+  build. C4's four remote commands (`nerdctl build --help`, the build, the iidfile read and
+  the by-ID inspect) now run inside the fixed helper, which rebuilds each reviewed command
+  from bounded hex and reports the argv it ran; a local ssh exit closes nothing. C4 step
+  envelopes are rebalanced inside the same 1200 s stage and 120 s reserve, and the receipt
+  re-derives the retained spec, stream and guest receipts. C5 stays unadmitted because its
+  remote `nerdctl run` still crosses as a local ssh exec step.
 
 - Enforce the Linux artifact builder's host-write boundary (effigy#749, closing
   the SO-host-write gap left by effigy#743). The `/workspace` source bind is
@@ -1101,6 +1113,12 @@ During v0.x, MINOR bumps may include breaking changes.
   malformed or missing capability data, or a failed read refuses without
   replacing the builder. Docker keeps its CapDrop witness. No live engine, build
   or artifact is produced here.
+- Finish the source preparation for the macOS Colima and Desktop runtime checks (effigy#769). C5's disposable
+  check runs through the fixed guest helper with its own cidfile and is then inspected, removed and checked absent by
+  exact ID, after the guest nerdctl version is observed to be the source-qualified one. D3 and D4 are proof-entry windows bound to their predecessors, and C5 and C6 are
+  plain proof requests. D2 links Docker Desktop's pinned Buildx into the private config and creates fresh
+  per-activation outputs, so a failed occurrence is never replayed. The proof selector clock now covers the
+  largest declared proof stage. Source only; no native run.
 
 - Bind the private Colima Recipe E entry to three roles: preparation source,
   a clean candidate checkout the producer runs in, and that checkout's own host

@@ -43,17 +43,21 @@ READINESS_STAGES = frozenset({'C0', 'D0'})
 # Every placeholder a manifest argv may contain. Anything else refuses at render time.
 SLOTS = frozenset({
     'control', 'colima_home', 'colima_cache_home', 'colima_docker_config', 'qualification_root',
+    'colima_input_dir',
     'desktop_config', 'desktop_context_dir', 'desktop_input_dir', 'desktop_host', 'desktop_iidfile',
     'desktop_cidfile',
-    'token', 'guest_spec', 'guest_verify_spec', 'guest_context', 'guest_iidfile', 'probe_source',
-    'stage_source', 'verify_source', 'check_source', 'route_echo', 'image_id',
+    'token', 'guest_spec', 'guest_verify_spec', 'guest_context', 'guest_iidfile', 'guest_oci', 'guest_debs',
+    'guest_input_spec', 'probe_source', 'stage_source', 'verify_source', 'transfer_source', 'input_verify_source',
+    'check_source', 'route_echo', 'image_id',
     'owned_container_ids', 'owned_image_id', 'owned_volume_name',
+    'guest_check_cid', 'check_container_id',
     'guest_helper_hex', 'guest_nonce',
 })
 # Arguments that carry multi-line or JSON source through the Colima shell route.
 # guest_helper_hex is [0-9a-f] only and is not a source slot.
 SOURCE_SLOTS = frozenset({
-    'probe_source', 'stage_source', 'verify_source', 'check_source', 'guest_spec', 'guest_verify_spec',
+    'probe_source', 'stage_source', 'verify_source', 'transfer_source', 'input_verify_source', 'check_source',
+    'guest_spec', 'guest_verify_spec', 'guest_input_spec',
 })
 # Named host-side actions. Each is a pure or receipt-producing step, never a shell string.
 HELPERS = frozenset({
@@ -61,7 +65,10 @@ HELPERS = frozenset({
     'render_guest_spec', 'compare_route_echo', 'host_stage_dockerfile', 'verify_desktop_endpoint',
     'verify_frozen_artifacts', 'check_build_help', 'read_iidfile', 'check_image_identity',
     'check_runtime_facts', 'select_cleanup_targets', 'read_cidfile', 'check_cleanup_target',
-    'prefetch_colima_image', 'prefetch_runtime_inputs',
+    'read_check_cid', 'check_container_absent', 'link_buildx_plugin',
+    'check_nerdctl_version', 'check_container_inspect', 'check_buildx_metadata', 'check_buildx_custody',
+    'prefetch_colima_image', 'prefetch_runtime_inputs', 'render_input_specs', 'render_input_transfer',
+    'check_input_transfer', 'check_input_verify',
 })
 # Hostile on purpose. Every character class the sources use (quotes, $, braces, glob, parens,
 # semicolon, backslash, equals, newline) is present, and nothing that can redirect, pipe or
@@ -90,6 +97,8 @@ DOCKER_ENV = dict(set={'DOCKER_HOST': '{desktop_host}', 'DOCKER_CONFIG': '{deskt
                   unset=['DOCKER_CONTEXT'])
 REQUIRED_ENV_R2 = {COLIMA: COLIMA_ENV_R2, DOCKER: DOCKER_ENV}
 REQUIRED_ENV = {COLIMA: COLIMA_ENV, DOCKER: DOCKER_ENV}
+# The Desktop buildx plugin is reached only through the owned private-config link (a fixed template, never a caller path).
+BUILDX_LINK_TEMPLATE = '{desktop_config}/cli-plugins/docker-buildx'
 CHECK_SOURCE = (
     'import json,os,signal,ssl,subprocess,sys\n'
     'signal.alarm(120)\n'
@@ -128,6 +137,8 @@ def control_paths(token):
         colima_docker_config=f'{control}/docker-config',
         # The qualification root is this empty owned directory; it is the only permitted share.
         qualification_root=f'{control}/s',
+        # C4's host staging root for the pinned runtime inputs the transfer streams from. Owned, empty, exclusive.
+        colima_input_dir=f'{control}/runtime-inputs',
         desktop_config=f'{control}/d/docker-config',
         desktop_context_dir=f'{control}/d/ctx',
         desktop_input_dir=f'{control}/d/inputs',
@@ -460,7 +471,11 @@ def check_engine_argv(argv):
                 f'build provenance must be exactly --provenance={expected} for this backend')
     elif sub[0] == 'run':
         require('--pull=never' in sub, 'runtime checks use --pull=never')
-        require('--rm' in sub and sub[sub.index('--network') + 1] == 'none', 'disposable check: --rm, no network')
+        if 'nerdctl' in argv:  # C5: a synchronous run kept for its exact-ID inspection and removal
+            require('--rm' not in sub and sub[sub.index('--network') + 1] == 'none',
+                    'disposable check: a synchronous run with no --rm (exact-ID removal follows) and no network')
+        else:  # D3: the Desktop check removes itself on a normal exit
+            require('--rm' in sub and sub[sub.index('--network') + 1] == 'none', 'disposable check: --rm, no network')
         require(sub.index('python3') >= 1 and sub[sub.index('python3') - 1] == '{image_id}',
                 'runtime check must name the authenticated image ID, not a tag')
     elif sub[:2] == ['image', 'inspect']:
@@ -479,10 +494,80 @@ def check_engine_argv(argv):
     elif sub[:2] == ['volume', 'rm']:
         require(sub == ['volume', 'rm', '{owned_volume_name}'], 'volume removal names one receipted volume')
     elif sub[:2] == ['container', 'inspect']:
-        require(sub[-1] == '{owned_container_ids}', 'container inspect names the one receipted container')
+        require(sub[-1] in ('{owned_container_ids}', '{check_container_id}'),
+                'container inspect names one receipted or check container ID')
+    elif sub[:2] == ['container', 'rm']:
+        require(sub == ['container', 'rm', '{check_container_id}'],
+                'the check removal names only its exact container ID, never forced')
     elif sub[0] == 'rm':
         require(sub == ['rm', '{owned_container_ids}'], 'container removal names only the receipted container')
     return True
+
+
+def guest_build_command(context):
+    """The one reviewed C4 runtime build: the pinned platform, the max provenance attestation, an immutable iidfile
+    beside the context, the fixed tag, no network, and the two local additional contexts. FROM cannot contact a
+    registry because both the base layer and the debs are local. Kept here so the manifest's remote argv and the
+    fixed helper's own operation are the same reviewed command."""
+    require(isinstance(context, str) and context.startswith('/') and '..' not in context.split('/')
+            and len(context) <= 400, 'guest context must be an absolute canonical path')
+    return ['sudo', '-n', 'env', 'DOCKER_CONFIG=' + context + '/docker-config', 'nerdctl', 'build',
+            '--platform', 'linux/arm64', '--provenance=mode=max', '--iidfile', context + '.iid',
+            '--tag', 'effigy-4f6a-runtime:r1', '--network', 'none',
+            '--build-context', 'ubuntu=oci-layout://' + context + '.oci',
+            '--build-context', 'debs=' + context + '.debs', context]
+
+
+def check_guest_remote_command(tail, bindings):
+    """C4's remote commands are exactly these four reviewed forms, rebuilt from the verified chain's context and
+    image ID. The executor re-renders each through the fixed guest helper, which rebuilds it from the same fields
+    and reports the argv it ran; nothing else may cross the route, and a local ssh exit alone closes nothing."""
+    context = bindings.get('guest_context')
+    require(isinstance(context, str) and context.startswith('/') and '..' not in context.split('/')
+            and len(context) <= 400, 'guest context must be an absolute canonical path')
+    if tail == ['nerdctl', 'build', '--help']:
+        return True
+    if tail == guest_build_command(context):
+        return True
+    if tail == ['sudo', '-n', 'cat', context + '.iid']:
+        return True
+    image_id = bindings.get('image_id')
+    if (tail == ['sudo', '-n', 'nerdctl', 'image', 'inspect', image_id]
+            and isinstance(image_id, str) and IMAGE_ID.fullmatch(image_id)):
+        return True
+    # C5: the disposable check, its cidfile read and the full container listing, under the guest context's sibling.
+    cid = bindings.get('guest_check_cid')
+    if cid is not None:
+        require(cid == context + '.check.cid', 'the check cidfile must sit beside the guest context')
+        if tail == guest_check_command(context, bindings.get('token'), image_id):
+            return True
+        if tail == ['sudo', '-n', 'cat', cid]:
+            return True
+    if tail == NERDCTL_VERSION:
+        return True
+    check_id = bindings.get('check_container_id')
+    if isinstance(check_id, str) and re.fullmatch(r'[0-9a-f]{64}', check_id):
+        if tail in (['sudo', '-n', 'nerdctl', 'container', 'inspect', check_id],
+                    ['sudo', '-n', 'nerdctl', 'container', 'rm', check_id]):
+            return True
+    if tail == CONTAINER_LIST:
+        return True
+    raise ValueError('the remote command is not one of the reviewed C4 or C5 forms')
+
+
+CONTAINER_LIST = ['sudo', '-n', 'nerdctl', 'container', 'ls', '--all', '--no-trunc', '--quiet']
+NERDCTL_VERSION = ['nerdctl', '--version']
+
+
+def guest_check_command(context, token, image_id):
+    """C5's one disposable check, exactly as the fixed guest helper rebuilds it: a synchronous run, network none, no
+    pull, no --rm (the exact-ID inspection and removal follow), the cidfile beside the context, the check's own name and
+    the pinned check source."""
+    require(isinstance(token, str) and TOKEN.fullmatch(token), 'the check name needs the eight-hex token')
+    require(isinstance(image_id, str) and IMAGE_ID.fullmatch(image_id), 'the check image is the C4 image ID')
+    return ['sudo', '-n', 'nerdctl', 'run', '--pull=never', '--network', 'none',
+            '--cidfile', context + '.check.cid', '--name', 'effigy-4f6a-check-' + token, image_id,
+            'python3', '-I', '-c', CHECK_SOURCE]
 
 
 def check_guest_deadline(step):
@@ -519,8 +604,9 @@ def check_step(step, legacy=False):
     argv = step['argv']
     require(isinstance(argv, list) and argv and all(isinstance(a, str) for a in argv),
             f'{step["id"]}: argv must be a list, never a shell string')
-    require(argv[0] in REQUIRED_ENV, f'{step["id"]}: executable must be the pinned absolute tool')
-    pin = (REQUIRED_ENV_R2 if legacy else REQUIRED_ENV)[argv[0]]
+    require(argv[0] in REQUIRED_ENV or argv[0] == BUILDX_LINK_TEMPLATE,
+            f'{step["id"]}: executable must be the pinned absolute tool')
+    pin = DOCKER_ENV if argv[0] == BUILDX_LINK_TEMPLATE else (REQUIRED_ENV_R2 if legacy else REQUIRED_ENV)[argv[0]]
     env = step.get('env', {})
     for key, value in pin['set'].items():
         require(env.get('set', {}).get(key) == value, f'{step["id"]}: env {key} not pinned')
@@ -529,12 +615,28 @@ def check_step(step, legacy=False):
     for name in SLOT.findall(' '.join(argv)):
         require(name in SLOTS, f'{step["id"]}: unknown slot {name}')
     if 'stdin' in step:
-        require(step['stdin'] == 'recipe_file', f'{step["id"]}: unknown stdin')
+        require(step['stdin'] in ('recipe_file', 'guest_input_stream'), f'{step["id"]}: unknown stdin')
     if not legacy and argv[0] == COLIMA and argv[1:2] == ['start']:
         check_colima_start(argv)
     if argv[0] == DOCKER or 'nerdctl' in argv:
         check_engine_argv(argv)
     check_guest_deadline(step)
+    check_guest_margin(step)
+    return True
+
+
+def check_guest_margin(step):
+    """A colima ssh guard is opened only where its kill grace and one second of receipt margin fit inside the step's
+    own host allowance, so the guest's own deadline always fires before the local client is killed."""
+    argv = step['argv']
+    if argv[:1] != [COLIMA] or '--' not in argv:
+        return True
+    tail = argv[argv.index('--') + 1:]
+    if tail[:1] != ['timeout'] or len(tail) < 4 or tail[1] != '-k':
+        return True
+    grace, seconds = int(tail[2]), int(tail[3])
+    require(step['timeout_seconds'] >= grace + seconds + 1,
+            f'{step["id"]}: the host allowance must contain the guest guard, its grace and a 1 second receipt margin')
     return True
 
 
