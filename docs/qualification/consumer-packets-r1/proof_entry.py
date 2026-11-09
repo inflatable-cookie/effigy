@@ -3,7 +3,7 @@
 
 Usage, as launched by the qualification selectors:
 
-    proof_entry.py {acow|cbs} --request PATH --sha256 sha256:HEX --evidence-dir DIR
+    proof_entry.py {acow|cbs|acow-acquisition} --request PATH --sha256 sha256:HEX --evidence-dir DIR
 
 Trust precondition, stated plainly. Nucleus launches this entry at the exact
 reviewed merged commit, with the request file's SHA-256 on argv, under
@@ -24,10 +24,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import acow  # noqa: E402
+import acow_acquisition  # noqa: E402
 import cbs  # noqa: E402
 import consumer_core as core  # noqa: E402
 
-ROUTES = {'acow': acow, 'cbs': cbs}
+ROUTES = {'acow': acow, 'cbs': cbs, 'acow-acquisition': acow_acquisition}
 
 
 def run(argv, *, manifest=None, roots=core.EVIDENCE_ROOTS, transport=None, git=None, now_ns=None):
@@ -35,7 +36,7 @@ def run(argv, *, manifest=None, roots=core.EVIDENCE_ROOTS, transport=None, git=N
     argv = list(argv)
     if (len(argv) != 7 or argv[0] not in ROUTES or argv[1] != '--request'
             or argv[3] != '--sha256' or argv[5] != '--evidence-dir'):
-        raise core.Refused('unarmed', 'proof entry needs {acow|cbs}, --request, --sha256 and --evidence-dir')
+        raise core.Refused('unarmed', 'proof entry needs {acow|cbs|acow-acquisition}, --request, --sha256 and --evidence-dir')
     return ROUTES[argv[0]].run(argv[2], argv[4], argv[6], manifest=manifest, roots=roots,
                                transport=transport, git=git, now_ns=now_ns)
 
