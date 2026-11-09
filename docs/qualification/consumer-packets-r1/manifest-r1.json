@@ -2,7 +2,7 @@
   "schema": "effigy.qualification.consumer-packets.r1",
   "task": "effigy#757",
   "status": "prepared-unarmed",
-  "note": "Source-visible pins only. The candidate, positive624 predecessor, helper head, window, merged commit, container and volume identities, and the resolved bundle revision are NOT pinned here: the hash-pinned request binds them. The proof entry checks what it can observe (request digest, packet HEAD, installed bytes, consumer closure, window, identities) and takes the rest on the Nucleus launch precondition from effigy#739. Remaining reviewed pins are consumer-config facts observed at freeze (CBS project label, CBS count tail and baselines, CBS bundle prefix and digest) and the status --json running-field contract on both routes. A 'pending' value refuses that route before any read.",
+  "note": "Source-visible pins only. The candidate, positive624 predecessor, helper head, window, merged commit, container and volume identities, and the resolved bundle revision are NOT pinned here: the hash-pinned request binds them. The proof entry checks what it can observe (request digest, packet HEAD, installed bytes, consumer closure, window, identities) and takes the rest on the Nucleus launch precondition from effigy#739. Remaining reviewed pins are consumer-config facts observed at freeze (CBS project label, CBS count tail and baselines, CBS bundle prefix and digest) and the status --json running-field contract on both routes. A 'pending' value refuses that route before any read. Since effigy#790 the acquisition route can also be armed through a hash-pinned external runtime binding on the proof entry's argv (--binding PATH --binding-sha256 sha256:HEX), which carries exactly this route's frozen pin set to the real CLI; the committed pins stay pending, so the default and every ordinary invocation refuse.",
   "consumed_windows": [],
   "routes": {
     "acow": {
@@ -214,6 +214,11 @@
         "stderr_cap_bytes": 67108864
       },
       "checkout": "/Users/tom/Dev/legacy/sites/acowtancy",
+      "environments": {
+        "legacy": "pending: the legacy ordinary container environment that declares the operator workspace, verified against the exact bundled composition at freeze (the tracked root reports web/dev at effigy#766; the bundle is outside the tracked repo, so the name is never guessed)",
+        "modern": "stack"
+      },
+      "environment_citation": "modern stack is source-visible: tracked infra/workspace.toml declares [containers.stack] and the workspace service at modern main a58d9970 (2026-11-09), and modern dev profiles select hybrid, so stack is the container-mode ordinary environment. Legacy is bundle-composed (decodelabs-effigy-bundle, version_hint 8121cfc2) and is verified at freeze. Each pass runs its own pinned environment; neither pass assumes the other's composition, and no fixture claims the equivalence.",
       "consumer": {
         "includes": [
           "effigy.toml"

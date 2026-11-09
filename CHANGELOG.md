@@ -8,6 +8,27 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Make the ordinary Acow acquisition retest launchable on the real artifact path
+  (effigy#790). The proof entry accepts one narrow external runtime binding
+  (`--binding PATH --binding-sha256 sha256:HEX`), schema-strict, hash-pinned and
+  restricted to the acquisition route's frozen pin set, so a later frozen
+  request arms the shipped CLI without editing reviewed source; the committed
+  manifest stays pending, so the default and every ordinary invocation still
+  refuse `route-pins-pending` before any read or child. The acquisition route
+  now binds the host producer output where production puts it — the candidate
+  install's provenance checkout, derived by the candidate's own provenance
+  rules and required to sit outside both consumer checkouts — and judges the
+  artifact by production currency semantics (receipt target and digest,
+  `.active-version` and `.install-identity` sidecars, the installed binary's
+  genuine `+local.` install receipt) instead of mtime plus `release_triple`.
+  Legacy cold acquisition still requires an in-window rewrite of a naturally
+  stale artifact; modern's verified warm reuse is accepted; wrong candidate,
+  identity, target, receipt or publication refuses. Each pass runs its own
+  pinned ordinary environment (modern `stack` is source-visible; legacy stays a
+  pending freeze pin), an already-running stack is reconciled by the ordinary
+  up and never stopped, and rollback still touches only what the window
+  started. No consumer, engine, VM, build or native run; no publication,
+  admission or dev credit.
 - Bound Desktop D3 control metadata and derive fresh runtime-check identities from
   each activation. The failed prior occurrence remains retained and requires a
   separate closure observation before a new native proof (effigy#784).

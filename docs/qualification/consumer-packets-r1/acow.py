@@ -62,15 +62,15 @@ def count_argv(engine, pg_id, table):
                             'SELECT count(*) FROM %s' % table)
 
 
-def expected_counts(manifest):
+def expected_counts(pins):
     """Owner baseline plus the declared quiet-window delta, per table."""
     return {table: pin['baseline'] + pin['delta']
-            for table, pin in manifest['routes'][ROUTE]['counts'].items()}
+            for table, pin in pins['counts'].items()}
 
 
-def observe_counts(session, engine, manifest, pg_id):
+def observe_counts(session, engine, pins, pg_id):
     counts = {}
-    for table in sorted(expected_counts(manifest)):
+    for table in sorted(expected_counts(pins)):
         record = session.engine_call(count_argv(engine, pg_id, table),
                                      'count-' + table.replace('.', '-'))
         text = core.stdout_text(record).strip()
@@ -80,9 +80,9 @@ def observe_counts(session, engine, manifest, pg_id):
     return counts
 
 
-def execute(session, engine, manifest, request):
+def execute(session, engine, pins, request):
     """The armed sequence. Identity and prior intent are bound before any effect."""
-    identity = manifest['routes'][ROUTE]['identity']
+    identity = pins['identity']
     intent = request['prior_intent']
     if set(intent) != ENVIRONMENTS:
         raise core.Refused('prior-intent', 'intent must name exactly hybrid and stack')
@@ -102,8 +102,8 @@ def execute(session, engine, manifest, request):
             session.effigy(('container', env, 'up', '--detach'), phase + '-up')
             observed[env] = core.read_running(session, env, phase + '-status')
         session.effigy(FORWARD_TAIL, 'level1-forward')
-        counts = observe_counts(session, engine, manifest, pg_id)
-        core.counts_match(counts, expected_counts(manifest))
+        counts = observe_counts(session, engine, pins, pg_id)
+        core.counts_match(counts, expected_counts(pins))
     finally:
         for name in core.rollback_plan(intent, observed, started):
             session.effigy(('container', name, 'down'), 'rollback-' + name)
