@@ -36,8 +36,9 @@ is: render verify spec, make `{colima_input_dir}`, prefetch, render the transfer
 transfer, check the transfer receipt, verify the C3 context, re-derive the inputs on the guest, check that
 re-derivation, `nerdctl build --help` and its flag check, the build, the iidfile read, and the by-ID inspect with
 its platform and label check. Step envelopes are rebalanced inside the same 1200 s stage and 120 s reserve: the
-transfer window is 105 s guest (+5 grace) in a 140 s host envelope, and the build is 540 s guest (+5 grace) in
-600 s host. The absolute stage deadline and reserve are unchanged.
+transfer window is 90 s guest (+5 grace) in a 125 s host envelope, the pre-build input re-derivation is 35 s
+guest (+5 grace) in 70 s host, and the build is 530 s guest (+5 grace) in 590 s host. Every guarded window keeps at
+least 30 s of host receipt margin. The absolute stage deadline and reserve are unchanged.
 
 C4's four remote commands are no longer exec steps the local ssh client carries. The manifest still states each
 reviewed argv; the executor re-renders it as the fixed guest-helper launch, passing the command as bounded hex.
@@ -643,7 +644,7 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
   require the chain engine to be `ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd`, the engine 690 observed. An empty or
   default `docker info` template refuses.
 - **Guest sources (pinned).** Every C2, C3 and C4 guest step runs the reviewed
-  `macos_guest_helper.py` (sha256 `f089f048…`) as
+  `macos_guest_helper.py` (sha256 `204d44b7…`) as
   `python3 -I -B -c <LAUNCHER> <hex(helper)> <operation> <nonce> …`. Probe, stage and verify then run the
   reviewed `macos_guest_context.py` (sha256 `5daf93e2…`) as the contained child; transfer and check-inputs
   run the reviewed `guest_inputs.py` (sha256 `d2d0ea05…`), with the transfer's framed stream inherited on the
@@ -739,7 +740,7 @@ Controls run through `effigy test:qualification:workspace-private:macos`
 (`macos_preparation_boundaries.py`: 112 cases, injected only, no native action; the stage bounds, the fixed
 commands and the manifest pins are checked against the files on disk). Docs run through `effigy qa:docs`.
 The executor runs through `effigy test:qualification:workspace-private:macos-executor`
-(`macos_stage_executor_tests.py`: 255 cases, injected local children, no native action; execution runs only
+(`macos_stage_executor_tests.py`: 256 cases, injected local children, no native action; execution runs only
 under the test-only seams described in the Executor section; `macos_guest_helper_tests.py`: 30 cases;
 `guest_inputs_tests.py`: 29 cases over the framing, caps, receive, readback and guest layout re-derivation,
 one of them in a real child process).

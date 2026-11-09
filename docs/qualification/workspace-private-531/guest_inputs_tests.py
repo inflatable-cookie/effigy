@@ -442,7 +442,10 @@ class HelperOperationTests(unittest.TestCase):
         build = helper.build_command(context)
         spec = json.dumps({'argv': build}, separators=(',', ':'), sort_keys=True).encode().hex()
         self.assertEqual(helper.inner_argv('build', [spec]), build)
-        self.assertEqual(helper.inner_argv('build-help', []), ['nerdctl', 'build', '--help'])
+        # build-help takes the same one-spec shape the executor dispatches, and must name exactly the help argv.
+        help_spec = json.dumps({'argv': ['nerdctl', 'build', '--help']},
+                               separators=(',', ':'), sort_keys=True).encode().hex()
+        self.assertEqual(helper.inner_argv('build-help', [help_spec]), ['nerdctl', 'build', '--help'])
         cat = ['sudo', '-n', 'cat', context + '.iid']
         self.assertEqual(helper.inner_argv('read-iidfile',
                                            [json.dumps({'argv': cat}, separators=(',', ':'),
@@ -462,6 +465,12 @@ class HelperOperationTests(unittest.TestCase):
                 helper.inner_argv(operation, [payload])
         with self.assertRaises(helper.Refusal):
             helper.inner_argv('build-help', ['anything'])
+        with self.assertRaises(helper.Refusal):
+            helper.inner_argv('build-help', [])
+        varied_help = json.dumps({'argv': ['nerdctl', 'build', '--help', '--pull']},
+                                 separators=(',', ':'), sort_keys=True).encode().hex()
+        with self.assertRaises(helper.Refusal):
+            helper.inner_argv('build-help', [varied_help])
         with self.assertRaises(helper.Refusal):
             helper.inner_argv('transfer', ['print(1)', 'ab'])
 

@@ -588,18 +588,40 @@ class DockerBuildAndRunFlags(unittest.TestCase):
 
 
 class GuestDeadlines(unittest.TestCase):
-    def test_c4_build_keeps_its_command_bound_with_a_guest_deadline_inside(self):
-        build = next(s for s in stage_by_id('C4')['steps'] if s['id'] == 'c4-nerdctl-build')
-        self.assertEqual(build['timeout_seconds'], 600)
-        self.assertEqual(build['guest_deadline'], dict(seconds=540, kill_grace_seconds=5))
-        self.assertEqual(600 - 540 - 5, 55)
-        self.assertTrue(prep.check_guest_deadline(build))
-        # The transfer window carries its own guest deadline and receipt margin inside the same stage budget.
-        transfer = next(s for s in stage_by_id('C4')['steps'] if s['id'] == 'c4-transfer-inputs')
-        self.assertEqual(transfer['guest_deadline'], dict(seconds=105, kill_grace_seconds=5))
-        self.assertEqual(transfer['timeout_seconds'] - 105 - 5, 30)
-        self.assertTrue(prep.check_guest_deadline(transfer))
-        self.assertEqual(transfer['stdin'], 'guest_input_stream')
+    # Every guarded C4 window: the flag check has no guard, the three bounded guest commands each carry one.
+    C4_GUARDED = {'c4-transfer-inputs': (125, 90, 5), 'c4-verify-inputs': (70, 35, 5),
+                  'c4-nerdctl-build': (590, 530, 5)}
+
+    def test_c4_guest_windows_keep_their_command_bounds_inside_the_stage(self):
+        steps = {s['id']: s for s in stage_by_id('C4')['steps']}
+        for step_id, (host, seconds, grace) in self.C4_GUARDED.items():
+            with self.subTest(step=step_id):
+                step = steps[step_id]
+                at = step['argv'].index('--') + 1
+                self.assertEqual(step['argv'][at:at + 4], ['timeout', '-k', str(grace), str(seconds)])
+                self.assertEqual(step['timeout_seconds'], host)
+                self.assertEqual(step['guest_deadline'], dict(seconds=seconds, kill_grace_seconds=grace))
+                self.assertEqual(host - seconds - grace, 55 if step_id == 'c4-nerdctl-build' else 30)
+                self.assertTrue(prep.check_guest_deadline(step))
+                # The wrapped command is the fixed guest operation or the reviewed remote command, never a bare
+                # timeout argument: the two helper launches start the pinned interpreter, the build starts sudo.
+                expected = ['sudo', '-n'] if step_id == 'c4-nerdctl-build' else ['python3', '-I']
+                self.assertEqual(step['argv'][at + 4:at + 6], expected)
+        self.assertEqual(steps['c4-transfer-inputs']['stdin'], 'guest_input_stream')
+        # A guard that lost its timeout wrapper, or a step that reads as five bare timeout arguments, refuses.
+        for step_id in self.C4_GUARDED:
+            with self.subTest(unwrapped=step_id):
+                step = steps[step_id]
+                at = step['argv'].index('--') + 1
+                unwrapped = dict(step, argv=step['argv'][:at] + step['argv'][at + 4:])
+                with self.assertRaises(ValueError):
+                    prep.check_guest_deadline(unwrapped)
+                shifted = dict(step, argv=step['argv'][:at] + ['5', '35'] + step['argv'][at + 2:])
+                with self.assertRaises(ValueError):
+                    prep.check_guest_deadline(shifted)
+        # The stage still fits its budget with the reserve.
+        self.assertLessEqual(sum(s['timeout_seconds'] for s in steps.values()),
+                             stage_by_id('C4')['seconds'] - stage_by_id('C4')['reserve_seconds'])
 
     def test_remote_build_without_a_guest_deadline_refused(self):
         build = next(s for s in stage_by_id('C4')['steps'] if s['id'] == 'c4-nerdctl-build')
@@ -609,17 +631,23 @@ class GuestDeadlines(unittest.TestCase):
         self.assertTrue(prep.check_guest_deadline(dict(without, argv=SSH + ['nerdctl', 'build', '--help'])))
 
     def test_guest_deadline_without_receipt_margin_refused(self):
-        build = next(s for s in stage_by_id('C4')['steps'] if s['id'] == 'c4-nerdctl-build')
-        widened = [a if a != '540' else '880' for a in build['argv']]
-        with self.assertRaises(ValueError) as refused:
-            prep.check_guest_deadline(dict(build, argv=widened, guest_deadline=dict(seconds=880, kill_grace_seconds=5)))
-        self.assertIn('receipt', str(refused.exception))
+        for step_id, (host, seconds, grace) in GuestDeadlines.C4_GUARDED.items():
+            with self.subTest(step=step_id):
+                step = next(s for s in stage_by_id('C4')['steps'] if s['id'] == step_id)
+                widened = [a if a != str(seconds) else str(host - grace - 5) for a in step['argv']]
+                with self.assertRaises(ValueError) as refused:
+                    prep.check_guest_deadline(dict(step, argv=widened, guest_deadline=dict(
+                        seconds=host - grace - 5, kill_grace_seconds=grace)))
+                self.assertIn('receipt', str(refused.exception))
 
     def test_guest_deadline_not_wrapping_the_remote_command_refused(self):
-        build = next(s for s in stage_by_id('C4')['steps'] if s['id'] == 'c4-nerdctl-build')
-        unwrapped = dict(build, argv=[a for a in build['argv'] if a not in ('timeout', '-k', '5', '540')])
-        with self.assertRaises(ValueError):
-            prep.check_guest_deadline(unwrapped)
+        for step_id, (host, seconds, grace) in GuestDeadlines.C4_GUARDED.items():
+            with self.subTest(step=step_id):
+                step = next(s for s in stage_by_id('C4')['steps'] if s['id'] == step_id)
+                at = step['argv'].index('--') + 1
+                unwrapped = dict(step, argv=step['argv'][:at] + step['argv'][at + 4:])
+                with self.assertRaises(ValueError):
+                    prep.check_guest_deadline(unwrapped)
 
     def test_timeout_before_remote_terminal_evidence_is_unknown_and_stops_the_chain(self):
         record = dict(waited_exit=None, outcome='deadline_exceeded')

@@ -67,7 +67,7 @@
     "verify_tool_sha",
     "verify_tranche_summary"
   ],
-  "manifest": "macos-4f6a5ed3-stages-r8",
+  "manifest": "macos-4f6a5ed3-stages-r9",
   "observed_metadata": {
     "child": "linux-artifact-preparation.l0tx7tam/macos-metadata-rfzuiadz",
     "note": "local metadata only; not a running-engine or guest observation",
@@ -687,7 +687,7 @@
             "timeout",
             "-k",
             "5",
-            "105",
+            "90",
             "python3",
             "-I",
             "-B",
@@ -712,14 +712,14 @@
             ]
           },
           "guest_deadline": {
-            "kill_grace_seconds": 5,
-            "seconds": 105
+            "seconds": 90,
+            "kill_grace_seconds": 5
           },
           "id": "c4-transfer-inputs",
           "kind": "exec",
           "output_cap_bytes": 262144,
           "retries": 0,
-          "timeout_seconds": 140,
+          "timeout_seconds": 125,
           "stdin": "guest_input_stream"
         },
         {
@@ -780,10 +780,10 @@
             "-p",
             "effigy-4f6a-qual",
             "--",
+            "timeout",
+            "-k",
             "5",
             "35",
-            "5",
-            "105",
             "python3",
             "-I",
             "-B",
@@ -811,7 +811,11 @@
           "kind": "exec",
           "output_cap_bytes": 262144,
           "retries": 0,
-          "timeout_seconds": 45
+          "timeout_seconds": 70,
+          "guest_deadline": {
+            "seconds": 35,
+            "kill_grace_seconds": 5
+          }
         },
         {
           "helper": "check_input_verify",
@@ -878,7 +882,7 @@
             "timeout",
             "-k",
             "5",
-            "540",
+            "530",
             "sudo",
             "-n",
             "env",
@@ -913,14 +917,14 @@
             ]
           },
           "guest_deadline": {
-            "kill_grace_seconds": 5,
-            "seconds": 540
+            "seconds": 530,
+            "kill_grace_seconds": 5
           },
           "id": "c4-nerdctl-build",
           "kind": "exec",
           "output_cap_bytes": 262144,
           "retries": 0,
-          "timeout_seconds": 600
+          "timeout_seconds": 590
         },
         {
           "argv": [

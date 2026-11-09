@@ -359,10 +359,6 @@ def inner_argv(operation, rest):
         input_spec(rest[1])
         return [sys.executable, '-I', '-B', '-c', rest[0], operation, rest[1]]
     if operation in REMOTE:
-        if operation == 'build-help':
-            if rest:
-                raise Refusal('build-help takes no spec')
-            return ['nerdctl', 'build', '--help']
         if len(rest) != 1:
             raise Refusal(operation + ' takes one hex command spec')
         return checked_remote(operation, remote_spec(rest[0]))
@@ -429,6 +425,10 @@ def checked_remote(operation, spec):
     if (not isinstance(argv, list) or not argv or len(argv) > 24
             or any(not isinstance(a, str) or not a or len(a) > 512 or '\x00' in a or '\n' in a for a in argv)):
         raise Refusal('remote command argv is malformed')
+    if operation == 'build-help':
+        if argv != ['nerdctl', 'build', '--help']:
+            raise Refusal('build-help is not the exact reviewed form')
+        return argv
     if operation == 'build':
         context = argv[-1]
         if not CONTEXT.fullmatch(context) or argv != build_command(context):

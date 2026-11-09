@@ -2270,6 +2270,44 @@ class DispatchSweepTests(Fixture):
         self.assertEqual(by_id['c4-image-inspect']['closure'], 'not_dispatched')
         self.assertNotIn('c4-read-iidfile', [x['id'] for x in receipt['steps'] if x.get('closure') == 'closed'])
 
+    def test_every_c4_remote_dispatch_rebuilds_the_reviewed_command_in_the_fixed_helper(self):
+        """The production dispatch and the fixed helper agree for every C4 remote command.
+
+        The manifest states each reviewed argv; the executor re-renders it as the fixed helper launch and appends
+        the same command as bounded hex; the helper decodes that argv and rebuilds the command it will run. This
+        control runs the real dispatch output back through the helper's own argv builder, so a dispatch shape the
+        helper refuses (or a command it would have altered) fails here rather than only in a stubbed envelope."""
+        context = '/root/effigy-531-image-' + self.T32
+        manifest = ex.load_manifest()
+        c4 = ex.stage_of(manifest, 'C4')
+        bindings = dict(self.run_bindings(), guest_context=context, guest_iidfile=context + '.iid', image_id=IMAGE)
+        steps = {step['id']: step for step in c4['steps']}
+        self.assertEqual(sorted(ex.REMOTE_COMMAND_STEPS),
+                         sorted(['c4-image-inspect', 'c4-iidfile-read', 'c4-nerdctl-build',
+                                 'c4-nerdctl-build-help']))
+        for step_id, operation in sorted(ex.REMOTE_COMMAND_STEPS.items()):
+            with self.subTest(step=step_id):
+                resolved = ex.resolve_step(steps[step_id], bindings)
+                _, reviewed = ex.guest_remote_tail(resolved, bindings)
+                dispatched = ex.dispatch_guest_command(resolved, bindings, 'ab' * 32)
+                # The helper is launched as `python3 -I -B -c LAUNCHER <hex> <operation> <nonce> <spec>`; the launcher
+                # execs the decoded helper, so the helper's own argv is what this reconstructs.
+                c_idx = dispatched.index('-c')
+                self.assertEqual(dispatched[c_idx + 1], helper.LAUNCHER)
+                launched = [dispatched[c_idx], dispatched[c_idx + 2]] + dispatched[c_idx + 3:]
+                args = helper.operation_argv(launched)
+                self.assertEqual(args[0], operation)
+                self.assertEqual(args[1], 'ab' * 32)
+                rebuilt = helper.inner_argv(operation, args[2:])
+                self.assertEqual(rebuilt, reviewed, step_id)
+                # And the guest-side spec really is the reviewed command, canonically encoded.
+                self.assertEqual(json.loads(bytes.fromhex(dispatched[-1]).decode()), {'argv': reviewed})
+                # The review guard: the helper refuses a command that is not the reviewed one for this step.
+                tampered = reviewed + ['--pull']
+                spec = json.dumps({'argv': tampered}, sort_keys=True, separators=(',', ':')).encode().hex()
+                with self.assertRaises(helper.Refusal):
+                    helper.inner_argv(operation, [spec])
+
     def test_c4_refuses_a_remote_command_that_is_not_the_reviewed_form(self):
         context = '/root/effigy-531-image-' + self.T32
         bindings = dict(self.bindings, image_id='effigy-4f6a-runtime:r1', guest_context=context)
