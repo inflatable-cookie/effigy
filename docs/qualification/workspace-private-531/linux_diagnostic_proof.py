@@ -353,9 +353,9 @@ def check_vm(raw, state):
     return vm
 
 
-def check_snapshots(raw):
+def check_snapshots(raw, expected=None):
     data = json.loads(raw, object_pairs_hook=parse_unique)
-    if hashlib.sha256(canonical(data)).hexdigest() != SNAPSHOT_SHA:
+    if hashlib.sha256(canonical(data)).hexdigest() != (SNAPSHOT_SHA if expected is None else expected):
         raise stage.Refusal('snapshot inventory differs from retained original')
     return data
 
@@ -437,14 +437,14 @@ def classify_transport(result, stdout, stderr):
         % (result.get('disposition'), result.get('waited_exit'), len(stdout), len(stderr)))
 
 
-def execute(request, request_path, request_hash, selector_streams=None):
+def execute(request, request_path, request_hash, selector_streams=None, *, exploratory_snapshot=None):
     launched_at = time.time()
     deadline = time.monotonic() + DURATION
     if request != plan(request['root'], request['activation_id'], request['head']):
         raise stage.Refusal('request bindings drifted')
     actual = subprocess.check_output([GIT, '-C', str(HERE), 'rev-parse', 'HEAD'], timeout=10).decode().strip()
     clean = subprocess.check_output([GIT, '-C', str(HERE), 'status', '--porcelain'], timeout=10)
-    if clean:
+    if clean and exploratory_snapshot is None:
         raise stage.Refusal('preparation checkout is not clean')
     if actual != request['head']:
         raise stage.Refusal('preparation head drifted')
@@ -472,7 +472,10 @@ def execute(request, request_path, request_hash, selector_streams=None):
         selector_streams.start(destination)
     operational_end = deadline - RESERVE
     start_end = operational_end - 120
-    outcome = {'schema': 'linux-diagnostic-observation-v7', 'request_sha256': request_hash,
+    outcome = {'schema': 'linux-diagnostic-observation-v7',
+               'exploratory': exploratory_snapshot is not None,
+               'qualification_credit': False,
+               'snapshot_sha256': exploratory_snapshot or SNAPSHOT_SHA, 'request_sha256': request_hash,
                'head': actual, 'candidate_h': setup.CANDIDATE_H_HEAD, 'launched_at': launched_at,
                'writable_top': 'unknown', 'guest_association': 'unknown',
                'disk_association': None, 'disk_association_result': None,
@@ -577,7 +580,7 @@ def execute(request, request_path, request_hash, selector_streams=None):
             outcome['start'] = result
         result['stderr_text'] = (step / 'stderr').read_bytes().decode('utf-8', 'replace')
         raw = (step / 'stdout').read_bytes()
-        if setup_route is not None:
+        if setup_route is not None and result.get('waited_exit') == 0:
             try:
                 raw = guest_probe.unwrap_program(setup_route, result, raw)
             except guest_probe.Bad as exc:
@@ -604,15 +607,15 @@ def execute(request, request_path, request_hash, selector_streams=None):
             remaining -= len(raw) + len(stderr)
             # Reuse 818's outcome-shape helper; wrapper drift is never a retry candidate.
             try:
-                wrapper = re.search(r'(?m)^(?:/bin/)?(?:ba|da)?sh:|(?:-c requires an argument)',
-                                    result.get('stderr_text', ''))
-                retry = not wrapper and classify_transport(result, raw, stderr) == 'unavailable'
+                retry = classify_transport(result, raw, stderr) == 'unavailable'
             except stage.Refusal:
                 retry = False
             if (not retry or attempt_number == 2 or remaining < 1
-                    or route_end - time.monotonic() < guest_probe.MIN_ROUTE_SECONDS):
+                    or route_end - time.monotonic() < min(guest_probe.MIN_ROUTE_SECONDS, TRANSPORT_FLOOR)):
                 break
-            guard()
+            if private_root(str(root)) != request['root_identity']:
+                raise stage.Refusal('evidence root identity changed')
+            pause(route_end)
         result['attempts'] = attempts
         return result, raw
 
@@ -657,7 +660,7 @@ def execute(request, request_path, request_hash, selector_streams=None):
         result, raw = call(['snapshot-list', setup.VM_UUID, '--json'], 10, 262144, start_end)
         if not good(result):
             raise stage.Refusal('pre-snapshot observation failed')
-        check_snapshots(raw)
+        check_snapshots(raw, exploratory_snapshot or SNAPSHOT_SHA)
         outcome['start_count'] = 1
         result, _ = call(['start', setup.VM_UUID], 145, 16384, start_end)
         if not good(result):
@@ -711,8 +714,8 @@ def execute(request, request_path, request_hash, selector_streams=None):
                 'deadline without the exact echo sentinel; stderr classes: %s'
                 % (len(outcome['transport']['attempts']),
                    repr(outcome['transport']['stderr_classes'])))
-        result, raw = call(['exec', setup.VM_UUID, '/usr/bin/systemctl', 'is-system-running', '--wait'],
-                           READY_WAIT, 1024, ready_end)
+        result, raw = read_only_route(
+            ['/usr/bin/systemctl', 'is-system-running', '--wait'], READY_WAIT, 1024, ready_end)
         outcome['readiness_observation'] = result
         try:
             outcome['readiness'] = setup.stage1_accept_readiness(
@@ -721,8 +724,8 @@ def execute(request, request_path, request_hash, selector_streams=None):
             raise stage.Refusal('systemd boot readiness refused: ' + str(exc)) from exc
         if raw != b'running\n' or not good(result):
             raise stage.Refusal('systemd boot readiness output is not exact running/exit 0')
-        boot_result, boot_raw = call(['exec', setup.VM_UUID, '/bin/cat',
-                                      '/proc/sys/kernel/random/boot_id'], 5, 256, ready_end)
+        boot_result, boot_raw = read_only_route(
+            ['/bin/cat', '/proc/sys/kernel/random/boot_id'], 20, 2048, ready_end)
         if not good(boot_result):
             raise stage.Refusal('boot identity after readiness was not positively observed')
         boot_id = check_boot_id(boot_raw)
@@ -730,7 +733,7 @@ def execute(request, request_path, request_hash, selector_streams=None):
         probe = (HERE / 'linux-setup-probe.sh').read_text()
         if hashlib.sha256(probe.encode()).hexdigest() != setup.PROBE_SHA256:
             raise stage.Refusal('probe drift')
-        result, raw = call(['exec', setup.VM_UUID, '/bin/sh', '-c', probe], 75, 262144, start_end)
+        result, raw = read_only_route(['/bin/sh', '-c', probe], 75, 262144, start_end)
         outcome['probe'] = result
         if not good(result):
             raise stage.Refusal('probe incomplete')
@@ -752,8 +755,8 @@ def execute(request, request_path, request_hash, selector_streams=None):
 
         def read_guest_boot():
             """One fresh guest boot original; a partial or failed read is not an identity."""
-            result, raw = call(['exec', setup.VM_UUID, '/bin/cat',
-                                '/proc/sys/kernel/random/boot_id'], 5, 256, start_end)
+            result, raw = read_only_route(
+                ['/bin/cat', '/proc/sys/kernel/random/boot_id'], 20, 2048, start_end)
             if not good(result):
                 raise stage.Refusal('guest boot identity read did not complete')
             return check_boot_id(raw)
@@ -906,7 +909,7 @@ def execute(request, request_path, request_hash, selector_streams=None):
                 result, raw = call(['snapshot-list', setup.VM_UUID, '--json'], 10, 262144, operational_end, track=False)
                 if not good(result):
                     raise stage.Refusal('post-snapshot observation failed')
-                check_snapshots(raw)
+                check_snapshots(raw, exploratory_snapshot or SNAPSHOT_SHA)
             except Exception as exc:
                 outcome['findings'].append('post snapshots: ' + str(exc))
         elif outcome['start_count']:

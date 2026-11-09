@@ -1,0 +1,1 @@
+Added an explicitly unsealed native Linux diagnostic selector that binds the current snapshot inventory for interactive exploration while preserving the sealed entry's fixed snapshot pin and qualification boundaries.

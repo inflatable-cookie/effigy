@@ -869,3 +869,65 @@ metadata selection only. It is not a runtime, header or setup proof, and it gran
 credit to any prior run.
 
 Not run here: a live Stage1 against the registered VM, and any image-body or header read.
+
+## Interactive native exploration — task 829
+
+Task 829 authorizes interactive preparation on the fixed Stash VM before candidate
+freeze. Exploratory observations grant no #623 qualification credit. Historical
+failed occurrences and their retained originals remain unchanged.
+
+The pre-change snapshot is `d1602e5a-964a-4375-9eec-df6ed4350305`, named
+`effigy-explore-2026-11-09`. Revert only this task-owned snapshot with
+`prlctl snapshot-switch 433c9e5b-c7b9-469f-9633-24b4addcd3b5 --id
+{d1602e5a-964a-4375-9eec-df6ed4350305}`. Reversion discards later guest changes;
+no reversion has been performed. Evidence is retained under
+`/Volumes/Stash/scratch/effigy/829-native-4y5ejcjw/native-829/`. The original live run root was
+`/Volumes/Stash/scratch/effigy/64906ab8/native-829/`; the retained copy preserves
+those recorded paths and is outside Queue run cleanup.
+
+`effigy qualification:linux:native-smoke -- OWNED_EVIDENCE_ROOT` is an unsealed
+entry for the diagnostic chain. It requires caller authority over the fixed VM,
+a stopped VM and an owned canonical mode-0700 evidence root. It binds the current
+snapshot inventory separately for each exploration and checks it before and after
+the cycle. The sealed entry retains its fixed historical inventory pin. Outputs
+explicitly label exploration and deny qualification credit. This currently covers
+the diagnostic cycle only; setup, activation and the full session remain to be
+integrated before this selector can claim the full task-829 smoke outcome.
+
+Initial native writer and engine-input observation routes completed without
+findings. The next integrated cycle exposed a session refusal on systemd readiness
+*after* a successful echo sentinel; transport availability is not stable for the
+whole boot window. Default Tools-mediated stop also stalled. An ACPI request returned once while an
+earlier default stop remained pending; later independent ACPI cycles timed out.
+That first return did not establish ACPI reliability. Retained streams and exits
+distinguish these observations from a closure assumption. Guest shutdown logs
+identify GNOME session and Parallels desktop-helper stop timeouts. This task changed
+only the guest default boot target from graphical to multi-user to avoid starting
+that unrelated desktop session on the dedicated proof VM. The pre-change snapshot
+is its rollback; accounts and user homes were not changed in this batch.
+
+After candidate freeze, the minimal sealed plan is: bind one merged candidate C
+and exact current preparation inputs, including a newly reviewed snapshot-inventory
+pin (the task-owned snapshot changes the historical inventory); produce its Linux binaries and runtime image
+once with retained hashes/tool identities; execute one setup/activation occurrence
+with its prerequisite observations, then one complete #623 full-session occurrence
+against those artifacts. #624 independently judges all receipts. A standalone
+sealed diagnostic is unnecessary if the accepted setup entry includes the same
+boot-bound observations; otherwise it is one additional prerequisite occurrence.
+No occurrence is armed here, and earlier failures are never reused as positive
+receipts. Current-main exploratory binaries cannot stand in for frozen C artifacts.
+
+The completed unsealed headless diagnostic is retained at
+`native-829/linux-diagnostic-explore-b2298d4f57e14870997eedb1a34d89d4/outcome.json`
+under the evidence root above; its caller streams are `smoke-6.stdout` and
+`smoke-6.stderr`, with `smoke-6.exit` recording zero. Findings are empty, both
+observation sets are complete, and the terminal VM observation is stopped.
+Tools-mediated graceful stop took 4.123 seconds. The final harness keeps that
+original stop route; ACPI is not a supported substitute established by this work.
+Read-only session refusals may recur after a successful sentinel, so the fixed
+readiness, probe and boot-ID reads now share the bounded shape-based retry policy
+used by observation routes. Every attempt is retained, nonempty partial output
+refuses, budgets decrease, and retries never extend the caller's absolute deadline.
+The local readiness fixtures use a two-second shared window, with ten seconds
+for the four-launch #817 reproduction under host contention; their state transition is published atomically so a reader
+cannot mistake a truncate/write interval for a terminal systemd state.

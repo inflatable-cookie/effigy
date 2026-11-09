@@ -1692,7 +1692,9 @@ class Stage1CallerChecks(unittest.TestCase):
             if step == 'S1.3':
                 def flip():
                     time.sleep(0.08)
-                    state_file.write_text('running\n')
+                    replacement = state_dir / 'state-next'
+                    replacement.write_text('running\n')
+                    replacement.replace(state_file)
                 threading.Thread(target=flip, daemon=True).start()
                 proc = subprocess.run([str(fake), 'is-system-running', '--wait'],
                                       capture_output=True, timeout=timeout)
