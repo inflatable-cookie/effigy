@@ -24,6 +24,9 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Put checkout CLI on PATH
+        run: echo "$GITHUB_WORKSPACE/target/debug" >> "$GITHUB_PATH"
+
       - name: Validate docs QA bundle
         run: cargo run --bin effigy -- qa:docs
 
@@ -39,6 +42,9 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Put checkout CLI on PATH
+        run: echo "$GITHUB_WORKSPACE/target/debug" >> "$GITHUB_PATH"
 
       - name: Validate JSON contracts
         run: |

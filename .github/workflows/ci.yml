@@ -138,8 +138,11 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@cargo-nextest
+
       - name: Run released-surface regression lane
-        run: cargo run --bin effigy -- qa:released-surface --repo .
+        run: cargo run --bin effigy -- qa:released-surface
 
   supply-chain:
     name: Supply-chain (cargo-deny)
