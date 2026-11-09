@@ -1063,7 +1063,7 @@ def activation_records(count=None):
     records = []
     for index, step in enumerate(bound.activation_plan()[:count]):
         name = step['name']
-        record = {'name': name, 'disposition': 'exited',
+        record = {'name': name, 'disposition': 'exited', 'waited_exit': 0,
                   'boot_id': RESCUE_BOOT if name in bound.RESCUE_BOUNDARIES or name in
                   ('snapshot', 'quiesce') else BOOT_ID}
         if name == 'quiesce':
@@ -1133,6 +1133,40 @@ class ActivationRouteChecks(unittest.TestCase):
                     broken[index]['disposition'] = disposition
                     with self.assertRaises(Refusal):
                         bound.inspect_activation_progress(broken)
+
+    def test_every_boundary_must_carry_a_zero_waited_exit(self):
+        records = activation_records()
+        for index, step in enumerate(records):
+            for broken_exit in (1, 3, 137, -1, None, '0', 0.0, True):
+                with self.subTest(boundary=step['name'], waited_exit=broken_exit):
+                    broken = [dict(item) for item in records[:index + 1]]
+                    broken[index]['waited_exit'] = broken_exit
+                    with self.assertRaisesRegex(Refusal, 'positive waited exit'):
+                        bound.inspect_activation_progress(broken)
+            with self.subTest(boundary=step['name'], waited_exit='missing'):
+                broken = [dict(item) for item in records[:index + 1]]
+                del broken[index]['waited_exit']
+                with self.assertRaisesRegex(Refusal, 'missing or unexpected facts'):
+                    bound.inspect_activation_progress(broken)
+
+    def test_the_offline_steps_need_a_zero_exit_not_only_an_exited_label(self):
+        records = activation_records()
+        offline = [step['name'] for step in bound.activation_plan() if step['kind'] == 'offline']
+        self.assertEqual(offline, ['precheck', 'features', 'mount-options', 'postcheck'])
+        for name in offline:
+            with self.subTest(boundary=name):
+                broken = [dict(item) for item in records]
+                target = next(item for item in broken if item['name'] == name)
+                target['waited_exit'] = 1
+                with self.assertRaisesRegex(Refusal, name + ' has no positive waited exit'):
+                    bound.inspect_activation_progress(broken)
+        # A nonzero exit before the offline steps is refused at that boundary, not carried forward.
+        for index, step in enumerate(records):
+            with self.subTest(boundary=step['name'], prefix=index + 1):
+                broken = [dict(item) for item in records[:index + 1]]
+                broken[index]['waited_exit'] = 1
+                with self.assertRaisesRegex(Refusal, 'nothing resumes or restores'):
+                    bound.inspect_activation_progress(broken)
 
     def test_a_repeated_or_unplanned_boundary_refuses(self):
         records = activation_records()

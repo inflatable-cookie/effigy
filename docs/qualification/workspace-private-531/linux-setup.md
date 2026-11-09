@@ -541,7 +541,11 @@ nothing. The boundaries are `quiesce`, `snapshot`, `rescue-boot`, `precheck`, `f
 `mount-options`, `postcheck`, `return-boot`, `project-assign`, `quota`, `enforce`.
 `inspect_activation_progress` refuses an out-of-order, repeated, unrecorded, refused or unknown
 boundary and any boundary that is not in the plan (a restore or a retry): an interrupted step is
-never a partial success and nothing resumes or rolls back automatically. It also refuses a step
+never a partial success and nothing resumes or rolls back automatically. Every boundary also has
+to carry the waited exit of the command that performed it, and it must be exactly zero: a nonzero,
+missing, boolean or non-integer exit refuses exactly like an unknown boundary, so an `exited`
+label alone is never a completion, and the offline steps' hashed streams stay the separate
+requirement the accepted `inspect_offline_progress` guard already enforces. It also refuses a step
 from the wrong boot (the four offline steps must share the rescue boot, the four later boundaries the
 returned normal boot, which must differ), a medium or tool set other than the recorded one, a nonempty stored
 mount-option string at the point of replacement, a snapshot without an exact identity, positive

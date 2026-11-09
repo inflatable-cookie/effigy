@@ -738,10 +738,13 @@ def inspect_activation_progress(records):
     """Check one exact activation sequence and refuse every interrupted or unrecorded boundary.
 
     Supplied records are never authority: the caller must independently authenticate the snapshot,
-    the medium, the rescue boot and the unmounted device. What this guard refuses is an out-of-order,
-    repeated, unrecorded, refused or unknown boundary and any boundary that is not in the plan
-    (including a restore or a retry). An interruption is therefore never a partial success, and
-    nothing resumes or rolls back automatically after an unknown result.
+    the medium, the rescue boot and the unmounted device. Every boundary must also carry the waited
+    exit of the command that performed it, and it must be exactly zero: a nonzero, missing, boolean or
+    non-integer exit is a failed or unknown result and refuses just as a refused or unknown
+    disposition does. What this guard refuses is an out-of-order, repeated, unrecorded, refused or
+    unknown boundary and any boundary that is not in the plan (including a restore or a retry). An
+    interruption is therefore never a partial success, and nothing resumes or rolls back
+    automatically after an unknown result.
     """
     plan = activation_plan()
     if not isinstance(records, list) or len(records) > len(plan):
@@ -751,11 +754,15 @@ def inspect_activation_progress(records):
         name = step['name']
         if not isinstance(item, dict) or item.get('name') != name:
             raise Refusal('activation boundary set or order differs at ' + name)
-        if set(item) != {'name', 'boot_id', 'disposition'} | set(step['requires']):
+        if set(item) != {'name', 'boot_id', 'disposition', 'waited_exit'} | set(step['requires']):
             raise Refusal('activation boundary ' + name + ' has missing or unexpected facts')
+        exit_code = item['waited_exit']
+        if type(exit_code) is not int or exit_code != 0:
+            raise Refusal('activation boundary ' + name + ' has no positive waited exit (non-zero, missing or '
+                          'unknown); its outcome is unknown and nothing resumes or restores automatically')
         if item['disposition'] != 'exited':
-            raise Refusal('activation boundary ' + name + ' did not finish with a positive waited exit; '
-                          'its outcome is unknown and nothing resumes or restores automatically')
+            raise Refusal('activation boundary ' + name + ' did not complete; its outcome is unknown and '
+                          'nothing resumes or restores automatically')
         boot = item['boot_id']
         if not isinstance(boot, str) or not boot or len(boot) > 64 or boot != boot.strip():
             raise Refusal('activation boundary ' + name + ' has no boot identity')
