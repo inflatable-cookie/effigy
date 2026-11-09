@@ -2810,6 +2810,21 @@ class GateCustodyAndUmaskChecks(unittest.TestCase):
 
 
 class ExactApprovalAndCustodyChecks(unittest.TestCase):
+    def test_approval_install_rejects_oversize_before_any_write(self):
+        for size, reaches_write in ((1024 * 1024, True), (1024 * 1024 + 1, False)):
+            data = 'x' * size
+            argv = ['installer', '/unused', hashlib.sha256(data.encode()).hexdigest(), data, '/unused']
+            with self.subTest(size=size), patch.object(sys, 'argv', argv), \
+                    patch.object(os, 'mkdir', side_effect=RuntimeError('write reached')) as mkdir:
+                if reaches_write:
+                    with self.assertRaisesRegex(RuntimeError, 'write reached'):
+                        exec(setup.APPROVAL_INSTALL, {})
+                    mkdir.assert_called_once()
+                else:
+                    with self.assertRaisesRegex(ValueError, 'fixed byte ceiling'):
+                        exec(setup.APPROVAL_INSTALL, {})
+                    mkdir.assert_not_called()
+
     def approval(self, raw=None):
         raw = raw or json.dumps({'nonce': NONCE}).encode()
         root = tmpdir('exact-approval-')

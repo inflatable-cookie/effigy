@@ -1128,6 +1128,8 @@ def _stop_unit_via_vm(unit):
 APPROVAL_INSTALL = r"""
 import os, sys, stat, hashlib, subprocess
 root, digest, data, program = sys.argv[1:]
+if len(data.encode()) > 1024 * 1024:
+    raise ValueError('approval request exceeds the fixed byte ceiling')
 assert hashlib.sha256(data.encode()).hexdigest() == digest
 assert len(digest) == 64 and all(c in '0123456789abcdef' for c in digest)
 try: os.mkdir(root, 0o700)
