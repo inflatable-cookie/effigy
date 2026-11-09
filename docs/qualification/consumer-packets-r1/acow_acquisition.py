@@ -172,6 +172,13 @@ def verify_install_receipt(request):
                            'install receipt does not record the pinned candidate source commit')
 
 
+def path_within(path, ancestor):
+    """True when `path` is `ancestor` or a component-wise descendant of it."""
+    path = os.path.realpath(str(path))
+    ancestor = os.path.realpath(str(ancestor))
+    return path == ancestor or path.startswith(ancestor.rstrip(os.sep) + os.sep)
+
+
 def check_producer(request, pins):
     """The producer binding: exact block, derived checkout, outside both consumers.
 
@@ -199,7 +206,10 @@ def check_producer(request, pins):
     core.resolve_checkout(checkout)
     for name in PASSES:
         consumer = pins['checkout'] if name == 'legacy' else pins['modern']['checkout']
-        if os.path.realpath(checkout) == os.path.realpath(consumer):
+        # Containment, not equality: producer output lives under the producer
+        # checkout, so output inside a consumer means the consumer is an
+        # ancestor of the producer (or the same directory).
+        if path_within(checkout, consumer):
             raise core.Refused('producer-mismatch',
                                name + ': the producer checkout must sit outside the consumer')
     verify_install_receipt(request)
@@ -260,19 +270,35 @@ def artifact_facts(producer_checkout):
             'install_identity': read_identity_file(Path(str(path) + INSTALL_IDENTITY_SUFFIX))}
 
 
+def digest_matches(recorded, digest):
+    """The receipt's recorded digest against a `sha256:<hex>` digest.
+
+    Mirrors production (`digest_matches` at candidate 5751ff9d): the receipt
+    records bare hex — the producer strips the prefix when it writes
+    (`write_workspace_artifact_receipt`) — trimmed and compared
+    case-insensitively. A receipt carrying a `sha256:` prefix does not match,
+    exactly as production's own reader rejects it.
+    """
+    computed = digest.split(':', 1)[1] if ':' in str(digest) else str(digest)
+    recorded = '' if recorded is None else str(recorded).strip()
+    return bool(recorded) and recorded.lower() == computed.lower()
+
+
 def artifact_current(facts, request):
     """Production currency for the pinned candidate and producer identities.
 
     Mirrors `verify_guest_artifact_until` and
     `linux_workspace_effigy_artifact_is_current` at candidate 5751ff9d: the
-    receipt must name the target and record the actual bytes' digest, the
-    active-version sidecar must name the candidate version, and the
-    install-identity sidecar must name the pinned producer identity. An optional
-    request digest additionally pins the bytes on a verified warm reuse.
+    receipt must name the target and record the actual bytes' digest in the
+    producer's bare-hex format, the active-version sidecar must name the
+    candidate version, and the install-identity sidecar must name the pinned
+    producer identity. An optional request digest additionally pins the bytes
+    on a verified warm reuse.
     """
     if not facts.get('present'):
         return False
-    if facts['receipt_release_triple'] != TARGET or facts['receipt_sha256'] != facts['sha256']:
+    if facts['receipt_release_triple'] != TARGET \
+            or not digest_matches(facts['receipt_sha256'], facts['sha256']):
         return False
     if facts['active_version'] != request['candidate']['install_identity']['version']:
         return False

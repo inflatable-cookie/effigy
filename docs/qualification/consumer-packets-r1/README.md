@@ -184,10 +184,11 @@ The binding document is `{schema, route, pins, consumed_windows}` under
 `effigy.qualification.consumer-packets.route-binding.v1`. It is schema-strict,
 names exactly one route, and carries exactly the acquisition route's functional
 pin set (`PIN_KEYS`); manifest-side citation fields are annotations and are not
-carried. The binding supplies the route's frozen pins and its consumed-window
-list; the candidate, helpers, resources and window stay bound exactly by the
-hash-pinned request, and the committed manifest stays authoritative for the
-routes it still pins. Malformed, duplicate, unknown-key, cross-route, altered
+carried. The binding supplies the route's frozen pins; the candidate, helpers,
+resources and window stay bound exactly by the hash-pinned request, and the
+committed manifest stays authoritative for the routes it still pins and for
+one use: the binding may add consumed windows, never reopen one the committed
+manifest already burned (the armed check unions both lists). Malformed, duplicate, unknown-key, cross-route, altered
 (digest mismatch) and still-pending forms refuse before the request is read,
 before the evidence claim and before any child. `acow` and `cbs` accept no
 binding (`binding-not-offered`), so their committed pending pins keep them
@@ -206,7 +207,7 @@ success alone proves nothing.
 | Acquisition only for a declared operator workspace | `provisioning.rs` `prepare_workspace_artifact_with` → `operator_workspace_for_policy` → `resolve_operator_workspace_for_container`; a hybrid environment gets no guest and acquires nothing |
 | The producer checkout is the host's provenance checkout, not the consumer | `provisioning.rs` `artifact_plan` (Auto + Checkout) → `host_provenance` → `checkout_of_local_install` (`<checkout>/.local-install/bin/effigy`) then `checkout_of_build_tree` (`<checkout>/target/{debug,release}/effigy`), gated by `looks_like_effigy_repo_root`; nearby checkouts are not provenance |
 | Build or reuse in that checkout | `ensure_local_linux_workspace_effigy_artifact`: a current artifact is reused untouched; a missing or stale one runs `workspace:linux:artifact` once under a per-target lock and requires `linux_workspace_artifact_produced_since` plus a digest change |
-| The output identities the route reads | `bind_verified_linux_workspace_effigy_artifact` writes `<artifact>.active-version` and `<artifact>.install-identity`; `workspace_artifact_receipt` reads the `key=value` `<artifact>.receipt` (`release_triple`, `sha256`); `linux_workspace_effigy_artifact_is_current` is mtime-independent |
+| The output identities the route reads | `bind_verified_linux_workspace_effigy_artifact` writes `<artifact>.active-version` and `<artifact>.install-identity`; `workspace_artifact_receipt` reads the `key=value` `<artifact>.receipt` (`release_triple`, `sha256`); `linux_workspace_artifact_receipt`'s writer strips the `sha256:` prefix, so the recorded digest is bare hex, and `digest_matches` compares it trimmed and case-insensitively; `linux_workspace_effigy_artifact_is_current` is mtime-independent |
 | Publication re-verifies inside the activation | `verify_guest_artifact_until` (version sidecar = host version, bytes digest = receipt `sha256`) then `publish_workspace_guest_in` → `check_acquired_artifact` → `prepare_workspace_guest`; the `GuestPublicationReceipt` records `artifact_digest`. The route observes these as postconditions and claims no publication credit |
 | The install receipt the route binds | `crates/effigy-core/src/build_info.rs`: the `<install>.active-version` stamp records `v<version>+local.<commit>[.dirty]`; `local_commit_from_identity` extracts the commit |
 
@@ -255,9 +256,10 @@ Legacy first, modern second, one occurrence, one window. Each pass, in order:
    rollback scoped exactly as below);
 6. producer output facts after, judged by production semantics:
    - the artifact must be current for the pinned candidate version, producer
-     install identity, receipt target and receipt digest
-     (`artifact_current` mirrors `verify_guest_artifact_until` +
-     `linux_workspace_effigy_artifact_is_current`);
+     install identity, receipt target and receipt digest — the digest in the
+     producer's own receipt format, bare hex, trimmed and compared
+     case-insensitively (`artifact_current` mirrors `verify_guest_artifact_until` +
+     `digest_matches` + `linux_workspace_effigy_artifact_is_current`);
    - when it was not current before, it must have been rewritten inside this
      window, as production refuses unchanged stale bytes; a stale or
      wrong-identity artifact that merely moved refuses `handoff-missing`;
@@ -278,7 +280,10 @@ manufacture a cold pass.
 effect, through `core.arm`'s `verify_more` hook with the same recording reader.
 The request carries a second block, `modern_consumer`, and the producer block
 `producer` (exact producer checkout, optional artifact digest, expected
-install-identity sidecar value). Only this route allows those keys
+install-identity sidecar value). Containment is checked component-wise: a
+producer checkout that equals or sits under either consumer refuses, so the
+producer's output can never land inside a consumer; a neighbouring name that
+merely shares a string prefix is not containment. Only this route allows those keys
 (`ROUTE_EXTRA_KEYS`). Before the evidence claim the route also derives the
 producer checkout from the pinned install path with the candidate's own
 provenance rules, refuses a producer checkout inside either consumer, and

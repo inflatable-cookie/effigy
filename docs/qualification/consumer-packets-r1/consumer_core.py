@@ -768,7 +768,9 @@ def arm(route, tails, execute, request_path, request_sha256, evidence_dir, *, tr
     consumed = manifest.get('consumed_windows', [])
     if binding is not None:
         pins = binding['pins']
-        consumed = binding['consumed_windows']
+        # The committed manifest's consumed windows stay authoritative: the
+        # binding may only add one-use burns, never reopen a spent window.
+        consumed = sorted(set(consumed) | set(binding['consumed_windows']))
     require_route_frozen(pins, route)
     request, digest = load_request(request_path, request_sha256)
     validate_request_shape(request, route)

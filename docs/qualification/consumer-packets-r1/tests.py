@@ -1283,9 +1283,10 @@ def uuid_like():
     return hashlib.sha256(os.urandom(16)).hexdigest()[:16]
 
 
-def producer_script():
+def producer_script(base=None):
     """A producer checkout instance: the pinned install at its provenance shape."""
-    base = ROOT / 'producers' / uuid_like()
+    if base is None:
+        base = ROOT / 'producers' / uuid_like()
     script = base / '.local-install' / 'bin' / 'effigy'
     script.parent.mkdir(parents=True, exist_ok=True)
     script.write_bytes(ACQ_PAYLOAD)
@@ -1397,13 +1398,18 @@ def acquisition_git(manifest, calls=None, legacy_head=HEAD, modern_head=HEAD2, m
 
 def write_artifact(producer, request, *, active_version=None, install_identity=None,
                    receipt_triple=acq.TARGET, receipt_sha256=None, payload=ARTIFACT_BYTES):
-    """What the ordinary producer leaves beside its output when it rebuilds."""
+    """What the ordinary producer leaves beside its output when it rebuilds.
+
+    The receipt is production-shaped: `write_workspace_artifact_receipt` strips
+    the `sha256:` prefix, so the recorded digest is bare hex.
+    """
     path = Path(producer) / '.effigy' / 'linux-release' / 'artifacts' / acq.ARTIFACT_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(payload)
     digest = receipt_sha256 if receipt_sha256 is not None else core.sha256_file(path)
+    hex_digest = str(digest).split(':', 1)[1] if ':' in str(digest) else str(digest)
     (Path(str(path) + acq.RECEIPT_SUFFIX)
-     .write_text('release_triple=%s\nsha256=%s\nbuild_kind=fixture\n' % (receipt_triple, digest)))
+     .write_text('release_triple=%s\nsha256=%s\nbuild_kind=fixture\n' % (receipt_triple, hex_digest)))
     version = active_version if active_version is not None \
         else request['candidate']['install_identity']['version']
     identity = install_identity if install_identity is not None \
@@ -1774,18 +1780,30 @@ def _():
     write_artifact(producer, request)
     assert acq.artifact_current(acq.artifact_facts(producer), request) is True
     good = acq.artifact_facts(producer)
+    payload_hex = good['sha256'].split(':', 1)[1]
+    assert good['receipt_sha256'] == payload_hex, \
+        'the production receipt records bare hex, not sha256:<hex>'
     wrong_triple = dict(good, receipt_release_triple='x86_64-unknown-linux-gnu')
-    wrong_digest = dict(good, receipt_sha256='sha256:' + '0' * 64)
+    wrong_digest = dict(good, receipt_sha256='0' * 64)
+    prefixed = dict(good, receipt_sha256='sha256:' + payload_hex)
+    upper = dict(good, receipt_sha256=payload_hex.upper())
     wrong_version = dict(good, active_version='v0.0.0+local.0000000')
     wrong_identity = dict(good, install_identity='local:v0.0.0:1:1')
     wrong_bytes = dict(good, sha256='sha256:' + '1' * 64)
-    for facts in (wrong_triple, wrong_digest, wrong_version, wrong_identity, wrong_bytes):
+    for facts in (wrong_triple, wrong_digest, prefixed, wrong_version, wrong_identity,
+                  wrong_bytes):
         assert acq.artifact_current(facts, request) is False, facts
+    assert acq.artifact_current(upper, request) is True, \
+        'production compares recorded hex case-insensitively'
     request['producer']['artifact_sha256'] = 'sha256:' + '2' * 64
     assert acq.artifact_current(good, request) is False, 'an unpinned digest is not the pin'
     assert acq.artifact_current(
-        dict(good, sha256='sha256:' + '2' * 64, receipt_sha256='sha256:' + '2' * 64),
+        dict(good, sha256='sha256:' + '2' * 64, receipt_sha256='2' * 64),
         request) is True
+    assert acq.digest_matches('0' * 64, 'sha256:' + '0' * 64) is True
+    assert acq.digest_matches('sha256:' + '0' * 64, 'sha256:' + '0' * 64) is False
+    assert acq.digest_matches(None, 'sha256:' + '0' * 64) is False
+    assert acq.digest_matches('', 'sha256:' + '0' * 64) is False
 
 
 @check('ordinary acquisition: stale input needs a rewrite, warm reuse needs none')
@@ -1951,6 +1969,39 @@ def _():
         assert engine.calls == [], name
 
 
+@check('ordinary acquisition: a producer checkout nested inside a consumer refuses')
+def _():
+    """Containment, not equality: a producer under a consumer puts its output in it."""
+    manifest = acquisition_manifest()
+    for name, checkout in (('legacy', checkout_of(ACQ_NAMES['legacy'])),
+                           ('modern', checkout_of(ACQ_NAMES['modern']))):
+        nested = Path(checkout) / ('nested-producer-' + name)
+        request = acquisition_request(manifest, ACQ_INTENT, script=producer_script(nested))
+        assert acq.path_within(request['producer']['checkout'], checkout), 'fixture must nest'
+        engine = AcquisitionEngine(manifest, request, produce=[])
+        acq_refusal('acq-producer-nested-' + name, 'producer-mismatch', manifest=manifest,
+                    request=request, engine=engine)
+        assert not (ROOT / ('acq-producer-nested-' + name) / 'evidence').exists()
+        assert engine.calls == [], name
+
+
+@check('ordinary acquisition: containment is component-wise, not a string prefix')
+def _():
+    """A neighbouring name that shares a string prefix is not containment."""
+    manifest = acquisition_manifest()
+    neighbour = ROOT / 'checkouts' / 'acquisition-legacy-x'
+    neighbour.mkdir(parents=True, exist_ok=True)
+    request = acquisition_request(manifest, ACQ_INTENT,
+                                  script=producer_script(ROOT / 'checkouts'
+                                                         / 'acquisition-legacy-y'
+                                                         / 'producer'))
+    engine = AcquisitionEngine(manifest, request)
+    result, evidence = run_entry(acq, acq.ROUTE, request, 'acq-producer-neighbour',
+                                 engine=engine, manifest=manifest,
+                                 git=acquisition_git(manifest))
+    assert result['status'] == 'passed', result
+
+
 @check('ordinary acquisition: a modern producer pin whose checkout is the modern consumer refuses')
 def _():
     manifest = acquisition_manifest()
@@ -1981,7 +2032,7 @@ def _():
     engine = AcquisitionEngine(manifest, request, stamp={'receipt_triple': 'x86_64-unknown-linux-gnu'})
     acq_refusal('acq-wrong-receipt', 'handoff-missing', manifest=manifest, request=request,
                 engine=engine)
-    engine = AcquisitionEngine(manifest, request, stamp={'receipt_sha256': 'sha256:' + '0' * 64})
+    engine = AcquisitionEngine(manifest, request, stamp={'receipt_sha256': '0' * 64})
     acq_refusal('acq-wrong-receipt-digest', 'handoff-missing', manifest=manifest,
                 request=request, engine=engine)
 
@@ -2050,6 +2101,41 @@ def _():
     expect_code('binding-pins', lambda: acq.environments(pins))
     pins['environments'] = {'legacy': 'dev', 'modern': 'stack', 'extra': 'x'}
     expect_code('binding-pins', lambda: acq.environments(pins))
+
+
+@check('ordinary acquisition: the committed manifest keeps its consumed windows under a binding')
+def _():
+    """One use survives an external binding: the binding may burn, never reopen."""
+    manifest = acquisition_manifest()
+    manifest['consumed_windows'] = ['fixture-window-acquisition']
+    request = acquisition_request(manifest, ACQ_INTENT)
+    folder = ROOT / 'acq-oneuse-binding'
+    folder.mkdir(parents=True, exist_ok=True)
+    pins = {key: manifest['routes'][acq.ROUTE][key] for key in sorted(acq.PIN_KEYS)}
+    doc = {'schema': core.BINDING_SCHEMA, 'route': acq.ROUTE, 'pins': pins,
+           'consumed_windows': []}
+    raw = json.dumps(doc, sort_keys=True).encode()
+    (folder / 'binding.json').write_bytes(raw)
+    req_raw = json.dumps(request, sort_keys=True).encode()
+    (folder / 'request.json').write_bytes(req_raw)
+    request_sha = core.sha256_bytes(req_raw)
+
+    def run_binding():
+        argv = [acq.ROUTE, '--request', str(folder / 'request.json'),
+                '--sha256', request_sha,
+                '--evidence-dir', str(folder / 'evidence'),
+                '--binding', str(folder / 'binding.json'),
+                '--binding-sha256', core.sha256_bytes((folder / 'binding.json').read_bytes())]
+        return proof_entry.run(argv, manifest=manifest, roots=(str(ROOT),),
+                               transport=forbidden_transport, now_ns=NOW,
+                               git=acquisition_git(manifest))
+
+    expect_code('window-consumed', run_binding)
+    assert not (folder / 'evidence').exists()
+    # The binding adding the same burn changes nothing.
+    doc = dict(doc, consumed_windows=['fixture-window-acquisition'])
+    (folder / 'binding.json').write_bytes(json.dumps(doc, sort_keys=True).encode())
+    expect_code('window-consumed', run_binding)
 
 
 @check('ordinary acquisition: the window is one use, bounded, and unexpired')

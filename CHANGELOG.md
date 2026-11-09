@@ -20,7 +20,11 @@ During v0.x, MINOR bumps may include breaking changes.
   rules and required to sit outside both consumer checkouts — and judges the
   artifact by production currency semantics (receipt target and digest,
   `.active-version` and `.install-identity` sidecars, the installed binary's
-  genuine `+local.` install receipt) instead of mtime plus `release_triple`.
+  genuine `+local.` install receipt) instead of mtime plus `release_triple`;
+  the receipt digest is read in the producer's own format (bare hex, trimmed,
+  case-insensitive), producer containment is checked component-wise so a
+  nested producer checkout refuses, and an external binding may add consumed
+  windows but never reopen one the committed manifest already burned.
   Legacy cold acquisition still requires an in-window rewrite of a naturally
   stale artifact; modern's verified warm reuse is accepted; wrong candidate,
   identity, target, receipt or publication refuses. Each pass runs its own
