@@ -2704,12 +2704,14 @@ def quota_runner_ok(row, stage, monitor):
 def execute(facts, runner=None, observe_identity=None, observe_terminal=None, wall_clock=None, clock=None,
             budget=18000, stage_root=None, stop_unit=None, quota_runner=None):
     identity = facts['identity']
-    return setup.execute_plan(facts, runner or ok_runner(),
-                              observe_identity or (lambda row: dict(identity)),
-                              observe_terminal or (lambda row: {'show_text': show_text()}),
-                              stage_root or tmpdir('plan-stage-'), clock or (lambda: 0.0),
-                              wall_clock or (lambda: NOW), budget, stop_unit=stop_unit or (lambda unit: 'exited'),
-                              quota_admin=quota_runner or quota_runner_ok)
+    # This seam lets unrelated executor controls reach their boundary; it is never a native receipt.
+    with patch.object(allocation, 'inspect_activation_completion', return_value=None):
+        return setup.execute_plan(facts, runner or ok_runner(),
+                                  observe_identity or (lambda row: dict(identity)),
+                                  observe_terminal or (lambda row: {'show_text': show_text()}),
+                                  stage_root or tmpdir('plan-stage-'), clock or (lambda: 0.0),
+                                  wall_clock or (lambda: NOW), budget, stop_unit=stop_unit or (lambda unit: 'exited'),
+                                  quota_admin=quota_runner or quota_runner_ok)
 
 
 # External anchors for the plan. In production the proof-entry activation (#694) binds them; the production

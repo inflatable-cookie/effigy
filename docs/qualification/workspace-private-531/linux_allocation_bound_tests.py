@@ -13,8 +13,10 @@ import json
 import os
 import shutil
 import struct
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
@@ -23,6 +25,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_allocation_bound as bound
+import linux_rescue_input as rescue
+import linux_rescue_input_proof as rescue_proof
 import linux_allocation_probe as probe
 import linux_supervisor as supervisor
 import linux_setup as setup
@@ -234,7 +238,8 @@ class VerifierChecks(unittest.TestCase):
 
     def test_production_admits_the_mechanism_but_still_requires_a_complete_witness(self):
         with patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({MECH})):
-            self.assertEqual(setup.verify_hard_limit(render(), LIMIT, None, facts())['mechanism'], MECH)
+            with self.assertRaisesRegex(Refusal, 'activation completion'):
+                setup.verify_hard_limit(render(), LIMIT, None, facts())
             incomplete = {k: v for k, v in render().items() if k != 'enforcement'}
             with self.assertRaises(Refusal):
                 setup.verify_hard_limit(incomplete, LIMIT, None, facts())
@@ -728,6 +733,13 @@ class ProductionPathChecks(unittest.TestCase):
                                                                       writer_tools=None))}
         self.assertTrue(any('writer tool custody' in m for m in without['E9a']['missing']))
 
+    def test_completed_label_cannot_credit_quota(self):
+        witness = render(tree_root=setup.BASE, boot=lst.BOOT, tree_boot=lst.BOOT, entries=ENTRIES)
+        live = self.fx.facts(hard_limit=witness, allocation_entries={'.', 'inputs', 'inputs/archive.tar'},
+                             activation={'completed': True})
+        reason = setup._hard_limit_reason(live, {'limit_bytes': LIMIT})
+        self.assertIn('activation completion', reason)
+
     def test_missing_exact_entries_refuses_the_prebound_hard_limit_path(self):
         witness = render(tree_root=setup.BASE, boot=lst.BOOT, tree_boot=lst.BOOT)
         with patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({MECH})):
@@ -1064,13 +1076,12 @@ def activation_records(count=None):
     for index, step in enumerate(bound.activation_plan()[:count]):
         name = step['name']
         record = {'name': name, 'disposition': 'exited', 'waited_exit': 0,
-                  'boot_id': RESCUE_BOOT if name in bound.RESCUE_BOUNDARIES or name in
-                  ('snapshot', 'quiesce') else BOOT_ID}
+                  'boot_id': None if name == 'snapshot' else (RESCUE_BOOT if name in bound.RESCUE_BOUNDARIES else (BOOT_ID if name == 'quiesce' else OTHER_BOOT))}
         if name == 'quiesce':
-            record.update(rows_idle=True, writers_stopped=True)
+            record.update(rows_idle=True, writers_stopped=True, vm_id=bound.ACTIVATION_VM, preboot_id=BOOT_ID)
         elif name == 'snapshot':
             record.update(snapshot_id='{4d475daf-8aa1-497a-9a38-355f21fcd867}', space_bytes=64 << 30,
-                          quiescent=True)
+                          quiescent=True, vm_id=bound.ACTIVATION_VM, preboot_id=BOOT_ID)
         elif name == 'rescue-boot':
             record.update(medium_sha256=bound.ACTIVATION_MEDIUM['iso_sha256'],
                           tools={'tune2fs': bound.OFFLINE_TOOL_VERSION, 'e2fsck': bound.OFFLINE_TOOL_VERSION},
@@ -1111,6 +1122,7 @@ class ActivationRouteChecks(unittest.TestCase):
     def test_the_recorded_medium_ships_the_source_qualified_toolset(self):
         self.assertEqual(bound.ACTIVATION_MEDIUM['e2fsprogs'].split('-')[0], bound.OFFLINE_TOOL_VERSION)
         self.assertEqual(len(bound.ACTIVATION_MEDIUM['iso_sha256']), 64)
+        self.assertEqual(bound.ACTIVATION_MEDIUM['url'], rescue.URL)
         self.assertGreater(bound.ACTIVATION_MEDIUM['iso_bytes'], 2 << 30)
 
     def test_a_complete_sequence_is_accepted_and_names_the_next_boundary(self):
@@ -1202,6 +1214,64 @@ class ActivationRouteChecks(unittest.TestCase):
                 with self.assertRaises(Refusal):
                     bound.inspect_activation_progress(records)
 
+    def test_pre_rescue_and_returned_boot_continuity(self):
+        for name, changes in (
+            ('quiesce', {'vm_id': 'other'}),
+            ('quiesce', {'preboot_id': OTHER_BOOT}),
+            ('snapshot', {'vm_id': 'other'}),
+            ('snapshot', {'preboot_id': OTHER_BOOT}),
+            ('snapshot', {'boot_id': BOOT_ID}),
+            ('rescue-boot', {'boot_id': BOOT_ID}),
+            ('return-boot', {'boot_id': BOOT_ID}),
+            ('quota', {'boot_id': BOOT_ID}),
+            ('enforce', {'boot_id': BOOT_ID}),
+        ):
+            with self.subTest(name=name, changes=changes):
+                records = activation_records()
+                next(item for item in records if item['name'] == name).update(changes)
+                with self.assertRaises(Refusal):
+                    bound.inspect_activation_progress(records)
+
+    def test_completion_requires_full_sequence_and_offline_originals_and_still_holds_accounting(self):
+        from linux_diagnostic_proof import PRLCTL, PRLCTL_SHA256
+        empty = hashlib.sha256(b'').hexdigest()
+        originals = [{'name': name, 'argv': argv, 'boot_id': RESCUE_BOOT, 'stdout': '', 'stderr': '',
+                      'stdout_sha256': empty, 'stderr_sha256': empty, 'exit': 0}
+                     for name, argv in bound.offline_operation_plan()]
+        records = activation_records()
+        def source(argv, text):
+            return {'argv': argv, 'tool_sha256': PRLCTL_SHA256, 'stdout': text, 'stderr': '',
+                    'stdout_sha256': hashlib.sha256(text.encode()).hexdigest(),
+                    'stderr_sha256': empty, 'exit': 0}
+        def vm(state):
+            return json.dumps([{'ID': bound.ACTIVATION_VM, 'State': state,
+                                'Home': setup.PVM_HOME + '/', 'Home path': setup.PVM_HOME + '/config.pvs',
+                                'Hardware': {'hdd0': {'image': setup.PVM_HOME + '/harddisk1.hdd',
+                                                     'enabled': True}}}])
+        list_argv = [PRLCTL, 'list', '--info', bound.ACTIVATION_VM, '--json']
+        boot_argv = [PRLCTL, 'exec', bound.ACTIVATION_VM, '/bin/cat', '/proc/sys/kernel/random/boot_id']
+        pre = {'running_vm': source(list_argv, vm('running')), 'boot': source(boot_argv, BOOT_ID + '\n'),
+               'stopped_vm': source(list_argv, vm('stopped'))}
+        def completion(recs, off=originals, before=pre):
+            return bound.inspect_activation_completion({'records': recs, 'offline_originals': off,
+                                                         'pre_originals': before})
+        with self.assertRaisesRegex(Refusal, 'accounting'):
+            completion(records)
+        for count in range(len(records)):
+            with self.subTest(count=count), self.assertRaises(Refusal):
+                completion(records[:count])
+        for bad in (originals[:-1], [dict(originals[0], argv=['wrong'])] + originals[1:],
+                    [dict(originals[0], stdout='changed')] + originals[1:]):
+            with self.assertRaises(Refusal):
+                completion(records, bad)
+        for before in (dict(pre, boot=source(boot_argv, OTHER_BOOT + '\n')),
+                       dict(pre, stopped_vm=source(list_argv, vm('running'))),
+                       dict(pre, running_vm=dict(pre['running_vm'], tool_sha256='0' * 64))):
+            with self.assertRaises(Refusal):
+                completion(records, before=before)
+        with self.assertRaises(Refusal):
+            completion(records + records[:1])
+
     def test_a_boundary_with_missing_or_extra_facts_refuses(self):
         records = activation_records()
         del records[0]['rows_idle']
@@ -1214,6 +1284,161 @@ class ActivationRouteChecks(unittest.TestCase):
         with self.assertRaises(Refusal):
             bound.inspect_activation_progress(activation_records() + activation_records(1))
 
+
+class RescueInputChecks(unittest.TestCase):
+    def test_unarmed_and_changed_url_refuse_without_transport(self):
+        result = subprocess.run([sys.executable, '-I', '-B', rescue.__file__], capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(b'ordinary rescue input execution is unarmed', result.stderr)
+        with self.assertRaises(rescue.Refusal):
+            rescue.main()
+        for url in ('https://example.com/', rescue.URL + '?other', rescue.URL.replace('https:', 'http:')):
+            with self.subTest(url=url), self.assertRaises(rescue.Refusal):
+                rescue.open_fixed_https(url)
+        with self.assertRaises(rescue.Refusal):
+            rescue.open_fixed_https(rescue.URL, {'Authorization': 'x'})
+
+    def test_proof_entry_is_unarmed_and_checks_full_signature(self):
+        result = subprocess.run([sys.executable, '-I', '-B', rescue_proof.__file__],
+                                capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(b'ordinary execution is unarmed', result.stderr)
+        status = ('[GNUPG:] VALIDSIG ' + rescue.FINGERPRINT + ' 2026-08-27 1 0 4 0 1 10 00 '
+                  + rescue.FINGERPRINT + '\n')
+        good = {'disposition': 'exited', 'waited_exit': 0}
+        self.assertTrue(rescue_proof.verified_signature(good, status))
+        for bad in (status.replace(rescue.FINGERPRINT, 'D94AA3F0EFE21092'),
+                    status.replace(rescue.FINGERPRINT, 'A' * 40), '', status + status):
+            self.assertFalse(rescue_proof.verified_signature(good, bad))
+        self.assertFalse(rescue_proof.verified_signature(dict(good, waited_exit=1), status))
+        self.assertFalse(rescue_proof.verified_signature(dict(good, waited_exit=True), status))
+        with patch.object(rescue_proof, 'GPG', '/missing/effigy-gpg'):
+            with self.assertRaisesRegex(rescue.Refusal, 'verifier unavailable'):
+                rescue_proof.source_inputs()
+
+    def test_forged_metadata_and_expired_checkpoint_refuse(self):
+        pins = dict(rescue_proof.META_HASHES, SHA256SUMS='0' * 64)
+        with patch.object(rescue_proof, 'META_HASHES', pins), self.assertRaisesRegex(rescue.Refusal, 'metadata'):
+            rescue_proof.source_inputs()
+        with patch.object(rescue.inputs, 'fetch_pinned_https') as fetch:
+            def expired():
+                raise rescue.Refusal('deadline expired')
+            with self.assertRaisesRegex(rescue.Refusal, 'deadline'):
+                rescue.fetch_fixed('/fixture/' + rescue.NAME, checkpoint=expired)
+            fetch.assert_not_called()
+
+    def test_proof_plan_binds_fixture_identity_and_refuses_collisions(self):
+        fixture = tempfile.mkdtemp(prefix='rescue-fixture-')
+        evidence = tempfile.mkdtemp(prefix='rescue-evidence-')
+        with patch.object(rescue_proof, 'source_inputs', return_value={'fixture-only': '0' * 64}):
+            plan = rescue_proof.plan(fixture, evidence, 'a' * 40, 'b' * 64)
+        self.assertEqual(plan['destination'], fixture + '/' + rescue.NAME)
+        self.assertEqual((plan['bytes'], plan['sha256'], plan['duration_seconds']),
+                         (rescue.SIZE, rescue.SHA256, 1800))
+        # A plan made with injected fixture inputs cannot pass the uninjected binding comparison.
+        with patch.object(rescue_proof, 'source_inputs', return_value={'actual-input': '1' * 64}):
+            with self.assertRaisesRegex(rescue.Refusal, 'bindings drifted'):
+                rescue_proof.execute(plan, evidence + '/request', 'c' * 64, time.monotonic() + 60)
+        self.assertEqual(os.listdir(evidence), [])
+        Path(fixture, 'foreign').write_bytes(b'x')
+        with self.assertRaises(rescue.Refusal):
+            rescue_proof.plan(fixture, evidence, 'a' * 40, 'b' * 64)
+        with self.assertRaises(rescue.Refusal):
+            rescue_proof.plan(evidence, evidence, 'a' * 40, 'b' * 64)
+
+    def test_proof_dispatch_uses_fixed_commands_and_failed_fixture_cannot_issue_receipt(self):
+        fixture = tempfile.mkdtemp(prefix='rescue-dispatch-fixture-')
+        evidence = tempfile.mkdtemp(prefix='rescue-dispatch-evidence-')
+        sources = {'fixture-source': '0' * 64}
+        calls = []
+        status = ('[GNUPG:] VALIDSIG ' + rescue.FINGERPRINT + ' 2026-08-27 1 0 4 0 1 10 00 '
+                  + rescue.FINGERPRINT + '\n')
+        def fake_stage(root, argv, *args, **kwargs):
+            calls.append(argv)
+            if len(calls) == 1:
+                Path(argv[7]).write_bytes(b'fixture keyring')
+            elif len(calls) == 2:
+                Path(root, 'stdout').write_text(status)
+            else:
+                return {'disposition': 'failed', 'waited_exit': 1}
+            return {'disposition': 'exited', 'waited_exit': 0}
+        def fake_git(argv, **kwargs):
+            return b'a' * 40 + b'\n' if 'rev-parse' in argv else b''
+        with patch.object(rescue_proof, 'source_inputs', return_value=sources), \
+                patch.object(rescue_proof.stage, 'run_stage', side_effect=fake_stage), \
+                patch.object(rescue_proof.subprocess, 'check_output', side_effect=fake_git):
+            request = rescue_proof.plan(fixture, evidence, 'a' * 40, 'b' * 64)
+            with self.assertRaisesRegex(rescue.Refusal, 'acquisition failed'):
+                rescue_proof.execute(request, evidence + '/request', 'c' * 64, time.monotonic() + 60)
+        self.assertEqual(calls[0][:3], [rescue_proof.GPG, '--no-options', '--homedir'])
+        self.assertEqual(calls[1][:4], [rescue_proof.GPGV, '--keyring', calls[0][7], '--status-fd'])
+        self.assertEqual(calls[2][:5], [request['python'], '-I', '-B', '-c', rescue_proof.CHILD])
+        self.assertEqual(calls[2][6], request['destination'])
+        occurrence = Path(evidence, 'rescue-' + 'b' * 64)
+        self.assertFalse((occurrence / 'result.json').exists())
+        self.assertEqual(os.listdir(fixture), [])
+
+    def test_bounded_transport_refuses_redirect_encoding_truncation_and_overflow(self):
+        data = b'fixture'
+        digest = hashlib.sha256(data).hexdigest()
+        root = Path(tempfile.mkdtemp(prefix='rescue-input-'))
+
+        class Response(io.BytesIO):
+            def __init__(self, body, status, headers):
+                super().__init__(body)
+                self.status, self.headers = status, headers
+            def getheader(self, key):
+                return self.headers.get(key)
+
+        class Connection:
+            def close(self):
+                pass
+
+        cases = ((302, {'Content-Length': str(len(data))}, data),
+                 (200, {'Content-Length': str(len(data)), 'Content-Encoding': 'gzip'}, data),
+                 (200, {'Content-Length': '0'}, data),
+                 (200, {'Content-Length': str(len(data))}, data[:-1]),
+                 (200, {'Content-Length': str(len(data))}, data + b'x'))
+        for index, (status, headers, body) in enumerate(cases):
+            with self.subTest(index=index), self.assertRaises(rescue.Refusal):
+                rescue.inputs.fetch_pinned_https('fixture', str(root / str(index)), len(data), digest,
+                    opener=lambda url, headers, response=Response(body, status, headers): (Connection(), response))
+        with self.assertRaises(rescue.Refusal):
+            rescue.inputs.fetch_pinned_https('fixture', str(root / 'collision'), 0, digest,
+                opener=lambda url, headers: (Connection(), Response(b'', 200, {'Content-Length': '0'})))
+        partial = root / 'partial'
+        with self.assertRaises(rescue.Refusal):
+            rescue.inputs.fetch_pinned_https('fixture', str(partial), len(data), digest,
+                opener=lambda url, headers: (Connection(), Response(data[:-1], 200, {'Content-Length': str(len(data))})))
+        self.assertEqual(partial.read_bytes(), data[:-1])
+        with self.assertRaises(rescue.Refusal):
+            rescue.inputs.fetch_pinned_https('fixture', str(partial), len(data), digest,
+                opener=lambda url, headers: (Connection(), Response(data, 200, {'Content-Length': str(len(data))})))
+        wrong_hash = root / 'wrong-hash'
+        with self.assertRaises(rescue.Refusal):
+            rescue.inputs.fetch_pinned_https('fixture', str(wrong_hash), len(data), '0' * 64,
+                opener=lambda url, headers: (Connection(), Response(data, 200, {'Content-Length': str(len(data))})))
+        self.assertEqual(wrong_hash.read_bytes(), data)
+
+    def test_existing_image_refuses_before_opening_transport(self):
+        root = Path(tempfile.mkdtemp(prefix='rescue-collision-'))
+        destination = root / rescue.NAME
+        destination.write_bytes(b'existing')
+        with patch.object(rescue.inputs, 'fetch_pinned_https') as fetch:
+            with self.assertRaisesRegex(rescue.Refusal, 'before network'):
+                rescue.fetch_fixed(str(destination), checkpoint=lambda: None)
+            fetch.assert_not_called()
+        self.assertEqual(destination.read_bytes(), b'existing')
+
+    def test_fixed_fetch_uses_exact_pins_and_rejects_invalid_destination(self):
+        with self.assertRaises(rescue.Refusal):
+            rescue.fetch_fixed('/not-canonical/other', checkpoint=lambda: None)
+        with patch.object(rescue.inputs, 'fetch_pinned_https', return_value={'fixture': True}) as fetch:
+            result = rescue.fetch_fixed('/fixture/' + rescue.NAME, checkpoint=lambda: None)
+        self.assertEqual(result, {'fixture': True})
+        args, kwargs = fetch.call_args
+        self.assertEqual(args, (rescue.URL, '/fixture/' + rescue.NAME, rescue.SIZE, rescue.SHA256))
+        self.assertIs(kwargs['opener'], rescue.open_fixed_https)
 
 if __name__ == '__main__':
     unittest.main()

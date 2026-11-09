@@ -562,7 +562,7 @@ in `linux_allocation_bound.ACTIVATION_MEDIUM`):
 | Product | `ubuntu-26.04.1-live-server-arm64.iso` (aarch64, EFI-bootable, casper 26.04.2 + subiquity snap) | Vended by the Ubuntu release metadata |
 | ISO SHA-256 | `af78753c94b924c85c4964c670692a853f7c80299a4064e317edad95462e3168` | Vended in the signed `SHA256SUMS` (SHA-256 `0daa2484…`, 2691 bytes) |
 | ISO size | 3,076,861,952 bytes (2.87 GiB) | Vended `Content-Length`; **exceeds the earlier prospective 2 GiB acquisition ceiling** |
-| Publisher signature | detached `SHA256SUMS.gpg`, SHA-256 `bfa9b6e8…`, 833 bytes, signature packet key id `D94AA3F0EFE21092`, digest algo 10 | Recorded. Full-fingerprint verification needs the publisher key, which is **not** imported globally here; it is a separate bounded step |
+| Publisher signature | detached `SHA256SUMS.gpg`, SHA-256 `bfa9b6e8…`, 833 bytes, signature packet key id `D94AA3F0EFE21092`, digest algo 10 | Recorded. Verified against the full Ubuntu publisher fingerprint in an owned private keyring; see below |
 | Tools | `e2fsprogs 1.47.2-3ubuntu4` (ship `e2fsck`/`tune2fs`) | Vended in the release manifest (SHA-256 `ad43a500…`), and **the same upstream release as the pinned v1.47.2 sources** — the version gate the offline plan requires |
 | Attachment | `set <vm> --device-set cdrom0 --image <absolute iso>`, `--device-connect cdrom0` | Vendor CLI help text of the installed Desktop 27.1.0 build (`prlctl`, already pinned to `2f61a1c6…`) |
 | Boot | `set <vm> --device-bootorder "cdrom0 hdd0"`, `start <vm>`; `--select-boot-device on` and `--bios-type efi-arm64` exist for the same purpose | Same vendor CLI help text |
@@ -578,6 +578,31 @@ image, or a planner decision to leave the native root unchanged. No `prlctl`, SD
 command is invented beyond the help text above, and no boot, attach, snapshot or console action runs
 here.
 
+**Publisher verification (2026-11-09).** The original release metadata and detached signature,
+manifest, public key and verifier streams are retained in `ubuntu-2604-metadata/`. The canonical
+metadata endpoint is `https://cdimage.ubuntu.com/ubuntu/releases/26.04/release/`: the earlier path
+redirects there. The signed sums, signature and manifest match the hashes above. The Ubuntu
+[image verification documentation](https://documentation.ubuntu.com/security/software-integrity/image-verification/)
+publishes the full fingerprint `843938DF228D22F7B3742BC0D94AA3F0EFE21092`. The public key fetched
+from `keyserver.ubuntu.com` has SHA-256 `337fa0013bb263aebcef98fa7b7af18e186d89565a5019f7295beb42ebee5290`.
+GnuPG 2.5.24 imported it into an owned private keyring and `gpgv` verified the detached signature,
+returning zero and the full fingerprint in `VALIDSIG`. This verifies the signed checksum metadata;
+it does not verify ISO bytes, rescue tools or a boot. The canonical ISO endpoint reports 3,076,861,952
+bytes. Future acquisition is limited to one exact pinned file on an exclusive removable 4 GiB
+fixture and an absolute 1,800 seconds including cleanup. This changes no native row or Stage2 bound.
+No payload was fetched.
+`linux_rescue_input.py` fixes the direct, non-redirecting URL and bounded stream primitive; its
+ordinary entry refuses. The `qualification:linux:rescue-input-proof-only` selector is the fixed
+future Nucleus entry. It requires a merged pinned head and hash-pinned request, holds and rechecks
+the exclusive owned fixture's canonical Stash volume/device/inode/uid/mode identity, consumes an
+exclusive request-bound claim, verifies the pinned metadata with the pinned private-keyring tools,
+and supervises the one bounded stream under the 1,800-second deadline including cleanup. The
+4 GiB is a byte budget, not a kernel quota: the one image is capped while received and the fixture
+must start empty. The parent must independently verify that Stash is removable and pin the actual
+fixture and evidence roots in the Nucleus request. Source, path and environment alone cannot grant
+the external Nucleus launch. An interrupted fetch retains partial bytes and cannot produce a
+successful receipt. This source preparation acquired no image and changed no VM.
+
 **Offline activation, source-qualified.** For a future verified v1.47.2 toolset, the candidate offline sequence is `/sbin/e2fsck -f -n /dev/sda2`, `/sbin/tune2fs -O project -Q prjquota /dev/sda2`, `/sbin/tune2fs -E mount_opts=prjquota /dev/sda2`, then `/sbin/e2fsck -f -n /dev/sda2`, with the root unmounted throughout. The extended mount-option command replaces the whole stored option string: it is permitted only if a fresh, complete v1.47.2 `dumpe2fs` original proves that string empty; a nonempty or unknown string refuses. It does not replace the separate default mount-option bits. The [v1.47.2 superblock printer source](https://git.kernel.org/pub/scm/fs/ext2/e2fsprogs.git/plain/lib/e2p/ls.c?h=v1.47.2) has SHA-256 `692a03d286e7a2e7349af6568e3d582f74ed13b353dbf75961682fe2753f2f1d` and prints the extended option line only when nonempty. The historical 747 filesystem original, SHA-256 `27dcdc02341f7a890e32f2eb9066d0fdf3f4ed5bf8e461d968e5a21c09cc3b41`, has no such line; that is not a fresh precondition. Boot arguments or later mounts may override stored options, and the v6.1 kernel may ignore an unparseable stored string, so neither the command exit nor the string alone proves enforcement.
 
 The prospective pre-state additionally requires the complete 1,024-byte primary superblock from byte offset 1,024 of the independently bound device. Its 64 stored mount-option bytes at offsets `0x200..0x23f` must all be zero, not merely have a leading NUL; the UUID, clean state, 256-byte inode size and absent project/quota features and project quota inode must match too. The [v1.47.2 ext2fs layout](https://git.kernel.org/pub/scm/fs/ext2/e2fsprogs.git/plain/lib/ext2fs/ext2_fs.h?h=v1.47.2) has SHA-256 `6acb20acf7ae2c811b3526ff8cd38b0b79ec185bacdd9471b44645b8673b48bc`. The source-only parser checks these fields against fixture bytes; it neither reads the device nor verifies the superblock checksum, and it grants no authority. A later fixed read must retain the original and hash, authenticate the device and checksum independently, and refuse incomplete or unknown results.
@@ -585,6 +610,29 @@ The prospective pre-state additionally requires the complete 1,024-byte primary 
 The [v1.47.2 e2fsck manual source](https://git.kernel.org/pub/scm/fs/ext2/e2fsprogs.git/plain/e2fsck/e2fsck.8.in?h=v1.47.2) has SHA-256 `b1579b176628725c956bb0f6c63c6f2bf60902df43817c705bcddfe636115461` and specifies `-n` as read-only with negative answers. Proceed only after a positive waited exit of zero at each step; do not authorize repair or retry on failure or unknown. `tune2fs` can require a freshly checked filesystem, which a read-only check may not establish; if it refuses, stop rather than run repair. Even a failed or interrupted feature change may have written metadata. A separately reviewed boot configuration and positive enforcement observation remain necessary.
 
 The v1.47.2 `tune2fs` source calls quota usage computation without checking its return value. Its [quota computation source](https://git.kernel.org/pub/scm/fs/ext2/e2fsprogs.git/plain/lib/support/mkquota.c?h=v1.47.2), SHA-256 `81f9bcec788b67384b92577ac8a36738c320570e985a2aad9619883cc3caaeeb`, can return errors while opening or scanning inodes. A zero `tune2fs` exit is therefore not proof that the full quota scan succeeded. Retain complete stderr and require a separately source-qualified, independent accounting check before any limit can be credited; this check is not yet implemented.
+
+The completion consumer also checks complete hashed originals for the pinned Parallels `list --info`
+read while running and stopped and the running guest's `boot_id` read. The parsed VM identity and
+pre-rescue boot must match quiesce and snapshot; the stopped observation has no guest boot ID.
+These supplied originals remain source controls until independently authenticated one-use custody
+establishes their origin and the quiescence observation.
+
+The independent candidate `e2fsck -f -n` is not admitted as a complete accounting witness. In
+[v1.47.2 pass1.c](https://github.com/tytso/e2fsprogs/blob/v1.47.2/e2fsck/pass1.c) (SHA-256
+`c409090140ccec5b5bf60e6c4a352d0ce2a6bd461aa1e21b5f0cbd6011c87c6c`), the checker accumulates
+inode charges through `quota_data_add`. In `mkquota.c` (hash above), that function returns void and
+skips a charge if `get_dq` cannot allocate its record. The same source's
+`quota_compare_and_update` sets an inconsistency flag on a scan error but then replaces the scan
+return code with the close result before returning. The [v1.47.2 unix.c](https://github.com/tytso/e2fsprogs/blob/v1.47.2/e2fsck/unix.c)
+(SHA-256 `b13559bf6143b9efb2fa2cfe61d0c850936f4e9f0c6f019aaa8dac5e64b4ea0b`) skips quota
+comparison for invalid bitmaps or a zero quota inode, and asks `fix_problem` on a reported mismatch.
+The [problem handler](https://github.com/tytso/e2fsprogs/blob/v1.47.2/e2fsck/problem.c) (SHA-256
+`169335a934df2fa0e45b75cab24515a1e27c7c7834c14cb3f89951d074189532`) marks a refused correction
+invalid; that does not recover an unreported charge or scan failure. Thus a zero exit and complete
+streams alone cannot prove this scan complete. The completion consumer checks every boundary and
+both hashed streams and exact argv for all four offline operations, then refuses accounting credit.
+The setup hard-limit admission invokes that consumer; neither a completion label nor an EDQUOT
+observation overrides the refusal. No filesystem read or repair is run here.
 
 The fixed source-only operation plan and progress guard check exact command order, one rescue-boot identity, both hashed streams and a positive waited exit for every recorded attempt. A started step without its completion, an altered command or a changed boot refuses; no repair or retry is added. Supplied records alone do not establish that every attempt was recorded, that the root is unmounted, or that the snapshot is available. Those require independently authenticated, durable one-use custody before any future operation.
 

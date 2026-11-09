@@ -51,7 +51,7 @@ ROUTES = ('mountinfo', 'dumpe2fs', 'by-uuid', 'quota', 'tree')
 ACTIVATION_MEDIUM = {
     'publisher': 'Ubuntu cdimage release metadata for 26.04',
     'product': 'ubuntu-26.04.1-live-server-arm64.iso',
-    'url': 'https://cdimage.ubuntu.com/releases/26.04/release/ubuntu-26.04.1-live-server-arm64.iso',
+    'url': 'https://cdimage.ubuntu.com/ubuntu/releases/26.04/release/ubuntu-26.04.1-live-server-arm64.iso',
     'iso_sha256': 'af78753c94b924c85c4964c670692a853f7c80299a4064e317edad95462e3168',
     'iso_bytes': 3076861952,
     'sums_sha256': '0daa248426442137c56a5122b89bda08e5854f565a6eed26dec5622094d3e5a3',
@@ -61,11 +61,12 @@ ACTIVATION_MEDIUM = {
     'e2fsprogs': '1.47.2-3ubuntu4',
 }
 OFFLINE_TOOL_VERSION = '1.47.2'
+ACTIVATION_VM = '433c9e5b-c7b9-469f-9633-24b4addcd3b5'
 # One exact ordered activation sequence. Each boundary names the facts a record must carry; an
 # unlisted boundary (for example a restore) is not part of this route and refuses.
 ACTIVATION_BOUNDARIES = (
-    ('quiesce', 'precondition', ('rows_idle', 'writers_stopped')),
-    ('snapshot', 'operator-effect', ('snapshot_id', 'space_bytes', 'quiescent')),
+    ('quiesce', 'precondition', ('rows_idle', 'writers_stopped', 'vm_id', 'preboot_id')),
+    ('snapshot', 'operator-effect', ('snapshot_id', 'space_bytes', 'quiescent', 'vm_id', 'preboot_id')),
     ('rescue-boot', 'operator-effect', ('medium_sha256', 'tools', 'root_unmounted')),
     ('precheck', 'offline', ('root_unmounted',)),
     ('features', 'offline', ('root_unmounted',)),
@@ -749,7 +750,7 @@ def inspect_activation_progress(records):
     plan = activation_plan()
     if not isinstance(records, list) or len(records) > len(plan):
         raise Refusal('activation record set is incomplete or longer than the plan')
-    rescue_boot = normal_boot = None
+    rescue_boot = normal_boot = preboot = None
     for item, step in zip(records, plan):
         name = step['name']
         if not isinstance(item, dict) or item.get('name') != name:
@@ -764,7 +765,10 @@ def inspect_activation_progress(records):
             raise Refusal('activation boundary ' + name + ' did not complete; its outcome is unknown and '
                           'nothing resumes or restores automatically')
         boot = item['boot_id']
-        if not isinstance(boot, str) or not boot or len(boot) > 64 or boot != boot.strip():
+        if name == 'snapshot':
+            if boot is not None:
+                raise Refusal('a stopped VM has no current guest boot identity')
+        elif not isinstance(boot, str) or not BOOT_UUID.fullmatch(boot):
             raise Refusal('activation boundary ' + name + ' has no boot identity')
         if name in RESCUE_BOUNDARIES and name != 'rescue-boot':
             if boot != rescue_boot:
@@ -774,6 +778,15 @@ def inspect_activation_progress(records):
                 raise Refusal('activation left no rescue boot identity to return from')
             if boot == rescue_boot:
                 raise Refusal('activation boundary ' + name + ' is not on the returned normal boot')
+        if name in ('quiesce', 'snapshot'):
+            if item['vm_id'] != ACTIVATION_VM or not isinstance(item['preboot_id'], str) or not BOOT_UUID.fullmatch(item['preboot_id']):
+                raise Refusal('pre-rescue VM or boot identity is missing or incorrect')
+            if name == 'quiesce':
+                preboot = item['preboot_id']
+                if boot != preboot:
+                    raise Refusal('quiesce is not on the observed normal boot')
+            elif item['preboot_id'] != preboot:
+                raise Refusal('snapshot is not bound to the quiesced boot')
         if name == 'quiesce':
             if item['rows_idle'] is not True or item['writers_stopped'] is not True:
                 raise Refusal('activation started while writers were not stopped and idle')
@@ -785,6 +798,8 @@ def inspect_activation_progress(records):
             if item['quiescent'] is not True:
                 raise Refusal('the snapshot was not taken from a quiescent filesystem')
         elif name == 'rescue-boot':
+            if boot == preboot:
+                raise Refusal('rescue boot is not distinct from the pre-rescue boot')
             if item['medium_sha256'] != ACTIVATION_MEDIUM['iso_sha256']:
                 raise Refusal('the rescue boot is not the recorded medium')
             if item['tools'] != {'tune2fs': OFFLINE_TOOL_VERSION, 'e2fsck': OFFLINE_TOOL_VERSION}:
@@ -803,16 +818,24 @@ def inspect_activation_progress(records):
             if item['stored_options_empty'] is not True:
                 raise Refusal('the stored mount-option string was not proven empty before it was replaced')
         elif name == 'return-boot':
+            if boot == preboot:
+                raise Refusal('returned boot is not distinct from the pre-rescue boot')
             if item['root_mounted_rw'] is not True:
                 raise Refusal('the normal boot did not return the root mounted writable')
             normal_boot = boot
         elif name == 'project-assign':
+            if boot != normal_boot:
+                raise Refusal('project assignment is from another returned boot')
             if item['assigned'] is not True:
                 raise Refusal('the project assignment did not report an assignment')
         elif name == 'quota':
+            if boot != normal_boot:
+                raise Refusal('quota is from another returned boot')
             if item['limit_set'] is not True:
                 raise Refusal('the quota boundary did not set a row limit')
         elif name == 'enforce':
+            if boot != normal_boot:
+                raise Refusal('enforcement is from another returned boot')
             if item['phase'] != 'edquot':
                 raise Refusal('the enforcement observation is not an EDQUOT refusal')
     if normal_boot is not None and rescue_boot is not None and normal_boot == rescue_boot:
@@ -820,3 +843,76 @@ def inspect_activation_progress(records):
     return {'completed': [item['name'] for item in records],
             'next': plan[len(records)]['name'] if len(records) < len(plan) else None,
             'snapshot_id': next((item['snapshot_id'] for item in records if item['name'] == 'snapshot'), None)}
+
+
+def inspect_pre_rescue_originals(originals, records):
+    """Bind the named VM's running boot and stopped state to retained source-qualified reads.
+
+    This validates supplied bytes, not their origin; independent one-use custody is still required.
+    The stopped state carries no guest boot ID. The boot original was collected while running.
+    """
+    if not isinstance(originals, dict) or set(originals) != {'running_vm', 'boot', 'stopped_vm'}:
+        raise Refusal('pre-rescue originals are incomplete')
+    prlctl = '/Applications/Parallels Desktop.app/Contents/MacOS/prlctl'
+    tool_sha = '2f61a1c60db2d51591fb8479a248a982a81658f136f1501a94733b7a81731c57'
+    home = '/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm'
+    host_argv = [prlctl, 'list', '--info', ACTIVATION_VM, '--json']
+    boot_argv = [prlctl, 'exec', ACTIVATION_VM, '/bin/cat', '/proc/sys/kernel/random/boot_id']
+    for name, argv in (('running_vm', host_argv), ('boot', boot_argv), ('stopped_vm', host_argv)):
+        item = originals[name]
+        _offline_streams(item, name, {'argv', 'tool_sha256'})
+        if item['argv'] != argv or item['tool_sha256'] != tool_sha:
+            raise Refusal('pre-rescue original has another source or argv')
+    def unique(pairs):
+        out = {}
+        for key, value in pairs:
+            if key in out:
+                raise Refusal('pre-rescue VM original has a duplicate key')
+            out[key] = value
+        return out
+    try:
+        for name, state in (('running_vm', 'running'), ('stopped_vm', 'stopped')):
+            values = json.loads(originals[name]['stdout'], object_pairs_hook=unique)
+            if not isinstance(values, list) or len(values) != 1 or not isinstance(values[0], dict):
+                raise Refusal('pre-rescue VM original is incomplete')
+            vm = values[0]
+            if (vm.get('ID'), vm.get('State'), vm.get('Home'), vm.get('Home path')) != \
+                    (ACTIVATION_VM, state, home + '/', home + '/config.pvs'):
+                raise Refusal('pre-rescue VM identity or state differs')
+            hardware = vm.get('Hardware')
+            if not isinstance(hardware, dict):
+                raise Refusal('pre-rescue VM hardware is missing')
+            disks = [value for key, value in hardware.items() if re.fullmatch(r'hdd[0-9]+', key)]
+            if len(disks) != 1 or not isinstance(disks[0], dict) or \
+                    disks[0].get('image') != home + '/harddisk1.hdd' or disks[0].get('enabled') is not True:
+                raise Refusal('pre-rescue VM disk differs')
+        boot_text = originals['boot']['stdout']
+        if not boot_text.endswith('\n') or not BOOT_UUID.fullmatch(boot_text[:-1]):
+            raise Refusal('pre-rescue boot original is malformed')
+        boot = boot_text[:-1]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise Refusal('pre-rescue VM or boot original is invalid') from exc
+    if boot != records[0]['preboot_id'] or boot != records[1]['preboot_id']:
+        raise Refusal('pre-rescue originals do not bind the quiesced boot')
+    return {'vm_id': ACTIVATION_VM, 'preboot_id': boot}
+
+
+def inspect_activation_completion(activation):
+    """Require the whole sequence and its offline originals; no quota credit is yet possible.
+
+    These records are source controls, not proof of provenance. The independent accounting
+    premise remains unresolved: v1.47.2 quota_data_add can lose an allocation failure and
+    quota_compare_and_update overwrites the scan return with the close result, although it separately flags a scan failure.
+    """
+    if not isinstance(activation, dict) or set(activation) != {'records', 'offline_originals', 'pre_originals'}:
+        raise Refusal('activation completion requires records and offline originals')
+    records = activation['records']
+    progress = inspect_activation_progress(records)
+    if progress['next'] is not None:
+        raise Refusal('activation is only a prefix, not completion')
+    inspect_pre_rescue_originals(activation['pre_originals'], records)
+    rescue = next(item['boot_id'] for item in records if item['name'] == 'rescue-boot')
+    names = [name for name, _ in offline_operation_plan()]
+    if inspect_offline_progress(rescue, names, activation['offline_originals'])['next'] is not None:
+        raise Refusal('offline operations are incomplete')
+    raise Refusal('independent complete quota accounting is not established')

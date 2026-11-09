@@ -1,0 +1,7 @@
+gpg: keybox '/Volumes/Stash/scratch/effigy/618954ca/metadata.AfyYOpWe/keyring/pubring.kbx' created
+gpg: key D94AA3F0EFE21092: 102 signatures not checked due to missing keys
+gpg: /Volumes/Stash/scratch/effigy/618954ca/metadata.AfyYOpWe/keyring/trustdb.gpg: trustdb created
+gpg: key D94AA3F0EFE21092: public key "Ubuntu CD Image Automatic Signing Key (2012) <cdimage@ubuntu.com>" imported
+gpg: Total number processed: 1
+gpg:               imported: 1
+gpg: no ultimately trusted keys found
