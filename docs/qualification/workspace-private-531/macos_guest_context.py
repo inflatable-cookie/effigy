@@ -14,7 +14,7 @@ import stat
 import subprocess
 import sys
 
-RECIPE_SHA256 = 'c00d5bd909e65969c70dc78b16781812a98e507c20a068cd573d70a20480fa1a'
+RECIPE_SHA256 = '8f1fa681851648430543cc0d0cd3573bfef191b3809cc447846de10821af2cc2'
 SHARED = Path('/Volumes/Builds/scratch/effigy/531-colima-qualification')
 
 

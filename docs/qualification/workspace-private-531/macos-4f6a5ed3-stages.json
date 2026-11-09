@@ -9,7 +9,7 @@
     },
     "desktop_host": "unix:///Users/tom/.docker/run/docker.sock",
     "ports_archive": "https://ports.ubuntu.com/ubuntu-ports",
-    "recipe_file": "docs/qualification/workspace-private-531/runtime.Dockerfile sha256 c00d5bd909e65969c70dc78b16781812a98e507c20a068cd573d70a20480fa1a",
+    "recipe_file": "docs/qualification/workspace-private-531/runtime.Dockerfile sha256 8f1fa681851648430543cc0d0cd3573bfef191b3809cc447846de10821af2cc2",
     "route_echo": "a \"b\" 'c' $HOME {x} * ; ( ) \\ = \nd",
     "token": "eight lowercase hex, minted at C0 admission",
     "token32": "32 lowercase hex, minted at C0 admission, names the guest context via guest_dir()",
@@ -104,7 +104,7 @@
     "image_context.py": "af74047f640111907930273f7cc7a2b46eac4cb27943f0a512fccf56a1b3b322",
     "image_prepare.py": "882f9e44e7acd87e5ab94237feb7f19a452a3bbb86dd1cf208f311129847964f",
     "macos_metadata_tranche.py": "c204bfaa87c2534da05b62c5f10beda5d3196216ce40d6afffeb8dec2ef9d1a6",
-    "macos_preparation.py": "7afca631e525ef1f48d8b57f07aab09d0d994e8e9cc7b5d0ca344452b6331b66",
+    "macos_preparation.py": "5e638111b8294e59c829831b3a33923bbe516d6a6082df5855a5ba966f49f126",
     "guest_inputs.py": "d2d0ea050f6d8b5ede4dcf07fbd3a7be65241b5b35d88830513cd07e76361af2"
   },
   "proof_entry": {
@@ -528,7 +528,7 @@
     },
     {
       "backend": "colima",
-      "closure": "the helper receipt equals the recipe: sha c00d5bd9, 318 bytes, mode 0600, fsynced, readback equal",
+      "closure": "the helper receipt equals the recipe: sha 8f1fa681, 1827 bytes, mode 0600, fsynced, readback equal",
       "download_cap_bytes": 0,
       "failure": "missing or partial receipt refuses; the Unknown guest directory is retained and never reused",
       "id": "C3",

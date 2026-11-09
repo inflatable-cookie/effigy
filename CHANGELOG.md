@@ -1102,6 +1102,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Install the pinned offline runtime-image debs in pre-depends order: `python3-minimal` and `python3` now install
+  after their Pre-Depends are configured, a 22-package configured-state check gates the image, and D2 gets a fresh
+  private Docker config per occurrence, so the earlier plugin link is never re-entered (effigy#776).
 - Finish the source preparation for the macOS Colima and Desktop runtime checks (effigy#769). C5's disposable
   check runs through the fixed guest helper with its own cidfile and is then inspected, removed and checked absent by
   exact ID, after the guest nerdctl version is observed to be the source-qualified one. D3 and D4 are proof-entry windows bound to their predecessors, and C5 and C6 are

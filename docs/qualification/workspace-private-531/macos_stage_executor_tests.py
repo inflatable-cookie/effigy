@@ -5318,7 +5318,7 @@ class D2BuildxRouteTests(Fixture):
     def test_the_link_is_one_owned_symlink_to_the_pinned_plugin_before_the_fetch(self):
         receipt, _ = self.d2(self.d1_ref(), activation_id='act-d2-link')
         self.assertEqual(receipt['closure'], 'closed')
-        link = self.bindings['desktop_config'] + '/cli-plugins/docker-buildx'
+        link = self.d2_out('act-d2-link')['desktop_config'] + '/cli-plugins/docker-buildx'
         self.assertEqual(os.readlink(link), ex.DESKTOP_BUILDX)
         ids = [s['id'] for s in receipt['steps']]
         self.assertLess(ids.index('d2-link-buildx-plugin'), ids.index('d2-prefetch-runtime-inputs'))
@@ -5331,7 +5331,7 @@ class D2BuildxRouteTests(Fixture):
                 self.assertRaisesRegex(ex.Refusal, 'pinned sha256'):
             self.d2(self.d1_ref(), activation_id='act-d2-badsha', calls=calls)
         self.assertEqual([c[0] for c in calls], ['d2-engine-info'])
-        self.assertFalse(os.path.lexists(self.bindings['desktop_config'] + '/cli-plugins'))
+        self.assertFalse(os.path.lexists(self.d2_out('act-d2-badsha')['desktop_config'] + '/cli-plugins'))
         self.assertFalse(os.path.lexists(self.d2_out('act-d2-badsha')['desktop_input_dir']))
 
     def test_a_changed_bundle_version_refuses_before_any_fetch(self):
@@ -5347,23 +5347,59 @@ class D2BuildxRouteTests(Fixture):
                 self.assertRaisesRegex(ex.Refusal, 'invalid machine input'):
             self.d2(self.d1_ref(), activation_id='act-d2-missing', calls=calls)
         self.assertNotIn('d2-docker-build', [c[0] for c in calls])
-        self.assertFalse(os.path.lexists(self.bindings['desktop_config'] + '/cli-plugins'))
+        self.assertFalse(os.path.lexists(self.d2_out('act-d2-missing')['desktop_config'] + '/cli-plugins'))
 
-    def test_an_existing_plugin_link_is_a_collision_and_is_never_adopted(self):
-        d1 = self.d1_ref()  # D0 creates the private config directory
+    def test_the_775_plugin_link_is_preserved_and_a_fresh_occurrence_is_isolated(self):
+        d1 = self.d1_ref()  # D0 creates the original private config; the 775 run linked its plugin there
         plugins = self.bindings['desktop_config'] + '/cli-plugins'
         os.mkdir(plugins, 0o700)
         os.symlink(self.colima, plugins + '/docker-buildx')
+        receipt, _ = self.d2(d1, activation_id='act-d2-fresh')
+        self.assertEqual(receipt['closure'], 'closed')
+        self.assertEqual(os.readlink(plugins + '/docker-buildx'), self.colima)  # the earlier link is never adopted or touched
+        fresh = self.d2_out('act-d2-fresh')['desktop_config']
+        self.assertNotEqual(fresh, self.bindings['desktop_config'])
+        self.assertEqual(os.readlink(fresh + '/cli-plugins/docker-buildx'), ex.DESKTOP_BUILDX)
+
+    def test_a_pre_existing_fresh_config_refuses_before_any_step(self):
+        d1 = self.d1_ref()
+        fresh = self.d2_out('act-d2-taken')['desktop_config']
+        os.mkdir(fresh, 0o700)
+        calls = []
         with self.assertRaisesRegex(ex.Refusal, 'refuse, do not adopt'):
-            self.d2(d1, activation_id='act-d2-adopt')
-        self.assertEqual(os.readlink(plugins + '/docker-buildx'), self.colima)
+            self.d2(d1, activation_id='act-d2-taken', calls=calls)
+        self.assertEqual(calls, [])
+        self.assertEqual(os.listdir(fresh), [])
+        self.assertEqual(json.loads(Path(self.stage_dir('D2', 'act-d2-taken') + '/stage-receipt.json').read_text())['closure'], 'refused')
+
+    def test_a_symlinked_fresh_config_refuses_and_is_never_followed(self):
+        d1 = self.d1_ref()
+        fresh = self.d2_out('act-d2-alias')['desktop_config']
+        os.symlink(self.bindings['desktop_config'], fresh)  # an alias to the original config is a foreign target
+        calls = []
+        with self.assertRaises(ex.Refusal):
+            self.d2(d1, activation_id='act-d2-alias', calls=calls)
+        self.assertEqual(calls, [])
+        self.assertFalse(os.path.lexists(self.bindings['desktop_config'] + '/cli-plugins'))  # the original config is untouched
+
+    def test_d2_steps_use_the_fresh_config_and_the_plugin_checks_precede_the_build(self):
+        calls = []
+        self.d2(self.d1_ref(), activation_id='act-d2-env', calls=calls)
+        fresh = self.d2_out('act-d2-env')['desktop_config']
+        by_step = {c[0]: c for c in calls}
+        for step in ('d2-engine-info', 'd2-buildx-metadata', 'd2-docker-build', 'd2-readback'):
+            self.assertEqual(by_step[step][2]['DOCKER_CONFIG'], fresh, step)
+        self.assertEqual(by_step['d2-buildx-metadata'][1][0], fresh + '/cli-plugins/docker-buildx')
+        self.assertNotIn(self.bindings['desktop_config'], [c[2].get('DOCKER_CONFIG') for c in calls])
+        ids = [c[0] for c in calls]
+        self.assertLess(ids.index('d2-buildx-metadata'), ids.index('d2-docker-build'))
 
     def test_each_activation_derives_fresh_occurrence_paths_never_the_original_ones(self):
         first = ex.d2_occurrence(self.bindings, 'occ-a')
         second = ex.d2_occurrence(self.bindings, 'occ-b')
         self.assertEqual(first, ex.d2_occurrence(self.bindings, 'occ-a'))  # derived, not random
-        self.assertEqual(len(set(first.values()) | set(second.values())), 6)
-        originals = {self.bindings[k] for k in ('desktop_input_dir', 'desktop_context_dir', 'desktop_iidfile')}
+        self.assertEqual(len(set(first.values()) | set(second.values())), 8)
+        originals = {self.bindings[k] for k in ('desktop_config', 'desktop_input_dir', 'desktop_context_dir', 'desktop_iidfile')}
         for path in list(first.values()) + list(second.values()):
             self.assertNotIn(path, originals)
             self.assertTrue(path.startswith(self.bindings['control'] + '/'))
