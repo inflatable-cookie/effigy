@@ -1365,6 +1365,7 @@ class RescueInputChecks(unittest.TestCase):
         def fake_git(argv, **kwargs):
             return b'a' * 40 + b'\n' if 'rev-parse' in argv else b''
         with patch.object(rescue_proof, 'source_inputs', return_value=sources), \
+                patch.object(rescue_proof, 'runtime_inputs', return_value={'/fixture-source': '0' * 64}), \
                 patch.object(rescue_proof.stage, 'run_stage', side_effect=fake_stage), \
                 patch.object(rescue_proof.subprocess, 'check_output', side_effect=fake_git):
             request = rescue_proof.plan(fixture, evidence, 'a' * 40, 'b' * 64)

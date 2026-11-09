@@ -607,7 +607,7 @@ fixture and an absolute 1,800 seconds including cleanup. This changes no native 
 No payload was fetched.
 `linux_rescue_input.py` fixes the direct, non-redirecting URL and bounded stream primitive; its
 ordinary entry refuses. The `qualification:linux:rescue-input-proof-only` selector is the fixed
-future Nucleus entry. It requires a merged pinned head and hash-pinned request, holds and rechecks
+future Nucleus entry. The request records repository inputs by fixed relative role and hash, with verifier, Git and Python binaries pinned separately by canonical machine path; dispatch resolves the roles under the current checkout. This allows an identical clean checkout at the same pinned head to consume the request. Its fixed selector allows 1,920 seconds for the unchanged 1,800-second acquisition plus 120 seconds for receipt and cleanup. It requires a merged pinned head and hash-pinned request, holds and rechecks
 the exclusive owned fixture's canonical Stash volume/device/inode/uid/mode identity, consumes an
 exclusive request-bound claim, verifies the pinned metadata with the pinned private-keyring tools,
 and supervises the one bounded stream under the 1,800-second deadline including cleanup. The
