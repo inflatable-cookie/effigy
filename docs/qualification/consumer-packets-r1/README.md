@@ -82,8 +82,9 @@ present. Prior running state of `hybrid` and `stack` must match the request, and
 the intent must name exactly those two. Then `container hybrid up --detach`,
 `container stack up --detach`, `container hybrid up --detach`, each observed.
 Then the Level 1 forward `container stack status --json`. Then eight named-table
-counts, counts only, against baseline plus declared delta. Then rollback: stop
-only environments this window started and that are not observed not running.
+counts, counts only, against baseline plus declared delta. Each environment is marked unknown before its up, so a failed or partly
+started up is rolled back. Then rollback: stop only environments this window
+started and that are not observed not running.
 Afterwards the protected identities must still be present.
 
 `dev:test` is declared, not armed. Its fresh environment is not pinned in

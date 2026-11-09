@@ -199,7 +199,7 @@ class FakeEngine:
     """A deterministic engine. Asserts every call runs from the pinned checkout."""
 
     def __init__(self, route, children, running, counts=None, containers=None,
-                 volumes=None, fail=None, on_up=None):
+                 volumes=None, fail=None, on_up=None, fail_after=None):
         manifest = fixture_manifest()
         identity = manifest['routes'][route]['identity']
         self.route = route
@@ -225,6 +225,7 @@ class FakeEngine:
                        if route == 'acow' else [CBS_VOLUME])
         self.volumes = set(volumes)
         self.fail = fail or {}
+        self.fail_after = fail_after or {}
         self.on_up = on_up
         self.calls = []
         self.cwd = checkout_of(route)
@@ -237,6 +238,8 @@ class FakeEngine:
         if short in self.fail:
             raise core.Refused(self.fail[short], short)
         text = self._output(argv, label)
+        if short in self.fail_after:
+            raise core.Refused(self.fail_after[short], short)
         self.children.mkdir(parents=True, exist_ok=True)
         path = self.children / (label + '.stdout')
         path.write_text(text)
@@ -712,6 +715,69 @@ def _():
     assert (ROOT / 'rb' / 'evidence' / 'binding.json').exists()
 
 
+@check('acow: a failed up that partly started stack is rolled back, not left running')
+def _():
+    manifest = fixture_manifest()
+    request = request_for(manifest, 'acow', {'hybrid': True, 'stack': False})
+    engine = FakeEngine('acow', ROOT / 'acow-up-partial' / 'children',
+                        {'hybrid': True, 'stack': False},
+                        fail_after={'container-up': 'child-failed'})
+    refusal_run(acow, 'acow', request, 'acow-up-partial', 'child-failed', manifest=manifest,
+                engine=engine)
+    assert engine.running == {'hybrid': True, 'stack': False}, engine.running
+    assert 'rollback-stack' in engine.labels() and 'rollback-hybrid' not in engine.labels()
+
+
+@check('acow: a stack status read that fails after its up is rolled back, not left running')
+def _():
+    manifest = fixture_manifest()
+    request = request_for(manifest, 'acow', {'hybrid': True, 'stack': False})
+    engine = FakeEngine('acow', ROOT / 'acow-status-fail' / 'children',
+                        {'hybrid': True, 'stack': False},
+                        fail_after={'container-status': 'child-failed'})
+    refusal_run(acow, 'acow', request, 'acow-status-fail', 'child-failed', manifest=manifest,
+                engine=engine)
+    assert engine.running == {'hybrid': True, 'stack': False}, engine.running
+    assert 'rollback-stack' in engine.labels()
+
+
+@check('acow: a failed second hybrid up rolls back every environment the window started')
+def _():
+    manifest = fixture_manifest()
+    request = request_for(manifest, 'acow', {'hybrid': False, 'stack': False})
+    engine = FakeEngine('acow', ROOT / 'acow-h2-fail' / 'children',
+                        {'hybrid': False, 'stack': False},
+                        fail_after={'hybrid-2-up': 'child-failed'})
+    refusal_run(acow, 'acow', request, 'acow-h2-fail', 'child-failed', manifest=manifest,
+                engine=engine)
+    assert engine.running == {'hybrid': False, 'stack': False}, engine.running
+    assert {'rollback-hybrid', 'rollback-stack'} <= set(engine.labels()), engine.labels()
+
+
+@check('cbs: a failed app-shell up that partly started the system is rolled back')
+def _():
+    manifest = fixture_manifest()
+    request = request_for(manifest, 'cbs', {'dev': False})
+    engine = FakeEngine('cbs', ROOT / 'cbs-up-partial' / 'children', {'dev': False},
+                        fail_after={'app-shell-up': 'child-failed'})
+    refusal_run(cbs, 'cbs', request, 'cbs-up-partial', 'child-failed', manifest=manifest,
+                engine=engine)
+    assert engine.running == {'dev': False}, engine.running
+    assert 'rollback-dev' in engine.labels()
+
+
+@check('cbs: a failed app-shell status read after its up is rolled back')
+def _():
+    manifest = fixture_manifest()
+    request = request_for(manifest, 'cbs', {'dev': False})
+    engine = FakeEngine('cbs', ROOT / 'cbs-status-fail' / 'children', {'dev': False},
+                        fail_after={'app-shell-status': 'child-failed'})
+    refusal_run(cbs, 'cbs', request, 'cbs-status-fail', 'child-failed', manifest=manifest,
+                engine=engine)
+    assert engine.running == {'dev': False}, engine.running
+    assert 'rollback-dev' in engine.labels()
+
+
 @check('a second run into an existing evidence directory refuses and keeps the first record')
 def _():
     manifest = fixture_manifest()
@@ -783,6 +849,8 @@ def _():
     occurrence = json.loads((evidence / 'occurrence.json').read_text())
     assert occurrence['status'] == 'passed' and occurrence['spent'] is False
     assert (evidence / 'binding.json').exists()
+    assert (evidence / 'closure.json').exists()
+    assert 'rev-parse' in (evidence / 'closure.json').read_text()
 
 
 @check('fixture-positive CBS: detached app-shell, forward, counts, scoped rollback')

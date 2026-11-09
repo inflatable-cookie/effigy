@@ -88,6 +88,8 @@ def execute(session, engine, manifest, request):
     started = {SYSTEM} if intent[SYSTEM] is False else set()
     counts = {}
     try:
+        # Unknown until read: a failed up may still have started the system.
+        observed[SYSTEM] = None
         session.effigy(('container', 'up', '--detach', '--system', SYSTEM), 'app-shell-up')
         observed[SYSTEM] = read_dev_status(session, 'app-shell-status')
         session.effigy(FORWARD_TAIL, 'level1-forward')
@@ -114,9 +116,12 @@ def run(request_path, evidence_dir, *, authenticate=None, transport=None, manife
     core.check_budgets(request, manifest, ROUTE)
     core.check_resources(request, manifest, ROUTE)
     checkout = core.resolve_checkout(manifest['routes'][ROUTE]['checkout'])
-    core.verify_consumer(git or core.default_git, request, manifest, ROUTE, checkout)
+    reads = []
+    core.verify_consumer(core.recording_git(git or core.default_git, reads),
+                         request, manifest, ROUTE, checkout)
     evidence = core.claim_evidence(evidence_dir, roots)
     core.write_binding(evidence, digest, record, core.module_hashes())
+    core.write_closure(evidence, reads)
     engine = manifest['routes'][ROUTE]['engine']
     run_transport = transport or core.make_transport(request['budgets'], evidence / 'children')
     session = core.Session(run_transport, record['candidate']['install_identity']['path'],

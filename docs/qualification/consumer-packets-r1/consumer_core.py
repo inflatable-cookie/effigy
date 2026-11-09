@@ -299,6 +299,21 @@ def default_git(args, cwd):
     return result.stdout
 
 
+def recording_git(git, reads):
+    """Wrap a git reader so every read is kept for the occurrence evidence."""
+    def recording(args, cwd):
+        stdout = git(args, cwd)
+        reads.append({'args': list(args), 'cwd': cwd, 'stdout': stdout})
+        return stdout
+    return recording
+
+
+def write_closure(evidence_dir, reads):
+    """Retain every consumer read the closure check made, before any child."""
+    write_exclusive(Path(evidence_dir) / 'closure.json',
+                    json.dumps({'reads': reads}, indent=2, sort_keys=True) + '\n')
+
+
 def verify_consumer(git, request, manifest, route, checkout):
     """Selected clean head, declared include set, and every closure blob at that head."""
     pins = manifest['routes'][route]['consumer']
