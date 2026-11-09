@@ -1645,6 +1645,11 @@ class PlanChecks(unittest.TestCase):
         patcher_b.start()
         self.addCleanup(patcher_b.stop)
 
+    def test_e8_row_and_supervised_request_preserve_the_sixty_second_payload_clock(self):
+        row = next(row for row in setup._rows(self.fx.base()) if row['id'] == 'E8')
+        self.assertEqual(row['timeout_seconds'], 60)
+        self.assertEqual(json.loads(row['credit']['request_json'])['timeout_seconds'], 60)
+
     def test_no_go_receipt_halts_at_the_first_row(self):
         facts = self.fx.facts()
         facts['go'] = {}

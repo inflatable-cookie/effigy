@@ -98,6 +98,7 @@ STAGE1_SYSTEM_STATES = frozenset({
 TRANSFER_CAP = 40 * 1024 * 1024            # E9 archive and E19 placements (brief: archive <= 40 MiB)
 EXTRACT_CAP = 500 * 1024 * 1024            # E9b extracted source (brief: extracted <= 500 MiB)
 PAYLOAD_CAP = 64 * 1024 * 1024             # E8 filesystem controls (brief: <= 64 MiB writes)
+E8_TIMEOUT_SECONDS = 60                   # existing E8 payload clock; reserves remain separate
 # Mechanisms that have been source-verified. Empty: none is established yet.
 SUPPORTED_DISK_MECHANISMS = frozenset()
 SUPPORTED_HARD_LIMITS = frozenset()
@@ -788,8 +789,9 @@ def _rows(fresh):
     # E8: the filesystem controls run as a supervised payload from the reviewed argv.
     payload = fresh.get('controls_payload')
     e8_ok = isinstance(payload, list) and payload and all(isinstance(a, str) and a for a in payload)
-    argv, credit = _supervised_argv(fresh, 'E8', list(payload), BASE, 900, cfg) if e8_ok else ([], None)
-    _row(rows, 'E8', 'vm-supervised', argv, 900, SUPERVISED_BASIS, 'E8', None, limit_bytes=PAYLOAD_CAP, credit=credit)
+    argv, credit = _supervised_argv(fresh, 'E8', list(payload), BASE, E8_TIMEOUT_SECONDS, cfg) if e8_ok else ([], None)
+    _row(rows, 'E8', 'vm-supervised', argv, E8_TIMEOUT_SECONDS, SUPERVISED_BASIS, 'E8', None,
+         limit_bytes=PAYLOAD_CAP, credit=credit)
     return rows
 
 
