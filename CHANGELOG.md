@@ -1102,6 +1102,17 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Verify the Linux artifact builder's remount-capability drop on Colima nerdctl
+  from the native OCI spec of the same full container ID (effigy#768). nerdctl's
+  compatibility inspect rebuilds CapDrop only from the 14 default capabilities,
+  so a dropped SYS_ADMIN never appears there, and the owned builder was refused
+  on every ordinary automatic acquisition. The native witness requires
+  no process capability beyond containerd's default set in bounding, effective,
+  permitted, inheritable or ambient (so CAP_SYS_ADMIN and any other added power
+  are refused), with CapAdd an empty list and the container unprivileged. A replaced ID,
+  malformed or missing capability data, or a failed read refuses without
+  replacing the builder. Docker keeps its CapDrop witness. No live engine, build
+  or artifact is produced here.
 - Finish the source preparation for the macOS Colima and Desktop runtime checks (effigy#769). C5's disposable
   check runs through the fixed guest helper with its own cidfile and is then inspected, removed and checked absent by
   exact ID, after the guest nerdctl version is observed to be the source-qualified one. D3 and D4 are proof-entry windows bound to their predecessors, and C5 and C6 are
