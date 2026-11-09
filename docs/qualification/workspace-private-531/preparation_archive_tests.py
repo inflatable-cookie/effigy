@@ -248,6 +248,84 @@ class StageChecks(unittest.TestCase):
         self.assertEqual(result['identity_probe']['errno'], 1)
         self.assertIsNotNone(result['waited_exit'])
 
+    def test_outer_exception_cleanup_respects_identity_authority(self):
+        real_popen = subprocess.Popen
+        children = []
+        def spawn(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            return child
+        script = "import os,time; os.write(1,b'kept-before-failure\\n'); time.sleep(10)"
+        with patch.object(stage.subprocess, 'Popen', side_effect=spawn), \
+             patch.object(stage.selectors.DefaultSelector, 'select', side_effect=RuntimeError('selector failed')), \
+             patch.object(stage.os, 'killpg') as killpg:
+            with self.assertRaisesRegex(RuntimeError, 'selector failed'):
+                stage.run_stage(self.root, [sys.executable, '-c', script], 2, 1024, {},
+                                identity_probe=lambda _pid: (_ for _ in ()).throw(PermissionError(errno.EPERM, 'probe denied')),
+                                deadline=time.monotonic() + 2,
+                                cleanup_deadline=time.monotonic() + 2)
+        self.assertEqual(killpg.call_count, 0)
+        self.assertIsNotNone(children[0].returncode)
+        receipt = json.loads((self.root / 'receipt.json').read_text())
+        self.assertIsNotNone(receipt['waited_exit'])
+        self.assertEqual(receipt['stream_custody'], 'incomplete-after-exception')
+        self.assertEqual(receipt['error_errno'], None)
+
+    def test_outer_exception_cleanup_uses_verified_group_and_never_reaped_pid(self):
+        real_popen = subprocess.Popen
+        real_killpg = os.killpg
+        children = []
+        def spawn(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            return child
+        script = "import time; time.sleep(10)"
+        with patch.object(stage.subprocess, 'Popen', side_effect=spawn), \
+             patch.object(stage.selectors.DefaultSelector, 'select', side_effect=RuntimeError('selector failed')), \
+             patch.object(stage.os, 'killpg', wraps=real_killpg) as killpg:
+            with self.assertRaisesRegex(RuntimeError, 'selector failed'):
+                stage.run_stage(self.root, [sys.executable, '-c', script], 2, 1024, {},
+                                identity_probe=lambda pid: {'pgid': pid, 'session_id': pid},
+                                deadline=time.monotonic() + 2,
+                                cleanup_deadline=time.monotonic() + 2)
+        self.assertEqual(killpg.call_count, 1)
+        self.assertIsNotNone(children[0].returncode)
+        self.assertIsNotNone(json.loads((self.root / 'receipt.json').read_text())['waited_exit'])
+
+    def test_incomplete_probe_record_never_verifies_identity(self):
+        result = stage.run_stage(self.root, [sys.executable, '-c', 'pass'], 2, 1024, {},
+                                 identity_probe=lambda _pid: {'pgid': os.getpid()})
+        self.assertEqual(result['identity_probe']['status'], 'failed')
+        self.assertEqual(result['identity_probe']['error'], 'Refusal')
+        self.assertEqual(result['disposition'], 'unknown')
+        process = json.loads((self.root / 'process.json').read_text())
+        self.assertEqual(process['pid'], result['process']['pid'])
+        self.assertIsNone(process['pgid'])
+        self.assertIsNone(process['session_id'])
+
+    def test_outer_exception_does_not_signal_positively_reaped_child(self):
+        real_popen = subprocess.Popen
+        children = []
+        def spawn(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            return child
+        root = self.root / 'reaped-before-error'
+        root.mkdir(mode=0o700)
+        def reaped_probe(_pid):
+            self.assertEqual(children[0].wait(timeout=2), 0)
+            raise ProcessLookupError(errno.ESRCH, 'already exited')
+        with patch.object(stage.subprocess, 'Popen', side_effect=spawn), \
+             patch.object(stage.selectors.DefaultSelector, 'select', side_effect=RuntimeError('selector failed')), \
+             patch.object(stage.os, 'killpg') as killpg:
+            with self.assertRaisesRegex(RuntimeError, 'selector failed'):
+                stage.run_stage(root, [sys.executable, '-c', "print('done')"], 2, 1024, {},
+                                identity_probe=reaped_probe, deadline=time.monotonic() + 2,
+                                cleanup_deadline=time.monotonic() + 2)
+        self.assertEqual(killpg.call_count, 0)
+        receipt = json.loads((root / 'receipt.json').read_text())
+        self.assertEqual(receipt['waited_exit'], 0)
+
     def test_inherited_stream_after_identity_failure_stays_unknown_until_closed(self):
         script = "import subprocess,sys; subprocess.Popen([sys.executable,'-c','import time; time.sleep(0.25)'])"
         started = time.monotonic()

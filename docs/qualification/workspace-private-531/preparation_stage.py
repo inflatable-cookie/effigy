@@ -130,19 +130,56 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
         result['process'] = identity
         identity_verified = identity_probe is None
         group_verified = identity_probe is None
+        stop_attempted = False
+        def stop_group():
+            nonlocal stop_attempted
+            if stop_attempted:
+                return
+            stop_attempted = True
+            # poll() reaps an exited child. Never signal a group by a PID that may
+            # have been recycled; a still-owned Popen child remains safe to kill.
+            if child.poll() is not None:
+                return
+            if not group_verified:
+                try:
+                    child.kill()
+                except ProcessLookupError:
+                    pass
+                return
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                # Neither error proves that the group is dead. The unreaped direct
+                # child remains owned, so stop it through Popen as a safe fallback.
+                if child.poll() is None:
+                    try:
+                        child.kill()
+                    except ProcessLookupError:
+                        pass
         if identity_probe is None:
             identity.update(pgid=child.pid, session_id=child.pid)
         if identity_probe is not None:
             try:
                 observed = identity_probe(child.pid)
-                if not isinstance(observed, dict):
-                    raise Refusal('spawned child identity observation is not a record')
-                identity.update(observed)
-                identity_verified = True
-                group_verified = observed.get('pgid') == child.pid and observed.get('session_id') == child.pid
-                if (('pgid' in observed and observed['pgid'] != child.pid)
-                        or ('session_id' in observed and observed['session_id'] != child.pid)):
-                    raise Refusal('spawned child group or session identity is unexpected')
+                if not isinstance(observed, dict) or ('pid' in observed and observed['pid'] != child.pid):
+                    raise Refusal('spawned child identity observation is invalid')
+                group_fields = {'pgid', 'session_id'} & set(observed)
+                if group_fields and group_fields != {'pgid', 'session_id'}:
+                    raise Refusal('spawned child group identity observation is incomplete')
+                if group_fields:
+                    group_verified = observed['pgid'] == child.pid and observed['session_id'] == child.pid
+                    if not group_verified:
+                        raise Refusal('spawned child group or session identity is unexpected')
+                    identity.update({key: value for key, value in observed.items() if key != 'pid'})
+                    identity_verified = True
+                elif guest and {'boot_id', 'start_time'} <= set(observed):
+                    # The Linux guest runner supplies its own process correlation;
+                    # it cannot authorize a host process-group signal.
+                    identity.update({key: value for key, value in observed.items() if key != 'pid'})
+                    group_verified = False
+                    identity_verified = True
+                else:
+                    raise Refusal('spawned child identity observation is incomplete')
                 result['identity_probe'] = {'status': 'verified'}
             except Exception as exc:
                 identity_verified = False
@@ -161,23 +198,6 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
         reason = None
         killed_at = None
 
-        def stop_group():
-            if not group_verified:
-                # Popen still owns this unreaped direct child PID. No group/session
-                # signal is safe until those identities have been observed.
-                try:
-                    child.kill()
-                except ProcessLookupError:
-                    pass
-                return
-            # Darwin: killpg on a zombie group leader with no live members raises
-            # EPERM (PermissionError); ESRCH is ProcessLookupError. Both mean the
-            # group is gone. A zombie leader with a live grandchild still accepts
-            # killpg and SIGKILL reaches the remaining members.
-            try:
-                os.killpg(child.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
         while True:
             # Do not reap the group leader while a stream remains open: the group
             # may still need to be stopped, and a reaped PID could be reused.
@@ -248,18 +268,36 @@ def run_stage(root, argv, timeout, output_cap, input_hashes, guest=False, identi
     except BaseException as exc:
         if child is not None and child.poll() is None:
             try:
-                os.killpg(child.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+                stop_group()
+            except BaseException as cleanup_exc:
+                # Keep the triggering error authoritative; cleanup failure remains
+                # separately visible and cannot be mistaken for closure.
+                result['cleanup_error'] = {'error': type(cleanup_exc).__name__,
+                                           'errno': getattr(cleanup_exc, 'errno', None),
+                                           'detail': str(cleanup_exc)}
             try:
                 result['waited_exit'] = child.wait(timeout=None if cleanup_deadline is None else
                                                    max(0, cleanup_deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
                 result['waited_exit'] = None
+            except BaseException as cleanup_exc:
+                result['waited_exit'] = None
+                result['cleanup_wait_error'] = {'error': type(cleanup_exc).__name__,
+                                                'errno': getattr(cleanup_exc, 'errno', None),
+                                                'detail': str(cleanup_exc)}
         elif child is not None:
             result['waited_exit'] = child.returncode
+        if child is not None:
+            for pipe in (child.stdout, child.stderr):
+                if pipe is not None:
+                    pipe.close()
         result.update(disposition='unknown' if child is not None and result.get('waited_exit') is None
-                      else 'local-error', error=type(exc).__name__)
+                      else 'local-error', error=type(exc).__name__, error_detail=str(exc),
+                      error_errno=getattr(exc, 'errno', None))
+        if child is not None:
+            result['stream_custody'] = 'incomplete-after-exception'
+            result['stream_custody_detail'] = (
+                'stream files contain bytes consumed before the exception; unread child-pipe bytes were not recovered')
         raise
     finally:
         if stdin_file is not None:
