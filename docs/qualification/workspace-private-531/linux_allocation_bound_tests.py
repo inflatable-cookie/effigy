@@ -1329,7 +1329,8 @@ class RescueInputChecks(unittest.TestCase):
     def test_proof_plan_binds_fixture_identity_and_refuses_collisions(self):
         fixture = tempfile.mkdtemp(prefix='rescue-fixture-')
         evidence = tempfile.mkdtemp(prefix='rescue-evidence-')
-        plan = rescue_proof.plan(fixture, evidence, 'a' * 40, 'b' * 64)
+        with patch.object(rescue_proof, 'source_inputs', return_value={'fixture-only': '0' * 64}):
+            plan = rescue_proof.plan(fixture, evidence, 'a' * 40, 'b' * 64)
         self.assertEqual(plan['destination'], fixture + '/' + rescue.NAME)
         self.assertEqual((plan['bytes'], plan['sha256'], plan['duration_seconds']),
                          (rescue.SIZE, rescue.SHA256, 1800))
