@@ -1675,8 +1675,9 @@ fn builder_remount_capability_dropped(record: Option<&serde_json::Value>) -> boo
 /// `cap_drop` reaches the spec through `WithDroppedCapabilities`, which removes
 /// the name from bounding, effective, permitted and inheritable.
 ///
-/// A missing, malformed, or other-identity native record is an error; only a
-/// complete record that still holds CAP_SYS_ADMIN is `Ok(false)`.
+/// A missing, malformed, or other-identity native record is an error. A complete
+/// record that holds any process capability beyond containerd's default set
+/// (CAP_SYS_ADMIN or other power) is `Ok(false)`.
 fn remount_capability_witness(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
