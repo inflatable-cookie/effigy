@@ -298,20 +298,107 @@ Writable-top selection is source-implemented as metadata only. Stage1 still refu
 no live producer supplies a top observation (`top_observation` is None), and every row stays gated by
 `EXTERNAL_ANCHORS`, which is unset in production.
 
-Controller-to-guest association is a fail-closed verifier in `linux_disk_association.py`, with `PINS` empty, so
-every association refuses. It has five premises, each checked on its own inputs (`premise_table`): `host_read`
-(one pinned read-only accessor, exact tool bytes and Desktop build, bounded output, boot bracket, and the serial
-and image UID the output names), `config` (exactly one hdd0 at SATA index 0 in the reviewed VM; CD-ROMs counted,
-not disks), `descriptor` (selected top, chain and every extent, from the descriptor bytes), `guest_blocks` (exactly
-one whole disk, `/dev/sda`, with the reviewed root partition on it; loop and ROM classified by type, anything
-else refuses) and `serial` (host read serial equals the guest parent serial).
+Controller-to-guest association is a fail-closed verifier in `linux_disk_association.py`. `PINS` and
+`SUPPORTED_DISK_MECHANISMS` are empty, so every association refuses. Six premises are checked on their own inputs
+(`premise_table`):
 
-The upstream candidate, `PrlVmDevHd_GetSerialNumber`, is used by libvirt's Virtuozzo driver. It is not exported by the
-installed Parallels Desktop 27.1.0 SDK (`libprl_sdk.11.dylib`, sha256 `464af6b9…`); its only serial accessors are
-the VM SMBIOS serial and serial ports. So no pinned host read exists. Retained 748 facts establish the config and
-guest-block premises and descriptor self-consistency, not the link: the config device Uuid `{9447f202…}` differs
-from the descriptor disk UID `{44b5d35e…}`, and no documented rule joins them. Guest `ata1` is not mapped to SATA
-position 0, and the guest sysfs serial attribute is absent while the probe reports the parent serial.
+- `mechanism` and `host_read`: a supported mechanism, one pinned read-only accessor with exact tool bytes and Desktop
+  build, bounded output, a boot bracket, and the serial and image UID the output names.
+- `config`: exactly one `Hdd` (hdd0, SATA index 0, reviewed device Uuid) that is enabled, connected, not passthrough,
+  not remote, and `DiskType` 1. Every `Hardware` child is a reviewed tag. No element outside `Hdd` and `CdRom` carries
+  a block-capable name at any depth (`Hdd`, `Disk`, `Scsi`, `Sata`, `VirtIOBlk`, ...). USB holds only the reviewed
+  camera record (every field exact, `SystemName` included; a field the reader uses is a leaf, so nested elements or
+  attributes refuse), and the connect history names only the five retained
+  virtual devices. The config has exactly one `USB` device and one `CdRom`; `CdRom` is counted, not treated as a disk.
+- `descriptor`: selected top, chain and every extent, from the descriptor bytes.
+- `guest_blocks`: exactly one whole disk, `/dev/sda`, non-removable, on the platform ATA controller
+  `/sys/devices/platform/PRL4010:00/ata…`, with the reviewed root partition on it. Loop and ROM are classified by
+  type; anything else refuses.
+- `serial`: the host read serial equals the guest parent serial.
+
+**Source status of each value the verifier requires.** A value is source-qualified only where a primary source gives
+its meaning and numeric value. Anything else is observed in the retained config and stays unadmitted.
+
+| Element and field | Required value | Source status |
+| --- | --- | --- |
+| `Hdd` `Passthrough` | 0 | Meaning sourced: `PrlVmDev_SetPassthrough` (C API v19) enables passthrough mode for optical or hard-disk devices. The boolean sense of `IsPassthrough` is by name. |
+| `Hdd` `Enabled`, `Connected` | 1 | Accessors `PrlVmDev_IsEnabled` and `IsConnected` exported. `IsConnected` does not say configuration or running state. The 1 is observed. |
+| `Hdd` `Remote` | 0 | `PrlVmDev_IsRemote` exported. Meaning not fetched. Observed. |
+| `Hdd` `DiskType` | 1 | Numeric enum sourced (C API v17, `_PRL_HARD_DISK_INTERNAL_FORMAT`): `PHD_PLAIN_HARD_DISK` = 0, `PHD_EXPANDING_HARD_DISK` = 1. So the retained disk is expanding, not plain. The XML-to-enum mapping is inferred. |
+| `Hdd` `InterfaceType` | 2 (SATA) | Not numerically sourced. The product CLI names `sata`, `ide`, `scsi` for `--iface`. `PrlVmDev_GetIfaceType` uses `PRL_MASS_STORAGE_INTERFACE_TYPE`, whose values were not located. |
+| USB `EmulatedType` 3, `UsbType` 2, `SystemName` (full retained string) | reviewed camera, every field exact | Not numerically sourced. The whole record and the five history names are observed in the retained config. |
+| `CdRom` `Passthrough` 1 | not a disk | Observed. A passthrough optical drive is not a disk. The guest's `sr0` is ROM and refuses as a disk under `guest_blocks`. |
+| `Hardware` child tags (17) | closed set | Observed in the retained config. The element names exist in `libPrlXmlModel.1.dylib`. |
+
+**Replay of the retained 747 originals** (transport observation, outcome sha256 `a99c3ac4…`, boot `6de5909b…`; no new
+native read) through `_run`: `config` pass (before config; post-config Hdd and CdRom subtrees identical; the retained
+USB camera and `VIRTUAL@` history accepted), `descriptor` pass, `guest_blocks` pass (15 nodes; `/dev/sda`
+137438953472 B, removable 0, controller `/sys/devices/platform/PRL4010:00/ata1/...`; `sda2` parent `sda`). `mechanism`,
+`host_read` and `serial` refuse: no pinned read exists, and no host artifact carries the guest serial
+`BV9VAH2KP2Q4N4A04SN0`. The config device Uuid `{9447f202…}` and the descriptor disk UID `{44b5d35e…}` are different
+namespaces, and no documented rule joins them. Guest `ata1` is not mapped to SATA position 0.
+
+**SDK surface.** Installed 27.1.0 build 58756, `ParallelsVirtualizationSDK` sha256 `464af6b9…`, 1270 exported symbols
+(`nm -gU`).
+
+- *Disk serial:* none. Exports whose name contains "serial" (case-insensitive) number 10, all VM, server or serial-port:
+  `PrlDispCfg_IsAddSerialPortOutputToReport`, `PrlDispCfg_SetAddSerialPortOutputToReport`,
+  `PrlSrvCfg_GetSerialPort`, `PrlSrvCfg_GetSerialPortsCount`, `PrlVmCfg_GetSerialPort`,
+  `PrlVmCfg_GetSerialPortsCount`, `PrlVmCfg_GetSmbiosSystemSerialNumber`, `PrlVmCfg_SetSmbiosSystemSerialNumber`,
+  `PrlVmDevSerial_GetSocketMode`, `PrlVmDevSerial_SetSocketMode`.
+- *Configured-device accessors* (documented or named as the configuration's): `PrlVmCfg_GetAllDevices` (C API v19: "Obtains
+  a handles list of all virtual devices in a virtual machine", on a `PHT_VM_CONFIGURATION` handle), `PrlVmCfg_GetDevsCount`,
+  `PrlVmCfg_GetHardDisksCount`, `PrlVmCfg_GetHardDisk`, `PrlVmCfg_GetOpticalDisksCount`, `PrlVmCfg_GetUsbDevicesCount`,
+  and the `PrlVmDev_*` and `PrlVmDevHd_*` accessors on those handles.
+- *Runtime candidates, none usable:*
+  - `PrlVm_GetState`: VM state only, no device-level content.
+  - `PrlVm_InitiateDevStateNotifications`: C API v19 says it "starts sending notifications about devices states by VM".
+    It is asynchronous, returns a job whose result is read with `PrlJob_GetRetCode`, and its notifications "have to be
+    same as notifications after changing a device state". The page does not say whether they describe device presence in
+    the running guest or the configuration. The event grammar is not in the permitted sources.
+  - `PrlVm_GetStatistics` and `PrlVm_GetStatisticsEx`: the `flags` argument is "from enum PRL_API_COMMAND_FLAGS". Per-device
+    content is not stated.
+  - `PrlVmDev_IsConnected`: C API v19 says "Checks if the specified virtual device is connected", without saying whether it
+    reads configuration or running state.
+  - `PrlVmInfo_GetState`, `PrlVmInfo_GetVmProcessId`: VM-level.
+- *Not located in permitted sources:* numeric values of `PRL_MASS_STORAGE_INTERFACE_TYPE`, `PRL_VM_DEV_EMULATION_TYPE`
+  and `PRL_API_COMMAND_FLAGS`. The bundle ships no SDK headers.
+
+**Closed enumeration and the missing premise.** A count of one hard disk on each side is not a bijection. The link needs
+a premise the sources do not give: the guest presents no block device the registered config does not declare. Host
+closure is established by the retained originals (the Hdd and CdRom subtrees, the 17 reviewed tags, and no block-capable
+element under an allowed tag). Presentation is not established. The one counterexample shape the retained bytes cannot
+refuse is an image-backed config `Hdd` beside a guest disk the config does not declare. `test_bare_count_of_one_is_not_the_disk`
+pins the physical-disk and disabled-disk shapes, which the verifier does refuse.
+
+**External limitation (delivered; no executable read proposed).** No permitted source pins a runtime-presentation accessor
+with its grammar, scope and limits. Configured-device accessors answer for the configuration, by their own docs. The one
+candidate with a runtime name, `PrlVm_InitiateDevStateNotifications`, lacks its event grammar and scope. So no read is
+source-ready for presentation. Design choices left to the planner:
+
+1. Accept presentation as a threat-contract assumption (the hypervisor presents what the configuration declares, under the
+   same-user boundary). Then the host inventory read below admits the host premise.
+2. Obtain the event grammar and scope of `PrlVm_InitiateDevStateNotifications`, or the SDK headers, from a permitted source.
+   Then a runtime notification read could be pinned.
+3. Keep refusing. `SUPPORTED_DISK_MECHANISMS` stays empty and 623 is not ready.
+
+The host inventory read for choice 1, not run here (native; needs its own authorization). Every call is read-only.
+Registration calls are excluded: `PrlVm_RegEx` (v19: "Creates a new virtual machine and registers it with the Parallels Service") and `PrlVm_Reg` change server state, so they are not used.
+
+1. `PrlSrv_LoginLocal`: opens the local service session. Its state effect is not fetched from the docs.
+2. `PrlSrv_GetVmListEx` with `nFlags` 0 (obsolete, per the v19 page): lists registered VMs as `PHT_VIRTUAL_MACHINE`
+   handles through a job. The v19 page does not state a state change; read-only is inferred from its description.
+3. For each listed handle: `PrlVm_GetConfig` (v19: "Obtains a handle of type PHT_VM_CONFIGURATION"; no state change
+   described) and `PrlVmCfg_GetUuid`, `PrlVmCfg_GetHomePath`. Select the handle whose UUID is the reviewed VM. A VM
+   that does not match, or two matches, refuses.
+4. On the selected config handle: `PrlVmCfg_GetAllDevices` (v19: "Obtains a handles list of all virtual devices in a
+   virtual machine"), `PrlVmCfg_GetDevsCount`, then per device `PrlVmDev_GetType`, `GetIfaceType`, `GetIndex`,
+   `GetSysName`, `GetImagePath`, `IsEnabled`, `IsConnected`, `IsRemote`, `IsPassthrough`, and `PrlVmDevHd_GetDiskType`
+   for hard disks. `IsConnected`'s config-or-running sense is not stated by its page.
+5. `PrlVm_GetState` before and after, bracketed with the guest boot id.
+
+Output: one `key=value` line per device, at most 64 KiB, exit 0. Calls: no `Set*`, `Connect`, `Disconnect`, `Reg*`
+or `Unreg*`. It closes the host inventory on the SDK's own parser, not the XML one. It does not close presentation.
 
 Still unavailable: source-verified kernel hard limits, fresh signed Stage1 evidence, exact activation
 anchors and root installation authorization. No VM, SSH, account, service, build,
