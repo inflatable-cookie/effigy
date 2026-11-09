@@ -1026,7 +1026,14 @@ mod legacy_admission_tests {
         let mut scalar = default_capabilities();
         scalar["effective"] = serde_json::json!("CAP_CHOWN");
         reject(native_inspect(id, scalar), "scalar set");
-        for entry in ["SYS_ADMIN", "cap_sys_admin", "CAP_Sys_Admin", ""] {
+        for entry in [
+            "SYS_ADMIN",
+            "cap_sys_admin",
+            "CAP_Sys_Admin",
+            "",
+            "CAP_SYS_ADMINX",
+            "CAP_BOGUS",
+        ] {
             let mut capabilities = default_capabilities();
             capabilities["bounding"] = serde_json::json!(["CAP_CHOWN", entry]);
             reject(native_inspect(id, capabilities), entry);
@@ -1102,6 +1109,56 @@ mod legacy_admission_tests {
                 "{key}"
             );
         }
+    }
+
+    #[test]
+    fn nerdctl_compat_add_back_must_be_present_and_strict() {
+        let private = tempfile::tempdir().expect("private checkout");
+        let checkout = private.path().canonicalize().expect("canonical checkout");
+        let project = "effigy-artifact-builder-v1-co-0123456789ab";
+        let record = retained_nerdctl_inspect(project, &checkout, &checkout);
+        let id = record["Id"].as_str().expect("id").to_owned();
+        let output = native_inspect(&id, default_capabilities());
+        // Missing or malformed compatibility fields are refused, never read as
+        // an add-back-free builder that recovery could replace.
+        type Mutation = fn(&mut serde_json::Value);
+        let malformed: [(&str, Mutation); 5] = [
+            ("CapAdd missing", |row| {
+                row["HostConfig"]
+                    .as_object_mut()
+                    .expect("host")
+                    .remove("CapAdd");
+            }),
+            ("CapAdd null", |row| {
+                row["HostConfig"]["CapAdd"] = serde_json::Value::Null
+            }),
+            ("CapAdd string", |row| {
+                row["HostConfig"]["CapAdd"] = serde_json::json!("CAP_SYS_PTRACE")
+            }),
+            ("Privileged missing", |row| {
+                row["HostConfig"]
+                    .as_object_mut()
+                    .expect("host")
+                    .remove("Privileged");
+            }),
+            ("HostConfig missing", |row| {
+                row.as_object_mut().expect("record").remove("HostConfig");
+            }),
+        ];
+        for (case, mutate) in malformed {
+            let mut record = record.clone();
+            mutate(&mut record);
+            assert!(
+                super::native_capability_absent(Some(&record), &output, &id).is_err(),
+                "{case} must refuse"
+            );
+        }
+        // Well-formed and present: an empty list is the witness; a privileged
+        // builder or an added capability is a definite Ok(false), not an error.
+        assert_eq!(
+            super::native_capability_absent(Some(&record), &output, &id),
+            Ok(true)
+        );
     }
 
     #[test]
@@ -1635,6 +1692,54 @@ fn remount_capability_witness(
         .map_err(|reason| ContainerExecError::refused(CONTEXT, reason))
 }
 
+/// Every capability name the kernel's uapi header defines
+/// (`include/uapi/linux/capability.h`, v6.12, sha256
+/// ee832adca0d6db0866ddbf1dd3426c5a0df63901bf255bde77e4d8305cf5b5e0). A name
+/// outside this list is unknown capability data, not a harmless extra.
+const LINUX_CAPABILITY_NAMES: [&str; 41] = [
+    "CAP_CHOWN",
+    "CAP_DAC_OVERRIDE",
+    "CAP_DAC_READ_SEARCH",
+    "CAP_FOWNER",
+    "CAP_FSETID",
+    "CAP_KILL",
+    "CAP_SETGID",
+    "CAP_SETUID",
+    "CAP_SETPCAP",
+    "CAP_LINUX_IMMUTABLE",
+    "CAP_NET_BIND_SERVICE",
+    "CAP_NET_BROADCAST",
+    "CAP_NET_ADMIN",
+    "CAP_NET_RAW",
+    "CAP_IPC_LOCK",
+    "CAP_IPC_OWNER",
+    "CAP_SYS_MODULE",
+    "CAP_SYS_RAWIO",
+    "CAP_SYS_CHROOT",
+    "CAP_SYS_PTRACE",
+    "CAP_SYS_PACCT",
+    "CAP_SYS_ADMIN",
+    "CAP_SYS_BOOT",
+    "CAP_SYS_NICE",
+    "CAP_SYS_RESOURCE",
+    "CAP_SYS_TIME",
+    "CAP_SYS_TTY_CONFIG",
+    "CAP_MKNOD",
+    "CAP_LEASE",
+    "CAP_AUDIT_WRITE",
+    "CAP_AUDIT_CONTROL",
+    "CAP_SETFCAP",
+    "CAP_MAC_OVERRIDE",
+    "CAP_MAC_ADMIN",
+    "CAP_SYSLOG",
+    "CAP_WAKE_ALARM",
+    "CAP_BLOCK_SUSPEND",
+    "CAP_AUDIT_READ",
+    "CAP_PERFMON",
+    "CAP_BPF",
+    "CAP_CHECKPOINT_RESTORE",
+];
+
 /// Decide the nerdctl witness from one native inspect of the full `id`.
 ///
 /// OCI omits an empty capability set (`omitempty`), so an absent set reads as
@@ -1700,17 +1805,37 @@ fn native_capability_absent(
         for name in names {
             let name = name
                 .as_str()
-                .filter(|name| {
-                    name.starts_with("CAP_")
-                        && name
-                            .bytes()
-                            .all(|byte| byte.is_ascii_uppercase() || byte == b'_')
-                })
+                .filter(|name| LINUX_CAPABILITY_NAMES.contains(name))
                 .ok_or_else(|| format!("native capability set `{set}` holds an unknown entry"))?;
             absent &= name != "CAP_SYS_ADMIN";
         }
     }
-    Ok(absent && host_is_unprivileged_without_add_back(record))
+    // This path reads the compatibility record strictly: a missing or malformed
+    // field is not an unprivileged, add-back-free builder.
+    let unprivileged_without_add_back = nerdctl_compat_add_back_witness(record)?;
+    Ok(absent && unprivileged_without_add_back)
+}
+
+/// The nerdctl compatibility record must state `Privileged` as a boolean and
+/// `CapAdd` as a list. Only `Privileged: false` with an empty `CapAdd` is
+/// `Ok(true)`. A privileged builder or an added capability is a well-formed
+/// `Ok(false)`, and a missing or malformed field is an error.
+fn nerdctl_compat_add_back_witness(record: Option<&serde_json::Value>) -> Result<bool, String> {
+    let host = record
+        .and_then(|record| record.get("HostConfig"))
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| "compatibility record has no HostConfig".to_owned())?;
+    let privileged = host
+        .get("Privileged")
+        .and_then(|value| value.as_bool())
+        .ok_or_else(|| {
+            "compatibility HostConfig.Privileged is missing or not a boolean".to_owned()
+        })?;
+    let cap_add = host
+        .get("CapAdd")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "compatibility HostConfig.CapAdd is missing or not a list".to_owned())?;
+    Ok(!privileged && cap_add.is_empty())
 }
 
 /// Native inspect of one full immutable ID. The compatibility record is only

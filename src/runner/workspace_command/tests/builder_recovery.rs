@@ -2316,6 +2316,25 @@ fn colima_native_extra_or_unknown_capability_data_refuses_without_replacing() {
             json!([{"ID": id, "Spec": {"process": {"capabilities": ["CAP_SYS_ADMIN"]}}}]),
             "no Spec.process.capabilities",
         ),
+        (
+            "bogus_name",
+            json!([{"ID": id, "Spec": {"process": {"capabilities": {
+                "bounding": NATIVE_DEFAULT_CAPS,
+                "effective": NATIVE_DEFAULT_CAPS,
+                "permitted": NATIVE_DEFAULT_CAPS,
+                "inheritable": ["CAP_BOGUS"],
+            }}}}]),
+            "unknown entry",
+        ),
+        (
+            "suffixed_sys_admin",
+            json!([{"ID": id, "Spec": {"process": {"capabilities": {
+                "bounding": NATIVE_DEFAULT_CAPS,
+                "effective": NATIVE_DEFAULT_CAPS,
+                "permitted": ["CAP_SYS_ADMINX"],
+            }}}}]),
+            "unknown entry",
+        ),
     ];
     for (case, output, reason) in cases {
         let fixture = Fixture::staged(true, false, "colima");
@@ -2335,6 +2354,46 @@ fn colima_native_extra_or_unknown_capability_data_refuses_without_replacing() {
             let error = fixture.task().expect_err(case);
             assert!(
                 error.contains(reason),
+                "{case} (required={required}): {error}"
+            );
+            assert_eq!(
+                fixture.activation_count(),
+                0,
+                "{case} (required={required})"
+            );
+            assert!(!fixture.root.join("state/build-effect").exists(), "{case}");
+        }
+        fixture.assert_preserved();
+    }
+}
+
+/// Colima's compatibility record must carry an explicit `CapAdd` list and a
+/// boolean `Privileged`. A missing or null `CapAdd` is refused on both paths
+/// through real admission and never replaces the owned builder.
+#[test]
+fn colima_compat_add_back_missing_or_null_refuses_without_replacing() {
+    let _lock = crate::contract_test_support::lock_test();
+    type Mutation = fn(&mut Value);
+    let mutations: [(&str, Mutation); 2] = [
+        ("missing", |row| {
+            row["HostConfig"].as_object_mut().unwrap().remove("CapAdd");
+        }),
+        ("null", |row| row["HostConfig"]["CapAdd"] = Value::Null),
+    ];
+    for (case, mutate) in mutations {
+        let fixture = Fixture::staged(true, false, "colima");
+        fixture.stage().expect("a staged source plan");
+        fixture.mutate(mutate);
+        for required in [true, false] {
+            let _switch = required.then(|| {
+                EnvGuard::set_many(&[(
+                    "EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING",
+                    Some("1".to_owned()),
+                )])
+            });
+            let error = fixture.task().expect_err(case);
+            assert!(
+                error.contains("CapAdd"),
                 "{case} (required={required}): {error}"
             );
             assert_eq!(
@@ -3197,7 +3256,13 @@ impl Fixture {
                 "Pid": 0, "ExitCode": 0, "Error": "", "StartedAt": "", "FinishedAt": ""
             },
             "Config": {"Labels": labels},
-            "HostConfig": {"Privileged": false, "CapAdd": Value::Null, "CapDrop": ["SYS_ADMIN"]},
+            // The owned builder's compatibility view: nerdctl lists an empty CapAdd
+            // and no drop, and Docker lists the dropped name and a null CapAdd.
+            "HostConfig": if std::env::var("EFFIGY_COMPOSE_BACKEND").as_deref() == Ok("colima") {
+                json!({"Privileged": false, "CapAdd": [], "CapDrop": []})
+            } else {
+                json!({"Privileged": false, "CapAdd": Value::Null, "CapDrop": ["SYS_ADMIN"]})
+            },
             "Mounts": [
                 {"Type": "bind", "Source": self.root, "Destination": "/workspace", "RW": true},
                 {"Type": "volume", "Name": format!("{project}-cargo-registry"), "Destination": "/root/.cargo/registry", "RW": true},

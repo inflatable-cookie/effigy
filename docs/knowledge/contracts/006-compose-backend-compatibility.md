@@ -311,8 +311,12 @@ Privileged false. Colima nerdctl: nerdctl's compatibility inspect rebuilds CapDr
 only from the 14 default capabilities, so a dropped SYS_ADMIN is never listed there
 and the live report reads `CapDrop: []`. The witness is instead the native OCI spec
 of the same full ID (`nerdctl inspect --mode=native`), where CAP_SYS_ADMIN must be
-absent from bounding, effective, permitted, inheritable and ambient. CapAdd must
-be empty and the container unprivileged. `nerdctl exec` inherits the stored spec's
+absent from bounding, effective, permitted, inheritable and ambient. Every entry
+must be a kernel capability name (the v6.12 uapi list), and the output must hold
+exactly one record for the verified ID with only the five OCI sets. The
+compatibility record must state `Privileged` as a boolean and `CapAdd` as a list,
+and `CapAdd` must be empty and the container unprivileged; a missing or malformed
+field refuses. `nerdctl exec` inherits the stored spec's
 process sets (only `exec --privileged` rewrites them), so that is the boundary the
 witness observes. A missing, malformed, replaced-ID or failed native read refuses
 the builder without replacing it. Artifact paths and the task interface
