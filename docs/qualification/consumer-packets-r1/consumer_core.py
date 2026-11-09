@@ -1,19 +1,20 @@
 """Shared core for the r1 consumer proof packets (Acow and CBS). Source only.
 
-This module holds the fail-closed machinery both route entries use: bounded
-strict JSON reads, the pinned manifest, the hash-pinned prospective request,
-the Nucleus provenance seam, a fixed-argv child runner with separate captured
-streams and a waited exit, and the counts and rollback rules. It performs no
-effect by itself. The committed manifest pins nothing yet, so every route
-refuses at `candidate-unfrozen` before a transport is called.
+Authority model. The committed manifest holds only source-visible facts: route
+constants, consumer closure blobs, count baselines, engine and identity facts,
+budgets, and the one-use consumed-window list. It does not pin the candidate,
+the predecessor, the helper head or the window. Those arrive in a hash-pinned
+request, and an authenticated Nucleus proof-entry record must name that
+request's SHA-256 and confirm the same values. File and environment values are
+data, never authorization. Without an authenticated record the entries refuse
+before any read of the consumer checkout or any engine.
 
-Historical reuse is narrow: five pure readers from the Acow r1 packet
-(`acow-ordinary-compose-5f466914/common.py`) are loaded by file path under a
-distinct module name. That packet is never edited and its own boundaries stay
-unchanged.
+Every child runs through `Session`: a fixed argv allowlist, the pinned consumer
+checkout as cwd, and one bounded transport. Routes build no other child.
+Git reads go through one fixed allowlist in `default_git` and read object ids
+and status only, never tracked file contents.
 """
 import hashlib
-import importlib.util
 import json
 import os
 import re
@@ -29,17 +30,26 @@ MANIFEST = DIR / 'manifest-r1.json'
 MANIFEST_SCHEMA = 'effigy.qualification.consumer-packets.r1'
 REQUEST_SCHEMA = 'effigy.qualification.consumer-packet.request.v1'
 PENDING = 'pending'
+ENTRY_MODULES = ('consumer_core.py', 'acow.py', 'cbs.py')
+GIT = '/usr/bin/git'
 MAX_REQUEST_BYTES = 65536
 MAX_MANIFEST_BYTES = 262144
 KILL_GRACE_S = 5
 PUMP_JOIN_S = 10
+GIT_TIMEOUT_S = 60
+ENGINE_VERBS = frozenset({'ps', 'inspect', 'volume', 'exec'})
 HEX40 = re.compile(r'[0-9a-f]{40}')
 HEX64 = re.compile(r'[0-9a-f]{64}')
 SHA256_TAG = re.compile(r'sha256:[0-9a-f]{64}')
 ID_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:-]{2,127}')
+NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]*')
 REQUEST_KEYS = frozenset({
     'schema', 'route', 'candidate', 'helpers', 'predecessor', 'consumer',
     'provenance', 'window', 'budgets', 'resources', 'prior_intent',
+})
+RECORD_KEYS = frozenset({
+    'authenticated', 'request_sha256', 'merged_commit', 'source_immutable_head',
+    'candidate', 'predecessor', 'window',
 })
 
 
@@ -52,39 +62,25 @@ class Refused(Exception):
         self.detail = detail
 
 
-def _historical():
-    path = DIR.parent / 'acow-ordinary-compose-5f466914' / 'common.py'
-    spec = importlib.util.spec_from_file_location('acow_r1_common', path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-_HIST = _historical()
-
-
-def historical(name, *args):
-    """Call one pure reader from the reviewed Acow r1 packet, refusing alike."""
-    try:
-        return getattr(_HIST, name)(*args)
-    except _HIST.Refused as exc:
-        raise Refused('historical-reader', '%s: %s' % (name, exc))
+def sha256_bytes(data):
+    return 'sha256:' + hashlib.sha256(data).hexdigest()
 
 
 def sha256_file(path):
-    digest = hashlib.sha256()
-    with open(path, 'rb') as handle:
-        for chunk in iter(lambda: handle.read(65536), b''):
-            digest.update(chunk)
-    return 'sha256:' + digest.hexdigest()
+    return sha256_bytes(Path(path).read_bytes())
 
 
 def monotonic_now():
     return time.monotonic_ns()
 
 
-def read_bounded_json(path, max_bytes):
-    """Regular, non-symlink, size-bounded JSON with no duplicate keys."""
+def module_hashes():
+    """Hashes of the entry modules on disk, compared with the request and record."""
+    return {name: sha256_file(DIR / name) for name in ENTRY_MODULES}
+
+
+def read_bounded_bytes(path, max_bytes):
+    """Regular, non-symlink, size-bounded bytes."""
     try:
         st = os.lstat(path)
     except OSError as exc:
@@ -93,8 +89,11 @@ def read_bounded_json(path, max_bytes):
         raise Refused('not-regular-file', str(path))
     if st.st_size > max_bytes:
         raise Refused('file-too-large', '%s (%d bytes)' % (path, st.st_size))
-    raw = Path(path).read_bytes()
+    return Path(path).read_bytes()
 
+
+def parse_json_strict(raw):
+    """JSON with no duplicate keys."""
     def no_duplicates(pairs):
         obj = {}
         for key, value in pairs:
@@ -106,11 +105,28 @@ def read_bounded_json(path, max_bytes):
     try:
         return json.loads(raw.decode('utf-8'), object_pairs_hook=no_duplicates)
     except (UnicodeDecodeError, ValueError) as exc:
-        raise Refused('malformed-json', '%s: %s' % (path, exc))
+        raise Refused('malformed-json', str(exc))
+
+
+def read_bounded_json(path, max_bytes):
+    return parse_json_strict(read_bounded_bytes(path, max_bytes))
+
+
+def load_request(path):
+    """The request object and the SHA-256 of its exact bytes."""
+    raw = read_bounded_bytes(path, MAX_REQUEST_BYTES)
+    return parse_json_strict(raw), sha256_bytes(raw)
+
+
+def load_manifest(path=MANIFEST):
+    manifest = read_bounded_json(path, MAX_MANIFEST_BYTES)
+    if manifest.get('schema') != MANIFEST_SCHEMA:
+        raise Refused('manifest-schema', str(manifest.get('schema')))
+    return manifest
 
 
 def pending_pins(node, prefix=''):
-    """Dotted paths of every pin still `pending`. Empty means fully frozen."""
+    """Dotted paths of every pin still `pending`. Empty means concrete."""
     found = []
     if isinstance(node, dict):
         for key in sorted(node):
@@ -123,25 +139,11 @@ def pending_pins(node, prefix=''):
     return found
 
 
-def load_manifest(path=MANIFEST):
-    manifest = read_bounded_json(path, MAX_MANIFEST_BYTES)
-    if manifest.get('schema') != MANIFEST_SCHEMA:
-        raise Refused('manifest-schema', str(manifest.get('schema')))
-    return manifest
-
-
-def require_frozen(manifest, route):
-    """Refuse while any pin the route depends on is still pending.
-
-    Frozen means the candidate, helpers, predecessor, provenance and this
-    route's own pins are all concrete. A placeholder never counts as frozen.
-    """
-    scope = {key: manifest[key] for key in
-             ('candidate', 'helpers', 'predecessor', 'provenance')}
-    scope['route'] = manifest['routes'][route]
-    pending = pending_pins(scope)
+def require_route_frozen(manifest, route):
+    """Refuse while the route's own source pins are pending."""
+    pending = pending_pins(manifest['routes'][route])
     if pending:
-        raise Refused('candidate-unfrozen',
+        raise Refused('route-pins-pending',
                       '%d pins pending, first: %s' % (len(pending), pending[0]))
 
 
@@ -151,7 +153,7 @@ def check_exact_keys(obj, keys, what):
 
 
 def validate_request_shape(request, route):
-    """Strict shape only. Pins are compared later, after the frozen check."""
+    """Strict shape only. Bindings are checked against the authenticated record."""
     check_exact_keys(request, REQUEST_KEYS, 'request')
     if request['schema'] != REQUEST_SCHEMA:
         raise Refused('request-schema', str(request['schema']))
@@ -163,57 +165,75 @@ def validate_request_shape(request, route):
             raise Refused('request-shape', key + ' is not an object')
     if not isinstance(request['resources'], list):
         raise Refused('request-shape', 'resources is not a list')
-    return request
 
 
-def compare_pins(request, manifest, route):
-    """Exact technical bindings: candidate, helpers, predecessor, consumer."""
-    cand = request['candidate']
-    pinned = manifest['candidate']
-    check_exact_keys(request['consumer'], {'selected_head', 'relevant_inputs',
-                                           'includes', 'bundle'}, 'consumer')
-    if cand.get('source_commit') != pinned['source_commit']:
-        raise Refused('candidate-mismatch', 'source commit is not C')
-    if cand.get('binary_sha256') != pinned['binary_sha256']:
-        raise Refused('candidate-mismatch', 'binary hash is not C')
-    if cand.get('install_identity') != pinned['install_identity']:
-        raise Refused('candidate-mismatch', 'installed identity differs')
-    helpers = request['helpers']
-    if helpers.get('head') != manifest['helpers']['head']:
-        raise Refused('helper-mismatch', 'helper source head is not pinned')
-    if helpers.get('modules') != manifest['helpers']['modules']:
-        raise Refused('helper-mismatch', 'helper module hashes differ')
-    pred = request['predecessor']
-    if pred.get('receipt_sha256') != manifest['predecessor']['receipt_sha256']:
-        raise Refused('predecessor-mismatch', 'positive624 receipt is not pinned')
-    if pred.get('same_candidate_commit') != pinned['source_commit']:
-        raise Refused('predecessor-mismatch', 'receipt is not for this C')
-    consumer = request['consumer']
-    pins = manifest['routes'][route]['consumer']
-    if not HEX40.fullmatch(str(consumer.get('selected_head', ''))):
-        raise Refused('consumer-mismatch', 'selected head is not a commit')
-    if consumer.get('relevant_inputs') != pins['relevant_inputs']:
-        raise Refused('input-drift', 'relevant tracked input closure differs')
-    if consumer.get('includes') != pins['includes']:
-        raise Refused('input-drift', 'declared include set differs')
-    bundle = consumer.get('bundle', {})
-    if bundle.get('resolved_revision') != pins['bundle']['resolved_revision']:
-        raise Refused('bundle-drift', 'resolved revision differs')
-    if bundle.get('content_digest') != pins['bundle']['content_digest']:
-        raise Refused('bundle-drift', 'content digest differs')
+def authenticate_provenance(request, digest, route, authenticate):
+    """The Nucleus proof-entry precondition: an authenticated record for THIS request.
+
+    `authenticate` is the Nucleus proof-entry channel. It receives the route
+    and the request's SHA-256 and returns a record. Source-only code has no
+    such channel, so the committed entries refuse here, before any read.
+    """
+    if authenticate is None:
+        raise Refused('nucleus-provenance-unavailable',
+                      'no authenticated proof-entry record reached the entry')
+    record = authenticate({'route': route, 'request_sha256': digest})
+    if not isinstance(record, dict) or record.get('authenticated') is not True:
+        raise Refused('nucleus-provenance-unavailable', 'record not authenticated')
+    check_exact_keys(record, RECORD_KEYS, 'provenance record')
+    if record['request_sha256'] != digest:
+        raise Refused('provenance-mismatch', 'record names another request')
+    return record
 
 
-def check_window(request, manifest, route, now_ns):
+def bind_record(request, record):
+    """Every candidate, predecessor, helper and window binding must match the record."""
+    provenance = {'merged_commit': record['merged_commit'],
+                  'source_immutable_head': record['source_immutable_head']}
+    if request['provenance'] != provenance:
+        raise Refused('provenance-mismatch', 'merged commit or source head differs')
+    if not HEX40.fullmatch(str(record['merged_commit'])):
+        raise Refused('provenance-mismatch', 'merged commit is not a commit')
+    if request['helpers'] != {'head': record['source_immutable_head'],
+                              'modules': module_hashes()}:
+        raise Refused('helper-mismatch', 'helper head or on-disk module hashes differ')
+    candidate = record['candidate']
+    check_exact_keys(candidate, {'source_commit', 'binary_sha256', 'install_identity'},
+                     'candidate')
+    if not HEX40.fullmatch(str(candidate['source_commit'])):
+        raise Refused('candidate-mismatch', 'source commit is not a commit')
+    if not os.path.isabs(str(candidate['install_identity'].get('path', ''))):
+        raise Refused('candidate-mismatch', 'installed path is not absolute')
+    if request['candidate'] != candidate:
+        raise Refused('candidate-mismatch', 'request candidate is not the record candidate')
+    predecessor = record['predecessor']
+    check_exact_keys(predecessor, {'receipt_sha256', 'same_candidate_commit', 'status'},
+                     'predecessor')
+    if predecessor['status'] != 'positive':
+        raise Refused('predecessor-not-positive', str(predecessor['status']))
+    if predecessor['same_candidate_commit'] != candidate['source_commit']:
+        raise Refused('predecessor-mismatch', 'receipt is not for this candidate')
+    if request['predecessor'] != {k: predecessor[k] for k in
+                                  ('receipt_sha256', 'same_candidate_commit')}:
+        raise Refused('predecessor-mismatch', 'request predecessor is not the record')
+    window = record['window']
+    check_exact_keys(window, {'id', 'token_sha256'}, 'record window')
+    if request['window'].get('id') != window['id'] \
+            or request['window'].get('token_sha256') != window['token_sha256']:
+        raise Refused('window-mismatch', 'request window is not the record window')
+
+
+def check_window(request, manifest, now_ns, route):
     """Absolute monotonic bounds, one use, and the route's maximum span."""
     window = request['window']
     check_exact_keys(window, {'id', 'token_sha256', 'start_monotonic_ns',
                               'deadline_monotonic_ns'}, 'window')
     if not ID_RE.fullmatch(str(window['id'])):
         raise Refused('window-missing', 'window id is malformed')
-    if window['id'] in manifest.get('consumed_windows', []):
-        raise Refused('window-consumed', window['id'])
     if not SHA256_TAG.fullmatch(str(window['token_sha256'])):
         raise Refused('window-missing', 'one-use token digest is missing')
+    if window['id'] in manifest.get('consumed_windows', []):
+        raise Refused('window-consumed', window['id'])
     start = window['start_monotonic_ns']
     deadline = window['deadline_monotonic_ns']
     if not (isinstance(start, int) and isinstance(deadline, int)):
@@ -236,16 +256,76 @@ def check_budgets(request, manifest, route):
 
 
 def check_resources(request, manifest, route):
-    """Exact engine identity for every resource the window may touch."""
+    """The resource roles and kinds the route pins. Identities are probed at the engine."""
     pinned = manifest['routes'][route]['resources']
-    listed = {item.get('role'): item for item in request['resources']
-              if isinstance(item, dict)}
-    if set(listed) != set(pinned) or len(listed) != len(request['resources']):
-        raise Refused('resource-mismatch', 'resource set is not the pinned set')
+    listed = {}
+    for item in request['resources']:
+        check_exact_keys(item, {'role', 'kind', 'identity'}, 'resource')
+        if item['role'] in listed:
+            raise Refused('resource-mismatch', 'duplicate role ' + item['role'])
+        listed[item['role']] = item
+    if set(listed) != set(pinned):
+        raise Refused('resource-mismatch', 'resource roles are not the pinned set')
     for role, want in pinned.items():
-        got = {key: value for key, value in listed[role].items() if key != 'role'}
-        if got != want:
-            raise Refused('resource-mismatch', 'identity differs for ' + role)
+        if listed[role]['kind'] != want['kind']:
+            raise Refused('resource-mismatch', 'kind differs for ' + role)
+        if not ID_RE.fullmatch(str(listed[role]['identity'])):
+            raise Refused('resource-mismatch', 'identity is malformed for ' + role)
+
+
+def resource_identity(request, role):
+    for item in request['resources']:
+        if item['role'] == role:
+            return item['identity']
+    raise Refused('resource-mismatch', 'missing role ' + role)
+
+
+def resolve_checkout(pinned):
+    """The pinned consumer checkout: a real directory, never a symlink."""
+    if os.path.islink(pinned) or not os.path.isdir(pinned):
+        raise Refused('checkout-mismatch', 'pinned checkout is not a real directory')
+    return os.path.realpath(pinned)
+
+
+def default_git(args, cwd):
+    """One fixed read: object ids and status of the pinned checkout. No content."""
+    if list(args) not in (['rev-parse', 'HEAD'], ['status', '--porcelain']) \
+            and not (len(args) == 2 and args[0] == 'rev-parse' and args[1].startswith('HEAD:')):
+        raise Refused('git-not-allowlisted', ' '.join(args))
+    result = subprocess.run([GIT, *args], cwd=cwd, capture_output=True, text=True,
+                            timeout=GIT_TIMEOUT_S)
+    if result.returncode != 0:
+        raise Refused('input-drift', 'git read failed: ' + ' '.join(args))
+    return result.stdout
+
+
+def verify_consumer(git, request, manifest, route, checkout):
+    """Selected clean head, declared include set, and every closure blob at that head."""
+    pins = manifest['routes'][route]['consumer']
+    consumer = request['consumer']
+    check_exact_keys(consumer, {'selected_head', 'relevant_inputs', 'includes', 'bundle'},
+                     'consumer')
+    if consumer['includes'] != pins['includes']:
+        raise Refused('input-drift', 'declared include set differs')
+    if consumer['relevant_inputs'] != pins['relevant_inputs']:
+        raise Refused('input-drift', 'request closure differs from the reviewed closure')
+    bundle = consumer['bundle']
+    check_exact_keys(bundle, {'resolved_revision', 'content_digest'}, 'bundle')
+    if bundle['content_digest'] != pins['bundle']['content_digest']:
+        raise Refused('bundle-drift', 'bundle content digest differs from the approved target')
+    revision = str(bundle['resolved_revision'])
+    if not HEX40.fullmatch(revision) or not revision.startswith(pins['bundle']['approved_revision_prefix']):
+        raise Refused('bundle-drift', 'resolved bundle revision is not the approved target')
+    selected = consumer['selected_head']
+    if not HEX40.fullmatch(str(selected)):
+        raise Refused('consumer-mismatch', 'selected head is not a commit')
+    if git(['rev-parse', 'HEAD'], checkout).strip() != selected:
+        raise Refused('consumer-mismatch', 'checkout HEAD is not the selected head')
+    if git(['status', '--porcelain'], checkout).strip():
+        raise Refused('consumer-dirty', 'checkout has uncommitted changes')
+    for path, blob in sorted(pins['relevant_inputs'].items()):
+        if git(['rev-parse', 'HEAD:' + path], checkout).strip() != blob:
+            raise Refused('input-drift', 'blob differs at selected head: ' + path)
 
 
 def check_prior_intent(request, observed_running):
@@ -258,47 +338,160 @@ def check_prior_intent(request, observed_running):
             raise Refused('prior-intent', 'running state changed for ' + name)
 
 
-def verify_provenance(request, manifest, authenticate):
-    """Nucleus exact merged-commit and source-immutable proof-entry precondition.
+def counts_match(observed, expected):
+    """Named-table cardinality only. Any missing, extra or unequal count refuses."""
+    if set(observed) != set(expected):
+        raise Refused('unexpected-counts', 'table set differs from the pin')
+    for table, want in sorted(expected.items()):
+        if observed[table] != want:
+            raise Refused('unexpected-counts', '%s: %s != %s'
+                          % (table, observed[table], want))
 
-    File and environment values are data, never authorization. `authenticate`
-    is the Nucleus proof-entry channel. Source-only code has none, so the
-    committed entries refuse here.
+
+def rollback_plan(prior_running, now_running, started_by_window):
+    """Stop only environments this window started. Unknown state counts as running.
+
+    An environment is stopped unless it was observed not running afterwards, so
+    an environment whose status was never read cannot be left running. Anything
+    running before the window is never named here.
     """
-    if authenticate is None:
-        raise Refused('nucleus-provenance-unavailable',
-                      'no authenticated proof-entry channel in this source')
-    record = authenticate(request['provenance'])
-    if not isinstance(record, dict) or record.get('authenticated') is not True:
-        raise Refused('nucleus-provenance-unavailable', 'record not authenticated')
-    pinned = manifest['provenance']
-    for key in ('merged_commit', 'source_immutable_head'):
-        if record.get(key) != pinned[key] or request['provenance'].get(key) != pinned[key]:
-            raise Refused('provenance-mismatch', key + ' is not the pinned value')
-    return record
+    return [name for name in sorted(started_by_window)
+            if prior_running.get(name) is False and now_running.get(name) is not False]
 
 
-def validate_request(request, manifest, route, authenticate, now_ns):
-    """Ordered gate: shape, frozen pins, provenance, pins, window, budgets."""
-    validate_request_shape(request, route)
-    require_frozen(manifest, route)
-    verify_provenance(request, manifest, authenticate)
-    compare_pins(request, manifest, route)
-    check_window(request, manifest, route, now_ns)
-    check_budgets(request, manifest, route)
-    check_resources(request, manifest, route)
-    return request
+def engine_argv(engine, *verb):
+    return [engine['colima_binary'], 'nerdctl', '-p', engine['profile'], '--', *verb]
 
 
-def check_argv(argv, allowed_tails, binary_prefix=None):
-    """Fixed allowlist: argv[0] absolute, the rest an exact allowed tail."""
-    if not argv or not os.path.isabs(argv[0]):
-        raise Refused('argv-not-pinned', 'argv[0] must be an absolute path')
-    if binary_prefix is not None and argv[0] != binary_prefix:
-        raise Refused('argv-not-pinned', 'binary is not the pinned install')
-    if tuple(argv[1:]) not in allowed_tails:
-        raise Refused('argv-not-allowlisted', ' '.join(argv[1:4]))
-    return list(argv)
+def parse_running(text):
+    try:
+        body = json.loads(text)
+    except ValueError:
+        raise Refused('status-unparsed', 'status is not JSON')
+    if not isinstance(body, dict) or not isinstance(body.get('running'), bool):
+        raise Refused('status-unparsed', 'running state is not a bool')
+    return body['running']
+
+
+def parse_ids(text):
+    rows = [line for line in text.splitlines() if line != '']
+    if any(not HEX64.fullmatch(row) for row in rows) or len(rows) != len(set(rows)):
+        raise Refused('resource-mismatch', 'container inventory is malformed or duplicated')
+    return sorted(rows)
+
+
+def parse_names(text):
+    rows = [line for line in text.splitlines() if line != '']
+    if any(not NAME_RE.fullmatch(row) for row in rows) or len(rows) != len(set(rows)):
+        raise Refused('resource-mismatch', 'volume inventory is malformed or duplicated')
+    return sorted(rows)
+
+
+def parse_mounts(text):
+    names = []
+    for line in text.splitlines():
+        if line.startswith('volume '):
+            names.append(line[len('volume '):])
+    return sorted(names)
+
+
+def stdout_text(record):
+    return Path(record['streams']['stdout']['path']).read_text()
+
+
+def protected_capture(session, engine):
+    """Container and volume identities now. Used before effect and after rollback."""
+    containers = parse_ids(stdout_text(session.engine_call(
+        engine_argv(engine, 'ps', '-a', '--no-trunc', '--format', '{{.ID}}'),
+        'capture-containers')))
+    volumes = parse_names(stdout_text(session.engine_call(
+        engine_argv(engine, 'volume', 'ls', '--format', '{{.Name}}'),
+        'capture-volumes')))
+    return {'containers': set(containers), 'volumes': set(volumes)}
+
+
+def identity_check(session, engine, identity, request, container_role, volume_role):
+    """Bind the actual container and volume the window will touch. Read-only probes."""
+    container_id = resource_identity(request, container_role)
+    volume_name = resource_identity(request, volume_role)
+    pinned_volume = identity.get('volume')
+    if pinned_volume is not None and volume_name != pinned_volume:
+        raise Refused('resource-mismatch', 'volume identity is not the pinned volume')
+    ids = parse_ids(stdout_text(session.engine_call(
+        engine_argv(engine, 'ps', '-a', '--no-trunc', '--format', '{{.ID}}',
+                    '--filter', 'label=com.docker.compose.project=' + identity['project'],
+                    '--filter', 'label=com.docker.compose.service=' + identity['service']),
+        'probe-' + container_role)))
+    if ids != [container_id]:
+        raise Refused('resource-mismatch', 'container is foreign, replaced or absent')
+    mounts = parse_mounts(stdout_text(session.engine_call(
+        engine_argv(engine, 'inspect', '--format',
+                    '{{range .Mounts}}{{.Type}} {{.Name}}\n{{end}}', container_id),
+        'probe-' + container_role + '-mounts')))
+    if volume_name not in mounts:
+        raise Refused('resource-mismatch', 'container does not mount the pinned volume')
+    return container_id
+
+
+def protected_check(baseline, after, shared_container, shared_volume, never_touch):
+    """Shared identities present before, present after, and no volume lost."""
+    if shared_container not in baseline['containers'] or shared_volume not in baseline['volumes']:
+        raise Refused('protected-missing', 'shared MariaDB identity is not present')
+    for name in never_touch:
+        if name not in baseline['volumes']:
+            raise Refused('protected-missing', 'protected volume absent: ' + name)
+    if shared_container not in after['containers'] or not baseline['volumes'] <= after['volumes']:
+        raise Refused('protected-identity-changed', 'a protected identity was removed')
+
+
+def volumes_kept(baseline, after):
+    """Named volumes are never removed by a window; containers may be the window's own."""
+    if not baseline['volumes'] <= after['volumes']:
+        raise Refused('protected-identity-changed', 'a named volume was removed')
+
+
+def within_root(path, roots):
+    """Evidence directories sit under an allowed root, with no symlink ancestor."""
+    resolved = Path(path)
+    if not resolved.is_absolute():
+        raise Refused('evidence-root', 'evidence dir must be absolute')
+    for ancestor in [resolved] + list(resolved.parents):
+        if ancestor.is_symlink():
+            raise Refused('evidence-root', 'symlink ancestor: %s' % ancestor)
+    if not any(str(resolved).startswith(str(root).rstrip('/') + '/') for root in roots):
+        raise Refused('evidence-root', 'outside the allowed scratch root')
+    return resolved
+
+
+def claim_evidence(path, roots):
+    """A new private evidence directory. An existing one refuses: no adoption."""
+    resolved = within_root(path, roots)
+    try:
+        os.mkdir(resolved, 0o700)
+    except FileExistsError:
+        raise Refused('evidence-exists', 'evidence directory already exists: %s' % resolved)
+    return resolved
+
+
+def write_exclusive(path, text):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+    with os.fdopen(fd, 'w') as handle:
+        handle.write(text)
+
+
+def write_occurrence(evidence_dir, status, detail):
+    """The occurrence record, written once. Failed or Unknown stays spent."""
+    body = {'status': status, 'detail': detail, 'spent': status != 'passed'}
+    write_exclusive(Path(evidence_dir) / 'occurrence.json',
+                    json.dumps(body, indent=2, sort_keys=True) + '\n')
+    return body
+
+
+def write_binding(evidence_dir, request_sha256, record, modules):
+    """Retain the bindings the occurrence ran against, before any child."""
+    body = {'request_sha256': request_sha256, 'provenance': record, 'modules': modules}
+    write_exclusive(Path(evidence_dir) / 'binding.json',
+                    json.dumps(body, indent=2, sort_keys=True) + '\n')
 
 
 def _pump(pipe, buffer, cap, overflow, group):
@@ -363,8 +556,8 @@ def run_child(argv, *, timeout_s, stdout_cap, stderr_cap, out_dir, label,
     _kill_group(pgid)
     record = {
         'label': label,
-        'argv_sha256': 'sha256:' + hashlib.sha256(
-            '\0'.join(argv).encode()).hexdigest(),
+        'argv': list(argv),
+        'cwd': str(cwd) if cwd is not None else None,
         'exit': rc,
         'duration_ns': time.monotonic_ns() - started,
         'streams': {},
@@ -387,52 +580,52 @@ def run_child(argv, *, timeout_s, stdout_cap, stderr_cap, out_dir, label,
     return record
 
 
-def counts_match(observed, expected):
-    """Named-table cardinality only. Any missing, extra or unequal count refuses."""
-    if set(observed) != set(expected):
-        raise Refused('unexpected-counts', 'table set differs from the pin')
-    for table, want in sorted(expected.items()):
-        if observed[table] != want:
-            raise Refused('unexpected-counts', '%s: %s != %s'
-                          % (table, observed[table], want))
+def make_transport(budgets, children_dir):
+    """The production transport: fixed argv, the pinned cwd, bounded streams."""
+    def transport(argv, label, cwd):
+        return run_child(argv, timeout_s=budgets['step_timeout_s'],
+                         stdout_cap=budgets['stdout_cap_bytes'],
+                         stderr_cap=budgets['stderr_cap_bytes'],
+                         out_dir=children_dir, label=label, cwd=cwd)
+    return transport
 
 
-def rollback_plan(prior_running, now_running, started_by_window):
-    """Stop only environments this window started, restoring prior intent.
+class Session:
+    """The only way a route runs a child.
 
-    Anything running before the window stays running. An environment is
-    stopped only when the window started it, so a foreign or pre-existing
-    environment is never touched.
+    `effigy` runs an allowlisted tail of the pinned install. `engine_call` runs
+    a read or an allowlisted engine verb through the pinned Colima profile.
+    Every call carries the pinned checkout as cwd and a sequence-numbered
+    label, so each original stream stays separate and unique.
     """
-    plan = []
-    for name in sorted(started_by_window):
-        if prior_running.get(name) is False and now_running.get(name) is True:
-            plan.append(name)
-    return plan
+
+    def __init__(self, transport, binary, checkout, tails, engine):
+        if not os.path.isabs(binary):
+            raise Refused('argv-not-pinned', 'binary must be absolute')
+        self.transport = transport
+        self.binary = binary
+        self.checkout = checkout
+        self.tails = frozenset(tails)
+        self.engine = engine
+        self.calls = 0
+
+    def _label(self, label):
+        self.calls += 1
+        return '%03d-%s' % (self.calls, label)
+
+    def effigy(self, tail, label):
+        tail = tuple(tail)
+        if tail not in self.tails:
+            raise Refused('argv-not-allowlisted', ' '.join(tail[:4]))
+        return self.transport([self.binary, *tail], self._label(label), self.checkout)
+
+    def engine_call(self, argv, label):
+        prefix = [self.engine['colima_binary'], 'nerdctl', '-p', self.engine['profile'], '--']
+        if list(argv[:5]) != prefix or len(argv) < 6 or argv[5] not in ENGINE_VERBS:
+            raise Refused('argv-not-allowlisted', 'engine verb outside the allowlist')
+        return self.transport(list(argv), self._label(label), self.checkout)
 
 
-def write_occurrence(evidence_dir, status, detail):
-    """The occurrence record. Failed or Unknown spends the window; never reset."""
-    body = {'status': status, 'detail': detail,
-            'spent': status != 'passed'}
-    Path(evidence_dir).mkdir(parents=True, exist_ok=True)
-    (Path(evidence_dir) / 'occurrence.json').write_text(
-        json.dumps(body, indent=2, sort_keys=True) + '\n')
-    return body
-
-
-def within_root(path, roots):
-    """Evidence directories must sit under an allowed root, never a symlink."""
-    resolved = Path(path)
-    if not resolved.is_absolute():
-        raise Refused('evidence-root', 'evidence dir must be absolute')
-    for ancestor in [resolved] + list(resolved.parents):
-        if ancestor.is_symlink():
-            raise Refused('evidence-root', 'symlink ancestor: %s' % ancestor)
-    if not any(str(resolved).startswith(str(root).rstrip('/') + '/') for root in roots):
-        raise Refused('evidence-root', 'outside the allowed scratch root')
-    return resolved
-
-
-def load_request(path):
-    return read_bounded_json(path, MAX_REQUEST_BYTES)
+def read_running(session, env, label):
+    record = session.effigy(('container', env, 'status', '--json'), label)
+    return parse_running(stdout_text(record))

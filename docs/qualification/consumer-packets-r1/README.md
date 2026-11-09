@@ -2,101 +2,122 @@
 
 Source-only preparation for the #625 Acow/CBS continuity proof, against the
 current candidate rather than the 5f466914 packet. Status: **prepared,
-unarmed, not executed.** The committed routes refuse every request before any
-child runs, because the manifest pins nothing yet. No consumer checkout, engine,
-volume, row, secret, network or native binary was touched to produce this.
+unarmed, not executed.** The committed entries refuse before any read of a
+consumer checkout or any engine. Nothing here touched a consumer checkout,
+engine, volume, row, secret or network.
 
-The historical packet `acow-ordinary-compose-5f466914/` is unchanged. Its boundary battery runs through `acow_battery.py`, which repoints only the fixture scratch constant (`/Volumes/Builds/scratch/effigy/540`, absent on some hosts) to a run-TMPDIR directory. Verification, expected results, hashes and tokens are not touched. Its
-#540/543/545/553 chain pinned a different candidate and a retired prerequisite.
-This packet reuses only its five pure readers (by file path, under a distinct
-module name) and its eight-table counts baseline, cited by file and line.
+The historical packet `acow-ordinary-compose-5f466914/` is unchanged. Its
+boundary battery runs through `acow_battery.py`, which repoints only the
+fixture scratch constant to a run-TMPDIR directory. The historical packet's own
+verification, expected results, hashes and tokens are not touched.
+
+## Authority model
+
+Authority does not come from this checkout's manifest.
+
+- **Hash-pinned request.** Names the candidate C (source, binary, installed
+  identity), the helper head and module hashes, the positive624 predecessor for
+  C, the consumer selected head and closure, the resolved bundle revision and
+  digest, the window (id, one-use token digest, monotonic bounds), budgets and
+  resources.
+- **Authenticated provenance record.** The Nucleus proof-entry channel returns a
+  record that names the request's SHA-256 and confirms the merged commit, source
+  head, candidate, predecessor (`status: positive`, same C) and window. File and
+  environment values are data, never authorization. Source-only code has no
+  such channel, so the entries refuse with `nucleus-provenance-unavailable`.
+- **Manifest.** Holds only source-visible facts: route constants, consumer
+  closure blobs, count baselines, engine and identity facts, budgets, the
+  Acow approved bundle revision prefix, and the consumed-window list.
+
+The entry hashes its own modules on disk and compares them with the request and
+the record. Git reads are a fixed allowlist of `rev-parse HEAD`,
+`rev-parse HEAD:<path>` and `status --porcelain` in the pinned checkout.
 
 ## Files
 
 | File | Role |
 | --- | --- |
-| `consumer_core.py` | Strict bounded JSON, pinned manifest, frozen-pin check, request gates, Nucleus provenance seam, fixed-argv child runner, counts and rollback rules |
-| `acow.py` | Acow route entry: hybrid/container/hybrid phases, Level 1 forward, eight-table counts, scoped rollback |
-| `cbs.py` | CBS route entry: detached app-shell, Level 1 forward, named counts, scoped rollback |
-| `manifest-r1.json` | Pinned identities and the pending pins a later exact occurrence must supply |
-| `tests.py` | Fail-closed controls driven through the real `main` and `run` boundaries, plus harness isolation and cleanup |
+| `consumer_core.py` | Strict JSON, manifest and request gates, provenance binding, closure verification, identity probes, the `Session` child boundary, the bounded child runner, counts and rollback rules |
+| `acow.py` | Acow entry: hybrid/container/hybrid phases, Level 1 forward, eight-table counts, scoped rollback, protected-identity check |
+| `cbs.py` | CBS entry: detached app-shell, Level 1 forward, named counts, scoped rollback, volumes-kept check |
 | `acow_battery.py` | Test-only harness: runs the unchanged historical Acow boundary battery with only its fixture SCRATCH relocated under TMPDIR |
+| `manifest-r1.json` | Source-visible pins; pending values refuse their route |
+| `tests.py` | Fail-closed controls driven through `main` and `run` with fixture transports, git reader and provenance |
 
 ## Selectors (`config/tasks.toml`)
 
 | Selector | Runs | Effect |
 | --- | --- | --- |
-| `test:qualification:consumer-packets` | `tests.py` | None: fixture transports and harmless `-I -c` children only |
+| `test:qualification:consumer-packets` | `tests.py` | None: fixture transports, fixture git, harmless `-I -c` children only |
 | `check:qualification:consumer-packets:compile` | compile all modules in memory | None |
-| `qualification:acow-consumer:proof-only` | `acow.py {args}` | Refuses before any child (unarmed) |
-| `qualification:cbs-consumer:proof-only` | `cbs.py {args}` | Refuses before any child (unarmed) |
-| `test:qualification:acow` | `acow_battery.py` → historical 5f466914 `boundaries.py` (150 checks) | Historical packet bytes unchanged; fixture SCRATCH relocated to a fresh 0700 directory under TMPDIR, restored on exit; no `/Volumes/Builds` needed |
+| `qualification:acow-consumer:proof-only` | `acow.py {args}` | Refuses before any read (unarmed) |
+| `qualification:cbs-consumer:proof-only` | `cbs.py {args}` | Refuses before any read (unarmed) |
+| `test:qualification:acow` | `acow_battery.py` → historical `boundaries.py` (150 checks) | Historical bytes unchanged; fixture SCRATCH under TMPDIR, restored on exit |
 
 ## Gate order (every route, before the first child)
 
-1. Strict request shape: exact keys, schema, route, no duplicate JSON keys, size cap.
-2. Frozen check: any `pending` pin for the candidate, helpers, predecessor, provenance or this route refuses `candidate-unfrozen`.
-3. Nucleus provenance: an authenticated record whose merged commit and source-immutable head equal the pins. File and environment values are data. No authenticated channel exists in this source, so the committed entries refuse `nucleus-provenance-unavailable`.
-4. Pins: candidate C source, binary and installed identity; helper head and module hashes; positive624 receipt for the same C; consumer relevant-input closure and include set; bundle resolved revision and content digest.
-5. Window: an absolute monotonic deadline inside the route span, a one-use token digest, not in `consumed_windows`.
-6. Budgets within route caps; resource identities exactly the pinned set.
-7. Evidence root: absolute, no symlink ancestor, under the allowed scratch root.
+1. Strict request shape, exact keys, schema and route, no duplicate JSON keys, size cap.
+2. Route pins: any `pending` value in the route refuses `route-pins-pending`.
+3. Authenticated provenance record for this request's SHA-256.
+4. Record binding: merged commit and source head; helper head and on-disk module hashes; candidate; predecessor (positive, same C); window id and token.
+5. Window: one use, monotonic bounds inside the route span, not expired.
+6. Budgets within route caps; resource roles and kinds exactly the pinned set.
+7. Pinned checkout is a real directory, not a symlink.
+8. Closure: selected head is HEAD, clean, includes exact, every relevant blob at that head, bundle digest exact and revision on the approved prefix.
+9. Evidence claim: a new private directory under an allowed root. An existing one refuses.
 
-Refusal codes are stable strings. A refusal after the first child writes
-`occurrence.json` with `spent: true`. Nothing retries, refunds or resets it.
+A refusal after step 9 spends the occurrence and records its code in
+`occurrence.json`. Refusals before step 9 leave no evidence.
 
 ## Armed sequence
 
-**Acow.** Observe prior intent for `stack` and `hybrid` and refuse on drift.
-Then `container hybrid up --detach`, `container stack up --detach`,
-`container hybrid up --detach`, observing each environment. Then the Level 1
-forward `container stack status --json`. Then eight named-table counts, counts
-only, against owner baseline plus declared delta. Then rollback: stop only the
-environments this window started and that are now running. Anything running
-before the window stays running.
+Every child runs through `Session` from the pinned consumer checkout, with a
+sequence-numbered label, its own original stdout and stderr, a waited exit, and
+bounded cleanup by recorded process group.
+
+**Acow.** Identity probes first: the postgres container from the project and
+service labels must be exactly the request's container, and must mount the
+pinned volume. Protected capture: shared MariaDB and every named volume must be
+present. Prior running state of `hybrid` and `stack` must match the request, and
+the intent must name exactly those two. Then `container hybrid up --detach`,
+`container stack up --detach`, `container hybrid up --detach`, each observed.
+Then the Level 1 forward `container stack status --json`. Then eight named-table
+counts, counts only, against baseline plus declared delta. Then rollback: stop
+only environments this window started and that are not observed not running.
+Afterwards the protected identities must still be present.
 
 `dev:test` is declared, not armed. Its fresh environment is not pinned in
 `infra/workspace.toml`. `dev` and `dev:container` are TUI and need a PTY, which
 is Level 2, so this route uses the detached container forms.
 
-**CBS.** Observe the `dev` system's prior state. Then
-`container up --detach --system dev`. Then the non-destructive forward
-`container status --system dev --json`. Then counts over the named `cbs` and
-`cbs-mortcalc` tables, against a pinned engine tail and database container.
-Then rollback as in Acow. No seed, deploy, sync, schema refresh or data command
-is in either route.
+**CBS.** Identity probe for the database container and the engine volume the
+request names. Prior state of the `dev` system must match the request. Then
+`container up --detach --system dev`, observed. Then the forward
+`container status --system dev --json`. Then counts over `cbs` and
+`cbs-mortcalc` through the pinned count tail. Then `container down --system dev`
+only if the window started it. Then named volumes must all still be present.
+No seed, deploy, sync, schema refresh or data command is in either route.
 
-## Pending pins (what the later exact occurrence must bind)
+## What a later exact occurrence binds, and what it edits
 
-- Candidate C: source commit, binary SHA-256, installed path and version.
-- Predecessor: positive624 receipt SHA-256 for the same C.
-- Helpers: source-immutable head and module hashes for the four modules here.
-- Provenance: the Nucleus exact merged commit and source-immutable head.
-- Consumer: selected clean head, bundle resolved full revision. The Acow content
-  digest is already pinned; the CBS digest is pending.
-- Status contract: verify the `running` field of `container <NAME> status --json`
-  on the frozen candidate. The parser refuses until that is verified.
-- CBS counts: the named table baselines (candidates chosen from the schema) and
-  the mysql count tail, with the credential named as a container-env reference.
-- Resources: Acow postgres volume and container, shared MariaDB; CBS engine
-  volume and database container. Identities come from engine evidence at the
-  window, never host `lstat`.
-- Protected baseline at the window: every shared, foreign and older volume and
-  container, captured read-only.
-- Window: id and one-use token digest, plus its monotonic bounds, inside the
-  route span.
+Bound by the authenticated request and record, with no source edit:
+candidate C, positive624 receipt for C, helper head and module hashes, merged
+commit and source head, window, Acow full resolved bundle revision, and the
+container and volume identities.
 
-## Reconciled facts (read-only, tracked)
+Still needs a reviewed manifest commit at freeze, because they are
+consumer-config facts observed at that time:
+- Both routes: the `status --json` running-field contract, verified on the frozen candidate.
+- CBS: the compose project label, the mysql count tail (credential as a container-env reference, never a literal), the six table baselines for `cbs` and `cbs-mortcalc`, and the bundle prefix and digest.
 
-- Acow relevant closure: all twelve blobs equal the 5f466914 pins at Acow main
-  `e23ed290e` (2026-11-08). The root manifest's six includes are unchanged.
-- Acow dev profile: `dev = "hybrid"`, `containers.stack` with shared mysql,
-  `containers.hybrid` with `data_from = "stack"`.
-- CBS relevant closure: `effigy.toml`, `infra/dev/effigy.container.toml`,
-  `infra/secrets.toml` (blob id only, never read), `infra/dev/nginx/cbs.conf`,
-  and the two schema baselines. CBS main `917e96b6`, clean.
-- Underlay `+local` builds satisfy the newer floors. Release builds stay strict.
-  This packet invents no version prerequisite.
+Helper source is not edited by arming. The reviewed commit changes only the
+manifest.
+
+## Decisions carried into the PR
+
+- A refusal after the evidence claim spends the occurrence. Refusals before it leave no evidence.
+- Unknown rollback state counts as running. An environment never observed not running is brought down if this window started it.
+- The historical packet's readers are not imported at runtime. Its counts, includes and blobs are copied with citations, and a control reconciles them.
 
 ## Not claimed
 
@@ -104,6 +125,8 @@ is in either route.
   OrdinaryAcow smoke credit. Passing these controls is source evidence only.
 - No engine, VM, SSH, install, build, download, consumer command, DB access,
   network or tunnel action has run.
-- The committed candidate, binary, positive624 receipt and window do not exist
-  yet. Nothing here mints a successful pin, a stale5f/H/627 credit or a
-  placeholder receipt.
+- The Nucleus proof-entry provenance channel is not a product-supported
+  interface in this checkout. The committed entries refuse at
+  `nucleus-provenance-unavailable`. The coordinated interface needed is a
+  Nucleus callable that returns an authenticated record for a given request
+  SHA-256, passed to `run(..., authenticate=...)` by the proof-only executor.

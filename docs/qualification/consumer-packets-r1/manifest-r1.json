@@ -2,30 +2,7 @@
   "schema": "effigy.qualification.consumer-packets.r1",
   "task": "effigy#757",
   "status": "prepared-unarmed",
-  "note": "Source-only pins. Every 'pending' value is a concrete technical binding the later exact proof-only occurrence must supply. A pending pin refuses every route before any child runs. Nothing here is a placeholder success: no pin is minted from a report, a stale candidate, positive624 history or the 5f466914 packet.",
-  "candidate": {
-    "source_commit": "pending",
-    "binary_sha256": "pending",
-    "install_identity": "pending",
-    "version_marker": "pending"
-  },
-  "predecessor": {
-    "task": "effigy#624",
-    "receipt_sha256": "pending"
-  },
-  "helpers": {
-    "head": "pending",
-    "modules": {
-      "consumer_core.py": "pending",
-      "acow.py": "pending",
-      "cbs.py": "pending",
-      "tests.py": "pending"
-    }
-  },
-  "provenance": {
-    "merged_commit": "pending",
-    "source_immutable_head": "pending"
-  },
+  "note": "Source-visible pins only. The candidate, positive624 predecessor, helper head, window, provenance, container and volume identities, and the resolved bundle revision are NOT pinned here: a hash-pinned request binds them and an authenticated proof-entry record must name that request. Remaining reviewed pins are consumer-config facts observed at freeze (CBS project label, CBS count tail and baselines, CBS bundle prefix and digest) and the status --json running-field contract on both routes. A 'pending' value refuses that route before any read.",
   "consumed_windows": [],
   "routes": {
     "acow": {
@@ -35,9 +12,8 @@
         "stdout_cap_bytes": 262144,
         "stderr_cap_bytes": 262144
       },
+      "checkout": "/Users/tom/Dev/projects/acowtancy",
       "consumer": {
-        "checkout": "/Users/tom/Dev/projects/acowtancy",
-        "anchor_pin_commit": "b7f004d74a47f702f4dc3ef5c96390f0bdbf3c0b",
         "includes": [
           "infra/workspace.toml",
           "infra/tasks.toml",
@@ -60,10 +36,11 @@
           "state/schema/202608221010__baseline_engagement.sql": "ed887393a015b8b1fd8f93a8393a9031742d0afb",
           "state/schema/202608221011__baseline_billing.sql": "f0eae506b32555d71289807be6f9bf845c48c8b0"
         },
-        "reference_observation": "all twelve blobs equal the 5f466914 packet's pins at Acow main e23ed290e (2026-11-08); the armed route re-verifies at the selected head",
+        "reference_observation": "all twelve blobs equal the 5f466914 packet's pins at Acow main e23ed290e (2026-11-08); the armed route re-verifies at the selected head with git rev-parse HEAD:<path>",
         "bundle": {
-          "resolved_revision": "pending",
-          "content_digest": "sha256:28c920404c34cc46d223b061b694903634b592f99a9f10f06f4f9f8f0058975d"
+          "approved_revision_prefix": "808adad",
+          "content_digest": "sha256:28c920404c34cc46d223b061b694903634b592f99a9f10f06f4f9f8f0058975d",
+          "note": "Acow owner-approved short revision; the full resolved revision arrives in the hash-pinned request and must start with this prefix"
         },
         "status_contract": "pending: verify the running field of effigy container <NAME> status --json against the frozen candidate before arming"
       },
@@ -72,22 +49,71 @@
         "colima_binary": "/opt/homebrew/bin/colima",
         "profile": "effigy"
       },
-      "counts": {
-        "auth.users": {"baseline": 57280, "delta": 0, "citation": "state/schema/202608221002__baseline_auth.sql:5"},
-        "auth.legacy_user_link": {"baseline": 57279, "delta": 0, "citation": "state/schema/202608221002__baseline_auth.sql:33"},
-        "billing.orders": {"baseline": 45540, "delta": 0, "citation": "state/schema/202608221011__baseline_billing.sql:357"},
-        "engagement.feedback": {"baseline": 2372, "delta": 0, "citation": "state/schema/202608221010__baseline_engagement.sql:5"},
-        "engagement.complaint": {"baseline": 62, "delta": 0, "citation": "state/schema/202608221010__baseline_engagement.sql:26"},
-        "learning.pathway": {"baseline": 5, "delta": 0, "citation": "state/schema/202608221003__baseline_learning.sql:5"},
-        "learning.module": {"baseline": 65, "delta": 0, "citation": "state/schema/202608221003__baseline_learning.sql:40"},
-        "learning.outcome": {"baseline": 6689, "delta": 0, "citation": "state/schema/202608221003__baseline_learning.sql:150"}
+      "identity": {
+        "project": "acowtancy-dev",
+        "service": "postgres",
+        "volume": "acowtancy-dev-postgres-data",
+        "shared_container": "c47a64b6fc1fe688e3ce503a27704fb978580c22bd4d8c2f7083e509ceb0e6d9",
+        "shared_volume": "effigy-shared-mariadb-0721de3e-mysql-data",
+        "never_touch_volumes": [
+          "acowtancy-dev-postgres-data",
+          "acowtancy-dev-silo-data",
+          "acowtancy-dev-dbgate-data",
+          "effigy-shared-mariadb-0721de3e-mysql-data",
+          "effigy-shared-mariadb-0721de3e-legacy_mysql-data"
+        ],
+        "citation": "5f466914 packet manifest-r1.json protected_state and common.py PRIMARY_* constants"
       },
       "resources": {
-        "acowtancy-dev-postgres-data": {"name": "acowtancy-dev-postgres-data", "kind": "volume", "identity": "pending"},
-        "acowtancy-dev-postgres-container": {"name": "acowtancy-dev-postgres-container", "kind": "container", "identity": "pending"},
-        "shared-mariadb-container": {"name": "c47a64b6fc1fe688e3ce503a27704fb978580c22bd4d8c2f7083e509ceb0e6d9", "kind": "container", "identity": "pending"}
+        "postgres-container": {
+          "kind": "container"
+        },
+        "postgres-volume": {
+          "kind": "volume"
+        }
       },
-      "protected_baseline": "pending: shared MariaDB container and volume, every acowtancy-dev volume and every older scoped volume, captured read-only at the window",
+      "counts": {
+        "auth.users": {
+          "baseline": 57280,
+          "delta": 0,
+          "citation": "state/schema/202608221002__baseline_auth.sql:5"
+        },
+        "auth.legacy_user_link": {
+          "baseline": 57279,
+          "delta": 0,
+          "citation": "state/schema/202608221002__baseline_auth.sql:33"
+        },
+        "billing.orders": {
+          "baseline": 45540,
+          "delta": 0,
+          "citation": "state/schema/202608221011__baseline_billing.sql:357"
+        },
+        "engagement.feedback": {
+          "baseline": 2372,
+          "delta": 0,
+          "citation": "state/schema/202608221010__baseline_engagement.sql:5"
+        },
+        "engagement.complaint": {
+          "baseline": 62,
+          "delta": 0,
+          "citation": "state/schema/202608221010__baseline_engagement.sql:26"
+        },
+        "learning.pathway": {
+          "baseline": 5,
+          "delta": 0,
+          "citation": "state/schema/202608221003__baseline_learning.sql:5"
+        },
+        "learning.module": {
+          "baseline": 65,
+          "delta": 0,
+          "citation": "state/schema/202608221003__baseline_learning.sql:40"
+        },
+        "learning.outcome": {
+          "baseline": 6689,
+          "delta": 0,
+          "citation": "state/schema/202608221003__baseline_learning.sql:150"
+        }
+      },
       "dev_test": {
         "phase": "dev:test",
         "status": "declared-unarmed",
@@ -101,8 +127,8 @@
         "stdout_cap_bytes": 262144,
         "stderr_cap_bytes": 262144
       },
+      "checkout": "/Users/tom/Dev/legacy/sites/cbs",
       "consumer": {
-        "checkout": "/Users/tom/Dev/legacy/sites/cbs",
         "includes": [
           "infra/dev/effigy.container.toml",
           "infra/secrets.toml"
@@ -117,35 +143,68 @@
         },
         "reference_observation": "blob ids read from the tracked index at CBS main 917e96b6 (2026-11-08); the armed route re-verifies at the selected head; cbs.env and any .env or vault file are never read",
         "bundle": {
-          "resolved_revision": "pending",
-          "content_digest": "pending"
+          "approved_revision_prefix": "pending: CBS approved bundle revision prefix, from the activation receipt",
+          "content_digest": "pending: CBS bundle content digest, from the activation receipt"
         },
         "status_contract": "pending: verify the running field of effigy container status --system dev --json against the frozen candidate before arming"
       },
-      "counts": {
-        "engine": {
-          "colima_binary": "/opt/homebrew/bin/colima",
-          "profile": "effigy",
-          "count_tail": "pending: the pinned mysql client argv tail, with the credential source named as a container-env reference and no literal secret"
-        },
-        "tables": {
-          "cbs": {
-            "user_client": {"baseline": "pending", "delta": 0, "citation": "infra/dev/bootstrap/cbs.schema.sql CREATE TABLE user_client"},
-            "news_article": {"baseline": "pending", "delta": 0, "citation": "infra/dev/bootstrap/cbs.schema.sql CREATE TABLE news_article"},
-            "contact_journal": {"baseline": "pending", "delta": 0, "citation": "infra/dev/bootstrap/cbs.schema.sql CREATE TABLE contact_journal"},
-            "feed_mortgage": {"baseline": "pending", "delta": 0, "citation": "infra/dev/bootstrap/cbs.schema.sql CREATE TABLE feed_mortgage"}
-          },
-          "cbs-mortcalc": {
-            "products": {"baseline": "pending", "delta": 0, "citation": "infra/dev/bootstrap/cbs-mortcalc.schema.sql CREATE TABLE products"},
-            "tracking_infos": {"baseline": "pending", "delta": 0, "citation": "infra/dev/bootstrap/cbs-mortcalc.schema.sql CREATE TABLE tracking_infos"}
-          }
-        }
+      "engine": {
+        "kind": "colima-nerdctl",
+        "colima_binary": "/opt/homebrew/bin/colima",
+        "profile": "effigy",
+        "count_tail": [
+          "pending: the mysql client argv tail, credential named as a container-env reference, no literal secret"
+        ]
+      },
+      "identity": {
+        "project": "pending: CBS compose project name, from engine evidence at freeze",
+        "service": "db",
+        "citation": "service name db is the host in the tracked seed commands of infra/dev/effigy.container.toml; the engine volume is bound by the hash-pinned request"
       },
       "resources": {
-        "cbs-engine-volume": {"name": "pending", "kind": "volume", "identity": "pending"},
-        "cbs-database-container": {"name": "pending", "kind": "container", "identity": "pending"}
+        "database-container": {
+          "kind": "container"
+        },
+        "engine-volume": {
+          "kind": "volume"
+        }
       },
-      "protected_baseline": "pending: every volume and container outside this checkout's dev system, captured read-only at the window"
+      "counts": {
+        "cbs": {
+          "user_client": {
+            "baseline": "pending",
+            "delta": 0,
+            "citation": "infra/dev/bootstrap/cbs.schema.sql CREATE TABLE user_client"
+          },
+          "news_article": {
+            "baseline": "pending",
+            "delta": 0,
+            "citation": "infra/dev/bootstrap/cbs.schema.sql CREATE TABLE news_article"
+          },
+          "contact_journal": {
+            "baseline": "pending",
+            "delta": 0,
+            "citation": "infra/dev/bootstrap/cbs.schema.sql CREATE TABLE contact_journal"
+          },
+          "feed_mortgage": {
+            "baseline": "pending",
+            "delta": 0,
+            "citation": "infra/dev/bootstrap/cbs.schema.sql CREATE TABLE feed_mortgage"
+          }
+        },
+        "cbs-mortcalc": {
+          "products": {
+            "baseline": "pending",
+            "delta": 0,
+            "citation": "infra/dev/bootstrap/cbs-mortcalc.schema.sql CREATE TABLE products"
+          },
+          "tracking_infos": {
+            "baseline": "pending",
+            "delta": 0,
+            "citation": "infra/dev/bootstrap/cbs-mortcalc.schema.sql CREATE TABLE tracking_infos"
+          }
+        }
+      }
     }
   }
 }
