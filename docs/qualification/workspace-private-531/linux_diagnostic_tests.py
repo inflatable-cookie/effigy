@@ -2047,13 +2047,29 @@ class EntryTests(unittest.TestCase):
             path.write_bytes(raw)
             path.chmod(0o400)
             digest = hashlib.sha256(raw).hexdigest()
-            # The entry-level fixture keeps the disk-association handoff unattempted through its
-            # documented defensive seam (see CheckoutBindingTests.bound): this fixture's guest and
-            # config bytes are not the registered identity. The handoff's real dispatch path runs in
-            # DiskAssociationHandoff; no prlctl process runs here.
+            # The handoff wiring is proved here on the real production path: execute requests
+            # proof.association_transport (the stage's supervised-route adapter) and this fixture
+            # seam replaces it with a recording transport that refuses, so the wiring, the bracket's
+            # first fresh guest read and the refusal recording all run while no helper or prlctl
+            # process launches. The fixture's guest and config bytes are not the registered
+            # identity, so a fixture cannot supply a positive pass (and never positive production
+            # provenance); the open-gate dispatch path is exercised in DiskAssociationHandoff with
+            # retained-shape fixtures and fixture transports.
+            requested = []
+
+            def recording_adapter(dispatch, pin=None):
+                requested.append(callable(dispatch))
+
+                def transport(argv, stdin_path, timeout, cap):
+                    raise Refusal('fixture: association transport seam')
+
+                return transport
+
             with contextlib.redirect_stdout(io.StringIO()), \
-                    patch.object(proof.disk_association, 'reader_executable', lambda: False):
-                self.assertEqual(proof.main(['proof', str(path), digest]), 0)
+                    patch.object(proof.disk_association, 'reader_executable', lambda: True), \
+                    patch.object(proof, 'association_transport', recording_adapter):
+                self.assertEqual(proof.main(['proof', str(path), digest]), 1)
+            self.assertEqual(requested, [True])
             self.assertEqual(state.read_text(), 'stopped')
             result = json.loads((evidence / 'linux-diagnostic-fixture01' / 'outcome.json').read_text())
             self.assertEqual(result['schema'], 'linux-diagnostic-observation-v6')
@@ -2063,7 +2079,8 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(result['before_extents']['a.hds']['logical'], 17 * 1024 * 1024)
             self.assertEqual(result['writable_top'], 'unknown')
             self.assertEqual(result['placement'], 'not evaluated')
-            self.assertEqual(result['findings'], [])
+            # The one finding is the fixture seam's own refusal of the wired handoff transport.
+            self.assertEqual(result['findings'], ['disk association: fixture: association transport seam'])
             self.assertEqual(result['transport']['status'], 'ready')
             self.assertEqual([row['classification'] for row in result['transport']['attempts']],
                              ['ready'])
@@ -2090,10 +2107,10 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(writer_bound['facts']['filesystem_features']['project_feature'], 'present')
             self.assertEqual(writer_bound['limits']['hard_quota'], 'not established')
             self.assertEqual(result['hard_quota'], 'not established')
-            self.assertEqual(result['guest_association'], 'not attempted: none')
-            # The handoff stays unattempted in the entry fixture through its defensive seam; the
-            # real dispatch path is exercised in DiskAssociationHandoff with retained-shape fixtures.
-            self.assertTrue(proof.disk_association.reader_executable())
+            self.assertEqual(result['guest_association'], 'refused: fixture: association transport seam')
+            self.assertEqual(result['findings'], ['disk association: fixture: association transport seam'])
+            # execute built the handoff's transport from the stage's supervised-route adapter; the
+            # fixture seam refused it before any dispatch, and the refusal kept no record.
             self.assertIsNone(result.get('disk_association'))
             self.assertIsNone(result.get('disk_association_result'))
             for route in guest_probe.route_ids():
@@ -2815,6 +2832,39 @@ class DiskAssociationHandoff(unittest.TestCase):
             self.writer_bound(block, lsblk, association_tests.guest_root_facts()),
             transport=association_tests.inventory_transport())
         self.assertEqual(handoff['status'], 'verified')
+
+    def test_production_transport_rechecks_the_fixed_route_and_returns_the_exact_shape(self):
+        """The stage's supervised route adapter: the fixed argv, stdin, timeout and cap are
+        re-checked before the dispatch, a foreign route refuses without dispatching, and a matching
+        dispatch returns the exact result shape the reader's contract expects."""
+        pin = proof.disk_association.PINS[proof.disk_association.MECHANISM]
+        dispatched = []
+
+        def dispatch(argv, timeout, cap):
+            dispatched.append((list(argv), timeout, cap))
+            return ({'disposition': 'exited', 'waited_exit': 0},
+                    association_tests.cli_info_text().encode(), b'stage-stderr')
+
+        transport = proof.association_transport(dispatch)
+        argv = list(pin['argv'])
+        result = transport(argv, None, proof.disk_inventory.INVENTORY_TIMEOUT,
+                           proof.disk_inventory.MAX_BYTES)
+        self.assertEqual(dispatched, [(argv, proof.disk_inventory.INVENTORY_TIMEOUT,
+                                       proof.disk_inventory.MAX_BYTES)])
+        self.assertEqual(result, {'disposition': 'exited', 'waited_exit': 0,
+                                  'stdout': association_tests.cli_info_text().encode(),
+                                  'stderr': b'stage-stderr'})
+        for label, args in (
+                ('foreign argv', (argv[:-1] + ['other'], None,
+                                  proof.disk_inventory.INVENTORY_TIMEOUT, proof.disk_inventory.MAX_BYTES)),
+                ('stdin bound', (argv, '/tmp/in', proof.disk_inventory.INVENTORY_TIMEOUT,
+                                 proof.disk_inventory.MAX_BYTES)),
+                ('foreign timeout', (argv, None, 10, proof.disk_inventory.MAX_BYTES)),
+                ('foreign cap', (argv, None, proof.disk_inventory.INVENTORY_TIMEOUT, 1024))):
+            with self.subTest(label), self.assertRaises(Refusal):
+                transport(*args)
+        self.assertEqual(dispatched, [(argv, proof.disk_inventory.INVENTORY_TIMEOUT,
+                                       proof.disk_inventory.MAX_BYTES)])
 
     def test_handoff_refuses_incomplete_guest_block_observations(self):
         block, lsblk = association_tests.guest_block_observations()

@@ -448,7 +448,10 @@ the guest block observations of the same boot (`guest_facts`, which refuses a de
 does not, a disagreeing major:minor or size, or an undocumented device type; an unknown device class is forwarded so
 `guest_blocks` refuses it rather than the mapper hiding it). `host_facts` refuses a descriptor chain image the observed
 inventory does not carry. `linux_diagnostic_proof.observe_association` is the wired stage entry: inside the existing
-same-VM boot bracket it dispatches the reader, brackets it with two fresh guest boot originals, and feeds the record
+same-VM boot bracket it dispatches the reader through the occurrence's own supervised route —
+`association_transport` re-checks the fixed argv, stdin, timeout and cap and dispatches through the same
+recorded-step `stage.run_stage` call with the same inputs, environment, resource monitor and stage deadlines as
+every other fixed prlctl call in the stage — brackets it with two fresh guest boot originals, and feeds the record
 through production `setup.verify_disk_association`. The outcome's `disk_association` key holds the fact document
 (`linux_disk_association.stored_facts`: the raw config, descriptor and host-read stdout/stderr as bounded base64
 envelopes with their own length and digest), because `setup_plan` E7* re-verifies that key as facts and
@@ -456,9 +459,11 @@ envelopes with their own length and digest), because `setup_plan` E7* re-verifie
 `disk_association_result` and is never the stored record. The reader is executable on the supported CLI route, so
 the stage dispatches it; if the accessor ever reports a limitation again, the stage records `guest_association` as
 not attempted with that exact limitation and stores no record, so no native occurrence is spent on an entry known
-to refuse. The entry-level fixtures keep the handoff unattempted through that documented seam, because their guest
-and config bytes are not the registered identity; the handoff's real dispatch path is exercised with retained-shape
-fixtures and fixture transports, which are test-only and supply no production provenance.
+to refuse. The entry-level fixture proves the wiring on the real production path: execute builds the transport
+from `association_transport` over its own supervised dispatch, and the fixture seam replaces that adapter with a
+recording transport that refuses — the fixture's guest and config bytes are not the registered identity, so a
+fixture cannot supply a positive pass and never supplies positive production provenance; the open-gate dispatch
+path is exercised with retained-shape fixtures and fixture transports, which are test-only.
 
 **Helper bytes are pinned independently.** `linux_disk_association.HELPER_SHA256` is a committed literal and
 `PINS['sha256']` binds to it; `read_inventory` verifies the file at the pinned path against it, so a modified helper

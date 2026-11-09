@@ -200,8 +200,11 @@ def _exact_section(section, reviewed, name):
         raise GrammarError('host read Hardware %s is not the reviewed section' % name)
     if set(section) != set(reviewed):
         raise GrammarError('host read Hardware %s fields differ from the reviewed shape' % name)
-    for key, value in reviewed.items():
-        if section[key] != value:
+    for key, expected in reviewed.items():
+        actual = section[key]
+        # Type-exact: JSON true is a Python bool and 1 is an int, so 1 can never stand in for the
+        # reviewed enabled flag (and 1.0 for an int) under Python's equal-value comparison.
+        if type(actual) is not type(expected) or actual != expected:
             raise GrammarError('host read Hardware %s %s is not the reviewed value' % (name, key))
 
 

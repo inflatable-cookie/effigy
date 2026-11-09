@@ -137,7 +137,7 @@ NOT_ESTABLISHED = (
 # The helper digest is a committed literal, not inventory.helper_digest() at import: a modified helper
 # cannot re-pin itself, and changing the helper without changing this literal refuses in
 # read_inventory('helper-bytes-differ').
-HELPER_SHA256 = '0346049a89fcc943e3d3c8456fd085c3e10c64e7c77e55c66063c1f998611e4f'
+HELPER_SHA256 = '3cb9086ba13e48dce4d087714d088001ca839886b13784045c1fbde239d4e5f8'
 PINS = {
     MECHANISM: {
         'tool_path': str(inventory.HELPER),

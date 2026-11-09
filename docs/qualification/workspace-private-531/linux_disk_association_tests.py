@@ -765,6 +765,24 @@ class ProductionInventoryControls(unittest.TestCase):
                 read = host_read_with(hardware=cli_hardware(hdd0=hdd0))
                 self.assertEqual(table(valid_association(host_read=read))['host_read'][0], 'refuse')
 
+    def test_a_boolean_field_will_not_accept_1_or_true_like_integers(self):
+        """The reviewed shape is type-exact: JSON true is a Python bool and 1 is an int, so a 1
+        cannot stand in for the reviewed enabled flag of any exact-shaped section."""
+        cases = {
+            'hdd0 enabled 1': cli_hardware(hdd0=dict(inventory.HDD0_REVIEWED, enabled=1)),
+            'cdrom0 enabled 1': cli_hardware(cdrom0=dict(inventory.CDROM0_REVIEWED, enabled=1)),
+            'usb enabled 1': cli_hardware(usb={'enabled': 1}),
+            'cdrom0 enabled 0': cli_hardware(cdrom0=dict(inventory.CDROM0_REVIEWED, enabled=0)),
+        }
+        for label, hardware in cases.items():
+            with self.subTest(label):
+                read = host_read_with(hardware=hardware)
+                self.assertEqual(table(valid_association(host_read=read))['host_read'][0], 'refuse')
+                with self.assertRaises(inventory.GrammarError):
+                    inventory.parse_output(cli_info_text(dal.PINS[dal.MECHANISM],
+                                                         hardware=hardware),
+                                           dal.PINS[dal.MECHANISM])
+
     def test_the_optical_section_is_counted_and_never_a_disk(self):
         missing = {k: v for k, v in cli_hardware().items() if k != 'cdrom0'}
         second = dict(cli_hardware(), cdrom1=dict(inventory.CDROM0_REVIEWED, port='sata:3'))

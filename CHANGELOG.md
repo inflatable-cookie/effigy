@@ -475,11 +475,16 @@ During v0.x, MINOR bumps may include breaking changes.
   `prlctl list --info <vm_uuid> --json`: the bundle CLI pinned to the exact
   binary the retained 747 occurrence ran (Desktop 27.1.0-58756, canonical path
   only — the `/usr/local/bin` wrapper alias refuses), executed in the retained
-  environment through the existing bounded supervised transport. The helper
+  environment through the occurrence's own supervised route: the handoff
+  dispatch runs through the same recorded-step call with the same inputs,
+  resource monitor and stage deadlines as every other fixed prlctl call in the
+  stage, behind an adapter that re-checks the fixed argv, stdin, timeout and
+  cap. The helper
   verifies that tool custody by local metadata, runs the one bounded dispatch,
   parses the genuine retained 747 JSON grammar exactly (duplicate keys, an
-  unknown or second hardware section, a changed data-disk/optical/USB field and
-  a nested object under an allowed section all refuse) and passes the exact
+  unknown or second hardware section, a changed data-disk/optical/USB field, a
+  nested object under an allowed section and a JSON 1 standing in for a pinned
+  true all refuse) and passes the exact
   original stdout through, so stored fact documents keep the genuine CLI bytes
   and the caller re-parses them with the same parser. The reader is now
   executable and owes no external source; the SDK scaffold (`PARALLELS_API_VER`,

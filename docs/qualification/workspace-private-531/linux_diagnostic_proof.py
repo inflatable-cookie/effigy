@@ -174,13 +174,38 @@ def parse_unique(pairs):
     return value
 
 
+def association_transport(dispatch, pin=None):
+    """The stage's supervised route for the one host inventory read.
+
+    dispatch(argv, timeout, cap) is the occurrence's own recorded-step dispatch: it runs the fixed
+    helper through stage.run_stage with the same inputs, environment, resource monitor and stage
+    deadlines as every other fixed prlctl call in the same occurrence, and returns (result dict,
+    stdout bytes, stderr bytes). The adapter re-checks the fixed argv, stdin, timeout and cap so
+    the seam cannot widen, and returns the exact shape the reader's dispatch contract expects."""
+    pin = disk_association.PINS[disk_association.MECHANISM] if pin is None else pin
+
+    def transport(argv, stdin_path, timeout, cap):
+        if stdin_path is not None:
+            raise stage.Refusal('the host inventory read takes no stdin')
+        if (list(argv) != pin['argv'] or timeout != disk_inventory.INVENTORY_TIMEOUT
+                or cap != disk_inventory.MAX_BYTES):
+            raise stage.Refusal('the host inventory read argv or bounds differ from the fixed route')
+        result, stdout, stderr = dispatch(list(argv), timeout, cap)
+        return {'disposition': result.get('disposition'), 'waited_exit': result.get('waited_exit'),
+                'stdout': stdout, 'stderr': stderr}
+
+    return transport
+
+
 def observe_association(boot_id, read_boot_id, config, descriptor, extents, writer_bound,
                         transport=None):
     """The production disk-association handoff for one already observed boot.
 
     No caller constant is a reading here. The pinned reader is the supported CLI configuration read
-    (prlctl list --info --json through the fixed helper); its one bounded read is bracketed by two
-    fresh guest boot originals of this same VM and boot; the selected VM UUID and home come from the
+    (prlctl list --info --json through the fixed helper), dispatched in production through the
+    stage's supervised route (association_transport over the occurrence's own recorded-step
+    dispatch, resource monitor and deadlines); its one bounded read is bracketed by two fresh
+    guest boot originals of this same VM and boot; the selected VM UUID and home come from the
     reader's own output; the registered config, descriptor and extent inventory are the originals
     this occurrence retained; and the guest block observations are the writer-bound reads of this
     same boot. The complete record then goes through production setup.verify_disk_association. A
@@ -581,18 +606,34 @@ def execute(request, request_path, request_hash):
         writer_bound = guest_probe.observe(
             lambda argv, limit, cap, end: call(['exec', setup.VM_UUID] + argv, limit, cap, end),
             retain_observation, guard, start_end)
-        # The disk-association handoff: the supported CLI configuration read, bracketed by two fresh
-        # guest boot originals of this same boot. The writer-bound guest block reads must have
-        # completed for this same boot, and the complete fact document goes through production
-        # setup.verify_disk_association; that document is what the stored `disk_association` key
-        # holds, so setup_plan E7* re-verifies the same facts and the retained raw originals rather
-        # than a reduced summary.
+        # The disk-association handoff: the supported CLI configuration read, dispatched through
+        # this occurrence's own supervised route (recorded step, inputs, environment, resource
+        # monitor and stage deadlines, exactly like every other fixed prlctl call here), and
+        # bracketed by two fresh guest boot originals of this same boot. The writer-bound guest
+        # block reads must have completed for this same boot, and the complete fact document goes
+        # through production setup.verify_disk_association; that document is what the stored
+        # `disk_association` key holds, so setup_plan E7* re-verifies the same facts and the
+        # retained raw originals rather than a reduced summary.
+        def association_dispatch(argv, timeout, cap):
+            nonlocal serial
+            if private_root(str(root)) != request['root_identity']:
+                raise stage.Refusal('evidence root identity changed')
+            serial += 1
+            step = destination / ('step-%03d' % serial)
+            step.mkdir(mode=0o700)
+            result = stage.run_stage(step, argv, timeout, cap, inputs, cwd=str(HERE),
+                                     environment={'PATH': '/usr/bin:/bin', 'LANG': 'C'},
+                                     resource_monitor=monitor, deadline=start_end,
+                                     cleanup_deadline=operational_end)
+            return result, (step / 'stdout').read_bytes(), (step / 'stderr').read_bytes()
+
         try:
             handoff = observe_association(
                 boot_id, read_guest_boot,
                 (destination / 'before-config').read_bytes(),
                 (destination / 'before-descriptor').read_bytes(),
-                outcome.get('before_extents') or {}, writer_bound)
+                outcome.get('before_extents') or {}, writer_bound,
+                transport=association_transport(association_dispatch))
             outcome['guest_association'] = handoff['status']
             outcome.update(stored_association(handoff))
         except (stage.Refusal, disk_association.Refusal, disk_inventory.Refused, OSError) as exc:
