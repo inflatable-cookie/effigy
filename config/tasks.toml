@@ -2072,7 +2072,20 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 # consumer stack, vault read, warm-up, build/install or native probe. The
 # packet's proof routes are the separately GO-armed launchers documented in
 # its packet-r1.md, never this selector.
-"test:qualification:acow" = { durable = true, visibility = "internal", group = "Maintenance", description = "Run the Acow ordinary-Compose qualification packet's fake-backend refusal boundaries; no native effects.", run = [{ run = "python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/boundaries.py", timeout_ms = 300000 }] }
+# Runs through the test-only harness in docs/qualification/consumer-packets-r1/
+# (effigy#757): the historical boundaries.py runs unchanged, with only its
+# fixture SCRATCH relocated under the run TMPDIR. The historical packet bytes
+# are not edited.
+"test:qualification:acow" = { durable = true, visibility = "internal", group = "Maintenance", description = "Run the Acow ordinary-Compose qualification packet's fake-backend refusal boundaries through the test-only TMPDIR scratch harness; no native effects.", run = [{ run = "python3 -I -B docs/qualification/consumer-packets-r1/acow_battery.py", timeout_ms = 300000 }] }
+
+# Current-candidate consumer packets for the #625 Acow/CBS continuity proof
+# (task effigy#757): docs/qualification/consumer-packets-r1/. Source and
+# fixture controls only. Every pin is pending, so the proof-entry selectors
+# refuse before any child runs; no engine, consumer, network or native effect.
+"test:qualification:consumer-packets" = { durable = true, visibility = "internal", group = "Maintenance", description = "Run the consumer packet controls: unarmed refusals, every request gate, the bounded child runner and fixture-positive Acow and CBS sequences; no native or consumer effects.", run = [{ run = "python3 -I -B docs/qualification/consumer-packets-r1/tests.py", timeout_ms = 300000 }] }
+"check:qualification:consumer-packets:compile" = { visibility = "internal", group = "Maintenance", description = "Compile the consumer packet Python entry modules and helpers in memory.", run = [{ run = "python3 -I -B -c 'from pathlib import Path; [compile(p.read_bytes(), str(p), \"exec\") for p in Path(\"docs/qualification/consumer-packets-r1\").glob(\"*.py\")]'", timeout_ms = 300000 }] }
+"qualification:acow-consumer:proof-only" = { visibility = "internal", group = "Maintenance", description = "Nucleus proof-only entry for the Acow consumer packet. Unarmed in source: refuses before any child until the candidate, positive624, window and Nucleus provenance are pinned.", run = [{ run = "python3 -I -B docs/qualification/consumer-packets-r1/acow.py {args}", timeout_ms = 7200000 }] }
+"qualification:cbs-consumer:proof-only" = { visibility = "internal", group = "Maintenance", description = "Nucleus proof-only entry for the CBS consumer packet. Unarmed in source: refuses before any child until the candidate, positive624, window and Nucleus provenance are pinned.", run = [{ run = "python3 -I -B docs/qualification/consumer-packets-r1/cbs.py {args}", timeout_ms = 3600000 }] }
 
 # Source/fixture qualification only. These selectors grant no native window.
 "test:workspace:private-qualification:kernel" = { durable = true, visibility = "internal", group = "Maintenance", description = "Exercise same-image reserved Env Discard and retained interpolation without a native backend.", run = [
