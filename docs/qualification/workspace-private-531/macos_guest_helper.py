@@ -7,13 +7,15 @@ Colima route are [0-9a-f] only. Stdlib only. The host binds a one-use nonce
 before launch; this process records Linux /proc identity, runs the allowlisted
 operation as a contained child in the same session and group, waits, and emits a
 length-prefixed envelope. A local client exit is not this file's concern.
-Missing /proc, a setsid child, an unreaped child or a remaining contained
-process (including a setsid descendant recorded before wait and reparented
-to init) leaves the trailer unable to close.
+Missing /proc, a failed child-subreaper call, a setsid child, an unreaped child
+or a remaining contained process (a live or zombie descendant whose ppid chain
+reaches this helper after wait) leaves the trailer unable to close.
 
-Fixture-only: EFFIGY_GUEST_HELPER_PROC relocates /proc for identity and cmdline
-reads. Production leaves it unset.
+The helper sets PR_SET_CHILD_SUBREAPER before spawn so the child's orphans
+reparent here instead of init. Tests relocate /proc with an explicit proc=
+argument; production reads /proc.
 """
+import ctypes
 import hashlib
 import json
 import os
@@ -21,6 +23,8 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+
+PR_SET_CHILD_SUBREAPER = 36
 
 ALLOWED = frozenset({'echo', 'probe', 'stage', 'verify'})
 NONCE = re.compile(r'^[0-9a-f]{64}$')
@@ -112,10 +116,10 @@ def parse_envelope(data):
 
 
 def resolved_proc(proc=None):
-    """Production reads /proc. Fixtures may relocate it via argument or EFFIGY_GUEST_HELPER_PROC."""
+    """Production reads /proc. Tests pass proc=; the environment is not a seam."""
     if proc:
         return proc
-    return os.environ.get('EFFIGY_GUEST_HELPER_PROC') or PROC
+    return PROC
 
 
 def _stat_fields(text):
@@ -174,67 +178,38 @@ def group_members(pgid, exclude, proc=PROC):
     return [pid for pid, info in walked.items() if pid not in exclude and info['pgid'] == pgid]
 
 
-def contained_record(parent, child_pid, exclude, proc=PROC):
-    """{pid: start_time} in the parent's group or session, or descended from the child.
+def become_child_subreaper():
+    """PR_SET_CHILD_SUBREAPER via prctl. Unprivileged; refuse if the call is missing or fails."""
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        prctl = libc.prctl
+        prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
+        prctl.restype = ctypes.c_int
+        rc = prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0)
+    except (OSError, AttributeError, TypeError, ValueError) as exc:
+        raise Refusal('child subreaper unavailable') from exc
+    if rc != 0:
+        raise Refusal('child subreaper unavailable')
 
-    Taken while the child is still alive. After wait the kernel reparents orphans to init, so a
-    later ppid-chain to child_pid cannot see them. None if the walk failed.
+
+def leftover_after_wait(helper_pid, child_pid, exclude, proc=PROC):
+    """Leftovers after the child is reaped. None if the walk failed.
+
+    A remaining live or zombie process whose ppid chain reaches the helper, other than the
+    waited child, is leftover. Subreaper is what keeps the child's orphans on this pid;
+    a descendant reparented to init is not leftover here.
     """
-    walked = _walk_proc(proc)
-    if walked is None:
-        return None
-    found = {}
-    for pid, info in walked.items():
-        if pid in exclude:
-            continue
-        if info['pgid'] == parent['pgid'] or info['session_id'] == parent['session_id']:
-            found[pid] = info['start_time']
-            continue
-        cur, seen = pid, set()
-        while cur and cur not in seen:
-            seen.add(cur)
-            if cur == child_pid:
-                found[pid] = info['start_time']
-                break
-            nxt = walked.get(cur)
-            if nxt is None:
-                break
-            cur = nxt['ppid']
-    return found
-
-
-def leftover_after_wait(parent, child_pid, recorded, exclude, proc=PROC):
-    """Leftovers after the child is reaped. None if either walk failed.
-
-    A recorded pid still alive with the same start_time is leftover even when setsid has
-    reparented it to init. A new process that reused the pid (different start_time) is not.
-    Current group/session members and processes whose ppid chain reaches a still-alive
-    recorded pid are leftover too. The waited child itself is not.
-    """
-    if recorded is None:
-        return None
     walked = _walk_proc(proc)
     if walked is None:
         return None
     leftovers = []
-    alive = set()
-    for pid, start in recorded.items():
-        if pid == child_pid or pid in exclude:
-            continue
-        info = walked.get(pid)
-        if info is not None and info['start_time'] == start:
-            leftovers.append(pid)
-            alive.add(pid)
-    for pid, info in walked.items():
-        if pid in exclude or pid == child_pid or pid in leftovers:
-            continue
-        if info['pgid'] == parent['pgid'] or info['session_id'] == parent['session_id']:
-            leftovers.append(pid)
+    for pid in walked:
+        if pid in exclude or pid == child_pid or pid == helper_pid:
             continue
         cur, seen = pid, set()
         while cur and cur not in seen:
             seen.add(cur)
-            if cur in alive:
+            if cur == helper_pid:
                 leftovers.append(pid)
                 break
             nxt = walked.get(cur)
@@ -376,20 +351,21 @@ def inner_argv(operation, rest):
 def run_contained(argv, stdin_bytes=None, proc=PROC):
     """Spawn the payload in this session, wait, and report identity plus wait facts.
 
-    Contained pids are recorded before wait. communicate() reaps the child and the kernel
-    reparents orphans to init; leftover_after_wait still sees a recorded setsid descendant.
+    become_child_subreaper runs before Popen so the child's orphans reparent here.
+    After wait, leftover_after_wait treats remaining live or zombie processes whose
+    ppid chain reaches this helper (other than the waited child) as leftover.
     """
     parent = linux_identity(os.getpid(), proc=proc)
+    become_child_subreaper()
     child = subprocess.Popen(argv, stdin=subprocess.PIPE if stdin_bytes is not None else subprocess.DEVNULL,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=False)
     try:
         child_id = linux_identity(child.pid, proc=proc)
     except Refusal:
         child_id = {'pid': child.pid, 'start_time': None, 'pgid': None, 'session_id': None, 'boot_id': None}
-    recorded = contained_record(parent, child.pid, exclude={os.getpid()}, proc=proc)
     out, err = child.communicate(stdin_bytes)
     waited = child.returncode
-    remaining = leftover_after_wait(parent, child.pid, recorded, exclude={os.getpid()}, proc=proc)
+    remaining = leftover_after_wait(parent['pid'], child.pid, exclude={os.getpid()}, proc=proc)
     trailer = {
         'waited_exit': waited,
         'child_pid': child_id['pid'],

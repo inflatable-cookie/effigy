@@ -4,6 +4,7 @@ Every fixture is a fresh mkdtemp directory under $TMPDIR. Production main() requ
 identity tests inject a fake proc root. Envelope and closure evaluation run in-process.
 """
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -22,7 +23,7 @@ import macos_stage_executor as ex  # noqa: E402
 
 
 NONCE = 'ab' * 32
-SOURCE = '9d5f979076cd9f8f762fd74fbf4ac574e7c7d4e87b82c6aae5a8d3fe8613c52e'
+SOURCE = '806ca0a5558766035643e9446fd99294c033d4bdabfcd7ff8a9ac0d49469e941'
 
 
 def fake_stat(pid, pgid, session, start, ppid=0):
@@ -192,51 +193,49 @@ class ProcIdentityTests(unittest.TestCase):
         self.add_pid(4, 8, 8, 3)
         self.assertEqual(sorted(helper.group_members(9, exclude={1}, proc=str(self.proc))), [3])
 
-    def test_setsid_descendant_reparented_to_init_is_a_leftover(self):
-        parent = {'pgid': 10, 'session_id': 10}
+    def test_late_fork_setsid_orphan_reparented_to_helper_is_a_leftover(self):
+        """Descendant 12 is created after spawn (only 10 and 11 exist first), then orphaned to the helper."""
         self.add_pid(10, 10, 10, 1, ppid=1)
         self.add_pid(11, 10, 10, 2, ppid=10)
+        spawn_walk = helper._walk_proc(str(self.proc))
+        self.assertEqual(sorted(spawn_walk), [10, 11])
         self.add_pid(12, 12, 12, 3, ppid=11)
-        recorded = helper.contained_record(parent, 11, exclude={10}, proc=str(self.proc))
-        self.assertEqual(recorded.get(12), 3)
         shutil.rmtree(self.proc / '11')
-        (self.proc / '12' / 'stat').write_text(fake_stat(12, 12, 12, 3, ppid=1))
-        leftover = helper.leftover_after_wait(parent, 11, recorded, exclude={10}, proc=str(self.proc))
+        (self.proc / '12' / 'stat').write_text(fake_stat(12, 12, 12, 3, ppid=10))
+        leftover = helper.leftover_after_wait(10, 11, exclude={10}, proc=str(self.proc))
         self.assertEqual(leftover, [12])
 
-    def test_pid_reuse_after_reap_is_not_a_recorded_leftover(self):
-        parent = {'pgid': 10, 'session_id': 10}
+    def test_descendant_reparented_to_init_is_not_the_only_evidence(self):
         self.add_pid(10, 10, 10, 1, ppid=1)
         self.add_pid(11, 10, 10, 2, ppid=10)
         self.add_pid(12, 12, 12, 3, ppid=11)
-        recorded = helper.contained_record(parent, 11, exclude={10}, proc=str(self.proc))
-        shutil.rmtree(self.proc / '11')
-        (self.proc / '12' / 'stat').write_text(fake_stat(12, 99, 99, 50, ppid=1))
-        leftover = helper.leftover_after_wait(parent, 11, recorded, exclude={10}, proc=str(self.proc))
-        self.assertEqual(leftover, [])
-
-    def test_grandchild_of_a_recorded_orphan_is_a_leftover(self):
-        parent = {'pgid': 10, 'session_id': 10}
-        self.add_pid(10, 10, 10, 1, ppid=1)
-        self.add_pid(11, 10, 10, 2, ppid=10)
-        self.add_pid(12, 12, 12, 3, ppid=11)
-        recorded = helper.contained_record(parent, 11, exclude={10}, proc=str(self.proc))
         shutil.rmtree(self.proc / '11')
         (self.proc / '12' / 'stat').write_text(fake_stat(12, 12, 12, 3, ppid=1))
+        leftover = helper.leftover_after_wait(10, 11, exclude={10}, proc=str(self.proc))
+        self.assertEqual(leftover, [])
+
+    def test_zombie_reparented_to_helper_is_a_leftover(self):
+        self.add_pid(10, 10, 10, 1, ppid=1)
+        self.add_pid(12, 12, 12, 3, ppid=10)
+        leftover = helper.leftover_after_wait(10, 11, exclude={10}, proc=str(self.proc))
+        self.assertEqual(leftover, [12])
+
+    def test_grandchild_orphaned_to_helper_is_a_leftover(self):
+        self.add_pid(10, 10, 10, 1, ppid=1)
+        self.add_pid(12, 12, 12, 3, ppid=10)
         self.add_pid(13, 13, 13, 4, ppid=12)
-        leftover = helper.leftover_after_wait(parent, 11, recorded, exclude={10}, proc=str(self.proc))
+        leftover = helper.leftover_after_wait(10, 11, exclude={10}, proc=str(self.proc))
         self.assertEqual(sorted(leftover), [12, 13])
 
-    def test_run_contained_records_descendants_before_wait(self):
+    def test_run_contained_sets_subreaper_before_spawn_then_scans_after_wait(self):
         order = []
         ident = {'pid': 10, 'pgid': 10, 'session_id': 10, 'start_time': 1, 'boot_id': 'b'}
 
         def identity(pid, proc=None):
             return dict(ident, pid=pid)
 
-        def record(*_a, **_k):
-            order.append('record')
-            return {12: 3}
+        def subreaper():
+            order.append('subreaper')
 
         def leftover(*_a, **_k):
             order.append('leftover')
@@ -250,15 +249,46 @@ class ProcIdentityTests(unittest.TestCase):
                 order.append('wait')
                 return b'out', b'err'
 
+        def popen(*_a, **_k):
+            order.append('popen')
+            return Child()
+
         with mock.patch.object(helper, 'linux_identity', identity), \
-                mock.patch.object(helper, 'contained_record', record), \
+                mock.patch.object(helper, 'become_child_subreaper', subreaper), \
                 mock.patch.object(helper, 'leftover_after_wait', leftover), \
-                mock.patch.object(subprocess, 'Popen', return_value=Child()):
+                mock.patch.object(subprocess, 'Popen', popen):
             _parent, out, err, trailer = helper.run_contained(['true'], proc=str(self.proc))
-        self.assertEqual(order, ['record', 'wait', 'leftover'])
+        self.assertEqual(order, ['subreaper', 'popen', 'wait', 'leftover'])
         self.assertEqual((out, err), (b'out', b'err'))
         self.assertFalse(trailer['group_empty'])
         self.assertFalse(trailer['unreaped'])
+
+    def test_run_contained_refuses_when_subreaper_fails(self):
+        ident = {'pid': 10, 'pgid': 10, 'session_id': 10, 'start_time': 1, 'boot_id': 'b'}
+
+        def boom():
+            raise helper.Refusal('child subreaper unavailable')
+
+        with mock.patch.object(helper, 'linux_identity', lambda *_a, **_k: ident), \
+                mock.patch.object(helper, 'become_child_subreaper', boom), \
+                mock.patch.object(subprocess, 'Popen') as popen:
+            with self.assertRaises(helper.Refusal) as raised:
+                helper.run_contained(['true'], proc=str(self.proc))
+        self.assertIn('child subreaper unavailable', str(raised.exception))
+        popen.assert_not_called()
+
+    def test_become_child_subreaper_refuses_without_prctl(self):
+        if sys.platform.startswith('linux'):
+            self.skipTest('Linux guests prove prctl by succeeding')
+        with self.assertRaises(helper.Refusal) as raised:
+            helper.become_child_subreaper()
+        self.assertIn('child subreaper unavailable', str(raised.exception))
+
+    def test_resolved_proc_ignores_the_environment(self):
+        os.environ['EFFIGY_GUEST_HELPER_PROC'] = str(self.proc)
+        self.addCleanup(os.environ.pop, 'EFFIGY_GUEST_HELPER_PROC', None)
+        self.assertEqual(helper.resolved_proc(), helper.PROC)
+        self.assertEqual(helper.resolved_proc(str(self.proc)), str(self.proc))
 
     def test_pinned_source_hash_matches_the_executor_pin(self):
         self.assertEqual(hashlib.sha256(ex.GUEST_HELPER_PATH.read_bytes()).hexdigest(), ex.GUEST_HELPER_SHA256)
@@ -281,18 +311,16 @@ class ProcIdentityTests(unittest.TestCase):
         self_dir = self.proc / 'self'
         self_dir.mkdir()
         (self_dir / 'stat').write_text(fake_stat(1, 1, 1, 1))
-        cmdline = b'\0'.join([
-            sys.executable.encode(), b'-I', b'-B', b'-c', helper.LAUNCHER.encode(),
-            raw.hex().encode(), b'echo', NONCE.encode(), b'payload', b'',
-        ])
-        (self_dir / 'cmdline').write_bytes(cmdline)
-        env = dict(os.environ)
-        env['EFFIGY_GUEST_HELPER_PROC'] = str(self.proc)
-        completed = subprocess.run(
-            [sys.executable, '-I', '-B', '-c', helper.LAUNCHER, raw.hex(), 'echo', NONCE, 'payload'],
-            capture_output=True, env=env, cwd=self.tmp)
-        self.assertNotIn(b'helper source bytes unavailable', completed.stderr)
-        parsed = helper.parse_envelope(completed.stdout)
+        orig = [sys.executable, '-I', '-B', '-c', helper.LAUNCHER, raw.hex(), 'echo', NONCE, 'payload']
+        argv = ['-c', raw.hex(), 'echo', NONCE, 'payload']
+        captured = type('Stdout', (), {})()
+        captured.buffer = io.BytesIO()
+        with mock.patch.object(helper, 'become_child_subreaper'), \
+                mock.patch.object(sys, 'orig_argv', orig, create=True), \
+                mock.patch.object(sys, 'stdout', captured):
+            rc = helper.main(argv, proc=str(self.proc))
+        self.assertEqual(rc, 0)
+        parsed = helper.parse_envelope(captured.buffer.getvalue())
         self.assertIsNotNone(parsed)
         self.assertEqual(parsed['header']['source_sha256'], SOURCE)
         self.assertEqual(parsed['header']['operation'], 'echo')
