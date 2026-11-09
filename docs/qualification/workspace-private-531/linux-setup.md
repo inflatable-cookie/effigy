@@ -380,12 +380,23 @@ source-ready for presentation. Design choices left to the planner:
    Then a runtime notification read could be pinned.
 3. Keep refusing. `SUPPORTED_DISK_MECHANISMS` stays empty and 623 is not ready.
 
-The host inventory read for choice 1, not run here (native; needs its own authorization): read-only SDK calls only,
-`PrlSrv_LoginLocal`, `PrlVm_RegEx` on the reviewed VM UUID, `PrlVm_GetConfig`, `PrlVmCfg_GetAllDevices`, then per device
-`PrlVmDev_GetType`, `GetIfaceType`, `GetIndex`, `GetSysName`, `GetImagePath`, `IsEnabled`, `IsConnected`, `IsRemote`,
-`IsPassthrough`, and `PrlVmDevHd_GetDiskType` for hard disks. Output: one `key=value` line per device, at most 64 KiB,
-exit 0, no `Set*`, `Connect` or `Disconnect`. It closes the host inventory on the SDK's own parser, not the XML one.
-It does not close presentation.
+The host inventory read for choice 1, not run here (native; needs its own authorization). Every call is read-only.
+Registration calls are excluded: `PrlVm_RegEx` (v19: "Creates a new virtual machine and registers it with the Parallels Service") and `PrlVm_Reg` change server state, so they are not used.
+
+1. `PrlSrv_LoginLocal`: opens the local service session. Its state effect is not fetched from the docs.
+2. `PrlSrv_GetVmListEx` with `nFlags` 0 (obsolete, per the v19 page): lists registered VMs as `PHT_VIRTUAL_MACHINE`
+   handles through a job. The v19 page does not state a state change; read-only is inferred from its description.
+3. For each listed handle: `PrlVm_GetConfig` (v19: "Obtains a handle of type PHT_VM_CONFIGURATION"; no state change
+   described) and `PrlVmCfg_GetUuid`, `PrlVmCfg_GetHomePath`. Select the handle whose UUID is the reviewed VM. A VM
+   that does not match, or two matches, refuses.
+4. On the selected config handle: `PrlVmCfg_GetAllDevices` (v19: "Obtains a handles list of all virtual devices in a
+   virtual machine"), `PrlVmCfg_GetDevsCount`, then per device `PrlVmDev_GetType`, `GetIfaceType`, `GetIndex`,
+   `GetSysName`, `GetImagePath`, `IsEnabled`, `IsConnected`, `IsRemote`, `IsPassthrough`, and `PrlVmDevHd_GetDiskType`
+   for hard disks. `IsConnected`'s config-or-running sense is not stated by its page.
+5. `PrlVm_GetState` before and after, bracketed with the guest boot id.
+
+Output: one `key=value` line per device, at most 64 KiB, exit 0. Calls: no `Set*`, `Connect`, `Disconnect`, `Reg*`
+or `Unreg*`. It closes the host inventory on the SDK's own parser, not the XML one. It does not close presentation.
 
 Still unavailable: source-verified kernel hard limits, fresh signed Stage1 evidence, exact activation
 anchors and root installation authorization. No VM, SSH, account, service, build,

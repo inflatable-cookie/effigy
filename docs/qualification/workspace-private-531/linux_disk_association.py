@@ -90,8 +90,12 @@ def _lower(value):
 
 
 def _text(node, tag, where):
-    child = node.find(tag)
-    if child is None or not child.text or child.text != child.text.strip():
+    """The one text value of a field. A repeated field refuses: a later duplicate must not hide behind the first."""
+    children = node.findall(tag)
+    if len(children) != 1:
+        raise Refusal('%s %s is missing or repeated (%d occurrences)' % (where, tag, len(children)))
+    child = children[0]
+    if not child.text or child.text != child.text.strip():
         raise Refusal('%s %s is missing, empty or padded' % (where, tag))
     return child.text
 
@@ -156,12 +160,12 @@ def _check_hardware_content(hardware):
             if any(word in low for word in BLOCK_WORDS) or low.startswith(BLOCK_PREFIXES):
                 raise Refusal('config %s carries a block-capable element %s' % (child.tag, node.tag))
     for usb in hardware.findall('USB'):
-        if (usb.findtext('EmulatedType') != USB_CAMERA['EmulatedType']
-                or usb.findtext('UsbType') != USB_CAMERA['UsbType']
-                or not (usb.findtext('SystemName') or '').startswith(USB_CAMERA['SystemName'])):
+        if (_text(usb, 'EmulatedType', 'USB') != USB_CAMERA['EmulatedType']
+                or _text(usb, 'UsbType', 'USB') != USB_CAMERA['UsbType']
+                or not _text(usb, 'SystemName', 'USB').startswith(USB_CAMERA['SystemName'])):
             raise Refusal('config USB device is not the reviewed virtual camera; a USB disk or other device refuses')
     for port in hardware.findall('UsbConnectHistory/USBPort'):
-        if not (port.findtext('SystemName') or '').startswith('VIRTUAL@'):
+        if not _text(port, 'SystemName', 'USBPort').startswith('VIRTUAL@'):
             raise Refusal('config USB connect history names a non-virtual device')
 
 
@@ -179,12 +183,16 @@ def _check_config(association):
         raise Refusal('registered config is not well-formed XML') from exc
     if root.tag != 'ParallelsVirtualMachine':
         raise Refusal('config root is not ParallelsVirtualMachine')
+    # One section of each kind: a second Hardware or Identification would be a hiding place that the first-match
+    # reads never see, so a repeated section refuses before any field is read.
+    for section in ('Identification', 'Hardware'):
+        count = len(root.findall(section))
+        if count != 1:
+            raise Refusal('config has %d %s sections; the association needs exactly one' % (count, section))
     identification = root.find('Identification')
-    if identification is None or _text(identification, 'VmUuid', 'Identification').strip('{}').lower() != REVIEWED['vm']:
+    if _text(identification, 'VmUuid', 'Identification').strip('{}').lower() != REVIEWED['vm']:
         raise Refusal('config VM is not the reviewed VM')
     hardware = root.find('Hardware')
-    if hardware is None:
-        raise Refusal('config has no Hardware section')
     unknown = sorted({child.tag for child in hardware} - HARDWARE_TAGS)
     if unknown:
         raise Refusal('config Hardware has unreviewed device elements: %s' % ', '.join(unknown))

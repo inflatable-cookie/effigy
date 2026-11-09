@@ -46,17 +46,19 @@ TEST_SUPPORTED = frozenset({TEST_MECHANISM})
 RETAINED_HDD_FLAGS = {'Enabled': '1', 'Connected': '1', 'Remote': '0', 'Passthrough': '0', 'DiskType': '1'}
 
 
-def config_xml(vm=VM, index='0', interface='2', system='harddisk1.hdd', uuid=DEVICE_UUID, extra='', **flags):
+def config_xml(vm=VM, index='0', interface='2', system='harddisk1.hdd', uuid=DEVICE_UUID, extra='', tail='',
+               **flags):
     """A registered-config excerpt in the retained shape: one Hdd under Hardware, one CdRom.
 
-    Keyword flags override the Hdd's retained flags, for example Passthrough='1' for a physical disk."""
+    Keyword flags override the Hdd's retained flags, for example Passthrough='1' for a physical disk. `tail` is
+    XML appended after the root's first section, for a second section."""
     values = dict(RETAINED_HDD_FLAGS, **flags)
     flag_xml = ''.join(f'<{name}>{value}</{name}>' for name, value in values.items())
     return (f'<ParallelsVirtualMachine><Identification><VmUuid>{{{vm}}}</VmUuid></Identification>'
             f'<Hardware><CdRom id="0"><Index>0</Index><Enabled>1</Enabled><Connected>0</Connected>'
             f'<InterfaceType>2</InterfaceType><Passthrough>1</Passthrough></CdRom>'
             f'<Hdd id="1"><Uuid>{uuid}</Uuid><Index>{index}</Index><InterfaceType>{interface}</InterfaceType>'
-            f'<SystemName>{system}</SystemName>{flag_xml}</Hdd>{extra}</Hardware></ParallelsVirtualMachine>').encode()
+            f'<SystemName>{system}</SystemName>{flag_xml}</Hdd>{extra}</Hardware>{tail}</ParallelsVirtualMachine>').encode()
 
 
 def host_read(**over):
@@ -201,6 +203,33 @@ class DiskAssociationControls(unittest.TestCase):
             self.assertEqual(setup.verify_disk_association(valid_association(), TEST_SUPPORTED)['serial'], SERIAL)
         with self.assertRaises(Refusal):
             setup.verify_disk_association(valid_association(), TEST_SUPPORTED)
+
+    def test_repeated_top_level_section_refuses_config(self):
+        """A second Hardware or Identification section must not hide a block device from the first-match reads."""
+        second_hardware = ('<Hardware><USB><EmulatedType>1</EmulatedType><UsbType>0</UsbType>'
+                           '<SystemName>SanDisk|0781|5581|high|--|1234</SystemName></USB></Hardware>')
+        second_identification = '<Identification><VmUuid>{00000000-0000-0000-0000-000000000000}</VmUuid></Identification>'
+        for label, tail in (('second Hardware', second_hardware), ('second Identification', second_identification)):
+            with self.subTest(label):
+                association = valid_association(config=config_xml(tail=tail))
+                self.assertEqual(table(association)['config'][0], 'refuse', table(association)['config'])
+                self.assertRefusedAt('config', association)
+
+    def test_repeated_field_refuses_config_and_the_later_value_cannot_hide(self):
+        """The first Passthrough is 0; a second one set to 1 must refuse, not be read past."""
+        base = config_xml()
+        assert base.count(b'<Passthrough>0</Passthrough>') == 1
+        duplicated = base.replace(b'<Passthrough>0</Passthrough>', b'<Passthrough>0</Passthrough><Passthrough>1</Passthrough>', 1)
+        self.assertRefusedAt('config', valid_association(config=duplicated))
+
+    def test_repeated_usb_or_history_field_refuses_config(self):
+        camera_twice = ('<USB><EmulatedType>3</EmulatedType><EmulatedType>1</EmulatedType><UsbType>2</UsbType>'
+                        '<SystemName>VIRTUAL@UVC@|203a|fff9|high|--|X</SystemName></USB>')
+        history_twice = ('<UsbConnectHistory><USBPort><SystemName>VIRTUAL@MOUSE@|203a|fffc</SystemName>'
+                         '<SystemName>SanDisk|0781|5581|high|--|1234</SystemName></USBPort></UsbConnectHistory>')
+        for label, extra in (('usb field twice', camera_twice), ('history field twice', history_twice)):
+            with self.subTest(label):
+                self.assertRefusedAt('config', valid_association(config=config_xml(extra=extra)))
 
     def test_reviewed_usb_camera_and_virtual_history_pass_config(self):
         extra = ('<USB><Enabled>1</Enabled><Connected>1</Connected><EmulatedType>3</EmulatedType><UsbType>2</UsbType>'
