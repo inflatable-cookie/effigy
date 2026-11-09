@@ -1219,7 +1219,7 @@
         "staged Dockerfile in {desktop_context_dir}",
         "owned {desktop_input_dir} and any partial or verified OCI layout or deb in it, never removed or reused"
       ],
-      "retention": "input receipts, build stream, iidfile, readback JSON, image ID",
+      "retention": "per-input size and sha256 in the prefetch helper result, build stream, iidfile, readback JSON, image ID",
       "seconds": 1200,
       "steps": [
         {

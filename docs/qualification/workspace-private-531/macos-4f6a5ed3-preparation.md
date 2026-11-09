@@ -17,7 +17,8 @@ debs, each hashed with exact size and sha256. They are assembled as `{desktop_in
 `debs={desktop_input_dir}/debs`. FROM cannot contact a registry: the named ubuntu context is a
 local oci-layout, and RUN cannot apt-get. The recipe is `FROM ubuntu` / `COPY --from=debs` /
 `dpkg -i`, sha256 `c00d5bd9…`, 318 bytes. Ubuntu 22.04, glibc, python3, ssl, coreutils and CA
-assertions stay.
+assertions stay. The 531 packet's historical recipe remains `runtime.Dockerfile.531`
+(sha256 `d290f70f…`, 474 bytes), which `image_context.py` still pins.
 
 C4's build argv is the same offline form with guest sibling paths `{guest_context}.oci` and
 `{guest_context}.debs`. C4 itself downloads nothing (`download_cap_bytes` 0, `network_sources`

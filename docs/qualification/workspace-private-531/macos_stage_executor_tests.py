@@ -3828,6 +3828,11 @@ class RuntimeImageInputTests(Fixture):
         self.assertEqual(result['bytes'], FAKE_RUNTIME_PIN['bytes'])
         self.assertEqual(result['oci'], self.dest + '/oci')
         self.assertEqual(result['debs'], self.dest + '/debs')
+        identities = [(f['bytes'], f['sha256']) for f in result['files']]
+        self.assertEqual(identities, runtime_inputs.pin_file_identities(FAKE_RUNTIME_PIN))
+        for f in result['files']:
+            self.assertEqual(hashlib.sha256(Path(f['path']).read_bytes()).hexdigest(), f['sha256'])
+            self.assertEqual(os.path.getsize(f['path']), f['bytes'])
         self.assertEqual((Path(result['oci']) / 'oci-layout').read_bytes(), b'{"imageLayoutVersion":"1.0.0"}\n')
         index = json.loads((Path(result['oci']) / 'index.json').read_bytes())
         self.assertEqual(len(index['manifests']), 1)

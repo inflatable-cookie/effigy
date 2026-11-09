@@ -149,6 +149,16 @@ def hex_digest(digest):
     return value
 
 
+def item_sha256(item):
+    return item['sha256'] if 'sha256' in item else hex_digest(item['digest'])
+
+
+def pin_file_identities(pin):
+    """(bytes, sha256) for each fetched payload in pin order: index, manifest, config, layer, debs."""
+    items = (pin['index'], pin['manifest'], pin['config'], pin['layer'], *pin['debs'])
+    return [(item['bytes'], item_sha256(item)) for item in items]
+
+
 def production_pin():
     """The reviewed input set. Callers that need a later occurrence swap this through runtime_image_pin."""
     debs = tuple(dict(item, url=UBUNTU_PORTS + item['path']) for item in DEBS)
@@ -399,7 +409,7 @@ def fetch_runtime_inputs(destination, pin, *, opener, checkpoint=None):
     def pull(item, directory, name, headers):
         nonlocal fetched
         dest = os.path.join(directory, name)
-        digest = item['sha256'] if 'sha256' in item else hex_digest(item['digest'])
+        digest = item_sha256(item)
         result = fetch_pinned_https(item['url'], dest, item['bytes'], digest, opener=opener,
                                     headers=headers, checkpoint=checkpoint)
         fetched += result['bytes']

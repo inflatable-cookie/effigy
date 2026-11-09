@@ -1005,7 +1005,7 @@ def h_prefetch_runtime_inputs(ctx, step):
         raise Refusal('prefetch destination differs from the reviewed desktop input path')
     result = runtime_inputs.fetch_runtime_inputs(destination, pin, opener=runtime_inputs.open_runtime_https,
                                                  checkpoint=lambda: ctx['monitor'].check())
-    return dict(bytes=result['bytes'], oci=result['oci'], debs=result['debs'])
+    return dict(bytes=result['bytes'], oci=result['oci'], debs=result['debs'], files=result['files'])
 
 
 def h_prefetch_colima_image(ctx, step):
@@ -1525,6 +1525,14 @@ def verify_receipt_tree(body, stage_id, key, manifest):
             pin = colima_image_pin(manifest)
             if helper.get('result') != dict(bytes=pin['bytes'], sha512=pin['sha512']):
                 raise Refusal('c1 prefetch result differs from the pinned Colima image')
+        elif step['id'] == 'd2-prefetch-runtime-inputs':
+            helper = json.loads(read_checked_file(ev['path'], must_be_in=root, read_only=False))
+            pin = runtime_inputs.runtime_image_pin(manifest)
+            result = helper.get('result') or {}
+            files = result.get('files')
+            recorded = [(f.get('bytes'), f.get('sha256')) for f in files] if isinstance(files, list) else None
+            if result.get('bytes') != pin['bytes'] or recorded != runtime_inputs.pin_file_identities(pin):
+                raise Refusal('d2 prefetch result differs from the pinned input identities')
     # 4. Creation receipts: each is re-derived field by field from its producing stage's own receipt, the
     #    step's intent and original streams, and must match the stored receipt exactly.
     for rec in body['receipts']:
