@@ -10,6 +10,7 @@ grants setup, disk-mechanism, hard-limit, association or trust credit.
 import hashlib
 import json
 import re
+import shlex
 import time
 
 # Status vocabulary: exactly one per read.
@@ -288,7 +289,7 @@ for f in cgroup.controllers cgroup.subtree_control; do
 done
 if ! command -v systemctl >/dev/null 2>&1; then printf 'unit_observation absent\\n'; exit 0; fi
 for u in system.slice user.slice; do
-  out=$(systemctl show -p MemoryMax -p MemoryHigh -p MemorySwapMax -p IOReadBandwidthMax -p IOWriteBandwidthMax -p IOReadIOPSMax -p IOWriteIOPSMax -p TasksMax -p CPUWeight -- "$u" 2>/dev/null) || out=
+  out=$(systemctl show --all -p MemoryMax -p MemoryHigh -p MemorySwapMax -p IOReadBandwidthMax -p IOWriteBandwidthMax -p IOReadIOPSMax -p IOWriteIOPSMax -p TasksMax -p CPUWeight -- "$u" 2>/dev/null) || out=
   if [ -z "$out" ]; then printf 'unit %s unreadable\\n' "$u"; continue; fi
   printf 'unit %s present\\n' "$u"
   printf '%s\\n' "$out" | while IFS= read -r l; do
@@ -308,6 +309,7 @@ for u in system.slice user.slice; do
         while [ $# -ge 2 ]; do printf 'property %s %s %s=%s\\n' "$u" "$k" "$1" "$2"; shift 2; done
         continue;;
     esac
+    if [ "$k" = CPUWeight ] && [ "$v" = "[not set]" ]; then v=unset; fi
     case $v in *[!A-Za-z0-9._+-]*) v=invalid;; esac
     printf 'property %s %s %s\\n' "$u" "$k" "$v"
   done
@@ -324,6 +326,13 @@ ROUTES = (
     {'id': 'cgroup-units', 'script': CGROUP_UNITS, 'timeout': 30},
 )
 
+# Removing standalone explanatory comments/indentation changes no shell tokens.
+# Keep the identity comment so private transports can label routes.
+for _route in ROUTES:
+    _route['script'] = '\n'.join(line.strip() for line in _route['script'].splitlines()
+                                if line.strip() and (not line.lstrip().startswith('#')
+                                or line.startswith('# effigy-linux-observation:'))) + '\n'
+
 
 class Bad(ValueError):
     """One read's bytes cannot be decoded under the fixed schema."""
@@ -338,8 +347,44 @@ def route_ids():
     return tuple(route['id'] for route in ROUTES)
 
 
+# Desktop 27.1.0 installed prlctl(8): Linux uses bash -c "command".
+# No documented length/stdin guarantee: bound the fully quoted command to the
+# largest successful retained command (810 step 020), never infer argv forwarding.
+MAX_COMMAND_BYTES = 2891
+
+
+def markers(route):
+    digest = hashlib.sha256(route['script'].encode()).hexdigest()
+    return ('effigy-begin-' + digest, 'effigy-end-' + digest)
+
+
+def delivered_program(route):
+    begin, end = markers(route)
+    return ("printf '%s\\n' " + begin + "\n(\n" + route['script'] +
+            "\n)\nrc=$?\nprintf '%s %s\\n' " + end + ' "$rc"\nexit "$rc"\n')
+
+
 def route_argv(route):
-    return ['/bin/sh', '-c', route['script']]
+    argv = ['/bin/sh', '-c', shlex.quote(delivered_program(route))]
+    if len(' '.join(argv).encode()) > MAX_COMMAND_BYTES:
+        raise Bad(MALFORMED, 'delivered command exceeds 2891-byte bound')
+    return argv
+
+
+def unwrap_program(route, result, raw):
+    if re.search(r'(?m)^(?:/bin/)?(?:ba|da)?sh:|(?:-c requires an argument)',
+                 result.get('stderr_text', '')):
+        raise Bad(MALFORMED, 'transport-semantics drift: guest wrapper stderr')
+    begin, end = (value.encode() for value in markers(route))
+    lines = raw.splitlines(keepends=True)
+    if (not lines or lines[0] != begin + b'\n' or
+            sum(line.startswith(b'effigy-begin-') for line in lines) != 1 or
+            sum(line.startswith(b'effigy-end-') for line in lines) != 1):
+        raise Bad(MALFORMED, 'missing, partial or duplicated program markers')
+    code = result.get('waited_exit')
+    if lines[-1] != end + b' ' + str(code).encode() + b'\n':
+        raise Bad(MALFORMED, 'program end marker or waited exit differs')
+    return b''.join(lines[1:-1])
 
 
 def routes_digest():
@@ -838,7 +883,7 @@ def parse_cgroup_units(raw):
                 if value in ('empty', 'invalid'):
                     if key in properties:
                         raise Bad(MALFORMED, 'duplicate or mixed IO property record')
-                    properties[key] = {'status': value, 'devices': []}
+                    properties[key] = {'status': 'none' if value == 'empty' else value, 'devices': []}
                     continue
                 device, separator, rate = value.partition('=')
                 if not separator or not IO_DEVICE.match(device) or not IO_RATE.match(rate):
@@ -851,12 +896,14 @@ def parse_cgroup_units(raw):
                 continue
             if key in properties:
                 raise Bad(MALFORMED, 'duplicate property record')
-            if value in ('empty', 'invalid'):
+            if value in ('empty', 'invalid', 'unset'):
+                if value == 'unset' and row[2] != 'CPUWeight':
+                    raise Bad(MALFORMED, 'unset is only documented for CPUWeight')
                 properties[key] = {'status': value}
             elif PROPERTY.match(value):
                 properties[key] = {'status': 'observed', 'value': value}
             else:
-                raise Bad(MALFORMED, 'a unit property carries an invalid value')
+                properties[key] = {'status': 'invalid'}
             continue
         raise Bad(MALFORMED, 'unknown record in the control-group inventory')
     if not files and observation is None:
@@ -957,7 +1004,12 @@ def observe(run, retain, guard, deadline, budget=BUDGET_SECONDS, legacy_partitio
         else:
             retained_error = None
         try:
-            status, facts, reasons = decode(route, result, raw, legacy_partition_removable)
+            body = (raw if result.get('disposition') in
+                    ('timeout', 'resource-refusal', 'unknown', 'local-error', 'output-cap')
+                    else unwrap_program(route, result, raw))
+            status, facts, reasons = decode(route, result, body, legacy_partition_removable)
+        except Bad as exc:
+            status, facts, reasons = exc.status, {}, [exc.reason]
         except Exception as exc:                                  # a decoder bug is not a fact
             status, facts, reasons = MALFORMED, {}, ['the read could not be decoded: ' + str(exc)]
         if retained_error is not None:

@@ -1036,7 +1036,10 @@ MALFORMED_ROUTES.update(engine_tests.MALFORMED_ROUTES)
 def route_text(outputs=None):
     """Route answers as text, the shape the fixture tool prints."""
     outputs = observation_outputs() if outputs is None else outputs
-    return {name: (code, raw if isinstance(raw, str) else raw.decode())
+    routes = {route['id']: route for route in guest_probe.ROUTES + engine_inputs.ROUTES}
+    return {name: (code, guest_probe.markers(routes[name])[0] + '\n' +
+                         (raw if isinstance(raw, str) else raw.decode()) +
+                         guest_probe.markers(routes[name])[1] + ' ' + str(code) + '\n')
             for name, (code, raw) in outputs.items()}
 
 
@@ -1099,7 +1102,7 @@ class WriterBoundObservationTests(unittest.TestCase):
         def run(argv, limit, cap, end):
             calls.append(list(argv))
             for route in guest_probe.ROUTES:
-                if route['script'] != argv[2]:
+                if guest_probe.route_argv(route) != argv:
                     continue
                 if run_error == route['id']:
                     raise Refusal('transport failure')
@@ -1109,6 +1112,8 @@ class WriterBoundObservationTests(unittest.TestCase):
                 else:
                     code, raw = row
                     disposition = 'exited' if code == 0 else 'failed'
+                begin, end_marker = guest_probe.markers(route)
+                raw = begin.encode() + b'\n' + raw + (end_marker + ' ' + str(code) + '\n').encode()
                 return {'disposition': disposition, 'waited_exit': code}, raw
             raise AssertionError('unexpected argv: %r' % (argv,))
 
@@ -1125,11 +1130,11 @@ class WriterBoundObservationTests(unittest.TestCase):
 
     def test_every_route_runs_once_with_its_reviewed_argv(self):
         result, calls, retained = self.observe()
-        self.assertEqual([call[2] for call in calls], [route['script'] for route in guest_probe.ROUTES])
+        self.assertEqual([call[2] for call in calls], [guest_probe.route_argv(route)[2] for route in guest_probe.ROUTES])
         self.assertTrue(all(call[:2] == ['/bin/sh', '-c'] for call in calls))
         self.assertEqual(tuple(statuses(result)), guest_probe.route_ids())
         self.assertEqual(set(retained), set(guest_probe.route_ids()))
-        rows = [[route['id'], ['/bin/sh', '-c', route['script']], route['timeout'],
+        rows = [[route['id'], guest_probe.route_argv(route), route['timeout'],
                  guest_probe.MAX_ROUTE_BYTES] for route in guest_probe.ROUTES]
         self.assertEqual(guest_probe.routes_digest(),
                          hashlib.sha256(json.dumps(rows, sort_keys=True, separators=(',', ':')).encode())
@@ -1141,6 +1146,26 @@ class WriterBoundObservationTests(unittest.TestCase):
         for row in result['routes']:
             self.assertEqual(row['original'], 'observation-%s.raw' % row['id'])
             self.assertEqual(row['sha256'], hashlib.sha256(retained[row['id']]).hexdigest())
+
+    def test_exact_program_delivery_and_size_bound(self):
+        # Private local bash models the documented outer shell; no native provenance.
+        route = {'id': 'fixture', 'script': "printf '%s\\n' 'quotes \" and $dollar'\n"}
+        argv = guest_probe.route_argv(route)
+        result = subprocess.run(['/bin/bash', '-c', ' '.join(argv)],
+                                capture_output=True, timeout=10)
+        body = guest_probe.unwrap_program(route, {'waited_exit': result.returncode,
+                                                  'stderr_text': result.stderr.decode()}, result.stdout)
+        self.assertEqual(body, b'quotes " and $dollar\n')
+        for fixed in guest_probe.ROUTES + engine_inputs.ROUTES:
+            self.assertLessEqual(len(' '.join(guest_probe.route_argv(fixed)).encode()),
+                                 guest_probe.MAX_COMMAND_BYTES)
+        oversized = dict(guest_probe.ROUTES[0], script='x' * 2892)
+        calls = []
+        with patch.object(guest_probe, 'ROUTES', (oversized,)):
+            with self.assertRaises(guest_probe.Bad):
+                guest_probe.observe(lambda *args: calls.append(args),
+                                    lambda *args: None, lambda: None, 10 ** 9)
+        self.assertEqual(calls, [])
 
     def test_one_disk_positive_facts(self):
         result, _, _ = self.observe()
@@ -1176,7 +1201,7 @@ class WriterBoundObservationTests(unittest.TestCase):
                          ['IOReadIOPSMax'],
                          {'status': 'observed', 'devices': [{'device': '/dev/vda', 'rate': '100'}]})
         self.assertEqual(result['facts']['control_groups']['units']['system.slice']['properties']
-                         ['IOWriteIOPSMax'], {'status': 'empty', 'devices': []})
+                         ['IOWriteIOPSMax'], {'status': 'none', 'devices': []})
         self.assertEqual(result['limits']['io_write_bandwidth_max'].startswith('per-device write rate'),
                          True)
         self.assertEqual(result['complete'], True)
@@ -1284,7 +1309,7 @@ class WriterBoundObservationTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(raw).hexdigest(), LEGACY_747_SHA256)
         result, _, retained = self.observe(sda_outputs(raw))
         self.assertEqual(statuses(result)['block-sysfs'], guest_probe.MALFORMED)
-        self.assertEqual(retained['block-sysfs'], raw)
+        self.assertEqual(guest_probe.unwrap_program(guest_probe.ROUTES[0], {'waited_exit': 0}, retained['block-sysfs']), raw)
         root = result['facts']['root']
         self.assertEqual(root['status'], 'unknown')
         self.assertIn('the block inventory is malformed, so the root ancestry is unknown', root['reasons'])
@@ -1470,11 +1495,12 @@ class WriterBoundObservationTests(unittest.TestCase):
         (tree / 'bin').mkdir()
         systemctl = tree / 'bin' / 'systemctl'
         systemctl.write_text('#!/bin/sh\n'
-                             'printf "MemoryMax=infinity\\nMemoryHigh=infinity\\n'
+                             'for arg do [ "$arg" != user.slice ] || exit 1; done\n'
+                             'printf "MemoryMax=infinity\\nMemoryHigh=bogus\\n'
                              'MemorySwapMax=infinity\\nIOReadBandwidthMax=/dev/sda 1048576 '
                              '/dev/sdb 2048\\nIOWriteBandwidthMax=/dev/sda 4096\\n'
                              'IOReadIOPSMax=\\nIOWriteIOPSMax=/dev/sda 100\\n'
-                             'TasksMax=4915\\nCPUWeight=100\\n"\n')
+                             'TasksMax=4915\\nCPUWeight=[not set]\\n"\n')
         systemctl.chmod(0o700)
         script = guest_probe.CGROUP_UNITS.replace('/sys/fs/cgroup', str(tree / 'sys' / 'fs' / 'cgroup'))
         script = script.replace('systemctl', str(systemctl))
@@ -1491,7 +1517,10 @@ class WriterBoundObservationTests(unittest.TestCase):
                          {'status': 'observed', 'devices': [{'device': '/dev/sda', 'rate': '4096'}]})
         self.assertEqual([item['device'] for item in properties['IOReadBandwidthMax']['devices']],
                          ['/dev/sda', '/dev/sdb'])
-        self.assertEqual(properties['IOReadIOPSMax'], {'status': 'empty', 'devices': []})
+        self.assertEqual(properties['IOReadIOPSMax'], {'status': 'none', 'devices': []})
+        self.assertEqual(properties['CPUWeight'], {'status': 'unset'})
+        self.assertEqual(properties['MemoryHigh'], {'status': 'invalid'})
+        self.assertEqual(facts['units']['user.slice']['status'], 'unreadable')
         self.assertEqual(sorted(facts['files']), ['cgroup.controllers', 'cgroup.subtree_control'])
 
         # The documented version flag differs per tool: dumpe2fs refuses --version and accepts -V.
@@ -1880,6 +1909,10 @@ elif args[0] == 'exec':
     for name in routes:
         if ('# effigy-linux-observation: ' + name) in script:
             code, out = mode_routes.get(mode, {}).get(name, routes[name])
+            if mode == 'marker_missing': out = ''.join(out.splitlines(keepends=True)[1:])
+            if mode == 'marker_partial': out = out[:-1]
+            if mode == 'marker_duplicate': out = out.splitlines(keepends=True)[0] + out
+            if mode == 'wrapper_stderr': print('/bin/sh: 0: -c requires an argument', file=sys.stderr)
             sys.stdout.write(out)
             sys.exit(code)
     if mode == 'growth':
@@ -1900,6 +1933,9 @@ elif args[0] == 'exec':
         (disk / 'b.hds').unlink()
     if mode == 'extent_replaced':
         touch(disk / 'b.hds', b'replacement')
+    import re
+    marker = re.search(r'effigy-begin-([0-9a-f]{64})', script).group(1)
+    print('effigy-begin-' + marker)
     if mode == 'probe_starting':
         print(%(starting_probe)r, end='')
     elif mode == 'timeout':
@@ -1909,6 +1945,7 @@ elif args[0] == 'exec':
         print('uid=0')
     else:
         print(%(probe)r, end='')
+    print('effigy-end-' + marker + ' 0')
 '''
 
 
@@ -1917,6 +1954,10 @@ class EntryTests(unittest.TestCase):
 
     # mode, expected entry exit, graceful stop commands sent
     MODES = (
+        ('marker_missing', 1, 1),
+        ('marker_partial', 1, 1),
+        ('marker_duplicate', 1, 1),
+        ('wrapper_stderr', 1, 1),
         ('wrong_home', 1, 0),
         ('wrong_uuid', 1, 0),
         ('wrong_snapshot', 1, 0),
@@ -2066,6 +2107,11 @@ class EntryTests(unittest.TestCase):
             staged = []
 
             def bounded(root, argv, timeout, cap, hashes, **kwargs):
+                # Selector streams are opened durably before the first transport process starts.
+                for name in ('stdout', 'stderr'):
+                    retained = Path(root).parent / ('selector-' + name)
+                    self.assertTrue(retained.is_file())
+                    self.assertEqual(retained.stat().st_mode & 0o777, 0o600)
                 staged.append({'argv': list(argv), 'timeout': timeout, 'cap': cap,
                                'monitor': kwargs.get('resource_monitor'),
                                'deadline': kwargs.get('deadline'),
@@ -2091,7 +2137,12 @@ class EntryTests(unittest.TestCase):
                     self.assertEqual(step.stat().st_mode & 0o777, 0o700, 'the step is not private')
                     self.assertFalse((step / 'stdout').exists(), 'stdout retained before the dispatch')
                     self.assertFalse((step / 'stderr').exists(), 'stderr retained before the dispatch')
-                    (step / 'stdout').write_bytes(engine_tests.artifacts_route())
+                    (step / 'stdout').write_bytes(route_text()['engine-artifacts'][1].encode())
+                    intent = json.loads((step / 'guest-program-intent.json').read_bytes())
+                    self.assertEqual(intent['script_sha256'],
+                                     hashlib.sha256(guest_probe.delivered_program(engine_inputs.ROUTES[0]).encode()).hexdigest())
+                    self.assertEqual(intent['source_script_sha256'],
+                                     hashlib.sha256(engine_inputs.ROUTES[0]['script'].encode()).hexdigest())
                     (step / 'stderr').write_bytes(b'')
                     return {'disposition': 'exited', 'waited_exit': 0}
                 return original_run(root, argv, timeout, cap, hashes, **kwargs)
@@ -2103,6 +2154,15 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(state.read_text(), 'stopped')
             result = json.loads((evidence / 'linux-diagnostic-fixture01' / 'outcome.json').read_text())
             self.assertEqual(result['schema'], 'linux-diagnostic-observation-v7')
+            for name, receipt in result['selector_streams'].items():
+                retained = evidence / 'linux-diagnostic-fixture01' / receipt['path']
+                content = retained.read_bytes()
+                self.assertEqual(receipt['bytes'], len(content))
+                self.assertEqual(receipt['sha256'], hashlib.sha256(content).hexdigest())
+                self.assertLessEqual(len(content), proof.SELECTOR_STREAM_CAP)
+                self.assertTrue(receipt['complete'])
+            stdout = evidence / 'linux-diagnostic-fixture01' / 'selector-stdout'
+            self.assertNotIn('selector_streams', json.loads(stdout.read_bytes()))
             self.assertEqual(result['start_count'], 1)
             self.assertEqual(result['stop_count'], 1)
             self.assertEqual(result['stop_eligibility'], 'running')
@@ -2631,7 +2691,11 @@ class CheckoutBindingTests(unittest.TestCase):
             "            code, out = routes[name]",
             "            sys.stdout.write(out)",
             "            sys.exit(code)",
+            "    import re",
+            "    marker = re.search(r'effigy-begin-([0-9a-f]{64})', script).group(1)",
+            "    print('effigy-begin-' + marker)",
             "    print(%r, end='')" % (probe,),
+            "    print('effigy-end-' + marker + ' 0')",
             '',
         ]))
         self.program.chmod(0o700)
@@ -2999,6 +3063,46 @@ class DiskAssociationHandoff(unittest.TestCase):
                          'not attempted: the guest block observations did not complete for this boot')
         self.assertIsNone(handoff['result'])
         self.assertEqual(dispatched, [])
+
+
+class SelectorStreamTests(unittest.TestCase):
+    def test_streams_are_durable_before_forward_and_caps_are_explicit(self):
+        root = fixture()
+        destination = root / 'selector-run'
+        destination.mkdir(mode=0o700)
+        original = io.StringIO()
+        stream = proof.SelectorStream(destination / 'selector-stdout', original, cap=8)
+        stream.write('first')
+        # Reading before close proves this is live retention, not final reconstruction.
+        self.assertEqual((destination / 'selector-stdout').read_bytes(), b'first')
+        stream.write('more output')
+        self.assertEqual((destination / 'selector-stdout').read_bytes(), b'firstmor')
+        self.assertEqual(original.getvalue(), 'firstmor')
+        self.assertEqual(stream.metadata(), {
+            'path': 'selector-stdout', 'bytes': 8, 'sha256': hashlib.sha256(b'firstmor').hexdigest(),
+            'cap_bytes': 8, 'complete': False})
+        stream.close()
+        with self.assertRaises(FileExistsError):
+            proof.SelectorStream(destination / 'selector-stdout', original)
+
+    def test_both_streams_and_restoration(self):
+        root = fixture()
+        destination = root / 'selector-run'
+        destination.mkdir(mode=0o700)
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            capture = proof.SelectorStreams()
+            capture.start(destination)
+            print('private fixture only')
+            print('fixture diagnostic', file=sys.stderr)
+            capture.close()
+            self.assertIs(sys.stdout, stdout)
+            self.assertIs(sys.stderr, stderr)
+        for name, content in (('stdout', b'private fixture only\n'),
+                              ('stderr', b'fixture diagnostic\n')):
+            self.assertEqual((destination / ('selector-' + name)).read_bytes(), content)
+            self.assertEqual(capture.metadata()[name]['sha256'], hashlib.sha256(content).hexdigest())
+            self.assertTrue(capture.metadata()[name]['complete'])
 
 
 if __name__ == '__main__':

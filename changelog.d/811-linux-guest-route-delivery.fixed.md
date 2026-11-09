@@ -1,0 +1,1 @@
+Fixed private Linux diagnostic script delivery through Parallels’ documented outer shell, bounded and split the fixed routes, required program completion markers, decoded systemd unset and empty properties, and retained capped selector streams with byte and SHA-256 receipts. Source and private fixture controls only; no native qualification credit.

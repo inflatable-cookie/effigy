@@ -4,6 +4,7 @@ External precondition: Nucleus must launch the pinned selector after native GO.
 This process cannot authenticate launch provenance against the same user. A
 request, this file, or caller environment is not that authorisation.
 """
+import contextlib
 import hashlib
 import json
 import os
@@ -67,6 +68,90 @@ SOURCES = ('linux_diagnostic_proof.py', 'linux_diagnostic.py', 'linux_diagnostic
            'preparation_stage.py', 'preparation_resources.py', 'preparation_observations.py',
            'preparation_requests.py', 'linux_disk_identity.py', 'linux_disk_association.py',
            'linux_disk_inventory.py', 'linux_engine_inputs.py', 'linux-setup-probe.sh')
+
+
+# Match the largest existing per-step output cap; selector retention adds no unbounded output.
+SELECTOR_STREAM_CAP = 262144
+
+
+class SelectorStream:
+    """Write each emitted UTF-8 byte durably before forwarding it to the caller.
+
+    Retention stops at the cap and records overflow; it never reconstructs output from receipts.
+    The final stdout JSON intentionally omits its own stream digest. outcome.json holds that
+    digest after stdout has finished, avoiding a self-referential hash.
+    """
+    def __init__(self, path, original, cap=SELECTOR_STREAM_CAP):
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
+        self.output = os.fdopen(os.open(path, flags, 0o600), 'wb')
+        self.path = path
+        self.original = original
+        self.cap = cap
+        self.count = 0
+        self.exceeded = False
+        self.digest = hashlib.sha256()
+
+    def write(self, text):
+        raw = text.encode('utf-8')
+        kept = raw[:max(0, self.cap - self.count)].decode('utf-8', 'ignore').encode('utf-8')
+        self.exceeded = self.exceeded or len(kept) != len(raw)
+        self.output.write(kept)
+        self.digest.update(kept)
+        self.count += len(kept)
+        self.flush()
+        # The retained stream covers exactly the bytes exposed to the executor, including when
+        # its own tool interface truncates them. A broken output consumer cannot lose originals.
+        try:
+            self.original.write(kept.decode('utf-8'))
+            self.original.flush()
+        except (OSError, ValueError):
+            pass
+        return len(text)
+
+    def flush(self):
+        self.output.flush()
+        os.fsync(self.output.fileno())
+
+    def close(self):
+        self.flush()
+        self.output.close()
+
+    def metadata(self):
+        return {'path': self.path.name, 'bytes': self.count,
+                'sha256': self.digest.hexdigest(), 'cap_bytes': self.cap,
+                'complete': not self.exceeded}
+
+
+class SelectorStreams:
+    def __init__(self):
+        self.stack = contextlib.ExitStack()
+        self.streams = {}
+        self.destination = None
+
+    def start(self, destination):
+        self.destination = destination
+        try:
+            for name in ('stdout', 'stderr'):
+                stream = SelectorStream(destination / ('selector-' + name), getattr(sys, name))
+                self.streams[name] = stream
+                self.stack.callback(stream.close)
+                redirect = contextlib.redirect_stdout if name == 'stdout' else contextlib.redirect_stderr
+                self.stack.enter_context(redirect(stream))
+                stream.flush()
+            fd = os.open(destination, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        except BaseException:
+            self.stack.close()
+            raise
+
+    def close(self):
+        self.stack.close()
+
+    def metadata(self):
+        return {name: stream.metadata() for name, stream in self.streams.items()}
 
 
 def sha(path):
@@ -359,7 +444,7 @@ def classify_transport(result, stdout, stderr):
         % (result.get('disposition'), result.get('waited_exit'), len(stdout), len(stderr)))
 
 
-def execute(request, request_path, request_hash):
+def execute(request, request_path, request_hash, selector_streams=None):
     launched_at = time.time()
     deadline = time.monotonic() + DURATION
     if request != plan(request['root'], request['activation_id'], request['head']):
@@ -390,6 +475,8 @@ def execute(request, request_path, request_hash):
     finally:
         os.close(fd)
     destination.mkdir(mode=0o700)
+    if selector_streams is not None:
+        selector_streams.start(destination)
     operational_end = deadline - RESERVE
     start_end = operational_end - 120
     outcome = {'schema': 'linux-diagnostic-observation-v7', 'request_sha256': request_hash,
@@ -442,11 +529,38 @@ def execute(request, request_path, request_hash):
 
     def call(args, limit, cap, end, track=True):
         nonlocal serial, start_launched
+        setup_route = None
+        delivered_route = None
+        if args[:2] == ['exec', setup.VM_UUID] and args[2:4] == ['/bin/sh', '-c']:
+            setup_route = {'id': 'setup-probe', 'script': (HERE / 'linux-setup-probe.sh').read_text()}
+            if args[4:] == [setup_route['script']]:
+                args = args[:2] + guest_probe.route_argv(setup_route)
+                delivered_route = setup_route
+            else:
+                setup_route = None
+                for route in (*guest_probe.ROUTES, *engine_inputs.ROUTES):
+                    if args[2:] == guest_probe.route_argv(route):
+                        delivered_route = route
+                        break
+                if delivered_route is None:
+                    raise stage.Refusal('guest script is not a fixed delivered program')
         if private_root(str(root)) != request['root_identity']:
             raise stage.Refusal('evidence root identity changed')
         serial += 1
         step = destination / ('step-%03d' % serial)
         step.mkdir(mode=0o700)
+        if delivered_route is not None:
+            stage.record(step / 'guest-program-intent.json', {
+                'route': delivered_route['id'], 'interpreter': '/bin/sh',
+                'script_sha256': hashlib.sha256(guest_probe.delivered_program(delivered_route).encode()).hexdigest(),
+                'source_script_sha256': hashlib.sha256(delivered_route['script'].encode()).hexdigest(),
+                'delivered_command_bytes': len(' '.join(args[2:]).encode()),
+                'delivered_command_cap_bytes': guest_probe.MAX_COMMAND_BYTES})
+            fd = os.open(step, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
         try:
             result = stage.run_stage(step, [request['program']] + args, limit, cap, inputs,
                                      guest=bool(args and args[0] == 'exec'),
@@ -468,7 +582,14 @@ def execute(request, request_path, request_hash):
         if args == ['start', setup.VM_UUID]:
             start_launched = bool(result.get('process'))
             outcome['start'] = result
-        return result, (step / 'stdout').read_bytes()
+        result['stderr_text'] = (step / 'stderr').read_bytes().decode('utf-8', 'replace')
+        raw = (step / 'stdout').read_bytes()
+        if setup_route is not None:
+            try:
+                raw = guest_probe.unwrap_program(setup_route, result, raw)
+            except guest_probe.Bad as exc:
+                raise stage.Refusal('setup probe program incomplete: ' + str(exc)) from exc
+        return result, raw
 
     def pause(end, track=True):
         until = min(end, time.monotonic() + PAUSE)
@@ -788,7 +909,8 @@ def execute(request, request_path, request_hash):
                 outcome['observation_failures'] = monitor.observation_failures
         outcome['finished_at'] = time.time()
         outcome['probe_sha256'] = setup.PROBE_SHA256
-        stage.record(destination / 'outcome.json', outcome)
+        if selector_streams is None:
+            stage.record(destination / 'outcome.json', outcome)
     return outcome
 
 
@@ -799,8 +921,23 @@ def main(argv):
     if len(argv) != 3:
         raise stage.Refusal('proof entry requires a request and SHA-256')
     request = read_request(argv[1], argv[2])
-    result = execute(request, argv[1], argv[2])
-    print(json.dumps(result, sort_keys=True))
+    streams = SelectorStreams()
+    result = None
+    try:
+        result = execute(request, argv[1], argv[2], selector_streams=streams)
+        print(json.dumps(result, sort_keys=True))
+    except (stage.Refusal, OSError, ValueError, KeyError) as exc:
+        if streams.destination is None:
+            raise
+        print('refused: ' + str(exc), file=sys.stderr)
+        return 2
+    finally:
+        streams.close()
+        if result is not None:
+            result['selector_streams'] = streams.metadata()
+            if any(not item['complete'] for item in result['selector_streams'].values()):
+                result['findings'].append('selector output exceeded its retained stream cap')
+            stage.record(streams.destination / 'outcome.json', result)
     return 0 if not result['findings'] and result['vm_terminal'] == 'stopped' else 1
 
 
