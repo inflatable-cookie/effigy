@@ -21,6 +21,8 @@ import linux_diagnostic_probe as guest_probe
 import linux_diagnostic_proof as proof
 import linux_disk_association_tests as association_tests
 import linux_disk_identity_tests as identity_tests
+import linux_engine_inputs as engine_inputs
+import linux_engine_inputs_tests as engine_tests
 from preparation_stage import Refusal
 
 
@@ -1010,6 +1012,7 @@ def observation_outputs(**overrides):
         'capabilities': (0, capabilities_route()),
         'cgroup-units': (0, cgroup_route()),
     }
+    outputs.update(engine_tests.engine_outputs())
     outputs.update(overrides)
     return outputs
 
@@ -1021,11 +1024,13 @@ ABSENT_ROUTES = {
     'capabilities': (0, capabilities_route(present=())),
     'cgroup-units': (0, cgroup_route(units=None)),
 }
+ABSENT_ROUTES.update(engine_tests.ABSENT_ROUTES)
 
 MALFORMED_ROUTES = {
     'block-lsblk': (0, b'not json\n'),
     'mountinfo': (0, b'22 1 254:2 / / rw - ext4 /dev/vda2'),
 }
+MALFORMED_ROUTES.update(engine_tests.MALFORMED_ROUTES)
 
 
 def route_text(outputs=None):
@@ -2078,6 +2083,17 @@ class EntryTests(unittest.TestCase):
                     (step / 'stdout').write_bytes(association_tests.cli_info_text().encode())
                     (step / 'stderr').write_bytes(b'')
                     return {'disposition': 'exited', 'waited_exit': 0}
+                if argv[4:5] == ['-c'] and '# effigy-linux-observation: engine-artifacts' in argv[5]:
+                    # The engine-input route runs through the same supervised seam: the route
+                    # created its private step first and the fixture only fills its streams.
+                    step = Path(root)
+                    self.assertTrue(step.is_dir(), 'the engine route did not create its step')
+                    self.assertEqual(step.stat().st_mode & 0o777, 0o700, 'the step is not private')
+                    self.assertFalse((step / 'stdout').exists(), 'stdout retained before the dispatch')
+                    self.assertFalse((step / 'stderr').exists(), 'stderr retained before the dispatch')
+                    (step / 'stdout').write_bytes(engine_tests.artifacts_route())
+                    (step / 'stderr').write_bytes(b'')
+                    return {'disposition': 'exited', 'waited_exit': 0}
                 return original_run(root, argv, timeout, cap, hashes, **kwargs)
 
             with contextlib.redirect_stdout(io.StringIO()), \
@@ -2086,7 +2102,7 @@ class EntryTests(unittest.TestCase):
                 self.assertEqual(proof.main(['proof', str(path), digest]), 1)
             self.assertEqual(state.read_text(), 'stopped')
             result = json.loads((evidence / 'linux-diagnostic-fixture01' / 'outcome.json').read_text())
-            self.assertEqual(result['schema'], 'linux-diagnostic-observation-v6')
+            self.assertEqual(result['schema'], 'linux-diagnostic-observation-v7')
             self.assertEqual(result['start_count'], 1)
             self.assertEqual(result['stop_count'], 1)
             self.assertEqual(result['stop_eligibility'], 'running')
@@ -2125,6 +2141,21 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(writer_bound['facts']['filesystem_features']['project_feature'], 'present')
             self.assertEqual(writer_bound['limits']['hard_quota'], 'not established')
             self.assertEqual(result['hard_quota'], 'not established')
+            engine_bound = result['guest_engine_inputs']
+            self.assertEqual(engine_bound['schema'], engine_inputs.SCHEMA)
+            self.assertEqual(engine_bound['status'], 'observed')
+            self.assertTrue(engine_bound['complete'])
+            self.assertEqual(engine_bound['findings'], [])
+            self.assertEqual({row['id']: row['status'] for row in engine_bound['routes']},
+                             {route: guest_probe.OBSERVED for route in engine_inputs.route_ids()})
+            self.assertEqual(engine_bound['routes_sha256'], engine_inputs.routes_digest())
+            self.assertEqual(engine_bound['limits']['confinement_credit'], 'none')
+            self.assertEqual(engine_bound['facts']['artifacts']['dockerd']['sha256'],
+                             {'status': 'observed', 'value': engine_tests.HASH_A})
+            self.assertEqual(engine_bound['facts']['artifacts']['dockerd']['package']['entries'][0]
+                             ['package'], 'docker-ce')
+            self.assertEqual(engine_bound['facts']['units']['docker.service']['effective'], 'packaged')
+            self.assertEqual(engine_bound['facts']['units']['buildkit.service']['status'], 'absent')
             self.assertEqual(result['guest_association'],
                              'refused: descriptor: descriptor root is not Parallels_disk_image Version 1.0')
             # The host read ran through the real supervised closure: the same monitor object, the
@@ -2151,6 +2182,27 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(host_row['environment'], {'PATH': '/usr/bin:/bin', 'LANG': 'C'})
             self.assertEqual(reference['environment'], host_row['environment'])
             self.assertEqual(host_row['inputs'].get(pin['tool_path']), pin['sha256'])
+            # The engine-input read was dispatched through the same supervised seam with the same
+            # monitor, deadlines, environment and pinned inputs as every other step here, and its
+            # argv is the fixed route argv after the exact guest transport prefix.
+            engine_rows = [row for row in staged if len(row['argv']) > 5 and isinstance(
+                row['argv'][5], str) and '# effigy-linux-observation: engine-artifacts' in row['argv'][5]]
+            self.assertEqual(len(engine_rows), 1)
+            engine_row = engine_rows[0]
+            engine_pin = next(route for route in engine_inputs.ROUTES
+                              if route['id'] == 'engine-artifacts')
+            self.assertEqual(engine_row['argv'], [str(program), 'exec', proof.setup.VM_UUID]
+                             + engine_inputs.route_argv(engine_pin))
+            self.assertEqual(engine_row['timeout'], engine_pin['timeout'])
+            self.assertEqual(engine_row['cap'], guest_probe.MAX_ROUTE_BYTES)
+            self.assertIsNotNone(engine_row['monitor'])
+            self.assertIs(engine_row['monitor'], reference['monitor'])
+            # The engine routes run in their own bounded observation window of the same budget,
+            # clamped inside this occurrence's operational deadline; cleanup shares the deadline.
+            self.assertLessEqual(engine_row['deadline'], reference['deadline'])
+            self.assertEqual(engine_row['cleanup_deadline'], reference['cleanup_deadline'])
+            self.assertEqual(engine_row['environment'], reference['environment'])
+            self.assertEqual(engine_row['inputs'], reference['inputs'])
             self.assertIsNone(result.get('disk_association'))
             self.assertIsNone(result.get('disk_association_result'))
             for route in guest_probe.route_ids():
@@ -2158,6 +2210,11 @@ class EntryTests(unittest.TestCase):
                 self.assertTrue(original.is_file(), route)
                 self.assertEqual(hashlib.sha256(original.read_bytes()).hexdigest(),
                                  {row['id']: row['sha256'] for row in writer_bound['routes']}[route])
+            for route in engine_inputs.route_ids():
+                original = evidence / 'linux-diagnostic-fixture01' / ('observation-%s.raw' % route)
+                self.assertTrue(original.is_file(), route)
+                self.assertEqual(hashlib.sha256(original.read_bytes()).hexdigest(),
+                                 {row['id']: row['sha256'] for row in engine_bound['routes']}[route])
             self.assertEqual(result['metadata_differences'], [])
             self.assertEqual(result['identity_events'], [])
             self.assertEqual(result['before_metadata']['logical'],
@@ -2397,6 +2454,12 @@ class EntryTests(unittest.TestCase):
                             self.assertTrue(any('boot identity' in finding for finding in result['findings']))
                             self.assertEqual(result['stop_count'], 1)
                             self.assertIn('config', result['post'])
+                        if mode == 'boot_drift_routes':
+                            # The engine-input routes share the writer routes' boot bracket, so
+                            # mixed boot facts leave that receipt incomplete too.
+                            self.assertFalse(result['guest_engine_inputs']['complete'])
+                            self.assertTrue(any('engine-input route window' in finding
+                                                for finding in result['findings']))
                         if mode == 'config_change':
                             self.assertEqual(result['findings'], [])
                             self.assertTrue(any('config bytes changed' in difference
@@ -2440,6 +2503,11 @@ class EntryTests(unittest.TestCase):
                             self.assertEqual(result['guest_writer_bound']['facts']
                                              ['control_groups']['unit_observation'], 'absent')
                             self.assertEqual(result['writable_top'], 'unknown')
+                            engine_rows = {row['id']: row['status']
+                                           for row in result['guest_engine_inputs']['routes']}
+                            self.assertEqual(engine_rows['engine-artifacts'], guest_probe.ABSENT)
+                            self.assertEqual(engine_rows['engine-units'], guest_probe.OBSERVED)
+                            self.assertTrue(result['guest_engine_inputs']['complete'])
                         if mode == 'writer_bound_malformed':
                             self.assertEqual(result['guest_writer_bound']['status'], 'partial')
                             self.assertFalse(result['guest_writer_bound']['complete'])
@@ -2450,6 +2518,13 @@ class EntryTests(unittest.TestCase):
                             self.assertEqual(rows['block-lsblk'], guest_probe.MALFORMED)
                             self.assertEqual(rows['mountinfo'], guest_probe.MALFORMED)
                             self.assertEqual(rows['block-sysfs'], guest_probe.OBSERVED)
+                            engine_rows = {row['id']: row['status']
+                                           for row in result['guest_engine_inputs']['routes']}
+                            self.assertEqual(engine_rows['engine-units'], guest_probe.MALFORMED)
+                            self.assertEqual(result['guest_engine_inputs']['status'], 'partial')
+                            self.assertFalse(result['guest_engine_inputs']['complete'])
+                            self.assertTrue(any('engine-input observation' in finding
+                                                for finding in result['findings']))
                             self.assertEqual(result['guest_association'], 'not attempted: none')
                             self.assertEqual(result['hard_quota'], 'not established')
 
@@ -2622,15 +2697,21 @@ class CheckoutBindingTests(unittest.TestCase):
         calls = [json.loads(line) for line in self.log.read_text().splitlines()]
         self.assertEqual([call[1] for call in calls],
                          ['list', 'snapshot-list', 'start', 'list'] +
-                         ['exec'] * (6 + len(guest_probe.route_ids())) +
+                         ['exec'] * (6 + len(guest_probe.route_ids())
+                                     + len(engine_inputs.route_ids())) +
                          ['list', 'stop', 'list', 'snapshot-list'])
         self.assertEqual(calls[4][3:6], ['/bin/echo', proof.TRANSPORT_SENTINEL])
         self.assertEqual(calls[5][3:6], ['/usr/bin/systemctl', 'is-system-running', '--wait'])
         self.assertEqual(calls[6][3:5], ['/bin/cat', '/proc/sys/kernel/random/boot_id'])
         self.assertEqual(calls[7][3:5], ['/bin/sh', '-c'])
         self.assertEqual(calls[8][3:5], ['/bin/cat', '/proc/sys/kernel/random/boot_id'])
-        self.assertEqual(calls[9 + len(guest_probe.route_ids())][3:5],
-                         ['/bin/cat', '/proc/sys/kernel/random/boot_id'])
+        self.assertEqual(calls[9 + len(guest_probe.route_ids()) + len(engine_inputs.route_ids())]
+                         [3:5], ['/bin/cat', '/proc/sys/kernel/random/boot_id'])
+        # The engine routes run between the writer routes and the closing boot read.
+        engine_first = 9 + len(guest_probe.route_ids())
+        for offset, route in enumerate(engine_inputs.ROUTES):
+            self.assertEqual(calls[engine_first + offset][3:5], ['/bin/sh', '-c'])
+            self.assertEqual(calls[engine_first + offset][5], engine_inputs.route_argv(route)[2])
         self.assertTrue(all(call[0] == str(self.program) for call in calls))
         self.assertIn([str(self.program), 'start', proof.setup.VM_UUID], calls)
         steps = sorted(self.destination('checkout01').glob('step-*'))

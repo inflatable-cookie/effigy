@@ -21,6 +21,7 @@ import linux_diagnostic as diagnostic
 import linux_diagnostic_probe as guest_probe
 import linux_disk_association as disk_association
 import linux_disk_inventory as disk_inventory
+import linux_engine_inputs as engine_inputs
 import linux_setup as setup
 import preparation_stage as stage
 
@@ -65,7 +66,7 @@ SOURCES = ('linux_diagnostic_proof.py', 'linux_diagnostic.py', 'linux_diagnostic
            'linux_setup.py', 'linux_supervisor.py', 'linux_transfer.py', 'linux_receipts.py',
            'preparation_stage.py', 'preparation_resources.py', 'preparation_observations.py',
            'preparation_requests.py', 'linux_disk_identity.py', 'linux_disk_association.py',
-           'linux_disk_inventory.py', 'linux-setup-probe.sh')
+           'linux_disk_inventory.py', 'linux_engine_inputs.py', 'linux-setup-probe.sh')
 
 
 def sha(path):
@@ -155,10 +156,11 @@ def plan(root, activation_id, head):
     if not effigy:
         raise stage.Refusal('installed Effigy unavailable')
     effigy = os.path.realpath(effigy)
-    return {'schema': 'linux-diagnostic-window-v3', 'head': head,
+    return {'schema': 'linux-diagnostic-window-v4', 'head': head,
             'candidate_h': setup.CANDIDATE_H_HEAD, 'root': root, 'root_identity': identity,
             'activation_id': activation_id, 'duration_seconds': DURATION,
             'observation_routes_sha256': guest_probe.routes_digest(),
+            'engine_routes_sha256': engine_inputs.routes_digest(),
             'observation_budget_seconds': guest_probe.BUDGET_SECONDS,
             'repository': repository, 'machine': machine_identity(program, interpreter, effigy),
             'program': program, 'interpreter': interpreter,
@@ -390,7 +392,7 @@ def execute(request, request_path, request_hash):
     destination.mkdir(mode=0o700)
     operational_end = deadline - RESERVE
     start_end = operational_end - 120
-    outcome = {'schema': 'linux-diagnostic-observation-v6', 'request_sha256': request_hash,
+    outcome = {'schema': 'linux-diagnostic-observation-v7', 'request_sha256': request_hash,
                'head': actual, 'candidate_h': setup.CANDIDATE_H_HEAD, 'launched_at': launched_at,
                'writable_top': 'unknown', 'guest_association': 'unknown',
                'disk_association': None, 'disk_association_result': None,
@@ -413,6 +415,12 @@ def execute(request, request_path, request_hash):
                                       'routes_sha256': guest_probe.routes_digest(), 'routes': [],
                                       'facts': {}, 'limits': dict(guest_probe.LIMITS),
                                       'complete': False, 'findings': []},
+               'guest_engine_inputs': {'schema': engine_inputs.SCHEMA,
+                                       'status': 'not attempted',
+                                       'reason': 'the boot-complete probe or the engine-input dispatch did not complete',
+                                       'routes_sha256': engine_inputs.routes_digest(), 'routes': [],
+                                       'facts': {}, 'limits': dict(engine_inputs.LIMITS),
+                                       'complete': False, 'findings': []},
                'repository_identity': request['repository'], 'machine_identity': request['machine'],
                'checkout_root': str(REPO_ROOT), 'runtime_inputs': runtime}
     serial = 0
@@ -606,6 +614,13 @@ def execute(request, request_path, request_hash):
         writer_bound = guest_probe.observe(
             lambda argv, limit, cap, end: call(['exec', setup.VM_UUID] + argv, limit, cap, end),
             retain_observation, guard, start_end)
+        # The engine-input routes share this boot-complete occurrence, its one boot bracket and
+        # its per-route limits: artifact identity pins and packaged launch metadata for the
+        # accepted 783 §3.4 route. They observe nothing running, execute no engine binary and
+        # contact no daemon; they feed no gate here, and no process ancestry exists in them.
+        engine_bound = engine_inputs.observe(
+            lambda argv, limit, cap, end: call(['exec', setup.VM_UUID] + argv, limit, cap, end),
+            retain_observation, guard, start_end)
         # The disk-association handoff: the supported CLI configuration read, dispatched through
         # this occurrence's own supervised route (recorded step, inputs, environment, resource
         # monitor and stage deadlines, exactly like every other fixed prlctl call here), and
@@ -643,13 +658,18 @@ def execute(request, request_path, request_hash):
         if after_routes != boot_id:
             writer_bound['complete'] = False
             writer_bound['findings'].append('boot identity changed during writer route window')
+            engine_bound['complete'] = False
+            engine_bound['findings'].append('boot identity changed during the engine-input route window')
             outcome['findings'].append('writer route window boot identity differs from readiness')
         else:
             outcome['boot_binding']['route_window_end'] = boot_id
             outcome['boot_binding']['status'] = 'same boot observed'
         writer_bound['status'] = 'observed' if writer_bound['complete'] else 'partial'
+        engine_bound['status'] = 'observed' if engine_bound['complete'] else 'partial'
         outcome['guest_writer_bound'] = writer_bound
+        outcome['guest_engine_inputs'] = engine_bound
         outcome['findings'].extend(writer_bound['findings'])
+        outcome['findings'].extend(engine_bound['findings'])
     except Exception as exc:
         observation = getattr(exc, 'observation', None)
         if observation is not None and not any(
