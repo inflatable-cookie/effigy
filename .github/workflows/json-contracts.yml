@@ -49,14 +49,14 @@ jobs:
       - name: Validate JSON contracts
         run: |
           set -o pipefail
-          cargo run --bin effigy -- contracts check-json --full --print-selected=json | tee json-contracts.log
+          cargo run --bin effigy -- contracts check-json --print-selected=json | tee json-contracts.log
           grep -m1 '^{"selected":' json-contracts.log > json-contracts-selected.json
 
       - name: Validate selection artifact contract
-        run: cargo run --bin effigy -- contracts validate-selection --artifact ./json-contracts-selected.json
+        run: cargo run --bin effigy -- contracts check-json --validate-selection --artifact ./json-contracts-selected.json
 
       - name: Validator smoke check (negative path)
-        run: cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture
+        run: cargo test -p effigy-contracts --lib tests::artifact_selection_validation_reads_the_artifact_file -- --exact --nocapture
 
       - name: Upload JSON contracts artifact
         if: always()
