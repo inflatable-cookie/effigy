@@ -307,7 +307,8 @@ Controller-to-guest association is a fail-closed verifier in `linux_disk_associa
 - `config`: exactly one `Hdd` (hdd0, SATA index 0, reviewed device Uuid) that is enabled, connected, not passthrough,
   not remote, and `DiskType` 1. Every `Hardware` child is a reviewed tag. No element outside `Hdd` and `CdRom` carries
   a block-capable name at any depth (`Hdd`, `Disk`, `Scsi`, `Sata`, `VirtIOBlk`, ...). USB holds only the reviewed
-  camera record (every field exact, `SystemName` included), and the connect history names only the five retained
+  camera record (every field exact, `SystemName` included; a field the reader uses is a leaf, so nested elements or
+  attributes refuse), and the connect history names only the five retained
   virtual devices. The config has exactly one `USB` device and one `CdRom`; `CdRom` is counted, not treated as a disk.
 - `descriptor`: selected top, chain and every extent, from the descriptor bytes.
 - `guest_blocks`: exactly one whole disk, `/dev/sda`, non-removable, on the platform ATA controller

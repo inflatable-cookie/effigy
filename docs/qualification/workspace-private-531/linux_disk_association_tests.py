@@ -270,6 +270,27 @@ class DiskAssociationControls(unittest.TestCase):
                 self.assertEqual(table(association)['guest_blocks'][0], 'pass')
                 self.assertRefusedAt('config', association)
 
+    def test_nested_xml_or_attributes_inside_a_reviewed_field_refuse(self):
+        """The reviewed text is the text before a nested element; the nested part must not pass unread."""
+        name = '6C707041-05AC-0011-0007-000000000001'
+        shapes = {
+            'nested element in SystemName': RETAINED_USB_CAMERA.replace(
+                f'<SystemName>VIRTUAL@UVC@|203a|fff9|high|--|{name}</SystemName>',
+                f'<SystemName>VIRTUAL@UVC@|203a|fff9|high|--|{name}<Extra>x</Extra></SystemName>'),
+            'nested element in Enabled': RETAINED_USB_CAMERA.replace(
+                '<Enabled>1</Enabled>', '<Enabled>1<Hidden>0</Hidden></Enabled>'),
+            'attribute on Connected': RETAINED_USB_CAMERA.replace(
+                '<Connected>1</Connected>', '<Connected state="x">1</Connected>'),
+        }
+        for label, usb in shapes.items():
+            with self.subTest(label):
+                self.assertRefusedAt('config', valid_association(config=config_xml(usb=usb)))
+        history = ('<UsbConnectHistory><USBPort><SystemName>VIRTUAL@MOUSE@|203a|fffc|full|--|PW3.0'
+                   '<Note>x</Note></SystemName></USBPort></UsbConnectHistory>')
+        self.assertRefusedAt('config', valid_association(config=config_xml(extra=history)))
+        hdd_nested = config_xml().replace(b'<Passthrough>0</Passthrough>', b'<Passthrough>0<Note>x</Note></Passthrough>', 1)
+        self.assertRefusedAt('config', valid_association(config=hdd_nested))
+
     def test_usb_history_name_outside_the_reviewed_set_refuses(self):
         history = ('<UsbConnectHistory><USBPort><SystemName>VIRTUAL@UVC@|203a|fff9|high|--|NOT-REVIEWED</SystemName>'
                    '</USBPort></UsbConnectHistory>')

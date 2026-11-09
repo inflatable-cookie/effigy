@@ -104,12 +104,19 @@ def _lower(value):
     return value.lower() if isinstance(value, str) else value
 
 
+def _leaf(child, where):
+    """A field the premises read is a leaf: nested elements or attributes would carry text the reader never sees."""
+    if len(child) or child.attrib:
+        raise Refusal('%s %s carries nested elements or attributes the reviewed record does not allow' % (where, child.tag))
+
+
 def _text(node, tag, where):
     """The one text value of a field. A repeated field refuses: a later duplicate must not hide behind the first."""
     children = node.findall(tag)
     if len(children) != 1:
         raise Refusal('%s %s is missing or repeated (%d occurrences)' % (where, tag, len(children)))
     child = children[0]
+    _leaf(child, where)
     if not child.text or child.text != child.text.strip():
         raise Refusal('%s %s is missing, empty or padded' % (where, tag))
     return child.text
@@ -193,6 +200,8 @@ def _check_exact_record(node, record, where):
     """Every field of the node is in the record, once, with the reviewed value; nothing extra and nothing missing."""
     if sorted(child.tag for child in node) != sorted(record):
         raise Refusal('config %s fields differ from the reviewed record (extra, missing or repeated)' % where)
+    for child in node:
+        _leaf(child, where)
     for tag, value in record.items():
         if (node.findtext(tag) or '') != value:
             raise Refusal('config %s %s is not the reviewed value' % (where, tag))
