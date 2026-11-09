@@ -8,6 +8,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Deliver a source-ready, receipt-bound observation entry for the failed Desktop check
+  container left by effigy#779. `macos_desktop_observation.py` consumes the retained
+  failure record by exact hash, binds the original D0 Desktop context, and runs at most
+  two fixed read-only operations — one engine-identity read and one exact full-ID
+  container inspect — reporting terminal, nonterminal, absent, mismatched or unknown
+  without mutation, cleanup or qualification credit (effigy#791). It stays unarmed until
+  its own pinned proof-only launch.
+
 - Bound Desktop D3 control metadata and derive fresh runtime-check identities from
   each activation. The failed prior occurrence remains retained and requires a
   separate closure observation before a new native proof (effigy#784).
