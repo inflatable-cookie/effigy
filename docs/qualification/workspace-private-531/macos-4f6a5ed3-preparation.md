@@ -287,22 +287,22 @@ imported by `cmd/limactl/main_darwin.go:9`), krunkit sockets and Docker/Incus ru
 `check_colima_start` refuses a runtime or VM-type change; a future change to these
 fixed settings must requalify the inventory.
 
-For any eight-hex token, `COLIMA_HOME` is 52 bytes including the trailing slash
+For any eight-hex token, `COLIMA_HOME` is 51 bytes including the trailing slash
 used below. Plans list these nine paths (length excludes NUL):
 
 | Relative to `<control>/c/` | Full path bytes |
 | --- | --- |
-| `_lima/colima-q4/ssh.sock` | 75 |
-| `_lima/colima-q4/ssh.sock.1234567890123456` | 92 |
-| `_lima/colima-q4/ha.sock` | 74 |
-| `_lima/colima-q4/ga.sock` | 74 |
-| `q4/containerd.sock` | 69 |
-| `q4/buildkitd.sock` | 68 |
-| `_lima/_networks/user-v2/user-v2_fd.sock` | 90 |
-| `_lima/_networks/user-v2/user-v2_qemu.sock` | 92 |
-| `_lima/_networks/user-v2/user-v2_ep.sock` | 90 |
+| `_lima/colima-q4/ssh.sock` | 74 |
+| `_lima/colima-q4/ssh.sock.1234567890123456` | 91 |
+| `_lima/colima-q4/ha.sock` | 73 |
+| `_lima/colima-q4/ga.sock` | 73 |
+| `q4/containerd.sock` | 68 |
+| `q4/buildkitd.sock` | 67 |
+| `_lima/_networks/user-v2/user-v2_fd.sock` | 89 |
+| `_lima/_networks/user-v2/user-v2_qemu.sock` | 91 |
+| `_lima/_networks/user-v2/user-v2_ep.sock` | 89 |
 
-The longest path uses 93 bytes including NUL, leaving 11 bytes before the limit,
+The longest path uses 92 bytes including NUL, leaving 12 bytes before the limit,
 well beyond the reserved four-byte margin. The #813 SSH temporary path remains
 105 bytes before NUL and is refused by the pure planner with its full path and length.
 
