@@ -14,8 +14,9 @@ source. The `-c` program is the pinned one-argv launcher
 `exec(__import__('binascii').unhexlify(__import__('sys').argv[1]))` (no `$`, backticks, newlines or double quotes).
 The helper bytes follow as lowercase hex. `own_source_sha256` hashes that decoded payload via
 `sys.orig_argv`, `/proc/self/cmdline`, or the `-c` hex in `sys.argv` (Darwin 3.9 has no `orig_argv`).
-A descendant that leaves the original group or session, or
-whose ppid chain still reaches the waited child, is a leftover: the trailer cannot close. A stage that
+A descendant is recorded while the child is still alive (`pid` plus `start_time`). After wait the
+kernel reaps the child and reparents orphans to init; a recorded pid that is still alive with the
+same start_time is leftover even after setsid. A stage that
 refuses after a closed guest step reports stage-level `guest_closure: unknown`.
 
 ## Revision r6 (supersedes r5 for C2 and C3; manifest `macos-4f6a5ed3-stages-r6`)
@@ -561,7 +562,7 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
   require the chain engine to be `ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd`, the engine 690 observed. An empty or
   default `docker info` template refuses.
 - **Guest sources (pinned).** The C2 echo, C2 probe, C3 stage and C4 verify run the reviewed
-  `macos_guest_helper.py` (sha256 `6efdc39d…`) as
+  `macos_guest_helper.py` (sha256 `9d5f9790…`) as
   `python3 -I -B -c <LAUNCHER> <hex(helper)> <operation> <nonce> …`.
   Probe, stage and verify then run the reviewed `macos_guest_context.py` (sha256 `713cb10e…`) as the
   contained child. That file is a copy of the historical `image_context.py` (sha256 `af74047f…`,

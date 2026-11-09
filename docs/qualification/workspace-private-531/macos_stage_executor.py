@@ -43,7 +43,7 @@ HELPER_PATH = HERE / 'macos_stage_helper.py'
 PROOF_PATH = HERE / 'macos_stage_proof.py'
 REPO_ROOT = HERE.parents[2]
 GUEST_CONTEXT_SHA256 = '713cb10ea8ce2d5c15422650b3aa8abfe45ef5de1b0fa885219b70d3cab0f873'
-GUEST_HELPER_SHA256 = '6efdc39d2336309ec26300ef28c1b7eeb2a78d1799dc25a42fc53b7d62496c7c'
+GUEST_HELPER_SHA256 = '9d5f979076cd9f8f762fd74fbf4ac574e7c7d4e87b82c6aae5a8d3fe8613c52e'
 # Program files whose bytes the GO binds. Changing any of them after activation refuses before dispatch.
 PROGRAM_FILES = (HERE / 'macos_stage_executor.py', HERE / 'macos_preparation.py',
                  HERE / 'preparation_stage.py', HERE / 'preparation_resources.py', GUEST_CONTEXT_PATH,

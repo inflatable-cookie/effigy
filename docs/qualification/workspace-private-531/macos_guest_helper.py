@@ -8,7 +8,8 @@ before launch; this process records Linux /proc identity, runs the allowlisted
 operation as a contained child in the same session and group, waits, and emits a
 length-prefixed envelope. A local client exit is not this file's concern.
 Missing /proc, a setsid child, an unreaped child or a remaining contained
-process leaves the trailer unable to close.
+process (including a setsid descendant recorded before wait and reparented
+to init) leaves the trailer unable to close.
 
 Fixture-only: EFFIGY_GUEST_HELPER_PROC relocates /proc for identity and cmdline
 reads. Production leaves it unset.
@@ -173,14 +174,59 @@ def group_members(pgid, exclude, proc=PROC):
     return [pid for pid, info in walked.items() if pid not in exclude and info['pgid'] == pgid]
 
 
-def contained_leftovers(parent, child_pid, exclude, proc=PROC):
-    """Pids still in the parent's group or session, or descended from the child. None if the walk failed."""
+def contained_record(parent, child_pid, exclude, proc=PROC):
+    """{pid: start_time} in the parent's group or session, or descended from the child.
+
+    Taken while the child is still alive. After wait the kernel reparents orphans to init, so a
+    later ppid-chain to child_pid cannot see them. None if the walk failed.
+    """
+    walked = _walk_proc(proc)
+    if walked is None:
+        return None
+    found = {}
+    for pid, info in walked.items():
+        if pid in exclude:
+            continue
+        if info['pgid'] == parent['pgid'] or info['session_id'] == parent['session_id']:
+            found[pid] = info['start_time']
+            continue
+        cur, seen = pid, set()
+        while cur and cur not in seen:
+            seen.add(cur)
+            if cur == child_pid:
+                found[pid] = info['start_time']
+                break
+            nxt = walked.get(cur)
+            if nxt is None:
+                break
+            cur = nxt['ppid']
+    return found
+
+
+def leftover_after_wait(parent, child_pid, recorded, exclude, proc=PROC):
+    """Leftovers after the child is reaped. None if either walk failed.
+
+    A recorded pid still alive with the same start_time is leftover even when setsid has
+    reparented it to init. A new process that reused the pid (different start_time) is not.
+    Current group/session members and processes whose ppid chain reaches a still-alive
+    recorded pid are leftover too. The waited child itself is not.
+    """
+    if recorded is None:
+        return None
     walked = _walk_proc(proc)
     if walked is None:
         return None
     leftovers = []
+    alive = set()
+    for pid, start in recorded.items():
+        if pid == child_pid or pid in exclude:
+            continue
+        info = walked.get(pid)
+        if info is not None and info['start_time'] == start:
+            leftovers.append(pid)
+            alive.add(pid)
     for pid, info in walked.items():
-        if pid in exclude:
+        if pid in exclude or pid == child_pid or pid in leftovers:
             continue
         if info['pgid'] == parent['pgid'] or info['session_id'] == parent['session_id']:
             leftovers.append(pid)
@@ -188,7 +234,7 @@ def contained_leftovers(parent, child_pid, exclude, proc=PROC):
         cur, seen = pid, set()
         while cur and cur not in seen:
             seen.add(cur)
-            if cur == child_pid:
+            if cur in alive:
                 leftovers.append(pid)
                 break
             nxt = walked.get(cur)
@@ -328,7 +374,11 @@ def inner_argv(operation, rest):
 
 
 def run_contained(argv, stdin_bytes=None, proc=PROC):
-    """Spawn the payload in this session, wait, and report identity plus wait facts."""
+    """Spawn the payload in this session, wait, and report identity plus wait facts.
+
+    Contained pids are recorded before wait. communicate() reaps the child and the kernel
+    reparents orphans to init; leftover_after_wait still sees a recorded setsid descendant.
+    """
     parent = linux_identity(os.getpid(), proc=proc)
     child = subprocess.Popen(argv, stdin=subprocess.PIPE if stdin_bytes is not None else subprocess.DEVNULL,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=False)
@@ -336,9 +386,10 @@ def run_contained(argv, stdin_bytes=None, proc=PROC):
         child_id = linux_identity(child.pid, proc=proc)
     except Refusal:
         child_id = {'pid': child.pid, 'start_time': None, 'pgid': None, 'session_id': None, 'boot_id': None}
+    recorded = contained_record(parent, child.pid, exclude={os.getpid()}, proc=proc)
     out, err = child.communicate(stdin_bytes)
     waited = child.returncode
-    remaining = contained_leftovers(parent, child.pid, exclude={os.getpid()}, proc=proc)
+    remaining = leftover_after_wait(parent, child.pid, recorded, exclude={os.getpid()}, proc=proc)
     trailer = {
         'waited_exit': waited,
         'child_pid': child_id['pid'],

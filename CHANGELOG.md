@@ -13,7 +13,8 @@ During v0.x, MINOR bumps may include breaking changes.
   `/proc` identity, waits the contained child, and the host binds a one-use nonce
   before launch. Helper bytes cross the Colima route as hex behind a pinned
   one-argv launcher; `own_source_sha256` hashes that payload from `sys.orig_argv`,
-  `/proc/self/cmdline`, or the `-c` hex in `sys.argv`.
+  `/proc/self/cmdline`, or the `-c` hex in `sys.argv`. Contained descendants are
+  recorded before wait so a setsid orphan reparented to init cannot close.
   A local `colima ssh` exit stays `guest_unknown`. C2 and C3 are admitted as
   plain proof requests; C4 and D2 stay refused for engine-side network. Inner
   streams replace the step records and the raw transport is retained.

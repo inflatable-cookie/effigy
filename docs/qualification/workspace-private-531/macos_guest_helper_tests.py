@@ -22,7 +22,7 @@ import macos_stage_executor as ex  # noqa: E402
 
 
 NONCE = 'ab' * 32
-SOURCE = '6efdc39d2336309ec26300ef28c1b7eeb2a78d1799dc25a42fc53b7d62496c7c'
+SOURCE = '9d5f979076cd9f8f762fd74fbf4ac574e7c7d4e87b82c6aae5a8d3fe8613c52e'
 
 
 def fake_stat(pid, pgid, session, start, ppid=0):
@@ -192,13 +192,73 @@ class ProcIdentityTests(unittest.TestCase):
         self.add_pid(4, 8, 8, 3)
         self.assertEqual(sorted(helper.group_members(9, exclude={1}, proc=str(self.proc))), [3])
 
-    def test_setsid_descendant_is_a_contained_leftover(self):
+    def test_setsid_descendant_reparented_to_init_is_a_leftover(self):
         parent = {'pgid': 10, 'session_id': 10}
         self.add_pid(10, 10, 10, 1, ppid=1)
-        # child 11 is reaped; descendant 12 called setsid (own group and session) but ppid still 11
+        self.add_pid(11, 10, 10, 2, ppid=10)
         self.add_pid(12, 12, 12, 3, ppid=11)
-        leftover = helper.contained_leftovers(parent, 11, exclude={10}, proc=str(self.proc))
+        recorded = helper.contained_record(parent, 11, exclude={10}, proc=str(self.proc))
+        self.assertEqual(recorded.get(12), 3)
+        shutil.rmtree(self.proc / '11')
+        (self.proc / '12' / 'stat').write_text(fake_stat(12, 12, 12, 3, ppid=1))
+        leftover = helper.leftover_after_wait(parent, 11, recorded, exclude={10}, proc=str(self.proc))
         self.assertEqual(leftover, [12])
+
+    def test_pid_reuse_after_reap_is_not_a_recorded_leftover(self):
+        parent = {'pgid': 10, 'session_id': 10}
+        self.add_pid(10, 10, 10, 1, ppid=1)
+        self.add_pid(11, 10, 10, 2, ppid=10)
+        self.add_pid(12, 12, 12, 3, ppid=11)
+        recorded = helper.contained_record(parent, 11, exclude={10}, proc=str(self.proc))
+        shutil.rmtree(self.proc / '11')
+        (self.proc / '12' / 'stat').write_text(fake_stat(12, 99, 99, 50, ppid=1))
+        leftover = helper.leftover_after_wait(parent, 11, recorded, exclude={10}, proc=str(self.proc))
+        self.assertEqual(leftover, [])
+
+    def test_grandchild_of_a_recorded_orphan_is_a_leftover(self):
+        parent = {'pgid': 10, 'session_id': 10}
+        self.add_pid(10, 10, 10, 1, ppid=1)
+        self.add_pid(11, 10, 10, 2, ppid=10)
+        self.add_pid(12, 12, 12, 3, ppid=11)
+        recorded = helper.contained_record(parent, 11, exclude={10}, proc=str(self.proc))
+        shutil.rmtree(self.proc / '11')
+        (self.proc / '12' / 'stat').write_text(fake_stat(12, 12, 12, 3, ppid=1))
+        self.add_pid(13, 13, 13, 4, ppid=12)
+        leftover = helper.leftover_after_wait(parent, 11, recorded, exclude={10}, proc=str(self.proc))
+        self.assertEqual(sorted(leftover), [12, 13])
+
+    def test_run_contained_records_descendants_before_wait(self):
+        order = []
+        ident = {'pid': 10, 'pgid': 10, 'session_id': 10, 'start_time': 1, 'boot_id': 'b'}
+
+        def identity(pid, proc=None):
+            return dict(ident, pid=pid)
+
+        def record(*_a, **_k):
+            order.append('record')
+            return {12: 3}
+
+        def leftover(*_a, **_k):
+            order.append('leftover')
+            return [12]
+
+        class Child:
+            pid = 11
+            returncode = 0
+
+            def communicate(self, _stdin=None):
+                order.append('wait')
+                return b'out', b'err'
+
+        with mock.patch.object(helper, 'linux_identity', identity), \
+                mock.patch.object(helper, 'contained_record', record), \
+                mock.patch.object(helper, 'leftover_after_wait', leftover), \
+                mock.patch.object(subprocess, 'Popen', return_value=Child()):
+            _parent, out, err, trailer = helper.run_contained(['true'], proc=str(self.proc))
+        self.assertEqual(order, ['record', 'wait', 'leftover'])
+        self.assertEqual((out, err), (b'out', b'err'))
+        self.assertFalse(trailer['group_empty'])
+        self.assertFalse(trailer['unreaped'])
 
     def test_pinned_source_hash_matches_the_executor_pin(self):
         self.assertEqual(hashlib.sha256(ex.GUEST_HELPER_PATH.read_bytes()).hexdigest(), ex.GUEST_HELPER_SHA256)
