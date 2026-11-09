@@ -3,7 +3,7 @@
 Two modes. Each prints key=value lines to stdout and writes nothing:
 
   quota DEVICE PROJECT_ID   Q_GETFMT and Q_GETQUOTA for one project on the block device.
-  tree ROOT PROJECT_ID      lstat (never followed) and FS_IOC_FSGETXATTR project id for every entry under ROOT.
+  tree ROOT PROJECT_ID      lstat (never followed) and FS_IOC_FSGETXATTR project id and flags for each entry.
 
 A failed kernel call prints `status=refused` with its errno and exits 3. The verifier in
 linux_allocation_bound.py refuses any output it cannot fully parse. Nothing here runs from a
@@ -22,6 +22,8 @@ Q_SETQUOTA = 0x800008
 PRJQUOTA = 2
 QB_UNIT_BYTES = 1024                 # if_dqblk block limits are in 1 KiB quota blocks (QIF_DQBLKSIZE_BITS = 10)
 FS_IOC_FSGETXATTR = 0x801C581F       # _IOR('X', 31, struct fsxattr)
+FS_IOC_FSSETXATTR = 0x401C5820       # _IOW('X', 32, struct fsxattr)
+FS_XFLAG_PROJINHERIT = 0x00000200
 FSXATTR = struct.Struct('=5I8s')     # xflags extsize nextents projid cowextsize pad
 BOOT_ID = '/proc/sys/kernel/random/boot_id'
 SAFE_CHARS = frozenset('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-')
@@ -59,6 +61,16 @@ class Refused(Exception):
         self.errno = errno_value
 
 
+def prospective_project_assignment(original):
+    """Build a fixed project-531/inheritance value, without invoking an ioctl."""
+    if not isinstance(original, bytes) or len(original) != FSXATTR.size:
+        raise Refused('project-original-malformed')
+    flags, extent, count, project, cowextent, padding = FSXATTR.unpack(original)
+    if project != 0 or flags & FS_XFLAG_PROJINHERIT or padding != b'\0' * 8:
+        raise Refused('project-prestate-not-empty')
+    return FSXATTR.pack(flags | FS_XFLAG_PROJINHERIT, extent, count, 531, cowextent, padding)
+
+
 def _quotactl(cmd, device, project_id, addr):
     libc = ctypes.CDLL(None, use_errno=True)
     if not hasattr(libc, 'quotactl'):
@@ -92,12 +104,13 @@ def quota_lines(device, project_id, call=_quotactl, read_boot=boot_id, stat_devi
     return lines
 
 
-def _project_id(fd, read=None):
+def _project_attributes(fd, read=None):
     if read is not None:
         return read(fd)
     buf = bytearray(FSXATTR.size)
     fcntl.ioctl(fd, FS_IOC_FSGETXATTR, buf)
-    return FSXATTR.unpack(bytes(buf))[3]
+    fields = FSXATTR.unpack(bytes(buf))
+    return fields[3], fields[0]
 
 
 def _safe_name(name):
@@ -115,7 +128,7 @@ def tree_lines(root, project_id, read_boot=boot_id, read_project=None):
         info = os.lstat(absolute)
         kind = 'dir' if stat.S_ISDIR(info.st_mode) else 'reg' if stat.S_ISREG(info.st_mode) else \
             'fifo' if stat.S_ISFIFO(info.st_mode) else 'lnk' if stat.S_ISLNK(info.st_mode) else 'other'
-        projid = -1
+        projid, xflags = -1, -1
         # A FIFO is never opened: opening it can block on the supervisor's gate, and its inode carries no
         # block charge, so its project id is not read.
         if kind in ('dir', 'reg'):
@@ -125,15 +138,15 @@ def tree_lines(root, project_id, read_boot=boot_id, read_project=None):
             except OSError as exc:
                 raise Refused('open-' + kind, exc.errno)
             try:
-                projid = _project_id(fd, read_project)
+                projid, xflags = _project_attributes(fd, read_project)
             except OSError as exc:
                 raise Refused('fsgetxattr-' + kind, exc.errno)
             finally:
                 os.close(fd)
-        lines.append('entry path=%s type=%s dev=%d:%d ino=%d uid=%d gid=%d mode=%o nlink=%d projid=%d '
+        lines.append('entry path=%s type=%s dev=%d:%d ino=%d uid=%d gid=%d mode=%o nlink=%d projid=%d xflags=%d '
                      'blocks512=%d size=%d' % (relative, kind, os.major(info.st_dev), os.minor(info.st_dev),
                                                info.st_ino, info.st_uid, info.st_gid,
-                                               stat.S_IMODE(info.st_mode), info.st_nlink, projid,
+                                               stat.S_IMODE(info.st_mode), info.st_nlink, projid, xflags,
                                                info.st_blocks, info.st_size))
         if kind == 'dir':
             for child in sorted(os.listdir(absolute)):

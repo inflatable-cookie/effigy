@@ -67,7 +67,8 @@ def render(mount_dev='8:2', mount_fs='ext4', mount_source='/dev/sda2', mount_opt
             'bhard_qb=%d bsoft_qb=0 curspace_bytes=%d valid=%d' % (hard_qb, charged, valid)]) + '\n',
         'tree': '\n'.join(['boot_id=%s' % tree_boot, 'root=%s' % tree_root, 'project_id=%d' % tree_project] +
                           ['entry path=%s type=%s dev=%s ino=%d uid=%d gid=0 mode=700 nlink=%d projid=%d '
-                           'blocks512=%d size=0' % (p, k, d, 10 + i, u, n, pr, b)
+                           'xflags=%d blocks512=%d size=0' % (p, k, d, 10 + i, u, n, pr,
+                                                          probe.FS_XFLAG_PROJINHERIT if k == 'dir' else 0, b)
                            for i, (p, k, d, u, pr, n, b) in enumerate(entries)]) + '\n',
     }
     return {'mechanism': MECH, 'observations': {r: original(texts[r]) for r in bound.ROUTES}}
@@ -243,6 +244,21 @@ class VerifierChecks(unittest.TestCase):
         with self.assertRaises(Refusal):
             self.verify(render(entries=root_is_file))
 
+    def test_directories_require_inheritance_and_root_custody_is_not_user_writable(self):
+        good = render()
+        original_tree = good['observations']['tree']['text']
+        no_inherit = replace_original(good, 'tree', text=original_tree.replace('xflags=512', 'xflags=0', 1))
+        with self.assertRaisesRegex(Refusal, 'does not inherit'):
+            self.verify(no_inherit)
+        root_entries = (('.', 'dir', '8:2', 0, 531, 3, 8),) + ENTRIES[1:]
+        rooted = render(entries=root_entries)
+        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
+            self.verify(rooted)
+        unsafe = replace_original(rooted, 'tree', text=rooted['observations']['tree']['text'].replace(
+            'mode=700', 'mode=777', 1))
+        with self.assertRaisesRegex(Refusal, 'writable by others'):
+            self.verify(unsafe)
+
     def test_supervisor_fifos_are_admitted_only_as_blockless_single_links(self):
         gate = ('inputs/gate.fifo', 'fifo', '8:2', 0, -1, 1, 0)
         payload = ('inputs/transfer.fifo', 'fifo', '8:2', UID, -1, 1, 0)
@@ -266,7 +282,7 @@ class VerifierChecks(unittest.TestCase):
         root = dir_ / 'stage'
         (root / 'inputs').mkdir(parents=True)
         os.mkfifo(root / 'inputs' / 'gate.fifo', 0o600)
-        lines = probe.tree_lines(str(root), 531, read_boot=lambda: BOOT, read_project=lambda fd: 531)
+        lines = probe.tree_lines(str(root), 531, read_boot=lambda: BOOT, read_project=lambda fd: (531, probe.FS_XFLAG_PROJINHERIT))
         fifo = [ln for ln in lines if 'path=inputs/gate.fifo' in ln]
         self.assertEqual(len(fifo), 1)
         self.assertIn('type=fifo', fifo[0])
@@ -312,6 +328,23 @@ class HelperChecks(unittest.TestCase):
             return rc_quota, errno if rc_quota else 0
         return call
 
+    def test_fsgetxattr_parser_keeps_project_and_inheritance_flag(self):
+        def ioctl(fd, command, data):
+            self.assertEqual(command, probe.FS_IOC_FSGETXATTR)
+            data[:] = probe.FSXATTR.pack(probe.FS_XFLAG_PROJINHERIT, 0, 0, 531, 0, b'\0' * 8)
+        with patch.object(probe.fcntl, 'ioctl', side_effect=ioctl):
+            self.assertEqual(probe._project_attributes(7), (531, probe.FS_XFLAG_PROJINHERIT))
+
+    def test_project_assignment_is_fixed_and_refuses_nonempty_prestate(self):
+        original = probe.FSXATTR.pack(0x40, 1, 2, 0, 3, b'\0' * 8)
+        result = probe.FSXATTR.unpack(probe.prospective_project_assignment(original))
+        self.assertEqual(result, (0x40 | probe.FS_XFLAG_PROJINHERIT, 1, 2, bound.PROJECT_ID, 3, b'\0' * 8))
+        for bad in (b'', probe.FSXATTR.pack(0, 0, 0, 531, 0, b'\0' * 8),
+                    probe.FSXATTR.pack(probe.FS_XFLAG_PROJINHERIT, 0, 0, 0, 0, b'\0' * 8),
+                    probe.FSXATTR.pack(0, 0, 0, 0, 0, b'x' * 8)):
+            with self.subTest(bad=bad), self.assertRaises(probe.Refused):
+                probe.prospective_project_assignment(bad)
+
     def test_command_entry_refuses_setter_before_kernel_call(self):
         with patch.object(probe, '_quotactl') as call, patch.object(sys, 'stderr'):
             self.assertEqual(probe.main(['set', bound.ROOT_DEVICE, str(bound.PROJECT_ID)]), 2)
@@ -351,7 +384,7 @@ class HelperChecks(unittest.TestCase):
         (root / 'inputs' / 'archive.tar').write_bytes(b'x' * 10)
         os.link(root / 'inputs' / 'archive.tar', root / 'inputs' / 'alias.tar')
         os.symlink(root / 'inputs' / 'archive.tar', root / 'link')
-        lines = probe.tree_lines(str(root), 531, read_boot=lambda: BOOT, read_project=lambda fd: 531)
+        lines = probe.tree_lines(str(root), 531, read_boot=lambda: BOOT, read_project=lambda fd: (531, probe.FS_XFLAG_PROJINHERIT))
         entries = {ln.split()[1].split('=')[1]: ln for ln in lines if ln.startswith('entry ')}
         self.assertEqual(set(entries), {'.', 'inputs', 'inputs/archive.tar', 'inputs/alias.tar', 'link'})
         self.assertIn('type=lnk', entries['link'])
@@ -363,7 +396,7 @@ class HelperChecks(unittest.TestCase):
         root.mkdir()
         (root / 'has space').write_bytes(b'')
         with self.assertRaisesRegex(probe.Refused, 'unsafe-name'):
-            probe.tree_lines(str(root), 531, read_boot=lambda: BOOT, read_project=lambda fd: 531)
+            probe.tree_lines(str(root), 531, read_boot=lambda: BOOT, read_project=lambda fd: (531, probe.FS_XFLAG_PROJINHERIT))
         clean = self.dir / 'clean'
         clean.mkdir()
         (clean / 'file').write_bytes(b'')
@@ -377,7 +410,7 @@ class HelperChecks(unittest.TestCase):
         root = self.dir / 'e2e'
         (root / 'inputs').mkdir(parents=True)
         (root / 'inputs' / 'archive.tar').write_bytes(b'y' * 4096)
-        tree = probe.tree_lines(str(root), 531, read_boot=lambda: BOOT, read_project=lambda fd: 531)
+        tree = probe.tree_lines(str(root), 531, read_boot=lambda: BOOT, read_project=lambda fd: (531, probe.FS_XFLAG_PROJINHERIT))
         fields = [dict(tok.split('=', 1) for tok in ln.split()[1:]) for ln in tree if ln.startswith('entry ')]
         entries = tuple((f['path'], f['type'], f['dev'], int(f['uid']), int(f['projid']), int(f['nlink']),
                          int(f['blocks512'])) for f in fields)

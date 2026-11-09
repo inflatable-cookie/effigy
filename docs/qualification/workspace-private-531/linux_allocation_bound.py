@@ -214,7 +214,7 @@ def _facts(facts):
     boot, uid, root = facts.get('boot_id'), facts.get('uid'), facts.get('root')
     entries = facts.get('entries')
     if not isinstance(boot, str) or not boot or len(boot) > 64 or boot != boot.strip() or not isinstance(uid, int) or \
-            isinstance(uid, bool) or not isinstance(root, str) or not root or \
+            isinstance(uid, bool) or uid <= 0 or not isinstance(root, str) or not root or \
             not isinstance(entries, (set, frozenset, list, tuple)) or '.' not in entries:
         raise Refusal('allocation facts are incomplete: boot, uid, root or exact entries missing')
     return boot, uid, root, frozenset(entries)
@@ -280,13 +280,24 @@ def verify(witness, limit_bytes, facts, supported):
             if _int(fields.get('blocks512'), 'blocks512') != 0 or _int(fields.get('nlink'), 'nlink') != 1:
                 raise Refusal('FIFO ' + path + ' holds blocks or is linked')
             continue
-        if owner != uid:
+        if kind == 'dir' and owner == ROOT_UID:
+            mode = fields.get('mode')
+            if not isinstance(mode, str) or not re.fullmatch(r'[0-7]{1,4}', mode) or int(mode, 8) & 0o022:
+                raise Refusal('root-owned directory ' + path + ' is writable by others or has invalid mode')
+        elif owner != uid:
             raise Refusal('entry ' + path + ' is owned by another uid')
         if _int(fields.get('projid'), 'projid') != PROJECT_ID:
             raise Refusal('entry ' + path + ' carries another project id')
+        if kind == 'dir':
+            xflags = _int(fields.get('xflags'), 'xflags')
+            if not 0 <= xflags <= 0xffffffff or not xflags & probe.FS_XFLAG_PROJINHERIT:
+                raise Refusal('directory ' + path + ' does not inherit its project')
         if kind == 'reg' and _int(fields.get('nlink'), 'nlink') != 1:
             raise Refusal('entry ' + path + ' is hardlinked; its charge is not owned by the tree alone')
-        tree_bytes += _int(fields.get('blocks512'), 'blocks512') * 512
+        blocks = _int(fields.get('blocks512'), 'blocks512')
+        if blocks < 0:
+            raise Refusal('entry ' + path + ' has negative allocation')
+        tree_bytes += blocks * 512
     if entries['.'].get('type') != 'dir':
         raise Refusal('stage root is not a directory')
     if charged < tree_bytes:
