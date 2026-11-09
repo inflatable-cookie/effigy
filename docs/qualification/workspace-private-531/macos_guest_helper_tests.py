@@ -23,7 +23,7 @@ import macos_stage_executor as ex  # noqa: E402
 
 
 NONCE = 'ab' * 32
-SOURCE = '806ca0a5558766035643e9446fd99294c033d4bdabfcd7ff8a9ac0d49469e941'
+SOURCE = 'f089f04820ca3c8c043cf86c46e4cdc5a6df5f584b2c0cfe5a494b0b4bb0953a'
 
 
 def fake_stat(pid, pgid, session, start, ppid=0):

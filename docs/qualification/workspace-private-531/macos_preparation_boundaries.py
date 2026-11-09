@@ -37,6 +37,7 @@ BINDINGS = dict(
     colima_cache_home=PATHS['colima_cache_home'],
     colima_docker_config=PATHS['colima_docker_config'],
     qualification_root=PATHS['qualification_root'],
+    colima_input_dir=PATHS['colima_input_dir'],
     desktop_config=PATHS['desktop_config'],
     desktop_context_dir=PATHS['desktop_context_dir'],
     desktop_input_dir=PATHS['desktop_input_dir'],
@@ -46,6 +47,9 @@ BINDINGS = dict(
     guest_verify_spec='{"parent":{}}', guest_context='/home/u/' + prep.guest_dir(TOKEN32),
     guest_iidfile='/home/u/' + prep.guest_dir(TOKEN32) + '.iid',
     probe_source='print(1)', stage_source='print(2)', verify_source='print(3)',
+    transfer_source='print(4)', input_verify_source='print(5)', guest_input_spec='ab' * 8,
+    guest_oci='/home/u/' + prep.guest_dir(TOKEN32) + '.oci',
+    guest_debs='/home/u/' + prep.guest_dir(TOKEN32) + '.debs',
     check_source=prep.CHECK_SOURCE, route_echo=prep.ROUTE_ECHO, image_id=IMAGE_ID,
     owned_container_ids=['abc123', 'def456'], owned_image_id=IMAGE_ID,
     owned_volume_name=VOLUME, guest_helper_hex='ab' * 8,
@@ -584,12 +588,18 @@ class DockerBuildAndRunFlags(unittest.TestCase):
 
 
 class GuestDeadlines(unittest.TestCase):
-    def test_c4_build_keeps_the_900_second_command_bound_with_a_guest_deadline_inside(self):
+    def test_c4_build_keeps_its_command_bound_with_a_guest_deadline_inside(self):
         build = next(s for s in stage_by_id('C4')['steps'] if s['id'] == 'c4-nerdctl-build')
-        self.assertEqual(build['timeout_seconds'], 900)
-        self.assertEqual(build['guest_deadline'], dict(seconds=840, kill_grace_seconds=5))
-        self.assertEqual(900 - 840 - 5, 55)
+        self.assertEqual(build['timeout_seconds'], 600)
+        self.assertEqual(build['guest_deadline'], dict(seconds=540, kill_grace_seconds=5))
+        self.assertEqual(600 - 540 - 5, 55)
         self.assertTrue(prep.check_guest_deadline(build))
+        # The transfer window carries its own guest deadline and receipt margin inside the same stage budget.
+        transfer = next(s for s in stage_by_id('C4')['steps'] if s['id'] == 'c4-transfer-inputs')
+        self.assertEqual(transfer['guest_deadline'], dict(seconds=105, kill_grace_seconds=5))
+        self.assertEqual(transfer['timeout_seconds'] - 105 - 5, 30)
+        self.assertTrue(prep.check_guest_deadline(transfer))
+        self.assertEqual(transfer['stdin'], 'guest_input_stream')
 
     def test_remote_build_without_a_guest_deadline_refused(self):
         build = next(s for s in stage_by_id('C4')['steps'] if s['id'] == 'c4-nerdctl-build')
@@ -600,14 +610,14 @@ class GuestDeadlines(unittest.TestCase):
 
     def test_guest_deadline_without_receipt_margin_refused(self):
         build = next(s for s in stage_by_id('C4')['steps'] if s['id'] == 'c4-nerdctl-build')
-        widened = [a if a != '840' else '880' for a in build['argv']]
+        widened = [a if a != '540' else '880' for a in build['argv']]
         with self.assertRaises(ValueError) as refused:
             prep.check_guest_deadline(dict(build, argv=widened, guest_deadline=dict(seconds=880, kill_grace_seconds=5)))
         self.assertIn('receipt', str(refused.exception))
 
     def test_guest_deadline_not_wrapping_the_remote_command_refused(self):
         build = next(s for s in stage_by_id('C4')['steps'] if s['id'] == 'c4-nerdctl-build')
-        unwrapped = dict(build, argv=[a for a in build['argv'] if a not in ('timeout', '-k', '5', '840')])
+        unwrapped = dict(build, argv=[a for a in build['argv'] if a not in ('timeout', '-k', '5', '540')])
         with self.assertRaises(ValueError):
             prep.check_guest_deadline(unwrapped)
 
@@ -672,15 +682,17 @@ class EffectStageCaps(unittest.TestCase):
         self.assertIn('COPY --from=debs', recipe)
         self.assertNotIn('apt-get', recipe)
 
-    def test_d2_sources_and_cap_match_the_reviewed_pin(self):
+    def test_the_reviewed_fetches_match_the_pinned_inputs(self):
         import runtime_image_inputs as runtime_inputs
-        d2 = stage_by_id('D2')
-        self.assertEqual(d2['download_cap_bytes'], runtime_inputs.INPUT_BYTES)
-        self.assertEqual(d2['network_sources'], list(runtime_inputs.NETWORK_SOURCES))
-        self.assertEqual(len(d2['network_sources']), 26)
-        c4 = stage_by_id('C4')
-        self.assertEqual(c4['download_cap_bytes'], 0)
-        self.assertEqual(c4['network_sources'], ['none'])
+        for stage_id in ('D2', 'C4'):
+            with self.subTest(stage=stage_id):
+                stage = stage_by_id(stage_id)
+                self.assertEqual(stage['download_cap_bytes'], runtime_inputs.INPUT_BYTES)
+                self.assertEqual(stage['network_sources'], list(runtime_inputs.NETWORK_SOURCES))
+                self.assertEqual(len(stage['network_sources']), 26)
+        # C4 stages the same pinned inputs on the host and transfers them; it never fetches anything else.
+        self.assertEqual({s['id'] for s in stage_by_id('C4')['steps'] if 'prefetch_runtime_inputs' == s.get('helper')},
+                         {'c4-prefetch-runtime-inputs'})
         self.assertEqual(MANIFEST['binding_inputs']['runtime_image']['bytes'], runtime_inputs.INPUT_BYTES)
         self.assertEqual(MANIFEST['binding_inputs']['runtime_image']['deb_count'], len(runtime_inputs.DEBS))
 

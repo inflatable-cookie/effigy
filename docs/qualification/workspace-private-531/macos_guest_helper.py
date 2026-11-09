@@ -1,4 +1,5 @@
-"""Fixed Colima guest-helper entry: echo, probe, stage, verify.
+"""Fixed Colima guest-helper entry: echo, probe, stage, verify, transfer, check-inputs and the four C4
+remote commands (build-help, build, read-iidfile, image-inspect).
 
 The host launches this file as
 `python3 -I -B -c LAUNCHER <hex(this file)> <operation> <nonce> ...`.
@@ -14,6 +15,16 @@ reaches this helper after wait) leaves the trailer unable to close.
 The helper sets PR_SET_CHILD_SUBREAPER before spawn so the child's orphans
 reparent here instead of init. Tests relocate /proc with an explicit proc=
 argument; production reads /proc.
+
+What each operation runs is fixed here, never taken from the caller:
+- probe/stage/verify run the pinned guest-context source with the chain spec.
+- transfer/check-inputs run the pinned guest-inputs source with the reviewed hex
+  spec; transfer inherits this helper's stdin so the framed runtime-input
+  stream reaches the child directly and is never buffered here.
+- build-help/build/read-iidfile/image-inspect run one exact reviewed command,
+  rebuilt from a bounded hex spec and compared before spawn. Their header
+  records the command that actually ran, so the host can re-derive it. Daemon
+  work behind a command is not this helper's work and is not claimed here.
 """
 import ctypes
 import hashlib
@@ -26,7 +37,17 @@ import sys
 
 PR_SET_CHILD_SUBREAPER = 36
 
-ALLOWED = frozenset({'echo', 'probe', 'stage', 'verify'})
+ALLOWED = frozenset({'echo', 'probe', 'stage', 'verify', 'transfer', 'check-inputs', 'build-help', 'build',
+                     'read-iidfile', 'image-inspect'})
+# Operations whose child is the pinned guest-inputs source and one hex spec.
+INPUT_MODES = frozenset({'transfer', 'check-inputs'})
+# Operations whose child is one exact reviewed remote command, rebuilt from a hex spec.
+REMOTE = frozenset({'build-help', 'build', 'read-iidfile', 'image-inspect'})
+# The reviewed hex spec is bounded: it is the layout, the caps and one fixed argv, never a payload.
+SPEC_CAP_BYTES = 64 * 1024
+IMAGE_ID = re.compile(r'^sha256:[0-9a-f]{64}$')
+CONTEXT = re.compile(r'^/[A-Za-z0-9_.+-]+(?:/[A-Za-z0-9_.+-]+)*/effigy-531-image-[0-9a-f]{32}$')
+BUILD_TAG = 'effigy-4f6a-runtime:r1'
 NONCE = re.compile(r'^[0-9a-f]{64}$')
 HEX = re.compile(r'^[0-9a-f]+$')
 # One argv, no $, backticks, newlines or double quotes. Helper bytes travel as hex.
@@ -330,6 +351,21 @@ def inner_argv(operation, rest):
         return [sys.executable, '-I', '-B', '-c',
                 'import sys; sys.stdout.buffer.write(sys.argv[1].encode()); sys.stdout.buffer.flush()',
                 rest[0]]
+    if operation in INPUT_MODES:
+        if len(rest) != 2:
+            raise Refusal(operation + ' takes the pinned source and the hex spec')
+        if not isinstance(rest[0], str) or not rest[0] or len(rest[0]) > SPEC_CAP_BYTES:
+            raise Refusal(operation + ' needs the pinned guest-inputs source')
+        input_spec(rest[1])
+        return [sys.executable, '-I', '-B', '-c', rest[0], operation, rest[1]]
+    if operation in REMOTE:
+        if operation == 'build-help':
+            if rest:
+                raise Refusal('build-help takes no spec')
+            return ['nerdctl', 'build', '--help']
+        if len(rest) != 1:
+            raise Refusal(operation + ' takes one hex command spec')
+        return checked_remote(operation, remote_spec(rest[0]))
     if len(rest) < 1:
         raise Refusal(operation + ' requires the pinned inner source')
     source = rest[0]
@@ -348,16 +384,87 @@ def inner_argv(operation, rest):
     raise Refusal('unknown guest helper operation')
 
 
-def run_contained(argv, stdin_bytes=None, proc=PROC):
+def hex_json(value, label):
+    """Decode one bounded, canonical hex-encoded JSON object. Hex keeps the route to [0-9a-f] only."""
+    if not isinstance(value, str) or not value or len(value) > 2 * SPEC_CAP_BYTES or not HEX.fullmatch(value):
+        raise Refusal(label + ' must be bounded lowercase hex')
+    try:
+        raw = bytes.fromhex(value)
+        parsed = json.loads(raw.decode())
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise Refusal(label + ' is not hex-encoded JSON') from exc
+    if compact(parsed) != raw:
+        raise Refusal(label + ' is not the canonical compact form')
+    return parsed
+
+
+def input_spec(value):
+    """The guest-inputs spec: parent, name, layout and limits only."""
+    spec = hex_json(value, 'guest input spec')
+    if not isinstance(spec, dict) or set(spec) != {'parent', 'name', 'layout', 'limits'}:
+        raise Refusal('guest input spec must state parent, name, layout and limits only')
+    return spec
+
+
+def remote_spec(value):
+    spec = hex_json(value, 'remote command spec')
+    if not isinstance(spec, dict) or set(spec) != {'argv'}:
+        raise Refusal('remote command spec must state one argv')
+    return spec
+
+
+def build_command(context):
+    """The one reviewed runtime build: local oci-layout and deb contexts, no registry, immutable iidfile."""
+    return ['sudo', '-n', 'env', 'DOCKER_CONFIG=' + context + '/docker-config', 'nerdctl', 'build',
+            '--platform', 'linux/arm64', '--provenance=mode=max', '--iidfile', context + '.iid',
+            '--tag', BUILD_TAG, '--network', 'none',
+            '--build-context', 'ubuntu=oci-layout://' + context + '.oci',
+            '--build-context', 'debs=' + context + '.debs', context]
+
+
+def checked_remote(operation, spec):
+    """Rebuild one reviewed remote command from its spec and require the spec to be exactly that command.
+    Nothing caller-chosen reaches a guest child: only these fixed forms can run."""
+    argv = spec['argv']
+    if (not isinstance(argv, list) or not argv or len(argv) > 24
+            or any(not isinstance(a, str) or not a or len(a) > 512 or '\x00' in a or '\n' in a for a in argv)):
+        raise Refusal('remote command argv is malformed')
+    if operation == 'build':
+        context = argv[-1]
+        if not CONTEXT.fullmatch(context) or argv != build_command(context):
+            raise Refusal('build is not the exact reviewed nerdctl invocation')
+        return argv
+    if operation == 'read-iidfile':
+        if len(argv) != 4 or not argv[3].endswith('.iid'):
+            raise Refusal('iidfile read is not the exact reviewed form')
+        context = argv[3][:-len('.iid')]
+        if not CONTEXT.fullmatch(context) or argv != ['sudo', '-n', 'cat', context + '.iid']:
+            raise Refusal('iidfile read is not the exact reviewed form')
+        return argv
+    if operation == 'image-inspect':
+        if (len(argv) != 6 or argv[:5] != ['sudo', '-n', 'nerdctl', 'image', 'inspect']
+                or not IMAGE_ID.fullmatch(argv[5])):
+            raise Refusal('image inspect is not the exact reviewed form')
+        return argv
+    raise Refusal('unknown remote command operation')
+
+
+def run_contained(argv, stdin_bytes=None, inherit_stdin=False, proc=PROC):
     """Spawn the payload in this session, wait, and report identity plus wait facts.
 
     become_child_subreaper runs before Popen so the child's orphans reparent here.
     After wait, leftover_after_wait treats remaining live or zombie processes whose
     ppid chain reaches this helper (other than the waited child) as leftover.
+    inherit_stdin hands this helper's own stdin to the child unchanged, so a large
+    framed transfer reaches the child directly instead of through this process.
     """
     parent = linux_identity(os.getpid(), proc=proc)
     become_child_subreaper()
-    child = subprocess.Popen(argv, stdin=subprocess.PIPE if stdin_bytes is not None else subprocess.DEVNULL,
+    if stdin_bytes is not None:
+        stdin = subprocess.PIPE
+    else:
+        stdin = None if inherit_stdin else subprocess.DEVNULL
+    child = subprocess.Popen(argv, stdin=stdin,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=False)
     try:
         child_id = linux_identity(child.pid, proc=proc)
@@ -404,10 +511,14 @@ def main(argv=None, proc=None):
     stdin_bytes = None
     if operation == 'stage':
         stdin_bytes = sys.stdin.buffer.read(8193)
-    parent, out, err, trailer = run_contained(inner_argv(operation, rest), stdin_bytes=stdin_bytes, proc=proc)
+    inherit = operation == 'transfer'
+    inner = inner_argv(operation, rest)
+    parent, out, err, trailer = run_contained(inner, stdin_bytes=stdin_bytes, inherit_stdin=inherit, proc=proc)
     header = dict(nonce=nonce, operation=operation, source_sha256=source_sha,
                   boot_id=parent['boot_id'], pid=parent['pid'], start_time=parent['start_time'],
                   pgid=parent['pgid'], session_id=parent['session_id'])
+    if operation in REMOTE:
+        header['command'] = list(inner)
     sys.stdout.buffer.write(format_envelope(header, out, err, trailer))
     sys.stdout.buffer.flush()
     return 0

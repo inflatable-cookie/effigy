@@ -43,17 +43,20 @@ READINESS_STAGES = frozenset({'C0', 'D0'})
 # Every placeholder a manifest argv may contain. Anything else refuses at render time.
 SLOTS = frozenset({
     'control', 'colima_home', 'colima_cache_home', 'colima_docker_config', 'qualification_root',
+    'colima_input_dir',
     'desktop_config', 'desktop_context_dir', 'desktop_input_dir', 'desktop_host', 'desktop_iidfile',
     'desktop_cidfile',
-    'token', 'guest_spec', 'guest_verify_spec', 'guest_context', 'guest_iidfile', 'probe_source',
-    'stage_source', 'verify_source', 'check_source', 'route_echo', 'image_id',
+    'token', 'guest_spec', 'guest_verify_spec', 'guest_context', 'guest_iidfile', 'guest_oci', 'guest_debs',
+    'guest_input_spec', 'probe_source', 'stage_source', 'verify_source', 'transfer_source', 'input_verify_source',
+    'check_source', 'route_echo', 'image_id',
     'owned_container_ids', 'owned_image_id', 'owned_volume_name',
     'guest_helper_hex', 'guest_nonce',
 })
 # Arguments that carry multi-line or JSON source through the Colima shell route.
 # guest_helper_hex is [0-9a-f] only and is not a source slot.
 SOURCE_SLOTS = frozenset({
-    'probe_source', 'stage_source', 'verify_source', 'check_source', 'guest_spec', 'guest_verify_spec',
+    'probe_source', 'stage_source', 'verify_source', 'transfer_source', 'input_verify_source', 'check_source',
+    'guest_spec', 'guest_verify_spec', 'guest_input_spec',
 })
 # Named host-side actions. Each is a pure or receipt-producing step, never a shell string.
 HELPERS = frozenset({
@@ -61,7 +64,8 @@ HELPERS = frozenset({
     'render_guest_spec', 'compare_route_echo', 'host_stage_dockerfile', 'verify_desktop_endpoint',
     'verify_frozen_artifacts', 'check_build_help', 'read_iidfile', 'check_image_identity',
     'check_runtime_facts', 'select_cleanup_targets', 'read_cidfile', 'check_cleanup_target',
-    'prefetch_colima_image', 'prefetch_runtime_inputs',
+    'prefetch_colima_image', 'prefetch_runtime_inputs', 'render_input_specs', 'render_input_transfer',
+    'check_input_transfer', 'check_input_verify',
 })
 # Hostile on purpose. Every character class the sources use (quotes, $, braces, glob, parens,
 # semicolon, backslash, equals, newline) is present, and nothing that can redirect, pipe or
@@ -128,6 +132,8 @@ def control_paths(token):
         colima_docker_config=f'{control}/docker-config',
         # The qualification root is this empty owned directory; it is the only permitted share.
         qualification_root=f'{control}/s',
+        # C4's host staging root for the pinned runtime inputs the transfer streams from. Owned, empty, exclusive.
+        colima_input_dir=f'{control}/runtime-inputs',
         desktop_config=f'{control}/d/docker-config',
         desktop_context_dir=f'{control}/d/ctx',
         desktop_input_dir=f'{control}/d/inputs',
@@ -485,6 +491,40 @@ def check_engine_argv(argv):
     return True
 
 
+def guest_build_command(context):
+    """The one reviewed C4 runtime build: the pinned platform, the max provenance attestation, an immutable iidfile
+    beside the context, the fixed tag, no network, and the two local additional contexts. FROM cannot contact a
+    registry because both the base layer and the debs are local. Kept here so the manifest's remote argv and the
+    fixed helper's own operation are the same reviewed command."""
+    require(isinstance(context, str) and context.startswith('/') and '..' not in context.split('/')
+            and len(context) <= 400, 'guest context must be an absolute canonical path')
+    return ['sudo', '-n', 'env', 'DOCKER_CONFIG=' + context + '/docker-config', 'nerdctl', 'build',
+            '--platform', 'linux/arm64', '--provenance=mode=max', '--iidfile', context + '.iid',
+            '--tag', 'effigy-4f6a-runtime:r1', '--network', 'none',
+            '--build-context', 'ubuntu=oci-layout://' + context + '.oci',
+            '--build-context', 'debs=' + context + '.debs', context]
+
+
+def check_guest_remote_command(tail, bindings):
+    """C4's remote commands are exactly these four reviewed forms, rebuilt from the verified chain's context and
+    image ID. The executor re-renders each through the fixed guest helper, which rebuilds it from the same fields
+    and reports the argv it ran; nothing else may cross the route, and a local ssh exit alone closes nothing."""
+    context = bindings.get('guest_context')
+    require(isinstance(context, str) and context.startswith('/') and '..' not in context.split('/')
+            and len(context) <= 400, 'guest context must be an absolute canonical path')
+    if tail == ['nerdctl', 'build', '--help']:
+        return True
+    if tail == guest_build_command(context):
+        return True
+    if tail == ['sudo', '-n', 'cat', context + '.iid']:
+        return True
+    image_id = bindings.get('image_id')
+    if (tail == ['sudo', '-n', 'nerdctl', 'image', 'inspect', image_id]
+            and isinstance(image_id, str) and IMAGE_ID.fullmatch(image_id)):
+        return True
+    raise ValueError('the remote command is not one of the reviewed C4 forms')
+
+
 def check_guest_deadline(step):
     """Guest deadline inside a host envelope: guest seconds + kill grace + receipt margin = host
     timeout. The guest timeout kills the remote client first, and the host keeps a receipt window."""
@@ -529,7 +569,7 @@ def check_step(step, legacy=False):
     for name in SLOT.findall(' '.join(argv)):
         require(name in SLOTS, f'{step["id"]}: unknown slot {name}')
     if 'stdin' in step:
-        require(step['stdin'] == 'recipe_file', f'{step["id"]}: unknown stdin')
+        require(step['stdin'] in ('recipe_file', 'guest_input_stream'), f'{step["id"]}: unknown stdin')
     if not legacy and argv[0] == COLIMA and argv[1:2] == ['start']:
         check_colima_start(argv)
     if argv[0] == DOCKER or 'nerdctl' in argv:
