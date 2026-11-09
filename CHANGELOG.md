@@ -8,6 +8,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Bound Desktop D3 control metadata and derive fresh runtime-check identities from
+  each activation. The failed prior occurrence remains retained and requires a
+  separate closure observation before a new native proof (effigy#784).
+
 - Close the fixed Colima route-echo, probe, stage and verify helpers through an
   authenticated guest envelope (effigy#754). The pinned helper records Linux
   `/proc` identity, waits the contained child, and the host binds a one-use nonce

@@ -448,7 +448,7 @@ def window_recipe(stage_id, bindings, options):
     absent_paths = ([os.path.dirname(bindings['desktop_config']), bindings['desktop_config'],
                      bindings['desktop_context_dir']] if stage_id == 'D0'
                     else sorted(executor.d2_occurrence(bindings, activation_id).values()) if stage_id == 'D2'
-                    else [bindings['desktop_cidfile']] if stage_id == 'D3' else [])
+                    else [executor.d3_occurrence(bindings, activation_id)['desktop_cidfile']] if stage_id == 'D3' else [])
     return dict(schema='macos-stage-window-v1', stage=stage_id, bindings=bindings,
                 bindings_sha256=executor.canon_sha(bindings), inputs=identity['inputs'],
                 inputs_sha256=identity['inputs_sha256'], manifest_sha256=identity['manifest_sha256'],
@@ -458,7 +458,8 @@ def window_recipe(stage_id, bindings, options):
                 activation_path=executor.ACTIVATIONS_DIR + '/' + activation_id + '.json',
                 claim_path=executor.CLAIMS_DIR + '/proof-' + activation_id + '.claim',
                 evidence_path=evidence + '/proof-' + activation_id + '.json',
-                evidence_root=evidence, roots=observed, absent_paths=absent_paths, prior_receipt=prior)
+                evidence_root=evidence, roots=observed, absent_paths=absent_paths, prior_receipt=prior,
+                **({'occurrence': executor.d3_occurrence(bindings, activation_id)} if stage_id == 'D3' else {}))
 
 
 def execute_window(request, request_sha, manifest, inputs_hash, *, outer_deadline=None, monitor_factory=None,
@@ -550,6 +551,8 @@ def main(argv):
                    'manifest_sha256', 'source_sha256', 'candidate_head', 'decision', 'decision_version',
                    'scope', 'activation_id', 'duration_seconds', 'activation_path', 'claim_path',
                    'evidence_path', 'evidence_root', 'roots', 'absent_paths', 'prior_receipt'}
+    if window and request.get('stage') == 'D3':
+        window_keys.add('occurrence')
     if not isinstance(request, dict) or (window and set(request) != window_keys) or (not window and set(request) != {
         'stage', 'activation_path', 'activation_sha256', 'bindings', 'evidence_root',
         'inputs', 'inputs_sha256', 'manifest_sha256', 'source_sha256',

@@ -42,7 +42,7 @@ BINDINGS = dict(
     desktop_context_dir=PATHS['desktop_context_dir'],
     desktop_input_dir=PATHS['desktop_input_dir'],
     desktop_iidfile=PATHS['desktop_iidfile'],
-    desktop_cidfile=PATHS['desktop_cidfile'],
+    desktop_cidfile=PATHS['desktop_cidfile'], desktop_container_name='effigy-4f6a-dcheck-test',
     desktop_host=prep.DESKTOP_HOST, token=TOKEN, guest_spec='{"parent":{}}',
     guest_verify_spec='{"parent":{}}', guest_context='/home/u/' + prep.guest_dir(TOKEN32),
     guest_iidfile='/home/u/' + prep.guest_dir(TOKEN32) + '.iid',
@@ -279,7 +279,7 @@ class CleanupAuthority(unittest.TestCase):
         self.assertEqual(build[build.index('--label') + 1], 'effigy.qual={token}')
         self.assertEqual(build[build.index('--tag') + 1], 'effigy-4f6a-desktop-runtime:{token}')
         run = steps['d3-disposable-check']
-        self.assertEqual(run[run.index('--name') + 1], 'effigy-4f6a-dcheck-{token}')
+        self.assertEqual(run[run.index('--name') + 1], '{desktop_container_name}')
         self.assertEqual(run[run.index('--label') + 1], 'effigy.qual={token}')
 
     def test_d4_observes_the_image_by_authenticated_id_not_by_list(self):
