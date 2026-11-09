@@ -45,6 +45,10 @@ effigy dev stop
 - On non-interactive terminals, Effigy renders a managed plan summary or stream
   output depending on task/runtime state.
 
+The interactive view keeps an outline around the tabs, leaves one blank row
+below them, and renders process output without a surrounding frame. The
+scrollbar uses its own rightmost column so it does not cover output text.
+
 Managed Cargo/Oxide producers use the initiating ANSI pane capability and
 respect `NO_COLOR`, CI and explicit colour preferences. Their canonical logs
 contain sanitized, redacted plain text; panes receive optional typed styles

@@ -191,6 +191,33 @@ fn waiting_tabs_name_their_own_dependency_and_phase() {
     assert_no_spinner_or_generic_wait(&frame);
 }
 
+#[test]
+fn output_has_a_single_gap_below_outlined_tabs_and_no_enclosing_frame() {
+    let now = Instant::now();
+    let waits = EntryWaits::new(four_entry_order(), None, now);
+    let frame = render_frame(&waits, "api", &HashMap::new(), now);
+    let rows = frame.lines().collect::<Vec<_>>();
+
+    assert!(
+        rows[0].contains('╭') && rows[2].contains('╰'),
+        "tabs stay outlined:\n{frame}"
+    );
+    assert!(
+        rows[3].trim().is_empty(),
+        "one blank row separates tabs and output:\n{frame}"
+    );
+    assert!(
+        rows[4].starts_with("startup:"),
+        "output uses the pane's left edge:\n{frame}"
+    );
+    assert!(
+        !rows[4..29].iter().any(|row| row
+            .chars()
+            .any(|ch| matches!(ch, '│' | '─' | '┌' | '┐' | '└' | '┘'))),
+        "output has no generated enclosing frame:\n{frame}"
+    );
+}
+
 /// A probe and readiness transition renders on one tab only: `api`'s pane
 /// names its own probe with the elapsed wait, the dependents keep naming `api`
 /// (and never borrow `api`'s probe), and readiness releases them. The probe

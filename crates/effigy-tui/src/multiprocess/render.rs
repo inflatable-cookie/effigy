@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use crate::core::{InputMode, LogEntry, ProcessExitState};
 use ratatui::backend::TestBackend;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::{Frame, Terminal};
 
 use super::state::ProcessStartupState;
@@ -87,22 +87,7 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
         shell_cursor,
     } = state;
     let active_is_shell = active_process == "shell";
-    let input_height = if active_is_shell {
-        0
-    } else if input_mode == InputMode::Insert {
-        3
-    } else {
-        0
-    };
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(1),
-            Constraint::Length(input_height),
-            Constraint::Length(1),
-        ])
-        .split(frame.area());
+    let chunks = main_areas(frame.area(), active_is_shell, input_mode);
 
     render_tabs(
         frame,
@@ -118,11 +103,11 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
     );
 
     if show_help {
-        render_help_overlay(frame, chunks[1]);
+        render_help_overlay(frame, chunks[2]);
     } else {
         render_output_pane(
             frame,
-            chunks[1],
+            chunks[2],
             OutputPaneRenderArgs {
                 active_logs,
                 scroll_offset,
@@ -154,10 +139,10 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
         );
     }
 
-    render_input_pane(frame, chunks[2], active_is_shell, input_mode, input_line);
+    render_input_pane(frame, chunks[3], active_is_shell, input_mode, input_line);
     render_footer(
         frame,
-        chunks[3],
+        chunks[4],
         footer::FooterState {
             input_mode,
             active_is_shell,
@@ -167,6 +152,27 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
             message: footer_message,
         },
     );
+}
+
+pub(super) fn main_areas(area: Rect, active_is_shell: bool, input_mode: InputMode) -> Vec<Rect> {
+    let input_height = if active_is_shell {
+        0
+    } else if input_mode == InputMode::Insert {
+        3
+    } else {
+        0
+    };
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(input_height),
+            Constraint::Length(1),
+        ])
+        .split(area)
+        .to_vec()
 }
 
 /// One session frame built from the entry snapshot another process published.
