@@ -199,6 +199,23 @@ class VerifierChecks(unittest.TestCase):
             bound._invoke_candidate_setter('E8', CHARGED, call)
         self.assertEqual(calls, [])
 
+    def test_fixed_setter_reaches_real_adapter_with_injected_library_only(self):
+        calls = []
+        class FakeLibrary:
+            def quotactl(self, command, device, project, address):
+                calls.append((command.value & 0xffffffff, device, project.value,
+                              address._obj.bhard, address._obj.valid))
+                return 0
+        with patch.object(probe.ctypes, 'CDLL', return_value=FakeLibrary()):
+            result = bound._invoke_candidate_setter('E8', CHARGED, probe._quotactl)
+        self.assertEqual(result['setter_exit'], 0)
+        self.assertEqual(calls, [(0x80000802, b'/dev/sda2', 531,
+                                  (CHARGED + (64 << 20)) // 1024, bound.QIF_BLIMITS)])
+        with patch.object(probe.ctypes, 'CDLL', return_value=object()), \
+                self.assertRaisesRegex(Refusal, 'failed or its result is unknown'):
+            bound._invoke_candidate_setter('E8', CHARGED, probe._quotactl)
+        self.assertEqual(len(calls), 1)
+
     def test_matching_originals_still_refuse_unproven_confinement_and_enforcement(self):
         with self.assertRaisesRegex(Refusal, 'enforcement and writer confinement are unproven'):
             self.verify()

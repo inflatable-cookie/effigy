@@ -184,7 +184,10 @@ def _invoke_candidate_setter(row, charged_bytes, call):
             probe.DQBlk.valid.offset != 64:
         raise Refusal('unsupported quota setter ABI')
     record = prospective_row_limit(row, charged_bytes)
-    result = call(probe.Q_SETQUOTA, ROOT_DEVICE, PROJECT_ID, ctypes.byref(record))
+    try:
+        result = call(probe.Q_SETQUOTA, ROOT_DEVICE, PROJECT_ID, ctypes.byref(record))
+    except (probe.Refused, OSError) as exc:
+        raise Refusal('project quota setter failed or its result is unknown') from exc
     if not isinstance(result, tuple) or len(result) != 2 or type(result[0]) is not int or \
             type(result[1]) is not int or result[0] != 0:
         raise Refusal('project quota setter failed or its result is unknown')
