@@ -464,6 +464,17 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- Source-admit the accepted narrow Parallels disk-association mechanism
+  `parallels-host-inventory-trust-v1` (effigy#774). For pinned Desktop
+  27.1.0-58756 and registered VM `433c9e5b-…`, a complete freshly authenticated
+  host inventory is trusted to describe every block device presented to that
+  same VM/guest boot; it cannot detect unreported or stale/misreported
+  presentation and is not independent presentation proof. `linux_disk_inventory.py`
+  owns the fixed argv, library pin, allowlisted read-only APIs and `key=value`
+  grammar. The helper refuses `PrlApi_InitEx` until numeric `PARALLELS_API_VER`
+  is sourced. Serial is an informative observation. Source admission of the
+  verifier is not a fresh read or native credit. Controls inject fixture
+  transport; no VM, SDK Init, or guest effect.
 - Private Colima Recipe E producer entry (`linux_recipe_e_proof.py`,
   `test:qualification:linux-recipe-e`, launch
   `qualification:linux:recipe-e-proof-only`) binds an exact current-checkout
