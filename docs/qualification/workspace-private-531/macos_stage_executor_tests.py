@@ -4996,8 +4996,8 @@ class RedirectPolicyTests(Fixture):
 
 
 class C1ProofEntryTests(Fixture):
-    """C1 is admitted in the proof entry as a plain request. It has no window recipe, and its prospective data
-    binds the same pinned inputs the executor plans."""
+    """C1 is admitted in the proof entry as a plain request. Its window needs its original C0 receipt, and its
+    prospective data binds the same pinned inputs the executor plans. C2-C6 keep plain-request-only windows."""
 
     def test_c1_prospective_data_binds_the_pinned_inputs(self):
         self.assertIn('C1', proof.PROOF_STAGES)
@@ -5006,14 +5006,258 @@ class C1ProofEntryTests(Fixture):
         self.assertEqual(data['inputs_sha256'], ex.canon_sha(ex.stable_input_manifest()[0]))
         self.assertEqual(data['bindings_sha256'], ex.canon_sha(self.bindings))
 
-    def test_c1_has_no_window_recipe_and_unknown_stages_still_refuse(self):
+    def test_c1_window_names_its_c0_and_unreviewed_windows_still_refuse(self):
         options = dict(activation_id='c1-window', duration_seconds=600, evidence_root=self.evidence)
-        with self.assertRaisesRegex(ex.Refusal, 'no window recipe'):
+        with self.assertRaisesRegex(ex.Refusal, 'unsupported window options'):  # a C1 window names its C0 receipt
             proof.window_recipe('C1', self.bindings, options)
         with self.assertRaisesRegex(ex.Refusal, 'no window recipe'):
             proof.window_recipe('C4', self.bindings, options)
         with self.assertRaisesRegex(ex.Refusal, 'supports only C0, D0, D1, C1, C2, C3, C4, C5, C6, D2, D3 or D4'):
             proof.prospective('C9', self.bindings)
+
+
+class C1WindowTests(Fixture):
+    """C1 through the proof entry's launch-time window: the request names the original executor C0 receipt it
+    consumes, that genuine closed chain is re-verified at the plan and at launch, and the token's first-use
+    cache, image, Docker-config and profile/VM state must be absent before the claim. The plain C1 request
+    keeps its pre-created absolute-time activation route. Fixed fake children only: no Colima, no network."""
+
+    def use_historical(self):
+        """A fixture 688 C0 record and tranche summary for the genuine C0's supervised helpers only. The
+        window's chain checks never read it: the prior is the executor C0 receipt, not the fixture."""
+        if getattr(self, 'historical', None) is not None:
+            return self.historical
+        hist = self.tmp + '/historical'
+        os.mkdir(hist, 0o700)
+        tranche = hist + '/summary.json'
+        Path(tranche).write_bytes(b'{"tranche": "fixture"}\n')
+        tranche_sha = ex.sha_file(tranche)
+        record = dict(status='passed: fixture', token=ex.RECORDED_TOKEN, zero_share_present=True, roots_safe=True,
+                      failed_at=None,
+                      tools={'colima': {'sha256': ex.sha_file(self.colima)}, 'docker': {'sha256': ex.sha_file(self.docker)}},
+                      tranche_summary_sha256=tranche_sha, roots_final={})
+        data = (json.dumps(record, sort_keys=True, indent=2) + '\n').encode()
+        record_path = hist + '/C0.stage.json'
+        Path(record_path).write_bytes(data)
+        for patcher in (mock.patch.dict(ex.HISTORICAL_C0, dict(path=record_path, sha256=sha_bytes(data),
+                                                              tranche_path=tranche, tranche_sha256=tranche_sha)),
+                        mock.patch.object(ex, 'LINUX_ARTIFACT_DIR', hist)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.historical = dict(path=record_path, sha256=sha_bytes(data))
+        return self.historical
+
+    def run_c0(self, token, activation_id):
+        """A genuine C0 through the real fixed helpers over the fixture record: the window consumes its receipt,
+        never the fixture itself."""
+        self.use_historical()
+        bindings = self.make_bindings(token)
+        calls = []
+        with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}), \
+             mock.patch.object(ex, 'HISTORICAL_TOOL_HASHES',
+                               {'colima': ex.sha_file(self.colima), 'docker': ex.sha_file(self.docker)}):
+            receipt = self.execute('C0', self.routed({'c0-colima-start-help': emit('help')}, calls),
+                                   prior_ref=None, activation_id=activation_id, bindings=bindings,
+                                   monitor_factory=FixedHelperTests.quiet_monitor)
+        self.assertEqual(receipt['closure'], 'closed', receipt)
+        self.assertEqual([c[0] for c in calls], ['c0-colima-start-help'])
+        return bindings, receipt, self.ref('C0', activation_id)
+
+    def request(self, bindings, prior, activation_id='c1-window-0001', **extra):
+        options = dict(activation_id=activation_id, duration_seconds=900, evidence_root=self.evidence)
+        if prior is not None:
+            options['prior_receipt'] = prior
+        options.update(extra)
+        return proof.window_recipe('C1', bindings, options)
+
+    def freeze(self, request, name='c1-window-request.json'):
+        path = self.tmp + '/' + name
+        Path(path).write_text(json.dumps(request, sort_keys=True))
+        os.chmod(path, 0o400)
+        return path, ex.sha_file(path)
+
+    def run_entry(self, path, digest, calls):
+        routes = {'c1-colima-start': emit('started')}
+        with mock.patch.object(ex, 'default_transport', self.routed(routes, calls)), \
+             mock.patch.object(ex, 'default_monitor', FixedHelperTests.quiet_monitor), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            code = proof.main(['proof', path, digest])
+        return code, json.loads(out.getvalue())
+
+    @staticmethod
+    def first_use_paths(bindings):
+        return sorted({bindings['colima_cache_home'], bindings['colima_docker_config'],
+                       bindings['colima_cache_home'] + '/' + ex.COLIMA_IMAGE_DIR,
+                       bindings['colima_home'] + '/' + prep.PROFILE,
+                       bindings['colima_home'] + '/_lima'})
+
+    def test_c1_window_runs_through_the_entry_and_its_go_names_the_c0_receipt(self):
+        bindings, _, c0_ref = self.run_c0('f0f0f0e1', 'c1-window-c0')
+        wrong = {name: dict(rec, device=0, inode=0) for name, rec in ex.RECORDED_ROOTS.items()}
+        request = self.request(bindings, c0_ref)
+        self.assertEqual(request['prior_receipt'], c0_ref)
+        self.assertEqual(request['duration_seconds'], 900)
+        self.assertEqual(request['absent_paths'], self.first_use_paths(bindings))
+        for path in request['absent_paths']:
+            self.assertFalse(os.path.lexists(path))
+        path, digest = self.freeze(request)
+        calls = []
+        with mock.patch.object(ex, 'RECORDED_ROOTS', wrong):  # consulted, these records would refuse the run
+            code, receipt = self.run_entry(path, digest, calls)
+        self.assertEqual(code, 0)
+        self.assertEqual(receipt['closure'], 'closed')
+        self.assertEqual([c[0] for c in calls], ['c1-colima-start'])
+        self.assertEqual(receipt['prior']['stage'], 'C0')
+        self.assertEqual(receipt['token'], bindings['token'])
+        go = json.loads(Path(request['activation_path']).read_text())
+        self.assertEqual(go['prior_receipt'], c0_ref)
+        run_bindings = {k: v for k, v in bindings.items() if k not in ex.NOT_SUPPLIED}
+        run_bindings.update(ex.guest_source_bindings())
+        self.assert_dispatch('C1', calls, run_bindings)
+
+    def test_delayed_c1_launch_starts_the_window_at_launch_and_is_one_use(self):
+        bindings, _, c0_ref = self.run_c0('f0f0f0e2', 'c1-delayed-c0')
+        request = self.request(bindings, c0_ref, activation_id='c1-delayed-0001')
+        path, digest = self.freeze(request, 'c1-delayed-request.json')
+        prepared = datetime.datetime.now(datetime.timezone.utc)
+        before = prepared + datetime.timedelta(seconds=1800)
+        real_datetime = datetime.datetime
+
+        class LaunchClock(real_datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return before
+
+        calls = []
+        with mock.patch.object(proof.datetime, 'datetime', LaunchClock), \
+             mock.patch.object(ex, 'default_transport', self.routed({'c1-colima-start': emit('started')}, calls)), \
+             mock.patch.object(ex, 'default_monitor', FixedHelperTests.quiet_monitor), \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(proof.main(['proof', path, digest]), 0)
+            with self.assertRaises(ex.Refusal):  # one use: the spent claim replays nothing
+                proof.main(['proof', path, digest])
+        self.assertEqual([c[0] for c in calls], ['c1-colima-start'])
+        go = json.loads(Path(request['activation_path']).read_text())
+        issued = datetime.datetime.fromisoformat(go['issued_utc'])
+        expires = datetime.datetime.fromisoformat(go['expires_utc'])
+        self.assertGreater((issued - prepared).total_seconds(), 1200)  # no prelaunch clock consumed
+        self.assertGreaterEqual(issued, before)
+        self.assertEqual((expires - issued).total_seconds(), 900)
+        retained = json.loads(Path(request['evidence_path']).read_text())
+        self.assertEqual(retained['request_sha256'], digest)
+        self.assertEqual(retained['activation_sha256'], sha_bytes(Path(request['activation_path']).read_bytes()))
+        self.assertEqual(json.loads(Path(request['claim_path']).read_text())['go_sha256'], digest)
+
+    def test_c1_window_without_a_c0_reference_or_with_a_wrong_hash_refuses(self):
+        bindings, _, c0_ref = self.run_c0('f0f0f0e3', 'c1-noref-c0')
+        with self.assertRaises(ex.Refusal):
+            proof.window_recipe('C1', bindings, dict(activation_id='c1-noref-0001', duration_seconds=900,
+                                                     evidence_root=self.evidence))
+        with self.assertRaises(ex.Refusal):
+            self.request(bindings, dict(c0_ref, sha256='0' * 64), activation_id='c1-badhash-0001')
+        with self.assertRaises(ex.Refusal):  # a D0 receipt is not the C0 reference C1 names
+            self.request(bindings, dict(c0_ref, stage='D0'), activation_id='c1-wrongstage-0001')
+
+    def test_c1_window_refuses_a_fixture_or_simulated_predecessor(self):
+        bindings, c0, c0_ref = self.run_c0('f0f0f0e4', 'c1-fixture-c0')
+        hist = self.historical
+        with self.assertRaises(ex.Refusal):  # the pinned fixture record is not an executor receipt
+            self.request(bindings, dict(stage='C0', path=hist['path'], sha256=hist['sha256']),
+                         activation_id='c1-fixture-0001')
+        with self.assertRaises(ex.Refusal):  # a window ref never carries the historical binding flag
+            self.request(bindings, dict(c0_ref, historical=True), activation_id='c1-histflag-0001')
+        body = json.loads(Path(c0['stage_root'], 'stage-receipt.json').read_text())
+        doctored = dict(body, closure_simulated=True)
+        raw = (json.dumps(doctored, sort_keys=True, indent=2) + '\n').encode()
+        Path(c0['stage_root'], 'stage-receipt.json').write_bytes(raw)
+        with self.assertRaises(ex.Refusal):  # a simulated closure is never a chain receipt
+            self.request(bindings, dict(c0_ref, sha256=sha_bytes(raw)), activation_id='c1-simulated-0001')
+
+    def test_c1_window_refuses_a_wrong_token_predecessor(self):
+        _, _, other_ref = self.run_c0('f0f0f0e5', 'c1-wrongtoken-c0')
+        with self.assertRaisesRegex(ex.Refusal, 'another backend chain'):
+            self.request(self.bindings, other_ref, activation_id='c1-wrongtoken-0001')
+
+    def test_c1_window_refuses_a_changed_root_before_the_claim(self):
+        bindings, _, c0_ref = self.run_c0('f0f0f0e6', 'c1-swap-c0')
+        path, digest = self.freeze(self.request(bindings, c0_ref, activation_id='c1-swap-0001'))
+        os.rmdir(bindings['colima_home'])
+        os.mkdir(bindings['colima_home'], 0o700)
+        calls = []
+        with self.assertRaisesRegex(ex.Refusal, 'root identity changed'):
+            self.run_entry(path, digest, calls)
+        self.assertEqual(calls, [])
+        self.assertFalse(os.path.lexists(self.tmp + '/claims/c1-swap-0001.claim'))
+        self.assertFalse(os.path.lexists(self.evidence + '/C1-c1-swap-0001'))
+
+    def test_c1_window_refuses_preexisting_first_use_state_before_the_claim(self):
+        bindings, _, c0_ref = self.run_c0('f0f0f0e7', 'c1-present-c0')
+        for index, present in enumerate((bindings['colima_cache_home'],
+                                         bindings['colima_home'] + '/' + prep.PROFILE)):
+            activation = 'c1-present-%04d' % index
+            os.mkdir(present, 0o700)
+            request = self.request(bindings, c0_ref, activation_id=activation)
+            frozen, digest = self.freeze(request, activation + '.json')
+            with mock.patch.object(ex, '_execute_stage') as effect, \
+                    self.assertRaisesRegex(ex.Refusal, 'named destination is not absent'):
+                self.run_entry(frozen, digest, [])
+            effect.assert_not_called()
+            self.assertFalse(os.path.lexists(self.tmp + '/claims/' + activation + '.claim'))
+            os.rmdir(present)
+
+    def test_c1_window_duration_boundaries(self):
+        bindings, _, c0_ref = self.run_c0('f0f0f0e8', 'c1-bounds-c0')
+        options = dict(activation_id='c1-bounds-0001', evidence_root=self.evidence)
+        for duration in (61, 300, 900):
+            request = proof.window_recipe('C1', bindings, dict(options, duration_seconds=duration,
+                                                               prior_receipt=c0_ref))
+            self.assertEqual(request['duration_seconds'], duration)
+        for duration in (0, 60, 901, 1200, 1201, True):
+            with self.subTest(duration=duration), self.assertRaises(ex.Refusal):
+                proof.window_recipe('C1', bindings, dict(options, duration_seconds=duration, prior_receipt=c0_ref))
+
+    def test_c1_window_timeout_retains_and_never_replays(self):
+        bindings, _, c0_ref = self.run_c0('f0f0f0e9', 'c1-timeout-c0')
+        request = self.request(bindings, c0_ref, activation_id='c1-timeout-0001')
+        path, digest = self.freeze(request, 'c1-timeout-request.json')
+        calls = []
+        transport = self.routed({'c1-colima-start': 'import time; time.sleep(30)'}, calls)
+
+        def short(**kw):
+            return transport(**dict(kw, timeout=min(kw['timeout'], 0.1)))
+
+        with mock.patch.object(ex, 'default_transport', short), \
+             mock.patch.object(ex, 'default_monitor', FixedHelperTests.quiet_monitor), \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(proof.main(['proof', path, digest]), 1)
+            with self.assertRaises(ex.Refusal):  # the spent window never replays
+                proof.main(['proof', path, digest])
+        receipt = json.loads(Path(self.evidence, 'C1-c1-timeout-0001', 'stage-receipt.json').read_text())
+        self.assertEqual(receipt['steps'][-1]['closure'], 'unknown_retained')
+        self.assertIsNotNone(receipt['steps'][-1]['waited_exit'])
+        self.assertEqual([c[0] for c in calls], ['c1-colima-start'])
+        self.assertTrue(os.path.isdir(bindings['colima_cache_home'] + '/' + ex.COLIMA_IMAGE_DIR))
+        self.assertTrue(Path(request['evidence_path']).exists())
+
+    def test_c1_plain_request_still_runs_with_a_precreated_activation(self):
+        bindings, _, c0_ref = self.run_c0('f0f0f0ea', 'c1-plain-c0')
+        inputs = ex.stable_input_manifest()[0]
+        path, sha = self.activation('C1', c0_ref, 'c1-plain-0001', bindings=bindings, inputs=inputs)
+        request = {'stage': 'C1', 'activation_path': path, 'activation_sha256': sha, 'bindings': bindings,
+                   'evidence_root': self.evidence, 'inputs': inputs, 'inputs_sha256': ex.canon_sha(inputs),
+                   'manifest_sha256': ex.sha_file(ex.MANIFEST_PATH), 'source_sha256': ex.sha_file(ex.__file__)}
+        raw = self.tmp + '/c1-plain-request.json'
+        Path(raw).write_text(json.dumps(request, sort_keys=True))
+        os.chmod(raw, 0o400)
+        calls = []
+        with mock.patch.object(ex, 'default_transport', self.routed({'c1-colima-start': emit('started')}, calls)), \
+             mock.patch.object(ex, 'default_monitor', FixedHelperTests.quiet_monitor), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(proof.main(['proof', raw, ex.sha_file(raw)]), 0)
+        receipt = json.loads(out.getvalue())
+        self.assertEqual(receipt['closure'], 'closed')
+        self.assertEqual([c[0] for c in calls], ['c1-colima-start'])
+        self.assertEqual(receipt['prior']['stage'], 'C0')
 
 
 class C2C3ProofEntryTests(Fixture):
