@@ -25,6 +25,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_allocation_bound as bound
+import linux_allocation_witness as witness
 import linux_rescue_input as rescue
 import linux_rescue_input_proof as rescue_proof
 import linux_allocation_probe as probe
@@ -47,7 +48,11 @@ ENTRIES = (
     ('inputs', 'dir', '8:2', UID, 531, 2, 8),
     ('inputs/archive.tar', 'reg', '8:2', UID, 531, 1, 65536),
 )
-CHARGED = 34 << 20
+# F2: the kernel charge must equal the owned tree census exactly, so every retained fixture derives
+# its charged bytes from the same blocks512 entries the tree original reports (E7c's directories
+# allocate legitimately before the first quota set; the census covers them).
+TREE_CENSUS = sum(entry[6] * 512 for entry in ENTRIES)
+CHARGED = TREE_CENSUS
 HARD = CHARGED + LIMIT
 NONCE = 'd' * 64
 
@@ -64,9 +69,13 @@ def original(text, code=0):
 
 def render(mount_dev='8:2', mount_fs='ext4', mount_source='/dev/sda2', mount_options='rw,relatime',
            uuid=bound.ROOT_UUID, features=None, link='../../sda2', boot=BOOT, quota_dev='8:2',
-           fmt=4, fmt_rc=0, quota_rc=0, hard_qb=HARD // 1024, charged=CHARGED, project=531, qb_unit=1024,
+           fmt=4, fmt_rc=0, quota_rc=0, hard_qb=None, charged=None, project=531, qb_unit=1024,
            entries=ENTRIES, tree_root=ROOT, tree_boot=BOOT, tree_project=531, valid=3):
     features = OBSERVED_747_FEATURES + ' project quota' if features is None else features
+    # The charge and the hard limit follow the tree census unless a control names them explicitly;
+    # the F2 equality at both production sites requires them equal for a complete witness.
+    charged = sum(entry[6] for entry in entries) * 512 if charged is None else charged
+    hard_qb = (charged + LIMIT) // 1024 if hard_qb is None else hard_qb
     texts = {
         'mountinfo': '36 1 %s / / %s shared:1 - %s %s rw\n' % (mount_dev, mount_options, mount_fs, mount_source),
         'dumpe2fs': 'Filesystem UUID:          %s\nFilesystem features:      %s\nFilesystem state:         clean\n'
@@ -85,7 +94,7 @@ def render(mount_dev='8:2', mount_fs='ext4', mount_source='/dev/sda2', mount_opt
     }
     enforcement_text = 'status=refused phase=edquot bytes=%d\n' % LIMIT
     return {'mechanism': MECH, 'row': 'E9a', 'nonce': NONCE, 'boot_id': BOOT, 'device': bound.ROOT_DEVICE,
-            'project': bound.PROJECT_ID, 'charged_bytes': CHARGED, 'limit_bytes': LIMIT, 'setter_exit': 0,
+            'project': bound.PROJECT_ID, 'charged_bytes': charged, 'limit_bytes': LIMIT, 'setter_exit': 0,
             'custody': {'entry_sha256': hashlib.sha256(bound.WRITER_HELPER.parent.joinpath(
                 'linux_supervisor.py').read_bytes()).hexdigest(),
                         'approval_digest': 'e' * 64, 'device': bound.ROOT_DEVICE, 'project': bound.PROJECT_ID},
@@ -106,6 +115,155 @@ def replace_original(witness, route, text=None, **changes):
     item.update(changes)
     observations[route] = item
     return dict(witness, observations=observations)
+
+
+def census_of(root):
+    """The owned tree census the F2 equality compares: lstat blocks over the fixture, like the helper."""
+    root = Path(root)
+    total = os.lstat(root).st_blocks * 512
+    for child in sorted(root.rglob('*')):
+        total += os.lstat(child).st_blocks * 512
+    return total
+
+
+# ---------------------------------------------------------------- fresh-project accounting witness
+
+
+def build_witness_image(path, block_bytes=1024, groups=3, ipg=8, inodes_count=17, desc64=True,
+                        csum_seed=True, live_inodes=(1, 2, 11, 12), inode_size=256, state=1,
+                        ro_extra=0, ro_drop_csum=False, incompat_extra=0, quota_inum=0,
+                        mount_opts=b'', last_orphan=0, desc_size=None, first_data_block=None,
+                        log_cluster=None, sb_patches=None, patches=None):
+    """A checksum-correct synthetic ext4 layout for the offline collector (fixture bytes only).
+
+    Everything the collector verifies is constructed consistently, so a refusal can only come from
+    the one field a control corrupts. `sb_patches(image)` corrupts superblock bytes after the
+    checksum is stored (checksum-drift controls); `patches(image, tables, seed)` corrupts descriptor
+    or inode bytes and may recompute descriptor checksums for controls that must pass them.
+    """
+    bs = block_bytes
+    fdb = 1 if bs == 1024 else 0
+    blocks_per_group = 3 if bs == 1024 else 13
+    blocks_count = fdb + blocks_per_group * groups
+    desc_bytes = 64 if desc64 else 32
+    sb = bytearray(1024)
+    struct.pack_into('<I', sb, 0x0, inodes_count)
+    struct.pack_into('<I', sb, 0x4, blocks_count)
+    struct.pack_into('<I', sb, 0x10, 3)
+    struct.pack_into('<I', sb, 0x14, fdb if first_data_block is None else first_data_block)
+    log = {1024: 0, 4096: 2}.get(bs, 2)
+    struct.pack_into('<I', sb, 0x18, log)
+    struct.pack_into('<I', sb, 0x1c, log if log_cluster is None else log_cluster)
+    struct.pack_into('<I', sb, 0x20, blocks_per_group)
+    struct.pack_into('<I', sb, 0x24, blocks_per_group)
+    struct.pack_into('<I', sb, 0x28, ipg)
+    struct.pack_into('<H', sb, 0x38, 0xEF53)
+    struct.pack_into('<H', sb, 0x3a, state)
+    struct.pack_into('<I', sb, 0x54, 11)
+    struct.pack_into('<H', sb, 0x58, inode_size)
+    incompat = witness.IN_FILETYPE | witness.IN_EXTENTS | witness.IN_FLEX_BG | incompat_extra
+    if desc64:
+        incompat |= witness.IN_64BIT
+        struct.pack_into('<H', sb, 0xfe, desc_size if desc_size is not None else 64)
+    if csum_seed:
+        incompat |= witness.IN_CSUM_SEED
+    struct.pack_into('<I', sb, 0x60, incompat)
+    ro = 0x1 | 0x2 | 0x8 | 0x20 | 0x40 | witness.RO_METADATA_CSUM | ro_extra
+    if ro_drop_csum:
+        ro = (ro & ~witness.RO_METADATA_CSUM) | witness.RO_GDT_CSUM
+    struct.pack_into('<I', sb, 0x64, ro)
+    sb[0x175] = 1
+    sb[0x68:0x78] = uuid.UUID(bound.ROOT_UUID).bytes
+    sb[0xe8:0xec] = struct.pack('<I', last_orphan)
+    sb[0x200:0x240] = mount_opts.ljust(64, b'\0')[:64]
+    struct.pack_into('<I', sb, 0x26c, quota_inum)
+    if csum_seed:
+        struct.pack_into('<I', sb, 0x270, 0x5EED5EED)
+        seed = 0x5EED5EED
+    else:
+        seed = witness.crc32c(0xFFFFFFFF, bytes(sb[0x68:0x78]))
+    struct.pack_into('<I', sb, 0x3fc, witness.crc32c(0xFFFFFFFF, bytes(sb[:0x3fc])))
+    gdt_block = fdb + 1
+    gdt_blocks = -(-groups * desc_bytes // bs)
+    image = bytearray(blocks_count * bs)
+    image[1024:2048] = sb
+    tables, next_block = [], gdt_block + gdt_blocks
+    table_span = max(1, -(-(ipg * witness.INODE_BYTES) // bs))
+    for group in range(groups):
+        desc = bytearray(desc_bytes)
+        table_block = next_block + group * table_span
+        tables.append(table_block)
+        struct.pack_into('<I', desc, 0x0, gdt_block)
+        struct.pack_into('<I', desc, 0x4, gdt_block)
+        struct.pack_into('<I', desc, 0x8, table_block)
+        offset = gdt_block * bs + group * desc_bytes
+        image[offset:offset + desc_bytes] = desc
+    seed_for_desc = seed
+    for group, table_block in enumerate(tables):
+        desc_offset = gdt_block * bs + group * desc_bytes
+        crc = witness._descriptor_checksum(seed_for_desc, group, bytes(image[desc_offset:desc_offset + desc_bytes]))
+        struct.pack_into('<H', image, desc_offset + witness.BG_CHECKSUM, crc)
+    for ino in live_inodes:
+        inode = bytearray(inode_size)
+        struct.pack_into('<H', inode, 0x0, 0x41ED)
+        struct.pack_into('<H', inode, 0x1a, 2 if ino == 2 else 1)
+        struct.pack_into('<I', inode, 0x64, 0x1234)
+        if inode_size > witness.EXT4_GOOD_OLD_INODE_SIZE:
+            struct.pack_into('<H', inode, 0x80, 32)
+        group, slot = divmod(ino - 1, ipg)
+        work = bytearray(inode)
+        work[witness.I_CHECKSUM_LO:witness.I_CHECKSUM_LO + 2] = bytes(2)
+        work[witness.I_CHECKSUM_HI:witness.I_CHECKSUM_HI + 2] = bytes(2)
+        crc = witness.crc32c(witness.crc32c(witness.crc32c(seed, struct.pack('<I', ino)),
+                                            inode[witness.I_GENERATION:witness.I_GENERATION + 4]), work)
+        struct.pack_into('<H', inode, witness.I_CHECKSUM_LO, crc & 0xFFFF)
+        if inode_size > witness.EXT4_GOOD_OLD_INODE_SIZE:
+            struct.pack_into('<H', inode, witness.I_CHECKSUM_HI, crc >> 16)
+        start = tables[group] * bs + slot * witness.INODE_BYTES
+        image[start:start + inode_size] = inode
+    if sb_patches is not None:
+        sb_patches(image)
+    if patches is not None:
+        patches(image, tables, seed)
+    path.write_bytes(bytes(image))
+    return path, blocks_count * bs, tables
+
+
+def patch_inode_field(inode_no, offset, data, ipg=8, block_bytes=1024):
+    """Corrupt one field of one inode slot in the assembled fixture image."""
+    def apply(image, tables, seed):
+        group, slot = divmod(inode_no - 1, ipg)
+        start = tables[group] * block_bytes + slot * witness.INODE_BYTES + offset
+        image[start:start + len(data)] = data
+    return apply
+
+
+def patch_desc_table(group, table_block, gdt_block=2, block_bytes=1024, desc_bytes=64):
+    """Point one group's inode table elsewhere, keeping its descriptor checksum consistent."""
+    def apply(image, tables, seed):
+        offset = gdt_block * block_bytes + group * desc_bytes
+        struct.pack_into('<I', image, offset + witness.BG_INODE_TABLE, table_block)
+        struct.pack_into('<I', image, offset + witness.BG_INODE_TABLE_HI, 0)
+        desc = bytes(image[offset:offset + desc_bytes])
+        struct.pack_into('<H', image, offset + witness.BG_CHECKSUM,
+                         witness._descriptor_checksum(seed, group, desc))
+    return apply
+
+
+def collect_witness(path, end, boot=None, nonce=None, chunk_bytes=None, read=None):
+    """Run the actual collector against fixture bytes through one injected read boundary."""
+    boot = RESCUE_BOOT if boot is None else boot
+    nonce = NONCE if nonce is None else nonce
+    if read is None:
+        fd = os.open(str(path), os.O_RDONLY)
+        def read(offset, length):
+            if offset + length > end:
+                return b''                       # an out-of-extent read arrives short, never zero-filled
+            return os.pread(fd, length, offset)
+    if chunk_bytes is not None:
+        with patch.object(witness, 'CHUNK_BYTES', chunk_bytes):
+            return witness.collect(read, boot, nonce)
+    return witness.collect(read, boot, nonce)
 
 
 class VerifierChecks(unittest.TestCase):
@@ -314,9 +472,9 @@ class VerifierChecks(unittest.TestCase):
         with self.assertRaisesRegex(Refusal, 'exceeds the project headroom|differs from the charged row'):
             self.verify(limit=headroom + 1)
         with self.assertRaisesRegex(Refusal, 'headroom exceeds the row ceiling'):
-            self.verify(render(hard_qb=(1 << 30) // 1024))
+            self.verify(render(hard_qb=(CHARGED + (1 << 30)) // 1024))
         with self.assertRaisesRegex(Refusal, 'no active hard block limit|headroom'):
-            self.verify(render(charged=HARD))
+            self.verify(render(hard_qb=CHARGED // 1024))
         for bad in (0, -1, True, None, 1.5):
             with self.subTest(limit=bad), self.assertRaises(Refusal):
                 self.verify(limit=bad)
@@ -388,15 +546,21 @@ class VerifierChecks(unittest.TestCase):
         self.assertIn('type=fifo', fifo[0])
         self.assertIn('projid=-1', fifo[0])
 
-    def test_kernel_charge_must_cover_every_tree_byte_and_multiple_files_are_summed(self):
+    def test_kernel_charge_must_equal_the_tree_census_and_multiple_files_are_summed(self):
         with self.assertRaisesRegex(Refusal, 'below the tree bytes'):
             self.verify(render(charged=1 << 20, hard_qb=((1 << 20) + LIMIT) // 1024))
         two_files = ENTRIES + (('inputs/second.tar', 'reg', '8:2', UID, 531, 1, 65536),)
         fx = facts(entries={'.', 'inputs', 'inputs/archive.tar', 'inputs/second.tar'})
         with self.assertRaisesRegex(Refusal, 'below the tree bytes'):
             self.verify(render(entries=two_files, charged=CHARGED), fx=fx)
-        self.assertEqual(self.verify(render(entries=two_files, charged=(66 << 20),
-                               hard_qb=((66 << 20) + LIMIT) // 1024), fx=fx)['mechanism'], MECH)
+        with self.assertRaisesRegex(Refusal, 'exceeds the owned tree census'):
+            self.verify(render(entries=two_files, charged=(66 << 20),
+                               hard_qb=((66 << 20) + LIMIT) // 1024), fx=fx)
+        # An exact charge over the extended tree passes: every census byte is covered, none beyond.
+        exact = TREE_CENSUS + 65536 * 512
+        result = self.verify(render(entries=two_files, charged=exact,
+                                    hard_qb=(exact + LIMIT) // 1024), fx=fx)
+        self.assertEqual(result['tree_bytes'], exact)
 
     def test_facts_must_bind_boot_uid_root_and_exact_entries(self):
         for fx in (facts(boot_id=None), facts(boot_id=''), facts(uid=True), facts(uid=0), facts(root=''),
@@ -577,7 +741,8 @@ class QuotaAdminChecks(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def state(self, **over):
-        state = {'hard': 0, 'cur': CHARGED, 'fmt': 4, 'rc_fmt': 0, 'rc_get': 0, 'rc_set': 0, 'probe': 'edquot'}
+        state = {'hard': 0, 'cur': census_of(self.root), 'fmt': 4, 'rc_fmt': 0, 'rc_get': 0,
+                 'rc_set': 0, 'probe': 'edquot'}
         state.update(over)
         return state
 
@@ -643,7 +808,7 @@ class QuotaAdminChecks(unittest.TestCase):
         witness = supervisor.quota_admin(self.request(), ops, 'f' * 64)
         self.assertEqual(witness['row'], 'E9a')
         self.assertEqual(witness['limit_bytes'], bound.ROW_RESERVATIONS['E9a'])
-        self.assertEqual(witness['charged_bytes'], CHARGED)
+        self.assertEqual(witness['charged_bytes'], census_of(self.root))
         self.assertEqual(witness['enforcement']['phase'], 'edquot')
         self.assertEqual(set(witness['observations']), set(bound.ROUTES))
         self.assertEqual((probe.Q_SETQUOTA, '/dev/sda2', 531) in calls, True)
@@ -676,7 +841,7 @@ class QuotaAdminChecks(unittest.TestCase):
             if cmd == probe.Q_GETQUOTA:
                 seen['gets'] += 1
                 if seen['gets'] >= 2:
-                    addr._obj.cur = (CHARGED + 4096) // probe.QB_UNIT_BYTES
+                    addr._obj.cur = (census_of(self.root) + 4096) // probe.QB_UNIT_BYTES
             return result
         ops._quotactl = moving_quota
         with self.assertRaisesRegex(Refusal, 'charge moved|headroom is not exactly'):
@@ -697,6 +862,68 @@ class QuotaAdminChecks(unittest.TestCase):
                 patch.object(supervisor.os, 'geteuid', return_value=0):
             supervisor.enforcement_probe(str(self.root), supervisor.QUOTA_PROBE_NAME, 4096, 0, 0,
                                          writer=lambda reservation: {'phase': 'edquot', 'bytes': reservation})
+
+    def test_the_first_quota_read_requires_the_exact_census_in_both_directions(self):
+        census = census_of(self.root)
+        writes = []
+        under, under_calls = self.ops(self.state(cur=census - 4096), writes=writes)
+        with self.assertRaisesRegex(Refusal, 'below the tree bytes; accounting does not cover the tree'):
+            supervisor.quota_admin(self.request(), under, 'f' * 64)
+        over, _ = self.ops(self.state(cur=census + 4096))
+        with self.assertRaisesRegex(Refusal, 'exceeds the owned tree census'):
+            supervisor.quota_admin(self.request(), over, 'f' * 64)
+        self.assertEqual([c for c in under_calls if c[0] == probe.Q_SETQUOTA], [],
+                         'an inexact first read must refuse before any limit is set')
+
+    def test_the_post_enforcement_reread_requires_the_exact_census_too(self):
+        census = census_of(self.root)
+
+        def growing_probe(root, name, reservation, uid, gid):
+            # The probe must leave the tree exactly as it found it; here it legitimately extends an
+            # existing entry instead, so the entry set is unchanged but the census is not.
+            with open(Path(root) / 'inputs' / 'archive.tar', 'ab') as handle:
+                handle.write(b'z' * 4096)
+            return {'argv': ['--enforce', str(Path(root) / name), str(reservation)], 'exit': 3,
+                    'bytes_allocated': reservation, 'phase': 'edquot', 'reservation_bytes': reservation,
+                    'stdout': '', 'stderr': 'status=refused phase=edquot bytes=%d\n' % reservation,
+                    'stdout_sha256': hashlib.sha256(b'').hexdigest(),
+                    'stderr_sha256': hashlib.sha256(
+                        ('status=refused phase=edquot bytes=%d\n' % reservation).encode()).hexdigest()}
+        ops, _ = self.ops(self.state())
+        ops._probe = growing_probe
+        with self.assertRaisesRegex(Refusal, 'post-enforcement kernel charge'):
+            supervisor.quota_admin(self.request(), ops, 'f' * 64)
+        self.assertGreater(census_of(self.root), census, 'the probe extended the tree in this control')
+
+    def test_e7c_legitimate_nonzero_charge_passes_the_exact_first_row_equality(self):
+        # After the genuine E7p zero anchor, E7c creates the eleven directories under BASE; they
+        # allocate before the first quota set, so the census is nonzero and must still be exact.
+        for name in setup.BASE_DIRS:
+            (self.root / name).mkdir(mode=0o700, exist_ok=True)
+        census = census_of(self.root)
+        self.assertGreater(census, 0)
+        ops, _ = self.ops(self.state(cur=census))
+        witness = supervisor.quota_admin(self.request(), ops, 'f' * 64)
+        self.assertEqual(witness['charged_bytes'], census)
+        entries = {'.', 'inputs', 'inputs/archive.tar'} | set(setup.BASE_DIRS)
+        fx = facts(boot_id=self.boot, root=str(self.root), uid=os.getuid(), entries=entries)
+        admitted = bound.verify(witness, bound.ROW_RESERVATIONS['E9a'], fx, {MECH})
+        self.assertEqual(admitted['tree_bytes'], census)
+        texts = witness['observations']
+        limit = bound.ROW_RESERVATIONS['E9a']
+        for drift in (census - 1024, census + 1024):   # KB-aligned: keeps the headroom exact
+            # Keep the exact row headroom while drifting the charge, so the census equality is the
+            # gate that refuses (not the headroom arithmetic).
+            quota = '\n'.join(
+                line.replace('curspace_bytes=%d' % census, 'curspace_bytes=%d' % drift)
+                    .replace('bhard_qb=%d' % ((census + limit) // 1024),
+                             'bhard_qb=%d' % ((drift + limit) // 1024))
+                for line in texts['quota']['text'].splitlines()) + '\n'
+            sha = hashlib.sha256(quota.encode('utf-8')).hexdigest()
+            tampered = dict(witness, observations={**texts, 'quota': dict(texts['quota'], text=quota,
+                                                                         sha256=sha)})
+            with self.subTest(drift=drift), self.assertRaisesRegex(Refusal, 'tree census|below the tree bytes'):
+                bound.verify(tampered, limit, fx, {MECH})
 
 
 class InventoryChecks(unittest.TestCase):
@@ -1232,7 +1459,7 @@ class ActivationRouteChecks(unittest.TestCase):
                 with self.assertRaises(Refusal):
                     bound.inspect_activation_progress(records)
 
-    def test_completion_requires_full_sequence_and_offline_originals_and_still_holds_accounting(self):
+    def test_completion_requires_the_full_sequence_originals_and_a_genuine_accounting_witness(self):
         from linux_diagnostic_proof import PRLCTL, PRLCTL_SHA256
         empty = hashlib.sha256(b'').hexdigest()
         originals = [{'name': name, 'argv': argv, 'boot_id': RESCUE_BOOT, 'stdout': '', 'stderr': '',
@@ -1252,11 +1479,29 @@ class ActivationRouteChecks(unittest.TestCase):
         boot_argv = [PRLCTL, 'exec', bound.ACTIVATION_VM, '/bin/cat', '/proc/sys/kernel/random/boot_id']
         pre = {'running_vm': source(list_argv, vm('running')), 'boot': source(boot_argv, BOOT_ID + '\n'),
                'stopped_vm': source(list_argv, vm('stopped'))}
-        def completion(recs, off=originals, before=pre):
-            return bound.inspect_activation_completion({'records': recs, 'offline_originals': off,
-                                                         'pre_originals': before})
-        with self.assertRaisesRegex(Refusal, 'accounting'):
-            completion(records)
+        # The accounting witness comes from the actual collector over a checksum-correct fixture
+        # layout, bound to this activation's rescue boot.
+        root = Path(tempfile.mkdtemp(prefix='completion-witness-', dir=os.environ.get('TMPDIR')))
+        self.addCleanup(shutil.rmtree, root, True)
+        image, end, _tables = build_witness_image(root / 'offline.img')
+        good = collect_witness(image, end)
+        def completion(recs, off=originals, before=pre, accounting=good):
+            payload = {'records': recs, 'offline_originals': off, 'pre_originals': before}
+            if accounting is not None:
+                payload['accounting'] = accounting
+            return bound.inspect_activation_completion(payload)
+        result = completion(records)
+        self.assertEqual(result['completed'], [step['name'] for step in bound.activation_plan()])
+        self.assertEqual(result['accounting']['kind'], witness.MECHANISM_KIND)
+        self.assertEqual(result['accounting']['boot_id'], RESCUE_BOOT)
+        with self.assertRaisesRegex(Refusal, 'accounting witness'):
+            completion(records, accounting=None)
+        stale = dict(good, boot_id=OTHER_BOOT)
+        with self.assertRaisesRegex(Refusal, 'another boot'):
+            completion(records, accounting=stale)
+        drifted = dict(good, counts=dict(good['counts'], zero_project=good['counts']['slots_checked'] - 1))
+        with self.assertRaisesRegex(Refusal, 'fresh project'):
+            completion(records, accounting=drifted)
         for count in range(len(records)):
             with self.subTest(count=count), self.assertRaises(Refusal):
                 completion(records[:count])
@@ -1540,6 +1785,259 @@ class RescueInputChecks(unittest.TestCase):
         args, kwargs = fetch.call_args
         self.assertEqual(args, (rescue.URL, '/fixture/' + rescue.NAME, rescue.SIZE, rescue.SHA256))
         self.assertIs(kwargs['opener'], rescue.open_fixed_https)
+
+
+class WitnessCollectorChecks(unittest.TestCase):
+    """The fixed offline collector over checksum-correct fixture bytes; no device is ever opened."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix='alloc-witness-', dir=os.environ.get('TMPDIR')))
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    def image(self, name='witness.img', **kwargs):
+        return build_witness_image(self.dir / name, **kwargs)
+
+    def test_the_pinned_crc32c_matches_the_standard_vector_and_chunks_incrementally(self):
+        self.assertEqual(witness.crc32c(0xFFFFFFFF, b'123456789') ^ 0xFFFFFFFF, 0xE3069283)
+        split = witness.crc32c(witness.crc32c(0xFFFFFFFF, b'hello '), b'world')
+        self.assertEqual(split, witness.crc32c(0xFFFFFFFF, b'hello world'))
+
+    def test_the_complete_supported_zero_case_collects_and_verifies(self):
+        image, end, _tables = self.image()
+        collected = collect_witness(image, end)
+        counts = collected['counts']
+        self.assertEqual(counts['slots_checked'], 17)
+        self.assertEqual((counts['zero_project'], counts['zero_projinherit']), (17, 17))
+        self.assertEqual(counts['checksums_verified'] + counts['zero_base_inodes'], 17)
+        summary = witness.verify_fresh_project_witness(collected, RESCUE_BOOT)
+        self.assertEqual(summary['inodes_count'], 17)
+        self.assertEqual(summary['project'], bound.PROJECT_ID)
+        self.assertNotIn(b'531', image.read_bytes()[-2048:], 'the fixture itself carries no project')
+
+    def test_an_alternative_supported_layout_collects_the_same_way(self):
+        image, end, _tables = self.image('alt.img', block_bytes=4096, desc64=False, csum_seed=False,
+                                         inodes_count=12)
+        collected = collect_witness(image, end)
+        self.assertEqual(collected['geometry']['block_bytes'], 4096)
+        self.assertEqual(collected['geometry']['descriptor_bytes'], 32)
+        self.assertEqual(collected['geometry']['checksum_seed_source'], 'uuid')
+        witness.verify_fresh_project_witness(collected, RESCUE_BOOT)
+
+    def test_nonzero_project_fields_refuse_with_the_surfaced_counterexample(self):
+        cases = ((1, r'inode 1 \(group 0, slot 0'),                      # first checked slot
+                 (16, r'inode 16 \(group 1, slot 7'),                    # last slot of a middle group
+                 (17, r'inode 17 \(group 2, slot 0'))                    # last checked slot of the fs
+        for ino, expected in cases:
+            with self.subTest(inode=ino):
+                image, end, _tables = self.image('proj-%d.img' % ino,
+                                                 patches=patch_inode_field(ino, witness.I_PROJID,
+                                                                           struct.pack('<I', 531)))
+                with self.assertRaisesRegex(witness.Refusal, expected + r'.*carries project 531'):
+                    collect_witness(image, end)
+
+    def test_a_chunk_boundary_slot_still_refuses_when_the_granularity_shrinks(self):
+        image, end, _tables = self.image('boundary.img',
+                                         patches=patch_inode_field(17, witness.I_PROJID,
+                                                                   struct.pack('<I', 531)))
+        with patch.object(witness, 'CHUNK_BYTES', 512):
+            with self.assertRaisesRegex(witness.Refusal, 'inode 17 .* carries project 531'):
+                collect_witness(image, end, chunk_bytes=512)
+
+    def test_the_inheritance_flag_refuses_as_a_nonzero_relevant_field(self):
+        image, end, _tables = self.image(
+            'inherit.img', patches=patch_inode_field(12, witness.I_FLAGS,
+                                                     struct.pack('<I', witness.EXT4_PROJINHERIT_FL)))
+        with self.assertRaisesRegex(witness.Refusal, 'inode 12 .* project-inheritance'):
+            collect_witness(image, end)
+
+    def test_an_inode_or_descriptor_or_superblock_checksum_drift_refuses(self):
+        inode_drift = patch_inode_field(11, 0x14, struct.pack('<I', 7))          # i_dtime, base inode
+        image, end, _tables = self.image('inode-csum.img', patches=inode_drift)
+        with self.assertRaisesRegex(witness.Refusal, 'inode 11 .* checksum does not verify'):
+            collect_witness(image, end)
+
+        def desc_drift(image, tables, seed):
+            offset = 2 * 1024 + 1 * 64
+            image[offset + 4] ^= 0xFF
+        image, end, _tables = self.image('desc-csum.img', patches=desc_drift)
+        with self.assertRaisesRegex(witness.Refusal, 'group 1 descriptor checksum'):
+            collect_witness(image, end)
+
+        def sb_drift(image):
+            image[1024 + 0x10] ^= 0xFF
+        image, end, _tables = self.image('sb-csum.img', sb_patches=sb_drift)
+        with self.assertRaisesRegex(witness.Refusal, 'superblock checksum does not verify'):
+            collect_witness(image, end)
+
+    def test_unsupported_or_nonfresh_layouts_refuse(self):
+        def set_bytes(offset, data):
+            def apply(image):
+                image[1024 + offset:1024 + offset + len(data)] = data
+            return apply
+        cases = (
+            ('magic', dict(sb_patches=set_bytes(0x38, b'\x00\x00')), 'magic is not ext4'),
+            ('uuid', dict(sb_patches=set_bytes(0x68, b'\x01')), 'differs from the native root'),
+            ('unclean', dict(state=2), 'not the clean offline state'),
+            ('inode-size', dict(inode_size=128), 'inode size 128 is unsupported'),
+            ('quota-bit', dict(ro_extra=witness.RO_QUOTA), 'already present: quota'),
+            ('project-bit', dict(ro_extra=witness.RO_PROJECT), 'already present: project'),
+            ('bigalloc-bit', dict(ro_extra=witness.RO_BIGALLOC), 'already present: bigalloc'),
+            ('no-metadata-csum', dict(ro_drop_csum=True), 'gdt_csum'),
+            ('inline-data', dict(incompat_extra=0x8000), 'outside the supported layout'),
+            ('csum-type', dict(sb_patches=set_bytes(0x175, b'\x02')), 'checksum type is not crc32c'),
+            ('quota-inode', dict(quota_inum=13), 'quota inode already recorded'),
+            ('mount-opts', dict(mount_opts=b'prjquota'), 'stored mount-option bytes'),
+            ('orphan-list', dict(last_orphan=42), 'orphan inodes are still listed'),
+            ('desc-size', dict(desc_size=128), 'descriptor size 128'),
+            ('first-block', dict(first_data_block=2), 'contradicts the 1024-byte block size'),
+            ('clusters', dict(log_cluster=1), 'clusters differ from blocks'),
+            ('bitmap-bounds', dict(ipg=8193), 'exceeds the one-block bitmap bound'),
+            ('unclosed-inodes', dict(inodes_count=999), 'not closed by 3 groups'),
+            ('few-inodes', dict(inodes_count=5), 'below the reserved inode range'),
+        )
+        for name, kwargs, expected in cases:
+            with self.subTest(case=name):
+                image, end, _tables = self.image('layout-%s.img' % name, **kwargs)
+                with self.assertRaisesRegex(witness.Refusal, expected):
+                    collect_witness(image, end)
+
+    def test_table_locations_that_leave_the_filesystem_or_alias_refuse(self):
+        image, end, _tables = self.image('table-zero.img',
+                                         patches=patch_desc_table(1, 0))
+        with self.assertRaisesRegex(witness.Refusal, 'group 1 inode table block 0 is outside'):
+            collect_witness(image, end)
+        image, end, _tables = self.image('table-out.img',
+                                         patches=patch_desc_table(1, 4096))
+        with self.assertRaisesRegex(witness.Refusal, 'outside the filesystem'):
+            collect_witness(image, end)
+        image, end, _tables = self.image('table-alias.img',
+                                         patches=patch_desc_table(1, 3))
+        with self.assertRaisesRegex(witness.Refusal, 'alias one another'):
+            collect_witness(image, end)
+        image, end, _tables = self.image('table-gdt.img',
+                                         patches=patch_desc_table(1, 2))
+        with self.assertRaisesRegex(witness.Refusal, 'overlaps the already read'):
+            collect_witness(image, end)
+
+    def test_partial_reads_and_missing_boundaries_refuse(self):
+        image, end, _tables = self.image()
+        fd = os.open(str(image), os.O_RDONLY)
+        self.addCleanup(os.close, fd)
+        def short(offset, length):
+            return os.pread(fd, length - 1, offset)
+        with self.assertRaisesRegex(witness.Refusal, 'short or malformed reads refuse'):
+            witness.collect(short, RESCUE_BOOT, NONCE)
+        with self.assertRaisesRegex(witness.Refusal, 'injected read boundary'):
+            witness.collect(None, RESCUE_BOOT, NONCE)
+        with self.assertRaisesRegex(witness.Refusal, 'boot identity'):
+            witness.collect(lambda offset, length: b'', 'not-a-boot', NONCE)
+        with self.assertRaisesRegex(witness.Refusal, 'nonce is invalid'):
+            witness.collect(lambda offset, length: b'', RESCUE_BOOT, 'short')
+
+    def test_tail_slots_beyond_the_inode_count_are_read_but_are_not_inode_facts(self):
+        # Slot 24 is beyond inodes_count 17: the scan cannot charge it, so its bytes are not project
+        # facts and must not refuse (the soundness boundary the collector documents).
+        image, end, _tables = self.image('tail.img',
+                                         patches=patch_inode_field(24, witness.I_PROJID,
+                                                                   struct.pack('<I', 531)))
+        collected = collect_witness(image, end)
+        self.assertEqual(collected['counts']['tail_slots'], 7)
+        self.assertEqual(collected['counts']['slots_checked'], 17)
+
+    def test_retained_bounds_refuse_before_the_witness_grows(self):
+        image, end, _tables = self.image()
+        with patch.object(witness, 'MAX_CHUNKS', 2):
+            with self.assertRaisesRegex(witness.Refusal, 'chunk retained bound'):
+                collect_witness(image, end)
+        with patch.object(witness, 'MAX_WITNESS_BYTES', 200):
+            with self.assertRaisesRegex(witness.Refusal, 'record ceiling'):
+                collect_witness(image, end)
+
+
+class WitnessConsumerChecks(unittest.TestCase):
+    """The completion-side verifier re-derives everything from the retained witness alone."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix='alloc-consumer-', dir=os.environ.get('TMPDIR')))
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        image, end, _tables = build_witness_image(self.dir / 'good.img')
+        self.good = collect_witness(image, end)
+
+    def tampered(self, **changes):
+        return dict(self.good, **changes)
+
+    def reject(self, candidate, expected):
+        with self.assertRaisesRegex(witness.Refusal, expected):
+            witness.verify_fresh_project_witness(candidate, RESCUE_BOOT)
+
+    def test_the_genuine_witness_passes_and_binds_only_its_own_rescue_boot(self):
+        summary = witness.verify_fresh_project_witness(self.good, RESCUE_BOOT)
+        self.assertEqual(summary['kind'], witness.MECHANISM_KIND)
+        self.reject(self.tampered(boot_id=BOOT_ID), 'another boot')
+        self.reject(self.tampered(boot_id=RESCUE_BOOT.replace('a', 'b', 1)), 'another boot')
+
+    def test_the_fixed_root_identity_cannot_be_replaced(self):
+        self.reject(self.tampered(device='/dev/sdb2'), 'another device')
+        self.reject(self.tampered(uuid='0' * 36), 'another device')
+        self.reject(self.tampered(project=530), 'another device, UUID or project')
+        self.reject(self.tampered(nonce='nope'), 'one-use nonce')
+        self.reject(self.tampered(kind='other'), 'another mechanism')
+        self.reject(self.tampered(mechanism='ext4-project-attribute'), 'another mechanism')
+        self.reject({k: v for k, v in self.good.items() if k != 'counts'}, 'unexpected shape')
+
+    def test_drifted_geometry_counts_or_features_refuse(self):
+        geometry = dict(self.good['geometry'])
+        for field, value, expected in (
+                ('block_bytes', 2048, 'contradicts the block size'),
+                ('groups', 4, 'does not close arithmetically'),
+                ('inodes_count', 18, 'slot coverage'),
+                ('descriptor_bytes', 32, 'descriptor size is outside'),
+                ('blocks_per_group', 0, 'bitmap bound'),
+                ('checksum_seed_source', 'elsewhere', 'seed source is unknown')):
+            with self.subTest(field=field):
+                self.reject(self.tampered(geometry=dict(geometry, **{field: value})), expected)
+        self.reject(self.tampered(filesystem_bytes=self.good['filesystem_bytes'] + 1),
+                    'extent differs from the geometry')
+        features = dict(self.good['superblock'])
+        self.reject(self.tampered(superblock=dict(features, checksum_verified=False)),
+                    'do not record the verified offline pre-state')
+        self.reject(self.tampered(superblock=dict(features, ro_compat=features['ro_compat'] |
+                                                  witness.RO_QUOTA)),
+                    'outside the supported offline pre-state')
+
+    def test_retained_inode_table_locations_and_counts_must_close(self):
+        self.reject(self.tampered(inode_tables=self.good['inode_tables'][:-8]),
+                    'do not match the group count')
+        self.reject(self.tampered(inode_tables=struct.pack('<3I', 3, 30, 7).hex()),
+                    'outside the filesystem|incomplete|outside or spans')
+        counts = dict(self.good['counts'])
+        self.reject(self.tampered(counts=dict(counts, zero_project=counts['zero_project'] - 1)),
+                    'not record a fully fresh project')
+        self.reject(self.tampered(counts=dict(counts, tail_slots=0)), 'tail-slot count')
+        self.reject(self.tampered(counts=dict(counts, checksums_verified=99)),
+                    'checksum counters do not cover')
+
+    def test_coverage_chunks_must_tile_the_planned_extents_exactly(self):
+        self.reject(self.tampered(coverage={'chunks': self.good['coverage']['chunks'],
+                                            'bytes': self.good['coverage']['bytes'] + 1}),
+                    'coverage bytes')
+        dropped = self.good['coverage']['chunks'][1:]
+        self.reject(self.tampered(coverage={'chunks': dropped,
+                                            'bytes': self.good['coverage']['bytes']}),
+                    'incomplete|gap|bytes')
+        duplicated = self.good['coverage']['chunks'] + [self.good['coverage']['chunks'][2]]
+        self.reject(self.tampered(coverage={'chunks': duplicated,
+                                            'bytes': self.good['coverage']['bytes']}),
+                    'duplicates|gap|outside or spans')
+        malformed = [dict(chunk, sha256='nothex') for chunk in self.good['coverage']['chunks']]
+        self.reject(self.tampered(coverage={'chunks': malformed,
+                                            'bytes': self.good['coverage']['bytes']}),
+                    'digest are malformed')
+        outside = [dict(self.good['coverage']['chunks'][0], offset=99 * 1024)]
+        self.reject(self.tampered(coverage={'chunks': outside + self.good['coverage']['chunks'][1:],
+                                            'bytes': self.good['coverage']['bytes']}),
+                    'outside or spans|incomplete')
+
 
 if __name__ == '__main__':
     unittest.main()

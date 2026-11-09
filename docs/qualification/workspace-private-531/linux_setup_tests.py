@@ -1893,8 +1893,10 @@ def hard_limit_witness():
             'enforcement': 'kernel'}
 
 
+# F2: the fixture witness's kernel charge equals its tree census exactly (2+2+69628 = 69632 blocks
+# = 34 MiB), as the exact charge/census equality at both production sites requires.
 QUOTA_CHARGED = 34 << 20
-QUOTA_ENTRIES = (('.', 'dir', 1), ('inputs', 'dir', 1), ('inputs/archive.tar', 'reg', 1))
+QUOTA_ENTRIES = (('.', 'dir', 2), ('inputs', 'dir', 2), ('inputs/archive.tar', 'reg', 69628))
 
 
 def writer_tools_fixture():

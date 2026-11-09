@@ -807,14 +807,15 @@ def _quota_original(ops, label, argv, timeout=60):
 def quota_admin(request, ops, approval_digest, clock=time.monotonic, deadline_seconds=600):
     """The fixed quota-administration role: set one row's exact headroom and retain the witness.
 
-    Order: read the fixed mount/feature/device originals, read the project record and tree, set the
-    block limit to charged + the row reservation, re-read and require the exact headroom (a
-    concurrent charge refuses), run the fixed over-limit probe as the payload uid (which must be
+    Order: read the fixed mount/feature/device originals, read the project record and tree and require
+    the kernel charge to equal the owned tree census exactly in both directions (a census is not
+    enforcement), set the block limit to charged + the row reservation, re-read and require the exact
+    headroom (a concurrent charge refuses), run the fixed over-limit probe as the payload uid (which must be
     refused with EDQUOT at the row ceiling, so a genuine enforcement observation exists rather than
-    a format bit), then re-read the charge and tree and require both unchanged and the probe file
-    gone. The witness is the retained originals plus the setter and enforcement receipts; a caller
-    label is never enforcement, and a missing or inconsistent original refuses before any limit is
-    set.
+    a format bit), then re-read the charge and tree and require both unchanged, the census equality
+    still exact and the probe file gone. The witness is the retained originals plus the setter and
+    enforcement receipts; a caller label is never enforcement, and a missing or inconsistent original
+    refuses before any limit is set.
     """
     row, nonce, boot = validate_quota_request(request)
     reservation = quota_row_reservation(row)
@@ -834,6 +835,9 @@ def quota_admin(request, ops, approval_digest, clock=time.monotonic, deadline_se
         raise Refusal('tree original is from another boot or stage root')
     if charge['charged_bytes'] < tree_bytes:
         raise Refusal('kernel charge is below the tree bytes; accounting does not cover the tree')
+    if charge['charged_bytes'] > tree_bytes:
+        raise Refusal('kernel charge %d exceeds the owned tree census %d bytes; unowned allocation is '
+                      'charged to the project' % (charge['charged_bytes'], tree_bytes))
     record = quota_limit_record(charge['charged_bytes'], reservation)
     total = record.bhard * QB_UNIT_BYTES
     rc, err = ops.quotactl(Q_SETQUOTA, QUOTA_DEVICE, QUOTA_PROJECT, ctypes.byref(record))
@@ -858,8 +862,13 @@ def quota_admin(request, ops, approval_digest, clock=time.monotonic, deadline_se
     if final['hard_bytes'] != total or final['charged_bytes'] != charge['charged_bytes']:
         raise Refusal('the enforcement probe changed the project charge; the bound is unproven')
     tree_final = _original(tree_original(ops, QUOTA_ROOT, boot))
-    if set(tree_charge({**texts, 'tree': tree_final['text']})[1]) != set(entries_before):
+    entries_final, tree_bytes_final = tree_charge({**texts, 'tree': tree_final['text']})[1:]
+    if set(entries_final) != set(entries_before):
         raise Refusal('the enforcement probe left an object in the stage tree')
+    if final['charged_bytes'] != tree_bytes_final:
+        raise Refusal('post-enforcement kernel charge %d does not equal the owned tree census %d bytes; '
+                      'the accounting is not exact'
+                      % (final['charged_bytes'], tree_bytes_final))
     if clock() - started > deadline_seconds:
         raise Refusal('quota administration exceeded its deadline')
     observations = dict(before, **{'quota': release, 'tree': tree_final})
