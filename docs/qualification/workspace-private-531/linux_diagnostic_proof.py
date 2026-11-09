@@ -584,6 +584,38 @@ def execute(request, request_path, request_hash, selector_streams=None):
                 raise stage.Refusal('setup probe program incomplete: ' + str(exc)) from exc
         return result, raw
 
+    def read_only_route(argv, timeout, cap, end):
+        # Only these fixed observation callers enter here. Start/stop/setup never do.
+        route_end = min(end, time.monotonic() + timeout)
+        remaining = cap
+        attempts = []
+        for attempt_number in range(3):
+            result, raw = call(['exec', setup.VM_UUID] + argv,
+                               min(timeout, max(0, route_end - time.monotonic())),
+                               remaining, route_end)
+            streams = result_streams()
+            stderr = streams['stderr']
+            attempts.append({'step': 'step-%03d' % serial,
+                             'disposition': result.get('disposition'),
+                             'waited_exit': result.get('waited_exit'),
+                             'stdout': {'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()},
+                             'stderr': {'bytes': len(stderr), 'sha256': hashlib.sha256(stderr).hexdigest(),
+                                        'text': stderr[:2048].decode('utf-8', 'replace')}})
+            remaining -= len(raw) + len(stderr)
+            # Reuse 818's outcome-shape helper; wrapper drift is never a retry candidate.
+            try:
+                wrapper = re.search(r'(?m)^(?:/bin/)?(?:ba|da)?sh:|(?:-c requires an argument)',
+                                    result.get('stderr_text', ''))
+                retry = not wrapper and classify_transport(result, raw, stderr) == 'unavailable'
+            except stage.Refusal:
+                retry = False
+            if (not retry or attempt_number == 2 or remaining < 1
+                    or route_end - time.monotonic() < guest_probe.MIN_ROUTE_SECONDS):
+                break
+            guard()
+        result['attempts'] = attempts
+        return result, raw
+
     def pause(end, track=True):
         until = min(end, time.monotonic() + PAUSE)
         while time.monotonic() < until:
@@ -731,14 +763,14 @@ def execute(request, request_path, request_hash, selector_streams=None):
             raise stage.Refusal('boot identity before writer routes differs from readiness')
         outcome['boot_binding']['route_window_start'] = boot_id
         writer_bound = guest_probe.observe(
-            lambda argv, limit, cap, end: call(['exec', setup.VM_UUID] + argv, limit, cap, end),
+            read_only_route,
             retain_observation, guard, start_end)
         # The engine-input routes share this boot-complete occurrence, its one boot bracket and
         # its per-route limits: artifact identity pins and packaged launch metadata for the
         # accepted 783 §3.4 route. They observe nothing running, execute no engine binary and
         # contact no daemon; they feed no gate here, and no process ancestry exists in them.
         engine_bound = engine_inputs.observe(
-            lambda argv, limit, cap, end: call(['exec', setup.VM_UUID] + argv, limit, cap, end),
+            read_only_route,
             retain_observation, guard, start_end)
         # The disk-association handoff: the supported CLI configuration read, dispatched through
         # this occurrence's own supervised route (recorded step, inputs, environment, resource

@@ -1008,6 +1008,15 @@ def one_disk_uuids():
             'entry by-uuid %s vda2\nentry by-partuuid %s vda2\n' % (ROOT_UUID, PART_UUID)).encode()
 
 
+def kernel_limits_route(io=''):
+    lines = []
+    for unit in ('system.slice', 'user.slice'):
+        for name in guest_probe.KERNEL_FILES:
+            value = io if name == 'io.max' else '100' if name == 'cpu.weight' else 'max'
+            lines.append('kernel %s %s %s' % (unit, name, 'value ' + value if value else 'empty'))
+    return ('\n'.join(lines) + '\n').encode()
+
+
 def observation_outputs(**overrides):
     """Every fixed read route answered with one reviewed-guest disk and an ext4 root."""
     outputs = {
@@ -1020,6 +1029,7 @@ def observation_outputs(**overrides):
         'device-uuids': (0, one_disk_uuids()),
         'capabilities': (0, capabilities_route()),
         'cgroup-units': (0, cgroup_route()),
+        'cgroup-limits': (0, kernel_limits_route()),
     }
     outputs.update(engine_tests.engine_outputs())
     outputs.update(overrides)
@@ -1355,17 +1365,16 @@ class WriterBoundObservationTests(unittest.TestCase):
         self.assertEqual(facts['filesystem_features']['project_feature'], 'absent')
         self.assertEqual(facts['filesystem_features']['quota_feature'], 'absent')
         self.assertEqual(set(facts['quota_tools'].values()), {'absent'})
-        # The 747 control-group read is complete as bytes but not as facts: CPUWeight is invalid and the
-        # IO properties were never returned, so the observation stays incomplete and says so.
+        # Historical systemd bytes omit IO properties; they remain configuration facts.
         properties = facts['control_groups']['units']['system.slice']['properties']
         self.assertEqual(properties['CPUWeight'], {'status': 'invalid'})
         self.assertEqual(properties['IOReadBandwidthMax'], {'status': 'unobserved'})
-        self.assertFalse(result['complete'])
-        self.assertTrue(result['observation_eligibility'].startswith('incomplete'))
-        self.assertIn('writer-bound observation cgroup-units: system.slice CPUWeight is invalid',
-                      result['findings'])
-        self.assertIn('writer-bound observation cgroup-units: user.slice IOWriteIOPSMax is unobserved',
-                      result['findings'])
+        # The fixture adds today's applied kernel read; no historical evidence is upgraded.
+        self.assertTrue(result['complete'])
+        self.assertEqual(facts['control_groups']['kernel_limits']['system.slice']['io.max'],
+                         {'status': 'none'})
+        self.assertTrue(all(disk['device_class'] == 'guest-loopback'
+                            for disk in facts['additional_disks'] if disk['name'].startswith('loop')))
 
     def test_legacy_selector_accepts_only_the_partition_token(self):
         legacy_partition = block_sysfs([block_record('vda', '254:0', 0, 268435456, VIRTIO + '/block/vda'),
@@ -1931,6 +1940,20 @@ elif args[0] == 'exec':
         (home / 'config.pvs.e13c235b').write_bytes(b'incidental-metadata')
     for name in routes:
         if ('# effigy-linux-observation: ' + name) in script:
+            if name == 'device-uuids' and mode in ('device_retry', 'device_after_marker', 'device_exhausted', 'device_stderr_cap', 'device_window'):
+                counter = root / 'device-attempts'
+                seen = int(counter.read_text()) if counter.exists() else 0
+                counter.write_text(str(seen + 1))
+                if mode == 'device_stderr_cap':
+                    print('x' * 2049, file=sys.stderr); sys.exit(255)
+                if mode == 'device_window':
+                    time.sleep(1.2); sys.exit(255)
+                if mode == 'device_after_marker':
+                    print(routes[name][1].splitlines()[0])
+                    sys.exit(1)
+                if seen == 0 or mode == 'device_exhausted':
+                    print('PrlJob_GetResult: Invalid argument. An invalid argument was passed.', file=sys.stderr)
+                    sys.exit(255)
             code, out = mode_routes.get(mode, {}).get(name, routes[name])
             if mode == 'marker_missing': out = ''.join(out.splitlines(keepends=True)[1:])
             if mode == 'marker_partial': out = out[:-1]
@@ -1972,6 +1995,33 @@ elif args[0] == 'exec':
 '''
 
 
+class KernelLimitTests(unittest.TestCase):
+    def test_fixed_kernel_program(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for unit in ('system.slice', 'user.slice'):
+                (root / unit).mkdir()
+                for name in guest_probe.KERNEL_FILES:
+                    (root / unit / name).write_text('' if name == 'io.max' else '100\n' if name == 'cpu.weight' else 'max\n')
+            script = guest_probe.CGROUP_LIMITS.replace('/sys/fs/cgroup', str(root))
+            run = subprocess.run(['/bin/sh', '-c', script], capture_output=True, timeout=10)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertEqual(guest_probe.parse_cgroup_limits(run.stdout),
+                             guest_probe.parse_cgroup_limits(kernel_limits_route()))
+
+    def test_kernel_grammar(self):
+        for io in ('', '8:0 rbps=max wbps=1024 riops=max wiops=100'):
+            facts = guest_probe.parse_cgroup_limits(kernel_limits_route(io))
+            for unit in facts.values():
+                self.assertEqual(unit['memory.max']['value'], 'max')
+                self.assertEqual(unit['io.max']['status'], 'observed' if io else 'none')
+        for bad in ('8:0 rbps=no', '8:0 rbps=1 rbps=2', '/dev/sda rbps=max', '8:0 other=1'):
+            with self.assertRaises(guest_probe.Bad):
+                guest_probe.parse_cgroup_limits(kernel_limits_route(bad))
+        with self.assertRaises(guest_probe.Bad):
+            guest_probe.parse_cgroup_limits(kernel_limits_route().replace(b'cpu.weight value 100', b'cpu.weight value max'))
+
+
 class EntryTests(unittest.TestCase):
     """The real supervisor primitive (preparation_stage.run_stage) drives a local fake CLI."""
 
@@ -1994,6 +2044,13 @@ class EntryTests(unittest.TestCase):
         ('growth', 0, 1),
         ('never_ready', 1, 1),
         ('transport_retry', 0, 1),
+        ('device_retry', 0, 1),
+        ('device_after_marker', 1, 1),
+        ('device_exhausted', 1, 1),
+        ('device_stderr_cap', 1, 1),
+        ('device_window', 1, 1),
+        ('kernel_limits_finite', 0, 1),
+        ('kernel_limits_malformed', 1, 1),
         ('transport_refused', 1, 1),
         ('transport_error', 1, 1),
         ('transport_817', 0, 1),
@@ -2066,7 +2123,11 @@ class EntryTests(unittest.TestCase):
                                           (SESSION_REFUSAL + b'\n').decode(),
                                       'routes': route_text(),
                                       'mode_routes': {'writer_bound_absent': route_text(ABSENT_ROUTES),
-                                                      'writer_bound_malformed': route_text(MALFORMED_ROUTES)}})
+                                                      'writer_bound_malformed': route_text(MALFORMED_ROUTES),
+                                                      'kernel_limits_finite': route_text(observation_outputs(**{
+                                                          'cgroup-limits': (0, kernel_limits_route('8:0 rbps=max wbps=1024 riops=max wiops=100'))})),
+                                                      'kernel_limits_malformed': route_text(observation_outputs(**{
+                                                          'cgroup-limits': (0, kernel_limits_route('8:0 rbps=broken'))}))}})
         program.chmod(0o700)
         head = '1' * 40
 
@@ -2080,7 +2141,7 @@ class EntryTests(unittest.TestCase):
             (home / 'config.pvs.backup').write_bytes(b'original-backup')
             (home / 'config.pvs.e13c235b').unlink(missing_ok=True)
             for leftover in ('config.pvs.backup.tmp', 'starting-lists', 'boot-reads',
-                             'transport-ready', 'transport-count', 'stop-while-starting'):
+                             'transport-ready', 'transport-count', 'device-attempts', 'stop-while-starting'):
                 (root / leftover).unlink(missing_ok=True)
             log.write_text('')
 
@@ -2283,7 +2344,8 @@ class EntryTests(unittest.TestCase):
                               if route['id'] == 'engine-artifacts')
             self.assertEqual(engine_row['argv'], [str(program), 'exec', proof.setup.VM_UUID]
                              + engine_inputs.route_argv(engine_pin))
-            self.assertEqual(engine_row['timeout'], engine_pin['timeout'])
+            self.assertLessEqual(engine_row['timeout'], engine_pin['timeout'])
+            self.assertGreater(engine_row['timeout'], engine_pin['timeout'] - 1)
             self.assertEqual(engine_row['cap'], guest_probe.MAX_ROUTE_BYTES)
             self.assertIsNotNone(engine_row['monitor'])
             self.assertIs(engine_row['monitor'], reference['monitor'])
@@ -2357,7 +2419,10 @@ class EntryTests(unittest.TestCase):
                     with self.subTest(mode=mode):
                         reset(mode)
                         readiness_bounds.clear()
-                        item = proof.plan(str(evidence), 'fixture%02d' % index, head)
+                        window = (patch.dict(next(r for r in guest_probe.ROUTES if r['id'] == 'device-uuids'),
+                                             timeout=1.1) if mode == 'device_window' else contextlib.nullcontext())
+                        with window:
+                            item = proof.plan(str(evidence), 'fixture%02d' % index, head)
                         item_path = root / ('request-%02d.json' % index)
                         item_raw = json.dumps(item).encode()
                         item_path.write_bytes(item_raw)
@@ -2366,7 +2431,9 @@ class EntryTests(unittest.TestCase):
                         # package file owned by another uid mid-occurrence.
                         injection = (injected_stat('config.pvs.e13c235b', uid=os.geteuid() + 1)
                                      if mode == 'foreign_metadata' else contextlib.nullcontext())
-                        with injection, contextlib.redirect_stdout(io.StringIO()):
+                        window = (patch.dict(next(r for r in guest_probe.ROUTES if r['id'] == 'device-uuids'),
+                                             timeout=1.1) if mode == 'device_window' else contextlib.nullcontext())
+                        with injection, window, contextlib.redirect_stdout(io.StringIO()):
                             self.assertEqual(proof.main(['proof', str(item_path),
                                                          hashlib.sha256(item_raw).hexdigest()]), expected)
                         result = json.loads((evidence / ('linux-diagnostic-fixture%02d' % index)
@@ -2486,6 +2553,31 @@ class EntryTests(unittest.TestCase):
                             return [(path.name, json.loads((path / 'intent.json').read_text())['argv'])
                                     for path in sorted(destination.glob('step-*'))]
 
+                        if mode.startswith('kernel_limits_'):
+                            row = next(r for r in result['guest_writer_bound']['routes'] if r['id'] == 'cgroup-limits')
+                            self.assertEqual(row['status'], 'malformed' if mode.endswith('malformed') else 'observed')
+                            self.assertEqual(len(row['attempts']), 1)
+                            if mode.endswith('finite'):
+                                limits = result['guest_writer_bound']['facts']['control_groups']['kernel_limits']
+                                self.assertEqual(limits['system.slice']['io.max']['devices']['8:0']['wbps'], '1024')
+                                self.assertEqual(limits['user.slice']['memory.max']['value'], 'max')
+                        if mode.startswith('device_'):
+                            attempts = next(row for row in result['guest_writer_bound']['routes']
+                                            if row['id'] == 'device-uuids')['attempts']
+                            self.assertEqual(len(attempts), {'device_retry': 2, 'device_after_marker': 1,
+                                                            'device_exhausted': 3, 'device_stderr_cap': 1, 'device_window': 1}[mode])
+                            for attempt in attempts:
+                                intent = json.loads((destination / attempt['step'] / 'intent.json').read_text())
+                                self.assertLessEqual(intent['timeout_seconds'], 20)
+                                self.assertLessEqual(intent['output_cap_bytes_each'], guest_probe.MAX_ROUTE_BYTES)
+                            if len(attempts) > 1:
+                                intents = [json.loads((destination / a['step'] / 'intent.json').read_text()) for a in attempts]
+                                self.assertEqual(len({i['deadline_monotonic'] for i in intents}), 1)
+                                self.assertLess(intents[1]['output_cap_bytes_each'], intents[0]['output_cap_bytes_each'])
+                            self.assertTrue(all('step' in row and 'sha256' in row['stderr'] for row in attempts))
+                            if mode == 'device_retry':
+                                self.assertEqual(result['guest_writer_bound']['facts']['root_uuids']['status'], 'observed')
+                                self.assertTrue(result['guest_writer_bound']['complete'])
                         if mode in ('transport_retry', 'transport_817'):
                             # Retained boot-time failures, then sentinel and same-boot routes.
                             # All echoes, systemd and the first boot read use one absolute end.

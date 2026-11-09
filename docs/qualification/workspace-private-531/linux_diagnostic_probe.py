@@ -316,6 +316,61 @@ for u in system.slice user.slice; do
 done
 '''
 
+CGROUP_LIMITS = '''# effigy-linux-observation: cgroup-limits
+for u in system.slice user.slice; do
+  for f in io.max memory.max memory.high memory.swap.max pids.max cpu.weight; do
+    p=/sys/fs/cgroup/$u/$f
+    v=$(cat "$p" 2>/dev/null) || { printf 'kernel %s %s unreadable\\n' "$u" "$f"; continue; }
+    if [ -z "$v" ]; then printf 'kernel %s %s empty\\n' "$u" "$f"; continue; fi
+    printf '%s\\n' "$v" | while IFS= read -r l; do printf 'kernel %s %s value %s\\n' "$u" "$f" "$l"; done
+  done
+done
+'''
+
+KERNEL_FILES = ('io.max', 'memory.max', 'memory.high', 'memory.swap.max', 'pids.max', 'cpu.weight')
+
+
+def parse_cgroup_limits(raw):
+    limits = {unit: {} for unit in ('system.slice', 'user.slice')}
+    for row in _decode(raw):
+        if (len(row) < 4 or row[0] != 'kernel' or row[1] not in limits
+                or row[2] not in KERNEL_FILES):
+            raise Bad(MALFORMED, 'invalid kernel limit record')
+        unit, name, state = row[1:4]
+        record = limits[unit].get(name)
+        if state in ('empty', 'unreadable') and len(row) == 4 and record is None:
+            limits[unit][name] = {'status': 'none' if name == 'io.max' and state == 'empty' else state}
+        elif state == 'value' and name == 'io.max' and len(row) >= 6:
+            if not MAJMIN.fullmatch(row[4]):
+                raise Bad(MALFORMED, 'invalid io.max device')
+            values = {}
+            for pair in row[5:]:
+                key, sep, value = pair.partition('=')
+                if (not sep or key not in ('rbps', 'wbps', 'riops', 'wiops') or key in values
+                        or not re.fullmatch(r'max|[0-9]{1,20}', value)):
+                    raise Bad(MALFORMED, 'invalid io.max limit')
+                values[key] = value
+            if set(values) != {'rbps', 'wbps', 'riops', 'wiops'}:
+                raise Bad(MALFORMED, 'incomplete io.max read')
+            record = limits[unit].setdefault(name, {'status': 'observed', 'devices': {}})
+            if record['status'] != 'observed' or row[4] in record['devices']:
+                raise Bad(MALFORMED, 'duplicate or mixed io.max record')
+            record['devices'][row[4]] = values
+        elif state == 'value' and name != 'io.max' and len(row) == 5 and record is None:
+            value = row[4]
+            if not re.fullmatch(r'max|[0-9]{1,20}', value):
+                raise Bad(MALFORMED, 'invalid scalar kernel limit')
+            if name == 'cpu.weight' and (value == 'max' or not 0 <= int(value) <= 10000):
+                raise Bad(MALFORMED, 'invalid cpu.weight')
+            limits[unit][name] = {'status': 'observed', 'value': value}
+        else:
+            raise Bad(MALFORMED, 'duplicate or malformed kernel limit')
+    for files in limits.values():
+        for name in KERNEL_FILES:
+            files.setdefault(name, {'status': 'unobserved'})
+    return limits
+
+
 ROUTES = (
     {'id': 'block-sysfs', 'script': BLOCK_SYSFS, 'timeout': 20},
     {'id': 'block-lsblk', 'script': BLOCK_LSBLK, 'timeout': 20},
@@ -324,6 +379,7 @@ ROUTES = (
     {'id': 'device-uuids', 'script': DEVICE_UUIDS, 'timeout': 20},
     {'id': 'capabilities', 'script': CAPABILITIES, 'timeout': 30},
     {'id': 'cgroup-units', 'script': CGROUP_UNITS, 'timeout': 30},
+    {'id': 'cgroup-limits', 'script': CGROUP_LIMITS, 'timeout': 15},
 )
 
 # Removing standalone explanatory comments/indentation changes no shell tokens.
@@ -918,7 +974,8 @@ def parse_cgroup_units(raw):
 
 PARSERS = {'block-sysfs': parse_block_sysfs, 'block-lsblk': parse_lsblk, 'mountinfo': parse_mountinfo,
            'filesystem': parse_filesystem, 'device-uuids': parse_device_uuids,
-           'capabilities': parse_capabilities, 'cgroup-units': parse_cgroup_units}
+           'capabilities': parse_capabilities, 'cgroup-units': parse_cgroup_units,
+           'cgroup-limits': parse_cgroup_limits}
 
 
 # ----------------------------------------------------------------- per-read supervision
@@ -1015,7 +1072,8 @@ def observe(run, retain, guard, deadline, budget=BUDGET_SECONDS, legacy_partitio
         if retained_error is not None:
             status, reasons = FAILED, reasons + [retained_error]
         row.update(status=status, exit=result.get('waited_exit'), disposition=result.get('disposition'),
-                   reasons=reasons, facts=facts, original=original, sha256=sha, bytes=len(raw))
+                   reasons=reasons, facts=facts, original=original, sha256=sha, bytes=len(raw),
+                   attempts=result.get('attempts', []))
         rows.append(row)
     guard()
     return summarize(rows)
@@ -1145,6 +1203,9 @@ def correlate(rows):
     root = _root_facts(mounts, filesystem, block, status_of(rows, 'block-sysfs'))
     disks, partitions = _disk_facts(block)
     ancestry = set(root.get('ancestry', []))
+    for disk in disks:
+        disk['device_class'] = ('guest-loopback' if re.fullmatch(r'loop[0-9]+', disk['name'])
+                                and disk.get('controller_kind') == 'virtual' else 'block-device')
     additional_disks = [disk for disk in disks if disk['name'] not in ancestry]
     additional_partitions = [part for part in partitions if part['name'] not in ancestry]
     entries = uuids.get('entries', {})
@@ -1182,7 +1243,8 @@ def correlate(rows):
                                'invocation succeeded with the tool banner'),
         'control_groups': {'status': 'observed' if groups else 'unknown',
                            'files': groups.get('files', {}), 'units': groups.get('units', {}),
-                           'unit_observation': groups.get('unit_observation')},
+                           'unit_observation': groups.get('unit_observation'),
+                           'kernel_limits': facts_of(rows, 'cgroup-limits')},
     }
 
 
@@ -1197,12 +1259,12 @@ def summarize(rows):
         if row['status'] in INCOMPLETE:
             detail = '; '.join(row['reasons']) or 'no reason recorded'
             findings.append('writer-bound observation %s: %s (%s)' % (row['id'], row['status'], detail))
-    # A property the read did not return, or returned unusable, stays a visible finding: the complete
-    # flag never reads as eligible while a cgroup limit is unknown or invalid.
-    for unit, record in facts.get('control_groups', {}).get('units', {}).items():
-        for key, prop in record.get('properties', {}).items():
-            if prop['status'] in ('invalid', 'unobserved'):
-                findings.append('writer-bound observation cgroup-units: %s %s is %s' % (unit, key, prop['status']))
+    kernel = facts.get('control_groups', {}).get('kernel_limits', {})
+    for unit in ('system.slice', 'user.slice'):
+        for name in KERNEL_FILES:
+            status = kernel.get(unit, {}).get(name, {}).get('status', 'unobserved')
+            if status not in ('observed', 'none'):
+                findings.append('writer-bound observation cgroup-limits: %s %s is %s' % (unit, name, status))
     agreement = facts.get('inventory_agreement', {})
     if agreement.get('status') == 'differs':
         findings.append('writer-bound observation: block inventories differ (' +
