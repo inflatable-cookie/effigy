@@ -29,11 +29,11 @@ def unique_object(pairs):
 
 
 # D1 is reached only through a window request, which names the original D0 receipt it consumes.
-# D2 is the same form, naming the original D1 receipt (which already binds the D0 chain).
-# C1, C2, C3 and C4 are plain proof requests only: their window recipes are not reviewed (window_recipe refuses them).
-PROOF_STAGES = ('C0', 'D0', 'D1', 'C1', 'C2', 'C3', 'C4', 'D2')
-WINDOW_PRIOR = {'D1': 'D0', 'D2': 'D1'}
-PROOF_STAGE_NAMES = 'C0, D0, D1, C1, C2, C3, C4 or D2'
+# D2, D3 and D4 are the same form, naming the original D1, D2 and D3 receipt they consume (each binds the chain below).
+# C1 to C6 are plain proof requests only: their window recipes are not reviewed (window_recipe refuses them).
+PROOF_STAGES = ('C0', 'D0', 'D1', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'D2', 'D3', 'D4')
+WINDOW_PRIOR = {'D1': 'D0', 'D2': 'D1', 'D3': 'D2', 'D4': 'D3'}
+PROOF_STAGE_NAMES = 'C0, D0, D1, C1, C2, C3, C4, C5, C6, D2, D3 or D4'
 PROOF_STAGE_REFUSAL = 'proof entry supports only ' + PROOF_STAGE_NAMES
 
 DESKTOP_DISK = '/Users/tom/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw'
@@ -411,7 +411,7 @@ def checked_prior(ref, bindings, manifest, expected_stage='D0'):
 
 def window_recipe(stage_id, bindings, options):
     """Prospective request. Directory identities must be captured after provisioning."""
-    if stage_id in ('C1', 'C2', 'C3', 'C4'):
+    if stage_id in ('C1', 'C2', 'C3', 'C4', 'C5', 'C6'):
         raise executor.Refusal(f'{stage_id} has no window recipe: it runs only as a plain proof request')
     base_options = {'activation_id', 'duration_seconds', 'evidence_root'}
     prior_stage = WINDOW_PRIOR.get(stage_id)
@@ -433,7 +433,7 @@ def window_recipe(stage_id, bindings, options):
         raise executor.Refusal('evidence root must be canonical under scratch')
     roots = [executor.ACTIVATIONS_DIR, executor.CLAIMS_DIR, evidence,
              os.path.dirname(bindings['control']) if stage_id == 'C0' else bindings['control']]
-    if stage_id in ('D1', 'D2'):  # the Docker directories the original D0 chain created are pinned by identity
+    if stage_id in ('D1', 'D2', 'D3', 'D4'):  # the Docker directories the original D0 chain created are pinned by identity
         roots += [bindings['desktop_config'], bindings['desktop_context_dir']]
     if len(set(roots)) != len(roots):
         raise executor.Refusal('root alias')
@@ -444,9 +444,11 @@ def window_recipe(stage_id, bindings, options):
         except FileNotFoundError:
             observed[root] = None  # Explicit provisioning precondition; execution refuses it.
     # D0 creates these paths exclusively; their approved identity is absence. D2 creates desktop_input_dir.
+    # D3's cidfile is written fresh by its run, so an existing one is a collision, not an adopted receipt.
     absent_paths = ([os.path.dirname(bindings['desktop_config']), bindings['desktop_config'],
                      bindings['desktop_context_dir']] if stage_id == 'D0'
-                    else [bindings['desktop_input_dir']] if stage_id == 'D2' else [])
+                    else sorted(executor.d2_occurrence(bindings, activation_id).values()) if stage_id == 'D2'
+                    else [bindings['desktop_cidfile']] if stage_id == 'D3' else [])
     return dict(schema='macos-stage-window-v1', stage=stage_id, bindings=bindings,
                 bindings_sha256=executor.canon_sha(bindings), inputs=identity['inputs'],
                 inputs_sha256=identity['inputs_sha256'], manifest_sha256=identity['manifest_sha256'],

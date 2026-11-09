@@ -146,8 +146,8 @@ create prints it, and the receipt is the inspect of that printed name with this 
 re-observes the engine and each exact target before its own removal, compares it with the receipt that
 produced the target, and includes the complete image inventory in the before and after foreign lists.
 The contract is source-qualified by controlled transports. Native execution remains under a separate
-owner GO and a Nucleus proof-only launch. D2 and D3 remain held, so D4 is not admitted. Details are in the
-D1, D4 and Executor sections below.
+owner GO and a Nucleus proof-only launch. Native execution of D2 through D4 stays under its own GO; the source
+admission state is in the Desktop and proof-entry sections below.
 
 The D1 window request names the original D0 receipt (`prior_receipt`, exact path and sha256). It verifies
 that receipt's complete chain at plan time and at launch. It also pins the control root and the two Docker
@@ -290,24 +290,51 @@ Colima (`colima`):
   `runtime.Dockerfile` on stdin. Storage cap 1 MiB.
 - **C4** runtime inputs, verify and build, 1200 s stage, 120 s reserve (r9). Steps: render the verify
   spec, make `{colima_input_dir}`, prefetch the pinned OCI blobs and 22 debs into it, render the transfer
-  spec, write the framed stream, transfer it through the fixed guest helper (105 s guest deadline + 5 s grace
-  inside a 140 s host envelope), check the guest transfer receipt, verify the C3 context, re-derive the inputs
+  spec, write the framed stream, transfer it through the fixed guest helper (90 s guest deadline + 5 s grace
+  inside a 125 s host envelope), check the guest transfer receipt, verify the C3 context, re-derive the inputs
   on the guest and check that receipt, `nerdctl build --help` and its flag check, then one local-path build:
-  `timeout -k 5 540 sudo -n env DOCKER_CONFIG={guest_context}/docker-config nerdctl build
+  `timeout -k 5 530 sudo -n env DOCKER_CONFIG={guest_context}/docker-config nerdctl build
   --platform linux/arm64 --provenance=mode=max --iidfile {guest_iidfile} --tag
   effigy-4f6a-runtime:r1 --network none --build-context ubuntu=oci-layout://{guest_context}.oci
-  --build-context debs={guest_context}.debs {guest_context}`. Host command envelope 600 s; the guest deadline
-  is 540 s plus a 5 s kill grace, leaving 55 s of host receipt margin. Then the iidfile is
+  --build-context debs={guest_context}.debs {guest_context}`. Host command envelope 590 s; the guest deadline
+  is 530 s plus a 5 s kill grace, leaving 55 s of host receipt margin. Then the iidfile is
   read and checked as a `sha256:` ID, and `sudo -n nerdctl image inspect {image_id}` is
   checked for linux/arm64. The tag is never used after the build. Every remote command runs through the
   fixed guest helper and its receipt carries the argv that ran. Download cap 38409328 bytes (the pinned
   OCI/deb set); storage cap 4 GiB; sources: the four Hub OCI URLs and the 22 `ports.ubuntu.com` deb URLs.
-  Step total 1075 s inside the 1080 s budget.
-- **C5** one disposable check, 360 s stage: `timeout -k 5 200 sudo -n nerdctl run --pull=never
-  --rm --network none --name effigy-4f6a-check-{token} {image_id} python3 -I -c {check_source}`.
-  Host envelope 240 s, so 35 s of receipt margin. The check raises an in-container alarm at
-  120 s. `check_runtime_facts` passes only with exit 0 and uid 0, Python 3, OpenSSL, a GNU C
-  library loader and coreutils. C5 needs C4's closure and identity.
+  Guarded windows, each with a 5 s kill grace: transfer 90 s in 125 s, pre-build re-derivation 35 s in 70 s, build
+  530 s in 590 s. The three small remote steps (build help, iidfile read, image inspect) run a 17 s guard with a 2 s
+  grace in their 20 s allowance, so the receipt margin is kept. Step total 1075 s inside the 1080 s budget.
+- **C5** one disposable check, 360 s stage, 60 s reserve (r10). Eleven steps, all guest steps through the fixed
+  guest helper over the colima ssh route, and host-side facts checks. In order:
+  `c5-guest-nerdctl-version` runs `nerdctl --version` (8 s, 2 s grace inside it) and `c5-check-nerdctl-version`
+  requires exactly the source-qualified `nerdctl version 2.3.1`; otherwise nothing runs. `c5-disposable-check` runs
+  `timeout -k 5 200 sudo -n nerdctl run --pull=never --network none --cidfile {guest_check_cid} --name
+  effigy-4f6a-check-{token} {image_id} python3 -I -c {check_source}` (no `--rm`: the container stays for inspection;
+  200 s guest deadline in a 240 s host envelope). `c5-check-facts` passes only with exit 0 and uid 0, Python 3,
+  OpenSSL, a GNU C library loader and coreutils. `c5-read-check-cid` reads `{guest_check_cid}`, one full container
+  ID. `c5-container-inspect` (`sudo -n nerdctl container inspect {check_container_id}`) and `c5-check-inspect` require
+  one object whose `Id` is that ID, whose `Image` is the predecessor image, and whose `State` is `exited` with
+  `ExitCode` 0. `c5-container-rm` removes that exact ID (`sudo -n nerdctl container rm {check_container_id}`, never
+  forced) and `c5-container-list` (`sudo -n nerdctl container ls --all --no-trunc --quiet`) with `c5-check-absent`
+  requires the ID to be absent from every full ID listed. Step total 293 s inside the 300 s budget after the reserve.
+  Each guarded step's host allowance contains its guard, grace and a 1 s receipt margin, and dispatch refuses when the
+  remaining allowance cannot contain the guard and grace.
+  `{guest_check_cid}` is the C4 verify spec's context with `.check.cid` appended, read back from the C4 receipt's own
+  spec file, whose sha256 the C4 helper recorded; the context must name this chain's token32.
+  Closure: a local ssh exit alone closes nothing. Every guest step needs its authenticated helper envelope closed
+  with waited exit 0 and the reviewed command. A nonzero exit, a deadline, an unknown closure, a version other than
+  2.3.1, a container that is not exited with exit 0 or not from the predecessor image, a replaced container ID, a
+  removal that fails, or a listing that still carries the ID stops later effects. The cidfile, the container and its
+  residue are retained, and nothing is removed by name or pattern.
+  Source qualification (nerdctl v2.3.1 source; the guest's own nerdctl version is observed at run time, not assumed):
+  `nerdctl run` waits in `runAction` and returns the container's exit status. `--cidfile` is written during `Create`,
+  before the container is created, and an existing file is refused (stat then create, not an exclusive create).
+  `container rm` refuses a running container without force (`container %s is in %v status`), so the exited check
+  container is removed without force. The inspect fields are `Id`, `Image` and `State.Status`/`State.ExitCode`. The
+  `Image` field's content is not established as an image ID from source, so a mismatch fails closed and that is owed
+  as a native fact. The `id` filter's exact matching was not verified, so the listing is tested for exact membership.
+  Owed native facts: the guest's own nerdctl version, the `Image` field form, and the actual lifecycle on the guest.
 - **C6** observe only: `colima list --json`. No stop. A running VM is retained until a
   separate GO covers a stop.
 
@@ -320,8 +347,11 @@ Desktop (`desktop`), with the pinned env above:
   label observation (`volume ls --filter label=effigy.qual=<token>`) must be empty. After it, `volume inspect`
   of that exact printed name must carry the same name and this occurrence's label. Both streams are retained.
   Not a receipt unless the inspect closed. Window 300 s, reserve 60 s, storage cap 1 MiB, download 0.
-- **D2** runtime image, 1200 s stage, 120 s reserve. Steps: engine info, make `{desktop_input_dir}`,
-  prefetch the pinned OCI blobs and 22 debs into that directory, stage the Dockerfile, then
+- **D2** runtime image, 1200 s stage, 120 s reserve. Steps: engine info, the Buildx link (`link_buildx_plugin`, before any fetch), the plugin's own metadata
+  command through the owned link (`d2-buildx-metadata`, `docker-cli-plugin-metadata`, env as the Docker route, 10 s),
+  the metadata check (schema 0.1.0, vendor `Docker Inc.`, version `v0.37.1`), make this occurrence's input directory
+  `{desktop_input_dir}` and build context `{desktop_context_dir}` (both fresh, below), prefetch the pinned OCI blobs
+  and 22 debs into the input directory, stage the Dockerfile, a custody check of the same link and bytes, then
   `docker build --platform linux/arm64 --provenance=false --label effigy.qual=<token> --tag
   effigy-4f6a-desktop-runtime:<token> --iidfile {desktop_iidfile} --network none
   --build-context ubuntu=oci-layout://{desktop_input_dir}/oci
@@ -331,9 +361,27 @@ Desktop (`desktop`), with the pinned env above:
   Build host envelope 840 s, and a kill or timeout is Unknown. Then the iidfile is read, and
   `docker image inspect {image_id}` is checked for linux/arm64 and the occurrence label.
   Download cap 38409328 bytes; storage cap 2 GiB. Sources: the four Hub OCI URLs and the 22
-  `https://ports.ubuntu.com/ubuntu-ports/...` deb URLs. Step total 1060 s inside the 1080 s
-  budget. The proof-entry window names the original D1 receipt and requires `desktop_input_dir`
+  `https://ports.ubuntu.com/ubuntu-ports/...` deb URLs. Step total 1074 s inside the 1080 s
+  budget. The proof-entry window names the original D1 receipt and requires this occurrence's three destinations
   absent.
+  **Buildx route and fresh occurrence (planner amendment for effigy#770).** The failed occurrence ran
+  `docker build --provenance=false` with the private config's `ClientInfo.Plugins=[]`. Buildx was not discovered, the
+  CLI fell back to the legacy builder, and it rejected `--provenance` (exit 125), so there was no image. The route now
+  links the pinned plugin into the owned private config. `link_buildx_plugin` requires Docker Desktop bundle version
+  4.92.0 (`CFBundleShortVersionString`) and the Desktop `docker-buildx` sha256
+  `a8638d2188cfd8bdfce7c1be2ce16aeeaf02c57b51443e9860799de5cf5ee105`, then creates one new `{desktop_config}/cli-plugins`
+  directory whose only entry is a symlink to that plugin. A missing, changed or other plugin, or an existing link,
+  refuses before any fetch. Nothing is read from a global config, and no legacy fallback is reachable from this stage.
+  The plugin's metadata command is the one Docker's discovery uses before it accepts a candidate (docker/cli
+  `cli-plugins/manager`: symlinks in `$DOCKER_CONFIG/cli-plugins` are accepted, and a candidate whose metadata is
+  invalid is not found). The buildx `main` runs `NewDockerCli` first; that source step is source-established only for
+  the metadata path, and the native run is owed. The plugin's bytes are part of the stable input set, so every launch
+  re-hashes them, and the custody check repeats the link and bytes before the build. Host-only helper steps in D2 are
+  5 s or less; every native exec clock is unchanged. Each activation's D2 outputs are fresh siblings of
+  the original paths, derived from the verified activation by `d2_occurrence`: `{desktop_input_dir}-<suffix>`,
+  `{desktop_context_dir}-<suffix>` (created by `d2-make-context-dir`) and `{desktop_iidfile}-<suffix>`. The original
+  D0/D1 paths and every earlier payload, recipe, claim and receipt stay in place and are never deleted, reset or
+  adopted.
 - **D3** disposable check: `docker run --pull=never --rm --network none --label
   effigy.qual=<token> --name effigy-4f6a-dcheck-<token> --cidfile {desktop_cidfile}
   {image_id} python3 -I -c {check_source}`, host envelope 240 s. The cidfile is read as
@@ -453,7 +501,8 @@ The prospective `plan-ready BINDINGS OPTIONS` request binds the original D0 rece
 directory identities, the expected engine, the exact installed Desktop bundle and launcher, the
 source-reviewed Docker CLI, and the freshly observed identity of the existing `Docker.raw`. It
 composes a readiness prefix with the existing D1 window. The proof launch has one monotonic deadline
-of at most 900 seconds, including the 60-second reserve; readiness has at most 600 seconds and D1
+of at most 900 seconds, including the 60-second reserve; the selector clock is 1380 seconds, the largest proof stage
+(C4 and D2, 1200 seconds including the reserve) plus 180 seconds of process margin, and no stage clock changed; readiness has at most 600 seconds and D1
 has at most 300 seconds or the remaining allowance. The readiness and app-start claims are distinct
 from D1's claims. A spent or uncertain claim is not replayable. The original D1 creation and
 inspection receipt still determines whether a volume is attributable.
@@ -570,7 +619,7 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
   - D2: admitted statically (r8 / 756). Its fetches are the pinned Ubuntu 22.04 arm64 OCI blobs and 22 offline debs,
     hashed with exact size, then a `--network none` docker build from local `--build-context` oci-layout and debs.
     Ordinary execution still refuses at the owner mechanism; its proof-only window names the original D1 receipt
-    and requires `desktop_input_dir` absent.
+    and requires this activation's three occurrence destinations absent.
   - C4: admitted (r9). It fetches the same pinned OCI/deb set D2 fetches into `{colima_input_dir}`, frames it
     as one fixed finite transfer, streams it to the guest through the fixed helper, re-derives the guest layout
     twice (on receive and immediately before the build), and runs every remote command through the same helper.
@@ -582,11 +631,11 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
     Ordinary execution still refuses. Plain proof request only; no window recipe.
   - D1 is statically admitted (r4). Its ordinary execution still refuses at the owner mechanism; its
     proof-only window names the original D0 receipt (see Executor).
-  - D3 and D4: statically admitted through predecessor D2. They are not in the proof entry. Native
-    execution still needs a separate GO.
-  - C5 and C6: unadmitted. C5's remote `nerdctl run` and its guest observations are still manifest exec steps
-    the local ssh client carries, so its guest closure is unknown; C6 inherits that predecessor reason. Routing
-    them through the fixed helper is not part of the C4 transfer work.
+  - D3 and D4: in the proof entry as windows. D3 names the original D2 receipt and requires its cidfile absent;
+    D4 names the original D3 receipt, selects only receipted full IDs on this engine, and refuses a predecessor that
+    did not close, so a failed predecessor cannot trigger cleanup. Native execution still needs a separate GO.
+  - C5 and C6: admitted (r10). C5's check, cidfile read and container listing are fixed guest-helper operations
+    (see C5). C6 follows C5. Both are plain proof requests only, with no window recipe.
 - **C0 (fresh tokens).** Its handlers are `verify_tool_sha` (the live colima and docker binaries
   against the sha256 the pinned 688 C0 record names) and `verify_tranche_summary` (the tranche
   summary against the sha the same record names). C0 creates its own roots under the scratch root
