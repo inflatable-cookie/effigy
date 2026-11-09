@@ -9,9 +9,11 @@ import ctypes
 import hashlib
 import os
 import shutil
+import struct
 import sys
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
@@ -37,7 +39,7 @@ ENTRIES = (
     ('inputs/archive.tar', 'reg', '8:2', UID, 531, 1, 65536),
 )
 CHARGED = 34 << 20
-HARD = 1 << 30
+HARD = CHARGED + LIMIT
 
 
 def facts(**over):
@@ -67,7 +69,8 @@ def render(mount_dev='8:2', mount_fs='ext4', mount_source='/dev/sda2', mount_opt
             'bhard_qb=%d bsoft_qb=0 curspace_bytes=%d valid=%d' % (hard_qb, charged, valid)]) + '\n',
         'tree': '\n'.join(['boot_id=%s' % tree_boot, 'root=%s' % tree_root, 'project_id=%d' % tree_project] +
                           ['entry path=%s type=%s dev=%s ino=%d uid=%d gid=0 mode=700 nlink=%d projid=%d '
-                           'blocks512=%d size=0' % (p, k, d, 10 + i, u, n, pr, b)
+                           'xflags=%d blocks512=%d size=0' % (p, k, d, 10 + i, u, n, pr,
+                                                          probe.FS_XFLAG_PROJINHERIT if k == 'dir' else 0, b)
                            for i, (p, k, d, u, pr, n, b) in enumerate(entries)]) + '\n',
     }
     return {'mechanism': MECH, 'observations': {r: original(texts[r]) for r in bound.ROUTES}}
@@ -88,11 +91,134 @@ class VerifierChecks(unittest.TestCase):
     def verify(self, witness=None, limit=LIMIT, fx=None):
         return bound.verify(witness if witness is not None else render(), limit, fx or facts(), {MECH})
 
-    def test_valid_kernel_bounded_witness_admits_with_remaining_headroom(self):
-        result = self.verify()
-        self.assertEqual(result['limit_bytes'], LIMIT)
-        self.assertEqual(result['remaining_after_bytes'], HARD - CHARGED - LIMIT)
-        self.assertEqual(result['entries'], 3)
+    def test_candidate_request_is_exact_and_never_supplies_device_or_limit(self):
+        good = {'row': 'E8', 'nonce': 'a' * 64, 'boot_id': '12345678-1234-1234-1234-123456789abc'}
+        self.assertEqual(bound.validate_candidate_request(good), good)
+        bad = (dict(good, row='E19.0'), dict(good, nonce='bad'), dict(good, boot_id='unknown'),
+               dict(good, device=bound.ROOT_DEVICE), dict(good, project=bound.PROJECT_ID),
+               dict(good, limit=LIMIT), {'row': 'E8'})
+        for request in bad:
+            with self.subTest(request=request), self.assertRaises(Refusal):
+                bound.validate_candidate_request(request)
+
+    def test_offline_versions_require_both_original_streams_and_waited_success(self):
+        def item(stdout, stderr, exit=0):
+            return {'stdout': stdout, 'stderr': stderr, 'exit': exit,
+                    'stdout_sha256': hashlib.sha256(stdout.encode()).hexdigest(),
+                    'stderr_sha256': hashlib.sha256(stderr.encode()).hexdigest()}
+        tune = item('tune2fs 1.47.2 (1-Jan-2025)\nFilesystem UUID: x\n', '')
+        check = item('', 'e2fsck 1.47.2 (1-Jan-2025)\nUsing EXT2FS Library\n')
+        originals = {'tune2fs': tune, 'e2fsck': check}
+        self.assertEqual(bound.offline_version_plan(), {'tune2fs': ['/sbin/tune2fs', '-l', '/dev/sda2'],
+                                                       'e2fsck': ['/sbin/e2fsck', '-V']})
+        self.assertEqual(bound.inspect_offline_versions(originals), {'e2fsprogs_version': '1.47.2'})
+        invalid = ({'tune2fs': tune}, dict(originals, e2fsck=item('', '', exit=0)),
+                   dict(originals, tune2fs=item('tune2fs 1.47.1 (date)\n', '')),
+                   dict(originals, e2fsck=item('', 'e2fsck 1.47.2 (date)\n', exit=False)),
+                   dict(originals, e2fsck=dict(check, stderr_sha256='0' * 64)),
+                   dict(originals, tune2fs=item('tune2fs 1.47.2 (date)\n', 'x' * (128 * 1024 + 1))))
+        for values in invalid:
+            with self.subTest(values=str(values)[:120]), self.assertRaises(Refusal):
+                bound.inspect_offline_versions(values)
+
+    def test_offline_steps_refuse_interruption_changed_commands_and_unknown_exits(self):
+        boot = '12345678-1234-1234-1234-123456789abc'
+        empty_hash = hashlib.sha256(b'').hexdigest()
+        plan = bound.offline_operation_plan()
+        records = [{'name': name, 'argv': argv, 'boot_id': boot, 'stdout': '', 'stderr': '',
+                    'stdout_sha256': empty_hash, 'stderr_sha256': empty_hash, 'exit': 0}
+                   for name, argv in plan]
+        names = [name for name, _ in plan]
+        for count in range(len(plan) + 1):
+            expected = names[count] if count < len(names) else None
+            self.assertEqual(bound.inspect_offline_progress(boot, names[:count], records[:count]),
+                             {'next': expected})
+        for count in range(1, len(plan) + 1):
+            with self.subTest(interrupted=names[count - 1]), self.assertRaises(Refusal):
+                bound.inspect_offline_progress(boot, names[:count], records[:count - 1])
+        cases = (dict(records[0], exit=None), dict(records[0], exit=1), dict(records[0], exit=False),
+                 dict(records[0], boot_id='00000000-0000-0000-0000-000000000000'),
+                 dict(records[0], argv=['/sbin/e2fsck', '-y', bound.ROOT_DEVICE]),
+                 dict(records[0], stdout='tampered'))
+        for record in cases:
+            with self.subTest(record=record), self.assertRaises(Refusal):
+                bound.inspect_offline_progress(boot, names[:1], [record])
+        with self.assertRaises(Refusal):
+            bound.inspect_offline_progress(boot, names[1:2], records[1:2])
+        with self.assertRaises(Refusal):
+            bound.inspect_offline_progress('unknown', [], [])
+
+    def test_offline_superblock_candidate_refuses_foreign_dirty_or_nonempty_prestate(self):
+        raw = bytearray(1024)
+        struct.pack_into('<H', raw, 0x38, 0xef53)
+        struct.pack_into('<H', raw, 0x3a, 1)
+        struct.pack_into('<H', raw, 0x58, 256)
+        raw[0x68:0x78] = uuid.UUID(bound.ROOT_UUID).bytes
+        self.assertTrue(bound.inspect_candidate_superblock(bytes(raw))['stored_mount_options_empty'])
+        mutations = ((0x38, b'\0\0'), (0x3a, b'\0\0'), (0x58, b'\x80\0'),
+                     (0x60, b'\x04'), (0x64, b'\x00\x01'), (0x65, b'\x20'),
+                     (0x68, b'\0'), (0x200, b'p'), (0x23f, b'x'), (0x26c, b'\x01'))
+        for offset, value in mutations:
+            changed = bytearray(raw)
+            changed[offset:offset + len(value)] = value
+            with self.subTest(offset=offset), self.assertRaises(Refusal):
+                bound.inspect_candidate_superblock(bytes(changed))
+        with self.assertRaises(Refusal):
+            bound.inspect_candidate_superblock(bytes(raw[:-1]))
+
+    def test_fixed_row_limit_reservation_is_bounded_and_not_authority(self):
+        for row, reservation in bound.ROW_RESERVATIONS.items():
+            with self.subTest(row=row):
+                block = bound.prospective_row_limit(row, CHARGED)
+                self.assertEqual(block.bhard * probe.QB_UNIT_BYTES, CHARGED + reservation)
+                self.assertEqual(block.valid, bound.QIF_BLIMITS)
+        for row, charged in (('E19.0', 0), ('foreign', 0), ('E8', -1), ('E8', True),
+                             ('E8', 1), ('E9b', bound.PROJECT_CEILING)):
+            with self.subTest(row=row, charged=charged), self.assertRaises(Refusal):
+                bound.prospective_row_limit(row, charged)
+
+    def test_fixed_candidate_setter_uses_only_the_project_block_limit(self):
+        calls = []
+        def call(cmd, device, project, address):
+            block = address._obj
+            calls.append((cmd, device, project, block.bhard, block.bsoft, block.valid))
+            return 0, 0
+        result = bound._invoke_candidate_setter('E8', CHARGED, call)
+        self.assertEqual(calls, [(probe.Q_SETQUOTA, bound.ROOT_DEVICE, bound.PROJECT_ID,
+                                  (CHARGED + (64 << 20)) // probe.QB_UNIT_BYTES, 0, bound.QIF_BLIMITS)])
+        self.assertEqual(result['setter_exit'], 0)
+        for result in (None, (-1, 5), (False, 0), (0, None)):
+            with self.subTest(result=result), self.assertRaisesRegex(Refusal, 'failed or its result is unknown'):
+                bound._invoke_candidate_setter('E8', CHARGED, lambda *args: result)
+        calls.clear()
+        with self.assertRaises(Refusal):
+            bound._invoke_candidate_setter('E19.0', 0, call)
+        self.assertEqual(calls, [])
+        with patch.object(bound.ctypes, 'sizeof', return_value=4), \
+                self.assertRaisesRegex(Refusal, 'unsupported quota setter ABI'):
+            bound._invoke_candidate_setter('E8', CHARGED, call)
+        self.assertEqual(calls, [])
+
+    def test_fixed_setter_reaches_real_adapter_with_injected_library_only(self):
+        calls = []
+        class FakeLibrary:
+            def quotactl(self, command, device, project, address):
+                calls.append((command.value & 0xffffffff, device, project.value,
+                              address._obj.bhard, address._obj.valid))
+                return 0
+        with patch.object(probe.ctypes, 'CDLL', return_value=FakeLibrary()):
+            result = bound._invoke_candidate_setter('E8', CHARGED, probe._quotactl)
+        self.assertEqual(result['setter_exit'], 0)
+        self.assertEqual(calls, [(0x80000802, b'/dev/sda2', 531,
+                                  (CHARGED + (64 << 20)) // 1024, bound.QIF_BLIMITS)])
+        with patch.object(probe.ctypes, 'CDLL', return_value=object()), \
+                self.assertRaisesRegex(Refusal, 'failed or its result is unknown'):
+            bound._invoke_candidate_setter('E8', CHARGED, probe._quotactl)
+        self.assertEqual(len(calls), 1)
+
+    def test_matching_originals_still_refuse_unproven_confinement_and_enforcement(self):
+        with self.assertRaisesRegex(Refusal, 'enforcement and writer confinement are unproven'):
+            self.verify()
 
     def test_production_refuses_every_witness_because_nothing_is_admitted(self):
         with self.assertRaises(Refusal):
@@ -120,12 +246,14 @@ class VerifierChecks(unittest.TestCase):
         missing = dict(good, observations={k: v for k, v in good['observations'].items() if k != 'tree'})
         extra = dict(good, observations=dict(good['observations'], other=original('x')))
         bad_exit = replace_original(good, 'mountinfo', exit=1)
+        false_exit = replace_original(good, 'mountinfo', exit=False)
         not_record = dict(good, observations=dict(good['observations'], dumpe2fs='text'))
         refused_text = 'status=refused phase=open-reg errno=13\n'
         refused_line = replace_original(good, 'tree', text=refused_text,
                                         sha256=hashlib.sha256(refused_text.encode()).hexdigest())
         for label, witness in (('tampered', tampered), ('missing', missing), ('extra', extra),
-                               ('exit', bad_exit), ('record', not_record), ('helper-refused', refused_line)):
+                               ('exit', bad_exit), ('false-exit', false_exit), ('record', not_record),
+                               ('helper-refused', refused_line)):
             with self.subTest(label), self.assertRaises(Refusal):
                 self.verify(witness)
 
@@ -155,16 +283,20 @@ class VerifierChecks(unittest.TestCase):
                 self.verify(render(**change))
 
     def test_quota_valid_bits_must_mark_both_block_limit_and_space_usage(self):
-        for valid in (0, bound.QIF_BLIMITS, bound.QIF_SPACE, bound.QIF_BLIMITS | (1 << 2)):  # QIF_ILIMITS_B = 2
+        for valid in (0, bound.QIF_BLIMITS, bound.QIF_SPACE, bound.QIF_BLIMITS | (1 << 2), 67):
             with self.subTest(valid=valid), self.assertRaisesRegex(Refusal, 'valid'):
                 self.verify(render(valid=valid))
-        self.assertEqual(self.verify(render(valid=bound.QIF_BLIMITS | bound.QIF_SPACE))['entries'], 3)
+        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
+            self.verify(render(valid=bound.QIF_BLIMITS | bound.QIF_SPACE))
 
-    def test_limit_equal_to_headroom_admits_and_one_byte_more_refuses(self):
+    def test_limit_equal_to_headroom_still_refuses_and_one_byte_more_refuses(self):
         headroom = HARD - CHARGED
-        self.assertEqual(self.verify(limit=headroom)['remaining_after_bytes'], 0)
+        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
+            self.verify(limit=headroom)
         with self.assertRaisesRegex(Refusal, 'exceeds the project headroom'):
             self.verify(limit=headroom + 1)
+        with self.assertRaisesRegex(Refusal, 'headroom exceeds the row ceiling'):
+            self.verify(render(hard_qb=(1 << 30) // 1024))
         with self.assertRaisesRegex(Refusal, 'no active hard block limit|headroom'):
             self.verify(render(charged=HARD))
         for bad in (0, -1, True, None, 1.5):
@@ -196,11 +328,27 @@ class VerifierChecks(unittest.TestCase):
         with self.assertRaises(Refusal):
             self.verify(render(entries=root_is_file))
 
+    def test_directories_require_inheritance_and_root_custody_is_not_user_writable(self):
+        good = render()
+        original_tree = good['observations']['tree']['text']
+        no_inherit = replace_original(good, 'tree', text=original_tree.replace('xflags=512', 'xflags=0', 1))
+        with self.assertRaisesRegex(Refusal, 'does not inherit'):
+            self.verify(no_inherit)
+        root_entries = (('.', 'dir', '8:2', 0, 531, 3, 8),) + ENTRIES[1:]
+        rooted = render(entries=root_entries)
+        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
+            self.verify(rooted)
+        unsafe = replace_original(rooted, 'tree', text=rooted['observations']['tree']['text'].replace(
+            'mode=700', 'mode=777', 1))
+        with self.assertRaisesRegex(Refusal, 'writable by others'):
+            self.verify(unsafe)
+
     def test_supervisor_fifos_are_admitted_only_as_blockless_single_links(self):
         gate = ('inputs/gate.fifo', 'fifo', '8:2', 0, -1, 1, 0)
         payload = ('inputs/transfer.fifo', 'fifo', '8:2', UID, -1, 1, 0)
         fx = facts(entries={'.', 'inputs', 'inputs/archive.tar', 'inputs/gate.fifo', 'inputs/transfer.fifo'})
-        self.assertEqual(self.verify(render(entries=ENTRIES + (gate, payload)), fx=fx)['entries'], 5)
+        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
+            self.verify(render(entries=ENTRIES + (gate, payload)), fx=fx)
         bad = (
             ('inputs/gate.fifo', 'fifo', '8:2', 0, -1, 1, 8),
             ('inputs/gate.fifo', 'fifo', '8:2', 0, -1, 2, 0),
@@ -218,7 +366,7 @@ class VerifierChecks(unittest.TestCase):
         root = dir_ / 'stage'
         (root / 'inputs').mkdir(parents=True)
         os.mkfifo(root / 'inputs' / 'gate.fifo', 0o600)
-        lines = probe.tree_lines(str(root), 531, read_boot=lambda: BOOT, read_project=lambda fd: 531)
+        lines = probe.tree_lines(str(root), 531, read_boot=lambda: BOOT, read_project=lambda fd: (531, probe.FS_XFLAG_PROJINHERIT))
         fifo = [ln for ln in lines if 'path=inputs/gate.fifo' in ln]
         self.assertEqual(len(fifo), 1)
         self.assertIn('type=fifo', fifo[0])
@@ -226,15 +374,17 @@ class VerifierChecks(unittest.TestCase):
 
     def test_kernel_charge_must_cover_every_tree_byte_and_multiple_files_are_summed(self):
         with self.assertRaisesRegex(Refusal, 'below the tree bytes'):
-            self.verify(render(charged=1 << 20))
+            self.verify(render(charged=1 << 20, hard_qb=((1 << 20) + LIMIT) // 1024))
         two_files = ENTRIES + (('inputs/second.tar', 'reg', '8:2', UID, 531, 1, 65536),)
         fx = facts(entries={'.', 'inputs', 'inputs/archive.tar', 'inputs/second.tar'})
         with self.assertRaisesRegex(Refusal, 'below the tree bytes'):
             self.verify(render(entries=two_files, charged=CHARGED), fx=fx)
-        self.assertEqual(self.verify(render(entries=two_files, charged=(66 << 20)), fx=fx)['entries'], 4)
+        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
+            self.verify(render(entries=two_files, charged=(66 << 20),
+                               hard_qb=((66 << 20) + LIMIT) // 1024), fx=fx)
 
     def test_facts_must_bind_boot_uid_root_and_exact_entries(self):
-        for fx in (facts(boot_id=None), facts(boot_id=''), facts(uid=True), facts(root=''),
+        for fx in (facts(boot_id=None), facts(boot_id=''), facts(uid=True), facts(uid=0), facts(root=''),
                    facts(entries=None), facts(entries={'inputs'})):
             with self.subTest(fx=fx), self.assertRaises(Refusal):
                 self.verify(fx=fx)
@@ -262,6 +412,38 @@ class HelperChecks(unittest.TestCase):
             return rc_quota, errno if rc_quota else 0
         return call
 
+    def test_fsgetxattr_parser_keeps_project_and_inheritance_flag(self):
+        def ioctl(fd, command, data):
+            self.assertEqual(command, probe.FS_IOC_FSGETXATTR)
+            data[:] = probe.FSXATTR.pack(probe.FS_XFLAG_PROJINHERIT, 0, 0, 531, 0, b'\0' * 8)
+        with patch.object(probe.fcntl, 'ioctl', side_effect=ioctl):
+            self.assertEqual(probe._project_attributes(7), (531, probe.FS_XFLAG_PROJINHERIT))
+
+    def test_project_assignment_is_fixed_and_refuses_nonempty_prestate(self):
+        original = probe.FSXATTR.pack(0x40, 1, 2, 0, 3, b'\0' * 8)
+        result = probe.FSXATTR.unpack(probe.prospective_project_assignment(original))
+        self.assertEqual(result, (0x40 | probe.FS_XFLAG_PROJINHERIT, 1, 2, bound.PROJECT_ID, 3, b'\0' * 8))
+        for bad in (b'', probe.FSXATTR.pack(0, 0, 0, 531, 0, b'\0' * 8),
+                    probe.FSXATTR.pack(probe.FS_XFLAG_PROJINHERIT, 0, 0, 0, 0, b'\0' * 8),
+                    probe.FSXATTR.pack(0, 0, 0, 0, 0, b'x' * 8)):
+            with self.subTest(bad=bad), self.assertRaises(probe.Refused):
+                probe.prospective_project_assignment(bad)
+
+    def test_command_entry_refuses_setter_before_kernel_call(self):
+        with patch.object(probe, '_quotactl') as call, patch.object(sys, 'stderr'):
+            self.assertEqual(probe.main(['set', bound.ROOT_DEVICE, str(bound.PROJECT_ID)]), 2)
+            call.assert_not_called()
+
+    def test_prospective_limit_reserves_exact_row_and_changes_only_block_limits(self):
+        record = probe.limit_record(CHARGED, LIMIT)
+        self.assertEqual(record.bhard * probe.QB_UNIT_BYTES, CHARGED + LIMIT)
+        self.assertEqual(record.valid, bound.QIF_BLIMITS)
+        self.assertEqual(record.bsoft, 0)
+        for charged, row in ((0, 0), (-1, LIMIT), (CHARGED, True), (1, LIMIT),
+                             (1 << 90, LIMIT)):
+            with self.subTest(charged=charged, row=row), self.assertRaises(probe.Refused):
+                probe.limit_record(charged, row)
+
     def test_quota_lines_feed_the_verifier_in_kernel_units(self):
         lines = probe.quota_lines('/dev/sda2', 531, call=self.fake_call(4, HARD // 1024),
                                   read_boot=lambda: BOOT, stat_device=lambda p: type('S', (), {'st_rdev': os.makedev(8, 2)})())
@@ -271,7 +453,8 @@ class HelperChecks(unittest.TestCase):
         self.assertIn('dev=8:2', text)
         witness = {'mechanism': MECH, 'observations': render()['observations']}
         witness = replace_original(witness, 'quota', text=text)
-        self.assertEqual(bound.verify(witness, LIMIT, facts(), {MECH})['limit_bytes'], LIMIT)
+        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
+            bound.verify(witness, LIMIT, facts(), {MECH})
 
     def test_kernel_refusal_is_printed_not_turned_into_a_zero_limit(self):
         lines = probe.quota_lines('/dev/sda2', 531, call=self.fake_call(0, 0, rc_quota=-1, errno=3),
@@ -285,7 +468,7 @@ class HelperChecks(unittest.TestCase):
         (root / 'inputs' / 'archive.tar').write_bytes(b'x' * 10)
         os.link(root / 'inputs' / 'archive.tar', root / 'inputs' / 'alias.tar')
         os.symlink(root / 'inputs' / 'archive.tar', root / 'link')
-        lines = probe.tree_lines(str(root), 531, read_boot=lambda: BOOT, read_project=lambda fd: 531)
+        lines = probe.tree_lines(str(root), 531, read_boot=lambda: BOOT, read_project=lambda fd: (531, probe.FS_XFLAG_PROJINHERIT))
         entries = {ln.split()[1].split('=')[1]: ln for ln in lines if ln.startswith('entry ')}
         self.assertEqual(set(entries), {'.', 'inputs', 'inputs/archive.tar', 'inputs/alias.tar', 'link'})
         self.assertIn('type=lnk', entries['link'])
@@ -297,7 +480,7 @@ class HelperChecks(unittest.TestCase):
         root.mkdir()
         (root / 'has space').write_bytes(b'')
         with self.assertRaisesRegex(probe.Refused, 'unsafe-name'):
-            probe.tree_lines(str(root), 531, read_boot=lambda: BOOT, read_project=lambda fd: 531)
+            probe.tree_lines(str(root), 531, read_boot=lambda: BOOT, read_project=lambda fd: (531, probe.FS_XFLAG_PROJINHERIT))
         clean = self.dir / 'clean'
         clean.mkdir()
         (clean / 'file').write_bytes(b'')
@@ -311,7 +494,7 @@ class HelperChecks(unittest.TestCase):
         root = self.dir / 'e2e'
         (root / 'inputs').mkdir(parents=True)
         (root / 'inputs' / 'archive.tar').write_bytes(b'y' * 4096)
-        tree = probe.tree_lines(str(root), 531, read_boot=lambda: BOOT, read_project=lambda fd: 531)
+        tree = probe.tree_lines(str(root), 531, read_boot=lambda: BOOT, read_project=lambda fd: (531, probe.FS_XFLAG_PROJINHERIT))
         fields = [dict(tok.split('=', 1) for tok in ln.split()[1:]) for ln in tree if ln.startswith('entry ')]
         entries = tuple((f['path'], f['type'], f['dev'], int(f['uid']), int(f['projid']), int(f['nlink']),
                          int(f['blocks512'])) for f in fields)
@@ -319,7 +502,8 @@ class HelperChecks(unittest.TestCase):
         witness = render(entries=entries, tree_root=str(root), mount_dev=mount_dev, quota_dev=mount_dev)
         witness = replace_original(witness, 'tree', text='\n'.join(tree) + '\n')
         fx = facts(uid=os.getuid(), root=str(root), entries={f['path'] for f in fields})
-        self.assertEqual(bound.verify(witness, LIMIT, fx, {MECH})['entries'], len(entries))
+        with self.assertRaisesRegex(Refusal, 'confinement are unproven'):
+            bound.verify(witness, LIMIT, fx, {MECH})
 
     def test_route_plan_binds_the_fixed_argv_and_the_helper_source(self):
         plan, digest = bound.route_plan(ROOT)
@@ -328,6 +512,13 @@ class HelperChecks(unittest.TestCase):
         self.assertEqual(plan[0]['argv'], ['/bin/cat', '/proc/self/mountinfo'])
         self.assertIn('quota', plan[3]['argv'])
         self.assertIn(ROOT, plan[4]['argv'])
+
+    def test_writer_tool_route_binds_fixed_entry_and_its_local_dependencies(self):
+        route = bound.writer_tool_route()
+        self.assertEqual(route['argv'], ['/usr/bin/python3', '-I', '-B', str(bound.WRITER_HELPER),
+                                          '--observe-writer-tools'])
+        self.assertEqual(route['sha256'], hashlib.sha256(bound.WRITER_HELPER.read_bytes()).hexdigest())
+        self.assertEqual(set(route['dependencies']), {'linux_supervisor.py', 'preparation_resources.py'})
 
 
 class InventoryChecks(unittest.TestCase):
@@ -345,14 +536,14 @@ class ProductionPathChecks(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def test_allocation_witness_clears_payload_rows_only_when_the_mechanism_is_admitted(self):
+    def test_allocation_witness_refuses_even_if_the_mechanism_is_admitted(self):
         witness = render(tree_root=setup.BASE, boot=lst.BOOT, tree_boot=lst.BOOT, entries=ENTRIES)
         entries = {'.', 'inputs', 'inputs/archive.tar'}
         live = self.fx.facts(hard_limit=witness, allocation_entries=entries)
         with patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({MECH})), \
                 patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', frozenset({'test-disk'})):
             rows = {r['id']: r for r in setup.setup_plan(dict(live, disk_association=lst.disk_witness()))}
-        self.assertFalse([m for m in rows['E9a']['missing'] if 'hard-limit' in m or 'kernel' in m])
+        self.assertTrue(any('confinement are unproven' in m for m in rows['E9a']['missing']))
         unset = {r['id']: r for r in setup.setup_plan(self.fx.facts(hard_limit=witness, allocation_entries=entries))}
         self.assertTrue(any('hard' in m or 'kernel' in m for m in unset['E9a']['missing']))
 
