@@ -1531,9 +1531,13 @@ while IFS= read -r line; do :; done
         (
             r#"#!/bin/sh
 echo admit
+# Keep the reader until the complete report arrives. This selects EOF after
+# delivery, rather than racing the owner's write against a closed pipe.
+IFS= read -r line
+printf '%s\n' "$line" > "$HOOK_LOG.received"
 exit 0
 "#,
-            "the hook exited instead of retaining admission",
+            "the hook exited before acknowledging seq 1",
             "custodians",
         ),
         (
@@ -1579,6 +1583,11 @@ while :; do sleep 0.1; done
             "case {index} ({report}): {details}"
         );
         assert!(!fixture.exists("ran.txt"), "case {index}: nothing ran");
+        if index == 1 {
+            let received = json_of(&fixture.read("hook.log.received"));
+            assert_eq!(received["event"], "custodians", "EOF follows delivery");
+            assert_eq!(received["seq"], 1, "the first report was consumed");
+        }
     }
 
     // A workload report that is not acknowledged fails the same way, after

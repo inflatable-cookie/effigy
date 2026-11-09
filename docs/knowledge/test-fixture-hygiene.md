@@ -341,6 +341,10 @@ reaped client, then counts real writes at its original cadence. A fixed runtime
 does not imply a minimum number of writes on a loaded host. The proof retains
 its regular-file, no-SIGPIPE, write-count, elapsed-time and cleanup assertions.
 
+An admission hook that tests EOF after report delivery consumes and records that
+complete frame before exiting without acknowledgement. Immediate exit races the
+decision poll, frame write and EOF read, so it cannot select one error branch.
+
 Recorded-generation closure requires positive absence, zombie state or an
 identity mismatch. An unknown identity or state stays unresolved within the
 fixture's existing wait bound; repeated failed observations do not prove closure.
