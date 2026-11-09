@@ -427,6 +427,10 @@ Backend status:
 - `nerdctl compose` also hands that file to every service's `nerdctl run`, so
   whatever it holds lands in each container's environment
 
+Private interpolation custody checks compare `st_mode` directly with inferred
+octal masks. This preserves the exact permission predicates across libc's
+platform-specific `mode_t` widths.
+
 Effigy ownership:
 
 - generated assets are named relatively and resolved by Compose against the

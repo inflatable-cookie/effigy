@@ -338,7 +338,7 @@ impl InterpolationFile {
         let directory = fstat(&self.directory).map_err(io::Error::from)?;
         if !owned_directory_for(&directory, geteuid().as_raw())
             || directory.st_nlink == 0
-            || u32::from(directory.st_mode) & 0o777 != 0o700
+            || directory.st_mode & 0o777 != 0o700
         {
             self.phase = RemovalPhase::Unknown;
             return Err(invalid(
@@ -614,7 +614,7 @@ fn open_private_directory(home: &Path) -> io::Result<OwnedFd> {
     let home_stat = fstat(&home_fd).map_err(io::Error::from)?;
     if !is_directory(&home_stat)
         || home_stat.st_uid != geteuid().as_raw()
-        || u32::from(home_stat.st_mode) & 0o022 != 0
+        || home_stat.st_mode & 0o022 != 0
     {
         return Err(invalid(
             "the Effigy home is not an operator-owned directory without group or other write access".into(),
@@ -637,10 +637,10 @@ fn open_private_directory(home: &Path) -> io::Result<OwnedFd> {
             "the Compose interpolation directory is not an owned directory".into(),
         ));
     }
-    if u32::from(stat.st_mode) & 0o777 != 0o700 {
+    if stat.st_mode & 0o777 != 0o700 {
         fchmod(&directory, Mode::from_bits_truncate(0o700)).map_err(io::Error::from)?;
         stat = fstat(&directory).map_err(io::Error::from)?;
-        if u32::from(stat.st_mode) & 0o777 != 0o700 {
+        if stat.st_mode & 0o777 != 0o700 {
             return Err(invalid(
                 "the Compose interpolation directory could not be made private".into(),
             ));
@@ -928,7 +928,7 @@ fn owned_file_for(stat: &FileStat, uid: u32) -> bool {
 
 /// A private regular single-link file owned by this user.
 fn private_file(stat: &FileStat) -> bool {
-    owned_file(stat) && u32::from(stat.st_mode) & 0o777 == 0o600
+    owned_file(stat) && stat.st_mode & 0o777 == 0o600
 }
 
 /// A directory owned by the given user.
