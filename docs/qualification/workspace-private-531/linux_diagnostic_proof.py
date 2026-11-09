@@ -40,14 +40,9 @@ PRLCTL_SHA256 = '2f61a1c60db2d51591fb8479a248a982a81658f136f1501a94733b7a81731c5
 SNAPSHOT_SHA = 'd21610ba279b4faf2d7a62c87ef8f1050943fc8b6c072a04c71ce4d0c953e3ad'
 PROBE_KEYS = frozenset('uid boot_id system_state systemctl systemd_run systemd_version cgroup2 ssh_host_ed25519_fp sshd_expiry_time_mentions effigy531_passwd_exit effigy531_group_exit effigy531_home docker_group root_source root_fstype root_uuid root_parent root_serial root_model root_size ssh_listen_ipv4'.split())
 BOOT_ID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
-# A guest session is proved only by this exact echo sentinel, and the only retryable answer is
-# the source-qualified Parallels refusal observed at step 005 of the 745 occurrence: the VM is
-# running but the host cannot open a session yet (waited exit 255, empty stdout, this stderr).
-# A wrong sentinel, a nonterminal client, a different stream or any unknown error refuses.
+# Only the exact echo sentinel proves a guest session; failed empty-output probes may retry
+# inside the existing readiness window. See linux-setup.md for the vendor contract's limits.
 TRANSPORT_SENTINEL = 'linux-diagnostic-transport-ready'
-TRANSPORT_UNAVAILABLE = (b'Unable to open new session in this virtual machine. Make sure your '
-                         b'virtual machine has finished booting, runs the latest version of '
-                         b'Parallels Tools, and is not isolated from the host OS.')
 TRANSPORT_WAIT = 20
 # A transport attempt starts only when this much of the one shared readiness window remains, so an
 # exhausted window is a named exhaustion instead of a client killed by the shared deadline.
@@ -423,23 +418,21 @@ def check_boot_id(raw):
 
 
 def classify_transport(result, stdout, stderr):
-    """Classify one bounded guest-session probe as `ready` or `unavailable`.
+    """Classify the fixed echo probe without depending on Parallels' error wording.
 
-    A successful exact sentinel with a waited exit 0 and no stderr proves transport only. The
-    retryable `unavailable` answer is the exact 745 Parallels session refusal with empty stdout
-    and a nonzero waited exit; the observed exit code is kept. Everything else — a wrong or
-    partial sentinel, a timeout or unknown disposition, extra stderr — refuses instead of being
-    retried, so an unrecognised transport error never becomes a readiness claim.
+    The prlctl(8) exec/DIAGNOSTICS contract requires Tools and reports failures nonzero,
+    but does not distinguish session-open from guest failures. Empty stdout with a waited
+    failure is only not-ready-yet, never proof of a transient fault or guest readiness.
     """
     if (result.get('disposition') == 'exited' and result.get('waited_exit') == 0
             and not stderr and stdout == (TRANSPORT_SENTINEL + '\n').encode()):
         return 'ready'
     if (result.get('disposition') == 'failed' and isinstance(result.get('waited_exit'), int)
             and result['waited_exit'] != 0 and not stdout
-            and stderr.rstrip(b'\n') == TRANSPORT_UNAVAILABLE):
+            and len(stderr) <= 2048):
         return 'unavailable'
     raise stage.Refusal(
-        'guest transport probe is neither the exact sentinel nor the source-qualified session '
+        'guest transport probe is neither the exact sentinel nor a bounded empty-output session '
         'refusal: disposition=%s waited_exit=%s stdout_bytes=%d stderr_bytes=%d'
         % (result.get('disposition'), result.get('waited_exit'), len(stdout), len(stderr)))
 
@@ -664,7 +657,8 @@ def execute(request, request_path, request_hash, selector_streams=None):
                        'stdout': {'bytes': len(raw),
                                   'sha256': hashlib.sha256(raw).hexdigest()},
                        'stderr': {'bytes': len(streams['stderr']),
-                                  'sha256': hashlib.sha256(streams['stderr']).hexdigest()}}
+                                  'sha256': hashlib.sha256(streams['stderr']).hexdigest(),
+                                  'text': streams['stderr'][:2048].decode('utf-8', 'replace')}}
             try:
                 kind = classify_transport(result, raw, streams['stderr'])
             except stage.Refusal:
@@ -678,9 +672,13 @@ def execute(request, request_path, request_hash, selector_streams=None):
             pause(ready_end)
         if outcome['transport']['status'] != 'ready':
             outcome['transport']['status'] = 'exhausted'
+            outcome['transport']['stderr_classes'] = sorted({
+                row['stderr']['text'] for row in outcome['transport']['attempts']})
             raise stage.Refusal(
                 'guest transport readiness unknown: %d attempt(s) in the one shared readiness '
-                'deadline without the exact echo sentinel' % len(outcome['transport']['attempts']))
+                'deadline without the exact echo sentinel; stderr classes: %s'
+                % (len(outcome['transport']['attempts']),
+                   repr(outcome['transport']['stderr_classes'])))
         result, raw = call(['exec', setup.VM_UUID, '/usr/bin/systemctl', 'is-system-running', '--wait'],
                            READY_WAIT, 1024, ready_end)
         outcome['readiness_observation'] = result
