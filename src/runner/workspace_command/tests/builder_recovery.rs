@@ -66,6 +66,11 @@ if cmd == 'inspect' and '--mode=native' in args:
     # the builder's default capability sets with no SYS_ADMIN anywhere; tests
     # replace its Spec (or ID) through state files, never through the caller.
     if mode == 'native_fail': sys.exit(27)
+    # Verbatim native output for malformed or extra-record controls.
+    raw_output = state / 'native-array.json'
+    if raw_output.exists():
+        print(raw_output.read_text())
+        sys.exit(0)
     row = json.loads(identity.read_text())[0]
     native = {'ID': row['Id'], 'Name': row['Name'], 'Config': row['Config'], 'Spec': {'process': {'capabilities': {'bounding': DEFAULT_CAPS, 'effective': DEFAULT_CAPS, 'permitted': DEFAULT_CAPS}}}}
     spec_override = state / 'native-spec.json'
@@ -113,6 +118,7 @@ if cmd == 'up':
     # the native record the test gave the one it replaced.
     (state / 'native-spec.json').unlink(missing_ok=True)
     (state / 'native-id').unlink(missing_ok=True)
+    (state / 'native-array.json').unlink(missing_ok=True)
     generated = next(a for a in args if a.endswith('.generated.compose.yml'))
     compose = pathlib.Path(generated).read_text()
     (state / 'last-up-compose').write_text(compose)
@@ -2277,6 +2283,67 @@ fn colima_native_sys_admin_in_any_set_is_recovered_or_refused_before_claim() {
             .unwrap_or_else(|error| panic!("{set}: {error}"));
         assert_eq!(fixture.activation_count(), 1, "{set}");
         assert_eq!(fixture.build_source(), plan.source, "{set}");
+        fixture.assert_preserved();
+    }
+}
+
+/// Extra or unknown capability data is no admission either: the native output
+/// must be exactly one record for the verified ID with only the five OCI sets.
+/// Each malformed output refuses through real admission on both paths, and
+/// the owned builder is never replaced.
+#[test]
+fn colima_native_extra_or_unknown_capability_data_refuses_without_replacing() {
+    let _lock = crate::contract_test_support::lock_test();
+    let id = "a".repeat(64);
+    let record = |capabilities: Value| json!({"ID": id, "Spec": {"process": {"capabilities": capabilities}}});
+    let defaults = json!({"bounding": NATIVE_DEFAULT_CAPS, "effective": NATIVE_DEFAULT_CAPS, "permitted": NATIVE_DEFAULT_CAPS});
+    let mut unknown_set = defaults.clone();
+    unknown_set["ambientExtra"] = json!(["CAP_SYS_ADMIN"]);
+    let cases = [
+        (
+            "two_records",
+            json!([record(defaults.clone()), record(defaults.clone())]),
+            "exactly one is required",
+        ),
+        ("no_records", json!([]), "exactly one is required"),
+        (
+            "unknown_set",
+            json!([record(unknown_set)]),
+            "unknown set `ambientExtra`",
+        ),
+        (
+            "capabilities_list",
+            json!([{"ID": id, "Spec": {"process": {"capabilities": ["CAP_SYS_ADMIN"]}}}]),
+            "no Spec.process.capabilities",
+        ),
+    ];
+    for (case, output, reason) in cases {
+        let fixture = Fixture::staged(true, false, "colima");
+        fixture.stage().expect("a staged source plan");
+        std::fs::write(
+            fixture.root.join("state/native-array.json"),
+            output.to_string(),
+        )
+        .unwrap();
+        for required in [true, false] {
+            let _switch = required.then(|| {
+                EnvGuard::set_many(&[(
+                    "EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING",
+                    Some("1".to_owned()),
+                )])
+            });
+            let error = fixture.task().expect_err(case);
+            assert!(
+                error.contains(reason),
+                "{case} (required={required}): {error}"
+            );
+            assert_eq!(
+                fixture.activation_count(),
+                0,
+                "{case} (required={required})"
+            );
+            assert!(!fixture.root.join("state/build-effect").exists(), "{case}");
+        }
         fixture.assert_preserved();
     }
 }

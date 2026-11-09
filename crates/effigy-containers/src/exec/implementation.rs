@@ -1070,6 +1070,41 @@ mod legacy_admission_tests {
     }
 
     #[test]
+    fn native_witness_refuses_extra_records_and_unknown_capability_sets() {
+        let private = tempfile::tempdir().expect("private checkout");
+        let checkout = private.path().canonicalize().expect("canonical checkout");
+        let project = "effigy-artifact-builder-v1-co-0123456789ab";
+        let record = retained_nerdctl_inspect(project, &checkout, &checkout);
+        let id = record["Id"].as_str().expect("id");
+        // A second record for the same ID is not the one the decision read.
+        let one = native_inspect(id, default_capabilities());
+        let mut two: Vec<serde_json::Value> =
+            serde_json::from_slice(&one).expect("one native record");
+        two.push(two[0].clone());
+        assert!(super::native_capability_absent(
+            Some(&record),
+            &serde_json::to_vec(&two).expect("two records"),
+            id
+        )
+        .is_err());
+        // An unknown set beside the five OCI sets may hold SYS_ADMIN and must
+        // not be ignored.
+        for key in ["ambientExtra", "Bounding", "bounding_extra"] {
+            let mut capabilities = default_capabilities();
+            capabilities[key] = serde_json::json!(["CAP_SYS_ADMIN"]);
+            assert!(
+                super::native_capability_absent(
+                    Some(&record),
+                    &native_inspect(id, capabilities),
+                    id
+                )
+                .is_err(),
+                "{key}"
+            );
+        }
+    }
+
+    #[test]
     fn inspect_refusals_name_the_concrete_cause_and_never_claim_a_signal() {
         let private = tempfile::tempdir().expect("private checkout");
         let checkout = private.path().canonicalize().expect("canonical checkout");
@@ -1614,10 +1649,16 @@ fn native_capability_absent(
 ) -> Result<bool, String> {
     let raw: serde_json::Value = serde_json::from_slice(native_output)
         .map_err(|error| format!("native inspect output is not JSON: {error}"))?;
-    let native = raw
+    let records = raw
         .as_array()
-        .and_then(|records| records.first())
-        .ok_or_else(|| "native inspect returned no container record".to_owned())?;
+        .ok_or_else(|| "native inspect output is not a record list".to_owned())?;
+    // One record for one ID: a second record is data this decision never saw.
+    let [native] = records.as_slice() else {
+        return Err(format!(
+            "native inspect returned {} records; exactly one is required",
+            records.len()
+        ));
+    };
     if native.get("ID").and_then(|value| value.as_str()) != Some(id) {
         return Err(
             "native inspect reports a different full container ID than the verified binding"
@@ -1628,17 +1669,28 @@ fn native_capability_absent(
         .pointer("/Spec/process/capabilities")
         .and_then(|value| value.as_object())
         .ok_or_else(|| "native inspect has no Spec.process.capabilities".to_owned())?;
-    if !capabilities.contains_key("bounding") {
-        return Err("native Spec.process.capabilities has no bounding set".to_owned());
-    }
-    let mut absent = true;
-    for set in [
+    const SETS: [&str; 5] = [
         "bounding",
         "effective",
         "inheritable",
         "permitted",
         "ambient",
-    ] {
+    ];
+    // OCI's LinuxCapabilities has exactly these five sets; any other key is
+    // capability data this decision would otherwise silently ignore.
+    if let Some(unknown) = capabilities
+        .keys()
+        .find(|key| !SETS.contains(&key.as_str()))
+    {
+        return Err(format!(
+            "native capability data holds an unknown set `{unknown}`"
+        ));
+    }
+    if !capabilities.contains_key("bounding") {
+        return Err("native Spec.process.capabilities has no bounding set".to_owned());
+    }
+    let mut absent = true;
+    for set in SETS {
         let Some(value) = capabilities.get(set) else {
             continue;
         };
