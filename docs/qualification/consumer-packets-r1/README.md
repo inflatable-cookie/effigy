@@ -6,7 +6,7 @@ unarmed, not executed.** The committed routes refuse every request before any
 child runs, because the manifest pins nothing yet. No consumer checkout, engine,
 volume, row, secret, network or native binary was touched to produce this.
 
-The historical packet `acow-ordinary-compose-5f466914/` is unchanged. Its
+The historical packet `acow-ordinary-compose-5f466914/` is unchanged. Its boundary battery runs through `acow_battery.py`, which repoints only the fixture scratch constant (`/Volumes/Builds/scratch/effigy/540`, absent on some hosts) to a run-TMPDIR directory. Verification, expected results, hashes and tokens are not touched. Its
 #540/543/545/553 chain pinned a different candidate and a retired prerequisite.
 This packet reuses only its five pure readers (by file path, under a distinct
 module name) and its eight-table counts baseline, cited by file and line.
@@ -19,7 +19,8 @@ module name) and its eight-table counts baseline, cited by file and line.
 | `acow.py` | Acow route entry: hybrid/container/hybrid phases, Level 1 forward, eight-table counts, scoped rollback |
 | `cbs.py` | CBS route entry: detached app-shell, Level 1 forward, named counts, scoped rollback |
 | `manifest-r1.json` | Pinned identities and the pending pins a later exact occurrence must supply |
-| `tests.py` | Fail-closed controls driven through the real `main` and `run` boundaries |
+| `tests.py` | Fail-closed controls driven through the real `main` and `run` boundaries, plus harness isolation and cleanup |
+| `acow_battery.py` | Test-only harness: runs the unchanged historical Acow boundary battery with only its fixture SCRATCH relocated under TMPDIR |
 
 ## Selectors (`config/tasks.toml`)
 
@@ -29,7 +30,7 @@ module name) and its eight-table counts baseline, cited by file and line.
 | `check:qualification:consumer-packets:compile` | compile all modules in memory | None |
 | `qualification:acow-consumer:proof-only` | `acow.py {args}` | Refuses before any child (unarmed) |
 | `qualification:cbs-consumer:proof-only` | `cbs.py {args}` | Refuses before any child (unarmed) |
-| `test:qualification:acow` | historical 5f466914 boundaries | Unchanged; preserves historical refusals |
+| `test:qualification:acow` | `acow_battery.py` → historical 5f466914 `boundaries.py` (150 checks) | Historical packet bytes unchanged; fixture SCRATCH relocated to a fresh 0700 directory under TMPDIR, restored on exit; no `/Volumes/Builds` needed |
 
 ## Gate order (every route, before the first child)
 

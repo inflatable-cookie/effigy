@@ -2072,7 +2072,11 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 # consumer stack, vault read, warm-up, build/install or native probe. The
 # packet's proof routes are the separately GO-armed launchers documented in
 # its packet-r1.md, never this selector.
-"test:qualification:acow" = { durable = true, visibility = "internal", group = "Maintenance", description = "Run the Acow ordinary-Compose qualification packet's fake-backend refusal boundaries; no native effects.", run = [{ run = "python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/boundaries.py", timeout_ms = 300000 }] }
+# Runs through the test-only harness in docs/qualification/consumer-packets-r1/
+# (effigy#757): the historical boundaries.py runs unchanged, with only its
+# fixture SCRATCH relocated under the run TMPDIR. The historical packet bytes
+# are not edited.
+"test:qualification:acow" = { durable = true, visibility = "internal", group = "Maintenance", description = "Run the Acow ordinary-Compose qualification packet's fake-backend refusal boundaries through the test-only TMPDIR scratch harness; no native effects.", run = [{ run = "python3 -I -B docs/qualification/consumer-packets-r1/acow_battery.py", timeout_ms = 300000 }] }
 
 # Current-candidate consumer packets for the #625 Acow/CBS continuity proof
 # (task effigy#757): docs/qualification/consumer-packets-r1/. Source and

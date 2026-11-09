@@ -20,11 +20,13 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import acow  # noqa: E402
+import acow_battery  # noqa: E402
 import cbs  # noqa: E402
 import consumer_core as core  # noqa: E402
 
@@ -581,6 +583,89 @@ def _():
     for argv in [a for _, a in acow.plan({'stack': False}, '/b/effigy')] + \
             [a for _, a in cbs.plan({'dev': False}, '/b/effigy')]:
         assert not forbidden.search(' '.join(argv)), argv
+
+
+# ---------------------------------------------------------------- acow battery harness
+
+
+class _FakeModule:
+    def __init__(self, scratch):
+        self.SCRATCH = scratch
+
+
+@check('acow battery harness refuses without a usable TMPDIR and never falls back')
+def _():
+    builds = Path('/Volumes/Builds/scratch/effigy/540')
+    before = builds.exists()
+    refuses_env = {'PATH': os.environ.get('PATH', '')}
+    result = subprocess.run(
+        [sys.executable, '-I', '-B', str(Path(acow_battery.__file__))],
+        env=refuses_env, capture_output=True, text=True, timeout=120)
+    assert result.returncode == 2, result.returncode
+    assert 'TMPDIR' in result.stderr
+    assert builds.exists() == before, 'refused run touched the Builds scratch'
+    for bad in ('', 'relative/dir'):
+        try:
+            acow_battery.tmp_root_from_env({'TMPDIR': bad})
+        except RuntimeError:
+            continue
+        raise AssertionError('accepted TMPDIR %r' % bad)
+    link = ROOT / 'battery-link'
+    if not link.exists():
+        os.symlink(str(ROOT), str(link))
+    try:
+        acow_battery.tmp_root_from_env({'TMPDIR': str(link)})
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError('accepted a symlinked TMPDIR')
+
+
+@check('acow battery harness repoints every bound SCRATCH and restores it on exit')
+def _():
+    original = Path('/Volumes/Builds/scratch/effigy/540')
+    modules = (_FakeModule(original), _FakeModule(original), _FakeModule(original),
+               _FakeModule(None))
+    modules[3].SCRATCH = original
+    root = Path(os.path.realpath(ROOT / 'battery-tmp'))
+    root.mkdir(parents=True, exist_ok=True)
+    with acow_battery.relocated_scratch(modules, str(root)) as fresh:
+        for module in modules:
+            assert module.SCRATCH == fresh
+        assert fresh.parent == root
+        assert oct(fresh.stat().st_mode & 0o777) == '0o700'
+        assert fresh.exists()
+    for module in modules:
+        assert module.SCRATCH == original
+    assert not fresh.exists(), 'empty fresh scratch was not removed'
+
+
+@check('acow battery harness restores SCRATCH after an error and keeps evidence')
+def _():
+    original = Path('/Volumes/Builds/scratch/effigy/540')
+    module = _FakeModule(original)
+    root = Path(os.path.realpath(ROOT / 'battery-error'))
+    root.mkdir(parents=True, exist_ok=True)
+    kept = None
+    try:
+        with acow_battery.relocated_scratch((module,), str(root)) as fresh:
+            kept = fresh
+            (fresh / 'receipt.json').write_text('evidence')
+            raise RuntimeError('boom')
+    except RuntimeError:
+        pass
+    assert module.SCRATCH == original
+    assert (kept / 'receipt.json').read_text() == 'evidence'
+
+
+@check('acow battery harness refuses modules that bind no SCRATCH')
+def _():
+    try:
+        with acow_battery.relocated_scratch((types.SimpleNamespace(),), str(ROOT)):
+            pass
+    except RuntimeError:
+        return
+    raise AssertionError('accepted a packet with no SCRATCH binding')
 
 
 def main():
