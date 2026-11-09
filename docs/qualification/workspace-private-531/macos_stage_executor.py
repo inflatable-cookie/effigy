@@ -424,6 +424,19 @@ def resolve_stage(stage_id, bindings, manifest=None):
     Derived slots render as explicit placeholders; execution never uses them."""
     manifest = manifest or load_manifest()
     stage = stage_of(manifest, stage_id)
+    sockets = []
+    if stage['backend'] == 'colima':
+        try:
+            profiles = {prep.PROFILE}
+            for item in manifest['stages']:
+                for step in item['steps']:
+                    argv = step.get('argv', [])
+                    if argv[:1] == [prep.COLIMA] and '-p' in argv:
+                        profiles.add(argv[argv.index('-p') + 1])
+            for profile in sorted(profiles):
+                sockets.extend(prep.check_socket_paths(bindings['colima_home'], profile))
+        except ValueError as err:
+            raise Refusal(str(err)) from err
     validate_bindings(bindings, manifest)
     view = dict(PLAN_PLACEHOLDERS, **bindings)
     view.update(guest_source_bindings())
@@ -434,6 +447,7 @@ def resolve_stage(stage_id, bindings, manifest=None):
     static = stage_admission(stage)
     return dict(
         stage=stage_id, backend=stage['backend'], seconds=stage['seconds'],
+        socket_paths=sockets,
         reserve_seconds=stage['reserve_seconds'], download_cap_bytes=stage.get('download_cap_bytes', 0),
         storage_cap_bytes=stage.get('storage_cap_bytes', 0), network_sources=stage.get('network_sources', []),
         retained_after_failure=stage.get('retained_after_failure', []), prior=PRIOR.get(stage_id),

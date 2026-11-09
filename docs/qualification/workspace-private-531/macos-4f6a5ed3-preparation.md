@@ -226,7 +226,7 @@ buildx build reference. nerdctl `v2.3.1` `docs/command-reference.md`.
 
 ## Paths (fresh, owned, pure-checked)
 
-Control root `/Volumes/Stash/scratch/effigy/mac-4f6a-<token>`, with `<token>` eight
+Control root `/Volumes/Stash/scratch/effigy/m4-<token>`, with `<token>` eight
 lowercase hex minted at C0. Owned children:
 
 - Colima home `<control>/c`, the only Colima data root.
@@ -237,14 +237,29 @@ lowercase hex minted at C0. Owned children:
 - Desktop config `<control>/d/docker-config` and context `<control>/d/ctx`, both owned and empty.
 - Desktop image ID file `<control>/d/image-id` and container ID file `<control>/d/container-id`.
 
-Profile `effigy-4f6a-qual`. Socket paths, computed by the boundary test:
+Source qualification of the complete socket inventory is still pending for #816;
+this preparation change is not yet validated or ready for a native packet.
 
-- `ha.sock` and `ga.sock`: 87 bytes each.
-- `docker.sock`: 78 bytes.
+Profile `q4`. The pure `resolve_stage` plan lists each derived host socket and its
+UTF-8 byte length, and refuses before activation, occurrence or claim when the path
+plus its NUL and a four-byte margin exceeds `UNIX_PATH_MAX=104`. The check covers
+the chain's profiles even when planning an earlier stage. Collisions, aliases and
+Builds paths also refuse; protected and historical resources are never adopted.
 
-The limit is 104 bytes, so the margin is 16. Collisions, aliases, Builds paths and
-over-limit sockets refuse before any effect. `effigy`, `effigy-release` and any
-historical 531 resource are never adopted.
+### Fresh C1 after #813
+
+A fresh C0 is required, with a new eight-hex token, new owned roots, a newly minted
+token32, and fresh manifest/source/input pins and stage activations. Then run C1
+once against that accepted C0 receipt. No native occurrence is authorized here.
+
+The accepted #787 C0 for `9b47cb21` cannot supply new bindings: `validate_bindings`
+requires the token's exact `control_paths`; `chain_key` binds token and control;
+`verify_receipt_tree` checks that key; `origin_roots` requires the exact C0-created
+roots and `check_recorded_roots` checks their device/inode identities. A new manifest
+does not loosen these checks. Keeping the old token/root cannot pass the new path
+shape, and its retained C1 cache, config and instance paths fail absence checks.
+Do not delete, adopt or reuse #813's partial state, claim or activation under
+`/Volumes/Stash/scratch/effigy/mac-4f6a-9b47cb21`.
 
 ## Executable rules
 
@@ -283,13 +298,13 @@ Colima (`colima`):
 - **C0** admission (unchanged from r2): tool hashes against the tranche, tranche summary
   check, intent claim, owned roots created 0700 and empty, `colima start --help`.
 - **C1** start, 900 s stage: `c1-make-owned-dirs` (cache, Docker config and `effigy-image`), then
-  `c1-prefetch-colima-image` (210 s, the pinned image, see r5), then `colima start -p effigy-4f6a-qual --runtime containerd
+  `c1-prefetch-colima-image` (210 s, the pinned image, see r5), then `colima start -p q4 --runtime containerd
   --vm-type vz --arch aarch64 --cpus 2 --memory 2 --disk 20 --root-disk 20 --mount none --disk-image {image}
   --ssh-config=false --activate=false` (600 s). The step budget is 30 + 210 + 600 = 840 s, the stage cap less the 60 s
   reserve. Download cap 446992920 bytes (the exact pinned size); storage cap 8 GiB. Source:
   `https://github.com/abiosoft/colima-core/releases/download/v0.10.4/ubuntu-24.04-minimal-cloudimg-arm64-containerd.raw.gz`,
   sha512 `86fd0879…`.
-- **C2** identity, 300 s stage: `colima status -p effigy-4f6a-qual --json`,
+- **C2** identity, 300 s stage: `colima status -p q4 --json`,
   the pinned guest helper `echo` of the hostile constant, the byte comparison, then the
   guest parent probe through the same helper. Nothing else crosses the route until the
   comparison passes. The echo and probe close only on an authenticated helper envelope.

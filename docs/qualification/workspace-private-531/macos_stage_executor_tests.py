@@ -264,7 +264,9 @@ class Fixture(unittest.TestCase):
         self.sock = socket.socket(socket.AF_UNIX)
         self.sock.bind(self.socket_path)
         self.addCleanup(self.sock.close)
-        for target, name, value in ((prep, 'STASH', self.tmp), (ex, 'CLAIMS_DIR', self.tmp + '/claims'),
+        for target, name, value in ((prep, 'STASH', self.tmp),
+                                    # Fixture sockets are Docker doubles only; simulated Lima paths are longer.
+                                    (prep, 'SOCKET_LIMIT_BYTES', 256), (ex, 'CLAIMS_DIR', self.tmp + '/claims'),
                                     (ex, 'ACTIVATIONS_DIR', self.activations),
                                     (ex, 'TOOL_PATHS', (self.colima, self.docker)),
                                     (ex, 'DESKTOP_SOCKET', self.socket_path),
@@ -819,6 +821,24 @@ class FixedHelperTests(Fixture):
 
 
 class PlanTests(Fixture):
+    def test_socket_plan_bounds_before_any_claim(self):
+        manifest = ex.load_manifest()
+        with mock.patch.object(prep, 'STASH', '/Volumes/Stash/scratch/effigy'), \
+                mock.patch.object(prep, 'SOCKET_LIMIT_BYTES', 104):
+            bindings = self.make_bindings('9b47cb21')
+            before = tree(self.tmp)
+            for stage in ('C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6'):
+                plan = ex.resolve_stage(stage, bindings, manifest)
+                self.assertTrue(plan['socket_paths'])
+                for row in plan['socket_paths']:
+                    self.assertEqual(row['bytes'], len(row['path'].encode()))
+                    self.assertLessEqual(row['bytes'] + 5, 104)
+            legacy = json.loads(json.dumps(manifest).replace('q4', 'effigy-4f6a-qual'))
+            old = dict(bindings, colima_home='/Volumes/Stash/scratch/effigy/mac-4f6a-9b47cb21/c')
+            with self.assertRaisesRegex(ex.Refusal, r'ssh.sock.1234567890123456 is 105 bytes'):
+                ex.resolve_stage('C1', old, legacy)
+            self.assertEqual(before, tree(self.tmp))
+
     def test_plan_is_pure_and_writes_nothing(self):
         before = tree(self.tmp)
         plans = [ex.resolve_stage(s['id'], self.bindings) for s in ex.load_manifest()['stages']]
