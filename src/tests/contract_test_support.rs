@@ -174,7 +174,15 @@ pub(super) fn wait_for_path_exists(path: &Path, timeout: Duration, label: &str) 
 /// Fixture-specific values are installed after this guard and restored before it.
 pub(super) fn clean_fixture_environment() -> EnvGuard {
     const ALLOWED: &[&str] = &[
-        "PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "TERM", "OXIDE_POOL",
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "LANG",
+        "LC_ALL",
+        "TERM",
+        "OXIDE_POOL",
     ];
     let lock = lock_test();
     let original: Vec<_> = std::env::vars_os()

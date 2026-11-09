@@ -405,6 +405,15 @@ fn managed_headless_plain_environment_shows_host_processes_and_its_workload() {
     // test shell's ambient agent/harness values never reach Effigy's child
     // classifier; fixture inputs are declared below.
     let _ambient = crate::contract_test_support::clean_fixture_environment();
+    // Use this build's CLI, rather than invoking Cargo under the private HOME.
+    let executable = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/effigy");
+    assert!(
+        executable.is_file(),
+        "this build's CLI: {}",
+        executable.display()
+    );
+    let _executable =
+        EnvGuard::set_many(&[("EFFIGY_EXECUTABLE", Some(executable.display().to_string()))]);
     let root = temp_workspace("managed-headless-plain-environment");
     // Owning a container environment resolves its gateway and volume state
     // under the Effigy home, so this session gets a private one.

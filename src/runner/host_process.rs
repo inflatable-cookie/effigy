@@ -1873,8 +1873,8 @@ fn ambient_credential_candidate(value: &[u8]) -> bool {
     value.len() >= 8 && !(!digits.is_empty() && digits.iter().all(u8::is_ascii_digit))
 }
 
-/// Only transport/session facts with established non-secret meaning. All
-/// application-specific inherited names require schema provenance or stay secret.
+/// Transport/session facts with established non-secret meaning. Other inherited
+/// values use the ambient credential rule unless declared by schema or literal.
 fn nonsecret_host_environment(name: &str) -> bool {
     matches!(
         name,
@@ -4604,6 +4604,79 @@ while True:
         let stopped =
             super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
         assert!(stopped.complete(), "{stopped:?}");
+    }
+
+    /// A schema-sensitive value is protected at one byte too. Its collision
+    /// with argv refuses exec and publishes failure before readiness can wait.
+    #[test]
+    fn host_process_listener_secret_argv_refusal_fails_before_readiness() {
+        let _ambient = crate::contract_test_support::clean_fixture_environment();
+        let fixture = fixture();
+        fs::write(
+            fixture.checkout.join(".env.schema"),
+            "# @sensitive\nLISTENER_CREDENTIAL=\n",
+        )
+        .expect("sensitive listener credential schema");
+        let domain = "refused-listener.host.test";
+        let (_gateway_home, mut policy) = listener_policy_running(
+            &fixture.checkout,
+            domain,
+            "secret-argv-refusal",
+            LISTENER_CHILD,
+            120,
+        );
+        let process = &mut policy.host_processes[0];
+        process.run = "printf '^' > refused-exec; exec /bin/sleep 120".to_owned();
+        process.env = vec![("LISTENER_CREDENTIAL".into(), "^".into())];
+        process.shutdown_grace_secs = 1;
+        struct Stop<'a>(&'a Path, &'a EffectiveContainerPolicy);
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                let _ = super::kernel_run::stop_host_processes_for_container(self.0, self.1);
+            }
+        }
+        let _cleanup = Stop(&fixture.checkout, &policy);
+        let started = Instant::now();
+        let result = super::kernel_run::start_host_processes_for_container(
+            &fixture.checkout,
+            &policy,
+            Some(started + Duration::from_secs(20)),
+        )
+        .expect("a refused listener reports its withheld route");
+        let elapsed = started.elapsed();
+        let stopped =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(stopped.complete(), "{stopped:?}");
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "a pre-exec refusal must not spend readiness or activation budgets: {elapsed:?}; {result:?}"
+        );
+        assert!(result.ready.is_empty(), "{result:?}");
+        assert_eq!(result.failures.len(), 1, "{result:?}");
+        let diagnostic = &result.failures[0].detail;
+        assert!(
+            diagnostic.contains("secret in argv")
+                && diagnostic.contains("LISTENER_CREDENTIAL")
+                && !diagnostic.contains("observation budget expired"),
+            "the original classified-key refusal reaches the caller: {diagnostic}"
+        );
+        assert!(
+            !fixture.checkout.join("refused-exec").exists(),
+            "the kernel refusal prevents the workload from executing"
+        );
+        assert!(
+            RouteTable::load(&route_table_path())
+                .expect("route table")
+                .lookup(domain)
+                .is_none(),
+            "a refused generation never publishes its listener route"
+        );
+        assert!(
+            super::kernel_run::host_process_status(&fixture.checkout, &policy)
+                .iter()
+                .all(|process| process.state == "closed"),
+            "the refused supervisor is settled before reporting"
+        );
     }
 
     /// The enclosing activation's observation budget ends a wait on a port
