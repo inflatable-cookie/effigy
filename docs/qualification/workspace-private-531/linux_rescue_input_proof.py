@@ -146,6 +146,11 @@ def verified_signature(result, status):
             and valid[0][2] == rescue.FINGERPRINT and valid[0][-1] == rescue.FINGERPRINT)
 
 
+def metadata_matches(sums, manifest):
+    return (sums.splitlines().count(rescue.SHA256 + ' *' + rescue.NAME) == 1 and
+            manifest.splitlines().count('e2fsprogs\t1.47.2-3ubuntu4') == 1)
+
+
 def execute(request, request_path, request_hash, deadline):
     """External Nucleus proof launch only. Input files describe scope; they grant no authority."""
     if request != plan(request['fixture'], request['evidence'], request['head'], request['nonce']):
@@ -198,7 +203,7 @@ def execute(request, request_path, request_hash, deadline):
             raise stage.Refusal('publisher detached signature was not verified with the full fingerprint')
         sums = (META / 'SHA256SUMS').read_text()
         manifest = (META / 'ubuntu-26.04.1-live-server-arm64.manifest').read_text()
-        if sums.splitlines().count(rescue.SHA256 + ' *' + rescue.NAME) != 1 or manifest.splitlines().count('e2fsprogs\t1.47.2-3ubuntu4') != 1:
+        if not metadata_matches(sums, manifest):
             raise stage.Refusal('signed image pin or tool manifest differs')
         child = [request['python'], '-I', '-B', '-c', CHILD, str(HERE), request['destination'], str(reserve_end)]
         result = call(3, child, reserve_end)
