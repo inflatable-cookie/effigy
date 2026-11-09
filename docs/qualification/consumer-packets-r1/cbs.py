@@ -2,9 +2,10 @@
 
 Source only and UNARMED. The CBS checkout is `/Users/tom/Dev/legacy/sites/cbs`
 with `infra/dev/effigy.container.toml` included by its root manifest. `main`
-refuses before any child runs. The armed entry is `run`, which needs an
-authenticated Nucleus proof-entry record for the exact request bytes. Source-only
-code has no such channel, so `run` refuses too.
+refuses every invocation before any read or child. The armed entry is
+`proof_entry.py cbs`, which Nucleus launches with the request's SHA-256 under the
+same-sequence precondition stated in consumer_core. While the committed manifest
+holds pending pins, `run` refuses at `route-pins-pending` before the request is read.
 
 Armed sequence, each child waited and run from the pinned CBS checkout:
   0. shape, frozen pins, provenance, bindings, window, budgets, resources,
@@ -103,51 +104,20 @@ def execute(session, engine, manifest, request):
     return {'status': 'passed', 'counts': counts, 'started': sorted(started)}
 
 
-def run(request_path, evidence_dir, *, authenticate=None, transport=None, manifest=None,
-        git=None, now_ns=None, roots=EVIDENCE_ROOTS):
-    manifest = manifest if manifest is not None else core.load_manifest()
-    request, digest = core.load_request(request_path)
-    core.validate_request_shape(request, ROUTE)
-    core.require_route_frozen(manifest, ROUTE)
-    record = core.authenticate_provenance(request, digest, ROUTE, authenticate)
-    core.bind_record(request, record)
-    now = core.monotonic_now() if now_ns is None else now_ns
-    core.check_window(request, manifest, now, ROUTE)
-    core.check_budgets(request, manifest, ROUTE)
-    core.check_resources(request, manifest, ROUTE)
-    checkout = core.resolve_checkout(manifest['routes'][ROUTE]['checkout'])
-    reads = []
-    core.verify_consumer(core.recording_git(git or core.default_git, reads),
-                         request, manifest, ROUTE, checkout)
-    evidence = core.claim_evidence(evidence_dir, roots)
-    core.write_binding(evidence, digest, record, core.module_hashes())
-    core.write_closure(evidence, reads)
-    engine = manifest['routes'][ROUTE]['engine']
-    run_transport = transport or core.make_transport(request['budgets'], evidence / 'children')
-    session = core.Session(run_transport, record['candidate']['install_identity']['path'],
-                           checkout, TAILS, engine)
-    try:
-        result = execute(session, engine, manifest, request)
-    except core.Refused as exc:
-        core.write_occurrence(evidence, exc.code, exc.detail)
-        raise
-    core.write_occurrence(evidence, 'passed', 'armed sequence settled')
-    return result
+def run(request_path, request_sha256, evidence_dir, **kwargs):
+    """The armed route. Reached only through `proof_entry.py`; see consumer_core.arm."""
+    return core.arm(ROUTE, TAILS, execute, request_path, request_sha256, evidence_dir, **kwargs)
 
 
 def main(argv):
-    """Unarmed ordinary CLI: every invocation refuses before any effect."""
-    if len(argv) != 4 or argv[0] != '--request' or argv[2] != '--evidence-dir':
-        print(json.dumps({'status': 'refused', 'code': 'unarmed',
-                          'detail': 'ordinary invocation has no proof-entry'}))
-        return 2
-    try:
-        result = run(argv[1], argv[3])
-    except core.Refused as exc:
-        print(json.dumps({'status': 'refused', 'code': exc.code, 'detail': exc.detail}))
-        return 2
-    print(json.dumps(result, sort_keys=True))
-    return 0
+    """Unarmed ordinary CLI: refuses every invocation before any read or child.
+
+    The armed entry is `proof_entry.py cbs`, which Nucleus launches with the
+    request's SHA-256. This module has no launch path of its own.
+    """
+    print(json.dumps({'status': 'refused', 'code': 'unarmed',
+                      'detail': 'use proof_entry.py cbs; ordinary invocation is unarmed'}))
+    return 2
 
 
 if __name__ == '__main__':

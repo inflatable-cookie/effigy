@@ -67,8 +67,8 @@ Desktop, Linux), #624 (aggregate judgment), #625 (Acow/CBS continuity) and #626
 The #625 source preparation (effigy#757) is
 [`docs/qualification/consumer-packets-r1/`](../qualification/consumer-packets-r1/README.md):
 Acow and CBS routes built on the current candidate, unarmed. Every candidate,
-positive624, window, provenance and engine pin is still pending, so the routes
-refuse before any child. Their fixture controls prove refusals and sequencing
+positive624, window and engine pin is still pending, so the routes refuse before
+any child. The armed entry runs only at the Nucleus launch precondition from #739. Their fixture controls prove refusals and sequencing
 only. They grant no consumer credit. The 5f466914 Acow packet stays historical.
 
 The former proof-before-enablement cycle is superseded. No stage implies the
