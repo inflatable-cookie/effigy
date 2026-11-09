@@ -98,6 +98,7 @@ def engine_outputs(**overrides):
     outputs = {'engine-artifacts': (0, artifacts_route()),
                'engine-units': (0, units_route())}
     outputs.update(overrides.get('routes', {}))
+    outputs.setdefault('engine-packages', outputs['engine-artifacts'])
     return outputs
 
 
@@ -121,7 +122,7 @@ class EngineInputRouteTests(unittest.TestCase):
         def run(argv, limit, cap, end):
             calls.append(list(argv))
             for route in engine.ROUTES:
-                if route['script'] != argv[2]:
+                if engine.route_argv(route) != argv:
                     continue
                 if run_error == route['id']:
                     raise Refusal('transport failure')
@@ -131,7 +132,9 @@ class EngineInputRouteTests(unittest.TestCase):
                 else:
                     code, raw = row
                     disposition = 'exited' if code == 0 else 'failed'
-                return {'disposition': disposition, 'waited_exit': code}, raw
+                begin, finish = probe.markers(route)
+                framed = begin.encode() + b'\n' + raw + finish.encode() + b' ' + str(code).encode() + b'\n'
+                return {'disposition': disposition, 'waited_exit': code}, framed
             raise AssertionError('unexpected argv: %r' % (argv,))
 
         def retain(name, data):
@@ -146,11 +149,11 @@ class EngineInputRouteTests(unittest.TestCase):
 
     def test_every_route_runs_once_with_its_reviewed_argv(self):
         result, calls, retained = self.observe()
-        self.assertEqual([call[2] for call in calls], [route['script'] for route in engine.ROUTES])
+        self.assertEqual(calls, [engine.route_argv(route) for route in engine.ROUTES])
         self.assertTrue(all(call[:2] == ['/bin/sh', '-c'] for call in calls))
         self.assertEqual(tuple(statuses(result)), engine.route_ids())
         self.assertEqual(set(retained), set(engine.route_ids()))
-        rows = [[route['id'], ['/bin/sh', '-c', route['script']], route['timeout'],
+        rows = [[route['id'], engine.route_argv(route), route['timeout'],
                  probe.MAX_ROUTE_BYTES] for route in engine.ROUTES]
         self.assertEqual(engine.routes_digest(),
                          hashlib.sha256(json.dumps(rows, sort_keys=True,
@@ -234,6 +237,13 @@ class EngineInputRouteTests(unittest.TestCase):
         self.assertEqual(result['findings'], [])
         self.assertEqual(result['facts']['artifacts'], {})
 
+    def test_package_and_file_paths_must_still_name_the_same_artifact(self):
+        altered = artifacts_route().replace(b'/usr/bin/dockerd', b'/opt/dockerd')
+        result, _, _ = self.observe(engine_outputs(routes={'engine-packages': (0, altered)}))
+        self.assertFalse(result['complete'])
+        self.assertEqual(result['facts']['artifact_package_identity_mismatches'], ['dockerd'])
+        self.assertTrue(any('file and package paths differ' in row for row in result['findings']))
+
     def test_two_owners_are_recorded_without_inventing_a_single_identity(self):
         result, _, _ = self.observe(engine_outputs(
             routes={'engine-artifacts': (0, artifacts_route(owner='multi'))}))
@@ -290,10 +300,10 @@ class EngineInputRouteTests(unittest.TestCase):
             'engine-artifacts': ('timeout', 0, b''),
             'engine-units': (0, b'present docker.service packaged\nread docker.service '
                                 b'/usr/lib/systemd/system\nlaunch docker.service /usr/bin/dockerd')}))
-        self.assertEqual(statuses(result), {'engine-artifacts': engine.FAILED,
+        self.assertEqual(statuses(result), {'engine-artifacts': engine.FAILED, 'engine-packages': engine.FAILED,
                                             'engine-units': engine.MALFORMED})
         self.assertFalse(result['complete'])
-        self.assertEqual(len(result['findings']), 2)
+        self.assertEqual(len(result['findings']), 3)
         self.assertTrue(any('engine-artifacts: failed' in finding for finding in result['findings']))
         self.assertTrue(any('engine-units: malformed' in finding for finding in result['findings']))
 
@@ -301,7 +311,7 @@ class EngineInputRouteTests(unittest.TestCase):
         result, _, _ = self.observe(engine_outputs(routes={
             'engine-artifacts': ('output-cap', 0, b'x' * 64),
             'engine-units': (0, b'')}))
-        self.assertEqual(statuses(result), {'engine-artifacts': engine.MALFORMED,
+        self.assertEqual(statuses(result), {'engine-artifacts': engine.MALFORMED, 'engine-packages': engine.MALFORMED,
                                             'engine-units': engine.MALFORMED})
 
     def test_unknown_record_duplicate_tool_and_wrong_tool_name_are_malformed(self):
@@ -475,9 +485,9 @@ class EngineInputRouteTests(unittest.TestCase):
         self.assertEqual(statuses(result)['engine-artifacts'], engine.FAILED)
 
     def test_route_shapes_stay_inside_the_reviewed_envelope(self):
-        self.assertEqual([route['timeout'] for route in engine.ROUTES], [30, 15])
+        self.assertEqual([route['timeout'] for route in engine.ROUTES], [30, 30, 15])
         for route in engine.ROUTES:
-            self.assertTrue(route['script'].startswith('# effigy-linux-observation: '))
+            self.assertLessEqual(len(' '.join(engine.route_argv(route)).encode()), probe.MAX_COMMAND_BYTES)
         self.assertEqual(set(engine.ARTIFACT_TOOLS),
                          {'dockerd', 'containerd', 'runc', 'buildx', 'docker-buildx'})
         self.assertEqual(set(engine.UNIT_NAMES),
@@ -591,7 +601,19 @@ class RealScriptTests(unittest.TestCase):
         run = self.run_route(self.replaced(engine.ENGINE_ARTIFACTS, tree),
                              str(tree / 'tools') + ':' + str(tree / 'bin') + ':/usr/bin:/bin')
         self.assertEqual(run.returncode, 0, run.stderr)
-        raw = self.canonical(tree, run.stdout)
+        package_run = self.run_route(self.replaced(engine.ENGINE_PACKAGES, tree),
+                                     str(tree / 'tools') + ':' + str(tree / 'bin') + ':/usr/bin:/bin')
+        self.assertEqual(package_run.returncode, 0, package_run.stderr)
+        package_rows = b''.join(line + b'\n' for line in package_run.stdout.splitlines()
+                                if line.startswith((b'owner ', b'owner-pkg ', b'version ')))
+        # Package records must follow the corresponding tool's file records.
+        merged = []
+        for line in run.stdout.splitlines():
+            merged.append(line)
+            if line.startswith(b'hash '):
+                name = line.split()[1]
+                merged.extend(row for row in package_rows.splitlines() if row.split()[1] == name)
+        raw = self.canonical(tree, b'\n'.join(merged) + b'\n')
         status, facts, reasons = self.decode('engine-artifacts', run, raw)
         self.assertEqual((status, reasons), (engine.OBSERVED, []), raw)
         tools = facts['tools']

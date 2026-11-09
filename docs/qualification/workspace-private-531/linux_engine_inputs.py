@@ -19,203 +19,243 @@ import time
 from linux_diagnostic_probe import (
     ABSENT, AMBIGUOUS, BUDGET_SECONDS, FAILED, INCOMPLETE, MALFORMED,
     MAX_ROUTE_BYTES, MIN_ROUTE_SECONDS, NOT_ATTEMPTED, OBSERVED, UNSUPPORTED,
-    Bad, _decode, facts_of,
+    Bad, _decode, facts_of, route_argv, unwrap_program, delivered_program,
 )
 
 SCHEMA = 'linux-engine-inputs-observation-v1'
 
 ENGINE_ARTIFACTS = '''# effigy-linux-observation: engine-artifacts
-LC_ALL=C
-export LC_ALL
+export LC_ALL=C
 for t in readlink stat sha256sum dpkg-query; do
-  command -v "$t" >/dev/null 2>&1 || { printf 'support %s absent\\n' "$t"; exit 127; }
+command -v "$t" >/dev/null 2>&1 || { printf "support %s absent\\n" "$t"; exit 127; }
 done
 pin() {
-  t=$1
-  p=$2
-  case $p in
-    absent) ;;
-    /*) case $p in *[!A-Za-z0-9._:/+-]*) p=invalid;; esac ;;
-    *) p=invalid ;;
-  esac
-  printf 'tool %s %s\\n' "$t" "$p"
-  case $p in /*) ;; *) return 0 ;; esac
-  if [ -L "$p" ]; then l=1; else l=0; fi
-  printf 'link %s %d\\n' "$t" "$l"
-  r=$(readlink -f "$p" 2>/dev/null) || r=
-  case $r in
-    /*) case $r in *[!A-Za-z0-9._:/+-]*) r=invalid;; esac ;;
-    '') r=unavailable ;;
-    *) r=invalid ;;
-  esac
-  printf 'resolve %s %s\\n' "$t" "$r"
-  case $r in /*) ;; *) return 0 ;; esac
-  if [ -e "$r" ]; then
-    st=$(stat -c '%f %u %g %s %d %i' "$r" 2>/dev/null) || st=
-    if [ -z "$st" ]; then printf 'stat %s unavailable\\n' "$t"; else
-      set -f
-      set -- $st
-      if [ "$#" -eq 6 ]; then printf 'stat %s %s %s %s %s %s %s\\n' "$t" "$1" "$2" "$3" "$4" "$5" "$6"
-      else printf 'stat %s invalid\\n' "$t"; fi
-    fi
-    h=$(sha256sum "$r" 2>/dev/null) || h=
-    set -f
-    set -- $h
-    if [ "$#" -eq 2 ]; then v=$1; else v=; fi
-    case $v in ''|*[!0-9a-f]*) v=invalid ;; esac
-    printf 'hash %s %s\\n' "$t" "$v"
-  else
-    printf 'stat %s missing\\n' "$t"
-    printf 'hash %s missing\\n' "$t"
-  fi
-  own=$(dpkg-query -S "$r" 2>/dev/null); orc=$?
-  if [ "$orc" -eq 1 ]; then printf 'owner %s none\\n' "$t"; return 0; fi
-  if [ "$orc" -ne 0 ]; then printf 'owner %s unavailable\\n' "$t"; return 0; fi
-  first=$(printf '%s\\n' "$own" | head -n 1)
-  extra=$(printf '%s\\n' "$own" | tail -n +2)
-  if [ -n "$extra" ]; then printf 'owner %s ambiguous\\n' "$t"; return 0; fi
-  case $first in
-    *": $r") pkgs=${first%": $r"} ;;
-    *) printf 'owner %s invalid\\n' "$t"; return 0 ;;
-  esac
-  case $pkgs in ''|*[!a-z0-9+.:_-]*) printf 'owner %s invalid\\n' "$t"; return 0 ;; esac
-  names=$(printf '%s\\n' "$pkgs" | tr ',' ' ')
-  set -f
-  set -- $names
-  if [ "$#" -gt 4 ]; then printf 'owner %s ambiguous\\n' "$t"; return 0; fi
-  printf 'owner %s %d\\n' "$t" "$#"
-  i=0
-  for pkg in "$@"; do
-    i=$((i+1))
-    case $pkg in
-      *:*) pa=${pkg%%:*}; pb=${pkg#*:}
-           case $pa in ''|*[!a-z0-9+.-]*) printf 'owner-pkg %s %d invalid\\n' "$t" "$i"; continue;; esac
-           case $pb in ''|*[!a-z0-9.-]*) printf 'owner-pkg %s %d invalid\\n' "$t" "$i"; continue;; esac ;;
-      *) case $pkg in ''|*[!a-z0-9+.-]*) printf 'owner-pkg %s %d invalid\\n' "$t" "$i"; continue;; esac ;;
-    esac
-    printf 'owner-pkg %s %d %s\\n' "$t" "$i" "$pkg"
-    q=$(dpkg-query -W -f='${Version}\\t${db:Status-Status}\\n' "$pkg" 2>/dev/null); qrc=$?
-    if [ "$qrc" -ne 0 ] || [ -z "$q" ]; then printf 'version %s %d unavailable\\n' "$t" "$i"; continue; fi
-    extra=$(printf '%s\\n' "$q" | tail -n +2)
-    if [ -n "$extra" ]; then printf 'version %s %d ambiguous\\n' "$t" "$i"; continue; fi
-    ver=$(printf '%s\\n' "$q" | head -n 1)
-    oldifs=$IFS
-    IFS=$(printf '\\t')
-    set -f
-    set -- $ver
-    IFS=$oldifs
-    if [ "$#" -ne 2 ]; then printf 'version %s %d invalid\\n' "$t" "$i"; continue; fi
-    v=$1
-    s=$2
-    case $v in ''|*[!A-Za-z0-9.+~:-]*) v=invalid ;; esac
-    case $s in ''|*[!a-z-]*) s=invalid ;; esac
-    printf 'version %s %d %s %s\\n' "$t" "$i" "$v" "$s"
-  done
-  return 0
+t=$1
+p=$2
+case $p in
+absent) ;;
+/*) case $p in *[!A-Za-z0-9._:/+-]*) p=invalid;; esac ;;
+*) p=invalid ;;
+esac
+printf "tool %s %s\\n" "$t" "$p"
+case $p in /*) ;; *) return 0 ;; esac
+if [ -L "$p" ]; then l=1; else l=0; fi
+printf "link %s %d\\n" "$t" "$l"
+r=$(readlink -f "$p" 2>/dev/null) || r=
+case $r in
+/*) case $r in *[!A-Za-z0-9._:/+-]*) r=invalid;; esac ;;
+"") r=unavailable ;;
+*) r=invalid ;;
+esac
+printf "resolve %s %s\\n" "$t" "$r"
+case $r in /*) ;; *) return 0 ;; esac
+if [ -e "$r" ]; then
+st=$(stat -c "%f %u %g %s %d %i" "$r" 2>/dev/null) || st=
+if [ -z "$st" ]; then printf "stat %s unavailable\\n" "$t"; else
+set -f
+set -- $st
+if [ "$#" -eq 6 ]; then printf "stat %s %s %s %s %s %s %s\\n" "$t" "$1" "$2" "$3" "$4" "$5" "$6"
+else printf "stat %s invalid\\n" "$t"; fi
+fi
+h=$(sha256sum "$r" 2>/dev/null) || h=
+set -f
+set -- $h
+if [ "$#" -eq 2 ]; then v=$1; else v=; fi
+case $v in ""|*[!0-9a-f]*) v=invalid ;; esac
+printf "hash %s %s\\n" "$t" "$v"
+else
+printf "stat %s missing\\n" "$t"
+printf "hash %s missing\\n" "$t"
+fi
+return 0
 }
 for t in dockerd containerd runc buildx; do
-  p=$(command -v "$t" 2>/dev/null) || p=
-  if [ -z "$p" ]; then p=absent; fi
-  pin "$t" "$p"
+p=$(command -v "$t" 2>/dev/null) || p=
+if [ -z "$p" ]; then p=absent; fi
+pin "$t" "$p"
 done
-# buildx is a Docker CLI plugin, not a PATH command: the CLI looks it up in these
-# documented system directories in this order, and the first hit wins.
 source=
 for d in /usr/local/lib/docker/cli-plugins /usr/local/libexec/docker/cli-plugins /usr/lib/docker/cli-plugins /usr/libexec/docker/cli-plugins; do
-  if [ -e "$d/docker-buildx" ]; then source=$d/docker-buildx; break; fi
+if [ -e "$d/docker-buildx" ]; then source=$d/docker-buildx; break; fi
 done
 if [ -z "$source" ]; then
-  printf 'tool docker-buildx absent\\n'
+printf "tool docker-buildx absent\\n"
 else
-  printf 'plugin-source docker-buildx %s\\n' "$source"
-  pin docker-buildx "$source"
+printf "plugin-source docker-buildx %s\\n" "$source"
+pin docker-buildx "$source"
+fi
+exit 0
+'''
+
+ENGINE_PACKAGES = '''# effigy-linux-observation: engine-packages
+export LC_ALL=C
+for t in readlink dpkg-query; do
+command -v "$t" >/dev/null 2>&1 || { printf "support %s absent\\n" "$t"; exit 127; }
+done
+emit() { printf "%s %s %s\\n" "$1" "$t" "$2"; }
+pin() {
+t=$1
+p=$2
+case $p in
+absent) ;;
+/*) case $p in *[!A-Za-z0-9._:/+-]*) p=invalid;; esac ;;
+*) p=invalid ;;
+esac
+emit tool "$p"
+case $p in /*) ;; *) return 0 ;; esac
+r=$(readlink -f "$p" 2>/dev/null) || r=
+case $r in
+/*) case $r in *[!A-Za-z0-9._:/+-]*) r=invalid;; esac ;;
+"") r=unavailable ;;
+*) r=invalid ;;
+esac
+emit resolve "$r"
+case $r in /*) ;; *) return 0 ;; esac
+own=$(dpkg-query -S "$r" 2>/dev/null); orc=$?
+if [ "$orc" -eq 1 ]; then emit owner none; return 0; fi
+if [ "$orc" -ne 0 ]; then emit owner unavailable; return 0; fi
+first=$own
+extra=$(printf "%s\\n" "$own" | tail -n +2)
+if [ -n "$extra" ]; then emit owner ambiguous; return 0; fi
+case $first in
+*": $r") pkgs=${first%": $r"} ;;
+*) emit owner invalid; return 0 ;;
+esac
+case $pkgs in ""|*[!a-z0-9+.:_-]*) emit owner invalid; return 0 ;; esac
+set -f
+set -- $pkgs
+if [ "$#" -gt 4 ]; then emit owner ambiguous; return 0; fi
+printf "owner %s %d\\n" "$t" "$#"
+i=0
+for pkg in "$@"; do
+i=$((i+1))
+case $pkg in
+*:*) pa=${pkg%%:*}; pb=${pkg#*:}
+case $pa in ""|*[!a-z0-9+.-]*) emit owner-pkg "$i invalid"; continue;; esac
+case $pb in ""|*[!a-z0-9.-]*) emit owner-pkg "$i invalid"; continue;; esac ;;
+*) case $pkg in ""|*[!a-z0-9+.-]*) emit owner-pkg "$i invalid"; continue;; esac ;;
+esac
+printf "owner-pkg %s %d %s\\n" "$t" "$i" "$pkg"
+q=$(dpkg-query -W -f='${Version}\\t${db:Status-Status}\\n' "$pkg" 2>/dev/null); qrc=$?
+if [ "$qrc" -ne 0 ] || [ -z "$q" ]; then emit version "$i unavailable"; continue; fi
+extra=$(printf "%s\\n" "$q" | tail -n +2)
+if [ -n "$extra" ]; then emit version "$i ambiguous"; continue; fi
+ver=$q
+oldifs=$IFS
+IFS=$(printf "\\t")
+set -f
+set -- $ver
+IFS=$oldifs
+if [ "$#" -ne 2 ]; then emit version "$i invalid"; continue; fi
+v=$1
+s=$2
+case $v in ""|*[!A-Za-z0-9.+~:-]*) v=invalid ;; esac
+case $s in ""|*[!a-z-]*) s=invalid ;; esac
+printf "version %s %d %s %s\\n" "$t" "$i" "$v" "$s"
+done
+return 0
+}
+for t in dockerd containerd runc buildx; do
+p=$(command -v "$t" 2>/dev/null) || p=
+if [ -z "$p" ]; then p=absent; fi
+pin "$t" "$p"
+done
+source=
+for d in /usr/local/lib/docker/cli-plugins /usr/local/libexec/docker/cli-plugins /usr/lib/docker/cli-plugins /usr/libexec/docker/cli-plugins; do
+if [ -e "$d/docker-buildx" ]; then source=$d/docker-buildx; break; fi
+done
+if [ -z "$source" ]; then
+printf "tool docker-buildx absent\\n"
+else
+printf "plugin-source docker-buildx %s\\n" "$source"
+pin docker-buildx "$source"
 fi
 exit 0
 '''
 
 ENGINE_UNITS = '''# effigy-linux-observation: engine-units
-LC_ALL=C
-export LC_ALL
+export LC_ALL=C
 emitval() {
-  if [ -z "$4" ]; then printf '%s %s %s bare\\n' "$1" "$2" "$3"
-  else printf '%s %s %s %s\\n' "$1" "$2" "$3" "$4"; fi
+if [ -z "$4" ]; then printf "%s %s %s bare\\n" "$1" "$2" "$3"
+else printf "%s %s %s %s\\n" "$1" "$2" "$3" "$4"; fi
 }
-dirs='/etc/systemd/system:admin /run/systemd/system:runtime /usr/local/lib/systemd/system:local /usr/lib/systemd/system:packaged /lib/systemd/system:legacy'
+dirs="/etc/systemd/system:admin /run/systemd/system:runtime /usr/local/lib/systemd/system:local /usr/lib/systemd/system:packaged /lib/systemd/system:legacy"
 for u in docker.service docker.socket containerd.service buildkit.service buildkit.socket; do
-  for d in $dirs; do
-    dir=${d%%:*}
-    role=${d##*:}
-    if [ "$role" = legacy ] && [ -e /usr/lib/systemd/system/"$u" ]; then continue; fi
-    if [ -e "$dir/$u" ]; then printf 'present %s %s\\n' "$u" "$role"; fi
-    if [ -d "$dir/$u.d" ]; then printf 'dropin %s %s\\n' "$u" "$role"; fi
-  done
-  body=
-  for spec in /usr/lib/systemd/system:packaged /lib/systemd/system:legacy; do
-    dir=${spec%%:*}
-    role=${spec##*:}
-    if [ "$role" = legacy ] && [ -e /usr/lib/systemd/system/"$u" ]; then continue; fi
-    if [ ! -e "$dir/$u" ]; then continue; fi
-    if [ -L "$dir/$u" ]; then printf 'read %s symlink\\n' "$u"
-    elif [ ! -f "$dir/$u" ]; then printf 'read %s nonregular\\n' "$u"
-    else printf 'read %s %s\\n' "$u" "$dir"; body=$dir/$u; fi
-    break
-  done
-  if [ -z "$body" ]; then continue; fi
-  n=0
-  overrun=0
-  while IFS= read -r line || [ -n "$line" ]; do
-    n=$((n+1))
-    if [ "$n" -gt 512 ]; then overrun=1; break; fi
-    merges=0
-    while :; do
-      case $line in
-        *\\\\) ;;
-        *) break ;;
-      esac
-      line=${line%\\\\}
-      merges=$((merges+1))
-      seg=
-      IFS= read -r seg
-      n=$((n+1))
-      if [ "$merges" -ge 4 ] || [ "$n" -gt 512 ]; then overrun=1; break; fi
-      if [ $((${#line} + ${#seg})) -gt 4096 ]; then overrun=1; break; fi
-      line=$line$seg
-    done
-    if [ "$overrun" -eq 1 ]; then break; fi
-    case $line in
-      ExecStart=*)
-        value=${line#ExecStart=}
-        set -f
-        set -- $value
-        if [ "$#" -eq 0 ]; then printf 'launch %s none\\n' "$u"; continue; fi
-        printf 'launch %s %s\\n' "$u" "$1"
-        shift
-        while [ "$#" -gt 0 ]; do
-          tok=$1
-          case $tok in
-            --config-file=*|--config=*|--root=*|--state-root=*|--data-root=*|--graph=*|--exec-root=*|--containerd=*)
-              emitval flag "$u" "${tok%%=*}" "${tok#*=}" ;;
-            --config-file|--config|--root|--state-root|--data-root|--graph|--exec-root|--containerd)
-              if [ "$#" -gt 1 ]; then emitval flag "$u" "$tok" "$2"; shift
-              else printf 'flag %s %s bare\\n' "$u" "$tok"; fi ;;
-          esac
-          shift
-        done ;;
-      ListenStream=*)
-        value=${line#ListenStream=}
-        set -f
-        set -- $value
-        if [ "$#" -eq 1 ]; then printf 'listen %s %s\\n' "$u" "$1"
-        else printf 'listen %s invalid\\n' "$u"; fi ;;
-    esac
-  done < "$body"
-  if [ "$overrun" -eq 1 ]; then printf 'overrun %s\\n' "$u"; fi
+for d in $dirs; do
+dir=${d%%:*}
+role=${d##*:}
+if [ "$role" = legacy ] && [ -e /usr/lib/systemd/system/"$u" ]; then continue; fi
+if [ -e "$dir/$u" ]; then printf "present %s %s\\n" "$u" "$role"; fi
+if [ -d "$dir/$u.d" ]; then printf "dropin %s %s\\n" "$u" "$role"; fi
+done
+body=
+for spec in /usr/lib/systemd/system:packaged /lib/systemd/system:legacy; do
+dir=${spec%%:*}
+role=${spec##*:}
+if [ "$role" = legacy ] && [ -e /usr/lib/systemd/system/"$u" ]; then continue; fi
+if [ ! -e "$dir/$u" ]; then continue; fi
+if [ -L "$dir/$u" ]; then printf "read %s symlink\\n" "$u"
+elif [ ! -f "$dir/$u" ]; then printf "read %s nonregular\\n" "$u"
+else printf "read %s %s\\n" "$u" "$dir"; body=$dir/$u; fi
+break
+done
+if [ -z "$body" ]; then continue; fi
+n=0
+overrun=0
+while IFS= read -r line || [ -n "$line" ]; do
+n=$((n+1))
+if [ "$n" -gt 512 ]; then overrun=1; break; fi
+merges=0
+while :; do
+case $line in
+*\\\\) ;;
+*) break ;;
+esac
+line=${line%\\\\}
+merges=$((merges+1))
+seg=
+IFS= read -r seg
+n=$((n+1))
+if [ "$merges" -ge 4 ] || [ "$n" -gt 512 ]; then overrun=1; break; fi
+if [ $((${#line} + ${#seg})) -gt 4096 ]; then overrun=1; break; fi
+line=$line$seg
+done
+if [ "$overrun" -eq 1 ]; then break; fi
+case $line in
+ExecStart=*)
+value=${line#ExecStart=}
+set -f
+set -- $value
+if [ "$#" -eq 0 ]; then printf "launch %s none\\n" "$u"; continue; fi
+printf "launch %s %s\\n" "$u" "$1"
+shift
+while [ "$#" -gt 0 ]; do
+tok=$1
+case $tok in
+--config-file=*|--config=*|--root=*|--state-root=*|--data-root=*|--graph=*|--exec-root=*|--containerd=*)
+emitval flag "$u" "${tok%%=*}" "${tok#*=}" ;;
+--config-file|--config|--root|--state-root|--data-root|--graph|--exec-root|--containerd)
+if [ "$#" -gt 1 ]; then emitval flag "$u" "$tok" "$2"; shift
+else printf "flag %s %s bare\\n" "$u" "$tok"; fi ;;
+esac
+shift
+done ;;
+ListenStream=*)
+value=${line#ListenStream=}
+set -f
+set -- $value
+if [ "$#" -eq 1 ]; then printf "listen %s %s\\n" "$u" "$1"
+else printf "listen %s invalid\\n" "$u"; fi ;;
+esac
+done < "$body"
+if [ "$overrun" -eq 1 ]; then printf "overrun %s\\n" "$u"; fi
 done
 exit 0
 '''
 
 ROUTES = (
     {'id': 'engine-artifacts', 'script': ENGINE_ARTIFACTS, 'timeout': 30},
+    {'id': 'engine-packages', 'script': ENGINE_PACKAGES, 'timeout': 30},
     {'id': 'engine-units', 'script': ENGINE_UNITS, 'timeout': 15},
 )
 
@@ -275,10 +315,6 @@ def route_ids():
     return tuple(route['id'] for route in ROUTES)
 
 
-def route_argv(route):
-    return ['/bin/sh', '-c', route['script']]
-
-
 def routes_digest():
     """Bind the exact fixed argv of every route, not a caller-supplied list."""
     rows = [[route['id'], route_argv(route), route['timeout'], MAX_ROUTE_BYTES] for route in ROUTES]
@@ -332,7 +368,7 @@ def _entry(status, value=None):
 
 # ----------------------------------------------------------------- route parsers
 
-def parse_engine_artifacts(raw):
+def parse_engine_artifacts(raw, phase="complete"):
     rows = _decode(raw)
     tools = {}
     plugin_source = {}
@@ -459,9 +495,9 @@ def parse_engine_artifacts(raw):
                                                  record['stat'], record['sha256'], record['package'])):
                 raise Bad(MALFORMED, 'an absent or invalid tool carries further records')
             continue
-        if record['package'] is None:
+        if record['package'] is None and phase != 'files':
             raise Bad(MALFORMED, 'a present tool carries no owner record')
-        for entry in record['package']['entries']:
+        for entry in (record['package'] or {}).get('entries', []):
             if entry['status'] == 'unobserved':
                 raise Bad(MALFORMED, 'a package entry carries no version record')
     return {'tools': tools, 'plugin_source': plugin_source,
@@ -560,8 +596,8 @@ def parse_engine_units(raw):
 
 
 def _parse(route, raw):
-    if route['id'] == 'engine-artifacts':
-        return parse_engine_artifacts(raw)
+    if route['id'] in ('engine-artifacts', 'engine-packages'):
+        return parse_engine_artifacts(raw, 'files' if route['id'] == 'engine-artifacts' else 'packages')
     return parse_engine_units(raw)
 
 
@@ -598,7 +634,7 @@ def observe(run, retain, guard, deadline, budget=BUDGET_SECONDS):
         guard()
         now = time.monotonic()
         limit = min(end, deadline)
-        row = {'id': route['id'], 'script_sha256': hashlib.sha256(route['script'].encode()).hexdigest(),
+        row = {'id': route['id'], 'script_sha256': hashlib.sha256(delivered_program(route).encode()).hexdigest(),
                'timeout_seconds': route['timeout'], 'cap_bytes': MAX_ROUTE_BYTES}
         if limit - now < MIN_ROUTE_SECONDS:
             row.update(status=NOT_ATTEMPTED, exit=None, disposition='not-attempted',
@@ -625,7 +661,12 @@ def observe(run, retain, guard, deadline, budget=BUDGET_SECONDS):
         else:
             retained_error = None
         try:
-            status, facts, reasons = decode(route, result, raw)
+            body = (raw if result.get('disposition') in
+                    ('timeout', 'resource-refusal', 'unknown', 'local-error', 'output-cap')
+                    else unwrap_program(route, result, raw))
+            status, facts, reasons = decode(route, result, body)
+        except Bad as exc:
+            status, facts, reasons = exc.status, {}, [exc.reason]
         except Exception as exc:                                  # a decoder bug is not a fact
             status, facts, reasons = MALFORMED, {}, ['the read could not be decoded: ' + str(exc)]
         if retained_error is not None:
@@ -642,8 +683,19 @@ def observe(run, retain, guard, deadline, budget=BUDGET_SECONDS):
 def correlate(rows):
     """Every engine-input fact as an observation, with missing parts left unknown."""
     artifacts = facts_of(rows, 'engine-artifacts')
+    packages = facts_of(rows, 'engine-packages')
+    mismatches = []
+    for name, record in artifacts.get('tools', {}).items():
+        package = packages.get('tools', {}).get(name)
+        if package is None:
+            continue
+        if (record['path'], record['resolved']) != (package['path'], package['resolved']):
+            mismatches.append(name)
+            continue
+        record['package'] = package['package']
     units = facts_of(rows, 'engine-units')
     return {
+        'artifact_package_identity_mismatches': mismatches,
         'artifacts': artifacts.get('tools', {}),
         'plugin_source': artifacts.get('plugin_source', {}),
         'units': units.get('units', {}),
@@ -664,6 +716,9 @@ def summarize(rows):
         if row['status'] in INCOMPLETE:
             detail = '; '.join(row['reasons']) or 'no reason recorded'
             findings.append('engine-input observation %s: %s (%s)' % (row['id'], row['status'], detail))
+    if facts.get('artifact_package_identity_mismatches'):
+        findings.append('engine-input observation: file and package paths differ for ' +
+                        ', '.join(facts['artifact_package_identity_mismatches']))
     for name, unit in facts.get('units', {}).items():
         if unit.get('truncated'):
             findings.append('engine-input observation engine-units: %s body overrun before completion'
