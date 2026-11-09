@@ -8,6 +8,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Bind the macOS C1 stage to a launch-time proof window. Its window request names the original
+  executor C0 receipt by exact path and sha256, re-verifies that complete genuine chain at the plan
+  and at launch, and binds the token's first-use cache, image, Docker-config, profile and Lima state
+  paths as absent before the claim. The plain C1 request keeps its pre-created absolute-time
+  activation; C2–C6 keep plain-request-only windows (effigy#788).
+
 - Bound Desktop D3 control metadata and derive fresh runtime-check identities from
   each activation. The failed prior occurrence remains retained and requires a
   separate closure observation before a new native proof (effigy#784).

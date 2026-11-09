@@ -528,6 +528,24 @@ Gates:
 
 `macos_stage_executor.py` is the stage runner. This source preparation starts no native backend.
 
+### The C1 window names its original C0 receipt
+
+C1's launch-time window carries `prior_receipt`: the exact path and sha256 of the original executor C0
+receipt of this token's chain. The plan and the launch both verify that complete chain then
+(`checked_prior`, then the chain verifier in execution): a closed, non-simulated executor chain bound to
+this token, control root and endpoint, whose C0 origin minted the chain's `token32` and recorded the owned
+roots. A window ref is exactly those three keys and never carries `historical`, so the pinned 688 C0 record
+stays a plain-request binding only: a fixture record, a doctored or simulated receipt, another token's
+chain or a changed hash refuses at the plan and again at launch. The request binds the control root
+identity; execution re-derives the three owned roots from the verified C0 creation record (first-use
+entries included) before the claim. The C1 `absent_paths` are the token's first-use `cache`,
+`cache/effigy-image`, `docker-config`, Colima profile directory and `_lima` VM state under `colima_home`:
+any of them present refuses before the request claim, so no cache, config, image or profile state is
+adopted. The GO is written at launch for the requested duration — at most the 900-second stage with the
+60-second reserve shared by prefetch and start. Every C1 runtime gate, the exact pinned image and the
+fixed start flags are unchanged, and the plain C1 request keeps its pre-created absolute-time activation
+route. C1 execution itself remains a separate proof-only launch.
+
 ### Desktop readiness before D1
 
 The prospective `plan-ready BINDINGS OPTIONS` request binds the original D0 receipt, its three
@@ -627,18 +645,21 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
   approval, provision the private activation, claims and evidence directories and the C0 parent or D0
   control root first. Create an options JSON containing exactly `activation_id` (fresh, 8–64 safe
   characters), `duration_seconds` (integer greater than the stage reserve and at most its stage
-  seconds and 1200), and canonical `evidence_root`. With the bindings JSON described above, run:
+  seconds and 1200), canonical `evidence_root`, and — for every stage whose window consumes a
+  predecessor (D1–D4 and C1) — `prior_receipt`, the exact path and sha256 of that original receipt.
+  With the bindings JSON described above, run:
 
   ```sh
   effigy qualification:macos:proof-only -- plan-window D0 /absolute/path/to/bindings.json /absolute/path/to/options.json
   ```
 
-  Use C0 in place of D0 when appropriate. Save the output unchanged as a read-only request under
-  scratch, retain its exact bytes and SHA-256, and pin the merged K, selector
+  Use C0 in place of D0 when appropriate, and C1 with its original executor C0 receipt as `prior_receipt`
+  (see Executor); C2–C6 stay plain proof requests with no window recipe. Save the output unchanged as a
+  read-only request under scratch, retain its exact bytes and SHA-256, and pin the merged K, selector
   `qualification:macos:proof-only -- /absolute/path/to/request.json REQUEST_SHA256` and request hash
   in Nucleus. Null root identities are provisioning preconditions: rerun the plan after provisioning,
-  before freezing the request. The D0 `absent_paths` are fixed creation destinations and must remain
-  absent through launch; existing directories and symlinks refuse before the request claim. Check all
+  before freezing the request. The D0 and C1 `absent_paths` are fixed first-use destinations and must
+  remain absent through launch; existing directories and symlinks refuse before the request claim. Check all
   named destinations are unused. The native operator answer and
   actual proof-only launch remain necessary. At launch the request claim is spent even on an uncertain
   or partial write; retain the claim, activation, proof evidence and stage evidence, and never retry it.
@@ -647,8 +668,9 @@ Fixture simulations are labelled and their D1 receipts cannot be consumed as nat
 - **Static admission.** C0 and D0 have no remaining static helper refusal. Their actual execution still
   needs the external proof-only precondition and all runtime checks. Remaining refusals:
   - C1: admitted statically (r5). Its one fetch is the pinned Colima image through the prefetch helper, with the exact
-    size and sha512. Ordinary execution still refuses. It is in the proof entry (`PROOF_STAGES`) as a plain proof request
-    only; its window recipe is refused, since the window recipe is not reviewed for C1.
+    size and sha512. Ordinary execution still refuses. It is in the proof entry (`PROOF_STAGES`) as a plain proof
+    request (the pre-created absolute-time activation) and as a launch-time window that names its original executor
+    C0 receipt (see Executor). C2–C6 remain plain proof requests only; their window recipes are refused.
   - D2: admitted statically (r8 / 756). Its fetches are the pinned Ubuntu 22.04 arm64 OCI blobs and 22 offline debs,
     hashed with exact size, then a `--network none` docker build from local `--build-context` oci-layout and debs.
     Ordinary execution still refuses at the owner mechanism; its proof-only window names the original D1 receipt

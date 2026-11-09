@@ -30,9 +30,14 @@ def unique_object(pairs):
 
 # D1 is reached only through a window request, which names the original D0 receipt it consumes.
 # D2, D3 and D4 are the same form, naming the original D1, D2 and D3 receipt they consume (each binds the chain below).
-# C1 to C6 are plain proof requests only: their window recipes are not reviewed (window_recipe refuses them).
+# C1's window names the original executor C0 receipt it consumes; its plain request (a pre-created absolute-time
+# activation) stays supported. C2 to C6 are plain proof requests only: their window recipes are not reviewed
+# (window_recipe refuses them).
 PROOF_STAGES = ('C0', 'D0', 'D1', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'D2', 'D3', 'D4')
-WINDOW_PRIOR = {'D1': 'D0', 'D2': 'D1', 'D3': 'D2', 'D4': 'D3'}
+WINDOW_PRIOR = {'C1': 'C0', 'D1': 'D0', 'D2': 'D1', 'D3': 'D2', 'D4': 'D3'}
+# The stages the plain proof entry refuses: every window stage whose plain request is not reviewed.
+# C1 keeps its plain request, so it is not window-only.
+WINDOW_ONLY = ('D1', 'D2', 'D3', 'D4')
 PROOF_STAGE_NAMES = 'C0, D0, D1, C1, C2, C3, C4, C5, C6, D2, D3 or D4'
 PROOF_STAGE_REFUSAL = 'proof entry supports only ' + PROOF_STAGE_NAMES
 
@@ -411,7 +416,7 @@ def checked_prior(ref, bindings, manifest, expected_stage='D0'):
 
 def window_recipe(stage_id, bindings, options):
     """Prospective request. Directory identities must be captured after provisioning."""
-    if stage_id in ('C1', 'C2', 'C3', 'C4', 'C5', 'C6'):
+    if stage_id in ('C2', 'C3', 'C4', 'C5', 'C6'):
         raise executor.Refusal(f'{stage_id} has no window recipe: it runs only as a plain proof request')
     base_options = {'activation_id', 'duration_seconds', 'evidence_root'}
     prior_stage = WINDOW_PRIOR.get(stage_id)
@@ -445,10 +450,16 @@ def window_recipe(stage_id, bindings, options):
             observed[root] = None  # Explicit provisioning precondition; execution refuses it.
     # D0 creates these paths exclusively; their approved identity is absence. D2 creates desktop_input_dir.
     # D3's cidfile is written fresh by its run, so an existing one is a collision, not an adopted receipt.
+    # C1 is first use of the token's cache, image directory, Docker config and Colima profile and VM state:
+    # any of them present is a collision or an adopted engine, refused before the claim at launch.
     absent_paths = ([os.path.dirname(bindings['desktop_config']), bindings['desktop_config'],
                      bindings['desktop_context_dir']] if stage_id == 'D0'
                     else sorted(executor.d2_occurrence(bindings, activation_id).values()) if stage_id == 'D2'
-                    else [executor.d3_occurrence(bindings, activation_id)['desktop_cidfile']] if stage_id == 'D3' else [])
+                    else [executor.d3_occurrence(bindings, activation_id)['desktop_cidfile']] if stage_id == 'D3'
+                    else sorted({bindings['colima_cache_home'], bindings['colima_docker_config'],
+                                 bindings['colima_cache_home'] + '/' + executor.COLIMA_IMAGE_DIR,
+                                 bindings['colima_home'] + '/' + executor.prep.PROFILE,
+                                 bindings['colima_home'] + '/_lima'}) if stage_id == 'C1' else [])
     return dict(schema='macos-stage-window-v1', stage=stage_id, bindings=bindings,
                 bindings_sha256=executor.canon_sha(bindings), inputs=identity['inputs'],
                 inputs_sha256=identity['inputs_sha256'], manifest_sha256=identity['manifest_sha256'],
@@ -561,7 +572,7 @@ def main(argv):
     stage_id = request['stage']
     if stage_id not in PROOF_STAGES:
         raise executor.Refusal(PROOF_STAGE_REFUSAL)
-    if stage_id in WINDOW_PRIOR and not window:
+    if stage_id in WINDOW_ONLY and not window:
         raise executor.Refusal(f'{stage_id} runs only through a window request that names its {WINDOW_PRIOR[stage_id]} receipt')
     manifest = executor.load_manifest()
     plan = executor.resolve_stage(stage_id, request['bindings'], manifest)
