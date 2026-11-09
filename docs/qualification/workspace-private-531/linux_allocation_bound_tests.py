@@ -396,6 +396,13 @@ class HelperChecks(unittest.TestCase):
         self.assertIn('quota', plan[3]['argv'])
         self.assertIn(ROOT, plan[4]['argv'])
 
+    def test_writer_tool_route_binds_fixed_entry_and_its_local_dependencies(self):
+        route = bound.writer_tool_route()
+        self.assertEqual(route['argv'], ['/usr/bin/python3', '-I', '-B', str(bound.WRITER_HELPER),
+                                          '--observe-writer-tools'])
+        self.assertEqual(route['sha256'], hashlib.sha256(bound.WRITER_HELPER.read_bytes()).hexdigest())
+        self.assertEqual(set(route['dependencies']), {'linux_supervisor.py', 'preparation_resources.py'})
+
 
 class InventoryChecks(unittest.TestCase):
     def test_allocation_modules_are_in_the_request_closure(self):

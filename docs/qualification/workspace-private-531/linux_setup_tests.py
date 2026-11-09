@@ -631,6 +631,52 @@ class ContainedTransferChecks(unittest.TestCase):
         finally:
             os.close(fd)
 
+    def test_writer_tool_observations_bind_canonical_identity_and_custody(self):
+        root = tmpdir('writer-tools-')
+        binary_dir = root / 'usr' / 'bin'
+        binary_dir.mkdir(parents=True)
+        (root / 'bin').symlink_to('usr/bin')
+        for name in ('env', 'sh', 'sleep', 'cat'):
+            binary = binary_dir / name
+            binary.write_bytes(('fixture-' + name).encode())
+            binary.chmod(0o755)
+        paths = (binary_dir / 'env', root / 'bin' / 'sh', root / 'bin' / 'sleep', root / 'bin' / 'cat')
+        def observe():
+            return {name: transfers._writer_tool_identity(str(path), os.getuid(), str(root))
+                    for name, path in zip(transfers.WRITER_TOOLS, paths)}
+        before = observe()
+        transfers._compare_writer_tool_observations(before, observe(), os.getuid())
+        with self.assertRaises(Refusal):
+            transfers._writer_tool_identity(str(paths[0]), os.getuid() + 1, str(root))
+        replacement = binary_dir / 'replacement'
+        replacement.write_bytes(b'replaced')
+        replacement.chmod(0o755)
+        os.replace(replacement, binary_dir / 'cat')
+        with self.assertRaisesRegex(Refusal, 'identity changed'):
+            transfers._compare_writer_tool_observations(before, observe(), os.getuid())
+        (binary_dir / 'cat').chmod(0o777)
+        with self.assertRaises(Refusal):
+            observe()
+        (binary_dir / 'cat').unlink()
+        with self.assertRaises(Refusal):
+            observe()
+        with self.assertRaises(Refusal):
+            transfers._compare_writer_tool_observations(before, {}, os.getuid())
+        (binary_dir / 'cat').symlink_to('/bin/cat')
+        with self.assertRaises(Refusal):
+            observe()
+
+    def test_fixed_writer_tool_entry_refuses_missing_custody_and_other_arguments(self):
+        boot = '12345678-1234-1234-1234-123456789abc'
+        with patch.object(transfers.Path, 'read_text', return_value=boot), \
+                patch.object(transfers, 'fixed_writer_tool_observations', side_effect=Refusal('missing custody')) as read, \
+                patch.object(sys, 'stderr'):
+            self.assertEqual(transfers.writer_tool_main(['--observe-writer-tools']), 3)
+            read.assert_called_once()
+            read.reset_mock()
+            self.assertEqual(transfers.writer_tool_main(['--other']), 2)
+            read.assert_not_called()
+
     def test_missing_fifo_is_a_writer_failure_not_closure(self):
         root = tmpdir('contained-nofifo-')
         data = root / 'archive.bin'

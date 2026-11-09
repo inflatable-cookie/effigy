@@ -41,6 +41,7 @@ QIF_SPACE = 1 << 1
 ROOT_UID = 0                                      # the supervisor creates its gate FIFO as root
 ROUTES = ('mountinfo', 'dumpe2fs', 'by-uuid', 'quota', 'tree')
 HELPER = Path(__file__).resolve().parent / 'linux_allocation_probe.py'
+WRITER_HELPER = Path(__file__).resolve().parent / 'linux_transfer.py'
 HEX64 = re.compile(r'^[0-9a-f]{64}$')
 BOOT_UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
@@ -109,6 +110,14 @@ def route_plan(tree_root, helper=HELPER):
         {'route': 'quota', 'argv': list(py + ('quota', ROOT_DEVICE, str(PROJECT_ID)))},
         {'route': 'tree', 'argv': list(py + ('tree', tree_root, str(PROJECT_ID)))},
     ], helper_sha256(helper)
+
+
+def writer_tool_route(helper=WRITER_HELPER):
+    """Fixed, read-only custody observation; it cannot authorize a writer."""
+    dependencies = ('linux_supervisor.py', 'preparation_resources.py')
+    return {'argv': ['/usr/bin/python3', '-I', '-B', str(helper), '--observe-writer-tools'],
+            'sha256': helper_sha256(helper),
+            'dependencies': {name: helper_sha256(Path(helper).parent / name) for name in dependencies}}
 
 
 def _originals(witness):
