@@ -1,0 +1,1 @@
+Record fixed-category Git settlement refusal facts on synthetic release TestEffects before fixture cleanup, including checkpoint-resume prepare commits, with Run versus Resume and `--to` checkpoint labels. Test-only; production output is unchanged (effigy#664).

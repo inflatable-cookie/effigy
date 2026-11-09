@@ -1,0 +1,1 @@
+`effigy bundle sync`, `bootstrap`, and deploy provider resolution show what they are waiting on as time passes: each bundle or catalog source names its exact revision, a `setup` or `start` phase names its selector, and a git provider fetch names its source and pin, with elapsed time on every frame. Immediate outcomes stay one line.

@@ -1,0 +1,1 @@
+A floating Git bundle source updates on `dev` again. The remote check read `git ls-remote` output that the terminal sanitizer had stripped of its TAB, so every check kept the old pin without a warning. The check now reads the object id and ref name with or without that TAB.

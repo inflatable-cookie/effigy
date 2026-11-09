@@ -1,0 +1,1 @@
+Managed TUI panes now show nested Effigy progress as plain start and finish lines instead of repeated spinner redraws and banners. Shutdown takes over the progress display cleanly, and sequence labels name useful work instead of generated step numbers.

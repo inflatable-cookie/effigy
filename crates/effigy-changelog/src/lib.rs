@@ -7,13 +7,19 @@ pub mod types;
 mod analyzer;
 mod extractor;
 mod formatter;
+mod fragments;
 mod parser;
+mod source;
+#[cfg(test)]
+mod test_support;
 mod validator;
 
 use std::path::Path;
 
 pub use analyzer::{Analysis, BumpKind};
 pub use error::{ChangelogError, ParseDiagnostic, ValidationDiagnostic};
+pub use fragments::{Fragment, FragmentSet, FRAGMENT_DIR};
+pub use source::{load_source, ChangelogSource};
 pub use types::*;
 
 /// Parse changelog content into a [`Changelog`] AST.

@@ -1806,3 +1806,5 @@ fn status_reports_pending_settlement_with_its_settle_action() {
     assert!(json["run"].get("settlement").is_none());
     assert!(!render_release_status_text(&status).contains("Settlement:"));
 }
+
+mod changelog_fragments;

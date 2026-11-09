@@ -1,0 +1,1 @@
+Catalog sources: services resolve from the project's `infra/dev/catalog/`, a bundle's `catalog/` or a declared `[catalog.sources.<name>]`, and a source that is behind updates itself on the next `dev`, `bootstrap` or `container up`. `effigy bundle sync` stays the explicit command, and `update = "manual"` makes a source strict.

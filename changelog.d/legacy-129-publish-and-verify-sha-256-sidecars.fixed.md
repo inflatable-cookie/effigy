@@ -1,0 +1,1 @@
+Publish and verify SHA-256 sidecars for all four release binaries, including Linux assets, so cold-cache workspace acquisition can verify the binary it downloads. The Linux build workflow also uses the maintained GLIBC check script while keeping its 2.35 floor.

@@ -347,6 +347,14 @@ pub fn apply_release_mutations(
                 })?;
             }
             FileMutationApply::SyncCargoLock { .. } => sync_cargo_lock(root, &mutation.path)?,
+            FileMutationApply::Remove => {
+                std::fs::remove_file(&mutation.path).map_err(|error| {
+                    ReleaseError::TaskInvocation(format!(
+                        "failed to remove {}: {error}",
+                        mutation.path.display()
+                    ))
+                })?;
+            }
         }
     }
     Ok(())

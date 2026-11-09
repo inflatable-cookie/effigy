@@ -70,7 +70,6 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::time::Instant;
 
-use effigy_changelog::{self as changelog};
 use effigy_manifest::config_sections::ManifestReleaseConfig;
 use effigy_manifest::load_task_manifest;
 use hosted_evidence::hosted_evidence_spec_from_manifest;
@@ -871,16 +870,10 @@ pub fn run_release_gate(root: &Path, gate: &ResolvedGate) -> GateResult {
 pub fn load_release_context(root: &Path) -> Result<ReleaseContext, ReleaseError> {
     let config = load_release_config(root)?;
     let current_version = read_current_version(&config.version_source)?;
-    let raw_changelog = std::fs::read_to_string(&config.changelog_path).map_err(|error| {
-        ReleaseError::TaskInvocation(format!(
-            "failed to read changelog {}: {error}",
-            config.changelog_path.display()
-        ))
-    })?;
-    let parsed_changelog = changelog::parse(&raw_changelog)
-        .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
-    let diagnostics = changelog::validate(&parsed_changelog, &raw_changelog);
-    let changelog_diagnostics = diagnostics
+    let source = pipeline::load_changelog_source(&config.changelog_path)?;
+    let parsed_changelog = source.changelog;
+    let changelog_diagnostics = source
+        .diagnostics
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>();

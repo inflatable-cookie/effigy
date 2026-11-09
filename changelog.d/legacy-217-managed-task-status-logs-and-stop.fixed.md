@@ -1,0 +1,1 @@
+Managed-task `status`, `logs` and `stop` (`mode = "tui"`) inspect or stop an existing session without acquiring a missing pinned source. The skip follows the selected task's own `mode`, including a prefixed catalog name and a task declared in an included manifest fragment. A real task run, including one whose first argument is those words, still acquires the pin.

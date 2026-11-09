@@ -1,0 +1,1 @@
+`EFFIGY_RENDER_ROOT` and every other Effigy value interpolated into a container, `EFFIGY_PARENT_CAPABILITY` with descriptor 9, Effigy's control markers in a workload's environment, `EFFIGY_INTERNAL_ENVIRONMENT_EXEMPT`, `EFFIGY_MANAGED_STREAM` and the host-container lease variables.

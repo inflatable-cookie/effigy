@@ -1,0 +1,1 @@
+Concurrent runs no longer refuse each other with `state store: store busy`: the store uses write-ahead logging, one writer gate and a bounded busy timeout, and a racing first open of a checkout journal waits instead of refusing.

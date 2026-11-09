@@ -1,0 +1,1 @@
+`effigy container <NAME> restart <process> [<process>...]` restarts only the named host processes and the processes that depend on them, in dependency order, while the containers and other host processes keep running. Its `--json` payload is `effigy.container.restart.v1`.

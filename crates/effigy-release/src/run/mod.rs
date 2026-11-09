@@ -54,24 +54,50 @@ pub(crate) fn plan_prepare_mutations(
     };
 
     if plan.changelog_in_use {
-        let raw = std::fs::read_to_string(&plan.changelog_path).map_err(|error| {
-            ReleaseError::TaskInvocation(format!(
-                "failed to read changelog {}: {error}",
-                plan.changelog_path.display()
-            ))
-        })?;
-        let parsed = changelog::parse(&raw)
-            .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
+        let source = crate::pipeline::load_changelog_source(&plan.changelog_path)?;
+        // Prepare folds only what the plan validated. A changed, added or
+        // newly malformed fragment refuses before any file is written.
+        if let Some(problem) = source
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.rule.starts_with("fragment-"))
+        {
+            return Err(ReleaseError::TaskInvocation(format!(
+                "changelog.d no longer validates, so nothing was folded: {problem}; fix it and re-run `effigy release --plan`"
+            )));
+        }
+        if !same_fragment_set(&plan.changelog_fragments, &source.fragments.fragments) {
+            return Err(ReleaseError::TaskInvocation(
+                "changelog.d fragments changed since the release was planned; re-run `effigy release --plan` before preparing".to_owned(),
+            ));
+        }
         let date = Utc::now().date_naive().to_string();
-        let after = render_prepared_changelog_contents(&parsed, &primary, &date)?;
-        if after != raw {
+        let after = render_prepared_changelog_contents(&source.changelog, &primary, &date)?;
+        if after != source.raw {
             mutations.push(changelog_write_mutation(
                 &plan.changelog_path,
-                &raw,
+                &source.raw,
                 &after,
                 &primary,
                 &date,
             ));
+        }
+        if !plan.changelog_fragments.is_empty() {
+            mutations.extend(
+                plan.changelog_fragments
+                    .iter()
+                    .map(|fragment| fragment_fold_mutation(fragment, &primary)),
+            );
+            // The adoption marker is git-tracked: keep `.gitkeep` in the folder.
+            let keep = plan
+                .changelog_path
+                .parent()
+                .unwrap_or_else(|| Path::new(""))
+                .join(effigy_changelog::FRAGMENT_DIR)
+                .join(".gitkeep");
+            if !keep.exists() {
+                mutations.push(gitkeep_mutation(&keep));
+            }
         }
     }
 
@@ -170,7 +196,6 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
-use effigy_changelog as changelog;
 use effigy_kernel::observe::UnknownReason;
 use effigy_kernel::outcome::WorkloadOutcome;
 use effigy_kernel::run::{EffectSpec, EffectTicket, Run, Settlement};
@@ -2009,6 +2034,54 @@ fn changelog_write_mutation(
         diff_preview: crate::build_diff_preview(before, after),
         apply: FileMutationApply::Write {
             after_contents: after.to_owned(),
+        },
+    }
+}
+
+/// Whether the fragments prepare sees are exactly the set the plan validated:
+/// the same file names, with the same bytes.
+fn same_fragment_set(
+    planned: &[effigy_changelog::Fragment],
+    current: &[effigy_changelog::Fragment],
+) -> bool {
+    planned.len() == current.len()
+        && planned
+            .iter()
+            .zip(current)
+            .all(|(a, b)| a.file_name == b.file_name && a.contents == b.contents)
+}
+
+fn fragment_fold_mutation(
+    fragment: &effigy_changelog::Fragment,
+    version: &semver::Version,
+) -> FileMutationPlan {
+    let before = String::from_utf8_lossy(&fragment.contents).into_owned();
+    FileMutationPlan {
+        path: fragment.path.clone(),
+        kind: "changelog-fragment",
+        summary: format!("fold {} into [{version}]", fragment.file_name),
+        before_preview: "fragment holds one unreleased entry".to_owned(),
+        after_preview: format!("folded into [{version}]"),
+        detail_lines: vec![format!(
+            "{} is consumed by this release",
+            fragment.file_name
+        )],
+        diff_preview: crate::build_diff_preview(&before, ""),
+        apply: FileMutationApply::Remove,
+    }
+}
+
+fn gitkeep_mutation(path: &Path) -> FileMutationPlan {
+    FileMutationPlan {
+        path: path.to_path_buf(),
+        kind: "changelog-fragment",
+        summary: "keep changelog.d adopted with .gitkeep".to_owned(),
+        before_preview: "changelog.d/.gitkeep is missing".to_owned(),
+        after_preview: "changelog.d/.gitkeep present".to_owned(),
+        detail_lines: vec!["the adoption marker survives in Git".to_owned()],
+        diff_preview: Vec::new(),
+        apply: FileMutationApply::Write {
+            after_contents: String::new(),
         },
     }
 }

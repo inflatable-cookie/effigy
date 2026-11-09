@@ -1,0 +1,1 @@
+The `.styled-tap` sidecar publishes its style window through the atomic stage-and-rename boundary without fsync barriers. The sidecar is optional presentation data that grants no durability acknowledgement; a lost or torn window renders plain text, the designed fallback, and the canonical log is unaffected.

@@ -1,0 +1,317 @@
+ordinal	source_line	source_section	source_paragraphs	fragment	type	source_sha256	effigy_refs	refs
+1	11	Security	1	legacy-001-update-bundled-sqlite-to-3-54.security.md	security	7b8441890edd5e77aa6271913963a36f0cf857064b01b0cd1f93a0a470c9a7dc	0	
+2	13	Security	1	795-recognize-docker-29-8-0-s.security.md	security	c45125a9048b047649da5e020c9565d6f7166a5bc481f4783bf40d191376c779	1	795
+3	17	Security	1	790-make-the-ordinary-acow-acquisition-retest.security.md	security	a0cd946e5481edb3bd762f79f5e5824acf0d445b6487cf2b4b67eabab567bd31	1	790
+4	42	Security	1	779-deliver-a-source-ready-receipt-bound.security.md	security	f14773caf94d517d187e018ff5f8967ae300f8c2e7eb66c32aa7b8f88825377e	2	779,791
+5	50	Security	1	788-bind-the-macos-c1-stage-to.security.md	security	24d6d3c03772374dd6e0397b5b18257ed6fbda413e6ab389ec89241e22f2809d	1	788
+6	56	Security	1	784-bound-desktop-d3-control-metadata-and.security.md	security	b23b57536a443cc3727b648e835418fc8fb2205f0c19f1150f48785011e19b92	1	784
+7	60	Security	1	754-close-the-fixed-colima-route-echo.security.md	security	84d24861ba1cd6abc11ff79df1aae636ebe0b84124d8a17eefa78ce96f6b8fcb	1	754
+8	73	Security	1	756-pin-finite-ubuntu-22-04-arm64.security.md	security	8e9e32924388996d7459a6741811684e84a3eaa9d30d170ad6c62e0ae5d3e724	1	756
+9	79	Security	1	765-close-the-c4-runtime-input-transfer.security.md	security	4514f75d61fd2a8ea8c759dda93eeb9b62520003dfe3ca6cad03b6d72e380a02	3	754,756,765
+10	93	Security	1	749-enforce-the-linux-artifact-builder-s.security.md	security	0f6c5a6f9bd45a4dd4668138a37290d69a3906e0629fb8dfa11cd547a65b552c	2	743,749
+11	111	Security	1	736-secure-existing-gateway-stdout-stderr-logs.security.md	security	2077ed01758188a6f22fb3b0b7a4fb2c871894b6852d6fb52b764c59854c3b7f	1	736
+12	116	Security	1	legacy-012-update-the-locked-ctutils-and-tokio.security.md	security	a602f810ec6a88d12aedfc5888575851d9fe5925bf2a47846bb88d3d65b17236	0	
+13	120	Security	1	legacy-013-prepare-a-private-proof-only-linux.security.md	security	629cddba4769661cbea68bf032204b8037b25830f9597c27731e7075c4c7c882	0	
+14	122	Security	1	740-extend-that-proof-only-linux-diagnostic.security.md	security	73cfd912eba25964d3cf6b176c13c2a7d59c89ed73b5273cff263e55f2dbd641	1	740
+15	131	Security	1	746-wait-for-the-guest-session-before.security.md	security	091cc06327174054058ced279794f4c7c1207cf4abd8b37533c5fd14e1f3aa39	1	746
+16	141	Security	1	747-read-a-partition-s-removable-flag.security.md	security	a8bcd9198633b260ec031f4970441bcffbb065b8dc8159e2a2f0e8121eb7bae5	2	747,748
+17	148	Security	1	696-allow-a-pinned-macos-proof-request.security.md	security	8cc367216b6afb1898945b66d0cc35cbe4558fb239590740376f92f3033c7f49	1	696
+18	150	Security	1	695-keep-macos-proof-input-bindings-stable.security.md	security	c298fe790a2e61f30cdde9cdfd7fa010c6b6f5828e4aff6e4ffa069c9a720e58	1	695
+19	152	Security	1	694-supervise-macos-preparation-helpers-against-the.security.md	security	2c27eb930b3e9f7eac5e8f23fe4763b0b90a64f77a75d1066a0347b5eba8d8af	1	694
+20	156	Security	1	612-keep-copied-database-seed-payloads-inside.security.md	security	593c194dfb65e6dd8b1632b518546ac392dcbc0de505678c970f9a6deb247499	1	612
+21	166	Security	1	610-secure-effigy-secrets-export-plaintext-destinati.security.md	security	71e89e936cb788b1c89cc9f1e0fd931b2c3379ee335135e73c65627d006be851	1	610
+22	174	Security	1	590-bind-remote-task-recovery-to-its.security.md	security	05f41d52de1217ff791dcf32f3fd62e3cdd30b73f5208ee53ba0c600de1701cb	1	590
+23	178	Security	1	559-fail-a-container-activation-whose-declared.security.md	security	f1b58c207756de20ff1ca06dada2f0010a2d4661244b14df6d93a1756f7037f7	1	559
+24	185	Security	1	574-fail-a-detached-container-up-when.security.md	security	eaffdec9e328f6c5d9773c69a5e3e767f3bb09c7fb894e5edf7e195e79d5ce6e	1	574
+25	192	Security	1	legacy-025-redact-a-managed-listener-s-quoted.security.md	security	8830d6f1b1ee00a6de350466cdcd558fe49d8b4838805db3fec770293bbcf4fa	0	
+26	199	Security	1	legacy-026-add-retained-interpolation-handoff-to-the.security.md	security	ed4d8e75a8355864bed17096adbc5ca80298342759d99e7158bb2b7596eee4e2	0	
+27	204	Security	1	legacy-027-keep-the-env-run-s-exact.security.md	security	1ee3355150883cff76e79374466c16ee377af54cc40ad9eba3b2b49284ae8aa7	0	
+28	208	Security	1	legacy-028-preserve-the-interpolation-file-lock-while.security.md	security	0a72bcc5ff432648e39b2684478fdf9b5567d729e65d813cf8374d690bf8d2e7	0	
+29	211	Security	1	legacy-029-preserve-interpolation-cleanup-candidates-when-t.security.md	security	fa6b7b422d981ef03ec3ef95dca1fbafb868fb9595f5984b33c370b2a27db59d	0	
+30	213	Security	1	legacy-030-check-interpolation-file-identity-before-moving.security.md	security	3b00264f7337ba480dfe26207d80463e1e9707268faffebca592909dc27e79f4	0	
+31	215	Security	1	legacy-031-refuse-secret-bearing-vm-compose-direct.security.md	security	ec59f596503881db215075121f2689720f723284a3354b1d17e4d5cbb40999a5	0	
+32	217	Security	1	legacy-032-serialize-compose-interpolation-file-creation-sw.security.md	security	866bc6505638f61292995d04da0fe3dabc5c1d476d9c57bf303d317314e21922	0	
+33	219	Security	1	legacy-033-process-custody-proves-the-recorded-group.security.md	security	f09479d56ccf420873823da28097bc7e603114d0f0cc3bed431de4e9b4665267	0	
+34	233	Security	1	legacy-034-container-mode-up-validates-checkout-and.security.md	security	fd7c7f4e28c30291ff5da8ac62d12418b871864d4290b81d929423354f2a8cc1	0	
+35	240	Security	1	legacy-035-workspace-startup-refusal-preserves-primary-and.security.md	security	8fd66ab7703be794c23e5d61bd59c30ea44eb859097d1e316449250525ab98e3	0	
+36	243	Security	1	legacy-036-compose-interpolation-files-for-the-vm.security.md	security	e2a824db7ffe77973bc735973a7557fe618ccefca095e3e45b8df643019aea20	0	
+37	261	Security	1	legacy-037-build-reserved-workspace-successor-attribution-f.security.md	security	de139881981be0a48f937b8f2b8d5790166128edf7af1e878002b6ed4460f459	0	
+38	264	Security	1	legacy-038-host-process-children-use-custody-owned.security.md	security	4e95828786b403120c96acd819702e75074a7208b67eb8706517b12ba2fb2eaa	0	
+39	279	Security	1	legacy-039-managed-panes-consume-redacted-typed-style.security.md	security	0accd3897c02a0cfcae7b4043fc1acb0033174472aa29a12dbaa5b5f75cf4612	0	
+40	293	Security	1	legacy-040-workspace-publication-now-freezes-one-typed.security.md	security	6d8ad1175f9ec18ca954626aa560152e853dfdedc9a3ed22d19a77192abed8bd	0	
+41	301	Security	1	legacy-041-a-workspace-channel-reservation-now-reaches.security.md	security	de244d3aaaa596cc962c7b3f360bc7064cf09b00a1d3770828bb0a23408876e2	0	
+42	308	Security	1	legacy-042-a-container-mode-guest-reads-host.security.md	security	be90a9e09e09939f85a32b71f4cae3f022c6b906f0706d96c8bcd35bd3b79406	0	
+43	313	Security	1	legacy-043-container-mode-guest-local-reads-are.security.md	security	704a8faf5161f21230c90853c22873cf8c1919200b7c9ae0ba213a6f0de1215a	0	
+44	320	Security	1	legacy-044-workspace-guest-probes-read-bounded-independent.security.md	security	411afcfdc7dbd7d9240a6db2f5409515992eb15f8d919847e5dc7d3eaccdde0f	0	
+45	322	Security	1	legacy-045-reserved-workspace-publication-inputs-are-built.security.md	security	5b1a727ecbf059a0d793ee7114aad70edf7728afcbc631748c7738bdc69240d3	0	
+46	330	Security	1	legacy-046-live-predecessor-compatibility-uses-its-exact.security.md	security	448088d60e5387454b285c4fefa26c924ec64178d20c0ffeb54b13470ef7b2af	0	
+47	336	Security	1	legacy-047-reserved-publication-preserves-one-absolute-dead.security.md	security	450dd631530bc1f4fb53730eada1c0263706349b1798d61f96aaaf50163538ba	0	
+48	347	Security	1	legacy-048-an-emulated-image-one-built-for.security.md	security	9d7ae74426b94b50cd8b14b9c5dfbafb1d5c464cac290a3fb2611a490939bfe6	0	
+49	349	Security	1	legacy-049-workspace-activation-owners-freeze-the-exact.security.md	security	b87e2b2c15b77aa263ebb55110702203be748580667acd22fd4423b289f1fbc3	0	
+50	351	Security	1	legacy-050-secret-bearing-process-output-drops-terminal.security.md	security	fffd02de04a81c51e8deb6cb506bacf86d3ec54ab4cf8d03e02f52b9570eb06d	0	
+51	368	Security	1	legacy-051-require-the-release-secret-audit-to.security.md	security	5ce1e09188d4dd41407e01568dab573e101ecf3eeedb38cad9e5cd9389ace8e2	0	
+52	370	Security	1	legacy-052-bump-rustls-webpki-0-103-15.security.md	security	b8cfbb8cb7644a6246c09ad32e887bf60ec72de11c11d4988d6cb599551e0a37	0	
+53	379	Breaking	1	legacy-053-workspace-guest-mount-targets-must-be.removed.md	removed	8c86773cdf782087f79f99264563096e76a50d5117d7dfb78417168a260c738c	0	
+54	383	Breaking	1	legacy-054-workspace-declarations-sharing-one-container-mus.removed.md	removed	313a474f349a983e12c2d8816d656123e84ce9a8df584ce741eeb14eb829cd62	0	
+55	388	Breaking	1	legacy-055-read-guide-085-docs-guides-085.removed.md	removed	37080c095432d639270609f8e05bdf3a9b40e2b47589b272c0f5fb07bdc0170c	0	
+56	390	Breaking	1	legacy-056-host-ports-come-from-the-os.removed.md	removed	358fee1b1282be77c9e007adce4262a3a133366c67322e65c7bd358c3828e8b7	0	
+57	401	Breaking	1	legacy-057-a-stopped-service-comes-back-by.removed.md	removed	4152d46995e959b3cf0129f47144353f6614e9879d44dcde0a315d3de8367c63	0	
+58	409	Breaking	1	legacy-058-readiness-is-running-plus-the-service.removed.md	removed	db8bc71b21360f9d79c48e61566becf272eee1ce9ecbdd95dfe7ba6198cce591	0	
+59	415	Breaking	1	legacy-059-effigy-container-retire-deletes-data-by.removed.md	removed	b53a6b3db24804fa586d68783a9e333f3693cdb0e0e61550016788772d61c435	0	
+60	419	Breaking	1	legacy-060-a-run-holds-its-environment-every.removed.md	removed	654be415cd919fa1a4f7361b59d121d7d8602b03a5a5695603f09350e37cefb1	0	
+61	428	Breaking	1	legacy-061-a-managed-listener-s-bind-may.removed.md	removed	1615fd0b725678bdf725e1069d414b3c053f1ed23e4e4680db6421e2aeb3195f	0	
+62	437	Breaking	1	legacy-062-task-runs-are-kernel-runs-and.removed.md	removed	e355a42870c152145ca248e6dd58064b289dc680bad8f09e5ff3830641afb790	0	
+63	444	Breaking	1	legacy-063-heavy-tasks-no-longer-queue-through.removed.md	removed	70d002889ac34af3bcfdc9e69aeb772b85482a5b68449a180b34f49e9d0184b3	0	
+64	451	Breaking	1	legacy-064-visibility-and-group-on-tasks-and.removed.md	removed	8b10d371bfd417ddb72e45faa47d8a9f908e452381dd437457df3ef6937a849e	0	
+65	457	Breaking	1	legacy-065-sequences-run-on-one-typed-engine.removed.md	removed	32d82a9737f83a7bc161aa17c43bf7a721daefea4ee72201920f080b029aeab9	0	
+66	461	Breaking	1	legacy-066-shell-and-manifest-root-are-gone.removed.md	removed	bfba5d27fd414e32ac6907532e11823922fd5d3cefa9bed969e5dfc54fb1cbf6	0	
+67	464	Breaking	1	legacy-067-compose-file-is-deprecated-and-generated.removed.md	removed	13db42e3365a51d3533d7b914471dea654519c99470e43eeee532b1889bbe4a5	0	
+68	471	Breaking	1	legacy-068-a-gateway-route-is-one-claim.removed.md	removed	4ab6a33490406716470f1bd2bd4c45f820877bc63b6c9e879b52e520f91e6b8a	0	
+69	481	Breaking	1	legacy-069-a-shared-service-s-connection-environment.removed.md	removed	575b5785ce39fb614f85b815f95591dea02cc0fc7b3a136621b0b5790b2c0a66	0	
+70	484	Breaking	1	legacy-070-bootstrap-is-rebuilt-around-task-selectors.removed.md	removed	6ef30c04081c67342c08fb5bc712432d87160685948aac34104357f0883f81aa	0	
+71	490	Breaking	1	legacy-071-the-service-catalog-pack-runtime-is.removed.md	removed	d4334f3c8d45b23d03874a56f27adbe666a9e70bca3e1f6a4b851ac90a78c226	0	
+72	495	Breaking	1	legacy-072-retired-commands-and-surfaces-effigy-system.removed.md	removed	c9307ee6274dcaf8bbe3a73abe39b77d099d8fe23d6e5bc3e2057130a3cdbcac	0	
+73	505	Breaking	1	legacy-073-upgrading-from-v0-14-1-imports.removed.md	removed	0ac9d19590ce3d8034fdd46ce7feb61bfbe1ae447867d546612d657d4261b16b	0	
+74	516	Added	1	792-route-the-fixed-parallels-host-inventory.added.md	added	1594b7438b38fcf356b4d9141f6955059d54086273070b16fddf51f549197942	1	792
+75	547	Added	1	782-bind-the-fixed-parallels-host-inventory.added.md	added	9b04e000f432a11026a7b8af3c98b8ddeddd1da284fdddb8d8e687d4c490af5e	1	782
+76	565	Added	1	774-source-admit-the-accepted-narrow-parallels.added.md	added	54bf37c24661bb379cedafe22575409bf9ebeba6ed6b30b41c73420f892c388a	1	774
+77	575	Added	1	legacy-077-private-colima-recipe-e-producer-entry.added.md	added	76759a86c5bc8adbde5b348f2a75cb99e37180336c722781cd61b8348ed7c98f	0	
+78	592	Added	1	732-prepare-boot-complete-linux-stage1-readiness.added.md	added	9e18e6f26588793e31aa2c2a21c00263727a475c63f820b2b30943263c561dbd	1	732
+79	608	Added	1	715-stage-the-development-linux-artifact-builder.added.md	added	7cd50491c58989fa91908cef24fa2b4c922e7aa4bea91a2a805113cd64bbebaf	1	715
+80	643	Added	1	680-bind-the-private-workspace-qualification-packet.added.md	added	6ff2407a75fe509b54dc46db5f88a2249896c19d02a109d04b10c0f0e28592d0	1	680
+81	663	Added	1	620-independent-per-backend-entry-points-for.added.md	added	a9ce91fa7947fca07b94e9457022db50fbdd45b763c071623a96d645f8f90519	2	620,627
+82	688	Added	1	555-a-whole-suite-test-census-and.added.md	added	e62b896ea52a9841158ea55621068e3069ec82a7b1d98ac8d15f6a7c152aa649	1	555
+83	696	Added	1	540-the-acow-ordinary-compose-consumer-qualification.added.md	added	0b5ed06a314210497d98ad110e83652fb2ea4698ca54073ff4f89a3bfd14c07a	1	540
+84	708	Added	1	579-the-task-engine-signal-matrix-evidence.added.md	added	fd7c5e86ad721d1c2b153a207ceb66d262d1e9b8ba9d4bbf6611f4e860b4bc4f	1	579
+85	720	Added	1	582-the-same-packet-s-executable-path.added.md	added	3305b65f70a553e755ad46141c777494b460733ab148039cd6f74551399b6a6e	1	582
+86	732	Added	1	585-the-same-packet-s-hostcli-identity.added.md	added	0a21f327c22f4ea53b07c4d9c0952992809397cf49972bd1656545019de9ac96	1	585
+87	744	Added	1	legacy-087-a-forwarded-workspace-command-streams-to.added.md	added	b44daf7efb0d802935ea3f17aa68dff4e0f19bf1bbf660d0d65c132647a942e6	0	
+88	765	Added	1	legacy-088-a-workspace-session-owns-its-terminals.added.md	added	7691d5fa378f1354307d99faf808c2e9daec50b3218ab42b2aa34b968a66a43a	0	
+89	800	Added	1	legacy-089-project-container-inventories-refuse-incomplete.added.md	added	c83a8ff6be2eedd9c87c101112f32f0c66d6b63bc24af2c0e0b4da51e6937675	0	
+90	803	Added	1	legacy-090-a-workspace-session-s-custody-can.added.md	added	2a477f20aa427bd341392c881d42c420b97fd329dfffc88599f417374c00787d	0	
+91	820	Added	1	legacy-091-a-workspace-terminal-keeps-its-own.added.md	added	9a5f74f068d2f1d68b8cac4e5da55aa6f80f30227ef07e2815a00013eff7a46e	0	
+92	839	Added	1	legacy-092-a-committed-workspace-session-s-service.added.md	added	787f380c5addf4cc5d5108685ffb75f0578af0a517c8af7892f17e06b8c1aedf	0	
+93	855	Added	1	legacy-093-add-the-pinned-tls-workspace-channel.added.md	added	83147ce5d852a948d88470331d592ce9d84e8a435c2923598ab78c8a571df0de	0	
+94	857	Added	1	legacy-094-workspace-creation-uses-a-complete-gate.added.md	added	9c0dc762f0c9d4149cdb9e9741b22352f2996ea7c0f1433c1dad28f481ce192f	0	
+95	885	Added	1	legacy-095-a-workspace-activation-is-decided-selected.added.md	added	fbea2f10c6f19fd7c8c88d6986abea670ec0c867a77bef13a0de5973f818a15a	0	
+96	919	Added	1	legacy-096-a-container-mode-workspace-is-prepared.added.md	added	898aae54f875cd8f1a2f5aef4ea1061fba66e7691dc740bec2568b1bcf920b1d	0	
+97	943	Added	1	legacy-097-local-static-and-observe-reads-run.added.md	added	4ff5d1bd6139c726938d2b398d2d9515273c6bc0be13dbf9fd4c79ad4340dead	0	
+98	957	Added	1	legacy-098-add-a-live-state-progress-source.added.md	added	8c2e10221f10eed4bc641e19abd364ef22411493c78080592163ff075bc141c5	0	
+99	959	Added	1	legacy-099-environment-and-colima-profile-progress-shows.added.md	added	6f5856b000657fe060214b90f51b6427168aa92c13d14ebc6a7e802bc6bc70fc	0	
+100	972	Added	1	legacy-100-linux-runs-the-operator-gateway-from.added.md	added	173d1d37df1e97dc4ce05aa3aa41844dda90c7ac00dad6aa63efe85136cac2f0	0	
+101	1038	Added	1	legacy-101-the-kernel-workspace-seam-recovers-keyed.added.md	added	66a9d310a1ac4c89b79981433529a27ae4ede2324d3d6a5eaf6317ccecc12359	0	
+102	1048	Added	1	legacy-102-the-workspace-host-authority-channel-s.added.md	added	20602c25634a0cdbc334e1a823b0daea12a61b781fe1b3603ddec6b34eec5c56	0	
+103	1059	Added	1	legacy-103-the-workspace-channel-binds-one-attachment.added.md	added	f19442aae1c1dde5d7504ded5d4da359829be04262a59b820217371aaee48ab5	0	
+104	1100	Added	1	legacy-104-the-workspace-session-layer-contract-052.added.md	added	9e8c5e0da913918f1bf1aa53865659f8bd4eeed774affdc670091025483c8e15	0	
+105	1111	Added	1	legacy-105-effigy-state-apply-and-state-capture.added.md	added	b27fc15987448e325c5617137aee55cc271273827ead2d1082f7d042bd609e4b	0	
+106	1115	Added	1	legacy-106-effigy-bundle-sync-bootstrap-and-deploy.added.md	added	be2435c56e2e2d6ba4643cc50c4625cf6a9c7ca238834bff24982067131e870c	0	
+107	1120	Added	1	legacy-107-run-control-for-every-run-effigy.added.md	added	0f03cfc0018ebdc62e23f174cfe71811cbd00ab4b1e557d2da11f0b35e16c49f	0	
+108	1124	Added	1	legacy-108-effigy-container-name-restart-process-process.added.md	added	0fe69a46d89dc7a07637534c160a7a8f04024e098ee6c186e2087581e511413c	0	
+109	1128	Added	1	legacy-109-data-from-on-containers-env-borrows.added.md	added	a9da891620fef2445b6fba20f384328064b847ea562f0ba89bb1a25f24ec2850	0	
+110	1131	Added	1	legacy-110-managed-host-listeners-containers-name-host.added.md	added	207788848a44c8e39c5e481f7297eaaed028e00e7039a70357bde91965e95d09	0	
+111	1135	Added	1	legacy-111-effigy-container-name-shell-command-cmd.added.md	added	3d8c621eeb447d602404f3ee3c6e7efc511d8c395f0f02cf8e83fbbd95648795	0	
+112	1138	Added	1	legacy-112-effigy-admission-hook-gates-admission-heavy.added.md	added	c26d2e4d07ac30ebce68b3d621affef8156e3af4b861e53c5c3d7f36911c465f	0	
+113	1140	Added	1	legacy-113-effigy-gateway-setup-tls-and-gateway.added.md	added	059d45827362ca49777208f3b391c82b35a5ef43bd6f331146e248596f24b2a8	0	
+114	1142	Added	1	legacy-114-effigy-fmt-rust-file-check-formats.added.md	added	0893e951b3f30c33a6cea77dbb6bc35f236828a9bda4473bf1096773a54d6118	0	
+115	1145	Added	1	legacy-115-catalog-sources-services-resolve-from-the.added.md	added	45a0cf535002be6fa653488fb9b5a9792dd5f56b326365e92173b4659406c564	0	
+116	1150	Added	1	legacy-116-optional-task-description-and-group-and.added.md	added	923c71f2d3aff1bfd249d505f4818ae6c17f285e15c78ad4e39f69ea65ad3a25	0	
+117	1152	Added	1	legacy-117-the-release-platform-effigy-release-run.added.md	added	dbeb55baf22ef076728184c4f4c27e734a2d4430210529cda1697d89d89601c8	0	
+118	1156	Added	1	legacy-118-environment-aware-deploy-effigy-deploy-model.added.md	added	226ecb4d98bdfbd798d0cb79ad0e720af3fb8fb119d20846c5102097c5409862	0	
+119	1161	Added	1	legacy-119-per-run-scratch-on-a-configured.added.md	added	2af0585d9fecf4eaeaaf10162ace2e9b2a495c6dd24d04a6462c5b3dcd4b272a	0	
+120	1164	Added	1	legacy-120-project-owned-json-contract-validation-contracts.added.md	added	000f78a97bd0f63e62a9a10f0737b6bb7cf085f23c0b475a38cd40bd17462f88	0	
+121	1168	Added	1	legacy-121-install-local-signs-what-it-installs.added.md	added	e6efcade3f33a1b674e9c775b512a48ca1ea434d44fbe6f61c8de4fd55f378b7	0	
+122	1177	Added	1	legacy-122-a-container-render-can-be-sealed.added.md	added	3082f7edd23b631849a7a6227ca939c371ce6865f5791661c7f1d73ee8de1d22	0	
+123	1213	Fixed	1	legacy-123-keep-private-compose-interpolation-permission-ch.fixed.md	fixed	4d9b506a13fbd2534e7d6d143b2bc065cb860e51bf658ecf59e5e1e5335fd3df	0	
+124	1215	Fixed	1	768-verify-the-linux-artifact-builder-s.fixed.md	fixed	4042768912e626e1b5b8d5f42eaab6715bbf491f09720edf409a328c6bebe9c9	1	768
+125	1226	Fixed	1	776-install-the-pinned-offline-runtime-image.fixed.md	fixed	f0d2f2cf8672f1de7e18b0e6f2deba34eefdc67a00a66e663b5f52c65fabb121	1	776
+126	1229	Fixed	1	769-finish-the-source-preparation-for-the.fixed.md	fixed	3446e0e911ef9ee25db07d99d5ae815fd1861a13ab55bc143a66b25287e55525	1	769
+127	1236	Fixed	1	741-bind-the-private-colima-recipe-e.fixed.md	fixed	6ca51b76ab143646302c5040754564c8e02a49d286ad1c37e1bc14601d7c3d22	1	741
+128	1246	Fixed	1	737-load-a-private-gateway-s-tls.fixed.md	fixed	35b887bc7a5652ae8ec7cb9123b6994a854790dd985e4828f350a9be8b7d501a	2	716,737
+129	1255	Fixed	1	legacy-129-publish-and-verify-sha-256-sidecars.fixed.md	fixed	a2051c71910c6f4da586896bfc31825f98ac4e58ae89e79d6f3e56c6405197fb	0	
+130	1259	Fixed	1	732-close-four-stage1-admission-holes-found.fixed.md	fixed	8dcdc01d1e4eb12ba7f0eee744c1afe4777a43a2d09a944a8f33f2ca78b01807	1	732
+131	1266	Fixed	1	729-keep-managed-panes-bounded-when-a.fixed.md	fixed	807ed2ee876a7d2c4889043fc080dedaf5bbfefae3a70934a6063405fb79fcf5	1	729
+132	1272	Fixed	1	legacy-132-recover-this-checkout-s-own-never.fixed.md	fixed	86e6bc19db0960b6d7611c8e1dbd14657a5ff25c4d19c17cd848567e60fb49aa	0	
+133	1276	Fixed	1	730-admit-the-borrowing-environment-s-generated.fixed.md	fixed	762d9fbf3a6163262f8e65aac570c4141cab114cf952d7736514aa058d1dfaa0	1	730
+134	1287	Fixed	1	709-avoid-a-false-cleanup-failure-when.fixed.md	fixed	622a6f52171b31626afaac307bf5d8d5557b86e54644047a6c546adfa3c900c6	1	709
+135	1290	Fixed	1	716-keep-a-running-gateway-s-routes.fixed.md	fixed	8b4b24a1177436d792013d08f986331abeae30a2ac031e3cc3be04ccbb4cbc23	1	716
+136	1303	Fixed	1	710-give-automatic-linux-workspace-artifact-builds.fixed.md	fixed	8d04948991b34c9ab33650d6b3f5468a8dd6f77eff4186ec9a30147e9c4268cd	1	710
+137	1319	Fixed	1	701-restored-automatic-linux-workspace-artifact-acqu.fixed.md	fixed	b0e7d241b012d30dec3363dc96ba12a5509cfa07b89b9c286069587e08243dde	1	701
+138	1327	Fixed	1	700-accept-compose-progress-only-when-its.fixed.md	fixed	f7567db4708f0550acb7222549130c44d95197e7f82a905b7fdc3d4418aaf498	1	700
+139	1332	Fixed	1	663-nested-sequence-builtins-pin-repo-to.fixed.md	fixed	6de87db318648afc10d78abe45b27457b902cf56ade45cbfbcfff870c996c0b7	1	663
+140	1340	Fixed	1	662-resolve-ordinary-catalog-task-secrets-and.fixed.md	fixed	2f545988c10437784b5342f31433a983b740e61486ee6aba95a0e2c2f681aafc	1	662
+141	1347	Fixed	1	legacy-141-use-the-supported-nucleus-cli-to.fixed.md	fixed	436950d4bd3062b3beb4964454b95a5542af6cf0bbccde3396e6c8d95993101b	0	
+142	1350	Fixed	1	legacy-142-preserve-bounded-anchor-verification-and-follow.fixed.md	fixed	a3d70dcf8801e28793a12a03e93d7ed0e83bf7fc351bcc3dd94391e0c9584f2c	0	
+143	1352	Fixed	1	legacy-143-bind-repository-json-qa-to-the.fixed.md	fixed	174f00dae76d37d0f59bb0c987c3e692a9e2885cd903df370ac19417616a1062	0	
+144	1354	Fixed	1	legacy-144-distinguish-unresolved-release-process-group-res.fixed.md	fixed	aa5b3eb56acdccbe46d0519d7d94a7b11692509fbf50628d6b0db08021245d28	0	
+145	1356	Fixed	1	664-record-fixed-category-git-settlement-refusal.fixed.md	fixed	a0f424aabe5c2f5135745d44545a5abc146521f5b7c75bcf9517cf65c90dcc27	1	664
+146	1361	Fixed	1	635-import-cached-legacy-bundle-bytes-during.fixed.md	fixed	e60f0e6fc569f57080dd4fb83b7895a04a8710e4c5fb5ed3ba5faa67b52e76a7	1	635
+147	1365	Fixed	1	legacy-147-coordinate-private-gateway-first-start-identity.fixed.md	fixed	754b591123ced71c6d3987ef3edefaf6c7a662ca35812bea20398537bcb1dbd7	0	
+148	1368	Fixed	1	633-preserve-empty-regular-kernel-run-log.fixed.md	fixed	ef6484e921e2bc843e48e0a8d771468aeddc24320dd3b408ab9f84cfd9bbc636	1	633
+149	1370	Fixed	1	632-preserve-this-checkout-s-kernel-run.fixed.md	fixed	cc7d6a4c54175f8440ace65989e755903df913d1600d8e7ce921c4e0ba0457fd	1	632
+150	1385	Fixed	1	629-refuse-a-keyed-invocation-when-a.fixed.md	fixed	7f67c49aefdb49a04d29c4cd1dd01860459edd45226a0ccc12f1d5b396a41f59	1	629
+151	1388	Fixed	1	630-collect-every-remaining-default-suite-failure.fixed.md	fixed	c8424ef1d37ac10cb5ced50aecfcdc3bedbdfe8ef33b3e80e5dbc38fa73f4765	1	630
+152	1396	Fixed	1	legacy-152-name-environment-recovery-commands-with-the.fixed.md	fixed	5e33bf8520aad671a4595bf9ac2ec43e0318d450d1de279c65e8622ef259cdaf	0	
+153	1399	Fixed	1	legacy-153-capture-complete-git-source-command-output.fixed.md	fixed	e64602fbd50f4258b7c3a1571fe08c5566edd7196358c97600a850df30a66407	0	
+154	1402	Fixed	1	legacy-154-preserve-representative-failing-test-names-in.fixed.md	fixed	be0685bf067b90473f06652bfefd0c190421304fe728bf0c25f27dc545dc9b91	0	
+155	1404	Fixed	1	611-restrict-effigy-container-cache-prune-global.fixed.md	fixed	77b2018d43e83ab829d9f5504674ffc0c1f96a87a5b46806769cb3a66bee068c	1	611
+156	1419	Fixed	1	legacy-156-stop-routed-remote-tasks-when-the.fixed.md	fixed	bd5f00a4a1507d4ccbd979864c948c6e0e2b426468ae96891b018c3bd755867c	0	
+157	1422	Fixed	1	608-retention-no-longer-deletes-an-object.fixed.md	fixed	4aeac8b43d7a9595618af3cca720229f81e81bac3fc42423d86ee85dae88f813	1	608
+158	1438	Fixed	1	609-effigy-run-logs-can-no-longer.fixed.md	fixed	de6161bb0516b68cb913e1b02ea0e9f1fc4ad36da35c705e0ec0e14b89a310c3	1	609
+159	1452	Fixed	1	597-the-kernel-boundary-ratchet-passes-again.fixed.md	fixed	6d3200c5dd9f259b33d72b3a32f6deafca01d7d81ade48d4ece7c7a3a8c7f328	1	597
+160	1464	Fixed	1	594-the-feedback-checker-no-longer-hides.fixed.md	fixed	429f6dad519afddb6f6a06eb624d06373836a1d5012b2c72b2cbd8f1b0731e83	1	594
+161	1478	Fixed	1	592-the-harness-mktemp-tmpdir-guard-treats.fixed.md	fixed	8e145e0c84e66f1dcf6ff0e3820c135402cbb8d81ef3173410c5209623f2538e	2	591,592
+162	1486	Fixed	1	588-container-status-json-no-longer-emits.fixed.md	fixed	bb640c1b9def413bf1b2769b17bc1b525afdf9c9a4420feedc7bd569c36ef6c2	1	588
+163	1494	Fixed	1	587-a-managed-listener-that-fails-readiness.fixed.md	fixed	2074cd734432ffdb6db36c7eeb125770afab85169dfbecbd440ebebc82696ddb	1	587
+164	1501	Fixed	1	586-predecessor-compatibility-of-an-unpublished-rend.fixed.md	fixed	22efe75181247798f83b63cd29f9d4871368047dcdd0849b666912095e8c47aa	1	586
+165	1506	Fixed	1	580-a-sqlite-durability-write-failure-sqlite.fixed.md	fixed	d524d89245304b62b02d096e50241a10a42a1e79d7188c0c2bb549f1738b115a	1	580
+166	1514	Fixed	1	567-a-host-process-restart-no-longer.fixed.md	fixed	c8990bc29dc503bb5c4ea8165469044de54e1bd62c9d12df071c74f69b19ac84	1	567
+167	1521	Fixed	1	568-restore-the-composer-home-vendor-bin.fixed.md	fixed	a16e4b111cb74976162131eda3d8c948cc275658b8c95f602432bdb4efe49618	1	568
+168	1530	Fixed	1	558-a-capture-pump-drain-commits-at.fixed.md	fixed	99f88189735163aaa23b97de16becd1f95350e3b9716d4f2b8247ba6f9e4552e	2	548,558
+169	1539	Fixed	1	legacy-169-the-styled-tap-sidecar-publishes-its.fixed.md	fixed	4f120125310c2b498983695985b777361c9335cd48fa0702d58d84e452c8a9c4	0	
+170	1545	Fixed	1	legacy-170-a-managed-run-whose-owning-client.fixed.md	fixed	cb0c54a6513ec85fd9abb60996e1f68e2eda6c28d08070f4d803778aff7b1969	0	
+171	1555	Fixed	1	544-bind-the-acow-ordinary-compose-consumer.fixed.md	fixed	6c71c6998643038a53e71516081ef94b1a45bf07c5735e7ed03c2949faa469b7	2	544,553
+172	1568	Fixed	1	legacy-172-record-pre-exec-closure-on-a.fixed.md	fixed	37ea8081e498e7c0a8957227f1b2580305a40f266255e8600370dd79a66efab6	0	
+173	1576	Fixed	1	546-the-colima-nerdctl-mounts-budget-preflight.fixed.md	fixed	ee9a63b155722a44d851016ce7043bde3ccfe7c9e509815a6d151f0b4634ea0e	1	546
+174	1585	Fixed	1	546-the-mounts-budget-estimate-now-models.fixed.md	fixed	e1ced953c1d03344673c12a2c1f8737b0bf4b20ec24a4c8553c119b8a435b1fd	1	546
+175	1594	Fixed	1	535-a-plain-effigy-container-up-is.fixed.md	fixed	d0140fccca08b7691f3bdf3269d1da17fa3c91ff5e958b52f1eb9edc0f1675b3	1	535
+176	1606	Fixed	1	legacy-176-colima-s-nerdctl-compose-preflight-estimates.fixed.md	fixed	ddf342855818d2c73fd91bb69228bf900c5df1e4a24eaee97e2e9bb611cb33e3	0	
+177	1621	Fixed	1	legacy-177-keep-the-workspace-alias-override-and.fixed.md	fixed	8b3559d8d9d699998934c61cda565fc7c8d93ba4566556c95982bf431ea38b79	0	
+178	1624	Fixed	1	legacy-178-render-sealed-compose-read-refusals-as.fixed.md	fixed	b4195859bf7ea37b6660774e2d7538267ffc16a57cf7f3012036c88b575d4a0a	0	
+179	1626	Fixed	1	legacy-179-the-detached-workspace-serving-proof-and.fixed.md	fixed	f3d62b7f12abbb3e6e20e16ac331e0fd55b91807b75efd4ac634e70bb3e3f369	0	
+180	1640	Fixed	1	legacy-180-an-interactive-effigy-test-run-that.fixed.md	fixed	6cb9efe5b2ceb1841c51a364ff78749ba4d36c78da30de4a5af03b794038a721	0	
+181	1663	Fixed	1	legacy-181-bind-guest-workspace-channel-aliases-to.fixed.md	fixed	993e6a06119bbe5eb57392b943579d4aa10e0f108dbb42a1a3e94c3855966848	0	
+182	1665	Fixed	1	legacy-182-a-host-task-in-a-linked.fixed.md	fixed	d8e385834ebb9164a52c9c99842b0e83da590d30bd1e5e97c747b62f6daf76b7	0	
+183	1667	Fixed	1	legacy-183-concurrent-first-use-of-a-runtime.fixed.md	fixed	18d84d1b6fd9c44ac027ebb0536875c0e309806a9eca7cf3b2633c5591dfe5a8	0	
+184	1669	Fixed	1	legacy-184-a-managed-host-listener-whose-supervisor.fixed.md	fixed	a614cd9d732639de577e5dee9e46255529fd1ec145bdda8e82156930e8209b0e	0	
+185	1671	Fixed	1	legacy-185-the-restart-policy-update-after-up.fixed.md	fixed	818af0b059e8bd0786333b36cd53d3f6eb544f9c887f8fe62b7fa2d3fe7d9162	0	
+186	1673	Fixed	1	legacy-186-a-shared-service-s-restart-policy.fixed.md	fixed	92d6f33df8626629a351182f096f747882ff9bdf349c0476a8acdf4ec222fa7c	0	
+187	1675	Fixed	1	legacy-187-a-direct-foreground-task-stays-in.fixed.md	fixed	d890bb90f18a3aa8cd7b316e37b1d8927b6a05b4d1222bebe0ed1c27b3d91eb7	0	
+188	1681	Fixed	1	legacy-188-effigy-container-name-status-json-always.fixed.md	fixed	ffec05f779be9c634c009bd45da4ebe4cc92662141741a61b0ac012e939f349b	0	
+189	1682	Fixed	1	legacy-189-a-floating-git-bundle-source-updates.fixed.md	fixed	d32563d78861e3a973a4d3fe0783eb3be3f7538651d94ef04de78d4e0aef6fec	0	
+190	1687	Fixed	1	legacy-190-database-seed-and-dump-keep-the.fixed.md	fixed	4f5623ff76cbe45955b133d55bf7509d8ca3b04ed86aba790dbfd08886fd79eb	0	
+191	1696	Fixed	1	legacy-191-keep-the-existing-workspace-session-and.fixed.md	fixed	b7c3cbbbd3398308c17a98d8c2507110ef7c2a5f56cebbc407b97463a0ce7580	0	
+192	1704	Fixed	1	legacy-192-a-declared-database-data-target-whose.fixed.md	fixed	dd61c4d97d7008cb3c0ecdc8ed6f6e0cc96e497762b08e8ba9e51ae1533d69f7	0	
+193	1735	Fixed	1	legacy-193-linux-workspace-artifact-builds-select-the.fixed.md	fixed	7ff944882cebe8d55ca08adcf9e5cded7a3587d4550d2426688c421149a539d9	0	
+194	1739	Fixed	1	legacy-194-workspace-entry-refuses-a-missing-or.fixed.md	fixed	c217cb5aebae4ed45835cc6994668cd8f8d2ff2ad492e2a54322a7775ce78816	0	
+195	1742	Fixed	1	legacy-195-effigy-gateway-setup-settles-on-linux.fixed.md	fixed	0ae657925cf9aff4775c45a4737d8625495eafa348c472063447df2cf996a6b9	0	
+196	1766	Fixed	1	legacy-196-effigy-gateway-setup-works-on-a.fixed.md	fixed	008f6287b8c9d708129d9aeffe031ddf88da987874a6cf3c9aa69045b1a95dc8	0	
+197	1778	Fixed	1	legacy-197-let-completed-machine-gateway-setup-runs.fixed.md	fixed	4f96430d7214496acd44f57d4b317f66af99251f6a6c053fdaa2f59dc9b2c2e9	0	
+198	1781	Fixed	1	legacy-198-managed-tui-panes-now-show-nested.fixed.md	fixed	50ed1871c880d87311fac97d51789422069c4bf26a8cf8700abf74da69611a1e	0	
+199	1785	Fixed	1	legacy-199-show-colima-workspace-sizing-recommendations-onl.fixed.md	fixed	0c7de07422cc98b0c6265bd29e2f202f635d3f043c733fb33f492810a90aadbe	0	
+200	1788	Fixed	1	455-a-failing-managed-host-listener-withholds.fixed.md	fixed	438c9e837d4a808f328a8a638eeda4f2106194bd9fb81d5a92e4cad84540c31c	1	455
+201	1818	Fixed	1	legacy-201-an-environment-transition-settles-on-a.fixed.md	fixed	7990a566f2e5d46a382fd1aac0fd3a187cc1d5a981348b3b53462e317e686cd2	0	
+202	1829	Fixed	1	legacy-202-a-container-workload-s-spawn-environment.fixed.md	fixed	f505287a8f862426b15981506c9175bf688f992600aff06239e50ce022ae657a	0	
+203	1835	Fixed	1	legacy-203-state-stack-depends-on-now-requires.fixed.md	fixed	315763b01b73c313b2cf6c76fcfea2046f5b3b3f73e616871e36ee1517a61a27	0	
+204	1838	Fixed	1	legacy-204-digest-pinned-oci-refs-bind-to.fixed.md	fixed	af60668ff0250dd2fb241ad7a6c01d32d1386ec3fe4a68c56fc985d104cbf186	0	
+205	1840	Fixed	1	legacy-205-builtin-effigy-test-now-routes-a.fixed.md	fixed	6a4786d1b0762b9e437b5118b5874d50406f4092b36670eb1517b13051f0fcd2	0	
+206	1843	Fixed	1	legacy-206-effigy-contracts-check-json-reports-a.fixed.md	fixed	2885b87b4e09174471de75958c479c94d4697d73fa766e064eba385b8e57d305	0	
+207	1846	Fixed	3	legacy-207-bun-links-no-longer-leave-a.fixed.md	fixed	14233a614b22552bcbe1d19b139a5450da79188c616cb75cb3252dd4a8e83653	0	
+208	1868	Fixed	1	legacy-208-bun-deps-unlink-now-retires-only.fixed.md	fixed	098efd4042a91bce6196386cb359f6c7433369fc6b1936ca2d7c4a91dcf062d8	0	
+209	1877	Fixed	1	legacy-209-bun-deps-status-and-doctor-now.fixed.md	fixed	889c98e36b15871a247b081d8de043e65426f8b002973c93487753e1750615ea	0	
+210	1880	Fixed	1	legacy-210-keep-managed-task-secret-values-out.fixed.md	fixed	ec495497d12793a07def0f2e5aa182d65ecd74c5b7214d0add4206bc10aa493b	0	
+211	1883	Fixed	1	legacy-211-auto-discovered-effigy-local-toml-now.fixed.md	fixed	a7fa5c65d2742a996d82246b2f156217241cb3e8ea0ac84c18615d9739d930e7	0	
+212	1886	Fixed	1	legacy-212-a-release-s-receipt-json-now.fixed.md	fixed	42053c027452fbf16ebe2b5ed02cc8cfeca8b724d95f07ea546278bb194ff0ae	0	
+213	1891	Fixed	1	legacy-213-release-settlement-is-no-longer-written.fixed.md	fixed	1531383a0428318ff607c37ba4dafd9ed0f4cf8cce6997f9450c7ccd7d30fd6f	0	
+214	1898	Fixed	1	legacy-214-bundle-step-overrides-replace-the-execution.fixed.md	fixed	917f8fd574e07f4fb98a466ab135428d365a1b02e935dd6f8f725638a41c21f9	0	
+215	1899	Fixed	1	legacy-215-a-shared-service-whose-render-directory.fixed.md	fixed	d5e567f8b5e356a69e6d290dcd36a568df3e5556812966ec90cc0274ca6fd977	0	
+216	1907	Fixed	1	legacy-216-a-container-runtime-that-stops-answering.fixed.md	fixed	704fa3200ec8c5e4f2ea9c2bf0a557e00ca22b4beb69034aaf7edb8e84592de8	0	
+217	1916	Fixed	1	legacy-217-managed-task-status-logs-and-stop.fixed.md	fixed	435ea4fbf328eecd8c572da6bfe09cda58e128189bb2c514ea5fe61ef896aa7f	0	
+218	1921	Fixed	1	legacy-218-mapping-form-build-additional-contexts-src.fixed.md	fixed	8bcfd1678ce2ffa6cbb446a7c6be0a151382041b5fa27aa74886e3a095c2d0d3	0	
+219	1926	Fixed	1	legacy-219-an-unreadable-run-holder-list-warns.fixed.md	fixed	18f1818c22bc71f1bef67e577d651750b69d7b26dc49ecb95b15e96abeda6153	0	
+220	1930	Fixed	1	legacy-220-explicit-colima-profile-repair-and-reset.fixed.md	fixed	db9b38b26a0799d9de2311dad8fed2ff183629e54354471b274b2668964f8d0e	0	
+221	1932	Fixed	1	legacy-221-a-container-readiness-refusal-and-a.fixed.md	fixed	5e43b187ec158d7b3270d3539de36bb667ed2ea7a0fedbd2634f10c9fb89618e	0	
+222	1939	Fixed	1	legacy-222-human-failures-name-their-cause-in.fixed.md	fixed	4fb16f72cd8dbe85b1514e59a02c34afb8faf120d7057fcc7e96a27b3eeb209b	0	
+223	1950	Fixed	1	legacy-223-effigy-doctor-shows-a-named-step.fixed.md	fixed	e46f02001ee43b0c774bfbbefa24918dbae0e8efe69c359ee62cbda954b9df9e	0	
+224	1955	Fixed	1	legacy-224-a-failing-bootstrap-setup-or-start.fixed.md	fixed	0ae8b458be2caef14638cda2f4a2d922be6a7a21222ff7d186456b4ca323c2da	0	
+225	1960	Fixed	1	legacy-225-a-failed-task-run-and-a.fixed.md	fixed	16c78fe45904caebae04c2937dafd7a2b309efe8b96b45f8abf592744955758c	0	
+226	1964	Fixed	1	legacy-226-a-managed-listener-whose-route-republication.fixed.md	fixed	9087b01e67fb9a2bd9914f5ae1a36bf5e12d9086f9dd3a94e38a6552ee375d1f	0	
+227	1972	Fixed	1	legacy-227-a-custody-anchor-no-longer-ignores.fixed.md	fixed	ebc6aee8106cb2c84ca9fb81a130cc28dbe86f1a04aebc813bc153ddc516f5fd	0	
+228	1979	Fixed	1	legacy-228-the-built-in-effigy-test-route.fixed.md	fixed	52cbff5cb7a8340f6ff4eeec8ce3228ff1ab7b02b373372a536dfb4768deb5d9	0	
+229	1984	Fixed	1	legacy-229-concurrent-runs-no-longer-refuse-each.fixed.md	fixed	064a9f8e2052fa26d8ad80e5394ecaed2d1c4fb5d8c1dea81bb1d01250c47701	0	
+230	1988	Fixed	1	legacy-230-a-json-invocation-always-emits-the.fixed.md	fixed	a77a8be72b127fe9bdaf72f0f4bb18dd084cbed67c57a08d2321ec47f9090a3e	0	
+231	1990	Fixed	1	legacy-231-a-failed-detached-container-up-keeps.fixed.md	fixed	b1ff1ae8da3acd97767cadc8a7836a040e1b72248bc28ce2c24f55a563bb632b	0	
+232	1992	Fixed	1	legacy-232-a-corrupt-store-s-refusal-names.fixed.md	fixed	2766ba9d55a898f69cc95393733816e14519d60241d2d395581a0c51007fa5b0	0	
+233	1994	Fixed	1	legacy-233-a-task-run-from-a-nested.fixed.md	fixed	842d3ae636d03fd7a2b0691b9f9017eaa7110221e445b01211644e23a03870cf	0	
+234	1997	Fixed	1	legacy-234-effigy-dev-delivers-a-project-s.fixed.md	fixed	cb5883edb89dca2498a3d9fd3d56fe94862805d6f823e9e6463049731e6300fc	0	
+235	2000	Fixed	1	legacy-235-shared-service-project-names-stay-stable.fixed.md	fixed	557d28e475c61292f247e455a0a790cf30b411917871b2d20ce9bc79c5d7f3b0	0	
+236	2002	Fixed	1	legacy-236-a-second-container-up-on-a.fixed.md	fixed	cf0bdfbfaf7a6d4938e6a4ac46e67e7736a7973b23d873aad3219f9b05eb99d5	0	
+237	2005	Fixed	1	legacy-237-a-gateway-started-before-any-route.fixed.md	fixed	10d542311a61496ef9fcf3a76d2e7be08d204ecd12b6654e0a68664b2bf59c8e	0	
+238	2008	Fixed	1	legacy-238-retiring-a-container-stops-it-before.fixed.md	fixed	41bc570602572542ac7c725ecb395e7af3977318e858803d656fd59e03f6c121	0	
+239	2010	Fixed	1	legacy-239-managed-host-cleanup-keeps-its-owned.fixed.md	fixed	da8fc4dd123e7df309d1174ff1b3d07e38fdef329e8804770069eb071a334e12	0	
+240	2013	Fixed	1	legacy-240-effigy-test-host-suites-run-nested.fixed.md	fixed	be37849801ebd7d1f7fdad9865d87199b4b3a81bff331b11d9b9665db31ece63	0	
+241	2015	Fixed	1	legacy-241-effigy-container-without-a-name-resolves.fixed.md	fixed	2138c349adced2e1970e26a0050d0cd3c8594a8679c17f33ab9318766643f721	0	
+242	2017	Fixed	1	legacy-242-a-rendered-compose-stack-works-on.fixed.md	fixed	4845cc7491fa2b8443b88aff314339bd1fcc976fd03bda8731a428aa7b9ec49b	0	
+243	2019	Fixed	1	legacy-243-an-edit-a-live-run-holds.fixed.md	fixed	696b3643aac07cc868bea461e84b3ec6e6494dd3f6f20ac7c1d210f5caa744af	0	
+244	2022	Fixed	1	legacy-244-a-checkout-path-that-cannot-be.fixed.md	fixed	50752a34f0e8265de405a5119bd0aa0e205540c06560ce2261ba7b3683e3e57a	0	
+245	2024	Fixed	1	legacy-245-a-repository-task-named-fmt-runs.fixed.md	fixed	55fc52e1139362974f92c6856ccdfd9e3a7bf57587871692bf15a433e4a5ed72	0	
+246	2026	Fixed	1	legacy-246-the-machine-gateway-stays-running-after.fixed.md	fixed	761d988f212cee9b5054dfaee2b70e586e90f6105ebc54a8f3d8c865b6899834	0	
+247	2032	Fixed	1	legacy-247-shared-service-and-alias-refusals-suggest.fixed.md	fixed	a57db0384e56619ba602d2fbe26b9cb442dacef27173620ad2ab57873931bc89	0	
+248	2038	Changed	1	legacy-248-remove-the-frame-around-managed-session.changed.md	changed	0755f4713b9332c69d4bf7aa97f59eb4e2ad992b13eea7abe699bc31223af464	0	
+249	2041	Changed	1	legacy-249-release-process-settlement-refusals-include-boun.changed.md	changed	153baaabe53f3f0f9660320ce450b546f7bcab8b8e1a4f6825962c1ab96125a4	0	
+250	2043	Changed	1	legacy-250-worktree-qa-log-archives-follow-the.changed.md	changed	c221dc70864471959f70a528757b2234fc2efc72926e9dd7f8e74a63bc2bdc5a	0	
+251	2045	Changed	1	593-focus-the-compiler-feedback-inventory-tests.changed.md	changed	11dcb97e4e1ddb2edd596c991ac5e2121625b99e4993b082e6208c705a71867d	1	593
+252	2054	Changed	1	591-census-self-test-and-the-cargo.changed.md	changed	951440b32668535d56ec8e163a78bb7de2e2c736b20f423d25a33e4a4bf9bb1f	1	591
+253	2062	Changed	1	545-the-acow-ordinary-compose-consumer-qualification.changed.md	changed	c2a4e11a559430ae34c5cb11c74390b112567c654f3acd22b70144c612ef9538	4	539,540,544,545
+254	2088	Changed	1	543-the-acow-ordinary-compose-consumer-qualification.changed.md	changed	572b65ba0cbd63745aabbe8ad3db8e0dfb15cf197537dc4c790b16f77fe62a50	3	540,543
+255	2111	Changed	1	legacy-255-the-one-workspace-compose-apply-is.changed.md	changed	bd0e1c400fcd0852271c8aba54ab5dccd043df5c0899676635c96a0776384f62	0	
+256	2132	Changed	1	legacy-256-group-closure-and-anchor-retirement-are.changed.md	changed	0f61f271914adf4dca7d639c805ec85e5032fddc80e98e268d8bf502952bf0af	0	
+257	2145	Changed	1	legacy-257-workspace-client-command-coverage-is-staged.changed.md	changed	4eeb24bdf4562454773ec9c791919a4529074a2990f6fe9426c04f27f2ec2410	0	
+258	2154	Changed	1	legacy-258-clarify-workspace-artifact-source-selection-the.changed.md	changed	58a13e591fe125e5372d5aa0c7d25350b1d6664a82bd1bebcaeae43f0e969765	0	
+259	2158	Changed	1	legacy-259-workspace-client-host-channel-coverage-is.changed.md	changed	4ab1993a25f63563302d5c98bbc627a266481da3c5df3f29b82d2e9877298767	0	
+260	2173	Changed	1	legacy-260-the-workspace-channel-checks-its-pinned.changed.md	changed	93e011c261020d853ccb48cc607bc3c9850302797c7e314d9c749dbe59869caa	0	
+261	2181	Changed	1	legacy-261-the-frozen-workspace-activation-hands-its.changed.md	changed	4a208de8c7fd29e6bed24dce2666f8e977e1db27472a77653aade33cb8e66e77	0	
+262	2188	Changed	1	legacy-262-a-workspace-session-s-serving-custody.changed.md	changed	047938ab677460712512c4e680e8557d569424b0e572c0aa8ebc9d5e04dbd994	0	
+263	2193	Changed	1	legacy-263-no-command-plane-shows-a-canned.changed.md	changed	334faafe4aba9661919f81045ef17185e604f0d5420f6e19d75500ab05ac7b1e	0	
+264	2228	Changed	1	legacy-264-a-managed-pane-keeps-the-colour.changed.md	changed	c27120bf2530c8d63ebcd2c85ed79045dde0a09fddc4f73ac477401b09a85c75	0	
+265	2240	Changed	1	legacy-265-a-managed-session-names-what-each.changed.md	changed	1049b743f323ed9e2c2c9e14dc6ebdbd962bacba79bdc614155fbc2902ed1ed3	0	
+266	2298	Changed	1	legacy-266-doctor-scan-checks-and-vault-lock.changed.md	changed	71c8ae4b22a61732e9ac39ea763a5cff6ec7c2fd98f81ddb040461f64da8cd4f	0	
+267	2306	Changed	1	legacy-267-cache-and-volume-list-prune-and.changed.md	changed	6a8c8dff928ed4659a9683f284cbc2d3a19c6bbe24221916bc204a02d0f14a7e	0	
+268	2316	Changed	1	legacy-268-workspace-guest-publication-now-completes-as.changed.md	changed	c5a12994fa6168b38888ea0cf700d181a5afa3e8772661969d2a18acf3adfb9f	0	
+269	2321	Changed	1	legacy-269-explicitly-selected-non-default-workspace-contai.changed.md	changed	e33ae428042349a7f18681b5a0f694a77e927eecc0e66ca74bdbd29f9b30520d	0	
+270	2324	Changed	1	legacy-270-workspace-guest-reads-and-publication-target.changed.md	changed	7c507fabd6e72af484d665e455ab2909902a3ae94ab9ba3bc47b1f45249368dd	0	
+271	2331	Changed	1	legacy-271-workspace-entry-verifies-the-prepared-guest.changed.md	changed	d2be0da888e3528b5e395dbb5ed3db8a7f2df1a54d9d4f9b3069d5b83391ab9f	0	
+272	2341	Changed	1	legacy-272-a-workspace-container-no-longer-sees.changed.md	changed	3d43f445d6e68ceab1e80f1a1dcb9a5acd62635f8c42ad1a5f445672e8ce09d0	0	
+273	2357	Changed	1	legacy-273-a-gateway-operator-action-names-its.changed.md	changed	003bacee4b374b666e603dab01420bdf7146809bdd74cc91d3f5ddce8c420c6c	0	
+274	2389	Changed	1	legacy-274-manual-manifest-include-optional-override-and.changed.md	changed	5081e5ac4e25e198954e5177c7c0c69f84683de7417f68ed17175217dc9b9695	0	
+275	2400	Changed	1	legacy-275-deep-doctor-now-bounds-owned-v2.changed.md	changed	9f30f83369ce3a4bdce13e10eecc0d071df1b7db623052787aecb48a63d511d5	0	
+276	2403	Changed	1	legacy-276-a-pinned-sources-name-checkout-is.changed.md	changed	3119fb981ad9eebc1b6e8905aa03913ea6d9ed2e82ef88e778c40a7f7f66e14b	0	
+277	2410	Changed	1	legacy-277-a-text-only-command-failure-carries.changed.md	changed	a3c76ba00e8ee543d5a708e220e038355921e738954f79b3ccb0673ec4ffd05a	0	
+278	2415	Changed	1	legacy-278-bundle-source-steps-name-what-they.changed.md	changed	710a4315b38561dff752240e9e7cffa9c16a3fb1e0e411faebb1b121504ff18a	0	
+279	2421	Changed	1	legacy-279-gateway-setup-and-operator-steps-show.changed.md	changed	03607438346834f6ffd4f72da2be2bc0e4fe95cd16e593f96d78413f3332d306	0	
+280	2441	Changed	1	legacy-280-test-focused-locks-per-invocation-not.changed.md	changed	5ee3e71fb81fa5b556bb2a07aa91c4ac4af3ae2371036b03360046b0c8b01b27	0	
+281	2449	Changed	1	legacy-281-a-refusal-says-which-of-three.changed.md	changed	ee7b92507af343e9a1cc6a19cc32a1b016ca0a1f413af67896e6094b29117f7b	0	
+282	2453	Changed	1	legacy-282-a-failed-command-shows-both-streams.changed.md	changed	44b4fa3554ef5f4a6cb7bf014822dfe37960fdb72affebdc0f15abf83c2ff80f	0	
+283	2456	Changed	1	legacy-283-container-up-is-one-apply-compose.changed.md	changed	b986011d6e06e699ab8278a235e0912281d91afc39b14ac5ee17b6d7c10eecf3	0	
+284	2461	Changed	1	legacy-284-a-catalog-service-with-a-build.changed.md	changed	ec04faa211add5de3ef006f042b010ce3e49cbf8128dfe5d0665fe98e69133c6	0	
+285	2465	Changed	1	legacy-285-a-shared-backing-service-renders-identically.changed.md	changed	17893b720046bb93e3068256e57377bc96b251a3e442c992403dd62568588a9c	0	
+286	2470	Changed	1	legacy-286-managed-listener-readiness-has-two-phases.changed.md	changed	c811bab78796f894a92b1893475d7a9203955cd83853cffe6a5ae7c3db2686ba	0	
+287	2474	Changed	1	legacy-287-a-host-run-in-a-linked.changed.md	changed	5d60491ddf6140c2db1c1c22aeaabad789699f3d1a34c1d5b3956e6e55c8c864	0	
+288	2515	Changed	1	legacy-288-host-processes-get-resolved-facts-instead.changed.md	changed	ae9a74c7b1a527b7fdbe733537226f35d8c11a3f2e0aac3bd27791c1220ede4b	0	
+289	2521	Changed	1	legacy-289-the-gateway-keeps-one-endpoint-table.changed.md	changed	5e4a019e8666f7cb14d1b658414acb49dd3e7e41e6776994fed3de86ef7d3295	0	
+290	2527	Changed	1	legacy-290-a-checkout-journal-is-opened-by.changed.md	changed	bbcdc013677ecd33fc8ddd3c5831e24e50a0149fa7b3fa8a38d026fdf04eefd0	0	
+291	2532	Changed	1	legacy-291-effigy-tasks-status-reads-the-run.changed.md	changed	b9c6bf8f97bea05dfd73357c0f19a75574bca716e13e32d02c1c54ce3fd397d5	0	
+292	2536	Changed	1	legacy-292-a-task-run-acquires-a-missing.changed.md	changed	9d88b376679034e3ed9bc8468a605577111449a54e6a4869ac8f4e4101e91a6b	0	
+293	2541	Changed	1	legacy-293-effigy-doctor-names-only-retired-cache.changed.md	changed	a80c8a87090223b85481b6d51ceb0c1d639eb78cad0a116abfa6ebcdd290bae3	0	
+294	2543	Changed	1	legacy-294-effigy-state-captures-moved-out-of.changed.md	changed	7f18d792cf4a23b583ae074c6c87e9e8adc3579ffe87bf3898b8a1b715637e82	0	
+295	2547	Changed	1	legacy-295-effigy-install-local-builds-this-checkout.changed.md	changed	4134f7d85880d97e8898ac7f48aa1ca3d4db130497728e613a73f079fcefbd68	0	
+296	2550	Changed	1	legacy-296-docs-check-with-explicit-paths-resolves.changed.md	changed	36cf200120e3bea9d17fe3b9f805f763905b65e1341f1ab5c8ad8770e5143b72	0	
+297	2553	Changed	1	legacy-297-bootstrap-and-other-retired-shapes-keep.changed.md	changed	41b14c4b97841b2ae5f0ba4ded1ae977824d1f0de8bb1e31d6936500e3f55124	0	
+298	2559	Changed	1	legacy-298-the-vendored-underlay-bundle-uses-silo.changed.md	changed	e345f583441fc6c1ef90da83c34a03d7cc88e38911635a7d1cae82ac4ed5efb6	0	
+299	2565	Changed	1	legacy-299-the-built-in-minio-catalog-service.changed.md	changed	d86f60561390bd376e0e8b736c929a0e07d84c758f423164b8336b56ff377484	0	
+300	2576	Changed	1	legacy-300-release-gates-and-stages-and-state.changed.md	changed	640f4636b6d589df772892c216b6a99965a499132f6512a5d65f7fc4a96dd363	0	
+301	2581	Changed	1	legacy-301-container-up-progress-now-follows-the.changed.md	changed	5ea2ce131b30d1e58ac4dd4cdbc41b6e0277247666f11145d4b299b9b0a291c9	0	
+302	2618	Changed	1	455-container-up-activation-and-preparation-report.changed.md	changed	deb1769a868702bbd257acb685a31b921c5604b4f2d3115b39cf8c78678f4b22	1	455
+303	2650	Removed	1	legacy-303-the-fixed-label-spinner-api-renderer.removed.md	removed	d05663ed9419a36b71f0bdbc5c782f1d345de53d7dea72aa7b08897025f4115b	0	
+304	2654	Removed	1	legacy-304-the-gateway-s-dead-route-sweep.removed.md	removed	f171e48f6a7e73351b8fc755bf87eee9ecc1583e27abb6c0d43b4ef043d508b5	0	
+305	2656	Removed	1	legacy-305-the-exec-ready-probe-and-its.removed.md	removed	c851f8f340bb2bc0fa46e54e4fa81b93cf8d37d2051ad02ed1d0858f296ff59f	0	
+306	2662	Removed	1	legacy-306-the-runtime-scope-journal-the-environment.removed.md	removed	88c983526661ab7fe37af7a9255a68bcd03816db5c3eb6eaf929e12d40410577	0	
+307	2665	Removed	1	legacy-307-the-v0-14-v0-14-1.removed.md	removed	1ced5eb13ddc270d9ef98422e8923852f64f1ef68fbcd6d3e30c053bcaeb62bb	0	
+308	2668	Removed	1	legacy-308-effigy-render-root-and-every-other.removed.md	removed	e9e01de74805257d4e28e82fc5c2970fd8ff3da4c5137357700e66809c5b6b9c	0	
+309	2672	Removed	1	legacy-309-the-kernel-s-invalid-request-error.removed.md	removed	97df61cf4011dd439980e507e3a7d2eb9aec8071371b2b8c979a3b813b79eb19	0	
+310	2674	Removed	1	legacy-310-the-startup-image-pin-and-executable.removed.md	removed	e95fba9903c4ce99c6409a72079e3af7faaf69a8b80d97164e29376ccfcc9ea3	0	
+311	2676	Removed	1	legacy-311-the-online-backup-snapshot-behind-a.removed.md	removed	6867433d1533e8a88bd2c55fe80d60b79be16f1f7d38cbb91d656c24039699b9	0	
+312	2679	Removed	1	legacy-312-effigy-contracts-check-json-fast-the.removed.md	removed	40b206a8ef069ce1d06e76a263e0fadc38f6a631873df87951ff55c1b450353f	0	
+313	2681	Removed	1	legacy-313-the-baseline-minio-catalog-fragment-effigy.removed.md	removed	8295a0d3e79f02170c8fc41acf7932e07dc3cd99559af2724a2cfff01137c424	0	
+314	2684	Removed	1	552-correct-the-acow-ordinary-compose-consumer.removed.md	removed	57dfcefe6ac0ea20ba1bbc126d686746d74d02d3e8b05ce23132d41566fac332	1	552
+pre-804	changelog.d/796-linux-accounting-witness.fixed.md	changelog.d (merged before 804)	1	796-linux-accounting-witness.fixed.md	fixed	c0969ba849c41f40f26b8d580c589403214f609d87d506f9bf5bbe27793baed3	1	796
+pre-804	changelog.d/803-ci-bootstrap.fixed.md	changelog.d (merged before 804)	1	803-ci-bootstrap.fixed.md	fixed	eca92f17cac4c77fdff3c4874a7840d2275b75c94ffbfcc9b87a646f81dfaad7	0	

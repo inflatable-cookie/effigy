@@ -1,0 +1,1 @@
+**Managed listener readiness has two phases.** While the port is closed and the child is alive the wait has no deadline and reports progress; once the port accepts a connection, `readiness.timeout_secs` bounds reaching the declared status. A restart binds the address its declaration names.

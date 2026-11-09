@@ -336,7 +336,7 @@ publication, binary-workflow dispatch, workflow edits or live operations.
 1. Start from clean, pushed `main`. Record `candidate_sha=$(git rev-parse HEAD)`.
 2. Dispatch `gh workflow run ci.yml --ref main`. Select the `workflow_dispatch` run for that exact SHA with `gh run list --workflow ci.yml --branch main --commit "$candidate_sha" --event workflow_dispatch --limit 20 --json databaseId,headSha,status,conclusion,url`, and require exactly one match: `scripts/check-release-ci.sh` refuses zero or several and names the candidates, because a sibling dispatch of the same commit is a different run. Verify `headSha`, and wait with `gh run watch <RUN_ID> --exit-status`. Missing, pending, red, cancelled, or different-commit evidence blocks release.
 3. Run `effigy release status --check-gates` and `effigy release --plan`. Confirm the target version with Tom. During `v0.x`, PATCH is for compatible fixes; MINOR may break behavior with explicit migration notes. Removing a public API is a break (a `Removed` changelog entry), so it proposes MINOR under `pre-1-0` rather than PATCH. CI installs should pin exact versions.
-4. Run `effigy release:run -- --to certify` (heavy admission), which runs the release Run's `validate`, `pre-gates`, `prepare` and `certify` stages in place: it updates `Cargo.toml`, `Cargo.lock` and `CHANGELOG.md`, commits the prepared tree, runs the `preflight` pre gate and the `certify` gates, and records the artifact digest of `target/release/effigy`; it publishes nothing. Review versioned install examples in `README.md`.
+4. Run `effigy release:run -- --to certify` (heavy admission), which runs the release Run's `validate`, `pre-gates`, `prepare` and `certify` stages in place: it updates `Cargo.toml`, `Cargo.lock` and `CHANGELOG.md`, folds the planned `changelog.d` fragments and removes them, commits the prepared tree, runs the `preflight` pre gate and the `certify` gates, and records the artifact digest of `target/release/effigy`; it publishes nothing. Review versioned install examples in `README.md`.
 5. Draft release notes from `effigy changelog extract CHANGELOG.md --version X.Y.Z` for Tom's review. Keep the reviewed notes with the GitHub release; routine release logs are not repository knowledge.
 
 ## Execute
@@ -350,6 +350,17 @@ publication, binary-workflow dispatch, workflow edits or live operations.
 A `stage = "pre"` release gate may reuse a hosted CI result for a gate explicitly configured with `reuse-hosted-evidence = true`. The result must come from this repository's own GitHub Actions runs, verified through authenticated `gh`, and match the exact commit SHA being released (`HEAD` when the Run validates). The `prepare` stage's version, changelog, and lockfile mutations do not change that SHA, which is why hosted evidence belongs in `pre-gates`, before the release commit exists. An identical tree at another SHA is insufficient. Gates not named for reuse still run under the full configured gate policy, including against the prepared working tree. Missing, pending, failed, ambiguous, wrong-repository, or wrong-SHA evidence fails closed. The release record names every reused gate and links to its run. The configured `ci` proof remains a prerequisite, not blanket permission to skip other gates.
 
 The wait binds the run this release dispatched, never a sibling. It opens a dispatch window when it first needs evidence and accepts only a run of the configured workflow and event, for the exact commit, created inside that window; several matches inside one window fail closed with the candidates named. The bound run's id is journalled on the gate and re-checked by every `effigy release resume`, so a newer dispatch of the same commit cannot replace it. `effigy release gates` has no Run record to open a window in, so it accepts only a commit's single matching run and is equally strict about several.
+
+## Changelog fragments
+
+A repository that has `changelog.d/` beside its configured changelog records unreleased changes as fragments (Northstar canonical: `changelog.py`). Each fragment is `<task-or-PR>-<slug>.<type>.md`, one paragraph, with type `added`, `changed`, `fixed`, `removed` or `security`. `.gitkeep` is not an entry.
+
+- Every changelog surface reads one source path: `effigy changelog validate`, `analyze` and `extract`, `release status`, `release --plan`, and prepare. Valid fragments fold into `[Unreleased]` for analysis, so the version policy is unchanged: `removed` counts as breaking like the old `Breaking` category.
+- Read-only surfaces never write. A plain repository with no `changelog.d/` behaves exactly as before.
+- Prepare folds exactly the planned set. It writes the new version section, deletes those fragments, keeps `.gitkeep`, and leaves `[Unreleased]` empty. It refuses if any fragment changed, appeared, or stopped validating since the plan. Every changed file is restored byte-for-byte when a later stage fails.
+- Refused as malformed: an unknown type, an invalid name, an empty or multi-paragraph body, a non-UTF-8 file, a non-regular file or symlink, a symlinked `changelog.d`, a case-only name collision, and direct entries in `[Unreleased]` once fragments are adopted.
+
+Migration record: `docs/qualification/changelog-fragment-migration-804/`.
 
 ## Gate checks and an empty Unreleased section
 

@@ -1,0 +1,1 @@
+Run control for every run: `effigy --run-id <key> <task>` names a run, `effigy runs` lists them, and `effigy run status|logs|stop <run>` inspects and stops one. A managed task's `--detach` returns once every workload has started.

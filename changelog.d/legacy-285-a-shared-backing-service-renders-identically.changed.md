@@ -1,0 +1,1 @@
+**A shared backing service renders identically from every checkout.** Its Compose input and init SQL live at one content-addressed directory under the Effigy home, and a shared container from another render is replaced before Compose creates the new one, so its port is never held twice and its named data volume is kept.

@@ -1,0 +1,1 @@
+**A checkout journal is opened by its location.** No checkout, Git or home generation is recorded, so a moved checkout, a recreated `.git`, `git worktree repair` and a reboot just work. A journal read is one plain read-only SQLite read; a store whose write-ahead log has an unreadable index no longer refuses.

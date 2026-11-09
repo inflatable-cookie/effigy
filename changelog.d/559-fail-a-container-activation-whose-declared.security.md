@@ -1,0 +1,1 @@
+Fail a container activation whose declared host process cannot start, in attached and detached modes alike, instead of demoting a plain (non-listener) workload's start failure to a warning only the detached supervisor's own output carries. An environment never reports success while its declared workload never started: the refusal names the process and its cause (effigy#559).

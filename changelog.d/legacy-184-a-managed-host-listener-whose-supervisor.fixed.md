@@ -1,0 +1,1 @@
+A managed host listener whose supervisor exits right after writing its final `failed` state reports that listener's own diagnostic, such as a reserved port that was already bound, instead of the generic "its supervisor exited before publishing readiness" error.

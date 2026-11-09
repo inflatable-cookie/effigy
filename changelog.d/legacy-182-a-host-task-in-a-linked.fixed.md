@@ -1,0 +1,1 @@
+A host task in a linked or detached worktree whose manifest declares no `[containers]` registry runs again. The absence is read from the manifest's shape, so it no longer surfaces as a container-policy refusal. A declared registry that cannot load still refuses, and a declared backing-service alias whose stack is not up still refuses before the run starts.

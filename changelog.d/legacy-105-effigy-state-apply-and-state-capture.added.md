@@ -1,0 +1,1 @@
+`effigy state apply` and `state capture` show a live step per executed layer that names the layer and action (task, SQL import, artifact stage, or hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer spinner timing still needs an exact-candidate proof.

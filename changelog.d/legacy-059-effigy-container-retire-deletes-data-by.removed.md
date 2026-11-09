@@ -1,0 +1,1 @@
+**Breaking:** **`effigy container retire` deletes data by default.** It removes every labelled container, network and named volume the checkout owns. `--keep-data` keeps the named volumes and lists the ones kept. A script that used `retire` as cleanup now loses the stack's data.

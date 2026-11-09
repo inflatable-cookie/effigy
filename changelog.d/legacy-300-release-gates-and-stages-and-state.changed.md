@@ -1,0 +1,1 @@
+Release gates and stages, and state apply and capture, show live progress that names the current gate, layer or capture, its known count, and the exact command or source they wait on, in place of one fixed label. JSON, piped and quiet output are unchanged.

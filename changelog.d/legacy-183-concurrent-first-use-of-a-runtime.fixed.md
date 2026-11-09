@@ -1,0 +1,1 @@
+Concurrent first use of a runtime-scoped checkout no longer refuses one caller with `invalid worktree scope`. The scope token is staged in full and hard-linked into place, so a reader never sees a partial token; racing callers all read the one published token. A malformed persisted scope is still refused.

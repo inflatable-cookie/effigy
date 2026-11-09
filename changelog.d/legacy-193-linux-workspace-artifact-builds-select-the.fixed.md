@@ -1,0 +1,1 @@
+Linux workspace artifact builds select the requested Rust architecture/libc target and retain a separate receipt beside each target binary. Missing target libraries or linkers refuse the build before it can attest an artifact.

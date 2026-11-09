@@ -1,0 +1,1 @@
+Supervise macOS preparation helpers against the stage deadline and live storage counter, retaining an unknown result if a child cannot be reaped. Native execution still requires a separately activated Nucleus proof and operator GO (effigy#694).

@@ -1,0 +1,1 @@
+Install the pinned offline runtime-image debs in pre-depends order: `python3-minimal` and `python3` now install after their Pre-Depends are configured, a 22-package configured-state check gates the image, and D2 gets a fresh private Docker config per occurrence, so the earlier plugin link is never re-entered (effigy#776).

@@ -1,0 +1,1 @@
+**Breaking:** Workspace declarations sharing one container must have identical effective configuration; give workspaces with different paths, mounts or identities distinct container names. Declared workspaces without a usable `user` and absolute `home` now refuse preparation and entry with configuration guidance.

@@ -1,0 +1,1 @@
+The exec-ready probe and its recovery restart, restart recovery of exited containers by name, the nerdctl health-check timer surgery, the `/run` inode-pressure parsing, automatic Colima repair and Effigy's own Colima restart. A running profile is never stopped or restarted: when it lacks a managed setting Effigy writes the managed config and warns with `colima restart <profile>`.

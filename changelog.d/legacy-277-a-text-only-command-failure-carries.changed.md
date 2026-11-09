@@ -1,0 +1,1 @@
+**A text-only command failure carries its next action in `--json`.** A failure whose payload is text, not a JSON object, now puts its `next:` line in `error.human.next_action`, the same action the text form prints. Its `what_failed` is the payload's first line, not a generic `json output available` sentence. A failure with no action keeps `next_action: null`.

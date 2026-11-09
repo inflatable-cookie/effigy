@@ -1,0 +1,1 @@
+A release's `receipt.json` now matches `effigy release receipt <run> --json` at every checkpoint. It used to be written only once, before the final `complete` status, so a completed Run's file read as unfinished. It is now rewritten with each record write, through the same atomic route, and a paused or failed Run keeps its recorded non-complete status.

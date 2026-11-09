@@ -1,0 +1,1 @@
+**Breaking:** Workspace guest mount targets must be absolute and contain no `..` components. Equivalent spellings using repeated separators or `.` share the same private store, state-mask and duplicate-target checks.

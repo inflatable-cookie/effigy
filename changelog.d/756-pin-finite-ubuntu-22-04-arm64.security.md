@@ -1,0 +1,1 @@
+Pin finite Ubuntu 22.04 arm64 OCI blobs and offline apt debs as the C4/D2 runtime-image inputs, fetch and hash them with exact size on the host, and build with `--network none` plus local `--build-context` oci-layout/debs so FROM cannot contact a registry (effigy#756). D2 is admitted on that host path. No image or package payload is produced here.
