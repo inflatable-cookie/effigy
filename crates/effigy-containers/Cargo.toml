@@ -32,7 +32,7 @@ toml_edit = "0.25.11"
 [dev-dependencies]
 nix = { version = "0.31", default-features = false, features = ["socket", "uio"] }
 effigy-test-support = { path = "../effigy-test-support" }
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 tempfile = "3"
 
 [lints]
