@@ -23,7 +23,8 @@ import struct
 import uuid
 from pathlib import Path
 
-from linux_supervisor import Refusal
+from linux_supervisor import Refusal, QUOTA_ROWS as ROW_RESERVATIONS, QUOTA_GROUP_ROWS, \
+    quota_row_reservation, quota_limit_record
 import linux_allocation_probe as probe
 
 MECHANISM = 'ext4-project-quota'
@@ -33,9 +34,6 @@ ROOT_FSTYPE = 'ext4'
 REQUIRED_FEATURES = frozenset({'project', 'quota'})
 PROJECT_ID = 531                                  # reserved for the stage tree; no other object may carry it
 QB_UNIT_BYTES = probe.QB_UNIT_BYTES
-# Candidate row reservations. E19 is deliberately omitted: its aggregate
-# 1 MiB ceiling cannot be enforced by independently resetting per-file limits.
-ROW_RESERVATIONS = {'E8': 64 << 20, 'E9a': 40 << 20, 'E9b': 500 << 20, 'E9c': 40 << 20}
 PROJECT_CEILING = 1 << 30
 # if_dqblk dqb_valid bits, linux/quota.h enum: QIF_BLIMITS_B = 0, QIF_SPACE_B = 1
 QIF_BLIMITS = 1 << 0
@@ -142,7 +140,7 @@ def inspect_offline_progress(boot_id, attempted, originals):
 
 
 def validate_candidate_request(request):
-    """Validate a prospective request's shape, without granting authority."""
+    """Validate the fixed admin request shape; it names no device, project or limit."""
     if not isinstance(request, dict) or set(request) != {'row', 'nonce', 'boot_id'}:
         raise Refusal('quota request must contain only row, nonce and boot identity')
     row, nonce, boot = request['row'], request['nonce'], request['boot_id']
@@ -154,12 +152,38 @@ def validate_candidate_request(request):
     return {'row': row, 'nonce': nonce, 'boot_id': boot}
 
 
-def prospective_row_limit(row, charged_bytes):
-    """Build fixed quota fields only; this does not authorize or invoke a setter.
+def placement_aggregate(items):
+    """The retained bytes the fixed placement set requires; a group ceiling must cover them all.
 
-    The caller must obtain a genuine, current charge under exclusive custody.
-    No production route is armed to consume this prospective record.
+    E19 and EGO are aggregate kit ceilings (kit 6.3: E19 placements <= 1 MiB). The reservation is
+    the ceiling for the whole set, never a per-file allowance, so the set must fit inside it.
     """
+    if not isinstance(items, list) or not items:
+        raise Refusal('placement set is empty or not bound')
+    total = 0
+    for item in items:
+        if not isinstance(item, dict) or type(item.get('bytes')) is not int or item['bytes'] <= 0:
+            raise Refusal('placement has no exact byte size')
+        total += item['bytes']
+    return total
+
+
+def group_ceiling_reason(row, items):
+    """None when the fixed placement set fits the group ceiling; otherwise the refusal text."""
+    try:
+        reservation = quota_row_reservation(row)
+        total = placement_aggregate(items)
+    except Refusal as exc:
+        return str(exc)
+    if row not in QUOTA_GROUP_ROWS:
+        return 'row is not an aggregate placement group'
+    if total > reservation:
+        return 'placement set requires %d bytes, above the %d-byte aggregate ceiling' % (total, reservation)
+    return None
+
+
+def prospective_row_limit(row, charged_bytes):
+    """Build the fixed quota record for one row; the limit is derived, never caller-chosen."""
     if not isinstance(row, str) or row not in ROW_RESERVATIONS:
         raise Refusal('row has no fixed project reservation')
     if not isinstance(charged_bytes, int) or isinstance(charged_bytes, bool) or charged_bytes < 0:
@@ -167,31 +191,7 @@ def prospective_row_limit(row, charged_bytes):
     reservation = ROW_RESERVATIONS[row]
     if charged_bytes + reservation > PROJECT_CEILING:
         raise Refusal('row reservation exceeds the project ceiling')
-    try:
-        return probe.limit_record(charged_bytes, reservation)
-    except probe.Refused as exc:
-        raise Refusal('row reservation is not representable') from exc
-
-
-def _invoke_candidate_setter(row, charged_bytes, call):
-    """Source-only fixed syscall boundary; no command entry or authority calls it.
-
-    The future root route must establish fresh preconditions and one-use authority
-    before calling this function, then retain an independent post-observation.
-    A successful syscall return alone is not proof of enforcement.
-    """
-    if ctypes.sizeof(ctypes.c_void_p) != 8 or ctypes.sizeof(probe.DQBlk) != 72 or \
-            probe.DQBlk.valid.offset != 64:
-        raise Refusal('unsupported quota setter ABI')
-    record = prospective_row_limit(row, charged_bytes)
-    try:
-        result = call(probe.Q_SETQUOTA, ROOT_DEVICE, PROJECT_ID, ctypes.byref(record))
-    except (probe.Refused, OSError) as exc:
-        raise Refusal('project quota setter failed or its result is unknown') from exc
-    if not isinstance(result, tuple) or len(result) != 2 or type(result[0]) is not int or \
-            type(result[1]) is not int or result[0] != 0:
-        raise Refusal('project quota setter failed or its result is unknown')
-    return {'setter_exit': 0, 'hard_qb': record.bhard}
+    return quota_limit_record(charged_bytes, reservation)
 
 
 def helper_sha256(path=HELPER):
@@ -319,13 +319,40 @@ def _facts(facts):
 
 
 def verify(witness, limit_bytes, facts, supported):
-    """Check originals and exact facts, then refuse while enforcement and custody are unproven."""
-    mechanism = witness.get('mechanism') if isinstance(witness, dict) else None
+    """Admit a hard bound only from a complete, exact witness for one row or placement group.
+
+    Requires the five retained originals, the fixed setter custody, the genuine EDQUOT enforcement
+    observation, an exact entry set and a headroom equal to the row reservation. A caller label, a
+    format bit, a missing original or an observation from another boot/device/project refuses.
+    """
+    if not isinstance(witness, dict):
+        raise Refusal('allocation witness is missing')
+    mechanism = witness.get('mechanism')
     if mechanism != MECHANISM or mechanism not in supported:
         raise Refusal('allocation mechanism is not admitted')
     if not isinstance(limit_bytes, int) or isinstance(limit_bytes, bool) or limit_bytes <= 0:
         raise Refusal('limit is not a positive byte count')
     boot, uid, root, expected = _facts(facts)
+    row, nonce = witness.get('row'), witness.get('nonce')
+    if not isinstance(row, str) or row not in ROW_RESERVATIONS:
+        raise Refusal('witness names no fixed row')
+    if not isinstance(nonce, str) or not HEX64.fullmatch(nonce):
+        raise Refusal('witness has no one-use nonce')
+    if witness.get('boot_id') != boot:
+        raise Refusal('witness is from another boot')
+    if witness.get('device') != ROOT_DEVICE or witness.get('project') != PROJECT_ID:
+        raise Refusal('witness names another device or project')
+    if witness.get('limit_bytes') != limit_bytes:
+        raise Refusal('witness limit differs from the charged row')
+    if witness.get('setter_exit') != 0:
+        raise Refusal('the fixed quota setter did not report a positive waited exit')
+    custody = witness.get('custody')
+    entry_sha = hashlib.sha256((Path(__file__).resolve().parent / 'linux_supervisor.py').read_bytes()).hexdigest()
+    if not isinstance(custody, dict) or custody.get('entry_sha256') != entry_sha or \
+            not isinstance(custody.get('approval_digest'), str) or \
+            not HEX64.fullmatch(custody['approval_digest']) or \
+            custody.get('device') != ROOT_DEVICE or custody.get('project') != PROJECT_ID:
+        raise Refusal('witness does not carry the fixed setter entry and one-use approval custody')
     texts = _originals(witness)
     mount = _root_mount(texts['mountinfo'])
     _check_superblock(texts['dumpe2fs'])
@@ -400,8 +427,116 @@ def verify(witness, limit_bytes, facts, supported):
         raise Refusal('stage root is not a directory')
     if charged < tree_bytes:
         raise Refusal('kernel charge is below the tree bytes; accounting does not cover the tree')
-    # An owner in the initial user namespace can change project attributes. A
-    # pre-run tree and a quota format do not establish confinement or limit
-    # enforcement throughout the row. Never promote these observations to a
-    # hard-bound witness until both have an independently reviewed proof.
-    raise Refusal('project quota enforcement and writer confinement are unproven')
+    reasons = _enforcement_reasons(witness, row, boot, nonce, limit_bytes)
+    if reasons:
+        raise Refusal(reasons[0])
+    return {'mechanism': MECHANISM, 'row': row, 'nonce': nonce, 'limit_bytes': limit_bytes,
+            'charged_bytes': charged, 'hard_bytes': hard, 'headroom_bytes': headroom,
+            'enforcement': dict(witness['enforcement']), 'custody': dict(witness['custody']),
+            'tree_bytes': tree_bytes}
+
+
+def _enforcement_reasons(witness, row, boot, nonce, limit_bytes):
+    """The enforcement record must be the fixed over-limit probe, refused in the charged scope.
+
+    A feature bit, a quota format or a zero syscall result is not enforcement. This record is a
+    genuine allocation attempt at the row ceiling by the payload identity with every capability set
+    emptied; EDQUOT is the observation, and anything else refuses.
+    """
+    item = witness.get('enforcement')
+    if not isinstance(item, dict):
+        return ['enforcement observation is missing']
+    required = {'argv', 'exit', 'bytes_allocated', 'phase', 'reservation_bytes', 'stdout', 'stderr',
+                'stdout_sha256', 'stderr_sha256'}
+    if set(item) != required:
+        return ['enforcement observation has an unexpected shape']
+    if item['argv'] != ['--enforce', QUOTA_ROOT_PROBE, str(limit_bytes)]:
+        return ['enforcement observation is not the fixed over-limit probe for this row']
+    if type(item['exit']) is not int or item['exit'] != 3 or item['phase'] != 'edquot':
+        return ['enforcement observation is not an EDQUOT refusal']
+    if item['reservation_bytes'] != limit_bytes or item['bytes_allocated'] != limit_bytes:
+        return ['enforcement observation does not fill exactly the row reservation']
+    for stream in ('stdout', 'stderr'):
+        value, digest = item[stream], item[stream + '_sha256']
+        if not isinstance(value, str) or not isinstance(digest, str) or not HEX64.fullmatch(digest):
+            return ['enforcement %s stream is malformed' % stream]
+        if hashlib.sha256(value.encode('utf-8', 'surrogateescape')).hexdigest() != digest:
+            return ['enforcement %s stream differs from its hash' % stream]
+    if 'phase=edquot' not in item['stderr']:
+        return ['enforcement stream does not record the EDQUOT phase']
+    return []
+
+
+QUOTA_ROOT = '/Volumes/Stash/scratch/effigy/linux-4f6a5ed3'
+QUOTA_ROOT_PROBE = QUOTA_ROOT + '/.effigy-quota-enforcement'
+
+
+def verify_scope(scope, facts):
+    """Check the writer bound that accompanies a charged row: confinement, custody and channel.
+
+    Source basis: a private identity user namespace rejects project and inheritance-flag changes
+    (fs/file_attr.c, fs/ioctl.c), empty capability sets remove the CAP_SYS_RESOURCE quota bypass
+    (fs/quota/dquot.c) and survive exec, no-new-privileges prevents regaining privileges, and an
+    empty supplementary group set removes the docker socket channel for this setup workload. The
+    only same-UID entry left is the qualification key, which is restricted to one forced command
+    that can write only a reviewed row FIFO. A different value, a missing observation or a second
+    channel refuses.
+    """
+    boot, uid, _, _ = _facts(facts)
+    if not isinstance(scope, dict) or set(scope) != {'boot_id', 'row', 'unit', 'process', 'channel', 'tools'}:
+        raise Refusal('writer scope observation is missing or has an unexpected shape')
+    if scope['boot_id'] != boot:
+        raise Refusal('writer scope observation is from another boot')
+    return _scope_checks(scope, uid)
+
+
+def _scope_checks(scope, uid):
+    unit = scope['unit']
+    expected_unit = {'PrivateUsers': 'identity', 'NoNewPrivileges': 'yes',
+                     'SupplementaryGroups': '', 'CapabilityBoundingSet': ''}
+    if unit != expected_unit:
+        raise Refusal('unit effective confinement differs from the fixed properties')
+    process = scope['process']
+    if not isinstance(process, dict) or set(process) != {'uid', 'groups', 'cap_eff', 'cap_prm',
+                                                         'no_new_privs', 'user_ns', 'init_user_ns',
+                                                         'docker_gid'}:
+        raise Refusal('payload process confinement observation is incomplete')
+    if process['uid'] != uid:
+        raise Refusal('payload process uid differs from the reviewed account')
+    if process['cap_eff'] or process['cap_prm']:
+        raise Refusal('payload process retains capabilities; the quota bypass is not removed')
+    if process['no_new_privs'] != 1:
+        raise Refusal('payload process has no no-new-privileges guarantee')
+    if not isinstance(process['user_ns'], int) or not isinstance(process['init_user_ns'], int) or \
+            process['user_ns'] == process['init_user_ns']:
+        raise Refusal('payload process is not in a private user namespace; project reassignment is possible')
+    if type(process['docker_gid']) is int and process['docker_gid'] in (process['groups'] or []):
+        raise Refusal('payload process keeps the docker group; an unconfined channel defeats the bound')
+    channel = scope['channel']
+    if not isinstance(channel, dict) or set(channel) != {'forced_command', 'sha256', 'key_lines'}:
+        raise Refusal('same-uid writer channel observation is incomplete')
+    if channel['forced_command'] != _forced_command() or \
+            channel['sha256'] != hashlib.sha256(channel['forced_command'].encode()).hexdigest():
+        raise Refusal('the qualification key is not restricted to the one forced command')
+    if channel['key_lines'] != 1:
+        raise Refusal('the qualification key file is not the single reviewed line')
+    tools = scope['tools']
+    if not isinstance(tools, dict) or not tools:
+        raise Refusal('writer tool custody observation is missing')
+    for path, record in tools.items():
+        if not isinstance(record, dict) or record.get('uid') != 0 or record.get('nlink') != 1 or \
+                record.get('mode', 0) & 0o022 or not isinstance(record.get('sha256'), str) or \
+                not HEX64.fullmatch(record['sha256']):
+            raise Refusal('writer tool custody observation is not the fixed root-owned executable')
+    return {'boot_id': scope['boot_id'], 'row': scope['row'], 'uid': uid,
+            'unit': dict(unit), 'process': dict(process), 'channel': dict(channel),
+            'tool_sha256': {path: record['sha256'] for path, record in sorted(tools.items())}}
+
+
+def _forced_command():
+    return ('/usr/bin/python3 -I -B /usr/local/libexec/effigy-stage-supervisor --transfer-writer')
+
+
+def witness_digest(witness):
+    """Stable digest of a complete witness, so a receipt can bind the exact retained bytes."""
+    return hashlib.sha256(json.dumps(witness, sort_keys=True).encode('utf-8')).hexdigest()

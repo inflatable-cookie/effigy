@@ -1743,7 +1743,9 @@ class WriterBoundObservationTests(unittest.TestCase):
         result, _, _ = self.observe()
         self.assertEqual(set(result), {'schema', 'routes_sha256', 'routes', 'facts', 'limits', 'complete',
                                        'findings', 'observation_eligibility'})
-        self.assertEqual(proof.setup.SUPPORTED_HARD_LIMITS, frozenset())
+        # The setup source admits only the witness-gated quota mechanism; this observation never
+        # turns a diagnostic fact into setup, placement or hard-quota credit.
+        self.assertEqual(proof.setup.SUPPORTED_HARD_LIMITS, frozenset({proof.setup.allocation.MECHANISM}))
         self.assertEqual(proof.setup.SUPPORTED_DISK_MECHANISMS, frozenset())
         self.assertIsNone(proof.setup.EXTERNAL_ANCHORS)
         self.assertEqual(proof.setup.SUPPORTED_TOP_MECHANISMS, frozenset({'parallels-descriptor-selection-v1'}))
