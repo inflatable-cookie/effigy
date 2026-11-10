@@ -75,6 +75,14 @@ The descendant timeout proof observes its live recorded child before expiring
 the unchanged 200 ms budget; termination/EOF cleanup use real time, and the
 original 150 ms disappearance bound is polled instead of slept through.
 
+The nested-pane colour proof gates its adjacent producer instead of sleeping.
+It pauses only its own TUI reader, releases the coloured line, observes the
+writer's optional style publication, then resumes the reader. Canonical plain
+append deliberately precedes that publication; reading the plain fallback in
+that interval cannot prove colour loss. The red SGR assertion and the 180-second
+fixture and three-second render bounds remain. Standalone progress requires
+at least five redraw frames for the running step, independently of label wording.
+
 ### The kernel-custody boundary
 
 Kernel custody is an explicit boundary, not a sweep target. A helper started
