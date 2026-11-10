@@ -5,8 +5,7 @@ use std::path::PathBuf;
 use effigy_cli::TaskInvocation;
 use effigy_context::EffigyRuntimeContext;
 use effigy_execution::{
-    ExecutionEnvironmentPlan, ExecutionOutputMode, ExecutionSurface, TaskExecutionRequest,
-    TaskExecutionRequestBuilder,
+    ExecutionEnvironmentPlan, ExecutionSurface, TaskExecutionRequest, TaskExecutionRequestBuilder,
 };
 use effigy_manifest::{
     LoadedCatalog, ManifestContainersConfig, ManifestSystemsConfig, ManifestTask,
@@ -45,29 +44,6 @@ pub(in crate::runner) fn run_manifest_task_with_surface(
     surface: ExecutionSurface,
 ) -> Result<String, RunnerError> {
     run_manifest_task_with_surface_and_env(task, cwd, surface, &BTreeMap::new())
-}
-
-pub(in crate::runner) fn run_manifest_task_with_output_mode(
-    task: &TaskInvocation,
-    cwd: PathBuf,
-    surface: ExecutionSurface,
-    output_mode: ExecutionOutputMode,
-) -> Result<String, RunnerError> {
-    let runtime_context = crate::runner::command_context::active_runtime_context()
-        .filter(|context| context.task_source().is_some())
-        .unwrap_or(
-            EffigyRuntimeContext::capture_lossy(Some(cwd.clone()), None)
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
-        );
-    let request = TaskExecutionRequestBuilder::new()
-        .runtime_context(runtime_context)
-        .task(task.name.clone(), task.args.clone())
-        .surface(surface)
-        .output_mode(output_mode)
-        .environment(ExecutionEnvironmentPlan::default().cwd(cwd))
-        .build()
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    run_manifest_task_request(request)
 }
 
 pub(in crate::runner) fn run_manifest_task_with_surface_and_env(
@@ -309,7 +285,13 @@ pub(in crate::runner) fn run_inline_task_with_cwd_and_env(
         surface: effigy_tasks::TaskSurface::Published,
     };
     let selection_plan = super::selection::build_execution_selection_plan(&preflight, &selection);
-    super::pipeline::standard::run_standard_task(&preflight, &selection, &selection_plan, None)
+    super::pipeline::standard::run_standard_task(
+        &preflight,
+        &selection,
+        &selection_plan,
+        None,
+        None,
+    )
 }
 
 #[cfg(test)]

@@ -2,17 +2,16 @@
 use super::host_alias::{host_alias_resolver, secret_env_slice};
 use super::{context::ExecutionTaskContext, preflight::ExecutionPreflight};
 use crate::runner::command_context::{command_repo_override, EmbeddedRepoOverrideMode};
-use crate::runner::embedded_runner::{parse_embedded_command, run_embedded_task_with_output_mode};
 use crate::runner::error::RunnerError;
 use crate::runner::task_engine::{
     run_effigy_child, run_plain, CustodyWait, PlainCommand, SpawnScope, TaskRun,
 };
-use effigy_cli::{BundleSubcommand, Command, DocsSubcommand, TaskInvocation};
+use effigy_cli::{Command, TaskInvocation};
 use effigy_env::{resolver::ResolvedEnv, secret::SecretString};
 use effigy_kernel::outcome::WorkloadOutcome;
 use effigy_managed::{render_step_command_template, StepEnvAccumulator};
 use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep, TaskSelection};
-use effigy_routing::{resolve_catalog_by_prefix, select_catalog_and_task};
+use effigy_routing::resolve_catalog_by_prefix;
 use effigy_tasks::{parse_task_reference_invocation, render_task_selector};
 use effigy_ui::steps::{live_step, streaming_step, streams_output, ProgressSource};
 use std::collections::BTreeSet;
@@ -24,16 +23,18 @@ pub(super) fn maybe_run_in_process_sequence(
     context: &ExecutionTaskContext<'_>,
     env_schema: &Option<ResolvedEnv>,
     secrets: Option<&[(&str, &SecretString)]>,
-    run: &mut TaskRun,
-    workload: &mut Option<WorkloadOutcome>,
+    execution: (&mut TaskRun, &mut Option<WorkloadOutcome>),
+    tree: ResolvedSteps,
 ) -> Result<Option<String>, RunnerError> {
-    let Some(ManifestManagedRun::Sequence(steps)) = &selection.task.run else {
-        return Ok(None);
-    };
+    let (run, workload) = execution;
+    match selection.task.run.as_ref() {
+        Some(ManifestManagedRun::Sequence(_)) => {}
+        Some(ManifestManagedRun::Command(command)) if command.starts_with("task:") => {}
+        _ => return Ok(None),
+    }
     let report = run_steps(
         preflight,
         selection,
-        steps,
         env_schema,
         secrets,
         (
@@ -41,6 +42,7 @@ pub(super) fn maybe_run_in_process_sequence(
             &preflight.runtime_args_exec.passthrough,
         ),
         run,
+        tree,
     )?;
     *workload = Some(report.outcome.clone());
     if preflight.output_json {
@@ -91,7 +93,8 @@ pub(super) fn run_in_process_sequence_steps(
     owner: (&str, &[String]),
     run: &TaskRun,
 ) -> Result<(), RunnerError> {
-    let report = run_steps(preflight, selection, steps, env_schema, secrets, owner, run)?;
+    let tree = resolve_steps(preflight, selection, steps, owner.1, &mut Vec::new())?;
+    let report = run_steps(preflight, selection, env_schema, secrets, owner, run, tree)?;
     if report.code == 0 {
         Ok(())
     } else {
@@ -108,18 +111,24 @@ pub(super) fn run_in_process_sequence_steps(
     }
 }
 
-/// Classify the complete declared tree before admission. Dynamic adapters
-/// declare durable capability; static task references resolve exactly as steps do.
-pub(in crate::runner::execute) fn foreground_tree(
+/// The execution actions and their admission class share one resolved tree.
+pub(in crate::runner::execute) struct ResolvedSteps {
+    pub(super) foreground: bool,
+    steps: Vec<ResolvedStep>,
+}
+
+struct ResolvedStep {
+    action: StepAction,
+    // Environment directives, label and timeout remain declarative inputs;
+    // only `action` decides the execution target.
+    declaration: ManifestManagedRunStep,
+}
+
+pub(in crate::runner::execute) fn resolve_tree(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
-) -> Result<bool, RunnerError> {
-    classify_tree(
-        preflight,
-        selection,
-        &preflight.selector.task_name,
-        &mut Vec::new(),
-    )
+) -> Result<ResolvedSteps, RunnerError> {
+    resolve_tree_from(preflight, selection, &mut Vec::new())
 }
 
 pub(in crate::runner::execute) fn foreground_test_sources(
@@ -157,134 +166,94 @@ fn classify_test_sources(
             evidence: Vec::new(),
             surface: effigy_core::task_selection::TaskSurface::Published,
         };
-        if !classify_tree(
-            preflight,
-            &selection,
-            &format!("test:{}", source.label),
-            ancestors,
-        )? {
+        if !resolve_tree_from(preflight, &selection, ancestors)?.foreground {
             return Ok(false);
         }
     }
     Ok(true)
 }
 
-fn classify_tree(
+fn resolve_tree_from(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
-    task_name: &str,
     ancestors: &mut Vec<(PathBuf, String)>,
-) -> Result<bool, RunnerError> {
-    let identity = (selection.catalog.catalog_root.clone(), task_name.to_owned());
+) -> Result<ResolvedSteps, RunnerError> {
+    let identity = (
+        selection.catalog.catalog_root.clone(),
+        preflight.selector.task_name.clone(),
+    );
     if ancestors.len() >= 64 || ancestors.contains(&identity) {
         return Err(RunnerError::task_invocation(
             "task tree is cyclic or exceeds 64 declared levels",
         ));
     }
-    if selection.task.durable
-        || selection.task.mode.as_deref() == Some("tui")
-        || !selection.task.concurrent.is_empty()
-        || !super::pipeline::standard::checked_host_binding(preflight, selection, task_name)?
-        || selection.task.uses_scratch() && crate::runner::scratch::wanted()
-        // The declared vault generation hook runs during `secrets =
-        // "required"` startup, before this task's body. It is a durable
-        // descendant the manifest names, so the tree class must include it
-        // before admission rather than refuse it mid-flight.
-        || super::pipeline::standard::startup_can_run_vault_generate_hook(preflight, selection)?
-    {
-        return Ok(false);
-    }
-    let Some(run) = selection.task.run.as_ref() else {
-        return Ok(false);
-    };
+    let foreground = !selection.task.durable
+        && selection.task.mode.as_deref() != Some("tui")
+        && selection.task.concurrent.is_empty()
+        && super::pipeline::standard::checked_host_binding(
+            preflight,
+            selection,
+            &preflight.selector.task_name,
+        )?
+        && !(selection.task.uses_scratch() && crate::runner::scratch::wanted())
+        && !super::pipeline::standard::startup_can_run_vault_generate_hook(preflight, selection)?;
     ancestors.push(identity);
-    let steps = match run {
-        ManifestManagedRun::Command(command) => {
-            vec![ManifestManagedRunStep::Command(command.clone())]
-        }
-        ManifestManagedRun::Sequence(steps) => steps.clone(),
+    let result = match selection.task.run.as_ref() {
+        Some(ManifestManagedRun::Command(command)) => resolve_steps(
+            preflight,
+            selection,
+            &[ManifestManagedRunStep::Command(command.clone())],
+            &preflight.runtime_args_exec.passthrough,
+            ancestors,
+        ),
+        Some(ManifestManagedRun::Sequence(steps)) => resolve_steps(
+            preflight,
+            selection,
+            steps,
+            &preflight.runtime_args_exec.passthrough,
+            ancestors,
+        ),
+        None => Ok(ResolvedSteps {
+            foreground: false,
+            steps: Vec::new(),
+        }),
     };
-    let result = (|| {
-        for step in &steps {
-            match resolve_step_action(
-                step,
-                preflight,
-                selection,
-                &preflight.runtime_args_exec.passthrough,
-            )? {
-                StepAction::Command(_) | StepAction::Noop => {}
-                StepAction::Rhai { .. } => return Ok(false),
-                StepAction::Builtin { parsed, cwd, .. } => {
-                    if !classify_builtin(&parsed, &cwd, ancestors)? {
-                        return Ok(false);
-                    }
-                }
-                StepAction::Task { invocation, cwd } => {
-                    if !classify_invocation(&invocation, &cwd, ancestors)? {
-                        return Ok(false);
-                    }
-                }
-            }
-        }
-        Ok(true)
-    })();
     ancestors.pop();
-    result
+    result.map(|mut tree| {
+        tree.foreground &= foreground;
+        tree
+    })
 }
 
-/// Resolve nested invocations through the same precedence and discovery as
-/// execution. A task named `config` may shadow that builtin, and a remapped
-/// builtin may defer to an adapter with durable effects.
-fn classify_invocation(
-    invocation: &TaskInvocation,
-    cwd: &Path,
+fn resolve_steps(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+    steps: &[ManifestManagedRunStep],
+    passthrough: &[String],
     ancestors: &mut Vec<(PathBuf, String)>,
-) -> Result<bool, RunnerError> {
-    if invocation
-        .args
+) -> Result<ResolvedSteps, RunnerError> {
+    let steps = steps
         .iter()
-        .any(|arg| arg == effigy_cli::INTERNAL_RUN_ID_ARG)
-    {
-        return Ok(false);
-    }
-    let child = super::preflight::build_execution_preflight(invocation, cwd.into())?;
-    if child.help {
-        return Ok(true);
-    }
-    match super::route::resolve_route(invocation, &child)? {
-        super::route::Route::Task { selection, .. } => {
-            if child.plan {
-                Ok(true)
-            } else {
-                classify_tree(&child, &selection, &child.selector.task_name, ancestors)
-            }
-        }
-        super::route::Route::Builtin if child.selector.task_name == "test" => {
-            match effigy_builtin::test_run_requirement(
-                &child.selector,
-                &child.runtime_args_exec,
-                &child.invocation_cwd,
-                &child.catalogs,
-            )? {
-                effigy_builtin::TestRunRequirement::Observe => Ok(true),
-                effigy_builtin::TestRunRequirement::Local(sources) => {
-                    classify_test_sources(&child, sources, ancestors)
-                }
-                _ => Ok(false),
-            }
-        }
-        _ => Ok(false),
-    }
+        .map(|step| {
+            Ok(ResolvedStep {
+                action: resolve_step_action(step, preflight, selection, passthrough, ancestors)?,
+                declaration: step.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, RunnerError>>()?;
+    let foreground = steps.iter().all(|step| match &step.action {
+        StepAction::Command(_) | StepAction::Noop => true,
+        StepAction::Rhai { .. } => false,
+        StepAction::Helper { foreground, .. } => *foreground,
+        StepAction::Exec { .. } => false,
+        StepAction::Task(child) => child.tree.foreground,
+    });
+    Ok(ResolvedSteps { steps, foreground })
 }
 
-fn classify_builtin(
-    command: &Command,
-    cwd: &Path,
-    ancestors: &mut Vec<(PathBuf, String)>,
-) -> Result<bool, RunnerError> {
+fn classify_builtin(command: &Command) -> bool {
     use effigy_cli::{RunsAction, TasksQaCommand};
-    Ok(match command {
-        Command::Task(task) => return classify_invocation(task, cwd, ancestors),
+    match command {
         Command::Version | Command::Help(_) | Command::HelpGroup(_) => true,
         Command::Doctor(args) => !args.fix && !args.deep && !args.refresh,
         Command::Tasks(args) => matches!(
@@ -312,7 +281,7 @@ fn classify_builtin(
             matches!(args.subcommand, effigy_cli::SkillSubcommand::Tasks { .. })
         }
         _ => false,
-    })
+    }
 }
 
 struct SequenceReport {
@@ -327,22 +296,22 @@ struct SequenceReport {
 fn run_steps(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
-    steps: &[ManifestManagedRunStep],
     env_schema: &Option<ResolvedEnv>,
     secrets: Option<&[(&str, &SecretString)]>,
     owner: (&str, &[String]),
     run: &TaskRun,
+    tree: ResolvedSteps,
 ) -> Result<SequenceReport, RunnerError> {
     let (task_name, passthrough) = owner;
     let _signals = CustodyWait::enter();
-    if steps.is_empty() {
+    if tree.steps.is_empty() {
         return Err(RunnerError::task_invocation(
             "a run sequence must contain at least one step",
         ));
     }
     let mut labels = std::collections::BTreeSet::new();
-    for step in steps {
-        if let ManifestManagedRunStep::Step(table) = step {
+    for step in &tree.steps {
+        if let ManifestManagedRunStep::Step(table) = &step.declaration {
             if let Some(label) = &table.id {
                 if label.trim().is_empty() || !labels.insert(label) {
                     return Err(RunnerError::task_invocation(format!(
@@ -367,11 +336,18 @@ fn run_steps(
     // including the values a step inherits from the task and chains from its
     // predecessors (contract 005).
     let mut host_aliases = host_alias_resolver(preflight, selection)?;
-    let mut planned = Vec::with_capacity(steps.len());
-    for (index, step) in steps.iter().enumerate() {
+    let mut planned = Vec::with_capacity(tree.steps.len());
+    for (
+        index,
+        ResolvedStep {
+            action,
+            declaration: step,
+        },
+    ) in tree.steps.into_iter().enumerate()
+    {
         env.apply_from_step(
             task_name,
-            step,
+            &step,
             &selection.catalog.manifest.env,
             root,
             &preflight.catalogs,
@@ -411,22 +387,15 @@ fn run_steps(
         for (key, value) in inherited {
             step_env.entry(key).or_insert(value);
         }
-        let (label, timeout) = match step {
+        let (label, timeout) = match &step {
             ManifestManagedRunStep::Command(_) => ((index + 1).to_string(), None),
             ManifestManagedRunStep::Step(table) => (
                 table.id.clone().unwrap_or_else(|| (index + 1).to_string()),
                 table.timeout_ms,
             ),
         };
-        let subject = step_subject(step);
-        planned.push((
-            resolve_step_action(step, preflight, selection, passthrough)?,
-            step_env,
-            label,
-            timeout,
-            subject,
-            step_secrets,
-        ));
+        let subject = step_subject(&step);
+        planned.push((action, step_env, label, timeout, subject, step_secrets));
     }
     let mut report = SequenceReport {
         code: 0,
@@ -493,13 +462,14 @@ fn run_steps(
                 secrets
             };
             let _env = SpawnScope::enter(&env, step_secret_slice, preflight.output_json, timeout);
+            let launch = SpawnScope::capture();
             execute_step(
-                &action,
+                action,
                 preflight,
                 selection,
                 root,
                 (task_name, passthrough),
-                timeout,
+                &launch,
                 &mut child,
             )
         };
@@ -629,30 +599,30 @@ fn live_source_command(selection: &TaskSelection<'_>, command: &str) -> String {
 }
 
 fn execute_step(
-    action: &StepAction,
+    action: StepAction,
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
     root: &Path,
     owner: (&str, &[String]),
-    timeout_ms: Option<u64>,
+    launch: &crate::runner::task_engine::LaunchInputs,
     run: &mut TaskRun,
 ) -> Result<StepExit, RunnerError> {
     let (task_name, passthrough) = owner;
     match action {
-        StepAction::Task { invocation, cwd } => {
-            let output =
-                run_embedded_task_with_output_mode(invocation, cwd, preflight.output_mode)?;
+        StepAction::Noop => Ok((0, String::new(), String::new(), WorkloadOutcome::Succeeded)),
+        StepAction::Task(child) => {
+            let output = child.run(launch)?;
             nested_exit(output, preflight.output_json)
         }
-        StepAction::Builtin { parsed, .. }
-            if matches!(parsed.as_ref(), Command::Exec(_))
-                && !crate::runner::container_runtime::inside_container_handoff() =>
-        {
-            let Command::Exec(args) = parsed.as_ref() else {
-                unreachable!("matched exec")
-            };
-            let exit =
-                crate::runner::exec_command::run_exec_step(args, run, preflight.output_json)?;
+        StepAction::Exec { args, cwd } => {
+            let context = effigy_context::EffigyRuntimeContext::capture_lossy(
+                Some(cwd),
+                args.repo_override.clone(),
+            )
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            let exit = crate::runner::command_context::with_runtime_context(&context, || {
+                crate::runner::exec_command::run_exec_step(&args, run, preflight.output_json)
+            })?;
             Ok((
                 exit.code,
                 String::from_utf8_lossy(&exit.stdout).into_owned(),
@@ -663,40 +633,52 @@ fn execute_step(
         StepAction::Command(command)
             if !super::pipeline::standard::runs_plain_host_command(preflight, selection) =>
         {
-            let command = live_source_command(selection, command);
+            let command = live_source_command(selection, &command);
             super::pipeline::standard::run_sequence_container_command(
                 preflight, selection, &command, run,
             )
             .and_then(|output| nested_exit(output, preflight.output_json))
         }
         _ => {
+            let helper = matches!(action, StepAction::Rhai { .. } | StepAction::Helper { .. });
+            let rhai = matches!(action, StepAction::Rhai { .. });
+            let mut cwd = root.to_path_buf();
+            let mut argv = Vec::new();
             let command = match action {
-                StepAction::Command(command) | StepAction::Builtin { command, .. } => {
-                    live_source_command(selection, command)
+                StepAction::Command(command) => live_source_command(selection, &command),
+                StepAction::Helper {
+                    argv: resolved,
+                    cwd: selected,
+                    ..
+                } => {
+                    argv = resolved
+                        .into_iter()
+                        .map(|arg| live_source_command(selection, &arg))
+                        .collect();
+                    cwd = selected;
+                    format!("effigy {}", argv.join(" "))
                 }
                 StepAction::Rhai { path } => {
-                    let executable =
-                        effigy_core::effigy_invocation::resolve_effigy_invocation_prefix(concat!(
-                            env!("CARGO_MANIFEST_DIR"),
-                            "/Cargo.toml"
-                        ))
-                        .map_err(RunnerError::Cwd)?;
+                    argv = effigy_core::effigy_invocation::resolve_effigy_invocation_argv(concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/Cargo.toml"
+                    ))
+                    .map_err(RunnerError::Cwd)?;
                     let path = live_source_command(selection, &path.display().to_string());
-                    format!(
-                        "{executable} script run --file {} --repo-root {} --task-name {}",
-                        effigy_core::shell::shell_quote(&path),
-                        effigy_core::shell::shell_quote(&root.display().to_string()),
-                        effigy_core::shell::shell_quote(task_name)
-                    )
+                    argv.extend([
+                        "script".to_owned(),
+                        "run".to_owned(),
+                        "--file".to_owned(),
+                        path.clone(),
+                        "--repo-root".to_owned(),
+                        root.display().to_string(),
+                        "--task-name".to_owned(),
+                        task_name.to_owned(),
+                    ]);
+                    format!("script run {path}")
                 }
-                StepAction::Noop => ":".to_owned(),
                 _ => unreachable!("references returned above"),
             };
-            let cwd = match action {
-                StepAction::Builtin { cwd, .. } => cwd.as_path(),
-                _ => root,
-            };
-            let helper = matches!(action, StepAction::Builtin { .. } | StepAction::Rhai { .. });
             let mut environment = Vec::new();
             if helper {
                 environment.push((
@@ -704,7 +686,7 @@ fn execute_step(
                     crate::runner::task_engine::EnvOverride::Plain("1".to_owned()),
                 ));
             }
-            if matches!(action, StepAction::Rhai { .. }) {
+            if rhai {
                 // Rhai `args` must match what a run step's `{args}` template
                 // receives: Effigy consumes one leading `--` boundary flag of
                 // its own, and later `--` tokens stay the task's.
@@ -731,16 +713,23 @@ fn execute_step(
             }
             let plain = PlainCommand {
                 command: &command,
-                cwd,
+                cwd: &cwd,
                 env: environment,
                 capture: preflight.output_json || helper,
-                timeout_ms,
+                // The scope already carries the absolute local/parent minimum.
+                timeout_ms: None,
             };
             // A builtin or script step is Effigy's own child process: it
             // receives the session grant. A user command is a workload and
             // never does.
             let exit = if helper {
-                run_effigy_child(run, plain, !preflight.output_json && streams_output())?
+                run_effigy_child(
+                    run,
+                    plain,
+                    argv.into_iter().map(std::ffi::OsString::from).collect(),
+                    launch,
+                    !preflight.output_json && streams_output(),
+                )?
             } else {
                 run_plain(run, plain)?
             };
@@ -787,13 +776,14 @@ fn nested_exit(output: String, capture: bool) -> Result<StepExit, RunnerError> {
 
 enum StepAction {
     Command(String),
-    Task {
-        invocation: TaskInvocation,
+    Task(Box<ResolvedTask>),
+    Helper {
+        argv: Vec<String>,
         cwd: PathBuf,
+        foreground: bool,
     },
-    Builtin {
-        command: String,
-        parsed: Box<Command>,
+    Exec {
+        args: effigy_cli::ExecArgs,
         cwd: PathBuf,
     },
     Rhai {
@@ -801,24 +791,12 @@ enum StepAction {
     },
     Noop,
 }
-impl StepAction {
-    #[cfg(test)]
-    fn kind(&self) -> &'static str {
-        match self {
-            Self::Command(_) => "command",
-            Self::Task { .. } => "task",
-            Self::Builtin { .. } => "builtin",
-            Self::Rhai { .. } => "rhai",
-            Self::Noop => "env",
-        }
-    }
-}
-
 fn resolve_step_action(
     step: &ManifestManagedRunStep,
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
     passthrough: &[String],
+    ancestors: &mut Vec<(PathBuf, String)>,
 ) -> Result<StepAction, RunnerError> {
     match step {
         ManifestManagedRunStep::Command(command) => {
@@ -827,7 +805,7 @@ fn resolve_step_action(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
             {
-                return resolve_task_step(task_ref, preflight, selection);
+                return resolve_task_step(task_ref, preflight, selection, ancestors);
             }
             let rendered = render_step_command_template(
                 command,
@@ -853,7 +831,9 @@ fn resolve_step_action(
                     );
                     Ok(StepAction::Command(render_skill_token(rendered, preflight)))
                 }
-                (None, Some(task_ref), None) => resolve_task_step(task_ref, preflight, selection),
+                (None, Some(task_ref), None) => {
+                    resolve_task_step(task_ref, preflight, selection, ancestors)
+                }
                 (None, None, Some(path)) => Ok(StepAction::Rhai {
                     path: PathBuf::from(render_script_path(
                         path,
@@ -874,13 +854,49 @@ fn resolve_step_action(
     }
 }
 
+/// A selected descendant owns the preflight and actions used at execution.
+struct ResolvedTask {
+    preflight: ExecutionPreflight,
+    task: effigy_manifest::ManifestTask,
+    surface: effigy_tasks::TaskSurface,
+    plan: effigy_execution::ExecutionSelectionPlan,
+    tree: ResolvedSteps,
+}
+impl ResolvedTask {
+    fn run(self, launch: &crate::runner::task_engine::LaunchInputs) -> Result<String, RunnerError> {
+        let _scope = SpawnScope::inherit(launch);
+        let _local_dev_secrets = crate::runner::secret_session::activate_local_dev_secret_access(
+            !self.preflight.plan && self.preflight.selector.task_name == "dev",
+        );
+        let catalog = self
+            .preflight
+            .catalogs
+            .iter()
+            .find(|catalog| catalog.catalog_root == self.plan.catalog.catalog_root)
+            .ok_or_else(|| RunnerError::task_invocation("resolved step catalog disappeared"))?;
+        let selection = TaskSelection {
+            catalog,
+            task: &self.task,
+            mode: self.plan.mode,
+            evidence: self.plan.evidence.clone(),
+            surface: self.surface,
+        };
+        super::entry::run_selected_task(
+            &self.preflight,
+            &selection,
+            &self.plan,
+            None,
+            Some(self.tree),
+        )
+    }
+}
+
 fn resolve_task_step(
     task_ref: &str,
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
+    ancestors: &mut Vec<(PathBuf, String)>,
 ) -> Result<StepAction, RunnerError> {
-    // The same `{repo}`/`{cwd}` spellings a run command supports work inside a
-    // task reference, so a nested catalog has a cwd-proof argument spelling.
     let task_ref = effigy_managed::references::expand_reference_placeholders(
         task_ref,
         preflight.task_execution_root(&selection.catalog.catalog_root),
@@ -890,57 +906,140 @@ fn resolve_task_step(
         RunnerError::task_invocation(format!("run step task ref `{task_ref}`: {error}"))
     })?;
     args.extend(preflight.runtime_args_exec.passthrough.clone());
-    if effigy_managed::BUILTIN_TASKS
-        .iter()
-        .any(|(name, _)| *name == selector.task_name)
-    {
-        let catalog_root = if let Some(prefix) = selector.prefix.as_deref() {
-            resolve_catalog_by_prefix(prefix, &preflight.catalogs, &preflight.invocation_cwd)
-                .ok_or_else(|| {
-                    RunnerError::task_invocation(format!(
-                        "unknown catalog prefix `{prefix}` for built-in task `{}`",
-                        selector.task_name
-                    ))
-                })?
-                .catalog_root
-                .clone()
-        } else {
-            selection.catalog.catalog_root.clone()
-        };
-        let cwd = preflight.task_execution_root(&catalog_root).to_path_buf();
-        let parsed = parse_builtin_step_command(&selector.task_name, &args, &cwd)?;
-        let command = effigy_managed::render_builtin_reference_invocation(
-            &selector.task_name,
-            &effigy_tasks::render_template_args(&args),
-            &cwd,
-        )?;
-        let command = pin_selected_catalog_repo_on_rendered_builtin(&parsed, command);
-        return Ok(StepAction::Builtin {
-            command,
-            parsed: Box::new(parsed),
-            cwd,
-        });
-    }
-    if let Some(prefix) = selector.prefix.as_deref() {
-        resolve_catalog_by_prefix(prefix, &preflight.catalogs, &preflight.invocation_cwd)
-            .ok_or_else(|| {
-                RunnerError::task_invocation(format!(
-                    "unknown catalog prefix `{prefix}` for task `{}`",
-                    selector.task_name
-                ))
-            })?;
-    } else {
+    if selector.prefix.is_none() {
         selector.prefix = Some(selection.catalog.alias.clone());
     }
-    select_catalog_and_task(&selector, &preflight.catalogs, &preflight.invocation_cwd).map_err(
-        |error| RunnerError::task_invocation(format!("run step task ref `{task_ref}`: {error}")),
-    )?;
+    let catalog = resolve_catalog_by_prefix(
+        selector.prefix.as_deref().unwrap_or_default(),
+        &preflight.catalogs,
+        &preflight.invocation_cwd,
+    )
+    .ok_or_else(|| {
+        RunnerError::task_invocation(format!("unknown catalog prefix for task `{task_ref}`"))
+    })?;
+    let cwd = preflight
+        .task_execution_root(&catalog.catalog_root)
+        .to_path_buf();
     let invocation = TaskInvocation {
         name: render_task_selector(&selector),
         args,
     };
-    let cwd = preflight.resolved.resolved_root.clone();
-    Ok(StepAction::Task { invocation, cwd })
+    let input = effigy_execution::ExecutionPreflightInput::new(
+        invocation.name.clone(),
+        invocation.args.clone(),
+        preflight.resolved.resolved_root.clone(),
+        effigy_execution::ExecutionSurface::RunArray,
+    )
+    .with_task_source(preflight.task_source.clone())
+    .with_output_mode(preflight.output_mode);
+    let mut child = super::preflight::build_execution_preflight_from_input(input)?;
+    child.output_json |= preflight.output_json;
+    let route = super::route::resolve_reference_route(&invocation, &child);
+    match route {
+        Ok(super::route::Route::Task { selection, plan }) => {
+            let tree = if child.help || child.plan {
+                ResolvedSteps {
+                    foreground: true,
+                    steps: Vec::new(),
+                }
+            } else {
+                resolve_tree_from(&child, &selection, ancestors)?
+            };
+            let task = selection.task.clone();
+            let surface = selection.surface;
+            Ok(StepAction::Task(Box::new(ResolvedTask {
+                preflight: child,
+                task,
+                surface,
+                plan: *plan,
+                tree,
+            })))
+        }
+        Ok(super::route::Route::Defer { .. } | super::route::Route::ExecAlias) => helper_step(
+            Some(child.resolved.resolved_root),
+            &invocation.name,
+            &invocation.args,
+            child.invocation_cwd,
+            false,
+        ),
+        Ok(super::route::Route::Builtin) => {
+            let parsed = parse_builtin_step_command(&selector.task_name, &invocation.args, &cwd)?;
+            if matches!(parsed, Command::Task(_)) {
+                let foreground = if child.selector.task_name == "test" {
+                    match effigy_builtin::test_run_requirement(
+                        &child.selector,
+                        &child.runtime_args_exec,
+                        &child.invocation_cwd,
+                        &child.catalogs,
+                    )? {
+                        effigy_builtin::TestRunRequirement::Observe => true,
+                        effigy_builtin::TestRunRequirement::Local(sources) => {
+                            classify_test_sources(&child, sources, ancestors)?
+                        }
+                        _ => false,
+                    }
+                } else {
+                    false
+                };
+                helper_step(
+                    Some(cwd.clone()),
+                    &selector.task_name,
+                    &invocation.args,
+                    cwd,
+                    foreground,
+                )
+            } else {
+                if let Command::Exec(args) = parsed {
+                    if !crate::runner::container_runtime::inside_container_handoff() {
+                        return Ok(StepAction::Exec { args, cwd });
+                    }
+                    return helper_step(
+                        args.repo_override.clone(),
+                        &selector.task_name,
+                        &invocation.args,
+                        cwd,
+                        false,
+                    );
+                }
+                let foreground = classify_builtin(&parsed);
+                helper_step(
+                    command_repo_override(&parsed),
+                    &selector.task_name,
+                    &invocation.args,
+                    cwd,
+                    foreground,
+                )
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Keep one executable argv. The admission parse supplies class and target,
+/// then is discarded; the supervised child performs its ordinary CLI ingress.
+fn helper_step(
+    repo: Option<PathBuf>,
+    name: &str,
+    args: &[String],
+    cwd: PathBuf,
+    foreground: bool,
+) -> Result<StepAction, RunnerError> {
+    let mut argv = effigy_core::effigy_invocation::resolve_effigy_invocation_argv(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/Cargo.toml"
+    ))
+    .map_err(RunnerError::Cwd)?;
+    if let Some(repo) = repo {
+        // Leading globals never enter a builtin's trailing payload or grammar.
+        argv.extend(["--repo".to_owned(), repo.display().to_string()]);
+    }
+    argv.push(name.to_owned());
+    argv.extend(args.iter().cloned());
+    Ok(StepAction::Helper {
+        argv,
+        cwd,
+        foreground,
+    })
 }
 
 pub(in crate::runner) fn render_script_path(
@@ -982,50 +1081,31 @@ fn parse_builtin_step_command(
 ) -> Result<Command, RunnerError> {
     let mut argv = vec![task_name.to_owned()];
     argv.extend(args.iter().cloned());
-    parse_embedded_command(repo_root, &argv, false, EmbeddedRepoOverrideMode::Force)
-}
-
-/// Nested CLI execution uses the rendered string, not the parsed `Command`.
-/// Force-apply stores a catalog on any type with a `repo_override` field.
-/// Pin that catalog on the rendered argv so a nested child does not walk up
-/// to the workspace root. Exclude only the forms shown to break:
-/// - `docs check`: `--repo` replaces repo_root and drops cwd/default-scope
-/// - `bundle sync`: public grammar has no `--repo`
-/// - `exec`: a trailing `--repo` becomes command payload
-///
-/// Bare help parses as `Command::Help` and has no override to pin.
-fn pin_selected_catalog_repo_on_rendered_builtin(parsed: &Command, command: String) -> String {
-    if rendered_builtin_omits_catalog_repo_pin(parsed) {
-        return command;
-    }
-    match command_repo_override(parsed) {
-        Some(repo) => format!(
-            "{command} --repo {}",
-            effigy_core::shell::shell_quote(&repo.display().to_string())
+    let (argv, requested_json) = effigy_cli::strip_global_json_flags(argv);
+    let parsed = effigy_cli::parse_command(argv)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    // Documentation checks own checkout-wide defaults and cwd-relative paths.
+    // Keep their explicit --repo, if any, exactly as the CLI parsed it.
+    let parsed = match parsed {
+        Command::Docs(ref args)
+            if matches!(args.subcommand, effigy_cli::DocsSubcommand::Check { .. }) =>
+        {
+            parsed
+        }
+        parsed => crate::runner::command_context::apply_repo_target_to_embedded_command(
+            parsed,
+            repo_root,
+            EmbeddedRepoOverrideMode::Force,
         ),
-        None => command,
-    }
-}
-
-fn rendered_builtin_omits_catalog_repo_pin(parsed: &Command) -> bool {
-    match parsed {
-        Command::Exec(_) => true,
-        Command::Docs(args) if matches!(args.subcommand, DocsSubcommand::Check { .. }) => true,
-        Command::Bundle(args) if matches!(args.subcommand, BundleSubcommand::Sync) => true,
-        _ => false,
-    }
+    };
+    Ok(effigy_cli::apply_global_json_flag(parsed, requested_json))
 }
 
 #[cfg(test)]
 mod tests {
     use super::parse_builtin_step_command;
     use super::{resolve_task_step, sequence_step_label, StepAction};
-    use crate::runner::execute::preflight::ExecutionPreflight;
     use effigy_cli::Command;
-    use effigy_core::resolver::{ResolutionMode, ResolvedTarget};
-    use effigy_execution::ExecutionDiscoveryPlan;
-    use effigy_manifest::{LoadedCatalog, TaskManifest, TaskSelection};
-    use effigy_tasks::{CatalogSelectionMode, TaskRuntimeArgs, TaskSelector};
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -1096,7 +1176,9 @@ mod tests {
             &preflight.invocation_cwd,
         )
         .unwrap();
-        super::foreground_tree(&preflight, &selection).unwrap()
+        super::resolve_tree(&preflight, &selection)
+            .unwrap()
+            .foreground
     }
 
     #[test]
@@ -1231,205 +1313,85 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn resolve_task_step_renders_secrets_builtin_against_the_selected_catalog() {
-        let root = loaded_catalog(
-            "root",
-            "/workspace",
-            manifest_from_toml("[tasks.root]\nrun = 'true'\n"),
-            0,
-        );
-        let child = loaded_catalog(
-            "desktop",
-            "/workspace/apps/bovine-desktop",
-            manifest_from_toml(
-                r#"
-[secrets]
-backend = "effigy-vault"
-[tasks.preflight]
-run = [{ task = "secrets init" }]
-"#,
-            ),
-            1,
-        );
-        let preflight = ExecutionPreflight {
-            invocation: effigy_cli::TaskInvocation {
-                name: "desktop/preflight".to_owned(),
-                args: Vec::new(),
-            },
-            invocation_cwd: PathBuf::from("/workspace"),
-            runtime_args_raw: TaskRuntimeArgs {
-                repo_override: None,
-                verbose_root: false,
-                env_schema_override: None,
-                lock_wait_ms: None,
-                passthrough: Vec::new(),
-            },
-            runtime_args_exec: TaskRuntimeArgs {
-                repo_override: None,
-                verbose_root: false,
-                env_schema_override: None,
-                lock_wait_ms: None,
-                passthrough: Vec::new(),
-            },
-            output_json: false,
-            plan: false,
-            help: false,
-            output_mode: effigy_execution::ExecutionOutputMode::Capture,
-            resolved: ResolvedTarget {
-                resolved_root: PathBuf::from("/workspace"),
-                resolution_mode: ResolutionMode::AutoNearest,
-                evidence: Vec::new(),
-                warnings: Vec::new(),
-            },
-            discovery_plan: ExecutionDiscoveryPlan {
-                invocation_cwd: PathBuf::from("/workspace"),
-                resolved_root: PathBuf::from("/workspace"),
-                selector: TaskSelector {
-                    prefix: Some("desktop".to_owned()),
-                    task_name: "preflight".to_owned(),
-                },
-                repo_override: None,
-            },
-            selector: TaskSelector {
-                prefix: Some("desktop".to_owned()),
-                task_name: "preflight".to_owned(),
-            },
-            catalogs: vec![root, child],
-            secret_targets: Vec::new(),
-            task_source: None,
-        };
-        let selection = TaskSelection {
-            catalog: &preflight.catalogs[1],
-            task: preflight.catalogs[1]
-                .manifest
-                .tasks
-                .get("preflight")
-                .expect("preflight task"),
-            mode: CatalogSelectionMode::ExplicitPrefix,
-            evidence: vec!["test".to_owned()],
-            surface: effigy_tasks::TaskSurface::Published,
-        };
-
-        let action = resolve_task_step("secrets init", &preflight, &selection)
-            .expect("resolve secrets init");
-        match action {
-            StepAction::Builtin {
-                command,
-                cwd,
-                parsed,
-            } => {
-                assert_eq!(cwd, PathBuf::from("/workspace/apps/bovine-desktop"));
-                assert!(
-                    command.contains("--repo '/workspace/apps/bovine-desktop'")
-                        || command.contains("--repo /workspace/apps/bovine-desktop"),
-                    "rendered builtin must pin --repo to the selected catalog: {command}"
-                );
-                assert!(matches!(
-                    *parsed,
-                    Command::Secrets(args)
-                        if args.repo_override == Some(PathBuf::from("/workspace/apps/bovine-desktop"))
-                            && matches!(args.subcommand, effigy_cli::SecretsSubcommand::Init)
-                ));
-            }
-            other => panic!("expected secrets builtin, got {}", other.kind()),
-        }
-
-        let set_action = resolve_task_step("secrets set API_KEY", &preflight, &selection)
-            .expect("resolve secrets set");
-        match set_action {
-            StepAction::Builtin {
-                command,
-                cwd,
-                parsed,
-            } => {
-                assert_eq!(cwd, PathBuf::from("/workspace/apps/bovine-desktop"));
-                assert!(
-                    command.contains("--repo '/workspace/apps/bovine-desktop'")
-                        || command.contains("--repo /workspace/apps/bovine-desktop"),
-                    "rendered secrets set must pin --repo to the selected catalog: {command}"
-                );
-                assert!(matches!(
-                    *parsed,
-                    Command::Secrets(args)
-                        if args.repo_override == Some(PathBuf::from("/workspace/apps/bovine-desktop"))
-                            && matches!(
-                                args.subcommand,
-                                effigy_cli::SecretsSubcommand::Set { ref name } if name == "API_KEY"
-                            )
-                ));
-            }
-            other => panic!("expected secrets set builtin, got {}", other.kind()),
-        }
+    fn parse_helper_argv(argv: &[String]) -> Command {
+        let (args, options) = effigy_cli::strip_global_cli_flags(argv[1..].to_vec()).unwrap();
+        let parsed = effigy_cli::parse_command(args).unwrap();
+        effigy_cli::apply_global_cli_flags(parsed, &options).unwrap()
     }
 
     #[test]
-    fn resolve_task_step_does_not_pin_repo_on_bare_help_builtins() {
-        let root = loaded_catalog(
-            "root",
-            "/workspace",
-            manifest_from_toml("[tasks.root]\nrun = [{ task = 'docs' }]\n"),
-            0,
-        );
-        let preflight = ExecutionPreflight {
-            invocation: effigy_cli::TaskInvocation {
-                name: "root".to_owned(),
-                args: Vec::new(),
-            },
-            invocation_cwd: PathBuf::from("/workspace"),
-            runtime_args_raw: TaskRuntimeArgs {
-                repo_override: None,
-                verbose_root: false,
-                env_schema_override: None,
-                lock_wait_ms: None,
-                passthrough: Vec::new(),
-            },
-            runtime_args_exec: TaskRuntimeArgs {
-                repo_override: None,
-                verbose_root: false,
-                env_schema_override: None,
-                lock_wait_ms: None,
-                passthrough: Vec::new(),
-            },
-            output_json: false,
-            plan: false,
-            help: false,
-            output_mode: effigy_execution::ExecutionOutputMode::Capture,
-            resolved: ResolvedTarget {
-                resolved_root: PathBuf::from("/workspace"),
-                resolution_mode: ResolutionMode::AutoNearest,
-                evidence: Vec::new(),
-                warnings: Vec::new(),
-            },
-            discovery_plan: ExecutionDiscoveryPlan {
-                invocation_cwd: PathBuf::from("/workspace"),
-                resolved_root: PathBuf::from("/workspace"),
-                selector: TaskSelector {
-                    prefix: None,
-                    task_name: "root".to_owned(),
+    fn resolved_builtins_keep_catalog_target_cwd_and_payload() {
+        let _executable =
+            effigy_core::executable_override::set_scoped(Some("/fixture/effigy".into()));
+        let fixture = effigy_test_support::Fixture::new("resolved-references-").unwrap();
+        let root = fixture.path();
+        let catalog = root.join("apps/desktop");
+        std::fs::create_dir_all(&catalog).unwrap();
+        std::fs::write(
+            root.join("effigy.toml"),
+            "[catalog]\nalias = 'root'\n[catalog.members]\ndesktop = 'apps/desktop'\n",
+        )
+        .unwrap();
+        std::fs::write(catalog.join("effigy.toml"), "[catalog]\nalias = 'desktop'\n[tasks.preflight]\nrun = 'true'\n[tasks.\"db:migrate\"]\nrun = 'true'\n").unwrap();
+        let invocation = effigy_cli::TaskInvocation {
+            name: "desktop/preflight".into(),
+            args: Vec::new(),
+        };
+        let preflight =
+            super::super::preflight::build_execution_preflight(&invocation, root.into()).unwrap();
+        let selection = effigy_routing::select_catalog_and_task(
+            &preflight.selector,
+            &preflight.catalogs,
+            &preflight.invocation_cwd,
+        )
+        .unwrap();
+        let resolve = |reference| {
+            resolve_task_step(reference, &preflight, &selection, &mut Vec::new()).unwrap()
+        };
+        for reference in [
+            "secrets init",
+            "secrets set API_KEY",
+            "tasks --json",
+            "deps",
+            "changelog validate",
+            "doctor",
+            "release status",
+            "deploy model",
+            "bundle inspect",
+            "docs add-log-index run.log",
+            "exec true",
+            "docs check links README.md knowledge/README.md",
+            "docs check links",
+            "bundle sync",
+        ] {
+            let (parsed, cwd) = match resolve(reference) {
+                StepAction::Helper { argv, cwd, .. } => (parse_helper_argv(&argv), cwd),
+                StepAction::Exec { args, cwd } => (Command::Exec(args), cwd),
+                _ => panic!("expected builtin: {reference}"),
+            };
+            assert_eq!(cwd, catalog);
+            assert_eq!(
+                crate::runner::command_context::command_repo_override(&parsed),
+                if reference.starts_with("docs check") {
+                    None
+                } else {
+                    Some(catalog.clone())
                 },
-                repo_override: None,
-            },
-            selector: TaskSelector {
-                prefix: None,
-                task_name: "root".to_owned(),
-            },
-            catalogs: vec![root],
-            secret_targets: Vec::new(),
-            task_source: None,
-        };
-        let selection = TaskSelection {
-            catalog: &preflight.catalogs[0],
-            task: preflight.catalogs[0]
-                .manifest
-                .tasks
-                .get("root")
-                .expect("root task"),
-            mode: CatalogSelectionMode::ExplicitPrefix,
-            evidence: vec!["test".to_owned()],
-            surface: effigy_tasks::TaskSurface::Published,
-        };
-
+                "{reference}"
+            );
+            match reference {
+                "secrets init" => assert!(
+                    matches!(parsed, Command::Secrets(args) if matches!(args.subcommand, effigy_cli::SecretsSubcommand::Init))
+                ),
+                "secrets set API_KEY" => assert!(
+                    matches!(parsed, Command::Secrets(args) if matches!(&args.subcommand, effigy_cli::SecretsSubcommand::Set { name } if name == "API_KEY"))
+                ),
+                "exec true" => assert!(
+                    matches!(parsed, Command::Exec(args) if args.command.as_slice() == ["true"])
+                ),
+                _ => {}
+            }
+        }
         for name in [
             "docs",
             "secrets",
@@ -1439,442 +1401,21 @@ run = [{ task = "secrets init" }]
             "service",
             "changelog",
         ] {
-            let action = resolve_task_step(name, &preflight, &selection)
-                .unwrap_or_else(|_| panic!("resolve `{name}`"));
-            match action {
-                StepAction::Builtin {
-                    command,
-                    cwd,
-                    parsed,
-                } => {
-                    assert_eq!(cwd, PathBuf::from("/workspace"));
-                    assert!(
-                        !command.contains("--repo"),
-                        "bare `{name}` must not append --repo: {command}"
-                    );
-                    assert!(
-                        matches!(*parsed, Command::Help(_)),
-                        "bare `{name}` parses as help"
-                    );
-                }
-                other => panic!("expected `{name}` builtin, got {}", other.kind()),
-            }
+            let StepAction::Helper { argv, cwd, .. } = resolve(name) else {
+                panic!("expected help: {name}");
+            };
+            let parsed = parse_helper_argv(&argv);
+            assert_eq!(cwd, catalog);
+            assert!(matches!(parsed, Command::Help(_)));
+            assert_eq!(
+                crate::runner::command_context::command_repo_override(&parsed),
+                None
+            );
         }
-    }
-
-    #[test]
-    fn resolve_task_step_does_not_pin_repo_on_exec_payload() {
-        let root = loaded_catalog(
-            "root",
-            "/workspace",
-            manifest_from_toml("[tasks.root]\nrun = [{ task = 'exec true' }]\n"),
-            0,
-        );
-        let preflight = ExecutionPreflight {
-            invocation: effigy_cli::TaskInvocation {
-                name: "root".to_owned(),
-                args: Vec::new(),
-            },
-            invocation_cwd: PathBuf::from("/workspace"),
-            runtime_args_raw: TaskRuntimeArgs {
-                repo_override: None,
-                verbose_root: false,
-                env_schema_override: None,
-                lock_wait_ms: None,
-                passthrough: Vec::new(),
-            },
-            runtime_args_exec: TaskRuntimeArgs {
-                repo_override: None,
-                verbose_root: false,
-                env_schema_override: None,
-                lock_wait_ms: None,
-                passthrough: Vec::new(),
-            },
-            output_json: false,
-            plan: false,
-            help: false,
-            output_mode: effigy_execution::ExecutionOutputMode::Capture,
-            resolved: ResolvedTarget {
-                resolved_root: PathBuf::from("/workspace"),
-                resolution_mode: ResolutionMode::AutoNearest,
-                evidence: Vec::new(),
-                warnings: Vec::new(),
-            },
-            discovery_plan: ExecutionDiscoveryPlan {
-                invocation_cwd: PathBuf::from("/workspace"),
-                resolved_root: PathBuf::from("/workspace"),
-                selector: TaskSelector {
-                    prefix: None,
-                    task_name: "root".to_owned(),
-                },
-                repo_override: None,
-            },
-            selector: TaskSelector {
-                prefix: None,
-                task_name: "root".to_owned(),
-            },
-            catalogs: vec![root],
-            secret_targets: Vec::new(),
-            task_source: None,
+        let StepAction::Task(child) = resolve("db:migrate") else {
+            panic!("expected task");
         };
-        let selection = TaskSelection {
-            catalog: &preflight.catalogs[0],
-            task: preflight.catalogs[0]
-                .manifest
-                .tasks
-                .get("root")
-                .expect("root task"),
-            mode: CatalogSelectionMode::ExplicitPrefix,
-            evidence: vec!["test".to_owned()],
-            surface: effigy_tasks::TaskSurface::Published,
-        };
-
-        let action =
-            resolve_task_step("exec true", &preflight, &selection).expect("resolve exec true");
-        match action {
-            StepAction::Builtin {
-                command,
-                cwd,
-                parsed,
-            } => {
-                assert_eq!(cwd, PathBuf::from("/workspace"));
-                assert!(
-                    !command.contains("--repo"),
-                    "exec payload must not include trailing --repo: {command}"
-                );
-                assert!(matches!(
-                    *parsed,
-                    Command::Exec(args)
-                        if args.command.as_slice() == ["true"]
-                            && args.repo_override == Some(PathBuf::from("/workspace"))
-                ));
-            }
-            other => panic!("expected exec builtin, got {}", other.kind()),
-        }
-    }
-
-    #[test]
-    fn resolve_task_step_does_not_pin_repo_on_docs_check_or_bundle_sync() {
-        let root = loaded_catalog(
-            "root",
-            "/workspace",
-            manifest_from_toml("[tasks.root]\nrun = 'true'\n"),
-            0,
-        );
-        let child = loaded_catalog(
-            "refdocs",
-            "/workspace/docs",
-            manifest_from_toml(
-                r#"
-[tasks.cwd-relative]
-run = [{ task = "docs check links README.md knowledge/README.md" }]
-[tasks.default-scope]
-run = [{ task = "docs check links" }]
-[tasks.refresh]
-run = [{ task = "bundle sync" }]
-"#,
-            ),
-            1,
-        );
-        let preflight = ExecutionPreflight {
-            invocation: effigy_cli::TaskInvocation {
-                name: "refdocs/cwd-relative".to_owned(),
-                args: Vec::new(),
-            },
-            invocation_cwd: PathBuf::from("/workspace/docs"),
-            runtime_args_raw: TaskRuntimeArgs {
-                repo_override: None,
-                verbose_root: false,
-                env_schema_override: None,
-                lock_wait_ms: None,
-                passthrough: Vec::new(),
-            },
-            runtime_args_exec: TaskRuntimeArgs {
-                repo_override: None,
-                verbose_root: false,
-                env_schema_override: None,
-                lock_wait_ms: None,
-                passthrough: Vec::new(),
-            },
-            output_json: false,
-            plan: false,
-            help: false,
-            output_mode: effigy_execution::ExecutionOutputMode::Capture,
-            resolved: ResolvedTarget {
-                resolved_root: PathBuf::from("/workspace"),
-                resolution_mode: ResolutionMode::AutoNearest,
-                evidence: Vec::new(),
-                warnings: Vec::new(),
-            },
-            discovery_plan: ExecutionDiscoveryPlan {
-                invocation_cwd: PathBuf::from("/workspace/docs"),
-                resolved_root: PathBuf::from("/workspace"),
-                selector: TaskSelector {
-                    prefix: Some("refdocs".to_owned()),
-                    task_name: "cwd-relative".to_owned(),
-                },
-                repo_override: None,
-            },
-            selector: TaskSelector {
-                prefix: Some("refdocs".to_owned()),
-                task_name: "cwd-relative".to_owned(),
-            },
-            catalogs: vec![root, child],
-            secret_targets: Vec::new(),
-            task_source: None,
-        };
-        let selection = TaskSelection {
-            catalog: &preflight.catalogs[1],
-            task: preflight.catalogs[1]
-                .manifest
-                .tasks
-                .get("cwd-relative")
-                .expect("cwd-relative task"),
-            mode: CatalogSelectionMode::ExplicitPrefix,
-            evidence: vec!["test".to_owned()],
-            surface: effigy_tasks::TaskSurface::Published,
-        };
-
-        for (task_ref, expect_docs) in [
-            ("docs check links README.md knowledge/README.md", true),
-            ("docs check links", true),
-            ("bundle sync", false),
-        ] {
-            let action = resolve_task_step(task_ref, &preflight, &selection)
-                .unwrap_or_else(|_| panic!("resolve `{task_ref}`"));
-            match action {
-                StepAction::Builtin {
-                    command,
-                    cwd,
-                    parsed,
-                } => {
-                    assert_eq!(cwd, PathBuf::from("/workspace/docs"));
-                    assert!(
-                        !command.contains("--repo"),
-                        "rendered `{task_ref}` must not append --repo: {command}"
-                    );
-                    if expect_docs {
-                        assert!(
-                            matches!(*parsed, Command::Docs(args) if args.repo_override.is_some()),
-                            "Force-apply still stores the catalog on parsed docs; that is not a pin license"
-                        );
-                    } else {
-                        assert!(
-                            matches!(*parsed, Command::Bundle(args) if args.repo_override.is_some()),
-                            "Force-apply still stores the catalog on parsed bundle; that is not a pin license"
-                        );
-                    }
-                }
-                other => panic!("expected `{task_ref}` builtin, got {}", other.kind()),
-            }
-        }
-    }
-
-    #[test]
-    fn resolve_task_step_pins_repo_on_selected_catalog_builtins() {
-        let root = loaded_catalog(
-            "root",
-            "/workspace",
-            manifest_from_toml("[tasks.root]\nrun = 'true'\n"),
-            0,
-        );
-        let child = loaded_catalog(
-            "desktop",
-            "/workspace/apps/bovine-desktop",
-            manifest_from_toml("[tasks.preflight]\nrun = 'true'\n"),
-            1,
-        );
-        let preflight = ExecutionPreflight {
-            invocation: effigy_cli::TaskInvocation {
-                name: "desktop/preflight".to_owned(),
-                args: Vec::new(),
-            },
-            invocation_cwd: PathBuf::from("/workspace"),
-            runtime_args_raw: TaskRuntimeArgs {
-                repo_override: None,
-                verbose_root: false,
-                env_schema_override: None,
-                lock_wait_ms: None,
-                passthrough: Vec::new(),
-            },
-            runtime_args_exec: TaskRuntimeArgs {
-                repo_override: None,
-                verbose_root: false,
-                env_schema_override: None,
-                lock_wait_ms: None,
-                passthrough: Vec::new(),
-            },
-            output_json: false,
-            plan: false,
-            help: false,
-            output_mode: effigy_execution::ExecutionOutputMode::Capture,
-            resolved: ResolvedTarget {
-                resolved_root: PathBuf::from("/workspace"),
-                resolution_mode: ResolutionMode::AutoNearest,
-                evidence: Vec::new(),
-                warnings: Vec::new(),
-            },
-            discovery_plan: ExecutionDiscoveryPlan {
-                invocation_cwd: PathBuf::from("/workspace"),
-                resolved_root: PathBuf::from("/workspace"),
-                selector: TaskSelector {
-                    prefix: Some("desktop".to_owned()),
-                    task_name: "preflight".to_owned(),
-                },
-                repo_override: None,
-            },
-            selector: TaskSelector {
-                prefix: Some("desktop".to_owned()),
-                task_name: "preflight".to_owned(),
-            },
-            catalogs: vec![root, child],
-            secret_targets: Vec::new(),
-            task_source: None,
-        };
-        let selection = TaskSelection {
-            catalog: &preflight.catalogs[1],
-            task: preflight.catalogs[1]
-                .manifest
-                .tasks
-                .get("preflight")
-                .expect("preflight task"),
-            mode: CatalogSelectionMode::ExplicitPrefix,
-            evidence: vec!["test".to_owned()],
-            surface: effigy_tasks::TaskSurface::Published,
-        };
-        let catalog = "/workspace/apps/bovine-desktop";
-
-        for task_ref in [
-            "tasks --json",
-            "deps",
-            "changelog validate",
-            "doctor",
-            "release status",
-            "deploy model",
-            "bundle inspect",
-            "docs add-log-index run.log",
-        ] {
-            let action = resolve_task_step(task_ref, &preflight, &selection)
-                .unwrap_or_else(|_| panic!("resolve `{task_ref}`"));
-            match action {
-                StepAction::Builtin {
-                    command,
-                    cwd,
-                    parsed: _,
-                } => {
-                    assert_eq!(cwd, PathBuf::from(catalog));
-                    assert!(
-                        command.contains(&format!("--repo '{catalog}'"))
-                            || command.contains(&format!("--repo {catalog}")),
-                        "rendered `{task_ref}` must pin --repo to the selected catalog: {command}"
-                    );
-                }
-                other => panic!("expected `{task_ref}` builtin, got {}", other.kind()),
-            }
-        }
-    }
-
-    fn manifest_from_toml(body: &str) -> TaskManifest {
-        toml::from_str(body).expect("parse manifest")
-    }
-
-    fn loaded_catalog(
-        alias: &str,
-        root: &str,
-        manifest: TaskManifest,
-        depth: usize,
-    ) -> LoadedCatalog {
-        LoadedCatalog::for_test(alias, PathBuf::from(root), manifest, depth)
-    }
-
-    #[test]
-    fn resolve_task_step_keeps_workspace_scope_for_nested_child_tasks() {
-        let root = loaded_catalog(
-            "acowtancy",
-            "/workspace-root/acowtancy",
-            manifest_from_toml(""),
-            0,
-        );
-        let child = loaded_catalog(
-            "farmyard",
-            "/workspace-root/acowtancy/farmyard",
-            manifest_from_toml(
-                r#"
-[tasks."db:migrate"]
-run = "true"
-[tasks."state:apply:schema"]
-run = [{ task = "db:migrate" }]
-"#,
-            ),
-            1,
-        );
-        let preflight = ExecutionPreflight {
-            invocation: effigy_cli::TaskInvocation {
-                name: "state:apply:schema".to_owned(),
-                args: Vec::new(),
-            },
-            invocation_cwd: PathBuf::from("/workspace-root/acowtancy"),
-            runtime_args_raw: TaskRuntimeArgs {
-                repo_override: None,
-                verbose_root: false,
-                env_schema_override: None,
-                lock_wait_ms: None,
-                passthrough: Vec::new(),
-            },
-            runtime_args_exec: TaskRuntimeArgs {
-                repo_override: None,
-                verbose_root: false,
-                env_schema_override: None,
-                lock_wait_ms: None,
-                passthrough: Vec::new(),
-            },
-            output_json: false,
-            plan: false,
-            help: false,
-            output_mode: effigy_execution::ExecutionOutputMode::Capture,
-            resolved: ResolvedTarget {
-                resolved_root: PathBuf::from("/workspace-root/acowtancy"),
-                resolution_mode: ResolutionMode::AutoNearest,
-                evidence: Vec::new(),
-                warnings: Vec::new(),
-            },
-            discovery_plan: ExecutionDiscoveryPlan {
-                invocation_cwd: PathBuf::from("/workspace-root/acowtancy"),
-                resolved_root: PathBuf::from("/workspace-root/acowtancy"),
-                selector: TaskSelector {
-                    prefix: Some("farmyard".to_owned()),
-                    task_name: "state:apply:schema".to_owned(),
-                },
-                repo_override: None,
-            },
-            selector: TaskSelector {
-                prefix: Some("farmyard".to_owned()),
-                task_name: "state:apply:schema".to_owned(),
-            },
-            catalogs: vec![root, child],
-            secret_targets: Vec::new(),
-            task_source: None,
-        };
-        let selection = TaskSelection {
-            catalog: &preflight.catalogs[1],
-            task: preflight.catalogs[1]
-                .manifest
-                .tasks
-                .get("state:apply:schema")
-                .expect("state task exists"),
-            mode: CatalogSelectionMode::ExplicitPrefix,
-            evidence: vec!["selected catalog via explicit prefix".to_owned()],
-            surface: effigy_tasks::TaskSurface::Published,
-        };
-
-        let action = resolve_task_step("db:migrate", &preflight, &selection).expect("resolve step");
-
-        match action {
-            StepAction::Task { invocation, cwd } => {
-                assert_eq!(invocation.name, "farmyard/db:migrate");
-                assert_eq!(cwd, PathBuf::from("/workspace-root/acowtancy"));
-            }
-            other => panic!("expected nested task action, got {:?}", other.kind()),
-        }
+        assert_eq!(child.preflight.invocation.name, "desktop/db:migrate");
+        assert_eq!(child.preflight.invocation_cwd, root);
     }
 }

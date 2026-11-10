@@ -77,7 +77,7 @@ pub(in crate::runner) fn run_plain(
     run: &mut TaskRun,
     command: PlainCommand<'_>,
 ) -> Result<PlainExit, RunnerError> {
-    run_plain_inner(run, command, false, false)
+    run_plain_inner(run, command, None, false, false)
 }
 
 /// A plain command that is Effigy's own child process (a builtin or a script
@@ -87,14 +87,18 @@ pub(in crate::runner) fn run_plain(
 pub(in crate::runner) fn run_effigy_child(
     run: &mut TaskRun,
     command: PlainCommand<'_>,
+    argv: Vec<OsString>,
+    launch: &super::spawn_env::LaunchInputs,
     stream: bool,
 ) -> Result<PlainExit, RunnerError> {
-    run_plain_inner(run, command, true, stream)
+    let _scope = super::spawn_env::SpawnScope::inherit(launch);
+    run_plain_inner(run, command, Some(argv), true, stream)
 }
 
 fn run_plain_inner(
     run: &mut TaskRun,
     command: PlainCommand<'_>,
+    argv: Option<Vec<OsString>>,
     effigy_child: bool,
     stream: bool,
 ) -> Result<PlainExit, RunnerError> {
@@ -123,11 +127,13 @@ fn run_plain_inner(
         env.insert(OsString::from(key), EnvValue::Plain(OsString::from(value)));
     }
     let spec = ProcessSpec {
-        argv: vec![
-            OsString::from("/bin/sh"),
-            OsString::from("-c"),
-            OsString::from(command.command),
-        ],
+        argv: argv.unwrap_or_else(|| {
+            vec![
+                OsString::from("/bin/sh"),
+                OsString::from("-c"),
+                OsString::from(command.command),
+            ]
+        }),
         cwd: command.cwd.to_path_buf(),
         env,
         grace: GRACE,

@@ -60,7 +60,7 @@ pub(in crate::runner) use process::spawn_environment;
 pub(in crate::runner) use run::after_key_lookup_for_test;
 pub(in crate::runner) use run::{fresh_request_id, fresh_run_id, request_run_stop};
 pub(in crate::runner) use spawn_env::remaining as remaining_lifetime;
-pub(in crate::runner) use spawn_env::{nested_capture, spawn_plain_env, SpawnScope};
+pub(in crate::runner) use spawn_env::{nested_capture, spawn_plain_env, LaunchInputs, SpawnScope};
 
 /// The recorded outcome of a task command that exited with `code`.
 pub(in crate::runner) fn workload_for_exit(code: i32) -> effigy_kernel::outcome::WorkloadOutcome {

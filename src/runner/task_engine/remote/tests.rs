@@ -1544,3 +1544,41 @@ fn a_container_workload_never_receives_session_vault_access() {
         Some(EnvValue::Plain(value)) if value == "dev"
     ));
 }
+
+/// Real registration, stop and settlement under an explicitly inherited
+/// nested scope, with both parent-shorter and child-shorter budgets.
+#[test]
+fn nested_remote_deadlines_take_the_minimum_and_settle_the_registered_session() {
+    for (parent, child) in [(1000, 5000), (5000, 1000)] {
+        let fixture = fixture();
+        let _parent = super::super::SpawnScope::enter(
+            &BTreeMap::from([("SCOPED".into(), "inherited".into())]),
+            None,
+            true,
+            Some(parent),
+        );
+        let inherited = super::super::SpawnScope::capture();
+        let _boundary = super::super::SpawnScope::inherit(&inherited);
+        let _child = super::super::SpawnScope::enter(&BTreeMap::new(), None, true, Some(child));
+        let mut task_run = begin(&fixture.root, "nested:remote:timeout");
+        let command = task(
+            &fixture.root,
+            "printf %s \"$SCOPED\"; while [ ! -f \"$MODEL_STOP\" ]; do sleep 0.02; done; exit 143",
+            true,
+            None,
+        );
+        let Lifetime::Finite(budget) = exec_options(&command).lifetime else {
+            panic!("finite nested budget required");
+        };
+        assert!(budget <= Duration::from_millis(parent.min(child)));
+        let started = Instant::now();
+        let exit = run(&fixture, &mut task_run, command);
+        assert_eq!(exit.code, 124);
+        assert!(matches!(exit.workload, WorkloadOutcome::TimedOut { .. }));
+        assert!(started.elapsed() < Duration::from_secs(4));
+        assert_eq!(exit.stdout, b"inherited");
+        assert!(fixture.model.dir.join("stop").exists());
+        assert!(fixture.model.closed());
+        close(task_run, exit.workload);
+    }
+}
