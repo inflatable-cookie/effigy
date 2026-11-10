@@ -10,6 +10,12 @@ receipt before continuing, holds the original root identities throughout, and
 refuses source or machine-input drift between stages. Desktop windows are unchanged.
 The older revision notes below describe the historical preparation sequence.
 
+Runtime input prefetch reuses HTTPS connections only within its single bounded
+helper. Every payload still has its original length/hash checks and exclusive
+file; unread responses and redirects discard their connection. All connections
+close on success or refusal. This avoids a separate TLS handshake for each deb
+without threads, retries, or a larger C4/D2 download window.
+
 Prepare with `qualification:macos:proof-only -- plan-chain BINDINGS OPTIONS`.
 OPTIONS contains only `activation_id` (at most 60 characters), `evidence_root` and
 `prior_receipt` (the original C1 stage/path/sha256). Freeze the resulting request

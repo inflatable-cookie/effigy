@@ -1400,8 +1400,9 @@ def h_prefetch_runtime_inputs(ctx, step):
                'c4-prefetch-runtime-inputs': 'colima_input_dir'}
     if allowed.get(step['id']) is None or destination != ctx['bindings'][allowed[step['id']]]:
         raise Refusal('prefetch destination differs from the reviewed input path for this stage')
-    result = runtime_inputs.fetch_runtime_inputs(destination, pin, opener=runtime_inputs.open_runtime_https,
-                                                 checkpoint=lambda: ctx['monitor'].check())
+    with runtime_inputs.runtime_https_session() as opener:
+        result = runtime_inputs.fetch_runtime_inputs(destination, pin, opener=opener,
+                                                     checkpoint=lambda: ctx['monitor'].check())
     ctx['pins'].pin(destination)
     return dict(bytes=result['bytes'], oci=result['oci'], debs=result['debs'], files=result['files'])
 

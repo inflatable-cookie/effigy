@@ -133,7 +133,7 @@ def fake_runtime_opener(bodies=None, token=b'{"token":"fixture-token"}'):
     """Opener that serves the fixture's tiny OCI/deb bytes. The token is not a payload."""
     bodies = bodies if bodies is not None else FAKE_RUNTIME_BODIES
 
-    def opener(url, headers=None):
+    def opener(url, headers=None, **kwargs):
         if url == runtime_inputs.AUTH_TOKEN_URL:
             return FakeConnection(), FakeResponse(token)
         if url not in bodies:
@@ -154,6 +154,12 @@ class FakeResponse:
 
     def read(self, n=-1):
         return self.body.read(n)
+
+    def isclosed(self):
+        return self.body.closed or self.body.tell() == len(self.body.getvalue())
+
+    def close(self):
+        self.body.close()
 
 
 class FakeConnection:
@@ -4835,6 +4841,84 @@ class RuntimeImageInputTests(Fixture):
 
 class RuntimeRedirectTests(Fixture):
     """The real runtime opener, with http.client replaced by a scripted connection."""
+
+    def session_connections(self, responses, connections, requests):
+        class Connection:
+            def __init__(self, host, port, timeout=None, context=None):
+                self.host, self.closed = host, False
+                connections.append(self)
+
+            def request(self, method, target, headers=None):
+                requests.append((self.host, target, dict(headers or {})))
+
+            def getresponse(self):
+                return responses.pop(0)
+
+            def close(self):
+                self.closed = True
+        return Connection
+
+    def test_session_reuses_only_fully_consumed_responses_and_closes_at_exit(self):
+        connections, requests = [], []
+        factory = self.session_connections([FakeResponse(b'ok'), FakeResponse(b'ok')], connections, requests)
+        with mock.patch('http.client.HTTPSConnection', factory), \
+             mock.patch.object(runtime_inputs, 'open_runtime_https', REAL_RUNTIME_OPEN):
+            with runtime_inputs.runtime_https_session() as opener:
+                for name in ('one', 'two'):
+                    lease, response = opener('https://ports.ubuntu.com/' + name)
+                    self.assertEqual(response.read(), b'ok')
+                    lease.close()
+                self.assertEqual(len(connections), 1)
+                self.assertFalse(connections[0].closed)
+        self.assertTrue(connections[0].closed)
+        self.assertEqual([row[1] for row in requests], ['/one', '/two'])
+
+    def test_session_discards_unread_response_without_retrying_it(self):
+        connections, requests = [], []
+        factory = self.session_connections([FakeResponse(b'unread'), FakeResponse(b'ok')], connections, requests)
+        with mock.patch('http.client.HTTPSConnection', factory), \
+             mock.patch.object(runtime_inputs, 'open_runtime_https', REAL_RUNTIME_OPEN):
+            with runtime_inputs.runtime_https_session() as opener:
+                lease, _ = opener('https://ports.ubuntu.com/one')
+                lease.close()
+                self.assertTrue(connections[0].closed)
+                lease, response = opener('https://ports.ubuntu.com/two')
+                self.assertEqual(response.read(), b'ok')
+                lease.close()
+        self.assertEqual(len(connections), 2)
+        self.assertTrue(all(conn.closed for conn in connections))
+        self.assertEqual(len(requests), 2)
+
+    def test_session_digest_failure_closes_connections_and_retains_partial(self):
+        connections, requests = [], []
+        factory = self.session_connections([FakeResponse(b'bad')], connections, requests)
+        target = self.tmp + '/bad-pinned-input'
+        with mock.patch('http.client.HTTPSConnection', factory), \
+             mock.patch.object(runtime_inputs, 'open_runtime_https', REAL_RUNTIME_OPEN):
+            with self.assertRaises(primitive.Refusal):
+                with runtime_inputs.runtime_https_session() as opener:
+                    runtime_inputs.fetch_pinned_https('https://ports.ubuntu.com/input', target, 3, _sha(b'yes'),
+                                                     opener=opener)
+        self.assertEqual(Path(target).read_bytes(), b'bad')
+        self.assertTrue(all(conn.closed for conn in connections))
+        self.assertEqual(len(requests), 1)
+
+    def test_session_redirect_drops_origin_auth_and_closes_redirect_connection(self):
+        connections, requests = [], []
+        factory = self.session_connections([
+            FakeResponse(b'', 307, {'Location': 'https://production.cloudfront.docker.com/blob'}),
+            FakeResponse(b'ok')], connections, requests)
+        with mock.patch('http.client.HTTPSConnection', factory), \
+             mock.patch.object(runtime_inputs, 'open_runtime_https', REAL_RUNTIME_OPEN):
+            with runtime_inputs.runtime_https_session() as opener:
+                lease, response = opener('https://registry-1.docker.io/v2/library/ubuntu/blob',
+                                         {'Authorization': 'Bearer secret'})
+                self.assertTrue(connections[0].closed)
+                self.assertEqual(response.read(), b'ok')
+                lease.close()
+                self.assertEqual(requests[0][2]['Authorization'], 'Bearer secret')
+                self.assertNotIn('Authorization', requests[1][2])
+        self.assertTrue(all(conn.closed for conn in connections))
 
     def test_redirects_follow_only_allowlisted_https_hosts(self):
         seen, headers_seen = [], []
