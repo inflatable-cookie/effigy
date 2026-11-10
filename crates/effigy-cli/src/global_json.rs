@@ -5,6 +5,8 @@ use crate::{unknown_argument, CliParseError, Command};
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GlobalCliOptions {
     pub json_mode: bool,
+    /// Show detailed progress subjects and diagnostic events.
+    pub verbose: bool,
     pub repo_override: Option<PathBuf>,
     pub task_verbose_root: bool,
     pub task_env_schema: Option<PathBuf>,
@@ -31,6 +33,7 @@ pub fn strip_global_cli_flags(
 
         match arg.as_str() {
             "--json" => options.json_mode = true,
+            "--verbose" => options.verbose = true,
             "--repo" => {
                 options.repo_override = Some(PathBuf::from(args.next().ok_or(
                     CliParseError::MissingFlagValue {
@@ -434,4 +437,22 @@ pub fn runtime_flag_present_before_passthrough(args: &[String], flag: &str) -> b
     args.iter()
         .take_while(|arg| arg.as_str() != "--")
         .any(|arg| arg == flag)
+}
+
+#[cfg(test)]
+mod progress_verbose_tests {
+    use super::*;
+
+    #[test]
+    fn leading_verbose_is_global_and_task_arguments_stay_untouched() {
+        let (args, options) =
+            strip_global_cli_flags(vec!["--verbose".into(), "container".into(), "up".into()])
+                .unwrap();
+        assert!(options.verbose);
+        assert_eq!(args, ["container", "up"]);
+        let (args, options) =
+            strip_global_cli_flags(vec!["build".into(), "--verbose".into()]).unwrap();
+        assert!(!options.verbose);
+        assert_eq!(args, ["build", "--verbose"]);
+    }
 }

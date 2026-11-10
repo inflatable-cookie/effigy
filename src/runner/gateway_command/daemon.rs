@@ -174,6 +174,7 @@ pub(super) fn wait_for_private_gateway_ready_with_probe(
 ) -> Result<(), RunnerError> {
     let action = format!("checking the verified listener on {listener}");
     progress.update(action.as_str(), None, None);
+    progress.label(format!("Checking gateway on {listener}"));
     loop {
         operation
             .check("private gateway verified listener publication")
@@ -193,6 +194,7 @@ pub(super) fn wait_for_private_gateway_ready_with_probe(
             Err(error) => return Err(RunnerError::task_invocation(error.to_string())),
         };
         progress.update(action.as_str(), None, Some(blocker.into()));
+        progress.label(format!("Checking gateway on {listener}"));
         let remaining = operation.remaining().ok_or_else(|| {
             RunnerError::task_invocation("private gateway startup requires a finite budget")
         })?;

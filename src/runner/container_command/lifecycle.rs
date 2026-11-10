@@ -635,12 +635,22 @@ fn prepare_container_up_with_loader(
     // load is in rather than holding one fixed label (effigy#460, Q-017).
     let preparation =
         ProgressSource::waiting_for("the container policy, its ports and mount sources");
+    preparation.label("Preparing config");
     let ports_step = TimedStep::live(preparation.clone());
+    let mut render_started = None;
+    let mut render_duration = std::time::Duration::ZERO;
     let (policy, workspace_mount_decisions) = match load(repo_root, name, &mut |stage| {
-        preparation.update(stage.description(), None, None)
+        if let Some(started) = render_started.take() {
+            render_duration = std::time::Instant::now().duration_since(started);
+        }
+        if matches!(stage, effigy_containers::CreationPolicyStage::Render) {
+            render_started = Some(std::time::Instant::now());
+        }
+        preparation.update(stage.description(), None, None);
+        preparation.label(stage.concise_description());
     }) {
         Ok(prepared) => {
-            ports_step.succeed("policy, ports and mount sources prepared");
+            ports_step.succeed("Prepared config");
             prepared
         }
         Err(error) => {
@@ -656,7 +666,10 @@ fn prepare_container_up_with_loader(
     // Rendering is immediate, so it is one finished line and never a spinner.
     effigy_ui::steps::finish_line(
         true,
-        &format!("stack rendered from {}", policy.compose_file_display),
+        &format!(
+            "Rendered stack ({})",
+            effigy_ui::human::human_duration(render_duration)
+        ),
     );
     operation.preparation_step = Some("validation");
     validate_container_policy(repo_root, &policy)?;
@@ -696,11 +709,12 @@ fn prepare_container_up_with_loader(
     } else {
         format!("shared services {shared_names} to be ready")
     };
-    let shared_service_notes = steps::during(
-        ProgressSource::waiting_for(awaiting),
-        "shared services ready",
-        |progress| ensure_shared_services_observed(&policy, progress),
-    )?;
+    let shared_progress = ProgressSource::waiting_for(awaiting);
+    shared_progress.label("Starting shared services");
+    let shared_service_notes =
+        steps::during(shared_progress, "Started shared services", |progress| {
+            ensure_shared_services_observed(&policy, progress)
+        })?;
     operation.preparation_step = Some("dispatch");
     let up_plan = effigy_runtime::container_manager::compose_up_invocation_plan(
         repo_root,
@@ -742,10 +756,14 @@ fn run_container_up_compose(
     // runtime line it read, so a runtime whose progress this parser does not
     // recognise still shows what it is waiting for (effigy#460, Q-017).
     let progress = activation_source(&plan.up_plan.label, &plan.policy.name);
-    let whole_stack = TimedStep::live(progress.clone());
+    let streaming = effigy_ui::steps::streams_output();
+    let output_step = streaming.then(|| effigy_ui::steps::streaming_step(progress.clone()));
+    let whole_stack = (!streaming).then(|| TimedStep::live(progress.clone()));
     let project = plan.policy.project_name.clone();
     let mut observe = |line: &str| {
-        if let Some(event) = parse_compose_step_event(line) {
+        if streaming {
+            effigy_ui::steps::print_line(line);
+        } else if let Some(event) = parse_compose_step_event(line) {
             progress.event(event.label(&project));
             compose_steps.observe(&event);
         }
@@ -782,21 +800,36 @@ fn run_container_up_compose(
                 Some(deadline),
                 &mut restart_stage,
             );
-            if compose_steps.touched() == 0 {
-                whole_stack.succeed("the stack is up");
-            } else {
-                whole_stack.finish_clear();
+            if let Some(step) = output_step {
+                step.succeed("The stack is up");
+            }
+            if let Some(whole_stack) = whole_stack {
+                if compose_steps.touched() == 0 {
+                    whole_stack.succeed("the stack is up");
+                } else {
+                    whole_stack.finish_clear();
+                }
             }
             Ok(None)
         }
         Err(_) if container_up_stop_requested(plan) => {
             compose_steps.finish_unfinished(false, "the activation was interrupted");
-            whole_stack.finish_clear();
+            if let Some(step) = output_step {
+                step.fail("Stack activation interrupted");
+            }
+            if let Some(whole_stack) = whole_stack {
+                whole_stack.finish_clear();
+            }
             Ok(Some(AttachedComposeEnd::Interrupted))
         }
         Err(error) => {
             compose_steps.finish_unfinished(false, "the runtime reported the stack as failed");
-            whole_stack.fail(format!("the stack did not start: {error}"));
+            if let Some(step) = output_step {
+                step.fail(&format!("The stack did not start: {error}"));
+            }
+            if let Some(whole_stack) = whole_stack {
+                whole_stack.fail(format!("the stack did not start: {error}"));
+            }
             Ok(Some(AttachedComposeEnd::Failed(error.to_string())))
         }
     }
@@ -808,6 +841,7 @@ fn run_container_up_compose(
 fn activation_source(up_label: &str, stack: &str) -> ProgressSource {
     let progress = ProgressSource::waiting_for(format!("{up_label} to return for stack `{stack}`"));
     progress.update(format!("starting the `{stack}` stack"), None, None);
+    progress.label(format!("Starting {stack} stack"));
     progress
 }
 
@@ -859,6 +893,14 @@ fn gateway_port_wait_stage(
     wait: super::gateway_registration::GatewayPortWait<'_>,
 ) {
     use super::gateway_registration::GatewayPortWait;
+    let label = match &wait {
+        GatewayPortWait::Reading { .. } => "Checking gateway ports",
+        GatewayPortWait::Blocked { .. } => "Waiting for gateway ports",
+        GatewayPortWait::ConfirmingOwnership => "Checking container ownership",
+        GatewayPortWait::ResolvingRoutes => "Resolving gateway routes",
+        GatewayPortWait::ReconcilingRoutes => "Saving gateway routes",
+        GatewayPortWait::ReadingExitedContainers => "Checking exited containers",
+    };
     let count = Some((5, INTEGRATION_STAGES));
     match wait {
         // The next poll keeps the last blocker as its event: that is what the
@@ -902,6 +944,7 @@ fn gateway_port_wait_stage(
             );
         }
     }
+    progress.label(label);
 }
 
 fn complete_container_up_runtime_integrations(
@@ -2095,12 +2138,52 @@ mod tests {
     }
 
     #[test]
+    fn concise_container_progress_transcript() {
+        use std::time::Duration;
+        let progress = super::activation_source("docker compose up", "web");
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(21)),
+            "Starting web stack · 21s"
+        );
+        println!("container up lifecycle fixture:");
+        println!(
+            "Before: {}",
+            progress.detailed_frame_at(Duration::from_secs(21))
+        );
+        println!("After: {}", progress.frame_at(Duration::from_secs(21)));
+        super::steps::restart_policy_stage(
+            &progress,
+            "the `web` stack",
+            RestartPolicyStage::Apply,
+            None,
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(21)),
+            "Setting restart policy · 21s"
+        );
+        println!(
+            "Before: {}",
+            progress.detailed_frame_at(Duration::from_secs(21))
+        );
+        println!("After: {}", progress.frame_at(Duration::from_secs(21)));
+        let (_, failure) = effigy_ui::steps::capture_lines(|| {
+            super::steps::during(progress, "routes registered", |_| {
+                Err::<(), _>(RunnerError::task_invocation(
+                    "gateway port 443 is already in use",
+                ))
+            })
+        });
+        assert!(failure[0].starts_with("✗ gateway port 443 is already in use ("));
+        println!("Failure: {}", failure[0]);
+    }
+
+    #[test]
     fn activation_frames_name_the_compose_call_and_the_last_runtime_line() {
         use std::time::Duration;
 
         let progress = super::activation_source("docker compose up", "web");
         assert_eq!(
-            progress.frame_at(Duration::from_secs(12)),
+            progress.detailed_frame_at(Duration::from_secs(12)),
             "starting the `web` stack; waiting for docker compose up to return for stack `web`; 12s elapsed"
         );
         // The runtime's own line, mapped through the same label production uses.
@@ -2111,11 +2194,11 @@ mod tests {
         // The event never replaces the call still awaited: two reads after it
         // both keep `docker compose up` and the elapsed wait.
         assert_eq!(
-            progress.frame_at(Duration::from_secs(20)),
+            progress.detailed_frame_at(Duration::from_secs(20)),
             "starting the `web` stack; waiting for docker compose up to return for stack `web`; last: starting web; 20s elapsed"
         );
         assert_eq!(
-            progress.frame_at(Duration::from_secs(90)),
+            progress.detailed_frame_at(Duration::from_secs(90)),
             "starting the `web` stack; waiting for docker compose up to return for stack `web`; last: starting web; 90s elapsed"
         );
         // Compose has returned and the restart-policy apply begins: each of its
@@ -2129,7 +2212,7 @@ mod tests {
             None,
         );
         assert_eq!(
-            progress.frame_at(Duration::from_secs(30)),
+            progress.detailed_frame_at(Duration::from_secs(30)),
             "reading the Compose declaration of the `web` stack for services without a restart policy; waiting for `restart: unless-stopped` on the `web` stack; 30s elapsed"
         );
         // A stalled runtime inventory read keeps saying what it is reading.
@@ -2140,7 +2223,7 @@ mod tests {
             None,
         );
         assert_eq!(
-            progress.frame_at(Duration::from_secs(44)),
+            progress.detailed_frame_at(Duration::from_secs(44)),
             "reading the running containers of the `web` stack from the runtime; waiting for `restart: unless-stopped` on the `web` stack; 44s elapsed"
         );
         super::steps::restart_policy_stage(
@@ -2150,7 +2233,7 @@ mod tests {
             None,
         );
         assert_eq!(
-            progress.frame_at(Duration::from_secs(51)),
+            progress.detailed_frame_at(Duration::from_secs(51)),
             "asking the runtime to keep the containers of the `web` stack on `restart: unless-stopped`; waiting for `restart: unless-stopped` on the `web` stack; 51s elapsed"
         );
     }
@@ -2162,7 +2245,7 @@ mod tests {
         let progress = ProgressSource::waiting_for("the runtime integrations of this environment");
         super::integration_stage(&progress, 5, "registering gateway routes");
         assert_eq!(
-            progress.frame_at(Duration::from_secs(2)),
+            progress.detailed_frame_at(Duration::from_secs(2)),
             "registering gateway routes (5/8); waiting for the runtime integrations of this environment; 2s elapsed"
         );
         // The runtime read now in flight, with its attempt and the stage count.
@@ -2171,7 +2254,7 @@ mod tests {
             super::super::gateway_registration::GatewayPortWait::Reading { attempt: 1 },
         );
         assert_eq!(
-            progress.frame_at(Duration::from_secs(6)),
+            progress.detailed_frame_at(Duration::from_secs(6)),
             "reading the runtime's containers for the declared gateway service ports (attempt 1) (5/8); waiting for the runtime integrations of this environment; 6s elapsed"
         );
         // The read answered and its blocker names the service and domain.
@@ -2183,7 +2266,7 @@ mod tests {
             },
         );
         assert_eq!(
-            progress.frame_at(Duration::from_secs(7)),
+            progress.detailed_frame_at(Duration::from_secs(7)),
             "waiting for the declared gateway service ports (attempt 1) (5/8); waiting for the runtime integrations of this environment; last: service `db` has not published its declared TCP alias port for gateway domain `db.demo.test`; 7s elapsed"
         );
         // The next poll keeps that blocker as the last thing this wait saw.
@@ -2193,10 +2276,10 @@ mod tests {
         );
         assert!(
             progress
-                .frame_at(Duration::from_secs(8))
+                .detailed_frame_at(Duration::from_secs(8))
                 .contains("reading the runtime's containers for the declared gateway service ports (attempt 2) (5/8); waiting for the runtime integrations of this environment; last: service `db`"),
             "{}",
-            progress.frame_at(Duration::from_secs(8))
+            progress.detailed_frame_at(Duration::from_secs(8))
         );
         // The poll then succeeds, and the work after it is its own wait: the
         // resolved blocker is not shown against it.
@@ -2215,9 +2298,9 @@ mod tests {
             ),
         ] {
             super::gateway_port_wait_stage(&progress, wait);
-            assert_eq!(progress.frame_at(Duration::from_secs(9)), expected);
+            assert_eq!(progress.detailed_frame_at(Duration::from_secs(9)), expected);
             assert!(
-                !progress.frame_at(Duration::from_secs(9)).contains("last:"),
+                !progress.detailed_frame_at(Duration::from_secs(9)).contains("last:"),
                 "the poll's blocker is cleared for the work that follows it"
             );
         }
@@ -2227,13 +2310,13 @@ mod tests {
             super::super::gateway_registration::GatewayPortWait::ReadingExitedContainers,
         );
         assert_eq!(
-            progress.frame_at(Duration::from_secs(10)),
+            progress.detailed_frame_at(Duration::from_secs(10)),
             "reading the exited gateway service containers for the timeout diagnostic (5/8); waiting for the runtime integrations of this environment; 10s elapsed"
         );
         // A later integration stage clears what the previous stage observed.
         super::integration_stage(&progress, 6, "reconciling tcp alias hosts");
         assert_eq!(
-            progress.frame_at(Duration::from_secs(11)),
+            progress.detailed_frame_at(Duration::from_secs(11)),
             "reconciling tcp alias hosts (6/8); waiting for the runtime integrations of this environment; 11s elapsed"
         );
     }
@@ -2246,7 +2329,7 @@ mod tests {
             ProgressSource::waiting_for("the container policy, its ports and mount sources");
         // The first frame names the exact wait before any stage is reported.
         assert_eq!(
-            progress.frame_at(Duration::from_secs(1)),
+            progress.detailed_frame_at(Duration::from_secs(1)),
             "waiting for the container policy, its ports and mount sources; 1s elapsed"
         );
         // Each preparation stage names itself as the load reaches it.
@@ -2275,7 +2358,7 @@ mod tests {
         ] {
             progress.update(stage.description(), None, None);
             assert_eq!(
-                progress.frame_at(Duration::from_secs(9)),
+                progress.detailed_frame_at(Duration::from_secs(9)),
                 format!("{expected}; waiting for the container policy, its ports and mount sources; 9s elapsed")
             );
         }

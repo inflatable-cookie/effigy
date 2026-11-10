@@ -296,6 +296,7 @@ fn provider_fetch_progress(
 ) -> ProgressSource {
     let progress = ProgressSource::waiting_for(provider_source_awaiting(url, reference, rev));
     progress.update(resolving_provider_label(provider_name, fetch), None, None);
+    progress.label(format!("Resolving {provider_name} provider"));
     progress
 }
 
@@ -1133,14 +1134,17 @@ mod tests {
             Some("1a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d"),
             DeployProviderFetch::Offline,
         );
+        let detail = pinned.detailed_frame_at(Duration::from_secs(5));
+        assert!(detail.contains(url));
+        assert!(detail.contains("1a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d"));
         // One fetch, read twice: the elapsed wait moves for the same source.
         assert_eq!(
             pinned.frame_at(Duration::from_secs(5)),
-            "resolving deploy provider acme (offline); waiting for git source https://example.test/acme.git at rev 1a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d; 5s elapsed"
+            "Resolving acme provider · 5s"
         );
         assert_eq!(
             pinned.frame_at(Duration::from_secs(45)),
-            "resolving deploy provider acme (offline); waiting for git source https://example.test/acme.git at rev 1a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d; 45s elapsed"
+            "Resolving acme provider · 45s"
         );
         let floating = provider_fetch_progress(
             "acme",
@@ -1151,11 +1155,11 @@ mod tests {
         );
         assert_eq!(
             floating.frame_at(Duration::from_secs(2)),
-            "resolving deploy provider acme (online); waiting for git source https://example.test/acme.git at ref main; 2s elapsed"
+            "Resolving acme provider · 2s"
         );
         assert_eq!(
             floating.frame_at(Duration::from_secs(60)),
-            "resolving deploy provider acme (online); waiting for git source https://example.test/acme.git at ref main; 60s elapsed"
+            "Resolving acme provider · 60s"
         );
     }
 }

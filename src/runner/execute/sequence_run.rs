@@ -14,7 +14,7 @@ use effigy_managed::{render_step_command_template, StepEnvAccumulator};
 use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep, TaskSelection};
 use effigy_routing::{resolve_catalog_by_prefix, select_catalog_and_task};
 use effigy_tasks::{parse_task_reference_invocation, render_task_selector};
-use effigy_ui::steps::{live_step, ProgressSource};
+use effigy_ui::steps::{live_step, streaming_step, streams_output, ProgressSource};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -472,7 +472,11 @@ fn run_steps(
         };
         let progress = sequence_step_label(task_name, position, total, subject);
         let source = sequence_step_progress(&progress, &label);
-        let step = live_step(source.clone());
+        let step = if streams_output() && !preflight.output_json {
+            streaming_step(source.clone())
+        } else {
+            live_step(source.clone())
+        };
         let mut child = run.step(index, &label)?;
         let child_id = child.id();
         let result = {
@@ -736,11 +740,11 @@ fn execute_step(
             // receives the session grant. A user command is a workload and
             // never does.
             let exit = if helper {
-                run_effigy_child(run, plain)?
+                run_effigy_child(run, plain, !preflight.output_json && streams_output())?
             } else {
                 run_plain(run, plain)?
             };
-            if helper && !preflight.output_json {
+            if helper && !preflight.output_json && !streams_output() {
                 print!("{}", String::from_utf8_lossy(&exit.stdout));
                 if exit.code == 0 {
                     eprint!("{}", String::from_utf8_lossy(&exit.stderr));
@@ -1047,12 +1051,12 @@ mod tests {
             &sequence_step_label("dev", 2, 4, Some("build")),
             "db:migrate",
         );
-        let first = progress.frame_at(std::time::Duration::from_secs(0));
+        let first = progress.detailed_frame_at(std::time::Duration::from_secs(0));
         assert_eq!(
             first,
             "running dev step 2/4: build; waiting for step `db:migrate` to exit; 0s elapsed"
         );
-        let later = progress.frame_at(std::time::Duration::from_secs(45));
+        let later = progress.detailed_frame_at(std::time::Duration::from_secs(45));
         assert_ne!(first, later, "a frame that never changes is not progress");
         assert_eq!(
             later,

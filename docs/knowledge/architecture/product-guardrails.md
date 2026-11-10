@@ -43,8 +43,16 @@ wrong." This followed an `effigy dev` that sat for four minutes and then
 reported only `run refused: Interrupted(TimedOut { phase: "settle", … })`,
 when the real cause was two named services failing their health checks.
 
+- **Producers stream their own output live; spinners are for silent waits.**
+  On a terminal, builds, installs and script steps print one short header,
+  their live output, then a success or failure line with duration. Keep JSON,
+  piped and managed-pane output unchanged. Tom, 2026-11-10, watching the Linux
+  artifact build behind a bare spinner: "I think it would be better to still
+  show that output so you know what it's actually doing rather than hiding it
+  behind a spinner".
+
 - **Show what is happening as it happens.** On a terminal, any step that can
-  take more than a moment runs under an asynchronous spinner whose short label
+  take more than a moment and waits silently runs under an asynchronous spinner whose short label
   names the current step and its subject, for example `starting web`,
   `waiting for web to report healthy (attempt 4, last: HTTP 404)` or
   `fetching bundle decodelabs`. The label changes as the work moves on, and
@@ -83,13 +91,22 @@ when the real cause was two named services failing their health checks.
   canned label fixed for the whole wait is noise. Show the current sub-step or
   object (service, image, dependency, layer or gate), known counts or ratios,
   elapsed time, and the last meaningful event or exact blocker. If no further
-  event can be observed, name the precise wait and probe alongside elapsed
-  time. An event is additive: a frame keeps naming the thing it still awaits
-  next to the last event, so publishing a progress line never hides the
-  operation for the rest of the phase. A changing glyph alone is not progress.
+  event can be observed, name the precise wait alongside elapsed time. The
+  label continues to name the operation when an event arrives; do not repeat
+  it in a separate waiting tail. A changing glyph alone is not progress.
   Managed TUI entries have their own dependency-derived state; a waiting entry
   never borrows another entry's label. This rule applies to every command plane
   for the v0.15 gate (Q-017).
+- **Keep progress labels concise.** Tom, 2026-11-10, watching `effigy container
+  up`: "I notice the spinner labels are very wordy - can we make them more human
+  friendly?" Use a short present-tense verb phrase and subject, about 50
+  characters or less. Keep known counts; add elapsed time as `· 21s` after
+  about two seconds. Add a blocker or meaningful event only when it helps,
+  in plain words. Never restate the label as "waiting for". Engine, context,
+  project, policy literals and paths belong in verbose output, run logs and
+  structured output. Use leading `--verbose` (for example, `effigy --verbose
+  container up`) for detailed progress in any plane. Success uses one short past-tense phrase with duration;
+  failure says what is wrong, with detail on the next line or in verbose.
 - **A managed entry's wait comes from the ordering graph.** Each entry's tab
   and status say what actually blocks it: the entry the resolved start order or
   a host process's `depends_on` puts first and that entry's current phase, the

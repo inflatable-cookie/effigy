@@ -2039,10 +2039,12 @@ fn probe_low_ports(
 /// daemon's own self-test with the status and blocker it reports, or the
 /// reason its status could not be read on this pass.
 fn observe_start(progress: &ProgressSource, listener: &str, phase: StartPhase) {
+    let admitting = matches!(&phase, StartPhase::Admitting);
     match phase {
         StartPhase::Admitting => {
             progress.now_waiting_for("the supervisor to start the gateway daemon");
             progress.update("admitting the gateway run", None, None);
+            progress.label("Starting gateway");
         }
         StartPhase::SelfTest { status, reason } => {
             progress.now_waiting_for(format!("the gateway to answer on {listener}"));
@@ -2067,6 +2069,9 @@ fn observe_start(progress: &ProgressSource, listener: &str, phase: StartPhase) {
                 Some(format!("cannot read the gateway status: {reason}")),
             );
         }
+    }
+    if !admitting {
+        progress.label(format!("Checking gateway on {listener}"));
     }
 }
 
@@ -2314,6 +2319,9 @@ fn setup_step<T>(
 ) -> std::io::Result<T> {
     let progress = ProgressSource::waiting_for(awaiting);
     progress.update(action, None, None);
+    if action.starts_with("applying platform setup") {
+        progress.label("Applying gateway setup");
+    }
     let step = live_step(progress.clone());
     match work(&progress) {
         Ok(value) => {

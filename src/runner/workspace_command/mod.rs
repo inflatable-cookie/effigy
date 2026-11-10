@@ -577,6 +577,7 @@ impl WorkspaceOpProgress {
             let _ = writeln!(stderr);
         }
         let source = ProgressSource::waiting_for(probe);
+        source.label("Preparing workspace");
         let step = steps::live_step(source.clone());
         Self {
             source: Some(source),
@@ -597,7 +598,13 @@ impl WorkspaceOpProgress {
         event: Option<String>,
     ) {
         if let Some(source) = &self.source {
-            source.update(sub_step, count, event);
+            match event {
+                Some(event) if event.starts_with("container `") => {
+                    source.update(sub_step, count, None);
+                    source.detail_event(event);
+                }
+                event => source.update(sub_step, count, event),
+            }
         }
     }
 

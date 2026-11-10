@@ -41,6 +41,15 @@ pub enum RestartPolicyStage {
 }
 
 impl RestartPolicyStage {
+    /// Short terminal label, without runtime policy literals.
+    pub fn concise_description(self) -> &'static str {
+        match self {
+            Self::ComposeDeclaration => "Checking restart policy",
+            Self::RuntimeInventory => "Checking running containers",
+            Self::Apply => "Setting restart policy",
+        }
+    }
+
     /// The stage in the operator's words, for the stack or service `subject`.
     pub fn description(self, subject: &str) -> String {
         match self {

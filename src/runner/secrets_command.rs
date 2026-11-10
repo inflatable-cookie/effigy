@@ -39,6 +39,7 @@ pub(in crate::runner) struct SecretOpProgress {
 impl SecretOpProgress {
     pub(in crate::runner) fn start(probe: impl Into<String>) -> Self {
         let source = ProgressSource::waiting_for(probe);
+        source.label("Waiting for vault access");
         let step = steps::live_step(source.clone());
         Self { source, step }
     }
@@ -1910,21 +1911,22 @@ mod live_progress_tests {
     fn unlock_frames_name_sub_steps_elapsed_and_never_secrets() {
         let ((), lines) = steps::capture_lines(|| {
             let progress = SecretOpProgress::start(PROBE_VAULT_WRITE_GATE);
+            assert!(progress
+                .source
+                .detailed_frame_at(Duration::from_secs(12))
+                .contains(PROBE_VAULT_WRITE_GATE));
             assert_eq!(
                 progress.frame_at(Duration::from_secs(0)),
-                "waiting for machine vault write gate; 0s elapsed"
+                "Waiting for vault access"
             );
             assert_eq!(
                 progress.frame_at(Duration::from_secs(12)),
-                "waiting for machine vault write gate; 12s elapsed"
+                "Waiting for vault access · 12s"
             );
             progress.now_waiting_for(PROBE_VAULT_DECRYPT);
             progress.update("decrypting vault", None, None);
             let frame = progress.frame_at(Duration::from_secs(14));
-            assert_eq!(
-                frame,
-                "decrypting vault; waiting for vault decrypt; 14s elapsed"
-            );
+            assert_eq!(frame, "decrypting vault · 14s");
             assert_redacted(&frame);
             progress.update(
                 "sealing local credential",
@@ -1932,10 +1934,7 @@ mod live_progress_tests {
                 Some("vault decrypted".to_owned()),
             );
             let frame = progress.frame_at(Duration::from_secs(17));
-            assert_eq!(
-                frame,
-                "sealing local credential; waiting for vault decrypt; last: vault decrypted; 17s elapsed"
-            );
+            assert_eq!(frame, "sealing local credential · vault decrypted · 17s");
             assert_redacted(&frame);
             progress.update(
                 "writing local credential",
@@ -1943,10 +1942,7 @@ mod live_progress_tests {
                 Some("credential sealed".to_owned()),
             );
             let frame = progress.frame_at(Duration::from_secs(18));
-            assert_eq!(
-                frame,
-                "writing local credential; waiting for vault decrypt; last: credential sealed; 18s elapsed"
-            );
+            assert_eq!(frame, "writing local credential · credential sealed · 18s");
             assert_redacted(&frame);
             progress.succeed("vault unlocked for commands and tasks");
         });
@@ -1965,13 +1961,13 @@ mod live_progress_tests {
             let progress = SecretOpProgress::start(PROBE_VAULT_WRITE_GATE);
             assert_eq!(
                 progress.frame_at(Duration::from_secs(4)),
-                "waiting for machine vault write gate; 4s elapsed"
+                "Waiting for vault access · 4s"
             );
             progress.now_waiting_for(PROBE_VAULT_LOCK);
             progress.update("removing local unlock files", Some((0, 2)), None);
             assert_eq!(
                 progress.frame_at(Duration::from_secs(5)),
-                "removing local unlock files (0/2); waiting for vault lock; 5s elapsed"
+                "removing local unlock files (0/2) · 5s"
             );
             progress.update(
                 "removing local unlock files",
@@ -1981,7 +1977,7 @@ mod live_progress_tests {
             let frame = progress.frame_at(Duration::from_secs(2));
             assert_eq!(
                 frame,
-                "removing local unlock files (1/2); waiting for vault lock; last: removed local-dev key; 2s elapsed"
+                "removing local unlock files (1/2) · removed local-dev key · 2s"
             );
             assert_redacted(&frame);
             progress.update(
@@ -1992,7 +1988,7 @@ mod live_progress_tests {
             let frame = progress.frame_at(Duration::from_secs(3));
             assert_eq!(
                 frame,
-                "removing local unlock files (2/2); waiting for vault lock; last: removed local unlock credential; 3s elapsed"
+                "removing local unlock files (2/2) · removed local unlock credential · 3s"
             );
             assert_redacted(&frame);
             progress.fail("could not lock the vault: failed to remove local-dev key");
@@ -2012,10 +2008,7 @@ mod live_progress_tests {
             let progress = SecretOpProgress::start(PROBE_VAULT_DECRYPT);
             progress.update("decrypting vault", None, None);
             let frame = progress.frame_at(Duration::from_secs(4));
-            assert_eq!(
-                frame,
-                "decrypting vault; waiting for vault decrypt; 4s elapsed"
-            );
+            assert_eq!(frame, "decrypting vault · 4s");
             assert_redacted(&frame);
             progress.fail("could not unlock the vault: wrong passphrase");
         });
@@ -2038,10 +2031,7 @@ mod live_progress_tests {
                 Some("inline command".to_owned()),
             );
             let frame = progress.frame_at(Duration::from_secs(8));
-            assert_eq!(
-                frame,
-                "running generate hook; waiting for vault generate hook; last: inline command; 8s elapsed"
-            );
+            assert_eq!(frame, "running generate hook · inline command · 8s");
             assert_redacted(&frame);
             assert!(!frame.contains("echo"));
             progress.fail("could not run the vault generate hook: command failed");

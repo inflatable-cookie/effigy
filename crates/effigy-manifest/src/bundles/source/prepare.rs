@@ -914,6 +914,7 @@ fn acquire_and_publish(
             home,
             &generation,
             &object,
+            progress,
         )
         .and_then(|(version, revision)| {
             if name == "bundle" {
@@ -1212,6 +1213,7 @@ fn acquire_source(
     home: &Path,
     generation: &DirFd,
     object: &DirFd,
+    progress: &SourceProgress,
 ) -> Result<(String, Option<String>), ManifestError> {
     match selection {
         BundleSelection::Path { path } => Ok((snapshot(path, object, cx, manifest)?, None)),
@@ -1237,6 +1239,7 @@ fn acquire_source(
                     checkout.path().as_os_str().into(),
                 ],
                 BUDGET,
+                Some(progress),
             )?;
             command(
                 manifest,
@@ -1254,6 +1257,7 @@ fn acquire_source(
                     reference.as_deref().unwrap_or("main").into(),
                 ],
                 BUDGET,
+                Some(progress),
             )?;
             command(
                 manifest,
@@ -1270,6 +1274,7 @@ fn acquire_source(
                     "FETCH_HEAD".into(),
                 ],
                 BUDGET,
+                Some(progress),
             )?;
             Ok((
                 snapshot(checkout.path(), object, cx, manifest)?,
@@ -1292,6 +1297,7 @@ fn acquire_source(
                     reference.into(),
                 ],
                 BUDGET,
+                None,
             )?;
             let descriptor: serde_json::Value = serde_json::from_slice(&raw)
                 .map_err(|err| error(manifest, format!("invalid OCI descriptor: {err}")))?;
@@ -1331,6 +1337,7 @@ fn acquire_source(
                     pull.path().as_os_str().into(),
                 ],
                 BUDGET,
+                Some(progress),
             )?;
             Ok((
                 snapshot(pull.path(), object, cx, manifest)?,
@@ -1367,6 +1374,7 @@ fn git_remote_revision(
             reference.into(),
         ],
         REMOTE_CHECK_BUDGET,
+        None,
     )?;
     Ok(parse_ls_remote(&raw, reference))
 }
@@ -1421,6 +1429,10 @@ fn pin_report(
         stale: !same_declaration(&pin.declaration, selection),
     }
 }
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one owned source command and its optional output observer"
+)]
 fn command(
     manifest: &Path,
     run: &mut Run<'_>,
@@ -1429,6 +1441,7 @@ fn command(
     cwd: &Path,
     mut argv: Vec<OsString>,
     limit: Duration,
+    progress: Option<&SourceProgress>,
 ) -> Result<Vec<u8>, ManifestError> {
     let program = argv
         .first_mut()
@@ -1504,9 +1517,38 @@ fn command(
         cx,
     )
     .map_err(|err| error(manifest, spawn_refusal_text(&err)))?;
+    let streaming = progress.filter(|progress| progress.output_enabled());
+    if let Some(progress) = streaming {
+        let started = std::time::Instant::now();
+        loop {
+            let observed = child.poll();
+            let bytes = child.take_output();
+            if !bytes.is_empty() {
+                progress.emit(SourceProgressEvent::Output { bytes });
+            }
+            if matches!(observed, Observed::Verified(..))
+                || started.elapsed() >= limit
+                || cx.operation().check("source acquisition").is_err()
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    // The original wait still closes and verifies source capture, including
+    // its capture cap, cancellation and process deadline.
     match child.wait(cx.operation()) {
         Observed::Verified(exit, _) => {
-            let bytes = child.take_output();
+            let remaining = child.take_output();
+            let bytes = match streaming {
+                Some(progress) => {
+                    if !remaining.is_empty() {
+                        progress.emit(SourceProgressEvent::Output { bytes: remaining });
+                    }
+                    child.tail()
+                }
+                None => remaining,
+            };
             child
                 .complete(run, exit)
                 .map_err(|err| error(manifest, err.to_string()))?;

@@ -1121,7 +1121,7 @@ mod tests {
     fn an_admission_wait_frame_names_its_probe_the_hook_progress_and_elapsed() {
         let progress = admission_progress("dev", None);
         assert_eq!(
-            progress.frame_at(Duration::from_secs(0)),
+            progress.detailed_frame_at(Duration::from_secs(0)),
             "waiting for heavy admission (task `dev`); waiting for the admission hook's \
              decision for task `dev`; 0s elapsed"
         );
@@ -1130,7 +1130,7 @@ mod tests {
             None,
             None,
         );
-        let later = progress.frame_at(Duration::from_secs(45));
+        let later = progress.detailed_frame_at(Duration::from_secs(45));
         assert_eq!(
             later,
             "waiting for heavy admission (task `dev`, waiting for capacity, 2 ahead); waiting \
