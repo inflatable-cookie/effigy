@@ -429,15 +429,21 @@ cohort. The library cohort builds workspace libraries and the small bootstrap
 integration target (which supplies the real CLI), avoiding compilation of other
 integration binaries it never executes. Every test in
 a binary still runs together under the original `effigy_shared_process`
-configuration and libtest's default parallel thread count. The library cohort
-uses optimization level 1 with debug assertions explicitly enabled; every
-cohort omits debug symbols. A Cargo runner selects whole binaries from the
+configuration and libtest's default parallel thread count. Hosted cohorts omit
+debug symbols, retaining the default debug assertions. A Cargo runner selects
+whole binaries from the
 compiled inventory in one workspace invocation, preserving feature unification
 and Cargo's per-package execution environment. Both operating systems retain all
-tests and doc tests. Compilation is cached independently of the partition.
+tests and doc tests. The non-library cohorts reuse the same compilation graph.
 
 The healthy headless lifecycle fixture retains its 35-second cold engine start,
 but its host window now ends when status positively reports both exec children
 exited zero, rather than waiting 60 seconds on each activation. The cold-start
 regression, immediate reuse, permission preparation and final cleanup assertions
 are unchanged.
+
+Workspace-client fixture contexts and peer replies clone one observed identity
+of their immutable compiled test executable per test process. Rehashing that
+same file for each context, live-run record and peer response inflated every
+matrix cell. Production dispatch still calls the real binary observer, and the
+version/digest mismatch controls retain their original assertions.

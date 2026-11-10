@@ -22,7 +22,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use std::io;
 use std::os::unix::net::UnixStream;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 const GENERATION: u64 = 3;
@@ -34,7 +34,13 @@ pub(super) const GUEST_CHECKOUT: &str = "/workspace";
 const MANIFEST: &[u8] = b"[tasks]\nbuild = \"cargo build\"\nseed = \"cargo run -- seed\"\n";
 
 fn running_binary() -> RunningBinary {
-    RunningBinary::observe().expect("the test binary's own identity")
+    // This compiled test executable is immutable for the process's lifetime.
+    // Context/peer fixtures need copies of that identity, not another full-file
+    // hash for each matrix cell. Production dispatch still observes its binary.
+    static BINARY: OnceLock<RunningBinary> = OnceLock::new();
+    BINARY
+        .get_or_init(|| RunningBinary::observe().expect("the test binary's own identity"))
+        .clone()
 }
 
 pub(super) fn session_run() -> RunId {

@@ -80,16 +80,9 @@ jobs:
   shared-process:
     name: Shared-process tests (${{ matrix.os }}, ${{ matrix.suite }})
     runs-on: ${{ matrix.os }}
-    # Temporary measurement head: quantify the full library tail after trimming builds.
-    timeout-minutes: ${{ matrix.suite == 'library' && 40 || 20 }}
+    timeout-minutes: 20
     env:
       RUSTFLAGS: --cfg effigy_shared_process
-      # Optimize the large library cohort's CLI launches and fingerprinting.
-      # Explicitly retain debug-only evidence seams and assertions.
-      CARGO_PROFILE_DEV_OPT_LEVEL: ${{ matrix.suite == 'library' && '1' || '0' }}
-      CARGO_PROFILE_TEST_OPT_LEVEL: ${{ matrix.suite == 'library' && '1' || '0' }}
-      CARGO_PROFILE_DEV_DEBUG_ASSERTIONS: 'true'
-      CARGO_PROFILE_TEST_DEBUG_ASSERTIONS: 'true'
     strategy:
       fail-fast: false
       matrix:
