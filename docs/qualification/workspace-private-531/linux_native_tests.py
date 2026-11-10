@@ -50,6 +50,45 @@ class ArtifactCompatibilityTests(unittest.TestCase):
                 producer.validate_elf(header, loader, versions)
 
 
+class RestartInventoryTests(unittest.TestCase):
+    def test_restart_accepts_only_identity_changes_with_exact_configuration(self):
+        import copy
+        import json
+        before = {'Name': 'bridge', 'Id': 'a' * 64, 'Driver': 'bridge',
+                  'IPAM': {'Config': [{'Subnet': '172.29.0.0/24'}]}, 'Options': {},
+                  'Labels': {}, 'Internal': False}
+        prior = {'containers': [], 'volumes': ['retained'], 'networks': [
+            {'name': before['Name'], 'engine_id': before['Id'],
+             'configuration_sha256': runtime.network_configuration(before)}]}
+        def engine(row):
+            def command(*args):
+                data = {('ps', '-a', '--no-trunc', '--format', '{{.ID}}'): '',
+                        ('network', 'ls', '--format', '{{.Name}}'): 'bridge\n',
+                        ('volume', 'ls', '--format', '{{.Name}}'): 'retained\n',
+                        ('network', 'inspect', 'bridge'): json.dumps([row])}[args]
+                return subprocess.CompletedProcess(args, 0, data.encode(), b'')
+            return command
+        after = dict(before, Id='b' * 64)
+        self.assertEqual(runtime.restarted_inventory(engine(after), prior)['networks'][0]['engine_id'], after['Id'])
+        for key, value in [('Driver', 'other'), ('IPAM', {}), ('Options', {'mtu': '1'}),
+                           ('Labels', {'owner': 'different'}), ('Internal', True)]:
+            changed = copy.deepcopy(after)
+            changed[key] = value
+            with self.subTest(key=key), self.assertRaises(RuntimeError):
+                runtime.restarted_inventory(engine(changed), prior)
+        raced = engine(after)
+        calls = 0
+        def changing(*args):
+            nonlocal calls
+            if args[:2] == ('network', 'inspect'):
+                calls += 1
+                if calls == 2:
+                    return engine(dict(after, Id='c' * 64))(*args)
+            return raced(*args)
+        with self.assertRaises(RuntimeError):
+            runtime.restarted_inventory(changing, prior)
+
+
 class RetainedStreamTests(unittest.TestCase):
     def test_protected_guest_output_is_not_written_to_exploratory_evidence(self):
         with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:

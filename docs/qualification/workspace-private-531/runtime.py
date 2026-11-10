@@ -25,6 +25,13 @@ from common import (PACKET, SCRATCH, artifact, digest, exclusive, exclusive_byte
                     validate_go, validate_inputs)
 
 
+def network_configuration(row, *, identity=None):
+    stable = {key: row.get(key) for key in ('Name', 'Id', 'Driver', 'IPAM', 'Options', 'Labels', 'Internal')}
+    if identity is not None:
+        stable['Id'] = identity
+    return hashlib.sha256(json.dumps(stable, sort_keys=True).encode()).hexdigest()
+
+
 def engine_inventory(engine_command):
     containers = engine_command('ps', '-a', '--no-trunc', '--format', '{{.ID}}').stdout.decode().splitlines()
     require(len(containers) == len(set(containers)) and all(__import__('re').fullmatch(r'[0-9a-f]{64}', ident) for ident in containers),
@@ -36,12 +43,32 @@ def engine_inventory(engine_command):
         rows = json.loads(engine_command('network', 'inspect', name).stdout)
         require(len(rows) == 1 and rows[0]['Name'] == name, 'network observation unavailable')
         row = rows[0]
-        stable = {key: row.get(key) for key in ('Name', 'Id', 'Driver', 'IPAM', 'Options', 'Labels', 'Internal')}
         networks.append({'name': name, 'engine_id': row.get('Id'),
-                         'configuration_sha256': hashlib.sha256(json.dumps(stable, sort_keys=True).encode()).hexdigest()})
+                         'configuration_sha256': network_configuration(row)})
     volumes = engine_command('volume', 'ls', '--format', '{{.Name}}').stdout.decode().splitlines()
     require(len(volumes) == len(set(volumes)), 'ambiguous volume inventory')
     return {'containers': sorted(containers), 'networks': networks, 'volumes': sorted(volumes)}
+
+
+def restarted_inventory(engine_command, prior):
+    """Bind a new unsealed window across restart, retaining exact configuration.
+
+    A recreated bridge may have a new engine ID. Only that identity difference
+    is allowed; names alone never establish unchanged network configuration.
+    Existing windows continue comparing their complete inventory exactly.
+    """
+    observed = engine_inventory(engine_command)
+    require(observed['containers'] == prior['containers'] and observed['volumes'] == prior['volumes']
+            and [row['name'] for row in observed['networks']] == [row['name'] for row in prior['networks']],
+            'retained exploratory resources drifted; no cleanup or rebaseline')
+    for before, after in zip(prior['networks'], observed['networks']):
+        rows = json.loads(engine_command('network', 'inspect', after['name']).stdout)
+        require(len(rows) == 1 and rows[0]['Name'] == after['name']
+                and rows[0]['Id'] == after['engine_id']
+                and network_configuration(rows[0]) == after['configuration_sha256']
+                and network_configuration(rows[0], identity=before['engine_id']) == before['configuration_sha256'],
+                'network configuration changed or observation raced across engine restart')
+    return observed
 
 
 class Window:

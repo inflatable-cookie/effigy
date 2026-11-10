@@ -41,7 +41,7 @@ def script(binding, roles, seed):
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd()/'docs/qualification/workspace-private-531'))
 import common
-from runtime import engine_inventory
+from runtime import restarted_inventory
 source=Path(SOURCE)
 roles=Path(ROLES)
 value=json.loads(SEED)
@@ -75,11 +75,8 @@ for key,path in {'guest_artifact':artifact,'guest_producer_receipt':artifact.wit
 for key in ('old_binary','nextest_binary','engine_binary'):common.artifact(cell[key])
 env={'PATH':'/usr/bin:/bin','HOME':'/var/lib/effigy-829/rootful/client/home','DOCKER_CONFIG':cell['docker_config']}
 def engine(*args):return common.run([cell['engine_binary']['path'],'--context',cell['engine_identity'],*args],env=env,timeout=30)
-observed=engine_inventory(engine)
 prior=cell['baseline']
-if (observed['containers']!=prior['containers'] or observed['volumes']!=prior['volumes']
- or [row['name'] for row in observed['networks']] != [row['name'] for row in prior['networks']]):
- raise RuntimeError('retained exploratory resources drifted; no cleanup or rebaseline')
+observed=restarted_inventory(engine,prior)
 # Docker recreates its default bridge identity on daemon restart. This is a
 # new, unsealed window after the recorded resume, not a changed baseline in
 # an existing window. Keep both complete observations; no missing resource is

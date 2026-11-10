@@ -1145,3 +1145,8 @@ run and original state-root identity for a recorded terminal result before
 forgetting completed connection custody. It neither revives an attachment nor
 waives a previously uncertain release. Live and unknown runs retain EOF cleanup.
 The full native session and mechanism activation remain outstanding.
+
+New exploratory windows also compare complete stable network configuration
+when an engine restart recreates a bridge ID. They retain both inventories; a
+same-name network with changed IPAM, driver, options, labels or isolation refuses.
+Each active window still requires its exact original inventory at settlement.
