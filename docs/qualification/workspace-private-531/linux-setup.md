@@ -1160,3 +1160,11 @@ and release token as hash-bound JSON control metadata. A short fixed bootstrap
 verifies those bytes and every prepared driver file before exec. This changes
 no executable source during the full occurrence and avoids transport-dependent
 argument limits as the driver grows.
+
+
+A later shutdown sample retained an unbound regular metadata stat with link count
+zero while Parallels unlinked it. This is a raced directory observation, rather
+than a hardlink. It now retains that stat and repeats the complete sample once;
+a persistent zero-link observation still refuses. Bound inputs keep strict
+custody, and real hardlinks/aliases (link count greater than one), symlinks and
+non-regular entries remain definitive refusals. No filename exception is added.

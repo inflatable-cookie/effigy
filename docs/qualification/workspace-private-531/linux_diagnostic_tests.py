@@ -317,6 +317,37 @@ class MetadataAccountingTests(unittest.TestCase):
         with self.assertRaisesRegex(Refusal, 'unsupported ancillary ownership mode'):
             diagnostic.package_sample(root, None, 'guess')
 
+    def test_unlinked_ancillary_stat_repeats_the_sample_but_never_weakens_bound_custody(self):
+        root,disk,xml=disk_fixture()
+        plain=root/'plain';plain.write_bytes(b'fixture')
+        monitor=observed_package(root,disk,xml)
+        original=diagnostic.lstat
+        first=True
+        def raced(path):
+            nonlocal first
+            info=original(path)
+            if Path(path)==plain and first:
+                first=False
+                return Sampled(info,nlink=0)
+            return info
+        with patch.object(diagnostic,'lstat',side_effect=raced),patch.object(diagnostic.time,'sleep'):
+            monitor.check()
+        self.assertEqual(len(monitor.observation_failures),1)
+        self.assertEqual(monitor.observation_failures[0]['nlink'],0)
+        self.assertEqual(monitor.observation_failures[0]['relative'],'plain')
+        before=len(monitor.observation_failures)
+        with injected_stat('plain',nlink=0),patch.object(diagnostic.time,'sleep'):
+            with self.assertRaises(diagnostic.ObservationRefusal):monitor.check()
+        self.assertEqual(len(monitor.observation_failures)-before,diagnostic.ATTEMPTS)
+        with injected_stat('plain',nlink=0):
+            with self.assertRaises(diagnostic.CustodyRefusal):
+                diagnostic.package_sample(root,None,diagnostic.OBSERVED,{str(plain)})
+        with injected_stat('plain',nlink=0,dev=plain.stat().st_dev+1):
+            with self.assertRaises(diagnostic.CustodyRefusal):
+                diagnostic.package_sample(root,None,diagnostic.OBSERVED)
+        with injected_stat('plain',nlink=0,uid=os.geteuid()+1):
+            with self.assertRaises(diagnostic.CustodyRefusal):diagnostic.package_sample(root)
+
     def test_observed_mode_refuses_a_cross_device_entry(self):
         root, disk, xml = disk_fixture()
         (root / 'other-device').write_bytes(b'x')

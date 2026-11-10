@@ -262,6 +262,14 @@ def package_sample(root, protected=None, ancillary_ownership=STRICT, bound=()):
             if not stat.S_ISREG(info.st_mode):
                 raise CustodyRefusal('package contains a non-regular file', 'package-walk', 'lstat',
                                      path, relative=relative, info=info)
+            if (info.st_nlink == 0 and key not in bound and info.st_dev == device
+                    and (ancillary_ownership == OBSERVED or info.st_uid == owner)):
+                # The directory walk raced an unlink. This is no longer a
+                # linked entry, not an alias (nlink > 1). Retain the exact stat
+                # and repeat the whole observation once; never charge or trust
+                # this inconsistent sample. Bound objects keep strict custody.
+                raise ObservationRefusal('package entry unlinked during observation',
+                                         'package-walk', 'lstat', path, relative=relative, info=info)
             if info.st_nlink != 1:
                 raise CustodyRefusal('package contains an aliased file', 'package-walk', 'lstat',
                                      path, relative=relative, info=info)
