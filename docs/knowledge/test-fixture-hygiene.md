@@ -499,3 +499,10 @@ self-connect on Linux if its automatically chosen source is the destination.
 The hosted failure did not record peer addresses, so that occurrence's cause
 is unproven; the bound probe removes this false-positive path without accepting
 an open listener or changing the production shutdown path.
+
+The queued-resize lifetime proof releases its owning row from inside the fake
+writer's first full resize attempt, then opens the handle. Its receipt replaces
+the fixed sleep: the next pump turn must re-read the released row before any
+effect. Releasing from the parent and then opening the handle could instead
+race a turn that had already observed a live row. The original no-geometry,
+retirement and post-retirement assertions and existing wait bounds remain.
