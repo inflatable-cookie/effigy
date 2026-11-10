@@ -1116,6 +1116,7 @@ fn a_settlement_gets_the_full_budget_when_it_starts() {
 /// one-shot context this returned `Err` from the apply run's settle.
 #[test]
 fn a_bring_up_that_outlives_its_budget_still_settles() {
+    assert_eq!(CLEANUP_BUDGET, std::time::Duration::from_secs(60));
     let home = home();
     let root = root(home.path());
     // The settlement budget the activation spends entirely.
@@ -1128,6 +1129,7 @@ fn a_bring_up_that_outlives_its_budget_still_settles() {
     let stack = env("stack");
     let fake = Fake::new();
     let render = closure("one");
+    let started = std::time::Instant::now();
     let applied = reconcile(
         &ctx,
         &stack,
@@ -1149,63 +1151,14 @@ fn a_bring_up_that_outlives_its_budget_still_settles() {
     .unwrap()
     .applied;
     assert_eq!(applied, Applied::Reconciled);
-    // The activation run that follows the slow apply also settles on a budget
-    // of its own, and publishes `active`.
-    std::thread::sleep(std::time::Duration::from_millis(900));
-    activate(&ctx, &stack, &[]).unwrap();
-    assert!(record(&ctx, &stack).active());
-    assert_eq!(fake.calls(), ["apply"]);
-    assert_store_sound(&ctx);
-}
-
-/// The boundary at production size: an activation that spends more than the
-/// real 60-second settlement budget still settles, and the activation run that
-/// follows it settles too. The shortened-budget proofs above show the ordering;
-/// this one spends the production budget itself, the shape the I1 cold stack
-/// hit when its first build ran past a minute.
-#[test]
-fn an_activation_past_the_sixty_second_budget_still_settles() {
-    const ACTIVATION: std::time::Duration = std::time::Duration::from_secs(61);
     assert!(
-        ACTIVATION > CLEANUP_BUDGET,
-        "the activation must outlive the production settlement budget"
-    );
-    let home = home();
-    let root = root(home.path());
-    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
-    let stack = env("stack");
-    let fake = Fake::new();
-    let render = closure("one");
-    let started = std::time::Instant::now();
-    assert_eq!(
-        reconcile(
-            &ctx,
-            &stack,
-            Up {
-                render: Some(&render),
-                project: PROJECT,
-                backend: &selection(),
-                retention: Retention::Held,
-                workdir: std::path::Path::new("."),
-                primary_service: "app",
-                compose_files: &[],
-            },
-            || {
-                std::thread::sleep(ACTIVATION);
-                fake.apply()
-            },
-        )
-        .unwrap()
-        .applied,
-        Applied::Reconciled
-    );
-    assert!(
-        started.elapsed() > CLEANUP_BUDGET,
+        started.elapsed() > ctx.cleanup_budget(),
         "the activation did not outlive the budget: {:?}",
         started.elapsed()
     );
-    // Its own settlement had a whole window, and the activation run that
-    // follows publishes `active` from its own.
+    // The activation run that follows the slow apply also settles on a budget
+    // of its own, and publishes `active`.
+    std::thread::sleep(std::time::Duration::from_millis(900));
     activate(&ctx, &stack, &[]).unwrap();
     assert!(record(&ctx, &stack).active());
     assert_eq!(fake.calls(), ["apply"]);

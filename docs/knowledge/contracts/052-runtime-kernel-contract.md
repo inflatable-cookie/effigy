@@ -4629,12 +4629,12 @@ recorded contract change.
 
 ### 12.3 Matrices
 
-- Supervisor matrix, full cross product as cheap model tests: front end
-  (TUI, attached text, detached) × prior state (fresh, interrupted
-  predecessor, closed predecessor with residue, stopped) × stop (request, INT, TERM, HUP, owning-client
-  SIGKILL, owner SIGKILL, handover, explicit `down`) × attachment (none,
-  borrowed, exclusive). Every cell asserts exactly one release per
-  attachment. Named end-to-end representatives follow.
+- Kernel supervisor matrix: 72 distinct inputs, prior state (fresh,
+  interrupted predecessor, closed predecessor with residue, stopped) × stop
+  (requested, INT, TERM, HUP, owner lost, owner dropped) × attachment (none,
+  borrowed, exclusive). Every cell asserts repeated settlement and exactly
+  one release per attachment. Handover and `down` use the requested cause;
+  frontend signal delivery is covered by caller/process tests.
 - Platform qualification on macOS and Linux for gates, identity and custody.
 - Real-engine remote-custody qualification on Colima, Docker Desktop and
   Linux Docker (§5.10).

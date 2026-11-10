@@ -772,123 +772,110 @@ fn run_applied_spawn_is_not_natural_completion() {
 }
 #[test]
 fn run_supervision_matrix_recovery_stop_and_attachment_release_are_idempotent() {
-    for front in ["tui", "attached", "detached"] {
-        for prior in ["fresh", "interrupted", "residue", "stopped"] {
-            for stop in [
-                "request",
-                "INT",
-                "TERM",
-                "HUP",
-                "client-kill",
-                "owner-kill",
-                "handover",
-                "down",
+    // Kernel inputs only; caller tests cover frontend signal delivery.
+    for prior in ["fresh", "interrupted", "residue", "stopped"] {
+        for stop in [
+            Some(StopCause::Requested),
+            Some(StopCause::Signal(libc::SIGINT)),
+            Some(StopCause::Signal(libc::SIGTERM)),
+            Some(StopCause::Signal(libc::SIGHUP)),
+            Some(StopCause::OwnerLost),
+            None, // Owner dropped without recording an interruption.
+        ] {
+            for attachment in [
+                None,
+                Some(AttachMode::Borrow),
+                Some(AttachMode::Exclusive {
+                    stop_on_release: true,
+                }),
             ] {
-                for attachment in [
-                    None,
-                    Some(AttachMode::Borrow),
-                    Some(AttachMode::Exclusive {
-                        stop_on_release: true,
-                    }),
-                ] {
-                    let home = home();
-                    let cx = context();
-                    let root = StateRoot::effects(&cx, home.path()).unwrap();
-                    let mut fake = Fake::new(home.path());
-                    if prior != "fresh" {
-                        let mut previous = begin(&cx, &root, owner(), 1, &mut fake);
-                        apply(&mut previous, &fake, "previous");
-                        if prior == "interrupted" {
-                            drop(previous);
-                        } else {
-                            fake.fail_release = prior == "residue";
-                            previous.settle(&cleanup(&cx), &mut fake).unwrap();
-                            if prior == "residue" {
-                                assert!(
-                                    matches!(
-                                        Run::begin(
-                                            &cx,
-                                            &root,
-                                            &inv(owner()),
-                                            opts(2),
-                                            &cleanup(&cx),
-                                            &mut fake
-                                        ),
-                                        Err(RunError::PredecessorUnsettled { .. })
+                let home = home();
+                let cx = context();
+                let root = StateRoot::effects(&cx, home.path()).unwrap();
+                let mut fake = Fake::new(home.path());
+                if prior != "fresh" {
+                    let mut previous = begin(&cx, &root, owner(), 1, &mut fake);
+                    apply(&mut previous, &fake, "previous");
+                    if prior == "interrupted" {
+                        drop(previous);
+                    } else {
+                        fake.fail_release = prior == "residue";
+                        previous.settle(&cleanup(&cx), &mut fake).unwrap();
+                        if prior == "residue" {
+                            assert!(
+                                matches!(
+                                    Run::begin(
+                                        &cx,
+                                        &root,
+                                        &inv(owner()),
+                                        opts(2),
+                                        &cleanup(&cx),
+                                        &mut fake
                                     ),
-                                    "{front}/{prior}/{stop}"
-                                );
-                            }
-                            fake.fail_release = false;
+                                    Err(RunError::PredecessorUnsettled { .. })
+                                ),
+                                "{prior}/{stop:?}"
+                            );
                         }
+                        fake.fail_release = false;
                     }
-                    let environment = active_environment(&cx, &root, &mut fake);
-                    let mut run = begin(&cx, &root, owner(), 2, &mut fake);
-                    if let Some(mode) = attachment {
-                        Attachments::attach(&mut run, &environment, mode, Wait::FailFast).unwrap();
-                    }
-                    apply(&mut run, &fake, "current");
-                    match stop {
-                        "owner-kill" => drop(run),
-                        _ => {
-                            let cause = match stop {
-                                "INT" => StopCause::Signal(libc::SIGINT),
-                                "TERM" => StopCause::Signal(libc::SIGTERM),
-                                "HUP" => StopCause::Signal(libc::SIGHUP),
-                                "client-kill" => StopCause::OwnerLost,
-                                _ => StopCause::Requested,
-                            };
-                            let signal = match cause {
-                                StopCause::Signal(s) => Some(s),
-                                _ => None,
-                            };
-                            run.interrupt(
-                                &cleanup(&cx),
-                                WorkloadOutcome::Cancelled { cause, signal },
-                            )
+                }
+                let environment = active_environment(&cx, &root, &mut fake);
+                let mut run = begin(&cx, &root, owner(), 2, &mut fake);
+                if let Some(mode) = attachment {
+                    Attachments::attach(&mut run, &environment, mode, Wait::FailFast).unwrap();
+                }
+                apply(&mut run, &fake, "current");
+                match stop.clone() {
+                    None => drop(run),
+                    Some(cause) => {
+                        let signal = match cause {
+                            StopCause::Signal(s) => Some(s),
+                            _ => None,
+                        };
+                        run.interrupt(&cleanup(&cx), WorkloadOutcome::Cancelled { cause, signal })
                             .unwrap();
-                            run.settle(&cleanup(&cx), &mut fake).unwrap();
-                        }
+                        run.settle(&cleanup(&cx), &mut fake).unwrap();
                     }
-                    for _ in 0..2 {
-                        assert_eq!(
-                            settle_interrupted(
-                                &cx,
-                                &root,
-                                &owner(),
-                                id(2),
-                                next(),
-                                &cleanup(&cx),
-                                &mut fake
-                            )
-                            .unwrap()
-                            .cleanup(),
-                            CleanupOutcome::Complete,
-                            "{front}/{prior}/{stop}"
-                        );
-                    }
+                }
+                for _ in 0..2 {
                     assert_eq!(
-                        fake.calls()
-                            .iter()
-                            .filter(|s| s.as_str() == "release current")
-                            .count(),
-                        1
-                    );
-                    let released: i64 = Store::open(&cx, &root)
-                        .unwrap()
-                        .conn()
-                        .query_row(
-                            "SELECT count(*) FROM attachments WHERE run_id=?1 AND state='released'",
-                            [id(2).to_string()],
-                            |r| r.get(0),
+                        settle_interrupted(
+                            &cx,
+                            &root,
+                            &owner(),
+                            id(2),
+                            next(),
+                            &cleanup(&cx),
+                            &mut fake
                         )
-                        .unwrap();
-                    assert_eq!(
-                        released,
-                        i64::from(attachment.is_some()),
-                        "{front}/{prior}/{stop}"
+                        .unwrap()
+                        .cleanup(),
+                        CleanupOutcome::Complete,
+                        "{prior}/{stop:?}"
                     );
                 }
+                assert_eq!(
+                    fake.calls()
+                        .iter()
+                        .filter(|s| s.as_str() == "release current")
+                        .count(),
+                    1
+                );
+                let released: i64 = Store::open(&cx, &root)
+                    .unwrap()
+                    .conn()
+                    .query_row(
+                        "SELECT count(*) FROM attachments WHERE run_id=?1 AND state='released'",
+                        [id(2).to_string()],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(
+                    released,
+                    i64::from(attachment.is_some()),
+                    "{prior}/{stop:?}"
+                );
             }
         }
     }
