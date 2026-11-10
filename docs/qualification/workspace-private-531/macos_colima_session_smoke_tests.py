@@ -131,6 +131,73 @@ class ExplorationTests(unittest.TestCase):
         self.assertEqual(events[0]['phase_bound_seconds'], 300)
         self.assertFalse(events[0]['proof'])
 
+    def colima_fixture(self):
+        binary = self.control / 'colima'
+        binary.write_bytes(b'fixture-only executable')
+        binary.chmod(0o700)
+        cell = dict(self.request['cell'], engine_identity='owned-profile',
+                    engine_binary=dict(path=str(binary), sha256=smoke.digest(binary)))
+        return binary, cell
+
+    def test_colima_symlink_refuses_before_any_share_probe_or_native_child(self):
+        binary, cell = self.colima_fixture()
+        link = self.control / 'linked-colima'
+        link.symlink_to(binary)
+        with mock.patch.object(smoke.shutil, 'which', return_value=str(link)), \
+             mock.patch.object(smoke.subprocess, 'run') as child:
+            with self.assertRaisesRegex(RuntimeError, 'real copied colima executable.*not a symlink'):
+                smoke.colima_readiness(cell, str(self.control))
+            child.assert_not_called()
+        self.assertFalse((self.control / 's').exists())
+
+    def test_colima_missing_share_or_guest_readback_refuses_before_window(self):
+        binary, cell = self.colima_fixture()
+        for share, reply in [(False, None), (True, subprocess.CompletedProcess([], 1, b'', b'absent')),
+                             (True, subprocess.CompletedProcess([], 0, b'foreign contents', b''))]:
+            with self.subTest(share=share, reply=reply):
+                if share:
+                    (self.control / 's').mkdir(exist_ok=True)
+                with mock.patch.object(smoke.shutil, 'which', return_value=str(binary)), \
+                     mock.patch.object(smoke.subprocess, 'run', return_value=reply) as child:
+                    with self.assertRaisesRegex(RuntimeError, 'C0–C6 preparation.*not session-ready'):
+                        smoke.colima_readiness(cell, str(self.control))
+                    self.assertEqual(child.call_count, int(share))
+        self.assertFalse((self.control / 's/session').exists())
+
+    def test_colima_readiness_pins_real_path_hash_namespace_and_guest_readback(self):
+        binary, cell = self.colima_fixture()
+        (self.control / 's').mkdir()
+        def readback(argv, **kwargs):
+            self.assertEqual(argv[:7], [str(binary), 'ssh', '-p', 'owned-profile', '--', 'sh', '-c'])
+            self.assertEqual(smoke.shlex.split(argv[-1])[:3], ['test', '-w', str(self.control / 's')])
+            self.assertEqual(kwargs['env']['COLIMA_HOME'], cell['colima_home'])
+            self.assertEqual(kwargs['env']['HOME'], str(self.control / 'h'))
+            self.assertEqual(kwargs['env']['TMPDIR'], str(self.control / 't'))
+            self.assertNotIn('LIMA_HOME', kwargs['env'])
+            self.assertNotIn('DOCKER_HOST', kwargs['env'])
+            self.assertEqual(kwargs['timeout'], 30)
+            return subprocess.CompletedProcess(argv, 0, Path(smoke.shlex.split(argv[-1])[-1]).read_bytes(), b'')
+        with mock.patch.object(smoke.shutil, 'which', return_value=str(binary)), \
+             mock.patch.object(smoke.subprocess, 'run', side_effect=readback), \
+             mock.patch.dict(os.environ, LIMA_HOME='/foreign', DOCKER_HOST='foreign'):
+            receipt = smoke.colima_readiness(cell, str(self.control))
+        self.assertTrue(receipt['host_guest_readback'])
+        self.assertTrue(Path(receipt['retained_probe']).is_file())
+        cell['engine_binary']['sha256'] = '0' * 64
+        with mock.patch.object(smoke.shutil, 'which', return_value=str(binary)), \
+             mock.patch.object(smoke.subprocess, 'run') as child:
+            with self.assertRaisesRegex(RuntimeError, 'differs from the pinned'):
+                smoke.colima_readiness(cell, str(self.control))
+            child.assert_not_called()
+
+    def test_colima_share_timeout_names_preparation_fix(self):
+        binary, cell = self.colima_fixture()
+        (self.control / 's').mkdir()
+        with mock.patch.object(smoke.shutil, 'which', return_value=str(binary)), \
+             mock.patch.object(smoke.subprocess, 'run', side_effect=subprocess.TimeoutExpired([], 30)):
+            with self.assertRaisesRegex(RuntimeError, 'already running owned profile.*share'):
+                smoke.colima_readiness(cell, str(self.control))
+
     def test_sqlite_readiness_refuses_an_incapable_interpreter(self):
         with mock.patch.object(smoke.sqlite3, 'connect', side_effect=smoke.sqlite3.OperationalError('fixture refusal')):
             with self.assertRaisesRegex(RuntimeError, 'select a capable Python'):

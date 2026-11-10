@@ -1,0 +1,1 @@
+The unsealed Colima full-session check now refuses a symlinked PATH executable or a missing writable session share before creating the checkout or starting activation, with a message explaining the required preparation.

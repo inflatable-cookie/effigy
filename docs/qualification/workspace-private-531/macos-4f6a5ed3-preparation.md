@@ -82,6 +82,12 @@ The hash-bound request records `control`, its observed `identity`, the actual
 `exploration_authority` and one `cell` with real, pinned artifacts and inventory.
 It requires an already running owned profile at `control/c`, Docker config at
 `control/docker-config`, and an empty qualification root under `control/s`.
+Before creating the session checkout, it requires a real copied `colima` on
+PATH matching the pinned executable, then checks that the guest can write the
+owned `control/s` share and read back a fresh host probe. The probe is retained
+as evidence. C0–C6 starts with `--mount none`; that profile must be stopped and
+prepared with its owned session share before a full session. These checks refuse
+with the required preparation step instead of reaching activation.
 Nerdctl intrinsic network modes carry no object ID and cannot be inspected;
 their complete structured listing participates in the baseline. Every network
 with an ID still requires inspection, and duplicate names refuse.
@@ -113,7 +119,10 @@ PATH and retain its canonical path/hash; do not bypass locking with
 `.install-identity` sidecar, alongside its binary, receipt and active version.
 The fixture's private HOME explicitly selects its backend/profile for retirement.
 After the final down, it retires only that synthetic checkout's owned data before
-requiring the original inventory. Workspace state masks carry checkout/scope
+requiring the original inventory. A failed exploration retains the fixture and
+its native resources for diagnosis; closed owner journals alone do not prove the
+baseline was restored. Down and retirement must finish on that owned checkout
+before comparing inventories. Workspace state masks carry checkout/scope
 labels through compaction and keep Compose's project-prefixed physical names
 for nerdctl's label-limited volumes. Unreferenced original declarations are
 removed, so retirement can identify the two masks after the container disappears.
@@ -177,6 +186,18 @@ the session profile. A separate audit of 580 recorded process identities across
 42 retained journals found no matching live owned process. Earlier failed
 explorations remain retained as failure evidence, including unqualified startup
 records; they are not relabelled as settled qualification.
+
+### Fresh-profile check (effigy#849)
+
+At `b502fc823`, the full unsealed entry passed on the fresh owned profile under
+`/Volumes/Stash/scratch/effigy/3328a540/QG5UJX`, started with its `s` share.
+The host and kernel proof inputs were rebuilt; the genuine #830 guest outputs,
+sidecars and original producer freshness anchor remained hash-bound. The receipt
+is `s/session-3/exploration-complete.json` below that root. Bind/reacquire,
+publication, client controls, kernel custody, crash recovery, fresh sessions and
+retirement passed, with the original native inventory restored. The profile was
+then stopped. No runtime regression or cleanup change was needed; this remains
+exploration, never sealed qualification credit.
 
 ## Historical revision notes
 
