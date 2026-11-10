@@ -302,9 +302,11 @@ fn operator_cli_reads_the_home_gateway_root_and_never_drives_it_as_a_fixture() {
     // A legacy record at the HOME root: `gateway status` can only report it if
     // it resolved that root. This process owns the pid, so nothing else is
     // stopped through it.
+    // Replace the shell: killing only a waiting shell leaves its sleep child
+    // holding the test harness's output pipes on Linux.
     let owner = std::process::Command::new("/bin/sh")
         .arg("-c")
-        .arg("sleep 120")
+        .arg("exec sleep 120")
         .spawn()
         .expect("owning process");
     let pid = format!("{}", owner.id());

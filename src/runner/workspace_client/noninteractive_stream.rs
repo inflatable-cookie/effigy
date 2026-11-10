@@ -280,8 +280,8 @@ fn read_stream(
         observe,
         root,
         run,
-        effigy_kernel::supervise::workspace_output_sequence(stream),
-        effigy_kernel::custody::Stream::Stdout,
+        effigy_kernel::supervise::OUTPUT_SEQUENCE,
+        stream,
         offset,
         OUTPUT_CHUNK,
     ) {

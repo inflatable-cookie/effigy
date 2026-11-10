@@ -2798,6 +2798,31 @@ mod tests {
 
     #[test]
     fn a_fresh_unit_directory_is_created_owner_only_under_a_permissive_umask() {
+        // umask belongs to the process, so this proof cannot share an image
+        // with fixtures concurrently constructing trusted directories.
+        const ACTOR: &str = "EFFIGY_TEST_OPERATOR_UMASK_ACTOR";
+        if std::env::var_os(ACTOR).is_none() {
+            use effigy_test_support::process::FixtureCommandExt;
+            let output = std::process::Command::new(std::env::current_exe().expect("test image"))
+                .args([
+                    "--exact",
+                    "linux_operator::tests::a_fresh_unit_directory_is_created_owner_only_under_a_permissive_umask",
+                    "--nocapture",
+                ])
+                .env_clear()
+                .env("TMPDIR", std::env::temp_dir())
+                .env(ACTOR, "1")
+                .output_owned()
+                .expect("bounded umask proof child");
+            assert!(
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+                "umask proof failed: stdout={}; stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
         with_run(|run, cx| {
             let home = tempfile::tempdir().unwrap();
             let binary = installed_binary(home.path());
@@ -4170,8 +4195,19 @@ mod tests {
 
             // A unit that already names a link is stale, not installed.
             std::fs::create_dir_all(&paths.user_dir).unwrap();
+            std::fs::set_permissions(&paths.user_dir, std::fs::Permissions::from_mode(0o755))
+                .unwrap();
             std::fs::write(&paths.unit, unit_definition(&link, home.path()).unwrap()).unwrap();
+            std::fs::set_permissions(&paths.unit, std::fs::Permissions::from_mode(0o644)).unwrap();
             enable_link(&paths);
+            assert_eq!(
+                std::fs::metadata(&paths.user_dir).unwrap().mode() & 0o777,
+                0o755
+            );
+            assert_eq!(
+                std::fs::metadata(&paths.unit).unwrap().mode() & 0o777,
+                0o644
+            );
             assert_eq!(observe_unit(&paths, uid), UnitState::Stale);
             let status = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
             assert_eq!(status.unit, UnitState::Stale);

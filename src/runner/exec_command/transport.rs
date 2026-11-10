@@ -741,13 +741,20 @@ pub(in crate::runner) fn copy_file_into_service(
     host_source: &Path,
     container_dest: &str,
 ) -> Result<(), RunnerError> {
-    let mut args = vec![OsString::from("cp")];
-    args.push(OsString::from(host_source));
-    args.push(OsString::from(format!("{container_id}:{container_dest}")));
-
-    let (program, resolved_args) = copy_file_into_service_invocation(repo_root, policy, &args)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let output = run_command_capture_allow_failure(repo_root, program.as_os_str(), &resolved_args)?;
+    let (program, resolved_args, stdin_file) = copy_file_into_service_invocation(
+        repo_root,
+        policy,
+        container_id,
+        host_source,
+        container_dest,
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let output = run_command_capture_allow_failure_with_stdin(
+        repo_root,
+        program.as_os_str(),
+        &resolved_args,
+        stdin_file.as_deref(),
+    )?;
     if !output.status.success() {
         return Err(RunnerError::TaskCommandFailure {
             command: format!(
@@ -775,30 +782,30 @@ pub(in crate::runner) fn copy_file_into_service_bounded(
     container_dest: &str,
     budget: &mut BoundedCommandBudget,
 ) -> Result<(), RunnerError> {
-    let container_id = target_id;
-    let copy_args = [
-        OsString::from("cp"),
-        host_source.as_os_str().to_os_string(),
-        OsString::from(format!("{container_id}:{container_dest}")),
-    ];
-    let (program, args) = copy_file_into_service_invocation(repo_root, policy, &copy_args)
-        .map_err(|_| {
-            bounded_phase_error(
-                policy,
-                service,
-                budget,
-                BoundedCommandPhase::WorkspacePreparation,
-                "workspace_preparation_failed",
-                "bounded container command could not resolve workspace artifact copy",
-                None,
-            )
-        })?;
+    let (program, args, stdin_file) = copy_file_into_service_invocation(
+        repo_root,
+        policy,
+        target_id,
+        host_source,
+        container_dest,
+    )
+    .map_err(|_| {
+        bounded_phase_error(
+            policy,
+            service,
+            budget,
+            BoundedCommandPhase::WorkspacePreparation,
+            "workspace_preparation_failed",
+            "bounded container command could not resolve workspace artifact copy",
+            None,
+        )
+    })?;
     let copy_capture = budget
         .run_command(
             repo_root,
             program.as_os_str(),
             &args,
-            None,
+            stdin_file.as_deref(),
             &[],
             BoundedCommandPhase::WorkspacePreparation,
         )
@@ -820,19 +827,52 @@ pub(in crate::runner) fn copy_file_into_service_bounded(
 pub(super) fn copy_file_into_service_invocation(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    args: &[OsString],
-) -> Result<(OsString, Vec<OsString>), effigy_containers::ContainerManagerError> {
+    target_id: &str,
+    host_source: &Path,
+    container_dest: &str,
+) -> Result<
+    (OsString, Vec<OsString>, Option<std::path::PathBuf>),
+    effigy_containers::ContainerManagerError,
+> {
+    let backend = resolve_compose_backend_for_repo(repo_root, policy);
+    let (args, stdin_file) = match backend {
+        ComposeBackend::ColimaNerdctl => (
+            [
+                "exec",
+                "-i",
+                "--user",
+                "0",
+                target_id,
+                "sh",
+                "-c",
+                "umask 077; set -C; cat > \"$1\"",
+                "effigy-stage",
+                container_dest,
+            ]
+            .map(OsString::from)
+            .to_vec(),
+            Some(host_source.to_path_buf()),
+        ),
+        ComposeBackend::Docker => (
+            vec![
+                "cp".into(),
+                host_source.as_os_str().to_owned(),
+                format!("{target_id}:{container_dest}").into(),
+            ],
+            None,
+        ),
+    };
+    // Colima's cp reads VM paths, not arbitrary host paths. Stream into an
+    // exclusive private staging file on the already verified exact target;
+    // stdin remains inside the same caller deadline and process supervision.
     let mut detection = ContainerBackendDetection::from_env_and_path();
-    detection.backend_override = Some(match resolve_compose_backend_for_repo(repo_root, policy) {
+    detection.backend_override = Some(match backend {
         ComposeBackend::Docker => BackendId::docker_compose(),
         ComposeBackend::ColimaNerdctl => BackendId::colima_nerdctl(),
     });
-    ContainerManager::defaults().runtime_process_invocation(
-        &detection,
-        policy.profile.as_str(),
-        "docker",
-        args,
-    )
+    ContainerManager::defaults()
+        .runtime_process_invocation(&detection, policy.profile.as_str(), "docker", &args)
+        .map(|(program, args)| (program, args, stdin_file))
 }
 
 pub(super) fn parse_compose_exec_args(args: &[OsString]) -> Result<ParsedComposeExec, RunnerError> {
@@ -904,14 +944,6 @@ pub(super) fn parse_compose_exec_args(args: &[OsString]) -> Result<ParsedCompose
             .ok_or_else(|| RunnerError::task_invocation("missing exec target service"))?,
         command,
     })
-}
-
-pub(super) fn run_command_capture_allow_failure(
-    repo_root: &Path,
-    program: &OsStr,
-    args: &[OsString],
-) -> Result<Output, RunnerError> {
-    run_command_capture_allow_failure_with_stdin(repo_root, program, args, None)
 }
 
 pub(super) fn run_command_capture_allow_failure_with_stdin(
@@ -1263,7 +1295,9 @@ mod capture_deadline_tests {
         let (sender, receiver) = mpsc::channel();
         {
             let root = root.clone();
+            let clock = _controlled.shared();
             thread::spawn(move || {
+                let _clock = clock.enter();
                 let result = run_command_capture_until(
                     &root,
                     OsStr::new("/bin/sh"),

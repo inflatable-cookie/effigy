@@ -279,6 +279,21 @@ impl GateGuard {
         Ok(copies)
     }
 
+    /// The foreground owner proved every workload and descendant closed and
+    /// waited for its exact backup to exit. Remaining inherited descriptions
+    /// can only be incidental fork copies, so they must not retain this gate.
+    /// Never call on failed/unknown custody closure or an unconfirmed descendant.
+    pub(crate) fn release_closed_custody(&mut self) {
+        for file in self
+            .gates
+            .iter_mut()
+            .map(|(_, file)| file)
+            .chain(self.scopes.iter_mut().map(|(_, file)| file))
+        {
+            file.unlock_on_drop = true;
+        }
+    }
+
     pub fn ids(&self) -> impl Iterator<Item = &ResourceId> {
         self.gates.iter().map(|(id, _)| id)
     }

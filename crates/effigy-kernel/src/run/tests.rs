@@ -1161,6 +1161,29 @@ fn gateway_operator_events_write_one_private_record_per_action() {
 
 #[test]
 fn gateway_operator_new_log_is_private_under_restrictive_umask() {
+    // A restrictive umask must affect only this proof's process, never a
+    // concurrently running fixture's files or directories.
+    if std::env::var_os("EFFIGY_TEST_ISOLATED_OPERATOR_UMASK").is_none() {
+        use effigy_test_support::process::FixtureCommandExt;
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "run::tests::gateway_operator_new_log_is_private_under_restrictive_umask",
+                "--nocapture",
+            ])
+            .env_clear()
+            .env("TMPDIR", std::env::temp_dir())
+            .env("EFFIGY_TEST_ISOLATED_OPERATOR_UMASK", "1")
+            .output_owned()
+            .unwrap();
+        assert!(
+            output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "isolated operator umask proof failed: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
     use std::os::unix::fs::PermissionsExt;
 
     let fixture = effigy_test_support::Fixture::new("gateway-operator-umask-").unwrap();

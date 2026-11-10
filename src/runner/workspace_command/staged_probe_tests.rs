@@ -921,7 +921,9 @@ fn controlled_staged_deadline_still_expires_after_backend_start() {
     let spawns = backend.spawns.clone();
     // The controller always advances (even if launch fails), and joins before
     // assertions/root cleanup. Capture itself owns termination and reaping.
+    let clock = _clock.shared();
     let controller = std::thread::spawn(move || {
+        let _clock = clock.enter();
         let wait_until = Instant::now() + Duration::from_secs(5);
         while !spawns.exists() && Instant::now() < wait_until {
             std::thread::sleep(Duration::from_millis(1));

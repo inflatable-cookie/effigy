@@ -284,6 +284,24 @@ fn finish_gateway_route_registration(
     rows: &[RunningComposeContainer],
     on_wait: &mut dyn FnMut(GatewayPortWait<'_>),
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
+    finish_gateway_route_registration_with_tls(
+        repo_root,
+        policy,
+        binding,
+        rows,
+        on_wait,
+        &mut ensure_gateway_tls_cert,
+    )
+}
+
+fn finish_gateway_route_registration_with_tls(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    binding: Option<&effigy_containers::exec::VerifiedComposeContainer>,
+    rows: &[RunningComposeContainer],
+    on_wait: &mut dyn FnMut(GatewayPortWait<'_>),
+    ensure_tls: &mut dyn FnMut(&str) -> Result<(), RunnerError>,
+) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
     if let Some(binding) = binding {
         on_wait(GatewayPortWait::ConfirmingOwnership);
         binding.reverify(
@@ -314,7 +332,7 @@ fn finish_gateway_route_registration(
     validate_gateway_routes_against_host_listeners(policy, &routes)?;
     on_wait(GatewayPortWait::ReconcilingRoutes);
     let route_table_path = gateway_route_table_path()?;
-    reconcile_gateway_routes_guarded(&route_table_path, repo_root, &routes)?;
+    reconcile_gateway_routes_with_tls(&route_table_path, repo_root, &routes, ensure_tls)?;
     Ok(routes)
 }
 
@@ -631,13 +649,14 @@ fn reconcile_gateway_routes(
     repo_root: &Path,
     desired: &[RegisteredGatewayRoute],
 ) -> Result<(), RunnerError> {
-    reconcile_gateway_routes_guarded(path, repo_root, desired)
+    reconcile_gateway_routes_with_tls(path, repo_root, desired, &mut ensure_gateway_tls_cert)
 }
 
-fn reconcile_gateway_routes_guarded(
+fn reconcile_gateway_routes_with_tls(
     path: &Path,
     repo_root: &Path,
     desired: &[RegisteredGatewayRoute],
+    ensure_tls: &mut dyn FnMut(&str) -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
     EndpointStore::for_routes(path).routes(|table| {
         let project_path = repo_root.display().to_string();
@@ -664,7 +683,7 @@ fn reconcile_gateway_routes_guarded(
         let desired = desired.as_slice();
         validate_gateway_tcp_alias_bindings_in_table(table, repo_root, desired)?;
         for route in desired.iter().filter(|route| route.tls) {
-            ensure_gateway_tls_cert(&route.domain)?;
+            ensure_tls(&route.domain)?;
         }
         let desired_domains = desired
             .iter()

@@ -465,6 +465,28 @@ mod tests {
         }
     }
 
+    /// Interrupt cleanup deliberately closes the process-wide registry forever.
+    /// Exercise it in a fresh process so sibling tests cannot close each
+    /// other's registry or kill their owned commands.
+    fn run_cleanup_isolated(name: &str) -> bool {
+        const CHILD: &str = "EFFIGY_DEPS_CLEANUP_TEST";
+        if std::env::var(CHILD).as_deref() == Ok(name) {
+            return false;
+        }
+        let output = Command::new(std::env::current_exe().expect("test binary"))
+            .args(["--exact", name, "--nocapture"])
+            .env(CHILD, name)
+            .output()
+            .expect("isolated cleanup test");
+        assert!(
+            output.status.success(),
+            "{name}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        true
+    }
+
     #[test]
     fn expired_deadline_times_out_without_spawning() {
         let process = BoundedReadOnlyProcess::new(
@@ -554,6 +576,11 @@ mod tests {
 
     #[test]
     fn a_spawn_that_has_not_published_its_pid_is_still_stopped_by_cleanup() {
+        if run_cleanup_isolated(
+            "process::tests::a_spawn_that_has_not_published_its_pid_is_still_stopped_by_cleanup",
+        ) {
+            return;
+        }
         // The window this covers: `spawn` returned, so the child is running,
         // but its PID has not reached the registry that cleanup reads. The
         // child is started the way the owned path starts one, in its own
@@ -589,6 +616,10 @@ mod tests {
 
     #[test]
     fn no_child_can_start_after_interrupt_cleanup_begins() {
+        if run_cleanup_isolated("process::tests::no_child_can_start_after_interrupt_cleanup_begins")
+        {
+            return;
+        }
         let slot = begin_spawn().expect("a spawn is allowed before cleanup");
         drop(slot);
         crate::process::interrupt_cleanup(|| ());

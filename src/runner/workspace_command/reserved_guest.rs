@@ -655,12 +655,9 @@ fn allocate_generation(guest: &mut dyn GuestWorkspace) -> Result<u64, RunnerErro
         generation = generation.checked_add(1).ok_or_else(|| {
             RunnerError::task_invocation("workspace context generations exhausted")
         })?;
-        // An interrupted publication can leave a private root-owned object.
-        // Its existence is a metadata question, independent of whether the
-        // workspace user can yet read its bytes.
-        if guest.file_sha256(&context_path(generation))?.is_none()
+        if guest.read_file(&context_path(generation))?.is_none()
             && guest
-                .file_sha256(&format!("/run/effigy/objects/enrol/{generation}"))?
+                .read_file(&format!("/run/effigy/objects/enrol/{generation}"))?
                 .is_none()
         {
             return Ok(generation);

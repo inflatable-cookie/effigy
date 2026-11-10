@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-11-08
+Last Updated: 2026-11-10
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -30,6 +30,53 @@ launched through a TUI, a plain shell, or a one-shot bootstrap path.
 
 This contract exists to keep one explicit runtime guarantee across those
 surfaces.
+
+Colima profile metadata and managed configuration use the explicit
+`COLIMA_HOME` namespace, falling back to `HOME/.colima` only when it is unset
+or empty. A profile name never selects configuration from another home.
+For a declared, resolved staged workspace, the source bind and checkout build
+context use the owned staged tree. Builder runtime preflight checks the staged
+Compose inputs before any runtime effect; the original temporary checkout path
+is not treated as a guest bind. Mount-size and ownership checks still apply.
+
+Detached workspace supervisors bind explicit host routing in their post-preparation
+declaration: Colima home/cache, Docker config, temporary paths and the supported
+artifact-source choice. These values cross the cleared kernel environment; no
+arbitrary environment key or credential does. Paths must be absolute without
+parent traversal. A changed routing declaration refuses before publication.
+
+Generated workspace state-mask volumes retain their checkout/scope ownership
+labels after name compaction and let Compose derive their physical names from
+its scoped project. Nerdctl omits custom volume labels, so its ordinary runtime
+ownership rule uses that project-prefixed name. An original mask declaration
+with no remaining service reference is removed across the ordered overlays, so Compose creates
+one owned physical mask per target. Explicit borrowed/shared volumes retain
+their existing ownership semantics.
+
+Host-to-container staging on Colima streams the host file through stdin to
+an exclusive mode-0600 guest staging path on the verified full container ID.
+It never assumes Colima's `nerdctl cp` can read an unshared host path. Optional
+guest file, link and digest reads carry explicit presence framing in successful
+replies; a nonzero transport exit never supplies absence. This preserves empty
+and binary file contents despite Colima collapsing guest exit codes to host 1.
+The same caller deadline and process supervision cover the transfer; existing paths
+refuse before replacement. Docker keeps its native copy path. Selector writes
+prepare their missing parent directories inside the same verified guest and
+operation budget before replacement; creating immutable object directories does
+not establish the legacy entry or binary-selector directories.
+
+Nerdctl may inspect a container's digest-pinned image as a local tag. For a new
+full container ID in the guarded creation window, that observed spelling must
+independently resolve to the same config ID as the frozen rendered reference.
+The receipt records reference-resolution evidence, without claiming a container
+image ID. Reobservation checks both mappings again; an attached alias, changed
+resolution or unknown lookup refuses. Docker retains its container-ID comparison.
+
+A retained artifact builder keeps its strict ownership/capability witness across
+build phases. Each reinspection uses that operation's caller deadline unchanged;
+the initial inventory deadline is not a lifetime limit for a later source probe,
+compile or artifact transfer. An expired current deadline still refuses before
+spawning, and changed identity or mount/capability witnesses still refuse.
 
 For the Colima nerdctl compose fallback, runtime preflight estimates the
 `nerdctl/mounts` label from recognized explicit primary-service bind and volume
@@ -423,6 +470,10 @@ The refusal names the status it answered, the status the manifest required and
 the same bounded child-output tail, and the declared budget is not spent on a
 question the child has already answered: a `500` where `200` is required ends
 the start, it does not wait out `timeout_secs`.
+
+A terminal `stopped` listener record ends an in-flight readiness wait immediately.
+The supervisor's process identity can remain observable as a Linux zombie after
+stop; that does not make the listener still starting or spend its readiness budget.
 
 ## Per-route exposure
 
@@ -1477,11 +1528,6 @@ Retirement also releases the checkout's gateway routes by checkout path alone,
 which frees its loopback address with them. Its certificates stay as a cache
 the daemon prunes by age. A second retire with nothing left is success and
 reports `idempotent: true`.
-
-Generated read-only workspace state and vault masks carry the checkout and
-scope ownership labels when the rewrite creates their named volumes. They are
-disposable and remain identifiable by retirement after containers are removed.
-The rewrite does not claim an existing user or borrowed volume.
 
 A container, volume or network of one of this checkout's Compose projects that
 carries no Effigy checkout label is reported under `kept` and left alone, never

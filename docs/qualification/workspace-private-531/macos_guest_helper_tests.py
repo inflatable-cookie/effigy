@@ -23,7 +23,7 @@ import macos_stage_executor as ex  # noqa: E402
 
 
 NONCE = 'ab' * 32
-SOURCE = '69239cd820934ca2f0b0e087a86fbb291fa3aad6b231e0b54c70537c08620985'
+SOURCE = '45fc7d75360706edf2aa944d670bde41615f92522c9adbe6f4108202d9526296'
 
 
 def fake_stat(pid, pgid, session, start, ppid=0):
@@ -185,6 +185,7 @@ class ProcIdentityTests(unittest.TestCase):
         self.add_pid(1, 1, 1, 1)
         broken = self.proc / '2'
         broken.mkdir()
+        (broken / 'stat').write_text('malformed')
         self.assertIsNone(helper.group_members(1, exclude=set(), proc=str(self.proc)))
 
     def test_group_members_returns_matching_pids(self):
@@ -256,12 +257,33 @@ class ProcIdentityTests(unittest.TestCase):
         with mock.patch.object(helper, 'linux_identity', identity), \
                 mock.patch.object(helper, 'become_child_subreaper', subreaper), \
                 mock.patch.object(helper, 'leftover_after_wait', leftover), \
+                mock.patch.object(helper.os, 'waitpid', return_value=(0, 0)), \
+                mock.patch.object(helper.time, 'monotonic', side_effect=[0, 3]), \
                 mock.patch.object(subprocess, 'Popen', popen):
             _parent, out, err, trailer = helper.run_contained(['true'], proc=str(self.proc))
         self.assertEqual(order, ['subreaper', 'popen', 'wait', 'leftover'])
         self.assertEqual((out, err), (b'out', b'err'))
         self.assertFalse(trailer['group_empty'])
         self.assertFalse(trailer['unreaped'])
+
+    def test_adopted_child_settles_and_is_reaped_without_name_exemptions(self):
+        ident = {'pid': 10, 'pgid': 10, 'session_id': 10, 'start_time': 1, 'boot_id': 'b'}
+        child = mock.Mock(pid=11, returncode=0)
+        child.communicate.return_value = (b'out', b'err')
+        with mock.patch.object(helper, 'linux_identity', return_value=ident), \
+                mock.patch.object(helper, 'become_child_subreaper'), \
+                mock.patch.object(helper, 'leftover_after_wait', side_effect=[[12], []]), \
+                mock.patch.object(helper.os, 'waitpid', side_effect=[(12, 0), (0, 0), (0, 0)]) as reap, \
+                mock.patch.object(subprocess, 'Popen', return_value=child):
+            _, _, _, trailer = helper.run_contained(['true'], proc=str(self.proc))
+        self.assertTrue(trailer['group_empty'])
+        self.assertEqual(trailer['remaining_pids'], [])
+        self.assertEqual(reap.call_count, 3)
+
+    def test_exited_unrelated_process_during_walk_is_not_an_unknown_member(self):
+        self.add_pid(1, 1, 1, 1)
+        (self.proc / '2').mkdir()  # stat disappeared with the process
+        self.assertEqual(helper.group_members(1, exclude=set(), proc=str(self.proc)), [1])
 
     def test_run_contained_refuses_when_subreaper_fails(self):
         ident = {'pid': 10, 'pgid': 10, 'session_id': 10, 'start_time': 1, 'boot_id': 'b'}

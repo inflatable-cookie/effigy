@@ -292,8 +292,12 @@ lock with a dead/unverifiable named owner remains held; the guard may refresh
 its own identity in the diagnostic body without creating durable authority. No
 stale-file unlink or PID-only reclaim exists. Owner and guard retain the group
 and unreaped-child/verified-anchor evidence through descendant and stream closure,
-even after leader exit. Normal settle closes the in-memory effects before
-unlocking. Owner EOF or terminal HUP/INT/TERM makes the guard stop the retained
+even after leader exit. Normal settle explicitly releases its gate only after
+complete in-memory effects, positive completion of every descendant, and the
+exact backup’s successful exit. Incidental pre-exec fork copies cannot retain
+a completely settled run; failed, unknown or unconfirmed custody never enables
+that release. Child completion propagates only after the same descendant
+closure proof. Owner EOF or terminal HUP/INT/TERM makes the guard stop the retained
 group within the cleanup budget, using the same positive evidence as the
 owner, then exit. While cleanup runs it keeps the owner gate held; it never
 unlocks on owner EOF alone. The owner similarly keeps custody if its guard dies.
@@ -822,7 +826,11 @@ read-only connection (`mode=ro`), so a writer beside the read is
 no obstacle: WAL already gives one consistent committed state, and a crashed
 writer's uncommitted frames are invisible to the reader and left untouched. The
 read never asks for a read-only shared-memory index: that left the index
-unwritable and the next write in this process failed. A
+unwritable and the next write in this process failed. SQLite may update read
+marks in an existing shared-memory index, including its modification time;
+this is WAL synchronization, not a persistent state write. Its type, owner,
+mode, identity and length remain unchanged. No read may create a side file or
+change the database or WAL bytes or metadata. A
 checkpointed store without side files is an immutable open, which needs no lock
 and no index. A read that fails is `Unknown`: the foreground path warns once and
 proceeds, and `runs` reports the journal as unavailable rather than refusing.
@@ -1264,9 +1272,11 @@ workload closure and capture drain are verified. With an anchor, TERM plus
 CONT and then KILL target individually inventoried workload identities,
 checking the anchor and membership before every signal. KILL inventories
 repeat until closure, covering children forked during an earlier inventory.
-The anchor itself is excluded from workload closure and killed last, after
-no live workload member remains. Group closure is then verified, and only
-then is the leader reaped. Output EOF and exit are separate events; capture
+The anchor itself is excluded from workload closure and retires last: an active
+anchor completes its own positive group observation; a stopped anchor needs the
+verified signal path because it cannot observe its group. The owner still
+requires a positive full-group closure observation, within its cleanup context,
+after no live workload member remains. Only then is the leader reaped. Output EOF and exit are separate events; capture
 drains under its own deadline. Unanchored custody retains the unreaped-leader
 group-signal path. `ESRCH` proves absence; unreadable observations remain
 `Unknown`. Leader exit alone is never closure. A stop counts its window from
@@ -1568,16 +1578,18 @@ only where identity, byte offset and text exactly match its canonical read;
 missing, stale or expired style data renders plain. TUI typed ingest renders
 those spans directly, without ANSI interpretation or a second redactor.
 
-Tom's 2026-10-31 launcher ruling classifies ambient `CLAUDE_CODE_*` as a
-non-secret switch namespace only for the exact values `0`, `1`, `true`, `false`.
-Switch names are bounded to 128 ASCII alphanumeric/underscore bytes with a
-nonempty suffix. Case-insensitive `TOKEN`, `KEY`, `SECRET`, `PASSWORD`,
-`CREDENTIAL` and `AUTH` name segments override the namespace. Schema sensitivity
-and aliases containing a known secret also override all metadata exceptions.
-Non-boolean values and unknown names outside the namespace remain Secret;
-the established exact launcher flags keep their closed-domain classification.
-The custody argv guard is unchanged. This policy avoids an expanding list of
-individual Claude flags without trusting arbitrary environment values.
+Ambient host-process values without schema or literal provenance qualify for
+secret protection only at eight or more bytes, excluding ASCII decimal integers
+(an optional `+` or `-` followed by digits). Short switches and numeric settings
+cannot provide useful credential evidence: matching them as substrings would
+refuse unrelated argv and corrupt ordinary output. This is a classification
+boundary, not a credential-strength guarantee. Applications with short or numeric
+credentials must declare them sensitive in their environment schema.
+Schema-sensitive values and Effigy-supplied `EnvValue::Secret` values retain full
+argv refusal and output redaction at every nonempty length. Their aliases also
+remain protected, including aliases in otherwise plain metadata or literals.
+The kernel custody guard itself applies to every classified secret unchanged;
+no launcher namespace or growing switch-name exception is needed.
 
 Canonical shared-lock reads intentionally return `WouldBlock` during writer
 commit. TUI followers retry on their next poll without blocking all panes;
@@ -3262,10 +3274,6 @@ lane's, not this contract's.
   workspace user in guest-private storage (`/run/effigy/enrol/`), as a
   journalled file effect of the Prepare run. It is bound to the environment
   generation and the container identity.
-  The publisher hashes the private object as root before ownership transfer;
-  this returns a digest, never credential bytes. Generation allocation uses
-  metadata so an unreadable orphan from an interrupted publication is retained
-  and skipped rather than mistaken for absence.
 - It authorises session enrolment only, never an effect. Enrolment is a
   Mutate request to the session run (§8.3): the host verifies the
   environment generation is current and the session run is live, then
@@ -3346,15 +3354,6 @@ the missing credential named, and local reads keep working.
     artifact. `download` takes the release asset on a release host and refuses on
     a development host, whose release would not be its artifact. A `+local.`
     host with no provable checkout refuses under `auto` and `download`.
-- The detached serving host retains the caller's `DOCKER_CONFIG`, `COLIMA_HOME`
-  and temporary-directory paths, and the parsed `auto`/`local`/`download`
-  artifact policy across its cleared environment. Config contents, arbitrary
-  ambient variables and credentials are not forwarded through this lane.
-- Additive staging creates the fixed selector parent directories before the
-  commit and selector CAS. A fresh image need not contain the legacy binary
-  directory; staging directories does not select an executable or context.
-- Live guest identity uses the active protocol version, without the CLI display
-  prefix; version, executable digest and protocol still compare exactly.
 - Publication consumes only current bytes. It re-checks the target and the
   install identity of the artifact the host acquired, authenticates the bytes
   against their receipt, and refuses when either changed. It never builds or
@@ -3556,8 +3555,13 @@ impl ProcGuestIdentity { fn process() -> Self; }
 ```
 
 Requests take container/boot claims from that observation. The published context is a host claim to compare against it, never
-independent evidence of the caller. The candidate independent source is the full 64-hex id in a backend-qualified kernel
-`/proc/self/mountinfo` root under `containers/`; boot is the canonical UUID in `/proc/sys/kernel/random/boot_id`. Exactly one
+independent evidence of the caller. The running binary reports the same active-version value the producer pins; display-only
+formatting such as a leading `v` never enters that wire identity. Version and protocol comparisons remain exact; credential
+pins compare as the shared `Digest` value, including the producer's bare-hex v2 encoding.
+The candidate independent source is the full 64-hex id in a backend-qualified kernel
+`/proc/self/mountinfo` root under `containers/`. It is the metadata file's immediate parent directory; backend namespace
+components between `containers/` and that ID are allowed. A hex value in a namespace, mountpoint or source column is not identity.
+Boot is the canonical UUID in `/proc/sys/kernel/random/boot_id`. Exactly one
 distinct full id is required; zero, conflicting, unreadable or malformed facts refuse before credentials. Consistent with §8.2,
 `/proc/self/cgroup` is diagnostic only: reading a full id there is still a cgroup claim, never independent placement evidence,
 even when it matches the context. Cgroup-only availability must refuse `Unproven`; neither qualification nor context agreement
@@ -4236,20 +4240,6 @@ another lane's.
   and cleanup as `Run::begin`; it never mints a run id, never swaps the ticket and never
   calls `Run::begin`. `run::reserve` still re-checks the durable reservation in the
   admission transaction, so the ticket alone binds nothing.
-- **Standard tasks use that same reservation.** The standard pipeline also passes the
-  ticket and catalog snapshot to `TaskRun::begin_detached`; managed probing claims its
-  supervisor owner only after selecting a managed plan. `task_engine::workspace` keeps
-  the standard run's existing owning channel and open run handle on the supervisor
-  thread. Plain commands, env-schema commands and remote waits poll it; in-process
-  nested tasks observe the same owner. Output uses the canonical separate streams,
-  with classified secrets supplied before capture; later unknown secret provenance
-  refuses before spawn. The merged canonical log stays at sequence zero. Separate
-  stdout/stderr projections use reserved negative slots with independent atomic
-  durable extents, after the same merged redaction and another redaction of each
-  projection. Workspace output reads those projections, preserving separate cursors
-  without changing the merged capture's existing readers. Caller loss remains `OwnerLost`,
-  and completion is announced only after kernel settlement and capture flush. No
-  second store, admission or run identity is introduced by this adapter.
 - **Shapes that cannot honour the exact run refuse before any effect.**
   `task_engine::run::workspace_admission_refusal` rejects an engine-internal or standalone
   run, a nested task run, a caller-keyed run and a run that would take a task-declared
@@ -5130,6 +5120,41 @@ not hold the writer or share the liveness pipe. `resume_owner` reopens
 the owning client's handle and no other. Both refuse a run this session did not
 admit and grant nothing: the dispatcher's grant check remains the authority.
 `test:kernel:workspace` owns these proofs.
+
+The reserved runner accepts managed runs and single host shell commands. Shell
+commands retain the dispatcher's exact resolution and ticket, run without a PTY
+and with stdin at EOF, and use the detached owner's custody, signal and owner-loss
+settlement. Standard sequences, container placement and schema `exec()` refuse
+before an unreserved fallback can run. Declarative schema and task secret values
+enter the existing classified redaction boundary. Workspace admission acknowledges
+only after capture initialization: stdout and stderr are separately committed
+projections of one merged sanitize/redact pass, each redacted again after projection.
+Their distinct format markers prevent a missing stream from masquerading as the
+older merged log's empty stderr. A line over the run's original line bound marks
+capture incomplete. Ordinary managed capture keeps its merged representation.
+Log commit contention and rotation have a typed busy result, retried for at most
+one second within the original observation deadline. Corruption still refuses
+immediately. A normally exited reserved shell flushes capture before committing
+its terminal outcome, so the final reader cannot outrun its last pipe bytes.
+Once a Level 1 connection observes its exact keyed terminal outcome,
+it drops that run's custody-only owning handle instead of requesting EOF release of
+compacted attachment rows. Pending uncertain releases remain fenced. A command
+that closes before owner attachment resumes still returns its first run ID for
+output drain only when the keyed completion, original invocation and acknowledged
+fence all match; replay continues to return the recorded outcome without admission.
+For a live run, the supervisor reads the typed durable workspace-owner release
+before interpreting its generic stop request. EOF remains `OwnerLost`, while an
+acknowledged detach leaves the workload running.
+
+Supervisor pipe capture commits at most 64 KiB of observed-order tagged reads per
+window, with at most five milliseconds of coalescing before incremental output
+is released. Workspace stream projections share that window and retain their own
+redaction and durable extents. The transport idle timeout and log retention limits
+are unchanged. Successful production handoff separates the finite publication
+operation from the adopted session's open serving lifetime, retaining cancellation,
+limits, placement and effect class. Expired or cancelled publication refuses the
+handoff. Each request takes a fresh ten-second child phase for admission and
+observation. The fixed-context channel entry never renews a caller's deadline.
 
 **Lane A dispatcher.** `crates/effigy-kernel/src/workspace_channel.rs` owns the
 v1 wire, its framing and limits, the server pin check, negotiation, grants,

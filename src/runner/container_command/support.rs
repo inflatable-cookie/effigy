@@ -1819,10 +1819,14 @@ mod tests {
                     crate::runner::exec_command::controlled_capture_clock::advance_controlled_capture_clock(self.0);
                 }
             }
-            let call = scope.spawn(|| super::run_shared_compose_bounded(
-                &root, &policy, &args, super::ContainerAction::Activate,
-                "shared deadline proof", None, std::time::Duration::from_millis(300),
-            ));
+            let clock = _clock.shared();
+            let call = scope.spawn(move || {
+                let _clock = clock.enter();
+                super::run_shared_compose_bounded(
+                    &root, &policy, &args, super::ContainerAction::Activate,
+                    "shared deadline proof", None, std::time::Duration::from_millis(300),
+                )
+            });
             let expire = Expire(deadline + std::time::Duration::from_secs(20));
             let ready_bound = started + std::time::Duration::from_secs(20);
             while !pid_file.exists() {

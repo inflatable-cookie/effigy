@@ -247,28 +247,35 @@ still exercises the real stack-to-listener switch and its ownership assertions.
 
 ## The fixture CLI environment
 
-A fixture's `effigy` CLI processes never inherit the ambient coding-agent and
-queue-harness environment. Those values (`AI_AGENT=pi`, `NORTHSTAR_BASE_BRANCH`,
-`CLICOLOR=1`, session paths and tokens) carry no provenance, so Effigy's child
-environment classifier marks them secret; a short one then refuses every host
-process whose argv mentions it (the substring `pi` is inside `api`, the digit
-`1` is inside almost any hashed binary path), and output redaction rewrites
-the same values inside a child's captured output, where the proofs read
-published domains and recorded pids.
-`tests/gateway_private.rs::fixture_environment_command` and the managed-matrix
-case command remove the families (the whole `CARGO_*` family - the
-fixture binary's path is itself under the cargo target directory, so
-`CARGO_TARGET_DIR` and nextest's `CARGO_BIN_EXE_*` collide with any argv
-that names the binary - plus `NEXTEST_*`,
-`CLAUDE_CODE_*`, `PI_*`, `PASEO_*`, `NORTHSTAR_*`, `AI_AGENT`, `CLAUDECODE`,
-`CLAUDE_AGENT_SDK_VERSION`, `CLICOLOR`, `CLICOLOR_FORCE`, `FORCE_COLOR`,
-`LS_COLORS`, `LSCOLORS`) before any fixture `effigy` invocation, and every
-daemon, supervisor and workload child inherits the stripped environment.
-In-process runner fixtures share the test process's own environment, so an
-ambient-sensitive one strips the same families for its duration through
-`contract_test_support::strip_ambient_agent_environment`. A new ambient
-variable of this class is added to the strip list, not worked around in a
-proof.
+Fixtures that need a clean CLI environment clear it and copy only their declared
+host-tool and runtime inputs. `fixture_environment_command`, managed-matrix case
+commands and in-process `clean_fixture_environment` use an allowlist; new
+agent, runner or queue variables cannot silently enter a fixture. Fixture-specific
+values are supplied explicitly after that boundary. Do not extend a strip list
+when a new ambient variable appears.
+
+The product classifier independently handles ordinary ambient settings: values
+shorter than eight bytes and signed ASCII decimal integers are not inferred to be
+secrets. Schema-declared sensitive values and Effigy-injected secrets keep full
+protection at every length, as do aliases containing their bytes (contract 052).
+Tests of that boundary construct classification inputs directly, rather than
+relying on the test runner's environment.
+
+Native prerequisites remain part of a proof. The planner's ruling for task 812
+(2026-11-09, Nucleus question `71b475bca204ee3436eb0a4af8d3c44af8490fd9271fec08d139d3f25793f9ec`)
+permits a named prerequisite skip only when `GITHUB_ACTIONS=true` and a probe
+positively establishes that distinct loopback aliases or the selected real
+Compose backend are unavailable. Other probe errors remain failures. Local and
+milestone QA still fail when a prerequisite is missing; supported hosts execute
+every original assertion. This is not permission to substitute an adapter for a
+native-equivalence assertion.
+
+`hosted_prerequisite_skip` records the exact test, missing prerequisite and
+detection in stderr and `GITHUB_STEP_SUMMARY`; failure to publish either record
+fails the test. Narrow nextest success-output overrides expose those records in
+hosted logs. The author lists every gated test and observed skip in the PR.
+Call the helper before clearing a fixture's environment. Runner setup that
+could satisfy a prerequisite belongs to a separately approved workflow change.
 
 The disposable Docker command adapters model the production Compose
 invocation, including the detached bring-up's `--project-directory
@@ -304,6 +311,60 @@ profile mounts `/Volumes/Builds/scratch`. The profile's `colima.yaml` has
 `mounts: []`, and Effigy writes no mounts, so the change is a host edit that
 needs a profile restart. Its gate is Q-016 in `questions.md`; no repository
 change can close it.
+
+## Shared-process controls
+
+Controlled capture clocks are local to their test thread. Companion capture or
+controller threads enter an explicitly shared clock; unrelated tests keep the
+wall clock. One-shot process-global cleanup tests run in their own test process,
+and publisher fault hooks belong to the thread that installs them. Preflight
+staging hooks are bound to their owned state root, including across the sealing
+helper thread; a sibling root must never consume another fixture’s handoff. Follow retry
+budget overrides are scoped to the test thread and restored on drop. Proofs of
+fixed descriptor numbers or permanently adopted secret grants run their original
+assertions in an exact-test child process. Foreground gate controls retain an
+unrelated pre-exec fork copy through successful settlement, and separately prove
+that an unconfirmed descendant still retains its ancestors’ gates. Dispatch
+fixtures own a cleared environment through context capture and final status.
+
+All in-process fixture environment writers use the same reentrant guard. Setup
+and bounded read workers retain that ownership until their observations finish.
+Start a private server's deadline after acquiring the fixture environment, so
+waiting for another fixture cannot consume its serving budget. FIFO timeout
+fixtures release their owned writer and replace the FIFO after the assertion;
+the fragment deadline proof waits for actual read completion before teardown.
+
+Local submodule fixtures scope `GIT_ALLOW_PROTOCOL=file` under the shared
+environment guard, restoring inherited policy afterward. Fake container
+lifecycle proofs omit unrelated fixed host publications; their real health
+listeners use OS-assigned ports. Status-contract fixtures retain the explicit
+port declarations they assert. A shared CLI cohort exercises those lifecycle
+proofs together and retains the JSON failure and private backend call logs.
+
+The detached exit-141 writer waits for the returned caller to acknowledge its
+reaped client, then counts real writes at its original cadence. A fixed runtime
+does not imply a minimum number of writes on a loaded host. The proof retains
+its regular-file, no-SIGPIPE, write-count, elapsed-time and cleanup assertions.
+Terminal redaction fixtures wait for verified group closure and complete capture
+after leader exit before reading their final sink bytes. Leader exit alone does
+not prove the final PTY read or redactor flush has happened.
+A scratch-retention proof reads the allocated scratch scope directly and asserts
+that it has no kernel process effects before abandonment. Subprocess TMPDIR
+delivery and custody recovery have their own controls: recording a leader exit
+and discarding live custody does not prove recoverable group closure.
+
+An admission hook that tests EOF after report delivery consumes and records that
+complete frame before exiting without acknowledgement. Immediate exit races the
+decision poll, frame write and EOF read, so it cannot select one error branch.
+
+Umask proofs run in exact-test child processes: restoring the old mask does not
+protect another thread that creates a file during the mutation. Trusted unit
+fixtures establish and assert their directory/file permissions before testing a
+stale executable, so an unsafe directory cannot select an earlier refusal.
+
+Recorded-generation closure requires positive absence, zombie state or an
+identity mismatch. An unknown identity or state stays unresolved within the
+fixture's existing wait bound; repeated failed observations do not prove closure.
 
 ## Kernel fault fixtures
 

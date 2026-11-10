@@ -450,6 +450,7 @@ fn assert_no_value(fixture: &CustodyFixture, where_: &str) {
 
 #[test]
 fn every_data_command_route_keeps_the_password_out_of_argv_and_reports() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     for case in matrix() {
         let shared = case.route == "shared";
         let fixture = CustodyFixture::new(

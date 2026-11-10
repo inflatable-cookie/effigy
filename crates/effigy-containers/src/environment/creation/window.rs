@@ -97,8 +97,15 @@ impl CreationPreflight {
         let resolved = self.images.get(request.primary_service).ok_or_else(|| {
             CreationRefusal::Unknown("primary resolved image is unavailable".into())
         })?;
-        let identity =
-            ImageIdentity::observe(backend, &observed, reference, resolved, false, None)?;
+        let identity = ImageIdentity::observe(
+            backend,
+            &observed,
+            reference,
+            resolved,
+            false,
+            None,
+            (request.workdir, request.deadline),
+        )?;
         primary_rows(rows(backend.inventory_until(
             request.workdir,
             request.project,
@@ -353,6 +360,7 @@ impl CreationWindow {
                     &images[service],
                     !before.contains_key(&row.id.to_ascii_lowercase()),
                     hashes.get(service).map(String::as_str),
+                    (request.workdir, request.deadline),
                 )
                 .map(|identity| (service.clone(), identity))
             })
@@ -520,7 +528,9 @@ fn validate(
             .as_deref()
             .ok_or_else(|| CreationRefusal::ImageMismatch(row.name.clone()))?;
         let same = same_reference(&row.image_reference, reference);
-        if row.image_reference.is_empty() || (complete && !same) {
+        // ImageIdentity::observe performs the final reference/alias binding
+        // with the guarded window's created-ID evidence.
+        if row.image_reference.is_empty() {
             return Err(CreationRefusal::ImageMismatch(row.name.clone()));
         }
         match exact_image_id(&row.image) {

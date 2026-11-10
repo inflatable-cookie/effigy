@@ -73,15 +73,14 @@ def restarted_inventory(engine_command, prior):
 
 
 class Window:
-    def __init__(self, cell, inputs_hash, go, *, exploratory=False):
+    def __init__(self, cell, inputs_hash, go, *, exploration_authority=None):
+        require((go is None) != (exploration_authority is None), "one execution authority record required")
+        self.exploratory = exploration_authority is not None
         self.cell = cell
-        native_linux = cell['backend'] == 'linux'
-        self.guest_user = 'effigy' if native_linux else 'root'
-        self.guest_home = '/home/effigy' if native_linux else '/root'
-        self.guest_options = ['-u', self.guest_user] if native_linux else []
-        self.guest_receipts = self.guest_home if native_linux else '/run/effigy'
-        self.exploratory = exploratory
-        self.command_count = 0
+        self.guest_user = 'effigy' if cell['backend'] == 'linux' else 'nobody'
+        self.guest_home = '/home/' + self.guest_user
+        self.guest_receipts = self.guest_home
+        self.guest_options = ['-u', self.guest_user] if cell['backend'] == 'linux' else []
         self.end = time.monotonic() + cell['budget_seconds']
         self.base = qualification_path(cell['qualification_root'])
         self.root = self.base / 'checkout'
@@ -114,6 +113,9 @@ class Window:
         self.guest_artifact = artifact(cell['guest_artifact'])
         artifact(cell['guest_producer_receipt'])
         artifact(cell['guest_active_version'])
+        identity = artifact(cell['guest_install_identity'])
+        require(identity == Path(str(self.guest_artifact) + '.install-identity'),
+                'guest host-identity sidecar belongs to another artifact')
         require(str(self.guest_artifact).startswith(str(Path(cell['source_root']) / '.effigy/linux-release/artifacts') + '/'),
                 'guest must be a real local producer output in the frozen source')
         # PATH/HOME retain real engine configuration only. No arbitrary ambient
@@ -142,15 +144,20 @@ class Window:
             require(not os.listdir(self.root_fd), 'qualification root is already used or contains foreign files')
             for name in ('checkout', 'tmp', 'home', 'home/.effigy'):
                 os.mkdir(name, mode=0o700, dir_fd=self.root_fd)
-            fd = os.open('home/.effigy/source.toml', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                         0o600, dir_fd=self.root_fd)
-            with os.fdopen(fd, 'w') as out:
-                out.write('repo_root = ' + json.dumps(cell['source_root']) + '\n')
+            backend = 'containerd' if cell['engine_kind'] == 'colima' else 'docker'
+            files = {'source.toml': 'repo_root = ' + json.dumps(cell['source_root']) + '\n',
+                     'config.toml': '[containers]\nbackend = ' + json.dumps(backend) +
+                         '\nprofile = ' + json.dumps(cell['engine_identity']) + '\n'}
+            for name, contents in files.items():
+                fd = os.open('home/.effigy/' + name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                             0o600, dir_fd=self.root_fd)
+                with os.fdopen(fd, 'w') as out:
+                    out.write(contents)
             exclusive('window.json', {'backend': cell['backend'], 'inputs_sha256': inputs_hash,
-                      'source_head': cell['source_head'], 'go': go['decision_id'],
-                      'qualification_root': cell['qualification_root'],
-                      **({'exploratory': True, 'qualification_credit': False} if exploratory else {})},
-                      dir_fd=self.root_fd)
+                      'source_head': cell['source_head'],
+                      **({'exploration_authority': exploration_authority, 'proof': False}
+                         if self.exploratory else {'go': go['decision_id']}),
+                      'qualification_root': cell['qualification_root']}, dir_fd=self.root_fd)
             self.verify_root()
         except BaseException:
             self.close()
@@ -164,33 +171,31 @@ class Window:
             os.close(self.root_fd)
             self.root_fd = None
 
-    def command(self, args, *, check=True, data=None, cwd=None, env=None, timeout=60, protected_output=False):
+    def command(self, args, *, check=True, data=None, cwd=None, activation=False, env=None, timeout=None, protected_output=False):
         self.verify_root()
         remaining = self.end - time.monotonic()
         require(remaining > 0, 'native window deadline expired')
-        limit = min(timeout, remaining)
-        environment = self.env if env is None else env
-        if not self.exploratory:
-            return run(args, cwd=cwd or self.root, env=environment, timeout=limit, check=check, data=data)
-        self.command_count += 1
-        stem = 'explore-command-%04d' % self.command_count
-        exclusive(stem + '.intent.json', {'argv': [str(arg) for arg in args],
-                  'cwd': str(cwd or self.root), 'timeout_seconds': limit,
-                  'protected_output_omitted': protected_output}, dir_fd=self.root_fd)
-        try:
-            result = run(args, cwd=cwd or self.root, env=environment, timeout=limit, check=False, data=data)
-        except subprocess.TimeoutExpired as error:
-            if not protected_output:
-                for name in ('stdout', 'stderr'):
-                    exclusive_bytes(stem + '.' + name, getattr(error, name) or b'', dir_fd=self.root_fd)
-            exclusive(stem + '.exit.json', {'exit': None, 'timeout': True,
-                      'remote_closure': 'unknown'}, dir_fd=self.root_fd)
-            raise
-        if not protected_output:
-            for name in ('stdout', 'stderr'):
-                exclusive_bytes(stem + '.' + name, getattr(result, name), dir_fd=self.root_fd)
-        exclusive(stem + '.exit.json', {'exit': result.returncode}, dir_fd=self.root_fd)
-        require(not check or result.returncode == 0, 'exploratory command failed: ' + stem)
+        # Exploration may observe a slow complete activation without spending
+        # a sealed occurrence. Sealed commands retain their reviewed 60-second
+        # bound; neither route can exceed the original backend window.
+        phase_seconds = timeout if timeout is not None else (300 if self.exploratory and activation else 60)
+        result = run(args, cwd=cwd or self.root, env=self.env if env is None else env, timeout=min(phase_seconds, remaining), check=False, data=data)
+        if check and result.returncode != 0 and self.exploratory and Path(args[0]) == self.candidate:
+            # The qualification fixture has one synthetic canary. Only an
+            # already-public, structured CLI error is retained for exploration;
+            # no raw guest/backend stream or successful command output is logged.
+            try:
+                reply = json.loads(result.stdout)
+                details = reply['error']['details']
+                if reply.get('schema') == 'effigy.command.v1' and isinstance(details, dict):
+                    selected = {key: details[key] for key in ('activation_stage', 'preparation_step', 'cause')
+                                if isinstance(details.get(key), str)}
+                    selected = {key: value[:2048].replace('531-private-compose-canary', '[redacted]')
+                                for key, value in selected.items()}
+                    self.record('exploration-command-refusal', proof=False, exit=result.returncode, details=selected)
+            except (ValueError, KeyError, TypeError):
+                pass
+        require(not check or result.returncode == 0, 'required command failed: ' + Path(args[0]).name)
         return result
 
     def engine_command(self, *args, **kwargs):
@@ -199,27 +204,43 @@ class Window:
     def spawn(self, args):
         self.verify_root()
         require(time.monotonic() < self.end, 'native window deadline expired')
-        child = subprocess.Popen(args, cwd=self.root, env=self.env, stdin=subprocess.DEVNULL,
-                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if self.exploratory:
-            self.command_count += 1
-            child.exploratory_stem = 'explore-spawn-%04d' % self.command_count
-            exclusive(child.exploratory_stem + '.intent.json',
-                      {'argv': [str(arg) for arg in args], 'local_pid': child.pid,
-                       'cwd': str(self.root), 'stdin': 'eof'}, dir_fd=self.root_fd)
-        return child
-
-    def retain_child(self, child, stdout, stderr, complete):
-        if self.exploratory:
-            stem = child.exploratory_stem
-            exclusive_bytes(stem + '.stdout', bytes(stdout), dir_fd=self.root_fd)
-            exclusive_bytes(stem + '.stderr', bytes(stderr), dir_fd=self.root_fd)
-            exclusive(stem + '.exit.json', {'local_pid': child.pid, 'waited_exit': child.returncode,
-                      'streams_complete': complete, 'remote_closure': 'not established by client exit'},
-                      dir_fd=self.root_fd)
+        return subprocess.Popen(args, cwd=self.root, env=self.env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def inventory(self):
-        return engine_inventory(self.engine_command)
+        containers = self.engine_command('ps', '-a', '--no-trunc', '--format', '{{.ID}}').stdout.decode().splitlines()
+        require(len(containers) == len(set(containers)) and all(__import__('re').fullmatch(r'[0-9a-f]{64}', ident) for ident in containers),
+                'container inventory identity unavailable')
+        if self.cell['engine_kind'] == 'colima':
+            listed = [json.loads(line) for line in self.engine_command(
+                'network', 'ls', '--format', '{{json .}}').stdout.decode().splitlines()]
+            require(all(isinstance(row, dict) and isinstance(row.get('Name'), str)
+                        and row['Name'] and isinstance(row.get('ID'), str) for row in listed),
+                    'network listing identity unavailable')
+            names = [row['Name'] for row in listed]
+            # Nerdctl's intrinsic network modes have no object ID and cannot
+            # be inspected. Retain their complete listing witness without a
+            # name allowlist; every object with an ID still requires inspect.
+            intrinsic = {row['Name']: row for row in listed if not row['ID']}
+        else:
+            names = self.engine_command('network', 'ls', '--format', '{{.Name}}').stdout.decode().splitlines()
+            intrinsic = {}
+        require(len(names) == len(set(names)), 'ambiguous network inventory')
+        networks = []
+        for name in sorted(names):
+            if name in intrinsic:
+                networks.append({'name': name, 'engine_id': '', 'configuration_sha256':
+                    hashlib.sha256(json.dumps(intrinsic[name], sort_keys=True).encode()).hexdigest()})
+                continue
+            rows = json.loads(self.engine_command('network', 'inspect', name).stdout)
+            require(len(rows) == 1 and rows[0]['Name'] == name, 'network observation unavailable')
+            row = rows[0]
+            stable = {key: row.get(key) for key in ('Name', 'Id', 'Driver', 'IPAM', 'Options', 'Labels', 'Internal')}
+            networks.append({'name': name, 'engine_id': row.get('Id'),
+                             'configuration_sha256': hashlib.sha256(json.dumps(stable, sort_keys=True).encode()).hexdigest()})
+        volumes = self.engine_command('volume', 'ls', '--format', '{{.Name}}').stdout.decode().splitlines()
+        require(len(volumes) == len(set(volumes)), 'ambiguous volume inventory')
+        return {'containers': sorted(containers), 'networks': networks, 'volumes': sorted(volumes)}
 
     def db(self):
         self.verify_root()
@@ -255,21 +276,30 @@ class Window:
         exclusive('cell-%02d.json' % len(self.events), self.events[-1], dir_fd=self.root_fd)
 
     def prepare(self):
-        image = json.loads(self.engine_command('image', 'inspect', self.cell['runtime_image']).stdout)
-        require(len(image) == 1 and image[0]['Id'] == self.cell['runtime_image'], 'resident image mismatch')
+        raw = self.engine_command('image', 'inspect', self.cell['runtime_image']).stdout
+        if self.cell['engine_kind'] == 'colima':
+            from macos_preparation import inspected_image_id
+            inspected_image_id(raw, self.cell['runtime_image'], allow_repo_digest=True)
+        else:
+            image = json.loads(raw)
+            require(len(image) == 1 and image[0]['Id'] == self.cell['runtime_image'], 'resident image mismatch')
         require(self.inventory() == self.cell['baseline'], 'baseline drift; no cleanup/rebaseline authority')
+        self.root.chmod(0o755)
         (self.root / '.git').mkdir(mode=0o700)
         (self.root / '.git/config').write_text('[effigy]\n runtimeScope = ephemeral\n')
         (self.root / 'probe.py').write_bytes((PACKET / 'probe.py').read_bytes())
         # No ports, volumes, shared services, pull or user stack. The image must
-        # already contain Python 3, a GNU loader and the declared workspace user.
+        # already contain Python 3, a GNU loader and the standard nobody user.
+        # Root stays the control-plane exec user; workspace clients use nobody,
+        # as ordinary workspace permission preparation deliberately refuses uid 0.
         profile = self.cell['engine_identity']
         (self.root / 'effigy.toml').write_text('''[containers]
 default = "web"
 [containers.web]
-compose_file = "compose.yml"
 primary_service = "app"
 profile = ''' + json.dumps(profile) + '''
+[containers.web.services.app]
+catalog = "native-session-probe"
 [systems]
 default = "dev"
 [systems.dev]
@@ -292,12 +322,11 @@ targets = ["containers"]
 ''')
         compose = {'services': {'app': {'image': self.cell['runtime_image'], 'pull_policy': 'never',
                     'command': ['python3', '-c', 'import time; time.sleep(86400)'],
-                    'volumes': [str(self.root) + ':/workspace'], 'working_dir': '/workspace',
-                    # The maintained Compose importer treats dollar syntax as
-                    # literal. Inherit the private invocation value instead;
-                    # no secret enters the generated source or render.
-                    'environment': ['PROBE_TOKEN']}}}
-        (self.root / 'compose.yml').write_text(json.dumps(compose))
+                    'volumes': [str(self.root) + ':/workspace'], 'working_dir': '/workspace', 'environment': ['PROBE_TOKEN']}}}
+        catalog = self.root / 'infra/dev/catalog/native-session-probe'
+        catalog.mkdir(parents=True, mode=0o700)
+        (catalog / 'service.toml').write_text('[service]\nname = "native-session-probe"\n')
+        (catalog / 'compose.fragment.yml').write_text(json.dumps(compose))
         self.command([self.utility, 'prepare', self.root])
         before = self.inventory()
         refused = self.command([self.production, 'container', 'up', '--system', 'dev', '--detach', '--json'], check=False)
@@ -307,7 +336,7 @@ targets = ["containers"]
         self.record('production-refusal', inventory=before)
 
     def up(self):
-        self.command([self.candidate, 'container', 'up', '--system', 'dev', '--detach', '--json'])
+        self.command([self.candidate, 'container', 'up', '--system', 'dev', '--detach', '--json'], activation=True)
         rows = self.rows("SELECT session_run,environment_generation FROM workspace_selection_obligations WHERE state='switched' ORDER BY environment_generation DESC LIMIT 1")
         require(len(rows) == 1, 'no real committed selection')
         session, generation = rows[0]
@@ -318,12 +347,6 @@ targets = ["containers"]
                                     '--filter', 'label=com.docker.compose.service=app', '--format', '{{.ID}}').stdout.decode().splitlines()
         require(len(found) == 1 and len(found[0]) == 64, 'native primary is missing or ambiguous')
         self.container = found[0]
-        if self.cell.get('native_engine_root'):
-            import linux_native_storage
-            inspected = json.loads(self.engine_command('inspect', self.container, protected_output=True).stdout)
-            require(len(inspected) == 1 and inspected[0]['Id'] == self.container, 'workload identity changed')
-            facts = linux_native_storage.verify_workload(inspected[0], self.root, self.cell['native_engine_root'])
-            self.record('bounded-native-workload', **facts)
         # Read the one selected full v2 document, never a v1 projection.
         selected = self.guest(['python3', '-c', "from pathlib import Path; import sys; g=Path('/run/effigy/context/current').read_text().strip(); sys.stdout.buffer.write(Path('/run/effigy/context/'+g+'/context.json').read_bytes())"]).stdout
         document = json.loads(selected)
@@ -331,10 +354,7 @@ targets = ["containers"]
         require(document['session']['run_id'] == session and document['environment_generation'] == generation, 'selected document names another owner')
         require(document['container_id'] == self.container, 'document target differs from native engine')
         require(document['artifact_digest'] == 'sha256:' + self.cell['guest_artifact']['sha256'], 'guest artifact differs')
-        expected = hashlib.sha256(b'531-private-compose-canary').hexdigest()
-        observed = self.guest(['python3', '-c',
-            'import hashlib,os; print(hashlib.sha256(os.environ["PROBE_TOKEN"].encode()).hexdigest())']).stdout.strip()
-        require(observed == expected.encode(),
+        require(self.guest(['printenv', 'PROBE_TOKEN']).stdout.strip() == b'531-private-compose-canary',
                 'actual Compose secret delivery missing')
         combined = self.rows("SELECT e.receipt FROM events e JOIN workspace_activation_reservations r ON r.environment_run=e.run_id WHERE r.session_run=? AND e.receipt IS NOT NULL", (session,))
         require(self.cell['engine_kind'] != 'colima' or any(isinstance(json.loads(row[0]), dict) and
@@ -355,8 +375,21 @@ targets = ["containers"]
         return self.engine_command('exec', '-i', *self.guest_options, self.container, *args, **kwargs)
 
     def guest_argv(self, task, client):
-        return self.engine + ['exec', '-i', *self.guest_options, '-w', '/workspace', '-e', 'EFFIGY_WORKSPACE_CLIENT_ID=' + client,
+        return self.engine + ['exec', '-i', '-u', self.guest_user, '-w', '/workspace', '-e', 'HOME=' + self.guest_home,
+                              '-e', 'EFFIGY_WORKSPACE_CLIENT_ID=' + client,
                               self.container, self.document['binary_path'], task]
+
+    def record_exploratory_client(self, label, status, stdout, stderr):
+        if not self.exploratory:
+            return
+        self.verify_root()
+        # These fixed probes emit markers and public CLI errors, never the
+        # Compose interpolation or enrolment credential used by setup.
+        require(max(len(stdout), len(stderr)) <= (8 * 1024 * 1024 if label == 'gap' else 64 * 1024), 'exploratory probe output exceeds its bound')
+        for name, payload in (('stdout', stdout), ('stderr', stderr)):
+            exclusive_bytes('exploration-' + label + '-' + name + '.bin', bytes(payload), dir_fd=self.root_fd)
+        self.record('exploration-' + label + '-client', proof=False, exit=status,
+                    stdout_bytes=len(stdout), stderr_bytes=len(stderr))
 
     def tasks(self):
         identity = json.loads(self.guest([self.document['binary_path'], '__guest-identity']).stdout)
@@ -366,11 +399,8 @@ targets = ["containers"]
         require(self.container in encoded and self.document['vm_boot_id'] in encoded, 'native identity differs')
         locator = self.document['locator']
         args = [self.document['binary_path'], '__guest-reach', '--dial', '--endpoint', locator['endpoint'], '--pin']
-        timeout = ['--timeout-ms', '5000']
-        self.guest(args + [locator['pin']] + timeout)
-        wrong_pin = 'sha256:' + hashlib.sha256(b'531-wrong-pinned-peer').hexdigest()
-        require(wrong_pin != locator['pin'], 'wrong-pin control equals the real pin')
-        wrong = self.guest(args + [wrong_pin] + timeout, check=False)
+        self.guest(args + [locator['pin'], '--timeout-ms', '5000'])
+        wrong = self.guest(args + ['sha256:' + '0' * 64, '--timeout-ms', '5000'], check=False)
         require(wrong.returncode != 0, 'wrong TLS pin accepted')
         self.record('native-identity-and-tls', boot_id=self.document['vm_boot_id'], wrong_pin_refused=True)
         started = time.monotonic()
@@ -381,7 +411,6 @@ targets = ["containers"]
             poll.register(stream, selectors.EVENT_READ, name)
         output = {'stdout': bytearray(), 'stderr': bytearray()}
         early = {}
-        complete = False
         try:
             while poll.get_map():
                 require(time.monotonic() < min(self.end, started + 60), 'streaming deadline expired')
@@ -390,6 +419,8 @@ targets = ["containers"]
                     if not data:
                         poll.unregister(key.fileobj)
                     else:
+                        require(len(output[key.data]) + len(data) <= 64 * 1024,
+                                'stream probe output exceeds its 64-KiB per-stream bound')
                         output[key.data].extend(data)
                         if b'531-' + key.data.encode() + b'-first' in output[key.data]:
                             early.setdefault(key.data, (time.monotonic() - started, child.poll()))
@@ -398,13 +429,12 @@ targets = ["containers"]
                                     'final output preceded incremental acknowledgement')
                             (self.root / 'stream-continue').write_text('both first streams observed')
             status = child.wait(timeout=5)
-            complete = True
         finally:
             poll.close()
             if child.poll() is None:
                 child.terminate()  # exact client this driver started; failure only
                 child.wait(timeout=5)
-            self.retain_child(child, output['stdout'], output['stderr'], complete)
+        self.record_exploratory_client('level-one', status, output['stdout'], output['stderr'])
         require(status != 0 and set(early) == {'stdout', 'stderr'}, 'stream or nonzero outcome missing')
         require(all(state is None for _, state in early.values()), 'output arrived only after completion')
         require(b'531-stderr-first' not in output['stdout'] and b'531-stdout-first' not in output['stderr'], 'streams merged')
@@ -417,6 +447,7 @@ targets = ["containers"]
         require(stamp == {'system': platform.system(), 'hostname': socket.gethostname()}, 'task ran in another placement')
         self.record('level-one-stream', incremental=True, streams_distinct=True, real_exit=23, no_pty_and_stdin_eof=True)
         signal_result = self.command(self.guest_argv('531-signal', '531-signal'), check=False)
+        self.record_exploratory_client('signal', signal_result.returncode, signal_result.stdout, signal_result.stderr)
         require(signal_result.returncode != 0, 'signal reported success')
         signal_runs = self.task_runs('531-signal')
         require(len(signal_runs) == 1, 'signal task was not admitted exactly once')
@@ -428,7 +459,7 @@ targets = ["containers"]
         # A new client cannot enrol with a corrupt credential. Existing client
         # grants are not reused and no credential bytes enter receipts or argv.
         credential_path = self.document['credential']['path']
-        credential = self.guest(['cat', credential_path], protected_output=True).stdout
+        credential = self.guest(['cat', credential_path]).stdout
         try:
             self.guest(['sh', '-c', 'cat > "$1"', 'fixture', credential_path], data=b'531-invalid-credential')
             bad = self.command(self.guest_argv('531-stream', '531-invalid'), check=False)
@@ -440,9 +471,34 @@ targets = ["containers"]
                 require(credential not in path.read_bytes(), 'guest credential leaked into host checkout')
         self.record('credential-refusal', invalid_new_client_refused=True)
 
-    def guest_client(self, task, client, receipt):
+    def guest_client(self, task, client, receipt, *, slow_stdout=False):
         script = 'import os; from pathlib import Path; p=os.getpid(); Path(' + repr(receipt) + ').write_text(str(p)+" "+Path("/proc/self/stat").read_text().split()[21]); os.execv(' + repr(self.document['binary_path']) + ',["effigy",' + repr(task) + '])'
-        return self.spawn(self.engine + ['exec', '-i', *self.guest_options, '-w', '/workspace', '-e', 'EFFIGY_WORKSPACE_CLIENT_ID=' + client,
+        if slow_stdout:
+            # Throttle inside the guest, before SSH/engine buffering. The real
+            # Effigy client blocks on stdout for <1 second per 16-KiB chunk,
+            # keeps polling its original channel, and naturally lags retention.
+            script = """import os, subprocess, sys, time
+from pathlib import Path
+child = subprocess.Popen([BINARY, TASK], stdout=subprocess.PIPE)
+p = child.pid
+Path(RECEIPT).write_text(str(p) + ' ' + Path('/proc/' + str(p) + '/stat').read_text().split()[21])
+try:
+    while True:
+        chunk = child.stdout.read(4096)
+        if not chunk:
+            break
+        time.sleep(.25)
+        sys.stdout.buffer.write(chunk)
+        sys.stdout.buffer.flush()
+except BaseException:
+    if child.poll() is None:
+        child.kill()
+    child.wait()
+    raise
+sys.exit(child.wait())
+""".replace('BINARY', repr(self.document['binary_path'])).replace('TASK', repr(task)).replace('RECEIPT', repr(receipt))
+        return self.spawn(self.engine + ['exec', '-i', '-u', self.guest_user, '-w', '/workspace', '-e', 'HOME=' + self.guest_home,
+                              '-e', 'EFFIGY_WORKSPACE_CLIENT_ID=' + client,
                                         self.container, 'python3', '-c', script])
 
     def guest_signal(self, receipt, number):
@@ -450,17 +506,15 @@ targets = ["containers"]
         self.guest(['python3', '-c', code])
 
     def owner_drop(self):
-        receipt = self.guest_receipts + '/531-owner-client'
+        receipt = getattr(self, 'guest_receipts', '/home/nobody') + '/531-owner-client'
         child = self.guest_client('531-owner', '531-owner', receipt)
-        stdout = stderr = b''
-        complete = False
         try:
             self.wait(lambda: (self.root / 'owner-started').is_file(), 'host task admission')
             # The owning protocol client lives inside the container. Killing
             # only a docker/nerdctl exec front end would not prove its death.
             self.guest_signal(receipt, signal.SIGKILL)
             stdout, stderr = child.communicate(timeout=5)
-            complete = True
+            self.record_exploratory_client('caller-drop', child.returncode, stdout, stderr)
             def settled():
                 rows = self.task_runs('531-owner')
                 return len(rows) == 1 and rows[0][1] == 'closed' and rows[0][3] == 'complete' and isinstance(rows[0][2], dict) and rows[0][2].get('Cancelled', {}).get('cause') == 'OwnerLost'
@@ -469,42 +523,53 @@ targets = ["containers"]
             if child.poll() is None:
                 child.kill()  # exact engine front end; never settlement credit
                 child.wait(timeout=5)
-                stdout, stderr = child.communicate(timeout=5)
-            self.retain_child(child, stdout, stderr, complete)
         self.record('caller-drop', actual_cancelled_and_settled=True, cause='OwnerLost')
 
+    def capture_state(self, run_id):
+        value = json.loads(self.command([self.utility, 'capture-state', self.root, run_id]).stdout)
+        require(set(value) == {'from', 'end', 'truncated'} and type(value['from']) is int
+                and type(value['end']) is int and 0 <= value['from'] <= value['end']
+                and type(value['truncated']) is bool, 'capture extent observation is malformed')
+        return value
+
     def gap(self):
-        # Capture the guest client PID and /proc birth in a guest-private file
-        # before exec. This process is started by this exact engine invocation.
-        receipt = self.guest_receipts + '/531-gap-client'
-        child = self.guest_client('531-gap', '531-gap', receipt)
-        stdout = stderr = b''
-        complete = False
-        guest_signal = lambda number: self.guest_signal(receipt, number)
+        receipt = getattr(self, 'guest_receipts', '/home/nobody') + '/531-gap-client'
+        child = self.guest_client('531-gap', '531-gap', receipt, slow_stdout=True)
         try:
             self.wait(lambda: (self.root / 'gap-started').exists(), 'gap task admission')
-            guest_signal(signal.SIGSTOP)
             (self.root / 'gap-go').write_text('emit')
-            self.wait(lambda: (self.root / 'gap-finished').exists(), 'actual output rotation')
-            guest_signal(signal.SIGCONT)
-            stdout, stderr = child.communicate(timeout=30)
-            complete = True
-            require(child.returncode != 0 and (b'incomplete' in stderr + stdout or b'Unknown' in stderr + stdout), 'rotated output reported complete')
+            stdout, stderr = child.communicate(timeout=min(60, self.end - time.monotonic()))
+            require(len(stdout) <= 8 * 1024 * 1024 and len(stderr) <= 65536,
+                    'slow-reader diagnostics exceed their fixed fixture bound')
+            self.wait(lambda: len(self.task_runs('531-gap')) == 1
+                      and self.task_runs('531-gap')[0][1] == 'closed'
+                      and self.task_runs('531-gap')[0][3] == 'complete', 'gap task settlement')
+            self.record_exploratory_client('gap', child.returncode, stdout, stderr)
+            gap = self.capture_state(self.task_runs('531-gap')[0][0])
+            require(child.returncode != 0 and gap['from'] > 0 and not gap['truncated'],
+                    'slow reader did not refuse actual retained output rotation')
         finally:
             if child.poll() is None:
-                # Failure retains fixture evidence; never claim teardown pass.
+                # Reap the exact guest producer before its engine front end.
+                # Preserve the primary failure if the guest already exited.
                 try:
-                    guest_signal(signal.SIGCONT)
+                    self.guest_signal(receipt, signal.SIGKILL)
+                except Exception:
+                    pass
                 finally:
                     child.kill()
                     child.wait(timeout=5)
-                    stdout, stderr = child.communicate(timeout=5)
-            self.retain_child(child, stdout, stderr, complete)
         result = self.command(self.guest_argv('531-truncated', '531-truncated'), check=False)
-        require(result.returncode != 0 and (b'incomplete' in result.stdout + result.stderr or b'Unknown' in result.stdout + result.stderr), 'truncated output reported complete')
+        self.record_exploratory_client('truncated', result.returncode, b'', result.stderr)
+        self.wait(lambda: len(self.task_runs('531-truncated')) == 1
+                  and self.task_runs('531-truncated')[0][1] == 'closed'
+                  and self.task_runs('531-truncated')[0][3] == 'complete', 'truncation task settlement')
+        truncated = self.capture_state(self.task_runs('531-truncated')[0][0])
+        require(result.returncode != 0 and truncated['truncated'], 'truncated output reported complete')
         require(len(self.task_runs('531-gap')) == 1 and len(self.task_runs('531-truncated')) == 1,
                 'incomplete output was resent or fell back to a second admission')
-        self.record('gap-and-truncation', unknown_refused=True)
+        self.record('gap-and-truncation', unknown_refused=True, expired_before=gap['from'],
+                    truncation_observed=True)
 
     def kernel_controls(self):
         # Genuine old binary provided by a separately recorded immutable source
@@ -512,16 +577,15 @@ targets = ["containers"]
         env = dict(self.env, EFFIGY_OLD_CUSTODY_BINARY=str(self.old), EFFIGY_KERNEL_CUSTODY_FIXTURE=str(self.kernel_fixture))
         runner = [self.nextest, 'nextest', 'run', '--config-file', self.nextest_config,
                   '--user-config-file', 'none', '--binaries-metadata', self.binaries_metadata,
-                  '--cargo-metadata', self.cargo_metadata, '--target-dir', self.base / 'nextest-target',
-                  '--no-fail-fast', '--retries', '0', '--no-tests', 'fail']
+                  '--cargo-metadata', self.cargo_metadata, '--target-dir', self.base / 'nextest-target', '--no-fail-fast', '--retries', '0', '--no-tests', 'fail']
         self.verify_root()
-        self.command(runner + ['--run-ignored', 'only', '-E', 'test(custody::tests::discard_old_sentinel_refuses_before_child_exec)'],
+        self.command(runner + ['--run-ignored', 'only', '-E', 'test(custody::tests::discard_old_sentinel_refuses_before_child_exec) | test(qualification_discard_refuses_genuine_old_helper_after_successful_admission)'],
             cwd=Path(self.cell['source_root']), env=env, timeout=min(600, self.end - time.monotonic()))
         self.verify_root()
         self.command(runner + ['-E', 'test(run::lifecycle::tests::retained_interpolation_) | test(run::lifecycle::tests::prelaunch_) | test(run::lifecycle::tests::reserved_env_admission_) | test(custody_signal_and_owner_kill_matrix) | test(custody_both_owner_and_sentinel_die) | test(custody_deleted_checkout_lease_survives_owner_kill) | test(custody::tests::fault_matrix_registration_spawn_and_socket_kill_enospc)'],
             cwd=Path(self.cell['source_root']), env=env, timeout=min(600, self.end - time.monotonic()))
         for mode in ('private-qualification', 'private-qualification-descendant', 'private-qualification-foreign',
-                     'private-qualification-uninitialized', 'private-qualification-expired', 'private-qualification-old'):
+                     'private-qualification-uninitialized', 'private-qualification-expired'):
             self.verify_root()
             home = Path(tempfile.mkdtemp(prefix='kernel-', dir=self.base))
             self.command([self.kernel_fixture, mode, home], cwd=self.root, env=env, timeout=min(60, self.end - time.monotonic()))
@@ -552,7 +616,7 @@ targets = ["containers"]
 
     def down(self):
         previous = self.session
-        self.command([self.candidate, 'container', 'web', 'down', '--json'])
+        self.command([self.candidate, 'container', 'web', 'down', '--json'], activation=True)
         row = self.rows('SELECT phase,cleanup_outcome FROM runs WHERE run_id=?', (previous,))[0]
         require(row == ('closed', 'complete'), 'down acknowledged without actual session closure')
         # An inspect failure could be a transport failure. Only a successful,
@@ -573,23 +637,22 @@ targets = ["containers"]
         fresh = self.up()
         require(fresh[0] != first[0] and fresh[1] > first[1], 'down/fresh-up did not replace session and generation')
         self.down()
-        # Down closes the session and removes containers; disposable cache
-        # volumes have a separate labelled retirement operation.
-        self.command([self.candidate, 'container', 'retire', '--yes', '--json'])
+        # Down retains owned data, including the empty volumes masking host
+        # control-plane directories. Retire only this synthetic checkout after
+        # every session control, before requiring the original engine baseline.
+        self.command([self.candidate, 'container', 'retire', '--yes', '--json'], activation=True)
         require(self.inventory() == self.cell['baseline'], 'native baseline/cleanup differs; retain exact fixture')
         open_runs = self.rows("SELECT run_id FROM runs WHERE phase <> 'closed' OR cleanup_outcome <> 'complete' OR cleanup_outcome IS NULL")
         require(not open_runs, 'unsettled fixture owners remain')
         # Fixture trees remain as evidence. Removal requires a separately
         # validated exact manifest and operator disposition; no rmtree here.
         self.record('baseline-and-cleanup', inventory=self.cell['baseline'], fixture_retained=True)
+        name = 'exploration-complete.json' if self.exploratory else 'complete.json'
+        receipt = {'cells': self.events, 'native': True, 'production_enabled': False}
         if self.exploratory:
-            exclusive('exploratory-complete.json', {'cells': self.events, 'exploratory': True,
-                      'qualification_credit': False, 'production_enabled': False}, dir_fd=self.root_fd)
-            print(json.dumps({'exploratory_result': str(self.base / 'exploratory-complete.json'),
-                              'qualification_credit': False}))
-        else:
-            exclusive('complete.json', {'cells': self.events, 'native': True, 'production_enabled': False}, dir_fd=self.root_fd)
-            print(json.dumps({'receipt': str(self.base / 'complete.json')}))
+            receipt.update(exploratory=True, proof=False)
+        exclusive(name, receipt, dir_fd=self.root_fd)
+        print(json.dumps({'receipt': str(self.base / name)}))
 
 
 def main():

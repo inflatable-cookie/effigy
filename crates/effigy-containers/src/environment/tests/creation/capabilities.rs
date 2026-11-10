@@ -343,3 +343,36 @@ fn custom_network_survives_extra_hosts_only_override_and_ordered_network_names_m
         assert!(infer(&mut Fake::new(vec![], vec![row]), &render).is_err());
     }
 }
+
+#[test]
+fn nerdctl_digest_alias_requires_a_fresh_id_and_independent_matching_resolution() {
+    let reference = format!("sha256:{}", id('e'));
+    let render = nerdctl_render(&reference);
+    let row = nerdctl_row('a');
+    let (created, attached) = infer(&mut Fake::new(vec![], vec![row.clone()]), &render).unwrap();
+    assert!(attached.is_empty());
+    assert_eq!(
+        created[0].image_capability(),
+        ImageCapability::ReferenceResolvedId
+    );
+    assert_eq!(created[0].image_id(), image());
+    let mut wrong_alias = Fake::new(vec![], vec![row.clone()]);
+    wrong_alias
+        .image_references
+        .insert(row.image_reference.clone(), format!("sha256:{}", id('f')));
+    assert!(infer(&mut wrong_alias, &render).is_err());
+    assert!(
+        infer(
+            &mut Fake::new(vec![row.clone()], vec![row.clone()]),
+            &render
+        )
+        .is_err(),
+        "an attached alias cannot prove its historical image from today's tag"
+    );
+    let mut docker = Fake::new(vec![], vec![row]);
+    docker.selection.kind = crate::environment::backend::BackendKind::DockerDesktop;
+    assert!(
+        infer(&mut docker, &render).is_err(),
+        "Docker must keep its container image-ID evidence"
+    );
+}

@@ -195,6 +195,11 @@ def validate_inputs(value, head):
         require(not cell.get('environment'), 'ambient environment overrides prohibited')
         require(cell['runtime_image'].startswith('sha256:') and HEX.fullmatch(cell['runtime_image'][7:]),
                 'resident image must be pinned by ID')
+        identity = cell.get('guest_install_identity')
+        require(isinstance(identity, dict) and set(identity) == {'path', 'sha256'}
+                and isinstance(identity['path'], str) and Path(identity['path']).is_absolute()
+                and isinstance(identity['sha256'], str) and HEX.fullmatch(identity['sha256']),
+                'pinned producer host-identity sidecar required')
         require(cell['budget_seconds'] > 0 and cell['budget_seconds'] <= 1800,
                 'packet cannot extend the existing 1800 second test window')
         require(cell['driver'] in ('local', 'ssh'), 'unknown native driver')

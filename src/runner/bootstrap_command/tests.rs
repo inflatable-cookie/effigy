@@ -170,6 +170,7 @@ fn a_plan_renders_json_with_the_stable_schema() {
 
 #[test]
 fn a_failing_setup_selector_fails_bootstrap() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let (_fixture, root) = owned_root("bootstrap-failing-setup-");
     let project = root.join("app");
     write_project(

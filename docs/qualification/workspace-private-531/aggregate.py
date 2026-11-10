@@ -109,6 +109,8 @@ def verify_receipt_semantics(record):
     parsed = load(path)
     require(parsed.get('native') is True and parsed.get('production_enabled') is False,
             'not a native, production-disabled complete receipt')
+    require(not parsed.get('exploratory') and parsed.get('proof') is not False,
+            'exploratory receipts cannot qualify')
     cells = parsed.get('cells')
     require(isinstance(cells, list) and cells, 'complete receipt records no cells')
     names = [cell.get('cell') for cell in cells]

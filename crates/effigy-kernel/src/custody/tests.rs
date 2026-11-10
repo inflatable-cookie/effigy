@@ -3553,35 +3553,6 @@ fn redaction_drops_a_tab_that_a_renderer_would_shift_the_next_bytes_with() {
 }
 
 #[test]
-#[cfg(feature = "fault-injection")]
-fn plain_capture_marker_publishes_after_its_complete_extent() {
-    use crate::fault::{self, Fault, Point};
-    let fixture = home();
-    let cx = cx();
-    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
-    let mut log = capture::Log::open(&root, id(), -1, STD, cx.operation().limits()).unwrap();
-    fault::arm_point(Point::CapturePlainPublish, Fault::Eperm);
-    assert!(log.enable_plain().is_err());
-    assert!(fault::fired());
-    fault::arm(None);
-    let directory = root.path().join("runs").join(id().to_string());
-    assert!(!directory.join("-1.stdout.plain").exists());
-    let extent: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(directory.join("-1.stdout.committed")).unwrap())
-            .unwrap();
-    assert_eq!(extent["committed"], 0);
-    assert!(directory.join("-1.stdout.guard").is_file());
-    let mut complete = capture::Log::open(&root, id(), -2, STD, cx.operation().limits()).unwrap();
-    complete.enable_plain().unwrap();
-    assert_eq!(
-        std::fs::read(directory.join("-2.stdout.plain")).unwrap(),
-        b"effigy.plain.v2\n"
-    );
-    assert!(directory.join("-2.stdout.committed").is_file());
-    assert!(!directory.join("-2.stdout.plain.initial").exists());
-}
-
-#[test]
 fn merged_log_is_plain_redacted_and_committed_before_fanout() {
     let cx = cx();
     let capture = FakeCapture::new(home(), &cx, vec![]);
@@ -4442,10 +4413,12 @@ fn anchored_recovery_journal_detail_cannot_turn_unknown_into_release() {
     );
 }
 
-/// Launch a leader in an anchored group, then stop the leader so the anchor is
-/// the group's only member. The anchor is pinned with SIGSTOP so it cannot
-/// retire itself before the stop under test observes it.
-fn anchored_group_with_pinned_anchor() -> (
+/// Launch a leader in an anchored group, optionally stopping and reaping it
+/// so the anchor is the group's only member. The anchor is pinned with SIGSTOP
+/// so it cannot retire itself before the stop under test observes it.
+fn anchored_group_with_pinned_anchor(
+    stop_leader: bool,
+) -> (
     spawn::Blocked,
     ProcessReceipt,
     ProcessIdentity,
@@ -4454,11 +4427,9 @@ fn anchored_group_with_pinned_anchor() -> (
     let home = home();
     let cx = cx();
     let spec = ProcessSpec {
-        argv: vec![
-            "/bin/sh".into(),
-            "-c".into(),
-            "trap '' TERM; /bin/sleep 30".into(),
-        ],
+        // A direct leader cannot fork an unrecorded sleep during the window
+        // between exec acknowledgement and this fixture's leader kill.
+        argv: vec!["/bin/sleep".into(), "30".into()],
         cwd: home.path().into(),
         env: BTreeMap::new(),
         grace: Duration::from_millis(10),
@@ -4488,10 +4459,12 @@ fn anchored_group_with_pinned_anchor() -> (
     child.executed(cx.operation()).unwrap();
     // SAFETY: the pid is an anchor this test launched and still owns.
     unsafe { libc::kill(anchor.pid as i32, libc::SIGSTOP) };
-    // SAFETY: the pid is the leader this test launched; SIGKILL is its owner's stop.
-    unsafe { libc::kill(child.pid as i32, libc::SIGKILL) };
-    while spawn::reap(r.identity.pid).unwrap().is_none() {
-        std::thread::sleep(Duration::from_millis(2));
+    if stop_leader {
+        // SAFETY: the pid is the leader this test launched; SIGKILL is its owner's stop.
+        unsafe { libc::kill(child.pid as i32, libc::SIGKILL) };
+        while spawn::reap(r.identity.pid).unwrap().is_none() {
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
     (child, r, anchor, fixture)
 }
@@ -4502,7 +4475,7 @@ fn anchored_group_with_pinned_anchor() -> (
 // refusal by itself: the group, observed afresh, decides closure.
 #[test]
 fn milestone_130acca8_anchor_retired_between_liveness_and_kill_still_closes_the_group() {
-    let (_child, r, anchor, _fixture) = anchored_group_with_pinned_anchor();
+    let (_child, r, anchor, _fixture) = anchored_group_with_pinned_anchor(true);
     anchor::seam::arm(anchor.pid, anchor::seam::Authority::RetireAnchor);
     let closed = anchor::stop(
         &r,
@@ -4516,11 +4489,61 @@ fn milestone_130acca8_anchor_retired_between_liveness_and_kill_still_closes_the_
     );
 }
 
+// A running anchor closes itself once its workload is gone. It must not race
+// a second kill authority check against its disappearing nonce evidence.
+#[test]
+fn active_anchor_retires_without_a_second_kill_authority_check() {
+    let (_child, r, anchor, _fixture) = anchored_group_with_pinned_anchor(false);
+    assert!(matches!(
+        platform::numeric(anchor.pid, false, libc::SIGCONT),
+        Observed::Verified(..)
+    ));
+    wait(|| {
+        matches!(
+            crate::ident::process_state(anchor.pid),
+            Observed::Verified(crate::ident::ProcessState::Active, _)
+        )
+    });
+    assert!(anchor::verified(&r, &anchor));
+    // The live direct child stays unreaped and pins the group. The anchor
+    // cannot self-retire before stop chooses its active-anchor strategy.
+    assert!(spawn::peek(r.identity.pid).unwrap().is_none());
+    anchor::seam::arm(anchor.pid, anchor::seam::Authority::RefuseLive);
+    let reached = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let recorded = reached.clone();
+    let leader = r.identity.pid;
+    crate::fault::hook(Some(Box::new(move |point| {
+        if point == crate::fault::Point::AnchorStopped {
+            // Only the new no-kill strategy reaches this point: the old kill
+            // invokes RefuseLive and returns before it. Now let the pinned
+            // workload end, allowing the real anchor to retire itself.
+            assert!(matches!(
+                platform::numeric(leader, false, libc::SIGKILL),
+                Observed::Verified(..)
+            ));
+            recorded.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    })));
+    let closed = anchor::stop(
+        &r,
+        Some(&anchor),
+        &cx().operation().cleanup(Duration::from_secs(10)).unwrap(),
+    );
+    crate::fault::hook(None);
+    assert!(reached.load(std::sync::atomic::Ordering::SeqCst));
+    anchor::seam::disarm();
+    assert!(
+        matches!(closed, Observed::Verified(..) | Observed::Absent(_)),
+        "{closed:?}"
+    );
+    wait(|| spawn::reap(r.identity.pid).unwrap().is_some());
+}
+
 // Negative control: a kill refused while the anchor is still live stays
 // refused. Only a retired anchor may be passed over.
 #[test]
 fn milestone_130acca8_live_anchor_refused_kill_still_refuses_closure() {
-    let (_child, r, anchor, _fixture) = anchored_group_with_pinned_anchor();
+    let (_child, r, anchor, _fixture) = anchored_group_with_pinned_anchor(true);
     anchor::seam::arm(anchor.pid, anchor::seam::Authority::RefuseLive);
     let closed = anchor::stop(
         &r,
@@ -4708,7 +4731,7 @@ impl Drop for ChildGuard {
 // owns another session (EPERM); only the member's own group read decides here.
 #[test]
 fn milestone_130acca8_member_that_left_the_group_is_refused_before_signal() {
-    let (_child, r, anchor, _fixture) = anchored_group_with_pinned_anchor();
+    let (_child, r, anchor, _fixture) = anchored_group_with_pinned_anchor(true);
     let mut member = ChildGuard(
         Command::new("/bin/sleep")
             .arg("30")

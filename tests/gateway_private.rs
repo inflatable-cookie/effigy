@@ -4587,6 +4587,10 @@ fn fixture_task_command_for_env(
 fn fixture_environment_command(checkout: &Path, cleanup: &ManagedContainerCleanup) -> Command {
     let mut command = Command::new(EFFIGY);
     command
+        .env_clear()
+        .env("TMPDIR", std::env::temp_dir())
+        .env("TMP", std::env::temp_dir())
+        .env("TEMP", std::env::temp_dir())
         .current_dir(checkout)
         .env("HOME", &cleanup.home)
         .env("EFFIGY_TEST_CONTAINERS_HOME", cleanup.home.join(".effigy"))
@@ -4602,45 +4606,6 @@ fn fixture_environment_command(checkout: &Path, cleanup: &ManagedContainerCleanu
         .env("CAROOT", &cleanup.foreign_ca)
         .env("FOREIGN_CAROOT", &cleanup.foreign_ca)
         .env("FAKE_DOCKER_LOG", &cleanup.docker_log);
-    // `oxide` injects its own `CARGO_PROFILE_OXIDE_*` profile settings, and
-    // nextest injects `NEXTEST_*` runner settings (such as the thread count),
-    // into the test process. Coding-agent and queue harnesses inject their own
-    // ambient values (`AI_AGENT=pi`, `NORTHSTAR_BASE_BRANCH=main`, session
-    // paths and tokens). Pip injects `PIP_PROGRESS_BAR=on`. Effigy's classifier
-    // reads a short inherited value as a secret when it appears in an argument
-    // (the watch-mode respawn proof refuses its own listener, the bound-elsewhere
-    // proof refuses its listener on `NEXTEST_TEST_THREADS`, and a python3
-    // adapterless listener refuses on `PIP_PROGRESS_BAR=on` because `on` occurs
-    // inside `python3`). Output redaction replaces the same values inside a
-    // child's captured output, where the proofs read published domains and
-    // recorded pids. A fixture never passes them to Effigy.
-    for (key, _) in std::env::vars_os() {
-        if key.to_str().is_some_and(|name| {
-            name.starts_with("CARGO_")
-                || name.starts_with("NEXTEST_")
-                || name.starts_with("CLAUDE_CODE_")
-                || name.starts_with("PI_")
-                || name.starts_with("PASEO_")
-                || name.starts_with("NORTHSTAR_")
-                || name.starts_with("PIP_")
-                || matches!(
-                    name,
-                    "AI_AGENT"
-                        | "CLAUDECODE"
-                        | "CLAUDE_AGENT_SDK_VERSION"
-                        // The inherited Nucleus branch name also collides with
-                        // the public primary host label in listener proofs.
-                        | "NUCLEUS_BASE_BRANCH"
-                        | "CLICOLOR"
-                        | "CLICOLOR_FORCE"
-                        | "FORCE_COLOR"
-                        | "LS_COLORS"
-                        | "LSCOLORS"
-                )
-        }) {
-            command.env_remove(key);
-        }
-    }
     command
 }
 
@@ -4771,6 +4736,12 @@ fn wait_for_listener_generation(
     previous: &str,
     timeout: Duration,
 ) -> Value {
+    let log_path = path.with_file_name(
+        path.file_name()
+            .expect("listener state filename")
+            .to_string_lossy()
+            .replace(".listener.json", ".log"),
+    );
     let deadline = Instant::now() + timeout;
     loop {
         if let Ok(bytes) = fs::read(path) {
@@ -4793,7 +4764,10 @@ fn wait_for_listener_generation(
         }
         assert!(
             Instant::now() < deadline,
-            "successor generation did not become ready"
+            "successor generation did not become ready: state={:?}; log={:?}; routes={:?}",
+            fs::read_to_string(path),
+            fs::read_to_string(&log_path),
+            RouteTable::load(route_table_path)
         );
         thread::sleep(Duration::from_millis(25));
     }

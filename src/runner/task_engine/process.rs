@@ -109,7 +109,6 @@ fn run_plain_inner(
     let relay = !command.capture
         && run.keyed()
         && !(std::io::stdout().is_terminal() && std::io::stderr().is_terminal());
-    super::workspace::verify_environment(&command.env)?;
     let mut env = environment(command.cwd, command.env)?;
     let grant = if effigy_child {
         crate::runner::secret_session::take_child_grant()
@@ -188,7 +187,6 @@ fn run_plain_inner(
         moved
     };
     let mut signalled: Option<(i32, Instant)> = None;
-    let mut workspace_stop = None;
     let mut timed_out = false;
     let mut requested = false;
     // A `run stop` addressed to this run outside any parent scope: TERM to
@@ -202,13 +200,6 @@ fn run_plain_inner(
                 process.stop(&cleanup);
             }
             return Err(error);
-        }
-        if let Some(cause) = super::workspace::poll_stop()? {
-            workspace_stop = Some(cause);
-            if super::workspace::escalating() {
-                let _ = process.forward(libc::SIGKILL);
-            }
-            break None;
         }
         if process.expired() {
             timed_out = true;
@@ -253,12 +244,7 @@ fn run_plain_inner(
         // Natural completion is recorded only from the verified exit (R5).
         let _ = run.complete(&process, exit);
     }
-    let workload = if let Some(cause) = workspace_stop.clone() {
-        WorkloadOutcome::Cancelled {
-            cause,
-            signal: None,
-        }
-    } else if timed_out {
+    let workload = if timed_out {
         WorkloadOutcome::TimedOut {
             phase: run.target().label.clone(),
         }
@@ -300,10 +286,7 @@ fn run_plain_inner(
     Ok(PlainExit {
         workload,
         code,
-        stopped: workspace_stop.is_some()
-            || requested
-            || own_request.is_some()
-            || signalled.is_some(),
+        stopped: requested || own_request.is_some() || signalled.is_some(),
         stdout: stdout.bytes,
         stderr: stderr.bytes,
     })
@@ -362,12 +345,7 @@ impl effigy_env::ExecRunner for RunExec<'_> {
                 }
                 return Err(spawn_error(error.to_string()));
             }
-            if super::workspace::poll_stop()
-                .map_err(|error| spawn_error(error.to_string()))?
-                .is_some()
-                || !kernel::poll_router().is_empty()
-                || process.expired()
-            {
+            if !kernel::poll_router().is_empty() || process.expired() {
                 break None;
             }
             let (out, err) = process.take_stream_output();

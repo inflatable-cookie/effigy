@@ -284,7 +284,19 @@ impl ForegroundRun {
                 .unwrap_or(WorkloadOutcome::Interrupted),
             self.record.effects().to_vec(),
         )?;
-        if outcome.cleanup() != crate::outcome::CleanupOutcome::Incomplete {
+        // Shared custody disables GateFile's ordinary explicit unlock. Restore
+        // it only after complete effects, positive descendant closure and the
+        // exact memory guard's successful exit above. A concurrent unrelated
+        // fork may still hold CLOEXEC copies until exec; those are no longer
+        // custody and must not make a settled foreground run appear live.
+        let descendants_closed = self.children.iter().all(|child| {
+            child
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_some()
+        });
+        if outcome.cleanup() != CleanupOutcome::Incomplete && descendants_closed {
+            self._gate.release_closed_custody();
             if let Some(completion) = &self.completion {
                 *completion
                     .lock()

@@ -104,10 +104,10 @@ fn validate_workspace_resolution(
     if actual.digest() != original.digest() {
         return Err(refuse());
     }
-    // Standard tasks consume the same reservation in their own durable engine.
-    // Managed control verbs still cannot escape into another admission.
+    // A shell task uses the same ticketed detached owner as a managed run.
+    // Other standard plans must not escape into an unreserved fallback.
     if selection.task.mode.as_deref() != Some("tui") {
-        return Ok(());
+        return super::pipeline::standard::validate_reserved_shell(preflight, selection);
     }
     let managed = effigy_managed::parse_managed_invocation(&preflight.runtime_args_exec)?;
     if !matches!(
@@ -233,9 +233,29 @@ mod workspace_resolution_tests {
             identity,
         };
         let standard_preflight =
-            super::super::api::build_execution_preflight(&task, checkout).unwrap();
+            super::super::api::build_execution_preflight(&task, checkout.clone()).unwrap();
         let route = super::super::route::resolve_route(&task, &standard_preflight).unwrap();
         validate_workspace_resolution(&task, &standard_preflight, &route, &standard_expected)
-            .expect("unchanged standard task can consume its exact reservation");
+            .expect("unchanged host shell task remains ticketed");
+
+        std::fs::write(
+            &manifest,
+            "[tasks.build]\nrun = ['echo first', 'echo second']\n",
+        )
+        .unwrap();
+        let resolved = dispatcher.resolve(&cx, &request).unwrap();
+        let expected = crate::runner::managed_run::WorkspaceResolution {
+            invocation: serde_json::to_vec(&resolved).unwrap(),
+            checkout: checkout.clone(),
+            identity,
+        };
+        let preflight = super::super::api::build_execution_preflight(&task, checkout).unwrap();
+        let route = super::super::route::resolve_route(&task, &preflight).unwrap();
+        assert!(
+            validate_workspace_resolution(&task, &preflight, &route, &expected)
+                .unwrap_err()
+                .to_string()
+                .contains("require a host shell command")
+        );
     }
 }

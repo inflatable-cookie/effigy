@@ -123,12 +123,25 @@ fn observe_proc(mounts: &[u8], boot: &[u8]) -> Result<GuestSelfObservation, Gues
         }
         let root = fields.get(3).ok_or(GuestIdentityRefusal::Malformed)?;
         let parts = root.split('/').collect::<Vec<_>>();
-        for pair in parts.windows(2) {
-            if pair.first() != Some(&"containers") {
+        for (index, component) in parts.iter().enumerate() {
+            if *component != "containers" {
                 continue;
             }
-            let id = pair.get(1).ok_or(GuestIdentityRefusal::Malformed)?;
-            if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            // Runtime metadata files may live below a backend namespace. The
+            // full ID is their immediate parent directory, never a namespace,
+            // mountpoint, source field or arbitrary hex substring.
+            let descendants = &parts[index + 1..];
+            let (_, parents) = descendants
+                .split_last()
+                .ok_or(GuestIdentityRefusal::Unproven)?;
+            let (id, namespace) = parents.split_last().ok_or(GuestIdentityRefusal::Unproven)?;
+            let full_id =
+                |part: &str| part.len() == 64 && part.bytes().all(|b| b.is_ascii_hexdigit());
+            if !full_id(id)
+                || namespace
+                    .iter()
+                    .any(|part| part.is_empty() || matches!(*part, "." | "..") || full_id(part))
+            {
                 return Err(GuestIdentityRefusal::Unproven);
             }
             ids.insert(id.to_ascii_lowercase());
@@ -275,6 +288,47 @@ mod tests {
             assert_eq!(first.container_id, id);
             assert_eq!(observe_proc(mounts.as_bytes(), BOOT), Ok(first));
         }
+    }
+
+    #[test]
+    fn workspace_identity_namespaced_metadata_roots_bind_only_the_file_parent_id() {
+        let id = "a1".repeat(32);
+        let roots = format!(
+            "{}{}",
+            mount(&format!(
+                "/nerdctl/runtime/containers/default/{id}/hostname"
+            )),
+            mount(&format!(
+                "/nerdctl/runtime/containers/another-namespace/{id}/resolv.conf"
+            ))
+        );
+        assert_eq!(
+            observe_proc(roots.as_bytes(), BOOT).unwrap().container_id,
+            id
+        );
+        for root in [
+            format!("/nerdctl/containers/{id}/namespace/hostname"),
+            "/nerdctl/containers/default/short/hostname".to_owned(),
+            format!("/nerdctl/containers/{id}/{id}/hostname"),
+            format!("/nerdctl/containers/default/{id}"),
+        ] {
+            assert_eq!(
+                observe_proc(mount(&root).as_bytes(), BOOT),
+                Err(GuestIdentityRefusal::Unproven)
+            );
+        }
+        let conflicting = format!(
+            "{}{}",
+            roots,
+            mount(&format!(
+                "/nerdctl/runtime/containers/default/{}/hostname",
+                "b2".repeat(32)
+            ))
+        );
+        assert_eq!(
+            observe_proc(conflicting.as_bytes(), BOOT),
+            Err(GuestIdentityRefusal::Ambiguous)
+        );
     }
 
     #[test]

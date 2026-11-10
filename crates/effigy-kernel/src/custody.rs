@@ -43,7 +43,7 @@ pub const STOP_MARGIN: Duration = Duration::from_secs(30);
 /// bounded to 64 KiB of text (styled_tap's own clamp), so a commit never
 /// exceeds the window a pane matches exactly, and a full pipe no longer pays
 /// the append-and-provenance dance sixteen times per drain (effigy#558).
-const DRAIN_COMMIT_BOUND: usize = 64 * 1024;
+pub(crate) const DRAIN_COMMIT_BOUND: usize = 64 * 1024;
 /// The descriptor slot a spawn hands its optional one-shot reader to (K12).
 /// It sits above the capability reader (9) and cleanup pin (10) slots, so a
 /// caller can hand one short-lived payload to its own child without either
@@ -68,8 +68,11 @@ impl SecretValue {
     pub(crate) fn bytes(&self) -> &[u8] {
         &self.0
     }
-    /// Whether the value is one line: line-framed transports (an env file)
-    /// cannot carry a newline. Reveals nothing else about the value.
+    /// Test an alias without exposing the credential bytes.
+    pub fn occurs_in(&self, value: &[u8]) -> bool {
+        value.windows(self.0.len()).any(|part| part == self.0)
+    }
+    /// Whether the value is one line for a line-framed transport.
     pub fn is_single_line(&self) -> bool {
         !self.0.contains(&b'\n')
     }
@@ -378,9 +381,9 @@ struct OutputPipeline {
 }
 impl OutputPipeline {
     fn new(secrets: Vec<Vec<u8>>) -> Self {
-        Self::for_capture(secrets, false)
+        Self::for_capture(secrets, false, true)
     }
-    fn for_capture(mut secrets: Vec<Vec<u8>>, plain: bool) -> Self {
+    fn for_capture(mut secrets: Vec<Vec<u8>>, plain: bool, project: bool) -> Self {
         if plain {
             secrets.extend(
                 secrets
@@ -399,7 +402,7 @@ impl OutputPipeline {
         Self {
             sanitizer: (secret_bearing || plain).then(terminal::TerminalSanitizer::new),
             plain,
-            projections: secret_bearing.then(|| {
+            projections: (secret_bearing && project).then(|| {
                 [
                     Redactor::new(secrets.clone()),
                     Redactor::new(secrets.clone()),

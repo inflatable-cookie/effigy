@@ -197,10 +197,18 @@ esac
     paths.extend(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     ));
-    let _env = effigy_test_support::env::ScopedEnv::set_many(&[
-        ("PATH", std::env::join_paths(paths).unwrap()),
-        ("EFFIGY_COMPOSE_BACKEND", "docker".into()),
-        ("DOCKER_CONTEXT", "default".into()),
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[
+        (
+            "PATH",
+            Some(
+                std::env::join_paths(paths)
+                    .unwrap()
+                    .into_string()
+                    .expect("fixture PATH"),
+            ),
+        ),
+        ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
+        ("DOCKER_CONTEXT", Some("default".into())),
     ]);
     effigy_containers::with_test_effigy_home(&observation.home, || {
         let mut policy =

@@ -20,6 +20,7 @@ import linux_native_session as session
 import linux_native_assets as assets
 import linux_native_smoke as smoke
 import runtime
+import linux_native_window
 import subprocess
 import time
 
@@ -205,7 +206,7 @@ class JournalPollingTests(unittest.TestCase):
 class RetainedStreamTests(unittest.TestCase):
     def test_protected_guest_output_is_not_written_to_exploratory_evidence(self):
         with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
-            window = object.__new__(runtime.Window)
+            window = object.__new__(linux_native_window.Window)
             window.root = Path(directory)
             window.root_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
             window.verify_root = lambda: None
@@ -215,7 +216,7 @@ class RetainedStreamTests(unittest.TestCase):
             window.env = {}
             try:
                 result = subprocess.CompletedProcess(['guest'], 0, b'protected-value-canary', b'protected-error-canary')
-                with patch.object(runtime, 'run', return_value=result):
+                with patch.object(linux_native_window, 'run', return_value=result):
                     self.assertIs(window.command(['guest'], protected_output=True), result)
                 self.assertFalse(any(b'protected-value-canary' in p.read_bytes()
                                      or b'protected-error-canary' in p.read_bytes() for p in Path(directory).iterdir()))

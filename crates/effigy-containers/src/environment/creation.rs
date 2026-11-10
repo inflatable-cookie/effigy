@@ -223,6 +223,7 @@ impl CreationReceipt {
                 &resolved,
                 created,
                 hashes.get(service).map(String::as_str),
+                (&self.workdir, deadline),
             )?;
             if &observed != expected {
                 return Err(CreationRefusal::ImageMismatch(row.id));

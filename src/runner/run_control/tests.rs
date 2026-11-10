@@ -791,11 +791,31 @@ fn log_dir(root: &Path, id: RunId) -> PathBuf {
     root.join(".effigy/state/runs").join(id.to_string())
 }
 
-/// Shrinks the follow's retry budget for this test process. nextest runs
-/// each test in its own process, so no test sees another's budget; the
-/// shipped budget stays the full 30 s.
-fn arm_unknown_budget(budget: Duration) {
-    *TEST_UNKNOWN_BUDGET.lock().expect("budget lock") = Some(budget);
+/// Restores a proof's retry budget even when libtest reuses its thread.
+struct UnknownBudgetGuard(Option<Duration>);
+
+impl Drop for UnknownBudgetGuard {
+    fn drop(&mut self) {
+        TEST_UNKNOWN_BUDGET.with(|slot| slot.set(self.0));
+    }
+}
+
+fn arm_unknown_budget(budget: Duration) -> UnknownBudgetGuard {
+    UnknownBudgetGuard(TEST_UNKNOWN_BUDGET.with(|slot| slot.replace(Some(budget))))
+}
+
+#[test]
+fn retry_budget_is_local_to_its_thread_and_restored_after_the_proof() {
+    let original = unknown_budget();
+    {
+        let _budget = arm_unknown_budget(Duration::from_millis(600));
+        assert_eq!(unknown_budget(), Duration::from_millis(600));
+        assert_eq!(
+            std::thread::spawn(unknown_budget).join().unwrap(),
+            UNKNOWN_BUDGET
+        );
+    }
+    assert_eq!(unknown_budget(), original);
 }
 
 #[cfg(feature = "fault-injection")]
@@ -874,7 +894,7 @@ fn a_run_whose_workload_stays_unverifiable_ends_unknown_within_the_budget() {
     // Steady state: the launch is complete, so the fault affects only this
     // follower's own reads.
     wait_for_workload(root.path(), key.id());
-    arm_unknown_budget(Duration::from_millis(600));
+    let _budget = arm_unknown_budget(Duration::from_millis(600));
     let mut collected = Collected::default();
     let mut offsets = Offsets::default();
     let started = Instant::now();
@@ -926,7 +946,7 @@ fn a_briefly_unverifiable_workload_read_recovers_without_loss_or_duplicate() {
     let key = key(root.path(), "workload-transient");
     let run = start(root.path(), "drips", &key, DRIPS);
     wait_for_workload(root.path(), key.id());
-    arm_unknown_budget(Duration::from_secs(5));
+    let _budget = arm_unknown_budget(Duration::from_secs(5));
     let mut collected = Collected::default();
     let mut offsets = Offsets::default();
     let ending = effigy_kernel::fault_injection::with_hook(refuse_first("RunEffects", 3), || {
@@ -966,7 +986,7 @@ fn a_terminal_run_with_unverifiable_workload_evidence_is_not_reported_settled() 
             .expect("run thread"),
         5
     );
-    arm_unknown_budget(Duration::from_millis(600));
+    let _budget = arm_unknown_budget(Duration::from_millis(600));
     let mut collected = Collected::default();
     let mut offsets = Offsets::default();
     let outcome =
@@ -1014,7 +1034,7 @@ fn a_terminal_run_with_an_unreadable_log_is_not_reported_settled_or_drained() {
         5
     );
     let hidden = hide_stdout_segments(&log_dir(root.path(), key.id()));
-    arm_unknown_budget(Duration::from_millis(600));
+    let _budget = arm_unknown_budget(Duration::from_millis(600));
     let mut collected = Collected::default();
     let mut offsets = Offsets::default();
     let outcome = follow(
@@ -1069,7 +1089,7 @@ fn a_briefly_unreadable_stream_recovers_to_one_exact_read() {
         std::thread::sleep(Duration::from_millis(200));
         restore_segments(&hidden);
     });
-    arm_unknown_budget(Duration::from_secs(5));
+    let _budget = arm_unknown_budget(Duration::from_secs(5));
     let mut collected = Collected::default();
     let mut offsets = Offsets::default();
     let ending = follow(
@@ -1103,7 +1123,7 @@ fn an_open_runs_snapshot_cannot_pass_with_unverifiable_workload_evidence() {
     wait_for_workload(root.path(), key.id());
     // Steady state only: launch applies read the run's effects back, so
     // damaging earlier would break the fixture run itself.
-    arm_unknown_budget(Duration::from_millis(600));
+    let _budget = arm_unknown_budget(Duration::from_millis(600));
     let mut collected = Collected::default();
     let mut offsets = Offsets::default();
     let outcome =

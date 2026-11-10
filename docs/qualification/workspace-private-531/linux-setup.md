@@ -1190,3 +1190,15 @@ for both images and passed the strict initialized-image verifier. Native resume
 now checks these conditions before starting any daemon. The snapshot remains
 retained; no revert occurred. Mechanism registration, complete live writer
 closure and downstream receipt integration are still required.
+
+The task branch now integrates reviewed main `876dcc39` (#830). Its existing
+reserved-shell handoff, version/credential handling, session request lifetime,
+owner-loss accounting and per-stream v3 capture replace this branch's duplicate
+implementations. The Linux adapter uses the shared full-session assertions,
+including the real slow-consumer rotation control and independent capture extent
+readback. Linux keeps its prepared UID1001 workspace user, dedicated engine
+checks and complete command/exit evidence; protected credential/inspect bodies
+remain omitted. The native GNU producer also publishes the real local host
+freshness identity from the prepared anchor's size and nanosecond mtime, matching
+the reviewed producer/consumer contract. Native re-exercise at the integrated
+head remains required.

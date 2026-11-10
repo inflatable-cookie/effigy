@@ -71,7 +71,8 @@ for key,name in {'candidate':'effigy-candidate','production':'effigy-production'
 cell['nextest_config']=bind(source/'tests/config/gateway-nextest.toml')
 artifact=source/'.effigy/linux-release/artifacts/effigy-aarch64-unknown-linux-gnu'
 for key,path in {'guest_artifact':artifact,'guest_producer_receipt':artifact.with_suffix('.receipt'),
- 'guest_active_version':artifact.with_suffix('.active-version')}.items():cell[key]=bind(path)
+ 'guest_active_version':artifact.with_suffix('.active-version'),
+ 'guest_install_identity':artifact.with_suffix('.install-identity')}.items():cell[key]=bind(path)
 for key in ('old_binary','nextest_binary','engine_binary'):common.artifact(cell[key])
 env={'PATH':'/usr/bin:/bin','HOME':'/var/lib/effigy-829/rootful/client/home','DOCKER_CONFIG':cell['docker_config']}
 def engine(*args):return common.run([cell['engine_binary']['path'],'--context',cell['engine_identity'],*args],env=env,timeout=30)

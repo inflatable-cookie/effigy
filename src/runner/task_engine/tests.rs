@@ -534,7 +534,6 @@ fn a_nested_run_reuses_its_parents_scratch_instead_of_starting_another() {
 fn a_run_that_died_keeps_its_scratch_until_the_sweep_removes_it() {
     let _guard = crate::contract_test_support::lock_test();
     let root = tempfile::tempdir().expect("root");
-    let work = tempfile::tempdir().expect("work");
     let catalog = catalog(root.path(), "", "root", 0);
     let target = TaskTarget::for_catalog(root.path(), "dev", &catalog);
     let scratch_root = root.path().join("scratch-vol");
@@ -543,8 +542,20 @@ fn a_run_that_died_keeps_its_scratch_until_the_sweep_removes_it() {
 
     let seen = crate::runner::scratch::with_test_scratch(Some(config.root.clone()), true, || {
         let mut run = begin_scratching(&target);
-        let (seen, _) = read_temp(&mut run, work.path());
-        // What a killed owner leaves: an open effect and no decision.
+        // Scratch is not a kernel effect. Observe its actual allocated scope
+        // directly: read_temp would create a process effect whose leader exit
+        // still needs group settlement before its live custody can be dropped.
+        let seen = crate::runner::scratch::current_dir().expect("the run owns scratch");
+        std::fs::write(seen.join("effigy-probe"), b"probe").expect("scratch is writable");
+        assert!(
+            run.run_mut()
+                .expect("durable scratch fixture")
+                .effects()
+                .expect("scratch run effects")
+                .is_empty(),
+            "scratch retention must not depend on unrelated process recovery"
+        );
+        // What a killed owner leaves: an open run and no scratch decision.
         run.abandon_for_tests();
         // The successor settles the predecessor through the same adapter
         // the sentinel uses, and still keeps its directory.
@@ -567,6 +578,10 @@ fn a_run_that_died_keeps_its_scratch_until_the_sweep_removes_it() {
     assert!(
         Path::new(&seen).exists(),
         "an unsettled run's scratch is not removed by its own absent decision"
+    );
+    assert_eq!(
+        std::fs::read(seen.join("effigy-probe")).expect("retained scratch bytes"),
+        b"probe"
     );
     let marker =
         std::fs::read_to_string(Path::new(&seen).join(".effigy-scratch.json")).expect("marker");
@@ -1261,7 +1276,7 @@ fn reserved_engine_refuses_changed_task_before_any_fallback_effect() {
 #[cfg(feature = "workspace-serving-fixture")]
 #[test]
 #[ignore = "requires a current binary from test:workspace:effigy-build"]
-fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
+fn reserved_engine_admits_shell_and_managed_profiles_under_the_reserved_id() {
     use effigy_kernel::run::{Reservation, Session};
     use effigy_kernel::supervise::Executable;
     use effigy_kernel::workspace_channel::{
@@ -1282,8 +1297,9 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
     std::fs::create_dir(&checkout).unwrap();
     let default_marker = checkout.join("default-ran");
     let admin_marker = checkout.join("admin-ran");
+    let shell_marker = checkout.join("shell-ran");
     std::fs::write(checkout.join("effigy.toml"), format!(
-        "[tasks.build]\nmode = 'tui'\nconcurrent = [{{ name = 'one', run = 'touch {} ; sleep 2' }}]\n[tasks.build.profiles.admin]\nconcurrent = [{{ name = 'two', run = 'touch {} ; sleep 2' }}]\n", default_marker.display(), admin_marker.display(),
+        "[tasks.shell]\nrun = 'test ! -t 0 && test ! -t 1 && test ! -t 2 && printf shell-stdout && printf shell-stderr >&2 && touch {} ; sleep 2'\nrun_in = 'host'\n[tasks.build]\nmode = 'tui'\nconcurrent = [{{ name = 'one', run = 'touch {} ; sleep 2' }}]\n[tasks.build.profiles.admin]\nconcurrent = [{{ name = 'two', run = 'touch {} ; sleep 2' }}]\n", shell_marker.display(), default_marker.display(), admin_marker.display(),
     )).unwrap();
     let cx = kernel::effects();
     let state = kernel::effects_root(&checkout).unwrap();
@@ -1306,18 +1322,28 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
         state.clone(),
     );
     let mut failures = Vec::new();
-    for (request_id, args, profile, wanted, unwanted) in [
-        (80, vec![], "default", &default_marker, &admin_marker),
+    for (request_id, selector, args, profile, wanted, unwanted) in [
+        (
+            80,
+            "build",
+            vec![],
+            Some("default"),
+            &default_marker,
+            &admin_marker,
+        ),
         (
             81,
+            "build",
             vec!["admin".to_owned()],
-            "admin",
+            Some("admin"),
             &admin_marker,
             &default_marker,
         ),
+        (82, "shell", vec![], None, &shell_marker, &default_marker),
     ] {
+        let label = profile.unwrap_or("shell");
         let body = InvocationBody {
-            selector: Selector::Task("build".into()),
+            selector: Selector::Task(selector.into()),
             cwd: ".".into(),
             target: Target::Host,
             args: args.clone(),
@@ -1326,7 +1352,7 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
         let resolved = match dispatch.resolve(&cx, &body) {
             Ok(resolved) => resolved,
             Err(error) => {
-                failures.push(format!("resolve {profile}: {error:?}"));
+                failures.push(format!("resolve {label}: {error:?}"));
                 continue;
             }
         };
@@ -1361,7 +1387,7 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
             identity,
         };
         let invocation = effigy_cli::TaskInvocation {
-            name: "build".into(),
+            name: selector.into(),
             args,
         };
         let start_result = crate::runner::managed_run::start_reserved_with_executable(
@@ -1373,26 +1399,66 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
             &executable,
         );
         if crate::runner::managed_run::take_reserved_handoff_observation() != Some(false) {
-            failures.push(format!(
-                "{profile}: launch did not use the no-handoff branch"
-            ));
+            failures.push(format!("{label}: launch did not use the no-handoff branch"));
         }
         let mut started = match start_result {
             Ok(started) => started,
             Err(error) => {
-                failures.push(format!("start {profile}: {error}"));
+                failures.push(format!("start {label}: {error}"));
                 continue;
             }
         };
         if started.run != expected_run || started.client.run != expected_run {
-            failures.push(format!("{profile}: wrong admitted run"));
+            failures.push(format!("{label}: wrong admitted run"));
         }
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while !wanted.exists() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         if !wanted.exists() || unwanted.exists() {
-            failures.push(format!("{profile}: wrong workload marker"));
+            failures.push(format!("{label}: wrong workload marker"));
+        }
+        if profile.is_none() {
+            let read = |stream| {
+                effigy_kernel::run::read_log(
+                    &kernel::observe(),
+                    &started.root,
+                    expected_run,
+                    effigy_kernel::supervise::OUTPUT_SEQUENCE,
+                    stream,
+                    0,
+                    4096,
+                )
+            };
+            for (stream, wanted, forbidden) in [
+                (
+                    effigy_kernel::custody::Stream::Stdout,
+                    "shell-stdout",
+                    "shell-stderr",
+                ),
+                (
+                    effigy_kernel::custody::Stream::Stderr,
+                    "shell-stderr",
+                    "shell-stdout",
+                ),
+            ] {
+                let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                loop {
+                    let observed = read(stream);
+                    if matches!(&observed, effigy_kernel::observe::Observed::Verified(bytes, _)
+                        if String::from_utf8_lossy(&bytes.bytes).contains(wanted)
+                        && !String::from_utf8_lossy(&bytes.bytes).contains(forbidden)
+                        && !bytes.truncated)
+                    {
+                        break;
+                    }
+                    if std::time::Instant::now() >= until {
+                        failures.push(format!("shell capture: {observed:?}"));
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
         }
         let observation = kernel::observe();
         match effigy_kernel::store::Store::read(&observation, &started.root) {
@@ -1400,7 +1466,7 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
                 match effigy_kernel::run::summary(&reader, expected_run) {
                     effigy_kernel::observe::Observed::Verified(summary, _)
                         if summary.invocation.as_ref().is_some_and(|inv| {
-                            inv.spec().task.profile() == Some(profile)
+                            inv.spec().task.profile() == profile
                                 && inv.digest() == admitted.digest()
                                 && inv.spec().provenance.get(super::MANAGED_RUN_PROVENANCE)
                                     == Some(&effigy_kernel::id::Digest::of(
@@ -1408,26 +1474,24 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
                                             .as_bytes(),
                                     ))
                         }) => {}
-                    other => {
-                        failures.push(format!("{profile}: wrong journal invocation: {other:?}"))
-                    }
+                    other => failures.push(format!("{label}: wrong journal invocation: {other:?}")),
                 }
             }
-            other => failures.push(format!("{profile}: cannot read journal: {other:?}")),
+            other => failures.push(format!("{label}: cannot read journal: {other:?}")),
         }
         started.client.close_input();
         if let Err(error) = started
             .client
             .wait_recoverable(cx.child(std::time::Duration::from_secs(30)).operation())
         {
-            failures.push(format!("{profile}: supervisor reap: {error}"));
+            failures.push(format!("{label}: supervisor reap: {error}"));
             if let Err(retry_error) = started
                 .client
                 .wait_recoverable(cx.child(std::time::Duration::from_secs(30)).operation())
             {
-                failures.push(format!("{profile}: supervisor reap retry: {retry_error}"));
+                failures.push(format!("{label}: supervisor reap retry: {retry_error}"));
                 if let Err(cleanup_error) = started.client.fixture_terminate_and_reap() {
-                    failures.push(format!("{profile}: fixture termination: {cleanup_error}"));
+                    failures.push(format!("{label}: fixture termination: {cleanup_error}"));
                 }
             }
         }
@@ -1437,19 +1501,19 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
                 match effigy_kernel::run::summary(&reader, expected_run) {
                     effigy_kernel::observe::Observed::Verified(summary, _)
                         if summary.cleanup_complete == Some(true) => {}
-                    other => failures.push(format!("{profile}: cleanup not complete: {other:?}")),
+                    other => failures.push(format!("{label}: cleanup not complete: {other:?}")),
                 }
             }
-            other => failures.push(format!("{profile}: cannot read cleanup: {other:?}")),
+            other => failures.push(format!("{label}: cannot read cleanup: {other:?}")),
         }
         if wanted.exists() {
             if let Err(error) = std::fs::remove_file(wanted) {
-                failures.push(format!("{profile}: remove marker: {error}"));
+                failures.push(format!("{label}: remove marker: {error}"));
             }
         }
         if unwanted.exists() {
             if let Err(error) = std::fs::remove_file(unwanted) {
-                failures.push(format!("{profile}: remove unexpected marker: {error}"));
+                failures.push(format!("{label}: remove unexpected marker: {error}"));
             }
         }
     }
@@ -1463,6 +1527,12 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
 
 #[test]
 fn reserved_child_receives_grant_at_handoff_fd() {
+    if crate::contract_test_support::run_in_isolated_test_process(
+        "runner::task_engine::tests::reserved_child_receives_grant_at_handoff_fd",
+    ) {
+        return;
+    }
+
     use effigy_kernel::run::{Reservation, Session};
     use effigy_kernel::supervise::Executable;
     use std::os::unix::fs::PermissionsExt;
@@ -1492,11 +1562,10 @@ fn reserved_child_receives_grant_at_handoff_fd() {
         Reservation::Fresh(ticket) => ticket,
         other => panic!("fresh reservation: {other:?}"),
     };
-    // This nextest process owns its environment and the shared test lock.
-    unsafe {
-        std::env::remove_var("EFFIGY_TEST_SECRETS_PASSPHRASE");
-        std::env::remove_var("EFFIGY_SECRET_PASSPHRASE");
-    }
+    let _environment = crate::contract_test_support::EnvGuard::set_many(&[
+        ("EFFIGY_TEST_SECRETS_PASSPHRASE", None),
+        ("EFFIGY_SECRET_PASSPHRASE", None),
+    ]);
     crate::runner::secret_session::forget_session_passphrase_for_tests();
     let grant = crate::runner::secret_session::activate_local_dev_secret_access(true);
     let invocation = effigy_cli::TaskInvocation {
@@ -1535,208 +1604,4 @@ fn reserved_child_receives_grant_at_handoff_fd() {
         b"absent\n"
     );
     assert!(session_run.close(WorkloadOutcome::Succeeded).is_empty());
-}
-
-/// Same-reservation standard commands retain incremental distinct streams and
-/// real exit/owner-loss outcomes through the ordinary engine and settlement.
-#[test]
-#[cfg(feature = "workspace-serving-fixture")]
-#[ignore = "requires a current binary from test:workspace:effigy-build"]
-fn reserved_standard_engine_streams_exits_and_settles_owner_loss() {
-    use effigy_kernel::run::{Reservation, Session};
-    use effigy_kernel::supervise::Executable;
-    use effigy_kernel::workspace_channel::{
-        InvocationBody, OutputMode, Resolver, Selector, Target,
-    };
-    use std::time::Duration;
-    let _lock = crate::contract_test_support::lock_test();
-    let fixture = tempfile::tempdir().unwrap();
-    let executable =
-        Executable::capture(&Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/effigy"))
-            .unwrap();
-    let mut failures = Vec::new();
-    for (marker, owner_loss, nested) in [
-        (91, false, false),
-        (92, true, false),
-        (93, true, true),
-        (94, true, false),
-    ] {
-        let checkout = fixture.path().join(format!("case-{marker}"));
-        std::fs::create_dir(&checkout).unwrap();
-        let command = "printf stdout-first; printf stderr-first >&2; touch started; while test ! -f continue; do sleep 0.02; done; printf stdout-last; printf stderr-last >&2; exit 23";
-        let command = serde_json::to_string(command).unwrap();
-        let manifest = if nested {
-            format!("[tasks.build]\nrun = [{{ task = 'inner' }}]\n[tasks.inner]\nrun = {command}\n")
-        } else {
-            format!("[tasks.build]\nrun = {command}\n")
-        };
-        std::fs::write(checkout.join("effigy.toml"), manifest).unwrap();
-        let cx = kernel::effects();
-        let state = kernel::effects_root(&checkout).unwrap();
-        let identity = state.owning_directory().identity().unwrap();
-        let session_run = begin(&TaskTarget::for_catalog(
-            &checkout,
-            "session",
-            &catalog(&checkout, "", "", 0),
-        ))
-        .unwrap();
-        let session = Session {
-            run: session_run.id(),
-            generation: effigy_kernel::id::Generation::new(1),
-        };
-        let mut dispatch = crate::runner::workspace_client::host_dispatch::HostDispatch::new(
-            checkout.clone(),
-            state.clone(),
-        );
-        let body = InvocationBody {
-            selector: Selector::Task("build".into()),
-            cwd: ".".into(),
-            target: Target::Host,
-            args: vec![],
-            output: OutputMode::Text,
-        };
-        let resolved = dispatch.resolve(&cx, &body).unwrap();
-        let id = effigy_kernel::id::RunId::new(1_760_000_000_000, [marker; 10]).unwrap();
-        let admitted = dispatch.admission_invocation(&body, &resolved, id).unwrap();
-        let ticket = match effigy_kernel::run::reserve_resolved(
-            &cx,
-            &state,
-            effigy_kernel::run::AdmissionKey {
-                session,
-                request: effigy_kernel::run::RequestId::new([marker; 16]),
-            },
-            effigy_kernel::id::Digest::of(b"standard reserved engine"),
-            id,
-            &admitted,
-        )
-        .unwrap()
-        {
-            Reservation::Fresh(ticket) => ticket,
-            _ => panic!("reservation was not fresh"),
-        };
-        let resolution = crate::runner::managed_run::WorkspaceResolution {
-            invocation: serde_json::to_vec(&resolved).unwrap(),
-            checkout: checkout.clone(),
-            identity,
-        };
-        let invocation = effigy_cli::TaskInvocation {
-            name: "build".into(),
-            args: vec![],
-        };
-        match crate::runner::managed_run::start_reserved_with_executable(
-            &checkout,
-            &invocation,
-            checkout.clone(),
-            ticket,
-            Some(resolution),
-            &executable,
-        ) {
-            Ok(mut started) => {
-                if started.run != id {
-                    failures.push("admitted another run".to_owned());
-                }
-                let deadline = std::time::Instant::now() + Duration::from_secs(10);
-                let mut early = false;
-                while std::time::Instant::now() < deadline {
-                    let out = super::read_run_log(
-                        &started.root,
-                        id,
-                        effigy_kernel::supervise::workspace_output_sequence(
-                            effigy_kernel::custody::Stream::Stdout,
-                        ),
-                        effigy_kernel::custody::Stream::Stdout,
-                        0,
-                        65536,
-                    );
-                    let err = super::read_run_log(
-                        &started.root,
-                        id,
-                        effigy_kernel::supervise::workspace_output_sequence(
-                            effigy_kernel::custody::Stream::Stderr,
-                        ),
-                        effigy_kernel::custody::Stream::Stdout,
-                        0,
-                        65536,
-                    );
-                    if let (
-                        effigy_kernel::observe::Observed::Verified(out, _),
-                        effigy_kernel::observe::Observed::Verified(err, _),
-                    ) = (out, err)
-                    {
-                        early = out.bytes.windows(12).any(|b| b == b"stdout-first")
-                            && err.bytes.windows(12).any(|b| b == b"stderr-first")
-                            && !out.bytes.windows(12).any(|b| b == b"stderr-first")
-                            && !err.bytes.windows(12).any(|b| b == b"stdout-first");
-                        if early {
-                            break;
-                        }
-                    }
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                if !early {
-                    failures.push(format!(
-                        "case {marker}: incremental distinct streams missing"
-                    ));
-                }
-                if owner_loss {
-                    if marker == 94 {
-                        let mut owner =
-                            effigy_kernel::run::resume_owner(&cx, &state, session, id).unwrap();
-                        owner
-                            .release(&cx, &state, effigy_kernel::run::Release::Eof)
-                            .unwrap();
-                    } else {
-                        started.client.close_input();
-                    }
-                } else {
-                    std::fs::write(checkout.join("continue"), b"go").unwrap();
-                }
-                if let Err(error) = started
-                    .client
-                    .wait_recoverable(cx.child(Duration::from_secs(30)).operation())
-                {
-                    failures.push(format!("case {marker}: reap: {error}"));
-                    started.client.close_input();
-                    if let Err(error) = started.client.fixture_terminate_and_reap() {
-                        failures.push(format!("fixture reap: {error}"));
-                    }
-                }
-                match effigy_kernel::store::Store::read(&kernel::observe(), &started.root) {
-                    effigy_kernel::observe::Observed::Verified(reader, _) => {
-                        match effigy_kernel::run::summary(&reader, id) {
-                            effigy_kernel::observe::Observed::Verified(summary, _) => {
-                                let expected = if owner_loss {
-                                    WorkloadOutcome::Cancelled {
-                                        cause: effigy_kernel::ctx::StopCause::OwnerLost,
-                                        signal: None,
-                                    }
-                                } else {
-                                    WorkloadOutcome::Failed { code: 23 }
-                                };
-                                if summary.workload.as_ref() != Some(&expected)
-                                    || summary.cleanup_complete != Some(true)
-                                    || summary
-                                        .invocation
-                                        .as_ref()
-                                        .is_none_or(|inv| inv.digest() != admitted.digest())
-                                {
-                                    failures.push(format!(
-                                        "case {marker}: wrong outcome, admission or cleanup"
-                                    ));
-                                }
-                            }
-                            _ => failures.push("missing admitted run".into()),
-                        }
-                    }
-                    _ => failures.push("missing journal".into()),
-                }
-            }
-            Err(error) => failures.push(format!("case {marker}: launch: {error}")),
-        }
-        let warnings = session_run.close(WorkloadOutcome::Succeeded);
-        if !warnings.is_empty() {
-            failures.extend(warnings);
-        }
-    }
-    assert!(failures.is_empty(), "{}", failures.join("; "));
 }

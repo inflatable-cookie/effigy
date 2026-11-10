@@ -1,7 +1,7 @@
 use crate::runner::tests::prelude::{
     assert_builtin_test_non_zero, assert_json_array_field, assert_json_string_field_eq,
     assert_output_excludes_all, fs, install_local_vitest, parse_json_output_with_schema,
-    run_builtin_err, setup_fanout_catalog_repo, temp_workspace,
+    run_builtin, run_builtin_err, setup_fanout_catalog_repo, temp_workspace,
     write_package_json_with_test_script, RunnerError,
 };
 
@@ -182,7 +182,7 @@ fn run_manifest_task_builtin_test_sweeps_a_leaked_suite_process() {
     install_local_vitest(
         &root,
         &format!(
-            "#!/bin/sh\nset -m\n\
+            "#!/bin/bash\nset -m\n\
              sh -c 'trap \"\" TERM HUP; echo $$ > \"{pid}\"; while :; do /bin/sleep 0.05; done' \
              >/dev/null 2>&1 &\n\
              while [ ! -s \"{pid}\" ]; do /bin/sleep 0.01; done\n\
@@ -191,22 +191,30 @@ fn run_manifest_task_builtin_test_sweeps_a_leaked_suite_process() {
         ),
     );
 
-    let err = run_builtin_err(root, "test", &[]);
-    let message = err.to_string();
+    let result = run_builtin(root, "test", &[]);
     let pid: u32 = fs::read_to_string(&leaked)
         .expect("the suite leaked its child")
         .trim()
         .parse()
         .expect("leaked pid");
     let alive = || {
-        // SAFETY: signal 0 only probes the exact PID the fixture leaked.
-        unsafe { libc::kill(pid as i32, 0) == 0 }
+        !matches!(
+            effigy_kernel::ident::process_state(pid),
+            effigy_kernel::observe::Observed::Absent(_)
+                | effigy_kernel::observe::Observed::Verified(
+                    effigy_kernel::ident::ProcessState::Zombie,
+                    _
+                )
+        )
     };
     let swept = !alive();
     // SAFETY: retires the documented fixture even when an assertion fails first.
     unsafe {
         libc::kill(pid as i32, libc::SIGKILL);
     }
+    let message = result
+        .expect_err("the escaped suite process must be reported")
+        .to_string();
     assert!(message.contains("outlived the test suite"), "{message}");
     assert!(message.contains(&pid.to_string()), "{message}");
     assert!(swept, "the sweep reaps and names leaked process {pid}");

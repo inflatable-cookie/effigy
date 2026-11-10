@@ -824,8 +824,8 @@ pub(crate) fn load_auth(
     };
     // The pinned document names the credential's own digest: bytes that differ
     // from what the host staged are refused instead of presented.
-    let digest = Digest::of(&bytes).hex();
-    if digest != context.credential.digest {
+    let digest = Digest::of(&bytes);
+    if Digest::parse_hex(&context.credential.digest).as_ref() != Some(&digest) {
         return Err(RunnerError::task_invocation(format!(
             "the workspace enrolment credential at `{path}` is {digest} but the context pins {}; \
              run `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace",
@@ -903,6 +903,8 @@ impl RunningBinary {
             ))
         })?;
         Ok(Self {
+            // Producer receipts and context documents carry the active value;
+            // the display-only `v` prefix is not part of the wire identity.
             version: effigy_core::build_info::active_version(),
             digest: digest_of_file(&executable)?,
         })

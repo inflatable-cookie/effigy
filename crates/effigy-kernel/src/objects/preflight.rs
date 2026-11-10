@@ -247,7 +247,7 @@ fn stage_object(
         .map_err(StoreError::from)?
         .expect("created lease");
     #[cfg(test)]
-    test_hooks::lease_point();
+    test_hooks::lease_point(root);
     if !fs::try_flock(&lease, libc::LOCK_EX).map_err(|error| {
         StoreError::from(FsError::io(
             "flock",
@@ -283,7 +283,7 @@ fn stage_object(
     stage.sync().map_err(StoreError::from)?;
     staging.sync().map_err(StoreError::from)?;
     #[cfg(test)]
-    test_hooks::staged_point();
+    test_hooks::staged_point(root);
     // The kernel's one closure verifier decides the receipt: bytes, digest,
     // private modes, no hard link and no entry the digest cannot name.
     let observe = cx
@@ -295,7 +295,7 @@ fn stage_object(
         return Err(RunError::broken("the verified seal is not this closure"));
     }
     #[cfg(test)]
-    test_hooks::verified_point();
+    test_hooks::verified_point(root);
     cx.operation()
         .check("preflight seal")
         .map_err(RunError::Interrupted)?;
@@ -553,70 +553,100 @@ fn token_of_lease(name: &str) -> Option<&str> {
     token_of_tree(name)?.strip_suffix(LEASE_SUFFIX)
 }
 
-/// Deterministic seams for the kernel's own proofs. Fault injection arms
-/// thread-local state and the staging helper is another thread, so these are
-/// process-wide and only ever compiled into a test build.
+/// Deterministic seams for the kernel's own proofs. Helper hooks follow their
+/// state root across threads; publication hooks stay on the installing thread.
+/// These seams are only compiled into a test build.
 #[cfg(test)]
 pub(crate) mod test_hooks {
+    use crate::root::StateRoot;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
     use std::sync::Mutex;
 
-    /// The helper, between creating its lease and locking it.
-    static LEASE: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
-    /// The helper, after durable staging and before its verification read.
-    static STAGED: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
-    /// The helper, after verification and before it hands the receipt back.
-    static VERIFIED: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
-    /// The publisher, inside the objects gate, immediately before its
-    /// exclusive no-replace move.
-    static PROMOTE: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
-    /// The publisher, inside the objects gate, before it consumes a receipt.
-    static CONSUME: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
+    type Hook = Box<dyn FnOnce() + Send>;
+    type Hooks = Mutex<BTreeMap<PathBuf, Hook>>;
 
-    pub(crate) fn lease(hook: impl FnOnce() + Send + 'static) {
-        *LEASE
+    // Helpers run on another thread, so bind their hooks to the exact state
+    // root instead of making one sibling's hook visible to every sealer.
+    pub(crate) struct HookGuard {
+        root: PathBuf,
+        hooks: &'static Hooks,
+    }
+    impl Drop for HookGuard {
+        fn drop(&mut self) {
+            self.hooks
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .remove(&self.root);
+        }
+    }
+    fn arm(hooks: &'static Hooks, root: &StateRoot, hook: Hook) -> HookGuard {
+        let root = root.path().to_path_buf();
+        let previous = hooks
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(hook));
+            .unwrap_or_else(|poison| poison.into_inner())
+            .insert(root.clone(), hook);
+        assert!(
+            previous.is_none(),
+            "preflight hook already armed for {root:?}"
+        );
+        HookGuard { root, hooks }
+    }
+
+    /// The helper, between creating its lease and locking it.
+    static LEASE: Hooks = Mutex::new(BTreeMap::new());
+    /// The helper, after durable staging and before its verification read.
+    static STAGED: Hooks = Mutex::new(BTreeMap::new());
+    /// The helper, after verification and before it hands the receipt back.
+    static VERIFIED: Hooks = Mutex::new(BTreeMap::new());
+    thread_local! {
+        // Publication runs on the arming test's thread. A sibling publisher
+        // must never consume its hook or plant a winner in the wrong fixture.
+        static PROMOTE: std::cell::RefCell<Option<Box<dyn FnOnce() + Send>>> = const { std::cell::RefCell::new(None) };
+        static CONSUME: std::cell::RefCell<Option<Box<dyn FnOnce() + Send>>> = const { std::cell::RefCell::new(None) };
+    }
+
+    pub(crate) fn lease(root: &StateRoot, hook: impl FnOnce() + Send + 'static) -> HookGuard {
+        arm(&LEASE, root, Box::new(hook))
     }
     pub(crate) fn promote(hook: impl FnOnce() + Send + 'static) {
-        *PROMOTE
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(hook));
+        PROMOTE.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
     }
-    pub(crate) fn staged(hook: impl FnOnce() + Send + 'static) {
-        *STAGED
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(hook));
+    pub(crate) fn staged(root: &StateRoot, hook: impl FnOnce() + Send + 'static) -> HookGuard {
+        arm(&STAGED, root, Box::new(hook))
     }
-    pub(crate) fn verified(hook: impl FnOnce() + Send + 'static) {
-        *VERIFIED
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(hook));
+    pub(crate) fn verified(root: &StateRoot, hook: impl FnOnce() + Send + 'static) -> HookGuard {
+        arm(&VERIFIED, root, Box::new(hook))
     }
     pub(crate) fn consume(hook: impl FnOnce() + Send + 'static) {
-        *CONSUME
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(hook));
+        CONSUME.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
     }
-    pub(super) fn lease_point() {
-        run(&LEASE);
+    pub(super) fn lease_point(root: &StateRoot) {
+        run(&LEASE, root);
     }
     pub(crate) fn promote_point() {
-        run(&PROMOTE);
+        let hook = PROMOTE.with(|slot| slot.borrow_mut().take());
+        if let Some(hook) = hook {
+            hook();
+        }
     }
-    pub(super) fn staged_point() {
-        run(&STAGED);
+    pub(super) fn staged_point(root: &StateRoot) {
+        run(&STAGED, root);
     }
-    pub(super) fn verified_point() {
-        run(&VERIFIED);
+    pub(super) fn verified_point(root: &StateRoot) {
+        run(&VERIFIED, root);
     }
     pub(crate) fn consume_point() {
-        run(&CONSUME);
+        let hook = CONSUME.with(|slot| slot.borrow_mut().take());
+        if let Some(hook) = hook {
+            hook();
+        }
     }
-    fn run(hook: &Mutex<Option<Box<dyn FnOnce() + Send>>>) {
-        let hook = hook
+    fn run(hooks: &Hooks, root: &StateRoot) {
+        let hook = hooks
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
+            .remove(root.path());
         if let Some(hook) = hook {
             hook();
         }

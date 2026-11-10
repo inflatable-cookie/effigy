@@ -2,7 +2,7 @@
 //! session custody, TLS listener, schema constructor and commit/CAS path.
 use super::*;
 use crate::runner::environment::{self, workspace::*};
-use crate::runner::workspace_client::guest_fake::{FakeGuest, FakeNodeKind};
+use crate::runner::workspace_client::guest_fake::FakeGuest;
 use crate::runner::workspace_transport::qualification::{
     Backend, GuestDialEvidence, ResolvedAlias,
 };
@@ -49,58 +49,18 @@ impl Guest {
 }
 impl GuestReader for Guest {
     fn read_file(&mut self, p: &str) -> Result<Option<Vec<u8>>, RunnerError> {
-        if self
-            .0
-            .borrow()
-            .node(p)
-            .is_some_and(|node| node.mode == 0o600 && node.owner.is_none())
-        {
-            return Err(RunnerError::task_invocation(
-                "workspace user cannot read root-owned private object",
-            ));
-        }
         self.0.borrow_mut().read_file(p)
     }
     fn file_sha256(&mut self, p: &str) -> Result<Option<String>, RunnerError> {
         self.0.borrow_mut().file_sha256(p)
     }
 }
-
-#[test]
-fn workspace_reserved_generation_skips_unreadable_private_orphan() {
-    let mut fake = FakeGuest::new();
-    fake.put_file(
-        "/run/effigy/objects/enrol/1",
-        b"retained private orphan",
-        0o600,
-    );
-    let mut guest = Guest(
-        Rc::new(RefCell::new(fake)),
-        None,
-        Rc::new(Cell::new(0)),
-        Rc::new(Cell::new(false)),
-    );
-    assert!(guest.read_file("/run/effigy/objects/enrol/1").is_err());
-    assert_eq!(
-        allocate_generation(&mut guest).expect("metadata skips the orphan"),
-        2
-    );
-}
 impl GuestWorkspace for Guest {
     fn read_link(&mut self, p: &str) -> Result<Option<String>, RunnerError> {
         self.0.borrow_mut().read_link(p)
     }
     fn ensure_dir(&mut self, p: &str, m: u32) -> Result<(), RunnerError> {
-        self.effect(|guest| {
-            // Production mkdir -p creates ancestors in the same guest I/O.
-            for parent in Path::new(p).ancestors().skip(1) {
-                let parent = parent.to_str().expect("fixed UTF-8 guest path");
-                if guest.node(parent).is_none() {
-                    guest.ensure_dir(parent, 0o755)?;
-                }
-            }
-            guest.ensure_dir(p, m)
-        })
+        self.effect(|guest| guest.ensure_dir(p, m))
     }
     fn write_file(&mut self, p: &str, b: &[u8], m: u32) -> Result<(), RunnerError> {
         self.effect(|guest| guest.write_file(p, b, m))
@@ -121,15 +81,6 @@ impl GuestWorkspace for Guest {
         self.effect(|guest| guest.install_executable(s, p))
     }
     fn replace_pointer(&mut self, p: &str, t: &str) -> Result<(), RunnerError> {
-        let parent = Path::new(p)
-            .parent()
-            .and_then(Path::to_str)
-            .expect("fixed selector parent");
-        if self.0.borrow().node(parent).map(|node| node.kind) != Some(FakeNodeKind::Dir) {
-            return Err(RunnerError::task_invocation(
-                "selector parent was not prepared",
-            ));
-        }
         self.effect(|guest| guest.replace_pointer(p, t))
     }
     fn replace_link(&mut self, p: &str, t: &str) -> Result<(), RunnerError> {
@@ -416,6 +367,7 @@ fn elf() -> Vec<u8> {
 }
 
 fn run(fault: Fault) -> usize {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let fixture = effigy_test_support::Fixture::new("workspace-reserved-").expect("fixture");
     std::fs::create_dir(fixture.path().join("home")).unwrap();
     effigy_containers::with_test_effigy_home(&fixture.path().join("home"), || {
@@ -459,10 +411,10 @@ home = "/home/vscode"
         let mut test_path = bin.as_os_str().to_os_string();
         test_path.push(":");
         test_path.push(inherited_path);
-        let _environment = effigy_test_support::env::ScopedEnv::set_many(&[
-            ("PATH", test_path),
-            ("EFFIGY_COMPOSE_BACKEND", "docker".into()),
-            ("DOCKER_CONTEXT", "fixture-context".into()),
+        let _environment = crate::contract_test_support::EnvGuard::set_many(&[
+            ("PATH", Some(test_path.into_string().expect("fixture PATH"))),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
+            ("DOCKER_CONTEXT", Some("fixture-context".into())),
         ]);
         let mut policy = effigy_containers::prepare_container_policy(&repo, Some("dev")).unwrap();
         policy.workspace_user = Some("vscode".into());

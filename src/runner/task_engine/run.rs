@@ -796,14 +796,6 @@ impl TaskRun {
             })
     }
 
-    /// A reserved standard engine polls its already-open root run, including
-    /// while an in-process nested command owns a child run. No store is reopened.
-    pub(super) fn durable_handle(&self) -> Result<Arc<Mutex<Run<'static>>>, RunnerError> {
-        self.run.clone().ok_or_else(|| {
-            RunnerError::task_invocation("workspace admission requires a durable run")
-        })
-    }
-
     /// Lexical nesting carries the parent's run and memory handle on this
     /// thread, so an in-process step is a child of this run.
     pub(in crate::runner) fn enter(&self) -> ParentScope {

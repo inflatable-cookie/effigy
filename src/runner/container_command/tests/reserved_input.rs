@@ -20,7 +20,26 @@ use effigy_kernel::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
 use effigy_kernel::workspace_session::{
     ArtifactEvidence, ContainerIdentity, PublishInputs, TargetEvidence,
 };
-use effigy_test_support::Fixture;
+/// Keep ambient configuration stable through setup, bounded read workers and
+/// fixture teardown. Workers only read and never acquire this caller's lock.
+struct Fixture {
+    directory: effigy_test_support::Fixture,
+    _environment: crate::contract_test_support::ReentrantTestLockGuard,
+}
+
+impl Fixture {
+    fn new(prefix: &str) -> std::io::Result<Self> {
+        let environment = crate::contract_test_support::lock_test();
+        Ok(Self {
+            directory: effigy_test_support::Fixture::new(prefix)?,
+            _environment: environment,
+        })
+    }
+
+    fn path(&self) -> &Path {
+        self.directory.path()
+    }
+}
 
 use super::*;
 use crate::runner::error::RunnerError;
@@ -549,6 +568,17 @@ fn plan_for(
         },
         backend,
     )
+}
+
+#[test]
+fn reserved_input_fixture_waits_for_an_ambient_path_mutator() {
+    crate::contract_test_support::assert_waits_for_path_mutator(|entered| {
+        entered();
+        let observation = observation_checkout("environment-boundary");
+        let policy = rendered_policy(&observation.root);
+        let mut backend = FakeBackend::colima();
+        let _plan = planned_in_home(&observation, &policy, &mut backend);
+    });
 }
 
 #[test]
@@ -1855,6 +1885,7 @@ fn bounded_closure(
     root: &Path,
     paths: &crate::runner::workspace_client::context::WorkspacePathMap,
     until: Instant,
+    finished: Option<std::sync::mpsc::Sender<()>>,
 ) -> Result<
     crate::runner::workspace_command::provisioning::WorkspaceSourceClosure,
     crate::runner::workspace_command::provisioning::BoundedReadRefusal,
@@ -1865,10 +1896,14 @@ fn bounded_closure(
         "test-source-closure",
         until,
         move || {
-            crate::runner::workspace_command::provisioning::workspace_source_closure(
+            let result = crate::runner::workspace_command::provisioning::workspace_source_closure(
                 &owned_root,
                 &owned_paths,
-            )
+            );
+            if let Some(finished) = finished {
+                let _ = finished.send(());
+            }
+            result
         },
     )
 }
@@ -1890,7 +1925,7 @@ fn the_source_closure_is_bounded_by_the_publication_deadline() {
     // A deadline that has already passed must not wait for the worker at all.
     assert!(
         matches!(
-            bounded_closure(&root, &paths, Instant::now() - Duration::from_secs(1)),
+            bounded_closure(&root, &paths, Instant::now() - Duration::from_secs(1), None),
             Err(crate::runner::workspace_command::provisioning::BoundedReadRefusal::TimedOut)
         ),
         "an expired publication refuses instead of reading the checkout"
@@ -1898,8 +1933,13 @@ fn the_source_closure_is_bounded_by_the_publication_deadline() {
 
     // The abandoned worker is read-only: the checkout is unchanged and the next
     // attempt with a real budget closes its pins normally.
-    let closed = bounded_closure(&root, &paths, Instant::now() + Duration::from_secs(30))
-        .expect("a bounded closure with budget left");
+    let closed = bounded_closure(
+        &root,
+        &paths,
+        Instant::now() + Duration::from_secs(30),
+        None,
+    )
+    .expect("a bounded closure with budget left");
     assert!(
         closed
             .pins
@@ -1934,14 +1974,24 @@ fn a_stalled_fragment_stops_the_closure_at_the_deadline() {
         .expect("container mode"),
     )
     .expect("path map");
-    // One included fragment is a FIFO: reading it blocks until a writer appears,
-    // which is the stalled read a clock check cannot interrupt.
+    // One included fragment is a FIFO with a held, silent writer: reading it
+    // blocks until fixture cleanup releases EOF, beyond the bounded call.
     let stalled_fragment = root.join("fragments/0001.toml");
     std::fs::remove_file(&stalled_fragment).expect("remove the fragment");
-    stalled(&stalled_fragment);
-
+    let stalled_read = stalled(&stalled_fragment);
+    let (finished, completed) = std::sync::mpsc::channel();
     let started = Instant::now();
-    let refusal = bounded_closure(&root, &paths, started + Duration::from_millis(50));
+    let refusal = bounded_closure(
+        &root,
+        &paths,
+        started + Duration::from_millis(50),
+        Some(finished),
+    );
+    let elapsed = started.elapsed();
+    drop(stalled_read);
+    completed
+        .recv_timeout(Duration::from_secs(10))
+        .expect("released fragment reader finished before fixture removal");
 
     assert!(
         matches!(
@@ -1951,7 +2001,7 @@ fn a_stalled_fragment_stops_the_closure_at_the_deadline() {
         "a stalled fragment is a timeout, not a blocked publication"
     );
     assert!(
-        started.elapsed() < Duration::from_secs(5),
+        elapsed < Duration::from_secs(5),
         "the closure stopped at its deadline"
     );
 }
@@ -1988,13 +2038,40 @@ fn a_publication_never_plans_past_its_deadline_composing_pins() {
 
 // ------------------------------------ blocked reads cannot outlive the budget
 
-/// A FIFO at `path`: any reader of it blocks until a writer appears, which is the
-/// stalled-filesystem case a clock check cannot interrupt.
-fn stalled(path: &Path) {
+/// Own the FIFO's silent writer so a deadline proof can release its blocked
+/// read before removing the fixture.
+struct StalledRead {
+    path: PathBuf,
+    writer: Option<std::fs::File>,
+}
+
+impl Drop for StalledRead {
+    fn drop(&mut self) {
+        // Existing readers get EOF when the held writer closes. Replace the
+        // name first so a late abandoned worker cannot block opening a FIFO
+        // after cleanup has already released it.
+        std::fs::remove_file(&self.path).expect("remove stalled FIFO");
+        std::fs::write(&self.path, b"").expect("replace released FIFO");
+        self.writer.take();
+    }
+}
+
+fn stalled(path: &Path) -> StalledRead {
     use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::OpenOptionsExt;
     let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).expect("path");
     let created = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
     assert_eq!(created, 0, "mkfifo {} failed", path.display());
+    let writer = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .expect("hold FIFO open until the deadline assertion finishes");
+    StalledRead {
+        path: path.to_path_buf(),
+        writer: Some(writer),
+    }
 }
 
 #[test]
@@ -2004,7 +2081,7 @@ fn a_stalled_artifact_sidecar_refuses_at_the_deadline() {
     // The receipt sidecar of a produced artifact can be a stalled read.
     let receipt = workspace_artifact_receipt_path(&artifact);
     std::fs::remove_file(&receipt).expect("remove the receipt");
-    stalled(&receipt);
+    let stalled_read = stalled(&receipt);
 
     let started = Instant::now();
     let refusal = crate::runner::workspace_command::provisioning::verify_guest_artifact_bounded(
@@ -2027,7 +2104,7 @@ fn a_stalled_artifact_sidecar_refuses_at_the_deadline() {
     );
 
     // The read was abandoned, not committed: a real artifact still authenticates.
-    std::fs::remove_file(&receipt).expect("remove the fifo");
+    drop(stalled_read);
     let healthy = produced_artifact(&observation.root, host_family());
     crate::runner::workspace_command::provisioning::verify_guest_artifact_bounded(
         healthy,
@@ -2044,7 +2121,7 @@ fn a_stalled_manifest_refuses_at_the_deadline_before_planning() {
     // The operator-workspace read loads the manifest; a stalled manifest must not
     // hold planning past the publication's one deadline.
     std::fs::remove_file(root.join("effigy.toml")).expect("remove the manifest");
-    stalled(&root.join("effigy.toml"));
+    let _stalled_read = stalled(&root.join("effigy.toml"));
 
     let mut backend = FakeBackend::colima();
     let started = Instant::now();
@@ -2082,7 +2159,7 @@ fn a_stalled_colima_profile_refuses_at_the_deadline() {
     // publication's deadline instead of holding planning.
     let colima_home = home.join("colima");
     std::fs::create_dir_all(colima_home.join("effigy")).expect("colima profile directory");
-    stalled(&colima_home.join("effigy/colima.yaml"));
+    let _stalled_read = stalled(&colima_home.join("effigy/colima.yaml"));
     let _env = crate::contract_test_support::EnvGuard::set_many(&[(
         "COLIMA_HOME",
         Some(colima_home.display().to_string()),

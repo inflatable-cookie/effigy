@@ -6,7 +6,9 @@
 //! `docs/knowledge/architecture/product-guardrails.md` ("Human-Facing
 //! Feedback").
 //!
-//! ```no_run
+//! Internal call pattern (covered by the module’s executable unit tests):
+//!
+//! ```text
 //! let status = crate::runner::feedback::live_progress(
 //!     "reading the gateway state",
 //!     "the gateway identity record",

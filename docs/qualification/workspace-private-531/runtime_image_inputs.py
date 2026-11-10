@@ -8,6 +8,7 @@ not a produced archive and has no payload hash of its own.
 No effects on import. Fetch, hash and layout assembly run only from the reviewed helper.
 """
 import hashlib
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -188,7 +189,34 @@ def runtime_image_pin(manifest):
     return pin
 
 
-def open_runtime_https(url, headers=None):
+@contextlib.contextmanager
+def runtime_https_session():
+    """Reuse fully consumed HTTPS connections within one bounded prefetch only.
+
+    No background workers, retries or connections survive the helper. The
+    existing timer can still interrupt every download on the main thread.
+    """
+    connections = {}
+    try:
+        yield lambda url, headers=None: open_runtime_https(url, headers, connections=connections)
+    finally:
+        for conn in connections.values():
+            conn.close()
+
+
+class ResponseLease:
+    def __init__(self, conn, response, connections, host):
+        self.conn, self.response, self.connections, self.host = conn, response, connections, host
+
+    def close(self):
+        # An unread/refused response cannot be reused for a later request.
+        if not self.response.isclosed():
+            self.conn.close()
+            self.connections.pop(self.host, None)
+        self.response.close()
+
+
+def open_runtime_https(url, headers=None, *, connections=None):
     """HTTPS GET of a pinned runtime URL. Redirects stay on RUNTIME_HOSTS, at most MAX_REDIRECTS.
     Authorization is sent only to the host it was minted for and is dropped on a host change."""
     import http.client
@@ -205,22 +233,31 @@ def open_runtime_https(url, headers=None):
         request_headers = {'Accept-Encoding': 'identity', 'User-Agent': 'effigy-qualification'}
         if parts.hostname == origin_host:
             request_headers.update(extra)
-        conn = http.client.HTTPSConnection(parts.hostname, 443, timeout=60, context=ssl.create_default_context())
+        conn = connections.get(parts.hostname) if connections is not None else None
+        if conn is None:
+            conn = http.client.HTTPSConnection(parts.hostname, 443, timeout=60, context=ssl.create_default_context())
+            if connections is not None:
+                connections[parts.hostname] = conn
         try:
             target = parts.path + ('?' + parts.query if parts.query else '')
             conn.request('GET', target, headers=request_headers)
             response = conn.getresponse()
         except BaseException:
             conn.close()
+            if connections is not None:
+                connections.pop(parts.hostname, None)
             raise
         if response.status in (301, 302, 303, 307, 308):
             location = response.getheader('Location')
             conn.close()
+            if connections is not None:
+                connections.pop(parts.hostname, None)
             if not location:
                 raise Refusal('redirect without a Location: refuse')
             current = urllib.parse.urljoin(current, location)
             continue
-        return conn, response
+        lease = ResponseLease(conn, response, connections, parts.hostname) if connections is not None else conn
+        return lease, response
     raise Refusal('too many redirects: refuse')
 
 

@@ -619,7 +619,7 @@ fn boundary_marker(
     let release_dir = format!("{BUILD_TREE_ROOT}/target/{triple}/release");
     let marker = serde_json::json!({
         "schema": BOUNDARY_SCHEMA,
-        "scope": "finite-before-write: read-only source bind, host-capped three-role transfer, staging/render and evidence; cargo tree is VM-side disclosed storage",
+        "scope": "finite-before-write: read-only source bind, host-capped three-role transfer and local identity binding within the sidecar cap, staging/render and evidence; cargo tree is VM-side disclosed storage",
         "target": triple,
         "no_change": {
             "switch": NO_CHANGE_ENV,
@@ -684,6 +684,7 @@ fn transfer_produced_artifact(
     binding: &VerifiedComposeContainer,
     triple: &str,
     active_version: &str,
+    install_identity: &str,
 ) -> Result<workspace_artifact_source::ProducedArtifact, RunnerError> {
     let release = format!("{BUILD_TREE_ROOT}/target/{triple}/release");
     let binary = transfer_role(
@@ -714,6 +715,7 @@ fn transfer_produced_artifact(
         repo_root,
         triple,
         active_version,
+        install_identity,
         binary,
         receipt,
         sidecar,
@@ -857,7 +859,11 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     }
     verify_workspace_artifact_builder_declaration(&policy)?;
     effigy_containers::validate_container_policy(repo_root, &policy)?;
-    effigy_containers::validate_compose_backend_runtime(repo_root, &policy)?;
+    let host_binary = std::env::current_exe().map_err(RunnerError::Cwd)?;
+    let install_identity = crate::runner::workspace_command::provisioning::local_artifact_identity(
+        &host_binary,
+        repo_root,
+    )?;
     // Stage this checkout's source closure before anything renders, activates
     // or inspects: the bind the render names must already carry the bytes the
     // build will compile. A checkout inside a mount the profile shares needs no
@@ -892,6 +898,9 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     // source and every Compose plan below names those files. The render digest is
     // unchanged, so this neither publishes nor supersedes the environment.
     effigy_containers::artifact_source::stage_compose_render(&mut policy)?;
+    // Validate the paths the guest will actually consume, after both source
+    // and Compose staging, and still before any runtime or builder effect.
+    effigy_containers::validate_compose_backend_runtime(repo_root, &policy)?;
     // The builder's profile is a managed Colima profile like any other
     // environment: create it when the user deleted it, start it when stopped
     // and restart it when its managed settings drifted. A runtime inventory
@@ -1129,12 +1138,22 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
         source_files,
     )?;
     check_interruption()?;
+    if crate::runner::workspace_command::provisioning::local_artifact_identity(
+        &host_binary,
+        repo_root,
+    )? != install_identity
+    {
+        return Err(RunnerError::task_invocation(
+            "workspace artifact host identity changed during the build; no artifact published",
+        ));
+    }
     let produced = transfer_produced_artifact(
         repo_root,
         &policy,
         &binding,
         &triple,
         &effigy_core::build_info::active_version(),
+        &install_identity,
     )?;
     let copied_bytes = produced.bytes;
     let export_released = match &staged {

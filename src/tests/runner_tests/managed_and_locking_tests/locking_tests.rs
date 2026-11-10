@@ -96,7 +96,7 @@ fn a_repository_task_named_tasks_is_never_the_inventory_a_conflict_suggests() {
     write_root_manifest(
         &root,
         r#"[tasks.tasks]
-run = "printf repository-tasks-task"
+run = "printf repository-tasks-task; while [ ! -f release-owner ]; do sleep 0.01; done"
 lock = "dev-stack"
 
 [tasks.build]
@@ -107,6 +107,13 @@ lock = "dev-stack"
 
     let root_for_thread = root.clone();
     let owner = OwnedThread::spawn(move || run_task_with_repo(&root_for_thread, "tasks", &[]));
+    struct Release(std::path::PathBuf);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            let _ = fs::write(&self.0, "release");
+        }
+    }
+    let release = Release(root.join("release-owner"));
     wait_for_live_task_owner(&root, "tasks");
 
     // `effigy tasks` runs the repository's own task here, so the conflict must
@@ -138,6 +145,7 @@ lock = "dev-stack"
         "{details:?}"
     );
 
+    fs::write(&release.0, "release").expect("release holding task");
     owner.join().expect("first run should complete");
 }
 

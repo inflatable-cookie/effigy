@@ -11,7 +11,7 @@ import threading
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common
-from runtime import Window
+from linux_native_window import Window
 
 TASK = '06fa2bbb-55f5-4f02-84c9-069e3a179946'
 BASE = Path('/Volumes/Stash/scratch/effigy/linux-native-829')

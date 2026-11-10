@@ -51,6 +51,11 @@ pub(in crate::runner) fn run_managed_task(
     selection_plan: &ExecutionSelectionPlan,
     run_key: Option<&RunKey>,
 ) -> Result<Option<String>, RunnerError> {
+    if selection.task.mode.as_deref() != Some("tui")
+        && managed_run::workspace_resolution()?.is_some()
+    {
+        return super::standard::run_reserved_shell(preflight, selection);
+    }
     let container_handoff = inside_container_handoff();
     let managed_invocation = (selection.task.mode.as_deref() == Some("tui"))
         .then(|| parse_managed_invocation(&preflight.runtime_args_exec))
@@ -60,9 +65,9 @@ pub(in crate::runner) fn run_managed_task(
     }
     // The detached supervisor re-resolves its client's invocation and owns
     // the run it admits (§5.8 step 3).
-    let supervisor_owned = managed_run::has_owner();
+    let owner = managed_run::take_owner();
     // Retired selectors refuse before any effect, whatever the flags.
-    let default_mode = if supervisor_owned {
+    let default_mode = if owner.is_some() {
         ManagedExecutionMode::Headless
     } else {
         managed_execution_mode()?
@@ -130,10 +135,6 @@ pub(in crate::runner) fn run_managed_task(
         &effigy_routing::resolve_task_selection,
     )?;
     let Some(plan) = plan else {
-        // Leave a reserved standard invocation and its owner for that engine.
-        if managed_run::reserved_admission()?.is_some() {
-            return Ok(None);
-        }
         // Not a managed run: leave the environment untouched.
         if should_open_workspace_shell_for_non_managed_task(
             selection.task.run.is_some(),
@@ -177,7 +178,6 @@ pub(in crate::runner) fn run_managed_task(
         )?;
         return Ok(None);
     };
-    let owner = managed_run::take_owner();
     if let Some(owner) = owner
         .as_ref()
         .filter(|owner| owner.session.admission().is_some())
@@ -885,6 +885,7 @@ fn own_managed_run(
                 .collect::<Vec<_>>(),
         );
         let owned = OwnedRun {
+            standard_shell: false,
             target,
             lock_wait_ms: resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?,
             admission: selection.task.admission,

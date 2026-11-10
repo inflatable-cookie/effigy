@@ -1786,6 +1786,113 @@ fn capture_compose_argv(
     output.stdout
 }
 
+// Probe before fixture/environment setup so hosted detection is still visible.
+// Only a missing executable or the CLI's exact missing-plugin diagnostic can
+// authorize a hosted prerequisite skip. Other failures retain a failing proof.
+fn skip_hosted_missing_compose_cli(test_name: &str) -> bool {
+    let _environment = crate::contract_test_support::lock_test();
+    let args = ["compose", "version", "--short"].map(OsString::from);
+    let result = effigy_containers::exec::run_input_capture_until(
+        Path::new("."),
+        "docker",
+        &args,
+        &[],
+        std::time::Instant::now() + Duration::from_secs(10),
+    );
+    let detection = match &result {
+        Err(effigy_containers::exec::ContainerExecError::Launch { command, error })
+            if error.kind() == std::io::ErrorKind::NotFound =>
+        {
+            Some(format!("{command}: {error:?}"))
+        }
+        Ok(output) if !output.status.success() => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let absent = stderr.lines().any(|line| {
+                [
+                    "docker: 'compose' is not a docker command.",
+                    "docker: unknown command: docker compose",
+                    "docker: unknown command: compose",
+                ]
+                .contains(&line.trim())
+            });
+            absent.then(|| {
+                format!(
+                    "docker compose version --short: status={}, stderr={stderr}",
+                    output.status
+                )
+            })
+        }
+        _ => None,
+    };
+    if let Some(detection) = detection {
+        if crate::contract_test_support::hosted_prerequisite_skip(
+            test_name,
+            "Docker executable and Docker Compose CLI/plugin",
+            &detection,
+        ) {
+            return true;
+        }
+    }
+    let output = result.unwrap_or_else(|error| {
+        panic!(
+        "host precondition: a working Docker Compose CLI/plugin is required; probe error={error:?}"
+    )
+    });
+    assert!(
+        output.status.success() && !output.stdout.is_empty(),
+        "host precondition: Docker Compose version probe failed; status={}, stdout={}, stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    false
+}
+
+// Hash the independently loaded canonical apply model. Older Compose versions
+// hash unresolved env_file metadata when given source files directly, unlike
+// create/up, which hashes the resolved service environment.
+fn hash_resolved_compose_model(
+    root: &Path,
+    policy: &EffectiveContainerPolicy,
+    project_directory: &std::ffi::OsStr,
+    model: &[u8],
+) -> std::collections::BTreeMap<String, String> {
+    let args = vec![
+        OsString::from("compose"),
+        OsString::from("--project-directory"),
+        project_directory.to_owned(),
+        OsString::from("-f"),
+        OsString::from("-"),
+        OsString::from("-p"),
+        OsString::from(&policy.project_name),
+        OsString::from("config"),
+        OsString::from("--hash"),
+        OsString::from("*"),
+    ];
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_args(
+        root,
+        policy,
+        args,
+        effigy_containers::ContainerAction::Status,
+        "canonical resolved-model hash proof",
+    )
+    .unwrap();
+    let output = effigy_containers::exec::run_input_capture_until(
+        &plan.repo_root,
+        plan.program.to_str().unwrap(),
+        &plan.args,
+        model,
+        std::time::Instant::now() + Duration::from_secs(30),
+    )
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    super::parse_service_config_hashes(&output.stdout).unwrap()
+}
+
 #[test]
 fn frozen_compose_expansion_refuses_unsealed_reads_and_temporary_environment_values() {
     let names = vec!["checkout/compose.yml".to_owned()];
@@ -1813,9 +1920,18 @@ fn frozen_compose_expansion_refuses_unsealed_reads_and_temporary_environment_val
 /// environment's fenced publisher promoting the exact seal it retained.
 #[test]
 fn the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_publishes() {
+    if skip_hosted_missing_compose_cli(concat!(
+        module_path!(),
+        "::the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_publishes"
+    )) {
+        return;
+    }
     // Hash offline with the host Compose CLI; native guest qualification is
     // the integrated lifecycle gate, not this private-seal adapter proof.
-    let _backend = effigy_test_support::env::ScopedEnv::set("EFFIGY_COMPOSE_BACKEND", "docker");
+    let _backend = crate::contract_test_support::EnvGuard::set_many(&[(
+        "EFFIGY_COMPOSE_BACKEND",
+        Some("docker".to_owned()),
+    )]);
     let fixture = effigy_test_support::Fixture::new("effigy-predecessor-live-").expect("fixture");
     let checkout = fixture.path().join("checkout");
     let home = fixture.path().join("home/.effigy");
@@ -2018,20 +2134,22 @@ fn the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_pu
 
         let mut config_argv = apply_prefix.to_vec();
         config_argv.extend(["config", "--format", "json"].map(OsString::from));
-        let mut hash_argv = apply_prefix.to_vec();
-        hash_argv.extend(["config", "--hash", "*"].map(OsString::from));
-        let canonical_config: serde_json::Value =
-            serde_json::from_slice(&capture_compose_argv(&checkout, &policy, config_argv)).unwrap();
-        let canonical_hashes = super::parse_service_config_hashes(&capture_compose_argv(
-            &checkout,
-            &policy,
-            hash_argv.clone(),
-        ))
-        .unwrap();
         assert_eq!(
             &apply_argv[..apply_argv.len() - 4],
-            &hash_argv[..hash_argv.len() - 3],
-            "hashing uses the actual apply's ordered -f/project prefix"
+            &config_argv[..config_argv.len() - 3],
+            "the canonical model uses the actual apply's ordered -f/project prefix"
+        );
+        let canonical_model = capture_compose_argv(&checkout, &policy, config_argv);
+        let canonical_config: serde_json::Value = serde_json::from_slice(&canonical_model).unwrap();
+        // Compose create/up hashes a resolved service environment. Compose
+        // 5.1.3's raw config --hash instead hashes env_file metadata, so load
+        // the exact canonical apply inputs first, then ask the same backend to
+        // hash that resolved model. No preflight adapter computes this oracle.
+        let canonical_hashes = hash_resolved_compose_model(
+            &checkout,
+            &policy,
+            apply_argv[2].as_os_str(),
+            &canonical_model,
         );
         assert_eq!(
             canonical_config["services"]["app"]["environment"]["FROZEN_ENV"],

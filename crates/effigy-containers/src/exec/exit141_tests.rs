@@ -235,8 +235,7 @@ def main():
         if mode["mode"] == "detached-writer":
             sys.stdout.write("[fake] detached up complete\n")
             sys.stdout.flush()
-            os.environ["EFFIGY_EXIT141_WRITER_SECONDS"] = str(mode.get("writer_seconds", 1.2))
-            writer = subprocess.Popen([sys.executable, WRITER], start_new_session=True)
+            writer = subprocess.Popen([sys.executable, WRITER, str(os.getpid())], start_new_session=True)
             write_json("detached-client.json", {
                 "pid": os.getpid(),
                 "pgrp": os.getpgrp(),
@@ -311,16 +310,36 @@ write_json("service-writer.json", {
     "stderr": shape(2),
     "started_at": round(started, 4),
 })
-seconds = float(os.environ.get("EFFIGY_EXIT141_WRITER_SECONDS", "1.2"))
 ticks = 0
-deadline = started + seconds
-while time.time() < deadline:
-    os.write(1, b"service-writer tick\n")
-    ticks += 1
-    time.sleep(0.01)
+post_ack_ticks = 0
+assert len(sys.argv) in (1, 2)
+client_pid = sys.argv[1] if len(sys.argv) == 2 else None
+if client_pid is not None:
+    handoff = os.path.join(FIXTURE, "detached-client-returned.json")
+    write_json("service-writer-awaiting-client.json", {"client_pid": int(client_pid)})
+    while not os.path.exists(handoff):
+        time.sleep(0.01)
+    with open(handoff) as handle:
+        acknowledged = json.load(handle)
+    assert acknowledged["client_pid"] == int(client_pid)
+    # Count real writes after the caller has returned and reaped the client.
+    # At the unchanged 10ms cadence this also preserves the 0.5s lower bound.
+    for _ in range(64):
+        os.write(1, b"service-writer tick\n")
+        ticks += 1
+        post_ack_ticks += 1
+        time.sleep(0.01)
+else:
+    seconds = float(os.environ.get("EFFIGY_EXIT141_WRITER_SECONDS", "1.2"))
+    deadline = started + seconds
+    while time.time() < deadline:
+        os.write(1, b"service-writer tick\n")
+        ticks += 1
+        time.sleep(0.01)
 write_json("service-writer-done.json", {
     "pid": os.getpid(),
     "ticks": ticks,
+    "post_ack_ticks": post_ack_ticks,
     "sigpipe": False,
     "finished_at": round(time.time(), 4),
 })
@@ -664,7 +683,7 @@ fn exit141_detached_client_exit_keeps_the_service_writer_on_a_regular_file() {
     fixture.control(json!({
         "ps": {"mode": "running"},
         "inspect": {"mode": "owned"},
-        "up": {"mode": "detached-writer", "writer_seconds": 1.2},
+        "up": {"mode": "detached-writer"},
     }));
     let compose = fixture.root.join("compose.yml");
     let args = [
@@ -713,7 +732,32 @@ fn exit141_detached_client_exit_keeps_the_service_writer_on_a_regular_file() {
         fixture.wait_pid_gone(client_pid, Duration::from_secs(5)),
         "the detached client is reaped before the adapter returns"
     );
+    let waiting = fixture.wait_json(
+        "service-writer-awaiting-client.json",
+        Duration::from_secs(5),
+    );
+    assert_eq!(waiting["client_pid"], json!(client_pid));
+    assert!(
+        !fixture.root.join("service-writer-done.json").exists(),
+        "the writer cannot finish before the returned caller acknowledges its reaped client"
+    );
+    let handoff = fixture.root.join("detached-client-returned.json");
+    let temporary = fixture.root.join("detached-client-returned.json.tmp");
+    fs::write(
+        &temporary,
+        serde_json::to_vec(&json!({
+            "client_pid": client_pid,
+            "returned_at": returned_at,
+        }))
+        .expect("handoff JSON"),
+    )
+    .expect("write caller-return handoff");
+    fs::rename(temporary, handoff).expect("publish caller-return handoff");
     let done = fixture.wait_json("service-writer-done.json", Duration::from_secs(15));
+    assert!(
+        done["post_ack_ticks"].as_i64().unwrap_or(0) >= 64,
+        "the writer completed at least 64 real writes after caller return and client reap: {done}"
+    );
     assert_eq!(done["sigpipe"], json!(false), "{done}");
     assert!(
         done["ticks"].as_i64().unwrap_or(0) > 20,

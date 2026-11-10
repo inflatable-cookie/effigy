@@ -95,12 +95,39 @@ struct PausedFork {
 }
 impl PausedFork {
     fn spawn() -> Self {
+        Self::spawn_with_closed_controls(false)
+    }
+    fn spawn_without_control_pipes() -> Self {
+        Self::spawn_with_closed_controls(true)
+    }
+    fn spawn_with_closed_controls(close_controls: bool) -> Self {
+        use std::os::unix::fs::FileTypeExt;
         let (parent, child) = UnixStream::pair().unwrap();
         parent
             .set_read_timeout(Some(Duration::from_secs(30)))
             .unwrap();
         let fd = child.as_raw_fd();
         let parent_fd = parent.as_raw_fd();
+        // Retain regular gate files, but not copies of the memory guard's EOF
+        // sockets/pipes: those would prevent the acknowledged guard closing
+        // and test a different, correctly refused custody boundary.
+        let controls: Vec<i32> = if close_controls {
+            std::fs::read_dir("/dev/fd")
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter_map(|entry| {
+                    let raw = entry.file_name().to_str()?.parse::<i32>().ok()?;
+                    let kind = std::fs::metadata(entry.path()).ok()?.file_type();
+                    (raw > 2
+                        && raw != fd
+                        && raw != parent_fd
+                        && (kind.is_fifo() || kind.is_socket()))
+                    .then_some(raw)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         // SAFETY: the child runs only the syscall-only branch below and _exit;
         // it neither allocates nor accesses locks inherited from other threads.
         let pid = unsafe { libc::fork() };
@@ -110,6 +137,9 @@ impl PausedFork {
             // pollfd are initialized stack storage. No Rust destructor runs.
             unsafe {
                 libc::close(parent_fd);
+                for &control in &controls {
+                    libc::close(control);
+                }
                 let ready = [1u8];
                 if libc::write(fd, ready.as_ptr().cast(), 1) != 1 {
                     libc::_exit(125);
@@ -153,6 +183,134 @@ impl Drop for PausedFork {
                 }
             }
         }
+    }
+}
+
+fn foreground_run(
+    cx: &EffectContext,
+    root: &StateRoot,
+    name: &str,
+    n: u8,
+    parent: Option<&mut effigy_kernel::run::ForegroundRun>,
+) -> effigy_kernel::run::ForegroundRun {
+    use effigy_kernel::{outcome::Invocation, run::*, supervise::*};
+    let task = TaskId::new(checkout(), "apps/api", Surface::Published, name, None).unwrap();
+    let invocation = ResolvedInvocation::new(InvocationSpec {
+        owner: task.resource(),
+        task,
+        route: Route::Task,
+        argv: vec![],
+        cwd: "".into(),
+        target: ExecutionTarget::Host,
+        env: Default::default(),
+        gates: vec![],
+        attachments: vec![],
+        class: EffectClass::Mutate,
+        placement: effigy_kernel::ctx::Placement::Host,
+        provenance: Default::default(),
+    })
+    .unwrap();
+    let opts = BeginOpts {
+        id: RunId::new(1, [n; 10]).unwrap(),
+        wait: Wait::FailFast,
+        acknowledge: vec![],
+        next: Invocation::validated(vec!["recover".into()], |a| a == ["recover"]).unwrap(),
+        custody: Some(LifecyclePlan {
+            executable: Executable::capture(Path::new(env!(
+                "CARGO_BIN_EXE_kernel-custody-fixture"
+            )))
+            .unwrap(),
+            placement: effigy_kernel::supervise::Placement::Inline,
+        }),
+    };
+    match parent {
+        Some(parent) => parent.begin_child(root, &invocation, opts),
+        None => ForegroundRun::begin(cx, root, &invocation, opts),
+    }
+    .unwrap()
+}
+
+#[test]
+fn settled_foreground_gate_releases_while_an_unrelated_fork_keeps_its_descriptors() {
+    use effigy_kernel::outcome::{CleanupOutcome, WorkloadOutcome};
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = foreground_run(&cx, &root, "foreground", 1, None);
+    // This models a sibling thread's fork paused before its descriptor sweep.
+    // Its inherited copy is unrelated to this run's acknowledged memory guard.
+    let fork = std::thread::spawn(PausedFork::spawn_without_control_pipes)
+        .join()
+        .unwrap();
+    let id = task("foreground");
+    assert!(matches!(
+        probe(home.path(), &id),
+        Observed::Verified(GateState::Held(_), _)
+    ));
+    run.finish(WorkloadOutcome::Failed { code: 7 }).unwrap();
+    let settled = run
+        .settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+        .unwrap();
+    assert_eq!(settled.cleanup(), CleanupOutcome::Complete);
+    fork.assert_running();
+    assert!(
+        matches!(
+            probe(home.path(), &id),
+            Observed::Verified(GateState::Free, _)
+        ),
+        "a completed foreground run must not be retained by a pre-exec fork copy"
+    );
+    let successor = acquire(home.path(), std::slice::from_ref(&id), Wait::FailFast).unwrap();
+    drop(fork);
+    assert!(matches!(
+        probe(home.path(), &id),
+        Observed::Verified(GateState::Held(_), _)
+    ));
+    drop(successor);
+}
+
+#[test]
+fn unsettled_foreground_descendant_retains_ancestor_gate_after_parent_failure() {
+    use effigy_kernel::outcome::{CleanupOutcome, WorkloadOutcome};
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut parent = foreground_run(&cx, &root, "parent", 1, None);
+    let mut child = foreground_run(&cx, &root, "child", 2, Some(&mut parent));
+    let mut descendant = foreground_run(&cx, &root, "descendant", 3, Some(&mut child));
+    let fork = std::thread::spawn(PausedFork::spawn_without_control_pipes)
+        .join()
+        .unwrap();
+    let cleanup = cx.operation().cleanup(Duration::from_secs(10)).unwrap();
+    child.finish(WorkloadOutcome::Failed { code: 7 }).unwrap();
+    assert_eq!(
+        child.settle(&cleanup).unwrap().cleanup(),
+        CleanupOutcome::Complete
+    );
+    parent.finish(WorkloadOutcome::Failed { code: 7 }).unwrap();
+    assert_eq!(
+        parent.settle(&cleanup).unwrap().cleanup(),
+        CleanupOutcome::Complete
+    );
+    // Remove the incidental copy: only the legitimate descendant's custody
+    // can retain these ancestor descriptions now.
+    drop(fork);
+    for name in ["parent", "child"] {
+        assert!(
+            matches!(
+                probe(home.path(), &task(name)),
+                Observed::Verified(GateState::Held(_), _)
+            ),
+            "{name} must remain held until its unconfirmed descendant closes"
+        );
+    }
+    descendant.finish(WorkloadOutcome::Succeeded).unwrap();
+    descendant.settle(&cleanup).unwrap();
+    for name in ["parent", "child"] {
+        assert!(matches!(
+            probe(home.path(), &task(name)),
+            Observed::Verified(GateState::Free, _)
+        ));
     }
 }
 

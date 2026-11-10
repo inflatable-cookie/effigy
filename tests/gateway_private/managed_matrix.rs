@@ -230,6 +230,10 @@ impl<'a> Case<'a> {
     fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(EFFIGY);
         command
+            .env_clear()
+            .env("TMPDIR", std::env::temp_dir())
+            .env("TMP", std::env::temp_dir())
+            .env("TEMP", std::env::temp_dir())
             .args(args)
             .current_dir(&self.root)
             .env("HOME", &self.home)
@@ -260,34 +264,6 @@ impl<'a> Case<'a> {
             .env("NO_COLOR", "1")
             .env_remove("EFFIGY_MANAGED_HEADLESS")
             .env_remove("EFFIGY_MANAGED_TUI");
-        // The same fixture contract as `fixture_environment_command`: ambient
-        // coding-agent and queue-harness values (`AI_AGENT=pi`, branch names,
-        // session tokens) have no provenance, so Effigy classifies them as
-        // secrets and redacts or refuses on them. A fixture never passes them
-        // to Effigy.
-        for (key, _) in std::env::vars_os() {
-            if key.to_str().is_some_and(|name| {
-                name.starts_with("CARGO_PROFILE_OXIDE_")
-                    || name.starts_with("NEXTEST_")
-                    || name.starts_with("CLAUDE_CODE_")
-                    || name.starts_with("PI_")
-                    || name.starts_with("PASEO_")
-                    || name.starts_with("NORTHSTAR_")
-                    || matches!(
-                        name,
-                        "AI_AGENT"
-                            | "CLAUDECODE"
-                            | "CLAUDE_AGENT_SDK_VERSION"
-                            | "CLICOLOR"
-                            | "CLICOLOR_FORCE"
-                            | "FORCE_COLOR"
-                            | "LS_COLORS"
-                            | "LSCOLORS"
-                    )
-            }) {
-                command.env_remove(key);
-            }
-        }
         command
     }
     fn run(&self, args: &[&str]) -> Output {

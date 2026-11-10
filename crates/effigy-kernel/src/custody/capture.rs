@@ -70,7 +70,7 @@ impl Log {
         let file = create(&dir, sequence, stream, 0)?;
         let tap = super::styled_tap::Tap::new(
             dir.clone(),
-            style_name(sequence)?,
+            style_name(sequence, stream)?,
             [sequence as u64, 0],
             limits.queue_bytes,
         );
@@ -97,12 +97,12 @@ impl Log {
     pub fn incomplete(&self) -> bool {
         self.incomplete
     }
-    pub fn enable_plain(&mut self) -> io::Result<()> {
+    pub fn enable_plain(&mut self, separate: bool) -> io::Result<()> {
         self.durable = true;
         let (guard, stat) = self
             .dir
             .open_file(
-                &guard_name(self.sequence)?,
+                &guard_name(self.sequence, self.stream)?,
                 libc::O_RDWR | libc::O_EXCL,
                 Some(0o600),
                 Trust::Private,
@@ -112,7 +112,18 @@ impl Log {
         crate::fs::fchmod(&guard, 0o600)?;
         guard.sync_all()?;
         self.guard = Some(FileIdentity::of(&stat));
-        let name = plain_name(self.sequence)?;
+        self.extent_identity = Some(super::merged::atomic::publish(
+            &self.dir,
+            &extent_name(self.sequence, self.stream)?,
+            &DurableExtent {
+                version: 1,
+                committed: 0,
+                guard: FileIdentity::of(&stat),
+            },
+            "initial",
+            None,
+        )?);
+        let name = plain_name(self.sequence, self.stream)?;
         let stage = name.with_suffix(".initial").map_err(io::Error::other)?;
         let (mut file, _) = self
             .dir
@@ -125,23 +136,12 @@ impl Log {
             .map_err(io::Error::other)?
             .ok_or_else(|| io::Error::other("plain format record missing"))?;
         crate::fs::fchmod(&file, 0o600)?;
-        file.write_all(b"effigy.plain.v2\n")?;
+        file.write_all(if separate {
+            b"effigy.plain.v3\n"
+        } else {
+            b"effigy.plain.v2\n"
+        })?;
         file.sync_all()?;
-        self.extent_identity = Some(super::merged::atomic::publish(
-            &self.dir,
-            &extent_name(self.sequence)?,
-            &DurableExtent {
-                version: 1,
-                committed: 0,
-                guard: FileIdentity::of(&stat),
-            },
-            "initial",
-            None,
-        )?);
-        // Readers select the plain protocol from this marker. Publish it only
-        // after its guard and initial committed extent are durable, and never
-        // expose a partially written format record.
-        crate::fault_point!(CapturePlainPublish)?;
         super::merged::atomic::rename(
             &self.dir,
             &stage,
@@ -194,7 +194,7 @@ impl Log {
         let (guard, stat) = self
             .dir
             .open_file(
-                &guard_name(self.sequence)?,
+                &guard_name(self.sequence, self.stream)?,
                 libc::O_RDWR,
                 None,
                 Trust::Private,
@@ -208,7 +208,7 @@ impl Log {
         let _lock = super::merged::atomic::FileLock::exclusive(guard)?;
         super::merged::atomic::begin_append(
             &self.dir,
-            &extent_name(self.sequence)?,
+            &extent_name(self.sequence, self.stream)?,
             guard_id,
             self.committed,
         )?;
@@ -222,7 +222,7 @@ impl Log {
         let next = self.bases.back().copied().unwrap_or(0) + self.written;
         self.extent_identity = Some(super::merged::atomic::publish(
             &self.dir,
-            &extent_name(self.sequence)?,
+            &extent_name(self.sequence, self.stream)?,
             &DurableExtent {
                 version: 1,
                 committed: next,
@@ -232,8 +232,10 @@ impl Log {
             Some(identity),
         )?);
         crate::fault_point!(CaptureCommitAfterPublish)?;
-        let cleanup_durable =
-            super::merged::atomic::finish_append(&self.dir, &extent_name(self.sequence)?)?;
+        let cleanup_durable = super::merged::atomic::finish_append(
+            &self.dir,
+            &extent_name(self.sequence, self.stream)?,
+        )?;
         self.committed = next;
         if !cleanup_durable {
             self.incomplete = true;
@@ -259,11 +261,11 @@ pub(crate) struct DurableExtent {
     pub committed: u64,
     pub guard: FileIdentity,
 }
-pub(crate) fn guard_name(sequence: i64) -> io::Result<FileName> {
-    FileName::new(&format!("{sequence}.stdout.guard")).map_err(io::Error::other)
+pub(crate) fn guard_name(sequence: i64, stream: Stream) -> io::Result<FileName> {
+    FileName::new(&format!("{sequence}.{}.guard", stream.name())).map_err(io::Error::other)
 }
-pub(crate) fn extent_name(sequence: i64) -> io::Result<FileName> {
-    FileName::new(&format!("{sequence}.stdout.committed")).map_err(io::Error::other)
+pub(crate) fn extent_name(sequence: i64, stream: Stream) -> io::Result<FileName> {
+    FileName::new(&format!("{sequence}.{}.committed", stream.name())).map_err(io::Error::other)
 }
 
 fn create(dir: &DirFd, sequence: i64, stream: Stream, base: u64) -> io::Result<std::fs::File> {
@@ -280,8 +282,8 @@ fn create(dir: &DirFd, sequence: i64, stream: Stream, base: u64) -> io::Result<s
         .0)
 }
 
-fn style_name(sequence: i64) -> io::Result<FileName> {
-    FileName::new(&format!("{sequence}.stdout.styled-tap")).map_err(io::Error::other)
+fn style_name(sequence: i64, stream: Stream) -> io::Result<FileName> {
+    FileName::new(&format!("{sequence}.{}.styled-tap", stream.name())).map_err(io::Error::other)
 }
 /// Optional presentation styles for an already read contiguous merged log.
 /// A missing/expired tap always yields plain spans matching those exact bytes.
@@ -304,12 +306,12 @@ pub fn read_styles(
     let Ok(Some(dir)) = parent.child(&run.to_string(), Trust::Private, false) else {
         return fallback();
     };
-    let Ok(name) = style_name(sequence) else {
+    let Ok(name) = style_name(sequence, Stream::Stdout) else {
         return fallback();
     };
     super::styled_tap::read(&dir, &name, [sequence as u64, 0], from, bytes)
 }
 
-pub(crate) fn plain_name(sequence: i64) -> io::Result<FileName> {
-    FileName::new(&format!("{sequence}.stdout.plain")).map_err(io::Error::other)
+pub(crate) fn plain_name(sequence: i64, stream: Stream) -> io::Result<FileName> {
+    FileName::new(&format!("{sequence}.{}.plain", stream.name())).map_err(io::Error::other)
 }

@@ -571,26 +571,16 @@ fn a_bootstrap_with_no_task_manifest_still_acquires_the_checkout() {
     );
 }
 
-/// `protocol.file.allow=always` for local-path submodule fixtures only.
-struct FileProtocolGuard;
+/// Local-path submodule fixtures opt into file transport for their own scope.
+/// One shared guard serializes sibling fixtures and restores inherited policy.
+struct FileProtocolGuard {
+    _environment: effigy_test_support::env::ScopedEnv,
+}
 
 impl FileProtocolGuard {
     fn allow() -> Self {
-        unsafe {
-            std::env::set_var("GIT_CONFIG_COUNT", "1");
-            std::env::set_var("GIT_CONFIG_KEY_0", "protocol.file.allow");
-            std::env::set_var("GIT_CONFIG_VALUE_0", "always");
-        }
-        Self
-    }
-}
-
-impl Drop for FileProtocolGuard {
-    fn drop(&mut self) {
-        unsafe {
-            std::env::remove_var("GIT_CONFIG_COUNT");
-            std::env::remove_var("GIT_CONFIG_KEY_0");
-            std::env::remove_var("GIT_CONFIG_VALUE_0");
+        Self {
+            _environment: effigy_test_support::env::ScopedEnv::set("GIT_ALLOW_PROTOCOL", "file"),
         }
     }
 }

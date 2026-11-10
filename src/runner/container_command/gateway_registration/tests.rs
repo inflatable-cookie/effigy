@@ -284,7 +284,13 @@ fn register_and_deregister_gateway_route_roundtrip() {
         .expect("published");
     let route = routes.first().expect("some route");
 
-    reconcile_gateway_routes(&route_table_path, &repo_root, &routes).expect("register");
+    let mut certificates = Vec::new();
+    reconcile_gateway_routes_with_tls(&route_table_path, &repo_root, &routes, &mut |domain| {
+        certificates.push(domain.to_owned());
+        Ok(())
+    })
+    .expect("register");
+    assert_eq!(certificates, ["clientname.test"]);
     let table = RouteTable::load(&route_table_path).expect("load registered route table");
     let registered = table.lookup("clientname.test").expect("registered route");
     assert_eq!(registered.target.as_deref(), Some("127.0.0.1:8080"));
@@ -697,15 +703,21 @@ fn route_registration_reports_its_post_poll_stages() {
             },
         ];
         let mut observed = Vec::new();
-        let routes = finish_gateway_route_registration(
+        let mut certificates = Vec::new();
+        let routes = finish_gateway_route_registration_with_tls(
             &policy.repo_root,
             &policy,
             None,
             &rows,
             &mut |wait| observed.push(described(wait)),
+            &mut |domain| {
+                certificates.push(domain.to_owned());
+                Ok(())
+            },
         )
         .expect("published ports register their declared routes");
         assert!(!routes.is_empty());
+        assert_eq!(certificates, ["clientname.test"]);
         assert_eq!(
             observed,
             vec![
@@ -1951,7 +1963,13 @@ fn container_up_starts_a_stopped_machine_gateway_then_registers_its_route() {
             .expect("routes")
             .expect("published");
         let route_table_path = gateway_route_table_path().expect("gateway route table");
-        reconcile_gateway_routes(&route_table_path, &repo_root, &routes).expect("register");
+        let mut certificates = Vec::new();
+        reconcile_gateway_routes_with_tls(&route_table_path, &repo_root, &routes, &mut |domain| {
+            certificates.push(domain.to_owned());
+            Ok(())
+        })
+        .expect("register");
+        assert_eq!(certificates, ["clientname.test"]);
         let table = RouteTable::load(&route_table_path).expect("load registered route table");
         let registered = table.lookup("clientname.test").expect("registered route");
         assert_eq!(registered.target.as_deref(), Some("127.0.0.1:8080"));

@@ -95,6 +95,20 @@ def produce(source, effigy):
     match = re.fullmatch(r'effigy v([^\s]+)', version)
     if not match:
         raise RuntimeError('artifact does not report an Effigy active version')
+    if subprocess.check_output([effigy, '--version'], text=True).strip() != version:
+        raise RuntimeError('producer host and GNU artifact versions differ')
+    # The real publisher binds local artifacts to the host freshness anchor.
+    # Match that contract from the actual prepared host's metadata; never stamp
+    # a release identity or borrow a different checkout's install record.
+    anchors = [source / '.local-install/bin/effigy', source / 'target/debug/effigy']
+    anchors = [path for path in anchors if path.is_file()]
+    if not anchors:
+        raise RuntimeError('native host freshness anchor is unavailable')
+    anchor = max(anchors, key=lambda path: path.stat().st_mtime_ns)
+    if anchor.resolve(strict=True) != anchor:
+        raise RuntimeError('native host freshness anchor is aliased')
+    anchor_info = anchor.stat()
+    identity = 'local:v%s:%d:%d\n' % (match[1], anchor_info.st_size, anchor_info.st_mtime_ns)
     destination = source / '.effigy/linux-release/artifacts'
     destination.mkdir(mode=0o700, parents=True, exist_ok=True)
     artifact = destination / ('effigy-' + TRIPLE)
@@ -106,6 +120,9 @@ def produce(source, effigy):
     publish(artifact, data, 0o700)
     publish(artifact.with_suffix('.active-version'), (match[1] + '\n').encode(), 0o600)
     publish(artifact.with_suffix('.receipt'), receipt, 0o600)
+    if (anchor.stat().st_size, anchor.stat().st_mtime_ns) != (anchor_info.st_size, anchor_info.st_mtime_ns):
+        raise RuntimeError('native host freshness anchor changed during publication')
+    publish(artifact.with_suffix('.install-identity'), identity.encode(), 0o600)
     print(json.dumps({'artifact': str(artifact), 'sha256': sha, 'source_pin': pin,
                       'glibc_requirements': tags, 'exploratory': True,
                       'qualification_credit': False}, indent=2))
