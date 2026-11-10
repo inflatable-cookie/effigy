@@ -1177,3 +1177,16 @@ The strict initialized-image verifier additionally requires no unwritten extents
 discard disabled and at most 64 KiB of outer-file extent metadata. Those latter
 activation conditions have not yet been established on the exploratory images;
 this source addition does not register or credit a prepared mechanism.
+
+`qualification:linux:initialize-images EVIDENCE_ROOT ASSET_SEED` is an explicit
+unsealed preparation selector for these two existing task-owned images. It
+requires the recorded pre-change snapshot, an idle dedicated engine and exact
+image inodes; it closes the engine, unmounts, rewrites each block with its original
+bytes, compares complete hashes, remounts and disables discard. It never formats,
+truncates, grows or replaces an image. A short-write/readback control covers the
+same-byte invariant. Restore attempts cover both verified images on failure.
+The real VM completed this preparation with matching full before/after hashes
+for both images and passed the strict initialized-image verifier. Native resume
+now checks these conditions before starting any daemon. The snapshot remains
+retained; no revert occurred. Mechanism registration, complete live writer
+closure and downstream receipt integration are still required.

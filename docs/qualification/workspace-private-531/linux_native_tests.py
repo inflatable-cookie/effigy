@@ -12,6 +12,7 @@ import common
 import linux_native_artifact as producer
 import linux_native_build as build
 import linux_native_storage as storage
+import linux_native_initialize as initialize
 import linux_loop_bound as loop_bound
 import linux_native_writers as writers
 import linux_native_run as native_run
@@ -49,6 +50,35 @@ class ArtifactCompatibilityTests(unittest.TestCase):
                 (self.header, self.loader, '')):
             with self.subTest(loader=loader, versions=versions), self.assertRaises(ValueError):
                 producer.validate_elf(header, loader, versions)
+
+
+class SameByteInitializationTests(unittest.TestCase):
+    def test_same_byte_rewrite_handles_short_writes_and_checks_its_readback(self):
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            path = Path(directory) / 'owned-image'
+            data = bytes(range(251)) * 256
+            path.write_bytes(data)
+            fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+            allocation = {'extents': [dict(logical=0, physical=4096, length=len(data), flags=1)]}
+            real_write, real_read = os.pwrite, os.pread
+            try:
+                with patch.object(initialize.storage, 'allocated_extents', return_value=allocation), \
+                     patch.object(initialize.os, 'pwrite', side_effect=lambda file, block, offset: real_write(file, block[:4096], offset)):
+                    result = initialize.rewrite_same(fd, len(data))
+                self.assertEqual(result['content_sha256_before'], result['content_sha256_after'])
+                self.assertEqual(path.read_bytes(), data)
+                calls = 0
+                def changed_read(file, count, offset):
+                    nonlocal calls
+                    calls += 1
+                    block = real_read(file, count, offset)
+                    return b'!' + block[1:] if calls == 2 else block
+                with patch.object(initialize.os, 'pread', side_effect=changed_read), \
+                     self.assertRaises(ValueError):
+                    initialize.rewrite_same(fd, len(data))
+                self.assertEqual(path.read_bytes(), data)
+            finally:
+                os.close(fd)
 
 
 class PhysicalImageReceiptTests(unittest.TestCase):

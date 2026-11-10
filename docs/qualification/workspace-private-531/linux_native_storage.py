@@ -225,6 +225,19 @@ def observe(image, mountpoint, capacity, *, project_quota):
         os.close(fd)
 
 
+def disable_discard(image, mountpoint, capacity):
+    """Fixed-image activation: prevent a later trim from punching outer holes."""
+    before = observe(image, mountpoint, capacity, project_quota=False)
+    path = Path('/sys/dev/block') / before['mount']['device'] / 'queue/discard_max_bytes'
+    if int(path.read_text()) != 0:
+        path.write_text('0\n')
+    after = observe(image, mountpoint, capacity, project_quota=False)
+    if (after['image_inode'] != before['image_inode'] or after['image_device'] != before['image_device']
+            or after['originals']['loop']['discard_max_bytes'] != 0):
+        raise ValueError('discard policy or loop backing changed during activation')
+    return after
+
+
 if __name__ == '__main__':
     if len(sys.argv) != 5 or sys.argv[4] not in ('project-quota', 'capacity'):
         raise SystemExit('usage: linux_native_storage.py IMAGE MOUNT CAPACITY project-quota|capacity')

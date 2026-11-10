@@ -48,7 +48,7 @@ def ssh_prefix(root, attempt):
                                      build.file_input(control / 'ssh_known_hosts'), control, attempt.root)
 
 
-def root_operation(root, attempt, ssh, entry, files, arguments=()):
+def root_operation(root, attempt, ssh, entry, files, arguments=(), *, runtime_seconds=45, file_limit='8M'):
     remote = build.BASE + '/metadata/smoke-' + uuid.uuid4().hex
     attempt.command(ssh + ['umask 077; mkdir ' + shlex.quote(remote)])
     pins = {}
@@ -83,13 +83,13 @@ def root_operation(root, attempt, ssh, entry, files, arguments=()):
     argv = ['/usr/bin/systemd-run', '--unit=' + unit, '--no-block', '--service-type=exec',
             '--property=RemainAfterExit=yes', '--property=CollectMode=inactive',
             '--property=ExitType=cgroup', '--property=KillMode=control-group',
-            '--property=RuntimeMaxSec=45', '--property=TimeoutStopSec=5',
+            '--property=RuntimeMaxSec=' + str(runtime_seconds), '--property=TimeoutStopSec=5',
             '--property=MemoryMax=256M', '--property=MemorySwapMax=0', '--property=TasksMax=64',
-            '--property=LimitFSIZE=8M', '--property=UMask=0077', '--property=LimitCORE=0',
+            '--property=LimitFSIZE=' + file_limit, '--property=UMask=0077', '--property=LimitCORE=0',
             '--property=StandardOutput=append:' + stdout, '--property=StandardError=append:' + stderr,
             '--', '/usr/bin/python3', '-I', '-B', '-c', entry]
     native_run.submit_unit(attempt, argv, unit)
-    deadline = time.monotonic() + 65
+    deadline = time.monotonic() + runtime_seconds + 20
     while True:
         raw = attempt.admin('systemctl show --all ' + unit + '.service '
                             '--property=MainPID,SubState,Result,ExecMainStatus,ControlGroup', read_only=True)
@@ -126,6 +126,46 @@ def root_collect(root, attempt, ssh, controller=None):
              'linux_native_resume.py', 'linux_native_collect.py')
     arguments = () if controller is None else (controller,)
     return root_operation(root, attempt, ssh, 'linux_native_collect.py', files, arguments)
+
+
+
+def initialize_images(root, seed):
+    """Explicit unsealed activation; preserve every byte and the owned rollback."""
+    attempt = native_run.Attempt(root, label='native-image-initialization')
+    raw = attempt.command([diagnostic.PRLCTL, 'list', '--info', setup.VM_UUID, '--json'], read_only=True)
+    diagnostic.check_vm(raw, 'running')
+    snapshots = json.loads(attempt.command([diagnostic.PRLCTL, 'snapshot-list', setup.VM_UUID, '--json'], read_only=True),
+                           object_pairs_hook=diagnostic.parse_unique)
+    # Parallels' observed JSON indexes snapshots by braced UUID; the ID is not
+    # a field inside an entry. Bind that exact owned entry, without recursion
+    # through unrelated snapshots or accepting an ID mentioned as a parent.
+    owned = snapshots.get('{d1602e5a-964a-4375-9eec-df6ed4350305}') if isinstance(snapshots, dict) else None
+    common.require(isinstance(owned, dict) and owned.get('name') == 'effigy-explore-2026-11-09',
+                   'task-owned pre-change snapshot is absent or differs')
+    common.exclusive(attempt.root / 'snapshot-original.json', snapshots)
+    value = common.load(seed)
+    common.require(value.get('schema') == 'effigy.linux-native-session-exploration.v1'
+                   and value.get('exploratory') is True and value.get('qualification_credit') is False,
+                   'unsealed owned asset seed required')
+    cell = value['cell']
+    common.require(cell['engine_identity'] == 'effigy-829-rootful' and cell['baseline']['containers'] == [],
+                   'only the idle dedicated owned engine may be initialized')
+    ssh = ssh_prefix(root, attempt)
+    actual = attempt.command(ssh + ['sha256sum -- ' + shlex.quote(cell['engine_binary']['path'])], read_only=True)
+    common.require(actual.decode().split()[0] == cell['engine_binary']['sha256'], 'engine executable changed')
+    engine = shlex.join([cell['engine_binary']['path'], '--config', cell['docker_config'],
+                         '--context', cell['engine_identity'], 'ps', '-a', '--no-trunc', '--format', '{{.ID}}'])
+    common.require(attempt.command(ssh + [engine], read_only=True).strip() == b'',
+                   'dedicated engine still has containers; settle their exact owners first')
+    stop_engine(attempt)
+    files = ('linux_loop_bound.py', 'linux_native_storage.py', 'linux_native_writers.py',
+             'linux_native_resume.py', 'linux_native_initialize.py')
+    result = root_operation(root, attempt, ssh, 'linux_native_initialize.py', files,
+                            runtime_seconds=300, file_limit='2G')
+    common.exclusive(attempt.root / 'initialized.json', result)
+    print(json.dumps({'evidence': str(attempt.root), 'initialized': True, 'exploratory': True,
+                      'qualification_credit': False}))
+    return 0
 
 
 def verify_engine_stopped(state, pids):
@@ -199,12 +239,17 @@ def main(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('evidence_root', type=Path)
     parser.add_argument('asset_seed', type=Path, nargs='?')
-    parser.add_argument('--diagnostic-only', action='store_true')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--diagnostic-only', action='store_true')
+    mode.add_argument('--initialize-images', action='store_true')
     args = parser.parse_args(argv[1:])
     root = args.evidence_root.resolve(strict=True)
     if args.diagnostic_only:
         common.require(args.asset_seed is None, 'diagnostic-only does not accept a session seed')
         return diagnostic_run(root)
+    if args.initialize_images:
+        common.require(args.asset_seed is not None, 'image initialization requires the prepared owned seed')
+        return initialize_images(root, args.asset_seed)
     common.require(args.asset_seed is not None, 'full native smoke requires the prepared asset seed; see linux-setup.md')
     return full_chain(root, args.asset_seed)
 

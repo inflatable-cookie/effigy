@@ -10,6 +10,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_native_storage as storage
 import linux_native_writers as writers
+from linux_loop_bound import verify_image
 
 ROOT = Path('/var/lib/effigy-829')
 WORKSPACE = Path('/Volumes/Stash/scratch/effigy/linux-native-829/qualification')
@@ -17,6 +18,7 @@ IMAGES = ((ROOT / 'engine-rootful.ext4', ROOT / 'rootful', 2147483648,
            '958bd45f-83da-43e7-b15a-b498a79b34bf'),
           (ROOT / 'rows-final.ext4', WORKSPACE, 1073741824,
            '8d8707ea-dd3d-48ab-b408-47f66e5475dd'))
+INODES = {'engine-rootful.ext4': 2641043, 'rows-final.ext4': 2640535}
 
 
 def run(*argv):
@@ -38,7 +40,11 @@ def resume():
             if run('losetup', '-j', str(image)).strip():
                 raise RuntimeError('unmounted image already has a loop association; reconcile explicitly')
             subprocess.run(['mount', '-o', 'loop,nodev,nosuid', str(image), str(target)], check=True)
-        observations.append(storage.observe(image, target, capacity, project_quota=False))
+        observation = storage.disable_discard(image, target, capacity)
+        verify_image(observation, {'image': str(image), 'image_device': os.stat('/').st_dev,
+            'image_inode': INODES[image.name], 'image_bytes': capacity,
+            'filesystem_uuid': expected_uuid, 'mountpoint': str(target)})
+        observations.append(observation)
     if (WORKSPACE.stat().st_uid != 1001 or WORKSPACE.stat().st_mode & 0o777 != 0o700
             or run('id', '-G', 'effigy531').strip() != '1001'):
         raise RuntimeError('dedicated native account or workspace ownership differs')
