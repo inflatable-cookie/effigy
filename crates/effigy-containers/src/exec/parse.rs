@@ -84,6 +84,7 @@ impl From<String> for ContainerStatus {
         let lowered = text.to_ascii_lowercase();
         let (state, annotation) = lowered.split_once(" (").unwrap_or((&lowered, ""));
         let lifecycle = match state.split_whitespace().next().unwrap_or_default() {
+            "up" | "running" if annotation == "paused)" => ContainerLifecycle::Paused,
             "up" | "running" => ContainerLifecycle::Running,
             "created" => ContainerLifecycle::Created,
             "exited" | "dead" => ContainerLifecycle::Exited,
@@ -694,6 +695,7 @@ mod tests {
             ("Created", Created, Unspecified),
             ("Exited (0) 2 days ago", Exited, Unspecified),
             ("Paused", Paused, Unspecified),
+            ("Up 10 seconds (Paused)", Paused, Unspecified),
             ("Restarting (1) 2 seconds ago", Transitioning, Unspecified),
             ("unknown", Unknown, Unspecified),
         ] {
