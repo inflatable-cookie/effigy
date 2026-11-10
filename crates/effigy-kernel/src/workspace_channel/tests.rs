@@ -671,6 +671,139 @@ impl Admission for LiveAdmitter<'_> {
 
 #[cfg(feature = "fault-injection")]
 #[test]
+fn settled_invocation_eof_allows_the_next_connection() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    struct SharedAdmission<'a>(Rc<RefCell<LiveAdmitter<'a>>>);
+    impl Admission for SharedAdmission<'_> {
+        fn admitted_fence(&self, ticket: &AdmissionTicket) -> Option<run::Fence> {
+            self.0.borrow().admitted_fence(ticket)
+        }
+        fn admit(
+            &mut self,
+            cx: &EffectContext,
+            ticket: &AdmissionTicket,
+            resolved: &ResolvedInvocation,
+        ) -> Result<(), Refusal> {
+            self.0.borrow_mut().admit(cx, ticket, resolved)
+        }
+    }
+    struct FinishOnAccepted<'a> {
+        inner: Pipe,
+        admission: Rc<RefCell<LiveAdmitter<'a>>>,
+        cx: &'a EffectContext,
+        finish_after: RequestId,
+    }
+    impl Transport for FinishOnAccepted<'_> {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            self.inner.read(bytes)
+        }
+        fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+            self.inner.write_all(bytes)?;
+            if matches!(decode_frame(&bytes[4..]), Ok(Frame::Response(Response { id, .. })) if id == self.finish_after)
+            {
+                let mut run = self
+                    .admission
+                    .borrow_mut()
+                    .runs
+                    .pop()
+                    .expect("admitted run");
+                run.finish(crate::outcome::WorkloadOutcome::Failed { code: 23 })
+                    .unwrap();
+                run.settle(&cleanup(self.cx), &mut NoEffects).unwrap();
+            }
+            Ok(())
+        }
+        fn verified_peer(&self) -> Option<ServerIdentity> {
+            self.inner.verified_peer()
+        }
+    }
+    for attached in [false, true] {
+        let (_fixture, cx, root, session) = journal("effigy-channel-settled-eof");
+        let admission = Rc::new(RefCell::new(LiveAdmitter {
+            root: &root,
+            runs: vec![],
+        }));
+        let mut grants = GrantBook::new();
+        grants.issue(
+            capability(),
+            binding(session),
+            session_operations(),
+            [Target::Host].into_iter().collect(),
+        );
+        let mut host = Server::new(
+            host(),
+            fence(session),
+            pinned(),
+            grants,
+            Dispatcher::new(
+                SharedAdmission(admission.clone()),
+                Resolver::new(task("workspace-channel").resource()),
+                Observer::default(),
+                Ids::new(&[179]),
+            ),
+        );
+        let mut frames = vec![
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            Frame::Request(request(
+                session,
+                RequestBody::Invoke(invocation_body("build")),
+                1,
+            )),
+        ];
+        if attached {
+            frames.push(attach_frame(
+                session,
+                RunId::new(7, [179; 10]).unwrap(),
+                2,
+                vec![StreamKind::Stdout],
+                None,
+            ));
+        }
+        let mut pipe = FinishOnAccepted {
+            inner: Pipe::new(stream(&frames), peer()),
+            admission,
+            cx: &cx,
+            finish_after: RequestId::new([if attached { 2 } else { 1 }; 16]),
+        };
+        host.serve(
+            &mut pipe,
+            &cx,
+            &observe_context(),
+            &root,
+            &mut RecordingTerminal::default(),
+        )
+        .expect("settled EOF");
+        assert!(!host.cleanup_pending());
+        assert!(host.dispatcher.admitted.is_empty());
+        let mut next = Pipe::new(
+            stream(&[Frame::Hello(hello()), Frame::Authenticate(capability())]),
+            peer(),
+        );
+        assert!(
+            host.serve(&mut next, &cx, &observe_context(), &root, &mut NoStreams)
+                .unwrap()
+                .closed
+        );
+        let reader = match Store::read(&observe_context(), &root) {
+            Observed::Verified(reader, _) => reader,
+            _ => panic!("journal unavailable"),
+        };
+        let stops: i64 = reader
+            .conn()
+            .query_row("SELECT count(*) FROM requests", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            stops, 0,
+            "completed invocation must not receive an EOF stop"
+        );
+    }
+}
+
+#[cfg(feature = "fault-injection")]
+#[test]
 fn mismatched_supervisor_fence_retains_the_started_owner_without_authority() {
     struct Mismatched<'a>(LiveAdmitter<'a>);
     impl Admission for Mismatched<'_> {

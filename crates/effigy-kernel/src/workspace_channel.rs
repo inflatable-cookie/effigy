@@ -2991,6 +2991,51 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         self.observed_invocations.clear();
     }
 
+    /// Settlement compacts attachment rows. A verified terminal admission
+    /// therefore discharges this connection's custody without attempting a
+    /// release against a row that no longer exists. An uncertain release is
+    /// still retained: terminal status cannot establish its earlier cause.
+    fn forget_settled_owners(
+        &mut self,
+        observe: &ObserveContext,
+        root: &StateRoot,
+        attachment: &mut Option<Attachment>,
+    ) {
+        for run in self.dispatcher.admitted.clone() {
+            let Some(original) = self.dispatcher.admitted_owners.get(&run) else {
+                continue;
+            };
+            if original.pending_release().is_some()
+                || original.check_release_root(root).is_err()
+                || attachment
+                    .as_ref()
+                    .is_some_and(|handle| handle.run() == run && handle.pending_release().is_some())
+            {
+                continue;
+            }
+            let completed = self.observed_invocations.iter().any(|(request, (owned, digest))| {
+                *owned == run
+                    && matches!(
+                        run::lookup(observe, root, run::AdmissionKey {
+                            session: original.session(),
+                            request: *request,
+                        }, digest.clone()),
+                        Observed::Verified(Recovered::Completed { run: found, .. }, _) if found == run
+                    )
+            });
+            if completed {
+                self.dispatcher.admitted.remove(&run);
+                self.dispatcher.admitted_owners.remove(&run);
+                if attachment
+                    .as_ref()
+                    .is_some_and(|handle| handle.run() == run)
+                {
+                    attachment.take();
+                }
+            }
+        }
+    }
+
     /// The unauthenticated half: `hello`, `hello_ok`, then `authenticate` or
     /// `enrol`. A refusal here is written once and ends the connection.
     fn handshake<T: Transport>(&mut self, transport: &mut T) -> Result<Option<Grant>, Refusal> {
@@ -3074,6 +3119,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                 .as_ref()
                 .is_err_and(|error| error.code == RefusalCode::Unavailable);
         if state.closed || transport_lost {
+            self.forget_settled_owners(observe, root, &mut attachment);
             match root.state_directory().identity() {
                 Ok(identity) => self.pending_eof_root = Some(identity),
                 Err(_) => {
@@ -3223,6 +3269,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         // owner's stop or releases this client's own row, and a secondary never
         // stops the owner's run. A detached handle is already gone.
         state.closed = true;
+        self.forget_settled_owners(observe, root, attachment);
         if let Some(mut handle) = attachment.take() {
             if handle.release(cx, root, Release::Eof).is_err() {
                 self.unsettled_attachment = Some(handle);

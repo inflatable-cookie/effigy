@@ -1135,3 +1135,13 @@ Parallels acknowledgement can fail before a stop starts; neither that failure
 nor a client exit is engine closure. The route retains helper streams and
 waited status, then independently requires inactive/MainPID-zero state and an
 empty kernel cgroup before the capacity control or VM stop.
+
+The native window at `bc28e6b98` completed one real standard task with separate
+incremental streams, stdin EOF, no PTY, host placement and a journalled exit 23
+with complete settlement. Its next task exposed a channel EOF bug: settlement
+compacts the owning attachment row, so releasing that row again fenced later
+connections. The channel now checks the exact admission key, digest, session,
+run and original state-root identity for a recorded terminal result before
+forgetting completed connection custody. It neither revives an attachment nor
+waives a previously uncertain release. Live and unknown runs retain EOF cleanup.
+The full native session and mechanism activation remain outstanding.
