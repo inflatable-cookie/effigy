@@ -6003,6 +6003,30 @@ fn run_cli_command_in_dir(cwd: &std::path::Path, args: &[&str]) -> std::process:
         .expect("run effigy")
 }
 
+#[test]
+fn cli_nested_reference_keeps_builtin_shadowing_and_literal_payload() {
+    let root = temp_workspace("nested-builtin-shadow-payload");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[tasks.parent]
+scratch = false
+run = [{ task = 'tasks "two words" -- literal "; touch injected"' }]
+[tasks.tasks]
+scratch = false
+run = "printf '%s\\n' {args} > payload"
+"#,
+    )
+    .unwrap();
+    let output = run_cli_command_in_dir(&root, &["parent"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        fs::read_to_string(root.join("payload")).unwrap(),
+        "two words\n--\nliteral\n; touch injected\n"
+    );
+    assert!(!root.join("injected").exists());
+}
+
 /// A checkout whose nested `docs/` catalog is a declared member, matching the
 /// underlay-reference shape: the docs check runs with cwd `docs/` while its
 /// arguments may still be spelled from the repository root.

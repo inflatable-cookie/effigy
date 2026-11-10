@@ -1,0 +1,1 @@
+Nested task steps now share one resolved execution tree with foreground admission. Builtins launch exact arguments under supervision, preserving catalog targeting, payload boundaries, scoped environments and parent/child timeout limits without a shell rendering round trip.

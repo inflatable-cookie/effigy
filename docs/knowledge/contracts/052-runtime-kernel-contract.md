@@ -4793,6 +4793,16 @@ task gates still apply; a nested heavy step never queues or validates host-run
 admission again (Q-006). The legacy heavy task name rule remains top-level
 policy until its separate retirement.
 
+Sequence admission and execution share one resolved in-memory step tree. Nested
+references use canonical task-first routing and retain the selected task,
+arguments, catalog and output mode. Builtins retain exact argv for supervised
+child execution; their admission parse is discarded. Leading global arguments
+carry catalog targeting without entering command payloads. Documentation checks
+keep their checkout-wide defaults and catalog-relative invocation cwd. User `run`
+strings use a real shell, and source paths relocate against the current pin when
+a step starts. Embedded task calls carry an explicit environment snapshot and
+absolute inherited deadline; a child can shorten that deadline, never restart it.
+
 Consumer sequence compatibility compares JSON plans against the dispatch baseline
 and replays the real composed step graphs with harmless leaf commands, preserving
 nested references and injecting failures at step boundaries. These fixtures prove

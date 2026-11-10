@@ -44,7 +44,7 @@ pub(super) fn run_execution_pipeline(
         return Ok(output);
     }
 
-    standard::run_standard_task(&preflight, &selection, &selection_plan, None)
+    standard::run_standard_task(&preflight, &selection, &selection_plan, None, None)
 }
 
 /// Answer a selected catalog task's own `--help`: its declaration, never its
@@ -62,7 +62,7 @@ pub(super) fn render_selected_task_help(
     .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
-fn render_resolved_selector_plan(
+pub(super) fn render_resolved_selector_plan(
     preflight: &ExecutionPreflight,
     selection: &effigy_manifest::TaskSelection<'_>,
 ) -> Result<String, RunnerError> {

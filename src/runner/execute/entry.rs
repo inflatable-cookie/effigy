@@ -35,7 +35,13 @@ fn run_manifest_task_with_preflight_input(
                 return Ok(output);
             }
         };
-    run_selected_task(&preflight, &selection, &selection_plan, run_key.as_ref())
+    run_selected_task(
+        &preflight,
+        &selection,
+        &selection_plan,
+        run_key.as_ref(),
+        None,
+    )
 }
 
 fn run_manifest_task_with_preflight_input_and_env(
@@ -82,22 +88,27 @@ fn run_manifest_task_with_preflight_input_and_env(
         &overridden_selection,
         &selection_plan,
         run_key.as_ref(),
+        None,
     )
 }
 
 /// Runs the selected task. A `--run-id` key that already names a run
 /// attaches to that run and exits with its result: a repeat never starts a
 /// second run (Q-006). Heavy admission happens inside the run's admission.
-fn run_selected_task(
+pub(super) fn run_selected_task(
     preflight: &super::planning::ExecutionPreflight,
     selection: &TaskSelection<'_>,
     selection_plan: &effigy_execution::ExecutionSelectionPlan,
     run_key: Option<&RunKey>,
+    tree: Option<super::sequence_run::ResolvedSteps>,
 ) -> Result<String, RunnerError> {
     // A task's own `--help` is answered from its declaration before any run,
     // gate or managed supervisor starts, exactly like a built-in's.
     if preflight.help {
         return super::pipeline::render_selected_task_help(preflight, selection);
+    }
+    if preflight.plan {
+        return super::pipeline::render_resolved_selector_plan(preflight, selection);
     }
     let result =
         super::pipeline::managed::run_managed_task(preflight, selection, selection_plan, run_key)
@@ -108,6 +119,7 @@ fn run_selected_task(
                     selection,
                     selection_plan,
                     run_key,
+                    tree,
                 ),
             });
     match result {

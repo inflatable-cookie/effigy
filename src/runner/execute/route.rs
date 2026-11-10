@@ -54,7 +54,7 @@ pub(in crate::runner) fn resolve_route<'a>(
     task: &TaskInvocation,
     preflight: &'a ExecutionPreflight,
 ) -> Result<Route<'a>, RunnerError> {
-    resolve_route_from(task, preflight, true)
+    resolve_route_from(task, preflight, builtin_handles(preflight))
 }
 
 /// The route after a built-in that declined the request at run time (for
@@ -64,6 +64,20 @@ pub(in crate::runner) fn resolve_route_past_builtin<'a>(
     preflight: &'a ExecutionPreflight,
 ) -> Result<Route<'a>, RunnerError> {
     resolve_route_from(task, preflight, false)
+}
+
+/// A run-array reference also accepts the direct CLI builtins (`docs`,
+/// `bundle`, `exec`, ...), after repository task selection in the same resolver.
+pub(super) fn resolve_reference_route<'a>(
+    task: &TaskInvocation,
+    preflight: &'a ExecutionPreflight,
+) -> Result<Route<'a>, RunnerError> {
+    resolve_route_from(
+        task,
+        preflight,
+        builtin_handles(preflight)
+            || effigy_core::builtin_tasks::is_builtin_task_name(&preflight.selector.task_name),
+    )
 }
 
 fn resolve_route_from<'a>(
@@ -90,7 +104,7 @@ fn resolve_route_from<'a>(
     }
     if preflight.plan {
         // `effigy test --plan` is the test built-in's own plan.
-        if builtins && preflight.selector.task_name == "test" && builtin_handles(preflight) {
+        if builtins && preflight.selector.task_name == "test" {
             return Ok(Route::Builtin);
         }
         // A remapped built-in (`[defer].builtins = ["release"]`) keeps
@@ -102,7 +116,7 @@ fn resolve_route_from<'a>(
         }
         return Err(error);
     }
-    if builtins && builtin_handles(preflight) {
+    if builtins {
         return Ok(Route::Builtin);
     }
     let prefer_deferral = active_runtime_context()

@@ -61,6 +61,7 @@ pub(in crate::runner) fn run_standard_task(
     selection: &TaskSelection<'_>,
     selection_plan: &ExecutionSelectionPlan,
     run_key: Option<&RunKey>,
+    tree: Option<super::super::sequence_run::ResolvedSteps>,
 ) -> Result<String, RunnerError> {
     if selection.task.cache.is_some() {
         return Err(retired_task_cache_error(&preflight.selector.task_name));
@@ -85,12 +86,16 @@ pub(in crate::runner) fn run_standard_task(
     let env_schema_config =
         env_schema_catalog.and_then(|catalog| catalog.manifest.env_schema.as_ref());
     let env_schema_override = preflight.runtime_args_raw.env_schema_override.as_deref();
+    let tree = match tree {
+        Some(tree) => tree,
+        None => super::super::sequence_run::resolve_tree(preflight, selection)?,
+    };
     let memory = run_key.is_none()
         && inherited_managed_run.is_none()
         && !inside_container_handoff()
         && !crate::runner::program_fallback::activates_here()
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-        && super::super::sequence_run::foreground_tree(preflight, selection)?;
+        && tree.foreground;
     let begin = if memory {
         TaskRun::begin_foreground
     } else {
@@ -150,6 +155,7 @@ pub(in crate::runner) fn run_standard_task(
             },
             &mut run,
             &mut workload,
+            tree,
         )
     })();
     let mut workload = workload.unwrap_or_else(|| workload_for_result(&result));
@@ -278,6 +284,7 @@ fn run_standard_task_inner(
     host_aliases: RunHostAliases<'_>,
     run: &mut TaskRun,
     workload: &mut Option<WorkloadOutcome>,
+    tree: super::super::sequence_run::ResolvedSteps,
 ) -> Result<String, RunnerError> {
     let env_schema_secret_pairs = env_schema_resolved
         .as_ref()
@@ -301,6 +308,7 @@ fn run_standard_task_inner(
         secret_ref,
         run,
         workload,
+        tree,
     )? {
         return Ok(output);
     }
@@ -355,10 +363,12 @@ fn run_standard_task_inner(
 
     let mut task_activation = None;
     let routed = if let Some(container_name) = routed_not_running_container(&routed.decision) {
-        task_activation = Some(activate_routed_container_runtime(
-            scope_root,
-            container_name,
-        )?);
+        task_activation = Some(
+            crate::runner::container_runtime_prep::activate_routed_container_runtime(
+                scope_root,
+                container_name,
+            )?,
+        );
         let rerouted = route_with_running_check(
             scope_root,
             preflight,
@@ -376,10 +386,12 @@ fn run_standard_task_inner(
         rerouted
     } else {
         if let Some((container_name, _)) = routed_container_target(&routed.decision) {
-            task_activation = Some(activate_routed_container_runtime(
-                scope_root,
-                container_name,
-            )?);
+            task_activation = Some(
+                crate::runner::container_runtime_prep::activate_routed_container_runtime(
+                    scope_root,
+                    container_name,
+                )?,
+            );
         }
         routed
     };
@@ -924,16 +936,6 @@ pub(in crate::runner::execute) fn redact_task_secret_values(
     redacted
 }
 
-fn activate_routed_container_runtime(
-    repo_root: &Path,
-    container_name: &str,
-) -> Result<crate::runner::container_runtime_prep::ContainerTaskActivation, RunnerError> {
-    crate::runner::container_runtime_prep::activate_routed_container_runtime(
-        repo_root,
-        container_name,
-    )
-}
-
 fn should_stay_in_workspace_shell(
     output_json: bool,
     task: &effigy_manifest::ManifestTask,
@@ -1207,18 +1209,8 @@ pub(in crate::runner) fn run_sequence_container_command(
     let built = command::build_task_command(preflight, &selected, &None)?;
     let plain_env_keys = built.plain_env_keys.clone();
     let context = ExecutionTaskContext::new(preflight, &selected, built.command);
-    // The canonical selection plan is rebuilt without effects by the resolver.
-    let invocation = effigy_cli::TaskInvocation {
-        name: effigy_tasks::render_task_selector(&preflight.selector),
-        args: preflight.runtime_args_exec.passthrough.clone(),
-    };
-    let super::super::selection::SelectionResolution::Selected { plan, .. } =
-        super::super::selection::resolve_task_selection(&invocation, preflight)?
-    else {
-        return Err(RunnerError::task_invocation(
-            "sequence selection disappeared",
-        ));
-    };
+    let plan = super::super::selection::build_execution_selection_plan(preflight, &selected);
+    let tree = super::super::sequence_run::resolve_tree(preflight, &selected)?;
     run_standard_task_inner(
         preflight,
         &selected,
@@ -1232,6 +1224,7 @@ pub(in crate::runner) fn run_sequence_container_command(
         },
         run,
         &mut None,
+        tree,
     )
 }
 

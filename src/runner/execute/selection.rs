@@ -11,6 +11,7 @@ use effigy_execution::{
 use super::planning::ExecutionPreflight;
 use crate::runner::error::RunnerError;
 
+pub(super) use fallback::run_fallback_route;
 pub(in crate::runner) use result::SelectionResolution;
 
 /// Resolves `task` through the one resolver and carries out a non-task

@@ -45,6 +45,15 @@ pub(in crate::runner) fn build_task_command(
                 task: preflight.selector.task_name.clone(),
                 path: selection.catalog.manifest_path.clone(),
             })?;
+    if let ManifestManagedRun::Command(reference) = run_spec {
+        if reference.starts_with("task:") && !preflight.plan {
+            return Ok(TaskCommand {
+                command: reference.clone(),
+                plain_env_keys: Default::default(),
+                host_aliases: None,
+            });
+        }
+    }
     // A sequence is an executable plan, never a generated shell program. Each
     // step resolves its own environment when it runs.
     if let ManifestManagedRun::Sequence(steps) = run_spec {
