@@ -70,7 +70,7 @@ pub(in crate::runner) enum LinuxWorkspaceTarget {
 /// release asset, and refuses on a development host, whose release would be a
 /// substitute. None of these builds during publication or task entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum LinuxWorkspaceArtifactSource {
+pub(in crate::runner) enum LinuxWorkspaceArtifactSource {
     Auto,
     Local,
     Download,
@@ -2758,7 +2758,13 @@ pub(super) fn resolve_local_effigy_repo_root_from_paths(
 
 pub(super) fn configured_linux_workspace_artifact_source(
 ) -> Result<LinuxWorkspaceArtifactSource, RunnerError> {
-    let Some(raw) = std::env::var_os(EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV) else {
+    linux_workspace_artifact_source_value(std::env::var_os(EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV))
+}
+
+pub(in crate::runner) fn linux_workspace_artifact_source_value(
+    raw: Option<std::ffi::OsString>,
+) -> Result<LinuxWorkspaceArtifactSource, RunnerError> {
+    let Some(raw) = raw else {
         return Ok(LinuxWorkspaceArtifactSource::Auto);
     };
     let normalized = raw.to_string_lossy().trim().to_ascii_lowercase();

@@ -3,6 +3,7 @@
 Only the fixed task-829 VM is addressed. No host Cargo command, install, engine or
 proof-only entry is used. Source and command originals stay in an owned evidence root.
 """
+import argparse
 import hashlib
 import json
 import os
@@ -32,7 +33,7 @@ def file_input(path):
     return {'path': str(path), 'sha256': common.digest(path)}
 
 
-def guest_script(pin, remote, bundle_sha):
+def guest_script(pin, remote, bundle_sha, source_ref=SOURCE_REF):
     if not re.fullmatch('[0-9a-f]{40}', pin) or not re.fullmatch('[0-9a-f]{64}', bundle_sha):
         raise ValueError('exact source and bundle digests required')
     return '\n'.join([
@@ -44,7 +45,7 @@ def guest_script(pin, remote, bundle_sha):
         'export PATH="$base/tools/bin:$CARGO_HOME/bin:/usr/bin:/bin"',
         'if command -v oxide >/dev/null 2>&1; then echo "guest now has Oxide; rebind route" >&2; exit 1; fi',
         'git init -q "$remote/source"', 'cd "$remote/source"',
-        'git fetch --no-tags ../source.bundle ' + SOURCE_REF,
+        'git fetch --no-tags ../source.bundle ' + shlex.quote(source_ref),
         'git checkout --detach ' + pin,
         'test "$(git rev-parse HEAD)" = ' + pin,
         'test -z "$(git status --porcelain)"',
@@ -58,7 +59,9 @@ def guest_script(pin, remote, bundle_sha):
     ]) + '\n'
 
 
-def build(root):
+def build(root, source_ref=SOURCE_REF):
+    if source_ref != 'HEAD' and not re.fullmatch(r'refs/[A-Za-z0-9_./-]+', source_ref):
+        raise ValueError('HEAD or an explicit source ref required')
     diagnostic.private_root(str(root))
     run_root = root / ('native-build-' + uuid.uuid4().hex)
     run_root.mkdir(mode=0o700)
@@ -94,7 +97,7 @@ def build(root):
 
     raw = run([diagnostic.PRLCTL, 'list', '--info', setup.VM_UUID, '--json'])
     diagnostic.check_vm(raw, 'running')
-    pin = run([diagnostic.GIT, 'rev-parse', SOURCE_REF]).decode().strip()
+    pin = run([diagnostic.GIT, 'rev-parse', '--verify', source_ref + '^{commit}']).decode().strip()
     if not re.fullmatch('[0-9a-f]{40}', pin):
         raise RuntimeError('current main source pin missing')
     control = root / 'control'
@@ -108,10 +111,10 @@ def build(root):
     if len(key) < 2 or len(pinned) < 3 or key[:2] != pinned[1:3]:
         raise RuntimeError('SSH host key differs from the fixed VM')
     bundle = run_root / 'source.bundle'
-    run([diagnostic.GIT, 'bundle', 'create', str(bundle), SOURCE_REF], timeout=120)
+    run([diagnostic.GIT, 'bundle', 'create', str(bundle), source_ref], timeout=120)
     bundle.chmod(0o400)
     binding = {'schema': 'effigy.linux-native-build-exploration.v1', 'exploratory': True,
-               'qualification_credit': False, 'source_pin': pin, 'bundle': file_input(bundle),
+               'qualification_credit': False, 'source_pin': pin, 'source_ref': source_ref, 'bundle': file_input(bundle),
                'ssh_config': config, 'ssh_known_hosts': known,
                'route': 'guest-local scripts/oxide-selector.sh with EFFIGY_OXIDE_ESCAPE=cargo',
                'need': 'guest has no Oxide; planner answer ee843c6e 2026-11-09'}
@@ -120,7 +123,7 @@ def build(root):
     with bundle.open('rb') as source:
         run(ssh + ['mkdir -p ' + shlex.quote(remote) + '; cat > ' + shlex.quote(remote + '/source.bundle')],
             stdin=source, timeout=180)
-    script = guest_script(pin, remote, binding['bundle']['sha256']).encode()
+    script = guest_script(pin, remote, binding['bundle']['sha256'], source_ref).encode()
     (run_root / 'build.sh').write_bytes(script)
     output = run(ssh + ['timeout --signal=TERM --kill-after=20s 1800 /bin/sh -s'], data=script, timeout=1860)
     binding['guest_source'] = remote + '/source'
@@ -136,6 +139,8 @@ def build(root):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        raise SystemExit('usage: build:qualification:linux-native -- OWNED_EVIDENCE_ROOT')
-    sys.exit(build(Path(sys.argv[1])))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('evidence_root', type=Path)
+    parser.add_argument('--source-ref', default=SOURCE_REF)
+    args = parser.parse_args()
+    sys.exit(build(args.evidence_root, args.source_ref))

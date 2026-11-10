@@ -133,7 +133,13 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
         // including files between the first and the last: a middle overlay's
         // entries are just as effective as a later one's.
         if defines_primary_service(&parsed) {
-            inject_workspace_named_volumes(&mut parsed, &injected_mounts);
+            inject_workspace_named_volumes(
+                &mut parsed,
+                &injected_mounts,
+                &mask_mounts,
+                repo_root,
+                config.share_runtime_identity,
+            );
             let services = parsed
                 .get_mut("services")
                 .and_then(serde_yaml::Value::as_mapping_mut)
@@ -442,6 +448,9 @@ pub(super) fn inject_workspace_service_environment(
 fn inject_workspace_named_volumes(
     parsed: &mut serde_yaml::Value,
     mounts: &[RenderedWorkspaceMount],
+    masks: &[RenderedWorkspaceMount],
+    repo_root: &Path,
+    share_runtime_identity: bool,
 ) {
     let names = mounts
         .iter()
@@ -468,6 +477,29 @@ fn inject_workspace_named_volumes(
                 serde_yaml::Value::String("name".to_owned()),
                 serde_yaml::Value::String(name.to_owned()),
             );
+            // Only masks created here belong to this checkout. In particular,
+            // never claim a pre-existing or borrowed user volume. Compose adds
+            // its project label; checkout and scope survive container removal
+            // so `container retire` can identify these empty disposable masks.
+            if masks
+                .iter()
+                .any(|mount| mount.named_volume.as_deref() == Some(name))
+            {
+                use crate::runtime::scope::{CHECKOUT_LABEL, MANAGED_LABEL, SCOPE_LABEL};
+                let checkout = effigy_core::worktree_scope::checkout_root(repo_root)
+                    .canonicalize()
+                    .unwrap_or_else(|_| repo_root.to_path_buf());
+                let mut labels = serde_yaml::Mapping::new();
+                labels.insert(CHECKOUT_LABEL.into(), checkout.display().to_string().into());
+                labels.insert(MANAGED_LABEL.into(), "true".into());
+                if !share_runtime_identity {
+                    if let Some(scope) = effigy_core::worktree_scope::load(repo_root).ok().flatten()
+                    {
+                        labels.insert(SCOPE_LABEL.into(), scope.into());
+                    }
+                }
+                entry.insert("labels".into(), serde_yaml::Value::Mapping(labels));
+            }
             serde_yaml::Value::Mapping(entry)
         });
     }
@@ -1160,6 +1192,19 @@ mod overlay_tests {
 
         assert_eq!(paths.len(), 2, "every input file is rewritten");
         let overlay_document = rewritten(&mut draft, &paths[1]);
+        let mask_definitions = overlay_document["volumes"]
+            .as_mapping()
+            .expect("mask definitions");
+        for definition in mask_definitions.values() {
+            assert_eq!(
+                definition["labels"][crate::runtime::scope::CHECKOUT_LABEL],
+                canonical.display().to_string()
+            );
+            assert_eq!(
+                definition["labels"][crate::runtime::scope::MANAGED_LABEL],
+                "true"
+            );
+        }
         let volumes = service_volumes(&overlay_document);
         assert!(
             !volumes

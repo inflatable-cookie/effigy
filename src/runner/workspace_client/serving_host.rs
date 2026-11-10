@@ -224,7 +224,7 @@ pub(crate) fn start(
     let payload = serde_json::to_vec(request)?;
     // The kernel deliberately clears inherited environment. Pass only path
     // routing and the declared credential-free backend identity. Secret values,
-    // policies and session credentials never use this lane.
+    // prepared policies and session credentials never use this lane.
     let mut environment = vec![("HOME".into(), request.state_home.as_os_str().to_owned())];
     if let Some(path) = std::env::var_os("PATH") {
         environment.push(("PATH".into(), path));
@@ -232,6 +232,9 @@ pub(crate) fn start(
     if let Activation::ContainerUp { request: input } = &request.activation {
         if let Some(declaration) = &input.post_prep {
             environment.extend(declaration.backend_environment()?);
+            environment.extend(container_routing_environment(|name| {
+                std::env::var_os(name)
+            })?);
         }
     }
     #[cfg(feature = "workspace-serving-fixture")]
@@ -256,6 +259,70 @@ pub(crate) fn start(
         client,
         published: None,
     })
+}
+
+/// Keep the caller's file/config placement across the cleared engine boundary.
+/// Backend handles, config contents and arbitrary ambient variables stay local.
+fn container_routing_environment(
+    read: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Result<Vec<(std::ffi::OsString, std::ffi::OsString)>, RunError> {
+    use crate::runner::workspace_command::provisioning::{
+        linux_workspace_artifact_source_value, LinuxWorkspaceArtifactSource,
+    };
+    let mut environment = Vec::new();
+    for name in ["DOCKER_CONFIG", "COLIMA_HOME", "TMPDIR", "TMP", "TEMP"] {
+        if let Some(value) = read(name) {
+            environment.push((name.into(), value));
+        }
+    }
+    let source =
+        linux_workspace_artifact_source_value(read("EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE"))
+            .map_err(|_| RunError::refused("workspace artifact source policy is invalid"))?;
+    let value = match source {
+        LinuxWorkspaceArtifactSource::Auto => "auto",
+        LinuxWorkspaceArtifactSource::Local => "local",
+        LinuxWorkspaceArtifactSource::Download => "download",
+    };
+    environment.push((
+        "EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE".into(),
+        value.into(),
+    ));
+    Ok(environment)
+}
+
+#[cfg(test)]
+mod routing_tests {
+    use super::container_routing_environment;
+    use std::ffi::OsString;
+
+    #[test]
+    fn serving_host_preserves_private_path_routing_without_ambient_secrets() {
+        let environment = container_routing_environment(|name| {
+            Some(OsString::from(match name {
+                "DOCKER_CONFIG" => "/owned/private/docker",
+                "COLIMA_HOME" => "/owned/private/colima",
+                "TMPDIR" | "TMP" | "TEMP" => "/owned/bounded/tmp",
+                "EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE" => " LOCAL ",
+                _ => "private-ambient-canary",
+            }))
+        })
+        .expect("routing");
+        assert_eq!(environment.len(), 6);
+        assert!(environment.contains(&("DOCKER_CONFIG".into(), "/owned/private/docker".into())));
+        assert!(environment.contains(&("TMPDIR".into(), "/owned/bounded/tmp".into())));
+        assert!(environment.contains(&(
+            "EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE".into(),
+            "local".into()
+        )));
+        assert!(!format!("{environment:?}").contains("private-ambient-canary"));
+    }
+
+    #[test]
+    fn serving_host_refuses_invalid_source_without_echoing_its_value() {
+        let error = container_routing_environment(|_| Some("private-invalid-source-canary".into()))
+            .expect_err("invalid source");
+        assert!(!error.to_string().contains("private-invalid-source-canary"));
+    }
 }
 
 /// The initiating side of one serving host.
