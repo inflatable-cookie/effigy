@@ -35,8 +35,7 @@ use crate::routes::{LiveRouteTable, RouteTable};
 use crate::stats::GatewayStats;
 use crate::tcp_alias::run_tcp_alias_manager;
 use crate::tls::{
-    server_config_from_resolver, sync_private_sni_resolver_from_dir, sync_sni_resolver_from_dir,
-    SniCertResolver, TlsConfig,
+    server_config_from_resolver, sync_sni_resolver_from_dir, SniCertResolver, TlsConfig,
 };
 
 const IDLE_SHUTDOWN_DELAY: Duration = Duration::from_secs(5 * 60);
@@ -1240,19 +1239,23 @@ async fn run_gateway_with_cancel(
     }
     let mut runtime_config = config.clone();
     let tls_reload = match config.tls.as_ref() {
-        Some(tls_config) if config.is_private() => {
-            if !tls_config
-                .private_ca_cert_path()
-                .is_some_and(|path| path.is_file())
-            {
-                return Err(GatewayError::TlsError {
-                    domain: "<CA>".to_owned(),
-                    reason: "private gateway requires its fixture CA certificate under the selected state root".to_owned(),
-                });
+        Some(tls_config) => {
+            if config.is_private() {
+                if !tls_config
+                    .private_ca_cert_path()
+                    .is_some_and(|path| path.is_file())
+                {
+                    return Err(GatewayError::TlsError {
+                        domain: "<CA>".to_owned(),
+                        reason: "private gateway requires its fixture CA certificate under the selected state root".to_owned(),
+                    });
+                }
+            } else {
+                std::fs::create_dir_all(&tls_config.certs_dir)?;
             }
             let resolver = Arc::new(SniCertResolver::new());
-            let cert_count = sync_private_sni_resolver_from_dir(&resolver, &tls_config.certs_dir)?;
-            if cert_count == 0 {
+            let cert_count = sync_sni_resolver_from_dir(&resolver, &tls_config.certs_dir)?;
+            if config.is_private() && cert_count == 0 {
                 return Err(GatewayError::TlsError {
                     domain: "<CA>".to_owned(),
                     reason: format!(
@@ -1265,25 +1268,15 @@ async fn run_gateway_with_cancel(
                 TlsReload {
                     resolver,
                     certs_dir: tls_config.certs_dir.clone(),
-                    private: true,
-                },
-                cert_count,
-            ))
-        }
-        Some(tls_config) => {
-            let resolver = Arc::new(SniCertResolver::new());
-            let cert_count = sync_sni_resolver_from_dir(&resolver, &tls_config.certs_dir)?;
-            Some((
-                TlsReload {
-                    resolver,
-                    certs_dir: tls_config.certs_dir.clone(),
-                    private: false,
                 },
                 cert_count,
             ))
         }
         None => None,
     };
+    runtime_config.proxy.tls_resolver = tls_reload
+        .as_ref()
+        .map(|(tls, _)| Arc::clone(&tls.resolver));
     if let Some(root) = config.private_state_root() {
         let address_path = crate::private_state::private_endpoint_path(root);
         if address_path.exists() {
@@ -1435,7 +1428,10 @@ async fn run_gateway_with_cancel(
     // notification the kernel never delivered cannot strand a route (effigy#716).
     // Dropping the handle stops and joins it, so no reload outlives this call,
     // including every startup failure below.
-    let _reconcile = RouteReconcile::spawn(RouteReconciler::production(reloader, route_signal));
+    let _reconcile = RouteReconcile::spawn(RouteReconciler::production(
+        reloader,
+        Arc::clone(&route_signal),
+    ));
 
     let has_tls = runtime_config.proxy.tls_bind_addr.is_some() && runtime_config.tls.is_some();
 
@@ -1574,13 +1570,10 @@ async fn run_gateway_with_cancel(
     });
 
     // Optionally start the HTTPS proxy.
-    let _tls_watcher = if let (Some(tls_addr), Some(tls_config)) =
-        (runtime_config.proxy.tls_bind_addr, &runtime_config.tls)
+    let _tls_watcher = if let (Some(tls_addr), Some((tls, cert_count))) =
+        (runtime_config.proxy.tls_bind_addr, tls_reload)
     {
-        let certs_dir = tls_config.certs_dir.clone();
-        if !runtime_config.is_private() {
-            std::fs::create_dir_all(&certs_dir)?;
-        }
+        let certs_dir = tls.certs_dir;
         // Certificates are a cache keyed by domain. Nothing withdraws one with
         // its route, so the daemon drops the ones no route names once they are
         // old enough to be worth nothing.
@@ -1593,14 +1586,6 @@ async fn run_gateway_with_cancel(
                 run_cert_cache_prune(prune_dir, prune_table, prune_shutdown).await,
             )
         });
-        let (resolver, cert_count) = match tls_reload {
-            Some((tls, count)) => (tls.resolver.clone(), count),
-            None => {
-                let resolver = Arc::new(SniCertResolver::new());
-                let count = sync_sni_resolver_from_dir(&resolver, &certs_dir)?;
-                (resolver, count)
-            }
-        };
         if cert_count == 0 {
             info!(
                 "HTTPS enabled but no certificates found in {} — \
@@ -1610,12 +1595,8 @@ async fn run_gateway_with_cancel(
         } else {
             info!(certs = cert_count, "loaded TLS certificates for HTTPS");
         }
-        let tls_watcher = setup_tls_watcher(TlsReload {
-            resolver: Arc::clone(&resolver),
-            certs_dir: certs_dir.clone(),
-            private: runtime_config.is_private(),
-        })?;
-        let server_config = Arc::new(server_config_from_resolver(resolver));
+        let tls_watcher = setup_tls_watcher(&certs_dir, Arc::clone(&route_signal))?;
+        let server_config = Arc::new(server_config_from_resolver(tls.resolver));
         match prebound_https_listener {
             Some(listener) => {
                 let table = Arc::clone(&shared_table);
@@ -1835,20 +1816,19 @@ fn route_watch_handler(
     watched_path: PathBuf,
 ) -> impl FnMut(notify::Result<notify::Event>) + Send + 'static {
     move |event| match event {
-        Ok(event) => {
-            use notify::EventKind;
-            match event.kind {
-                EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
-                    debug!(path = %watched_path.display(), "route store changed, reloading");
-                    // Route reload never elevates or changes platform setup.
-                    signal.notify();
-                }
-                _ => {}
-            }
+        Ok(event)
+            if matches!(
+                event.kind,
+                notify::EventKind::Create(_)
+                    | notify::EventKind::Modify(_)
+                    | notify::EventKind::Remove(_)
+            ) =>
+        {
+            debug!(path = %watched_path.display(), "gateway state changed, waking reconciliation");
+            signal.notify();
         }
-        Err(error) => {
-            error!(error = %error, "file watcher error");
-        }
+        Err(error) => error!(error = %error, "file watcher error"),
+        _ => {}
     }
 }
 
@@ -1889,17 +1869,6 @@ fn setup_file_watcher(
 struct TlsReload {
     resolver: Arc<SniCertResolver>,
     certs_dir: PathBuf,
-    private: bool,
-}
-
-impl TlsReload {
-    fn reconcile(&self) -> Result<usize, GatewayError> {
-        if self.private {
-            sync_private_sni_resolver_from_dir(&self.resolver, &self.certs_dir)
-        } else {
-            sync_sni_resolver_from_dir(&self.resolver, &self.certs_dir)
-        }
-    }
 }
 
 /// Observes committed endpoint snapshots and applies them to the live table.
@@ -1994,7 +1963,7 @@ impl RouteReloader {
         let Some(tls) = &self.tls else {
             return;
         };
-        match tls.reconcile() {
+        match sync_sni_resolver_from_dir(&tls.resolver, &tls.certs_dir) {
             Ok(count) => {
                 debug!(
                     certs = count,
@@ -2310,39 +2279,16 @@ fn schedule_idle_shutdown(
     })
 }
 
-fn setup_tls_watcher(tls: TlsReload) -> Result<RecommendedWatcher, GatewayError> {
-    let watched = tls.clone();
-
+fn setup_tls_watcher(
+    certs_dir: &Path,
+    signal: Arc<ReconcileSignal>,
+) -> Result<RecommendedWatcher, GatewayError> {
     let mut watcher =
-        notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
-            Ok(ev) => {
-                use notify::EventKind;
-                match ev.kind {
-                    EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
-                        debug!(path = %watched.certs_dir.display(), "TLS cert directory changed, reloading");
-                        match watched.reconcile() {
-                            Ok(count) => {
-                                debug!(certs = count, "TLS certs reloaded");
-                            }
-                            Err(error) => {
-                                error!(error = %error, "failed to reload TLS certs");
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            Err(error) => {
-                error!(error = %error, "TLS watcher error");
-            }
-        })
-        .map_err(|e| GatewayError::WatcherError(e.to_string()))?;
-
-    std::fs::create_dir_all(&tls.certs_dir)?;
+        notify::recommended_watcher(route_watch_handler(signal, certs_dir.to_path_buf()))
+            .map_err(|error| GatewayError::WatcherError(error.to_string()))?;
     watcher
-        .watch(&tls.certs_dir, RecursiveMode::NonRecursive)
-        .map_err(|e| GatewayError::WatcherError(e.to_string()))?;
-
+        .watch(certs_dir, RecursiveMode::NonRecursive)
+        .map_err(|error| GatewayError::WatcherError(error.to_string()))?;
     Ok(watcher)
 }
 

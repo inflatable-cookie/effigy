@@ -1072,146 +1072,210 @@ fn milestone_130acca8_watcher_callback_signals_the_route_worker() {
     );
 }
 
-/// QA cbef4a23: applying a committed TLS route loads the certificate from the
-/// selected private root into the watched SNI resolver without a filesystem
-/// event. The seven gateway_private HTTPS failures observed `tlsv1 alert
-/// access denied` after the live route view already named the domain, because
-/// only the cert-directory watcher loaded SNI and that notification never
-/// arrived.
+/// Both root modes use the same worker, scanner and last-good policy. Keep
+/// route application independent of TLS availability, including an unchanged
+/// route, a missed notification, and an invalid unused neighbour.
 #[test]
-fn milestone_cbef4a23_route_observation_loads_a_certificate_without_a_filesystem_event() {
-    let (_fixture, routes) = gateway_state();
-    let certs = routes.parent().unwrap().join("certs");
-    crate::private_state::create_owner_only_directory(&certs).expect("certs directory");
-    let domain = "cbef4a23.host.test";
-    write_self_signed_cert_pair(&certs, domain);
+fn milestone_cbef4a23_tls_reload_matrix() {
+    use std::os::unix::fs::PermissionsExt;
+    for private in [false, true] {
+        let (_fixture, routes) = gateway_state();
+        let certs = routes.parent().unwrap().join("certs");
+        crate::private_state::create_owner_only_directory(&certs).unwrap();
+        let domain = "cbef4a23.host.test";
+        let table = Arc::new(RwLock::new(RouteTable::new()));
+        let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
+        let clock = held_clock();
+        let (idle, _stopped) = idle_shutdown(&routes, &clock);
+        let resolver = Arc::new(SniCertResolver::new());
+        let reloader = reloader(&routes, &table, &dns_cache, &idle, private).with_tls(TlsReload {
+            resolver: Arc::clone(&resolver),
+            certs_dir: certs.clone(),
+        });
+        assert!(!resolver.has_cert(domain));
+        publish_tls_route(&routes, domain);
+        assert!(matches!(
+            reloader.reload().unwrap(),
+            ReloadOutcome::Applied { .. }
+        ));
+        assert!(table.read().unwrap().lookup(domain).is_some());
+        assert!(
+            !resolver.has_cert(domain),
+            "the route applies before its pair exists"
+        );
 
-    let table = Arc::new(RwLock::new(RouteTable::new()));
-    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
-    let clock = held_clock();
-    let (idle, _stopped) = idle_shutdown(&routes, &clock);
-    let resolver = Arc::new(SniCertResolver::new());
-    assert!(
-        !resolver.has_cert(domain),
-        "the watched resolver starts without the produced certificate"
-    );
-    let reloader = reloader(&routes, &table, &dns_cache, &idle, true).with_tls(TlsReload {
-        resolver: Arc::clone(&resolver),
-        certs_dir: certs.clone(),
-        private: true,
-    });
-
-    publish_tls_route(&routes, domain);
-    match reloader.reload().expect("observe the published TLS route") {
-        ReloadOutcome::Applied { idle_timer } => drop(idle_timer),
-        ReloadOutcome::Unchanged => panic!("the first observation must apply the published route"),
-    }
-
-    assert!(
-        table.read().unwrap().lookup(domain).is_some(),
-        "the observation applied the route"
-    );
-    assert!(
-        resolver.has_cert(domain),
-        "applying the route loaded the certificate without a filesystem event"
-    );
-    assert!(
-        !resolver.has_cert("unknown.host.test"),
-        "an unpublished domain still has no certificate"
-    );
-}
-
-/// QA cbef4a23: a later observation that does not change the applied table
-/// still loads a certificate written after the route was applied. The caller
-/// writes the pair before publication, but a missed first load must still
-/// converge on the interval.
-#[test]
-fn milestone_cbef4a23_unchanged_observation_loads_a_certificate_written_after_the_route() {
-    let (_fixture, routes) = gateway_state();
-    let certs = routes.parent().unwrap().join("certs");
-    crate::private_state::create_owner_only_directory(&certs).expect("certs directory");
-    let domain = "cbef4a23-late.host.test";
-    publish_tls_route(&routes, domain);
-
-    let table = Arc::new(RwLock::new(RouteTable::new()));
-    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
-    let clock = held_clock();
-    let (idle, _stopped) = idle_shutdown(&routes, &clock);
-    let resolver = Arc::new(SniCertResolver::new());
-    let reloader = reloader(&routes, &table, &dns_cache, &idle, true).with_tls(TlsReload {
-        resolver: Arc::clone(&resolver),
-        certs_dir: certs.clone(),
-        private: true,
-    });
-    match reloader
-        .reload()
-        .expect("apply the route before its certificate exists")
-    {
-        ReloadOutcome::Applied { idle_timer } => drop(idle_timer),
-        ReloadOutcome::Unchanged => panic!("the empty table must take the published route"),
-    }
-    assert!(
-        !resolver.has_cert(domain),
-        "no certificate is loaded until the pair exists"
-    );
-
-    write_self_signed_cert_pair(&certs, domain);
-    match reloader.reload().expect("re-observe after the pair lands") {
-        ReloadOutcome::Unchanged => {}
-        ReloadOutcome::Applied { .. } => {
-            panic!("the already applied revision must not move the fence")
+        write_self_signed_cert_pair(&certs, domain);
+        publish_tls_route(&routes, domain);
+        assert!(matches!(
+            reloader.reload().unwrap(),
+            ReloadOutcome::Applied { .. }
+        ));
+        resolver.remove_cert(domain);
+        assert!(matches!(
+            reloader.reload().unwrap(),
+            ReloadOutcome::Unchanged
+        ));
+        assert!(
+            resolver.has_cert(domain),
+            "unchanged observation loads the late pair without an event"
+        );
+        assert!(!resolver.has_cert("unknown.host.test"));
+        let original = std::fs::read(certs.join(format!("{domain}.pem"))).unwrap();
+        // One real TCP/TLS handshake per root; the same loaded certificate
+        // must remain usable after each rejected replacement below.
+        assert_tls_handshake(&resolver, domain, &original);
+        for failure in [
+            "corrupt",
+            "missing-key",
+            "missing-cert",
+            "unreadable",
+            "missing-directory",
+            "incomplete-neighbour",
+        ] {
+            let key = certs.join(format!("{domain}-key.pem"));
+            let held = certs.with_extension("held");
+            match failure {
+                "corrupt" => {
+                    std::fs::write(certs.join(format!("{domain}.pem")), "corrupt").unwrap()
+                }
+                "missing-key" => std::fs::rename(&key, key.with_extension("held")).unwrap(),
+                "missing-cert" => std::fs::rename(
+                    certs.join(format!("{domain}.pem")),
+                    certs.join("saved-cert"),
+                )
+                .unwrap(),
+                "unreadable" => {
+                    std::fs::set_permissions(&certs, std::fs::Permissions::from_mode(0)).unwrap()
+                }
+                "missing-directory" => std::fs::rename(&certs, &held).unwrap(),
+                _ => std::fs::write(certs.join("stale.host.test.pem"), "incomplete").unwrap(),
+            }
+            let refused = sync_sni_resolver_from_dir(&resolver, &certs);
+            assert!(
+                refused.is_err(),
+                "{private}/{failure}: replacement must fail"
+            );
+            if failure == "incomplete-neighbour" {
+                publish_tls_route(&routes, "stale.host.test");
+                assert!(matches!(
+                    reloader.reload().unwrap(),
+                    ReloadOutcome::Applied { .. }
+                ));
+                assert!(
+                    table.read().unwrap().lookup("stale.host.test").is_some(),
+                    "TLS failure does not unwind the applied route"
+                );
+                assert!(!resolver.has_cert("stale.host.test"));
+            } else {
+                assert!(matches!(
+                    reloader.reload().unwrap(),
+                    ReloadOutcome::Unchanged
+                ));
+            }
+            assert!(
+                resolver.has_cert(domain),
+                "{private}/{failure}: preserve the last good map"
+            );
+            assert_tls_handshake(&resolver, domain, &original);
+            match failure {
+                "corrupt" => {
+                    std::fs::write(certs.join(format!("{domain}.pem")), &original).unwrap()
+                }
+                "missing-key" => std::fs::rename(key.with_extension("held"), &key).unwrap(),
+                "missing-cert" => std::fs::rename(
+                    certs.join("saved-cert"),
+                    certs.join(format!("{domain}.pem")),
+                )
+                .unwrap(),
+                "unreadable" => {
+                    std::fs::set_permissions(&certs, std::fs::Permissions::from_mode(0o700))
+                        .unwrap()
+                }
+                "missing-directory" => std::fs::rename(&held, &certs).unwrap(),
+                _ => std::fs::remove_file(certs.join("stale.host.test.pem")).unwrap(),
+            }
         }
+        let observations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let reloader = RouteReloader {
+            read: counting_reader(&observations),
+            ..reloader
+        };
+        let signal = Arc::new(ReconcileSignal::new());
+        let mut route_events = route_watch_handler(Arc::clone(&signal), routes.clone());
+        let mut cert_events = route_watch_handler(Arc::clone(&signal), certs.clone());
+        let mut reconcile = RouteReconcile::spawn(
+            RouteReconciler::production(reloader, signal)
+                .with_intervals(Duration::from_millis(20), Duration::from_millis(10)),
+        );
+        wait_until(
+            "a second interval observation",
+            Duration::from_secs(20),
+            || observations.load(Ordering::SeqCst) >= 2,
+        );
+        // A missed notification after startup still converges on the interval.
+        write_self_signed_cert_pair(&certs, domain);
+        let rotated = std::fs::read(certs.join(format!("{domain}.pem"))).unwrap();
+        let opening = observations.load(Ordering::SeqCst);
+        wait_until("the next interval", Duration::from_secs(20), || {
+            observations.load(Ordering::SeqCst) >= opening + 2
+        });
+        assert_tls_handshake(&resolver, domain, &rotated);
+        for _ in 0..100 {
+            route_events(Ok(notify::Event::new(notify::EventKind::Modify(
+                notify::event::ModifyKind::Any,
+            ))));
+            cert_events(Ok(notify::Event::new(notify::EventKind::Create(
+                notify::event::CreateKind::File,
+            ))));
+        }
+        reconcile.settle();
+        assert_tls_handshake(&resolver, domain, &rotated);
     }
-    assert!(
-        resolver.has_cert(domain),
-        "an unchanged observation still loads the late certificate"
-    );
 }
 
-/// QA cbef4a23: a private incomplete pair does not replace the last loaded
-/// set. The applied route stays, and the domain that already had a complete
-/// pair keeps serving.
-#[test]
-fn milestone_cbef4a23_incomplete_certificate_keeps_the_last_loaded_set() {
-    let (_fixture, routes) = gateway_state();
-    let certs = routes.parent().unwrap().join("certs");
-    crate::private_state::create_owner_only_directory(&certs).expect("certs directory");
-    let served = "cbef4a23-served.host.test";
-    write_self_signed_cert_pair(&certs, served);
-
-    let table = Arc::new(RwLock::new(RouteTable::new()));
-    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
-    let clock = held_clock();
-    let (idle, _stopped) = idle_shutdown(&routes, &clock);
-    let resolver = Arc::new(SniCertResolver::new());
-    let reloader = reloader(&routes, &table, &dns_cache, &idle, true).with_tls(TlsReload {
-        resolver: Arc::clone(&resolver),
-        certs_dir: certs.clone(),
-        private: true,
+fn assert_tls_handshake(resolver: &Arc<SniCertResolver>, domain: &str, pem: &[u8]) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let config = Arc::new(server_config_from_resolver(Arc::clone(resolver)));
+    let server = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(20)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(20)))
+            .unwrap();
+        let session = rustls::ServerConnection::new(config).unwrap();
+        rustls::StreamOwned::new(session, stream)
+            .write_all(b"ok")
+            .unwrap();
     });
-    publish_tls_route(&routes, served);
-    reloader.reload().expect("load the complete pair");
-    assert!(resolver.has_cert(served));
-
-    std::fs::write(certs.join("stale.host.test.pem"), "not a complete pair")
-        .expect("incomplete certificate");
-    publish_tls_route(&routes, "stale.host.test");
-    match reloader.reload().expect("the route still applies") {
-        ReloadOutcome::Applied { idle_timer } => drop(idle_timer),
-        ReloadOutcome::Unchanged => panic!("the new domain must apply"),
-    }
-    assert!(
-        resolver.has_cert(served),
-        "an incomplete neighbour must not drop the last loaded certificate"
-    );
-    assert!(
-        !resolver.has_cert("stale.host.test"),
-        "an incomplete pair is never installed"
-    );
-    assert!(
-        table.read().unwrap().lookup("stale.host.test").is_some(),
-        "a failed certificate reload does not unwind the applied snapshot"
-    );
+    let mut roots = rustls::RootCertStore::empty();
+    let der = rustls_pemfile::certs(&mut &pem[..])
+        .next()
+        .unwrap()
+        .unwrap();
+    roots.add(der.clone()).unwrap();
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let session =
+        rustls::ClientConnection::new(Arc::new(config), domain.to_owned().try_into().unwrap())
+            .unwrap();
+    let stream = std::net::TcpStream::connect_timeout(&address, Duration::from_secs(20)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(20)))
+        .unwrap();
+    let mut tls = rustls::StreamOwned::new(session, stream);
+    let mut body = [0; 2];
+    tls.read_exact(&mut body).unwrap();
+    assert_eq!(&body, b"ok");
+    assert_eq!(tls.conn.peer_certificates().unwrap()[0], der);
+    server.join().unwrap();
 }
 
 /// effigy#716: an observation that panics is reported at the panic point and
@@ -1754,6 +1818,8 @@ fn write_self_signed_cert_pair(certs: &Path, domain: &str) {
             &format!("/CN={domain}"),
             "-addext",
             &format!("subjectAltName=DNS:{domain}"),
+            "-addext",
+            "basicConstraints=critical,CA:FALSE",
             "-keyout",
             key.to_str().expect("UTF-8 key path"),
             "-out",

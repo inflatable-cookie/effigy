@@ -4166,6 +4166,15 @@ fn milestone_cbef4a23_applied_route_serves_verified_https_from_a_late_certificat
         |response| response == body,
     );
     assert_eq!(response, body);
+    assert_eq!(
+        gateway_live_routes(proxy_address).unwrap()["routes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|route| route["domain"] == domain)
+            .unwrap()["tls_available"],
+        true
+    );
 
     let unknown = probe_https(
         https_address,

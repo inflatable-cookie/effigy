@@ -104,7 +104,7 @@ Status uses the same pure snapshot reader.
 ## Reload lifecycle
 
 One owned worker is the only place an observed snapshot is applied, so no two
-reloads race. The directory watcher only signals it: a burst of notifications
+reloads race. The route and certificate directory watchers only signal it: a burst of notifications
 coalesces into one observation, and no per-event work or thread grows from it.
 The worker observes the committed snapshot on a five-second interval of its own,
 so a notification the kernel never delivered cannot strand a route; a filesystem
@@ -113,6 +113,14 @@ failed observation is retried from one second, doubling up to thirty seconds,
 and resets on the next success. The same retry covers an observation that
 panics: the panic is logged at the observation point, the applied table is kept
 and reconciliation continues, because the table's locks are poison-tolerant.
+
+The worker validates cached TLS pairs identically for both roots before replacing
+the whole resolver map. Any unreadable directory/entry, incomplete or invalid
+pair keeps the last-good map, including damage to unused pairs. Repair permits
+new certificates. Startup validates the same way; machine startup creates an
+absent directory. Unchanged route observations also reload TLS.
+`/_effigy/routes` reports `tls_available` from the listener's loaded resolver,
+separately from applied routes. Older daemons omit it and need explicit down/up.
 
 Applying the snapshot that is already applied changes nothing: an unchanged
 revision keeps the revision fence, the DNS cache and the idle generation, and
@@ -177,11 +185,9 @@ the failure; it does not claim the cause of a past unexplained refusal.
   the fence and routes, a delivered watcher event reaching the worker's signal
   (without the platform having to deliver one), an observation that panics but
   does not end reconciliation, and cancellation that settles the worker.
-  `milestone_cbef4a23_` controls drive the same worker's TLS reload: applying a
-  committed TLS route loads the certificate from the selected private root
-  without a filesystem event, an unchanged later observation still loads a
-  pair written after the route, and an incomplete neighbour keeps the last
-  loaded set while the applied snapshot stays.
+  `milestone_cbef4a23_` covers both roots: invalid/incomplete pairs, unreadable
+  directories, unchanged routes, missed events, overlapping wakes and rotation,
+  with real TCP/TLS handshakes against the retained and rotated certificates.
 - `proof:gateway:pinned-reader`: a pinned build decodes a route snapshot
   written by the current build.
 - `test:gateway:loopback-lifecycle`: alias addresses derived from the route

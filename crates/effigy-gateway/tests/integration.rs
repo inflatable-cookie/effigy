@@ -216,6 +216,7 @@ async fn proxy_routes_to_correct_upstream() {
     let proxy_config = ProxyConfig {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
         tls_bind_addr: None,
+        tls_resolver: None,
         connect_timeout: std::time::Duration::from_secs(5),
         response_timeout: std::time::Duration::from_secs(30),
         max_request_body: 0,
@@ -261,6 +262,7 @@ async fn proxy_returns_no_route_page() {
     let proxy_config = ProxyConfig {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
         tls_bind_addr: None,
+        tls_resolver: None,
         connect_timeout: std::time::Duration::from_secs(5),
         response_timeout: std::time::Duration::from_secs(30),
         max_request_body: 0,
@@ -312,6 +314,7 @@ async fn gateway_internal_endpoints_health_routes_and_unknown() {
     let proxy_config = ProxyConfig {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
         tls_bind_addr: None,
+        tls_resolver: None,
         connect_timeout: std::time::Duration::from_secs(5),
         response_timeout: std::time::Duration::from_secs(30),
         max_request_body: 0,
@@ -352,6 +355,11 @@ async fn gateway_internal_endpoints_health_routes_and_unknown() {
     );
     let routes_body: serde_json::Value = routes.json().await.unwrap();
     assert_eq!(routes_body["count"], 2);
+    assert!(routes_body["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|route| route["tls_available"] == false));
     let domains: Vec<&str> = routes_body["routes"]
         .as_array()
         .unwrap()
@@ -393,6 +401,7 @@ async fn stats_endpoint_tracks_requests() {
     let proxy_config = ProxyConfig {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
         tls_bind_addr: None,
+        tls_resolver: None,
         connect_timeout: std::time::Duration::from_secs(5),
         response_timeout: std::time::Duration::from_secs(30),
         max_request_body: 0,
@@ -473,6 +482,7 @@ async fn proxy_returns_bad_gateway_for_unreachable_upstream() {
     let proxy_config = ProxyConfig {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
         tls_bind_addr: None,
+        tls_resolver: None,
         connect_timeout: std::time::Duration::from_secs(1),
         response_timeout: std::time::Duration::from_secs(30),
         max_request_body: 0,
@@ -541,6 +551,7 @@ async fn proxy_response_timeout_returns_bad_gateway() {
     let proxy_config = ProxyConfig {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
         tls_bind_addr: None,
+        tls_resolver: None,
         connect_timeout: std::time::Duration::from_secs(5),
         // Very short response timeout to test quickly.
         response_timeout: std::time::Duration::from_millis(200),
@@ -586,6 +597,7 @@ async fn proxy_rejects_oversized_request_body() {
     let proxy_config = ProxyConfig {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
         tls_bind_addr: None,
+        tls_resolver: None,
         connect_timeout: std::time::Duration::from_secs(5),
         response_timeout: std::time::Duration::from_secs(30),
         max_request_body: 1024, // 1KB limit
@@ -685,6 +697,7 @@ async fn proxy_forwards_post_bodies() {
     let proxy_config = ProxyConfig {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
         tls_bind_addr: None,
+        tls_resolver: None,
         connect_timeout: std::time::Duration::from_secs(5),
         response_timeout: std::time::Duration::from_secs(30),
         max_request_body: 0,
@@ -757,6 +770,7 @@ async fn proxy_multiple_concurrent_requests() {
     let proxy_config = ProxyConfig {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
         tls_bind_addr: None,
+        tls_resolver: None,
         connect_timeout: std::time::Duration::from_secs(5),
         response_timeout: std::time::Duration::from_secs(30),
         max_request_body: 0,
@@ -845,6 +859,7 @@ async fn proxy_preserves_response_status_and_headers() {
     let proxy_config = ProxyConfig {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
         tls_bind_addr: None,
+        tls_resolver: None,
         connect_timeout: std::time::Duration::from_secs(5),
         response_timeout: std::time::Duration::from_secs(30),
         max_request_body: 0,
