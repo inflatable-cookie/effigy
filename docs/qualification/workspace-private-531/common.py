@@ -206,6 +206,17 @@ def validate_inputs(value, head):
         require((cell['backend'] == 'linux') == (cell['driver'] == 'ssh'),
                 'Linux must execute natively in its separately approved Linux host')
         if cell['driver'] == 'ssh':
+            import linux_capacity_contract as capacity
+            capacity.verify_preparation(cell.get('linux_capacity'), head)
+            pins = cell['linux_capacity']['plan']['phases']['activation']['images']
+            native_root = Path(pins['preparation']['mountpoint'])
+            workspace = Path(pins['workspace']['mountpoint'])
+            require(Path(cell['source_root']).is_relative_to(native_root)
+                    and Path(cell['qualification_root']['path']).is_relative_to(workspace)
+                    and cell['native_engine_root'] == pins['engine']['mountpoint']
+                    and cell['native_engine_capacity_bytes'] == pins['engine']['image_bytes']
+                    and Path(cell['docker_config']).is_relative_to(Path(cell['native_engine_root'])),
+                    'Linux inputs escape their prepared physical roles')
             require(all(isinstance(cell.get(key), dict) and set(cell[key]) == {'path', 'sha256'}
                         and HEX.fullmatch(cell[key]['sha256']) for key in ('ssh_config', 'ssh_known_hosts')),
                     'pinned isolated SSH config and host keys required')

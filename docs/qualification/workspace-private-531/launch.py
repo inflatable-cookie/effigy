@@ -132,7 +132,7 @@ def main():
                    'one_shot_marker': str(SCRATCH / ('531-' + args.sha256 + '-' + cell['backend'] + '.started.json'))}
         if cell['driver'] == 'ssh':
             binding.update(ssh_alias=cell['ssh_alias'], ssh_config=cell['ssh_config'],
-                           ssh_known_hosts=cell['ssh_known_hosts'])
+                           ssh_known_hosts=cell['ssh_known_hosts'], linux_capacity=cell['linux_capacity'])
         # The post-run source check gates positivity: a mid-window source edit
         # yields honest, nonqualifying evidence, never a positive receipt.
         unchanged = source_head(root) == head

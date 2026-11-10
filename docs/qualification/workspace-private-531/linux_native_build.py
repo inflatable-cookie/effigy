@@ -121,7 +121,10 @@ def run_script(attempt, root, ssh, remote, payload, *, seconds=1800):
             time.sleep(.2)
         observed = smoke.root_collect(root, attempt, ssh, unit)
         common.require(observed['writer_closure']['complete'], 'preparation writer bound refused')
-        native.channel_receive(attempt, ssh, gate, expected.encode())
+        identifier, _ = native.channel_request(attempt, 'run', gate, data=expected.encode(), limit=len(expected),
+            run=dict(unit=unit + '.service', deadline_seconds=seconds + 90,
+                     stdout_path=streams['stdout'], stderr_path=streams['stderr']))
+        attempt.command(ssh + [identifier], data=expected.encode(), timeout=seconds + 120)
         deadline = time.monotonic() + seconds + 120
         while True:
             raw = attempt.admin('systemctl show --all ' + unit + '.service '

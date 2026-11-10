@@ -171,6 +171,56 @@ class PhysicalImageReceiptTests(unittest.TestCase):
             loop_bound.verify_image(bad, pin)
 
 
+class FixedChannelPublicationTests(unittest.TestCase):
+    def test_receive_publishes_only_hash_checked_complete_bytes(self):
+        import hashlib, io
+        from types import SimpleNamespace
+        import linux_native_channel as channel
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            target = base/'ready'
+            data = b'fixed gate bytes'
+            class Input(io.BytesIO):
+                def read(self,count):
+                    if target.exists(): raise AssertionError('partial receive was published')
+                    return super().read(count)
+            identity = base.stat()
+            value = dict(operation='receive',path=str(target),parent_device=identity.st_dev,
+                         parent_inode=identity.st_ino,limit_bytes=len(data),size_bytes=len(data),
+                         sha256=hashlib.sha256(data).hexdigest())
+            with patch.object(channel,'BASE',base), patch.object(channel.os,'geteuid',return_value=1001), \
+                 patch.object(channel,'read_request',return_value=value), \
+                 patch.object(channel.sys,'stdin',SimpleNamespace(buffer=Input(data))):
+                channel.dispatch('a'*64)
+                self.assertEqual(target.read_bytes(),data)
+                self.assertEqual(target.stat().st_nlink,2)
+                other=base/'refused'
+                target=other
+                value.update(path=str(other),sha256='0'*64)
+                channel.sys.stdin.buffer=Input(data)
+                with self.assertRaises(ValueError): channel.dispatch('b'*64)
+                self.assertFalse(other.exists())
+
+    def test_fixed_preexec_program_compiles_with_quoted_paths(self):
+        program=native_run.gated_python('/owned/a quote',b'nonce',["/owned/main.py","metadata"],
+                                        {'/owned/main.py':'a'*64})
+        compile(program,'session-preexec','exec')
+
+
+class EnginePromotionCopyTests(unittest.TestCase):
+    def test_copy_preserves_original_and_initializes_only_a_fresh_extension(self):
+        import linux_native_engine_capacity as promotion
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            source, new = Path(directory)/'original', Path(directory)/'new'
+            data = bytes(range(251))*64
+            source.write_bytes(data)
+            result = promotion.copy_image(source,new,len(data)+4096)
+            self.assertEqual(source.read_bytes(),data)
+            self.assertEqual(new.read_bytes(),data+bytes(4096))
+            self.assertEqual(result['original_sha256'],result['copied_prefix_sha256'])
+            with self.assertRaises(FileExistsError): promotion.copy_image(source,new,len(data)+4096)
+
+
 class Ext4AllocationUnionTests(unittest.TestCase):
     def originals(self):
         value, _ = PhysicalImageReceiptTests().image()
@@ -279,7 +329,7 @@ class CapacityOriginalTests(unittest.TestCase):
                                          next(p['mountpoint'] for p in expected['images'].values() if p['image'] == image['image']))
             item = observation['accounting'][mount['target']]
             raw = image['originals']['image_superblock_hex']
-            item.update(device=os.makedev(*map(int, mount['device'].split(':'))), root_inode=2,
+            item.update(device=(7 << 8) | int(mount['device'].split(':')[1]), root_inode=2,
                         visible_inode_allocated_bytes=4096,
                         orphan_inode=dict(superblock_hex=raw, group_descriptor_hex=None, inode_hex=None),
                         external_xattrs=dict(superblock_hex=raw, references=[], headers={}))
@@ -325,45 +375,30 @@ class CapacityOriginalTests(unittest.TestCase):
     def test_phase_plan_refuses_reused_identity_mixed_source_and_exploration_as_proof(self):
         import copy, hashlib, json
         import linux_capacity_contract as contract
-        witness, expected = self.envelope()
-        phases, originals = {}, {}
-        for index, phase in enumerate(sorted(contract.PHASES)):
-            frozen, original = copy.deepcopy(expected), copy.deepcopy(witness)
-            frozen['origin'].update(phase=phase, nonce=('%032x' % (index + 1)))
-            frozen['observer_unit'] = 'observer-%s.service' % phase
-            original['origin'] = frozen['origin']
-            original['unit']['name'] = frozen['observer_unit']
-            data = json.loads(original['stdout'])
-            data['origin'] = frozen['origin']
-            if phase == 'live':
-                data['accounting'] = None
-                group = '/system.slice/controller.service'
-                frozen['cgroups'][group] = 1024
-                actor = copy.deepcopy(data['writer_closure']['actors'][0])
-                actor.update(pid=124, cgroup='0::'+group)
-                data['writer_closure']['actors'].append(actor)
-                for key in ('cgroups','cgroups_before','cgroups_after'):
-                    data['writer_closure'][key][group] = [124]
-                data['writer_closure']['controls'][group] = {'memory.max':'1024', 'memory.swap.max':'0'}
-                data['units']['controller.service'] = dict(ActiveState='active', ControlGroup=group, MainPID='124')
-            original['stdout'] = json.dumps(data)
-            original['stdout_sha256'] = hashlib.sha256(original['stdout'].encode()).hexdigest()
-            phases[phase], originals[phase] = frozen, original
-        plan = dict(schema='effigy.linux-capacity-plan.v1', source_head='b'*40,
-                    mechanism=contract.MECHANISM, phases=phases)
-        packet = dict(plan=plan, originals={p:originals[p] for p in ('setup','activation')})
-        full = {p:originals[p] for p in ('before','live','after')}
+        packet, full = capacity_fixture()
+        plan = packet['plan']
         self.assertEqual(set(contract.verify_full(packet, full, 'b'*40, evidence_kind='exploration')),
                          {'before','live','after'})
         with self.assertRaises(ValueError):
             contract.verify_full(packet, full, 'b'*40)
         for change in (lambda p: p['phases']['live']['origin'].update(source_head='f'*40),
                        lambda p: p['phases']['after']['origin'].update(nonce=p['phases']['before']['origin']['nonce']),
-                       lambda p: p['phases']['after'].update(boot_id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')):
+                       lambda p: p['phases']['after'].update(boot_id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+                       lambda p: p['live_observers'].__setitem__(2,p['live_observers'][0])):
             bad = copy.deepcopy(plan)
             change(bad)
             with self.assertRaises(ValueError):
                 contract.validate_plan(bad, 'b'*40, evidence_kind='exploration')
+
+    def test_missing_or_replayed_live_originals_do_not_close_all_activations(self):
+        import copy
+        import linux_capacity_contract as contract
+        packet,full=capacity_fixture()
+        for change in (lambda value:value['live'].pop(),
+                       lambda value:value['live'].__setitem__(1,copy.deepcopy(value['live'][0]))):
+            bad=copy.deepcopy(full);change(bad)
+            with self.assertRaises(ValueError):
+                contract.verify_full(packet,bad,'b'*40,evidence_kind='exploration')
 
 
 class RestartInventoryTests(unittest.TestCase):
@@ -654,6 +689,59 @@ class SubmissionTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             session.validate({'schema': 'effigy.workspace-private-proof.v1'})
 
+
+
+def capacity_fixture(head='b'*40, kind='exploration', workspace='/bounded'):
+    import copy, hashlib, json
+    import linux_capacity_contract as contract
+    witness, expected = CapacityOriginalTests().envelope()
+    expected['origin'].update(source_head=head, evidence_kind=kind)
+    import json, hashlib
+    data = json.loads(witness['stdout'])
+    data['exploratory'] = kind == 'exploration'
+    data['accounting'][workspace] = data['accounting'].pop('/bounded')
+    for image in data['images']:
+        image['originals']['mountinfo'] = image['originals']['mountinfo'].replace('/bounded', workspace)
+    for actor in data['writer_closure']['actors']:
+        actor['mountinfo'] = actor['mountinfo'].replace('/bounded', workspace)
+        for item in actor['mount_visibility']:
+            for key in ('target','opened_path'):
+                if key in item: item[key] = item[key].replace('/bounded', workspace)
+    expected['images']['workspace']['mountpoint'] = workspace
+    witness['stdout'] = json.dumps(data)
+    phases, originals = {}, {}
+    for index, phase in enumerate(sorted(contract.PHASES)):
+        frozen, original = copy.deepcopy(expected), copy.deepcopy(witness)
+        frozen['origin'].update(phase=phase, nonce=('%032x' % (index + 1)))
+        frozen['observer_unit'] = 'observer-%s.service' % phase
+        original['origin'] = frozen['origin']
+        original['unit']['name'] = frozen['observer_unit']
+        data = json.loads(original['stdout'])
+        data['origin'] = frozen['origin']
+        if phase == 'live':
+            data['accounting'] = None
+            group = '/system.slice/controller.service'
+            frozen['cgroups'][group] = 1024
+            actor = copy.deepcopy(data['writer_closure']['actors'][0])
+            actor.update(pid=124, cgroup='0::'+group)
+            data['writer_closure']['actors'].append(actor)
+            for key in ('cgroups','cgroups_before','cgroups_after'):
+                data['writer_closure'][key][group] = [124]
+            data['writer_closure']['controls'][group] = {'memory.max':'1024', 'memory.swap.max':'0'}
+            data['units']['controller.service'] = dict(ActiveState='active', ControlGroup=group, MainPID='124')
+        original['stdout'] = json.dumps(data)
+        original['stdout_sha256'] = hashlib.sha256(original['stdout'].encode()).hexdigest()
+        phases[phase], originals[phase] = frozen, original
+    plan = dict(schema='effigy.linux-capacity-plan.v1', source_head=head,
+                mechanism=contract.MECHANISM, phases=phases, live_observers=[phases['live']['observer_unit'],'observer-live-2.service','observer-live-3.service'])
+    packet = dict(plan=plan, originals={p:originals[p] for p in ('setup','activation')})
+    full = {p:originals[p] for p in ('before','after')}
+    full['live'] = []
+    for unit in plan['live_observers']:
+        original = copy.deepcopy(originals['live'])
+        original['unit']['name'] = unit
+        full['live'].append(original)
+    return packet, full
 
 if __name__ == '__main__':
     unittest.main()

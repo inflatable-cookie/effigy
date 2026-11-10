@@ -980,8 +980,9 @@ Planner decision `5b63ff1d431522bbb8a6da63065d08527a642ce6b47c003a1f2e96064f8c14
 selects the dedicated rootful engine; the earlier rootless experiment remains
 unqualified. The VM's original Docker/containerd services are unchanged.
 All dedicated containerd state, Docker data, BuildKit caches and logs reside on
-`/var/lib/effigy-829/engine-rootful.ext4`, exactly 2 GiB, root-owned mode 0600,
-UUID `958bd45f-83da-43e7-b15a-b498a79b34bf`. The workspace image is
+`/var/lib/effigy-829/engine-final.ext4`, exactly 3 GiB, root-owned mode 0600,
+UUID `ba08b2af-40d2-4da5-8f67-f5e48e02a4d6`. The former 2 GiB engine pilot
+remains intact and unmounted. The workspace image is
 `/var/lib/effigy-829/rows-final.ext4`, exactly 1 GiB, root-owned mode 0600,
 UUID `8d8707ea-dd3d-48ab-b408-47f66e5475dd`. The former 4 GiB pilot stays
 retained and unmounted. A real UID1001/CapEff-zero/Seccomp-2 container writer
@@ -1066,3 +1067,31 @@ An actual receive/read round trip passed and an arbitrary `id` request refused
 with exit 3. Root operations retain exact source, unit, streams, exit and
 independent empty kernel-cgroup observations. This exploratory transfer channel
 is not yet the separately activated sealed proof transport.
+
+
+### Engine headroom after repeated exploration
+
+A later full session completed all assertions and live writer checks, then
+refused its headroom check: retained preparation contexts raised the engine
+peak to 1,108,004,864 bytes. The 2 GiB pilot was therefore too small for the
+required two-times peak. Future offline build contexts now stage on the
+40 GiB preparation filesystem, rather than consuming engine allocation.
+
+The smallest supported final engine reservation is 3 GiB. Promotion copied the
+quiescent pilot into a fresh, fully initialized image, then changed and checked
+only that copy. UUID replacement requires a writable filesystem check before
+`resize2fs`; the first refused resize and its recovery originals are retained.
+The original pilot SHA-256 remained
+`e046dd10b7547fe72c8ac0f7be26b838ab1994dba1225b4e2b8111d8b48e4ecc`.
+Final custody pins device 2050, inode 2641556, 3,221,225,472 image bytes,
+complete initialized extents and 4,096 outer metadata bytes. The new
+filesystem also passed whole-filesystem attribution. No original image was
+enlarged, deleted or reverted.
+
+
+The quota-specific production observation entry is retired and refuses before
+transport or intent. Quota parsers remain only for historical evidence and
+focused controls; production limit admission supports the physical mechanism.
+The single native runner freezes setup/activation and before/after originals,
+plus three separate live observer units for the three activation cohorts.
+Missing or replayed live originals refuse offline acceptance.

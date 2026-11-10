@@ -166,6 +166,12 @@ def verify_record(backend, record, head):
     root = qualification_path(binding['qualification_root'])
     require(Path(record['receipt']) == root / 'complete.json',
             'the recorded receipt must be the pinned root\u2019s complete.json')
+    if backend == 'linux':
+        import linux_capacity_contract as capacity
+        original = record['linux_capacity_originals']
+        path = receipt_file(original['path'], 'Linux physical originals')
+        require(digest(path) == original['sha256'], 'Linux physical originals changed')
+        capacity.verify_full(binding['linux_capacity'], load(path), head)
     verify_receipt_semantics(record)
 
 

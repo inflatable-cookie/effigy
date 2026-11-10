@@ -33,6 +33,10 @@ def inputs():
             engine_kind='colima' if backend == 'colima' else 'docker'))
     cells[2].update(ssh_config=dict(path=str(SCRATCH / 'unarmed-ssh'), sha256='e' * 64),
                     ssh_known_hosts=dict(path=str(SCRATCH / 'unarmed-known-hosts'), sha256='e' * 64))
+    from linux_native_tests import capacity_fixture
+    packet, _ = capacity_fixture(HEAD, 'proof', str(SCRATCH))
+    cells[2].update(linux_capacity=packet, source_root='/preparation/source',
+                    native_engine_root='/engine', native_engine_capacity_bytes=packet['plan']['phases']['activation']['images']['engine']['image_bytes'], docker_config='/engine/client/config')
     return dict(schema='effigy.workspace-private-proof.v1', source_head=HEAD, backends=cells)
 
 
@@ -111,7 +115,7 @@ def invocation_record(backend, cell, base, source_head=HEAD, inputs_sha256='f' *
                'one_shot_marker': str(SCRATCH / ('531-' + inputs_sha256 + '-' + backend + '.started.json'))}
     if cell['driver'] == 'ssh':
         binding.update(ssh_alias=cell.get('ssh_alias', 'effigy-531-vault'), ssh_config=cell['ssh_config'],
-                       ssh_known_hosts=cell['ssh_known_hosts'])
+                       ssh_known_hosts=cell['ssh_known_hosts'], linux_capacity=cell['linux_capacity'])
     record = {'schema': 'effigy.workspace-private-backend-invocation.v1', 'backend': backend, 'exit_code': 0,
               'source_unchanged': True, 'positive': True,
               'host': binding.get('ssh_alias', 'local'), 'receipt': str(complete_path),
@@ -119,6 +123,12 @@ def invocation_record(backend, cell, base, source_head=HEAD, inputs_sha256='f' *
               'receipt_export': {'path': str(export), 'sha256': digest(export)},
               'stdout_sha256': 'a' * 64, 'stderr_sha256': 'a' * 64,
               'binding': binding}
+    if backend == 'linux':
+        from linux_native_tests import capacity_fixture
+        _, originals = capacity_fixture(HEAD, 'proof', str(SCRATCH))
+        original_path = base / (label + '-capacity.json')
+        exclusive(original_path, originals)
+        record['linux_capacity_originals'] = {'path': str(original_path), 'sha256': digest(original_path)}
     path = base / (label + '.invocation.json')
     exclusive(path, record)
     return path, record

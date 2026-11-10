@@ -113,7 +113,7 @@ SETUP_GO_GATES = frozenset({'E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'E19', 'E-
 # admission is not a fresh inventory or native credit. The writable top stays the descriptor
 # metadata mechanism.
 SUPPORTED_DISK_MECHANISMS = frozenset({disk_association.MECHANISM})
-SUPPORTED_HARD_LIMITS = frozenset({allocation.MECHANISM, capacity.MECHANISM})
+SUPPORTED_HARD_LIMITS = frozenset({capacity.MECHANISM})
 SUPPORTED_TOP_MECHANISMS = frozenset({identity.MECHANISM})   # the only implemented top selection: descriptor metadata
 CANDIDATE_H_HEAD = '4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02'   # source-bound candidate H, distinct from K
 # External anchors: the preparation head K, candidate H, the probe transcript sha and the allowed-signers

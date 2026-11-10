@@ -46,6 +46,7 @@ source=Path(SOURCE)
 roles=Path(ROLES)
 value=json.loads(SEED)
 cell=value['cell']
+cell['native_engine_capacity_bytes']=3221225472
 metadata=json.loads((roles/'binaries.original.json').read_text())
 def visit(row):
  if isinstance(row,dict):

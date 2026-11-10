@@ -14,14 +14,14 @@ from linux_loop_bound import verify_image
 
 ROOT = Path('/var/lib/effigy-829')
 WORKSPACE = Path('/Volumes/Stash/scratch/effigy/linux-native-829/qualification')
-IMAGES = ((ROOT / 'engine-rootful.ext4', ROOT / 'rootful', 2147483648,
-           '958bd45f-83da-43e7-b15a-b498a79b34bf'),
+IMAGES = ((ROOT / 'engine-final.ext4', ROOT / 'rootful', 3221225472,
+           'ba08b2af-40d2-4da5-8f67-f5e48e02a4d6'),
           (ROOT / 'rows-final.ext4', WORKSPACE, 1073741824,
            '8d8707ea-dd3d-48ab-b408-47f66e5475dd'))
 PREPARATION = (ROOT / 'preparation.ext4', WORKSPACE.parent, 42949672960,
                '18f16a9f-a2cd-421e-8390-8f8d6d2bd829')
 ALL_IMAGES = (PREPARATION, *IMAGES)
-INODES = {'engine-rootful.ext4': 2641043, 'rows-final.ext4': 2640535, 'preparation.ext4': 2641184}
+INODES = {'engine-rootful.ext4': 2641043, 'engine-final.ext4': 2641556, 'rows-final.ext4': 2640535, 'preparation.ext4': 2641184}
 
 
 def run(*argv):

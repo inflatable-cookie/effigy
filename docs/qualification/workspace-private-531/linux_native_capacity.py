@@ -16,14 +16,14 @@ def probe(root, capacity):
     allowed = (Path('/Volumes/Stash/scratch/effigy/linux-native-829'),
                Path('/Volumes/Stash/scratch/effigy/linux-native-829/qualification'),
                Path('/var/lib/effigy-829/rootful/client'))
-    if (os.geteuid() != 1001 or capacity not in (1073741824, 2147483648, 42949672960)
+    if (os.geteuid() != 1001 or capacity not in (1073741824, 2147483648, 3221225472, 42949672960)
             or not any(root == parent or root.is_relative_to(parent) for parent in allowed)):
         raise ValueError('task-owned native writer and capacity required')
     status = dict(line.split(':', 1) for line in Path('/proc/self/status').read_text().splitlines() if ':' in line)
     if int(status['CapEff'].strip(), 16):
         raise ValueError('capacity writer has effective capabilities')
     before = os.statvfs(root)
-    if before.f_blocks * before.f_frsize != capacity or root.stat().st_dev == os.stat('/').st_dev:
+    if not 0 < before.f_blocks * before.f_frsize <= capacity or root.stat().st_dev == os.stat('/').st_dev:
         raise ValueError('capacity control does not match its physical filesystem')
     directory = Path(tempfile.mkdtemp(prefix='enospc-', dir=root))
     path = directory / 'payload'

@@ -209,13 +209,19 @@ def full_chain(root, seed):
     native_run.authorize_channel(root, attempt)
     ssh = ssh_prefix(root, attempt)
     stop_engine(attempt)
-    capacity_probe(attempt, ssh, '/var/lib/effigy-829/rootful/client/tmp', 2147483648)
+    capacity_probe(attempt, ssh, '/var/lib/effigy-829/rootful/client/tmp', 3221225472)
     root_resume(root, attempt, ssh)
     capacity_probe(attempt, ssh, build.BASE + '/qualification', 1073741824,
                    image=value['cell']['runtime_image'])
     binding = build.build(root, 'HEAD')
     value['cell']['source_head'] = binding['source_pin']
     prepared = assets.prepare(root, binding, value)
+    import linux_native_contract as contract
+    current = common.load(prepared)
+    packet = contract.prepare(root, attempt, ssh, current['cell'])
+    current['cell']['linux_capacity_preparation'] = build.file_input(packet)
+    prepared = attempt.root / 'assets-with-capacity.json'
+    common.exclusive(prepared, current)
     common.require(native_run.execute(root, prepared, 'acquire') == 0, 'native acquisition failed')
     common.require(native_run.execute(root, prepared, 'full') == 0, 'native full session failed')
     final = root_resume(root, attempt, ssh)

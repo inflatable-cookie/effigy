@@ -3789,24 +3789,12 @@ class ExactApprovalAndCustodyChecks(unittest.TestCase):
 
 
 class AuthenticatedObservationChecks(unittest.TestCase):
-    def test_actual_callers_retain_separate_streams_and_reject_boot_drift(self):
+    def test_retired_quota_entry_refuses_before_transport_or_intent(self):
         import linux_observation_caller as callers
-        fx = PlanFixture()
-        facts = fx.facts()
-        rows = {r['id']: r for r in setup.setup_plan(facts)}
-        calls = []
-        def transport(argv, stdin, timeout, cap):
-            calls.append(argv)
-            text = BOOT + '\n' + (show_text() if argv[0] == '/usr/bin/ssh' else '256 ' + HOSTKEY + ' root (ED25519)\n')
-            return dict(disposition='exited', reason=None, waited_exit=0, stdout=text.encode(), stderr=b'')
-        root = tmpdir('actual-observation-')
-        caller = callers.ObservationCaller(facts, root, transport, lambda: NOW)
-        self.assertEqual(caller.identity(rows['E8']), facts['identity'])
-        self.assertEqual(caller.terminal(rows['E8']), {'show_text': show_text()})
-        self.assertIn(rows['E8']['credit']['unit'], calls[-1][-1])
-        self.assertTrue((root / 'observation-0002' / 'stderr').exists())
-        facts['identity']['boot_id'] = 'changed'
-        with self.assertRaises(Refusal): caller.terminal(rows['E8'])
+        root = tmpdir('retired-quota-')
+        with self.assertRaisesRegex(Refusal,'legacy quota preparation entry retired'):
+            callers.execute({},root,600)
+        self.assertEqual(list(root.iterdir()),[])
 
     def test_every_ssh_payload_checks_credentials_before_intent(self):
         fx = PlanFixture()

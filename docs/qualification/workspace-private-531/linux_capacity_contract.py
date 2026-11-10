@@ -15,7 +15,7 @@ import linux_loop_bound as loop
 MECHANISM = loop.MECHANISM
 SCHEMA = 'effigy.linux-loop-original.v1'
 VM = '433c9e5b-c7b9-469f-9633-24b4addcd3b5'
-CAPS = {'workspace': 1073741824, 'engine': 2147483648, 'preparation': 42949672960}
+CAPS = {'workspace': 1073741824, 'engine': 3221225472, 'preparation': 42949672960}
 ENGINE_GROUP = '/system.slice/effigy-829-rootful.service'
 PHASES = {'setup', 'activation', 'before', 'live', 'after'}
 MAX_ORIGINAL_BYTES = 8 * 1024 * 1024
@@ -143,8 +143,9 @@ def _verify_observation(witness, expected):
         for role, pin in pins.items():
             value = data['accounting'][pin['mountpoint']]
             device = bounds[role]['device'].split(':')
-            import os
-            require(value.get('device') == os.makedev(*map(int, device)) and value.get('root_inode') == 2,
+            major, minor = map(int, device)
+            number = ((major & 0xfff) << 8) | (minor & 0xff) | ((major & ~0xfff) << 32) | ((minor & ~0xff) << 12)
+            require(value.get('device') == number and value.get('root_inode') == 2,
                     'attribution does not cover the admitted whole filesystem')
             for name in ('orphan_inode', 'external_xattrs'):
                 require(name in value and loop.superblock(bytes.fromhex(value[name]['superblock_hex']), project_quota=False) ==
@@ -191,10 +192,14 @@ def verify_observation(witness, expected):
 
 def validate_plan(plan, head, *, evidence_kind='proof'):
     """The input/GO hash freezes every observation's expectations before effects."""
-    require(isinstance(plan, dict) and set(plan) == {'schema', 'source_head', 'mechanism', 'phases'}
+    require(isinstance(plan, dict) and set(plan) == {'schema', 'source_head', 'mechanism', 'phases', 'live_observers'}
             and plan['schema'] == 'effigy.linux-capacity-plan.v1'
             and plan['source_head'] == head and plan['mechanism'] == MECHANISM
             and set(plan['phases']) == PHASES, 'complete frozen Linux capacity plan required')
+    observers = plan['live_observers']
+    require(isinstance(observers,list) and len(observers) == len(set(observers)) == 3
+            and all(isinstance(unit,str) and unit for unit in observers)
+            and observers[0] == plan['phases']['live']['observer_unit'], 'three frozen live observation units required')
     shared = None
     nonces, observers = set(), set()
     for phase, expected in plan['phases'].items():
@@ -207,7 +212,9 @@ def validate_plan(plan, head, *, evidence_kind='proof'):
         shared = identity
         nonces.add(origin['nonce'])
         observers.add(expected['observer_unit'])
-    require(len(nonces) == len(observers) == len(PHASES), 'capacity phase identities are reused')
+    require(len(nonces) == len(observers) == len(PHASES)
+            and len(observers | set(plan['live_observers'])) == len(PHASES) + 2,
+            'capacity phase identities are reused')
     require(len({plan['phases'][phase]['boot_id'] for phase in ('activation', 'before', 'live', 'after')}) == 1,
             'activation and full-session observations cross a boot')
     return plan
@@ -226,5 +233,14 @@ def verify_full(packet, observations, head, *, evidence_kind='proof'):
     verify_preparation(packet, head, evidence_kind=evidence_kind)
     require(isinstance(observations, dict) and set(observations) == {'before', 'live', 'after'},
             'fresh before/live/after Linux writer originals required')
-    return {phase: verify_observation(observations[phase], packet['plan']['phases'][phase])
-            for phase in ('before', 'live', 'after')}
+    import copy
+    live = observations['live']
+    require(isinstance(live,list) and len(live) == 3, 'all three native activation cohorts require originals')
+    result = {phase: verify_observation(observations[phase], packet['plan']['phases'][phase])
+              for phase in ('before','after')}
+    result['live'] = []
+    for index, witness in enumerate(live):
+        expected = copy.deepcopy(packet['plan']['phases']['live'])
+        expected['observer_unit'] = packet['plan']['live_observers'][index]
+        result['live'].append(verify_observation(witness,expected))
+    return result

@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
 import sys
 import time
 
@@ -65,9 +66,12 @@ def read_request(identifier):
     finally:
         os.close(fd)
     value = json.loads(data)
-    require(set(value) == {'schema', 'operation', 'path', 'sha256', 'limit_bytes', 'size_bytes',
-                          'parent_device', 'parent_inode', 'boot_id', 'expires_at'}, 'request schema differs')
-    require(value['schema'] == SCHEMA and value['operation'] in ('receive', 'read')
+    fields = {'schema', 'operation', 'path', 'sha256', 'limit_bytes', 'size_bytes',
+              'parent_device', 'parent_inode', 'boot_id', 'expires_at'}
+    if value.get('operation') == 'run':
+        fields |= {'unit', 'invocation_id', 'deadline_seconds', 'outputs'}
+    require(set(value) == fields, 'request schema differs')
+    require(value['schema'] == SCHEMA and value['operation'] in ('receive', 'read', 'run')
             and type(value['limit_bytes']) is int and 0 <= value['limit_bytes'] <= MAX_BYTES
             and type(value['size_bytes']) is int and 0 <= value['size_bytes'] <= value['limit_bytes']
             and isinstance(value['sha256'], str) and HEX.fullmatch(value['sha256']), 'request bounds differ')
@@ -83,8 +87,11 @@ def provision(identifier, encoded):
     data = base64.b64decode(encoded, validate=True)
     require(len(data) <= 4096, 'operation request exceeds its cap')
     value = json.loads(data)
-    require(set(value) == {'operation', 'path', 'sha256', 'size_bytes', 'limit_bytes'}, 'provision fields differ')
-    require(value['operation'] in ('receive', 'read') and type(value['limit_bytes']) is int
+    fields = {'operation', 'path', 'sha256', 'size_bytes', 'limit_bytes'}
+    if value.get('operation') == 'run':
+        fields |= {'unit', 'deadline_seconds', 'stdout_path', 'stderr_path'}
+    require(set(value) == fields, 'provision fields differ')
+    require(value['operation'] in ('receive', 'read', 'run') and type(value['limit_bytes']) is int
             and 0 <= value['limit_bytes'] <= MAX_BYTES, 'unsupported operation')
     require(BASE.stat().st_dev != os.stat('/').st_dev, 'preparation image is not mounted')
     fd = parent_fd(value['path'])
@@ -112,6 +119,29 @@ def provision(identifier, encoded):
                 os.close(source)
         require(type(value['size_bytes']) is int and 0 <= value['size_bytes'] <= value['limit_bytes']
                 and isinstance(value['sha256'], str) and HEX.fullmatch(value['sha256']), 'artifact identity is incomplete')
+        if value['operation'] == 'run':
+            require(re.fullmatch(r'effigy-829-[0-9a-f]{32}\.service', value['unit'])
+                    and type(value['deadline_seconds']) is int and 0 < value['deadline_seconds'] <= 2520,
+                    'exact bounded session unit required')
+            state = unit_state(value['unit'])
+            require(int(state['MainPID']) > 0 and state['ActiveState'] == 'active'
+                    and re.fullmatch(r'[0-9a-f]{32}', state['InvocationID']), 'session unit is not waiting live')
+            value['invocation_id'] = state['InvocationID']
+            value['outputs'] = {}
+            for name in ('stdout', 'stderr'):
+                output = value.pop(name + '_path')
+                parent = parent_fd(output)
+                try:
+                    source = os.open(Path(output).name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent)
+                    try:
+                        item = os.fstat(source)
+                        require(stat.S_ISREG(item.st_mode) and item.st_dev == info.st_dev,
+                                'session output is outside its bounded gate filesystem')
+                        value['outputs'][name] = dict(path=output, device=item.st_dev, inode=item.st_ino)
+                    finally:
+                        os.close(source)
+                finally:
+                    os.close(parent)
         value.update(schema=SCHEMA, parent_device=info.st_dev, parent_inode=info.st_ino,
                      boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(), expires_at=int(time.time()) + 3600)
     finally:
@@ -162,6 +192,46 @@ def directory(path):
         os.close(fd)
 
 
+def unit_state(unit):
+    raw = subprocess.check_output(['/usr/bin/systemctl', 'show', '--all', unit,
+        '--property=MainPID,ActiveState,InvocationID,ExecMainStatus,ExecMainExitTimestampMonotonic'], text=True, timeout=10)
+    return dict(line.split('=',1) for line in raw.splitlines())
+
+
+def wait_unit(value):
+    """Return only the bound main's waited result; cgroup closure is separate."""
+    end = time.monotonic() + value['deadline_seconds']
+    while True:
+        state = unit_state(value['unit'])
+        require(state['InvocationID'] == value['invocation_id'], 'session unit generation changed')
+        if state['MainPID'] == '0' and int(state['ExecMainExitTimestampMonotonic'] or '0') > 0:
+            break
+        require(time.monotonic() < end, 'session main did not return within its bound')
+        time.sleep(.2)
+    for name in ('stdout','stderr'):
+        item = value['outputs'][name]
+        parent = parent_fd(item['path'])
+        try:
+            source = os.open(Path(item['path']).name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent)
+            try:
+                info = os.fstat(source)
+                require((info.st_dev, info.st_ino) == (item['device'], item['inode'])
+                        and info.st_size <= 8 * 1024 ** 2, 'session output identity or cap differs')
+                data = bytearray()
+                while len(data) <= 8 * 1024 ** 2:
+                    block = os.read(source, min(1048576, 8 * 1024 ** 2 + 1 - len(data)))
+                    if not block: break
+                    data.extend(block)
+                require(len(data) == info.st_size and os.fstat(source).st_mtime_ns == info.st_mtime_ns,
+                        'session output changed after its main returned')
+                getattr(sys, name).buffer.write(data)
+            finally:
+                os.close(source)
+        finally:
+            os.close(parent)
+    return int(state['ExecMainStatus'])
+
+
 def dispatch(identifier):
     require(os.geteuid() == 1001, 'dedicated non-root SSH account required')
     value = read_request(identifier)
@@ -169,21 +239,31 @@ def dispatch(identifier):
     try:
         info = os.fstat(parent)
         require((info.st_dev, info.st_ino) == (value['parent_device'], value['parent_inode']), 'operation parent changed')
-        flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL if value['operation'] == 'receive' else os.O_RDONLY)
-        fd = os.open(Path(value['path']).name, flags | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+        flags = (os.O_RDONLY if value['operation'] == 'read' else os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+        final_name = Path(value['path']).name
+        name = final_name
+        if value['operation'] != 'read':
+            try:
+                os.stat(final_name,dir_fd=parent,follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                raise ValueError('operation destination already exists')
+            name = final_name + '.pending-' + identifier
+        fd = os.open(name, flags | os.O_NOFOLLOW, 0o600, dir_fd=parent)
         try:
             initial = os.fstat(fd)
             require(stat.S_ISREG(initial.st_mode) and initial.st_dev == info.st_dev, 'operation artifact differs')
             digest, count = hashlib.sha256(), 0
             while True:
                 block = (sys.stdin.buffer.read(min(1048576, value['limit_bytes'] + 1 - count))
-                         if value['operation'] == 'receive' else os.read(fd, 1048576))
+                         if value['operation'] != 'read' else os.read(fd, 1048576))
                 if not block:
                     break
                 count += len(block)
                 require(count <= value['limit_bytes'], 'operation exceeded its byte cap')
                 digest.update(block)
-                if value['operation'] == 'receive':
+                if value['operation'] != 'read':
                     offset = 0
                     while offset < len(block):
                         written = os.write(fd, block[offset:])
@@ -192,8 +272,13 @@ def dispatch(identifier):
                 else:
                     sys.stdout.buffer.write(block)
             require(count == value['size_bytes'] and digest.hexdigest() == value['sha256'], 'operation bytes differ')
-            if value['operation'] == 'receive':
+            if value['operation'] != 'read':
                 os.fsync(fd)
+                # Publish only complete hash-checked bytes. Consumers waiting on
+                # a gate or acknowledgement never observe an empty/partial file.
+                # The pending name remains as retained evidence of this receive.
+                os.link(name,final_name,src_dir_fd=parent,dst_dir_fd=parent,follow_symlinks=False)
+                os.fsync(parent)
             final = os.fstat(fd)
             require((initial.st_dev, initial.st_ino) == (final.st_dev, final.st_ino)
                     and final.st_size == value['size_bytes'], 'operation inode changed')
@@ -210,7 +295,11 @@ if __name__ == '__main__':
         elif len(sys.argv) == 3 and sys.argv[1] == '--directory':
             print(json.dumps(directory(sys.argv[2]), sort_keys=True))
         elif sys.argv[1:] == ['--dispatch']:
-            dispatch(os.environ.get('SSH_ORIGINAL_COMMAND'))
+            identifier = os.environ.get('SSH_ORIGINAL_COMMAND')
+            dispatch(identifier)
+            request = read_request(identifier)
+            if request['operation'] == 'run':
+                sys.exit(wait_unit(request))
         else:
             raise ValueError('unsupported channel entry')
     except (ValueError, OSError, KeyError, TypeError) as error:

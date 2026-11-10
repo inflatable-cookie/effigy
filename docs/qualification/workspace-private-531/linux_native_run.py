@@ -19,7 +19,7 @@ import linux_native_build as build
 import linux_native_session as session
 import linux_setup as setup
 
-FILES = ('common.py', 'runtime.py', 'probe.py', 'linux_native_session.py', 'linux_native_window.py', 'linux_native_storage.py', 'linux_loop_bound.py')
+FILES = ('common.py', 'runtime.py', 'probe.py', 'linux_native_session.py', 'linux_native_window.py', 'linux_native_storage.py', 'linux_loop_bound.py', 'linux_capacity_contract.py')
 
 
 def bootstrap_preparation(attempt):
@@ -119,7 +119,7 @@ def stage_admin_script(attempt, data):
                 'assert hashlib.sha256(os.pread(f,' + str(offset) + ',0)).hexdigest()=='
                 + repr(hashlib.sha256(data[:offset]).hexdigest()) + '; '
                 'assert os.pwrite(f,b,' + str(offset) + ')==len(b); os.fsync(f); os.close(f)')
-        for trial in range(4):
+        for trial in range(8):
             try:
                 attempt.admin('python3 -I -B -c ' + shlex.quote(code))
                 break
@@ -127,22 +127,24 @@ def stage_admin_script(attempt, data):
                 # Rewriting the SAME bytes at the SAME offset is idempotent.
                 # Each invocation verifies the complete prior prefix and size;
                 # it cannot append a duplicate or change an existing prefix.
-                if trial == 3:
+                if trial == 7:
                     raise
+                time.sleep(5)
     digest = hashlib.sha256(data).hexdigest()
     code = ('import os,hashlib; from pathlib import Path; p=Path(' + repr(path) + '); '
             'assert hashlib.sha256(p.read_bytes()).hexdigest()==' + repr(digest)
             + '; os.chmod(p,0o400); print(' + repr(digest) + ')')
     # A chmod to the one fixed final mode is idempotent, and no payload executes
     # until the complete immutable root-owned source passes this readback.
-    for trial in range(4):
+    for trial in range(8):
         try:
             actual = attempt.admin('python3 -I -B -c ' + shlex.quote(code))
             common.require(actual.decode().strip() == digest, 'root source readback differs')
             break
         except RuntimeError:
-            if trial == 3:
+            if trial == 7:
                 raise
+            time.sleep(5)
     common.exclusive(attempt.root / (Path(path).name + '.source.json'),
                      {'path': path, 'sha256': digest, 'bytes': len(data)})
     return path
@@ -213,11 +215,14 @@ def authorize_channel(root, attempt):
     return expiry
 
 
-def channel_request(attempt, operation, path, *, data=None, size=None, digest=None, limit=1024 ** 3):
+def channel_request(attempt, operation, path, *, data=None, size=None, digest=None, limit=1024 ** 3, run=None):
     import base64
     identifier = uuid.uuid4().hex + uuid.uuid4().hex
     value = {'operation': operation, 'path': str(path), 'sha256': hashlib.sha256(data).hexdigest() if data is not None else (digest or '0' * 64),
              'size_bytes': len(data) if data is not None else (size or 0), 'limit_bytes': limit}
+    if run is not None:
+        common.require(operation == 'run', 'run details on another operation')
+        value.update(run)
     encoded = base64.b64encode(json.dumps(value, separators=(',', ':')).encode()).decode()
     command = ('/usr/bin/python3 -I -B /usr/local/libexec/effigy829-native-channel --provision '
                + identifier + ' ' + shlex.quote(encoded))
@@ -332,6 +337,57 @@ def stop_owned_unit(attempt, target, output_root):
     return state, pids
 
 
+def gated_python(release, token, main, files):
+    """Build the fixed pre-exec gate; every imported driver byte is hash-bound."""
+    return ('import os,time,hashlib; from pathlib import Path; p=Path(' + repr(release) + '); '
+              'end=time.monotonic()+90; '
+              'exec(' + repr('while not p.exists():\n assert time.monotonic()<end\n time.sleep(.1)') + '); '
+              'assert p.read_bytes()==' + repr(token) + '; '
+              'files=' + repr(files) + '; '
+              'assert all(hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest for path,digest in files.items()); '
+              'os.execv("/usr/bin/python3",["/usr/bin/python3","-I","-B"]+' + repr(main) + ')')
+
+
+
+class SSHRun:
+    """An owned SSH release/wait process, separate from remote cgroup custody."""
+    def __init__(self, attempt, ssh, identifier, token, *, timeout):
+        self.stem = attempt.root / ('ssh-run-' + uuid.uuid4().hex)
+        self.started, self.timeout = time.monotonic(), timeout
+        self.streams = {name: self.stem.with_suffix('.' + name).open('xb') for name in ('stdout','stderr')}
+        argv = ssh + [identifier]
+        common.exclusive(self.stem.with_suffix('.intent.json'),
+                         {'argv':argv,'input_sha256':hashlib.sha256(token).hexdigest(),'timeout_seconds':timeout})
+        self.child = subprocess.Popen(argv,stdin=subprocess.PIPE,stdout=self.streams['stdout'],stderr=self.streams['stderr'])
+        common.exclusive(self.stem.with_suffix('.pid.json'), {'local_pid':self.child.pid})
+        try:
+            self.child.stdin.write(token)
+            self.child.stdin.close()
+        except BrokenPipeError:
+            # Retain the actual transport result below; it supplies no remote
+            # settlement or permission to replay the opaque operation.
+            pass
+        self.result = None
+
+    def finish(self):
+        if self.result is not None:
+            return self.result
+        unknown = False
+        try:
+            self.child.wait(timeout=min(10,max(.1,self.timeout-(time.monotonic()-self.started))))
+        except subprocess.TimeoutExpired:
+            self.child.kill()
+            self.child.wait()
+            unknown = True
+        finally:
+            for stream in self.streams.values(): stream.close()
+        result = dict(local_exit=self.child.returncode,waited=True,transport_timeout=unknown,
+                      elapsed_seconds=time.monotonic()-self.started)
+        common.exclusive(self.stem.with_suffix('.terminal.json'),result)
+        self.result = result
+        return result
+
+
 class Attempt:
     def __init__(self, root, *, label='native-session'):
         diagnostic.private_root(str(root))
@@ -410,11 +466,27 @@ def execute(root, seed, mode):
     encoded = json.dumps(value, sort_keys=True, indent=2).encode()
     channel_receive(attempt, ssh, metadata, encoded)
     binding = dict(path=metadata, sha256=hashlib.sha256(encoded).hexdigest(), fixture=fixture)
-    unit = 'effigy-829-' + uuid.uuid4().hex
+    physical = value['cell'].get('linux_capacity_preparation') if mode == 'full' else None
+    capacity_packet, capacity_originals = None, {}
+    if physical:
+        import linux_native_contract as contract
+        import linux_capacity_contract as capacity
+        capacity_packet = common.load(common.artifact(physical))
+        capacity.verify_preparation(capacity_packet, value['cell']['source_head'], evidence_kind='exploration')
+        groups = capacity_packet['plan']['phases']['live']['cgroups']
+        unit = next(group for group in groups if group != capacity.ENGINE_GROUP).rsplit('/',1)[-1].removesuffix('.service')
+        common.require(__import__('re').fullmatch(r'effigy-829-[0-9a-f]{32}', unit), 'frozen controller identity differs')
+        capacity_originals['before'] = contract.observe(root, attempt, ssh, capacity_packet['plan'], 'before')
+    else:
+        unit = 'effigy-829-' + uuid.uuid4().hex
     # The controller's retained stream is a writer too: keep its pre-opened
     # output descriptor on the same physically capped workspace filesystem.
     log = str(session.BASE / 'qualification' / (unit + '.log'))
     writable = str(session.BASE if mode in ('acquire', 'preflight') else Path(binding['fixture']))
+    release = str(session.BASE / 'qualification' / ('ssh-release-' + unit))
+    token = uuid.uuid4().hex.encode()
+    main = [driver + '/linux_native_session.py', binding['path'], binding['sha256'], mode]
+    script = gated_python(release,token,main,{driver+'/'+name:digest for name,digest in files.items()})
     argv = ['/usr/bin/systemd-run', '--unit=' + unit, '--no-block', '--service-type=exec',
             '--uid=effigy531', '--gid=effigy531', '--property=ExitType=cgroup',
             '--property=RemainAfterExit=yes', '--property=KillMode=control-group',
@@ -427,81 +499,108 @@ def execute(root, seed, mode):
             '--property=ProtectKernelTunables=yes', '--property=ProtectKernelModules=yes',
             '--property=ProtectKernelLogs=yes', '--property=ReadWritePaths=' + writable,
             '--property=MemoryMax=3G', '--property=MemorySwapMax=0', '--property=LimitCORE=0',
-            '--property=StandardOutput=append:' + log, '--property=StandardError=append:' + log,
+            '--property=StandardOutput=append:' + log + '.stdout', '--property=StandardError=append:' + log + '.stderr',
             '--setenv=PATH=' + str(session.BASE / 'tools/bin') + ':/usr/bin:/bin',
             '--setenv=HOME=/home/effigy531', '--', '/usr/bin/python3', '-I', '-B',
-            driver + '/linux_native_session.py', binding['path'], binding['sha256'], mode]
+            '-c', script]
     binding.update(unit=unit, log=log, driver=driver, files=files, unit_argv=argv,
                    exploratory=True, qualification_credit=False, mode=mode)
     common.exclusive(attempt.root / 'binding.json', binding)
     submit_unit(attempt, argv, unit)
-    deadline = time.monotonic() + 1900
-    properties = 'LoadState,ActiveState,SubState,Result,ExecMainStatus,MainPID,ControlGroup,InvocationID,ExecMainExitTimestampMonotonic'
-    terminal = None
-    observed_gates = set()
-    observation_failure = None
-    while time.monotonic() < deadline:
-        raw = attempt.admin('systemctl show --all ' + unit + '.service --property=' + properties, read_only=True)
-        status = dict(line.split('=', 1) for line in raw.decode().splitlines())
-        if (status.get('MainPID') == '0' and status.get('ControlGroup')
-                and int(status.get('ExecMainExitTimestampMonotonic', '0')) > 0):
-            # The assertions have returned. Dispose only this attempt's exact
-            # service, including any intentionally retained fixture helpers.
-            # Preserve the pre-stop state; this is cleanup, not proof that a
-            # running session settled naturally. Its journal checks ran first.
-            common.exclusive(attempt.root / 'post-main-cgroup.json', status)
+    relay = None
+    try:
+        identifier, _ = channel_request(attempt, 'run', release, data=token, limit=len(token),
+            run=dict(unit=unit+'.service',deadline_seconds=1850,stdout_path=log+'.stdout',stderr_path=log+'.stderr'))
+        relay = SSHRun(attempt,ssh,identifier,token,timeout=1900)
+        deadline = time.monotonic() + 1900
+        properties = 'LoadState,ActiveState,SubState,Result,ExecMainStatus,MainPID,ControlGroup,InvocationID,ExecMainExitTimestampMonotonic'
+        terminal = None
+        observed_gates = set()
+        observation_failure = None
+        while time.monotonic() < deadline:
+            raw = attempt.admin('systemctl show --all ' + unit + '.service --property=' + properties, read_only=True)
+            status = dict(line.split('=', 1) for line in raw.decode().splitlines())
+            if (status.get('MainPID') == '0' and status.get('ControlGroup')
+                    and int(status.get('ExecMainExitTimestampMonotonic', '0')) > 0):
+                # The assertions have returned. Dispose only this attempt's exact
+                # service, including any intentionally retained fixture helpers.
+                # Preserve the pre-stop state; this is cleanup, not proof that a
+                # running session settled naturally. Its journal checks ran first.
+                relay.finish()
+                common.exclusive(attempt.root / 'post-main-cgroup.json', status)
+                stop_owned_unit(attempt, unit, session.BASE / 'qualification')
+                continue
+            if (status.get('MainPID') == '0' and status.get('ControlGroup') == ''
+                    and status.get('ActiveState') in ('active', 'failed', 'inactive')
+                    and status.get('SubState') != 'running'):
+                terminal = status
+                break
+            if mode == 'full' and status.get('MainPID') != '0':
+                # Each committed up pauses at its unique gate. Observe the exact
+                # live owning cohort before allowing the native assertions onward.
+                code = ('import json; from pathlib import Path; p=Path(' + repr(binding['fixture'])
+                        + '); print(json.dumps(sorted(str(f) for f in p.glob("writer-gate-*.request.json"))))')
+                gates = json.loads(attempt.admin('python3 -I -B -c ' + shlex.quote(code), read_only=True))
+                for gate in gates:
+                    if gate in observed_gates:
+                        continue
+                    import linux_native_smoke as smoke
+                    try:
+                        if capacity_packet is not None:
+                            cohorts = capacity_originals.setdefault('live',[])
+                            cohorts.append(contract.observe(root, attempt, ssh, capacity_packet['plan'], 'live',len(cohorts)))
+                            original = json.loads(cohorts[-1]['stdout'])
+                        else:
+                            original = smoke.root_collect(root, attempt, ssh, unit)
+                        common.require(original['writer_closure']['complete'], 'live native writer closure refused')
+                    except Exception as error:
+                        observation_failure = str(error)
+                        common.exclusive(attempt.root / 'writer-observation-failed.json', {'error': observation_failure})
+                        stop_owned_unit(attempt, unit, session.BASE / 'qualification')
+                        break
+                    acknowledgement = gate.removesuffix('.request.json') + '.observed.json'
+                    data = json.dumps({'nonce': value['cell']['native_writer_gate'], 'complete': True}).encode()
+                    channel_receive(attempt, ssh, acknowledgement, data)
+                    observed_gates.add(gate)
+            time.sleep(1)
+        if terminal is None:
             stop_owned_unit(attempt, unit, session.BASE / 'qualification')
-            continue
-        if (status.get('MainPID') == '0' and status.get('ControlGroup') == ''
-                and status.get('ActiveState') in ('active', 'failed', 'inactive')
-                and status.get('SubState') != 'running'):
-            terminal = status
-            break
-        if mode == 'full' and status.get('MainPID') != '0':
-            # Each committed up pauses at its unique gate. Observe the exact
-            # live owning cohort before allowing the native assertions onward.
-            code = ('import json; from pathlib import Path; p=Path(' + repr(binding['fixture'])
-                    + '); print(json.dumps(sorted(str(f) for f in p.glob("writer-gate-*.request.json"))))')
-            gates = json.loads(attempt.admin('python3 -I -B -c ' + shlex.quote(code), read_only=True))
-            for gate in gates:
-                if gate in observed_gates:
-                    continue
-                import linux_native_smoke as smoke
-                try:
-                    original = smoke.root_collect(root, attempt, ssh, unit)
-                    common.require(original['writer_closure']['complete'], 'live native writer closure refused')
-                except Exception as error:
-                    observation_failure = str(error)
-                    common.exclusive(attempt.root / 'writer-observation-failed.json', {'error': observation_failure})
-                    stop_owned_unit(attempt, unit, session.BASE / 'qualification')
-                    break
-                acknowledgement = gate.removesuffix('.request.json') + '.observed.json'
-                data = json.dumps({'nonce': value['cell']['native_writer_gate'], 'complete': True}).encode()
-                channel_receive(attempt, ssh, acknowledgement, data)
-                observed_gates.add(gate)
-        time.sleep(1)
-    if terminal is None:
+            relay.finish()
+            raise RuntimeError('owned native service exceeded deadline; stopped exact unit, no success claim')
+        transport = relay.finish()
+        common.exclusive(attempt.root / 'terminal.json', terminal)
+        log_data = b''
+        for name in ('stdout','stderr'):
+            data = channel_read(attempt, ssh, log+'.'+name, limit=8 * 1024 ** 2)
+            common.exclusive_bytes(attempt.root / ('guest.'+name),data)
+            log_data += data
+        (attempt.root / 'guest.log').write_bytes(log_data)
+        # Retain the entire exact fixture, including failed command streams. No
+        # deletion or rebaseline is performed by the exploratory runner.
+        archive_path = str(session.BASE / 'metadata' / (attempt.root.name + '.tar'))
+        code = ('import os,subprocess; p=' + repr(archive_path) + '; '
+                'f=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600); '
+                'subprocess.run(["tar","-C",' + repr(binding['fixture']) + ',"-cf","-","."],stdout=f,check=True); '
+                'os.fsync(f); os.fchown(f,1001,1001); os.close(f)')
+        admin_operation(attempt, code.encode(), seconds=120, file_limit='1G')
+        archive = channel_read(attempt, ssh, archive_path)
+        (attempt.root / 'fixture.tar').write_bytes(archive)
+        passed = (not transport['transport_timeout'] and transport['local_exit'] == 0
+                  and observation_failure is None and terminal.get('Result') == 'success'
+                  and terminal.get('ExecMainStatus') == '0')
+        if passed and capacity_packet is not None:
+            capacity_originals['after'] = contract.observe(root, attempt, ssh, capacity_packet['plan'], 'after')
+            capacity.verify_full(capacity_packet, capacity_originals, value['cell']['source_head'], evidence_kind='exploration')
+            common.exclusive(attempt.root / 'capacity-originals.json', capacity_originals)
+        result = dict(binding, passed=passed, terminal=terminal, observation_failure=observation_failure)
+        common.exclusive(attempt.root / 'outcome.json', result)
+        print(json.dumps({'evidence': str(attempt.root), 'passed': passed, 'qualification_credit': False}))
+        return 0 if passed else 1
+    except BaseException:
         stop_owned_unit(attempt, unit, session.BASE / 'qualification')
-        raise RuntimeError('owned native service exceeded deadline; stopped exact unit, no success claim')
-    common.exclusive(attempt.root / 'terminal.json', terminal)
-    log_data = channel_read(attempt, ssh, log, limit=8 * 1024 ** 2)
-    (attempt.root / 'guest.log').write_bytes(log_data)
-    # Retain the entire exact fixture, including failed command streams. No
-    # deletion or rebaseline is performed by the exploratory runner.
-    archive_path = str(session.BASE / 'metadata' / (attempt.root.name + '.tar'))
-    code = ('import os,subprocess; p=' + repr(archive_path) + '; '
-            'f=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600); '
-            'subprocess.run(["tar","-C",' + repr(binding['fixture']) + ',"-cf","-","."],stdout=f,check=True); '
-            'os.fsync(f); os.fchown(f,1001,1001); os.close(f)')
-    admin_operation(attempt, code.encode(), seconds=120, file_limit='1G')
-    archive = channel_read(attempt, ssh, archive_path)
-    (attempt.root / 'fixture.tar').write_bytes(archive)
-    passed = (observation_failure is None and terminal.get('Result') == 'success'
-              and terminal.get('ExecMainStatus') == '0')
-    result = dict(binding, passed=passed, terminal=terminal, observation_failure=observation_failure)
-    common.exclusive(attempt.root / 'outcome.json', result)
-    print(json.dumps({'evidence': str(attempt.root), 'passed': passed, 'qualification_credit': False}))
-    return 0 if passed else 1
+        if relay is not None:
+            relay.finish()
+        raise
 
 
 if __name__ == '__main__':

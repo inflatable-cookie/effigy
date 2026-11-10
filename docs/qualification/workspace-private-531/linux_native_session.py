@@ -20,7 +20,9 @@ OLD = '823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1'
 
 class Peak:
     """Sample allocation headroom, independently of the hard physical ceiling."""
-    def __init__(self):
+    def __init__(self, engine_capacity):
+        common.require(engine_capacity == 3221225472, 'final three-GiB engine reservation required')
+        self.engine_capacity = engine_capacity
         self.paths = (Path('/var/lib/effigy-829/rootful'), BASE / 'qualification')
         self.devices = [path.stat().st_dev for path in self.paths]
         self.peak = [0, 0]
@@ -49,8 +51,8 @@ class Peak:
             raise self.error
         return {'sample_period_seconds': .05, 'samples': self.samples,
                 'sampled_peak_bytes': dict(zip(map(str, self.paths), self.peak)),
-                'engine_capacity_bytes': 2147483648,
-                'engine_has_twice_sampled_peak_headroom': 2 * self.peak[0] <= 2147483648,
+                'engine_capacity_bytes': self.engine_capacity,
+                'engine_has_twice_sampled_peak_headroom': 2 * self.peak[0] <= self.engine_capacity,
                 'exploratory': True, 'qualification_credit': False}
 
 
@@ -90,7 +92,7 @@ def execute(path, expected, mode):
     common.require(common.digest(path) == expected, 'exploratory inputs changed')
     cell = validate(common.load(path))
     window = Window(cell, expected, {'decision_id': 'task-829-exploration'}, exploratory=True)
-    peak = Peak()
+    peak = Peak(cell['native_engine_capacity_bytes'])
     peak.thread.start()
     try:
         info = json.loads(window.engine_command('info', '--format', '{{json .}}').stdout)
