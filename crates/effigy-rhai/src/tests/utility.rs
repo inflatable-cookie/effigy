@@ -805,3 +805,76 @@ fn execute_rhai_script_write_file_if_absent_fails_without_destination() {
     assert!(!root.join("blocker/child.txt").exists());
     assert!(staged_payload_leftovers(&root).is_empty());
 }
+
+#[test]
+fn execute_rhai_script_supports_args_and_runtime_helpers() {
+    let root = temp_root("runtime-helpers");
+    let context = script_context(&root);
+    let runtime = effigy_context::EffigyRuntimeContext::builder()
+        .cwd_override(Some(root.clone()))
+        .repo_override(Some(root.clone()))
+        .capture()
+        .expect("runtime context");
+    let script = r#"
+let stamp = time::now_utc();
+let scratch = fs::make_temp_dir("rhai-runtime-helper");
+let ctx = runtime::context();
+let exec = exec::run(["sh", "-lc", "printf exec-ok"], #{ run_in: "host" });
+let pid = time::process_id().to_string();
+fs::write_file("stamp.txt", stamp);
+fs::write_file("arg.txt", args[0].to_string());
+fs::write_file("scratch.txt", scratch);
+fs::write_file("runtime-root.txt", ctx["command_root"]);
+fs::write_file("exec.txt", exec["stdout"]);
+fs::write_lines("lines.txt", ["one", "two"]);
+fs::append_file("append.txt", "alpha\n");
+fs::append_file("append.txt", "beta\n");
+fs::write_file("pid.txt", pid);
+if !fs::exists(scratch) {
+    throw "scratch dir was not created";
+}
+fs::remove(scratch);
+"#;
+    execute_rhai_script_with_runtime_context(
+        &context,
+        Some(&runtime),
+        script,
+        &["helper-ok".to_owned()],
+        &callbacks(),
+    )
+    .expect("execute helpers");
+
+    let stamp = fs::read_to_string(root.join("stamp.txt")).expect("read stamp");
+    assert!(stamp.ends_with('Z'), "expected UTC timestamp: {stamp}");
+    assert_eq!(
+        fs::read_to_string(root.join("arg.txt")).unwrap(),
+        "helper-ok"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("exec.txt")).unwrap(),
+        "exec-ok"
+    );
+    let canonical_root = root.canonicalize().expect("canonical root");
+    assert_eq!(
+        fs::read_to_string(root.join("runtime-root.txt")).unwrap(),
+        canonical_root.display().to_string()
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("lines.txt")).unwrap(),
+        "one\ntwo\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("append.txt")).unwrap(),
+        "alpha\nbeta\n"
+    );
+    let pid = fs::read_to_string(root.join("pid.txt")).expect("read pid");
+    assert!(
+        pid.trim().parse::<u32>().is_ok(),
+        "expected numeric pid output: {pid}"
+    );
+    let scratch = fs::read_to_string(root.join("scratch.txt")).expect("read scratch dir");
+    assert!(
+        !std::path::Path::new(scratch.trim()).exists(),
+        "scratch dir should be removed: {scratch}"
+    );
+}

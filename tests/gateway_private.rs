@@ -2136,21 +2136,7 @@ fn create_listener_worktree_fixture(
 }
 
 #[test]
-fn linked_base_domain_alias_avoids_primary_claim_without_dns_routes() {
-    linked_base_domain_alias_case(true, false);
-}
-
-#[test]
-fn linked_base_domain_alias_without_shared_service() {
-    linked_base_domain_alias_case(false, false);
-}
-
-#[test]
 fn linked_base_domain_alias_with_dns_route() {
-    linked_base_domain_alias_case(true, true);
-}
-
-fn linked_base_domain_alias_case(shared: bool, dns_route: bool) {
     let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let docker_dir = std::env::split_paths(&effects.env_path).next().unwrap();
@@ -2177,7 +2163,7 @@ fn linked_base_domain_alias_case(shared: bool, dns_route: bool) {
         fs::write(catalog.join("service.toml"), "[service]\nname = \"z374-client\"\ndescription = \"Consumer-shapes proof client: a small build image and a shared-service client.\"\n\n[params.working_dir]\ntype = \"string\"\ndefault = \"/workspace\"\ndescription = \"Directory the checkout is mounted at\"\n\n[capabilities]\nexec_target = true\nshell = \"/bin/sh\"\n").unwrap();
         fs::write(catalog.join("compose.fragment.yml"), "services:\n  {{ service_name }}:\n    build:\n      context: {{ repo_root }}\n      dockerfile: {{ catalog_path }}/Dockerfile\n      args:\n        MARKER: \"z374-build\"\n        SUFFIX: \"{{ project_name }}\"\n    working_dir: {{ working_dir }}\n    volumes:\n      - {{ repo_root }}:{{ working_dir }}\n").unwrap();
         fs::write(catalog.join("Dockerfile"), "FROM busybox:latest\nARG MARKER=unset\nARG SUFFIX=none\nRUN printf '%s/%s/%s' \"$MARKER\" \"${SUFFIX}\" \"$PWD\" > /z374-build-proof\nCMD [\"sh\", \"-c\", \"sleep infinity\"]\n").unwrap();
-        let mut manifest = r#"[containers]
+        let manifest = r#"[containers]
 default = "z374proof"
 [containers.z374proof]
 primary_service = "client"
@@ -2194,6 +2180,7 @@ shared = true
 database = "z374proof"
 [containers.z374proof.dns]
 base_domain = "z374-consumer-shapes.test"
+routes = [{ domain = "app.z374-consumer-shapes.test", service = "client", port = 3306 }]
 [[containers.z374proof.host_processes]]
 name = "listener"
 run = 'exec python3 -m http.server "$PORT" --bind "$HOST"'
@@ -2208,12 +2195,6 @@ domain = "z374-consumer-shapes.test"
 tls = false
 "#
         .to_owned();
-        if !shared {
-            manifest = manifest.replace("[containers.z374proof.services.backing]\ncatalog = \"mariadb\"\nshared = true\n[containers.z374proof.services.backing.params]\ndatabase = \"z374proof\"\n", "");
-        }
-        if dns_route {
-            manifest = manifest.replace("base_domain = \"z374-consumer-shapes.test\"", "base_domain = \"z374-consumer-shapes.test\"\nroutes = [{ domain = \"app.z374-consumer-shapes.test\", service = \"client\", port = 3306 }]");
-        }
         fs::write(checkout.join("effigy.toml"), manifest).unwrap();
     }
     let mut cleanup = ManagedContainerCleanup {
@@ -2252,7 +2233,7 @@ tls = false
         .filter(|r| r["project"].as_str().unwrap().starts_with("effigy-shared-"))
         .map(|r| r["id"].as_str().unwrap().to_owned())
         .collect::<Vec<_>>();
-    assert_eq!(shared_before.len(), usize::from(shared), "{before}");
+    assert_eq!(shared_before.len(), 1, "{before}");
     assert!(effigy_core::worktree_scope::load_scoped(linked)
         .unwrap()
         .is_none());

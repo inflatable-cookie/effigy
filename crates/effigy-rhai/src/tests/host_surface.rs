@@ -253,3 +253,31 @@ fn retired_cache_and_unlock_modules_are_absent_from_the_surface() {
         );
     }
 }
+
+#[test]
+fn task_call_spellings_forward_the_same_selector_and_args() {
+    let root = temp_root("task-call-spellings");
+    let context = script_context(&root);
+    for (name, script, selector) in [
+        (
+            "simple",
+            r#"let output = task::run("farmyard/install", [args[0]]);"#,
+            "farmyard/install",
+        ),
+        (
+            "colon",
+            r#"let output = task::run("farmyard/migration:source:install-media", [args[0]]);"#,
+            "farmyard/migration:source:install-media",
+        ),
+        (
+            "function",
+            r#"fn run_task(name, values) { task::run(name, values) } let output = run_task("farmyard/migration:source:install-media", [args[0]]);"#,
+            "farmyard/migration:source:install-media",
+        ),
+    ] {
+        let script =
+            format!(r#"{script} if output != "task:{selector}:snapshot-a" {{ throw(output); }}"#);
+        execute_rhai_script(&context, &script, &["snapshot-a".to_owned()], &callbacks())
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+    }
+}

@@ -4084,13 +4084,13 @@ services:
         let (escaped, note) = run_swap_race(&argv);
         assert!(!escaped, "bulk chown resolved outside the volume: {note}");
     }
-    /// Real filesystem, real `find`: 44339 entries over three volumes. A fake
-    /// `chown` records every path it is handed (no uid change is possible
-    /// without root) so we can prove traversal reaches every entry in all three
-    /// volumes in few batched invocations while contents stay byte-identical.
+    /// Real traversal at empty, single-file and multi-batch boundaries. GNU
+    /// find batches by argv bytes, so long names cross its 128 KiB boundary
+    /// without constructing tens of thousands of files. The native acceptance
+    /// below retains the full 44,339-entry scale and actual ownership changes.
     #[cfg(unix)]
     #[test]
-    fn bulk_real_find_reaches_all_44339_entries_in_batches_and_preserves_contents() {
+    fn bulk_real_find_batches_nested_spaced_paths_and_preserves_contents() {
         use std::os::unix::fs::PermissionsExt;
         let temp = effigy_test_support::Fixture::new("effigy-bulk-real-").expect("tempdir");
         let root = std::fs::canonicalize(temp.path()).expect("canon");
@@ -4098,53 +4098,42 @@ services:
         std::fs::create_dir_all(&bin).expect("bin");
         let log = root.join("chown.log");
         let calls = root.join("chown.calls");
+        // Names are unique within each row; GNU and BSD pass different prefixes.
         let script = format!(
-            "#!/bin/sh\nshift; shift; shift\necho x >> '{calls}'\nfor p in \"$@\"; do printf '%s/%s\\n' \"$(pwd -P)\" \"${{p#./}}\" >> '{log}'; done\n",
-            calls = calls.display(),
-            log = log.display()
+            "#!/bin/sh\nshift; shift; shift\necho x >> '{calls}'\nfor p in \"$@\"; do printf '%s\\n' \"${{p##*/}}\" >> '{log}'; done\n",
+            calls = calls.display(), log = log.display()
         );
         let chown = bin.join("chown");
         std::fs::write(&chown, script).expect("chown");
         std::fs::set_permissions(&chown, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-
-        // BSD/bfs `find -execdir +` spawns once per entry, so the full-size run
-        // is only affordable (and batching only meaningful) with GNU findutils,
-        // the canonical workspace image's find. Elsewhere run a 1/40 scale
-        // coverage-only fixture.
         let gnu = std::process::Command::new("find")
             .arg("--version")
             .output()
             .is_ok_and(|out| String::from_utf8_lossy(&out.stdout).contains("GNU findutils"));
-        let scale = if gnu { 1 } else { 40 };
-        let mut expected = 0usize;
-        let mut manifest = Vec::new();
-        let mut volumes = Vec::new();
-        for (name, full_entries, _) in BULK_VOLUMES {
-            let entries = full_entries / scale;
-            let vol = root.join(name.trim_start_matches('/').replace('/', "_"));
-            let dirs = 40usize;
-            std::fs::create_dir_all(&vol).expect("vol");
-            for d in 0..dirs {
-                std::fs::create_dir_all(vol.join(format!("d{d}"))).expect("dir");
-            }
-            for f in 0..(entries - 1 - dirs) {
-                let path = vol.join(format!("d{}/f{f}", f % dirs));
-                std::fs::write(&path, format!("{name}-{f}")).expect("file");
-                manifest.push((path, format!("{name}-{f}")));
-            }
-            expected += entries;
-            volumes.push(vol);
-        }
-        if gnu {
-            assert_eq!(expected, 44339);
-        }
-
         let path_env = format!(
             "{}:{}",
             bin.display(),
             std::env::var("PATH").unwrap_or_default()
         );
-        for vol in &volumes {
+        for (name, files) in [("empty", 0), ("one file", 1), ("multi batch", 600)] {
+            let vol = root.join(name);
+            std::fs::create_dir(&vol).expect("volume");
+            let mut expected = std::collections::BTreeSet::from([name.to_owned()]);
+            let mut contents = Vec::new();
+            if files > 0 {
+                let nested = vol.join("nested dir");
+                std::fs::create_dir(&nested).expect("nested");
+                expected.insert("nested dir".to_owned());
+                for index in 0..files {
+                    let path = nested.join(format!("{} {index:04}", "x".repeat(230)));
+                    let body = format!("{name}-{index}");
+                    std::fs::write(&path, &body).expect("file");
+                    expected.insert(path.file_name().unwrap().to_string_lossy().into_owned());
+                    contents.push((path, body));
+                }
+            }
+            std::fs::write(&log, "").expect("reset log");
+            std::fs::write(&calls, "").expect("reset calls");
             let argv = bulk_chown_argv(&vol.display().to_string(), 424242, 424243);
             let out = std::process::Command::new(&argv[0])
                 .args(&argv[1..])
@@ -4153,31 +4142,36 @@ services:
                 .expect("find");
             assert!(
                 out.status.success(),
-                "find failed on {}: {}",
-                vol.display(),
+                "{name}: {}",
                 String::from_utf8_lossy(&out.stderr)
             );
-        }
-        let handed: std::collections::BTreeSet<String> = std::fs::read_to_string(&log)
-            .expect("log")
-            .lines()
-            .map(str::to_owned)
-            .collect();
-        let invocations = std::fs::read_to_string(&calls)
-            .expect("calls")
-            .lines()
-            .count();
-        println!(
-            "real find (gnu={gnu}): {} unique entries handed to chown in {invocations} invocations",
-            handed.len()
-        );
-        // Volume roots are handed over as `<parent>/<root>`; every entry exactly once.
-        assert_eq!(handed.len(), expected);
-        if gnu {
-            assert!(invocations < expected / 50, "batched: {invocations}");
-        }
-        for (path, body) in &manifest {
-            assert_eq!(&std::fs::read_to_string(path).expect("read"), body);
+            let handed = std::fs::read_to_string(&log).expect("log");
+            assert_eq!(
+                handed.lines().count(),
+                expected.len(),
+                "{name}: each entry once"
+            );
+            assert_eq!(
+                handed
+                    .lines()
+                    .map(str::to_owned)
+                    .collect::<std::collections::BTreeSet<_>>(),
+                expected,
+                "{name}"
+            );
+            let invocations = std::fs::read_to_string(&calls)
+                .expect("calls")
+                .lines()
+                .count();
+            if gnu && files == 600 {
+                assert!(
+                    (4..=6).contains(&invocations),
+                    "multiple bounded batches: {invocations}"
+                );
+            }
+            for (path, body) in contents {
+                assert_eq!(std::fs::read_to_string(path).expect("read"), body, "{name}");
+            }
         }
     }
 

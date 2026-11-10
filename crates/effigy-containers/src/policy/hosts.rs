@@ -670,6 +670,68 @@ mod tests {
     }
 
     #[test]
+    fn base_domain_alias_variants_do_not_claim_primary_hosts() {
+        let alias = EffectiveServiceAlias {
+            service: "db".to_owned(),
+            domain_label: "mysql".to_owned(),
+            container_port: 3306,
+        };
+        let shared = SharedServiceBinding {
+            service_name: "backing".to_owned(),
+            catalog: "mariadb".to_owned(),
+            domain_label: "mysql".to_owned(),
+            project_name: "shared-db".to_owned(),
+            compose_file: "compose.yml".into(),
+            host: "127.0.0.1".to_owned(),
+            host_port: 3306,
+            container_port: 3306,
+            host_env_vars: vec![],
+            port_env_vars: vec![],
+            render_digest: "shared-render".to_owned(),
+        };
+        for (name, shared_services, dns_routes) in [
+            ("shared, no DNS", vec![shared.clone()], vec![]),
+            ("local only, no DNS", vec![], vec![]),
+            (
+                "shared with DNS",
+                vec![shared],
+                vec![http("app.acme.test", false, Some("client"))],
+            ),
+        ] {
+            let map = build_host_map(
+                &dns_routes,
+                std::slice::from_ref(&alias),
+                &shared_services,
+                Some("abcdef0123456789abcdef0123456789"),
+                false,
+                Some("acme.test"),
+            );
+            assert_eq!(map.declared_base.as_deref(), Some("acme.test"), "{name}");
+            assert_eq!(
+                map.effective_base.as_deref(),
+                Some("acme-wabcdef01.test"),
+                "{name}"
+            );
+            let tcp = map
+                .routes
+                .iter()
+                .filter(|route| route.kind == HostRouteKind::Tcp)
+                .collect::<Vec<_>>();
+            assert_eq!(tcp.len(), 1, "{name}: local and shared aliases deduplicate");
+            assert_eq!(tcp[0].declared, "mysql.acme.test", "{name}");
+            assert_eq!(tcp[0].effective, "mysql.acme-wabcdef01.test", "{name}");
+            assert_eq!(tcp[0].service.as_deref(), Some("db"), "{name}");
+            assert!(
+                map.routes
+                    .iter()
+                    .all(|route| route.effective != route.declared),
+                "{name}"
+            );
+            assert_eq!(map.routes.len(), dns_routes.len() + 1, "{name}");
+        }
+    }
+
+    #[test]
     fn sibling_tokens_produce_distinct_hostnames() {
         let first = build_host_map(
             &[http("app.test", false, None)],
