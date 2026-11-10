@@ -59,7 +59,11 @@ def verify_library_inventory(binary, args):
 
 
 def run_binary(suite, binary, args):
-    group = json.loads(os.environ["EFFIGY_CI_TEST_PARTITIONS"])[binary]
+    partitions = json.loads(os.environ["EFFIGY_CI_TEST_PARTITIONS"])
+    # Rustdoc compiles its executables after Cargo's --no-run discovery. Only
+    # the default rest selection runs docs; execute those generated tests whole.
+    # Other cohorts still refuse an executable outside their compiled inventory.
+    group = partitions.get(binary, "rest") if suite == "rest" else partitions[binary]
     if group == "library" and suite in LIBRARY_COHORTS:
         verify_library_inventory(binary, args)
         if os.environ["EFFIGY_CI_INVENTORY_ONLY"] == "1":
@@ -85,6 +89,10 @@ def main(argv):
     # compiling every integration binary for a library-only execution cohort.
     selection = (["--workspace", "--lib", "--test", "bootstrap_cli_tests"]
                  if suite in LIBRARY_COHORTS else ["--workspace", "--tests"])
+    if suite == "rest":
+        # Keep Cargo's original default example builds and doc tests on both
+        # operating systems; --tests would silently omit example compilation.
+        selection = ["--workspace"]
     build = subprocess.Popen(
         ["cargo", "test", *selection, "--no-run", "--message-format=json"],
         stdout=subprocess.PIPE, text=True,
@@ -125,12 +133,9 @@ def main(argv):
         "cargo", "test", *selection, "--no-fail-fast",
         "--config", f"target.{host}.runner={json.dumps(runner)}",
     ], env=environment)
-    failed = result.returncode != 0
-    if suite == "rest":
-        failed |= subprocess.run([
-            "cargo", "test", "--workspace", "--doc", "--no-fail-fast",
-        ]).returncode != 0
-    return 1 if failed else 0
+    # The rest cohort's default selection includes docs. --no-fail-fast keeps
+    # Cargo running them even after a test binary fails, preserving its status.
+    return 1 if result.returncode else 0
 
 
 if __name__ == "__main__":

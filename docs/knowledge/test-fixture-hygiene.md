@@ -460,6 +460,10 @@ bootstrap integration target, which supplies the real CLI without compiling
 unassigned integration binaries. Cargo owns runtime cwd/environment and identical
 workspace selections prevent per-package feature rebuilds. Hosted jobs omit
 debug symbols, retaining the default debug assertions and optimization levels.
+The remaining-binary cohort retains Cargo's default whole-workspace selection,
+including normal example compilation and doc tests on both operating systems.
+Its `--no-fail-fast` keeps doc tests running after a binary fails and preserves
+the failure status; `--tests` alone would omit the default example builds.
 
 The healthy headless lifecycle fixture retains its 35-second cold engine start,
 but its host window now ends when status positively reports both exec children

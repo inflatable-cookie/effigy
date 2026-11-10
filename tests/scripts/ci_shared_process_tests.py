@@ -60,7 +60,12 @@ class PartitionTests(unittest.TestCase):
 
     def test_unknown_binary_fails_closed(self):
         with self.assertRaises(KeyError):
-            self.runner("rest", "/synthetic/unknown")
+            self.runner("cli", "/synthetic/unknown")
+
+    def test_cargo_generated_doc_binary_runs_whole_in_rest(self):
+        code, calls = self.runner("rest", "/synthetic/rustdoc-test", 7)
+        self.assertEqual(code, 7)
+        self.assertEqual(calls[0].args[0], ["/synthetic/rustdoc-test"])
 
     def test_inventory_only_does_not_execute_tests(self):
         self.assertEqual(self.runner("library-runner", "/synthetic/lib", inventory_only="1"), (0, []))
@@ -127,7 +132,9 @@ class PartitionTests(unittest.TestCase):
         self.assertEqual(len(plan), 5)
         self.assertEqual(plan["/synthetic/new_future_target-test"], "rest")
         self.assertEqual(env["EFFIGY_CI_INVENTORY_ONLY"], "0")
-        self.assertIn("--doc", calls[1].args[0])
+        self.assertEqual(compile_call.args[0][2:3], ["--workspace"])
+        self.assertNotIn("--tests", compile_call.args[0])
+        self.assertNotIn("--tests", calls[0].args[0])
 
     def test_library_build_supplies_cli_without_unassigned_integration_binaries(self):
         code, compile_call, calls = self.build(suite="library-workspace")
@@ -136,10 +143,13 @@ class PartitionTests(unittest.TestCase):
         self.assertEqual(calls[0].args[0][2:6], compile_call.args[0][2:6])
         self.assertEqual(len(calls), 1)
 
-    def test_failure_is_retained_and_doc_tests_still_run(self):
+    def test_failure_is_retained_with_default_examples_and_doc_tests(self):
         code, _, calls = self.build(test_exit=1)
         self.assertEqual(code, 1)
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("--no-fail-fast", calls[0].args[0])
+        self.assertNotIn("--tests", calls[0].args[0])
+        self.assertNotIn("--lib", calls[0].args[0])
 
     def test_inventory_mode_is_explicit_and_cannot_run_tests(self):
         _, _, calls = self.build(suite="inventory")
