@@ -945,7 +945,12 @@ shared_root = "{}"
             let source = parts.next().expect("source");
             let target = parts.next().expect("target");
             let definition = document["volumes"].get(source)?;
-            let name = definition["name"].as_str().expect("final volume name");
+            // Mask volumes deliberately keep Compose's project-scoped default
+            // name; the fake inspect must model those as well as explicit names.
+            let name = definition["name"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("{}_{source}", policy.project_name));
             Some(serde_json::json!({
                 "Type": "volume", "Name": name,
                 "Destination": target, "RW": parts.next() != Some("ro")

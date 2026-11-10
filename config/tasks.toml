@@ -3,6 +3,10 @@
 # Aggregator tasks below call the built-in through task refs.
 
 [tasks]
+"test:ci:partitioner" = { visibility = "internal", group = "Maintenance", description = "Prove the real Cargo partitioner compiles default examples and runs unit, example and doc tests.", env = { RUSTFLAGS = "--cfg effigy_shared_process", CARGO_PROFILE_DEV_DEBUG = "0", CARGO_PROFILE_TEST_DEBUG = "0" }, run = [{ run = "sh scripts/oxide-selector.sh exec -- python3 -I -B tests/scripts/ci_shared_process_fixture.py", timeout_ms = 300000 }] }
+"test:ci:inventory" = { visibility = "internal", group = "Maintenance", description = "Build and list the real shared-process library, proving each test belongs to exactly one hosted family without running its tests.", env = { RUSTFLAGS = "--cfg effigy_shared_process", CARGO_PROFILE_DEV_DEBUG = "0", CARGO_PROFILE_TEST_DEBUG = "0" }, run = [{ run = "sh scripts/oxide-selector.sh exec -- python3 scripts/ci-shared-process.py inventory", timeout_ms = 1800000 }] }
+"test:ci:fixtures" = { durable = true, visibility = "internal", group = "Maintenance", description = "Exercise the workspace nextest scheduling policy on an explicit fixture selection.", run = [{ run = "sh scripts/oxide-selector.sh nextest run --locked --workspace --config-file .config/nextest.toml --user-config-file none {args} --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 }] }
+"test:ci:scheduling" = { visibility = "internal", group = "Maintenance", description = "Prove hosted library families and whole-binary cohorts preserve coverage and failure status.", run = "python3 -I -B tests/scripts/ci_shared_process_tests.py" }
 "check:managed:output" = { visibility = "internal", group = "Maintenance", run = [{ task = "check:managed:output:compile" }, { task = "check:managed:output:lint" }] }
 "check:managed:output:compile" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-core -p effigy-kernel -p effigy-tui -p effigy-process --all-targets --features effigy-kernel/fault-injection", timeout_ms = 900000 }] }
 "check:managed:output:lint" = { visibility = "internal", group = "Maintenance", run = [
@@ -133,6 +137,7 @@
   { id = "deps-compile", run = "sh scripts/oxide-selector.sh check -p effigy-deps --all-targets", timeout_ms = 600000 },
   { id = "deps-clippy", run = "sh scripts/oxide-selector.sh clippy -p effigy-deps --all-targets -- -D warnings", timeout_ms = 900000 },
 ] }
+"test:deps:shared-process" = { durable = true, visibility = "internal", group = "Maintenance", description = "Prove dependency-library fixtures together in one libtest process, including private interrupt controls.", run = [{ run = "sh scripts/oxide-selector.sh test --locked -p effigy-deps --lib --no-fail-fast -- --test-threads=8", timeout_ms = 300000 }] }
 "test:bundles:pins" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest --lib --test local_bundle -E 'test(bundles::) | test(composition::) | binary(local_bundle)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:bundles:cli" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --cargo-profile discovery-proof --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test bundle_pins --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 
@@ -315,6 +320,10 @@
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test probe --lib -E 'test(/^probe::/) | binary(probe)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
 "test:kernel:probe:linux" = { durable = true, visibility = "internal", group = "Maintenance",  admission = "heavy", run = [{ id = "linux-probe", run = "sh crates/effigy-kernel/tests/scripts/linux-custody.sh probe", timeout_ms = 1800000 }] }
+"test:kernel:probe:load" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", description = "Repeat the checked terminal probe twenty times under bounded owned CPU load without changing its assertions or deadlines.", run = [
+  { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture python3 -I -B tests/scripts/kernel_probe_load.py sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test probe -E 'test(/^checked_control::probe_checked_observer_pause_consumes_real_guard_terminal_exit$/)' --no-fail-fast --retries 0 --no-tests fail --success-output immediate", timeout_ms = 600000 },
+] }
 "test:kernel:custody" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test custody --lib -E 'test(/^custody::tests::/) | test(/^signal::tests::/) | test(/^run::lifecycle::tests::/) | binary(custody)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },

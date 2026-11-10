@@ -46,6 +46,44 @@ the `run_manifest_task_builtin_test_sweeps_a_leaked_suite_process` proof: a
 suite that leaves a process in its own process group, which the route must name
 and reap.
 
+The handoff descriptor controls re-exec a fresh test process for each source
+slot (11, 3 and 10). Its launcher first moves inherited non-stdio descriptors
+above fd 11, preserving suite markers and runner pipes while leaving the
+controlled slots available. Each cell then claims only its own source slot.
+
+The workspace guest's exact-version control uses a private child environment.
+Changing `EFFIGY_ACTIVE_VERSION` in the shared harness would race concurrent
+terminal/context proofs that correctly compare their pinned binary identities.
+
+The remote admission protocol-2 refusal control also uses a private child.
+Positive admission fixtures capture their hook under the shared environment
+lock and restore it with `EnvGuard` before concurrent remote lifecycle work.
+The registration deadline begins after admission setup and stays unchanged.
+Both remote fixture allocators capture the scratch parent under that lock.
+`shared_process_remote_admission_and_guest_version_inputs_stay_private` runs
+all eight admission cases and both guest version/terminal cases together in
+one libtest process with eight test threads, requiring all ten receipts.
+
+The shared Compose timeout fixture publishes its PID by rename from a complete
+pending file. Its readiness barrier therefore observes a complete identity
+before advancing the unchanged controlled deadline.
+
+Container capture fixture clocks bind to their owning thread; capture workers
+join explicitly through a shared clock handle. Unlinked calls keep the real
+clock, so one fixture's expiry cannot time out a concurrent healthy call.
+The descendant timeout proof observes its live recorded child before expiring
+the unchanged 200 ms budget; termination/EOF cleanup use real time, and the
+original 150 ms disappearance bound is polled instead of slept through.
+
+The nested-pane colour proof gates its adjacent producer instead of sleeping.
+It pauses only its own TUI reader, releases the coloured line, observes the
+writer's optional style publication, then resumes the reader. Canonical plain
+append deliberately precedes that publication; reading the plain fallback in
+that interval cannot prove colour loss. The red SGR assertion and the 180-second
+fixture and three-second render bounds remain. Standalone producer checks observe bytes before releasing the workload. A
+separate non-streaming live-step PTY control retains at least five redraw frames
+and escape-byte assertions, independently of label wording.
+
 ### The kernel-custody boundary
 
 Kernel custody is an explicit boundary, not a sweep target. A helper started
@@ -410,3 +448,201 @@ exact test filter. `lint:bundle:deadline-proof` covers that feature's targets;
 the ordinary bundle controls also run without the feature.
 
 Worktree archive controls use private synthetic scratch roots and retain the explicit archive-base and fixture override routes. They must not probe or move real host archives.
+
+## Test scheduling
+
+Nextest's default suite caps cold-start fixtures at one concurrent test in the
+`cold-start` group; the durable supervisor matrix has its own `journal-matrix`
+group. These caps bound contention within each class while ordinary tests keep
+using the remaining runner slots. All managed-host gateway listener fixtures
+share that cold-start cap, including terminal readiness failure. Focused exposure checks use the same cold-start
+cap. No test reserves every runner thread; activation deadlines and assertions
+remain unchanged.
+
+Hosted nextest runs use four hash partitions on each operating system. Shared-
+process CI uses four Effigy library families plus whole CLI, gateway and
+remaining-binary cohorts through `scripts/ci-shared-process.py`:
+
+| Library family | Test namespace |
+| --- | --- |
+| `library-workspace` | `runner::workspace_command::` (all builder and provisioning matrices) |
+| `library-core` | `runner::tests::runner_core_tests::` (the core runner fixtures and their hooks) |
+| `library-runner` | Remaining `runner::` tests (including their fixture hooks and registries) |
+| `library-other` | All other Effigy library tests |
+
+The runner lists the real compiled library, then lists each family's exact
+libtest filter selection. Every name, including existing ignored names, must
+appear in exactly one family and agree with the namespace map. Missing,
+overlapping or misrouted names fail CI. Test bodies, default libtest threads,
+ignored status, assertions and deadlines are unchanged on both operating
+systems. `test:ci:inventory` proves the real map without executing test bodies;
+`test:ci:scheduling` proves the missing/overlap refusal controls.
+
+Planner ruling (2026-11-10, Nucleus question
+`5b794989f6fa2d96927bf233121bc6a8e17ec529a7da8b2af7b1af89acd6bbd3`)
+admits these hosted families within the duration brief: related fixture/hook
+families stay together, while generic EnvGuard/HOME/PATH use can be isolated
+between processes. The release gate remains full, unpartitioned
+`cargo test --workspace`, retaining cross-family shared-process interference
+coverage. Ordinary `effigy qa` and milestone QA retain full unpartitioned
+nextest; they do not use the hosted family filters.
+
+The initial remaining-runner cohort passed on Linux in 13m20s but reached the
+20-minute cap on macOS with 1,952 of 1,953 tests complete. Separating the intact
+`runner::tests::runner_core_tests::` family bounds that tail while retaining the same
+inventory checks, default threads and unpartitioned release coverage.
+
+Non-library cohorts discover every compiled workspace target; new binaries enter
+the remaining cohort. Library jobs build workspace libraries and the small
+bootstrap integration target, which supplies the real CLI without compiling
+unassigned integration binaries. Cargo owns runtime cwd/environment and identical
+workspace selections prevent per-package feature rebuilds. Hosted jobs omit
+debug symbols, retaining the default debug assertions and optimization levels.
+The remaining-binary cohort retains Cargo's default whole-workspace selection,
+including normal example compilation and doc tests on both operating systems.
+Its `--no-fail-fast` keeps doc tests running after a binary fails and preserves
+the failure status; `--tests` alone would omit the default example builds.
+
+The healthy headless lifecycle fixture retains its 35-second cold engine start,
+but its host window now ends when status positively reports both exec children
+exited zero, rather than waiting 60 seconds on each activation. The cold-start
+regression, immediate reuse, permission preparation and final cleanup assertions
+are unchanged.
+
+Workspace-client fixture contexts and peer replies reuse one observation of
+their immutable compiled executable while the active-version input is unchanged.
+Changed version inputs call the real observer again, keeping its wire-version
+format authoritative rather than reconstructing that version in a fixture. Rehashing that
+same file for each context, live-run record and peer response inflated every
+matrix cell. Production dispatch still calls the real binary observer, and the
+version/digest mismatch controls retain their original assertions.
+
+Planner ruling (2026-11-10, Nucleus question
+`6c7a912f7c11c5b27ef562003add8ffc14d8190764a15a73be32ece9c94ba199`)
+assigns the fixture regressions exposed by integrating task 830 to task 814.
+Guest adapters must model successful optional reads as `P\n` plus bytes or
+`A\n` for absence, including hashes and links, and create selector parents
+inside their private guest tree. The staged-source preflight models an existing
+non-temporary mount without writing there: a sibling under `/tmp` cannot prove
+the positive path. Fake volume inspection must also model Compose's default
+project-scoped names for mask volumes. These fixture repairs retain every
+assertion and deadline; they do not change production behavior.
+
+Provisioning-guest fixtures take the existing reentrant environment lock before
+allocating temporary paths, including standalone guest homes and staged files.
+Taking it only later in `EnvGuard` can allocate beneath a concurrent builder
+fixture's TMPDIR; that fixture then removes the still-needed checkout when its
+own test ends. The lock protects allocation, not a larger runner reservation.
+
+The serving-supervisor closure proof binds a distinct loopback client source
+port while its listener is still live, then retains the original TCP-refusal
+assertion after settlement. An unbound connect to a retired ephemeral port can
+self-connect on Linux if its automatically chosen source is the destination.
+The hosted failure did not record peer addresses, so that occurrence's cause
+is unproven; the bound probe removes this false-positive path without accepting
+an open listener or changing the production shutdown path.
+
+The queued-resize lifetime proof releases its owning row from inside the fake
+writer's first full resize attempt, then opens the handle. Its receipt replaces
+the fixed sleep: the next pump turn must re-read the released row before any
+effect. Releasing from the parent and then opening the handle could instead
+race a turn that had already observed a live row. The original no-geometry,
+retirement and post-retirement assertions and existing wait bounds remain.
+
+## Custody descriptor remapping (effigy#814)
+
+The hosted macOS core cohort exposed a missing secret grant in
+`run_manifest_task_required_secrets_generate_missing_key_in_existing_vault`
+(PR #884, job 129663652328). Its source descriptor was not recorded, so the
+exact cause of that occurrence remains unproven. A bounded production custody
+control independently proved the descriptor-plan defect: the source-11 control
+preserved its payload, but source 3 delivered empty bytes after a successful
+child exit and complete settlement. The startup barrier replaced descriptor 3
+before custody copied that handoff source into slot 11.
+
+Planner continuation `e10ce6da0f5bf7f65e13a50e21e155ef26ef46b9f0d79bc430e1fdca6526d81c`
+authorizes the bounded production repair in task 814. Before fork, every source
+used by the child's `dup2` plan is copied with `F_DUPFD_CLOEXEC` above slot 11,
+the highest destination. No destination can overwrite a source still needed.
+The existing child sweep closes the temporary copies; parent RAII closes its
+copies on return or error. Stdio, startup barrier/status, anchor, cleanup pin
+and handoff retain their existing targets and meanings.
+
+The isolated regression retains sources 11 and 3 and adds source 10, covering
+handoff, startup-barrier and cleanup-pin target aliases. Each cell uses a fresh
+test process, since kernel signal descriptors persist for that process's lifetime. Only descriptors
+the cell claimed are replaced. The original payload and child-exit assertions
+and settlement requirements remain; ordinary custody terminal tests cover
+copies of the harness-owned standard descriptors.
+
+The workspace lifetime integration proof checks the contract's exact causes:
+owner EOF settles as `OwnerLost`, while the detached owner stays live until an
+explicit `Requested` stop. Its foreign/resolved-stop cells must not mask owner
+loss as a requested stop. The production cause mapping is unchanged.
+
+Deploy fixtures invoke their in-process command under the shared environment
+lock. Provider phases set temporary context/report variables under a private
+production lock; that lock alone does not exclude test fixtures that scrub the
+ambient environment. The Linux core cohort exposed a missing provider-report
+variable during a pinned-cache status observation. A direct concurrency control
+holds the ambient scrubber guard, observes the provider worker queued behind it,
+then restores the environment and requires a valid provider plan. No preview,
+offline-cache or provider-report assertion is relaxed.
+
+The dependent-replacement gateway proof uses `fixture_listener_address` for its
+dependent listener, outside the OS client ephemeral range. A hosted Linux start
+was refused because that listener's reserved port already answered before its
+child existed; the log did not record the peer identity, so its precise cause
+is unproven. The bounded address avoids client traffic taking the dependent's
+port. Every app still uses `:0`, preserving automatic allocation in all three
+scopes and both text/JSON fronts. Dependency generation, route replacement,
+foreign identity, restart-port retention and scope teardown assertions remain.
+Startup failures in this proof and the leader-exit proof snapshot listener
+owners (`lsof`/`ss`), Linux owner working directories and the owned listener
+records before cleanup. An occupied-port refusal alone does not identify a
+foreign listener, self-connect or another generation; retain those facts before
+assigning a cause.
+
+Functional bootstrap-command fixtures acquire the same clean environment guard
+before root allocation, Git setup or bootstrap invocation, as the failing-setup
+fixture already did. Hosted shared-process execution caught a Git reader using
+a prerequisite fixture's deleted fake-Git path. Hold the guard across the whole
+functional case, preserving every selector, plan/schema and failure assertion.
+
+Managed invalid-definition and invalid-reference matrices likewise acquire a
+clean environment guard before fixture setup and validation. Their expected
+manifest errors must not observe the headless retirement proof's temporary
+`EFFIGY_MANAGED_STREAM` flag. The retirement proof keeps all three values and
+its before-effects assertions; every matrix cell and expected error stays.
+
+## Checked probe terminal readiness
+
+The checked-pause probe control releases its held observer only after the OS
+positively reports the still-unreaped leader as a zombie. On macOS, identity
+absence can precede that terminal state; it proves neither waitability nor
+what the observer's next `waitid(WNOWAIT)` will return. Other descendants still
+require absence, while cleanup retains its existing closure predicate. The
+fixture's five-second observation bound, 1200 ms probe deadline, three-second
+O14 assertion and terminal-result assertions remain unchanged. A controlled
+sequence covers absent, unknown, active and stopped observations before the
+positive zombie state; none may release the observer.
+
+The Bun watcher cold-start and simulated-interrupt controls run in private
+children. Installing the watcher is irreversible process-wide state, and the
+cold-start assertion must not observe a sibling's installation. Both original
+assertion sets remain; the child harness requires one actual passing case.
+`test:deps:shared-process` runs the complete dependency library with eight
+libtest threads to retain its shared-process coverage.
+
+Planner ruling `8f2c4183773f8836bd196fc20baf2f63018c6ffdbf7e105d96a769bbacbca7e6`
+keeps both feedback planes after approved task 835: streaming producers must
+publish bytes before completion; a separate non-streaming live-step fixture
+still proves five animated redraws and escape bytes. The pane/plain/JSON/width
+assertions remain. Hosted `Lint & format` also executes the real partitioner
+fixture so independent proof owns only disposable runner fixtures.
+
+`test:kernel:probe:load` repeats the unchanged checked-pause case twenty times
+under up to twelve owned CPU workers. Admission precedes the load, workers
+self-expire after five minutes, and the driver stops and reaps only its recorded
+PIDs before removing its own fixture. Every iteration requires a passing exact
+case and live load workers; probe assertions and deadlines are unchanged.

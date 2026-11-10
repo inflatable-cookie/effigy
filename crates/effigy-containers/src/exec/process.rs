@@ -122,40 +122,129 @@ pub(super) fn run_command_capture_os_with_env_until(
 /// termination and process settlement continue to use the real clock.
 #[cfg(any(test, feature = "test-support"))]
 pub mod capture_test_clock {
-    use std::sync::{Mutex, MutexGuard};
+    use std::cell::RefCell;
+    use std::marker::PhantomData;
+    use std::rc::Rc;
+    use std::sync::{Arc, Mutex, MutexGuard};
     use std::time::Instant;
 
     static SERIAL: Mutex<()> = Mutex::new(());
-    static NOW: Mutex<Option<Instant>> = Mutex::new(None);
+    thread_local! {
+        static NOW: RefCell<Option<Arc<Mutex<Instant>>>> = const { RefCell::new(None) };
+    }
 
+    /// One serialized fixture clock, bound only to its controlling thread.
+    #[derive(Debug)]
     pub struct Guard {
+        clock: Shared,
+        _binding: Binding,
         _serial: MutexGuard<'static, ()>,
     }
 
-    pub fn control(start: Instant) -> Guard {
-        let serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
-        *NOW.lock().unwrap_or_else(|error| error.into_inner()) = Some(start);
-        Guard { _serial: serial }
+    /// A fixture clock that a capture worker explicitly opts into.
+    #[derive(Clone, Debug)]
+    pub struct Shared(Arc<Mutex<Instant>>);
+
+    /// A thread-local binding; it must be dropped on the thread that entered it.
+    #[derive(Debug)]
+    pub struct Binding {
+        _thread: PhantomData<Rc<()>>,
     }
 
-    impl Guard {
-        pub fn advance(&self, to: Instant) {
-            let mut now = NOW.lock().unwrap_or_else(|error| error.into_inner());
-            assert!(to >= now.expect("controlled capture clock"));
-            *now = Some(to);
+    /// Freeze this fixture's capture clock. A thread cannot nest bindings.
+    pub fn control(start: Instant) -> Guard {
+        NOW.with(|now| assert!(now.borrow().is_none(), "capture clock already bound"));
+        let serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
+        let clock = Shared(Arc::new(Mutex::new(start)));
+        let binding = clock.enter();
+        Guard {
+            clock,
+            _binding: binding,
+            _serial: serial,
         }
     }
 
-    impl Drop for Guard {
+    impl Guard {
+        /// Link a worker to this clock without affecting other test threads.
+        pub fn shared(&self) -> Shared {
+            self.clock.clone()
+        }
+
+        /// Advance only this fixture's clock, preserving monotonicity.
+        pub fn advance(&self, to: Instant) {
+            let mut now = self
+                .clock
+                .0
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            assert!(to >= *now);
+            *now = to;
+        }
+    }
+
+    impl Shared {
+        /// Bind a capture worker until the returned guard drops.
+        /// Panics if that thread already has a controlled capture clock.
+        pub fn enter(&self) -> Binding {
+            NOW.with(|now| {
+                let mut now = now.borrow_mut();
+                assert!(now.is_none(), "capture clock already bound");
+                *now = Some(self.0.clone());
+            });
+            Binding {
+                _thread: PhantomData,
+            }
+        }
+    }
+
+    impl Drop for Binding {
         fn drop(&mut self) {
-            *NOW.lock().unwrap_or_else(|error| error.into_inner()) = None;
+            NOW.with(|now| *now.borrow_mut() = None);
         }
     }
 
     pub(super) fn now() -> Instant {
-        NOW.lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .unwrap_or_else(Instant::now)
+        NOW.with(|now| {
+            now.borrow()
+                .as_ref()
+                .map(|clock| *clock.lock().unwrap_or_else(|error| error.into_inner()))
+        })
+        .unwrap_or_else(Instant::now)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::time::Duration;
+
+        #[test]
+        fn only_linked_workers_observe_and_advance_the_fixture_clock() {
+            let frozen = Instant::now() + Duration::from_secs(3600);
+            let clock = control(frozen);
+            assert_eq!(now(), frozen);
+            assert!(std::thread::spawn(now).join().unwrap() < frozen);
+            let shared = clock.shared();
+            let (ready, wait_ready) = std::sync::mpsc::sync_channel(0);
+            let (advanced, wait_advanced) = std::sync::mpsc::sync_channel(0);
+            std::thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let _binding = shared.enter();
+                    assert_eq!(now(), frozen);
+                    ready.send(()).unwrap();
+                    wait_advanced.recv().unwrap();
+                    assert_eq!(now(), frozen + Duration::from_secs(1));
+                });
+                wait_ready.recv().unwrap();
+                clock.advance(frozen + Duration::from_secs(1));
+                advanced.send(()).unwrap();
+                worker.join().unwrap();
+            });
+            drop(clock);
+            assert!(
+                now() < frozen,
+                "dropping the binding restores the real clock"
+            );
+        }
     }
 }
 
@@ -1568,14 +1657,50 @@ mod tests {
             pid_file.display()
         );
 
-        let error = run_command_capture_with_timeout(
-            root,
-            "/bin/sh",
-            &["-c", script.as_str()],
-            "descendant test",
-            Duration::from_millis(200),
-        )
+        let timeout = Duration::from_millis(200);
+        let clock = capture_test_clock::control(Instant::now());
+        let shared = clock.shared();
+        let error = std::thread::scope(|scope| {
+            let capture = scope.spawn(|| {
+                let _binding = shared.enter();
+                run_command_capture_with_timeout(
+                    root,
+                    "/bin/sh",
+                    &["-c", script.as_str()],
+                    "descendant test",
+                    timeout,
+                )
+            });
+            struct Expire<'a>(&'a capture_test_clock::Guard, Duration);
+            impl Drop for Expire<'_> {
+                fn drop(&mut self) {
+                    self.0.advance(Instant::now() + self.1);
+                }
+            }
+            let expire = Expire(&clock, timeout);
+            let ready_bound = Instant::now() + Duration::from_secs(20);
+            loop {
+                if let Some(pid) = fs::read_to_string(&pid_file)
+                    .ok()
+                    .and_then(|text| text.trim().parse::<i32>().ok())
+                {
+                    assert!(
+                        kill(Pid::from_raw(pid), None).is_ok(),
+                        "descendant is live before expiry"
+                    );
+                    break;
+                }
+                assert!(
+                    Instant::now() < ready_bound,
+                    "descendant did not publish its identity"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+            drop(expire);
+            capture.join().expect("descendant capture")
+        })
         .expect_err("script should time out");
+        assert!(error_is_timeout(&error));
 
         match error {
             ContainerExecError::Failure { command, .. } => {
@@ -1589,11 +1714,14 @@ mod tests {
             .trim()
             .parse::<i32>()
             .expect("pid");
-        thread::sleep(Duration::from_millis(150));
-        assert!(
-            kill(Pid::from_raw(descendant_pid), None).is_err(),
-            "expected descendant pid {descendant_pid} to be gone"
-        );
+        let gone_bound = Instant::now() + Duration::from_millis(150);
+        while kill(Pid::from_raw(descendant_pid), None).is_ok() {
+            assert!(
+                Instant::now() < gone_bound,
+                "expected descendant pid {descendant_pid} to be gone"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
     }
 
     // ------------------------------------------------------------------

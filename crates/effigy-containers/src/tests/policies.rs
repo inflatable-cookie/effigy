@@ -1075,10 +1075,15 @@ fn validate_compose_backend_runtime_checks_staged_source_instead_of_temp_checkou
     let root = temp_repo("staged-colima-path-preflight");
     let temporary = root.join("temporary");
     let source = temporary.join("source");
-    let shared = root.join("shared");
+    // Only model paths under this existing, non-temporary mount. The preflight
+    // does not publish files there; all fixture writes stay under `root`.
+    // A sibling of `source` would still be under /tmp on hosted runners.
+    let shared = std::env::current_dir()
+        .expect("current directory")
+        .canonicalize()
+        .expect("existing shared mount");
     let colima = root.join("colima");
     fs::create_dir_all(&source).expect("source");
-    fs::create_dir_all(&shared).expect("shared mount");
     fs::create_dir_all(colima.join("private")).expect("profile");
     let _env = effigy_test_support::env::ScopedEnv::set_many(&[
         ("TMPDIR", temporary.as_os_str().to_owned()),
@@ -1101,9 +1106,20 @@ fn validate_compose_backend_runtime_checks_staged_source_instead_of_temp_checkou
     )
     .expect("profile mounts");
     let mut policy = load_container_policy(&source, Some("web")).expect("policy");
-    let compose = shared.join("compose.yml");
-    fs::copy(source.join("compose.yml"), &compose).expect("staged Compose input");
-    policy.compose_files = vec![compose];
+    // Rebase only the in-memory snapshot's logical address. Validation still
+    // reads the real rendered bytes, without publishing into the modeled mount.
+    let render = policy.render.as_mut().expect("Compose snapshot");
+    let original = render.path.clone();
+    render.path = shared;
+    policy.compose_files = policy
+        .compose_files
+        .iter()
+        .map(|path| {
+            render
+                .path
+                .join(path.strip_prefix(&original).expect("snapshot input"))
+        })
+        .collect();
     policy.workspace_source = crate::artifact_source::WorkspaceSource::Staged;
     with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
         crate::validate_compose_backend_runtime(&source, &policy).expect("reachable staged source");

@@ -19,7 +19,8 @@ binary standalone (live progress must still animate) and piped/`--json`
 
 Usage: managed-pane-nested.py <effigy-binary> [<evidence-dir>]
 
-With an evidence directory the fixture also retains, per width, the raw PTY
+The optional EFFIGY_PANE_EVIDENCE environment variable supplies the same directory
+through the focused test selector. With either route the fixture retains the raw PTY
 stream and the canonical pane logs, plus the standalone stream and a summary.
 """
 import errno
@@ -36,10 +37,13 @@ import sys
 import tempfile
 import termios
 import time
+from managed_pane_live_step import prove_animation
 from pathlib import Path
 
 binary = str(Path(sys.argv[1]).resolve())
-evidence = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else None
+live_fixture = os.environ["EFFIGY_PANE_LIVE_STEP_FIXTURE"]
+evidence_path = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("EFFIGY_PANE_EVIDENCE")
+evidence = Path(evidence_path).resolve() if evidence_path else None
 
 # The tab command: a wrapper that starts Effigy with the internal pane marker
 # scrubbed, exactly like the bundle's `nested_environment()`.
@@ -61,9 +65,11 @@ sys.exit(subprocess.run([sys.argv[1], *sys.argv[2:]], env=env).returncode)
 # fixture proves concurrent output and colour survive.
 ADJACENT = '''#!/usr/bin/env python3
 import time
+from pathlib import Path
 print("[fixture] adjacent-tab", flush=True)
 print("adjacent-before", flush=True)
-time.sleep(1)
+while not Path("release-adjacent").exists():
+    time.sleep(0.01)
 print("\\033[31mVite error\\033[0m", flush=True)
 print("adjacent-after", flush=True)
 time.sleep(120)
@@ -101,7 +107,7 @@ run = [
 ]
 [tasks."nested:wait"]
 run_in = "host"
-run = "sleep 4; printf 'nested-waited\\n'"
+run = "printf 'nested-stream-ready\\n'; sleep 4; printf 'nested-waited\\n'"
 [tasks."nested:long"]
 run_in = "host"
 run = "python3 __LONG_LINE__"
@@ -117,7 +123,7 @@ STEPS = (
 )
 
 
-def start(args, cwd, env, cols, rows):
+def start(args, cwd, env, cols, rows, program=binary):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
@@ -126,7 +132,7 @@ def start(args, cwd, env, cols, rows):
         fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
 
     child = subprocess.Popen(
-        [binary, *args],
+        [program, *args],
         cwd=cwd,
         env=env,
         stdin=slave,
@@ -254,6 +260,23 @@ def scenario_base(temp, label, manifest=MANIFEST):
     return base, root, env
 
 
+def adjacent_style_published(base):
+    """The writer's optional style tap has published the controlled line.
+
+    Plain append precedes style publication by contract. The colour proof must
+    not mistake that permitted plain fallback for a lost published style.
+    """
+    for path in base.rglob("*.styled-tap"):
+        try:
+            window = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        for chunk in window.get("chunks", []):
+            if any("Vite error" in span["text"] for span in chunk["spans"]):
+                return True
+    return False
+
+
 def pane_scenario(temp, label, cols, rows, evidence_dir):
     """One real `effigy dev` TUI whose Services tab starts a scrubbed Effigy."""
     base, root, env = scenario_base(temp, label)
@@ -261,6 +284,8 @@ def pane_scenario(temp, label, cols, rows, evidence_dir):
     raw = bytearray()
     services = b""
     adjacent = b""
+    paused = False
+    colour_ready = False
     try:
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
@@ -268,6 +293,21 @@ def pane_scenario(temp, label, cols, rows, evidence_dir):
             logs = list(base.rglob("*.stdout.*.log"))
             services = pane_log(logs, b"[fixture] services-tab")
             adjacent = pane_log(logs, b"[fixture] adjacent-tab")
+            if not colour_ready and b"adjacent-before" in adjacent:
+                # Suspend only our own reader before releasing the producer.
+                # Its independently supervised writer can publish the style tap
+                # before this reader consumes the corresponding canonical bytes.
+                client.send_signal(signal.SIGSTOP)
+                paused = True
+                _, status = os.waitpid(client.pid, os.WUNTRACED)
+                assert os.WIFSTOPPED(status), "owned TUI reader did not stop"
+                (root / "release-adjacent").touch()
+                while time.monotonic() < deadline and not adjacent_style_published(base):
+                    time.sleep(0.01)
+                assert adjacent_style_published(base), "adjacent style was not published"
+                colour_ready = True
+                client.send_signal(signal.SIGCONT)
+                paused = False
             if b"[error]" in services and b"adjacent-after" in adjacent:
                 break
             if client.poll() is not None:
@@ -284,11 +324,11 @@ def pane_scenario(temp, label, cols, rows, evidence_dir):
         # red SGR line must reach the rendered screen beside the plain log.
         os.write(master, b"\x1b[C")
         settle = time.monotonic() + 3
-        while time.monotonic() < settle and b"Vite error" not in raw:
+        while time.monotonic() < settle and not adjacent_colour(raw)[0]:
             drain(master, raw)
-        time.sleep(0.3)
-        drain(master, raw)
     finally:
+        if paused:
+            client.send_signal(signal.SIGCONT)
         exited, signalled, escalated = stop(client, master, raw)
         os.close(master)
     summary = measure(services, adjacent, bytes(raw), rows, cols)
@@ -394,13 +434,27 @@ def assert_bounded(label, summary, services, adjacent):
 
 
 def run_standalone(root, env):
-    """A child is bounded only inside a pane: standalone still animates."""
+    """Producer bytes arrive live; non-streaming steps still animate."""
+    prove_animation(
+        lambda: start(["--ignored", "--exact", "non_streaming_live_step_fixture", "--nocapture", "--color", "never"], root, env, 120, 40, program=live_fixture),
+        drain,
+    )
+    manifest = root / "effigy.toml"
+    manifest.write_text(manifest.read_text().replace(
+        "sleep 4;", "while [ ! -f release-stream ]; do sleep 0.02; done;"
+    ))
     client, master = start(["nested:steps"], root, env, 120, 40)
     output = bytearray()
     try:
         deadline = time.monotonic() + 60
+        live = False
         while client.poll() is None and time.monotonic() < deadline:
             drain(master, output)
+            if not live and b"nested-stream-ready" in output:
+                assert client.poll() is None, "producer completed before live output"
+                live = True
+                (root / "release-stream").touch()
+        assert live, bytes(output[-4000:])
         for _ in range(5):
             drain(master, output)
         assert client.poll() == 3, (client.poll(), bytes(output[-4000:]))
@@ -410,8 +464,6 @@ def run_standalone(root, env):
             client.wait(timeout=15)
         os.close(master)
     text = bytes(output)
-    frames = text.count(b"elapsed")
-    assert frames >= 5, ("standalone progress stopped", frames, text[-4000:])
     assert b"EFFIGY" in text, text[-4000:]
     return text
 

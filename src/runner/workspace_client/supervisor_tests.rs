@@ -322,6 +322,18 @@ fn committed_guest_ordering(before_first_turn: bool) {
                 assert_eq!(service.served(), 1);
             }
         }));
+        // Reserve a distinct client source port while this listener is live.
+        // An unbound loopback connect after retirement can choose the retired
+        // destination port itself and self-connect on Linux, proving nothing
+        // about the listener. Keep the same post-settlement refusal assertion.
+        let probe = tokio::net::TcpSocket::new_v4().expect("closure probe socket");
+        probe
+            .bind("127.0.0.1:0".parse().expect("loopback source"))
+            .expect("reserve closure probe source");
+        assert_ne!(
+            probe.local_addr().expect("probe source").port(),
+            endpoint.port()
+        );
         service.stop();
         let joined = guest.join();
         let key_revoked = !service.key_held();
@@ -338,8 +350,12 @@ fn committed_guest_ordering(before_first_turn: bool) {
         if proof.is_ok() {
             assert_eq!(retired.served, usize::from(!before_first_turn));
         }
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .build()
+            .expect("closure probe runtime");
         assert!(
-            TcpStream::connect(endpoint).is_err(),
+            runtime.block_on(probe.connect(endpoint)).is_err(),
             "settlement closed the listener"
         );
         joined.expect("the guest thread ended");

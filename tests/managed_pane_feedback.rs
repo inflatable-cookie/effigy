@@ -8,8 +8,13 @@ fn pane_fixture(script: &str) {
     use std::process::Command;
     let script = format!("{}/tests/scripts/{script}", env!("CARGO_MANIFEST_DIR"));
     let output = Command::new("python3")
+        .arg("-B")
         .arg(&script)
         .arg(env!("CARGO_BIN_EXE_effigy"))
+        .env(
+            "EFFIGY_PANE_LIVE_STEP_FIXTURE",
+            std::env::current_exe().expect("pane fixture binary"),
+        )
         .output()
         .expect("run pane fixture");
     assert!(
@@ -34,4 +39,20 @@ fn managed_pane_feedback_stays_plain() {
 #[test]
 fn a_nested_child_through_a_scrubbing_wrapper_stays_bounded() {
     pane_fixture("managed-pane-nested.py");
+}
+
+/// The Python PTY owner releases this non-streaming step only after observing
+/// five real redraw frames. Producer streaming is proved separately.
+#[cfg(unix)]
+#[test]
+#[ignore = "PTY fixture launched by both pane proofs"]
+fn non_streaming_live_step_fixture() {
+    use effigy_ui::steps::{configure_from_terminal, live_step, ProgressSource};
+
+    configure_from_terminal(false, false);
+    let step = live_step(ProgressSource::waiting_for("fixture-animation"));
+    let mut release = String::new();
+    std::io::stdin().read_line(&mut release).unwrap();
+    assert_eq!(release, "release\n");
+    step.succeed("animation complete");
 }

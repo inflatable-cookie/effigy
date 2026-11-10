@@ -18,11 +18,12 @@ use crate::runner::workspace_client::identity::{
     GuestIdentity, GuestIdentityRefusal, GuestSelfObservation,
 };
 use effigy_cli::{parse_command, Command};
+use effigy_test_support::process::FixtureCommandExt;
 use std::collections::{BTreeMap, VecDeque};
 
 use std::io;
 use std::os::unix::net::UnixStream;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 const GENERATION: u64 = 3;
@@ -34,16 +35,50 @@ pub(super) const GUEST_CHECKOUT: &str = "/workspace";
 const MANIFEST: &[u8] = b"[tasks]\nbuild = \"cargo build\"\nseed = \"cargo run -- seed\"\n";
 
 fn running_binary() -> RunningBinary {
-    RunningBinary::observe().expect("the test binary's own identity")
+    // The executable is immutable. Reuse its observation only while the active
+    // version input is unchanged; the observer remains authoritative about
+    // wire-version formatting, including after production API changes.
+    static BINARY: OnceLock<(String, RunningBinary)> = OnceLock::new();
+    let active_version = effigy_core::build_info::active_version();
+    let (cached_version, binary) = BINARY.get_or_init(|| {
+        (
+            active_version.clone(),
+            RunningBinary::observe().expect("the test binary's own identity"),
+        )
+    });
+    if *cached_version == active_version {
+        binary.clone()
+    } else {
+        RunningBinary::observe().expect("the test binary's changed version identity")
+    }
 }
 
 #[test]
 fn running_guest_version_matches_producer_context_without_display_normalization() {
     let _lock = crate::contract_test_support::lock_test();
-    let _env = crate::contract_test_support::EnvGuard::set_many(&[(
-        "EFFIGY_ACTIVE_VERSION",
-        Some("0.14.1+local.fixture".into()),
-    )]);
+    const CHILD: &str = "EFFIGY_TEST_EXACT_GUEST_VERSION";
+    if std::env::var_os(CHILD).is_none() {
+        // The real observer reads the process version. Keep this deliberate
+        // override out of concurrent shared-process terminal/context proofs.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "runner::workspace_client::tests::running_guest_version_matches_producer_context_without_display_normalization",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .env("EFFIGY_ACTIVE_VERSION", "0.14.1+local.fixture")
+            .output_owned()
+            .expect("isolated exact-version control");
+        assert!(output.status.success(), "{output:?}");
+        return;
+    }
+    assert_eq!(
+        effigy_core::build_info::active_version(),
+        "0.14.1+local.fixture",
+        "the child runs the original exact-version input"
+    );
     let document = workspace_document(Some(session_run()), None);
     let mut value: serde_json::Value = serde_json::from_slice(&document.render().unwrap()).unwrap();
     value["version"] = effigy_core::build_info::active_version().into();
@@ -2936,6 +2971,8 @@ struct FakePty {
     batch: usize,
     /// Runs once, after the first write effect returns.
     after_first_write: Option<PtyHook>,
+    /// Runs once after a resize attempt, before the next pump turn.
+    after_first_resize: Option<PtyHook>,
 }
 
 impl FakePty {
@@ -2944,6 +2981,7 @@ impl FakePty {
             log,
             batch: usize::MAX,
             after_first_write: None,
+            after_first_resize: None,
         }
     }
 
@@ -2958,6 +2996,11 @@ impl FakePty {
     /// owner's lifetime is read again before the *next* partial write.
     fn after_first_write(mut self, hook: impl FnMut() + Send + 'static) -> Self {
         self.after_first_write = Some(PtyHook(Box::new(hook)));
+        self
+    }
+
+    fn after_first_resize(mut self, hook: impl FnMut() + Send + 'static) -> Self {
+        self.after_first_resize = Some(PtyHook(Box::new(hook)));
         self
     }
 }
@@ -2984,11 +3027,17 @@ impl TerminalWriter for FakePty {
     fn resize(&mut self, size: TerminalSize) -> io::Result<()> {
         let mut log = self.log.lock().expect("pty log");
         log.resize_attempts.push(size);
-        if !log.resize_open {
-            return Err(io::Error::from(io::ErrorKind::WouldBlock));
+        let result = if !log.resize_open {
+            Err(io::Error::from(io::ErrorKind::WouldBlock))
+        } else {
+            log.sizes.push(size);
+            Ok(())
+        };
+        drop(log);
+        if let Some(mut hook) = self.after_first_resize.take() {
+            (hook.0)();
         }
-        log.sizes.push(size);
-        Ok(())
+        result
     }
 
     fn retire(&mut self) -> io::Result<()> {
@@ -5042,35 +5091,46 @@ fn a_queued_resize_is_fenced_by_the_owners_lifetime() {
     let run = RunId::new(1, [9; 10]).expect("run id");
     let _owner = live_admission(&cx, &observe, &root, calls.clone());
     let log = Arc::new(Mutex::new(PtyLog::default()));
+    log.lock().expect("pty log").resize_open = false;
+    let mut releaser =
+        run::resume_owner(&cx, &root, terminal_session(), run).expect("owning attachment");
+    let releasing_context = cx.clone();
+    let releasing_root = root.clone();
+    let released_log = log.clone();
+    let (released_tx, released_rx) = std::sync::mpsc::channel();
     let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     custody
         .open(
             &cx,
             run,
             vec![(1, Stream::Stdout)],
-            Box::new(FakePty::new(log.clone())),
+            Box::new(FakePty::new(log.clone()).after_first_resize(move || {
+                // The first attempt is full. Release inside that attempt, so
+                // the next effect must cross a fresh owner-lifetime read.
+                releaser
+                    .release(&releasing_context, &releasing_root, Release::Eof)
+                    .expect("the owning client's end of stream");
+                released_log.lock().expect("pty log").resize_open = true;
+                released_tx.send(()).expect("report owner release");
+            })),
         )
         .expect("the run's terminal opens");
-    let mut owner =
-        run::resume_owner(&cx, &root, terminal_session(), run).expect("owning attachment");
+    let owner = run::resume_owner(&cx, &root, terminal_session(), run).expect("owning attachment");
     custody.start(&owner, &StreamStart::from([(host::TERMINAL_STREAM, 0)]));
 
     // The resize handle is full, so the newest geometry cannot land yet.
-    log.lock().expect("pty log").resize_open = false;
     custody
         .resize(&owner, size(50, 120))
         .expect("the owning attachment resizes its terminal");
-    std::thread::sleep(Duration::from_millis(50));
+    released_rx
+        .recv_timeout(Duration::from_secs(20))
+        .expect("the full resize attempt released its owning row");
     assert!(sizes(&log).is_empty(), "the full handle applied nothing");
 
-    // The owning client's stream ends while the geometry is still queued...
-    owner
-        .release(&cx, &root, Release::Eof)
-        .expect("the owning client's end of stream");
-    // ...and the handle frees immediately afterwards. The next turn re-reads the
+    // The owning client's stream ended inside the full attempt, and the handle
+    // freed immediately afterwards. The next turn re-reads the
     // owning row before its effect, so the queued geometry is never applied; a
     // pump that skipped that read would apply it here.
-    log.lock().expect("pty log").resize_open = true;
     wait_until("the writer to retire on the released row", || {
         log.lock().expect("pty log").retired == 1
     });

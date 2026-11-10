@@ -1,5 +1,4 @@
 use crate::deploy_fixture_support::write_test_deploy_export_provider;
-use crate::runner::run_command;
 use crate::runner::tests::prelude::{
     parse_json_output_with_schema_version, setup_workspace_app_path_bundle, temp_workspace,
     write_manifest, write_root_manifest,
@@ -9,6 +8,14 @@ use effigy_core::git_source::{canonical_git_cache_identity, sanitize_cache_segme
 use std::fs;
 use std::path::Path;
 use std::process::Command as ProcessCommand;
+
+fn run_command(command: Command) -> Result<String, crate::runner::error::RunnerError> {
+    // Provider phases temporarily set process-wide context/report variables.
+    // Participate in the fixture lock so ambient-environment scrubbers cannot
+    // remove them while the in-process Rhai provider is reading them.
+    let _environment = crate::contract_test_support::lock_test();
+    crate::runner::run_command(command)
+}
 
 fn with_deploy_providers(manifest: &str) -> String {
     format!(
@@ -603,6 +610,28 @@ fn run_status(root: &Path, env: &str) -> Result<String, crate::runner::error::Ru
         repo_override: Some(root.to_path_buf()),
         output_json: true,
     }))
+}
+
+#[test]
+fn shared_process_deploy_provider_waits_for_the_ambient_environment_fixture() {
+    let root = setup_deploy_transaction_fixture("deploy-environment-exclusion");
+    let environment = crate::contract_test_support::clean_fixture_environment();
+    let worker = std::thread::spawn(move || run_plan(&root, "uat"));
+    let queued = crate::contract_test_support::test_lock_waiter_position(
+        worker.thread().id(),
+        std::time::Duration::from_secs(5),
+    );
+    // Release even if the queue observation failed, and join before asserting.
+    drop(environment);
+    let output = worker
+        .join()
+        .expect("provider worker")
+        .expect("provider plan");
+    assert!(
+        queued.is_some(),
+        "the provider must queue behind the ambient-environment owner"
+    );
+    parse_json_output_with_schema_version(&output, "effigy.deploy.plan.v1", 1);
 }
 
 fn provider_phase_leftovers(root: &Path) -> Vec<std::path::PathBuf> {

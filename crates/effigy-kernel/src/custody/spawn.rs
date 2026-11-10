@@ -5,6 +5,9 @@ use std::ffi::CString;
 use std::os::fd::{FromRawFd, RawFd};
 use std::sync::Mutex;
 static FORK: Mutex<()> = Mutex::new(());
+// Child destinations are stdio 0..2, barrier/status 3..4, anchor 5,
+// closure pin 10 and handoff 11. No source may alias any destination.
+const SOURCE_FD_MIN: RawFd = HANDOFF_FD + 1;
 
 pub(crate) fn pipe() -> io::Result<(OwnedFd, OwnedFd)> {
     let mut fds = [-1; 2];
@@ -24,7 +27,7 @@ pub(crate) fn pipe() -> io::Result<(OwnedFd, OwnedFd)> {
 }
 pub(crate) fn high(fd: OwnedFd) -> io::Result<OwnedFd> {
     // SAFETY: duplicates a live fd above the child's reserved descriptors.
-    let copy = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 10) };
+    let copy = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, SOURCE_FD_MIN) };
     if copy < 0 {
         return Err(io::Error::last_os_error());
     }
@@ -286,10 +289,13 @@ impl Blocked {
         }
         let closure_fd = closure
             .map(|capability| capability.custody_fd())
+            .transpose()?
+            .map(high)
             .transpose()?;
         let closure_fd_raw = closure_fd.as_ref().map_or(-1, AsRawFd::as_raw_fd);
         // The parent's one-shot descriptor, handed over at its reserved slot.
-        let handoff_fd = handoff.map_or(-1, AsRawFd::as_raw_fd);
+        let handoff_copy = handoff.map(|fd| duplicate(fd.as_raw_fd())).transpose()?;
+        let handoff_fd = handoff_copy.as_ref().map_or(-1, AsRawFd::as_raw_fd);
         env.push(
             CString::new(format!("{key}={nonce}"))
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid nonce"))?,
@@ -307,9 +313,11 @@ impl Blocked {
             env.last().expect("nonce present").as_ptr(),
             std::ptr::null(),
         ];
-        let anchor_fd = image
+        let anchor_copy = image
             .and_then(|i| i.fd.as_ref())
-            .map_or(-1, AsRawFd::as_raw_fd);
+            .map(|fd| duplicate(fd.as_raw_fd()))
+            .transpose()?;
+        let anchor_fd = anchor_copy.as_ref().map_or(-1, AsRawFd::as_raw_fd);
         let anchored = image.is_some();
         let cwd = DirFd::walk(&spec.cwd, Trust::Ancestor).map_err(io::Error::other)?;
         let _fork = FORK
@@ -393,9 +401,10 @@ impl Blocked {
         }
         if pid == 0 {
             // SAFETY: every fd below is live in the inherited descriptor table;
-            // stdio/barrier sources are >=10 and mapped before the optional
-            // cleanup-pin target 10. Their sources are >=128, so neither can
-            // overwrite the other. After closure only explicit slots remain. In
+            // every dup2 source was copied above the highest destination (11)
+            // with CLOEXEC before fork. Mapping targets cannot clobber a source
+            // still needed, even when the original descriptors form a cycle.
+            // The sweep closes those temporaries; only explicit slots remain. In
             // particular no sibling's barrier or sentinel writer is inherited.
             unsafe {
                 if libc::fchdir(cwd.raw()) != 0
@@ -875,7 +884,7 @@ pub(crate) fn descriptor_limit() -> io::Result<i32> {
 
 fn duplicate(fd: RawFd) -> io::Result<OwnedFd> {
     // SAFETY: borrows the live source; the returned descriptor has sole ownership.
-    let copy = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };
+    let copy = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, SOURCE_FD_MIN) };
     if copy < 0 {
         return Err(io::Error::last_os_error());
     }

@@ -14,8 +14,10 @@ import sys
 import tempfile
 import termios
 import time
+from managed_pane_live_step import prove_animation
 
 binary = str(Path(sys.argv[1]).resolve())
+live_fixture = os.environ["EFFIGY_PANE_LIVE_STEP_FIXTURE"]
 with tempfile.TemporaryDirectory(prefix="epane.") as directory:
     base = Path(directory)
     home = base / "home"
@@ -37,13 +39,13 @@ run = [{ task = "leaf" }]
 run = ["printf 'child-before\\\\n'; sleep 2; printf 'child-after\\\\n'"]
 ''')
 
-    def start(args):
+    def start(args, program=binary):
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
         def own_terminal():
             os.setsid()
             fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
-        child = subprocess.Popen([binary, *args], cwd=root, env=env, stdin=slave,
+        child = subprocess.Popen([program, *args], cwd=root, env=env, stdin=slave,
                                  stdout=slave, stderr=slave, preexec_fn=own_terminal)
         os.close(slave)
         return child, master
@@ -110,16 +112,30 @@ run = ["printf 'child-before\\\\n'; sleep 2; printf 'child-after\\\\n'"]
                 child.wait(timeout=15)
         os.close(master)
 
+    prove_animation(
+        lambda: start(["--ignored", "--exact", "non_streaming_live_step_fixture", "--nocapture", "--color", "never"], program=live_fixture),
+        drain,
+    )
+    manifest = root / "effigy.toml"
+    manifest.write_text(manifest.read_text().replace(
+        "sleep 2;", "while [ ! -f release-stream ]; do sleep 0.02; done;"
+    ))
     child, master = start(["nested"])
     output = bytearray()
     try:
         deadline = time.monotonic() + 30
+        live = False
         while child.poll() is None and time.monotonic() < deadline:
             drain(master, output)
+            if not live and b"child-before" in output:
+                assert child.poll() is None, "producer completed before live output"
+                live = True
+                (root / "release-stream").touch()
+        assert live, bytes(output)
         assert child.poll() == 0, (child.poll(), bytes(output))
         for _ in range(5):
             drain(master, output)
-        assert b"EFFIGY" in output and b"running nested" in output and b"\x1b" in output, bytes(output)
+        assert b"EFFIGY" in output and b"running nested" in output, bytes(output)
     finally:
         if child.poll() is None:
             os.killpg(child.pid, signal.SIGKILL)

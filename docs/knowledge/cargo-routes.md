@@ -181,3 +181,18 @@ the owned guest, with a private stable build HOME under its toolchain. The local
 selects this producer explicitly; it is not a Colima recipe receipt or a host
 Cargo fallback. Native test-input builds likewise use guest Effigy selectors;
 the session selector executes their pinned prebuilt nextest binaries.
+
+## Hosted binary partitioner
+
+`scripts/ci-shared-process.py` drives Cargo directly on hosted CI, where Oxide
+is unavailable. The local inventory-only selector leases this driver through
+`oxide exec`; it builds and lists tests without executing their bodies. Library
+cohorts build workspace libraries and the bootstrap CLI target, then verify the
+root library's complete family inventory. Other cohorts build every test target
+and keep binaries whole. The remaining cohort also retains Cargo's default
+example builds and doc tests. Local selectors continue to use Oxide. Unit controls
+mock subprocess calls and do not build or execute Cargo.
+
+| Route | Rule | Reason |
+| --- | --- | --- |
+| `scripts/ci-shared-process.py` | genuine exception | Hosted driver has no Oxide; local inventory runs it under `oxide exec`. |

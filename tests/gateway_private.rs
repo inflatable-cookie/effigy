@@ -37,6 +37,36 @@ fn managed_host_fixture() -> effigy_test_support::Fixture {
         .expect("owned external managed host fixture")
 }
 
+fn print_listener_owners() {
+    for (program, args) in [
+        ("lsof", vec!["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"]),
+        ("ss", vec!["-tanp"]),
+    ] {
+        match Command::new(program).args(args).output_owned() {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                println!(
+                    "listener owner inventory ({program}) status={}:\n{stdout}\nstderr: {}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                #[cfg(target_os = "linux")]
+                if program == "lsof" {
+                    for pid in stdout.lines().filter_map(|line| line.strip_prefix('p')) {
+                        if let Ok(pid) = pid.parse::<u32>() {
+                            println!(
+                                "listener owner {pid} cwd: {:?}",
+                                fs::read_link(format!("/proc/{pid}/cwd"))
+                            );
+                        }
+                    }
+                }
+            }
+            Err(error) => println!("listener owner inventory ({program}) unavailable: {error}"),
+        }
+    }
+}
+
 fn copy_dir_all(src: &Path, dst: &Path) {
     fs::create_dir_all(dst).expect("create fixture directory");
     for entry in fs::read_dir(src).expect("read fixture source") {
@@ -1189,8 +1219,14 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
             .as_table_mut()
             .unwrap()
             .insert("env".into(), toml::Value::Table(env));
+        // The dependent exercises replacement/teardown, not dynamic port
+        // selection. Keep it outside client ephemeral ports so readiness
+        // traffic cannot take its address before its child starts. The app
+        // above still proves :0 allocation in every scope and both CLI fronts.
+        let bind =
+            fixture_listener_address(&format!("dependent:{index}:{}", fixture.path().display()));
         let listener: toml::Value = toml::from_str(&format!(
-            "bind = \"127.0.0.1:0\"\n[readiness]\npath = \"/health\"\nstatus = 200\ntimeout_secs = 20\n[route]\ndomain = {}\ntls = true\n", toml_quote(&format!("dependent.{domain}")))).unwrap();
+            "bind = {}\n[readiness]\npath = \"/health\"\nstatus = 200\ntimeout_secs = 20\n[route]\ndomain = {}\ntls = true\n", toml_quote(&bind), toml_quote(&format!("dependent.{domain}")))).unwrap();
         consumer
             .as_table_mut()
             .unwrap()
@@ -1229,6 +1265,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         .collect::<Vec<_>>();
     for (index, result) in startup_results.iter().enumerate() {
         if !result.status.success() {
+            print_listener_owners();
             println!("private activation diagnostic: {result:?}");
             let (checkout, profile, ..) = &checkouts[index];
             let runtime = checkout
@@ -3529,6 +3566,21 @@ fn managed_host_listener_leader_exit_restarts_by_policy() {
     };
 
     let started = run_container_cli(&checkout, &cleanup, &["up", "--detach", "--json"]);
+    if !started.status.success() {
+        print_listener_owners();
+        for name in ["replaced", "settled"] {
+            for suffix in ["listener.json", "log"] {
+                let path = checkout
+                    .join(".effigy/runtime/host-processes/web")
+                    .join(profile)
+                    .join(format!("{name}.{suffix}"));
+                println!(
+                    "leader-exit startup diagnostic for {name}.{suffix}: {:?}",
+                    fs::read_to_string(path)
+                );
+            }
+        }
+    }
     assert!(
         started.status.success(),
         "leader-exit startup failed: stdout={} stderr={}",
@@ -9108,7 +9160,7 @@ identity = 'a' * 64
 def guest(name):
     path = pathlib.PurePosixPath(name)
     assert path.is_absolute() and '..' not in path.parts, name
-    assert name.startswith(('/run/effigy/', '/tmp/effigy-host-', '/usr/local/bin/effigy')), name
+    assert name == '/usr/local/bin' or name.startswith(('/run/effigy/', '/tmp/effigy-host-', '/usr/local/bin/effigy')), name
     local = root.joinpath(*path.parts[1:])
     assert local.resolve().is_relative_to(root), name
     return local
@@ -9136,9 +9188,24 @@ elif script.startswith('set -eu\npatch_alias()'):
     pass  # DNS alias preparation, also modeled by the switch fake.
 elif script.startswith('p=') and 'sha256sum' in script:
     path = guest(shlex.split(script.splitlines()[0])[0][2:])
-    print(hashlib.sha256(read(path)).hexdigest())
+    if path.is_file():
+        print('P\n' + hashlib.sha256(read(path)).hexdigest())
+    else:
+        print('A')
+elif script.startswith('p=') and 'cat "$p"' in script:
+    path = guest(shlex.split(script.splitlines()[0])[0][2:])
+    sys.stdout.buffer.write(b'P\n' + path.read_bytes() if path.exists() else b'A\n')
+elif script.startswith('if [ -L '):
+    path = guest(shlex.split(script)[3])
+    if path.is_symlink():
+        print('P\n/' + str(path.resolve().relative_to(root)))
+    else:
+        print('A')
 else:
     words = shlex.split(script)
+    if words[:5] == ['mkdir', '-p', '-m', '0755', '--'] and words[6] == '&&':
+        guest(words[5]).mkdir(parents=True, exist_ok=True)
+        words = words[7:]
     if words[:1] == ['cat'] and words[2:] == ['2>/dev/null', '||', 'exit', '3']:
         sys.stdout.buffer.write(read(guest(words[1])))
     elif words[:2] == ['mkdir', '-p'] and words[3:5] == ['&&', 'chmod']:

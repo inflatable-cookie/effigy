@@ -2471,22 +2471,33 @@ fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
                 Observed::Verified(reader, _) => reader,
                 other => panic!("store {other:?}"),
             };
-        assert!(matches!(
-            lookup(&cx.operation().observe().unwrap(), &root, key, digest),
-            Observed::Verified(
-                Recovered::Completed {
-                    outcome: RecordedOutcome {
-                        workload: WorkloadOutcome::Cancelled {
-                            cause: StopCause::Requested,
-                            ..
+        let recovered = lookup(&cx.operation().observe().unwrap(), &root, key, digest);
+        // The EOF cells must settle on owner loss, not the foreign/resolved
+        // stop requests injected above. Detach stays live until explicit stop.
+        let expected_cause = if cause == Release::Eof {
+            StopCause::OwnerLost
+        } else {
+            StopCause::Requested
+        };
+        assert!(
+            matches!(
+                &recovered,
+                Observed::Verified(
+                    Recovered::Completed {
+                        outcome: RecordedOutcome {
+                            workload: WorkloadOutcome::Cancelled {
+                                cause: actual_cause,
+                                ..
+                            },
+                            cleanup_complete: true
                         },
-                        cleanup_complete: true
+                        ..
                     },
-                    ..
-                },
-                _
-            )
-        ));
+                    _
+                ) if actual_cause == &expected_cause
+            ),
+            "settlement lookup: {recovered:?}"
+        );
         assert_eq!(
             rusqlite::Connection::open_with_flags(
                 root.path().join("kernel.db"),

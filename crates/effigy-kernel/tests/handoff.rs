@@ -9,6 +9,7 @@
 use effigy_kernel::{
     ctx::*, custody::*, gate::Wait, id::*, outcome::*, root::StateRoot, run::*, supervise::*,
 };
+use effigy_test_support::process::FixtureCommandExt;
 use std::collections::BTreeMap;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
@@ -141,9 +142,53 @@ fn occupy_through_the_slot() -> Vec<OwnedFd> {
 /// A caller hands its child one short-lived reader at `HANDOFF_FD`. The reader
 /// can already sit at that number (a session with descriptors up to 10 open),
 /// where `dup2` is a no-op that would leave CLOEXEC set: the slot's flag is
-/// cleared explicitly, so the child still reads the payload after exec.
+/// cleared explicitly, so the child still reads the payload after exec. The
+/// low-source control must also survive the child's reserved descriptor plan.
 #[test]
 fn a_handoff_reader_already_at_the_slot_survives_exec() {
+    const SOURCE: &str = "EFFIGY_TEST_HANDOFF_SOURCE";
+    if let Ok(source) = std::env::var(SOURCE) {
+        assert_handoff_reader_survives_from(source.parse().expect("source descriptor"));
+        return;
+    }
+    // Keep 11 and 3, and cover the cleanup-pin target too. These slots are
+    // claimed by the cell; inherited suite markers remain open above them.
+    for source in [HANDOFF_FD, 3, 10] {
+        // A fresh process keeps earlier cells' process-global kernel signal
+        // descriptors from occupying a later cell's deliberately claimed slot.
+        // Before the Rust harness starts, move inherited non-stdio descriptors
+        // above the controlled slots. A built-in test runner may supply a pipe
+        // or sweep marker at 10; keep that evidence open without claiming it.
+        let output = std::process::Command::new("python3")
+            .args(["-I", "-B", "-c"])
+            .arg(
+                r#"import errno, fcntl, os, sys
+for source in range(3, 12):
+    try:
+        spare = fcntl.fcntl(source, fcntl.F_DUPFD, 12)
+    except OSError as error:
+        if error.errno != errno.EBADF:
+            raise
+    else:
+        os.set_inheritable(spare, True)
+        os.close(source)
+os.execv(sys.argv[1], sys.argv[1:])
+"#,
+            )
+            .arg(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "a_handoff_reader_already_at_the_slot_survives_exec",
+                "--nocapture",
+            ])
+            .env(SOURCE, source.to_string())
+            .output_owned()
+            .expect("isolated source-slot control");
+        assert!(output.status.success(), "source {source}: {output:?}");
+    }
+}
+
+fn assert_handoff_reader_survives_from(source: i32) {
     let mut held = occupy_through_the_slot();
     let (reader, writer) = {
         let mut fds = [-1; 2];
@@ -152,23 +197,40 @@ fn a_handoff_reader_already_at_the_slot_survives_exec() {
         // SAFETY: the successful pipe returned two fresh owned descriptors.
         unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) }
     };
-    // Free the slot this test claimed, then move the reader onto it: this is
-    // the shape that used to lose the CLOEXEC flag at exec.
-    drop(held.pop().expect("the slot holder"));
+    // Free only the source slot this test claimed, then move the reader there.
+    // Keep the other holders alive so no unrelated allocation takes that slot.
+    let holder = held
+        .iter()
+        .position(|fd| fd.as_raw_fd() == source)
+        .unwrap_or_else(|| {
+            let facts = std::process::Command::new("lsof")
+                .args([
+                    "-n",
+                    "-P",
+                    "-a",
+                    "-p",
+                    &std::process::id().to_string(),
+                    "-d",
+                ])
+                .arg(source.to_string())
+                .output_owned();
+            panic!("source {source} was not claimed by this cell: {facts:?}");
+        });
+    drop(held.remove(holder));
     // SAFETY: the slot is free and the reader is live; ownership of the
     // duplicate transfers below.
     assert_eq!(
-        unsafe { libc::dup2(reader.as_raw_fd(), HANDOFF_FD) },
-        HANDOFF_FD,
-        "move the payload reader onto the handoff slot"
+        unsafe { libc::dup2(reader.as_raw_fd(), source) },
+        source,
+        "move the payload reader onto its controlled source slot"
     );
     // The parent's copy must not leak into unrelated children: only the
     // child's own spawn clears the flag.
     // SAFETY: live descriptor and a valid flag request.
-    assert!(unsafe { libc::fcntl(HANDOFF_FD, libc::F_SETFD, libc::FD_CLOEXEC) } >= 0);
+    assert!(unsafe { libc::fcntl(source, libc::F_SETFD, libc::FD_CLOEXEC) } >= 0);
     drop(reader);
     // SAFETY: the duplicate at the slot is now the owned reader.
-    let reader = unsafe { OwnedFd::from_raw_fd(HANDOFF_FD) };
+    let reader = unsafe { OwnedFd::from_raw_fd(source) };
     {
         use std::io::Write;
         let mut writer = std::fs::File::from(writer);
@@ -192,6 +254,9 @@ fn a_handoff_reader_already_at_the_slot_survives_exec() {
         .unwrap();
 
     let payload = std::fs::read(home.path().join("handoff.out")).unwrap();
-    assert_eq!(payload, b"handoff-proof-payload");
+    assert_eq!(
+        payload, b"handoff-proof-payload",
+        "source descriptor {source}"
+    );
     drop(held);
 }

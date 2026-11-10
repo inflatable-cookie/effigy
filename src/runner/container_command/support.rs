@@ -1786,7 +1786,7 @@ mod tests {
         std::fs::create_dir(&bin).unwrap();
         let pid_file = root.join("child.pid");
         let script = format!(
-            "#!/bin/sh\nprintf '%s' \"$$\" > {pid_file}\nsleep 60\nprintf 'late\n'\n",
+            "#!/bin/sh\nprintf '%s' \"$$\" > {pid_file}.pending\nmv {pid_file}.pending {pid_file}\nsleep 60\nprintf 'late\n'\n",
             pid_file = pid_file.display()
         );
         for name in ["docker", "colima"] {

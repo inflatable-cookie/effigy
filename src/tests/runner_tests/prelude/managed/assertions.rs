@@ -6,6 +6,9 @@ use super::cases::{ManagedInvalidDefinitionCase, ManagedTaskRefInvalidCase};
 use super::helpers::run_dev_with_repo;
 
 fn run_dev_with_manifest_error(workspace: &str, manifest: &str, context: &str) -> RunnerError {
+    // These matrices exercise manifest errors under the default environment,
+    // excluding concurrent retirement fixtures' process-wide flags.
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let root = temp_workspace(workspace);
     write_root_manifest(&root, manifest);
     run_dev_with_repo(&root, &[]).expect_err(context)
