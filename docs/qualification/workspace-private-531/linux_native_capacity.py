@@ -27,14 +27,18 @@ def probe(root, capacity):
         raise ValueError('capacity control does not match its physical filesystem')
     directory = Path(tempfile.mkdtemp(prefix='enospc-', dir=root))
     path = directory / 'payload'
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_DSYNC, 0o600)
     initial = os.fstat(fd)
     try:
         block = bytes(1024 * 1024)
         failure = None
         while os.lseek(fd, 0, os.SEEK_CUR) <= capacity:
             try:
-                os.write(fd, block)
+                written=os.write(fd, block)
+                if written<=0:raise RuntimeError('capacity write made no progress')
+                # Clean pages can be evicted immediately. ENOSPC, rather than
+                # dirty-page charging, must terminate this bounded writer.
+                os.posix_fadvise(fd,0,0,os.POSIX_FADV_DONTNEED)
             except OSError as error:
                 failure = error.errno
                 break

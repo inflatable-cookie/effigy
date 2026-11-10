@@ -1144,3 +1144,10 @@ historical meaning. A separate sealed diagnostic occurrence is unnecessary:
 the first occurrence's actual boot-bound physical and writer observations are
 its prerequisites. A request file alone never authorizes either occurrence.
 No sealed occurrence or #623 credit is claimed by task 829's exploration.
+
+
+The integrated ENOSPC sweep initially hit its 128 MiB observer memory ceiling
+while buffering writes. Its OOM result, empty cgroup and exact retained payload
+inode were observed before that inode alone was truncated and retained. Capacity
+writers now use synchronous data writes and evict clean pages so physical
+ENOSPC, rather than page-cache charging, terminates the control.

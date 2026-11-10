@@ -1,4 +1,4 @@
-"""Linux-only unsealed custody around the shared native session driver."""
+"""Linux custody and physical writer checks around the shared session driver."""
 import json
 from pathlib import Path
 import subprocess
@@ -10,11 +10,9 @@ from common import exclusive, exclusive_bytes, require, run
 
 
 class Window(runtime.Window):
-    def __init__(self, cell, inputs_hash, go, *, exploratory):
-        require(exploratory is True, 'Linux exploration cannot supply proof authority')
+    def __init__(self, cell, inputs_hash, go, *, exploration_authority=None):
         self.command_count = 0
-        super().__init__(cell, inputs_hash, None,
-                         exploration_authority='task-829 Queue-held native exploration approval')
+        super().__init__(cell, inputs_hash, go, exploration_authority=exploration_authority)
 
     def inventory(self):
         return runtime.engine_inventory(self.engine_command)
@@ -64,7 +62,8 @@ class Window(runtime.Window):
         limit = min(timeout if timeout is not None else (300 if activation else 60), remaining)
         environment = self.env if env is None else env
         if not self.exploratory:
-            return run(args, cwd=cwd or self.root, env=environment, timeout=limit, check=check, data=data)
+            return super().command(args,check=check,data=data,cwd=cwd,env=env,timeout=timeout,
+                                   activation=activation,protected_output=protected_output)
         self.command_count += 1
         stem = 'explore-command-%04d' % self.command_count
         exclusive(stem + '.intent.json', {'argv': [str(arg) for arg in args],

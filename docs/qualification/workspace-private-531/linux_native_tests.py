@@ -496,6 +496,30 @@ class JournalPollingTests(unittest.TestCase):
                 gc.collect()
 
 
+class SharedLinuxWindowTests(unittest.TestCase):
+    def test_both_authorities_reach_the_shared_driver_and_conflicting_authority_refuses(self):
+        class ArtifactReached(Exception):pass
+        cell=dict(backend='linux',budget_seconds=10,qualification_root='/owned/root',candidate={})
+        with patch.object(runtime,'qualification_path',return_value=Path('/owned/root')), \
+             patch.object(runtime,'artifact',side_effect=ArtifactReached):
+            for go,authority in (({'fixture_go':True},None),(None,{'fixture_exploration':True})):
+                with self.assertRaises(ArtifactReached):
+                    linux_native_window.Window(cell,'a'*64,go,exploration_authority=authority)
+            for go,authority in ((None,None),({'fixture_go':True},{'fixture_exploration':True})):
+                with self.assertRaisesRegex(RuntimeError,'one execution authority'):
+                    linux_native_window.Window(cell,'a'*64,go,exploration_authority=authority)
+
+    def test_proof_activation_keeps_the_shared_command_deadline(self):
+        window=object.__new__(linux_native_window.Window)
+        window.verify_root=lambda:None
+        window.end=time.monotonic()+1000
+        window.exploratory=False
+        window.root=Path('/owned/root');window.env={}
+        with patch.object(runtime,'run',return_value=subprocess.CompletedProcess(['fixture'],0,b'',b'')) as run:
+            window.command(['fixture'],activation=True)
+            self.assertEqual(run.call_args.kwargs['timeout'],60)
+
+
 class RetainedStreamTests(unittest.TestCase):
     def test_protected_guest_output_is_not_written_to_exploratory_evidence(self):
         with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
