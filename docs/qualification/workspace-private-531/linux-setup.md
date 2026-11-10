@@ -1,8 +1,8 @@
 # Linux transport and Vault-backed placement proposal — unarmed
 
-No VM/SSH/account/key/storage inspection or effect is authorized here. A later
-fresh Queue-bound stage needs exact operator effects, numeric time/storage bounds
-and disposition. Keep the reviewed **SSH** transport; Parallels authenticates
+This document grants no VM, SSH or storage authority. Task 829's Queue-held brief
+separately authorizes the exploration recorded below; the legacy sealed packet
+remains unarmed. Keep the reviewed **SSH** transport; Parallels authenticates
 preparation facts, not a replacement proof transport.
 
 ## Fixed diagnostic snapshot binding
@@ -869,3 +869,302 @@ metadata selection only. It is not a runtime, header or setup proof, and it gran
 credit to any prior run.
 
 Not run here: a live Stage1 against the registered VM, and any image-body or header read.
+
+## Interactive native exploration — task 829
+
+Task 829 authorizes interactive preparation on the fixed Stash VM before candidate
+freeze. Exploratory observations grant no #623 qualification credit. Historical
+failed occurrences and their retained originals remain unchanged.
+
+The pre-change snapshot is `d1602e5a-964a-4375-9eec-df6ed4350305`, named
+`effigy-explore-2026-11-09`. Revert only this task-owned snapshot with
+`prlctl snapshot-switch 433c9e5b-c7b9-469f-9633-24b4addcd3b5 --id
+{d1602e5a-964a-4375-9eec-df6ed4350305}`. Reversion discards later guest changes;
+no reversion has been performed. Evidence is retained under
+`/Volumes/Stash/scratch/effigy/829-native-4y5ejcjw/native-829/`. The original live run root was
+`/Volumes/Stash/scratch/effigy/64906ab8/native-829/`; the retained copy preserves
+those recorded paths and is outside Queue run cleanup.
+
+`effigy qualification:linux:native-smoke -- OWNED_EVIDENCE_ROOT ASSET_SEED`
+runs the unsealed chain on the prepared fixed VM: diagnostic boot/stop, private
+SSH identity check, physical-image resume, engine and actual-container ENOSPC
+controls, exact-HEAD native builds, GNU artifact production, ordinary acquisition
+and the complete private-session assertions. Success stops the owned engine and
+VM. A failure retains its fixture and resources for diagnosis; reconcile that
+exact fixture before another window. `--diagnostic-only` runs just the original
+diagnostic cycle. Neither route accepts a sealed GO or grants qualification credit.
+
+Prerequisites are this task's dedicated account/tools, the existing root-owned
+engine and final workspace images, the pinned offline runtime image, and the
+mode-0700 evidence root with its private SSH config/key/known-hosts files. The
+asset seed is the exploratory schema consumed by `linux_native_run.py`; it binds
+the real old binary/source, engine, image and retained resource inventory. The
+full smoke builds ordinary/candidate/fixture/kernel roles and the GNU artifact
+from its exact committed HEAD, re-hashes retained tools and old binary, and keeps
+the previous and current network observations. Docker recreates its default
+bridge ID on daemon restart; each new unsealed window binds that new observed
+identity, while containers, volumes and network names must still agree with the
+retained baseline. Inventory equality within a window remains exact. The private
+SSH key is exclusive and expiring. A fresh preparation occurrence must rebind
+its actual policy and forced-command entry; an exploratory key is not proof authority.
+The sealed diagnostic retains its historical snapshot pin; exploration binds
+and verifies the actual current snapshot inventory for each cycle.
+
+Initial native writer and engine-input observation routes completed without
+findings. The next integrated cycle exposed a session refusal on systemd readiness
+*after* a successful echo sentinel; transport availability is not stable for the
+whole boot window. Default Tools-mediated stop also stalled. An ACPI request returned once while an
+earlier default stop remained pending; later independent ACPI cycles timed out.
+That first return did not establish ACPI reliability. Retained streams and exits
+distinguish these observations from a closure assumption. Guest shutdown logs
+identify GNOME session and Parallels desktop-helper stop timeouts. This task changed
+only the guest default boot target from graphical to multi-user to avoid starting
+that unrelated desktop session on the dedicated proof VM. The pre-change snapshot
+is its rollback; accounts and user homes were not changed in this batch.
+
+After candidate freeze, use the two-occurrence plan below. No occurrence is
+armed here. Earlier failures remain failures; exploratory artifacts cannot stand
+in for frozen candidate artifacts.
+
+The completed unsealed headless diagnostic is retained at
+`native-829/linux-diagnostic-explore-b2298d4f57e14870997eedb1a34d89d4/outcome.json`
+under the evidence root above; its caller streams are `smoke-6.stdout` and
+`smoke-6.stderr`, with `smoke-6.exit` recording zero. Findings are empty, both
+observation sets are complete, and the terminal VM observation is stopped.
+Tools-mediated graceful stop took 4.123 seconds. The final harness keeps that
+original stop route; ACPI is not a supported substitute established by this work.
+Read-only session refusals may recur after a successful sentinel, so the fixed
+readiness, probe and boot-ID reads now share the bounded shape-based retry policy
+used by observation routes. Every attempt is retained, nonempty partial output
+refuses, budgets decrease, and retries never extend the caller's absolute deadline.
+The local readiness fixtures use a two-second shared window, with ten seconds
+for the four-launch #817 reproduction under host contention; their state transition is published atomically so a reader
+cannot mistake a truncate/write interval for a terminal systemd state.
+
+### Native build, engine and complete session
+
+The complete unsealed session passed on 2026-11-10 using native binaries from
+`4713c1dc7` (reviewed main `876dcc39` plus the control-plane read fix).
+Evidence is retained under the owned root above in
+`native-session-38f0e703475c4326a2d34b1d84cfd2b3/`: waited exit zero,
+`fixture.tar`, all command streams/exits and three live writer observations.
+Its 27 recorded cells include standard streaming/exit 23, signal 15, invalid
+credentials, caller-loss settlement, actual rotation/truncation refusal,
+genuine-old/kernel helpers, session crash recovery, fresh activation, shutdown
+and exact original engine inventory. These are exploratory observations;
+mechanism activation, downstream receipt integration and the final full smoke
+remain outstanding. They supply no #623 or #624 credit.
+
+The dedicated account is locked `effigy531`, UID/GID 1001. Private host SSH files
+are outside guest shares. The current expiring exploratory key permits interactive
+preparation; it is **not** the sealed E6 forced-command credential.
+Native Rust 1.97.1 and pinned Nextest 0.9.145 build ordinary and qualification
+binaries, real helper/test binaries, and genuine old source
+`823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1`. The guest-only missing-Oxide
+selector route is recorded in [cargo-routes.md](../../knowledge/cargo-routes.md#task-829-interactive-guest-bootstrap).
+The GNU producer targets ARM64 GNU 2.31, verifies ELF/loader requirements and
+publishes actual source/version/hash and freshness-anchor identity. The ordinary
+consumer binds that identity; no handwritten install receipt substitutes for it.
+The Linux runtime recipe creates the non-root `effigy` UID1001 user and verifies
+Python/SSL as that user. Builds keep a stable private toolchain HOME to reuse
+Zig's linker cache. Nextest reused-binary execution places reports on the
+workspace image with a generated `store.dir`, preserving pinned runner timeouts.
+
+Planner decision `5b63ff1d431522bbb8a6da63065d08527a642ce6b47c003a1f2e96064f8c14fd`
+selects the dedicated rootful engine; the earlier rootless experiment remains
+unqualified. The VM's original Docker/containerd services are unchanged.
+All dedicated containerd state, Docker data, BuildKit caches and logs reside on
+`/var/lib/effigy-829/engine-final.ext4`, exactly 3 GiB, root-owned mode 0600,
+UUID `ba08b2af-40d2-4da5-8f67-f5e48e02a4d6`. The former 2 GiB engine pilot
+remains intact and unmounted. The workspace image is
+`/var/lib/effigy-829/rows-final.ext4`, exactly 1 GiB, root-owned mode 0600,
+UUID `8d8707ea-dd3d-48ab-b408-47f66e5475dd`. The former 4 GiB pilot stays
+retained and unmounted. A real UID1001/CapEff-zero/Seccomp-2 container writer
+could remove its empty inode's project ID, then restored it without allocating
+payload extents. Project quota therefore cannot cover this writer population.
+Actual workspace and stopped-engine probes reached ENOSPC, retained their new
+empty inodes and released only those verified probe extents.
+
+Both active images were initialized offline by rewriting each block unchanged,
+with equal complete before/after hashes. `qualification:linux:initialize-images`
+requires the owned rollback snapshot, exact existing inodes and idle engine;
+it never formats, grows or replaces an image. Resume verifies complete ordinary
+FIEMAP extents, zero loop discard, root-controlled ancestors, raw ext4 capacity
+and UUID, original `LOOP_GET_STATUS64` backing inode/device/offset, nodev/nosuid
+mounts and at most 64 KiB outer-file metadata before starting the daemon.
+Quiescent whole-filesystem allocation must remain stable and agree with the
+inode census within the fixed 1 MiB metadata tolerance.
+
+The successful session sampled every 50 ms: engine peak was 1,024,258,048 bytes
+and workspace peak 76,914,688 bytes. The 2 GiB engine passed the two-times sampled
+peak check. Sampling is headroom evidence, separate from the physical ceiling.
+
+Live observations cover every PID in the exact controller and engine cgroups,
+including the container, shim and containerd. They retain PID births, executable
+hashes, memory/swap controls, visible mount descriptors, writable descriptors
+and shared mappings. Process names never establish identity. Covered mount
+entries can remain in mountinfo while their paths are absent; the collector
+opens the nearest visible ancestor and verifies that coverage explicitly.
+Writable hugetlbfs refused. The controller now binds `/dev` and `/sys` read-only
+and uses a closed device policy; `PrivateDevices` alone did not remove the
+observed writable child mount on this VM. The daemon also protects kernel
+modules/logs/clocks and binds `/dev` and `/sys` read-only, with explicit writable
+kernel interfaces `/sys/fs/cgroup` (runc) and `/proc/sys/net` (network setup).
+Both cohorts have 3 GiB memory limits and zero swap. Pinned trusted daemons and
+controller are part of this premise; arbitrary privileged workloads are not.
+
+Private publication exposed an image-USER assumption: mode-0600 credentials
+were hashed before their ownership handoff. Control-plane immutable-object reads
+now use explicit root, matching staging writes. Protected credential and inspect
+bodies are omitted from exploratory command evidence. Shared reviewed main owns
+the standard-shell handoff, per-stream v3 capture, session request lifetime and
+owner-loss accounting; this task removed its overlapping local implementations.
+
+Planner review `9faaa016a0a865cedc7ac31f08b880962b9f608d4613e1bb061d12e3822fe201`
+requires a fresh physical preparation/activation packet and full-session
+receipt integration. Follow-up `5a1fa1682ef0286965de450a434711f4740d0ddf63ddfd3e61c8b45cdcff1a30`
+requires one preparation runner: retain custody, transfer, supervisor and receipts,
+and isolate quota-specific assumptions behind a limit-mechanism boundary.
+The production hard-limit registry now dispatches only source verifiers;
+self-declared limits/enforcement labels cannot pass. The pure loop-original
+verifier binds frozen source/phase/nonces, original streams, completed observer
+custody, exact images/configuration, writer cohorts and allocation accounting.
+Registration is source support, not activation or proof. The legacy root-quota
+packet remains unarmed; no old H/K anchors or failed occurrences are repurposed.
+
+
+### Bounded preparation and fixed transfer (829)
+
+The preparation tree now has its own initialized 40 GiB image,
+`/var/lib/effigy-829/preparation.ext4`, UUID
+`18f16a9f-a2cd-421e-8390-8f8d6d2bd829`, mounted at the native base.
+The original tree remains at `linux-native-829.before-physical-18f16a9f`.
+All 146,497 copied entries matched content and metadata before cutover.
+This bounds sources, toolchains, caches and artifacts separately from the
+1 GiB workspace and 3 GiB final engine. Builds run as UID1001 in observed systemd
+units with 3 GiB memory, no swap, read-only system/kernel mounts and writable
+paths confined to these filesystems. The actual preparation gate passed after
+protecting the observed `binfmt_misc` kernel mount.
+
+Allocation accounting reads the real ext4 orphan inode and shared external
+attribute block headers. It counts each physical block once; it does not widen
+the 1 MiB attribution tolerance. A private, nonrecursive read-only bind exposes
+preparation inodes otherwise covered by the workspace mount. All three native
+filesystems passed the resulting attribution check.
+
+The exploratory SSH account now uses one exclusive, expiring transfer key under
+a root-owned SSH policy. Its fixed entry accepts only a 64-character operation
+ID provisioned by the authenticated host authority. Each operation binds boot,
+expiry, parent device/inode, exact size and SHA-256. Receive uses exclusive,
+no-follow creation; read verifies the independently provisioned identity.
+An actual receive/read round trip passed and an arbitrary `id` request refused
+with exit 3. Root operations retain exact source, unit, streams, exit and
+independent empty kernel-cgroup observations. The same transport is used by the prepared full-session facade. Neither its
+operation ID nor an environment variable grants proof activation.
+
+
+### Engine headroom after repeated exploration
+
+A later full session completed all assertions and live writer checks, then
+refused its headroom check: retained preparation contexts raised the engine
+peak to 1,108,004,864 bytes. The 2 GiB pilot was therefore too small for the
+required two-times peak. Future offline build contexts now stage on the
+40 GiB preparation filesystem, rather than consuming engine allocation.
+
+The smallest supported final engine reservation is 3 GiB. Promotion copied the
+quiescent pilot into a fresh, fully initialized image, then changed and checked
+only that copy. UUID replacement requires a writable filesystem check before
+`resize2fs`; the first refused resize and its recovery originals are retained.
+The original pilot SHA-256 remained
+`e046dd10b7547fe72c8ac0f7be26b838ab1994dba1225b4e2b8111d8b48e4ecc`.
+Final custody pins device 2050, inode 2641556, 3,221,225,472 image bytes,
+complete initialized extents and 4,096 outer metadata bytes. The new
+filesystem also passed whole-filesystem attribution. No original image was
+enlarged, deleted or reverted.
+
+
+The quota-specific production observation entry is retired and refuses before
+transport or intent. Quota parsers remain only for historical evidence and
+focused controls; production limit admission supports the physical mechanism.
+The single native runner freezes setup/activation and before/after originals,
+plus three separate live observer units for the three activation cohorts.
+Missing or replayed live originals refuse offline acceptance.
+
+
+### Frozen preparation and full-session handoff
+
+The shared runner retains separate stdout/stderr, SSH wait status, exact unit
+invocation, and independent empty kernel cgroups. The fixed SSH entry accepts
+only root-provisioned read, receive and run operations. Receive publishes with
+an exclusive hard link after hash verification and fsync. Run releases one
+bound unit, returns its bounded streams and exit, and accepts no shell command.
+A content-addressed root-owned observer cache is installed during preparation;
+the full proof only verifies and executes those prepared observers.
+
+The controller writes its one-use claim and bounded fixture archive under
+`linux-native-829/proof-claims` on the 40 GiB preparation image. This filesystem
+is writable during the full session and belongs to its admitted physical bounds.
+Workspace, engine and preparation images are checked before, during all three
+activation cohorts, and after the session. The engine invocation must stay the
+same as activation. Receipt export happens only after two-times peak headroom,
+archive publication and all session assertions pass. Offline aggregation reads
+originals and never invokes a VM, SSH, Docker or a privileged helper.
+
+One-time image migration/promotion and interrupted-copy recovery sources are
+retained in the exploratory evidence and Git history. Their live entry points
+are removed. The smoke selector adopts the three existing verified images;
+it never creates a replacement reservation or deletes earlier evidence.
+
+### Minimal sealed plan after candidate freeze
+
+1. The owner selects one exact 40-character merged candidate C containing this
+   change, after canonical main QA is green. Freeze the actual VM/snapshot
+   inventory, owned seed, program hashes and fresh activation in a physical
+   preparation request. Separately activate
+   `qualification:linux:physical-preparation-proof-only REQUEST SHA256` through
+   Nucleus. Its 5,400-second window adopts the account/private SSH/tools, checks
+   all three real ENOSPC controls, builds C and its genuine GNU-floor artifact,
+   exercises ordinary acquisition, and exports fresh setup/activation originals.
+   It leaves this VM and dedicated engine running on the recorded boot. Bind
+   its complete artifact as the Linux cell's `linux_preparation` reference.
+2. Assemble hash-bound all-backend inputs for that same C and Recipe E, with the
+   fresh empty Linux fixture, preinstalled driver, exact physical plan and actual
+   artifacts from step 1. Freeze GO, selected GO and GO-index bytes after the
+   preparation artifact exists. Separately activate the existing #623 Linux
+   full-session entry once, within its 1,800-second window. It transfers only
+   the bound JSON inputs and hash-bound unit-control metadata, then gates the
+   prepared controller; it performs no
+   build, install, source staging or configuration repair. Retain original
+   separate streams, all three live observations, actual allocation samples,
+   receipt bytes and closure. A reboot, engine restart or changed artifact
+   requires fresh preparation and GO rather than refreshing an old packet.
+
+#624 then runs its offline aggregate against matching Linux, Desktop and Colima
+receipts at C. Prior H/K anchors and failed #810/#817/#820 originals retain their
+historical meaning. A separate sealed diagnostic occurrence is unnecessary:
+the first occurrence's actual boot-bound physical and writer observations are
+its prerequisites. A request file alone never authorizes either occurrence.
+No sealed occurrence or #623 credit is claimed by task 829's exploration.
+
+
+The integrated ENOSPC sweep initially hit its 128 MiB observer memory ceiling
+while buffering writes. Its OOM result, empty cgroup and exact retained payload
+inode were observed before that inode alone was truncated and retained. Capacity
+writers now use synchronous data writes and evict clean pages so physical
+ENOSPC, rather than page-cache charging, terminates the control.
+
+
+The integrated driver file map exceeded Parallels' observed command-size ceiling
+when embedded in the unit command. Launch now transfers that map, exact argv
+and release token as hash-bound JSON control metadata. A short fixed bootstrap
+verifies those bytes and every prepared driver file before exec. This changes
+no executable source during the full occurrence and avoids transport-dependent
+argument limits as the driver grows.
+
+
+A later shutdown sample retained an unbound regular metadata stat with link count
+zero while Parallels unlinked it. This is a raced directory observation, rather
+than a hardlink. It now retains that stat and repeats the complete sample once;
+a persistent zero-link observation still refuses. Bound inputs keep strict
+custody, and real hardlinks/aliases (link count greater than one), symlinks and
+non-regular entries remain definitive refusals. No filename exception is added.

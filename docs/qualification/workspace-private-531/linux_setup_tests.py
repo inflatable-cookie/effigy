@@ -47,6 +47,21 @@ def nonce_for(row_id):
     return hashlib.sha256(('effigy-test-nonce:' + row_id).encode()).hexdigest()
 
 
+
+def fixture_hard_limit(witness, limit_bytes, facts, supported):
+    if limit_bytes is None or limit_bytes not in witness.get('limits', []) or witness.get('enforcement') != 'kernel':
+        raise ValueError('fixture hard limit differs')
+    return {'fixture_only': True}
+
+
+def setUpModule():
+    setup.HARD_LIMIT_VERIFIERS['test-limit'] = fixture_hard_limit
+
+
+def tearDownModule():
+    del setup.HARD_LIMIT_VERIFIERS['test-limit']
+
+
 class _Nonces(dict):
     """Row nonces for any row id; the fixture never has to list them."""
 
@@ -1692,7 +1707,9 @@ class Stage1CallerChecks(unittest.TestCase):
             if step == 'S1.3':
                 def flip():
                     time.sleep(0.08)
-                    state_file.write_text('running\n')
+                    replacement = state_dir / 'state-next'
+                    replacement.write_text('running\n')
+                    replacement.replace(state_file)
                 threading.Thread(target=flip, daemon=True).start()
                 proc = subprocess.run([str(fake), 'is-system-running', '--wait'],
                                       capture_output=True, timeout=timeout)
@@ -2135,8 +2152,8 @@ class PlanChecks(unittest.TestCase):
         facts = self.fx.facts()
         self.assertEqual(set(facts['go']), setup.SETUP_GO_GATES)
         rows = setup._rows(facts)
-        self.assertEqual(sum(row['kind'] in ('vm-supervised', 'contained-transfer') for row in rows), 48)
         facts['go']['unexpected'] = {}
+        self.assertEqual(setup._rows(facts), rows)
         result = execute(facts)
         self.assertEqual(result['halt'], 'E3a')
         self.assertIn('fixed setup GO receipt set', result['reason'])
@@ -3772,24 +3789,12 @@ class ExactApprovalAndCustodyChecks(unittest.TestCase):
 
 
 class AuthenticatedObservationChecks(unittest.TestCase):
-    def test_actual_callers_retain_separate_streams_and_reject_boot_drift(self):
+    def test_retired_quota_entry_refuses_before_transport_or_intent(self):
         import linux_observation_caller as callers
-        fx = PlanFixture()
-        facts = fx.facts()
-        rows = {r['id']: r for r in setup.setup_plan(facts)}
-        calls = []
-        def transport(argv, stdin, timeout, cap):
-            calls.append(argv)
-            text = BOOT + '\n' + (show_text() if argv[0] == '/usr/bin/ssh' else '256 ' + HOSTKEY + ' root (ED25519)\n')
-            return dict(disposition='exited', reason=None, waited_exit=0, stdout=text.encode(), stderr=b'')
-        root = tmpdir('actual-observation-')
-        caller = callers.ObservationCaller(facts, root, transport, lambda: NOW)
-        self.assertEqual(caller.identity(rows['E8']), facts['identity'])
-        self.assertEqual(caller.terminal(rows['E8']), {'show_text': show_text()})
-        self.assertIn(rows['E8']['credit']['unit'], calls[-1][-1])
-        self.assertTrue((root / 'observation-0002' / 'stderr').exists())
-        facts['identity']['boot_id'] = 'changed'
-        with self.assertRaises(Refusal): caller.terminal(rows['E8'])
+        root = tmpdir('retired-quota-')
+        with self.assertRaisesRegex(Refusal,'legacy quota preparation entry retired'):
+            callers.execute({},root,600)
+        self.assertEqual(list(root.iterdir()),[])
 
     def test_every_ssh_payload_checks_credentials_before_intent(self):
         fx = PlanFixture()

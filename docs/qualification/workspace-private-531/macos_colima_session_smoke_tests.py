@@ -227,6 +227,8 @@ class ExplorationTests(unittest.TestCase):
         from types import SimpleNamespace
         for engine in ('colima', 'docker'):
             window = smoke.runtime.Window.__new__(smoke.runtime.Window)
+            window.guest_user = 'nobody'
+            window.guest_home = '/home/nobody'
             window.root = self.control / ('checkout-' + engine)
             window.root.mkdir(mode=0o700)
             image = 'sha256:' + 'a' * 64

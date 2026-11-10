@@ -113,7 +113,17 @@ def verify_receipt_semantics(record):
             'exploratory receipts cannot qualify')
     cells = parsed.get('cells')
     require(isinstance(cells, list) and cells, 'complete receipt records no cells')
-    names = [cell.get('cell') for cell in cells]
+    all_names=[cell.get('cell') for cell in cells]
+    if record['backend']=='linux':
+        extras={'bounded-native-workload','bounded-native-writers'}
+        activations=[index for index,name in enumerate(all_names) if name=='positive-session']
+        require(len(activations)==3 and all(all_names[index+1:index+3]==['bounded-native-workload','bounded-native-writers']
+                for index in activations),'Linux activations lack their workload and writer observations')
+        require(all_names.count('bounded-native-workload')==all_names.count('bounded-native-writers')==3,
+                'Linux receipt has missing or extra writer gates')
+        names=[name for name in all_names if name not in extras]
+    else:
+        names=all_names
     require(all(name in REQUIRED_CELLS for name in names),
             'receipt records a cell outside the fixed full-session contract')
     require(list(dict.fromkeys(names)) == list(REQUIRED_CELLS),
@@ -166,6 +176,29 @@ def verify_record(backend, record, head):
     root = qualification_path(binding['qualification_root'])
     require(Path(record['receipt']) == root / 'complete.json',
             'the recorded receipt must be the pinned root\u2019s complete.json')
+    if backend == 'linux':
+        import linux_capacity_contract as capacity
+        preparation=binding['linux_preparation']
+        prepared_path=receipt_file(preparation['path'],'retained Linux preparation')
+        require(digest(prepared_path)==preparation['sha256'],'Linux preparation bytes changed')
+        prepared=load(prepared_path)
+        require(prepared['schema']=='effigy.linux-physical-preparation-complete.v1'
+                and prepared['source_head']==head and prepared['cell']['linux_capacity']==binding['linux_capacity'],
+                'Linux full receipt does not carry its frozen preparation')
+        original = record['linux_capacity_originals']
+        path = receipt_file(original['path'], 'Linux physical originals')
+        require(digest(path) == original['sha256'], 'Linux physical originals changed')
+        capacity.verify_full(binding['linux_capacity'], load(path), head)
+        limits=binding['linux_capacity']['plan']['phases']['activation']['images']
+        allocation=record['linux_allocation']
+        peak=allocation['sampled_peak_bytes'][limits['engine']['mountpoint']]
+        require(type(peak) is int and peak>0 and type(allocation['samples']) is int and allocation['samples']>0
+                and allocation['sample_period_seconds']==.05
+                and allocation['engine_capacity_bytes']==limits['engine']['image_bytes']
+                and allocation['engine_has_twice_sampled_peak_headroom'] is True
+                and peak*2<=limits['engine']['image_bytes'], 'Linux engine lacks recorded two-times peak headroom')
+        claim=Path(limits['preparation']['mountpoint'])/'proof-claims'/('531-'+binding['inputs']['sha256']+'-linux.started.json')
+        require(binding['one_shot_marker']==str(claim),'Linux one-use claim escapes its prepared role')
     verify_receipt_semantics(record)
 
 

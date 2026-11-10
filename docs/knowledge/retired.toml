@@ -1839,3 +1839,16 @@ allow = [
   "docs/knowledge/questions.md",
   "docs/knowledge/v015-roadmap.md",
 ]
+
+[[retired]]
+id = "linux-quota-only-native-preparation"
+retired = "2026-11-10; native physical-limit preparation (effigy#829)"
+replacement = "Use the shared native Linux physical preparation and full-session runner with the existing initialized workspace, engine and preparation images. Quota parsers and the refusal-only compatibility entry remain for historical evidence; they cannot dispatch production preparation. One-time image migration, promotion and interrupted-copy recovery sources remain in Git and retained exploratory evidence."
+owner = "docs/qualification/workspace-private-531/linux-setup.md"
+terms = ["class ObservationCaller"]
+paths = [
+  "docs/qualification/workspace-private-531/linux_native_engine_capacity.py",
+  "docs/qualification/workspace-private-531/linux_native_preparation_storage.py",
+]
+config_keys = ["qualification:linux:prepare-storage", "qualification:linux:resume-preparation-copy"]
+allow = ["CHANGELOG.md"]
