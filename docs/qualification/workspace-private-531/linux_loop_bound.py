@@ -101,8 +101,12 @@ def visible_mounts(actor):
     visible = {}
     for item in actor['mount_visibility']:
         row = by_id.get(item['mount_id'])
+        opened = item.get('opened_path', item['target'])
         if (row is None or row['device'] != item['device']
-                or not Path(item['target']).is_relative_to(Path(row['target']))
+                or not Path(item['target']).is_relative_to(Path(opened))
+                or not Path(opened).is_relative_to(Path(row['target']))
+                or (item.get('missing', False) is not (opened != item['target']))
+                or (opened != item['target'] and row['target'] == item['target'])
                 or item['read_only'] != ('ro' in row['options'])):
             raise ValueError('visible mount descriptor disagrees with mountinfo')
         visible[item['mount_id']] = row

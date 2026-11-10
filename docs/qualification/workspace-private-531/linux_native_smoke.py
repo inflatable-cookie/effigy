@@ -48,7 +48,7 @@ def ssh_prefix(root, attempt):
                                      build.file_input(control / 'ssh_known_hosts'), control, attempt.root)
 
 
-def root_operation(root, attempt, ssh, entry, files, arguments=(), *, runtime_seconds=45, file_limit='8M'):
+def root_operation(root, attempt, ssh, entry, files, arguments=(), *, runtime_seconds=45, file_limit='8M', expected=None):
     remote = build.BASE + '/metadata/smoke-' + uuid.uuid4().hex
     attempt.command(ssh + ['umask 077; mkdir ' + shlex.quote(remote)])
     pins = {}
@@ -71,7 +71,9 @@ def root_operation(root, attempt, ssh, entry, files, arguments=(), *, runtime_se
     payload = code.encode()
     bootstrap = remote + '/root-bootstrap.py'
     attempt.command(ssh + ['umask 077; set -C; cat > ' + shlex.quote(bootstrap)], data=payload)
-    unit = 'effigy-829-resume-' + uuid.uuid4().hex
+    unit = (expected['observer_unit'].removesuffix('.service') if expected else
+            'effigy-829-resume-' + uuid.uuid4().hex)
+    common.require(__import__('re').fullmatch(r'effigy-829-resume-[0-9a-f]{32}', unit), 'fresh exact observer unit required')
     stdout, stderr = ('/var/lib/effigy-829/' + unit + suffix for suffix in ('.stdout.json', '.stderr.log'))
     # Authenticate the bootstrap bytes in memory. Its account-owned directory
     # is never imported by root. One retained unit name is the execution latch,
@@ -92,7 +94,7 @@ def root_operation(root, attempt, ssh, entry, files, arguments=(), *, runtime_se
     deadline = time.monotonic() + runtime_seconds + 20
     while True:
         raw = attempt.admin('systemctl show --all ' + unit + '.service '
-                            '--property=MainPID,SubState,Result,ExecMainStatus,ControlGroup', read_only=True)
+                            '--property=MainPID,SubState,Result,ExecMainStatus,ControlGroup,InvocationID', read_only=True)
         state = dict(line.split('=', 1) for line in raw.decode().splitlines())
         if state.get('MainPID') == '0' and state.get('SubState') in ('exited', 'failed', 'dead'):
             break
@@ -109,6 +111,17 @@ def root_operation(root, attempt, ssh, entry, files, arguments=(), *, runtime_se
     # unit and remains available for the next native step.
     common.require(state.get('ControlGroup') == '', 'completed root helper retains a cgroup')
     result = json.loads(output)
+    if expected is not None:
+        import linux_capacity_contract as capacity
+        witness = {'schema': capacity.SCHEMA, 'mechanism': capacity.MECHANISM,
+                   'origin': expected['origin'], 'unit': dict(state, name=unit + '.service'),
+                   'stdout': output.decode('utf-8'), 'stderr': errors.decode('utf-8'),
+                   'stdout_sha256': hashlib.sha256(output).hexdigest(),
+                   'stderr_sha256': hashlib.sha256(errors).hexdigest(), 'exit': 0}
+        # Retain failed acceptance too. Authenticated source execution and its
+        # external frozen expectations remain separate from this pure check.
+        common.exclusive(attempt.root / (unit + '.original.json'), witness)
+        capacity.verify_observation(witness, expected)
     common.exclusive(attempt.root / ('resume-' + uuid.uuid4().hex + '.json'), result)
     return result
 
@@ -121,11 +134,15 @@ def root_resume(root, attempt, ssh):
     return result
 
 
-def root_collect(root, attempt, ssh, controller=None):
+def root_collect(root, attempt, ssh, controller=None, expected=None):
     files = ('linux_loop_bound.py', 'linux_native_storage.py', 'linux_native_writers.py',
              'linux_native_resume.py', 'linux_native_collect.py')
     arguments = () if controller is None else (controller,)
-    return root_operation(root, attempt, ssh, 'linux_native_collect.py', files, arguments)
+    if expected is not None:
+        common.require(expected['origin']['programs'] == {name: common.digest(Path(__file__).parent / name) for name in files},
+                       'frozen root observer source closure differs')
+        arguments = (controller or '-', json.dumps(expected['origin'], sort_keys=True))
+    return root_operation(root, attempt, ssh, 'linux_native_collect.py', files, arguments, expected=expected)
 
 
 

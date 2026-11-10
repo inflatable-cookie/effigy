@@ -25,6 +25,24 @@ def run(*argv):
     return subprocess.check_output(argv, text=True)
 
 
+def configuration_originals():
+    paths = [Path('/etc/systemd/system/effigy-829-rootful.service'),
+             Path('/usr/local/libexec/effigy829-rootful.sh'),
+             ROOT / 'rootful/containerd.toml', ROOT / 'rootful/dockerd.json']
+    result = {}
+    for path in paths:
+        info = path.lstat()
+        if path.resolve(strict=True) != path or info.st_uid != 0 or info.st_mode & 0o022:
+            raise RuntimeError('daemon configuration is not root controlled')
+        data = path.read_bytes()
+        if len(data) > 65536:
+            raise RuntimeError('daemon configuration exceeds its original bound')
+        result[str(path)] = {'text': data.decode('utf-8'), 'uid': info.st_uid,
+                            'mode': info.st_mode, 'device': info.st_dev, 'inode': info.st_ino,
+                            'sha256': hashlib.sha256(data).hexdigest()}
+    return result
+
+
 def resume():
     if os.geteuid() != 0 or run('blkid', '-s', 'UUID', '-o', 'value', '/dev/sda2').strip() != storage.ROOT_UUID:
         raise RuntimeError('fixed native root observer required')
@@ -63,14 +81,7 @@ def resume():
     if (len(addresses) != 1 or not (bridge / 'bridge').is_dir()
             or [(row['local'], row['prefixlen']) for row in addresses[0]['addr_info']] != [('172.29.0.1', 24)]):
         raise RuntimeError('existing bridge identity differs')
-    config_paths = [Path('/etc/systemd/system/effigy-829-rootful.service'),
-                    Path('/usr/local/libexec/effigy829-rootful.sh'),
-                    ROOT / 'rootful/containerd.toml', ROOT / 'rootful/dockerd.json']
-    configs = {}
-    for path in config_paths:
-        if path.resolve(strict=True) != path or path.stat().st_uid != 0 or path.stat().st_mode & 0o022:
-            raise RuntimeError('daemon configuration is not root controlled')
-        configs[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+    configs = {path: item['sha256'] for path, item in configuration_originals().items()}
     subprocess.run(['systemctl', 'start', 'effigy-829-rootful.service'], check=True)
     # Type=exec acknowledges exec, not daemon readiness. In particular, stopping
     # immediately can interrupt the wrapper before it has exec'd dockerd.

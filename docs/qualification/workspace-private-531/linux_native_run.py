@@ -150,6 +150,7 @@ def execute(root, seed, mode):
     common.require(value.get('schema') == 'effigy.linux-native-session-exploration.v1'
                    and value.get('task_id') == session.TASK and value.get('exploratory') is True
                    and value.get('qualification_credit') is False, 'unsealed task-owned asset seed required')
+    value['cell']['native_writer_gate'] = uuid.uuid4().hex if mode == 'full' else None
     common.exclusive(attempt.root / 'seed.json', value)
     driver = str(session.BASE / ('driver-' + attempt.root.name))
     attempt.command(ssh + ['umask 077; mkdir ' + shlex.quote(driver)])
@@ -182,7 +183,10 @@ def execute(root, seed, mode):
             '--property=RuntimeMaxSec=1850', '--property=TimeoutStopSec=15',
             '--property=PrivateUsers=identity', '--property=NoNewPrivileges=yes',
             '--property=CapabilityBoundingSet=', '--property=ProtectSystem=strict',
-            '--property=ProtectHome=yes', '--property=ReadWritePaths=' + writable,
+            '--property=ProtectHome=yes', '--property=BindReadOnlyPaths=/dev /sys',
+            '--property=DevicePolicy=closed',
+            '--property=ProtectKernelTunables=yes', '--property=ProtectKernelModules=yes',
+            '--property=ProtectKernelLogs=yes', '--property=ReadWritePaths=' + writable,
             '--property=MemoryMax=3G', '--property=MemorySwapMax=0', '--property=LimitCORE=0',
             '--property=StandardOutput=append:' + log, '--property=StandardError=append:' + log,
             '--setenv=PATH=' + str(session.BASE / 'tools/bin') + ':/usr/bin:/bin',
@@ -195,6 +199,8 @@ def execute(root, seed, mode):
     deadline = time.monotonic() + 1900
     properties = 'LoadState,ActiveState,SubState,Result,ExecMainStatus,MainPID,ControlGroup,InvocationID,ExecMainExitTimestampMonotonic'
     terminal = None
+    observed_gates = set()
+    observation_failure = None
     while time.monotonic() < deadline:
         raw = attempt.admin('systemctl show --all ' + unit + '.service --property=' + properties, read_only=True)
         status = dict(line.split('=', 1) for line in raw.decode().splitlines())
@@ -212,7 +218,29 @@ def execute(root, seed, mode):
                 and status.get('SubState') != 'running'):
             terminal = status
             break
-        time.sleep(5)
+        if mode == 'full' and status.get('MainPID') != '0':
+            # Each committed up pauses at its unique gate. Observe the exact
+            # live owning cohort before allowing the native assertions onward.
+            code = ('import json; from pathlib import Path; p=Path(' + repr(binding['fixture'])
+                    + '); print(json.dumps(sorted(str(f) for f in p.glob("writer-gate-*.request.json"))))')
+            gates = json.loads(attempt.admin('python3 -I -B -c ' + shlex.quote(code), read_only=True))
+            for gate in gates:
+                if gate in observed_gates:
+                    continue
+                import linux_native_smoke as smoke
+                try:
+                    original = smoke.root_collect(root, attempt, ssh, unit)
+                    common.require(original['writer_closure']['complete'], 'live native writer closure refused')
+                except Exception as error:
+                    observation_failure = str(error)
+                    common.exclusive(attempt.root / 'writer-observation-failed.json', {'error': observation_failure})
+                    stop_owned_unit(attempt, unit, session.BASE / 'qualification')
+                    break
+                acknowledgement = gate.removesuffix('.request.json') + '.observed.json'
+                data = json.dumps({'nonce': value['cell']['native_writer_gate'], 'complete': True}).encode()
+                attempt.command(ssh + ['set -C; cat > ' + shlex.quote(acknowledgement)], data=data)
+                observed_gates.add(gate)
+        time.sleep(1)
     if terminal is None:
         stop_owned_unit(attempt, unit, session.BASE / 'qualification')
         raise RuntimeError('owned native service exceeded deadline; stopped exact unit, no success claim')
@@ -224,8 +252,9 @@ def execute(root, seed, mode):
     archive = attempt.command(ssh + ['tar -C ' + shlex.quote(binding['fixture']) + ' -cf - .'],
                               timeout=180, read_only=True)
     (attempt.root / 'fixture.tar').write_bytes(archive)
-    passed = terminal.get('Result') == 'success' and terminal.get('ExecMainStatus') == '0'
-    result = dict(binding, passed=passed, terminal=terminal)
+    passed = (observation_failure is None and terminal.get('Result') == 'success'
+              and terminal.get('ExecMainStatus') == '0')
+    result = dict(binding, passed=passed, terminal=terminal, observation_failure=observation_failure)
     common.exclusive(attempt.root / 'outcome.json', result)
     print(json.dumps({'evidence': str(attempt.root), 'passed': passed, 'qualification_credit': False}))
     return 0 if passed else 1

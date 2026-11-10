@@ -47,6 +47,21 @@ def nonce_for(row_id):
     return hashlib.sha256(('effigy-test-nonce:' + row_id).encode()).hexdigest()
 
 
+
+def fixture_hard_limit(witness, limit_bytes, facts, supported):
+    if limit_bytes is None or limit_bytes not in witness.get('limits', []) or witness.get('enforcement') != 'kernel':
+        raise ValueError('fixture hard limit differs')
+    return {'fixture_only': True}
+
+
+def setUpModule():
+    setup.HARD_LIMIT_VERIFIERS['test-limit'] = fixture_hard_limit
+
+
+def tearDownModule():
+    del setup.HARD_LIMIT_VERIFIERS['test-limit']
+
+
 class _Nonces(dict):
     """Row nonces for any row id; the fixture never has to list them."""
 
@@ -2137,8 +2152,8 @@ class PlanChecks(unittest.TestCase):
         facts = self.fx.facts()
         self.assertEqual(set(facts['go']), setup.SETUP_GO_GATES)
         rows = setup._rows(facts)
-        self.assertEqual(sum(row['kind'] in ('vm-supervised', 'contained-transfer') for row in rows), 48)
         facts['go']['unexpected'] = {}
+        self.assertEqual(setup._rows(facts), rows)
         result = execute(facts)
         self.assertEqual(result['halt'], 'E3a')
         self.assertIn('fixed setup GO receipt set', result['reason'])

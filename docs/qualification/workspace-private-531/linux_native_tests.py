@@ -132,6 +132,118 @@ class PhysicalImageReceiptTests(unittest.TestCase):
             loop_bound.verify_image(bad, pin)
 
 
+class CapacityOriginalTests(unittest.TestCase):
+    def envelope(self):
+        import hashlib, json, copy
+        import linux_capacity_contract as contract
+        workspace, wp = PhysicalImageReceiptTests().image()
+        workspace['image'] = wp['image']
+        engine, ep = copy.deepcopy(workspace), copy.deepcopy(wp)
+        ep.update(image='/var/lib/effigy-829/engine-rootful.ext4', image_inode=2641043, mountpoint='/engine')
+        engine['image'] = ep['image']
+        engine['originals']['image_stat']['inode'] = ep['image_inode']
+        engine['originals']['ancestors'] = [dict(path=str(parent), uid=0, mode=0o40755) for parent in Path(ep['image']).parents]
+        raw = bytearray.fromhex(engine['originals']['loop_status_hex'])
+        struct.pack_into('<Q', raw, 8, ep['image_inode'])
+        struct.pack_into('<I', raw, 40, 13)
+        engine['originals']['loop_status_hex'] = raw.hex()
+        engine['originals']['loop']['backing_file'] = ep['image']
+        engine['originals']['loop']['device'] = '7:13'
+        engine['originals']['mountinfo'] = engine['originals']['mountinfo'].replace('/bounded', '/engine').replace('7:12','7:13').replace('loop12','loop13')
+        group = '/system.slice/engine.service'
+        mounts = '1 0 8:2 / / ro - ext4 /dev/sda2 rw\n2 1 7:12 / /bounded rw,nodev,nosuid - ext4 /dev/loop12 rw'
+        actor = WriterClosureTests().actor(mounts)
+        actor.update(executable_sha256='a' * 64, cgroup='0::' + group)
+        members = {group: [123]}
+        configs = {'/frozen/config': dict(text='exact config', uid=0, mode=0o100644)}
+        origin = dict(vm_uuid=contract.VM, source_head='b'*40, phase='setup', nonce='c'*32,
+                      programs={'collector.py':'d'*64}, evidence_kind='exploration')
+        expected = dict(origin=origin, boot_id='01234567-89ab-cdef-0123-456789abcdef',
+                        images={'workspace':wp, 'engine':ep}, cgroups={group:1024},
+                        executables=['a'*64], observer_unit='observer.service',
+                        engine_configs={'/frozen/config':hashlib.sha256(b'exact config').hexdigest()})
+        observation = dict(schema='effigy.linux-loop-observation.v1', boot_id=expected['boot_id'],
+            origin=origin, exploratory=True, qualification_credit=False,
+            images=[workspace, engine], engine_configs=configs,
+            writer_closure=dict(cgroups=members, cgroups_before=members, cgroups_after=members,
+                                actors=[actor], controls={group:{'memory.max':'1024', 'memory.swap.max':'0'}}),
+            units={'engine.service':dict(ActiveState='active', ControlGroup=group, MainPID='123')},
+            accounting={path:dict(used_bytes_before=4096, used_bytes_after=4096, inode_allocated_bytes=4096)
+                        for path in ('/bounded', '/engine')})
+        witness = dict(schema=contract.SCHEMA, mechanism=contract.MECHANISM, origin=origin,
+            unit=dict(name='observer.service', MainPID='0', ControlGroup='', Result='success',
+                      ExecMainStatus='0', InvocationID='e'*32), stdout=json.dumps(observation), stderr='', exit=0)
+        for name in ('stdout','stderr'):
+            witness[name+'_sha256'] = hashlib.sha256(witness[name].encode()).hexdigest()
+        return witness, expected
+
+    def test_originals_bind_frozen_source_streams_custody_and_image_reservations(self):
+        import copy
+        import linux_capacity_contract as contract
+        witness, expected = self.envelope()
+        self.assertEqual(contract.verify_observation(witness, expected)['writer_pids'], [123])
+        for mutate in (lambda w: w['origin'].update(source_head='f'*40),
+                       lambda w: w.update(stdout=w['stdout']+' '),
+                       lambda w: w['unit'].update(MainPID='123'),
+                       lambda w: w.update(exit=True)):
+            bad = copy.deepcopy(witness)
+            mutate(bad)
+            with self.assertRaises(ValueError):
+                contract.verify_observation(bad, expected)
+        with self.assertRaises(ValueError):
+            contract.verify(witness, 40*1024**2, {'expected':expected, 'image_role':'workspace'}, {contract.MECHANISM})
+
+    def test_changed_cohort_unbounded_descriptor_or_unstable_accounting_refuses(self):
+        import copy, hashlib, json
+        import linux_capacity_contract as contract
+        witness, expected = self.envelope()
+        for change in (lambda d: d['writer_closure'].update(cgroups_after={}),
+                       lambda d: d['writer_closure']['actors'][0]['descriptors'].append(
+                           dict(kind='regular', device='8:2', filesystem_magic=0xef53)),
+                       lambda d: d['accounting']['/bounded'].update(used_bytes_after=8192)):
+            bad = copy.deepcopy(witness)
+            data = json.loads(bad['stdout'])
+            change(data)
+            bad['stdout'] = json.dumps(data)
+            bad['stdout_sha256'] = hashlib.sha256(bad['stdout'].encode()).hexdigest()
+            with self.assertRaises(ValueError):
+                contract.verify_observation(bad, expected)
+
+    def test_phase_plan_refuses_reused_identity_mixed_source_and_exploration_as_proof(self):
+        import copy, hashlib, json
+        import linux_capacity_contract as contract
+        witness, expected = self.envelope()
+        phases, originals = {}, {}
+        for index, phase in enumerate(sorted(contract.PHASES)):
+            frozen, original = copy.deepcopy(expected), copy.deepcopy(witness)
+            frozen['origin'].update(phase=phase, nonce=('%032x' % (index + 1)))
+            frozen['observer_unit'] = 'observer-%s.service' % phase
+            original['origin'] = frozen['origin']
+            original['unit']['name'] = frozen['observer_unit']
+            data = json.loads(original['stdout'])
+            data['origin'] = frozen['origin']
+            if phase == 'live':
+                data['accounting'] = None
+            original['stdout'] = json.dumps(data)
+            original['stdout_sha256'] = hashlib.sha256(original['stdout'].encode()).hexdigest()
+            phases[phase], originals[phase] = frozen, original
+        plan = dict(schema='effigy.linux-capacity-plan.v1', source_head='b'*40,
+                    mechanism=contract.MECHANISM, phases=phases)
+        packet = dict(plan=plan, originals={p:originals[p] for p in ('setup','activation')})
+        full = {p:originals[p] for p in ('before','live','after')}
+        self.assertEqual(set(contract.verify_full(packet, full, 'b'*40, evidence_kind='exploration')),
+                         {'before','live','after'})
+        with self.assertRaises(ValueError):
+            contract.verify_full(packet, full, 'b'*40)
+        for change in (lambda p: p['phases']['live']['origin'].update(source_head='f'*40),
+                       lambda p: p['phases']['after']['origin'].update(nonce=p['phases']['before']['origin']['nonce']),
+                       lambda p: p['phases']['after'].update(boot_id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')):
+            bad = copy.deepcopy(plan)
+            change(bad)
+            with self.assertRaises(ValueError):
+                contract.validate_plan(bad, 'b'*40, evidence_kind='exploration')
+
+
 class RestartInventoryTests(unittest.TestCase):
     def test_restart_accepts_only_identity_changes_with_exact_configuration(self):
         import copy
@@ -359,6 +471,20 @@ class WriterClosureTests(unittest.TestCase):
         item['mount_visibility'][0]['read_only'] = False
         with self.assertRaises(ValueError):
             writers.verify_actor(item, {'7:12'}, '/engine', 1024)
+
+    def test_covered_absent_mount_resolves_to_its_visible_parent_descriptor(self):
+        mounts = ('1 0 8:2 / / ro - ext4 /dev/sda2 rw\n'
+                  '2 1 0:4 / /run/user/1001 rw - tmpfs tmpfs rw')
+        item = self.actor(mounts)
+        item['mount_visibility'][1] = dict(target='/run/user/1001', opened_path='/run/user',
+            missing=True, mount_id=1, device='8:2', read_only=True)
+        self.assertEqual(writers.verify_actor(item, {'7:12'}, '/engine', 1024)['writable_mounts'], [])
+        for field, value in (('missing', False), ('opened_path', '/foreign'), ('mount_id', 2)):
+            import copy
+            bad = copy.deepcopy(item)
+            bad['mount_visibility'][1][field] = value
+            with self.assertRaises(ValueError):
+                writers.verify_actor(bad, {'7:12'}, '/engine', 1024)
 
     def test_overlay_requires_both_allocating_paths_inside_the_engine(self):
         mounts = '1 0 0:3 / / rw - overlay overlay rw,upperdir=/engine/upper,workdir=/engine/work'

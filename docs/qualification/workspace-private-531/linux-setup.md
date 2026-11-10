@@ -947,258 +947,92 @@ The local readiness fixtures use a two-second shared window, with ten seconds
 for the four-launch #817 reproduction under host contention; their state transition is published atomically so a reader
 cannot mistake a truncate/write interval for a terminal systemd state.
 
-### Native build and engine exploration
+### Native build, engine and complete session
 
-Phase-two commands, streams and exits live in the same owned evidence root under
-`phase2/`; each `native-session-*` directory retains a separate attempt and its
-exact guest fixture archive. None is a sealed occurrence or qualification receipt.
-The dedicated account is `effigy531` (UID/GID 1001), with a locked password and an
-expiring restricted SSH key. Its private host control files stay outside guest
-shares. The key currently permits exploratory preparation, not the sealed E6
-forced-command role. Guest scratch ancestors need read and traverse access for
-descriptor custody; the task base and qualification roots remain mode 0700.
+The complete unsealed session passed on 2026-11-10 using native binaries from
+`4713c1dc7` (reviewed main `876dcc39` plus the control-plane read fix).
+Evidence is retained under the owned root above in
+`native-session-38f0e703475c4326a2d34b1d84cfd2b3/`: waited exit zero,
+`fixture.tar`, all command streams/exits and three live writer observations.
+Its 27 recorded cells include standard streaming/exit 23, signal 15, invalid
+credentials, caller-loss settlement, actual rotation/truncation refusal,
+genuine-old/kernel helpers, session crash recovery, fresh activation, shutdown
+and exact original engine inventory. These are exploratory observations;
+mechanism activation, downstream receipt integration and the final full smoke
+remain outstanding. They supply no #623 or #624 credit.
 
-Native Rust 1.97.1 built current-main `26b639f46f24b1353643a4f657b2f3e8a74cc255`,
-its separate ordinary and qualification binaries, the real fixture utility and
-nextest test executables. The genuine old build is
-`823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1`. Nextest 0.9.145's downloaded archive
-matched the existing pin. Linux Oxide cannot compile its pinned Barge dependency;
-the planner-approved guest-only selector route is recorded in
-[`cargo-routes.md`](../../knowledge/cargo-routes.md#task-829-interactive-guest-bootstrap).
+The dedicated account is locked `effigy531`, UID/GID 1001. Private host SSH files
+are outside guest shares. The current expiring exploratory key permits interactive
+preparation; it is **not** the sealed E6 forced-command credential.
+Native Rust 1.97.1 and pinned Nextest 0.9.145 build ordinary and qualification
+binaries, real helper/test binaries, and genuine old source
+`823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1`. The guest-only missing-Oxide
+selector route is recorded in [cargo-routes.md](../../knowledge/cargo-routes.md#task-829-interactive-guest-bootstrap).
+The GNU producer targets ARM64 GNU 2.31, verifies ELF/loader requirements and
+publishes actual source/version/hash and freshness-anchor identity. The ordinary
+consumer binds that identity; no handwritten install receipt substitutes for it.
+The Linux runtime recipe creates the non-root `effigy` UID1001 user and verifies
+Python/SSL as that user. Builds keep a stable private toolchain HOME to reuse
+Zig's linker cache. Nextest reused-binary execution places reports on the
+workspace image with a generated `store.dir`, preserving pinned runner timeouts.
 
-Ubuntu 26's ordinary native binary needs GNU 2.39; the pinned Ubuntu 22 runtime
-provides 2.35. The native Zig producer targets ARM64 GNU 2.31 and checks the real
-ELF machine, interpreter and version requirements before publishing its own
-factual producer record. The observed binary requires at most GNU 2.30 and has
-SHA-256 `66cc77b0d9a8d69d48970cd2107fa21e108d4a757ecc853786fee5546958ebe6`.
-An ignored machine-local task overlay selects this genuine producer without
-changing current-main Rust source. Ordinary current-main `container up`, `down`
-and `retire` each returned zero in `phase2/ordinary-acquire-resume.*`; the actual
-consumer, rather than a handwritten sidecar, bound its install identity. Build
-HOME is a private stable directory under the owned guest toolchain (outside
-the service's hidden `/home`): fixture-specific homes change
-cargo-zigbuild's linker-cache path and otherwise force repeated cold builds.
+Planner decision `5b63ff1d431522bbb8a6da63065d08527a642ce6b47c003a1f2e96064f8c14fd`
+selects the dedicated rootful engine; the earlier rootless experiment remains
+unqualified. The VM's original Docker/containerd services are unchanged.
+All dedicated containerd state, Docker data, BuildKit caches and logs reside on
+`/var/lib/effigy-829/engine-rootful.ext4`, exactly 2 GiB, root-owned mode 0600,
+UUID `958bd45f-83da-43e7-b15a-b498a79b34bf`. The workspace image is
+`/var/lib/effigy-829/rows-final.ext4`, exactly 1 GiB, root-owned mode 0600,
+UUID `8d8707ea-dd3d-48ab-b408-47f66e5475dd`. The former 4 GiB pilot stays
+retained and unmounted. A real UID1001/CapEff-zero/Seccomp-2 container writer
+could remove its empty inode's project ID, then restored it without allocating
+payload extents. Project quota therefore cannot cover this writer population.
+Actual workspace and stopped-engine probes reached ENOSPC, retained their new
+empty inodes and released only those verified probe extents.
 
-The native Linux recipe appends `linux-native-runtime.fragment` to the existing
-offline recipe, preserving historical macOS packet bytes and pins while sharing
-their package closure. It creates non-root `effigy` UID/GID 1001. Current permission
-preparation correctly refuses a root workspace identity. Its directory root is
-explicitly readable by that user; a daemon mask of 077 had made an imported OCI
-root mode 0700 even though its libraries were readable. The daemon uses its normal
-022 mask, and the recipe verifies Python/SSL as the declared non-root user. The
-fixture inherits `PROBE_TOKEN` from the private invocation environment; the old
-`${PROBE_TOKEN}` source syntax is rejected by the maintained Compose importer.
+Both active images were initialized offline by rewriting each block unchanged,
+with equal complete before/after hashes. `qualification:linux:initialize-images`
+requires the owned rollback snapshot, exact existing inodes and idle engine;
+it never formats, grows or replaces an image. Resume verifies complete ordinary
+FIEMAP extents, zero loop discard, root-controlled ancestors, raw ext4 capacity
+and UUID, original `LOOP_GET_STATUS64` backing inode/device/offset, nodev/nosuid
+mounts and at most 64 KiB outer-file metadata before starting the daemon.
+Quiescent whole-filesystem allocation must remain stable and agree with the
+inode census within the fixed 1 MiB metadata tolerance.
 
-Planner answer `5b63ff1d431522bbb8a6da63065d08527a642ce6b47c003a1f2e96064f8c14fd`
-selects a dedicated **rootful** daemon on a fixed-capacity loop image. The earlier
-rootless experiment remains exploratory and grants no rootless qualification.
-The original VM Docker and containerd services were not replaced. The pilot puts
-its own containerd root/state, Docker data, BuildKit cache and daemon/container
-logs on one root-owned 2 GiB ext4 image with zero reserved-block percentage;
-temporary `/run`, `/tmp` and `/var/tmp` mounts and service memory have explicit
-RAM limits. The image's outer extents/metadata are accounted separately from
-inner filesystem capacity. This trusts the pinned daemons, not arbitrary
-privileged workloads; mount, privilege and namespace observations must agree
-with the owned bounded roots. Final capacity still needs a complete peak census
-and an honest ENOSPC control; the pilot size is not an admitted E12 ceiling.
+The successful session sampled every 50 ms: engine peak was 1,024,258,048 bytes
+and workspace peak 76,914,688 bytes. The 2 GiB engine passed the two-times sampled
+peak check. Sampling is headroom evidence, separate from the physical ceiling.
 
-Two native unit details matter. A bind over only the delegated cgroup subtree
-breaks runc's `RESOLVE_NO_XDEV` checks; the daemon instead sees one writable
-cgroupfs mount and uses its own fixed cgroup parent. Cgroupfs is kernel/RAM state,
-not persisted engine allocation. `PrivateDevices` removes CAP_MKNOD from the
-daemon's bounding set and breaks runc's default capability setup, so the daemon
-uses Docker's workload device isolation, seccomp and AppArmor rather than that
-incompatible service option. Effective properties and startup failures are
-retained, not inferred from a successful `systemctl start` return.
+Live observations cover every PID in the exact controller and engine cgroups,
+including the container, shim and containerd. They retain PID births, executable
+hashes, memory/swap controls, visible mount descriptors, writable descriptors
+and shared mappings. Process names never establish identity. Covered mount
+entries can remain in mountinfo while their paths are absent; the collector
+opens the nearest visible ancestor and verifies that coverage explicitly.
+Writable hugetlbfs refused. The controller now binds `/dev` and `/sys` read-only
+and uses a closed device policy; `PrivateDevices` alone did not remove the
+observed writable child mount on this VM. The daemon also protects kernel
+modules/logs/clocks and binds `/dev` and `/sys` read-only, with explicit writable
+kernel interfaces `/sys/fs/cgroup` (runc) and `/proc/sys/net` (network setup).
+Both cohorts have 3 GiB memory limits and zero swap. Pinned trusted daemons and
+controller are part of this premise; arbitrary privileged workloads are not.
 
-A fresh 4 GiB ext4 image demonstrated project-531 inheritance, real EDQUOT at a
-64 MiB hard limit, and exact equality between kernel quota charge and the inode
-allocation census. That witness covers a `PrivateUsers=identity` writer with no
-capabilities. A later actual rootful-container probe, UID 1001 with zero effective
-capabilities and default seccomp, could change its empty inode from project 531
-to 0. It restored project 531 before exiting; no payload extent was allocated.
-Project quota therefore cannot supply this guest-writer bound. The chosen next
-step is a workspace image with at most 1 GiB physical capacity, rather than
-claiming the controller-only quota witness covers container writers. The final workspace image is now
-`/var/lib/effigy-829/rows-final.ext4`, root-owned mode 0600, exactly 1 GiB,
-UUID `8d8707ea-dd3d-48ab-b408-47f66e5475dd`. The earlier 4 GiB pilot is retained
-unmounted. An actual rootful-container UID-1001, CapEff-zero, Seccomp-2 writer
-reached ENOSPC after allocating 1,003,491,328 bytes. The engine's 2 GiB image
-independently reached ENOSPC with its daemon stopped. Each probe retained its
-new empty inode and released only that inode's extents after identity checks.
-These are physical ceilings independent of project assignment. Kernel loop size,
-ext4 superblock capacity and root-controlled image size must agree; `statvfs`
-alone reports usable data blocks and is not that capacity proof. Controller
-streams also reside on the capped workspace filesystem. Session allocation is
-sampled every 50 ms to check engine headroom, separately from the hard ceiling.
-`linux_native_storage.py` independently checks root-owned image custody,
-loop offset/size, mount identity, features and association to the fixed native
-root UUID; it does not manufacture a positive legacy root-partition witness.
-
-Native acquisition at `d648c00a2f85cf7ed22d2000e6215c1691cbd022` now returns zero
-for ordinary up/down/retire, binds the real GNU artifact through the actual
-consumer, and restores exact inventory. The serving host preserves private
-engine-config and scratch paths plus the parsed local-artifact choice across
-its cleared environment. Newly created state/vault mask volumes have ownership
-labels and retire after container down; pre-existing unrelated volumes are not
-claimed. A later private run reached actual credential staging and exposed a
-root-owned-0600 digest read attempted as the non-root image user. Publication
-now performs that metadata read as root and skips retained unreadable credential
-orphans by metadata, without retaining their bytes. Full native re-exercise of
-this correction is required before reporting the chain complete. Raw exploratory
-capture omits protected inspect/credential streams; canary delivery is checked
-by digest so the harness itself does not manufacture a durable secret leak.
+Private publication exposed an image-USER assumption: mode-0600 credentials
+were hashed before their ownership handoff. Control-plane immutable-object reads
+now use explicit root, matching staging writes. Protected credential and inspect
+bodies are omitted from exploratory command evidence. Shared reviewed main owns
+the standard-shell handoff, per-stream v3 capture, session request lifetime and
+owner-loss accounting; this task removed its overlapping local implementations.
 
 Planner review `9faaa016a0a865cedc7ac31f08b880962b9f608d4613e1bb061d12e3822fe201`
-confirms the physical-bound design and the two-occurrence sealed plan, but the
-path is **not yet prepared for sealing**: the loop ceiling must be registered as
-a supported mechanism, verified at setup and activation with real writer/fd
-closure, and accepted by the downstream receipts and #624 inputs. The legacy
-root project-quota activation is superseded for this #623 route; its refusal and
-historical evidence stay intact. This does not retire the general quota concept.
-
-A quiescent native allocation census found 501,514,240 inode-allocation bytes
-versus 501,915,648 filesystem-used bytes on the engine image, and 5,943,296 versus
-6,209,536 on the workspace image. Free-block counts stayed stable throughout each
-walk. Their respective metadata gaps were 401,408 and 266,240 bytes. The supported
-mechanism must carry before/after dedicated-tree attribution with an explicit
-finite metadata tolerance, alongside the independent physical ceiling and the
-retained ENOSPC control; a sampled peak alone supplies none of these witnesses.
-
-Private publication also revealed that fresh images need selector parent
-directories prepared before commit/CAS. Additive staging now creates all three
-fixed parents. The strict guest double models mkdir-p ancestors and refuses a
-pointer write without a prepared directory, so the crash/partial-switch controls
-exercise the actual requirement instead of relying on implicit fake directories.
-The complete native re-exercise remains outstanding at this source tranche.
-
-The next native session reached real committed selection, bound workload mounts,
-full v2 context, native identity, correct TLS pin, and a genuine wrong-certificate
-pin refusal. The first task then found a display/protocol version mismatch:
-`RunningBinary` used `v0.14.1` while the published protocol identity used
-`0.14.1`. It now observes the active version, preserving exact digest/protocol
-comparison. The unsealed TLS control follows the CLI's canonical argument order
-and uses a distinct nonzero wrong pin, so it reaches TLS rather than failing
-argument validation.
-
-Native build selectors now reuse a private guest-only Cargo target cache under
-`BASE/build-cache`. Each build still runs its real selector; ordinary, qualified,
-utility and test roles are copied into fresh owned artifact directories and
-hashed, and the GNU producer publishes its real bytes and receipt into the
-source's artifact store. No cache path or symlink is used as a frozen artifact.
-The guest-only missing-Oxide ruling remains the reason for this route. The host
-build/admission route is unchanged.
-
-The native image observer also checks a synchronized descriptor FIEMAP: exact
-contiguous logical coverage, distinct physical extents, and only ordinary or
-unwritten allocated extents. Sparse, delayed, unknown, shared or truncated
-allocation refuses. Both real images passed this check, with `nodev,nosuid`
-required on their mounts. A no-follow whole-filesystem census now compares
-distinct-inode allocation with stable before/after filesystem usage, allowing
-at most 1 MiB for filesystem metadata. This strengthens observation; mechanism
-registration and the downstream activation/receipt integration remain required.
-
-The following native window passed version identity and reached enrolment, where
-the client compared a prefixed credential hash with the strict v2 document's
-bare hex digest. Credential verification now uses the same kernel `Digest` hex
-representation as publication. The direct-terminal test document follows that
-strict contract too; changed bytes still refuse before enrolment.
-
-Native exploration at `b65eb8ee6` completed real guest enrolment and exposed
-an explicit managed-only reserved-engine guard before the first standard task.
-The standard pipeline now carries the same ticket into `TaskRun::begin_admitted`,
-preserves the dispatcher resolution fence, captures both streams, and polls the
-owning channel through ordinary command waits and nested tasks. Managed probing
-leaves the owner intact until a managed plan is selected. This keeps the full
-fixture on its actual standard-task path. Supervisor capture also supplies safe
-stdout/stderr projections with independent atomic durable extents; the former
-merged-only capture did not match the workspace protocol's separate cursors.
-Native full-session re-exercise remains
-required before this source change can be called successful on the VM.
-
-The dedicated daemon now uses a closed device policy, protects kernel modules,
-logs and clocks, and binds `/sys` and `/dev` read-only. `/sys/fs/cgroup` and
-`/proc/sys/net` remain explicit writable kernel interfaces: runc needs the
-former, and Docker's container-network setup needs the latter. Actual mount
-readback must select the visible mount by descriptor mount ID and read-only
-flags: `mountinfo` also contains hidden lower writable mounts, which are not
-writable paths for the actor. `linux_native_writers.py` retains those originals,
-PID births, executable hashes, writable descriptors and shared mappings. The
-resume route uses that observer instead of its older partial actor loop, checks
-actual cgroup memory/swap ceilings, and retains whole-filesystem allocation
-attribution. Both idle daemon actors passed natively with no findings; this is
-not yet the complete controller/workload closure or sealed mechanism admission.
-
-The native smoke also latches engine stops under fresh retained systemd unit
-names, using the same bounded ambiguous-submission handling as resume. A local
-Parallels acknowledgement can fail before a stop starts; neither that failure
-nor a client exit is engine closure. The route retains helper streams and
-waited status, then independently requires inactive/MainPID-zero state and an
-empty kernel cgroup before the capacity control or VM stop.
-
-The native window at `bc28e6b98` completed one real standard task with separate
-incremental streams, stdin EOF, no PTY, host placement and a journalled exit 23
-with complete settlement. Its next task exposed a channel EOF bug: settlement
-compacts the owning attachment row, so releasing that row again fenced later
-connections. The channel now checks the exact admission key, digest, session,
-run and original state-root identity for a recorded terminal result before
-forgetting completed connection custody. It neither revives an attachment nor
-waives a previously uncertain release. Live and unknown runs retain EOF cleanup.
-The full native session and mechanism activation remain outstanding.
-
-New exploratory windows also compare complete stable network configuration
-when an engine restart recreates a bridge ID. They retain both inventories; a
-same-name network with changed IPAM, driver, options, labels or isolation refuses.
-Each active window still requires its exact original inventory at settlement.
-
-The next unsealed window exposed an output initialization race: the format
-marker could become visible before its committed extent. Plain capture now
-stages the complete marker, durably publishes its guard and initial zero extent,
-then exclusively renames the marker into view. A fault before that last boundary
-leaves no selectable partial protocol. This preserves strict missing-extent
-refusal while preventing a healthy new capture from manufacturing that state.
-
-At `c948df777` the native session passed standard streaming, real signal 15
-and invalid-credential refusal. Caller-loss polling exposed two independent
-issues: SQLite transaction context managers left connections open, and the
-engine saw the attachment EOF's durable stop as `Requested` while its serving
-relay pipe remained alive. Polling now explicitly closes connections, including
-failed queries. Engine control reads the real owning attachment's EOF release
-before interpreting the mailbox; that preserves `OwnerLost` without changing
-request schemas or relaxing attachment release fences. Controller cleanup now
-shares the engine's latched stop route and reads empty systemd properties with
-`--all`, followed by independent kernel cgroup closure.
-
-The physical image observer now retains the original `LOOP_GET_STATUS64` bytes
-and checks the kernel's backing inode/device, offset and size limit against the
-opened root-owned image. It also retains raw ext4 superblocks, full mountinfo,
-ancestor ownership, FIEMAP and discard queue readback for pure offline checks.
-The strict initialized-image verifier additionally requires no unwritten extents,
-discard disabled and at most 64 KiB of outer-file extent metadata. Those latter
-activation conditions have not yet been established on the exploratory images;
-this source addition does not register or credit a prepared mechanism.
-
-`qualification:linux:initialize-images EVIDENCE_ROOT ASSET_SEED` is an explicit
-unsealed preparation selector for these two existing task-owned images. It
-requires the recorded pre-change snapshot, an idle dedicated engine and exact
-image inodes; it closes the engine, unmounts, rewrites each block with its original
-bytes, compares complete hashes, remounts and disables discard. It never formats,
-truncates, grows or replaces an image. A short-write/readback control covers the
-same-byte invariant. Restore attempts cover both verified images on failure.
-The real VM completed this preparation with matching full before/after hashes
-for both images and passed the strict initialized-image verifier. Native resume
-now checks these conditions before starting any daemon. The snapshot remains
-retained; no revert occurred. Mechanism registration, complete live writer
-closure and downstream receipt integration are still required.
-
-The task branch now integrates reviewed main `876dcc39` (#830). Its existing
-reserved-shell handoff, version/credential handling, session request lifetime,
-owner-loss accounting and per-stream v3 capture replace this branch's duplicate
-implementations. The Linux adapter uses the shared full-session assertions,
-including the real slow-consumer rotation control and independent capture extent
-readback. Linux keeps its prepared UID1001 workspace user, dedicated engine
-checks and complete command/exit evidence; protected credential/inspect bodies
-remain omitted. The native GNU producer also publishes the real local host
-freshness identity from the prepared anchor's size and nanosecond mtime, matching
-the reviewed producer/consumer contract. Native re-exercise at the integrated
-head remains required.
+requires a fresh physical preparation/activation packet and full-session
+receipt integration. Follow-up `5a1fa1682ef0286965de450a434711f4740d0ddf63ddfd3e61c8b45cdcff1a30`
+requires one preparation runner: retain custody, transfer, supervisor and receipts,
+and isolate quota-specific assumptions behind a limit-mechanism boundary.
+The production hard-limit registry now dispatches only source verifiers;
+self-declared limits/enforcement labels cannot pass. The pure loop-original
+verifier binds frozen source/phase/nonces, original streams, completed observer
+custody, exact images/configuration, writer cohorts and allocation accounting.
+Registration is source support, not activation or proof. The legacy root-quota
+packet remains unarmed; no old H/K anchors or failed occurrences are repurposed.

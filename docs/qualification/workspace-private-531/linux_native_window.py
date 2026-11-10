@@ -35,6 +35,19 @@ class Window(runtime.Window):
         require(len(rows) == 1 and rows[0]['Id'] == self.container, 'workload inspect differs')
         bound = storage.verify_workload(rows[0], self.root, self.cell['native_engine_root'])
         self.record('bounded-native-workload', **bound)
+        gate = self.cell.get('native_writer_gate')
+        if gate:
+            self.command_count += 1
+            name = 'writer-gate-%04d' % self.command_count
+            exclusive(name + '.request.json', {'nonce': gate, 'container': self.container}, dir_fd=self.root_fd)
+            acknowledgement = self.base / (name + '.observed.json')
+            deadline = min(self.end, time.monotonic() + 90)
+            while not acknowledgement.exists():
+                require(time.monotonic() < deadline, 'live native writer observation did not return')
+                time.sleep(.1)
+            observed = json.loads(acknowledgement.read_bytes())
+            require(observed == {'nonce': gate, 'complete': True}, 'live writer observation refused')
+            self.record('bounded-native-writers', observation=name)
         return result
 
     def record_exploratory_client(self, label, status, stdout, stderr):

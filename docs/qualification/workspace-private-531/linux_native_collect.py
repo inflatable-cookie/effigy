@@ -13,10 +13,10 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_native_storage as storage
 import linux_native_writers as writers
-from linux_native_resume import IMAGES
+from linux_native_resume import IMAGES, configuration_originals
 
 
-def collect(controller=None):
+def collect(controller=None, origin=None):
     if os.geteuid() != 0 or sys.platform != 'linux':
         raise ValueError('native read-only root collector required')
     images = [storage.observe(image, target, capacity, project_quota=False)
@@ -30,22 +30,25 @@ def collect(controller=None):
     for group in groups:
         unit = group.rsplit('/', 1)[-1]
         raw = subprocess.check_output(['systemctl', 'show', '--all', unit,
-            '--property=ActiveState,MainPID,ControlGroup,ExecStart,User,Group,MemoryMax,MemorySwapMax'], text=True)
+            '--property=ActiveState,MainPID,ControlGroup,ExecStart,User,Group,MemoryMax,MemorySwapMax,DevicePolicy,ProtectSystem'], text=True)
         state = dict(line.split('=', 1) for line in raw.splitlines())
         if state['ActiveState'] != 'active' or state['ControlGroup'] != group or int(state['MainPID']) <= 0:
             raise ValueError('writer unit is not the expected live owner')
         units[unit] = state
     return {'schema': 'effigy.linux-loop-observation.v1',
-            'boot_id': Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
-            'images': images, 'units': units,
+            'boot_id': Path('/proc/sys/kernel/random/boot_id').read_text().strip(), 'origin': origin,
+            'images': images, 'units': units, 'engine_configs': configuration_originals(),
             'writer_closure': writers.observe(groups, {item['mount']['device'] for item in images},
                 '/var/lib/effigy-829/rootful', 3 * 1024 ** 3),
             'accounting': None if controller else {
                 str(target): storage.accounting(target) for _, target, _, _ in IMAGES},
-            'exploratory': True, 'qualification_credit': False}
+            'exploratory': origin is None or origin['evidence_kind'] == 'exploration',
+            'qualification_credit': False}
 
 
 if __name__ == '__main__':
-    if len(sys.argv) > 2:
+    if len(sys.argv) not in (1, 2, 3):
         raise SystemExit('usage: linux_native_collect.py [EXACT_CONTROLLER_UNIT]')
-    print(json.dumps(collect(sys.argv[1] if len(sys.argv) == 2 else None), indent=2))
+    controller = sys.argv[1] if len(sys.argv) >= 2 and sys.argv[1] != '-' else None
+    origin = json.loads(sys.argv[2]) if len(sys.argv) == 3 else None
+    print(json.dumps(collect(controller, origin), indent=2))

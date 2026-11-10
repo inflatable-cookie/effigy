@@ -67,11 +67,20 @@ def actor(pid):
               'mountinfo': (proc / 'mountinfo').read_text(),
               'descriptors': [], 'shared_writable_mappings': [], 'mount_visibility': []}
     for target in sorted({row['target'] for row in storage.mount_rows(result['mountinfo'])}):
-        descriptor = os.open(str(proc / 'root') + target, os.O_PATH)
+        opened = Path(target)
+        while True:
+            try:
+                descriptor = os.open(str(proc / 'root') + str(opened), os.O_PATH)
+                break
+            except FileNotFoundError:
+                if opened == Path('/'):
+                    raise
+                opened = opened.parent
         try:
             fields = dict(line.split(':', 1) for line in Path('/proc/self/fdinfo/' + str(descriptor)).read_text().splitlines())
             info = os.fstat(descriptor)
-            result['mount_visibility'].append({'target': target, 'mount_id': int(fields['mnt_id']),
+            result['mount_visibility'].append({'target': target, 'opened_path': str(opened),
+                'missing': str(opened) != target, 'mount_id': int(fields['mnt_id']),
                 'device': '%d:%d' % (os.major(info.st_dev), os.minor(info.st_dev)),
                 'read_only': bool(os.fstatvfs(descriptor).f_flag & os.ST_RDONLY)})
         finally:
@@ -125,6 +134,7 @@ def observe(cgroups, devices, engine_root, memory_max):
             verified.append(verify_actor(item, devices, engine_root, memory_max))
         except ValueError as error:
             findings.append({'pid': item['pid'], 'reason': str(error)})
-    return {'cgroups': before, 'controls': controls, 'actors': actors,
+    return {'cgroups': before, 'cgroups_before': before, 'cgroups_after': after,
+            'controls': controls, 'actors': actors,
             'verified': verified, 'complete': not findings, 'findings': findings,
             'memory_max': memory_max, 'exploratory': True, 'qualification_credit': False}

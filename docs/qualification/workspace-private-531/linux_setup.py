@@ -29,6 +29,7 @@ import linux_supervisor as supervisor
 import preparation_observations as observations
 import linux_disk_identity as identity
 import linux_allocation_bound as allocation
+import linux_capacity_contract as capacity
 import linux_disk_association as disk_association
 import preparation_resources as resources
 import linux_receipts
@@ -112,7 +113,7 @@ SETUP_GO_GATES = frozenset({'E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'E19', 'E-
 # admission is not a fresh inventory or native credit. The writable top stays the descriptor
 # metadata mechanism.
 SUPPORTED_DISK_MECHANISMS = frozenset({disk_association.MECHANISM})
-SUPPORTED_HARD_LIMITS = frozenset({allocation.MECHANISM})
+SUPPORTED_HARD_LIMITS = frozenset({allocation.MECHANISM, capacity.MECHANISM})
 SUPPORTED_TOP_MECHANISMS = frozenset({identity.MECHANISM})   # the only implemented top selection: descriptor metadata
 CANDIDATE_H_HEAD = '4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02'   # source-bound candidate H, distinct from K
 # External anchors: the preparation head K, candidate H, the probe transcript sha and the allowed-signers
@@ -541,24 +542,30 @@ def verify_disk_association(facts, supported=None):
     return disk_association.verify(disk_association.load_facts(facts), supported)
 
 
-def verify_hard_limit(witness, limit_bytes, supported=None, facts=None):
-    """A hard limit is established only by a source-verified, kernel-enforced mechanism.
+def _quota_limit(witness, limit_bytes, facts, supported):
+    bound = allocation.verify(witness, limit_bytes, facts, supported)
+    allocation.inspect_activation_completion(facts.get('activation'))
+    return bound
 
-    Polling counters never qualify. Empty support means every witness refuses. The kernel
-    project-quota mechanism verifies its originals against exact facts (see _allocation_facts).
-    """
+
+# Support labels never substitute for a source verifier. Tests can explicitly
+# inject a fixture verifier; the production registry has only these two routes.
+HARD_LIMIT_VERIFIERS = {allocation.MECHANISM: _quota_limit,
+                        capacity.MECHANISM: capacity.verify}
+
+
+def verify_hard_limit(witness, limit_bytes, supported=None, facts=None):
+    """Admit only exact originals accepted by the mechanism's source verifier."""
     supported = SUPPORTED_HARD_LIMITS if supported is None else supported
     mechanism = witness.get('mechanism') if isinstance(witness, dict) else None
-    if mechanism not in supported:
+    verifier = HARD_LIMIT_VERIFIERS.get(mechanism)
+    if mechanism not in supported or verifier is None:
         raise Refusal('no source-verified hard-limit mechanism; polling counters are not a quota')
-    if mechanism == allocation.MECHANISM:
-        bound = allocation.verify(witness, limit_bytes, facts or {}, supported)
-        allocation.inspect_activation_completion((facts or {}).get('activation'))
-        return {'mechanism': mechanism, 'limit_bytes': limit_bytes, 'bound': bound}
-    limits = witness.get('limits') or []
-    if limit_bytes is None or limit_bytes not in limits or witness.get('enforcement') != 'kernel':
-        raise Refusal('hard limit does not cover this row or is not kernel-enforced')
-    return {'mechanism': mechanism, 'limit_bytes': limit_bytes}
+    try:
+        bound = verifier(witness, limit_bytes, facts or {}, supported)
+    except ValueError as error:
+        raise Refusal(str(error)) from error
+    return {'mechanism': mechanism, 'limit_bytes': limit_bytes, 'bound': bound}
 
 
 def check_authorized_keys(keys, e2_public_key, now, expiry):

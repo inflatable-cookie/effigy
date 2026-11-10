@@ -1816,7 +1816,7 @@ class WriterBoundObservationTests(unittest.TestCase):
                                        'findings', 'observation_eligibility'})
         # The setup source admits only the witness-gated quota mechanism; this observation never
         # turns a diagnostic fact into setup, placement or hard-quota credit.
-        self.assertEqual(proof.setup.SUPPORTED_HARD_LIMITS, frozenset({proof.setup.allocation.MECHANISM}))
+        self.assertEqual(proof.setup.SUPPORTED_HARD_LIMITS, frozenset({proof.setup.allocation.MECHANISM, proof.setup.capacity.MECHANISM}))
         self.assertEqual(proof.setup.SUPPORTED_DISK_MECHANISMS,
                          frozenset({proof.setup.disk_association.MECHANISM}))
         self.assertIsNone(proof.setup.EXTERNAL_ANCHORS)

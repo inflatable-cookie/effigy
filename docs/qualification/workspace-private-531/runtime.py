@@ -575,9 +575,15 @@ sys.exit(child.wait())
         # Genuine old binary provided by a separately recorded immutable source
         # build, plus the real helper/fault controls. No shell stand-in qualifies.
         env = dict(self.env, EFFIGY_OLD_CUSTODY_BINARY=str(self.old), EFFIGY_KERNEL_CUSTODY_FIXTURE=str(self.kernel_fixture))
-        runner = [self.nextest, 'nextest', 'run', '--config-file', self.nextest_config,
+        # Reused binaries prohibit Cargo's --target-dir. Nextest's store.dir
+        # places reports on the fixture filesystem without remapping binaries.
+        config = self.base / 'nextest.toml'
+        with config.open('xb') as output:
+            output.write(('[store]\ndir = ' + json.dumps(str(self.base / 'nextest-store')) + '\n').encode())
+            output.write(self.nextest_config.read_bytes())
+        runner = [self.nextest, 'nextest', 'run', '--config-file', config,
                   '--user-config-file', 'none', '--binaries-metadata', self.binaries_metadata,
-                  '--cargo-metadata', self.cargo_metadata, '--target-dir', self.base / 'nextest-target', '--no-fail-fast', '--retries', '0', '--no-tests', 'fail']
+                  '--cargo-metadata', self.cargo_metadata, '--no-fail-fast', '--retries', '0', '--no-tests', 'fail']
         self.verify_root()
         self.command(runner + ['--run-ignored', 'only', '-E', 'test(custody::tests::discard_old_sentinel_refuses_before_child_exec) | test(qualification_discard_refuses_genuine_old_helper_after_successful_admission)'],
             cwd=Path(self.cell['source_root']), env=env, timeout=min(600, self.end - time.monotonic()))
