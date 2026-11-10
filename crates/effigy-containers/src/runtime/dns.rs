@@ -248,7 +248,10 @@ fn bounded_profile_text(path: &Path) -> Result<String, ProfileRead> {
 }
 
 pub(crate) fn colima_home_dir() -> Option<PathBuf> {
-    if let Some(home) = std::env::var_os("COLIMA_HOME").map(PathBuf::from) {
+    if let Some(home) = std::env::var_os("COLIMA_HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+    {
         return Some(home);
     }
     std::env::var_os("HOME")

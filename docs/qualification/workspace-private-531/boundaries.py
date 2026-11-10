@@ -25,6 +25,7 @@ def inputs():
             candidate_receipt=dict(source_head=HEAD, features=['workspace-private-qualification'], sha256='a' * 64),
             production_receipt=dict(source_head=HEAD, features=[], sha256='b' * 64),
             candidate=dict(sha256='a' * 64), production=dict(sha256='b' * 64), old_binary=dict(sha256='c' * 64),
+            guest_install_identity=dict(path=str(SCRATCH / 'unarmed-guest.install-identity'), sha256='e' * 64),
             runtime_image='sha256:' + 'd' * 64, budget_seconds=600,
             qualification_root=dict(path=str(SCRATCH / ('531-unarmed-' + backend)),
                                     device=0, inode=0, uid=os.geteuid()),
@@ -414,6 +415,8 @@ class Boundaries(unittest.TestCase):
             lambda v: v['backends'][2].update(driver='local'),
             lambda v: v['backends'][0].update(environment={'EFFIGY_WORKSPACE_ACTIVATION_FAKE': 'anything'}),
             lambda v: v['backends'][0].update(budget_seconds=1801),
+            lambda v: v['backends'][0].pop('guest_install_identity'),
+            lambda v: v['backends'][0]['guest_install_identity'].update(sha256='invalid'),
             lambda v: v['backends'][0]['old_binary'].update(sha256='a' * 64),
         ):
             value = inputs()
@@ -478,6 +481,9 @@ class Boundaries(unittest.TestCase):
             guest = source / '.effigy/linux-release/artifacts/fixture'
             guest.parent.mkdir(parents=True)
             guest.write_bytes(b'not an ELF or qualification input')
+            identity_sidecar = Path(str(guest) + '.install-identity')
+            identity_sidecar.write_bytes(b'unarmed freshness fixture; no native credit')
+            cell['guest_install_identity'] = dict(path=str(identity_sidecar), sha256=digest(identity_sidecar))
             cell.update(source_root=str(source), guest_artifact=dict(path=str(guest), sha256=digest(guest)),
                         docker_config=str(parent), colima_home=str(parent))
             window = None
@@ -971,6 +977,9 @@ class Boundaries(unittest.TestCase):
                 {'error_type': 'RuntimeError', 'cells_completed': 9, 'native_pass': False}).encode())
             production_reexport = reexported('production-export.json', 'desktop', json.dumps(
                 {'cells': complete_cells(), 'native': True, 'production_enabled': True}).encode())
+            exploratory_reexport = reexported('exploratory-export.json', 'desktop', json.dumps(
+                {'cells': complete_cells(), 'native': True, 'production_enabled': False,
+                 'exploratory': True, 'proof': False}).encode())
             incomplete_reexport = reexported('incomplete-export.json', 'desktop', json.dumps(
                 {'cells': [cell for cell in complete_cells() if cell['cell'] != 'kernel-custody'],
                  'native': True, 'production_enabled': False}).encode())
@@ -1057,6 +1066,9 @@ class Boundaries(unittest.TestCase):
             linux_replaced = call(receipt_list=receipts[:2] + [feature_binding],
                                   hash_list=hashes[:2] + [feature_hash])
             cases = [
+                (call(receipt_list=receipts[:1] + [exploratory_reexport[0]] + receipts[2:],
+                      hash_list=hashes[:1] + [exploratory_reexport[1]] + hashes[2:]),
+                 'exploratory receipts cannot qualify'),
                 (call(source_head='nothex'), 'final source head required'),
                 (call(receipt_list=receipts[:2], hash_list=hashes[:2]), 'missing backend receipt'),
                 (call(receipt_list=receipts + [receipts[0]], hash_list=hashes + [hashes[0]]),

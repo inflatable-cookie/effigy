@@ -37,6 +37,30 @@ fn running_binary() -> RunningBinary {
     RunningBinary::observe().expect("the test binary's own identity")
 }
 
+#[test]
+fn running_guest_version_matches_producer_context_without_display_normalization() {
+    let _lock = crate::contract_test_support::lock_test();
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[(
+        "EFFIGY_ACTIVE_VERSION",
+        Some("0.14.1+local.fixture".into()),
+    )]);
+    let document = workspace_document(Some(session_run()), None);
+    let mut value: serde_json::Value = serde_json::from_slice(&document.render().unwrap()).unwrap();
+    value["version"] = effigy_core::build_info::active_version().into();
+    let produced = WorkspaceContextV2::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(produced
+        .verify(&mut ObservedIt(Some(guest_observation())), &live_run())
+        .is_ok());
+    value["version"] = effigy_core::build_info::display_version().into();
+    let presentation = WorkspaceContextV2::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(
+        presentation
+            .verify(&mut ObservedIt(Some(guest_observation())), &live_run())
+            .is_err(),
+        "comparison stays exact; the producer and observer must use the same identity source"
+    );
+}
+
 pub(super) fn session_run() -> RunId {
     RunId::new(1, [SESSION_MARKER; 10]).expect("run id")
 }
@@ -99,7 +123,7 @@ pub(super) fn workspace_document(
             "credential": {
                 "generation": GENERATION,
                 "path": enrolment_path(),
-                "digest": sha256_text(credential.as_bytes()),
+                "digest": Digest::of(credential.as_bytes()).hex(),
             },
             "locator": {
                 "endpoint": CHANNEL_ENDPOINT,
@@ -635,6 +659,18 @@ fn a_direct_terminal_enrols_with_the_published_session_generation_and_credential
         }
         other => panic!("a direct terminal enrols, not {other:?}"),
     }
+
+    // The real v2 producer emits bare hex; the v2 parser also accepts the
+    // qualified digest form. Both identify the same bytes, never text equality.
+    assert_eq!(
+        context.credential.digest,
+        Digest::of(enrolment_body().as_bytes()).hex()
+    );
+    let mut prefixed: serde_json::Value =
+        serde_json::from_slice(&context.render().unwrap()).unwrap();
+    prefixed["credential"]["digest"] = sha256_text(enrolment_body().as_bytes()).into();
+    let prefixed = WorkspaceContextV2::parse(&serde_json::to_vec(&prefixed).unwrap()).unwrap();
+    assert!(load_auth(&mut guest, &prefixed, TEST_CLIENT).is_ok());
 
     // Bytes the document did not pin are refused instead of presented.
     guest.put_file(&enrolment_path(), b"credential=not-the-staged-one\n", 0o600);

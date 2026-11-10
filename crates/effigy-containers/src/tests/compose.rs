@@ -2484,3 +2484,76 @@ version = "10.11"
             .any(|alias| alias.starts_with("postgres.acme-w")));
     });
 }
+
+#[test]
+fn workspace_state_masks_keep_checkout_ownership_without_unused_original_volumes() {
+    let _lock = crate::test_env_lock();
+    let fixture = effigy_test_support::Fixture::new("workspace-mask-ownership").unwrap();
+    let root = fixture.path().canonicalize().unwrap();
+    fs::create_dir(root.join(".git")).unwrap();
+    fs::write(
+        root.join(".git/config"),
+        "[effigy]\nruntimeScope = ephemeral\n",
+    )
+    .unwrap();
+    let token = effigy_core::worktree_scope::prepare_checkout_token(&root).unwrap();
+    let catalog = root.join("infra/dev/catalog/probe");
+    fs::create_dir_all(&catalog).unwrap();
+    fs::write(
+        catalog.join("service.toml"),
+        "[service]\nname = \"probe\"\n",
+    )
+    .unwrap();
+    fs::write(catalog.join("compose.fragment.yml"),
+        "services:\n  app:\n    image: example:one\n    volumes:\n      - '{{ repo_root }}:/workspace'\n").unwrap();
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers.web]
+primary_service = "app"
+[containers.web.services.app]
+catalog = "probe"
+[systems.dev]
+default_workspace = "app"
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/workspace"
+user = "root"
+home = "/root"
+"#,
+    )
+    .unwrap();
+    let policy = load_container_policy(&root, Some("web")).unwrap();
+    let mut volumes = std::collections::BTreeMap::new();
+    for path in &policy.compose_files {
+        let document: serde_yaml::Value =
+            serde_yaml::from_str(&policy.read_compose(path).unwrap()).unwrap();
+        if let Some(entries) = document
+            .get("volumes")
+            .and_then(serde_yaml::Value::as_mapping)
+        {
+            for (name, entry) in entries {
+                volumes.insert(name.as_str().unwrap().to_owned(), entry.clone());
+            }
+        }
+    }
+    assert_eq!(volumes.len(), 2, "one physical volume per host state mask");
+    for entry in volumes.values() {
+        assert!(
+            entry.get("name").is_none(),
+            "Compose must retain project-scoped physical mask names on nerdctl"
+        );
+        assert_eq!(
+            entry["labels"][crate::runtime::scope::CHECKOUT_LABEL].as_str(),
+            root.to_str()
+        );
+        assert_eq!(
+            entry["labels"][crate::runtime::scope::SCOPE_LABEL].as_str(),
+            Some(token.as_str())
+        );
+        assert_eq!(
+            entry["labels"][crate::runtime::scope::MANAGED_LABEL].as_str(),
+            Some("true")
+        );
+    }
+}

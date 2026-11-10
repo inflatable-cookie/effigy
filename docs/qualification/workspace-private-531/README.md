@@ -112,9 +112,11 @@ probes. Qualification preparation uses only the existing read-only backend
 status and containerd/BuildKit readiness checks; a stopped/unavailable backend
 refuses instead of entering ordinary ensure's VM start or shared-unit repair.
 
-Runtime images must already contain Python 3, a GNU loader, the root user and
-ordinary core utilities. The fixture has no ports, named volumes, shared
-services or user data. Its utility creates a new encrypted synthetic vault and
+Runtime images must already contain Python 3, a GNU loader, root for control
+operations, the standard nonroot `nobody` user for workspace clients and ordinary
+core utilities. The fixture has no ports, shared services or user data. Its two
+empty host-state mask volumes use scoped Compose names and are retired after
+the final down. Its utility creates a new encrypted synthetic vault and
 sealed local unlock credential through the real vault APIs, with a known
 fixture canary delivered only to Compose. It reads no user/consumer vault. The
 scoped native GO must cover that isolated vault/key/credential creation too. Missing images/tools/artifacts refuse; the driver never

@@ -60,7 +60,62 @@ proof occurrence. Exploration never touches that root. After the candidate freez
 #621 separately binds the Recipe A–E artifacts, baseline, guest artifact provenance,
 qualification-root identity and scoped native GO described in [producer.md](producer.md)
 and [README.md](README.md), then runs the single-backend full-session entry. The
-stage-chain receipt is a prerequisite, not a full-session result.
+stage-chain receipt is a prerequisite, not a full-session result. The full-session
+freeze also pins a Python interpreter whose scratch read-only SQLite probe passes
+and the genuinely produced guest host-identity sidecar; a missing binding is a
+preparation failure, never a sidecar to manufacture during the proof. Before freezing
+that full-session baseline, its preparation owner must initialize the profile's
+container networking on owned resources and prove the temporary container is
+removed. A cold Colima engine lists only intrinsic network modes; its first
+container creates a persistent default bridge. The full-session window neither
+rebaselines nor deletes that engine network to disguise the change.
+
+`qualification:macos:colima-session-smoke -- --request REQUEST --sha256 SHA256`
+runs the complete local Colima cell driver without consuming a sealed occurrence.
+The hash-bound request records `control`, its observed `identity`, the actual
+`exploration_authority` and one `cell` with real, pinned artifacts and inventory.
+It requires an already running owned profile at `control/c`, Docker config at
+`control/docker-config`, and an empty qualification root under `control/s`.
+Nerdctl intrinsic network modes carry no object ID and cannot be inspected;
+their complete structured listing participates in the baseline. Every network
+with an ID still requires inspection, and duplicate names refuse.
+The detached host supervisor carries the declaration's explicit Colima/cache,
+Docker-config and temp paths plus its supported artifact-source choice, so its
+reobservation reaches the same owned namespace after the kernel clears ambient
+environment. Those values are compared again with the prepared declaration.
+The fixture uses a project catalog fragment and a bare `PROBE_TOKEN` environment
+key, so current generated Compose can consume the same-owner interpolation
+environment without importing a legacy `${PROBE_TOKEN}` Compose file.
+The workspace client runs as `nobody` with an owned `/home/nobody`; root is only
+the fixture's control exec identity. Ordinary permission preparation refuses a
+root workspace identity. Colima file staging streams unshared host bytes over
+stdin into an exclusive guest staging file. Optional guest reads return explicit
+presence framing: Colima collapses nonzero guest exits to host exit 1, so an exit
+code cannot supply absence evidence.
+Before creating the session checkout, the unsealed entry checks that its Python
+can open an actual scratch SQLite database read-only and that writes refuse.
+On this host, system Python 3.9.6/SQLite 3.51.0 failed that read-only open;
+Homebrew Python 3.11.17/SQLite 3.53.4 passed. Select a capable interpreter on
+PATH and retain its canonical path/hash; do not bypass locking with
+`immutable=1`. The full-session baseline also binds the producer's real
+`.install-identity` sidecar, alongside its binary, receipt and active version.
+The fixture's private HOME explicitly selects its backend/profile for retirement.
+After the final down, it retires only that synthetic checkout's owned data before
+requiring the original inventory. Workspace state masks carry checkout/scope
+labels through compaction and keep Compose's project-prefixed physical names
+for nerdctl's label-limited volumes. Unreferenced original declarations are
+removed, so retirement can identify the two masks after the container disappears.
+The 1800-second cell bound remains. Exploratory activation/down/retirement
+commands may spend at most 300 seconds each, clipped to that original window;
+other commands keep 60 seconds. The exploratory receipt records these limits.
+The sealed driver retains its reviewed 60-second command bound. A debug host
+activation exceeded that bound after genuine publication reached a pending
+selection, so the later candidate freeze must measure the optimized artifacts
+against it or explicitly review a new phase bound before sealing. This task
+neither changes the sealed bound nor claims that timing proof.
+Its result is `exploration-complete.json`
+with `exploratory: true, proof: false`; aggregate verification refuses it even
+if renamed. This entry grants no VM startup or artifact-build authority.
 
 ## Native exploration, 2026-11-09
 

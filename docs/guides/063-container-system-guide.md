@@ -844,8 +844,15 @@ without Effigy state, secret files, ignored or untracked paths or submodule
 contents; `effigy workspace:linux:artifact` refreshes it before each build,
 proves through the container that the bound bytes are that closure, and copies
 only the receipt-verified artifact back. Inside a shared mount the checkout's
-own path stays bound and nothing is staged. The profile configuration is only
-read: no mount, profile setting or VM is added or changed.
+own path stays bound and nothing is staged. Build contexts that name the
+checkout also use that staged tree, so the guest can read the Dockerfile;
+relative Dockerfile names and unrelated build fields stay unchanged. Runtime
+path checks run after Compose staging and judge the effective source and
+Compose inputs, rather than rejecting a temporary checkout whose staged paths
+are reachable. The profile configuration is only read: no mount, profile
+setting or VM is added or changed. Profile reads and managed writes use
+`COLIMA_HOME` when set, matching Colima itself; otherwise they use
+`HOME/.colima`.
 
 The clone marker is read from that checkout's own `.git/config` only — never
 from global or system Git configuration, and `[include]` directives are not

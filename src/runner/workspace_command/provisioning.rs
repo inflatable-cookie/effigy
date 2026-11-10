@@ -1868,15 +1868,117 @@ impl<'a> ComposeWorkspaceGuest<'a> {
     }
 }
 
+// Colima/nerdctl collapses nonzero guest exits into host exit 1. Optional
+// reads therefore carry explicit presence framing in a successful guest reply;
+// transport failure never supplies absence. The body remains binary-safe.
+fn selector_parent(path: &str) -> Result<String, RunnerError> {
+    Path::new(path)
+        .parent()
+        .and_then(Path::to_str)
+        .map(shell_quote)
+        .ok_or_else(|| RunnerError::task_invocation("guest selector has no parent directory"))
+}
+
+fn optional_guest_read(bytes: &[u8]) -> Result<Option<&[u8]>, RunnerError> {
+    match bytes {
+        b"A\n" => Ok(None),
+        [b'P', b'\n', body @ ..] => Ok(Some(body)),
+        _ => Err(RunnerError::task_invocation(
+            "guest optional read returned malformed presence framing",
+        )),
+    }
+}
+
+#[cfg(test)]
+mod guest_read_protocol {
+    use super::*;
+    #[test]
+    fn selector_writes_prepare_missing_parents_through_the_bounded_guest_transport() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{Duration, Instant};
+        let _lock = crate::contract_test_support::lock_test();
+        let fixture = effigy_test_support::Fixture::new("guest-selector-parent-").unwrap();
+        let root = fixture.path().canonicalize().unwrap();
+        let bin = root.join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let home = root.join("home");
+        std::fs::create_dir(&home).unwrap();
+        let executable = bin.join("colima");
+        std::fs::write(
+            &executable,
+            r#"#!/bin/sh
+set -e
+[ "$1" = nerdctl ] && [ "$2" = --profile ] && [ "$3" = fixture ] && [ "$4" = -- ]
+shift 4
+[ "$1" = exec ]
+previous=''
+while [ "$#" -gt 0 ] && [ "$1" != sh ]; do previous="$1"; shift; done
+[ "$previous" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]
+exec "$@"
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let _env = crate::contract_test_support::EnvGuard::set_many(&[
+            ("PATH", Some(format!("{}:/usr/bin:/bin", bin.display()))),
+            ("HOME", Some(home.display().to_string())),
+            ("COLIMA_HOME", Some(root.join("c").display().to_string())),
+            ("EFFIGY_COMPOSE_BACKEND", Some("colima".into())),
+        ]);
+        std::fs::write(root.join("effigy.toml"), "[containers.web]\ncompose_file='compose.yml'\nprimary_service='app'\nprofile='fixture'\n").unwrap();
+        std::fs::write(
+            root.join("compose.yml"),
+            "services:\n  app:\n    image: fixture:one\n",
+        )
+        .unwrap();
+        let policy = effigy_containers::load_container_policy(&root, Some("web")).unwrap();
+        let now = Instant::now();
+        let mut budget = BoundedCommandBudget::new(now, now + Duration::from_secs(10), 4096, 4096);
+        let id = "a".repeat(64);
+        let mut guest = ComposeWorkspaceGuest::bounded(&root, &policy, &id, &mut budget);
+        let pointer = root.join("guest fresh ; literal/run/bin/current");
+        guest
+            .replace_pointer(pointer.to_str().unwrap(), "42")
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(&pointer).unwrap(), "42\n");
+        // This double executes host utilities. The Linux guest's GNU mv -T
+        // branch is exercised here on Linux and by native smoke on macOS.
+        #[cfg(target_os = "linux")]
+        {
+            let link = root.join("another fresh/usr/local/bin/effigy");
+            guest
+                .replace_link(link.to_str().unwrap(), "/owned/object")
+                .unwrap();
+            assert_eq!(
+                std::fs::read_link(link).unwrap(),
+                Path::new("/owned/object")
+            );
+        }
+    }
+
+    #[test]
+    fn presence_framing_distinguishes_absence_empty_and_binary_contents() {
+        assert_eq!(optional_guest_read(b"A\n").unwrap(), None);
+        assert_eq!(optional_guest_read(b"P\n").unwrap(), Some(&b""[..]));
+        assert_eq!(
+            optional_guest_read(b"P\nA\n\0\xff").unwrap(),
+            Some(&b"A\n\0\xff"[..])
+        );
+        for bad in [&b""[..], &b"A\nextra"[..], &b"diagnostic"[..], &b"P"[..]] {
+            assert!(optional_guest_read(bad).is_err());
+        }
+    }
+}
+
 impl GuestReader for ComposeWorkspaceGuest<'_> {
     fn read_file(&mut self, path: &str) -> Result<Option<Vec<u8>>, RunnerError> {
-        let script = format!("cat {} 2>/dev/null || exit 3", shell_quote(path));
+        let script = format!(
+            "p={}\nif [ -e \"$p\" ]; then printf 'P\\n'; cat \"$p\"; else printf 'A\\n'; fi",
+            shell_quote(path)
+        );
         let output = self.run_script(&script, false)?;
         if output.status.success() {
-            return Ok(Some(output.stdout));
-        }
-        if output.status.code() == Some(3) {
-            return Ok(None);
+            return optional_guest_read(&output.stdout).map(|value| value.map(<[u8]>::to_vec));
         }
         Err(RunnerError::task_invocation(format!(
             "cannot read `{path}` in workspace container `{}`: {}",
@@ -1889,7 +1991,7 @@ impl GuestReader for ComposeWorkspaceGuest<'_> {
         // One digest line, never the file: a bounded caller must not pay for
         // the executable's size in its own capture budget.
         let script = format!(
-            "p={path}\n[ -f \"$p\" ] || exit 3\n\
+            "p={path}\n[ -f \"$p\" ] || {{ printf 'A\\n'; exit 0; }}\nprintf 'P\\n'\n\
              if command -v sha256sum >/dev/null 2>&1; then sha256sum \"$p\"\n\
              elif command -v shasum >/dev/null 2>&1; then shasum -a 256 \"$p\"\n\
              elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 \"$p\"\n\
@@ -1899,7 +2001,6 @@ impl GuestReader for ComposeWorkspaceGuest<'_> {
         let output = self.run_script(&script, false)?;
         match output.status.code() {
             Some(0) => {}
-            Some(3) => return Ok(None),
             Some(4) => {
                 return Err(RunnerError::task_invocation(format!(
                     "workspace container `{}` has no SHA-256 utility, so the pinned guest \
@@ -1916,7 +2017,10 @@ impl GuestReader for ComposeWorkspaceGuest<'_> {
                 )))
             }
         }
-        let rendered = String::from_utf8_lossy(&output.stdout);
+        let Some(bytes) = optional_guest_read(&output.stdout)? else {
+            return Ok(None);
+        };
+        let rendered = String::from_utf8_lossy(bytes);
         rendered
             .split_whitespace()
             .find(|token| token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit()))
@@ -1934,17 +2038,16 @@ impl GuestReader for ComposeWorkspaceGuest<'_> {
 impl GuestWorkspace for ComposeWorkspaceGuest<'_> {
     fn read_link(&mut self, path: &str) -> Result<Option<String>, RunnerError> {
         let script = format!(
-            "[ -L {path} ] || exit 3\nreadlink {path}",
+            "if [ -L {path} ]; then printf 'P\\n'; readlink {path}; else printf 'A\\n'; fi",
             path = shell_quote(path)
         );
         let output = self.run_script(&script, false)?;
         match output.status.code() {
-            Some(0) => String::from_utf8(output.stdout)
-                .map(|target| Some(target.trim_end_matches('\n').to_owned()))
-                .map_err(|error| RunnerError::task_invocation(format!(
-                    "cannot decode workspace entry `{path}`: {error}; run `{HOST_REPREPARE_COMMAND}` on the host"
-                ))),
-            Some(3) => Ok(None),
+            Some(0) => optional_guest_read(&output.stdout)?
+                .map(|bytes| String::from_utf8(bytes.to_vec())
+                    .map(|target| target.trim_end_matches('\n').to_owned())
+                    .map_err(|_| RunnerError::task_invocation("guest link read returned invalid UTF-8")))
+                .transpose(),
             _ => Err(RunnerError::task_invocation(format!(
                 "cannot read workspace entry `{path}`: {}; run `{HOST_REPREPARE_COMMAND}` on the host",
                 String::from_utf8_lossy(&output.stderr).trim()
@@ -2008,8 +2111,9 @@ impl GuestWorkspace for ComposeWorkspaceGuest<'_> {
     }
 
     fn replace_pointer(&mut self, path: &str, target: &str) -> Result<(), RunnerError> {
+        let parent = selector_parent(path)?;
         let script = format!(
-            "printf '%s\\n' {target} > {path}.tmp && mv -f {path}.tmp {path}",
+            "mkdir -p -m 0755 -- {parent} && printf '%s\\n' {target} > {path}.tmp && mv -f {path}.tmp {path}",
             target = shell_quote(target),
             path = shell_quote(path),
         );
@@ -2017,8 +2121,9 @@ impl GuestWorkspace for ComposeWorkspaceGuest<'_> {
     }
 
     fn replace_link(&mut self, path: &str, target: &str) -> Result<(), RunnerError> {
+        let parent = selector_parent(path)?;
         let script = format!(
-            "ln -sfn {target} {path}.tmp && mv -Tf {path}.tmp {path}",
+            "mkdir -p -m 0755 -- {parent} && ln -sfn {target} {path}.tmp && mv -Tf {path}.tmp {path}",
             target = shell_quote(target),
             path = shell_quote(path),
         );
@@ -2566,7 +2671,10 @@ fn path_named(path: &Path, name: &str) -> bool {
     path.file_name().is_some_and(|file| file == name)
 }
 
-fn local_artifact_identity(host_binary: &Path, checkout: &Path) -> Result<String, RunnerError> {
+pub(in crate::runner) fn local_artifact_identity(
+    host_binary: &Path,
+    checkout: &Path,
+) -> Result<String, RunnerError> {
     workspace_effigy_local_install_identity(&resolve_local_workspace_effigy_freshness_anchor(
         host_binary,
         checkout,

@@ -3543,8 +3543,13 @@ impl ProcGuestIdentity { fn process() -> Self; }
 ```
 
 Requests take container/boot claims from that observation. The published context is a host claim to compare against it, never
-independent evidence of the caller. The candidate independent source is the full 64-hex id in a backend-qualified kernel
-`/proc/self/mountinfo` root under `containers/`; boot is the canonical UUID in `/proc/sys/kernel/random/boot_id`. Exactly one
+independent evidence of the caller. The running binary reports the same active-version value the producer pins; display-only
+formatting such as a leading `v` never enters that wire identity. Version and protocol comparisons remain exact; credential
+pins compare as the shared `Digest` value, including the producer's bare-hex v2 encoding.
+The candidate independent source is the full 64-hex id in a backend-qualified kernel
+`/proc/self/mountinfo` root under `containers/`. It is the metadata file's immediate parent directory; backend namespace
+components between `containers/` and that ID are allowed. A hex value in a namespace, mountpoint or source column is not identity.
+Boot is the canonical UUID in `/proc/sys/kernel/random/boot_id`. Exactly one
 distinct full id is required; zero, conflicting, unreadable or malformed facts refuse before credentials. Consistent with §8.2,
 `/proc/self/cgroup` is diagnostic only: reading a full id there is still a cgroup claim, never independent placement evidence,
 even when it matches the context. Cgroup-only availability must refuse `Unproven`; neither qualification nor context agreement

@@ -178,6 +178,9 @@ fi
 # The bounded entry verifies the prepared guest context instead of installing
 # one (contract 052 §8.9). These answers are the published context the fixture
 # wrote: one generation, one pinned executable, nothing refreshed.
+optional_presence() {
+    case "$args" in *"printf 'P"*) printf 'P\n' ;; esac
+}
 case "$args" in
     *"/run/effigy/context/current"*)
         if [ "$FAKE_BOUNDED_MODE" = "workspace-hang" ]; then
@@ -193,18 +196,21 @@ case "$args" in
             done
             exit 0
         fi
+        optional_presence
         printf '1'
         exit 0
         ;;
     *"/run/effigy/context/1/context.json"*)
         # `read` is a shell builtin: the child's PATH holds only the fixture
         # backend, so a `cat` here would fail and read as an empty document.
+        optional_presence
         while IFS= read -r line || [ -n "$line" ]; do
             printf '%s\n' "$line"
         done < "$FAKE_BOUNDED_CONTEXT_FILE"
         exit 0
         ;;
     *"/run/effigy/bin/current"*)
+        optional_presence
         printf '%s' "$FAKE_BOUNDED_DIGEST"
         exit 0
         ;;
@@ -216,13 +222,15 @@ case "$args" in
         ;;
     *"readlink"*"/usr/local/bin/effigy"*)
         case "$FAKE_BOUNDED_MODE" in
-            entry-missing) exit 3 ;;
-            entry-wrong) printf '/run/effigy/other\n'; exit 0 ;;
+            entry-missing) printf 'A\n'; exit 0 ;;
+            entry-wrong) optional_presence; printf '/run/effigy/other\n'; exit 0 ;;
         esac
+        optional_presence
         printf '/run/effigy/bin/%s/effigy\n' "$FAKE_DIGEST_HEX"
         exit 0
         ;;
     *"/usr/local/bin/effigy"*)
+        optional_presence
         if [ "$FAKE_BOUNDED_MODE" = "entry-wrong-bytes" ]; then
             printf '%064d\n' 0
         else
@@ -233,6 +241,7 @@ case "$args" in
     *"$FAKE_DIGEST_HEX"*)
         # The entry authenticates the installed executable with a digest probe,
         # never by reading its bytes into the caller's capture budget.
+        optional_presence
         printf '%s\n' "$FAKE_DIGEST_HEX"
         exit 0
         ;;

@@ -89,6 +89,32 @@ pub(in crate::runner) enum IntegratedFailure<'a, E> {
     },
 }
 
+impl<E> IntegratedFailure<'_, E> {
+    /// Fixed diagnostic vocabulary; underlying errors can contain protected data.
+    pub(in crate::runner) fn stage(&self) -> &'static str {
+        match self {
+            Self::PhaseA(PhaseAFailure::BeforeAdmission(_)) => "before admission",
+            Self::PhaseA(PhaseAFailure::Admission(_)) => "admission",
+            Self::PhaseA(PhaseAFailure::Guarded { .. }) => "sealed apply",
+            Self::Guarded { bound: None, .. } => "bind/reacquire",
+            Self::Guarded { effects: None, .. } => "integration effects",
+            Self::Guarded { .. } => "park",
+            Self::Parked { .. } => "integrations/resume",
+            Self::Cleanup(_) => "guarded cleanup",
+            Self::CleanupOnly { .. } => "cleanup integrations",
+            Self::ParkedCleanup { .. } => "parked cleanup",
+            Self::Publication {
+                cause: PublicationFailure::Guarded { .. },
+                ..
+            } => "publication/selection",
+            Self::Publication {
+                cause: PublicationFailure::Finishing { .. },
+                ..
+            } => "selected finish",
+        }
+    }
+}
+
 type Resumed =
     Result<WorkspaceActivation<'static>, (EnvError, Box<ParkedWorkspaceActivation<'static>>)>;
 

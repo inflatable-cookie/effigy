@@ -133,7 +133,7 @@ builder GO. Decision D-2: Darwin Colima `effigy-release`, target
 `build_kind=workspace-artifact`, `completed_at`) names the container-local
 binary path; the host transfers the three roles into
 `.effigy/linux-release/artifacts/`. The active-version sidecar must match. Record cells `guest_artifact`,
-`guest_producer_receipt` and `guest_active_version` from the producer's
+`guest_producer_receipt`, `guest_active_version` and `guest_install_identity` from the producer's
 `.effigy/linux-release/artifacts/` outputs. The native proof never rebuilds
 the artifact and never blesses bytes with new sidecars.
 
@@ -215,7 +215,12 @@ builder's private tree. After positive closure the host transfers the three
 capped roles (`cat -- <container-path>` with each role's cap enforced while
 receiving) and atomically publishes a complete verified set into the caller's
 `.effigy/linux-release/artifacts/`. The compiler never chooses the destination
-and never writes it. A failed, oversize or interrupted transfer publishes
+and never writes it. After the same verified build, the host publishes its
+freshness binding (`.install-identity`) before the receipt. It captures the
+host identity before compiling and refuses host-anchor drift before publishing.
+The active-version bytes and locally generated binding share the existing
+4 KiB sidecar cap; the boundary's charged bytes include both. No artifact is
+made current by the full-session window, and no host-write cap increases. A failed, oversize or interrupted transfer publishes
 nothing and keeps the caller's prior valid artifact.
 
 This is not 743's weaker proposal of a read-only source plus a writable host
