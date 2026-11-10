@@ -29,7 +29,6 @@ pub struct EffectiveContainerPolicy {
     pub profile: String,
     pub compose_source: EffectiveComposeSource,
     pub compose_files: Vec<PathBuf>,
-    pub compose_file_display: String,
     pub managed_volumes: Vec<ManagedVolume>,
     /// Named volumes this environment mounts from a `data_from` owner's
     /// Compose project. They are declared `external` in the generated
@@ -294,7 +293,6 @@ pub(crate) fn test_policy(repo_root: &std::path::Path) -> EffectiveContainerPoli
         profile: "effigy".to_owned(),
         compose_source: EffectiveComposeSource::Generated,
         compose_files: vec![],
-        compose_file_display: "generated".to_owned(),
         managed_volumes: vec![],
         borrowed_volumes: vec![],
         data_peers: vec![],

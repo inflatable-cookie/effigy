@@ -529,23 +529,17 @@ fn build_effective_policy(
         config,
     )?;
     let volume_borrow = data_links.borrow.clone();
-    let (
-        mut compose_files,
-        compose_file_display,
-        managed_volumes,
-        borrowed_volumes,
-        effective_ports,
-        shared_services,
-    ) = resolve_compose_source(
-        repo_root,
-        bundle_root,
-        name,
-        config,
-        &project_name,
-        effective_manifest,
-        volume_borrow.as_ref(),
-        &mut draft,
-    )?;
+    let (mut compose_files, managed_volumes, borrowed_volumes, effective_ports, shared_services) =
+        resolve_compose_source(
+            repo_root,
+            bundle_root,
+            name,
+            config,
+            &project_name,
+            effective_manifest,
+            volume_borrow.as_ref(),
+            &mut draft,
+        )?;
     let primary_service = config.primary_service.clone().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
             "container `{name}` must declare `primary_service`"
@@ -653,7 +647,6 @@ fn build_effective_policy(
         profile,
         compose_source: EffectiveComposeSource::Generated,
         compose_files,
-        compose_file_display,
         managed_volumes,
         borrowed_volumes,
         data_peers: data_links.peers,

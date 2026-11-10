@@ -723,244 +723,165 @@ pub(crate) fn normalize_runtime_rewrite_paths(
     compose_dir: &Path,
     defines_services: bool,
 ) {
-    normalize_document_paths(parsed, compose_dir);
-    let Some(services) = parsed
+    if defines_services {
+        if let Some(services) = parsed
+            .get_mut("services")
+            .and_then(serde_yaml::Value::as_mapping_mut)
+        {
+            for service in services.values_mut() {
+                if let Some(build) = service
+                    .get_mut("build")
+                    .and_then(serde_yaml::Value::as_mapping_mut)
+                {
+                    build
+                        .entry(serde_yaml::Value::String("context".into()))
+                        .or_insert_with(|| {
+                            serde_yaml::Value::String(render_compose_relative_path(
+                                ".",
+                                compose_dir,
+                            ))
+                        });
+                }
+            }
+        }
+    }
+    map_compose_paths(parsed, &mut |path, bind| {
+        if bind {
+            looks_like_bind_mount_source(path)
+                .then(|| render_compose_relative_path(path, compose_dir))
+        } else {
+            normalize_compose_relative_path(path, compose_dir)
+        }
+    });
+}
+
+/// Visit host file references only. Commands, environment, inline content,
+/// container targets and named volumes are never path relocation inputs.
+pub(crate) fn map_compose_paths(
+    document: &mut serde_yaml::Value,
+    map: &mut impl FnMut(&str, bool) -> Option<String>,
+) {
+    for kind in ["secrets", "configs"] {
+        if let Some(entries) = document
+            .get_mut(kind)
+            .and_then(serde_yaml::Value::as_mapping_mut)
+        {
+            for entry in entries.values_mut() {
+                map_path(entry, "file", false, map);
+            }
+        }
+    }
+    if let Some(include) = document.get_mut("include") {
+        map_path(include, "path", false, map);
+    }
+    let Some(services) = document
         .get_mut("services")
         .and_then(serde_yaml::Value::as_mapping_mut)
     else {
         return;
     };
     for service in services.values_mut() {
-        let Some(service) = service.as_mapping_mut() else {
-            continue;
-        };
-        normalize_service_build_paths(service, compose_dir, defines_services);
-        normalize_service_env_file_paths(service, compose_dir);
-        normalize_service_volume_sources(service, compose_dir);
-    }
-}
-
-/// The document-level keys that name a file: `secrets`, `configs` and
-/// `include`.
-fn normalize_document_paths(parsed: &mut serde_yaml::Value, compose_dir: &Path) {
-    let Some(root) = parsed.as_mapping_mut() else {
-        return;
-    };
-    for kind in ["secrets", "configs"] {
-        let Some(entries) = root
-            .get_mut(serde_yaml::Value::String(kind.to_owned()))
-            .and_then(serde_yaml::Value::as_mapping_mut)
-        else {
-            continue;
-        };
-        for entry in entries.values_mut() {
-            normalize_key_path(entry, "file", compose_dir);
-        }
-    }
-    if let Some(include) = root.get_mut(serde_yaml::Value::String("include".to_owned())) {
-        match include {
-            serde_yaml::Value::Sequence(entries) => {
-                for entry in entries {
-                    normalize_include_entry(entry, compose_dir);
-                }
-            }
-            entry => normalize_include_entry(entry, compose_dir),
-        }
-    }
-}
-
-fn normalize_include_entry(entry: &mut serde_yaml::Value, compose_dir: &Path) {
-    match entry {
-        serde_yaml::Value::String(path) => {
-            if let Some(normalized) = normalize_compose_relative_path(path, compose_dir) {
-                *path = normalized;
-            }
-        }
-        entry => {
-            let _ = normalize_key_path(entry, "path", compose_dir);
-        }
-    }
-}
-
-fn normalize_key_path(entry: &mut serde_yaml::Value, key: &str, compose_dir: &Path) -> Option<()> {
-    let value = entry.get_mut(serde_yaml::Value::String(key.to_owned()))?;
-    let serde_yaml::Value::String(path) = value else {
-        return None;
-    };
-    if let Some(normalized) = normalize_compose_relative_path(path, compose_dir) {
-        *path = normalized;
-    }
-    Some(())
-}
-
-fn normalize_service_build_paths(
-    service: &mut serde_yaml::Mapping,
-    compose_dir: &Path,
-    defines_services: bool,
-) {
-    let Some(build) = service.get_mut(serde_yaml::Value::String("build".to_owned())) else {
-        return;
-    };
-    match build {
-        serde_yaml::Value::String(path) => {
-            if let Some(normalized) = normalize_compose_relative_path(path, compose_dir) {
-                *path = normalized;
-            }
-        }
-        serde_yaml::Value::Mapping(mapping) => {
-            let key = serde_yaml::Value::String("context".to_owned());
-            if let Some(serde_yaml::Value::String(path)) = mapping.get_mut(&key) {
-                if let Some(normalized) = normalize_compose_relative_path(path, compose_dir) {
-                    *path = normalized;
-                }
-            } else if mapping.get(&key).is_none() && defines_services {
-                // Compose defaults a missing context to the project directory,
-                // which after a render is the generation. The defining file
-                // names the directory it was read from instead; an overlay
-                // inherits the base's context, so it is left as written.
-                mapping.insert(
-                    key,
-                    serde_yaml::Value::String(render_compose_relative_path(".", compose_dir)),
-                );
-            }
-            match mapping.get_mut(serde_yaml::Value::String("additional_contexts".to_owned())) {
-                Some(serde_yaml::Value::Sequence(contexts)) => {
-                    for context in contexts {
-                        normalize_additional_context(context, compose_dir);
+        if let Some(build) = service.get_mut("build") {
+            if build.is_string() {
+                map_path(build, "", false, map);
+            } else {
+                map_path(build, "context", false, map);
+                if let Some(contexts) = build.get_mut("additional_contexts") {
+                    match contexts {
+                        serde_yaml::Value::Mapping(contexts) => {
+                            for context in contexts.values_mut() {
+                                if !context.as_str().is_some_and(looks_like_named_build_context) {
+                                    map_path(context, "", false, map);
+                                }
+                            }
+                        }
+                        serde_yaml::Value::Sequence(contexts) => {
+                            for context in contexts {
+                                let value = if context.is_mapping() {
+                                    context.get_mut("value")
+                                } else {
+                                    Some(context)
+                                };
+                                let Some(serde_yaml::Value::String(raw)) = value else {
+                                    continue;
+                                };
+                                let Some((name, path, separator)) = raw
+                                    .split_once('=')
+                                    .map(|(n, p)| (n, p, "="))
+                                    .or_else(|| raw.split_once(':').map(|(n, p)| (n, p, ":")))
+                                else {
+                                    continue;
+                                };
+                                if let Some(path) = map(path, false) {
+                                    *raw = format!("{name}{separator}{path}");
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                Some(serde_yaml::Value::Mapping(contexts)) => {
-                    for context in contexts.values_mut() {
-                        normalize_mapping_additional_context(context, compose_dir);
-                    }
-                }
-                _ => {}
             }
         }
-        _ => {}
-    }
-}
-
-/// One sequence-form `build.additional_contexts` entry: a `name=path` or
-/// `name: path`, or a mapping whose `value` names the path.
-fn normalize_additional_context(context: &mut serde_yaml::Value, compose_dir: &Path) {
-    match context {
-        serde_yaml::Value::String(raw) => {
-            let (name, path, separator) = match raw.split_once('=') {
-                Some((name, path)) => (name, path, "="),
-                None => match raw.split_once(':') {
-                    Some((name, path)) => (name, path, ":"),
-                    None => return,
-                },
-            };
-            if let Some(normalized) = normalize_compose_relative_path(path, compose_dir) {
-                *raw = format!("{name}{separator}{normalized}");
-            }
+        if let Some(files) = service.get_mut("env_file") {
+            map_path(files, "path", false, map);
         }
-        serde_yaml::Value::Mapping(mapping) => {
-            if let Some(value) = mapping.get_mut(serde_yaml::Value::String("value".to_owned())) {
-                normalize_additional_context(value, compose_dir);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Mapping-form `additional_contexts: { name: path }`: the value is the
-/// context itself, not a `name=path` string. Remote, already-absolute, and
-/// `service:<name>` named-context values stay as written.
-fn normalize_mapping_additional_context(context: &mut serde_yaml::Value, compose_dir: &Path) {
-    let serde_yaml::Value::String(path) = context else {
-        return;
-    };
-    if looks_like_named_build_context(path) {
-        return;
-    }
-    if let Some(normalized) = normalize_compose_relative_path(path, compose_dir) {
-        *path = normalized;
-    }
-}
-
-fn normalize_service_env_file_paths(service: &mut serde_yaml::Mapping, compose_dir: &Path) {
-    let Some(env_file) = service.get_mut(serde_yaml::Value::String("env_file".to_owned())) else {
-        return;
-    };
-    match env_file {
-        serde_yaml::Value::String(path) => {
-            if let Some(normalized) = normalize_compose_relative_path(path, compose_dir) {
-                *path = normalized;
-            }
-        }
-        serde_yaml::Value::Sequence(entries) => {
-            for entry in entries {
-                match entry {
-                    serde_yaml::Value::String(path) => {
-                        if let Some(normalized) = normalize_compose_relative_path(path, compose_dir)
-                        {
-                            *path = normalized;
+        if let Some(volumes) = service
+            .get_mut("volumes")
+            .and_then(serde_yaml::Value::as_sequence_mut)
+        {
+            for volume in volumes {
+                if let Some(raw) = volume.as_str() {
+                    let Some((source, target, options)) = parse_mount_parts(raw) else {
+                        continue;
+                    };
+                    if looks_like_bind_mount_source(source) {
+                        if let Some(source) = map(source, true) {
+                            *volume = format!(
+                                "{source}:{target}{}",
+                                options
+                                    .filter(|v| !v.is_empty())
+                                    .map(|v| format!(":{v}"))
+                                    .unwrap_or_default()
+                            )
+                            .into();
                         }
                     }
-                    // `env_file: [{path: ./x, required: false}]` resolves
-                    // against the project directory too, and Compose skips it
-                    // silently when the rewritten path is missing.
-                    entry => {
-                        let _ = normalize_key_path(entry, "path", compose_dir);
-                    }
+                } else if volume
+                    .get("type")
+                    .and_then(serde_yaml::Value::as_str)
+                    .is_none_or(|kind| kind == "bind")
+                {
+                    map_path(volume, "source", true, map);
                 }
+            }
+        }
+    }
+}
+
+fn map_path(
+    value: &mut serde_yaml::Value,
+    key: &str,
+    bind: bool,
+    map: &mut impl FnMut(&str, bool) -> Option<String>,
+) {
+    match value {
+        serde_yaml::Value::Sequence(entries) => {
+            for entry in entries {
+                map_path(entry, key, bind, map);
+            }
+        }
+        serde_yaml::Value::Mapping(_) => {
+            if let Some(value) = value.get_mut(key) {
+                map_path(value, key, bind, map);
+            }
+        }
+        serde_yaml::Value::String(path) => {
+            if let Some(mapped) = map(path, bind) {
+                *path = mapped;
             }
         }
         _ => {}
     }
-}
-
-fn normalize_service_volume_sources(service: &mut serde_yaml::Mapping, compose_dir: &Path) {
-    let Some(serde_yaml::Value::Sequence(volumes)) =
-        service.get_mut(serde_yaml::Value::String("volumes".to_owned()))
-    else {
-        return;
-    };
-    for volume in volumes {
-        let Some(raw) = volume.as_str() else {
-            normalize_volume_mapping(volume, compose_dir);
-            continue;
-        };
-        let Some((source, target, options)) = parse_mount_parts(raw) else {
-            continue;
-        };
-        let Some(normalized_source) = normalize_bind_mount_source(source, compose_dir) else {
-            continue;
-        };
-        let mut rendered = format!("{normalized_source}:{target}");
-        if let Some(options) = options.filter(|value| !value.is_empty()) {
-            rendered.push(':');
-            rendered.push_str(options);
-        }
-        *volume = serde_yaml::Value::String(rendered);
-    }
-}
-
-/// One long-syntax volume: `{type: bind, source: ./x, target: /y}`.
-fn normalize_volume_mapping(volume: &mut serde_yaml::Value, compose_dir: &Path) {
-    let Some(mapping) = volume.as_mapping_mut() else {
-        return;
-    };
-    if let Some(kind) = mapping.get(serde_yaml::Value::String("type".to_owned())) {
-        if kind.as_str() != Some("bind") {
-            return;
-        }
-    }
-    let Some(serde_yaml::Value::String(source)) =
-        mapping.get_mut(serde_yaml::Value::String("source".to_owned()))
-    else {
-        return;
-    };
-    if let Some(normalized) = normalize_bind_mount_source(source, compose_dir) {
-        *source = normalized;
-    }
-}
-
-fn normalize_bind_mount_source(source: &str, compose_dir: &Path) -> Option<String> {
-    looks_like_bind_mount_source(source).then(|| render_compose_relative_path(source, compose_dir))
 }
 
 fn normalize_compose_relative_path(path: &str, compose_dir: &Path) -> Option<String> {

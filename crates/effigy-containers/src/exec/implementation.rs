@@ -633,7 +633,6 @@ mod legacy_admission_tests {
             profile: "effigy".to_owned(),
             compose_source: EffectiveComposeSource::Direct,
             compose_files: vec![],
-            compose_file_display: "direct".to_owned(),
             managed_volumes: vec![],
             borrowed_volumes: vec![],
             data_peers: Vec::new(),

@@ -29,7 +29,6 @@ fn test_policy(compose_file: PathBuf) -> EffectiveContainerPolicy {
         profile: "effigy".to_owned(),
         compose_source: EffectiveComposeSource::Direct,
         compose_files: vec![compose_file],
-        compose_file_display: "docker-compose.yml".to_owned(),
         managed_volumes: vec![],
         borrowed_volumes: Vec::new(),
         data_peers: Vec::new(),

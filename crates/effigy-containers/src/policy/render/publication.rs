@@ -11,6 +11,7 @@ use effigy_kernel::objects::Objects;
 use effigy_kernel::observe::{AbsenceProof, Observed, UnknownReason};
 use effigy_kernel::outcome::{CleanupOutcome, Invocation};
 use effigy_kernel::run::{BeginOpts, Effect, Fence, Reconciled, Run, SettlementAdapter};
+use std::ffi::OsStr;
 use std::io::Read;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 

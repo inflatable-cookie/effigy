@@ -954,7 +954,6 @@ catalog = "php-fpm"
             profile: "effigy".to_owned(),
             compose_source: EffectiveComposeSource::Generated,
             compose_files: Vec::new(),
-            compose_file_display: String::new(),
             managed_volumes: Vec::new(),
             borrowed_volumes: Vec::new(),
             data_peers: Vec::new(),

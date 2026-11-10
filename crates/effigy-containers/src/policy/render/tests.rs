@@ -50,6 +50,11 @@ fn resolution_is_a_pure_complete_closure_and_prepare_seals_it() {
         let before = snapshot(fixture.path());
         let observed = load_container_policy(&checkout, None).unwrap();
         assert!(!observed.compose_files[0].exists());
+        let display = observed.compose_file_display();
+        assert_eq!(
+            display,
+            ".effigy/runtime/compose/one.generated.compose.yml, .effigy/runtime/dns/one.compose.override.yml"
+        );
         assert!(observed
             .read_compose(&observed.compose_files[0])
             .unwrap()
@@ -57,6 +62,7 @@ fn resolution_is_a_pure_complete_closure_and_prepare_seals_it() {
         assert_eq!(snapshot(fixture.path()), before);
         let prepared = prepare_resolved(&observed).unwrap();
         verify(&prepared).unwrap();
+        assert_eq!(prepared.compose_file_display(), display);
         // An unchanged generation hands Compose the same arguments every time,
         // so a re-up of a running stack recreates nothing (effigy#362).
         let up = crate::compose::compose_up_args(&prepared);
@@ -840,5 +846,140 @@ fn frozen_backend_keeps_the_recorded_context_when_the_current_context_changes() 
         let metadata: serde_json::Value = serde_json::from_slice(bytes).unwrap();
         assert_eq!(metadata["backend_context"], "remote-A");
         assert_eq!(metadata["backend_id"], "docker-compose");
+    });
+}
+
+#[test]
+fn field_relocation_golden_keeps_literals_and_first_file_base() {
+    let source = r#"services:
+  app:
+    build: {context: /source/app, dockerfile: Dockerfile,
+      dockerfile_inline: COPY /source/config.yaml /config.yaml, args: {LITERAL: /source/config.yaml},
+      additional_contexts: {files: /source/config.yaml, remote: 'service:app'}}
+    env_file: [{path: /source/config.yaml, required: false}]
+    volumes: ['/source/config.yaml:/source/config.yaml:ro',
+      {type: bind, source: /source/config.yaml, target: /source/config.yaml}, 'named:/source/config.yaml']
+    environment: {FILE: /source/config.yaml, SUBSTRING: prefix/source/config.yaml.backup}
+    command: cat /source/config.yaml
+    entrypoint: [/source/config.yaml]
+    labels: {literal: /source/config.yaml}
+    healthcheck: {test: [CMD-SHELL, cat /source/config.yaml]}
+configs: {app: {file: /source/config.yaml}}
+secrets: {app: {file: /source/config.yaml}}
+include: [/source/extra.yml]
+"#;
+    for first in [Path::new("checkout"), Path::new("checkout/overrides")] {
+        let names = BTreeMap::from([
+            ("/source/config.yaml", "checkout/generated/config.yaml"),
+            ("/source/extra.yml", "checkout/overrides/extra.yml"),
+        ]);
+        let mut value: serde_yaml::Value = serde_yaml::from_str(source).unwrap();
+        crate::workspace::map_compose_paths(&mut value, &mut |path, _| {
+            names
+                .get(path)
+                .map(|name| relative_name(first, Path::new(name)))
+        });
+        let expected = r#"services:
+  app:
+    build: {context: /source/app, dockerfile: Dockerfile,
+      dockerfile_inline: COPY /source/config.yaml /config.yaml, args: {LITERAL: /source/config.yaml},
+      additional_contexts: {files: ./generated/config.yaml, remote: 'service:app'}}
+    env_file: [{path: ./generated/config.yaml, required: false}]
+    volumes: ['./generated/config.yaml:/source/config.yaml:ro',
+      {type: bind, source: ./generated/config.yaml, target: /source/config.yaml}, 'named:/source/config.yaml']
+    environment: {FILE: /source/config.yaml, SUBSTRING: prefix/source/config.yaml.backup}
+    command: cat /source/config.yaml
+    entrypoint: [/source/config.yaml]
+    labels: {literal: /source/config.yaml}
+    healthcheck: {test: [CMD-SHELL, cat /source/config.yaml]}
+configs: {app: {file: ./generated/config.yaml}}
+secrets: {app: {file: ./generated/config.yaml}}
+include: [./overrides/extra.yml]
+"#
+        .to_owned();
+        let expected = if first.ends_with("overrides") {
+            expected
+                .replace("./generated/", "../generated/")
+                .replace("./overrides/", "./")
+        } else {
+            expected
+        };
+        assert_eq!(
+            value,
+            serde_yaml::from_str::<serde_yaml::Value>(&expected).unwrap(),
+            "{first:?}"
+        );
+    }
+}
+
+#[test]
+fn shared_render_relocates_path_components_only() {
+    let pending = PendingSharedRender {
+        project_name: "shared".into(),
+        directory: PathBuf::from("/owned/shared"),
+        compose_yaml: "services:\n  db:\n    volumes:\n      - /owned/shared/config.sql:/init.sql:ro\n      - /owned/shared-other/config.sql:/other.sql:ro\n    environment:\n      LITERAL: /owned/shared/config.sql\n    command: cat /owned/shared/config.sql\n".into(),
+        config_files: Default::default(),
+    };
+    let original: serde_yaml::Value = serde_yaml::from_str(&pending.compose_yaml).unwrap();
+    let old_digest =
+        effigy_gateway::ports::sha256_hex(serde_yaml::to_string(&original).unwrap().as_bytes());
+    let (render, digest, _) =
+        finish_shared_render(pending, crate::compose::ComposeBackend::Docker).unwrap();
+    let document: serde_yaml::Value =
+        serde_yaml::from_slice(&render.files[Path::new("shared.generated.compose.yml")]).unwrap();
+    assert_ne!(
+        digest, old_digest,
+        "corrected bytes must not reuse the old immutable directory"
+    );
+    let service = &document["services"]["db"];
+    assert_eq!(
+        service["volumes"][0],
+        format!("/owned/shared/{digest}/config.sql:/init.sql:ro")
+    );
+    assert_eq!(
+        service["volumes"][1],
+        "/owned/shared-other/config.sql:/other.sql:ro"
+    );
+    assert_eq!(
+        service["environment"]["LITERAL"],
+        "/owned/shared/config.sql"
+    );
+    assert_eq!(service["command"], "cat /owned/shared/config.sql");
+}
+
+#[test]
+fn generated_yaml_config_is_literal_even_when_it_has_compose_keys() {
+    let (_fixture, checkout, home) = fixture();
+    crate::with_test_effigy_home(&home, || {
+        let config = "services: {app: {build: ./literal, env_file: ./literal}}\n";
+        let assembly = effigy_catalog::assembly::AssemblyResult {
+            compose_yaml: "services: {app: {volumes: ['./settings.yaml:/settings.yaml:ro']}}\n"
+                .into(),
+            dockerfiles: Default::default(),
+            config_files: std::collections::HashMap::from([(
+                "settings.yaml".into(),
+                config.into(),
+            )]),
+            volumes: vec![],
+        };
+        let mut draft = Draft::default();
+        let compose = draft
+            .assembly(&checkout, &checkout, "app", &assembly)
+            .unwrap();
+        let mut policy = crate::policy::model::test_policy(&checkout);
+        policy.compose_files = vec![compose];
+        draft.finish(&mut policy, "").unwrap();
+        let render = policy.render.unwrap();
+        assert_eq!(
+            render.closure.files()["checkout/settings.yaml"],
+            config.as_bytes()
+        );
+        let document: serde_yaml::Value =
+            serde_yaml::from_slice(&render.closure.files()["checkout/app.generated.compose.yml"])
+                .unwrap();
+        assert_eq!(
+            document["services"]["app"]["volumes"][0],
+            "./settings.yaml:/settings.yaml:ro"
+        );
     });
 }

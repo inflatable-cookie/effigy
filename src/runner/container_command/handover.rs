@@ -1058,7 +1058,6 @@ esac
             profile: "effigy".to_owned(),
             compose_source: effigy_containers::EffectiveComposeSource::Generated,
             compose_files: vec![],
-            compose_file_display: "generated".to_owned(),
             managed_volumes: vec![],
             borrowed_volumes: vec![],
             data_peers: vec![],

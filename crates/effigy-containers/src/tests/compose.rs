@@ -882,10 +882,10 @@ variant = "default"
         assert_eq!(policy.compose_files.len(), 2);
         assert!(
             policy
-                .compose_file_display
+                .compose_file_display()
                 .contains("web.generated.compose.yml"),
             "display should reference generated compose, got {}",
-            policy.compose_file_display
+            policy.compose_file_display()
         );
 
         let compose_path = policy.compose_files[0].clone();
@@ -1043,10 +1043,10 @@ variant = "default"
         );
         assert!(
             policy
-                .compose_file_display
+                .compose_file_display()
                 .contains(".effigy/runtime/compose/"),
             "display should stay under runtime compose dir: {}",
-            policy.compose_file_display
+            policy.compose_file_display()
         );
         assert!(
             compose.contains(&format!(

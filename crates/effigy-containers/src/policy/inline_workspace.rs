@@ -76,11 +76,6 @@ pub fn load_inline_workspace_container_policy(
         profile: DEFAULT_COLIMA_PROFILE.to_owned(),
         compose_source: EffectiveComposeSource::Direct,
         compose_files,
-        compose_file_display: compose_path
-            .strip_prefix(repo_root)
-            .unwrap_or(&compose_path)
-            .display()
-            .to_string(),
         managed_volumes: Vec::new(),
         borrowed_volumes: Vec::new(),
         data_peers: Vec::new(),

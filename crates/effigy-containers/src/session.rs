@@ -56,7 +56,7 @@ pub fn render_stream_session_overview(
         format!("[container] {}", policy.name),
         format!("driver: {}", driver_label(policy.driver)),
         format!("profile: {}", policy.profile),
-        format!("compose_file: {}", policy.compose_file_display),
+        format!("compose_file: {}", policy.compose_file_display()),
         format!("project_name: {}", policy.project_name),
         format!("primary_service: {}", policy.primary_service),
         format!("owner_task: {}", owner_task.unwrap_or("<direct-command>")),

@@ -1,6 +1,5 @@
 //! Host rendering is an in-memory file closure. Only Prepare publishes it.
 use std::collections::BTreeMap;
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use effigy_kernel::objects::Closure;
@@ -87,6 +86,22 @@ pub fn prepare_inputs(
 }
 
 impl EffectiveContainerPolicy {
+    pub fn compose_file_display(&self) -> String {
+        self.compose_files
+            .iter()
+            .map(|path| {
+                let logical = self
+                    .render
+                    .as_ref()
+                    .and_then(|render| path.strip_prefix(&render.path).ok())
+                    .map(|name| name.strip_prefix("checkout").unwrap_or(name))
+                    .unwrap_or_else(|| path.strip_prefix(&self.repo_root).unwrap_or(path));
+                logical.display().to_string()
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     /// Render the workspace channel alias supplied by backend qualification.
     /// This is an in-memory render only: it neither chooses an address nor
     /// creates a network. Its resulting closure is what activation must freeze.
@@ -243,7 +258,11 @@ impl EffectiveContainerPolicy {
                         .compose_files
                         .first()
                         .is_some_and(|first| first == path);
-                    resolve_generation_paths(&mut document, self.project_directory(), defining);
+                    crate::workspace::normalize_runtime_rewrite_paths(
+                        &mut document,
+                        self.project_directory(),
+                        defining,
+                    );
                     return serde_yaml::to_string(&document).map_err(error);
                 }
             }
@@ -270,6 +289,7 @@ impl EffectiveContainerPolicy {
 #[derive(Debug, Default)]
 pub(crate) struct Draft {
     files: BTreeMap<PathBuf, Vec<u8>>,
+    assets: std::collections::BTreeSet<PathBuf>,
     inputs: BTreeMap<String, Vec<u8>>,
     shared: Vec<PendingSharedRender>,
 }
@@ -348,7 +368,9 @@ impl Draft {
         let compose = inline_catalog_dockerfiles(directory, assembly);
         self.insert(path.clone(), compose.into_bytes());
         for (name, bytes) in &assembly.config_files {
-            self.insert(configs.join(name), bytes.as_bytes());
+            let path = configs.join(name);
+            self.assets.insert(path.clone());
+            self.insert(path, bytes.as_bytes());
         }
         Ok(path)
     }
@@ -388,10 +410,7 @@ impl Draft {
         let first_input = policy.compose_files.first().cloned();
         let mut files = self.inputs;
         for (path, bytes) in self.files {
-            let bytes = if matches!(
-                path.extension().and_then(OsStr::to_str),
-                Some("yml" | "yaml")
-            ) {
+            let bytes = if !self.assets.contains(&path) {
                 // Compose resolves every relative input against the directory
                 // of the invocation's first `-f` file, so that directory is how
                 // this document names the rest of the generation.
@@ -400,18 +419,6 @@ impl Draft {
                     .and_then(|input| names.get(input))
                     .and_then(|name| Path::new(name).parent())
                     .unwrap_or(Path::new(""));
-                let mut replacements = names
-                    .iter()
-                    .map(|(source, name)| {
-                        (
-                            source.display().to_string(),
-                            relative_name(directory, Path::new(name)),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                // Dockerfiles are relative to build.context, and bind sources
-                // are relative to the project directory. Normalize first.
-                replacements.sort_by_key(|(path, _)| std::cmp::Reverse(path.len()));
                 let mut value: serde_yaml::Value = serde_yaml::from_slice(&bytes).map_err(error)?;
                 let defining = first_input.as_deref() == Some(path.as_path());
                 super::super::workspace::normalize_runtime_rewrite_paths(
@@ -420,7 +427,11 @@ impl Draft {
                         .ok_or_else(|| error("Compose input has no parent"))?,
                     defining,
                 );
-                relocate(&mut value, &replacements);
+                crate::workspace::map_compose_paths(&mut value, &mut |source, _| {
+                    names
+                        .get(Path::new(source))
+                        .map(|name| relative_name(directory, Path::new(name)))
+                });
                 if backend == crate::compose::ComposeBackend::ColimaNerdctl {
                     healthcheck::normalize_exec_form(&mut value);
                 }
@@ -509,6 +520,12 @@ fn finish_shared_render(
     if backend == crate::compose::ComposeBackend::ColimaNerdctl {
         healthcheck::normalize_exec_form(&mut document);
     }
+    crate::workspace::map_compose_paths(&mut document, &mut |source, _| {
+        Path::new(source)
+            .strip_prefix(&pending.directory)
+            .ok()
+            .map(|relative| format!("./{}", relative.display()))
+    });
     let mut content = serde_yaml::to_string(&document)
         .map_err(error)?
         .into_bytes();
@@ -523,13 +540,11 @@ fn finish_shared_render(
     let digest = effigy_gateway::ports::sha256_hex(&content);
     label_shared_render(&mut document, &digest);
     let directory = pending.directory.join(&digest);
-    relocate(
-        &mut document,
-        &[(
-            pending.directory.display().to_string(),
-            directory.display().to_string(),
-        )],
-    );
+    crate::workspace::map_compose_paths(&mut document, &mut |source, _| {
+        source
+            .strip_prefix("./")
+            .map(|relative| directory.join(relative).display().to_string())
+    });
     let mut files = BTreeMap::new();
     files.insert(
         PathBuf::from(&compose_name),
@@ -654,27 +669,6 @@ fn compose_literal(content: &str) -> String {
     content.replace('$', "$$")
 }
 
-fn relocate(value: &mut serde_yaml::Value, replacements: &[(String, String)]) {
-    match value {
-        serde_yaml::Value::String(text) => {
-            for (source, target) in replacements {
-                *text = text.replace(source, target);
-            }
-        }
-        serde_yaml::Value::Sequence(values) => {
-            for value in values {
-                relocate(value, replacements);
-            }
-        }
-        serde_yaml::Value::Mapping(values) => {
-            for value in values.values_mut() {
-                relocate(value, replacements);
-            }
-        }
-        _ => {}
-    }
-}
-
 /// `name` relative to the generation's `directory`, spelled the way Compose
 /// reads a relative input: `./…` beside the project directory, `../…` outside.
 fn relative_name(directory: &Path, name: &Path) -> String {
@@ -697,17 +691,6 @@ fn relative_name(directory: &Path, name: &Path) -> String {
     } else {
         format!("./{relative}")
     }
-}
-
-/// Resolve the relative inputs a render names into the generation, so internal
-/// readers see the files Compose reads. The generation is immutable, so its own
-/// names are the only relative inputs that survive a render.
-fn resolve_generation_paths(
-    document: &mut serde_yaml::Value,
-    directory: &Path,
-    defines_services: bool,
-) {
-    crate::workspace::normalize_runtime_rewrite_paths(document, directory, defines_services);
 }
 
 #[cfg(test)]

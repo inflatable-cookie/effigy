@@ -128,7 +128,6 @@ pub(super) fn policy(root: &Path) -> crate::EffectiveContainerPolicy {
         profile: "effigy".to_owned(),
         compose_source: crate::EffectiveComposeSource::Generated,
         compose_files: vec![root.join("compose.yml")],
-        compose_file_display: "compose.yml".to_owned(),
         managed_volumes: vec![],
         borrowed_volumes: vec![],
         data_peers: Vec::new(),
