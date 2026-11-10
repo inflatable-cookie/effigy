@@ -38,9 +38,8 @@ pub(in crate::runner) struct HostProcessTab {
     pub(in crate::runner) listener_state: Option<PathBuf>,
     pub(in crate::runner) restart: HostProcessRestart,
     pub(in crate::runner) restart_delay_ms: u64,
-    /// The scope this process's wait is published in. A read resolves the
-    /// owner that currently publishes it, so a tab never reads a publisher
-    /// that lost the scope (effigy#458).
+    /// The activation observations for this environment. Attached clients bind
+    /// this reader to their exact parent run before polling it.
     pub(in crate::runner) wait_ledger: crate::runner::managed_wait::WaitLedger,
 }
 
@@ -211,9 +210,6 @@ pub(in crate::runner) struct HostFollower {
     next_poll: std::time::Instant,
     /// The bring-up's published wait, while it holds this process.
     wait: Option<EntryState>,
-    /// Whether the published record says the wait is over: the planner only
-    /// settles an entry once it launched the process.
-    settled: bool,
     /// Whether this process has been observed at all: one of its own published
     /// wait records, a settled launch or a typed owner observation. Before
     /// the first observation the tab reports no status, so no front end claims
@@ -233,7 +229,6 @@ impl HostFollower {
             started: false,
             next_poll: std::time::Instant::now(),
             wait: None,
-            settled: false,
             evidence: false,
         }
     }
@@ -247,11 +242,11 @@ impl HostFollower {
     /// Whether this process may be announced as started. It needs evidence
     /// that it did start — the supervisor's own report, or a published record
     /// the planner settled after launching it. A missing record, including the
-    /// window before a publisher stages its snapshot, is no evidence, so a tab
+    /// window before an activation publishes its observation, is no evidence, so a tab
     /// never claims a process ran because its wait is not visible yet
     /// (effigy#458).
     pub(in crate::runner) fn may_announce_started(&self) -> bool {
-        self.wait_state().is_none() && (self.settled || self.status.reports_a_start())
+        self.wait_state().is_none() && (self.wait.is_some() || self.status.reports_a_start())
     }
 
     /// The wait the bring-up published for this process, if it still holds
@@ -269,79 +264,44 @@ impl HostFollower {
         })
     }
 
-    /// Reads the published wait. A record that is not this entry's own is no
-    /// observation, and an entry that started no longer waits.
-    fn read_wait(&mut self) {
-        self.wait = self.tab.wait_ledger.read(&self.tab.name);
-        self.settled = self
-            .wait
-            .as_ref()
-            .is_some_and(|state| !state.holds_a_wait());
-    }
-
     /// This follower's status line, and whether it changed since the last
     /// call. The first observed state reports; no record is not a start.
     fn take_status_change(&mut self, now: std::time::Instant) -> Option<HostStatus> {
-        let mut changed = None;
-        if now >= self.next_poll {
-            self.next_poll = now + LISTENER_POLL;
-            self.read_wait();
-            self.evidence |= self.wait.is_some();
-            if let Some(state) = &self.wait {
-                let reported = match state.phase {
-                    EntryPhase::NotStarted | EntryPhase::Failed => {
-                        Some(HostStatus::NotStarted(state.status_line()))
-                    }
-                    _ if state.waiting_on.is_some() => {
-                        Some(HostStatus::Waiting(state.status_line()))
-                    }
-                    _ => None,
-                };
-                if let Some(status) = reported {
-                    if status != self.status {
-                        self.status = status.clone();
-                        // A published wait keeps reporting as its elapsed time
-                        // advances: the line is live, not a canned label.
-                        self.announced = false;
-                        return Some(status);
-                    }
-                    // The wait is unchanged and already announced: no repeat.
-                    if self.announced {
-                        return None;
-                    }
-                    self.announced = true;
-                    return Some(status);
-                }
+        if now < self.next_poll {
+            return None;
+        }
+        self.next_poll = now + LISTENER_POLL;
+        self.wait = self.tab.wait_ledger.read(&self.tab.name);
+        self.evidence |= self.wait.is_some();
+        let waiting = self.wait.as_ref().and_then(|state| match state.phase {
+            EntryPhase::NotStarted | EntryPhase::Failed => {
+                Some(HostStatus::NotStarted(state.status_line()))
             }
+            _ if state.waiting_on.is_some() => Some(HostStatus::Waiting(state.status_line())),
+            _ => None,
+        });
+        let status = waiting.unwrap_or_else(|| {
             let observed = self
                 .tab
                 .identity
                 .as_ref()
                 .and_then(|identity| identity.read(self.tab.listener_state.as_deref()));
             self.evidence |= observed.is_some();
-            let status = observed
+            observed
                 .map(|view| observed_status(&self.tab, &view))
-                .unwrap_or(HostStatus::Unavailable);
-            if status != self.status {
-                changed = Some(status.clone());
-                self.status = status;
-            }
-        }
-        // Nothing has observed this process yet: it has not been reported as
-        // starting, because the bring-up has not said anything about it.
-        if !self.evidence {
+                .unwrap_or(HostStatus::Unavailable)
+        });
+        let changed = status != self.status;
+        self.status = status;
+        if !self.evidence || (self.announced && !changed) {
             return None;
         }
-        if !self.announced || changed.is_some() {
-            self.announced = true;
-            let status = changed.clone().unwrap_or_else(|| self.status.clone());
-            return Some(status);
-        }
-        None
+        self.announced = true;
+        Some(self.status.clone())
     }
 
     /// New complete log lines, each with the status it reports (if any), and
-    /// the status changes the listener state file announced.
+    /// the status changes the owner observation announced.
     pub(in crate::runner) fn poll(&mut self) -> HostPoll {
         let now = std::time::Instant::now();
         let mut poll = HostPoll::default();
@@ -520,6 +480,17 @@ impl LogTail {
 mod tests {
     use super::*;
 
+    fn settled(entry: &str) -> EntryState {
+        EntryState {
+            entry: entry.to_owned(),
+            phase: EntryPhase::Ready,
+            waiting_on: None,
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        }
+    }
+
     fn tab(restart: HostProcessRestart, listener_state: Option<PathBuf>) -> HostProcessTab {
         HostProcessTab {
             name: "api".to_owned(),
@@ -604,8 +575,9 @@ mod tests {
     #[test]
     fn an_unobserved_host_process_reports_no_starting_status() {
         let dir = tempfile::tempdir().expect("wait dir");
-        let ledger = crate::runner::managed_wait::WaitLedger::environment(dir.path(), "app");
-        ledger.clear();
+        let publisher =
+            crate::runner::managed_wait::WaitPublisher::fixture(dir.path(), Some("app"));
+        let ledger = publisher.environment_source(dir.path(), "app");
         let mut tab = tab(HostProcessRestart::Never, None);
         tab.name = "api".to_owned();
         tab.wait_ledger = ledger.clone();
@@ -631,13 +603,14 @@ mod tests {
         use effigy_core::managed_waits::{Attribution, EntryPhase, EntryState, WaitOn};
 
         let dir = tempfile::tempdir().expect("wait dir");
-        let ledger = crate::runner::managed_wait::WaitLedger::environment(dir.path(), "app");
-        ledger.clear();
+        let publisher =
+            crate::runner::managed_wait::WaitPublisher::fixture(dir.path(), Some("app"));
+        let ledger = publisher.environment_source(dir.path(), "app");
         let mut tab = tab(HostProcessRestart::Never, None);
         tab.name = "front".to_owned();
         tab.wait_ledger = ledger.clone();
 
-        ledger.publish(&EntryState {
+        publisher.publish_hosts(&[EntryState {
             entry: "front".to_owned(),
             phase: EntryPhase::Waiting,
             waiting_on: Some(WaitOn::Entry {
@@ -647,7 +620,7 @@ mod tests {
             not_started_because: None,
             detail: None,
             elapsed_ms: 4_000,
-        });
+        }]);
         let mut follower = HostFollower::new(tab.clone());
         assert_eq!(
             follower.poll().statuses,
@@ -665,14 +638,24 @@ mod tests {
             })
         );
 
-        ledger.publish(&EntryState {
+        assert!(
+            follower.poll().statuses.is_empty(),
+            "no repeat before the poll interval"
+        );
+        std::thread::sleep(ListenerPollWait::value());
+        assert!(
+            follower.poll().statuses.is_empty(),
+            "an unchanged wait is announced once"
+        );
+
+        publisher.publish_hosts(&[EntryState {
             entry: "front".to_owned(),
             phase: EntryPhase::NotStarted,
             waiting_on: None,
             not_started_because: Some(Attribution::new("api", "failed (status 500)")),
             detail: None,
             elapsed_ms: 0,
-        });
+        }]);
         // The poll interval must pass before the record is re-read.
         std::thread::sleep(ListenerPollWait::value());
         assert_eq!(
@@ -698,11 +681,12 @@ mod tests {
     #[test]
     fn a_settled_record_names_no_wait() {
         let dir = tempfile::tempdir().expect("wait dir");
-        let ledger = crate::runner::managed_wait::WaitLedger::environment(dir.path(), "app");
-        ledger.clear();
+        let publisher =
+            crate::runner::managed_wait::WaitPublisher::fixture(dir.path(), Some("app"));
+        let ledger = publisher.environment_source(dir.path(), "app");
         let mut tab = tab(HostProcessRestart::Never, None);
         tab.wait_ledger = ledger.clone();
-        ledger.publish(&effigy_core::managed_waits::EntryState {
+        publisher.publish_hosts(&[effigy_core::managed_waits::EntryState {
             entry: "api".to_owned(),
             phase: effigy_core::managed_waits::EntryPhase::Starting,
             waiting_on: Some(effigy_core::managed_waits::WaitOn::Probe {
@@ -711,7 +695,7 @@ mod tests {
             not_started_because: None,
             detail: None,
             elapsed_ms: 12_000,
-        });
+        }]);
         let mut follower = HostFollower::new(tab.clone());
         assert_eq!(
             follower.poll().statuses,
@@ -721,7 +705,7 @@ mod tests {
         );
         // The entry settled: the bring-up records that, and the tab stops
         // naming the probe.
-        ledger.settle("api");
+        publisher.publish_hosts(&[settled("api")]);
         std::thread::sleep(ListenerPollWait::value());
         follower.poll();
         assert_eq!(
@@ -731,131 +715,43 @@ mod tests {
         );
     }
 
-    /// The handoff window: while the planner's snapshot is staged but not yet
-    /// committed, a tab reads the run's complete environment wait and never
-    /// announces a start it has no evidence for; once the planner commits, it
-    /// names the planner's state; only a settled record or the supervisor's own
-    /// report announces the process (effigy#458).
-    #[test]
-    fn a_staged_snapshot_never_erases_a_wait_or_announces_a_start() {
-        use effigy_core::managed_waits::{EntryPhase, EntryState, WaitOn};
-
-        let dir = tempfile::tempdir().expect("wait dir");
-        let ledger = crate::runner::managed_wait::WaitLedger::environment(dir.path(), "app");
-        ledger.clear();
-        let parent = ledger.stage(crate::runner::managed_wait::WaitOwner::Run);
-        parent.publish(&EntryState {
-            entry: "api".to_owned(),
-            phase: EntryPhase::Waiting,
-            waiting_on: Some(WaitOn::Environment {
-                healthy: Some(3),
-                total: Some(4),
-            }),
-            not_started_because: None,
-            detail: None,
-            elapsed_ms: 0,
-        });
-        ledger.commit(&parent);
-
-        let mut tab = tab(HostProcessRestart::Never, None);
-        tab.wait_ledger = ledger.clone();
-        let mut follower = HostFollower::new(tab.clone());
-        follower.poll();
-        assert_eq!(
-            follower
-                .wait_state()
-                .map(|state| state.tab_label())
-                .as_deref(),
-            Some("api [waiting: environment]")
-        );
-        assert!(!follower.may_announce_started());
-
-        // The planner stages its own snapshot, not visible yet.
-        let planner = ledger.stage(crate::runner::managed_wait::WaitOwner::Planner);
-        planner.publish(&EntryState {
-            entry: "api".to_owned(),
-            phase: EntryPhase::Starting,
-            waiting_on: Some(WaitOn::Probe {
-                probe: "GET / -> 200".to_owned(),
-            }),
-            not_started_because: None,
-            detail: None,
-            elapsed_ms: 0,
-        });
-        ledger.commit(&planner);
-        std::thread::sleep(ListenerPollWait::value());
-        follower.poll();
-        assert_eq!(
-            follower
-                .wait_state()
-                .map(|state| state.tab_label())
-                .as_deref(),
-            Some("api [starting: GET / -> 200 (0s)]"),
-            "the committed planner snapshot is the one read"
-        );
-        assert!(
-            !follower.may_announce_started(),
-            "a probe wait is not a start"
-        );
-
-        // The planner launched it and settled the wait.
-        planner.settle("api");
-        std::thread::sleep(ListenerPollWait::value());
-        follower.poll();
-        assert!(
-            follower.may_announce_started(),
-            "a settled record is evidence the process started"
-        );
-    }
-
     /// A late TUI attach reads the record named by its own tab, even when two
     /// accepted names differ only by a character a lossy file name would have
     /// folded together (effigy#458).
     #[test]
     fn a_late_attach_reads_the_entry_its_tab_names() {
-        use effigy_core::managed_waits::{EntryPhase, EntryState, WaitOn};
-
+        use effigy_core::managed_waits::WaitOn;
         let dir = tempfile::tempdir().expect("wait dir");
-        let ledger = crate::runner::managed_wait::WaitLedger::environment(dir.path(), "app");
-        ledger.clear();
-        for (entry, probe) in [("api v1", "GET / -> 200"), ("api-v1", "GET /health -> 204")] {
-            ledger.publish(&EntryState {
-                entry: entry.to_owned(),
-                phase: EntryPhase::Starting,
-                waiting_on: Some(WaitOn::Probe {
-                    probe: probe.to_owned(),
-                }),
-                not_started_because: None,
-                detail: None,
-                elapsed_ms: 0,
-            });
-        }
-        let mut spaced = tab(HostProcessRestart::Never, None);
-        spaced.name = "api v1".to_owned();
-        spaced.wait_ledger = ledger.clone();
-        let mut dashed = tab(HostProcessRestart::Never, None);
-        dashed.name = "api-v1".to_owned();
-        dashed.wait_ledger = ledger.clone();
-
-        assert_tab_reads_probe(&mut spaced, "GET / -> 200");
-        assert_tab_reads_probe(&mut dashed, "GET /health -> 204");
-    }
-
-    fn assert_tab_reads_probe(tab: &mut HostProcessTab, probe: &str) {
-        let mut follower = HostFollower::new(tab.clone());
-        follower.poll();
-        assert_eq!(
-            follower
-                .wait_state()
-                .and_then(|state| state.waiting_on.clone()),
-            Some(effigy_core::managed_waits::WaitOn::Probe {
-                probe: probe.to_owned()
+        let publisher =
+            crate::runner::managed_wait::WaitPublisher::fixture(dir.path(), Some("app"));
+        let ledger = publisher.environment_source(dir.path(), "app");
+        let cases = [("api v1", "GET / -> 200"), ("api-v1", "GET /health -> 204")];
+        publisher.publish_hosts(&cases.map(|(entry, probe)| EntryState {
+            phase: EntryPhase::Starting,
+            waiting_on: Some(WaitOn::Probe {
+                probe: probe.to_owned(),
             }),
-            "the tab reads its own entry's wait"
-        );
+            ..settled(entry)
+        }));
+        for (entry, probe) in cases {
+            let mut tab = tab(HostProcessRestart::Never, None);
+            tab.name = entry.to_owned();
+            tab.wait_ledger = ledger.clone();
+            let mut follower = HostFollower::new(tab);
+            follower.poll();
+            assert_eq!(
+                follower
+                    .wait_state()
+                    .and_then(|state| state.waiting_on.clone()),
+                Some(WaitOn::Probe {
+                    probe: probe.to_owned()
+                }),
+                "the tab reads its own entry's wait"
+            );
+        }
     }
 
-    /// A host that is still waiting for the environment (or for a reader) is    /// A host that is still waiting for the environment (or for a reader) is
+    /// A host that is still waiting for the environment (or for a reader) is
     /// never announced as started, so its tab cannot claim it ran; a process
     /// with no wait is (effigy#458).
     #[test]
@@ -863,13 +759,14 @@ mod tests {
         use effigy_core::managed_waits::{EntryPhase, EntryState, WaitOn};
 
         let dir = tempfile::tempdir().expect("wait dir");
-        let ledger = crate::runner::managed_wait::WaitLedger::environment(dir.path(), "app");
-        ledger.clear();
+        let publisher =
+            crate::runner::managed_wait::WaitPublisher::fixture(dir.path(), Some("app"));
+        let ledger = publisher.environment_source(dir.path(), "app");
         let mut tab = tab(HostProcessRestart::Never, None);
         tab.name = "front".to_owned();
         tab.wait_ledger = ledger.clone();
 
-        ledger.publish(&EntryState {
+        publisher.publish_hosts(&[EntryState {
             entry: "front".to_owned(),
             phase: EntryPhase::Waiting,
             waiting_on: Some(WaitOn::Environment {
@@ -879,7 +776,7 @@ mod tests {
             not_started_because: None,
             detail: None,
             elapsed_ms: 0,
-        });
+        }]);
         let mut follower = HostFollower::new(tab.clone());
         assert_eq!(
             follower.poll().statuses,
@@ -893,7 +790,7 @@ mod tests {
         );
 
         // The planner launched it and settled its wait.
-        ledger.settle("front");
+        publisher.publish_hosts(&[settled("front")]);
         std::thread::sleep(ListenerPollWait::value());
         follower.poll();
         assert!(

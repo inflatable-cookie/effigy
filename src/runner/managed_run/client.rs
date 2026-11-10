@@ -326,6 +326,7 @@ struct TextFollower {
     /// The last wait line printed for each entry, so a live wait is printed
     /// when it advances and a settled one prints once (effigy#458).
     waits: std::collections::BTreeMap<String, String>,
+    wait_ledger: crate::runner::managed_wait::WaitLedger,
 }
 
 struct FollowedWorkload {
@@ -397,14 +398,26 @@ impl FollowedLines {
 }
 
 impl TextFollower {
-    fn new(root: effigy_kernel::root::StateRoot, run: RunId, hosts: Vec<HostProcessTab>) -> Self {
+    fn new(
+        root: effigy_kernel::root::StateRoot,
+        run: RunId,
+        hosts: Vec<HostProcessTab>,
+        repo: &std::path::Path,
+    ) -> Self {
         Self {
             output: OutputFollower::new(root.clone(), run),
             root,
             run,
             workloads: Vec::new(),
-            hosts: hosts.into_iter().map(HostFollower::new).collect(),
+            hosts: hosts
+                .into_iter()
+                .map(|mut host| {
+                    host.wait_ledger = host.wait_ledger.for_parent(run);
+                    HostFollower::new(host)
+                })
+                .collect(),
             waits: std::collections::BTreeMap::new(),
+            wait_ledger: crate::runner::managed_wait::WaitLedger::run(repo, run),
         }
     }
 
@@ -414,6 +427,7 @@ impl TextFollower {
         let mut lines = String::new();
         for state in states {
             let Some(line) = state.headless_line() else {
+                self.waits.remove(&state.entry);
                 continue;
             };
             if self.waits.get(&state.entry) == Some(&line) {
@@ -431,6 +445,7 @@ impl TextFollower {
     }
 
     fn relay(&mut self, finish: bool) {
+        self.relay_waits(self.wait_ledger.read_all());
         relay(&mut self.output);
         let mut host_lines = String::new();
         for host in &mut self.hosts {
@@ -568,7 +583,7 @@ pub(in crate::runner) fn attach_text(
         stop_command(addressed)
     );
     flush();
-    let mut output = TextFollower::new(root, run, hosts);
+    let mut output = TextFollower::new(root, run, hosts, &addressed.target.root);
     let mut stop = StopSender::new();
     let closed = loop {
         if !task_engine::routed_signals().is_empty() {
@@ -577,9 +592,6 @@ pub(in crate::runner) fn attach_text(
         output.relay(false);
         match next_event(&mut client) {
             Ok(Some(Event::Engine(bytes))) => {
-                if let Some(EngineEvent::Entry { state }) = wire::decode(&bytes) {
-                    output.relay_waits(std::iter::once(state));
-                }
                 if let Some(EngineEvent::Outcome { error, code }) = wire::decode(&bytes) {
                     output.relay(false);
                     // Closed follows the outcome on the same pipe.

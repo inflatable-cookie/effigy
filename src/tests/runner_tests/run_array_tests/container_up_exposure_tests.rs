@@ -862,17 +862,22 @@ fn detached_up_settles_retrying_failures_before_detaching_healthy_listeners() {
             }),
             "the original refusal is retained: {document}"
         );
-        let state: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(
-                fixture
-                    .repo()
-                    .join(".effigy/runtime/host-processes/e2e/effigy/front.listener.json"),
-            )
-            .expect("terminal listener record"),
-        )
-        .expect("listener state JSON");
+        let state = crate::runner::host_process::listener_observation_for_test(
+            &fixture
+                .repo()
+                .join(".effigy/runtime/host-processes/e2e/effigy/front.listener.json"),
+        );
         assert_eq!(state["status"], "failed");
-        assert!(state["child_pid"].is_null() && state["route_owner"].is_null());
+        assert_eq!(state["custody_nonce"].is_null(), collision);
+        assert!(state["route_owner"].is_null());
+        let run = serde_json::from_value(state["run"].clone()).expect("exact failed run");
+        let crate::runner::task_engine::Lookup::Found(record) =
+            crate::runner::task_engine::lookup_checkout(fixture.repo(), run)
+        else {
+            panic!("failed listener run is retained");
+        };
+        assert!(record.closed());
+        assert_eq!(record.view.cleanup, Some("complete"));
         let table = fixture.routes();
         assert!(table.lookup(FRONT_DOMAIN).is_none(), "{table:?}");
         assert!(table.lookup(API_DOMAIN).is_some(), "{table:?}");
@@ -1115,14 +1120,13 @@ fn detached_up_never_publishes_a_timed_out_listener_after_return() {
         effigy_gateway::identity::read_live_process_identity(child_pid).is_err(),
         "the recorded listener child must be stopped before the report"
     );
-    let state = std::fs::read_to_string(
-        fixture
+    let state = crate::runner::host_process::listener_observation_for_test(
+        &fixture
             .repo()
             .join(".effigy/runtime/host-processes/e2e/effigy/front.listener.json"),
-    )
-    .expect("the listener state record");
-    assert!(
-        state.contains("\"stopped\""),
+    );
+    assert_eq!(
+        state["status"], "stopped",
         "the timed-out generation settled as stopped: {state}"
     );
     fixture.down();

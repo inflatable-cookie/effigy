@@ -400,7 +400,7 @@ fn run_up(
         }
         if Instant::now() >= next_progress_read {
             next_progress_read = Instant::now() + ENVIRONMENT_PROGRESS_READ;
-            progress(environment_counts(plan));
+            progress(environment_counts(plan, run.id()));
         }
         if Instant::now() >= next_progress {
             next_progress = Instant::now() + START_PROGRESS_INTERVAL;
@@ -438,11 +438,16 @@ fn run_up(
 
 /// The containers the environment's own `up` reported healthy so far, from
 /// the record it publishes while it waits for readiness.
-fn environment_counts(plan: &EnvironmentPlan) -> Option<(u32, u32)> {
+fn environment_counts(
+    plan: &EnvironmentPlan,
+    parent: effigy_kernel::id::RunId,
+) -> Option<(u32, u32)> {
     // The container readiness publisher writes the phase's own record, not an
     // entry's, and a host process may legitimately be named `environment`
     // (effigy#458).
-    crate::runner::managed_wait::WaitLedger::environment(&plan.repo, &plan.name).read_progress()
+    crate::runner::managed_wait::WaitLedger::environment(&plan.repo, &plan.name)
+        .for_parent(parent)
+        .read_progress()
 }
 
 /// The owned binding of the service exec workloads attach to, observed with
@@ -611,12 +616,16 @@ mod tests {
     fn the_environment_phase_reads_the_published_container_counts() {
         let repo = tempfile::tempdir().expect("repo");
         let plan = plan(repo.path().to_path_buf());
-        let ledger = crate::runner::managed_wait::WaitLedger::environment(repo.path(), &plan.name);
-        ledger.clear();
-        assert_eq!(environment_counts(&plan), None, "nothing is published yet");
+        let publisher =
+            crate::runner::managed_wait::WaitPublisher::fixture(repo.path(), Some(&plan.name));
+        assert_eq!(
+            environment_counts(&plan, publisher.run_id()),
+            None,
+            "nothing is published yet"
+        );
 
         // The readiness publisher's own write path.
-        ledger.publish_phase(&effigy_core::managed_waits::EntryState {
+        publisher.publish_phase(&effigy_core::managed_waits::EntryState {
             entry: "environment".to_owned(),
             phase: effigy_core::managed_waits::EntryPhase::Waiting,
             waiting_on: Some(WaitOn::Environment {
@@ -627,11 +636,11 @@ mod tests {
             detail: None,
             elapsed_ms: 12_000,
         });
-        assert_eq!(environment_counts(&plan), Some((3, 4)));
+        assert_eq!(environment_counts(&plan, publisher.run_id()), Some((3, 4)));
 
         // A host process that happens to be named `environment` is an entry,
         // not the phase, and never changes the counts.
-        ledger.publish(&effigy_core::managed_waits::EntryState {
+        publisher.publish_hosts(&[effigy_core::managed_waits::EntryState {
             entry: "environment".to_owned(),
             phase: effigy_core::managed_waits::EntryPhase::Starting,
             waiting_on: Some(WaitOn::Probe {
@@ -640,12 +649,12 @@ mod tests {
             not_started_because: None,
             detail: None,
             elapsed_ms: 0,
-        });
-        assert_eq!(environment_counts(&plan), Some((3, 4)));
+        }]);
+        assert_eq!(environment_counts(&plan, publisher.run_id()), Some((3, 4)));
 
         // The phase reporting ready ends the counts.
-        ledger.settle_phase();
-        assert_eq!(environment_counts(&plan), None);
+        publisher.settle_phase();
+        assert_eq!(environment_counts(&plan, publisher.run_id()), None);
     }
 
     fn plan(repo: std::path::PathBuf) -> EnvironmentPlan {

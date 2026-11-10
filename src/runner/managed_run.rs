@@ -37,9 +37,9 @@ pub(in crate::runner) use engine::{
     OwnerSession, WorkloadSpec, EXEC_NONCE,
 };
 pub(in crate::runner) use environment::EnvironmentPlan;
-pub(in crate::runner) use host_tabs::HostProcessTab;
 #[cfg(test)]
-pub(in crate::runner) use host_tabs::{HostFollower, HostStatus};
+pub(in crate::runner) use host_tabs::HostFollower;
+pub(in crate::runner) use host_tabs::HostProcessTab;
 pub(in crate::runner) use settlement::Binding;
 pub(in crate::runner) use tui::{attach_tui, ManagedTab, TabSource};
 pub(in crate::runner) use wire::{Front, WorkspaceResolution};

@@ -15,6 +15,9 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use effigy_core::managed_waits::{
+    should_publish, EntryPhase, EntryState, EntryWaits, SessionOrder, WaitOn,
+};
 use effigy_kernel::ctx::{OpenReason, StopCause};
 use effigy_kernel::custody::{
     EnvValue, Lifetime, OwnedProcess, ProcessSpec, SecretValue, Terminal,
@@ -24,16 +27,13 @@ use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::{CleanupOutcome, WorkloadOutcome};
 use effigy_kernel::run::{EffectSpec, RequestAction, RunError, Settlement};
 use effigy_kernel::supervise::{EngineSession, OwnerWatch};
-use effigy_core::managed_waits::{should_publish, EntryPhase, EntryState, EntryWaits, SessionOrder, WaitOn};
 
 use super::environment::{self, EnvironmentPlan, Health, NotReady, RouteHealth};
 use super::settlement::{self, Binding, ExecGroupEffect};
 use super::wire::{self, ClientFrame, EngineEvent, Payload};
 use crate::runner::error::RunnerError;
-use crate::runner::host_process::{
-    attributed_environment_failure, begin_environment_phase, HostWaitGraph,
-};
-use crate::runner::managed_wait::WaitLedger;
+use crate::runner::host_process::{attributed_environment_failure, HostWaitGraph};
+use crate::runner::managed_wait::{WaitLedger, WaitPublisher};
 use crate::runner::task_engine::{self, EnvOverride, TaskRun, TaskRunRequest, TaskTarget};
 
 /// TERM to KILL for a workload's group.
@@ -339,6 +339,27 @@ pub(in crate::runner) fn own<T>(
         .filter(|value| !value.is_empty())
         .map(|value| value.as_bytes().to_vec())
         .collect();
+    let environment_name = plan
+        .environment
+        .as_ref()
+        .map(|environment| environment.name.clone());
+    let wait_publisher = WaitPublisher::from_run(&run, environment_name.as_deref())?;
+    let now = Instant::now();
+    let waits = EntryWaits::new(
+        plan.workload_order.clone(),
+        environment_name.as_deref(),
+        now,
+    );
+    wait_publisher.publish_entries(&waits.states(now));
+    let refused_waits = |detail: &str| {
+        let mut states = waits.states(now);
+        for state in &mut states {
+            state.phase = EntryPhase::Failed;
+            state.waiting_on = None;
+            state.detail = Some(detail.to_owned());
+        }
+        wait_publisher.publish_entries(&states);
+    };
     let admitted = if session.admission().is_some() {
         session.admitted_with_capture(&mut *run.run_mut()?, secrets.clone())
     } else {
@@ -348,6 +369,7 @@ pub(in crate::runner) fn own<T>(
         let message =
             format!("the managed run could not establish its control and capture ({error})");
         session.refused(Category::Unavailable, &message);
+        refused_waits(&message);
         let (_, warnings) = run.close_settled(WorkloadOutcome::NotStarted, SETTLE_BUDGET);
         warn(&warnings);
         return Err(RunnerError::task_invocation(message));
@@ -358,6 +380,7 @@ pub(in crate::runner) fn own<T>(
     {
         let message = "the managed run cannot establish safe output descriptors or record capture truncation; no setup or workload was started";
         session.refused(Category::Unavailable, message);
+        refused_waits(message);
         let (_, warnings) = run.close_settled(WorkloadOutcome::NotStarted, SETTLE_BUDGET);
         warn(&warnings);
         return Err(RunnerError::task_invocation(message));
@@ -369,24 +392,12 @@ pub(in crate::runner) fn own<T>(
         run.id(),
         std::process::id()
     );
-    let repo_root = plan.target.root.clone();
-    let wait_ledger = WaitLedger::task(&repo_root, &plan.task, &plan.profile);
-    wait_ledger.clear();
-    let environment_name = plan
-        .environment
-        .as_ref()
-        .map(|environment| environment.name.clone());
-    let now = Instant::now();
     let mut owner = Owner {
         standard_shell: plan.standard_shell,
         session,
         workloads: Vec::new(),
-        waits: EntryWaits::new(
-            plan.workload_order.clone(),
-            environment_name.as_deref(),
-            now,
-        ),
-        wait_ledger,
+        waits,
+        wait_publisher,
         published: BTreeMap::new(),
         published_at: BTreeMap::new(),
         probe_since: None,
@@ -431,7 +442,7 @@ struct Owner {
     health: Option<RouteHealth>,
     /// Every workload's own wait, and the record it is published in.
     waits: EntryWaits,
-    wait_ledger: WaitLedger,
+    wait_publisher: WaitPublisher,
     /// The last state published per entry, and when, so the wire and the
     /// record carry transitions and live elapsed time without repeating
     /// themselves every turn.
@@ -501,19 +512,19 @@ impl Owner {
         // publishes them now, while the environment is still coming up. Their
         // planner takes the same records over once the phase is ready.
         if let Some(environment) = &plan.environment {
-            self.wait_ledger
+            self.wait_publisher
                 .publish_environment_identity(&environment.name);
             // Every named environment — with or without host processes — begins
             // its phase settled and count-free here, before this run polls it,
             // so an interrupted prior run's container counts never reach a
             // workload's wait (effigy#458).
-            begin_environment_phase(&environment.repo, &environment.name);
+            self.wait_publisher.settle_phase();
             if matches!(environment.binding, Binding::Named { .. }) {
                 if let Ok(policy) = settlement::policy(&environment.repo, &environment.binding) {
                     if !policy.host_processes.is_empty() {
                         self.host_waits = Some(HostWaitGraph::for_environment_phase(
-                            &environment.repo,
                             &policy,
+                            &self.wait_publisher,
                             Instant::now(),
                         ));
                     }
@@ -526,7 +537,12 @@ impl Owner {
             let watch = self.watch.take();
             let mut stop = |run: &mut TaskRun| pending_stop(run, watch.as_ref());
             let ansi_front = self.ansi_front;
+            let host_source =
+                WaitLedger::environment(&environment.repo, &environment.name).for_parent(run.id());
             let mut progress = |counts: Option<(u32, u32)>| {
+                if host_source.activation_started() && self.host_waits.take().is_some() {
+                    self.wait_publisher.publish_hosts(&[]);
+                }
                 if let Some((healthy, total)) = counts {
                     self.waits.environment_progress(healthy, total);
                 }
@@ -551,6 +567,13 @@ impl Owner {
                 &mut progress,
             );
             self.watch = watch;
+            if host_source.activation_started() {
+                self.host_waits = None;
+                self.wait_publisher.publish_hosts(&host_source.read_all());
+                if let Some(phase) = host_source.read_phase() {
+                    self.wait_publisher.publish_phase(&phase);
+                }
+            }
             match brought_up {
                 Ok(()) => {
                     let now = Instant::now();
@@ -571,19 +594,14 @@ impl Owner {
                     // failing entry and its report itself: its records stay,
                     // and the run names that failure instead of the generic
                     // `up` exit (effigy#458).
-                    let reason = match self.host_waits.as_mut() {
-                        Some(hosts) if !hosts.is_visible() => attributed_environment_failure(
-                            &reason,
-                            &crate::runner::managed_wait::WaitLedger::environment(
-                                &environment.repo,
-                                &environment.name,
-                            ),
-                        ),
-                        Some(hosts) => {
-                            hosts.environment_failed_if_owned(&reason, now);
-                            reason
+                    let reason = if host_source.activation_started() {
+                        self.host_waits = None;
+                        attributed_environment_failure(&reason, &host_source)
+                    } else {
+                        if let Some(hosts) = self.host_waits.as_mut() {
+                            hosts.environment_failed(&reason, now);
                         }
-                        None => reason,
+                        reason
                     };
                     return Err(End::StartFailed(reason, None));
                 }
@@ -980,9 +998,22 @@ impl Owner {
     /// due for a refresh, to the run's clients and its status record.
     fn publish_waits(&mut self, now: Instant) {
         let states = self.waits.states(now);
-        for state in states {
-            self.publish_state(&state, now);
+        if !states.iter().any(|state| {
+            should_publish(
+                self.published.get(&state.entry),
+                self.published_at.get(&state.entry).copied(),
+                state,
+                now,
+            )
+        }) {
+            return;
         }
+        self.wait_publisher.publish_entries(&states);
+        for state in states {
+            self.published_at.insert(state.entry.clone(), now);
+            self.published.insert(state.entry.clone(), state);
+        }
+        self.event(&EngineEvent::WaitsChanged);
     }
 
     /// The run's own readiness probe, attributed to its own tab: it names the
@@ -1006,18 +1037,9 @@ impl Owner {
             None => {
                 self.probe_since = None;
                 if self.published.remove(entry).is_some() {
-                    self.wait_ledger.settle(entry);
+                    self.wait_publisher.settle(entry);
                     self.published_at.remove(entry);
-                    self.event(&EngineEvent::Entry {
-                        state: EntryState {
-                            entry: entry.to_owned(),
-                            phase: EntryPhase::Ready,
-                            waiting_on: None,
-                            not_started_because: None,
-                            detail: None,
-                            elapsed_ms: 0,
-                        },
-                    });
+                    self.event(&EngineEvent::WaitsChanged);
                 }
             }
         }
@@ -1037,15 +1059,13 @@ impl Owner {
             return;
         }
         if state.holds_a_wait() {
-            self.wait_ledger.publish(state);
+            self.wait_publisher.publish(state);
         } else {
-            self.wait_ledger.settle(&state.entry);
+            self.wait_publisher.settle(&state.entry);
         }
         // Every change reaches the clients, so their view never keeps a wait
         // the entry has left behind.
-        self.event(&EngineEvent::Entry {
-            state: state.clone(),
-        });
+        self.event(&EngineEvent::WaitsChanged);
         self.published.insert(state.entry.clone(), state.clone());
         self.published_at.insert(state.entry.clone(), now);
     }
@@ -1125,10 +1145,10 @@ impl Owner {
         let now = Instant::now();
         for state in self.waits.states(now) {
             if !matches!(state.phase, EntryPhase::NotStarted | EntryPhase::Failed) {
-                self.wait_ledger.settle(&state.entry);
+                self.wait_publisher.settle(&state.entry);
             }
         }
-        self.wait_ledger.settle(super::OUTPUT_LOG);
+        self.wait_publisher.settle(super::OUTPUT_LOG);
         if let Some(hosts) = self.host_waits.as_mut() {
             hosts.settle_all(now);
         }

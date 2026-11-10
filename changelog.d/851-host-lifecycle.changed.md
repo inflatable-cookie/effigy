@@ -1,1 +1,1 @@
-Host activation, dependencies, status and panes now read typed lifecycle observations from the host owner’s journal, preserving readiness budgets and exact child generations. Running older supervisors keep their existing reader until stopped.
+Host readiness and managed waits now use complete journal observations shared by activation, dependencies, status and panes. Missing event notifications cannot erase a wait or announce a workload that never started. Exact child generations, readiness budgets and running older supervisors retain their existing guarantees.

@@ -46,13 +46,21 @@ mod waits;
 pub(in crate::runner) use kernel_run::{
     host_process_listener_state_path, host_process_log_path, host_process_status,
     owns_supervise_payload, restart_host_processes_for_container,
-    start_host_processes_for_container, stop_host_processes_for_container, CustodyStop,
+    start_host_processes_in_activation, stop_host_processes_for_container, CustodyStop,
     HostPaneIdentity, HostPaneObservation, HostProcessStopReport,
 };
 pub(in crate::runner) use waits::{
-    attributed_environment_failure, begin_environment_phase, run_host_activation, HostActivation,
-    HostWaitGraph, ReadinessOutcome,
+    attributed_environment_failure, run_host_activation, HostActivation, HostWaitGraph,
+    ReadinessOutcome,
 };
+
+#[cfg(test)]
+pub(in crate::runner) fn listener_observation_for_test(path: &Path) -> serde_json::Value {
+    serde_json::to_value(
+        kernel_run::lifecycle_at_path(path).expect("journaled listener observation"),
+    )
+    .expect("listener observation JSON")
+}
 
 const HOST_PROCESS_DIR: &str = ".effigy/runtime/host-processes";
 const HOST_PROCESS_SPEC_SCHEMA: &str = "effigy.managed.host-process-spec.v1";
@@ -153,36 +161,6 @@ struct HostProcessDependency {
     name: String,
     owner: String,
     state_file: PathBuf,
-}
-
-/// A host-process supervisor's event for its owning client, on the kernel's
-/// engine-event channel (`supervise::Event::Engine`). Delivery is best
-/// effort: the same fact is also in the run journal and the process log, so
-/// a lost frame costs the bring-up its latency, never the record. Both ends
-/// are the same verified binary, so the shapes carry no version history
-/// (the managed run's wire precedent).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum HostProcessEvent {
-    /// A generation was refused or failed before any process ran, with the
-    /// spawn's own explanation as `detail`. A kernel pre-exec refusal — an
-    /// ambient value classified secret whose bytes occur in the run string,
-    /// for example — arrives here with its redacted key-only message. A
-    /// plain workload declares no readiness of its own. Its failed launch is
-    /// recorded on the kernel run before this best-effort wakeup (effigy#574).
-    LaunchFailed { process: String, detail: String },
-}
-
-/// Wake the owning client after recording a plain workload's failed launch.
-/// Every spawn error is decided before any workload ran; the durable typed
-/// observation carries that refusal even if this event is lost (effigy#574).
-fn report_launch_failed(session: &EngineSession, process: &str, detail: &str) {
-    if let Ok(bytes) = serde_json::to_vec(&HostProcessEvent::LaunchFailed {
-        process: process.to_owned(),
-        detail: detail.to_owned(),
-    }) {
-        session.event(bytes);
-    }
 }
 
 /// Typed observations carried by the host owner's run effects. The wire names
@@ -1606,7 +1584,6 @@ fn supervise_plain_host_process(
             // is unchanged.
             state.diagnostic = Some(error.to_string());
             state.write(run, HostLifecycleStatus::Failed)?;
-            report_launch_failed(session, &spec.process_name, &error.to_string());
             append_log_line(
                 spec.output.as_ref(),
                 &format!(
@@ -3213,10 +3190,8 @@ mod tests {
     /// failed generation: diagnostic, observed status and generation stay.
     #[test]
     fn unpublished_teardown_keeps_this_supervisors_failed_generation() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("app.listener.json");
         let pid = std::process::id();
-        let spec = terminal_state_spec(path.clone());
+        let spec = terminal_state_spec(PathBuf::new());
         let mut failed = published_listener_state("runtime", "failed");
         failed["supervisor_pid"] = serde_json::json!(pid);
         failed["generation"] = serde_json::json!("losing-generation");
@@ -3249,10 +3224,8 @@ mod tests {
     /// record: no diagnostic, no child, no endpoint owner.
     #[test]
     fn unpublished_teardown_settles_a_starting_generation_as_stopped() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("app.listener.json");
         let pid = std::process::id();
-        let spec = terminal_state_spec(path.clone());
+        let spec = terminal_state_spec(PathBuf::new());
         let mut starting = published_listener_state("runtime", "starting");
         starting["supervisor_pid"] = serde_json::json!(pid);
         starting["generation"] = serde_json::json!("starting-generation");
@@ -3273,11 +3246,9 @@ mod tests {
     /// a previous activation's failed record with a blank terminal one.
     #[test]
     fn later_activation_teardown_replaces_a_previous_supervisors_failed_record() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("app.listener.json");
         let previous = std::process::id();
         let successor = previous.wrapping_add(1);
-        let spec = terminal_state_spec(path.clone());
+        let spec = terminal_state_spec(PathBuf::new());
         let mut failed = published_listener_state("runtime", "failed");
         failed["supervisor_pid"] = serde_json::json!(previous);
         failed["generation"] = serde_json::json!("previous-failed");

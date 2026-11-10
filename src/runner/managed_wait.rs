@@ -1,273 +1,164 @@
-//! The published wait of a managed session entry (effigy#458, Q-017).
+//! Complete managed-entry observations on their owning kernel run.
 //!
-//! A wait that happens in another process cannot be re-derived by a front end:
-//! the environment's health counts are observed by the `up` child, and a host
-//! process's dependency wait happens before its own supervisor exists. Each
-//! owner therefore publishes one record per entry under the checkout's runtime
-//! directory, and every front end — the TUI tab, `--headless` text and
-//! `status --json` — reads that record instead of inventing a label.
-//!
-//! Records are a projection, never authority: the process that owns the wait
-//! writes it, and the journal stays the record of what ran. A record left by a
-//! finished session is cleared when the next one starts.
+//! A task records its workload and prelaunch host graph; the environment's
+//! activation records its phase and host graph on one operation run. Readers
+//! select that activation by exact parent run, never by a publisher pointer.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, Weak};
+use std::time::Duration;
 
-use effigy_core::managed_waits::{EntryPhase, EntryState, ENTRY_WAIT_SCHEMA};
+use effigy_core::managed_waits::{EntryPhase, EntryState};
+use effigy_kernel::ctx::{EffectClass, OpenReason, Placement};
+use effigy_kernel::gate::Wait;
+use effigy_kernel::id::{CheckoutId, InvocationSpec, ResourceId, RunId, Scope, TaskId};
+use effigy_kernel::observe::Observed;
+use effigy_kernel::outcome::{Invocation, WorkloadOutcome};
+use effigy_kernel::run::{BeginOpts, Effect, EffectSpec, Run, Settlement};
+use effigy_kernel::store::Store;
 use serde::{Deserialize, Serialize};
 
-use crate::runner::host_process::write_private_json;
+use crate::runner::error::RunnerError;
+use crate::runner::task_engine::{self, Lookup, TaskRun};
 
-/// Every managed wait record lives under this checkout-relative directory.
-const WAITS_DIR: &str = ".effigy/runtime/waits";
-/// The one record naming the environment a scope's waits belong to. It is
-/// written before the environment phase can block, so `status` can find the
-/// environment's own records while it is still coming up.
-const SESSION_RECORD: &str = "session.json";
-/// Who currently publishes one environment scope's entries. The run's owner
-/// publishes the host graph before its environment phase can block; the host
-/// planner takes the same scope over when it starts the plan, so the two never
-/// write the same entries at once (effigy#458).
-const OWNER_RECORD: &str = "owner.json";
-/// The environment phase's own record. It is a reserved storage key, never an
-/// entry name: [`path_component`] escapes `@`, so a host process that an
-/// operator names `environment` keeps its own record beside the phase's
-/// (effigy#458).
-const PHASE_RECORD: &str = "@environment.json";
-/// Where an unclaimed scope's entries live. A task scope never claims one.
-const DEFAULT_NAMESPACE: &str = "entries";
+const WAIT_EFFECT: &str = "managed:waits";
 
-/// The environment identity a scope publishes before its phase blocks.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SessionRecord {
-    schema: String,
-    scope: String,
-    environment: String,
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct Snapshot {
+    environment: Option<String>,
+    parent: Option<RunId>,
+    entries: BTreeMap<String, EntryState>,
+    // None is unobserved, distinct from a complete empty host graph.
+    hosts: Option<Vec<EntryState>>,
+    phase: Option<EntryState>,
 }
 
-/// Who publishes one environment scope's entries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(in crate::runner) enum WaitOwner {
-    /// The run's own owner, before the environment's host planner takes over.
-    Run,
-    /// The environment's host planner: the one process that starts hosts.
-    Planner,
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Source {
+    Run(RunId),
+    Environment { name: String, parent: Option<RunId> },
 }
 
-impl WaitOwner {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Run => "run",
-            Self::Planner => "planner",
-        }
-    }
-}
-
-/// The one record naming the current publisher of a scope: the directory its
-/// complete snapshot lives in. Switching it is one atomic rename, so a reader
-/// always resolves a whole snapshot — the previous publisher's until the new
-/// one is complete, and the new one's afterwards (effigy#458).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct OwnerRecord {
-    schema: String,
-    scope: String,
-    directory: String,
-}
-
-/// One published record: the session it belongs to and the entry's state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct WaitRecord {
-    schema: String,
-    /// `<scope>`: the environment name, or the task and profile.
-    scope: String,
-    #[serde(flatten)]
-    state: EntryState,
-}
-
-/// Where the entries of one scope publish their waits.
-///
-/// Records live in one directory per published snapshot. A publisher stages a
-/// complete snapshot in a fresh directory and then commits it by replacing
-/// `owner.json`, so readers resolve the whole previous snapshot until the new
-/// one is complete. A publisher that has lost the scope keeps writing its own
-/// directory, which nothing reads (effigy#458).
+/// A read-only selection of observations in this checkout's journal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct WaitLedger {
-    dir: PathBuf,
-    scope: String,
-    /// The snapshot this ledger publishes in, when it is a publisher.
-    namespace: Option<PathBuf>,
+    repo: PathBuf,
+    source: Source,
 }
 
 impl WaitLedger {
-    /// The waits of one container environment's own phase and host processes.
-    pub(in crate::runner) fn environment(repo_root: &Path, environment: &str) -> Self {
-        Self::new(repo_root, "environment", &path_component(environment))
-    }
-
-    /// The waits of one managed task and profile's workloads. The two are
-    /// separate components, so `a-b`/`c` and `a`/`b-c` never share a scope.
-    pub(in crate::runner) fn task(repo_root: &Path, task: &str, profile: &str) -> Self {
-        Self::new(
-            repo_root,
-            "task",
-            &format!("{}+{}", path_component(task), path_component(profile)),
-        )
-    }
-
-    /// `name` is already encoded by [`path_component`].
-    fn new(repo_root: &Path, kind: &str, name: &str) -> Self {
-        let scope = format!("{kind}-{name}");
+    pub(in crate::runner) fn run(repo: &Path, run: RunId) -> Self {
         Self {
-            dir: repo_root.join(WAITS_DIR).join(&scope),
-            scope,
-            namespace: None,
+            repo: repo.to_owned(),
+            source: Source::Run(run),
         }
     }
 
-    /// Forgets every record of this scope: a new session never reads the
-    /// previous session's waits as its own.
-    pub(in crate::runner) fn clear(&self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-
-    /// Starts a fresh, not yet visible snapshot for `owner`. The caller
-    /// publishes the complete snapshot into it and only then commits it, so a
-    /// reader never resolves a half-written set of records (effigy#458).
-    pub(in crate::runner) fn stage(&self, owner: WaitOwner) -> Self {
-        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let directory = format!(
-            "{}-{}-{}",
-            owner.name(),
-            std::process::id(),
-            SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        );
-        let namespace = self.dir.join(&directory);
-        let _ = std::fs::create_dir_all(&namespace);
+    pub(in crate::runner) fn environment(repo: &Path, environment: &str) -> Self {
         Self {
-            dir: self.dir.clone(),
-            scope: self.scope.clone(),
-            namespace: Some(namespace),
-        }
-    }
-
-    /// Makes a staged snapshot the one readers resolve. The switch is one
-    /// atomic record replace; the snapshot it replaces is dropped afterwards.
-    pub(in crate::runner) fn commit(&self, staged: &Self) {
-        let Some(namespace) = staged.namespace.as_ref() else {
-            return;
-        };
-        let Some(directory) = namespace.file_name().and_then(|name| name.to_str()) else {
-            return;
-        };
-        let previous = self.committed_namespace();
-        let record = OwnerRecord {
-            schema: ENTRY_WAIT_SCHEMA.to_owned(),
-            scope: self.scope.clone(),
-            directory: directory.to_owned(),
-        };
-        if write_private_json(&self.dir.join(OWNER_RECORD), &record).is_err() {
-            return;
-        }
-        if previous != *namespace {
-            // The snapshot readers resolved until now is no longer reachable.
-            let _ = std::fs::remove_dir_all(previous);
-        }
-    }
-
-    /// Whether this publisher's snapshot is the one readers resolve now.
-    pub(in crate::runner) fn is_visible(&self) -> bool {
-        self.namespace
-            .as_ref()
-            .is_some_and(|namespace| self.committed_namespace() == *namespace)
-    }
-
-    /// The directory readers resolve: the committed snapshot, or the default
-    /// one for a scope that never claimed a publisher.
-    fn committed_namespace(&self) -> PathBuf {
-        let raw = std::fs::read(self.dir.join(OWNER_RECORD)).ok();
-        let directory = raw
-            .and_then(|raw| serde_json::from_slice::<OwnerRecord>(&raw).ok())
-            .filter(|record| record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope)
-            .map(|record| record.directory);
-        match directory {
-            Some(directory) => self.dir.join(directory),
-            None => self.dir.join(DEFAULT_NAMESPACE),
-        }
-    }
-
-    /// The directory this ledger writes entry records in.
-    fn namespace(&self) -> PathBuf {
-        self.namespace
-            .clone()
-            .unwrap_or_else(|| self.committed_namespace())
-    }
-
-    /// Publishes one entry's state. A best-effort write: a front end that
-    /// cannot read a record falls back to the entry's own process status, and
-    /// the record is never the run's authority.
-    pub(in crate::runner) fn publish(&self, state: &EntryState) {
-        self.write_entry(
-            &state.entry,
-            WaitRecord {
-                schema: ENTRY_WAIT_SCHEMA.to_owned(),
-                scope: self.scope.clone(),
-                state: state.clone(),
+            repo: repo.to_owned(),
+            source: Source::Environment {
+                name: environment.to_owned(),
+                parent: None,
             },
-        );
+        }
     }
 
-    /// The entry no longer waits: it started, became ready or settled. The
-    /// record says so rather than being deleted, so a front end that reads it
-    /// later never renders a wait the entry has left behind (effigy#458).
-    pub(in crate::runner) fn settle(&self, entry: &str) {
-        self.write_entry(
-            entry,
-            WaitRecord {
-                schema: ENTRY_WAIT_SCHEMA.to_owned(),
-                scope: self.scope.clone(),
-                state: EntryState {
-                    entry: entry.to_owned(),
-                    phase: EntryPhase::Ready,
-                    waiting_on: None,
-                    not_started_because: None,
-                    detail: None,
-                    elapsed_ms: 0,
-                },
-            },
-        );
+    pub(in crate::runner) fn for_parent(mut self, run: RunId) -> Self {
+        if let Source::Environment { parent, .. } = &mut self.source {
+            *parent = Some(run);
+        }
+        self
     }
 
-    /// The environment phase's own wait, under its reserved storage key.
-    pub(in crate::runner) fn publish_phase(&self, state: &EntryState) {
-        self.write_phase(WaitRecord {
-            schema: ENTRY_WAIT_SCHEMA.to_owned(),
-            scope: self.scope.clone(),
-            state: state.clone(),
-        });
+    fn activation(&self) -> Option<Snapshot> {
+        let Source::Environment { name, parent } = &self.source else {
+            return None;
+        };
+        let checkout = task_engine::checkout::read(&self.repo).ok()??;
+        let cx = task_engine::observe_context(Duration::from_secs(10));
+        let root = match task_engine::observe_checkout_root(&cx, &self.repo) {
+            Observed::Verified(root, _) => root,
+            _ => return None,
+        };
+        let reader = match Store::read(&cx, &root) {
+            Observed::Verified(reader, _) => reader,
+            _ => return None,
+        };
+        let owner = activation_resource(checkout, name).ok()?;
+        let runs = match effigy_kernel::run::history(&reader, &owner, task_engine::HISTORY_LIMIT) {
+            Observed::Verified(runs, _) => runs,
+            _ => return None,
+        };
+        for run in runs {
+            let effects = match effigy_kernel::run::effects(&reader, run.id) {
+                Observed::Verified(effects, _) => effects,
+                _ => return None,
+            };
+            if !effects.iter().any(|effect| effect.spec.kind == WAIT_EFFECT) {
+                continue;
+            }
+            let snapshot = read_run(&self.repo, run.id)?;
+            if parent.is_none() || snapshot.parent == *parent {
+                return Some(snapshot);
+            }
+        }
+        None
     }
 
-    /// The environment phase is over.
-    pub(in crate::runner) fn settle_phase(&self) {
-        self.write_phase(WaitRecord {
-            schema: ENTRY_WAIT_SCHEMA.to_owned(),
-            scope: self.scope.clone(),
-            state: EntryState {
-                entry: "environment".to_owned(),
-                phase: EntryPhase::Ready,
-                waiting_on: None,
-                not_started_because: None,
-                detail: None,
-                elapsed_ms: 0,
-            },
-        });
+    fn snapshot(&self) -> Option<Snapshot> {
+        match &self.source {
+            Source::Run(run) => read_run(&self.repo, *run),
+            Source::Environment { parent, .. } => {
+                let previous = parent.and_then(|run| read_run(&self.repo, run));
+                match self.activation() {
+                    Some(mut current) => {
+                        if current.hosts.is_none() {
+                            current.hosts = previous.as_ref().and_then(|value| value.hosts.clone());
+                        }
+                        if current.phase.is_none() {
+                            current.phase = previous.and_then(|value| value.phase);
+                        }
+                        Some(current)
+                    }
+                    None => previous,
+                }
+            }
+        }
     }
 
-    /// The containers the environment phase reported healthy, from its own
-    /// record. It is the one handoff the owner polls while the environment
-    /// comes up, and the same counts every entry that waits for the phase
-    /// names (effigy#458).
+    pub(in crate::runner) fn activation_started(&self) -> bool {
+        self.activation()
+            .is_some_and(|snapshot| snapshot.hosts.is_some())
+    }
+
+    pub(in crate::runner) fn read(&self, entry: &str) -> Option<EntryState> {
+        self.read_all()
+            .into_iter()
+            .find(|state| state.entry == entry)
+    }
+
+    pub(in crate::runner) fn read_all(&self) -> Vec<EntryState> {
+        let Some(snapshot) = self.snapshot() else {
+            return Vec::new();
+        };
+        match self.source {
+            Source::Run(_) => snapshot.entries.into_values().collect(),
+            Source::Environment { .. } => {
+                let mut hosts = snapshot.hosts.unwrap_or_default();
+                hosts.sort_by(|left, right| left.entry.cmp(&right.entry));
+                hosts
+            }
+        }
+    }
+
+    pub(in crate::runner) fn read_phase(&self) -> Option<EntryState> {
+        self.snapshot()?.phase
+    }
+    pub(in crate::runner) fn environment_identity(&self) -> Option<String> {
+        self.snapshot()?.environment
+    }
     pub(in crate::runner) fn read_progress(&self) -> Option<(u32, u32)> {
         match self.read_phase()?.waiting_on? {
             effigy_core::managed_waits::WaitOn::Environment {
@@ -277,129 +168,348 @@ impl WaitLedger {
             _ => None,
         }
     }
+}
 
-    /// The environment phase's wait, whichever publisher owns the entries.
-    pub(in crate::runner) fn read_phase(&self) -> Option<EntryState> {
-        let raw = std::fs::read(self.dir.join(PHASE_RECORD)).ok()?;
-        let record: WaitRecord = serde_json::from_slice(&raw).ok()?;
-        (record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope).then_some(record.state)
+fn from_effects(effects: &[Effect]) -> Option<Snapshot> {
+    let latest = effects
+        .iter()
+        .rev()
+        .find(|effect| effect.spec.kind == WAIT_EFFECT)?;
+    serde_json::from_value(latest.spec.payload.clone()).ok()
+}
+
+fn read_run(repo: &Path, run: RunId) -> Option<Snapshot> {
+    let Lookup::Found(record) = task_engine::lookup_checkout(repo, run) else {
+        return None;
+    };
+    let effects = match record.effects() {
+        Observed::Verified(effects, _) => effects,
+        _ => return None,
+    };
+    let mut snapshot = from_effects(&effects)?;
+    if record.terminal() {
+        for state in snapshot
+            .entries
+            .values_mut()
+            .chain(snapshot.hosts.iter_mut().flatten())
+            .chain(snapshot.phase.iter_mut())
+        {
+            if matches!(state.phase, EntryPhase::Waiting | EntryPhase::Starting) {
+                state.phase = EntryPhase::Failed;
+                state.waiting_on = None;
+                state.detail = Some("wait owner ended without a terminal observation".to_owned());
+            }
+        }
+    }
+    Some(snapshot)
+}
+
+/// The actual run owner writes one atomic snapshot. Clones share only its
+/// in-memory model; the weak handle cannot keep a finished owner alive.
+#[derive(Clone)]
+pub(in crate::runner) struct WaitPublisher {
+    run: Weak<Mutex<Run<'static>>>,
+    snapshot: Arc<Mutex<Snapshot>>,
+    #[cfg(test)]
+    _fixture_owner: Option<Arc<Mutex<Run<'static>>>>,
+}
+
+impl std::fmt::Debug for WaitPublisher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WaitPublisher").finish_non_exhaustive()
+    }
+}
+
+impl WaitPublisher {
+    pub(in crate::runner) fn from_run(
+        run: &TaskRun,
+        environment: Option<&str>,
+    ) -> Result<Self, RunnerError> {
+        Ok(Self::new(run.journal_handle()?, environment, None))
     }
 
-    /// Names the environment this scope's waits belong to. The run publishes
-    /// it before its environment phase can block, so a status read during
-    /// bring-up finds the environment's own host waits and counts (effigy#458).
-    pub(in crate::runner) fn publish_environment_identity(&self, environment: &str) {
-        if std::fs::create_dir_all(&self.dir).is_err() {
-            return;
+    fn new(
+        run: Weak<Mutex<Run<'static>>>,
+        environment: Option<&str>,
+        parent: Option<RunId>,
+    ) -> Self {
+        Self {
+            run,
+            snapshot: Arc::new(Mutex::new(Snapshot {
+                environment: environment.map(str::to_owned),
+                parent,
+                ..Snapshot::default()
+            })),
+            #[cfg(test)]
+            _fixture_owner: None,
         }
-        let record = SessionRecord {
-            schema: ENTRY_WAIT_SCHEMA.to_owned(),
-            scope: self.scope.clone(),
-            environment: environment.to_owned(),
+    }
+
+    #[cfg(test)]
+    pub(in crate::runner) fn run_id(&self) -> RunId {
+        self.run
+            .upgrade()
+            .expect("fixture observation owner")
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .id()
+    }
+    #[cfg(test)]
+    pub(in crate::runner) fn source(&self, repo: &Path) -> WaitLedger {
+        WaitLedger::run(repo, self.run_id())
+    }
+    #[cfg(test)]
+    pub(in crate::runner) fn environment_source(&self, repo: &Path, name: &str) -> WaitLedger {
+        WaitLedger::environment(repo, name).for_parent(self.run_id())
+    }
+
+    fn update(&self, change: impl FnOnce(&mut Snapshot)) {
+        let mut snapshot = self
+            .snapshot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        change(&mut snapshot);
+        let Some(run) = self.run.upgrade() else {
+            return;
         };
-        let _ = write_private_json(&self.dir.join(SESSION_RECORD), &record);
-    }
-
-    /// The environment this scope's waits belong to, when it published one.
-    pub(in crate::runner) fn environment_identity(&self) -> Option<String> {
-        let raw = std::fs::read(self.dir.join(SESSION_RECORD)).ok()?;
-        let record: SessionRecord = serde_json::from_slice(&raw).ok()?;
-        (record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope)
-            .then_some(record.environment)
-    }
-
-    fn write_entry(&self, entry: &str, record: WaitRecord) {
-        let namespace = self.namespace();
-        if std::fs::create_dir_all(&namespace).is_err() {
+        let mut run = run
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Ok(payload) = serde_json::to_value(&*snapshot) else {
             return;
+        };
+        // These are already-observed facts, so intent atomically publishes the
+        // complete payload. No reader waits for an applied receipt to decode it.
+        let spec = EffectSpec {
+            target: run.fence().clone(),
+            kind: WAIT_EFFECT.to_owned(),
+            payload,
+            settlement: Settlement::Retain,
+            required: false,
+        };
+        if let Ok(ticket) = run.intend(spec) {
+            let _ = run.applied(&ticket, serde_json::Value::Null);
         }
-        // One accepted private-record writer: temp file, 0600, rename.
-        let _ = write_private_json(
-            &namespace.join(format!("{}.json", path_component(entry))),
-            &record,
-        );
     }
 
-    fn write_phase(&self, record: WaitRecord) {
-        if std::fs::create_dir_all(&self.dir).is_err() {
-            return;
-        }
-        let _ = write_private_json(&self.dir.join(PHASE_RECORD), &record);
+    pub(in crate::runner) fn publish_entries(&self, states: &[EntryState]) {
+        self.update(|snapshot| {
+            for state in states {
+                snapshot.entries.insert(state.entry.clone(), state.clone());
+            }
+        });
+    }
+    pub(in crate::runner) fn publish(&self, state: &EntryState) {
+        self.publish_entries(std::slice::from_ref(state));
+    }
+    pub(in crate::runner) fn settle(&self, entry: &str) {
+        self.publish(&settled(entry));
+    }
+    pub(in crate::runner) fn publish_hosts(&self, states: &[EntryState]) {
+        self.update(|snapshot| snapshot.hosts = Some(states.to_vec()));
+    }
+    pub(in crate::runner) fn publish_environment(&self, phase: &EntryState, hosts: &[EntryState]) {
+        self.update(|snapshot| {
+            snapshot.phase = Some(phase.clone());
+            snapshot.hosts = Some(hosts.to_vec());
+        });
     }
 
-    /// The entry's record from the snapshot readers resolve now. A commit that
-    /// retires the snapshot this read resolved re-resolves it, so an in-flight
-    /// reader never observes a broken snapshot (effigy#458).
-    pub(in crate::runner) fn read(&self, entry: &str) -> Option<EntryState> {
-        read_snapshot(
-            || self.committed_namespace(),
-            |namespace| {
-                let raw = std::fs::read(namespace.join(format!("{}.json", path_component(entry))))
-                    .ok()?;
-                let record: WaitRecord = serde_json::from_slice(&raw).ok()?;
-                (record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope)
-                    .then_some(record.state)
-            },
-        )
+    pub(in crate::runner) fn publish_phase(&self, state: &EntryState) {
+        self.update(|snapshot| snapshot.phase = Some(state.clone()));
+    }
+    pub(in crate::runner) fn settle_phase(&self) {
+        self.publish_phase(&settled("environment"));
+    }
+    pub(in crate::runner) fn publish_environment_identity(&self, environment: &str) {
+        self.update(|snapshot| snapshot.environment = Some(environment.to_owned()));
     }
 
-    /// Every entry record of the snapshot readers resolve now, in entry-name
-    /// order. The environment phase's own record is read with
-    /// [`Self::read_phase`], and a snapshot retired mid-read is re-resolved.
-    pub(in crate::runner) fn read_all(&self) -> Vec<EntryState> {
-        read_snapshot(
-            || self.committed_namespace(),
-            |namespace| {
-                let entries = std::fs::read_dir(namespace).ok()?;
-                let mut states = entries
-                    .filter_map(Result::ok)
-                    .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
-                    .filter_map(|entry| {
-                        let raw = std::fs::read(entry.path()).ok()?;
-                        let record: WaitRecord = serde_json::from_slice(&raw).ok()?;
-                        (record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope)
-                            .then_some(record.state)
-                    })
-                    .collect::<Vec<_>>();
-                states.sort_by(|left, right| left.entry.cmp(&right.entry));
-                Some(states)
-            },
-        )
-        .unwrap_or_default()
+    #[cfg(test)]
+    pub(in crate::runner) fn fixture(repo: &Path, environment: Option<&str>) -> Self {
+        let run = begin_run(repo, environment.unwrap_or("fixture"), true)
+            .expect("fixture observation run");
+        let mut publisher = Self::new(Arc::downgrade(&run), environment, None);
+        publisher._fixture_owner = Some(run);
+        publisher
+    }
+
+    #[cfg(test)]
+    pub(in crate::runner) fn fixture_child(repo: &Path, environment: &str, parent: RunId) -> Self {
+        let run = begin_run(repo, environment, false).expect("fixture activation run");
+        let mut publisher = Self::new(Arc::downgrade(&run), Some(environment), Some(parent));
+        publisher._fixture_owner = Some(run);
+        publisher
     }
 }
 
-/// Reads one complete snapshot through a handoff. `resolve` names the
-/// snapshot readers resolve now and `load` reads one.
-///
-/// A commit retires the previous snapshot right after it takes over, so a
-/// reader that resolved it can find part of it already deleted: the load then
-/// yields a partial view. The snapshot is accepted only while it is still the
-/// visible one — a retired snapshot is re-resolved, so a front end sees the
-/// previous complete snapshot or the new one, never a partial set
-/// (effigy#458).
-fn read_snapshot<T>(
-    mut resolve: impl FnMut() -> PathBuf,
-    mut load: impl FnMut(&Path) -> Option<T>,
-) -> Option<T> {
-    for _ in 0..4 {
-        let namespace = resolve();
-        match load(&namespace) {
-            Some(value) if resolve() == namespace => return Some(value),
-            Some(_) => continue,
-            None if resolve() == namespace => return None,
-            None => continue,
-        }
+pub(in crate::runner) fn settled(entry: &str) -> EntryState {
+    EntryState {
+        entry: entry.to_owned(),
+        phase: EntryPhase::Ready,
+        waiting_on: None,
+        not_started_because: None,
+        detail: None,
+        elapsed_ms: 0,
     }
-    None
 }
 
-/// The one injective encoding for a record path component (K1): `+` separates
-/// components and is never left bare, and every byte outside `[A-Za-z0-9_-]` is
-/// escaped as `%XX`. Two distinct accepted entry or scope names therefore never
-/// share a record — a lossy mapping would let one entry's wait replace
-/// another's, so `status` could omit an entry and a late TUI attach could read
-/// the wrong one (effigy#458). The exec markers use the same rule.
+fn activation_resource(checkout: CheckoutId, environment: &str) -> Result<ResourceId, RunnerError> {
+    ResourceId::store(
+        Scope::Checkout(checkout),
+        &format!("host-activation:{environment}"),
+    )
+    .map_err(error)
+}
+
+fn error(error: impl std::fmt::Display) -> RunnerError {
+    RunnerError::task_invocation(error.to_string())
+}
+
+fn begin_run(
+    repo: &Path,
+    environment: &str,
+    fixture: bool,
+) -> Result<Arc<Mutex<Run<'static>>>, RunnerError> {
+    let checkout = task_engine::checkout::mint(repo)?;
+    let id = task_engine::fresh_run_id()?;
+    let owner = if fixture {
+        ResourceId::store(Scope::Checkout(checkout), &format!("wait-fixture:{id}"))
+            .map_err(error)?
+    } else {
+        activation_resource(checkout, environment)?
+    };
+    let task = TaskId::new(
+        checkout,
+        "",
+        effigy_kernel::id::Surface::Published,
+        "host-activation",
+        Some(environment),
+    )
+    .map_err(error)?;
+    let argv = vec![
+        "effigy".into(),
+        "container".into(),
+        environment.into(),
+        "up".into(),
+    ];
+    let invocation = effigy_kernel::id::ResolvedInvocation::new(InvocationSpec {
+        task,
+        route: effigy_kernel::id::Route::Task,
+        argv: argv.clone(),
+        cwd: String::new(),
+        target: effigy_kernel::id::ExecutionTarget::Host,
+        env: BTreeMap::new(),
+        owner,
+        gates: Vec::new(),
+        attachments: Vec::new(),
+        class: EffectClass::Mutate,
+        placement: Placement::Host,
+        provenance: BTreeMap::new(),
+    })
+    .map_err(error)?;
+    let next = Invocation::validated(argv, |args| {
+        args.len() == 4 && args[0] == "effigy" && args[1] == "container" && args[3] == "up"
+    })
+    .map_err(|_| error("invalid activation recovery invocation"))?;
+    let cx = task_engine::effect_context(OpenReason::Shell);
+    let cleanup = task_engine::cleanup_context(Duration::from_secs(10));
+    let run = Run::begin(
+        &cx,
+        task_engine::checkout_effects_root(repo)?,
+        &invocation,
+        BeginOpts {
+            id,
+            wait: Wait::FailFast,
+            acknowledge: Vec::new(),
+            next,
+            custody: None,
+        },
+        &cleanup,
+        &mut task_engine::TaskSettlement::default(),
+    )
+    .map_err(error)?;
+    Ok(Arc::new(Mutex::new(run)))
+}
+
+/// The existing activation/planning operation, journaled without holding Env
+/// across readiness. Only observations belong to this run.
+pub(in crate::runner) struct ActivationWaits {
+    run: Option<Arc<Mutex<Run<'static>>>>,
+    publisher: WaitPublisher,
+}
+
+impl std::fmt::Debug for ActivationWaits {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ActivationWaits")
+            .field("open", &self.run.is_some())
+            .finish()
+    }
+}
+
+impl ActivationWaits {
+    pub(in crate::runner) fn begin(
+        repo: &Path,
+        environment: &str,
+        parent: Option<RunId>,
+    ) -> Result<Self, RunnerError> {
+        let run = begin_run(repo, environment, false)?;
+        let publisher = WaitPublisher::new(Arc::downgrade(&run), Some(environment), parent);
+        Ok(Self {
+            run: Some(run),
+            publisher,
+        })
+    }
+
+    pub(in crate::runner) fn publisher(&self) -> &WaitPublisher {
+        &self.publisher
+    }
+
+    pub(in crate::runner) fn finish(&mut self, success: bool) -> Result<(), RunnerError> {
+        self.close(if success {
+            WorkloadOutcome::Succeeded
+        } else {
+            WorkloadOutcome::Failed { code: 1 }
+        })
+    }
+
+    fn close(&mut self, outcome: WorkloadOutcome) -> Result<(), RunnerError> {
+        let Some(run) = self.run.take() else {
+            return Ok(());
+        };
+        let mut run = Arc::try_unwrap(run)
+            .map_err(|_| error("activation observation owner is still borrowed"))?
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        run.finish(outcome).map_err(error)?;
+        run.settle(
+            &task_engine::cleanup_context(Duration::from_secs(10)),
+            &mut task_engine::TaskSettlement::default(),
+        )
+        .map_err(error)?;
+        Ok(())
+    }
+}
+
+impl Drop for ActivationWaits {
+    fn drop(&mut self) {
+        let _ = self.close(WorkloadOutcome::Interrupted);
+    }
+}
+
+pub(in crate::runner) fn with_activation_waits<T>(
+    repo: &Path,
+    environment: &str,
+    parent: Option<RunId>,
+    work: impl FnOnce(WaitPublisher) -> Result<T, RunnerError>,
+) -> Result<T, RunnerError> {
+    let mut activation = ActivationWaits::begin(repo, environment, parent)?;
+    let result = work(activation.publisher().clone());
+    activation.finish(result.is_ok())?;
+    result
+}
+
+/// Injective component encoding, also used by exec markers.
 pub(in crate::runner) fn path_component(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -415,540 +525,128 @@ pub(in crate::runner) fn path_component(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use effigy_core::managed_waits::{Attribution, EntryPhase, WaitOn};
+    use effigy_core::managed_waits::{Attribution, WaitOn};
 
-    fn fixture() -> (tempfile::TempDir, WaitLedger) {
-        let home = tempfile::tempdir().expect("fixture directory");
-        let ledger = WaitLedger::environment(home.path(), "app/one");
-        (home, ledger)
-    }
-
-    #[test]
-    fn a_published_record_round_trips_with_its_waiting_on() {
-        let (_home, ledger) = fixture();
-        ledger.clear();
-        ledger.publish(&EntryState {
-            entry: "front".to_owned(),
+    fn waiting(name: &str) -> EntryState {
+        EntryState {
+            entry: name.to_owned(),
             phase: EntryPhase::Waiting,
-            waiting_on: Some(WaitOn::Entry {
-                name: "api".to_owned(),
-                phase: EntryPhase::Starting,
-            }),
-            not_started_because: None,
-            detail: None,
-            elapsed_ms: 4_200,
-        });
-        assert!(
-            ledger.read("front").is_some(),
-            "the record is published in the current owner's namespace"
-        );
-        let state = ledger.read("front").expect("the record reads back");
-        assert_eq!(state.entry, "front");
-        assert_eq!(state.elapsed_ms, 4_200);
-        assert_eq!(
-            state.waiting_on,
-            Some(WaitOn::Entry {
-                name: "api".to_owned(),
-                phase: EntryPhase::Starting,
-            })
-        );
-        // Another entry has no record, and a cleared scope has none at all.
-        assert!(ledger.read("admin").is_none());
-        ledger.clear();
-        assert!(ledger.read("front").is_none());
-    }
-
-    /// A commit retires the previous snapshot so it cannot accumulate, and the
-    /// read path re-resolves when the snapshot it resolved was the retired one:
-    /// an in-flight reader still observes a complete snapshot (effigy#458).
-    #[test]
-    fn a_read_that_races_a_commit_resolves_the_visible_snapshot() {
-        let (_home, ledger) = fixture();
-        ledger.clear();
-        let run = ledger.stage(WaitOwner::Run);
-        run.publish(&EntryState {
-            entry: "api".to_owned(),
-            phase: EntryPhase::Waiting,
-            waiting_on: Some(WaitOn::Environment {
-                healthy: Some(3),
-                total: Some(4),
-            }),
-            not_started_because: None,
-            detail: None,
-            elapsed_ms: 0,
-        });
-        ledger.commit(&run);
-        // What an in-flight reader resolved just before the handoff.
-        let resolved_before_commit = ledger.committed_namespace();
-
-        let planner = ledger.stage(WaitOwner::Planner);
-        planner.publish(&EntryState {
-            entry: "api".to_owned(),
-            phase: EntryPhase::Starting,
             waiting_on: Some(WaitOn::Probe {
-                probe: "GET / -> 200".to_owned(),
+                probe: "GET /health -> 200".to_owned(),
             }),
             not_started_because: None,
-            detail: None,
-            elapsed_ms: 0,
-        });
-        ledger.commit(&planner);
-        assert!(
-            !resolved_before_commit.exists(),
-            "the retired snapshot is cleaned up"
-        );
-
-        // The production read path resolves the visible snapshot.
-        assert_eq!(
-            ledger.read("api").and_then(|state| state.waiting_on),
-            Some(WaitOn::Probe {
-                probe: "GET / -> 200".to_owned()
-            }),
-            "the committed snapshot is what a read resolves"
-        );
-
-        // A reader that resolved the retired snapshot re-resolves it, so it
-        // still observes a complete snapshot instead of a missing one.
-        let mut attempts = 0;
-        let recovered = read_snapshot(
-            || {
-                attempts += 1;
-                if attempts == 1 {
-                    resolved_before_commit.clone()
-                } else {
-                    ledger.committed_namespace()
-                }
-            },
-            |namespace| {
-                let raw = std::fs::read(namespace.join(format!("{}.json", path_component("api"))))
-                    .ok()?;
-                let record: WaitRecord = serde_json::from_slice(&raw).ok()?;
-                Some(record.state)
-            },
-        )
-        .expect("a read that raced the commit still resolves the visible snapshot");
-        assert_eq!(
-            recovered.waiting_on,
-            Some(WaitOn::Probe {
-                probe: "GET / -> 200".to_owned()
-            })
-        );
-        assert!(attempts >= 2, "the reader re-resolved the snapshot");
-    }
-
-    /// A handoff that retires a snapshot *after* `read_dir` succeeded leaves a
-    /// partial listing for an in-flight reader. The read accepts a snapshot
-    /// only while it is still the visible one, so the partial view is never
-    /// returned (effigy#458).
-    #[test]
-    fn a_snapshot_retired_after_read_dir_succeeds_is_never_returned_partial() {
-        let (_home, ledger) = fixture();
-        ledger.clear();
-        let run = ledger.stage(WaitOwner::Run);
-        for entry in ["api", "front"] {
-            run.publish(&EntryState {
-                entry: entry.to_owned(),
-                phase: EntryPhase::Waiting,
-                waiting_on: Some(WaitOn::Environment {
-                    healthy: Some(3),
-                    total: Some(4),
-                }),
-                not_started_because: None,
-                detail: None,
-                elapsed_ms: 0,
-            });
+            detail: Some("observed detail".to_owned()),
+            elapsed_ms: 17,
         }
-        ledger.commit(&run);
-        let retired = ledger.committed_namespace();
-
-        let planner = ledger.stage(WaitOwner::Planner);
-        for entry in ["api", "front", "admin"] {
-            planner.publish(&EntryState {
-                entry: entry.to_owned(),
-                phase: EntryPhase::Starting,
-                waiting_on: Some(WaitOn::Probe {
-                    probe: "GET / -> 200".to_owned(),
-                }),
-                not_started_because: None,
-                detail: None,
-                elapsed_ms: 0,
-            });
-        }
-
-        // The reader lists the retired snapshot, and the handoff retires it
-        // right there: reading the files that were listed yields a partial
-        // view.
-        let mut loads = 0;
-        let mut resolve_calls = 0;
-        let seen = read_snapshot(
-            || {
-                resolve_calls += 1;
-                if resolve_calls == 1 {
-                    retired.clone()
-                } else {
-                    ledger.committed_namespace()
-                }
-            },
-            |namespace| {
-                loads += 1;
-                let listed = std::fs::read_dir(namespace)
-                    .ok()?
-                    .filter_map(Result::ok)
-                    .map(|entry| entry.file_name())
-                    .collect::<Vec<_>>();
-                if loads == 1 {
-                    // The commit retires this snapshot between the listing and
-                    // the reads, exactly as `commit` does.
-                    ledger.commit(&planner);
-                }
-                let mut states = listed
-                    .into_iter()
-                    .filter_map(|name| std::fs::read(namespace.join(name)).ok())
-                    .filter_map(|raw| serde_json::from_slice::<WaitRecord>(&raw).ok())
-                    .map(|record| record.state.entry)
-                    .collect::<Vec<_>>();
-                states.sort();
-                Some(states)
-            },
-        )
-        .expect("the read resolves the visible snapshot");
-
-        assert_eq!(loads, 2, "the partial read was retried");
-        assert_eq!(
-            seen,
-            vec!["admin".to_owned(), "api".to_owned(), "front".to_owned()],
-            "the visible snapshot is complete"
-        );
     }
 
-    /// A host process an operator names `environment` is a host, not the
-    /// environment phase: the phase has its own storage key, so the two never
-    /// overwrite each other (effigy#458).
     #[test]
-    fn a_host_named_environment_keeps_its_own_record() {
-        let (_home, ledger) = fixture();
-        ledger.clear();
-        ledger.publish_phase(&EntryState {
-            entry: "environment".to_owned(),
-            phase: EntryPhase::Waiting,
-            waiting_on: Some(WaitOn::Environment {
-                healthy: Some(3),
-                total: Some(4),
-            }),
-            not_started_because: None,
-            detail: None,
-            elapsed_ms: 0,
-        });
-        ledger.publish(&EntryState {
-            entry: "environment".to_owned(),
-            phase: EntryPhase::Starting,
-            waiting_on: Some(WaitOn::Probe {
-                probe: "GET / -> 200".to_owned(),
-            }),
-            not_started_because: None,
-            detail: None,
-            elapsed_ms: 12_000,
-        });
-
-        let phase = ledger.read_phase().expect("the phase record");
-        assert_eq!(
-            phase.waiting_on,
-            Some(WaitOn::Environment {
-                healthy: Some(3),
-                total: Some(4)
-            })
-        );
-        let host = ledger.read("environment").expect("the host's own record");
-        assert_eq!(
-            host.waiting_on,
-            Some(WaitOn::Probe {
-                probe: "GET / -> 200".to_owned()
-            }),
-            "the host's wait is its own, not the phase's"
-        );
-        assert_eq!(
-            ledger
-                .read_all()
-                .iter()
-                .map(|state| state.entry.as_str())
-                .collect::<Vec<_>>(),
-            vec!["environment"],
-            "the phase is read on its own key, never as an entry"
-        );
-
-        ledger.settle_phase();
-        assert!(!ledger
-            .read_phase()
-            .is_some_and(|phase| phase.holds_a_wait()));
-        assert!(
-            ledger.read("environment").is_some(),
-            "the host record stays"
-        );
-    }
-
-    /// Two accepted entry names are two records. A lossy file name would let
-    /// one entry's wait replace another's, so `status` could omit an entry and
-    /// a late TUI attach could read the wrong one (effigy#458).
-    #[test]
-    fn distinct_accepted_names_never_share_a_record() {
-        let (_home, ledger) = fixture();
-        ledger.clear();
-        let states = [
-            (
-                "api-v1",
-                WaitOn::Delay {
-                    remaining_ms: 1_200,
-                },
-            ),
-            (
-                "api v1",
-                WaitOn::Entry {
-                    name: "api".to_owned(),
-                    phase: EntryPhase::Starting,
-                },
-            ),
-            (
-                "api/v1",
-                WaitOn::Probe {
-                    probe: "GET / -> 200".to_owned(),
-                },
-            ),
-            (
-                "api_v1",
-                WaitOn::Environment {
-                    healthy: Some(3),
-                    total: Some(4),
-                },
-            ),
+    fn one_snapshot_keeps_distinct_names_and_the_phase_separate() {
+        let repo = tempfile::tempdir().unwrap();
+        let publisher = WaitPublisher::fixture(repo.path(), Some("app/one"));
+        let names = [
+            "a+b",
+            "a/b",
+            "a%2Fb",
+            "a b",
+            "a-b",
+            "environment",
+            "@environment",
+            "雪",
         ];
-        for (entry, waiting_on) in &states {
-            ledger.publish(&EntryState {
-                entry: (*entry).to_owned(),
-                phase: EntryPhase::Waiting,
-                waiting_on: Some(waiting_on.clone()),
-                not_started_because: None,
-                detail: None,
-                elapsed_ms: 0,
-            });
+        let entries = names.map(waiting);
+        publisher.publish_entries(&entries);
+        publisher.publish_environment(&waiting("environment"), &entries);
+        let task = publisher.source(repo.path());
+        let hosts = publisher.environment_source(repo.path(), "app/one");
+        for entry in &entries {
+            assert_eq!(task.read(&entry.entry).as_ref(), Some(entry));
+            assert_eq!(hosts.read(&entry.entry).as_ref(), Some(entry));
         }
-        for (entry, waiting_on) in &states {
-            let state = ledger
-                .read(entry)
-                .unwrap_or_else(|| panic!("{entry} keeps its own record"));
-            assert_eq!(&state.entry, entry);
-            assert_eq!(
-                state.waiting_on.as_ref(),
-                Some(waiting_on),
-                "{entry} reads its own wait"
-            );
-        }
-        let published = ledger.read_all();
+        let mut ordered = entries.to_vec();
+        ordered.sort_by(|left, right| left.entry.cmp(&right.entry));
+        assert_eq!(task.read_all(), ordered);
+        assert_eq!(hosts.read_all(), ordered);
+        assert_eq!(hosts.read_phase(), Some(waiting("environment")));
+        assert_eq!(task.environment_identity().as_deref(), Some("app/one"));
+        assert!(!repo.path().join(".effigy/runtime/waits").exists());
+        let encoded = names
+            .map(path_component)
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(
-            published
-                .iter()
-                .map(|state| state.entry.as_str())
-                .collect::<Vec<_>>(),
-            vec!["api v1", "api-v1", "api/v1", "api_v1"],
-            "every distinct name is published once"
+            encoded.len(),
+            names.len(),
+            "exec marker names remain injective too"
         );
     }
 
-    /// A task and a profile are separate scope components, so two different
-    /// task/profile pairs never share a scope.
     #[test]
-    fn task_scopes_keep_the_task_and_profile_apart() {
-        let home = tempfile::tempdir().expect("fixture directory");
-        let left = WaitLedger::task(home.path(), "a-b", "c");
-        let right = WaitLedger::task(home.path(), "a", "b-c");
-        left.clear();
-        right.clear();
-        left.publish(&EntryState {
-            entry: "api".to_owned(),
-            phase: EntryPhase::Waiting,
-            waiting_on: Some(WaitOn::Delay { remaining_ms: 1 }),
-            not_started_because: None,
-            detail: None,
-            elapsed_ms: 0,
+    fn exact_runs_never_share_waits_and_a_new_run_has_no_old_counts() {
+        let repo = tempfile::tempdir().unwrap();
+        let first = WaitPublisher::fixture(repo.path(), Some("app"));
+        let second = WaitPublisher::fixture(repo.path(), Some("app"));
+        first.publish(&waiting("first"));
+        first.publish_phase(&EntryState {
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(1),
+                total: Some(4),
+            }),
+            ..waiting("environment")
         });
-        right.publish(&EntryState {
-            entry: "api".to_owned(),
+        assert_ne!(first.run_id(), second.run_id());
+        assert!(second.source(repo.path()).read_all().is_empty());
+        assert_eq!(second.source(repo.path()).read_progress(), None);
+        second.publish(&waiting("second"));
+        assert!(first.source(repo.path()).read("second").is_none());
+        assert!(second.source(repo.path()).read("first").is_none());
+    }
+
+    #[test]
+    fn attribution_survives_its_owner_without_turning_an_unobserved_launch_ready() {
+        let repo = tempfile::tempdir().unwrap();
+        let publisher = WaitPublisher::fixture(repo.path(), None);
+        let source = publisher.source(repo.path());
+        let failure = EntryState {
             phase: EntryPhase::NotStarted,
             waiting_on: None,
             not_started_because: Some(Attribution::new("api", "failed (status 500)")),
-            detail: None,
-            elapsed_ms: 0,
-        });
-        assert_eq!(
-            left.read("api").map(|state| state.phase),
-            Some(EntryPhase::Waiting)
-        );
-        assert_eq!(
-            right.read("api").map(|state| state.phase),
-            Some(EntryPhase::NotStarted)
-        );
-    }
-
-    /// The handoff is atomic because each publisher writes only its own
-    /// directory and readers resolve the directory the current claim names: a
-    /// publisher that lost the scope can keep writing and never changes what
-    /// a front end reads (effigy#458).
-    #[test]
-    fn a_publisher_that_lost_the_scope_cannot_change_what_readers_see() {
-        let (_home, ledger) = fixture();
-        ledger.clear();
-        let run = ledger.stage(WaitOwner::Run);
-        run.publish(&EntryState {
-            entry: "api".to_owned(),
-            phase: EntryPhase::Waiting,
-            waiting_on: Some(WaitOn::Environment {
-                healthy: Some(3),
-                total: Some(4),
-            }),
-            not_started_because: None,
-            detail: None,
-            elapsed_ms: 0,
-        });
-        ledger.commit(&run);
-        assert_eq!(
-            ledger.read("api").and_then(|state| state.waiting_on),
-            Some(WaitOn::Environment {
-                healthy: Some(3),
-                total: Some(4)
-            })
-        );
-
-        // The planner stages its complete snapshot before it starts any
-        // listener, and commits it afterwards. A reader paused in between still
-        // resolves the run's whole snapshot, never an empty one.
-        let planner = ledger.stage(WaitOwner::Planner);
-        planner.publish(&EntryState {
-            entry: "api".to_owned(),
-            phase: EntryPhase::Starting,
-            waiting_on: Some(WaitOn::Probe {
-                probe: "GET / -> 200".to_owned(),
-            }),
-            not_started_because: None,
-            detail: None,
-            elapsed_ms: 0,
-        });
-        assert_eq!(
-            ledger.read("api").and_then(|state| state.waiting_on),
-            Some(WaitOn::Environment {
-                healthy: Some(3),
-                total: Some(4)
-            }),
-            "a reader between staging and commit sees the previous complete snapshot"
-        );
-        assert!(
-            !planner.is_visible(),
-            "the staged planner snapshot is not visible before its commit"
-        );
-        assert!(
-            run.is_visible(),
-            "the run's snapshot stays visible until the planner commits"
-        );
-        ledger.commit(&planner);
-        assert!(planner.is_visible());
-        assert_eq!(
-            ledger.read("api").and_then(|state| state.waiting_on),
-            Some(WaitOn::Probe {
-                probe: "GET / -> 200".to_owned()
-            })
-        );
-
-        // The run's owner keeps publishing, as its progress ticks do: its
-        // writes land in its own namespace and are not what a reader resolves.
-        run.publish(&EntryState {
-            entry: "api".to_owned(),
-            phase: EntryPhase::Waiting,
-            waiting_on: Some(WaitOn::Environment {
-                healthy: Some(3),
-                total: Some(4),
-            }),
-            not_started_because: None,
-            detail: None,
-            elapsed_ms: 0,
-        });
-        run.settle("api");
-        assert_eq!(
-            ledger.read("api").and_then(|state| state.waiting_on),
-            Some(WaitOn::Probe {
-                probe: "GET / -> 200".to_owned()
-            }),
-            "the planner's record is the one read"
-        );
-
-        // The same holds for a terminal failure: the run's generic attribution
-        // never replaces the planner's.
-        planner.publish(&EntryState {
-            entry: "front".to_owned(),
-            phase: EntryPhase::NotStarted,
-            waiting_on: None,
-            not_started_because: Some(effigy_core::managed_waits::Attribution::new(
-                "api",
-                "failed: readiness probe GET / returned 500",
-            )),
-            detail: None,
-            elapsed_ms: 0,
-        });
-        run.publish(&EntryState {
-            entry: "front".to_owned(),
-            phase: EntryPhase::NotStarted,
-            waiting_on: None,
-            not_started_because: Some(effigy_core::managed_waits::Attribution::new(
-                "environment",
-                "failed: `up` exited 1",
-            )),
-            detail: None,
-            elapsed_ms: 0,
-        });
-        assert_eq!(
-            ledger
-                .read("front")
-                .and_then(|state| state.not_started_because)
-                .map(|cause| cause.name),
-            Some("api".to_owned())
-        );
+            ..waiting("front")
+        };
+        publisher.publish_entries(&[failure.clone(), waiting("unobserved")]);
+        drop(publisher);
+        assert_eq!(source.read("front"), Some(failure));
+        let unknown = source.read("unobserved").unwrap();
+        assert_eq!(unknown.phase, EntryPhase::Failed);
+        assert!(unknown.waiting_on.is_none());
+        assert!(unknown
+            .detail
+            .unwrap()
+            .contains("without a terminal observation"));
     }
 
     #[test]
-    fn an_attributed_failure_survives_the_session_that_published_it() {
-        let (_home, ledger) = fixture();
-        ledger.publish(&EntryState {
-            entry: "front".to_owned(),
-            phase: EntryPhase::NotStarted,
-            waiting_on: None,
-            not_started_because: Some(Attribution::new("api", "failed (status 500)")),
-            detail: None,
-            elapsed_ms: 0,
-        });
-        let state = ledger.read("front").expect("the record reads back");
-        assert_eq!(state.status_line(), "not started — api failed (status 500)");
-    }
-
-    #[test]
-    fn every_published_record_is_listed_once_in_entry_order() {
-        let (_home, ledger) = fixture();
-        for (entry, phase) in [
-            ("front", EntryPhase::NotStarted),
-            ("api", EntryPhase::Starting),
-        ] {
-            ledger.publish(&EntryState {
-                entry: entry.to_owned(),
-                phase,
-                waiting_on: None,
-                not_started_because: None,
-                detail: None,
-                elapsed_ms: 0,
-            });
-        }
-        let states = ledger.read_all();
+    fn latest_observation_is_atomic_before_receipt_and_malformed_never_replays_old_waits() {
+        let repo = tempfile::tempdir().unwrap();
+        let publisher = WaitPublisher::fixture(repo.path(), None);
+        publisher.publish(&waiting("api"));
+        let Lookup::Found(record) = task_engine::lookup_checkout(repo.path(), publisher.run_id())
+        else {
+            panic!("fixture run")
+        };
+        let Observed::Verified(mut effects, _) = record.effects() else {
+            panic!("fixture effects")
+        };
+        let latest = effects.last_mut().unwrap();
+        latest.state = effigy_kernel::run::EffectState::Intended;
+        latest.receipt = None;
         assert_eq!(
-            states
-                .iter()
-                .map(|state| state.entry.as_str())
-                .collect::<Vec<_>>(),
-            vec!["api", "front"]
+            from_effects(&effects).unwrap().entries["api"],
+            waiting("api")
         );
+        let mut malformed = effects.last().unwrap().clone();
+        malformed.spec.payload = serde_json::json!({});
+        effects.push(malformed);
+        assert!(from_effects(&effects).is_none());
     }
 }

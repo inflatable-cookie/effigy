@@ -485,7 +485,6 @@ fn start_managed_run(
                 tabs,
                 order,
                 shells,
-                initial_waits(&plan),
             )
         }
     }
@@ -743,26 +742,6 @@ fn session_tabs(
         }
     }
     (tabs, order)
-}
-
-/// The session's waits before the supervisor's first event: every workload
-/// names the environment phase or the entry before it, so no tab opens with a
-/// generic spinner (effigy#458).
-fn initial_waits(plan: &effigy_managed::ManagedTaskPlan) -> Vec<effigy_core::managed_waits::EntryState> {
-    let order = effigy_core::managed_waits::SessionOrder::workloads(
-        &plan
-            .processes
-            .iter()
-            .filter(|process| process.role == ManagedProcessRole::Standard)
-            .map(|process| effigy_core::managed_waits::WorkloadOrder {
-                name: &process.name,
-                after: &process.after,
-            })
-            .collect::<Vec<_>>(),
-    );
-    let environment = plan.owns_environment.then_some("environment");
-    let now = std::time::Instant::now();
-    effigy_core::managed_waits::EntryWaits::new(order, environment, now).states(now)
 }
 
 /// A shell tab's interactive attach, run by the TUI client itself.

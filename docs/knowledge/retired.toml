@@ -1872,3 +1872,13 @@ terms = ["fn write_listener_state("]
 paths = []
 config_keys = []
 allow = ["CHANGELOG.md"]
+
+[[retired]]
+id = "managed-wait-publisher-handoff"
+retired = "2026-11-10; one run-owned wait projection (effigy#851)"
+replacement = "Complete managed:waits effect payloads on the owning task and activation runs replace per-entry files, staged publisher directories and owner pointers. Phase counts and host states publish together. Readers select the exact managed parent, preserving its prelaunch observations until the matching activation publishes a complete host graph; best-effort events only wake journal readers. Existing old binaries and their readers remain untouched until stopped."
+owner = "docs/knowledge/contracts/053-environment-reconciler-contract.md"
+terms = ["enum WaitOwner", "fn committed_namespace("]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md"]

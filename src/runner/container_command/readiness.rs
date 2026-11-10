@@ -22,7 +22,10 @@ use effigy_containers::EffectiveContainerPolicy;
 use effigy_core::managed_waits::{EntryPhase, EntryState, WaitOn};
 
 use crate::runner::error::RunnerError;
-use crate::runner::managed_wait::WaitLedger;
+#[cfg(test)]
+use crate::runner::managed_wait::WaitPublisher;
+
+pub(super) type PhaseObserver<'a> = Option<&'a mut dyn FnMut(&EntryState)>;
 
 use super::steps::{ProgressSource, TimedStep};
 
@@ -151,30 +154,36 @@ pub(super) fn await_services_ready(
     policy: &EffectiveContainerPolicy,
     stop_requested: Option<&AtomicBool>,
     deadline: Option<Instant>,
+    mut waits: PhaseObserver<'_>,
 ) -> Result<ReadinessReport, RunnerError> {
-    let waits = WaitLedger::environment(&policy.repo_root, &policy.name);
     // A new session's phase begins settled and without counts: a record left by
     // an earlier run is never read while this one is still probing, and the
     // staged host graph in the same scope is untouched (effigy#458).
-    begin_environment_phase(&waits);
-    let result = await_services_ready_inner(repo_root, policy, stop_requested, deadline, &waits);
+    begin_environment_phase(&mut waits);
+    let result =
+        await_services_ready_inner(repo_root, policy, stop_requested, deadline, &mut waits);
     // Every exit is terminal: a success, a nothing-to-await fallback or a stop
     // settles the phase, and a failure or timeout names what ended it, so
     // status never reports a live wait after the phase is over.
-    end_environment_phase(&waits, &result);
+    end_environment_phase(&mut waits, &result);
     result
 }
 
 /// The phase's start: settled and count-free, so nothing from an earlier
 /// session is read as this one's.
-fn begin_environment_phase(waits: &WaitLedger) {
-    waits.settle_phase();
+fn begin_environment_phase(waits: &mut PhaseObserver<'_>) {
+    if let Some(observe) = waits {
+        observe(&crate::runner::managed_wait::settled("environment"));
+    }
 }
 
 /// The phase's end, on every exit.
-fn end_environment_phase(waits: &WaitLedger, result: &Result<ReadinessReport, RunnerError>) {
+fn end_environment_phase(
+    waits: &mut PhaseObserver<'_>,
+    result: &Result<ReadinessReport, RunnerError>,
+) {
     match result {
-        Ok(_) => waits.settle_phase(),
+        Ok(_) => begin_environment_phase(waits),
         Err(error) => {
             // The headline and the first piece of evidence, bounded: a person
             // reading `status` needs the failing service, not just the phase.
@@ -191,14 +200,16 @@ fn end_environment_phase(waits: &WaitLedger, result: &Result<ReadinessReport, Ru
             } else {
                 format!("{headline}; {evidence}")
             };
-            waits.publish_phase(&EntryState {
-                entry: "environment".to_owned(),
-                phase: EntryPhase::Failed,
-                waiting_on: None,
-                not_started_because: None,
-                detail: Some(detail.chars().take(240).collect()),
-                elapsed_ms: 0,
-            });
+            if let Some(observe) = waits {
+                observe(&EntryState {
+                    entry: "environment".to_owned(),
+                    phase: EntryPhase::Failed,
+                    waiting_on: None,
+                    not_started_because: None,
+                    detail: Some(detail.chars().take(240).collect()),
+                    elapsed_ms: 0,
+                });
+            }
         }
     }
 }
@@ -208,7 +219,7 @@ fn await_services_ready_inner(
     policy: &EffectiveContainerPolicy,
     stop_requested: Option<&AtomicBool>,
     deadline: Option<Instant>,
-    waits: &WaitLedger,
+    waits: &mut PhaseObserver<'_>,
 ) -> Result<ReadinessReport, RunnerError> {
     let started = Instant::now();
     let deadline = deadline.unwrap_or_else(|| observation_deadline(policy));
@@ -573,14 +584,15 @@ fn first_line(text: &str) -> String {
 /// Publishes the containers that are healthy now, as the wait every entry
 /// that waits for this environment renders.
 fn publish_environment_wait(
-    waits: &WaitLedger,
+    waits: &mut PhaseObserver<'_>,
     services: &[ServiceHealth],
     unready: &[String],
     elapsed: Duration,
 ) {
+    let Some(observe) = waits else { return };
     let total = u32::try_from(services.len()).unwrap_or(u32::MAX);
     let healthy = u32::try_from(services.len().saturating_sub(unready.len())).unwrap_or(u32::MAX);
-    waits.publish_phase(&EntryState {
+    observe(&EntryState {
         entry: "environment".to_owned(),
         phase: EntryPhase::Waiting,
         waiting_on: Some(WaitOn::Environment {
@@ -1363,11 +1375,13 @@ mod tests {
     #[test]
     fn the_phase_settles_on_every_exit_and_a_new_session_starts_clean() {
         let dir = tempfile::tempdir().expect("fixture directory");
-        let ledger = WaitLedger::environment(dir.path(), "app");
-        ledger.clear();
+        let publisher = WaitPublisher::fixture(dir.path(), Some("app"));
+        let ledger = publisher.environment_source(dir.path(), "app");
+        let mut publish_phase = |state: &EntryState| publisher.publish_phase(state);
+        let mut observer: PhaseObserver<'_> = Some(&mut publish_phase);
 
         // A previous run left its live counts behind.
-        ledger.publish_phase(&phase_counts(1, 4));
+        publisher.publish_phase(&phase_counts(1, 4));
         assert_eq!(ledger.read_progress(), Some((1, 4)));
 
         // The new session's boundary resets the phase without touching a host
@@ -1383,8 +1397,8 @@ mod tests {
             detail: None,
             elapsed_ms: 0,
         };
-        ledger.publish(&host);
-        begin_environment_phase(&ledger);
+        publisher.publish_hosts(&[host]);
+        begin_environment_phase(&mut observer);
         assert_eq!(
             ledger.read_progress(),
             None,
@@ -1400,19 +1414,19 @@ mod tests {
         );
 
         // A success settles the phase.
-        ledger.publish_phase(&phase_counts(4, 4));
-        end_environment_phase(&ledger, &report(ReadinessEnd::Ready));
+        publisher.publish_phase(&phase_counts(4, 4));
+        end_environment_phase(&mut observer, &report(ReadinessEnd::Ready));
         assert_eq!(ledger.read_progress(), None);
         assert!(!ledger
             .read_phase()
             .is_some_and(|phase| phase.holds_a_wait()));
 
         // A failure publishes the phase's own attributed terminal record.
-        ledger.publish_phase(&phase_counts(2, 4));
+        publisher.publish_phase(&phase_counts(2, 4));
         let failure = RunnerError::task_invocation(
             "environment `app` did not become ready within 60s\n- web is unhealthy after 3 failed checks",
         );
-        end_environment_phase(&ledger, &Err(failure));
+        end_environment_phase(&mut observer, &Err(failure));
         let phase = ledger.read_phase().expect("the failed phase record");
         assert_eq!(phase.phase, EntryPhase::Failed);
         assert!(
@@ -1426,11 +1440,11 @@ mod tests {
         assert_eq!(ledger.read_progress(), None, "no live counts survive");
 
         // A stop or a nothing-to-await fallback settles too.
-        ledger.publish_phase(&phase_counts(3, 4));
-        end_environment_phase(&ledger, &report(ReadinessEnd::Interrupted));
+        publisher.publish_phase(&phase_counts(3, 4));
+        end_environment_phase(&mut observer, &report(ReadinessEnd::Interrupted));
         assert_eq!(ledger.read_progress(), None);
-        ledger.publish_phase(&phase_counts(3, 4));
-        end_environment_phase(&ledger, &report(ReadinessEnd::NothingToAwait));
+        publisher.publish_phase(&phase_counts(3, 4));
+        end_environment_phase(&mut observer, &report(ReadinessEnd::NothingToAwait));
         assert_eq!(ledger.read_progress(), None);
     }
 }

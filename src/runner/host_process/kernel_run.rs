@@ -39,6 +39,7 @@ use super::{
     RestartedHostProcess, HOST_LISTENER_STATE_SCHEMA,
 };
 use crate::runner::error::RunnerError;
+use crate::runner::managed_wait::{with_activation_waits, WaitPublisher};
 
 /// How long a stop request waits for the live supervisor to act before the
 /// requester settles the run as its gate holder.
@@ -431,23 +432,36 @@ impl HostPaneIdentity {
         })
     }
     pub(in crate::runner) fn read(&self, listener: Option<&Path>) -> Option<HostPaneObservation> {
-        self.observe(listener).map(|observation| observation.pane)
+        self.observe(listener)
+            .ok()
+            .flatten()
+            .map(|observation| observation.pane)
     }
 
-    fn observe(&self, listener: Option<&Path>) -> Option<HostRunObservation> {
-        let run = latest_run(&self.repo, &self.resource)?;
-        let root = match observe_root(&self.repo)? {
-            Observed::Verified(root, _) => root,
-            _ => return None,
+    fn observe(&self, listener: Option<&Path>) -> Result<Option<HostRunObservation>, &'static str> {
+        let root = match observe_root(&self.repo) {
+            Some(Observed::Verified(root, _)) => root,
+            Some(Observed::Absent(_)) => return Ok(None),
+            _ => return Err("host journal is unavailable"),
         };
         let reader = match Store::read(&observe(), &root) {
             Observed::Verified(reader, _) => reader,
-            _ => return None,
+            Observed::Absent(_) => return Ok(None),
+            _ => return Err("host journal is unreadable"),
         };
-        let effects = match effigy_kernel::run::effects(&reader, run.id) {
-            Observed::Verified(effects, _) => effects,
-            _ => return None,
+        let rows = history(&reader, &self.resource, 1);
+        let Some(run) = rows
+            .verified()
+            .ok_or("host run observation is unknown")?
+            .first()
+            .cloned()
+        else {
+            return Ok(None);
         };
+        let effects = effigy_kernel::run::effects(&reader, run.id);
+        let effects = effects
+            .verified()
+            .ok_or("host effects observation is unknown")?;
         let latest = effects
             .iter()
             .rev()
@@ -469,7 +483,7 @@ impl HostPaneIdentity {
         let live = match Gate::probe(&observe(), &root, &self.resource) {
             Observed::Verified(GateState::Held(_), _) => true,
             Observed::Verified(GateState::Free, _) => false,
-            _ => return None,
+            _ => return Err("host owner observation is unknown"),
         };
         let lifecycle = if effects
             .iter()
@@ -477,11 +491,13 @@ impl HostPaneIdentity {
         {
             // A malformed or stale current observation is unknown, never a
             // missing listener that would fall back to an apparent start.
-            Some(pane_listener(
-                owner_observation(lifecycle_from_effects(&effects)?, live),
-                run.id,
-                nonce,
-            )?)
+            let state =
+                lifecycle_from_effects(effects).ok_or("host lifecycle snapshot is unreadable")?;
+            let state = owner_observation(state, live && run.phase != Phase::Closed);
+            Some(
+                pane_listener(state, run.id, nonce)
+                    .ok_or("host lifecycle snapshot has a stale custody generation")?,
+            )
         } else {
             listener
                 .and_then(|path| read_private_json::<HostLifecycleObservation>(path).ok())
@@ -495,7 +511,7 @@ impl HostPaneIdentity {
         } else {
             exit.or_else(|| run_exit(&run))
         };
-        Some(HostRunObservation {
+        Ok(Some(HostRunObservation {
             pid,
             last_exit,
             pane: HostPaneObservation {
@@ -505,7 +521,7 @@ impl HostPaneIdentity {
                 exit,
             },
             run,
-        })
+        }))
     }
 }
 
@@ -725,16 +741,38 @@ pub(super) fn invocation(
 /// `deadline` is the enclosing activation's observation budget. A listener
 /// still starting when it is spent withholds its own route; a caller with no
 /// enclosing budget passes `None` (a restart waits on its own readiness).
+#[cfg(test)]
 pub(in crate::runner) fn start_host_processes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     deadline: Option<Instant>,
 ) -> Result<HostProcessListenerReport, RunnerError> {
+    with_activation_waits(
+        repo_root,
+        &policy.name,
+        crate::runner::environment::requested_holder(),
+        |publisher| start_host_processes_in_activation(repo_root, policy, deadline, &publisher),
+    )
+}
+
+pub(in crate::runner) fn start_host_processes_in_activation(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    deadline: Option<Instant>,
+    publisher: &WaitPublisher,
+) -> Result<HostProcessListenerReport, RunnerError> {
     let HostProcessStart {
         started,
         listeners,
         failures,
-    } = start_host_processes_inner(repo_root, policy, None, ReplaceGate::Unheld, deadline)?;
+    } = start_host_processes_inner(
+        repo_root,
+        policy,
+        None,
+        ReplaceGate::Unheld,
+        deadline,
+        publisher,
+    )?;
     detach_started(repo_root, policy, started, None)?;
     Ok(HostProcessListenerReport {
         ready: listeners,
@@ -769,12 +807,20 @@ pub(in crate::runner) fn restart_host_processes_for_container(
         started,
         listeners,
         failures,
-    } = start_host_processes_inner(
+    } = with_activation_waits(
         repo_root,
-        policy,
-        Some(&selected),
-        ReplaceGate::HeldForReplace,
-        None,
+        &policy.name,
+        crate::runner::environment::requested_holder(),
+        |publisher| {
+            start_host_processes_inner(
+                repo_root,
+                policy,
+                Some(&selected),
+                ReplaceGate::HeldForReplace,
+                None,
+                &publisher,
+            )
+        },
     )?;
     // A restart names the processes it replaces, so a listener that did not
     // publish is this restart's failure, not a partial environment: the
@@ -934,8 +980,21 @@ pub(super) fn start_host_processes_owning(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<(String, effigy_kernel::supervise::SupervisorClient)>, RunnerError> {
-    let HostProcessStart { started, .. } =
-        start_host_processes_inner(repo_root, policy, None, ReplaceGate::Unheld, None)?;
+    let HostProcessStart { started, .. } = with_activation_waits(
+        repo_root,
+        &policy.name,
+        crate::runner::environment::requested_holder(),
+        |publisher| {
+            start_host_processes_inner(
+                repo_root,
+                policy,
+                None,
+                ReplaceGate::Unheld,
+                None,
+                &publisher,
+            )
+        },
+    )?;
     Ok(started)
 }
 
@@ -1032,15 +1091,6 @@ fn await_plain_launch(
         }
         match event {
             Ok(effigy_kernel::supervise::Event::Active) => return Ok(()),
-            Ok(effigy_kernel::supervise::Event::Engine(bytes)) => {
-                if let Ok(super::HostProcessEvent::LaunchFailed { detail, .. }) =
-                    serde_json::from_slice(&bytes)
-                {
-                    return Err(RunnerError::task_invocation(format!(
-                        "host process `{process}` did not start its workload: {detail}"
-                    )));
-                }
-            }
             Ok(effigy_kernel::supervise::Event::Closed { workload, .. }) => {
                 return Err(RunnerError::task_invocation(format!(
                     "host process `{process}` settled without starting its workload ({workload})"
@@ -1477,6 +1527,7 @@ fn start_host_processes_inner(
     selection: Option<&BTreeSet<String>>,
     gate: ReplaceGate,
     deadline: Option<Instant>,
+    publisher: &WaitPublisher,
 ) -> Result<HostProcessStart, RunnerError> {
     if policy.host_processes.is_empty() {
         return Ok(HostProcessStart {
@@ -1526,8 +1577,7 @@ fn start_host_processes_inner(
         .filter(|process| selection.is_none_or(|selection| selection.contains(&process.name)))
         .map(|process| process.name.clone())
         .collect::<BTreeSet<_>>();
-    let mut graph =
-        super::HostWaitGraph::for_policy(&checkout_root, policy, &starting, Instant::now());
+    let mut graph = super::HostWaitGraph::for_policy(policy, &starting, publisher, Instant::now());
     // The ordering loop and its per-process operations: the loop decides what
     // starts, what is withheld and what every entry's wait says; this struct
     // starts the real supervisors and waits for the real listeners.
@@ -2193,23 +2243,6 @@ fn describe_signals(report: &CustodyStop) -> String {
     names.join(" then ")
 }
 
-/// The newest run of `resource`, open or closed.
-fn latest_run(repo_root: &Path, resource: &ResourceId) -> Option<RunSummary> {
-    let observed = observe_root(repo_root)?;
-    let root = match observed {
-        Observed::Verified(root, _) => root,
-        _ => return None,
-    };
-    let reader = match Store::read(&observe(), &root) {
-        Observed::Verified(reader, _) => reader,
-        _ => return None,
-    };
-    match history(&reader, resource, 1) {
-        Observed::Verified(rows, _) => rows.into_iter().next(),
-        _ => None,
-    }
-}
-
 /// The newest run of `resource` that has not closed.
 fn latest_open_run(
     repo_root: &Path,
@@ -2344,71 +2377,57 @@ pub(in crate::runner) fn host_process_status(
         .host_processes
         .iter()
         .map(|hp| {
-            let state_file = host_process_state_path(&dir, &hp.name);
+            let mut row = HostProcessStatus {
+                name: hp.name.clone(),
+                run: None,
+                state: "unknown".to_owned(),
+                phase: None,
+                pid: None,
+                last_exit: None,
+                listener: None,
+                log: Some(
+                    hp_log_path(repo_root, policy, &hp.name)
+                        .display()
+                        .to_string(),
+                ),
+            };
             let resource = match host_process_resource(policy, &hp.name) {
                 Ok(resource) => resource,
                 Err(error) => {
-                    return HostProcessStatus {
-                        name: hp.name.clone(),
-                        run: None,
-                        state: "absent".to_owned(),
-                        phase: None,
-                        pid: None,
-                        last_exit: None,
-                        listener: None,
-                        log: Some(error.to_string()),
-                    }
+                    row.log = Some(error.to_string());
+                    return row;
                 }
             };
             let identity = HostPaneIdentity {
                 repo: repo_root.to_owned(),
                 resource,
             };
-            let Some(observed) = identity.observe(Some(&state_file)) else {
-                let run = latest_run(repo_root, &identity.resource);
-                return HostProcessStatus {
-                    name: hp.name.clone(),
-                    state: if run.is_some() { "unknown" } else { "absent" }.to_owned(),
-                    run: run.map(|run| run.id.to_string()),
-                    phase: None,
-                    pid: None,
-                    last_exit: None,
-                    listener: None,
-                    log: None,
-                };
-            };
-            let run = observed.run;
-            let view = observed.pane;
-            let state = if run.phase == Phase::Closed {
-                "closed"
-            } else if view.live {
-                "running"
-            } else {
-                "interrupted"
-            };
-            let listener = hp.listener.as_ref().and(view.lifecycle).map(|(status, _)| {
-                if status == super::HostLifecycleStatus::Ready
-                    && (run.phase == Phase::Closed || !view.live)
-                {
-                    "unavailable".to_owned()
-                } else {
-                    status.as_str().to_owned()
+            match identity.observe(Some(&host_process_state_path(&dir, &hp.name))) {
+                Ok(None) => row.state = "absent".to_owned(),
+                Err(_) => {}
+                Ok(Some(observed)) => {
+                    let run = observed.run;
+                    let view = observed.pane;
+                    row.run = Some(run.id.to_string());
+                    row.state = if run.phase == Phase::Closed {
+                        "closed"
+                    } else if view.live {
+                        "running"
+                    } else {
+                        "interrupted"
+                    }
+                    .to_owned();
+                    row.phase = Some(phase_label(run.phase).to_owned());
+                    row.pid = observed.pid;
+                    row.last_exit = observed.last_exit;
+                    row.listener = hp
+                        .listener
+                        .as_ref()
+                        .and(view.lifecycle)
+                        .map(|(status, _)| status.as_str().to_owned());
                 }
-            });
-            HostProcessStatus {
-                name: hp.name.clone(),
-                run: Some(run.id.to_string()),
-                state: state.to_owned(),
-                phase: Some(phase_label(run.phase).to_owned()),
-                pid: observed.pid,
-                last_exit: observed.last_exit,
-                listener,
-                log: Some(
-                    hp_log_path(repo_root, policy, &hp.name)
-                        .display()
-                        .to_string(),
-                ),
             }
+            row
         })
         .collect()
 }
