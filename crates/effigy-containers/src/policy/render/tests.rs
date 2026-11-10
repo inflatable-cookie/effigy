@@ -868,8 +868,6 @@ configs: {app: {file: /source/config.yaml}}
 secrets: {app: {file: /source/config.yaml}}
 include: [/source/extra.yml]
 "#;
-    // Both a base and an override relocate relative to the invocation's first
-    // file, even when the override itself is in another directory.
     for first in [Path::new("checkout"), Path::new("checkout/overrides")] {
         let names = BTreeMap::from([
             (

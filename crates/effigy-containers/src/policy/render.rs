@@ -86,8 +86,7 @@ pub fn prepare_inputs(
 }
 
 impl EffectiveContainerPolicy {
-    /// Display the render's logical inputs in invocation order, independent of
-    /// the immutable generation's location or later staging for a backend.
+    /// Logical Compose inputs in invocation order, independent of publication or staging.
     pub fn compose_file_display(&self) -> String {
         self.compose_files
             .iter()
