@@ -541,3 +541,12 @@ The workspace lifetime integration proof checks the contract's exact causes:
 owner EOF settles as `OwnerLost`, while the detached owner stays live until an
 explicit `Requested` stop. Its foreign/resolved-stop cells must not mask owner
 loss as a requested stop. The production cause mapping is unchanged.
+
+Deploy fixtures invoke their in-process command under the shared environment
+lock. Provider phases set temporary context/report variables under a private
+production lock; that lock alone does not exclude test fixtures that scrub the
+ambient environment. The Linux core cohort exposed a missing provider-report
+variable during a pinned-cache status observation. A direct concurrency control
+holds the ambient scrubber guard, observes the provider worker queued behind it,
+then restores the environment and requires a valid provider plan. No preview,
+offline-cache or provider-report assertion is relaxed.
