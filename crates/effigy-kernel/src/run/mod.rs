@@ -2846,49 +2846,39 @@ pub fn status(
         return injected;
     }
 
-    let result: Result<_, RunError> = (|| {
-        let record = journal::run(reader.conn(), id)?;
-        if record.phase == Phase::Closed {
-            let effects = journal::effects(reader.conn(), id)?;
-            let cleanup: Option<String> = reader.conn().query_row(
-                "SELECT cleanup_outcome FROM runs WHERE run_id=?1",
-                [id.to_string()],
-                |r| r.get(0),
-            )?;
-            let complete = cleanup.as_deref() == Some("complete")
-                && effects.iter().all(|e| e.state.terminal());
-            let workload = record
-                .workload
-                .ok_or_else(|| RunError::broken("closed without workload"))?;
-            return Ok(Observed::Verified(
-                RunStatus::Closed {
-                    workload,
-                    complete,
-                    effects,
-                },
-                settle::evidence(),
+    let record = match summary(reader, id) {
+        Observed::Verified(record, _) => record,
+        Observed::Absent(proof) => return Observed::Absent(proof),
+        Observed::Unknown(reason) => return Observed::Unknown(reason),
+    };
+    if record.phase == Phase::Closed {
+        let Some(workload) = record.workload else {
+            return Observed::Unknown(UnknownReason::StoreUnreadable(
+                RunError::broken("closed without workload").to_string(),
             ));
+        };
+        return effects(reader, id).map(|effects| RunStatus::Closed {
+            complete: record.cleanup_complete == Some(true)
+                && effects.iter().all(|e| e.state.terminal()),
+            workload,
+            effects,
+        });
+    }
+    match reader.run_owner_state(cx, root, &id) {
+        Observed::Verified(crate::gate::OwnerState::Held, _) => {
+            Observed::Verified(RunStatus::Live(record.phase), settle::evidence())
         }
-        Ok(match reader.run_owner_state(cx, root, &id) {
-            Observed::Verified(crate::gate::OwnerState::Held, _) => {
-                Observed::Verified(RunStatus::Live(record.phase), settle::evidence())
-            }
-            Observed::Verified(crate::gate::OwnerState::Interrupted, _) => Observed::Verified(
-                RunStatus::Interrupted {
-                    phase: record.phase,
-                    next,
-                },
-                settle::evidence(),
-            ),
-            Observed::Unknown(reason) => Observed::Unknown(reason),
-            _ => Observed::Unknown(UnknownReason::Inconsistent(
-                "run state changed during observation".into(),
-            )),
-        })
-    })();
-    match result {
-        Ok(value) => value,
-        Err(error) => Observed::Unknown(UnknownReason::StoreUnreadable(error.to_string())),
+        Observed::Verified(crate::gate::OwnerState::Interrupted, _) => Observed::Verified(
+            RunStatus::Interrupted {
+                phase: record.phase,
+                next,
+            },
+            settle::evidence(),
+        ),
+        Observed::Unknown(reason) => Observed::Unknown(reason),
+        _ => Observed::Unknown(UnknownReason::Inconsistent(
+            "run state changed during observation".into(),
+        )),
     }
 }
 

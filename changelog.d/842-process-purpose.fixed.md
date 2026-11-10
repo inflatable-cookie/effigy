@@ -1,0 +1,1 @@
+Run status now distinguishes a missing journal row from unreadable state, and log following uses process purpose so tasks named `admission hook` or `env-schema exec` retain their workload output. Older journal logs remain readable.

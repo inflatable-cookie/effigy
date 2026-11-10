@@ -18,8 +18,6 @@ use super::status::{project_foreground, project_run, project_terminal, RunView};
 use super::RunKey;
 use crate::runner::error::RunnerError;
 
-/// Process labels that are part of a run but not its workload output.
-const NOT_WORKLOAD: &[&str] = &[super::admission::HOOK_LABEL, super::process::ENV_EXEC_LABEL];
 const KERNEL_PROCESS: &str = "kernel:process";
 
 /// One run as the journal and its owner gate report it now.
@@ -91,14 +89,10 @@ impl RunRecord {
     /// The run's workload process, read from this record's own journal: a poll
     /// pays one read here, not another lookup (effigy#339).
     pub(in crate::runner) fn workload_process(&self) -> Observed<Option<i64>> {
-        workload_process_in(&kernel::observe(), &self.root, self.id)
+        workload_process_in(&self.root, self.id)
     }
     pub(in crate::runner) fn effects(&self) -> Observed<Vec<effigy_kernel::run::Effect>> {
-        match Store::read(&kernel::observe(), &self.root) {
-            Observed::Verified(reader, _) => effigy_kernel::run::effects(&reader, self.id),
-            Observed::Absent(proof) => Observed::Absent(proof),
-            Observed::Unknown(reason) => Observed::Unknown(reason),
-        }
+        effects_in(&self.root, self.id)
     }
     pub(in crate::runner) fn read_log(
         &self,
@@ -572,33 +566,54 @@ pub(in crate::runner) fn effects_in(
     }
 }
 
-/// The run's workload process: its last custody process that is not the
-/// admission hook or an env-schema command. `None` until it has started.
-fn workload_process_in(
-    cx: &effigy_kernel::ctx::ObserveContext,
-    root: &effigy_kernel::root::StateRoot,
-    id: RunId,
-) -> Observed<Option<i64>> {
-    let reader = match Store::read(cx, root) {
-        Observed::Verified(reader, _) => reader,
-        Observed::Absent(proof) => return Observed::Absent(proof),
-        Observed::Unknown(reason) => return Observed::Unknown(reason),
-    };
-    match effigy_kernel::run::effects(&reader, id) {
-        Observed::Verified(effects, evidence) => Observed::Verified(
-            effects
-                .iter()
-                .filter(|effect| effect.spec.kind == KERNEL_PROCESS)
-                .filter(|effect| {
-                    let label = effect.spec.payload.get("label").and_then(|v| v.as_str());
-                    !label.is_some_and(|label| NOT_WORKLOAD.contains(&label))
-                })
-                .map(|effect| effect.sequence)
-                .next_back(),
-            evidence,
+/// The last workload intent. Only pre-purpose journals interpret helper labels.
+/// `None` until the workload has started.
+fn workload_process_in(root: &effigy_kernel::root::StateRoot, id: RunId) -> Observed<Option<i64>> {
+    effects_in(root, id).map(|effects| {
+        effects
+            .iter()
+            .filter(|effect| effect.spec.kind == KERNEL_PROCESS)
+            .filter(|effect| workload_intent(&effect.spec.payload))
+            .map(|effect| effect.sequence)
+            .next_back()
+    })
+}
+
+// A present but unfamiliar purpose never falls back to a display label.
+fn workload_intent(payload: &serde_json::Value) -> bool {
+    match payload.get("purpose") {
+        Some(purpose) => purpose == "workload",
+        None => !matches!(
+            payload.get("label").and_then(|v| v.as_str()),
+            Some(super::admission::HOOK_LABEL | super::process::ENV_EXEC_LABEL)
         ),
-        Observed::Absent(proof) => Observed::Absent(proof),
-        Observed::Unknown(reason) => Observed::Unknown(reason),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn purpose_overrides_labels_and_only_missing_purpose_uses_legacy_labels() {
+        use serde_json::json;
+        for (payload, expected) in [
+            (
+                json!({"purpose":"workload", "label":"admission hook"}),
+                true,
+            ),
+            (
+                json!({"purpose":"workload", "label":"env-schema exec"}),
+                true,
+            ),
+            (json!({"purpose":"auxiliary", "label":"build"}), false),
+            (json!({"purpose":"setup", "label":"build"}), false),
+            (json!({"purpose":null, "label":"build"}), false),
+            (json!({"label":"admission hook"}), false),
+            (json!({"label":"env-schema exec"}), false),
+            (json!({"label":"build"}), true),
+            (json!({}), true),
+        ] {
+            assert_eq!(super::workload_intent(&payload), expected, "{payload}");
+        }
     }
 }
 

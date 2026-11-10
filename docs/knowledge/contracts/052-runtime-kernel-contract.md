@@ -14,6 +14,15 @@ environments and remote clients select checkout durability before their first
 effect. Status combines live foreground evidence with
 explicitly historical durable results; a missing record means `not-recorded`.
 
+Kernel status returns `Absent(NoRow)` for a missing run; permission and corrupt
+state remain `Unknown`. Log selection reads `purpose` from the existing process
+intent, derived at custody launch from its workload/auxiliary role. Env-schema
+commands are auxiliary; their caller checks their result. Only intents without
+purpose use the two historical helper labels (`admission hook`, `env-schema exec`)
+as a compatibility fallback. New labels never decide purpose; an unfamiliar or
+malformed explicit purpose is excluded from workload output. No receipt or
+public status/JSON schema changes.
+
 A checkout journal opens by its location, `<checkout>/.effigy/state/`, and
 records no checkout, Git or home generation (Q-011, §7.1). A replaced `.git`
 directory or pointer, a `git worktree repair`, a moved checkout and a reboot are
