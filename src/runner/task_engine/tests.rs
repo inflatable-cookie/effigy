@@ -1536,3 +1536,194 @@ fn reserved_child_receives_grant_at_handoff_fd() {
     );
     assert!(session_run.close(WorkloadOutcome::Succeeded).is_empty());
 }
+
+/// Same-reservation standard commands retain incremental distinct streams and
+/// real exit/owner-loss outcomes through the ordinary engine and settlement.
+#[test]
+#[cfg(feature = "workspace-serving-fixture")]
+#[ignore = "requires a current binary from test:workspace:effigy-build"]
+fn reserved_standard_engine_streams_exits_and_settles_owner_loss() {
+    use effigy_kernel::run::{Reservation, Session};
+    use effigy_kernel::supervise::Executable;
+    use effigy_kernel::workspace_channel::{
+        InvocationBody, OutputMode, Resolver, Selector, Target,
+    };
+    use std::time::Duration;
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = tempfile::tempdir().unwrap();
+    let executable =
+        Executable::capture(&Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/effigy"))
+            .unwrap();
+    let mut failures = Vec::new();
+    for (marker, owner_loss, nested) in [(91, false, false), (92, true, false), (93, true, true)] {
+        let checkout = fixture.path().join(format!("case-{marker}"));
+        std::fs::create_dir(&checkout).unwrap();
+        let command = "printf stdout-first; printf stderr-first >&2; touch started; while test ! -f continue; do sleep 0.02; done; printf stdout-last; printf stderr-last >&2; exit 23";
+        let command = serde_json::to_string(command).unwrap();
+        let manifest = if nested {
+            format!("[tasks.build]\nrun = [{{ task = 'inner' }}]\n[tasks.inner]\nrun = {command}\n")
+        } else {
+            format!("[tasks.build]\nrun = {command}\n")
+        };
+        std::fs::write(checkout.join("effigy.toml"), manifest).unwrap();
+        let cx = kernel::effects();
+        let state = kernel::effects_root(&checkout).unwrap();
+        let identity = state.owning_directory().identity().unwrap();
+        let session_run = begin(&TaskTarget::for_catalog(
+            &checkout,
+            "session",
+            &catalog(&checkout, "", "", 0),
+        ))
+        .unwrap();
+        let session = Session {
+            run: session_run.id(),
+            generation: effigy_kernel::id::Generation::new(1),
+        };
+        let mut dispatch = crate::runner::workspace_client::host_dispatch::HostDispatch::new(
+            checkout.clone(),
+            state.clone(),
+        );
+        let body = InvocationBody {
+            selector: Selector::Task("build".into()),
+            cwd: ".".into(),
+            target: Target::Host,
+            args: vec![],
+            output: OutputMode::Text,
+        };
+        let resolved = dispatch.resolve(&cx, &body).unwrap();
+        let id = effigy_kernel::id::RunId::new(1_760_000_000_000, [marker; 10]).unwrap();
+        let admitted = dispatch.admission_invocation(&body, &resolved, id).unwrap();
+        let ticket = match effigy_kernel::run::reserve_resolved(
+            &cx,
+            &state,
+            effigy_kernel::run::AdmissionKey {
+                session,
+                request: effigy_kernel::run::RequestId::new([marker; 16]),
+            },
+            effigy_kernel::id::Digest::of(b"standard reserved engine"),
+            id,
+            &admitted,
+        )
+        .unwrap()
+        {
+            Reservation::Fresh(ticket) => ticket,
+            _ => panic!("reservation was not fresh"),
+        };
+        let resolution = crate::runner::managed_run::WorkspaceResolution {
+            invocation: serde_json::to_vec(&resolved).unwrap(),
+            checkout: checkout.clone(),
+            identity,
+        };
+        let invocation = effigy_cli::TaskInvocation {
+            name: "build".into(),
+            args: vec![],
+        };
+        match crate::runner::managed_run::start_reserved_with_executable(
+            &checkout,
+            &invocation,
+            checkout.clone(),
+            ticket,
+            Some(resolution),
+            &executable,
+        ) {
+            Ok(mut started) => {
+                if started.run != id {
+                    failures.push("admitted another run".to_owned());
+                }
+                let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                let mut early = false;
+                while std::time::Instant::now() < deadline {
+                    let out = super::read_run_log(
+                        &started.root,
+                        id,
+                        effigy_kernel::supervise::workspace_output_sequence(
+                            effigy_kernel::custody::Stream::Stdout,
+                        ),
+                        effigy_kernel::custody::Stream::Stdout,
+                        0,
+                        65536,
+                    );
+                    let err = super::read_run_log(
+                        &started.root,
+                        id,
+                        effigy_kernel::supervise::workspace_output_sequence(
+                            effigy_kernel::custody::Stream::Stderr,
+                        ),
+                        effigy_kernel::custody::Stream::Stdout,
+                        0,
+                        65536,
+                    );
+                    if let (
+                        effigy_kernel::observe::Observed::Verified(out, _),
+                        effigy_kernel::observe::Observed::Verified(err, _),
+                    ) = (out, err)
+                    {
+                        early = out.bytes.windows(12).any(|b| b == b"stdout-first")
+                            && err.bytes.windows(12).any(|b| b == b"stderr-first")
+                            && !out.bytes.windows(12).any(|b| b == b"stderr-first")
+                            && !err.bytes.windows(12).any(|b| b == b"stdout-first");
+                        if early {
+                            break;
+                        }
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                if !early {
+                    failures.push(format!(
+                        "case {marker}: incremental distinct streams missing"
+                    ));
+                }
+                if owner_loss {
+                    started.client.close_input();
+                } else {
+                    std::fs::write(checkout.join("continue"), b"go").unwrap();
+                }
+                if let Err(error) = started
+                    .client
+                    .wait_recoverable(cx.child(Duration::from_secs(30)).operation())
+                {
+                    failures.push(format!("case {marker}: reap: {error}"));
+                    started.client.close_input();
+                    if let Err(error) = started.client.fixture_terminate_and_reap() {
+                        failures.push(format!("fixture reap: {error}"));
+                    }
+                }
+                match effigy_kernel::store::Store::read(&kernel::observe(), &started.root) {
+                    effigy_kernel::observe::Observed::Verified(reader, _) => {
+                        match effigy_kernel::run::summary(&reader, id) {
+                            effigy_kernel::observe::Observed::Verified(summary, _) => {
+                                let expected = if owner_loss {
+                                    WorkloadOutcome::Cancelled {
+                                        cause: effigy_kernel::ctx::StopCause::OwnerLost,
+                                        signal: None,
+                                    }
+                                } else {
+                                    WorkloadOutcome::Failed { code: 23 }
+                                };
+                                if summary.workload.as_ref() != Some(&expected)
+                                    || summary.cleanup_complete != Some(true)
+                                    || summary
+                                        .invocation
+                                        .as_ref()
+                                        .is_none_or(|inv| inv.digest() != admitted.digest())
+                                {
+                                    failures.push(format!(
+                                        "case {marker}: wrong outcome, admission or cleanup"
+                                    ));
+                                }
+                            }
+                            _ => failures.push("missing admitted run".into()),
+                        }
+                    }
+                    _ => failures.push("missing journal".into()),
+                }
+            }
+            Err(error) => failures.push(format!("case {marker}: launch: {error}")),
+        }
+        let warnings = session_run.close(WorkloadOutcome::Succeeded);
+        if !warnings.is_empty() {
+            failures.extend(warnings);
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("; "));
+}

@@ -56,6 +56,7 @@ impl Destination {
 struct Writer {
     log: Destination,
     pipeline: OutputPipeline,
+    stream_logs: Option<[super::capture::Log; 2]>,
     secrets: Vec<Vec<u8>>,
     pending: Vec<(OutputTag, u8)>,
     output: VecDeque<u8>,
@@ -156,6 +157,7 @@ impl CanonicalOutput {
             line_start,
             log,
             pipeline,
+            stream_logs: None,
             secrets,
             pending: Vec::new(),
             output: VecDeque::new(),
@@ -170,6 +172,22 @@ impl CanonicalOutput {
             finished: false,
         }))))
     }
+    /// Add safe stream projections before any producer starts. The same merged
+    /// sanitization/redaction runs first, then each projection is redacted again.
+    pub(crate) fn project_streams(&self, mut logs: [super::capture::Log; 2]) -> io::Result<()> {
+        let mut writer = lock(&self.0);
+        if writer.stream_logs.is_some() || writer.log.committed_offset() != 0 || writer.finished {
+            return Err(io::Error::other(
+                "stream projections must be established before capture",
+            ));
+        }
+        for log in &mut logs {
+            log.enable_plain()?;
+        }
+        writer.stream_logs = Some(logs);
+        Ok(())
+    }
+
     pub(super) fn validate(&self, spec: &ProcessSpec) -> io::Result<()> {
         let writer = lock(&self.0);
         if writer.failed || writer.finished || writer.log.incomplete() {
@@ -250,7 +268,7 @@ impl CanonicalOutput {
         writer.check()?;
         if !matches!(&writer.log, Destination::Host(_)) {
             writer.failed = true;
-            writer.log.mark_failed();
+            writer.mark_failed();
             return Err(io::Error::other("non-host capture drain was truncated"));
         }
         let clean = writer.pipeline.push_terminal(&[], true, false);
@@ -268,7 +286,7 @@ impl CanonicalOutput {
     pub(crate) fn fail(&self) {
         let mut writer = lock(&self.0);
         writer.failed = true;
-        writer.log.mark_failed();
+        writer.mark_failed();
     }
     pub fn capture_state(&self) -> CaptureState {
         let writer = lock(&self.0);
@@ -298,6 +316,15 @@ impl CanonicalOutput {
     }
 }
 impl Writer {
+    fn mark_failed(&self) {
+        self.log.mark_failed();
+        if let Some(logs) = &self.stream_logs {
+            for log in logs {
+                log.mark_truncated();
+            }
+        }
+    }
+
     fn check_finished(&self) -> io::Result<()> {
         if self.failed || self.log.incomplete() {
             Err(io::Error::other(
@@ -318,7 +345,7 @@ impl Writer {
     fn commit(&mut self, mut clean: Vec<(OutputTag, u8)>, eof: bool) -> io::Result<()> {
         let result = self.commit_inner(&mut clean, eof);
         if result.is_err() {
-            self.log.mark_failed();
+            self.mark_failed();
         }
         result
     }
@@ -336,6 +363,14 @@ impl Writer {
         let bytes = &bytes[..complete];
         let offset = self.log.committed_offset();
         self.log.append(bytes)?;
+        if self.stream_logs.is_some() {
+            let parts = self.pipeline.project(&clean, eof);
+            if let Some(logs) = &mut self.stream_logs {
+                for (log, part) in logs.iter_mut().zip(parts) {
+                    log.append_durable(&part)?;
+                }
+            }
+        }
         // Only successful durable appends reach any live/tail projection.
         if !bytes.is_empty() {
             self.line_start = bytes.last() == Some(&b'\n');

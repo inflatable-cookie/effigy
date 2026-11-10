@@ -60,9 +60,9 @@ pub(in crate::runner) fn run_managed_task(
     }
     // The detached supervisor re-resolves its client's invocation and owns
     // the run it admits (§5.8 step 3).
-    let owner = managed_run::take_owner();
+    let supervisor_owned = managed_run::has_owner();
     // Retired selectors refuse before any effect, whatever the flags.
-    let default_mode = if owner.is_some() {
+    let default_mode = if supervisor_owned {
         ManagedExecutionMode::Headless
     } else {
         managed_execution_mode()?
@@ -130,6 +130,10 @@ pub(in crate::runner) fn run_managed_task(
         &effigy_routing::resolve_task_selection,
     )?;
     let Some(plan) = plan else {
+        // Leave a reserved standard invocation and its owner for that engine.
+        if managed_run::reserved_admission()?.is_some() {
+            return Ok(None);
+        }
         // Not a managed run: leave the environment untouched.
         if should_open_workspace_shell_for_non_managed_task(
             selection.task.run.is_some(),
@@ -173,6 +177,7 @@ pub(in crate::runner) fn run_managed_task(
         )?;
         return Ok(None);
     };
+    let owner = managed_run::take_owner();
     if let Some(owner) = owner
         .as_ref()
         .filter(|owner| owner.session.admission().is_some())

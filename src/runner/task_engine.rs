@@ -24,6 +24,7 @@ mod remote;
 mod run;
 mod spawn_env;
 mod status;
+pub(in crate::runner) mod workspace;
 
 pub(in crate::runner) use control::{
     effects_in as run_effects, list as list_runs, list_owned as list_owned_runs, lookup_checkout,
@@ -99,6 +100,22 @@ pub(in crate::runner) fn pending_stop(
     label: &str,
 ) -> Option<(i32, effigy_kernel::outcome::WorkloadOutcome)> {
     use effigy_kernel::{ctx::StopCause, outcome::WorkloadOutcome};
+    match workspace::poll_stop() {
+        Ok(Some(cause)) => {
+            return Some((
+                1,
+                WorkloadOutcome::Cancelled {
+                    cause,
+                    signal: None,
+                },
+            ))
+        }
+        Err(error) => {
+            eprintln!("workspace owner control unavailable: {error}");
+            return Some((1, WorkloadOutcome::Interrupted));
+        }
+        Ok(None) => {}
+    }
     let signals = kernel::poll_router();
     if let Some(signal) = signals
         .first()

@@ -81,13 +81,21 @@ pub(in crate::runner) fn run_standard_task(
     let env_schema_config =
         env_schema_catalog.and_then(|catalog| catalog.manifest.env_schema.as_ref());
     let env_schema_override = preflight.runtime_args_raw.env_schema_override.as_deref();
-    let memory = run_key.is_none()
+    let workspace_admission = crate::runner::managed_run::reserved_admission()?;
+    let reserved = workspace_admission.is_some();
+    let workspace_token = workspace_admission
+        .as_ref()
+        .map(|admission| effigy_kernel::run::workspace_managed_token(admission.ticket.run()));
+    let memory = !reserved
+        && run_key.is_none()
         && inherited_managed_run.is_none()
         && !inside_container_handoff()
         && !crate::runner::program_fallback::activates_here()
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?
         && super::super::sequence_run::foreground_tree(preflight, selection)?;
-    let begin = if memory {
+    let begin = if reserved {
+        TaskRun::begin_detached
+    } else if memory {
         TaskRun::begin_foreground
     } else {
         TaskRun::begin
@@ -104,11 +112,13 @@ pub(in crate::runner) fn run_standard_task(
         // Only a host-placed task gets the configured per-run scratch, and a
         // task may opt out of it.
         scratch: runs_plain_host_command(preflight, selection) && selection.task.uses_scratch(),
-        managed_run_token: inherited_managed_run.as_deref(),
+        managed_run_token: workspace_token
+            .as_deref()
+            .or(inherited_managed_run.as_deref()),
         args: &preflight.runtime_args_exec.passthrough,
         key: run_key,
         admission: selection.task.admission,
-        workspace_admission: None,
+        workspace_admission,
         cwd: Some(&preflight.invocation_cwd),
     })?;
     let mut workload = None;
@@ -120,6 +130,16 @@ pub(in crate::runner) fn run_standard_task(
         // a first local-dev unlock writes the machine vault, and the kernel
         // refuses a durable effect while a foreground parent scope is live.
         let task_secret_pairs = resolve_standard_task_secrets(preflight, selection)?;
+        if reserved {
+            let owner = crate::runner::managed_run::take_owner().ok_or_else(|| {
+                RunnerError::task_invocation("reserved standard owner is unavailable")
+            })?;
+            let secrets = task_secret_pairs
+                .iter()
+                .map(|(_, value)| value.expose().as_bytes().to_vec())
+                .collect();
+            crate::runner::task_engine::workspace::attach(&mut run, owner.session, secrets)?;
+        }
         let _parent = run.enter();
         let env_schema_resolved = {
             let exec = RunExec::new(&mut run);
@@ -173,7 +193,7 @@ pub(in crate::runner) fn run_standard_task(
         _ => result,
     };
     // Observability never changes the task's outcome or exit code (K10).
-    for warning in run.close(workload) {
+    for warning in crate::runner::task_engine::workspace::close(run, workload) {
         eprintln!("warning: {}: {warning}", target.label);
     }
     result

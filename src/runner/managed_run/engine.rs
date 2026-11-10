@@ -94,6 +94,14 @@ pub(in crate::runner) fn supervise(session: EngineSession) -> Result<(), RunErro
     Ok(())
 }
 
+/// Whether this process is re-resolving a supervisor-owned invocation.
+pub(in crate::runner) fn has_owner() -> bool {
+    OWNER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .is_some()
+}
+
 /// The supervisor's session, once: only the first managed run this process
 /// resolves becomes its owner.
 pub(in crate::runner) fn take_owner() -> Option<OwnerSession> {
@@ -122,6 +130,50 @@ pub(in crate::runner) fn workspace_resolution(
                 )
             }),
         _ => Ok(None),
+    }
+}
+
+/// The exact reserved admission and catalog fence, without consuming the owner.
+pub(in crate::runner) fn reserved_admission(
+) -> Result<Option<task_engine::WorkspaceAdmission>, RunnerError> {
+    let owner = OWNER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match owner.as_ref() {
+        Some(owner) => admission_for(&owner.session, &owner.payload),
+        None => Ok(None),
+    }
+}
+
+fn admission_for(
+    session: &EngineSession,
+    payload: &Payload,
+) -> Result<Option<task_engine::WorkspaceAdmission>, RunnerError> {
+    match session.admission().cloned() {
+        Some(ticket) => {
+            let snapshot = payload
+                .workspace_resolution
+                .as_ref()
+                .and_then(|resolution| {
+                    effigy_kernel::id::ResolvedInvocation::decode(&resolution.invocation).ok()
+                })
+                .and_then(|resolved| {
+                    resolved
+                        .spec()
+                        .provenance
+                        .get("workspace:catalog-snapshot")
+                        .cloned()
+                });
+            let Some(snapshot) = snapshot else {
+                let message = "reserved workspace catalog snapshot is unavailable";
+                return Err(RunnerError::task_invocation(message));
+            };
+            Ok(Some(task_engine::WorkspaceAdmission {
+                ticket,
+                catalog_snapshot: Some(snapshot),
+            }))
+        }
+        None => Ok(None),
     }
 }
 
@@ -283,33 +335,9 @@ pub(in crate::runner) fn own<T>(
     } = owner;
     let ansi_front = matches!(payload.front, super::wire::Front::Tui);
     let _front = crate::runner::managed_color::enter(ansi_front);
-    let workspace_admission = match session.admission().cloned() {
-        Some(ticket) => {
-            let snapshot = payload
-                .workspace_resolution
-                .as_ref()
-                .and_then(|resolution| {
-                    effigy_kernel::id::ResolvedInvocation::decode(&resolution.invocation).ok()
-                })
-                .and_then(|resolved| {
-                    resolved
-                        .spec()
-                        .provenance
-                        .get("workspace:catalog-snapshot")
-                        .cloned()
-                });
-            let Some(snapshot) = snapshot else {
-                let message = "reserved workspace catalog snapshot is unavailable";
-                session.refused(Category::Refused, message);
-                return Err(RunnerError::task_invocation(message));
-            };
-            Some(task_engine::WorkspaceAdmission {
-                ticket,
-                catalog_snapshot: Some(snapshot),
-            })
-        }
-        None => None,
-    };
+    let workspace_admission = admission_for(&session, &payload).inspect_err(|error| {
+        session.refused_message(error.category(), error.to_string());
+    })?;
     let mut run = match TaskRun::begin_detached(TaskRunRequest {
         target: &plan.target,
         lock_wait_ms: plan.lock_wait_ms,

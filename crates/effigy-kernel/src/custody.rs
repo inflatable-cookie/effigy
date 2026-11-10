@@ -399,7 +399,7 @@ impl OutputPipeline {
         Self {
             sanitizer: (secret_bearing || plain).then(terminal::TerminalSanitizer::new),
             plain,
-            projections: (secret_bearing && !plain).then(|| {
+            projections: secret_bearing.then(|| {
                 [
                     Redactor::new(secrets.clone()),
                     Redactor::new(secrets.clone()),

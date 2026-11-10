@@ -1104,14 +1104,17 @@ bare hex digest. Credential verification now uses the same kernel `Digest` hex
 representation as publication. The direct-terminal test document follows that
 strict contract too; changed bytes still refuse before enrolment.
 
-Native exploration at `b65eb8ee6` now completes real guest enrolment and reaches
-host standard-task admission. That admission is explicitly unavailable in the
-current reserved engine (`execute/selection.rs`); it supports managed tasks
-only. The full-session stream control therefore still refuses before a task
-starts. A proper standard-engine handoff must carry the same ticket into
-`TaskRun::begin_admitted`, preserve the dispatcher resolution fence, stream
-both outputs, and observe owning-client loss through settlement. Changing the
-fixture into a managed task would leave this gap untested.
+Native exploration at `b65eb8ee6` completed real guest enrolment and exposed
+an explicit managed-only reserved-engine guard before the first standard task.
+The standard pipeline now carries the same ticket into `TaskRun::begin_admitted`,
+preserves the dispatcher resolution fence, captures both streams, and polls the
+owning channel through ordinary command waits and nested tasks. Managed probing
+leaves the owner intact until a managed plan is selected. This keeps the full
+fixture on its actual standard-task path. Supervisor capture also supplies safe
+stdout/stderr projections with independent atomic durable extents; the former
+merged-only capture did not match the workspace protocol's separate cursors.
+Native full-session re-exercise remains
+required before this source change can be called successful on the VM.
 
 The dedicated daemon now uses a closed device policy, protects kernel modules,
 logs and clocks, and binds `/sys` and `/dev` read-only. `/sys/fs/cgroup` and

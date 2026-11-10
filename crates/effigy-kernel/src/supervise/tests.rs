@@ -1054,3 +1054,58 @@ fn a_reserved_request_is_never_reused() {
     assert_eq!(requests.reserve().unwrap(), 2);
     assert_eq!(requests.reserve().unwrap(), 3);
 }
+
+#[test]
+fn workspace_output_projections_preserve_streams_and_redact_rejoined_secrets() {
+    use crate::custody::{CanonicalOutput, Stream};
+    let world = World::new();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, &world.home()).unwrap();
+    let run = Run::begin(
+        &cx,
+        &root,
+        &inv("workspace-streams"),
+        opts(42, None),
+        &cleanup(&cx),
+        &mut Strict,
+    )
+    .unwrap();
+    let log = run
+        .capture_log(OUTPUT_SEQUENCE, Stream::Stdout, cx.operation().limits())
+        .unwrap()
+        .unwrap();
+    let output =
+        CanonicalOutput::for_run(log, vec![b"supersecret".to_vec()], cx.operation().limits())
+            .unwrap();
+    let logs = [Stream::Stdout, Stream::Stderr].map(|stream| {
+        run.capture_log(
+            workspace_output_sequence(stream),
+            Stream::Stdout,
+            cx.operation().limits(),
+        )
+        .unwrap()
+        .unwrap()
+    });
+    output.project_streams(logs).unwrap();
+    output.feed(0, b"stdout-first\nsuper", false).unwrap();
+    output.feed(1, b"stderr-first\nnoise", false).unwrap();
+    output.feed(0, b"secret\n", false).unwrap();
+    output.finish().unwrap();
+    let read = |stream| match crate::run::read_log(
+        &cx.operation().observe().unwrap(),
+        &root,
+        run.id(),
+        workspace_output_sequence(stream),
+        Stream::Stdout,
+        0,
+        65536,
+    ) {
+        crate::observe::Observed::Verified(read, _) => read,
+        _ => panic!("projection is missing"),
+    };
+    assert_eq!(read(Stream::Stdout).bytes, b"stdout-first\n[REDACTED]\n");
+    assert_eq!(read(Stream::Stderr).bytes, b"stderr-first\nnoise");
+    output.fail();
+    assert!(read(Stream::Stdout).truncated && read(Stream::Stderr).truncated);
+    run.settle(&cleanup(&cx), &mut Strict).unwrap();
+}

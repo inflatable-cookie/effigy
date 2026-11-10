@@ -104,12 +104,10 @@ fn validate_workspace_resolution(
     if actual.digest() != original.digest() {
         return Err(refuse());
     }
-    // The existing reserved engine supports managed runs only; standard tasks
-    // and managed control verbs must not escape into an unreserved run.
+    // Standard tasks consume the same reservation in their own durable engine.
+    // Managed control verbs still cannot escape into another admission.
     if selection.task.mode.as_deref() != Some("tui") {
-        return Err(RunnerError::task_invocation(
-            "reserved workspace standard-task admission is unavailable",
-        ));
+        return Ok(());
     }
     let managed = effigy_managed::parse_managed_invocation(&preflight.runtime_args_exec)?;
     if !matches!(
@@ -237,14 +235,7 @@ mod workspace_resolution_tests {
         let standard_preflight =
             super::super::api::build_execution_preflight(&task, checkout).unwrap();
         let route = super::super::route::resolve_route(&task, &standard_preflight).unwrap();
-        assert!(validate_workspace_resolution(
-            &task,
-            &standard_preflight,
-            &route,
-            &standard_expected
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("standard-task admission is unavailable"));
+        validate_workspace_resolution(&task, &standard_preflight, &route, &standard_expected)
+            .expect("unchanged standard task can consume its exact reservation");
     }
 }

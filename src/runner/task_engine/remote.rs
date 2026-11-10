@@ -108,6 +108,7 @@ pub(in crate::runner) fn run_remote_with(
     fence: &mut dyn FnMut() -> Result<Fence, RunnerError>,
 ) -> Result<PlainExit, RunnerError> {
     let _waiting = CustodyWait::enter();
+    super::workspace::verify_environment(&task.env)?;
     run.verify_admission()?;
     if let Some((code, workload)) = super::pending_stop(&run.target().label) {
         return Ok(not_run(code, workload));
@@ -215,6 +216,8 @@ pub(in crate::runner) fn run_remote_with(
             let expired = post_registration_timeout_expired(deadline);
             let stop = if expired || remote.client().expired() {
                 Some(Stop::TimedOut)
+            } else if let Some(cause) = super::workspace::poll_stop()? {
+                Some(Stop::Workspace(cause))
             } else if super::run::stop_requested() {
                 Some(Stop::Requested)
             } else if let Some(routed) = kernel::poll_router().first() {
@@ -265,6 +268,10 @@ pub(in crate::runner) fn run_remote_with(
             phase: run.target().label.clone(),
         },
         (Some((Stop::Requested, _)), _) => requested(),
+        (Some((Stop::Workspace(cause), _)), _) => WorkloadOutcome::Cancelled {
+            cause: cause.clone(),
+            signal: None,
+        },
         (Some((Stop::Request(request), _)), _) => {
             let _ = run.run_mut()?.resolve_request(request);
             requested()
@@ -360,6 +367,7 @@ fn client_lost(
 }
 
 enum Stop {
+    Workspace(StopCause),
     TimedOut,
     Requested,
     Request(effigy_kernel::run::Request),

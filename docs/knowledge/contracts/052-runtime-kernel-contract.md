@@ -4236,6 +4236,20 @@ another lane's.
   and cleanup as `Run::begin`; it never mints a run id, never swaps the ticket and never
   calls `Run::begin`. `run::reserve` still re-checks the durable reservation in the
   admission transaction, so the ticket alone binds nothing.
+- **Standard tasks use that same reservation.** The standard pipeline also passes the
+  ticket and catalog snapshot to `TaskRun::begin_detached`; managed probing claims its
+  supervisor owner only after selecting a managed plan. `task_engine::workspace` keeps
+  the standard run's existing owning channel and open run handle on the supervisor
+  thread. Plain commands, env-schema commands and remote waits poll it; in-process
+  nested tasks observe the same owner. Output uses the canonical separate streams,
+  with classified secrets supplied before capture; later unknown secret provenance
+  refuses before spawn. The merged canonical log stays at sequence zero. Separate
+  stdout/stderr projections use reserved negative slots with independent atomic
+  durable extents, after the same merged redaction and another redaction of each
+  projection. Workspace output reads those projections, preserving separate cursors
+  without changing the merged capture's existing readers. Caller loss remains `OwnerLost`,
+  and completion is announced only after kernel settlement and capture flush. No
+  second store, admission or run identity is introduced by this adapter.
 - **Shapes that cannot honour the exact run refuse before any effect.**
   `task_engine::run::workspace_admission_refusal` rejects an engine-internal or standalone
   run, a nested task run, a caller-keyed run and a run that would take a task-declared

@@ -1872,6 +1872,16 @@ struct OutputCapture {
 }
 /// The output log's journal position: no effect has sequence 0.
 pub const OUTPUT_SEQUENCE: i64 = 0;
+/// Each safe stream projection has its own atomic durable extent. Negative
+/// slots cannot collide with a workload's positive effect sequence. Both use
+/// the plain log's physical stdout format; this maps logical stream identity.
+pub const fn workspace_output_sequence(stream: crate::custody::Stream) -> i64 {
+    match stream {
+        crate::custody::Stream::Stdout => -1,
+        crate::custody::Stream::Stderr => -2,
+    }
+}
+
 impl OutputCapture {
     fn start(run: &Run<'_>, secrets: Vec<Vec<u8>>) -> io::Result<Self> {
         let limits = run.limits();
@@ -1879,6 +1889,22 @@ impl OutputCapture {
             .capture_log(OUTPUT_SEQUENCE, crate::custody::Stream::Stdout, &limits)?
             .ok_or_else(|| io::Error::other("managed supervisor output needs a durable log"))?;
         let output = crate::custody::CanonicalOutput::for_run(log, secrets, &limits)?;
+        let projections = [
+            crate::custody::Stream::Stdout,
+            crate::custody::Stream::Stderr,
+        ]
+        .map(|stream| {
+            run.capture_log(
+                workspace_output_sequence(stream),
+                crate::custody::Stream::Stdout,
+                &limits,
+            )
+            .and_then(|log| {
+                log.ok_or_else(|| io::Error::other("workspace projection needs a durable log"))
+            })
+        });
+        let [stdout, stderr] = projections;
+        output.project_streams([stdout?, stderr?])?;
         if let crate::custody::CaptureState::Truncated(reason) = output.capture_state() {
             return Err(io::Error::other(reason));
         }
