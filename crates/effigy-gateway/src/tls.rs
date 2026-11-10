@@ -542,6 +542,19 @@ impl SniCertResolver {
         crate::locks::read_tolerant(&self.certs).contains_key(domain)
     }
 
+    /// Select the certificate served for an SNI name: exact, wildcard, or fallback.
+    pub(crate) fn cert_for_name(&self, name: &str) -> Option<Arc<CertifiedKey>> {
+        let certs = crate::locks::read_tolerant(&self.certs);
+        certs
+            .get(name)
+            .or_else(|| {
+                let (_, suffix) = name.split_once('.')?;
+                certs.get(&format!("*.{suffix}"))
+            })
+            .or(self.fallback.as_ref())
+            .map(Arc::clone)
+    }
+
     /// Build a `rustls::ServerConfig` using this resolver.
     pub fn into_server_config(self) -> rustls::ServerConfig {
         let resolver = Arc::new(self);
@@ -557,96 +570,43 @@ pub fn server_config_from_resolver(resolver: Arc<SniCertResolver>) -> rustls::Se
         .with_cert_resolver(resolver)
 }
 
-/// Reload a resolver from the certificate directory.
-///
-/// The replacement is one map write, so a handshake never observes an empty
-/// resolver between `clear` and the first successful `add`. A directory that
-/// cannot be read leaves the last loaded set in place.
+/// Validate the whole directory before atomically replacing the resolver map.
+/// Any unreadable directory/entry or invalid/incomplete pair preserves the last
+/// good map, including when the damaged pair is not currently routed.
 pub fn sync_sni_resolver_from_dir(
     resolver: &SniCertResolver,
     certs_dir: &Path,
 ) -> Result<usize, GatewayError> {
     let mut certs = HashMap::new();
-    if certs_dir.is_dir() {
-        let entries = std::fs::read_dir(certs_dir).map_err(|e| GatewayError::TlsError {
+    let entries = std::fs::read_dir(certs_dir).map_err(|error| GatewayError::TlsError {
+        domain: certs_dir.display().to_string(),
+        reason: format!("failed to read certs directory: {error}"),
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| GatewayError::TlsError {
             domain: certs_dir.display().to_string(),
-            reason: format!("failed to read certs directory: {e}"),
+            reason: format!("failed to read cert entry: {error}"),
         })?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-
-            let filename = match path.file_name().and_then(|n| n.to_str()) {
-                Some(n) => n.to_string(),
-                None => continue,
-            };
-
-            if filename.ends_with(".pem") && !filename.ends_with("-key.pem") {
-                let domain = filename.trim_end_matches(".pem");
-                let key_path = certs_dir.join(format!("{domain}-key.pem"));
-
-                if key_path.exists() {
-                    match load_certified_key(&path, &key_path) {
-                        Ok(cert) => {
-                            certs.insert(domain.to_string(), cert);
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                domain = domain,
-                                error = %e,
-                                "skipping cert with load error"
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-    let loaded = certs.len();
-    *crate::locks::write_tolerant(&resolver.certs) = certs;
-    Ok(loaded)
-}
-
-/// Strictly reload fixture-owned certificates without replacing the last good
-/// set when any certificate/key pair is incomplete or invalid.
-pub(crate) fn sync_private_sni_resolver_from_dir(
-    resolver: &SniCertResolver,
-    certs_dir: &Path,
-) -> Result<usize, GatewayError> {
-    let mut certs = HashMap::new();
-    if certs_dir.is_dir() {
-        let entries = std::fs::read_dir(certs_dir).map_err(|error| GatewayError::TlsError {
-            domain: certs_dir.display().to_string(),
-            reason: format!("failed to read private certs directory: {error}"),
-        })?;
-        for entry in entries {
-            let entry = entry.map_err(|error| GatewayError::TlsError {
-                domain: certs_dir.display().to_string(),
-                reason: format!("failed to read private cert entry: {error}"),
-            })?;
-            let path = entry.path();
-            let filename = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or_default();
-            if !filename.ends_with(".pem") || filename.ends_with("-key.pem") {
-                continue;
-            }
-            let domain = filename.trim_end_matches(".pem");
-            let key_path = certs_dir.join(format!("{domain}-key.pem"));
-            if !key_path.is_file() {
+        let path = entry.path();
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if let Some(domain) = filename.strip_suffix("-key.pem") {
+            if !certs_dir.join(format!("{domain}.pem")).is_file() {
                 return Err(GatewayError::TlsError {
                     domain: domain.to_owned(),
-                    reason: format!(
-                        "private certificate {} has no matching key file",
-                        path.display()
-                    ),
+                    reason: "private key has no matching certificate file".to_owned(),
                 });
             }
-            certs.insert(domain.to_owned(), load_certified_key(&path, &key_path)?);
+            continue;
         }
+        if !filename.ends_with(".pem") {
+            continue;
+        }
+        let domain = filename.trim_end_matches(".pem");
+        let key_path = certs_dir.join(format!("{domain}-key.pem"));
+        certs.insert(domain.to_owned(), load_certified_key(&path, &key_path)?);
     }
     let count = certs.len();
     *crate::locks::write_tolerant(&resolver.certs) = certs;
@@ -842,25 +802,7 @@ impl Default for SniCertResolver {
 
 impl ResolvesServerCert for SniCertResolver {
     fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
-        // Extract the SNI hostname from the ClientHello.
-        let sni = client_hello.server_name()?;
-
-        // Look up the cert for this domain.
-        let certs = crate::locks::read_tolerant(&self.certs);
-        if let Some(cert) = certs.get(sni) {
-            return Some(Arc::clone(cert));
-        }
-
-        // Try a wildcard match: *.example.test matches foo.example.test.
-        if let Some(dot_pos) = sni.find('.') {
-            let wildcard = format!("*{}", &sni[dot_pos..]);
-            if let Some(cert) = certs.get(&wildcard) {
-                return Some(Arc::clone(cert));
-            }
-        }
-
-        // Fall back to the default cert if configured.
-        self.fallback.as_ref().map(Arc::clone)
+        self.cert_for_name(client_hello.server_name()?)
     }
 }
 
@@ -870,7 +812,9 @@ impl ResolvesServerCert for SniCertResolver {
 /// Each pair is loaded and registered under the domain name.
 pub fn build_sni_resolver_from_dir(certs_dir: &Path) -> Result<SniCertResolver, GatewayError> {
     let resolver = SniCertResolver::new();
-    let _ = sync_sni_resolver_from_dir(&resolver, certs_dir)?;
+    if certs_dir.try_exists()? {
+        sync_sni_resolver_from_dir(&resolver, certs_dir)?;
+    }
     Ok(resolver)
 }
 

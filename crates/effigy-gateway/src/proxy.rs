@@ -49,6 +49,9 @@ pub struct ProxyConfig {
     /// If None, HTTPS is disabled.
     pub tls_bind_addr: Option<SocketAddr>,
 
+    /// The listener's actual loaded certificates, shared with reconciliation.
+    pub tls_resolver: Option<Arc<crate::tls::SniCertResolver>>,
+
     /// Timeout for connecting to upstream targets.
     pub connect_timeout: Duration,
 
@@ -66,6 +69,7 @@ impl Default for ProxyConfig {
         Self {
             bind_addr: SocketAddr::from(([127, 0, 0, 1], 80)),
             tls_bind_addr: None,
+            tls_resolver: None,
             connect_timeout: Duration::from_secs(5),
             response_timeout: Duration::from_secs(300), // 5 min — generous for debugging
             max_request_body: 256 * 1024 * 1024,        // 256MB — generous for dev uploads
@@ -373,6 +377,7 @@ fn handle_gateway_endpoint(
     req: &Request<Incoming>,
     route_table: &Arc<RwLock<RouteTable>>,
     stats: &Arc<GatewayStats>,
+    config: &ProxyConfig,
 ) -> Option<Response<ProxyBody>> {
     let path = req.uri().path();
 
@@ -417,6 +422,8 @@ fn handle_gateway_endpoint(
                         "target": r.target,
                         "dns_ip": r.dns_ip,
                         "tls": r.tls,
+                        "tls_available": r.tls && config.tls_bind_addr.is_some()
+                            && config.tls_resolver.as_ref().is_some_and(|resolver| resolver.cert_for_name(&r.domain).is_some()),
                         "project": r.project,
                         "registered": r.registered.to_rfc3339(),
                     })
@@ -457,7 +464,7 @@ async fn handle_request(
     GatewayStats::inc(&stats.http_requests);
 
     // Gateway internal endpoints (/_effigy/*).
-    if let Some(response) = handle_gateway_endpoint(&req, route_table, stats) {
+    if let Some(response) = handle_gateway_endpoint(&req, route_table, stats, config) {
         return Ok(response);
     }
 

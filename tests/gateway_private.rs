@@ -4112,7 +4112,7 @@ fn milestone_130acca8_https_waits_poll_through_a_missing_certificate_and_an_unco
     );
 }
 
-/// QA cbef4a23: a certificate produced in the selected private root is served
+/// QA cbef4a23: a wildcard certificate produced in the private root is served
 /// over verified HTTPS once the daemon applies the route, even when the
 /// cert-directory watcher never delivers an event. The seven integrated-QA
 /// failures had already consumed the route (`/_effigy/routes`) and then
@@ -4131,7 +4131,8 @@ fn milestone_cbef4a23_applied_route_serves_verified_https_from_a_late_certificat
         &mut gateway_cleanup,
     );
     let ca_path = root.join("ca/rootCA.pem");
-    let domain = "cbef4a23.host.test";
+    let domain = "app.cbef4a23.host.test";
+    let certificate = "*.cbef4a23.host.test";
     let body = "cbef4a23-body";
     let upstream = CannedUpstream::start(body);
     let _env = env_test_support::EnvGuard::set_many(&[
@@ -4145,10 +4146,12 @@ fn milestone_cbef4a23_applied_route_serves_verified_https_from_a_late_certificat
     ]);
     effigy_gateway::tls::TlsConfig::new(root.join("certs"))
         .with_ca_root(root.join("ca"))
-        .generate_cert(domain)
+        .generate_cert(certificate)
         .expect("produce the private certificate before publication");
     assert!(
-        root.join("certs").join(format!("{domain}.pem")).is_file(),
+        root.join("certs")
+            .join(format!("{certificate}.pem"))
+            .is_file(),
         "the selected private root holds the produced certificate"
     );
     save_private_routes(&root, &[(domain, upstream.address, true)]);
@@ -4174,6 +4177,15 @@ fn milestone_cbef4a23_applied_route_serves_verified_https_from_a_late_certificat
         |response| response == body,
     );
     assert_eq!(response, body);
+    assert_eq!(
+        gateway_live_routes(proxy_address).unwrap()["routes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|route| route["domain"] == domain)
+            .unwrap()["tls_available"],
+        true
+    );
 
     let unknown = probe_https(
         https_address,
