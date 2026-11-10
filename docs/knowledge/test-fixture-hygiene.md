@@ -491,3 +491,11 @@ allocating temporary paths, including standalone guest homes and staged files.
 Taking it only later in `EnvGuard` can allocate beneath a concurrent builder
 fixture's TMPDIR; that fixture then removes the still-needed checkout when its
 own test ends. The lock protects allocation, not a larger runner reservation.
+
+The serving-supervisor closure proof binds a distinct loopback client source
+port while its listener is still live, then retains the original TCP-refusal
+assertion after settlement. An unbound connect to a retired ephemeral port can
+self-connect on Linux if its automatically chosen source is the destination.
+The hosted failure did not record peer addresses, so that occurrence's cause
+is unproven; the bound probe removes this false-positive path without accepting
+an open listener or changing the production shutdown path.
