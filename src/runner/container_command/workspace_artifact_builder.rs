@@ -24,7 +24,7 @@ use effigy_containers::exec::{
     list_compose_containers_for_policy_including_stopped_with_deadline,
     list_running_compose_containers_for_policy_with_deadline, observed_workspace_artifact_builder,
     verify_workspace_artifact_builder, verify_workspace_artifact_builder_declaration,
-    VerifiedComposeContainer,
+    workspace_artifact_builder_preparation, VerifiedComposeContainer, WorkspaceBuilderPreparation,
 };
 use effigy_containers::{
     load_container_policy, ContainerAction, EffectiveContainerPolicy, ARTIFACT_BINARY_CAP_BYTES,
@@ -936,97 +936,27 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     if runtime.profile_created_or_restarted {
         retained = None;
     }
-    let mut rows = list_compose_containers_for_policy_including_stopped_with_deadline(
+    let rows = list_compose_containers_for_policy_including_stopped_with_deadline(
         repo_root,
         &policy,
         Some(deadline),
     )?;
-    if rows.is_empty() {
-        if retained.is_some() {
-            return Err(RunnerError::task_invocation("workspace artifact builder record has no matching container; retained state was not removed or adopted"));
-        }
-        if no_change {
-            return Err(RunnerError::task_invocation(
-                "no-change workspace artifact build refuses to create the builder container; the profile must already hold it",
-            ));
-        }
-        // No recovery is needed on first activation. Use the maintained
-        // lifecycle path and its existing readiness/deadline/ownership checks.
-        check_interruption()?;
-        super::lifecycle::run_container_up(
-            repo_root,
-            Some("linux-release"),
-            super::UpSelection::Direct,
-            false,
-            true,
-            false,
-            effigy_containers::environment::Retention::Persistent,
-            &[],
-        )?;
-        policy = load_container_policy(repo_root, Some("linux-release"))?;
-        retained = builder_retained(&policy).then_some(());
-        deadline = Instant::now() + Duration::from_secs(15);
-        rows = list_compose_containers_for_policy_including_stopped_with_deadline(
-            repo_root,
-            &policy,
-            Some(deadline),
-        )?;
-    }
-    if rows.len() != 1 {
-        return Err(RunnerError::task_invocation("workspace artifact builder inventory must contain exactly one owned builder; no build attempted"));
-    }
-    let row = rows.remove(0);
-    if row.service.as_deref() != Some("builder") || row.oneoff {
-        return Err(RunnerError::task_invocation(
-            "workspace artifact builder service identity is unverified",
-        ));
-    }
-    let binding = match verify_workspace_artifact_builder(repo_root, &policy, &row, deadline)
-        .map_err(RunnerError::from)
-    {
-        Ok(binding) => binding,
-        // An owned leftover: the pre-staging checkout bind, or a writable
-        // `/workspace` from before the read-only declaration. Ordinary
-        // auto-build may recover it through the maintained lifecycle. Restricted
-        // E14 refuses before claim and cannot create, replace or reconfigure.
-        // A foreign, unreadable or otherwise unowned builder is never adopted.
-        Err(error) => {
-            let observed =
-                match observed_workspace_artifact_builder(repo_root, &policy, &row, deadline) {
-                    Ok(observed) => observed,
-                    Err(refusal)
-                        if effigy_containers::exec::compose_status_is_created(&row.status) =>
-                    {
-                        return Err(RunnerError::from(refusal));
-                    }
-                    Err(_) => return Err(error),
-                };
-            let checkout = effigy_core::worktree_scope::checkout_root(repo_root)
-                .canonicalize()
-                .unwrap_or_else(|_| repo_root.to_path_buf());
-            let expected = staged
-                .as_ref()
-                .map(|(plan, _)| plan.source.clone())
-                .unwrap_or_else(|| checkout.clone());
-            let owned = observed.source == checkout || observed.source == expected;
-            let matching = observed.read_only
-                && observed.source == expected
-                && observed.mounts_owned
-                && observed.remount_capability_dropped;
-            if !owned || matching {
-                return Err(error);
-            }
-            if no_change {
-                return Err(RunnerError::task_invocation(
-                    "no-change workspace artifact build refuses an old, writable or mismatched owned builder before claim; it cannot create, replace or reconfigure it",
-                ));
-            }
-            // The transition replaces only the identity observed above. Listing
-            // and inspection are repeated right before it, so a builder that
-            // started, was replaced or changed identity during the wait is never
-            // the one the lifecycle acts on.
+    let binding = match workspace_artifact_builder_preparation(
+        repo_root,
+        &policy,
+        &rows,
+        deadline,
+        retained.is_some(),
+        no_change,
+    )? {
+        WorkspaceBuilderPreparation::Reuse(binding) => binding,
+        WorkspaceBuilderPreparation::Activate(observed) => {
+            // Mutation still requires the same exact identity and source at its
+            // boundary. The pure preparation decision grants no lasting lease.
             check_interruption()?;
-            confirm_transition_target(repo_root, &policy, &observed)?;
+            if let Some(observed) = observed.as_ref() {
+                confirm_transition_target(repo_root, &policy, observed)?;
+            }
             check_interruption()?;
             super::lifecycle::run_container_up(
                 repo_root,
@@ -1041,14 +971,14 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
             policy = load_container_policy(repo_root, Some("linux-release"))?;
             retained = builder_retained(&policy).then_some(());
             deadline = Instant::now() + Duration::from_secs(15);
-            let mut replanned = list_compose_containers_for_policy_including_stopped_with_deadline(
+            let replanned = list_compose_containers_for_policy_including_stopped_with_deadline(
                 repo_root,
                 &policy,
                 Some(deadline),
             )?;
-            let [replanned] = replanned.as_mut_slice() else {
+            let [replanned] = replanned.as_slice() else {
                 return Err(RunnerError::task_invocation(
-                    "workspace artifact builder inventory after source staging must contain exactly one owned builder; no build attempted",
+                    "workspace artifact builder inventory after activation must contain exactly one owned builder; no build attempted",
                 ));
             };
             verify_workspace_artifact_builder(repo_root, &policy, replanned, deadline)?

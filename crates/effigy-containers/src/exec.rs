@@ -64,9 +64,10 @@ pub use implementation::{
     shared_project_containers, shared_render_identity, shutdown_container,
     verify_owned_running_compose_identities, verify_owned_running_compose_rows,
     verify_shared_render_container, verify_workspace_artifact_builder,
-    verify_workspace_artifact_builder_declaration, ContainerExecError,
-    ObservedWorkspaceArtifactBuilder, OwnershipContext, RunningComposeContainerInventory,
-    RuntimeInventoryFailure, SharedProjectContainer, VerifiedComposeContainer,
+    verify_workspace_artifact_builder_declaration, workspace_artifact_builder_preparation,
+    ContainerExecError, ObservedWorkspaceArtifactBuilder, OwnershipContext,
+    RunningComposeContainerInventory, RuntimeInventoryFailure, SharedProjectContainer,
+    VerifiedComposeContainer, WorkspaceBuilderPreparation,
 };
 pub use managed_stop::{end_owned_container_process_group, verify_owned_stack_for_shutdown};
 pub use mounts::ensure_isolated_mount_host_points;
