@@ -101,6 +101,18 @@ fn start(root: &Path, task: &str, key: &RunKey, command: &str) -> std::thread::J
             },
         )
         .expect("command ran");
+        if matches!(task.as_str(), "admission hook" | "env-schema exec") {
+            assert_eq!(
+                effigy_env::ExecRunner::run(
+                    &crate::runner::task_engine::RunExec::new(&mut run),
+                    "printf helper-output",
+                    Duration::from_secs(5),
+                    &root,
+                )
+                .expect("auxiliary exec after workload"),
+                "helper-output"
+            );
+        }
         let warnings = run.close(exit.workload);
         assert!(warnings.is_empty(), "{warnings:?}");
         exit.code
@@ -308,7 +320,7 @@ fn assert_single_settled_run(root: &Path, id: RunId, ending: &Ending, collected:
 fn a_follower_lost_mid_run_reattaches_by_exact_offset() {
     let root = tempfile::tempdir().expect("root");
     let key = key(root.path(), "lost-mid-run");
-    let run = start(root.path(), "chatty", &key, CHATTY);
+    let run = start(root.path(), "admission hook", &key, CHATTY);
     wait_for("the run", || found(root.path(), key.id()).is_some());
     let (collected, ending) = follow_losing_once(root.path(), key.id(), "FollowRead", 3);
     assert_eq!(run.join().expect("run thread"), 3);
@@ -407,7 +419,7 @@ fn expired_log_bytes_are_reported_never_skipped_silently() {
     // Six 1 MiB segments; the log keeps the newest four.
     let six_mib = "head -c 6291456 /dev/zero | tr '\\0' x";
     assert_eq!(
-        start(root.path(), "flood", &key, six_mib)
+        start(root.path(), "env-schema exec", &key, six_mib)
             .join()
             .expect("run thread"),
         0

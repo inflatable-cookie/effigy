@@ -882,6 +882,57 @@ fn run_supervision_matrix_recovery_stop_and_attachment_release_are_idempotent() 
 }
 
 #[test]
+fn run_status_and_history_distinguish_missing_rows_from_corrupt_state() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let run = begin(&cx, &root, owner(), 1, &mut fake);
+    let view = reader(&cx, &root);
+    assert!(matches!(
+        summary(&view, id(2)),
+        Observed::Absent(AbsenceProof::NoRow { .. })
+    ));
+    assert!(matches!(
+        status(&observe(&cx), &root, &view, id(2), next()),
+        Observed::Absent(AbsenceProof::NoRow { .. })
+    ));
+    use std::os::unix::fs::PermissionsExt;
+    let gates = root.state_directory().path().join("gates");
+    let permissions = std::fs::metadata(&gates).unwrap().permissions();
+    std::fs::set_permissions(&gates, std::fs::Permissions::from_mode(0)).unwrap();
+    let denied = status(&observe(&cx), &root, &view, id(1), next());
+    std::fs::set_permissions(&gates, permissions).unwrap();
+    assert!(
+        matches!(denied, Observed::Unknown(UnknownReason::PermissionDenied)),
+        "{denied:?}"
+    );
+    run.store
+        .conn()
+        .execute(
+            "UPDATE runs SET workload_outcome='corrupt' WHERE run_id=?1",
+            [id(1).to_string()],
+        )
+        .unwrap();
+    assert!(matches!(
+        summary(&view, id(1)),
+        Observed::Unknown(UnknownReason::StoreUnreadable(_))
+    ));
+    assert!(matches!(
+        status(&observe(&cx), &root, &view, id(1), next()),
+        Observed::Unknown(UnknownReason::StoreUnreadable(_))
+    ));
+    run.store
+        .conn()
+        .execute(
+            "UPDATE runs SET workload_outcome=NULL WHERE run_id=?1",
+            [id(1).to_string()],
+        )
+        .unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+}
+
+#[test]
 fn run_store_record_uses_owner_gate_and_atomic_replace_faults() {
     let home = home();
     let cx = context();

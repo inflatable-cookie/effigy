@@ -814,7 +814,7 @@ pub(crate) fn process_intent(
         .map_err(|e| SpawnError::Refused(e.to_string()))?;
     let mut redact = Redactor::new(secrets);
     let label = String::from_utf8_lossy(&redact.push(spec.label.as_bytes(), true)).into_owned();
-    // Only a digest and a redacted label enter the journal. Never env values.
+    // Purpose follows the existing workload obligation; never persist env values.
     let digest = crate::id::Digest::of(
         &serde_json::to_vec(&serde_json::json!({
             "argv":spec.argv.iter().map(|s|s.as_bytes()).collect::<Vec<_>>(),
@@ -830,7 +830,8 @@ pub(crate) fn process_intent(
     Ok(EffectSpec {
         target,
         kind: KIND.into(),
-        payload: serde_json::json!({"digest":digest,"label":label}),
+        payload: serde_json::json!({"digest":digest,"label":label,
+            "purpose":if required { "workload" } else { "auxiliary" }}),
         settlement: Settlement::Release(Value::Null),
         required,
     })

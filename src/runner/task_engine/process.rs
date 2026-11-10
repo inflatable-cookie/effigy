@@ -338,7 +338,7 @@ impl effigy_env::ExecRunner for RunExec<'_> {
         };
         let _waiting = CustodyWait::enter();
         let mut process = run
-            .spawn(spec, false)
+            .spawn(spec, true)
             .map_err(|error| spawn_error(format!("{error:?}")))?;
         let mut stdout = Vec::new();
         let mut stderr = Tail::default();

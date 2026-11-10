@@ -79,7 +79,7 @@ pub(in crate::runner) fn task_status(target: &TaskTarget, limit: usize) -> TaskS
         Observed::Unknown(reason) => {
             view.state = "unknown".into();
             view.warnings
-                .push(format!("foreground custody unavailable: {reason:?}"));
+                .push(format!("foreground custody unavailable: {reason}"));
             return view;
         }
         Observed::Absent(_) => return view,
@@ -212,7 +212,7 @@ fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
         Observed::Unknown(reason) => {
             view.state = "unknown".to_owned();
             view.warnings
-                .push(format!("state root is unreadable: {reason:?}"));
+                .push(format!("state root is unreadable: {reason}"));
             return view;
         }
     };
@@ -222,7 +222,7 @@ fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
         Observed::Unknown(reason) => {
             view.state = "unknown".to_owned();
             view.warnings
-                .push(format!("run journal is unreadable: {reason:?}"));
+                .push(format!("run journal is unreadable: {reason}"));
             return view;
         }
     };
@@ -232,7 +232,7 @@ fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
         Observed::Unknown(reason) => {
             view.state = "unknown".to_owned();
             view.warnings
-                .push(format!("run journal is unreadable: {reason:?}"));
+                .push(format!("run journal is unreadable: {reason}"));
             return view;
         }
     };
@@ -481,9 +481,13 @@ pub(in crate::runner) fn run_liveness(
     let reader = match Store::read(&cx, &root) {
         Observed::Verified(reader, _) => reader,
         Observed::Absent(_) => return RunLiveness::NotFound,
-        Observed::Unknown(reason) => return RunLiveness::Unknown(format!("{reason:?}")),
+        Observed::Unknown(reason) => return RunLiveness::Unknown(reason.to_string()),
     };
-    match effigy_kernel::run::status(&cx, &root, &reader, id, next) {
+    liveness(effigy_kernel::run::status(&cx, &root, &reader, id, next))
+}
+
+fn liveness(status: Observed<effigy_kernel::run::RunStatus>) -> RunLiveness {
+    match status {
         Observed::Verified(effigy_kernel::run::RunStatus::Live(_), _) => RunLiveness::Live,
         Observed::Verified(effigy_kernel::run::RunStatus::Interrupted { .. }, _) => {
             RunLiveness::Interrupted
@@ -497,12 +501,30 @@ pub(in crate::runner) fn run_liveness(
             succeeded: complete && workload == WorkloadOutcome::Succeeded,
         },
         Observed::Absent(_) => RunLiveness::NotFound,
-        Observed::Unknown(reason) => {
-            if format!("{reason:?}").contains("QueryReturnedNoRows") {
-                RunLiveness::NotFound
-            } else {
-                RunLiveness::Unknown(format!("{reason:?}"))
-            }
+        Observed::Unknown(reason) => RunLiveness::Unknown(reason.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn only_typed_absence_is_not_found() {
+        use effigy_kernel::observe::{AbsenceProof, UnknownReason};
+        assert!(matches!(
+            liveness(Observed::Absent(AbsenceProof::NoRow {
+                table: "runs".into()
+            })),
+            RunLiveness::NotFound
+        ));
+        for reason in [
+            UnknownReason::PermissionDenied,
+            UnknownReason::StoreUnreadable("QueryReturnedNoRows".into()),
+        ] {
+            assert!(matches!(
+                liveness(Observed::Unknown(reason)),
+                RunLiveness::Unknown(_)
+            ));
         }
     }
 }
@@ -521,7 +543,7 @@ fn project_children(
         Observed::Verified(children, _) => children,
         Observed::Absent(_) => return Ok(Vec::new()),
         Observed::Unknown(reason) => {
-            return Err(format!("step journal is unreadable: {reason:?}"));
+            return Err(format!("step journal is unreadable: {reason}"));
         }
     };
     children
