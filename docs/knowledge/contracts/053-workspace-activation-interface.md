@@ -166,3 +166,21 @@ itself, and `workspace_reserved_callback_keeps_the_original_activation_deadline`
 asserts exactly that. The four `#[ignore]`d serving-host
 proofs in `tests/workspace_client/container_up_production.rs` need the same
 capability plus the fixture apply seam, and remain #531's positive E2E.
+
+### Detached Docker routing (effigy#831)
+
+The post-preparation declaration carries the observed backend address into the
+supervisor. A Docker socket path or URI sets `DOCKER_HOST` and clears
+`DOCKER_CONTEXT`; a named context sets `DOCKER_CONTEXT`. A context would override
+a host endpoint, so treating a socket URI as a context name refuses against the
+wrong namespace. Credential-bearing addresses remain refused without echoing them.
+Colima keeps its existing profile and private routing paths.
+
+Planner ruling `0796c1788c789665ffc81b2ecd6c4051d58d91889814e1cd273ff6c36572f190`
+allowed effigy#831 to test a bounded owned fixture under
+`/Users/tom/.effigy-qual-831/`, with artifacts and evidence on Stash, followed by
+archival and removal. The uninstalled fixture utility admits only direct
+children of that directory; the exploratory driver pins directory identity and
+checks a 16 MiB source/state bound. This exception grants no sealed activation
+or shared Desktop settings change. The native limitation and cleanup evidence
+are in the [macOS preparation record](../../qualification/workspace-private-531/macos-4f6a5ed3-preparation.md#desktop-full-session-exploration-effigy831).

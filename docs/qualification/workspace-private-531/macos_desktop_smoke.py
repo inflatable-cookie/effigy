@@ -1,4 +1,6 @@
 """Unsealed Desktop exploration. Fresh labelled resources; no sealed proof credit."""
+import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -22,14 +24,52 @@ def inventory():
                          ('image', '{{.ID}} {{.Repository}}:{{.Tag}}'),
                          ('volume', '{{.Name}} {{.Labels}}'), ('network', '{{.ID}} {{.Name}} {{.Labels}}')]:
         argv = [executor.prep.DOCKER, kind, 'ls', '--format', fields]
+        if kind in ('container', 'image', 'network'):
+            argv += ['--no-trunc']
         if kind in ('container', 'image'):
-            argv += ['--no-trunc', '--all']
+            argv += ['--all']
         child = subprocess.run(argv, env=env, capture_output=True, timeout=60, check=True)
         result[kind] = sorted(child.stdout.decode().splitlines())
     return result
 
 
+def cleanup_preparation(path, expected):
+    path = Path(path)
+    scratch = Path(os.environ['TMPDIR']).resolve(strict=True)
+    if path.resolve(strict=True) != path or not path.is_relative_to(scratch):
+        raise executor.Refusal('cleanup preparation must be canonical inside this run’s scratch')
+    raw = executor.read_checked_file(str(path), must_be_in=str(scratch), read_only=False)
+    if hashlib.sha256(raw).hexdigest() != expected:
+        raise executor.Refusal('cleanup preparation hash differs')
+    prepared = json.loads(raw, object_pairs_hook=proof.unique_object)
+    if set(prepared) != {'bindings', 'prior_receipt', 'proof'} or prepared['proof'] is not False:
+        raise executor.Refusal('cleanup requires an unsealed preparation receipt')
+    bindings, root = prepared['bindings'], str(path.parent)
+    if os.path.dirname(bindings['control']) != root:
+        raise executor.Refusal('cleanup control belongs to another preparation')
+    executor.ACTIVATIONS_DIR, executor.CLAIMS_DIR = root + '/activations', root + '/claims'
+    options = dict(activation_id='cleanup-' + bindings['token'] + '-' + os.urandom(4).hex(),
+                   duration_seconds=executor.stage_of(executor.load_manifest(), 'D4')['seconds'],
+                   evidence_root=root + '/evidence', prior_receipt=prepared['prior_receipt'])
+    request = proof.window_recipe('D4', bindings, options)
+    executor.write_json_new(root, options['activation_id'] + '.request.json', request)
+    result = proof.execute_window(request, executor.canon_sha(request), executor.load_manifest(), request['inputs_sha256'])
+    print('D4: ' + result['closure'], flush=True)
+    return 0 if result['closure'] == 'closed' else 1
+
+
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--cleanup-preparation')
+    parser.add_argument('--sha256')
+    parser.add_argument('--retain-runtime', action='store_true', help='Keep this run’s D3 runtime for a separate owned session; do not run D4 yet.')
+    args = parser.parse_args()
+    if args.cleanup_preparation:
+        if args.retain_runtime or not args.sha256:
+            raise executor.Refusal('cleanup needs its hash and cannot retain a new runtime')
+        return cleanup_preparation(args.cleanup_preparation, args.sha256)
+    if args.sha256:
+        raise executor.Refusal('hash requires a cleanup preparation')
     scratch = os.environ['TMPDIR']
     if (os.path.realpath(scratch) != scratch or not os.path.isdir(scratch)
             or not scratch.startswith(executor.prep.STASH + '/')):
@@ -61,6 +101,9 @@ def main():
                 if result['closure'] != 'closed':
                     return 1
                 prior = result['receipts'][-1]
+                executor.write_json_new(root, 'preparation.json', dict(bindings=bindings, prior_receipt=prior, proof=False))
+                if args.retain_runtime:
+                    return 0
             options = dict(activation_id='smoke-' + token + '-' + stage.lower(),
                            duration_seconds=executor.stage_of(executor.load_manifest(), stage)['seconds'],
                            evidence_root=root + '/evidence')

@@ -109,10 +109,16 @@ impl PostPrepDeclaration {
                 "workspace declared backend context is not credential-free",
             ));
         }
-        let mut environment = vec![
-            ("EFFIGY_COMPOSE_BACKEND".into(), engine.into()),
-            ("DOCKER_CONTEXT".into(), self.backend.context.clone().into()),
-        ];
+        let endpoint = engine == "docker"
+            && (self.backend.context.contains("://") || self.backend.context.starts_with('/'));
+        let mut environment = vec![("EFFIGY_COMPOSE_BACKEND".into(), engine.into())];
+        if endpoint {
+            // A context overrides DOCKER_HOST, so clear it when pinning an endpoint.
+            environment.push(("DOCKER_CONTEXT".into(), "".into()));
+            environment.push(("DOCKER_HOST".into(), self.backend.context.clone().into()));
+        } else {
+            environment.push(("DOCKER_CONTEXT".into(), self.backend.context.clone().into()));
+        }
         for (key, value) in &self.backend.routing {
             validate_routing(key, value)?;
             environment.push((key.into(), value.into()));

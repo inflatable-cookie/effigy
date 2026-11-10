@@ -169,3 +169,29 @@ fn post_prep_routing_preserves_namespace_paths_and_rejects_drift_or_credentials(
         assert!(!error.contains(value), "routing refusals never echo values");
     }
 }
+
+#[test]
+fn post_prep_environment_preserves_docker_endpoint_and_named_context() {
+    let (_fixture, policy) = policy_fixture();
+    for (context, endpoint) in [
+        ("unix:///owned/docker.sock", true),
+        ("/owned/docker.sock", true),
+        ("tcp://127.0.0.1:2376", true),
+        ("desktop-linux", false),
+    ] {
+        let mut selected = backend();
+        selected.kind = BackendKind::DockerDesktop;
+        selected.engine = effigy_containers::BackendId::docker_compose();
+        selected.context = context.into();
+        let declared = PostPrepDeclaration::capture(&policy, &selected, identity(&policy), &[])
+            .expect("Docker declaration");
+        let environment: std::collections::BTreeMap<_, _> = declared
+            .backend_environment()
+            .expect("pinned routing")
+            .into_iter()
+            .collect();
+        let get = |key: &str| environment.get(std::ffi::OsStr::new(key)).map(|v| v.to_str().unwrap());
+        assert_eq!(get("DOCKER_CONTEXT"), Some(if endpoint { "" } else { context }));
+        assert_eq!(get("DOCKER_HOST"), endpoint.then_some(context));
+    }
+}

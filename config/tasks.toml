@@ -2201,4 +2201,16 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 visibility = "internal"
 group = "Maintenance"
 description = "Unsealed native Desktop D0-D4 exploration on fresh labelled resources; retains complete engine inventories and receipts, without sealed credit."
-run = [{ run = "python3 -I -B docs/qualification/workspace-private-531/macos_desktop_smoke.py", timeout_ms = 4800000 }]
+run = [{ run = "python3 -I -B docs/qualification/workspace-private-531/macos_desktop_smoke.py {args}", timeout_ms = 4800000 }]
+
+[tasks."qualification:macos:desktop-session-smoke"]
+visibility = "internal"
+group = "Maintenance"
+description = "Unsealed full Desktop session on a D3-receipted owned image and hash-bound real artifacts; no context change or sealed credit."
+run = [{ run = "python3 -I -B docs/qualification/workspace-private-531/macos_colima_session_smoke.py --backend desktop {args}", timeout_ms = 1920000 }]
+
+[tasks."lint:workspace:private-qualification:desktop"]
+visibility = "internal"
+group = "Maintenance"
+description = "Lint the Desktop supervisor routing change and uninstalled qualification utility."
+run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy --lib --bin workspace-qualification-fixture --features workspace-private-qualification -- -D warnings", timeout_ms = 900000 }]

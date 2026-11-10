@@ -2,14 +2,20 @@
 use std::path::Path;
 
 const QUALIFICATION_SCRATCH: &str = "/Volumes/Stash/scratch/effigy";
+// Planner ruling 0796c178: only this task-owned, size-bounded Desktop fixture.
+const DESKTOP_831_FIXTURE: &str = "/Users/tom/.effigy-qual-831";
+
+fn owned_fixture_path(root: &Path) -> bool {
+    (root.starts_with(QUALIFICATION_SCRATCH) && root != Path::new(QUALIFICATION_SCRATCH))
+        || root.parent() == Some(Path::new(DESKTOP_831_FIXTURE))
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [command, path] if command == "prepare" => {
             let root = Path::new(path).canonicalize()?;
-            let scratch = Path::new(QUALIFICATION_SCRATCH).canonicalize()?;
-            if !root.starts_with(&scratch) || root == scratch || !root.join(".git").is_dir() || root.join(".git").is_symlink() {
+            if !owned_fixture_path(&root) || !root.join(".git").is_dir() || root.join(".git").is_symlink() {
                 return Err("qualification fixture must be a fresh scratch checkout".into());
             }
             // The real checkout identity producer, never a manufactured token.
@@ -49,8 +55,7 @@ fn fixture_observation(
     use effigy_kernel::observe::Observed;
     use std::time::{Duration, Instant};
     let path = path.canonicalize()?;
-    let scratch = Path::new(QUALIFICATION_SCRATCH).canonicalize()?;
-    if !path.starts_with(&scratch) || path == scratch {
+    if !owned_fixture_path(&path) {
         return Err("foreign fixture".into());
     }
     let observe = OperationContext::new(
@@ -180,4 +185,19 @@ fn prepare_vault(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         &seal_local_unlock_passphrase(&key, passphrase)?,
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn owned_fixture_path_keeps_the_desktop_exception_narrow() {
+        for allowed in ["/Volumes/Stash/scratch/effigy/owned/checkout", "/Users/tom/.effigy-qual-831/owned"] {
+            assert!(owned_fixture_path(Path::new(allowed)));
+        }
+        for foreign in ["/Volumes/Stash/scratch/effigy", "/Users/tom/.effigy-qual-831", "/Users/tom/foreign", "/Users/tom/.effigy-qual-831/owned/nested"] {
+            assert!(!owned_fixture_path(Path::new(foreign)));
+        }
+    }
 }
