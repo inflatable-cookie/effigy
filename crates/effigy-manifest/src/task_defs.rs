@@ -126,24 +126,25 @@ sync = { task = "defer migrate/media https://www.example.test" }
 
     #[test]
     fn shorthand_task_definition_accepts_task_level_run_in() {
-        let parsed: TasksEnvelope = toml::from_str(
-            r#"
-[tasks]
-capture = { rhai = "scripts/capture.rhai", run_in = "host" }
-"#,
-        )
-        .expect("parse shorthand task definition with run_in");
-
-        let task = parsed.tasks.get("capture").expect("missing capture task");
-        assert_eq!(task.run_in, Some(ManifestTaskRunIn::Host));
-        let Some(ManifestManagedRun::Sequence(steps)) = &task.run else {
-            panic!("expected shorthand single task object to deserialize as one-step sequence");
-        };
-        assert!(matches!(
-            steps.as_slice(),
-            [ManifestManagedRunStep::Step(step)]
-                if step.rhai.as_deref() == Some("scripts/capture.rhai")
-        ));
+        for definition in [
+            r#"capture = { rhai = "scripts/capture.rhai", run_in = "host" }"#,
+            r#"capture = { run = { rhai = "scripts/capture.rhai" }, run_in = "host" }"#,
+            r#"capture = { run = [{ rhai = "scripts/capture.rhai" }], run_in = "host" }"#,
+        ] {
+            let parsed: TasksEnvelope =
+                toml::from_str(&format!("[tasks]\n{definition}")).expect("parse Rhai task shape");
+            let task = &parsed.tasks["capture"];
+            assert_eq!(task.run_in, Some(ManifestTaskRunIn::Host), "{definition}");
+            assert!(
+                matches!(
+                    &task.run,
+                    Some(ManifestManagedRun::Sequence(steps))
+                        if matches!(steps.as_slice(), [ManifestManagedRunStep::Step(step)]
+                            if step.rhai.as_deref() == Some("scripts/capture.rhai"))
+                ),
+                "{definition}"
+            );
+        }
     }
 
     #[test]

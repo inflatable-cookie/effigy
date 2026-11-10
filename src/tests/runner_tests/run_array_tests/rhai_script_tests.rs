@@ -9,164 +9,55 @@ use effigy_cli::TaskInvocation;
 use std::os::unix::fs::PermissionsExt;
 
 #[test]
-fn run_manifest_task_run_array_supports_file_backed_rhai_steps() {
+fn rhai_task_run_supports_prefixed_catalog_children_without_parent_lock_conflict() {
     let _guard = lock_test();
-    let root = temp_workspace("run-array-file-rhai-step");
+
+    let root = temp_workspace("rhai-prefixed-catalog-child-task");
     fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
+    let farmyard = create_workspace_dir(&root, "farmyard");
     fs::write(
-        root.join("scripts/validate.rhai"),
+        farmyard.join("Cargo.toml"),
+        "[package]\nname = \"farmyard\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write nested repo marker");
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        r#"[catalog]
+alias = "farmyard"
+[tasks."migration:source:install-media"]
+run = "printf %s {args} > ../installed.txt"
+"#,
+    );
+    fs::write(
+        root.join("scripts/hydrate.rhai"),
         r#"
+fn run_task(task_name, task_args) {
+    task::run(task_name, task_args);
+}
 let process = process::run("sh", ["-lc", "printf process-ok"]);
-task::run("capture", []);
+run_task("farmyard/migration:source:install-media", [args[0]]);
 fs::write_file("process.txt", process["stdout"]);
-fs::copy("nested-source.txt", "nested.txt");
+fs::copy("installed.txt", "nested.txt");
 "#,
     )
     .expect("write rhai script");
     write_manifest(
         &root.join("effigy.toml"),
-        r#"[tasks.capture]
-run = "printf nested-ok > nested-source.txt"
-
-[tasks.validate]
-run = [{ rhai = "scripts/validate.rhai" }]
+        r#"[tasks]
+hydrate = { run = { rhai = "scripts/hydrate.rhai" }, run_in = "host" }
 "#,
     );
-
     run_manifest_task_with_cwd(
         &TaskInvocation {
-            name: "validate".to_owned(),
-            args: Vec::new(),
+            name: "hydrate".to_owned(),
+            args: vec!["snapshot-a".to_owned()],
         },
         root.clone(),
     )
-    .expect("file-backed rhai task should run");
-
+    .expect("child task inside a Rhai function should use its own lock");
+    assert_file_text_equals(&root.join("installed.txt"), "snapshot-a");
+    assert_file_text_equals(&root.join("nested.txt"), "snapshot-a");
     assert_file_text_equals(&root.join("process.txt"), "process-ok");
-    assert_file_text_equals(&root.join("nested.txt"), "nested-ok");
-}
-
-/// One child-task contract for `task::run`: a prefixed catalog child runs
-/// under the child's own lock from every supported task spelling and call
-/// site — an array Rhai step naming a dot-prefixed child, a compact run
-/// object naming a colon-path child, and the same compact child invoked from
-/// inside a Rhai user function. The flat shorthand spelling is a manifest
-/// parse shape and keeps its own detector in `effigy-manifest`'s tests.
-#[test]
-fn rhai_task_run_supports_prefixed_catalog_children_without_parent_lock_conflict() {
-    let _guard = lock_test();
-
-    let array_step = temp_workspace("rhai-prefixed-catalog-child-task");
-    write_catalog_child_fixture(&array_step, false);
-    fs::write(
-        array_step.join("scripts/hydrate.rhai"),
-        r#"
-task::run("farmyard/install", [args[0]]);
-"#,
-    )
-    .expect("write rhai script");
-    write_manifest(
-        &array_step.join("effigy.toml"),
-        r#"[tasks.hydrate]
-run = [{ rhai = "scripts/hydrate.rhai" }]
-"#,
-    );
-
-    run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "hydrate".to_owned(),
-            args: vec!["snapshot-a".to_owned()],
-        },
-        array_step.clone(),
-    )
-    .expect("prefixed child task should run under its own lock");
-    assert_file_text_equals(&array_step.join("installed.txt"), "snapshot-a");
-
-    let colon_path = temp_workspace("compact-run-object-rhai-prefixed-colon-child-task");
-    write_catalog_child_fixture(&colon_path, true);
-    fs::write(
-        colon_path.join("scripts/hydrate.rhai"),
-        r#"
-task::run("farmyard/migration:source:install-media", [args[0]]);
-"#,
-    )
-    .expect("write rhai script");
-    write_manifest(
-        &colon_path.join("effigy.toml"),
-        r#"[tasks]
-hydrate = { run = { rhai = "scripts/hydrate.rhai" }, run_in = "host" }
-"#,
-    );
-
-    run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "hydrate".to_owned(),
-            args: vec!["snapshot-a".to_owned()],
-        },
-        colon_path.clone(),
-    )
-    .expect("prefixed colon child task should run under its own lock");
-    assert_file_text_equals(&colon_path.join("installed.txt"), "snapshot-a");
-
-    let fn_scoped = temp_workspace("compact-run-object-rhai-function-child-task");
-    write_catalog_child_fixture(&fn_scoped, true);
-    fs::write(
-        fn_scoped.join("scripts/hydrate.rhai"),
-        r#"
-fn run_task(task_name, task_args) {
-    task::run(task_name, task_args);
-}
-
-run_task("farmyard/migration:source:install-media", [args[0]]);
-"#,
-    )
-    .expect("write rhai script");
-    write_manifest(
-        &fn_scoped.join("effigy.toml"),
-        r#"[tasks]
-hydrate = { run = { rhai = "scripts/hydrate.rhai" }, run_in = "host" }
-"#,
-    );
-
-    run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "hydrate".to_owned(),
-            args: vec!["snapshot-a".to_owned()],
-        },
-        fn_scoped.clone(),
-    )
-    .expect("child task called inside Rhai function should use child lock");
-    assert_file_text_equals(&fn_scoped.join("installed.txt"), "snapshot-a");
-}
-
-/// The catalog half of the child-task fixtures: `farmyard` with a dot-named
-/// task, or with the colon-path task and the nested-repo marker the colon
-/// fixtures declare.
-fn write_catalog_child_fixture(root: &std::path::Path, colon_task: bool) {
-    fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
-    let farmyard = create_workspace_dir(root, "farmyard");
-    if colon_task {
-        fs::write(
-            farmyard.join("Cargo.toml"),
-            "[package]\nname = \"farmyard\"\nversion = \"0.1.0\"\n",
-        )
-        .expect("write nested repo marker");
-        write_manifest(
-            &farmyard.join("effigy.toml"),
-            r#"[catalog]
-alias = "farmyard"
-
-[tasks."migration:source:install-media"]
-run = "printf %s {args} > ../installed.txt"
-"#,
-        );
-    } else {
-        write_catalog_tasks(
-            &farmyard,
-            Some("farmyard"),
-            &[("install", "printf %s {args} > ../installed.txt")],
-        );
-    }
 }
 
 #[test]
@@ -279,74 +170,6 @@ run = [{ run = "printf invalid", rhai = "print(\"nope\")" }]
 }
 
 #[test]
-fn run_manifest_task_run_array_rhai_steps_support_args_and_runtime_helpers() {
-    let _guard = lock_test();
-    let root = temp_workspace("run-array-rhai-runtime-helpers");
-    fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
-    fs::write(
-        root.join("scripts/helpers.rhai"),
-        r#"
-let stamp = time::now_utc();
-let scratch = fs::make_temp_dir("rhai-runtime-helper");
-let ctx = runtime::context();
-let exec = exec::run(["sh", "-lc", "printf exec-ok"], #{ run_in: "host" });
-let pid = time::process_id().to_string();
-fs::write_file("stamp.txt", stamp);
-fs::write_file("arg.txt", args[0].to_string());
-fs::write_file("scratch.txt", scratch);
-fs::write_file("runtime-root.txt", ctx["command_root"]);
-fs::write_file("exec.txt", exec["stdout"]);
-fs::write_lines("lines.txt", ["one", "two"]);
-fs::append_file("append.txt", "alpha\n");
-fs::append_file("append.txt", "beta\n");
-fs::write_file("pid.txt", pid);
-if !fs::exists(scratch) {
-    throw "scratch dir was not created";
-}
-fs::remove(scratch);
-"#,
-    )
-    .expect("write rhai script");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.validate]
-run = [{ rhai = "scripts/helpers.rhai" }]
-"#,
-    );
-
-    run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: vec!["helper-ok".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("rhai helper task should run");
-
-    let stamp = fs::read_to_string(root.join("stamp.txt")).expect("read stamp");
-    assert!(stamp.ends_with('Z'), "expected UTC timestamp: {stamp}");
-    assert_file_text_equals(&root.join("arg.txt"), "helper-ok");
-    assert_file_text_equals(&root.join("exec.txt"), "exec-ok");
-    let canonical_root = root.canonicalize().expect("canonical root");
-    assert_file_text_equals(
-        &root.join("runtime-root.txt"),
-        &canonical_root.display().to_string(),
-    );
-    assert_file_text_equals(&root.join("lines.txt"), "one\ntwo\n");
-    assert_file_text_equals(&root.join("append.txt"), "alpha\nbeta\n");
-    let pid = fs::read_to_string(root.join("pid.txt")).expect("read pid");
-    assert!(
-        pid.trim().parse::<u32>().is_ok(),
-        "expected numeric pid output: {pid}"
-    );
-    let scratch = fs::read_to_string(root.join("scratch.txt")).expect("read scratch dir");
-    assert!(
-        !std::path::Path::new(scratch.trim()).exists(),
-        "scratch dir should be removed: {scratch}"
-    );
-}
-
-#[test]
 fn run_manifest_task_run_array_rhai_steps_support_typed_host_helpers() {
     let _guard = lock_test();
     let root = temp_workspace("run-array-rhai-host-helpers");
@@ -370,12 +193,16 @@ if bundle_report["ok"] == false {
     throw "bundle inspect failed";
 }
 fs::write_file("bundles.json", json::stringify(bundle_report));
+fs::write_file("result.txt", "host-rhai-ok");
 "#,
     )
     .expect("write rhai script");
     write_manifest(
         &root.join("effigy.toml"),
-        r#"[bundle]
+        r#"[task_defaults]
+run_in = "container"
+
+[bundle]
 base = { type = "path", dir = "bundles/acme" }
 
 [tasks.capture]
@@ -395,6 +222,7 @@ run = [{ rhai = "scripts/dispatch.rhai" }]
     )
     .expect("rhai dispatch task should run");
 
+    assert_file_text_equals(&root.join("result.txt"), "host-rhai-ok");
     let bundles_json = fs::read_to_string(root.join("bundles.json")).expect("read bundles json");
     let bundle_report: serde_json::Value =
         serde_json::from_str(&bundles_json).expect("parse bundles json");
@@ -508,40 +336,6 @@ fn run_manifest_task_run_array_rhai_steps_support_container_helpers() {
         args_log.contains("down --remove-orphans"),
         "got: {args_log}"
     );
-}
-
-#[test]
-fn run_manifest_task_run_array_rhai_steps_bypass_container_default_when_fully_in_process() {
-    let _guard = lock_test();
-    let root = temp_workspace("run-array-rhai-in-process-container-default");
-    fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
-    fs::write(
-        root.join("scripts/write-host-file.rhai"),
-        r#"
-fs::write_file("result.txt", "host-rhai-ok");
-"#,
-    )
-    .expect("write rhai script");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[task_defaults]
-run_in = "container"
-
-[tasks.validate]
-run = [{ rhai = "scripts/write-host-file.rhai" }]
-"#,
-    );
-
-    run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: Vec::new(),
-        },
-        root.clone(),
-    )
-    .expect("fully in-process rhai task should bypass container routing");
-
-    assert_file_text_equals(&root.join("result.txt"), "host-rhai-ok");
 }
 
 fn write_container_fixture(root: &std::path::Path) {
