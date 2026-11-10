@@ -9,6 +9,7 @@
 use effigy_kernel::{
     ctx::*, custody::*, gate::Wait, id::*, outcome::*, root::StateRoot, run::*, supervise::*,
 };
+use effigy_test_support::process::FixtureCommandExt;
 use std::collections::BTreeMap;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
@@ -145,8 +146,26 @@ fn occupy_through_the_slot() -> Vec<OwnedFd> {
 /// low-source control must also survive the child's reserved descriptor plan.
 #[test]
 fn a_handoff_reader_already_at_the_slot_survives_exec() {
-    for source in [HANDOFF_FD, 3] {
-        assert_handoff_reader_survives_from(source);
+    const SOURCE: &str = "EFFIGY_TEST_HANDOFF_SOURCE";
+    if let Ok(source) = std::env::var(SOURCE) {
+        assert_handoff_reader_survives_from(source.parse().expect("source descriptor"));
+        return;
+    }
+    // Keep 11 and 3, and cover the cleanup-pin target too. These slots are
+    // claimed by the cell; inherited suite-marker descriptors are untouched.
+    for source in [HANDOFF_FD, 3, 10] {
+        // A fresh process keeps earlier cells' process-global kernel signal
+        // descriptors from occupying a later cell's deliberately claimed slot.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "a_handoff_reader_already_at_the_slot_survives_exec",
+                "--nocapture",
+            ])
+            .env(SOURCE, source.to_string())
+            .output_owned()
+            .expect("isolated source-slot control");
+        assert!(output.status.success(), "source {source}: {output:?}");
     }
 }
 
