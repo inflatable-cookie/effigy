@@ -77,6 +77,10 @@ build phases. Each reinspection uses that operation's caller deadline unchanged;
 the initial inventory deadline is not a lifetime limit for a later source probe,
 compile or artifact transfer. An expired current deadline still refuses before
 spawning, and changed identity or mount/capability witnesses still refuse.
+Builder preparation decodes one inspect record and makes one pure decision to
+reuse, activate or refuse. Never-started Colima records share the running
+ownership, mount and capability evidence, with their additional creation proof.
+Recovery rechecks the exact observed identity immediately before activation.
 
 For the Colima nerdctl compose fallback, runtime preflight estimates the
 `nerdctl/mounts` label from recognized explicit primary-service bind and volume

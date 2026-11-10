@@ -265,6 +265,7 @@ pub(crate) fn parse_inspected_container_identity(
 /// is empty, and only when every other `State` field states "never started"
 /// exactly. It is identity evidence, never a running binding, so the caller
 /// must also prove the listing says `Created`.
+#[cfg(test)]
 pub(crate) fn parse_inspected_never_started_identity(
     stdout: &str,
 ) -> Result<InspectedContainerIdentity, String> {
@@ -275,7 +276,16 @@ fn parse_inspected_identity(
     stdout: &str,
     never_started: bool,
 ) -> Result<InspectedContainerIdentity, String> {
-    let records: Vec<InspectRecord> = serde_json::from_str(stdout)
+    let raw = serde_json::from_str(stdout)
+        .map_err(|error| format!("failed to parse inspect json: {error}"))?;
+    inspected_identity_from_value(&raw, never_started)
+}
+
+pub(super) fn inspected_identity_from_value(
+    raw: &serde_json::Value,
+    never_started: bool,
+) -> Result<InspectedContainerIdentity, String> {
+    let records: Vec<InspectRecord> = serde_json::from_value(raw.clone())
         .map_err(|error| format!("failed to parse inspect json: {error}"))?;
     if records.len() != 1 {
         return Err(format!(

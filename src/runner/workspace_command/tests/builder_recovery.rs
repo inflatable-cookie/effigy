@@ -66,18 +66,11 @@ if cmd == 'inspect' and '--mode=native' in args:
     # the builder's default capability sets with no SYS_ADMIN anywhere; tests
     # replace its Spec (or ID) through state files, never through the caller.
     if mode == 'native_fail': sys.exit(27)
-    # Verbatim native output for malformed or extra-record controls.
-    raw_output = state / 'native-array.json'
-    if raw_output.exists():
-        print(raw_output.read_text())
-        sys.exit(0)
     row = json.loads(identity.read_text())[0]
     native = {'ID': row['Id'], 'Name': row['Name'], 'Config': row['Config'], 'Spec': {'process': {'capabilities': {'bounding': DEFAULT_CAPS, 'effective': DEFAULT_CAPS, 'permitted': DEFAULT_CAPS}}}}
     spec_override = state / 'native-spec.json'
     if spec_override.exists():
-        text = spec_override.read_text()
-        if text == 'absent': native.pop('Spec')
-        else: native['Spec'] = json.loads(text)
+        native['Spec'] = json.loads(spec_override.read_text())
     id_override = state / 'native-id'
     if id_override.exists(): native['ID'] = id_override.read_text()
     print(json.dumps([native]))
@@ -91,12 +84,12 @@ if cmd == 'inspect':
     if not identity.exists(): sys.exit(1)
     row = json.loads(identity.read_text())
     if mode == 'created_then_running' and row[0]['State'].get('Status') == '':
-        # Two reads precede the observation and the next one is the transition's
-        # own re-observation, so the builder starts after the observation.
+        # The first read is the preparation observation; the transition's own
+        # re-observation sees that the builder has since started.
         reads = state / 'created-reads'
         count_created = int(reads.read_text()) + 1 if reads.exists() else 1
         reads.write_text(str(count_created))
-        if count_created > 2:
+        if count_created > 1:
             row[0]['State'] = {'Status': 'running', 'Running': True, 'Paused': False, 'Restarting': False, 'Pid': 1, 'ExitCode': 0, 'Error': '', 'StartedAt': '2026-11-08T00:00:00Z', 'FinishedAt': ''}
             identity.write_text(json.dumps(row))
     if mode == 'change_inputs':
@@ -118,7 +111,6 @@ if cmd == 'up':
     # the native record the test gave the one it replaced.
     (state / 'native-spec.json').unlink(missing_ok=True)
     (state / 'native-id').unlink(missing_ok=True)
-    (state / 'native-array.json').unlink(missing_ok=True)
     generated = next(a for a in args if a.endswith('.generated.compose.yml'))
     compose = pathlib.Path(generated).read_text()
     (state / 'last-up-compose').write_text(compose)
@@ -1186,22 +1178,14 @@ fn retained_builder_accepts_its_immutable_compose_working_directory() {
 fn assert_invalid_builder_refuses_before_build(case: &str) {
     let _lock = crate::contract_test_support::lock_test();
     let fixture = Fixture::new(true, true, "docker");
-    match case {
-        "foreign_checkout" => fixture.mutate(|row| row["Config"]["Labels"]["com.effigy.checkout"] = json!(fixture.root.join("state"))),
-        "foreign_scope" => fixture.mutate(|row| row["Config"]["Labels"]["com.effigy.scope"] = json!("foreign-scope")),
-        "foreign_project" => fixture.mutate(|row| row["Config"]["Labels"]["com.docker.compose.project"] = json!("foreign-project")),
-        "foreign_service" => fixture.mutate(|row| row["Config"]["Labels"]["com.docker.compose.service"] = json!("app")),
-        "foreign_working_dir" => fixture.mutate(|row| row["Config"]["Labels"]["com.docker.compose.project.working_dir"] = json!(fixture.root.join("state"))),
-        "oneoff" => fixture.mutate(|row| row["Config"]["Labels"]["com.docker.compose.oneoff"] = json!("True")),
-        "unlabelled" => fixture.mutate(|row| { row["Config"]["Labels"].as_object_mut().unwrap().remove("com.effigy.checkout"); }),
-        "missing_scope" => fixture.mutate(|row| { row["Config"]["Labels"].as_object_mut().unwrap().remove("com.effigy.scope"); }),
-        "stopped" => fixture.mutate(|row| { row["State"]["Running"] = json!(false); row["State"]["Status"] = json!("exited"); }),
-        "ports" => fixture.mutate(|row| row["NetworkSettings"]["Ports"] = json!({"80/tcp": [{"HostIp": "127.0.0.1", "HostPort": "12345"}]})),
-        "bad_bind" => fixture.mutate(|row| row["Mounts"][0]["Source"] = json!(fixture.root.join("state"))),
-        "writable_bind" => fixture.mutate(|row| { row["Mounts"][0]["RW"] = json!(true); row["Mounts"][0]["Mode"] = json!(""); }),
-        "missing_bind" => fixture.mutate(|row| row["Mounts"] = json!([])),
-        "shadow_bind" => fixture.mutate(|row| row["Mounts"].as_array_mut().unwrap().push(json!({"Type": "bind", "Source": fixture.root.join("state"), "Destination": "/workspace/src", "RW": true}))),
-        _ => fixture.mode(case),
+    // The shared decoder table covers ownership permutations. Keep one
+    // foreign-owner refusal through the real task wiring.
+    if case == "foreign_checkout" {
+        fixture.mutate(|row| {
+            row["Config"]["Labels"]["com.effigy.checkout"] = json!(fixture.root.join("state"));
+        });
+    } else {
+        fixture.mode(case);
     }
     let error = fixture.task().expect_err(case);
     assert!(
@@ -1224,27 +1208,15 @@ mod invalid_builders {
     }
     cases!(
         foreign_checkout,
-        foreign_scope,
-        foreign_project,
-        foreign_service,
-        foreign_working_dir,
-        oneoff,
         multiple_rows,
         multiple_inspect,
         malformed_list,
         change_name,
-        unlabelled,
-        bad_bind,
-        missing_bind,
-        shadow_bind,
         replace,
         change_bind,
         list_fail,
         inspect_fail,
         malformed_inspect,
-        missing_scope,
-        stopped,
-        ports,
     );
 }
 
@@ -2139,6 +2111,18 @@ fn ordinary_auto_build_recovers_an_owned_writable_source_bind() {
         row["Mounts"][0]["RW"] = json!(true);
         row["Mounts"][0]["Mode"] = json!("");
     });
+    {
+        let _switch =
+            EnvGuard::set_many(&[("EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING", Some("1".to_owned()))]);
+        let error = fixture.task().expect_err("writable source");
+        assert!(
+            error.contains("refuses an old, writable or mismatched owned builder before claim"),
+            "{error}"
+        );
+        assert_eq!(fixture.activation_count(), 0);
+        assert!(!fixture.root.join("state/build-effect").exists(), "{error}");
+        fixture.assert_preserved();
+    }
     fixture
         .task()
         .expect("ordinary auto-build recovers the owned writable leftover");
@@ -2157,395 +2141,74 @@ fn ordinary_auto_build_recovers_an_owned_writable_source_bind() {
     fixture.assert_preserved();
 }
 
-/// Ordinary auto-build recovers an owned leftover whose inspect is missing the
-/// exact mount set or SYS_ADMIN drop: the maintained activation replaces it.
-#[test]
-fn ordinary_auto_build_recovers_an_owned_extra_bind_or_missing_sys_admin_drop() {
-    let _lock = crate::contract_test_support::lock_test();
-    for case in [
-        "extra_host_bind",
-        "missing_cap_drop",
-        "privileged",
-        "cap_add",
-    ] {
-        let fixture = Fixture::staged(true, false, "docker");
-        let plan = fixture.stage().expect("a staged source plan");
-        mutate_inspect_mismatch(&fixture, case);
-        fixture
-            .task()
-            .unwrap_or_else(|error| panic!("{case}: {error}"));
-        assert_eq!(fixture.activation_count(), 1, "{case}");
-        assert_eq!(fixture.build_source(), plan.source, "{case}");
-        let identity: Value = serde_json::from_slice(
-            &std::fs::read(fixture.root.join("state/identity.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(identity[0]["Mounts"].as_array().unwrap().len(), 3, "{case}");
-        assert_eq!(
-            identity[0]["HostConfig"]["Privileged"],
-            json!(false),
-            "{case}"
-        );
-        assert_eq!(
-            identity[0]["HostConfig"]["CapDrop"],
-            json!(["SYS_ADMIN"]),
-            "{case}"
-        );
-        fixture.assert_preserved();
-    }
-}
-
-fn mutate_inspect_mismatch(fixture: &Fixture, case: &str) {
-    match case {
-        "writable_bind" => fixture.mutate(|row| {
-            row["Mounts"][0]["RW"] = json!(true);
-            row["Mounts"][0]["Mode"] = json!("");
-        }),
-        "pre_staging" => fixture.mutate(|row| row["Mounts"][0]["Source"] = json!(fixture.root)),
-        "extra_host_bind" => fixture.mutate(|row| {
-            row["Mounts"].as_array_mut().unwrap().push(json!({
-                "Type": "bind",
-                "Source": fixture.root.join("state"),
-                "Destination": "/opt/extra",
-                "RW": true
-            }));
-        }),
-        "missing_cap_drop" => fixture.mutate(|row| row["HostConfig"]["CapDrop"] = json!([])),
-        "privileged" => fixture.mutate(|row| row["HostConfig"]["Privileged"] = json!(true)),
-        "cap_add" => fixture.mutate(|row| row["HostConfig"]["CapAdd"] = json!(["SYS_PTRACE"])),
-        _ => unreachable!("{case}"),
-    }
-}
-
-/// Restricted E14 (`EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING=1`) refuses an old,
-/// writable or mismatched owned builder before claim and cannot create,
-/// replace or reconfigure it.
-#[test]
-fn no_change_refuses_an_old_writable_or_mismatched_owned_builder_before_claim() {
-    let _lock = crate::contract_test_support::lock_test();
-    for case in [
-        "writable_bind",
-        "pre_staging",
-        "extra_host_bind",
-        "missing_cap_drop",
-        "privileged",
-        "cap_add",
-    ] {
-        let fixture = Fixture::staged(true, false, "docker");
-        fixture.stage().expect("a staged source plan");
-        mutate_inspect_mismatch(&fixture, case);
-        let _switch =
-            EnvGuard::set_many(&[("EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING", Some("1".to_owned()))]);
-        let error = fixture.task().expect_err(case);
-        assert!(
-            error.contains("refuses an old, writable or mismatched owned builder before claim"),
-            "{case}: {error}"
-        );
-        assert_eq!(fixture.activation_count(), 0, "{case}");
-        assert!(
-            !fixture.root.join("state/build-effect").exists(),
-            "{case}: {error}"
-        );
-        fixture.assert_preserved();
-    }
-}
-
-/// Restricted E14 reuses a matching read-only owned builder and does not
-/// reconfigure it.
+/// Restricted E14 reuses the exact owned read-only builder on both backends.
+/// Colima's empty compatibility CapDrop must be witnessed by its native spec.
 #[test]
 fn no_change_reuses_a_matching_read_only_owned_builder() {
     let _lock = crate::contract_test_support::lock_test();
-    let fixture = Fixture::staged(true, false, "docker");
-    fixture.stage().expect("a staged source plan");
-    let _switch =
-        EnvGuard::set_many(&[("EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING", Some("1".to_owned()))]);
-    fixture
-        .task()
-        .expect("restricted E14 reuses the matching read-only builder");
-    assert_eq!(fixture.activation_count(), 0);
-    assert!(fixture.root.join("state/build-effect").exists());
-    fixture.assert_preserved();
-}
-
-/// The default process capability sets of a Colima builder's stored spec. A
-/// `cap_drop: [SYS_ADMIN]` container that never held SYS_ADMIN keeps these.
-const NATIVE_DEFAULT_CAPS: [&str; 14] = [
-    "CAP_CHOWN",
-    "CAP_DAC_OVERRIDE",
-    "CAP_FSETID",
-    "CAP_FOWNER",
-    "CAP_MKNOD",
-    "CAP_NET_RAW",
-    "CAP_SETGID",
-    "CAP_SETUID",
-    "CAP_SETFCAP",
-    "CAP_SETPCAP",
-    "CAP_NET_BIND_SERVICE",
-    "CAP_SYS_CHROOT",
-    "CAP_KILL",
-    "CAP_AUDIT_WRITE",
-];
-
-impl Fixture {
-    /// Replace the native (OCI) spec the fake reports for the builder's ID.
-    fn set_native_spec(&self, spec: Value) {
-        std::fs::write(self.root.join("state/native-spec.json"), spec.to_string()).unwrap();
+    for backend in ["docker", "colima"] {
+        let fixture = Fixture::staged(true, false, backend);
+        fixture.stage().expect("a staged source plan");
+        let _switch =
+            EnvGuard::set_many(&[("EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING", Some("1".to_owned()))]);
+        fixture
+            .task()
+            .unwrap_or_else(|error| panic!("{backend}: exact owned read-only builder: {error}"));
+        assert_eq!(fixture.activation_count(), 0, "{backend}");
+        assert!(
+            fixture.root.join("state/build-effect").exists(),
+            "{backend}"
+        );
+        fixture.assert_preserved();
     }
 }
 
-/// Colima's retained owned builder: its compatibility record reads
-/// `CapDrop: []`, the live report, so the native spec alone can witness the
-/// dropped SYS_ADMIN. Admission must hold with it and must refuse without it.
+/// Pure native capability tables cover every OCI set and malformed shape.
+/// Keep the native-read boundary and both policy outcomes through the real task.
 #[test]
-fn colima_retained_empty_compat_shape_is_admitted_only_by_its_native_witness() {
+fn colima_native_power_is_recovered_or_refused_before_claim() {
     let _lock = crate::contract_test_support::lock_test();
     let fixture = Fixture::staged(true, false, "colima");
-    fixture.stage().expect("a staged source plan");
-    let _switch =
-        EnvGuard::set_many(&[("EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING", Some("1".to_owned()))]);
+    let plan = fixture.stage().expect("a staged source plan");
+    std::fs::write(
+        fixture.root.join("state/native-spec.json"),
+        json!({"process": {"capabilities": {"bounding": ["CAP_SYS_ADMIN"]}}}).to_string(),
+    )
+    .unwrap();
+    {
+        let _switch =
+            EnvGuard::set_many(&[("EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING", Some("1".to_owned()))]);
+        let error = fixture.task().expect_err("SYS_ADMIN still present");
+        assert!(
+            error.contains("refuses an old, writable or mismatched owned builder before claim"),
+            "{error}"
+        );
+        assert_eq!(fixture.activation_count(), 0);
+        assert!(!fixture.root.join("state/build-effect").exists());
+    }
     fixture
         .task()
-        .expect("the exact owned builder with a complete native witness is admitted");
-    assert_eq!(fixture.activation_count(), 0);
-    assert!(fixture.root.join("state/build-effect").exists());
+        .expect("replace the exact owned powered builder");
+    assert_eq!(fixture.activation_count(), 1);
+    assert_eq!(fixture.build_source(), plan.source);
     fixture.assert_preserved();
 }
 
-/// A native spec that still holds SYS_ADMIN in any process set is the remount
-/// capability alive. Ordinary auto-build replaces that exact owned builder; the
-/// restricted run refuses it before claim.
+/// A native read failure or full-ID mismatch is unknown, never permission to
+/// replace or execute the builder. Parser variations live in the pure table.
 #[test]
-fn colima_native_power_in_any_set_is_recovered_or_refused_before_claim() {
+fn colima_native_read_or_replaced_identity_refuses_without_replacing() {
     let _lock = crate::contract_test_support::lock_test();
-    for power in ["CAP_SYS_ADMIN", "CAP_SYS_PTRACE"] {
-        for set in [
-            "bounding",
-            "effective",
-            "inheritable",
-            "permitted",
-            "ambient",
-        ] {
-            let mut capabilities = json!({"bounding": NATIVE_DEFAULT_CAPS, "effective": NATIVE_DEFAULT_CAPS, "permitted": NATIVE_DEFAULT_CAPS});
-            capabilities[set] = json!([power]);
-            let fixture = Fixture::staged(true, false, "colima");
-            let plan = fixture.stage().expect("a staged source plan");
-            fixture.set_native_spec(json!({"process": {"capabilities": capabilities}}));
-            {
-                let _switch = EnvGuard::set_many(&[(
-                    "EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING",
-                    Some("1".to_owned()),
-                )]);
-                let error = fixture.task().expect_err(&format!("{power} in {set}"));
-                assert!(
-                    error.contains(
-                        "refuses an old, writable or mismatched owned builder before claim"
-                    ),
-                    "{power} in {set}: {error}"
-                );
-                assert_eq!(fixture.activation_count(), 0, "{power} in {set}");
-                assert!(
-                    !fixture.root.join("state/build-effect").exists(),
-                    "{power} in {set}"
-                );
-            }
-            fixture
-                .task()
-                .unwrap_or_else(|error| panic!("{power} in {set}: {error}"));
-            assert_eq!(fixture.activation_count(), 1, "{power} in {set}");
-            assert_eq!(fixture.build_source(), plan.source, "{power} in {set}");
-            fixture.assert_preserved();
-        }
-    }
-}
-
-/// Extra or unknown capability data is no admission either: the native output
-/// must be exactly one record for the verified ID with only the five OCI sets.
-/// Each malformed output refuses through real admission on both paths, and
-/// the owned builder is never replaced.
-#[test]
-fn colima_native_extra_or_unknown_capability_data_refuses_without_replacing() {
-    let _lock = crate::contract_test_support::lock_test();
-    let id = "a".repeat(64);
-    let record = |capabilities: Value| json!({"ID": id, "Spec": {"process": {"capabilities": capabilities}}});
-    let defaults = json!({"bounding": NATIVE_DEFAULT_CAPS, "effective": NATIVE_DEFAULT_CAPS, "permitted": NATIVE_DEFAULT_CAPS});
-    let mut unknown_set = defaults.clone();
-    unknown_set["ambientExtra"] = json!(["CAP_SYS_ADMIN"]);
-    let cases = [
-        (
-            "two_records",
-            json!([record(defaults.clone()), record(defaults.clone())]),
-            "exactly one is required",
-        ),
-        ("no_records", json!([]), "exactly one is required"),
-        (
-            "unknown_set",
-            json!([record(unknown_set)]),
-            "unknown set `ambientExtra`",
-        ),
-        (
-            "capabilities_list",
-            json!([{"ID": id, "Spec": {"process": {"capabilities": ["CAP_SYS_ADMIN"]}}}]),
-            "no Spec.process.capabilities",
-        ),
-        (
-            "bogus_name",
-            json!([{"ID": id, "Spec": {"process": {"capabilities": {
-                "bounding": NATIVE_DEFAULT_CAPS,
-                "effective": NATIVE_DEFAULT_CAPS,
-                "permitted": NATIVE_DEFAULT_CAPS,
-                "inheritable": ["CAP_BOGUS"],
-            }}}}]),
-            "unknown entry",
-        ),
-        (
-            "suffixed_sys_admin",
-            json!([{"ID": id, "Spec": {"process": {"capabilities": {
-                "bounding": NATIVE_DEFAULT_CAPS,
-                "effective": NATIVE_DEFAULT_CAPS,
-                "permitted": ["CAP_SYS_ADMINX"],
-            }}}}]),
-            "unknown entry",
-        ),
-    ];
-    for (case, output, reason) in cases {
+    for (case, reason) in [
+        ("replaced_id", "different full container ID"),
+        ("native_fail", "failed"),
+    ] {
         let fixture = Fixture::staged(true, false, "colima");
         fixture.stage().expect("a staged source plan");
-        std::fs::write(
-            fixture.root.join("state/native-array.json"),
-            output.to_string(),
-        )
-        .unwrap();
-        for required in [true, false] {
-            let _switch = required.then(|| {
-                EnvGuard::set_many(&[(
-                    "EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING",
-                    Some("1".to_owned()),
-                )])
-            });
-            let error = fixture.task().expect_err(case);
-            assert!(
-                error.contains(reason),
-                "{case} (required={required}): {error}"
-            );
-            assert_eq!(
-                fixture.activation_count(),
-                0,
-                "{case} (required={required})"
-            );
-            assert!(!fixture.root.join("state/build-effect").exists(), "{case}");
-        }
-        fixture.assert_preserved();
-    }
-}
-
-/// Colima's compatibility record must carry an explicit `CapAdd` list and a
-/// boolean `Privileged`. A missing or null `CapAdd` is refused on both paths
-/// through real admission and never replaces the owned builder.
-#[test]
-fn colima_compat_add_back_missing_or_null_refuses_without_replacing() {
-    let _lock = crate::contract_test_support::lock_test();
-    type Mutation = fn(&mut Value);
-    let mutations: [(&str, Mutation); 2] = [
-        ("missing", |row| {
-            row["HostConfig"].as_object_mut().unwrap().remove("CapAdd");
-        }),
-        ("null", |row| row["HostConfig"]["CapAdd"] = Value::Null),
-    ];
-    for (case, mutate) in mutations {
-        let fixture = Fixture::staged(true, false, "colima");
-        fixture.stage().expect("a staged source plan");
-        fixture.mutate(mutate);
-        for required in [true, false] {
-            let _switch = required.then(|| {
-                EnvGuard::set_many(&[(
-                    "EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING",
-                    Some("1".to_owned()),
-                )])
-            });
-            let error = fixture.task().expect_err(case);
-            assert!(
-                error.contains("CapAdd"),
-                "{case} (required={required}): {error}"
-            );
-            assert_eq!(
-                fixture.activation_count(),
-                0,
-                "{case} (required={required})"
-            );
-            assert!(!fixture.root.join("state/build-effect").exists(), "{case}");
-        }
-        fixture.assert_preserved();
-    }
-}
-
-/// No positive native witness is no admission: a missing spec, a replaced full
-/// ID, malformed capability data or a failed native read refuses the builder
-/// with its concrete cause, on both the restricted and the ordinary path, and
-/// never replaces it.
-#[test]
-fn colima_native_witness_gaps_refuse_without_replacing_the_builder() {
-    let _lock = crate::contract_test_support::lock_test();
-    // (case, native Spec override, replaced ID digit, forced fake mode, cause)
-    type GapCase = (
-        &'static str,
-        Option<Value>,
-        Option<char>,
-        Option<&'static str>,
-        &'static str,
-    );
-    let cases: [GapCase; 5] = [
-        (
-            "absent_spec",
-            None,
-            None,
-            None,
-            "has no Spec.process.capabilities",
-        ),
-        (
-            "replaced_id",
-            None,
-            Some('c'),
-            None,
-            "different full container ID",
-        ),
-        (
-            "malformed_entry",
-            Some(json!({"process": {"capabilities": {"bounding": ["SYS_ADMIN"]}}})),
-            None,
-            None,
-            "unknown entry",
-        ),
-        (
-            "native_read_fails",
-            None,
-            None,
-            Some("native_fail"),
-            "failed",
-        ),
-        (
-            "missing_bounding",
-            Some(json!({"process": {"capabilities": {"effective": NATIVE_DEFAULT_CAPS}}})),
-            None,
-            None,
-            "no bounding set",
-        ),
-    ];
-    for (case, spec, replaced, mode, reason) in cases {
-        let fixture = Fixture::staged(true, false, "colima");
-        fixture.stage().expect("a staged source plan");
-        match spec {
-            Some(spec) => fixture.set_native_spec(spec),
-            None if case == "absent_spec" => {
-                std::fs::write(fixture.root.join("state/native-spec.json"), "absent").unwrap()
-            }
-            None => {}
-        }
-        if let Some(digit) = replaced {
-            let id = digit.to_string().repeat(64);
-            std::fs::write(fixture.root.join("state/native-id"), id).unwrap();
-        }
-        if let Some(mode) = mode {
-            std::fs::write(fixture.root.join("state/mode"), mode).unwrap();
+        if case == "replaced_id" {
+            std::fs::write(fixture.root.join("state/native-id"), "c".repeat(64)).unwrap();
+        } else {
+            fixture.mode(case);
         }
         for required in [true, false] {
             let _switch = required.then(|| {
@@ -3375,125 +3038,29 @@ fn created_pre_staging_builder_is_replaced_once_and_reused() {
     assert_eq!(private_build_count(&fixture.root), 2);
 }
 
-/// Each refusal names no transition, no exec and no build. Empty status alone is
-/// never proof: every other field and ownership fact must hold too.
-fn assert_created_builder_refuses_without_transition(case: &str) {
+/// The decoder table checks every never-started field and ownership fact.
+/// This empty-status control retains the real refusal-before-transition seam.
+#[test]
+fn created_running_with_empty_status_refuses_without_transition() {
     let _lock = crate::contract_test_support::lock_test();
     let fixture = Fixture::staged(true, false, "colima");
     fixture.stage().expect("a staged source plan");
     fixture.retain_created_pre_staging();
-    use std::os::unix::fs::MetadataExt;
-    let meta = std::fs::metadata(&fixture.root).unwrap();
-    let device = meta.dev();
-    let generation_inode = if case == "stale_generation" {
-        meta.ino() + 1
-    } else {
-        meta.ino()
-    };
-    fixture.mutate(|record| match case {
-        "lowercase_created_status" => record["State"]["Status"] = json!("created"),
-        "running_with_empty_status" => record["State"]["Running"] = json!(true),
-        "paused" => record["State"]["Paused"] = json!(true),
-        "restarting" => record["State"]["Restarting"] = json!(true),
-        "nonzero_pid" => record["State"]["Pid"] = json!(4242),
-        "started_at" => record["State"]["StartedAt"] = json!("2026-11-08T00:00:00Z"),
-        "finished_at" => record["State"]["FinishedAt"] = json!("2026-11-08T00:00:00Z"),
-        "error_text" => record["State"]["Error"] = json!("exec: boom"),
-        "missing_error_field" => {
-            record["State"].as_object_mut().unwrap().remove("Error");
-        }
-        "missing_state" => {
-            record.as_object_mut().unwrap().remove("State");
-        }
-        "short_id" => record["Id"] = json!("a".repeat(12)),
-        "wrong_name" => record["Name"] = json!("/successor-builder-1"),
-        "wrong_service" => {
-            record["Config"]["Labels"]["com.docker.compose.service"] = json!("worker")
-        }
-        "stale_generation" => {
-            record["Config"]["Labels"]["com.effigy.checkout-generation"] =
-                json!(json!({"device": device, "inode": generation_inode}).to_string());
-        }
-        "fence_device_mismatch" => {
-            record["Config"]["Labels"]["com.effigy.checkout-fence"] =
-                json!(json!({"device": device + 1, "inode": 1992354169u64}).to_string());
-        }
-        "missing_generation" => {
-            record["Config"]["Labels"]
-                .as_object_mut()
-                .unwrap()
-                .remove("com.effigy.checkout-generation");
-        }
-        "foreign_checkout_label" => {
-            record["Config"]["Labels"]["com.effigy.checkout"] = json!("/nonexistent/other");
-        }
-        "bind_to_other_source" => {
-            record["Mounts"][0]["Source"] = json!("/nonexistent/other-checkout");
-        }
-        "renamed_cache_volume" => {
-            record["Mounts"][1]["Name"] = json!("other-cargo-registry");
-        }
-        "extra_mount" => {
-            record["Mounts"].as_array_mut().unwrap().push(
-                json!({"Type": "volume", "Name": "extra", "Destination": "/extra", "RW": true}),
-            );
-        }
-        "published_port" => {
-            record["NetworkSettings"]["Ports"] =
-                json!({"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8080"}]});
-        }
-        _ => unreachable!("{case}"),
-    });
-    let error = fixture.task().expect_err(case);
-    assert_eq!(fixture.activation_count(), 0, "{case}: {error}");
-    assert_eq!(private_build_count(&fixture.root), 0, "{case}: {error}");
+    fixture.mutate(|record| record["State"]["Running"] = json!(true));
+    let error = fixture
+        .task()
+        .expect_err("empty status is not a never-started witness");
+    assert_eq!(fixture.activation_count(), 0, "{error}");
+    assert_eq!(private_build_count(&fixture.root), 0, "{error}");
     assert!(
         fixture
             .calls()
             .iter()
             .all(|args| !args.iter().any(|arg| arg == "exec")),
-        "{case}: no exec may run on refusal"
+        "no exec may run on refusal: {error}"
     );
-    assert!(
-        !fixture.root.join("state/build-effect").exists(),
-        "{case}: {error}"
-    );
+    assert!(!fixture.root.join("state/build-effect").exists(), "{error}");
     fixture.assert_preserved();
-}
-
-mod created_builder_refusals {
-    use super::*;
-    macro_rules! cases {
-        ($($case:ident),+ $(,)?) => { $(
-            #[test]
-            fn $case() {
-                assert_created_builder_refuses_without_transition(stringify!($case));
-            }
-        )+ };
-    }
-    cases!(
-        lowercase_created_status,
-        running_with_empty_status,
-        paused,
-        restarting,
-        nonzero_pid,
-        started_at,
-        finished_at,
-        error_text,
-        missing_error_field,
-        missing_state,
-        short_id,
-        wrong_name,
-        wrong_service,
-        stale_generation,
-        fence_device_mismatch,
-        missing_generation,
-        foreign_checkout_label,
-        bind_to_other_source,
-        renamed_cache_volume,
-        extra_mount,
-        published_port,
-    );
 }
 
 /// The never-started shape is proven only for the Colima nerdctl backend; the
