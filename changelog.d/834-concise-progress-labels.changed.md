@@ -1,0 +1,1 @@
+Shortened terminal progress labels, kept live counts and useful blockers, and show compact elapsed time after two seconds. Container preparation, restart policy and environment waits keep runtime details in verbose output; the rendered-stack line no longer names a stale file path.

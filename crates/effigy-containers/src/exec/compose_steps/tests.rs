@@ -214,19 +214,16 @@ fn reconstructed_build_lines_do_not_accumulate_fake_steps() {
 fn a_runtime_step_frame_moves_with_the_runtime_and_names_its_wait() {
     let step = super::runtime_wait("pulling postgres:16", "the runtime's next report");
     let frame = step.frame_at(std::time::Duration::from_secs(2));
-    assert_eq!(
-        frame,
-        "pulling postgres:16; waiting for the runtime's next report; 2s elapsed"
-    );
+    assert_eq!(frame, "pulling postgres:16 · 2s");
     // The clock moves the frame without any new runtime line.
     assert_eq!(
         step.frame_at(std::time::Duration::from_secs(45)),
-        "pulling postgres:16; waiting for the runtime's next report; 45s elapsed"
+        "pulling postgres:16 · 45s"
     );
     // A new runtime line replaces the label; nothing waits on a fixed one.
     step.set_label("starting web");
     assert_eq!(
         step.frame_at(std::time::Duration::from_secs(46)),
-        "starting web; waiting for the runtime's next report; 46s elapsed"
+        "starting web · 46s"
     );
 }

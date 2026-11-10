@@ -312,6 +312,25 @@ fn publish_gate_state(source: &ProgressSource, env: &str, state: &Observed<GateS
         None,
         Some(event),
     );
+    source.label(format!("Waiting for {env}"));
+    match state {
+        Observed::Verified(GateState::Held(holder), _) => {
+            let label = match holder.as_ref() {
+                Observed::Verified(diag, _) => match &diag.foreground {
+                    Some(foreground) => format!(
+                        "held by `effigy {}` (pid {})",
+                        foreground_task(&foreground.task),
+                        diag.pid
+                    ),
+                    None => format!("held by pid {}", diag.pid),
+                },
+                _ => "Environment lock owner is unreadable".to_owned(),
+            };
+            source.event_label(label);
+        }
+        Observed::Unknown(_) => source.event_label("Cannot read environment lock"),
+        _ => source.clear_event(),
+    }
 }
 
 /// Reads `Gate(Env)` with a momentary shared lock: no create, no authority and
@@ -1128,11 +1147,9 @@ impl<'r> EnvRun<'r> {
         });
         let run = match admitted {
             Ok(run) => {
-                progress.update(
-                    "reading the environment record",
-                    None,
-                    Some(format!("run {} holds the environment gate", run.id())),
-                );
+                progress.update("reading the environment record", None, None);
+                progress.detail_event(format!("run {} holds the environment gate", run.id()));
+                progress.label("Reading environment");
                 run
             }
             Err(error) => {
@@ -1266,7 +1283,7 @@ impl<'r> EnvRun<'r> {
         self.phase("publishing the desired render", None);
         let result = Objects::publish_desired(&mut self.run, closure);
         let id = self.kernel(result)?;
-        self.progress.event(format!("published render {id}"));
+        self.progress.detail_event(format!("published render {id}"));
         Ok(id)
     }
 
@@ -1285,14 +1302,15 @@ impl<'r> EnvRun<'r> {
         self.phase("publishing the sealed render", None);
         let result = Objects::publish_sealed_desired(&mut self.run, sealed, closure);
         let id = self.kernel(result)?;
-        self.progress.event(format!("published sealed render {id}"));
+        self.progress
+            .detail_event(format!("published sealed render {id}"));
         Ok(id)
     }
 
     /// Replaces the engine's fields on the record.
     pub fn write_record(&mut self, record: &EngineRecord) -> Result<(), EnvError> {
         self.phase("writing the environment record", None);
-        self.progress.event(format!(
+        self.progress.detail_event(format!(
             "retention: {}, project `{}`",
             record.retention.label(),
             record.project
@@ -1338,7 +1356,7 @@ impl<'r> EnvRun<'r> {
             ),
             None,
         );
-        self.progress.event(event);
+        self.progress.detail_event(event);
         observed
     }
 
@@ -1472,7 +1490,7 @@ impl<'r> EnvRun<'r> {
             Ok(ticket) => {
                 self.transitioned = true;
                 self.phase(APPLY_PHASE, None);
-                self.progress.event(event);
+                self.progress.detail_event(event);
                 ticket
             }
             Err(error) => {
@@ -1524,7 +1542,7 @@ impl<'r> EnvRun<'r> {
         };
         self.phase(APPLY_PHASE, None);
         if let Err(error) = outcome {
-            self.progress.event(match &error {
+            self.progress.detail_event(match &error {
                 BackendError::NotStarted(message) => {
                     format!("the backend was never contacted: {message}")
                 }
@@ -1715,7 +1733,7 @@ impl<'r> EnvRun<'r> {
                 // The permit's borrow of the run ended with `intend`; the
                 // phase publishes once the effect is journalled.
                 self.phase(phase, None);
-                self.progress.event(event);
+                self.progress.detail_event(event);
                 ticket
             }
             Err(error) => {
@@ -1738,7 +1756,7 @@ impl<'r> EnvRun<'r> {
         // The permit's borrow of the run ends with its last use above;
         // callbacks go through the run itself.
         self.phase(phase, None);
-        self.progress.event(match &outcome {
+        self.progress.detail_event(match &outcome {
             Ok(()) if kind == STOP_EFFECT => "the backend stopped".to_owned(),
             Ok(()) => "the backend converged".to_owned(),
             Err(BackendError::NotStarted(message)) => {
@@ -1950,7 +1968,7 @@ impl<'r> EnvRun<'r> {
             "activating the environment",
             (holders.len() as u64, holders.len() as u64),
         );
-        self.progress.event("the environment is active");
+        self.progress.detail_event("the environment is active");
         Ok(())
     }
 
@@ -2272,18 +2290,27 @@ impl<'r> EnvRun<'r> {
 
     /// The phase this transition is in now.
     pub(super) fn phase(&self, phase: impl Into<String>, count: Option<(u64, u64)>) {
+        self.progress.clear_event();
+        let phase = phase.into();
+        let label = match phase.as_str() {
+            "publishing the desired render" | "publishing the sealed render" => "Saving stack",
+            "writing the environment record" => "Saving environment",
+            APPLY_PHASE => "Updating containers",
+            _ => "Checking environment",
+        };
         self.progress.update(phase, count, None);
+        self.progress.label(label);
     }
 
     /// Publish the last thing this transition observed, for a phase a sibling
     /// module of this one drives (the reset's own object drop).
     pub(super) fn publish_event(&self, event: impl Into<String>) {
-        self.progress.event(event);
+        self.progress.detail_event(event);
     }
 
     /// The same, with a known count or ratio.
     fn phase_with_count(&self, phase: impl Into<String>, count: (u64, u64)) {
-        self.progress.update(phase, Some(count), None);
+        self.phase(phase, Some(count));
     }
 
     /// A fresh bounded cleanup context for this run's own settlement work.
@@ -2827,7 +2854,18 @@ mod tests {
             &stack.name,
             &observe_gate(&state, &stack.resource),
         );
-        let frame = waiting.frame_at(Duration::from_secs(4));
+        let concise = waiting.frame_at(Duration::from_secs(4));
+        assert!(
+            concise.starts_with("Waiting for stack · held by "),
+            "{concise}"
+        );
+        assert!(
+            concise.contains(&format!("pid {}", std::process::id())),
+            "{concise}"
+        );
+        assert!(!concise.contains(&run.id().to_string()), "{concise}");
+        println!("Blocked wait: {concise}");
+        let frame = waiting.detailed_frame_at(Duration::from_secs(4));
         for needle in [
             "waiting for Gate(Env) on `stack`".to_owned(),
             format!("run {}", run.id()),
@@ -2840,7 +2878,7 @@ mod tests {
 
         // The reconcile advances: the render is published, then the record.
         run.publish_desired(&closure("two")).expect("publish");
-        let frame = run.progress.frame_at(Duration::from_secs(9));
+        let frame = run.progress.detailed_frame_at(Duration::from_secs(9));
         assert!(
             frame.starts_with("publishing the desired render"),
             "{frame}"
@@ -2856,7 +2894,7 @@ mod tests {
             .unwrap_or_else(|| EngineRecord::new(Retention::Held, "acme-stack"));
         record.retention = Retention::Persistent;
         run.write_record(&record).expect("record");
-        let frame = run.progress.frame_at(Duration::from_secs(11));
+        let frame = run.progress.detailed_frame_at(Duration::from_secs(11));
         assert!(
             frame.starts_with("writing the environment record"),
             "{frame}"
@@ -2882,7 +2920,7 @@ mod tests {
             matches!(refused, Err(EnvError::HeldBy { .. })),
             "{refused:?}"
         );
-        let frame = run.progress.frame_at(Duration::from_secs(12));
+        let frame = run.progress.detailed_frame_at(Duration::from_secs(12));
         assert!(
             frame.starts_with("checking the runs attached to environment `stack`"),
             "{frame}"

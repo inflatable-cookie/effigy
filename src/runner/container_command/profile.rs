@@ -344,11 +344,11 @@ impl ProfileProgress {
     /// The frame this progress renders after `elapsed`. Production passes the
     /// wall clock through its steps; a proof passes the time it means to show.
     #[cfg(test)]
-    fn frame_at(&self, elapsed: std::time::Duration) -> String {
+    fn detailed_frame_at(&self, elapsed: std::time::Duration) -> String {
         self.source
             .as_ref()
             .expect("a drawn progress has a source")
-            .frame_at(elapsed)
+            .detailed_frame_at(elapsed)
     }
 }
 
@@ -1332,12 +1332,12 @@ mod progress_tests {
             "reading the state Colima reports for profile `effigy`",
         );
         assert_eq!(
-            progress.frame_at(Duration::from_secs(3)),
+            progress.detailed_frame_at(Duration::from_secs(3)),
             "reading the state Colima reports for profile `effigy`; waiting for `colima list --json` to answer for profile `effigy`; 3s elapsed"
         );
 
         progress.observe(&running_profile(100));
-        let frame = progress.frame_at(Duration::from_secs(42));
+        let frame = progress.detailed_frame_at(Duration::from_secs(42));
         assert_eq!(
             frame,
             "reading the state Colima reports for profile `effigy`; waiting for `colima list --json` to answer for profile `effigy`; last: profile `effigy` reported Running with 2 CPUs, 32GiB memory and 100GiB disk (target=300GiB); 42s elapsed"
@@ -1350,7 +1350,7 @@ mod progress_tests {
             "stopping Colima profile `effigy`",
             Some((1, 2)),
         );
-        let frame = progress.frame_at(Duration::from_secs(57));
+        let frame = progress.detailed_frame_at(Duration::from_secs(57));
         assert!(
             frame.starts_with("stopping Colima profile `effigy` (1/2)"),
             "{frame}"
@@ -1372,7 +1372,7 @@ mod progress_tests {
             "starting Colima profile `effigy` with the managed sizing",
             Some((2, 2)),
         );
-        let frame = progress.frame_at(Duration::from_secs(61));
+        let frame = progress.detailed_frame_at(Duration::from_secs(61));
         assert!(
             frame.starts_with("starting Colima profile `effigy` with the managed sizing (2/2)"),
             "{frame}"
@@ -1382,7 +1382,7 @@ mod progress_tests {
             "{frame}"
         );
         progress.observe(&running_profile(300));
-        let frame = progress.frame_at(Duration::from_secs(70));
+        let frame = progress.detailed_frame_at(Duration::from_secs(70));
         assert!(frame.contains("300GiB disk (target=300GiB)"), "{frame}");
         progress.succeed("recovered the Colima runtime of profile `effigy`");
     }
@@ -1435,7 +1435,7 @@ mod progress_tests {
 
         for (index, (phase, operation, awaiting)) in phases.into_iter().enumerate() {
             progress.recovery_phase(phase);
-            let early = progress.frame_at(Duration::from_secs(index as u64 * 10));
+            let early = progress.detailed_frame_at(Duration::from_secs(index as u64 * 10));
             assert!(
                 early.starts_with(operation),
                 "{phase:?}: expected `{operation}` first, got {early}"
@@ -1452,7 +1452,7 @@ mod progress_tests {
                 early.contains("last: profile `effigy` reported Running"),
                 "{phase:?}: the last profile state stays as the event: {early}"
             );
-            let later = progress.frame_at(Duration::from_secs(index as u64 * 10 + 25));
+            let later = progress.detailed_frame_at(Duration::from_secs(index as u64 * 10 + 25));
             assert_ne!(early, later, "{phase:?}: the frame must move with time");
             assert!(
                 later.ends_with(&format!("; {}s elapsed", index as u64 * 10 + 25)),
@@ -1478,7 +1478,7 @@ mod progress_tests {
             "the managed Colima configuration for profile `effigy` to be written",
             None,
         );
-        let configuring = progress.frame_at(Duration::from_secs(5));
+        let configuring = progress.detailed_frame_at(Duration::from_secs(5));
         assert!(
             configuring.contains(
                 "waiting for the managed Colima configuration for profile `effigy` to be written"
@@ -1492,7 +1492,7 @@ mod progress_tests {
             "starting Colima profile `effigy` with the managed sizing",
             Some((3, 3)),
         );
-        let starting = progress.frame_at(Duration::from_secs(9));
+        let starting = progress.detailed_frame_at(Duration::from_secs(9));
         assert!(
             starting.contains("waiting for `colima start` to finish for profile `effigy`"),
             "{starting}"
@@ -1521,7 +1521,7 @@ mod progress_tests {
         );
         progress.observe(&absent);
         assert_eq!(
-            progress.frame_at(Duration::from_secs(1)),
+            progress.detailed_frame_at(Duration::from_secs(1)),
             "reading the state Colima reports for profile `effigy`; waiting for `colima list --json` to answer for profile `effigy`; last: profile `effigy` is not listed by `colima list --json`; 1s elapsed"
         );
 

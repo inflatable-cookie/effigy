@@ -1047,12 +1047,12 @@ mod tests {
             &sequence_step_label("dev", 2, 4, Some("build")),
             "db:migrate",
         );
-        let first = progress.frame_at(std::time::Duration::from_secs(0));
+        let first = progress.detailed_frame_at(std::time::Duration::from_secs(0));
         assert_eq!(
             first,
             "running dev step 2/4: build; waiting for step `db:migrate` to exit; 0s elapsed"
         );
-        let later = progress.frame_at(std::time::Duration::from_secs(45));
+        let later = progress.detailed_frame_at(std::time::Duration::from_secs(45));
         assert_ne!(first, later, "a frame that never changes is not progress");
         assert_eq!(
             later,

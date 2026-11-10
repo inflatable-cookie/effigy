@@ -180,6 +180,7 @@ pub fn wait_for_ready(
             None,
             None,
         );
+        progress.label(format!("Checking {subject}"));
         match probe_health_detail(check) {
             HealthProbe::Ready => {
                 step.succeed(&format!("{subject} reports healthy"));
@@ -201,7 +202,8 @@ pub fn wait_for_ready(
                 return Err(error);
             }
             HealthProbe::Unanswered => {
-                progress.event(format!("`{check}` did not answer healthy"));
+                progress.detail_event(format!("`{check}` did not answer healthy"));
+                progress.event_label("Health check has not answered");
             }
         }
         std::thread::sleep(Duration::from_millis(250));
@@ -226,6 +228,7 @@ fn health_wait_progress(
     let progress = effigy_ui::steps::ProgressSource::waiting_for(format!(
         "`{check}` to report {subject} healthy"
     ));
+    progress.label(format!("Waiting for {subject}"));
     let step = effigy_ui::steps::live_step(progress.clone());
     (progress, step)
 }

@@ -387,7 +387,7 @@ fn release_gate_steps_name_the_gate_and_its_outcome() {
         hosted_evidence: None,
     };
     assert_eq!(
-        gate_progress(2, 5, &gate, false).frame_at(Duration::from_secs(3)),
+        gate_progress(2, 5, &gate, false).detailed_frame_at(Duration::from_secs(3)),
         "running gate cargo test (2/5); waiting for `effigy test` to exit; 3s elapsed"
     );
     let reused = ResolvedGate {
@@ -396,7 +396,7 @@ fn release_gate_steps_name_the_gate_and_its_outcome() {
         ..gate
     };
     assert_eq!(
-        gate_progress(1, 1, &reused, true).frame_at(Duration::from_secs(2)),
+        gate_progress(1, 1, &reused, true).detailed_frame_at(Duration::from_secs(2)),
         "reusing hosted evidence for gate hosted ci (1/1); waiting for hosted evidence for gate hosted ci; 2s elapsed"
     );
 
@@ -447,7 +447,7 @@ fn a_release_run_step_names_the_stage_the_gate_and_the_next_stage() {
 
     observer.stage("certify");
     assert_eq!(
-        progress.frame_at(Duration::from_secs(3)),
+        progress.detailed_frame_at(Duration::from_secs(3)),
         "running stage certify; waiting for the next gate or stage; 3s elapsed"
     );
 
@@ -462,7 +462,7 @@ fn a_release_run_step_names_the_stage_the_gate_and_the_next_stage() {
     };
     observer.gate_started(2, 5, &gate, false);
     assert_eq!(
-        progress.frame_at(Duration::from_secs(4)),
+        progress.detailed_frame_at(Duration::from_secs(4)),
         "running gate cargo test (2/5); waiting for `effigy test` to exit; 4s elapsed"
     );
 
@@ -484,7 +484,7 @@ fn a_release_run_step_names_the_stage_the_gate_and_the_next_stage() {
     };
     observer.gate_finished(2, 5, &result);
     assert_eq!(
-        progress.frame_at(Duration::from_secs(40)),
+        progress.detailed_frame_at(Duration::from_secs(40)),
         "checking the next gate or stage (2/5); waiting for the next gate or stage; last: gate `cargo test` passed after 12s (2/5); 40s elapsed"
     );
 
@@ -492,7 +492,7 @@ fn a_release_run_step_names_the_stage_the_gate_and_the_next_stage() {
     // outcome stays visible until a newer event replaces it.
     observer.note("checking hosted GitHub Actions evidence");
     assert_eq!(
-        progress.frame_at(Duration::from_secs(41)),
+        progress.detailed_frame_at(Duration::from_secs(41)),
         "checking hosted GitHub Actions evidence; waiting for the next gate or stage; last: gate `cargo test` passed after 12s (2/5); 41s elapsed"
     );
 }
