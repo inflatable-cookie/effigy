@@ -640,6 +640,44 @@ mod checked_control {
         }
     }
 
+    // The held observer still owns this unreaped leader. Identity absence can
+    // precede terminal waitability on macOS; require positive zombie state so
+    // its one post-deadline peek can observe the guard's completed exit.
+    fn wait_zombie(mut observe: impl FnMut() -> Observed<ProcessState>) -> bool {
+        let until = Instant::now() + BOUND;
+        let mut rounds = 0;
+        loop {
+            rounds += 1;
+            if matches!(observe(), Observed::Verified(ProcessState::Zombie, _)) {
+                eprintln!("control leader terminal: positive zombie after {rounds} observations");
+                return true;
+            }
+            if Instant::now() >= until {
+                return false;
+            }
+            std::thread::sleep(POLL);
+        }
+    }
+
+    #[test]
+    fn checked_leader_waits_through_absent_unknown_and_live_states() {
+        use effigy_kernel::observe::{AbsenceProof, Evidence, UnknownReason};
+
+        let evidence = Evidence::new("controlled exit transition".into(), None).unwrap();
+        let mut states = [
+            Observed::Absent(AbsenceProof::NoSuchProcess { pid: 1 }),
+            Observed::Unknown(UnknownReason::PermissionDenied),
+            Observed::Verified(ProcessState::Active, evidence.clone()),
+            Observed::Verified(ProcessState::Stopped, evidence.clone()),
+            Observed::Verified(ProcessState::Zombie, evidence),
+        ]
+        .into_iter();
+        assert!(wait_zombie(|| states
+            .next()
+            .expect("missing terminal state")));
+        assert!(states.next().is_none(), "released on nonterminal evidence");
+    }
+
     // A pid that is still listed in its group, or mid-exit, is an in-flight
     // closure round, not closure: the group inventory reports it as unproven
     // when the OS reaps or tears it down between the listing and the state read.
@@ -950,7 +988,7 @@ mod checked_control {
         // the OS, so they are awaited to absence (see `wait_absent`).
         for (index, id) in owner.workload.iter().enumerate() {
             let closed = if index == 0 {
-                wait_closed(id)
+                wait_zombie(|| ident::process_state(id.pid))
             } else {
                 wait_absent(id)
             };
@@ -983,6 +1021,10 @@ mod checked_control {
             Instant::now() + BOUND,
         )?;
         owner.reap()?;
+        eprintln!(
+            "control {mode}/checked-pause: unknown_detail={:?}",
+            result.get("unknown")
+        );
         let warning_categories: Option<Vec<_>> = result["warnings"].as_array().map(|warnings| {
             warnings
                 .iter()

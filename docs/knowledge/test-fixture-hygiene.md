@@ -613,3 +613,15 @@ clean environment guard before fixture setup and validation. Their expected
 manifest errors must not observe the headless retirement proof's temporary
 `EFFIGY_MANAGED_STREAM` flag. The retirement proof keeps all three values and
 its before-effects assertions; every matrix cell and expected error stays.
+
+## Checked probe terminal readiness
+
+The checked-pause probe control releases its held observer only after the OS
+positively reports the still-unreaped leader as a zombie. On macOS, identity
+absence can precede that terminal state; it proves neither waitability nor
+what the observer's next `waitid(WNOWAIT)` will return. Other descendants still
+require absence, while cleanup retains its existing closure predicate. The
+fixture's five-second observation bound, 1200 ms probe deadline, three-second
+O14 assertion and terminal-result assertions remain unchanged. A controlled
+sequence covers absent, unknown, active and stopped observations before the
+positive zombie state; none may release the observer.
