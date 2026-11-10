@@ -348,6 +348,10 @@ its regular-file, no-SIGPIPE, write-count, elapsed-time and cleanup assertions.
 Terminal redaction fixtures wait for verified group closure and complete capture
 after leader exit before reading their final sink bytes. Leader exit alone does
 not prove the final PTY read or redactor flush has happened.
+A scratch-retention proof reads the allocated scratch scope directly and asserts
+that it has no kernel process effects before abandonment. Subprocess TMPDIR
+delivery and custody recovery have their own controls: recording a leader exit
+and discarding live custody does not prove recoverable group closure.
 
 An admission hook that tests EOF after report delivery consumes and records that
 complete frame before exiting without acknowledgement. Immediate exit races the
