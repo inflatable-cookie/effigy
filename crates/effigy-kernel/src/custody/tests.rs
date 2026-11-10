@@ -4758,3 +4758,27 @@ fn milestone_130acca8_member_that_left_the_group_is_refused_before_signal() {
         "the refused member is not signalled"
     );
 }
+
+#[test]
+fn reserved_fd_mapping_preserves_sources_above_ordered_destinations() {
+    let (reader, _writer) = spawn::pipe().unwrap();
+    for optional in 0u32..8 {
+        let sources = std::array::from_fn(|slot| {
+            (slot < 5 || optional & (1 << (slot - 5)) != 0).then_some(reader.as_raw_fd())
+        });
+        let mapping = spawn::prepare_fds(sources).unwrap();
+        let expected = [0, 1, 2, 3, 4, 5, 10, 11]
+            .into_iter()
+            .zip(sources)
+            .filter_map(|(fd, source)| source.map(|_| fd));
+        assert!(mapping.iter().map(|(_, fd)| *fd).eq(expected));
+        for (source, _) in mapping {
+            assert!(source.as_raw_fd() > 11);
+            // SAFETY: observes flags on a live, uniquely owned prepared source.
+            assert_eq!(
+                unsafe { libc::fcntl(source.as_raw_fd(), libc::F_GETFD) },
+                libc::FD_CLOEXEC
+            );
+        }
+    }
+}

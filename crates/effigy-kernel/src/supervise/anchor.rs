@@ -13,8 +13,8 @@ pub(crate) struct Image {
 impl Image {
     pub(crate) fn prepare(executable: &Executable) -> Result<Self, RunError> {
         #[cfg(target_os = "linux")]
-        let fd = Some(crate::custody::spawn::high(
-            std::fs::File::open(&executable.path)?.into(),
+        let fd = Some(crate::custody::spawn::duplicate(
+            std::fs::File::open(&executable.path)?.as_raw_fd(),
         )?);
         #[cfg(target_os = "macos")]
         let fd = None;

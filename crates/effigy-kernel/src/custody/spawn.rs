@@ -5,9 +5,18 @@ use std::ffi::CString;
 use std::os::fd::{FromRawFd, RawFd};
 use std::sync::Mutex;
 static FORK: Mutex<()> = Mutex::new(());
-// Child destinations are stdio 0..2, barrier/status 3..4, anchor 5,
-// closure pin 10 and handoff 11. No source may alias any destination.
-const SOURCE_FD_MIN: RawFd = HANDOFF_FD + 1;
+// Ordered destinations: stdio, barrier/status, anchor, closure pin and handoff.
+const CHILD_FDS: [RawFd; 8] = [0, 1, 2, 3, 4, 5, crate::closure::CLOSURE_FD, HANDOFF_FD];
+
+pub(super) fn prepare_fds(sources: [Option<RawFd>; 8]) -> io::Result<Vec<(OwnedFd, RawFd)>> {
+    sources
+        .into_iter()
+        .zip(CHILD_FDS)
+        .filter_map(|(source, destination)| {
+            source.map(|fd| duplicate(fd).map(|copy| (copy, destination)))
+        })
+        .collect()
+}
 
 pub(crate) fn pipe() -> io::Result<(OwnedFd, OwnedFd)> {
     let mut fds = [-1; 2];
@@ -24,15 +33,6 @@ pub(crate) fn pipe() -> io::Result<(OwnedFd, OwnedFd)> {
         }
     }
     Ok(pair)
-}
-pub(crate) fn high(fd: OwnedFd) -> io::Result<OwnedFd> {
-    // SAFETY: duplicates a live fd above the child's reserved descriptors.
-    let copy = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, SOURCE_FD_MIN) };
-    if copy < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: fcntl returned a new fd, transferred once.
-    Ok(unsafe { OwnedFd::from_raw_fd(copy) })
 }
 fn nonblock(fd: &OwnedFd) -> io::Result<()> {
     // SAFETY: live fd and supported file status flag.
@@ -289,13 +289,7 @@ impl Blocked {
         }
         let closure_fd = closure
             .map(|capability| capability.custody_fd())
-            .transpose()?
-            .map(high)
             .transpose()?;
-        let closure_fd_raw = closure_fd.as_ref().map_or(-1, AsRawFd::as_raw_fd);
-        // The parent's one-shot descriptor, handed over at its reserved slot.
-        let handoff_copy = handoff.map(|fd| duplicate(fd.as_raw_fd())).transpose()?;
-        let handoff_fd = handoff_copy.as_ref().map_or(-1, AsRawFd::as_raw_fd);
         env.push(
             CString::new(format!("{key}={nonce}"))
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid nonce"))?,
@@ -313,26 +307,17 @@ impl Blocked {
             env.last().expect("nonce present").as_ptr(),
             std::ptr::null(),
         ];
-        let anchor_copy = image
-            .and_then(|i| i.fd.as_ref())
-            .map(|fd| duplicate(fd.as_raw_fd()))
-            .transpose()?;
-        let anchor_fd = anchor_copy.as_ref().map_or(-1, AsRawFd::as_raw_fd);
+        let anchor_fd = image.and_then(|i| i.fd.as_ref());
         let anchored = image.is_some();
         let cwd = DirFd::walk(&spec.cwd, Trust::Ancestor).map_err(io::Error::other)?;
         let _fork = FORK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (barrier_read, barrier_write) = pipe()?;
-        let barrier_read = high(barrier_read)?;
         let (status_read, status_write) = pipe()?;
-        let status_write = high(status_write)?;
         let (mut out_read, mut out_write) = pipe()?;
-        out_write = high(out_write)?;
-        let (err_read, err_write) = pipe()?;
-        let mut err_write = high(err_write)?;
-        let (input_read, input_write) = pipe()?;
-        let mut input_read = high(input_read)?;
+        let (err_read, mut err_write) = pipe()?;
+        let (mut input_read, input_write) = pipe()?;
         // `Pipe` keeps the owner's write end; every other terminal closes it
         // before the fork so the child reads EOF (or its own terminal).
         let mut input_keep = None;
@@ -341,13 +326,11 @@ impl Blocked {
             Terminal::Discard => {
                 drop(input_write);
                 let null = std::fs::OpenOptions::new().write(true).open("/dev/null")?;
-                out_write = high(null.into())?;
+                out_write = null.into();
                 err_write = duplicate(out_write.as_raw_fd())?;
             }
             Terminal::Pipe => {
-                // High, so the child's descriptor sweep closes it: a child
-                // holding its own stdin write end would never see EOF.
-                input_keep = Some(high(input_write)?);
+                input_keep = Some(input_write);
             }
             Terminal::Inherit { capture } => {
                 // A closed owner descriptor keeps the EOF pipe or capture pipe.
@@ -369,7 +352,7 @@ impl Blocked {
             }
             Terminal::Pty | Terminal::Styled { pty: true } => {
                 let (master, slave) = pty()?;
-                input_read = high(slave)?;
+                input_read = slave;
                 out_write = duplicate(input_read.as_raw_fd())?;
                 err_write = duplicate(input_read.as_raw_fd())?;
                 out_read = master;
@@ -391,21 +374,37 @@ impl Blocked {
         // SAFETY: isatty only observes this process's own stdin.
         let stdin_is_terminal = unsafe { libc::isatty(libc::STDIN_FILENO) } == 1;
         let isolate_session = isolates_session(&spec.terminal, stdin_is_terminal);
+        let mapping = prepare_fds([
+            Some(input_read.as_raw_fd()),
+            Some(out_write.as_raw_fd()),
+            Some(err_write.as_raw_fd()),
+            Some(barrier_read.as_raw_fd()),
+            Some(status_write.as_raw_fd()),
+            anchor_fd.map(AsRawFd::as_raw_fd),
+            closure_fd.as_ref().map(AsRawFd::as_raw_fd),
+            handoff.map(AsRawFd::as_raw_fd),
+        ])?;
+        let mut close_ranges = Vec::new();
+        let mut first = 0;
+        for &(_, destination) in &mapping {
+            if first < destination as u32 {
+                close_ranges.push((first, destination as u32 - 1));
+            }
+            first = destination as u32 + 1;
+        }
+        close_ranges.push((first, u32::MAX));
+        let close_from = if anchor_fd.is_some() { 6 } else { 5 };
         let fd_limit = descriptor_limit()?;
-        // SAFETY: no Rust code, allocation or locks run in the child. All
-        // buffers and pointers are prepared above and remain initialized and
-        // immutable in its private address space until execve or _exit.
+        // SAFETY: the child uses only syscalls over these prepared buffers;
+        // no allocation, locks or destructors run before execve or _exit.
         let pid = unsafe { libc::fork() };
         if pid < 0 {
             return Err(io::Error::last_os_error());
         }
         if pid == 0 {
-            // SAFETY: every fd below is live in the inherited descriptor table;
-            // every dup2 source was copied above the highest destination (11)
-            // with CLOEXEC before fork. Mapping targets cannot clobber a source
-            // still needed, even when the original descriptors form a cycle.
-            // The sweep closes those temporaries; only explicit slots remain. In
-            // particular no sibling's barrier or sentinel writer is inherited.
+            // SAFETY: prepared sources are live, CLOEXEC and above every target,
+            // so remapping cannot clobber a pending source, including cycles.
+            // dup2 always clears CLOEXEC; the sweep closes all non-destinations.
             unsafe {
                 if libc::fchdir(cwd.raw()) != 0
                     || (if isolate_session {
@@ -417,60 +416,26 @@ impl Blocked {
                 {
                     libc::_exit(125);
                 }
-                if libc::dup2(input_read.as_raw_fd(), 0) < 0
-                    || libc::dup2(out_write.as_raw_fd(), 1) < 0
-                    || libc::dup2(err_write.as_raw_fd(), 2) < 0
-                    || libc::dup2(barrier_read.as_raw_fd(), 3) < 0
-                    || libc::dup2(status_write.as_raw_fd(), 4) < 0
-                {
-                    libc::_exit(125);
-                }
-                libc::fcntl(3, libc::F_SETFD, libc::FD_CLOEXEC);
-                libc::fcntl(4, libc::F_SETFD, libc::FD_CLOEXEC);
-                if anchor_fd >= 0 && libc::dup2(anchor_fd, 5) < 0 {
-                    libc::_exit(125);
-                }
-                if closure_fd_raw >= 0 && libc::dup2(closure_fd_raw, crate::closure::CLOSURE_FD) < 0
-                {
-                    libc::_exit(125);
-                }
-                // A source that is already the target slot makes `dup2` a
-                // no-op, so the descriptor keeps CLOEXEC and the payload would
-                // never survive exec. Clear the flag on the slot itself.
-                if handoff_fd >= 0
-                    && (libc::dup2(handoff_fd, HANDOFF_FD) < 0
-                        || libc::fcntl(HANDOFF_FD, libc::F_SETFD, 0) < 0)
-                {
-                    libc::_exit(125);
-                }
-                let close_from = if anchor_fd >= 0 { 6 } else { 5 };
-                // Keep only the write-only cleanup pin and the parent's
-                // one-shot handoff in slots 10/11. Sibling barriers always
-                // close; the group anchor closes these workload slots too.
-                #[cfg(target_os = "linux")]
-                let closed = {
-                    let mut ok =
-                        libc::syscall(libc::SYS_close_range, close_from as u32, 9u32, 0u32) == 0;
-                    if ok && closure_fd_raw < 0 {
-                        ok = libc::syscall(libc::SYS_close_range, 10u32, 10u32, 0u32) == 0;
+                for (source, destination) in &mapping {
+                    if libc::dup2(source.as_raw_fd(), *destination) < 0
+                        || (matches!(*destination, 3 | 4)
+                            && libc::fcntl(*destination, libc::F_SETFD, libc::FD_CLOEXEC) < 0)
+                    {
+                        libc::_exit(125);
                     }
-                    ok && libc::syscall(
-                        libc::SYS_close_range,
-                        if handoff_fd >= 0 { 12u32 } else { 11u32 },
-                        u32::MAX,
-                        0u32,
-                    ) == 0
-                };
-                #[cfg(target_os = "macos")]
-                let closed = false;
-                if !closed {
-                    let mut fd = close_from;
-                    while fd < fd_limit {
-                        if !(closure_fd_raw >= 0 && fd == crate::closure::CLOSURE_FD
-                            || handoff_fd >= 0 && fd == HANDOFF_FD)
-                        {
-                            libc::close(fd);
-                        }
+                }
+                // Close every gap in the prepared destinations, including all
+                // copied sources and sibling barriers. The anchor closes the
+                // workload-only slots separately below.
+                for &(first, last) in &close_ranges {
+                    #[cfg(target_os = "linux")]
+                    if libc::syscall(libc::SYS_close_range, first, last, 0u32) == 0 {
+                        continue;
+                    }
+                    let end = last.min((fd_limit - 1) as u32);
+                    let mut fd = first;
+                    while fd <= end {
+                        libc::close(fd as RawFd);
                         fd += 1;
                     }
                 }
@@ -531,13 +496,13 @@ impl Blocked {
                             libc::close(fd);
                             fd += 1;
                         }
-                        if handoff_fd >= 0 {
+                        if handoff.is_some() {
                             // The anchor is not the reader: only the workload
                             // keeps the parent's handoff.
                             libc::close(HANDOFF_FD);
                         }
                         #[cfg(target_os = "linux")]
-                        if anchor_fd >= 0 {
+                        if anchor_fd.is_some() {
                             libc::syscall(
                                 libc::SYS_execveat,
                                 5,
@@ -551,7 +516,7 @@ impl Blocked {
                         libc::execve(anchor_args[0], anchor_args.as_ptr(), anchor_env.as_ptr());
                         libc::_exit(125);
                     }
-                    if anchor_fd >= 0 {
+                    if anchor_fd.is_some() {
                         libc::close(5);
                     }
                     libc::close(control[0]);
@@ -625,6 +590,7 @@ impl Blocked {
                 libc::_exit(127);
             }
         }
+        drop(mapping);
         drop(barrier_read);
         drop(status_write);
         drop(out_write);
@@ -882,9 +848,10 @@ pub(crate) fn descriptor_limit() -> io::Result<i32> {
     Ok(limit)
 }
 
-fn duplicate(fd: RawFd) -> io::Result<OwnedFd> {
+pub(crate) fn duplicate(fd: RawFd) -> io::Result<OwnedFd> {
+    let minimum = CHILD_FDS[CHILD_FDS.len() - 1] + 1;
     // SAFETY: borrows the live source; the returned descriptor has sole ownership.
-    let copy = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, SOURCE_FD_MIN) };
+    let copy = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, minimum) };
     if copy < 0 {
         return Err(io::Error::last_os_error());
     }
@@ -908,6 +875,6 @@ fn pty() -> io::Result<(OwnedFd, OwnedFd)> {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: successful openpty returns two fresh, distinct descriptors.
-    let pair = unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
-    Ok((high(pair.0)?, high(pair.1)?))
+    let _pair = unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
+    Ok((duplicate(master)?, duplicate(slave)?))
 }
