@@ -19,7 +19,7 @@ import linux_native_build as build
 import linux_native_session as session
 import linux_setup as setup
 
-FILES = ('common.py', 'runtime.py', 'probe.py', 'linux_native_session.py', 'linux_native_storage.py')
+FILES = ('common.py', 'runtime.py', 'probe.py', 'linux_native_session.py', 'linux_native_storage.py', 'linux_loop_bound.py')
 
 
 def submit_unit(attempt, argv, unit):

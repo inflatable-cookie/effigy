@@ -52,7 +52,7 @@ def root_resume(root, attempt, ssh):
     remote = build.BASE + '/metadata/smoke-' + uuid.uuid4().hex
     attempt.command(ssh + ['umask 077; mkdir ' + shlex.quote(remote)])
     pins = {}
-    for name in ('linux_native_storage.py', 'linux_native_writers.py', 'linux_native_resume.py'):
+    for name in ('linux_loop_bound.py', 'linux_native_storage.py', 'linux_native_writers.py', 'linux_native_resume.py'):
         data = (Path(__file__).parent / name).read_bytes()
         pins[name] = hashlib.sha256(data).hexdigest()
         attempt.command(ssh + ['umask 077; set -C; cat > ' + shlex.quote(remote + '/' + name)], data=data)

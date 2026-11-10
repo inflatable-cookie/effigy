@@ -14,67 +14,11 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_native_storage as storage
+from linux_loop_bound import visible_mounts, verify_actor
 
 
-def visible_mounts(actor):
-    rows = storage.mount_rows(actor['mountinfo'])
-    by_id = {int(line.split()[0]): row for line, row in zip(actor['mountinfo'].splitlines(), rows)}
-    if (len(by_id) != len(rows) or len(actor['mount_visibility']) != len({row['target'] for row in rows})
-            or set(item['target'] for item in actor['mount_visibility']) != set(row['target'] for row in rows)):
-        raise ValueError('mount visibility observation is incomplete')
-    visible = {}
-    for item in actor['mount_visibility']:
-        row = by_id.get(item['mount_id'])
-        if (row is None or row['device'] != item['device']
-                or not Path(item['target']).is_relative_to(Path(row['target']))
-                or item['read_only'] != ('ro' in row['options'])):
-            raise ValueError('visible mount descriptor disagrees with mountinfo')
-        visible[item['mount_id']] = row
-    return list(visible.values())
 
 
-def verify_actor(actor, devices, engine_root, memory_max):
-    """Check persistent allocation routes, separately from bounded kernel/RAM writes."""
-    if not actor['birth'] or memory_max <= 0:
-        raise ValueError('writer birth or memory ceiling is absent')
-    writable = []
-    mounts = visible_mounts(actor)
-    for row in mounts:
-        if 'rw' not in row['options']:
-            continue
-        if row['fstype'] == 'overlay':
-            options = dict(part.split('=', 1) for part in row['super_options'] if '=' in part)
-            for key in ('upperdir', 'workdir'):
-                value = Path(options.get(key, ''))
-                if not value.is_absolute() or '..' in value.parts or not value.is_relative_to(Path(engine_root)):
-                    raise ValueError('overlay allocation escapes the bounded engine')
-            kind = 'bounded-overlay'
-        elif row['device'] in devices:
-            kind = 'bounded-filesystem'
-        elif row['fstype'] in ('tmpfs', 'devtmpfs'):
-            # The actor's cgroup memory.max/swap.max is independently read back.
-            # A tmpfs allocation is memory, not native root disk allocation.
-            kind = 'kernel-memory-filesystem'
-        elif row['fstype'] in ('proc', 'cgroup2', 'devpts', 'mqueue', 'nsfs'):
-            kind = 'kernel-interface'
-        else:
-            raise ValueError('unbounded writable filesystem: ' + row['target'])
-        writable.append(dict(row, allocation_class=kind))
-    for item in actor['descriptors'] + actor['shared_writable_mappings']:
-        if item['kind'] == 'block':
-            raise ValueError('writer holds a writable block-device descriptor')
-        if item['kind'] == 'regular' and item['device'] not in devices:
-            if item['filesystem_magic'] == 0x01021994:  # TMPFS_MAGIC, including memfd
-                continue
-            if any(row['device'] == item['device'] and row['fstype'] in ('proc', 'cgroup2')
-                   for row in mounts):
-                continue
-            # An overlay descriptor carries the overlay device, not upperdir's
-            # device. It must resolve to this actor's verified writable overlay.
-            if not any(row['device'] == item['device'] and row['fstype'] == 'overlay'
-                       and 'rw' in row['options'] for row in mounts):
-                raise ValueError('writer holds an unbounded writable file descriptor or mapping')
-    return {'pid': actor['pid'], 'birth': actor['birth'], 'writable_mounts': writable}
 
 
 def birth(proc):
