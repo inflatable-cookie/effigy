@@ -378,10 +378,15 @@ struct RunningSource {
 /// look, so `--json` and piped output stay silent on the step lines.
 fn source_progress_steps() -> SourceProgress {
     let running: Mutex<BTreeMap<String, RunningSource>> = Mutex::new(BTreeMap::new());
-    SourceProgress::to(move |event| {
+    let progress = SourceProgress::to(move |event| {
         let mut running = running.lock().unwrap_or_else(PoisonError::into_inner);
         draw_source_event(&mut running, event);
-    })
+    });
+    if effigy_ui::steps::streams_output() {
+        progress.with_output()
+    } else {
+        progress
+    }
 }
 
 /// Turn one engine event into what the operator sees: a step started, a step
@@ -395,7 +400,11 @@ fn draw_source_event(running: &mut BTreeMap<String, RunningSource>, event: Sourc
             local,
         } => {
             let progress = source_progress(&source, &subject, &revision, local);
-            let step = effigy_ui::steps::live_step(progress);
+            let step = if local {
+                effigy_ui::steps::live_step(progress)
+            } else {
+                effigy_ui::steps::streaming_step(progress)
+            };
             running.insert(source, RunningSource { step, local });
         }
         SourceProgressEvent::Finished {
@@ -418,6 +427,14 @@ fn draw_source_event(running: &mut BTreeMap<String, RunningSource>, event: Sourc
                 Some(running) => running.step.fail(&summary),
                 None if !ok => effigy_ui::steps::print_line(&format!("[bundle] {summary}")),
                 None => {}
+            }
+        }
+        SourceProgressEvent::Output { bytes } => {
+            if effigy_ui::steps::streams_output() {
+                use std::io::Write;
+                let mut stderr = std::io::stderr().lock();
+                let _ = stderr.write_all(&bytes);
+                let _ = stderr.flush();
             }
         }
         SourceProgressEvent::Warning { message } | SourceProgressEvent::Note { message } => {

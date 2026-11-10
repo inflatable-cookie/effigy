@@ -1,0 +1,1 @@
+Builds, installs and script steps now show their output live on a terminal, with a short header and timed outcome instead of hiding progress behind a spinner. Linux artifact receipts and builder safeguards remain intact; JSON, piped and managed-pane output keep their existing behavior.

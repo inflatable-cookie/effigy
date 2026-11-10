@@ -747,6 +747,100 @@ else exit 43; fi
 }
 
 #[test]
+fn oci_pull_streams_before_exit_while_descriptor_stays_captured() {
+    use effigy_test_support::process::FixtureCommandExt;
+
+    let fixture = Fixture::new();
+    fixture.write_path_bundle();
+    let tools = fixture.owner.path().join("tools");
+    fs::create_dir(&tools).unwrap();
+    let executable = tools.join("oras");
+    fs::write(&executable, r#"#!/bin/sh
+if [ "$1" = manifest ]; then
+  printf '{"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+elif [ "$1" = pull ]; then
+  case "$2" in *@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) ;; *) exit 41;; esac
+  printf 'BUNDLE-PULL-LIVE\n'
+  while [ ! -f "$HOME/release-pull" ]; do sleep 0.02; done
+  cp "$EFFIGY_TEST_SOURCE/bundle.toml" "$4/bundle.toml"
+  cp "$EFFIGY_TEST_SOURCE/effigy.toml" "$4/effigy.toml"
+else exit 43; fi
+"#).unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        fixture.repo.join("effigy.toml"),
+        "[bundle]\nbase = { type = \"oci\", url = \"ghcr.io/fixture/bundle:main\" }\n",
+    )
+    .unwrap();
+    let output = Command::new("python3")
+        .args(["-I", "-B", "-c", BUNDLE_PTY_PROOF])
+        .arg(env!("CARGO_BIN_EXE_effigy"))
+        .arg(&fixture.repo)
+        .arg(&fixture.home)
+        .arg(&tools)
+        .output_owned()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(fixture.repo.join(".effigy/sources.lock.json").is_file());
+}
+
+const BUNDLE_PTY_PROOF: &str = r#"
+import errno, os, pathlib, pty, select, subprocess, sys, time
+binary, repo, home, tools = sys.argv[1:]
+env = os.environ.copy()
+for key in ('CI', 'EFFIGY_MANAGED_PANE', 'EFFIGY_INTERNAL_MANAGED_PANE', 'EFFIGY_WORKSPACE_CONTAINER', 'EFFIGY_CONTAINER_HANDOFF'):
+    env.pop(key, None)
+env.update(HOME=home, PATH=tools + os.pathsep + env['PATH'], TERM='xterm-256color', EFFIGY_TEST_SOURCE=str(pathlib.Path(repo) / 'bundle'))
+master, slave = pty.openpty()
+child = subprocess.Popen([binary, 'bundle', 'sync'], cwd=repo, env=env, stdin=subprocess.DEVNULL, stdout=slave, stderr=slave)
+os.close(slave)
+transcript = bytearray()
+def read_once():
+    if select.select([master], [], [], .05)[0]:
+        try:
+            data = os.read(master, 65536)
+        except OSError as error:
+            if error.errno == errno.EIO:
+                return False
+            raise
+        transcript.extend(data)
+        return bool(data)
+    return True
+try:
+    deadline = time.monotonic() + 30
+    while b'BUNDLE-PULL-LIVE' not in transcript:
+        assert child.poll() is None, bytes(transcript)
+        assert time.monotonic() < deadline, bytes(transcript)
+        read_once()
+    assert child.poll() is None, bytes(transcript)
+    assert not (pathlib.Path(repo) / '.effigy/sources.lock.json').exists(), bytes(transcript)
+    (pathlib.Path(home) / 'release-pull').touch()
+    while child.poll() is None:
+        assert time.monotonic() < deadline, bytes(transcript)
+        read_once()
+    while read_once():
+        assert time.monotonic() < deadline, bytes(transcript)
+    assert child.wait() == 0, bytes(transcript)
+    assert b'BUNDLE-PULL-LIVE' in transcript, bytes(transcript)
+    assert b'{"digest":' not in transcript, bytes(transcript)
+finally:
+    (pathlib.Path(home) / 'release-pull').touch()
+    if child.poll() is None:
+        child.terminate()
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait()
+    os.close(master)
+"#;
+
+#[test]
 fn a_later_dev_refreshes_a_changed_path_bundle() {
     let fixture = Fixture::new();
     fixture.write_path_bundle();

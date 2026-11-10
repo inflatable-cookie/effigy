@@ -77,7 +77,7 @@ pub(in crate::runner) fn run_plain(
     run: &mut TaskRun,
     command: PlainCommand<'_>,
 ) -> Result<PlainExit, RunnerError> {
-    run_plain_inner(run, command, false)
+    run_plain_inner(run, command, false, false)
 }
 
 /// A plain command that is Effigy's own child process (a builtin or a script
@@ -87,14 +87,16 @@ pub(in crate::runner) fn run_plain(
 pub(in crate::runner) fn run_effigy_child(
     run: &mut TaskRun,
     command: PlainCommand<'_>,
+    stream: bool,
 ) -> Result<PlainExit, RunnerError> {
-    run_plain_inner(run, command, true)
+    run_plain_inner(run, command, true, stream)
 }
 
 fn run_plain_inner(
     run: &mut TaskRun,
     command: PlainCommand<'_>,
     effigy_child: bool,
+    stream: bool,
 ) -> Result<PlainExit, RunnerError> {
     let _waiting = CustodyWait::enter();
     if let Some((code, workload)) = super::pending_stop(&run.target().label) {
@@ -106,9 +108,10 @@ fn run_plain_inner(
             stderr: Vec::new(),
         });
     }
-    let relay = !command.capture
-        && run.keyed()
-        && !(std::io::stdout().is_terminal() && std::io::stderr().is_terminal());
+    let relay = stream
+        || !command.capture
+            && run.keyed()
+            && !(std::io::stdout().is_terminal() && std::io::stderr().is_terminal());
     let mut env = environment(command.cwd, command.env)?;
     let grant = if effigy_child {
         crate::runner::secret_session::take_child_grant()
@@ -180,7 +183,8 @@ fn run_plain_inner(
                 .write_all(&out)
                 .and_then(|()| std::io::stdout().flush());
             let _ = std::io::stderr().lock().write_all(&err);
-        } else if command.capture {
+        }
+        if command.capture {
             stdout.push(&out);
             stderr.push(&err);
         }

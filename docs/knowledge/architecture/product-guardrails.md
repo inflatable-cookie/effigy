@@ -43,8 +43,16 @@ wrong." This followed an `effigy dev` that sat for four minutes and then
 reported only `run refused: Interrupted(TimedOut { phase: "settle", … })`,
 when the real cause was two named services failing their health checks.
 
+- **Producers stream their own output live; spinners are for silent waits.**
+  On a terminal, builds, installs and script steps print one short header,
+  their live output, then a success or failure line with duration. Keep JSON,
+  piped and managed-pane output unchanged. Tom, 2026-11-10, watching the Linux
+  artifact build behind a bare spinner: "I think it would be better to still
+  show that output so you know what it's actually doing rather than hiding it
+  behind a spinner".
+
 - **Show what is happening as it happens.** On a terminal, any step that can
-  take more than a moment runs under an asynchronous spinner whose short label
+  take more than a moment and waits silently runs under an asynchronous spinner whose short label
   names the current step and its subject, for example `starting web`,
   `waiting for web to report healthy (attempt 4, last: HTTP 404)` or
   `fetching bundle decodelabs`. The label changes as the work moves on, and
