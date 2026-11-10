@@ -1,3 +1,4 @@
+use effigy_ui::steps::ProgressFrame;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -294,10 +295,11 @@ fn provider_fetch_progress(
     rev: Option<&str>,
     fetch: DeployProviderFetch,
 ) -> ProgressSource {
-    let progress = ProgressSource::waiting_for(provider_source_awaiting(url, reference, rev));
-    progress.update(resolving_provider_label(provider_name, fetch), None, None);
-    progress.label(format!("Resolving {provider_name} provider"));
-    progress
+    ProgressSource::new(
+        ProgressFrame::new(resolving_provider_label(provider_name, fetch))
+            .label(format!("Resolving {provider_name} provider"))
+            .waiting_for(provider_source_awaiting(url, reference, rev)),
+    )
 }
 
 /// What a git provider fetch waits on: `git source <url> at rev <sha>`, or the
@@ -1137,14 +1139,10 @@ mod tests {
         let detail = pinned.detailed_frame_at(Duration::from_secs(5));
         assert!(detail.contains(url));
         assert!(detail.contains("1a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d"));
-        // One fetch, read twice: the elapsed wait moves for the same source.
+        // The producer keeps source evidence out of the concise terminal phrase.
         assert_eq!(
             pinned.frame_at(Duration::from_secs(5)),
             "Resolving acme provider · 5s"
-        );
-        assert_eq!(
-            pinned.frame_at(Duration::from_secs(45)),
-            "Resolving acme provider · 45s"
         );
         let floating = provider_fetch_progress(
             "acme",
@@ -1156,10 +1154,6 @@ mod tests {
         assert_eq!(
             floating.frame_at(Duration::from_secs(2)),
             "Resolving acme provider · 2s"
-        );
-        assert_eq!(
-            floating.frame_at(Duration::from_secs(60)),
-            "Resolving acme provider · 60s"
         );
     }
 }

@@ -1,3 +1,4 @@
+use effigy_ui::steps::ProgressFrame;
 use std::path::Path;
 
 use effigy_core::resolver::ResolvedTarget;
@@ -117,8 +118,9 @@ pub(super) fn release_run_action(
     to: Option<ReleaseStage>,
 ) -> Result<ReleaseRunOutcome, RunnerError> {
     let home = release_home_via_release()?;
-    let progress = ProgressSource::waiting_for(NEXT_GATE_OR_STAGE);
-    progress.update(release_run_label(&action, to), None, None);
+    let progress = ProgressSource::new(
+        ProgressFrame::new(release_run_label(&action, to)).waiting_for(NEXT_GATE_OR_STAGE),
+    );
     let step = live_step(progress.clone());
     let action_label = action_name(&action);
     let request = ReleaseRunRequest {
@@ -181,13 +183,8 @@ impl GateObserver for ReleaseRunSteps {
         if let Some(previous) = self.gate.take() {
             previous.finish_clear();
         }
-        show_gate(
-            &self.progress,
-            position,
-            total,
-            gate,
-            reusing_hosted_evidence,
-        );
+        self.progress
+            .update(|_| gate_frame(position, total, gate, reusing_hosted_evidence));
         self.gate = Some(self.root.live_step(gate_progress(
             position,
             total,
@@ -203,23 +200,26 @@ impl GateObserver for ReleaseRunSteps {
             Some(step) => step.fail(&summary),
             None => {}
         }
-        self.progress.update(
-            "checking the next gate or stage",
-            Some((position as u64, total as u64)),
-            Some(summary),
-        );
-        self.progress.waiting_on(NEXT_GATE_OR_STAGE);
+        self.progress.update(|_| {
+            ProgressFrame::new("checking the next gate or stage")
+                .count(Some((position as u64, total as u64)))
+                .event(Some(summary))
+                .waiting_for(NEXT_GATE_OR_STAGE)
+        });
     }
 
     fn stage(&mut self, stage: &str) {
-        self.progress
-            .update(format!("running stage {stage}"), None, None);
-        self.progress.waiting_on(NEXT_GATE_OR_STAGE);
+        self.progress.update(|_| {
+            ProgressFrame::new(format!("running stage {stage}")).waiting_for(NEXT_GATE_OR_STAGE)
+        });
     }
 
     fn note(&mut self, message: &str) {
-        self.progress.update(message, None, None);
-        self.progress.waiting_on(NEXT_GATE_OR_STAGE);
+        self.progress.update(|previous| {
+            ProgressFrame::new(message)
+                .waiting_for(NEXT_GATE_OR_STAGE)
+                .observations_from(previous)
+        });
     }
 }
 
@@ -397,20 +397,17 @@ pub(super) fn gate_progress(
     gate: &ResolvedGate,
     reusing_hosted_evidence: bool,
 ) -> ProgressSource {
-    let source = ProgressSource::waiting_for(String::new());
-    show_gate(&source, position, total, gate, reusing_hosted_evidence);
-    source
+    ProgressSource::new(gate_frame(position, total, gate, reusing_hosted_evidence))
 }
 
 /// Show one gate on a progress source: its sub-step and count, and the exact
 /// command or hosted evidence it is waiting on.
-fn show_gate(
-    source: &ProgressSource,
+fn gate_frame(
     position: usize,
     total: usize,
     gate: &ResolvedGate,
     reusing_hosted_evidence: bool,
-) {
+) -> ProgressFrame {
     let (sub_step, awaiting) = if reusing_hosted_evidence {
         (
             format!("reusing hosted evidence for gate {}", gate.name),
@@ -422,8 +419,9 @@ fn show_gate(
             format!("`{}` to exit", gate.command),
         )
     };
-    source.update(sub_step, Some((position as u64, total as u64)), None);
-    source.waiting_on(awaiting);
+    ProgressFrame::new(sub_step)
+        .count(Some((position as u64, total as u64)))
+        .waiting_for(awaiting)
 }
 
 /// The line a finished gate leaves: the outcome word, the timing, and where

@@ -13,7 +13,7 @@
 //!     "reading the gateway state",
 //!     "the gateway identity record",
 //!     |progress| {
-//!         progress.update("checking whether the gateway is running", None, None);
+//!         progress.update(|_| ProgressFrame::new("checking whether the gateway is running"));
 //!         resolve_status()
 //!     },
 //! )?;
@@ -21,6 +21,8 @@
 //!
 //! The closure moves the action and the awaited object as the work moves on.
 //! When it returns, the step ends with the action it last set.
+
+use effigy_ui::steps::ProgressFrame;
 
 use effigy_ui::steps::{live_step, ProgressSource};
 
@@ -35,8 +37,7 @@ pub(in crate::runner) fn live_progress<T>(
     awaiting: &str,
     work: impl FnOnce(&ProgressSource) -> Result<T, RunnerError>,
 ) -> Result<T, RunnerError> {
-    let progress = ProgressSource::waiting_for(awaiting);
-    progress.update(action, None, None);
+    let progress = ProgressSource::new(ProgressFrame::new(action).waiting_for(awaiting));
     let step = live_step(progress.clone());
     match work(&progress) {
         Ok(value) => {
@@ -61,7 +62,7 @@ mod tests {
                 "reading the gateway state",
                 "the gateway identity record",
                 |progress| {
-                    progress.update("the gateway is running on pid 42", None, None);
+                    progress.update(|_| ProgressFrame::new("the gateway is running on pid 42"));
                     Ok(42)
                 },
             )

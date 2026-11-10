@@ -9,6 +9,8 @@
 //! pull/build/create/start lines, `container down` its stopping/removing lines,
 //! so the label changes as the runtime works instead of after it finishes.
 
+use effigy_ui::steps::ProgressFrame;
+
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -51,7 +53,7 @@ impl TimedStep {
     }
 
     pub fn set_label(&self, label: impl Into<String>) {
-        self.source.update(label.into(), None, None);
+        self.source.update(|_| ProgressFrame::new(label.into()));
     }
 
     pub fn elapsed(&self) -> Duration {
@@ -99,8 +101,7 @@ impl TimedStep {
 /// silent awaits the command's own exit, so the frame never names a report
 /// that may never come (effigy#467, Q-017).
 pub fn runtime_wait(label: impl Into<String>, awaiting: impl Into<String>) -> TimedStep {
-    let source = ProgressSource::waiting_for(awaiting);
-    source.update(label.into(), None, None);
+    let source = ProgressSource::new(ProgressFrame::new(label.into()).waiting_for(awaiting));
     TimedStep::live(source)
 }
 

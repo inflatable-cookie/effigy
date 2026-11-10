@@ -1,3 +1,4 @@
+use effigy_ui::steps::ProgressFrame;
 use std::fs::File;
 use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio};
@@ -157,7 +158,6 @@ pub(super) fn wait_for_private_gateway_ready(
     // The listener address lives in the probe's own sub-step: once an event
     // arrives the frame shows that event instead of this sentence, and the
     // operator must still see the exact port being waited on.
-    progress.now_waiting_for("the gateway to answer");
     wait_for_private_gateway_ready_with_probe(&operation, progress, config.proxy.bind_addr, || {
         server::get_verified_gateway_status(config).map(|_| ())
     })
@@ -173,8 +173,11 @@ pub(super) fn wait_for_private_gateway_ready_with_probe(
     mut probe: impl FnMut() -> Result<(), effigy_gateway::GatewayError>,
 ) -> Result<(), RunnerError> {
     let action = format!("checking the verified listener on {listener}");
-    progress.update(action.as_str(), None, None);
-    progress.label(format!("Checking gateway on {listener}"));
+    progress.update(|_| {
+        ProgressFrame::new(action.as_str())
+            .label(format!("Checking gateway on {listener}"))
+            .waiting_for("the gateway to answer")
+    });
     loop {
         operation
             .check("private gateway verified listener publication")
@@ -193,8 +196,12 @@ pub(super) fn wait_for_private_gateway_ready_with_probe(
             }
             Err(error) => return Err(RunnerError::task_invocation(error.to_string())),
         };
-        progress.update(action.as_str(), None, Some(blocker.into()));
-        progress.label(format!("Checking gateway on {listener}"));
+        progress.update(|_| {
+            ProgressFrame::new(action.as_str())
+                .event(Some(blocker.into()))
+                .label(format!("Checking gateway on {listener}"))
+                .waiting_for("the gateway to answer")
+        });
         let remaining = operation.remaining().ok_or_else(|| {
             RunnerError::task_invocation("private gateway startup requires a finite budget")
         })?;

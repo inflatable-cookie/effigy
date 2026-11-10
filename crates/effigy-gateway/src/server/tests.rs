@@ -1145,7 +1145,7 @@ fn milestone_cbef4a23_tls_reload_matrix() {
                 )
                 .unwrap(),
                 "unreadable" => {
-                    std::fs::set_permissions(&certs, std::fs::Permissions::from_mode(0)).unwrap()
+                    std::fs::set_permissions(&certs, std::fs::Permissions::from_mode(0o0)).unwrap()
                 }
                 "missing-directory" => std::fs::rename(&certs, &held).unwrap(),
                 _ => std::fs::write(certs.join("stale.host.test.pem"), "incomplete").unwrap(),

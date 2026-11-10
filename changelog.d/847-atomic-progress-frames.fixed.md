@@ -1,0 +1,1 @@
+Progress phases now publish their short label, detailed wait, count and blocker together, so terminal updates cannot briefly mix evidence from different phases. Moving to a new phase clears its previous events while verbose detail, managed panes and streaming output keep their existing modes.

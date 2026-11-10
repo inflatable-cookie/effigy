@@ -505,30 +505,6 @@ fn liveness(status: Observed<effigy_kernel::run::RunStatus>) -> RunLiveness {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn only_typed_absence_is_not_found() {
-        use effigy_kernel::observe::{AbsenceProof, UnknownReason};
-        assert!(matches!(
-            liveness(Observed::Absent(AbsenceProof::NoRow {
-                table: "runs".into()
-            })),
-            RunLiveness::NotFound
-        ));
-        for reason in [
-            UnknownReason::PermissionDenied,
-            UnknownReason::StoreUnreadable("QueryReturnedNoRows".into()),
-        ] {
-            assert!(matches!(
-                liveness(Observed::Unknown(reason)),
-                RunLiveness::Unknown(_)
-            ));
-        }
-    }
-}
-
 fn project_children(
     cx: &effigy_kernel::ctx::ObserveContext,
     root: &effigy_kernel::root::StateRoot,
@@ -558,4 +534,28 @@ fn project_children(
             Ok(view)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn only_typed_absence_is_not_found() {
+        use effigy_kernel::observe::{AbsenceProof, UnknownReason};
+        assert!(matches!(
+            liveness(Observed::Absent(AbsenceProof::NoRow {
+                table: "runs".into()
+            })),
+            RunLiveness::NotFound
+        ));
+        for reason in [
+            UnknownReason::PermissionDenied,
+            UnknownReason::StoreUnreadable("QueryReturnedNoRows".into()),
+        ] {
+            assert!(matches!(
+                liveness(Observed::Unknown(reason)),
+                RunLiveness::Unknown(_)
+            ));
+        }
+    }
 }

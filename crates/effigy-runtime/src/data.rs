@@ -1,3 +1,4 @@
+use effigy_ui::steps::ProgressFrame;
 mod cache;
 mod planning;
 mod progress;
@@ -118,11 +119,13 @@ fn list_cache_for_repo<F>(
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
-    progress.update(
-        format!("inspecting cache volumes for `{}`", repo_root.display()),
-        None,
-        None,
-    );
+    progress.update(|_| {
+        ProgressFrame::new(format!(
+            "inspecting cache volumes for `{}`",
+            repo_root.display()
+        ))
+        .label("Inspecting cache volumes")
+    });
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let _operation_plan = cache_operation_plan(
@@ -146,11 +149,15 @@ where
     .into_iter()
     .filter_map(cache_volume_entry)
     .collect::<Vec<_>>();
-    progress.update(
-        format!("inspecting cache volumes for `{}`", repo_root.display()),
-        Some((caches.len() as u64, caches.len() as u64)),
-        Some(format!("listed {} cache volumes", caches.len())),
-    );
+    progress.update(|_| {
+        ProgressFrame::new(format!(
+            "inspecting cache volumes for `{}`",
+            repo_root.display()
+        ))
+        .count(Some((caches.len() as u64, caches.len() as u64)))
+        .event(Some(format!("listed {} cache volumes", caches.len())))
+        .label("Inspecting cache volumes")
+    });
 
     Ok(render_container_report(
         cache_list_report(&policy, colima_running, &caches),
@@ -170,18 +177,21 @@ where
     CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
         let repos = crate::read::discover_effigy_repos_under(scope_root);
         let total = repos.len() as u64;
-        progress.update(
-            "inspecting cache volumes",
-            Some((0, total)),
-            Some(format!("found {total} repos")),
-        );
+        progress.update(|_| {
+            ProgressFrame::new("inspecting cache volumes")
+                .count(Some((0, total)))
+                .event(Some(format!("found {total} repos")))
+        });
         let mut rendered = Vec::new();
         for (index, repo_root) in repos.into_iter().enumerate() {
-            progress.update(
-                format!("inspecting cache volumes for `{}`", repo_root.display()),
-                Some((index as u64 + 1, total)),
-                None,
-            );
+            progress.update(|_| {
+                ProgressFrame::new(format!(
+                    "inspecting cache volumes for `{}`",
+                    repo_root.display()
+                ))
+                .count(Some((index as u64 + 1, total)))
+                .label("Inspecting cache volumes")
+            });
             match list_cache_for_repo(
                 &repo_root,
                 name,
@@ -219,7 +229,7 @@ where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
     CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
-        progress.update("inspecting cache volumes", None, None);
+        progress.update(|_| ProgressFrame::new("inspecting cache volumes"));
         let resolved_profile = effigy_containers::backend::global_endpoint(profile);
         let _operation_plan = global_cache_operation_plan(
             cwd,
@@ -245,11 +255,11 @@ where
                     && kind_filter.is_none_or(|kind| cache.kind == kind)
             })
             .collect::<Vec<_>>();
-        progress.update(
-            "inspecting cache volumes",
-            Some((caches.len() as u64, caches.len() as u64)),
-            Some(format!("listed {} cache volumes", caches.len())),
-        );
+        progress.update(|_| {
+            ProgressFrame::new("inspecting cache volumes")
+                .count(Some((caches.len() as u64, caches.len() as u64)))
+                .event(Some(format!("listed {} cache volumes", caches.len())))
+        });
         let scope_label =
             cache_scope_label("profile-wide cache inventory", project_filter, kind_filter);
 
@@ -270,7 +280,7 @@ where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
     CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
-        progress.update("inspecting cache volumes", None, None);
+        progress.update(|_| ProgressFrame::new("inspecting cache volumes"));
         let policy = load_container_policy(repo_root, name)
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
         let _operation_plan = cache_operation_plan(
@@ -305,12 +315,12 @@ where
             &run_runtime_volume_capture,
         )?;
         let cache_total = caches.len() as u64;
-        progress.now_waiting_for(PROBE_VOLUME_REMOVE);
-        progress.update(
-            "removing cache volumes",
-            Some((0, cache_total)),
-            Some(format!("listed {cache_total} cache volumes")),
-        );
+        progress.update(|_| {
+            ProgressFrame::new("removing cache volumes")
+                .count(Some((0, cache_total)))
+                .event(Some(format!("listed {cache_total} cache volumes")))
+                .waiting_for(PROBE_VOLUME_REMOVE)
+        });
         let mut entries = Vec::new();
         let mut warnings = Vec::new();
         let mut done = 0u64;
@@ -325,33 +335,32 @@ where
                     warnings.push(format!(
                         "left {reason}; it was not created for this environment"
                     ));
-                    progress.update(
-                        format!("skipping cache volume `{}`", volume.name),
-                        Some((done, cache_total)),
-                        Some(format!("left {reason}")),
-                    );
+                    progress.update(|_| {
+                        ProgressFrame::new(format!("skipping cache volume `{}`", volume.name))
+                            .count(Some((done, cache_total)))
+                            .event(Some(format!("left {reason}")))
+                    });
                     continue;
                 }
                 Some(VolumeIdentity::Absent) | None => {
-                    progress.update(
-                        format!("skipping cache volume `{}`", volume.name),
-                        Some((done, cache_total)),
-                        Some("volume absent".to_owned()),
-                    );
+                    progress.update(|_| {
+                        ProgressFrame::new(format!("skipping cache volume `{}`", volume.name))
+                            .count(Some((done, cache_total)))
+                            .event(Some("volume absent".to_owned()))
+                    });
                     continue;
                 }
             }
-            progress.update(
-                format!("removing cache volume `{}`", volume.name),
-                Some((done, cache_total)),
-                None,
-            );
+            progress.update(|_| {
+                ProgressFrame::new(format!("removing cache volume `{}`", volume.name))
+                    .count(Some((done, cache_total)))
+            });
             run_runtime_volume_capture(repo_root, &endpoint, &remove_volume_command(&volume.name))?;
-            progress.update(
-                format!("removing cache volume `{}`", volume.name),
-                Some((done, cache_total)),
-                Some(format!("removed `{}`", volume.name)),
-            );
+            progress.update(|_| {
+                ProgressFrame::new(format!("removing cache volume `{}`", volume.name))
+                    .count(Some((done, cache_total)))
+                    .event(Some(format!("removed `{}`", volume.name)))
+            });
             entries.push(ContainerCachePruneEntry {
                 name: volume.name,
                 kind: cache_kind_label(kind).to_owned(),
@@ -382,7 +391,7 @@ where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
     CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
-        progress.update("inspecting cache volumes", None, None);
+        progress.update(|_| ProgressFrame::new("inspecting cache volumes"));
         let resolved_profile = effigy_containers::backend::global_endpoint(profile);
         let _operation_plan = global_cache_operation_plan(
             cwd,
@@ -410,12 +419,12 @@ where
             })
             .collect::<Vec<_>>();
         let total = caches.len() as u64;
-        progress.now_waiting_for(PROBE_VOLUME_REMOVE);
-        progress.update(
-            "removing cache volumes",
-            Some((0, total)),
-            Some(format!("listed {total} cache volumes")),
-        );
+        progress.update(|_| {
+            ProgressFrame::new("removing cache volumes")
+                .count(Some((0, total)))
+                .event(Some(format!("listed {total} cache volumes")))
+                .waiting_for(PROBE_VOLUME_REMOVE)
+        });
         let mut entries = Vec::new();
         let mut warnings = Vec::new();
         for (index, cache) in caches.into_iter().enumerate() {
@@ -427,21 +436,20 @@ where
             // project stays intact.
             match inventory.verdicts.get(&name) {
                 Some(GlobalCachePruneVerdict::Removable) => {
-                    progress.update(
-                        format!("removing cache volume `{name}`"),
-                        Some((done, total)),
-                        None,
-                    );
+                    progress.update(|_| {
+                        ProgressFrame::new(format!("removing cache volume `{name}`"))
+                            .count(Some((done, total)))
+                    });
                     run_runtime_volume_capture(
                         cwd,
                         &resolved_profile,
                         &remove_volume_command(&name),
                     )?;
-                    progress.update(
-                        format!("removing cache volume `{name}`"),
-                        Some((done, total)),
-                        Some(format!("removed `{name}`")),
-                    );
+                    progress.update(|_| {
+                        ProgressFrame::new(format!("removing cache volume `{name}`"))
+                            .count(Some((done, total)))
+                            .event(Some(format!("removed `{name}`")))
+                    });
                     entries.push(ContainerCachePruneEntry {
                         name: cache.name,
                         kind: cache.kind,
@@ -452,11 +460,11 @@ where
                     });
                 }
                 Some(GlobalCachePruneVerdict::OwnedInUse { project: _ }) => {
-                    progress.update(
-                        format!("skipping cache volume `{name}`"),
-                        Some((done, total)),
-                        Some(format!("`{name}` in use")),
-                    );
+                    progress.update(|_| {
+                        ProgressFrame::new(format!("skipping cache volume `{name}`"))
+                            .count(Some((done, total)))
+                            .event(Some(format!("`{name}` in use")))
+                    });
                     entries.push(ContainerCachePruneEntry {
                         name: cache.name,
                         kind: cache.kind,
@@ -476,11 +484,11 @@ where
                     warnings.push(format!(
                         "left {reason}; it was not created for this environment"
                     ));
-                    progress.update(
-                        format!("skipping cache volume `{name}`"),
-                        Some((done, total)),
-                        Some(format!("left {reason}")),
-                    );
+                    progress.update(|_| {
+                        ProgressFrame::new(format!("skipping cache volume `{name}`"))
+                            .count(Some((done, total)))
+                            .event(Some(format!("left {reason}")))
+                    });
                     entries.push(ContainerCachePruneEntry {
                         name: cache.name,
                         kind: cache.kind,
@@ -511,7 +519,7 @@ where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
     CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
-        progress.update("inspecting managed volumes", None, None);
+        progress.update(|_| ProgressFrame::new("inspecting managed volumes"));
         let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
         let _operation_plan = global_volume_operation_plan(
             cwd,
@@ -520,11 +528,11 @@ where
         );
         let volumes =
             collect_global_volume_entries(cwd, orphans_only, &run_runtime_volume_capture)?;
-        progress.update(
-            "inspecting managed volumes",
-            Some((volumes.len() as u64, volumes.len() as u64)),
-            Some(format!("listed {} volumes", volumes.len())),
-        );
+        progress.update(|_| {
+            ProgressFrame::new("inspecting managed volumes")
+                .count(Some((volumes.len() as u64, volumes.len() as u64)))
+                .event(Some(format!("listed {} volumes", volumes.len())))
+        });
         Ok(render_container_report(
             volume_list_report(
                 "global runtime volume inventory",
@@ -546,11 +554,10 @@ where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
     CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
-        progress.update(
-            format!("inspecting volumes for `{}`", repo_root.display()),
-            None,
-            None,
-        );
+        progress.update(|_| {
+            ProgressFrame::new(format!("inspecting volumes for `{}`", repo_root.display()))
+                .label("Inspecting volumes")
+        });
         let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
         let _operation_plan = global_volume_operation_plan(
             repo_root,
@@ -559,11 +566,12 @@ where
         );
         let volumes =
             collect_repo_volume_entries(repo_root, orphans_only, &run_runtime_volume_capture)?;
-        progress.update(
-            format!("inspecting volumes for `{}`", repo_root.display()),
-            Some((volumes.len() as u64, volumes.len() as u64)),
-            Some(format!("listed {} volumes", volumes.len())),
-        );
+        progress.update(|_| {
+            ProgressFrame::new(format!("inspecting volumes for `{}`", repo_root.display()))
+                .count(Some((volumes.len() as u64, volumes.len() as u64)))
+                .event(Some(format!("listed {} volumes", volumes.len())))
+                .label("Inspecting volumes")
+        });
         Ok(render_container_report(
             volume_list_report(
                 &format!("repo volume inventory for {}", repo_root.display()),
@@ -584,7 +592,7 @@ where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
     CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
-        progress.update("inspecting managed volumes", None, None);
+        progress.update(|_| ProgressFrame::new("inspecting managed volumes"));
         let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
         let _operation_plan = global_volume_operation_plan(
             cwd,
@@ -593,22 +601,22 @@ where
         );
         let volumes = collect_global_volume_entries(cwd, true, &run_runtime_volume_capture)?;
         let total = volumes.len() as u64;
-        progress.now_waiting_for(PROBE_VOLUME_REMOVE);
-        progress.update(
-            "removing volumes",
-            Some((0, total)),
-            Some(format!("listed {total} volumes")),
-        );
+        progress.update(|_| {
+            ProgressFrame::new("removing volumes")
+                .count(Some((0, total)))
+                .event(Some(format!("listed {total} volumes")))
+                .waiting_for(PROBE_VOLUME_REMOVE)
+        });
         let mut entries = Vec::new();
         for (index, volume) in volumes.into_iter().enumerate() {
             let done = index as u64 + 1;
             let name = volume.name.clone();
             if volume.in_use {
-                progress.update(
-                    format!("skipping volume `{name}`"),
-                    Some((done, total)),
-                    Some(format!("`{name}` in use")),
-                );
+                progress.update(|_| {
+                    ProgressFrame::new(format!("skipping volume `{name}`"))
+                        .count(Some((done, total)))
+                        .event(Some(format!("`{name}` in use")))
+                });
                 entries.push(ContainerVolumePruneEntry {
                     name: volume.name,
                     backend: volume.backend,
@@ -621,17 +629,15 @@ where
                 });
                 continue;
             }
-            progress.update(
-                format!("removing volume `{name}`"),
-                Some((done, total)),
-                None,
-            );
+            progress.update(|_| {
+                ProgressFrame::new(format!("removing volume `{name}`")).count(Some((done, total)))
+            });
             run_runtime_volume_capture(cwd, &volume.profile, &remove_volume_command(&name))?;
-            progress.update(
-                format!("removing volume `{name}`"),
-                Some((done, total)),
-                Some(format!("removed `{name}`")),
-            );
+            progress.update(|_| {
+                ProgressFrame::new(format!("removing volume `{name}`"))
+                    .count(Some((done, total)))
+                    .event(Some(format!("removed `{name}`")))
+            });
             entries.push(ContainerVolumePruneEntry {
                 name: volume.name,
                 backend: volume.backend,
@@ -659,11 +665,10 @@ where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
     CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
-        progress.update(
-            format!("inspecting volumes for `{}`", repo_root.display()),
-            None,
-            None,
-        );
+        progress.update(|_| {
+            ProgressFrame::new(format!("inspecting volumes for `{}`", repo_root.display()))
+                .label("Inspecting volumes")
+        });
         let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
         let _operation_plan = global_volume_operation_plan(
             repo_root,
@@ -672,22 +677,22 @@ where
         );
         let volumes = collect_repo_volume_entries(repo_root, true, &run_runtime_volume_capture)?;
         let total = volumes.len() as u64;
-        progress.now_waiting_for(PROBE_VOLUME_REMOVE);
-        progress.update(
-            "removing volumes",
-            Some((0, total)),
-            Some(format!("listed {total} volumes")),
-        );
+        progress.update(|_| {
+            ProgressFrame::new("removing volumes")
+                .count(Some((0, total)))
+                .event(Some(format!("listed {total} volumes")))
+                .waiting_for(PROBE_VOLUME_REMOVE)
+        });
         let mut entries = Vec::new();
         for (index, volume) in volumes.into_iter().enumerate() {
             let done = index as u64 + 1;
             let name = volume.name.clone();
             if volume.in_use {
-                progress.update(
-                    format!("skipping volume `{name}`"),
-                    Some((done, total)),
-                    Some(format!("`{name}` in use")),
-                );
+                progress.update(|_| {
+                    ProgressFrame::new(format!("skipping volume `{name}`"))
+                        .count(Some((done, total)))
+                        .event(Some(format!("`{name}` in use")))
+                });
                 entries.push(ContainerVolumePruneEntry {
                     name: volume.name,
                     backend: volume.backend,
@@ -700,17 +705,15 @@ where
                 });
                 continue;
             }
-            progress.update(
-                format!("removing volume `{name}`"),
-                Some((done, total)),
-                None,
-            );
+            progress.update(|_| {
+                ProgressFrame::new(format!("removing volume `{name}`")).count(Some((done, total)))
+            });
             run_runtime_volume_capture(repo_root, &volume.profile, &remove_volume_command(&name))?;
-            progress.update(
-                format!("removing volume `{name}`"),
-                Some((done, total)),
-                Some(format!("removed `{name}`")),
-            );
+            progress.update(|_| {
+                ProgressFrame::new(format!("removing volume `{name}`"))
+                    .count(Some((done, total)))
+                    .event(Some(format!("removed `{name}`")))
+            });
             entries.push(ContainerVolumePruneEntry {
                 name: volume.name,
                 backend: volume.backend,

@@ -8,6 +8,8 @@
 //! when the caller can observe it. Each step ends with one ✓ or ✗ line that
 //! names the check.
 
+use effigy_ui::steps::ProgressFrame;
+
 use effigy_ui::steps::{self, ProgressSource, Step};
 
 use crate::{DoctorFinding, DoctorSeverity};
@@ -129,9 +131,13 @@ impl DoctorProgressReporter {
         count: Option<(u64, u64)>,
         event: Option<String>,
     ) {
-        let source = ProgressSource::waiting_for(label.probe);
-        source.update(label.active, count, event);
-        source.label(label.active);
+        let source = ProgressSource::new(
+            ProgressFrame::new(label.active)
+                .count(count)
+                .event(event)
+                .label(label.active)
+                .waiting_for(label.probe),
+        );
         #[cfg(test)]
         let stored = source.clone();
         let step = steps::live_step(source);

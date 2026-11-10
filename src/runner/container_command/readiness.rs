@@ -6,6 +6,8 @@
 //! check said, and what to run next (effigy#313). A stack whose unready
 //! services all fail the same way is diagnosed instead of waited out.
 
+use effigy_ui::steps::ProgressFrame;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
@@ -405,15 +407,15 @@ fn observe_parent(progress: &ProgressSource, services: &[ServiceHealth]) {
         format!("waiting for {names} to report healthy")
     };
     let latest = waiting.first().map(|service| service.problem());
-    progress.update(
-        sub_step,
-        Some((ready as u64, services.len() as u64)),
-        latest,
-    );
-    progress.label(if names.is_empty() {
-        "Waiting for services".to_owned()
-    } else {
-        format!("Waiting for {names}")
+    progress.update(|_| {
+        ProgressFrame::new(sub_step)
+            .count(Some((ready as u64, services.len() as u64)))
+            .event(latest)
+            .label(if names.is_empty() {
+                "Waiting for services".to_owned()
+            } else {
+                format!("Waiting for {names}")
+            })
     });
 }
 
@@ -442,10 +444,14 @@ fn observe_probe_stage(
             budget.as_secs()
         ),
     };
-    progress.update(sub_step, known, None);
-    progress.label(match stage {
-        HealthProbeStage::ListingContainers => "Checking containers",
-        HealthProbeStage::InspectingContainers { .. } => "Checking container health",
+    progress.update(|previous| {
+        ProgressFrame::new(sub_step)
+            .count(known)
+            .label(match stage {
+                HealthProbeStage::ListingContainers => "Checking containers",
+                HealthProbeStage::InspectingContainers { .. } => "Checking container health",
+            })
+            .observations_from(previous)
     });
 }
 
@@ -475,15 +481,15 @@ fn observe_probe_started(
     budget: Duration,
     known: Option<(u64, u64)>,
 ) {
-    progress.update(
-        format!(
+    progress.update(|previous| {
+        ProgressFrame::new(format!(
             "reading the health of project `{project}` from the runtime (probe {probe}, up to {}s)",
             budget.as_secs()
-        ),
-        known,
-        None,
-    );
-    progress.label("Checking service health");
+        ))
+        .count(known)
+        .label("Checking service health")
+        .observations_from(previous)
+    });
 }
 
 /// The waits a readiness wait ended on, machine-readable: one entry per
@@ -543,15 +549,14 @@ fn readiness_wait_error(
 /// The parent step after a probe the runtime could not answer: it names the
 /// exact read and subjects it was in, with the error that read returned.
 fn observe_probe_failure(progress: &ProgressSource, project: &str, read: &ProbeRead, error: &str) {
-    progress.update(
-        format!(
+    progress.update(|_| {
+        ProgressFrame::new(format!(
             "waiting for the runtime to answer {}",
             read.description(project)
-        ),
-        None,
-        Some(first_line(error)),
-    );
-    progress.label("Waiting for container runtime");
+        ))
+        .event(Some(first_line(error)))
+        .label("Waiting for container runtime")
+    });
 }
 
 /// The first line of a runtime error, bounded so one frame stays one line.
@@ -692,11 +697,14 @@ fn exited_logs(
         // that identity — a Compose `container_name` may differ from the
         // service name (effigy#460, Q-017).
         let sub_step = exited_log_step_label(&service.container, done, total);
-        progress.update(sub_step.clone(), Some((done, total)), None);
+        progress.update(|_| ProgressFrame::new(sub_step.clone()).count(Some((done, total))));
         // The readiness wait's own frame names the same read, so a timeout never
         // shows the finished probe while a log read runs.
-        parent.now_waiting_for(exited_log_parent_label(&service.container));
-        parent.update(sub_step, Some((done, total)), None);
+        parent.update(|_| {
+            ProgressFrame::new(sub_step)
+                .count(Some((done, total)))
+                .waiting_for(exited_log_parent_label(&service.container))
+        });
         match container_last_log_line_for_policy(
             repo_root,
             policy,
@@ -780,11 +788,15 @@ fn report_services(
             .clone()
             .unwrap_or_else(|| format!("container {}", service.state));
         match steps.get(&service.service) {
-            Some(waiting) => waiting.progress.update(sub_step, None, Some(last)),
+            Some(waiting) => waiting
+                .progress
+                .update(|_| ProgressFrame::new(sub_step).event(Some(last))),
             None => {
-                let progress =
-                    ProgressSource::waiting_for(format!("{} to report healthy", service.service));
-                progress.update(sub_step, None, Some(last));
+                let progress = ProgressSource::new(
+                    ProgressFrame::new(sub_step)
+                        .event(Some(last))
+                        .waiting_for(format!("{} to report healthy", service.service)),
+                );
                 let step = TimedStep::live(progress.clone());
                 steps.insert(service.service.clone(), ServiceStep { progress, step });
             }
@@ -1150,14 +1162,16 @@ mod tests {
             "waiting for the last output of 2 exited containers; 3s elapsed"
         );
         let sub_step = exited_log_step_label("demo-web-1", 1, 2);
-        progress.update(sub_step.clone(), Some((1, 2)), None);
+        progress.update(|_| ProgressFrame::new(sub_step.clone()).count(Some((1, 2))));
         assert_eq!(
             progress.detailed_frame_at(Duration::from_secs(9)),
             "reading the last line `demo-web-1` printed (1/2) (1/2); waiting for the last output of 2 exited containers; 9s elapsed"
         );
-        let parent = ProgressSource::waiting_for("the environment's services to report healthy");
-        parent.now_waiting_for(exited_log_parent_label("demo-web-1"));
-        parent.update(sub_step, Some((1, 2)), None);
+        let parent = ProgressSource::new(
+            ProgressFrame::new(sub_step)
+                .count(Some((1, 2)))
+                .waiting_for(exited_log_parent_label("demo-web-1")),
+        );
         assert_eq!(
             parent.detailed_frame_at(Duration::from_secs(12)),
             "reading the last line `demo-web-1` printed (1/2) (1/2); waiting for the runtime's log tail of `demo-web-1`; 12s elapsed"

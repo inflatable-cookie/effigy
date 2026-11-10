@@ -3,6 +3,8 @@
 //! Extracted from `src/runner/container_command.rs` — these are
 //! container-domain health check operations, not CLI shell behavior.
 
+use effigy_ui::steps::ProgressFrame;
+
 pub mod readiness;
 
 use std::io::{Read, Write};
@@ -175,12 +177,13 @@ pub fn wait_for_ready(
             return Ok(Some("interrupted"));
         }
         attempts += 1;
-        progress.update(
-            format!("probing `{check}` for {subject} (attempt {attempts})"),
-            None,
-            None,
-        );
-        progress.label(format!("Checking {subject}"));
+        progress.update(|previous| {
+            ProgressFrame::new(format!(
+                "probing `{check}` for {subject} (attempt {attempts})"
+            ))
+            .label(format!("Checking {subject}"))
+            .observations_from(previous)
+        });
         match probe_health_detail(check) {
             HealthProbe::Ready => {
                 step.succeed(&format!("{subject} reports healthy"));
@@ -202,8 +205,10 @@ pub fn wait_for_ready(
                 return Err(error);
             }
             HealthProbe::Unanswered => {
-                progress.detail_event(format!("`{check}` did not answer healthy"));
-                progress.event_label("Health check has not answered");
+                progress.blocker(
+                    format!("`{check}` did not answer healthy"),
+                    "Health check has not answered",
+                );
             }
         }
         std::thread::sleep(Duration::from_millis(250));
@@ -225,10 +230,11 @@ fn health_wait_progress(
     subject: &str,
     check: &str,
 ) -> (effigy_ui::steps::ProgressSource, effigy_ui::steps::Step) {
-    let progress = effigy_ui::steps::ProgressSource::waiting_for(format!(
-        "`{check}` to report {subject} healthy"
-    ));
-    progress.label(format!("Waiting for {subject}"));
+    let progress = effigy_ui::steps::ProgressSource::new(
+        ProgressFrame::default()
+            .waiting_for(format!("`{check}` to report {subject} healthy"))
+            .label(format!("Waiting for {subject}")),
+    );
     let step = effigy_ui::steps::live_step(progress.clone());
     (progress, step)
 }
