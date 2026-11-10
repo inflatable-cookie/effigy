@@ -27,6 +27,14 @@ The second path is supported because Effigy owns fallback behavior for known
 gaps, not because `nerdctl compose` is assumed to be behavior-identical to
 Docker Compose.
 
+Docker target pins retain their string wire shape. One `DockerTarget` adapter
+classifies them as contexts or endpoints for both argv and detached child
+environments; context selection still outranks `DOCKER_HOST`. Runtime rows
+decode lifecycle, health and published-port bindings at ingress. Route resolution
+uses lifecycle independently of health; wait, handoff and registration own their
+missing-publication decisions. Participation enumeration remains conservative
+across every potential runtime endpoint.
+
 ## Capability classes
 
 Effigy should classify backend-sensitive runtime behavior into three buckets:

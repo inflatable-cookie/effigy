@@ -2927,7 +2927,7 @@ primary_service = "app"
     ) -> effigy_containers::exec::RunningComposeContainer {
         effigy_containers::exec::RunningComposeContainer {
             container_name: format!("web-{service}"),
-            status: "Up 2 minutes".to_owned(),
+            status: "Up 2 minutes".into(),
             ports: Vec::new(),
             project_name: Some("demo-web-dev".to_owned()),
             working_dir: None,
@@ -3018,13 +3018,13 @@ primary_service = "app"
         )
         .expect("missing sibling"));
         let mut sibling = running_row("db", false);
-        sibling.status = "Exited (1)".to_owned();
+        sibling.status = "Exited (1)".into();
         assert!(!effigy_containers::exec::compose_stack_is_running(
             &policy,
             &[primary.clone(), sibling.clone()]
         )
         .expect("stopped sibling"));
-        sibling.status = "Up 10 seconds".to_owned();
+        sibling.status = "Up 10 seconds".into();
         assert!(
             effigy_containers::exec::compose_stack_is_running(&policy, &[primary, sibling])
                 .expect("complete stack")

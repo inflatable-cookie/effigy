@@ -514,6 +514,8 @@ fn docker_context_and_endpoint_are_explicit_on_apply_and_observation() {
     for (context, flag) in [
         ("named-fixture", "--context"),
         ("unix:///fixture.sock", "--host"),
+        ("/owned/docker.sock", "--host"),
+        ("tcp://127.0.0.1:2376", "--host"),
     ] {
         let mut selected = docker_selection();
         selected.context = context.into();
@@ -522,6 +524,21 @@ fn docker_context_and_endpoint_are_explicit_on_apply_and_observation() {
             .unwrap();
         assert_eq!(argv[0], flag);
         assert_eq!(argv[1], context);
+        let env: std::collections::BTreeMap<_, _> =
+            crate::environment::DockerTarget::resolve(context)
+                .environment()
+                .into_iter()
+                .collect();
+        let variable = if flag == "--host" {
+            "DOCKER_HOST"
+        } else {
+            "DOCKER_CONTEXT"
+        };
+        assert_eq!(env.get(std::ffi::OsStr::new(variable)).unwrap(), context);
+        if flag == "--host" {
+            assert_eq!(env[std::ffi::OsStr::new("DOCKER_CONTEXT")], "");
+        }
+
         assert!(matches!(
             selected.adapter().image_id_until(
                 workdir,

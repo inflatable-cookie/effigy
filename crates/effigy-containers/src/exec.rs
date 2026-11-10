@@ -72,6 +72,7 @@ pub use managed_stop::{end_owned_container_process_group, verify_owned_stack_for
 pub use mounts::ensure_isolated_mount_host_points;
 pub use parse::{
     compose_status_is_created, compose_status_is_running, parse_running_compose_containers,
+    ContainerHealth, ContainerLifecycle, ContainerStatus, PortBinding, PublishedPort,
     RunningComposeContainer, RunningComposeContainerProfiled, RunningContainerStats,
     RunningContainerStatsCapture,
 };

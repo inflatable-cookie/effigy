@@ -364,7 +364,7 @@ mod tests {
         let rows = vec![
             RunningComposeContainer {
                 container_name: "demo-db-1".to_owned(),
-                status: "Up".to_owned(),
+                status: "Up".into(),
                 ports: vec![],
                 project_name: Some("demo".to_owned()),
                 working_dir: None,
@@ -373,7 +373,7 @@ mod tests {
             },
             RunningComposeContainer {
                 container_name: "demo-app-1".to_owned(),
-                status: "Up".to_owned(),
+                status: "Up".into(),
                 ports: vec![],
                 project_name: Some("demo".to_owned()),
                 working_dir: Some(compose_dir.display().to_string()),
@@ -398,7 +398,7 @@ mod tests {
             policy,
             services: vec![RunningComposeContainer {
                 container_name: "demo-app-1".to_owned(),
-                status: "Up".to_owned(),
+                status: "Up".into(),
                 ports: vec![],
                 project_name: Some("demo".to_owned()),
                 working_dir: None,

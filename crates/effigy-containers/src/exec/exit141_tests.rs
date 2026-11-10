@@ -979,7 +979,7 @@ fn inventory_and_ownership_child() {
             match mode {
                 "empty" => assert!(observed.unwrap().is_empty()),
                 "sibling" => assert_eq!(observed.unwrap()[0].service.as_deref(), Some("worker")),
-                "stopped" => assert_eq!(observed.unwrap()[0].status, "Exited (0)"),
+                "stopped" => assert_eq!(observed.unwrap()[0].status.to_string(), "Exited (0)"),
                 _ => assert!(
                     observed.is_err(),
                     "malformed or failed runtime cannot prove absence"
