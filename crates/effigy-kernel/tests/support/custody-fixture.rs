@@ -7,6 +7,16 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
 use std::time::{Duration, Instant};
+
+// Each marker has one writer in a private fixture home. Readers may parse it
+// as soon as it exists, so publish only the completed sibling file.
+fn publish_marker(path: &Path, contents: impl AsRef<[u8]>) {
+    let mut pending = path.as_os_str().to_os_string();
+    pending.push(".pending");
+    std::fs::write(&pending, contents).expect("write fixture marker payload");
+    std::fs::rename(&pending, path).expect("publish fixture marker");
+}
+
 #[derive(Debug)]
 struct Strict;
 impl SettlementAdapter for Strict {
@@ -303,7 +313,15 @@ fn main() {
         process_spec.grace = Duration::from_secs(2);
         let mut child = Custody::spawn(&mut run, process_spec, &cx).unwrap();
         run.advance(Phase::Active).unwrap();
-        std::fs::write(home.join("lease-ready.json"),serde_json::to_vec(&serde_json::json!({"identity":run.checkout_fence_identity(),"child":child.identity(),"anchor":child.anchor()})).unwrap()).unwrap();
+        publish_marker(
+            &home.join("lease-ready.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "identity": run.checkout_fence_identity(),
+                "child": child.identity(),
+                "anchor": child.anchor(),
+            }))
+            .unwrap(),
+        );
         let _ = child.wait(&op);
         run.settle(&cleanup, &mut Strict).unwrap();
         return;
@@ -366,7 +384,7 @@ fn main() {
             home.join("owner-loss.json"),
         )
         .unwrap();
-        std::fs::write(home.join("ready"), b"ready").unwrap();
+        publish_marker(&home.join("ready"), b"ready");
         loop {
             // The owner never settles. Its sentinel recovers the run once this
             // process is killed by the recorded pid.
@@ -387,7 +405,7 @@ fn main() {
             .arg("nonce-workload")
             .spawn()
             .unwrap();
-        std::fs::write(home.join("descendant-pid"), child.id().to_string()).unwrap();
+        publish_marker(&home.join("descendant-pid"), child.id().to_string());
         return;
     }
     let home = Path::new(args.get(1).expect("fixture home"));
@@ -443,7 +461,7 @@ fn main() {
         if !detach {
             while !matches!(client.event(&op).unwrap(), Event::Active) {}
         }
-        std::fs::write(home.join("client-ready"), client.run.to_string()).unwrap();
+        publish_marker(&home.join("client-ready"), client.run.to_string());
         if detach {
             return;
         }
@@ -464,7 +482,7 @@ fn main() {
         )
         .unwrap();
         while !matches!(client.event(&op).unwrap(), Event::Active) {}
-        std::fs::write(home.join("ready"), b"ready").unwrap();
+        publish_marker(&home.join("ready"), b"ready");
         loop {
             for event in router.poll() {
                 if event.forward == libc::SIGKILL {
@@ -514,7 +532,7 @@ fn main() {
         assert_eq!(settled.cleanup(), CleanupOutcome::Complete);
         assert_eq!(settled.workload(), &WorkloadOutcome::Succeeded);
         assert_owner_terminal(home, "sequence-settled");
-        std::fs::write(home.join("sequence-done"), b"yes").unwrap();
+        publish_marker(&home.join("sequence-done"), b"yes");
         return;
     }
     let workload = if entry == "inline-terminal" {
@@ -550,23 +568,21 @@ fn main() {
         child.wait(&op);
     }
     if entry == "anchor-gone-orphan" {
-        std::fs::write(
-            home.join("anchor.json"),
+        publish_marker(
+            &home.join("anchor.json"),
             serde_json::to_vec(&serde_json::json!({
                 "process": child.identity(),
                 "anchor": child.anchor(),
             }))
             .unwrap(),
-        )
-        .unwrap();
+        );
     }
 
-    std::fs::write(
-        home.join("receipt"),
+    publish_marker(
+        &home.join("receipt"),
         serde_json::to_vec(&child.identity()).unwrap(),
-    )
-    .unwrap();
-    std::fs::write(home.join("ready"), b"ready").unwrap();
+    );
+    publish_marker(&home.join("ready"), b"ready");
     loop {
         if matches!(entry, "inline-orphan" | "anchor-gone-orphan") {
             std::thread::sleep(Duration::from_millis(10));
@@ -607,7 +623,7 @@ fn main() {
         assert_eq!(result.workload(), &WorkloadOutcome::Succeeded);
         // SAFETY: observe our controlling terminal after the custody lease restored it.
         assert_eq!(unsafe { libc::tcgetpgrp(0) }, unsafe { libc::getpgrp() });
-        std::fs::write(home.join("terminal-restored"), b"yes").unwrap();
+        publish_marker(&home.join("terminal-restored"), b"yes");
     }
 }
 
@@ -619,7 +635,7 @@ fn assert_owner_terminal(home: &Path, marker: &str) {
         foreground, owner,
         "{marker}: the owner gave up the terminal"
     );
-    std::fs::write(home.join(marker), b"yes").unwrap();
+    publish_marker(&home.join(marker), b"yes");
 }
 
 /// Two `Terminal::Foreground` children in one run: the first writes to the
@@ -768,11 +784,11 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
                 "/bin/sh".into(),
                 "-c".into(),
                 if std::env::var_os("FIXTURE_ENGINE_WITNESS_GATE").is_some() {
-                    ": > engine-witness-pending; read gate < engine-witness.gate; echo $$ > engine-workload.pid; exec /bin/sleep 40".into()
+                    ": > engine-witness.pending && /bin/mv engine-witness.pending engine-witness-pending; read gate < engine-witness.gate; echo $$ > engine-workload.pid.pending && /bin/mv engine-workload.pid.pending engine-workload.pid && exec /bin/sleep 40".into()
                 } else if std::env::var_os("FIXTURE_ENGINE_LONG_GRACE").is_some() {
-                    "trap '' TERM; echo $$ > engine-workload.pid; exec /bin/sleep 40".into()
+                    "trap '' TERM; echo $$ > engine-workload.pid.pending && /bin/mv engine-workload.pid.pending engine-workload.pid && exec /bin/sleep 40".into()
                 } else {
-                    "echo $$ > engine-workload.pid; exec /bin/sleep 40".into()
+                    "echo $$ > engine-workload.pid.pending && /bin/mv engine-workload.pid.pending engine-workload.pid && exec /bin/sleep 40".into()
                 },
             ],
             grace: if std::env::var_os("FIXTURE_ENGINE_LONG_GRACE").is_some() {
