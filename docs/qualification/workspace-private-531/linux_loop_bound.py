@@ -82,13 +82,146 @@ def verify_extents(extents, capacity):
 
 
 
+def inode_geometry(raw):
+    filesystem = superblock(raw, project_quota=False)
+    incompat = struct.unpack_from('<I', raw, 0x60)[0]
+    block = 1024 << struct.unpack_from('<I', raw, 0x18)[0]
+    size = struct.unpack_from('<H', raw, 0x58)[0]
+    descriptor = struct.unpack_from('<H', raw, 0xfe)[0] if incompat & 0x80 else 32
+    total, per = struct.unpack_from('<I', raw, 0)[0], struct.unpack_from('<I', raw, 0x28)[0]
+    if (not total or not per or size != 256 or descriptor not in (32, 64)
+            or incompat & 0x10 or struct.unpack_from('<I', raw, 0x64)[0] & 0x200
+            or struct.unpack_from('<I', raw, 0x48)[0] != 0):
+        raise ValueError('unsupported ext4 inode geometry')
+    return dict(inode_size=size, descriptor_size=descriptor, block_size=block,
+                descriptor_base=(struct.unpack_from('<I', raw, 0x14)[0] + 1) * block,
+                capacity_bytes=filesystem['capacity_bytes'], total_inodes=total, per_group=per)
+
+
+def inode_offset(raw, number, descriptor):
+    geometry = inode_geometry(raw)
+    if type(number) is not int or not 0 < number <= geometry['total_inodes'] or len(descriptor) != geometry['descriptor_size']:
+        raise ValueError('complete inode identity and group descriptor required')
+    table = struct.unpack_from('<I', descriptor, 8)[0]
+    if len(descriptor) == 64:
+        table |= struct.unpack_from('<I', descriptor, 0x28)[0] << 32
+    offset = table * geometry['block_size'] + ((number - 1) % geometry['per_group']) * geometry['inode_size']
+    if not 0 < offset <= geometry['capacity_bytes'] - geometry['inode_size']:
+        raise ValueError('inode table exceeds its filesystem')
+    return offset
+
+
+def external_xattr_deduction(original):
+    raw = bytes.fromhex(original['superblock_hex'])
+    geometry = inode_geometry(raw)
+    references = {}
+    seen = set()
+    for item in original['references']:
+        number = item['number']
+        inode = bytes.fromhex(item['inode_hex'])
+        descriptor = bytes.fromhex(item['group_descriptor_hex'])
+        if (number in seen or len(inode) != geometry['inode_size']
+                or inode_offset(raw, number, descriptor) != item['inode_offset']):
+            raise ValueError('external xattr inode identity differs')
+        seen.add(number)
+        acl = struct.unpack_from('<I', inode, 0x68)[0] | struct.unpack_from('<H', inode, 0x76)[0] << 32
+        sectors = struct.unpack_from('<I', inode, 0x1c)[0] | struct.unpack_from('<H', inode, 0x74)[0] << 32
+        if (acl <= 0 or (acl + 1) * geometry['block_size'] > geometry['capacity_bytes']
+                or struct.unpack_from('<I', inode, 0x20)[0] & 0x40000
+                or type(item['charged_sectors']) is not int or sectors != item['charged_sectors']
+                or sectors * 512 < geometry['block_size']):
+            raise ValueError('external xattr block or inode charge differs')
+        references[acl] = references.get(acl, 0) + 1
+    if set(original['headers']) != {str(block) for block in references}:
+        raise ValueError('external xattr block originals are incomplete')
+    for block, count in references.items():
+        header = bytes.fromhex(original['headers'][str(block)])
+        if len(header) != 32:
+            raise ValueError('external xattr header is incomplete')
+        magic, refcount, blocks = struct.unpack_from('<III', header)
+        if magic != 0xea020000 or refcount < count or blocks != 1:
+            raise ValueError('external xattr references contradict their shared block header')
+    return sum(count - 1 for count in references.values()) * geometry['block_size']
+
+
+def orphan_layout(raw):
+    """ext4's source-defined orphan inode, never a guessed metadata allowance."""
+    filesystem = superblock(raw, project_quota=False)
+    compat, incompat = struct.unpack_from('<II', raw, 0x5c)
+    inode = struct.unpack_from('<I', raw, 0x280)[0]
+    if not compat & 0x1000:  # EXT4_FEATURE_COMPAT_ORPHAN_FILE
+        if inode:
+            raise ValueError('orphan inode exists without its filesystem feature')
+        return None
+    block = 1024 << struct.unpack_from('<I', raw, 0x18)[0]
+    first, per_group = struct.unpack_from('<I', raw, 0x14)[0], struct.unpack_from('<I', raw, 0x28)[0]
+    size = struct.unpack_from('<H', raw, 0x58)[0]
+    descriptor = struct.unpack_from('<H', raw, 0xfe)[0] if incompat & 0x80 else 32
+    if (not 0 < inode <= per_group or size != 256 or descriptor not in (32, 64)
+            or incompat & 0x10 or struct.unpack_from('<I', raw, 0x64)[0] & 0x200):
+        raise ValueError('unsupported ext4 orphan inode geometry')
+    return dict(inode=inode, inode_size=size, descriptor_size=descriptor,
+                descriptor_offset=(first + 1) * block, block_size=block,
+                capacity_bytes=filesystem['capacity_bytes'])
+
+
+def orphan_inode_offset(raw, descriptor):
+    layout = orphan_layout(raw)
+    if layout is None or len(descriptor) != layout['descriptor_size']:
+        raise ValueError('complete orphan group descriptor required')
+    table = struct.unpack_from('<I', descriptor, 8)[0]
+    if len(descriptor) == 64:
+        table |= struct.unpack_from('<I', descriptor, 0x28)[0] << 32
+    offset = table * layout['block_size'] + (layout['inode'] - 1) * layout['inode_size']
+    if not 0 < offset <= layout['capacity_bytes'] - layout['inode_size']:
+        raise ValueError('orphan inode table exceeds its filesystem')
+    return offset
+
+
+def orphan_allocation(original):
+    raw = bytes.fromhex(original['superblock_hex'])
+    layout = orphan_layout(raw)
+    if layout is None:
+        if original['group_descriptor_hex'] is not None or original['inode_hex'] is not None:
+            raise ValueError('unexpected orphan inode original')
+        return 0
+    descriptor = bytes.fromhex(original['group_descriptor_hex'])
+    inode = bytes.fromhex(original['inode_hex'])
+    offset = orphan_inode_offset(raw, descriptor)
+    if len(inode) != layout['inode_size'] or original['inode_offset'] != offset:
+        raise ValueError('orphan inode bytes or offset differ')
+    mode, uid, gid, links = (struct.unpack_from('<H', inode, value)[0] for value in (0, 2, 0x18, 0x1a))
+    flags = struct.unpack_from('<I', inode, 0x20)[0]
+    sectors = struct.unpack_from('<I', inode, 0x1c)[0] | struct.unpack_from('<H', inode, 0x74)[0] << 32
+    size = struct.unpack_from('<I', inode, 4)[0] | struct.unpack_from('<I', inode, 0x6c)[0] << 32
+    if (mode != 0o100600 or uid or gid or links != 1 or flags != 0x80000
+            or inode[0x78:0x7c] != bytes(4) or not 0 < size <= 16 * 1024 ** 2
+            or size % layout['block_size'] or sectors * 512 != size):
+        raise ValueError('orphan inode allocation or custody differs')
+    magic, entries, maximum, depth = struct.unpack_from('<HHHH', inode, 0x28)
+    logical, length, high, low = struct.unpack_from('<IHHI', inode, 0x34)
+    start = (high << 32) | low
+    if (magic != 0xf30a or entries != 1 or maximum != 4 or depth or logical
+            or length & 0x8000 or length * layout['block_size'] != size or start <= 0
+            or (start + length) * layout['block_size'] > layout['capacity_bytes']):
+        raise ValueError('orphan inode does not have one complete initialized extent')
+    return size
+
+
 def verify_accounting(value):
     before, after = value['used_bytes_before'], value['used_bytes_after']
     tree = value['inode_allocated_bytes']
-    if (not all(isinstance(number, int) and number >= 0 for number in (before, after, tree))
+    internal = orphan_allocation(value['orphan_inode']) if 'orphan_inode' in value else 0
+    deduction = external_xattr_deduction(value['external_xattrs']) if 'external_xattrs' in value else 0
+    if 'orphan_inode' in value and (type(value.get('visible_inode_allocated_bytes')) is not int
+                     or tree != value['visible_inode_allocated_bytes'] - deduction + internal):
+        raise ValueError('visible and internal inode allocation disagree')
+    if (not all(type(number) is int and number >= 0 for number in (before, after, tree))
             or before != after or not 0 <= before - tree <= METADATA_TOLERANCE):
-        raise ValueError('tree allocation and stable filesystem usage exceed the metadata tolerance')
-    return dict(value, metadata_bytes=before - tree, metadata_tolerance_bytes=METADATA_TOLERANCE)
+        raise ValueError('tree allocation and stable filesystem usage exceed the metadata tolerance: '
+                         + repr({'before': before, 'after': after, 'tree': tree, 'gap': before - tree}))
+    return dict(value, metadata_bytes=before - tree, metadata_tolerance_bytes=METADATA_TOLERANCE,
+                internal_inode_allocated_bytes=internal, shared_xattr_deduction_bytes=deduction)
 
 
 
@@ -175,7 +308,7 @@ def loop_status(raw):
                 offset=offset, size_limit=size, number=number, flags=flags)
 
 
-def verify_image(value, pin):
+def image_custody(value, pin, *, child_mounts=()):
     """Re-derive one initialized image bound against externally frozen pins.
 
     The authenticated collector retains raw superblocks, mountinfo and ioctl
@@ -219,10 +352,18 @@ def verify_image(value, pin):
     if (mounted['fstype'] != 'ext4' or mounted['root'] != '/'
             or not {'rw', 'nodev', 'nosuid'} <= set(mounted['options'])
             or any(row != mounted and (row['device'] == mounted['device']
-                   or row['target'].startswith(pin['mountpoint'] + '/')) for row in rows)):
+                   or (row['target'].startswith(pin['mountpoint'] + '/')
+                       and row['target'] not in child_mounts)) for row in rows)):
         raise ValueError('image mount is unsafe, aliased or nested')
     extents = value['allocation_map']['extents']
     verify_extents(extents, pin['image_bytes'])
-    if any(item['flags'] & ~1 for item in extents):
+    return dict(pin, device=mounted['device'],
+                image_metadata_bytes=info['blocks'] * 512 - pin['image_bytes'],
+                initialized=not any(item['flags'] & ~1 for item in extents))
+
+
+def verify_image(value, pin, *, child_mounts=()):
+    bound = image_custody(value, pin, child_mounts=child_mounts)
+    if not bound.pop('initialized'):
         raise ValueError('image contains uninitialized allocated extents')
-    return dict(pin, device=mounted['device'], image_metadata_bytes=info['blocks'] * 512 - pin['image_bytes'])
+    return bound

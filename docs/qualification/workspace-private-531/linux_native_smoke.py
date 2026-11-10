@@ -48,68 +48,23 @@ def ssh_prefix(root, attempt):
                                      build.file_input(control / 'ssh_known_hosts'), control, attempt.root)
 
 
-def root_operation(root, attempt, ssh, entry, files, arguments=(), *, runtime_seconds=45, file_limit='8M', expected=None):
-    remote = build.BASE + '/metadata/smoke-' + uuid.uuid4().hex
-    attempt.command(ssh + ['umask 077; mkdir ' + shlex.quote(remote)])
-    pins = {}
-    for name in files:
-        data = (Path(__file__).parent / name).read_bytes()
-        pins[name] = hashlib.sha256(data).hexdigest()
-        attempt.command(ssh + ['umask 077; set -C; cat > ' + shlex.quote(remote + '/' + name)], data=data)
-    # Copy verified bytes into a fresh root-controlled directory before import.
-    # The mutable account directory is never on root Python's import path.
-    code = ('import os,hashlib,tempfile,runpy; from pathlib import Path; '
-            'p=Path("/var/lib/effigy-829/helpers"); p.mkdir(mode=0o700,exist_ok=True); '
+def root_operation(root, attempt, ssh, entry, files, arguments=(), *, runtime_seconds=45, file_limit='8M', expected=None, memory_limit='256M'):
+    import base64
+    data = {name: base64.b64encode((Path(__file__).parent / name).read_bytes()).decode() for name in files}
+    pins = {name: common.digest(Path(__file__).parent / name) for name in files}
+    code = ('import os,hashlib,tempfile,runpy,base64,sys; from pathlib import Path; '
+            'p=Path("/var/lib/effigy-829/helpers"); '
             'assert p.resolve()==p and p.stat().st_uid==0 and p.stat().st_mode&0o777==0o700; '
-            'd=Path(tempfile.mkdtemp(prefix="smoke-",dir=p)); '
-            'pins=' + repr(pins) + '; '
-            'data={n:(Path(' + repr(remote) + ')/n).read_bytes() for n in pins}; '
-            'assert all(hashlib.sha256(b).hexdigest()==pins[n] for n,b in data.items()); '
-            '[(d/n).write_bytes(b) for n,b in data.items()]; '
-            'import sys; sys.argv=[' + repr(entry) + ']+ ' + repr(list(arguments)) + '; '
+            'd=Path(tempfile.mkdtemp(prefix="modules-",dir=p)); '
+            'data=' + repr(data) + '; pins=' + repr(pins) + '; '
+            'decoded={n:base64.b64decode(b) for n,b in data.items()}; '
+            'assert all(hashlib.sha256(b).hexdigest()==pins[n] for n,b in decoded.items()); '
+            '[(d/n).write_bytes(b) for n,b in decoded.items()]; '
+            'sys.argv=[' + repr(entry) + ']+' + repr(list(arguments)) + '; '
             'runpy.run_path(str(d/' + repr(entry) + '),run_name="__main__")')
-    payload = code.encode()
-    bootstrap = remote + '/root-bootstrap.py'
-    attempt.command(ssh + ['umask 077; set -C; cat > ' + shlex.quote(bootstrap)], data=payload)
-    unit = (expected['observer_unit'].removesuffix('.service') if expected else
-            'effigy-829-resume-' + uuid.uuid4().hex)
-    common.require(__import__('re').fullmatch(r'effigy-829-resume-[0-9a-f]{32}', unit), 'fresh exact observer unit required')
-    stdout, stderr = ('/var/lib/effigy-829/' + unit + suffix for suffix in ('.stdout.json', '.stderr.log'))
-    # Authenticate the bootstrap bytes in memory. Its account-owned directory
-    # is never imported by root. One retained unit name is the execution latch,
-    # so an ambiguous Parallels acknowledgement cannot replay mount/start work.
-    entry = ('import hashlib; from pathlib import Path; p=' + repr(bootstrap)
-             + '; b=Path(p).read_bytes(); assert hashlib.sha256(b).hexdigest()=='
-             + repr(hashlib.sha256(payload).hexdigest())
-             + '; exec(compile(b,p,"exec"),{"__name__":"__main__"})')
-    argv = ['/usr/bin/systemd-run', '--unit=' + unit, '--no-block', '--service-type=exec',
-            '--property=RemainAfterExit=yes', '--property=CollectMode=inactive',
-            '--property=ExitType=cgroup', '--property=KillMode=control-group',
-            '--property=RuntimeMaxSec=' + str(runtime_seconds), '--property=TimeoutStopSec=5',
-            '--property=MemoryMax=256M', '--property=MemorySwapMax=0', '--property=TasksMax=64',
-            '--property=LimitFSIZE=' + file_limit, '--property=UMask=0077', '--property=LimitCORE=0',
-            '--property=StandardOutput=append:' + stdout, '--property=StandardError=append:' + stderr,
-            '--', '/usr/bin/python3', '-I', '-B', '-c', entry]
-    native_run.submit_unit(attempt, argv, unit)
-    deadline = time.monotonic() + runtime_seconds + 20
-    while True:
-        raw = attempt.admin('systemctl show --all ' + unit + '.service '
-                            '--property=MainPID,SubState,Result,ExecMainStatus,ControlGroup,InvocationID', read_only=True)
-        state = dict(line.split('=', 1) for line in raw.decode().splitlines())
-        if state.get('MainPID') == '0' and state.get('SubState') in ('exited', 'failed', 'dead'):
-            break
-        common.require(time.monotonic() < deadline, 'root resume unit did not finish; retain exact owner')
-        time.sleep(.2)
-    common.exclusive(attempt.root / (unit + '.terminal.json'), state)
-    output = attempt.admin('cat ' + shlex.quote(stdout), read_only=True)
-    errors = attempt.admin('cat ' + shlex.quote(stderr), read_only=True)
-    common.exclusive_bytes(attempt.root / (unit + '.stdout'), output)
-    common.exclusive_bytes(attempt.root / (unit + '.stderr'), errors)
-    common.require(state['Result'] == 'success' and state['ExecMainStatus'] == '0',
-                   'root helper failed; retained unit and streams')
-    # This exact, completed helper is ours. Its daemon is in a distinct named
-    # unit and remains available for the next native step.
-    common.require(state.get('ControlGroup') == '', 'completed root helper retains a cgroup')
+    unit = expected['observer_unit'].removesuffix('.service') if expected else None
+    output, errors, state, unit = native_run.admin_operation(
+        attempt, code.encode(), seconds=runtime_seconds, memory=memory_limit, file_limit=file_limit, unit=unit)
     result = json.loads(output)
     if expected is not None:
         import linux_capacity_contract as capacity
@@ -118,8 +73,6 @@ def root_operation(root, attempt, ssh, entry, files, arguments=(), *, runtime_se
                    'stdout': output.decode('utf-8'), 'stderr': errors.decode('utf-8'),
                    'stdout_sha256': hashlib.sha256(output).hexdigest(),
                    'stderr_sha256': hashlib.sha256(errors).hexdigest(), 'exit': 0}
-        # Retain failed acceptance too. Authenticated source execution and its
-        # external frozen expectations remain separate from this pure check.
         common.exclusive(attempt.root / (unit + '.original.json'), witness)
         capacity.verify_observation(witness, expected)
     common.exclusive(attempt.root / ('resume-' + uuid.uuid4().hex + '.json'), result)
@@ -127,6 +80,7 @@ def root_operation(root, attempt, ssh, entry, files, arguments=(), *, runtime_se
 
 
 def root_resume(root, attempt, ssh):
+    native_run.bootstrap_preparation(attempt)
     files = ('linux_loop_bound.py', 'linux_native_storage.py', 'linux_native_writers.py', 'linux_native_resume.py')
     result = root_operation(root, attempt, ssh, 'linux_native_resume.py', files)
     common.require(result['writer_closure']['complete'],
@@ -146,7 +100,7 @@ def root_collect(root, attempt, ssh, controller=None, expected=None):
 
 
 
-def initialize_images(root, seed):
+def initialize_images(root, seed, *, preparation=False, resume_copy=False):
     """Explicit unsealed activation; preserve every byte and the owned rollback."""
     attempt = native_run.Attempt(root, label='native-image-initialization')
     raw = attempt.command([diagnostic.PRLCTL, 'list', '--info', setup.VM_UUID, '--json'], read_only=True)
@@ -170,15 +124,29 @@ def initialize_images(root, seed):
     ssh = ssh_prefix(root, attempt)
     actual = attempt.command(ssh + ['sha256sum -- ' + shlex.quote(cell['engine_binary']['path'])], read_only=True)
     common.require(actual.decode().split()[0] == cell['engine_binary']['sha256'], 'engine executable changed')
-    engine = shlex.join([cell['engine_binary']['path'], '--config', cell['docker_config'],
-                         '--context', cell['engine_identity'], 'ps', '-a', '--no-trunc', '--format', '{{.ID}}'])
-    common.require(attempt.command(ssh + [engine], read_only=True).strip() == b'',
-                   'dedicated engine still has containers; settle their exact owners first')
+    state_raw = attempt.admin('systemctl show --all effigy-829-rootful.service '
+                              '--property=ActiveState,MainPID,ControlGroup', read_only=True)
+    state = dict(line.split('=', 1) for line in state_raw.decode().splitlines())
+    if state.get('ActiveState') == 'active':
+        engine = shlex.join([cell['engine_binary']['path'], '--config', cell['docker_config'],
+                             '--context', cell['engine_identity'], 'ps', '-a', '--no-trunc', '--format', '{{.ID}}'])
+        common.require(attempt.command(ssh + [engine], read_only=True).strip() == b'',
+                       'dedicated engine still has containers; settle their exact owners first')
+    else:
+        verify_engine_stopped(state, [])
+        common.require(attempt.admin('test ! -d /sys/fs/cgroup/system.slice/effigy-829-rootful.service '
+                                     '|| test -z "$(find /sys/fs/cgroup/system.slice/effigy-829-rootful.service -name cgroup.procs -exec cat {} +)"', read_only=True) == b'',
+                       'inactive engine cgroup observation failed')
     stop_engine(attempt)
     files = ('linux_loop_bound.py', 'linux_native_storage.py', 'linux_native_writers.py',
              'linux_native_resume.py', 'linux_native_initialize.py')
-    result = root_operation(root, attempt, ssh, 'linux_native_initialize.py', files,
-                            runtime_seconds=300, file_limit='2G')
+    if preparation:
+        files += ('linux_native_preparation_storage.py',)
+        entry, seconds, ceiling, memory = 'linux_native_preparation_storage.py', 1200, '40G', '2G'
+    else:
+        entry, seconds, ceiling, memory = 'linux_native_initialize.py', 300, '2G', '256M'
+    result = root_operation(root, attempt, ssh, entry, files, ('--resume-copy',) if resume_copy else (),
+                            runtime_seconds=seconds, file_limit=ceiling, memory_limit=memory)
     common.exclusive(attempt.root / 'initialized.json', result)
     print(json.dumps({'evidence': str(attempt.root), 'initialized': True, 'exploratory': True,
                       'qualification_credit': False}))
@@ -197,13 +165,23 @@ def stop_engine(attempt):
 
 
 def capacity_probe(attempt, ssh, root, size, *, image=None):
+    import base64
     payload = (Path(__file__).parent / 'linux_native_capacity.py').read_bytes()
-    argv = '/usr/bin/python3 -I -B - ' + shlex.quote(root) + ' ' + str(size)
+    argv = ['/usr/bin/setpriv', '--reuid=1001', '--regid=1001', '--clear-groups',
+            '--bounding-set=-all', '--no-new-privs', '/usr/bin/python3', '-I', '-B', '-', root, str(size)]
     if image:
-        argv = ('env DOCKER_CONFIG=/var/lib/effigy-829/rootful/client/config /usr/bin/docker '
-                '--context effigy-829-rootful run --rm -i --network none --user 1001:1001 '
-                '--volume ' + shlex.quote(root + ':' + root) + ' ' + shlex.quote(image) + ' ' + argv)
-    result = json.loads(attempt.command(ssh + [argv], data=payload, timeout=120))
+        argv = ['/usr/bin/setpriv', '--reuid=1001', '--regid=1001', '--clear-groups',
+                '--bounding-set=-all', '--no-new-privs', '/usr/bin/env',
+                'DOCKER_CONFIG=/var/lib/effigy-829/rootful/client/config', '/usr/bin/docker',
+                '--context', 'effigy-829-rootful', 'run', '--rm', '-i', '--network', 'none',
+                '--user', '1001:1001', '--volume', root + ':' + root, image,
+                '/usr/bin/python3', '-I', '-B', '-', root, str(size)]
+    code = ('import subprocess,base64; subprocess.run(' + repr(argv)
+            + ',input=base64.b64decode(' + repr(base64.b64encode(payload).decode()) + '),check=True)')
+    output, errors, _, _ = native_run.admin_operation(attempt, code.encode(), seconds=180,
+                                                    memory='128M', file_limit=str(size))
+    common.require(not errors, 'capacity control reported stderr')
+    result = json.loads(output)
     common.require(result['errno'] == 28 and result['retained_empty_inode']
                    and (not image or result['seccomp'] == '2'), 'physical ENOSPC control differs')
     common.exclusive(attempt.root / ('capacity-' + uuid.uuid4().hex + '.json'), result)
@@ -228,6 +206,8 @@ def full_chain(root, seed):
     known = (root / 'control/ssh_known_hosts').read_text().split()
     common.require(len(key) >= 2 and key[:2] == known[1:3], 'fixed VM SSH identity differs')
     root_resume(root, attempt, ssh)
+    native_run.authorize_channel(root, attempt)
+    ssh = ssh_prefix(root, attempt)
     stop_engine(attempt)
     capacity_probe(attempt, ssh, '/var/lib/effigy-829/rootful/client/tmp', 2147483648)
     root_resume(root, attempt, ssh)
@@ -259,14 +239,16 @@ def main(argv):
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--diagnostic-only', action='store_true')
     mode.add_argument('--initialize-images', action='store_true')
+    mode.add_argument('--prepare-storage', action='store_true')
+    mode.add_argument('--resume-preparation-copy', action='store_true')
     args = parser.parse_args(argv[1:])
     root = args.evidence_root.resolve(strict=True)
     if args.diagnostic_only:
         common.require(args.asset_seed is None, 'diagnostic-only does not accept a session seed')
         return diagnostic_run(root)
-    if args.initialize_images:
+    if args.initialize_images or args.prepare_storage or args.resume_preparation_copy:
         common.require(args.asset_seed is not None, 'image initialization requires the prepared owned seed')
-        return initialize_images(root, args.asset_seed)
+        return initialize_images(root, args.asset_seed, preparation=args.prepare_storage or args.resume_preparation_copy, resume_copy=args.resume_preparation_copy)
     common.require(args.asset_seed is not None, 'full native smoke requires the prepared asset seed; see linux-setup.md')
     return full_chain(root, args.asset_seed)
 

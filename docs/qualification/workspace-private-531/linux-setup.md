@@ -1036,3 +1036,33 @@ verifier binds frozen source/phase/nonces, original streams, completed observer
 custody, exact images/configuration, writer cohorts and allocation accounting.
 Registration is source support, not activation or proof. The legacy root-quota
 packet remains unarmed; no old H/K anchors or failed occurrences are repurposed.
+
+
+### Bounded preparation and fixed transfer (829)
+
+The preparation tree now has its own initialized 40 GiB image,
+`/var/lib/effigy-829/preparation.ext4`, UUID
+`18f16a9f-a2cd-421e-8390-8f8d6d2bd829`, mounted at the native base.
+The original tree remains at `linux-native-829.before-physical-18f16a9f`.
+All 146,497 copied entries matched content and metadata before cutover.
+This bounds sources, toolchains, caches and artifacts separately from the
+1 GiB workspace and 2 GiB engine. Builds run as UID1001 in observed systemd
+units with 3 GiB memory, no swap, read-only system/kernel mounts and writable
+paths confined to these filesystems. The actual preparation gate passed after
+protecting the observed `binfmt_misc` kernel mount.
+
+Allocation accounting reads the real ext4 orphan inode and shared external
+attribute block headers. It counts each physical block once; it does not widen
+the 1 MiB attribution tolerance. A private, nonrecursive read-only bind exposes
+preparation inodes otherwise covered by the workspace mount. All three native
+filesystems passed the resulting attribution check.
+
+The exploratory SSH account now uses one exclusive, expiring transfer key under
+a root-owned SSH policy. Its fixed entry accepts only a 64-character operation
+ID provisioned by the authenticated host authority. Each operation binds boot,
+expiry, parent device/inode, exact size and SHA-256. Receive uses exclusive,
+no-follow creation; read verifies the independently provisioned identity.
+An actual receive/read round trip passed and an arbitrary `id` request refused
+with exit 3. Root operations retain exact source, unit, streams, exit and
+independent empty kernel-cgroup observations. This exploratory transfer channel
+is not yet the separately activated sealed proof transport.

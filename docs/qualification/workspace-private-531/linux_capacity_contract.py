@@ -15,7 +15,8 @@ import linux_loop_bound as loop
 MECHANISM = loop.MECHANISM
 SCHEMA = 'effigy.linux-loop-original.v1'
 VM = '433c9e5b-c7b9-469f-9633-24b4addcd3b5'
-CAPS = {'workspace': 1073741824, 'engine': 2147483648}
+CAPS = {'workspace': 1073741824, 'engine': 2147483648, 'preparation': 42949672960}
+ENGINE_GROUP = '/system.slice/effigy-829-rootful.service'
 PHASES = {'setup', 'activation', 'before', 'live', 'after'}
 MAX_ORIGINAL_BYTES = 8 * 1024 * 1024
 HEX = re.compile(r'[0-9a-f]{64}')
@@ -62,7 +63,7 @@ def original(witness, expected):
     unit = witness['unit']
     require(unit['name'] == expected['observer_unit'] and unit['MainPID'] == '0'
             and unit['ControlGroup'] == '' and unit['Result'] == 'success'
-            and unit['ExecMainStatus'] == '0'
+            and unit['ExecMainStatus'] == '0' and unit.get('kernel_pids') == []
             and re.fullmatch(r'[0-9a-f]{32}', unit['InvocationID']),
             'observer unit did not complete with independently empty custody')
     data = json.loads(witness['stdout'], object_pairs_hook=unique)
@@ -78,7 +79,7 @@ def original(witness, expected):
 def _verify_observation(witness, expected):
     data = original(witness, expected)
     pins = expected['images']
-    require(set(pins) == set(CAPS), 'workspace and engine image pins required')
+    require(set(pins) == set(CAPS), 'preparation, workspace and engine image pins required')
     by_path = {item['image']: item for item in data['images']}
     require(len(by_path) == len(data['images']) == len(pins)
             and set(by_path) == {pin['image'] for pin in pins.values()}, 'image originals are missing or duplicated')
@@ -86,7 +87,9 @@ def _verify_observation(witness, expected):
     for role, pin in pins.items():
         require(type(pin['image_bytes']) is int and 0 < pin['image_bytes'] <= CAPS[role],
                 'physical image exceeds its frozen role ceiling')
-        bounds[role] = loop.verify_image(by_path[pin['image']], pin)
+        children = tuple(other['mountpoint'] for other in pins.values()
+                         if other['mountpoint'].startswith(pin['mountpoint'] + '/'))
+        bounds[role] = loop.verify_image(by_path[pin['image']], pin, child_mounts=children)
     require(len({bound['device'] for bound in bounds.values()}) == len(bounds)
             and len({(pin['image_device'], pin['image_inode']) for pin in pins.values()}) == len(pins),
             'physical roles share a loop device or backing inode')
@@ -102,6 +105,9 @@ def _verify_observation(witness, expected):
     require(groups == closure['cgroups_before'] == closure['cgroups_after']
             and set(groups) == set(expected['cgroups']) and all(groups.values()),
             'writer cohort was incomplete or changed during observation')
+    require(ENGINE_GROUP in groups and 1 <= len(groups) <= 2
+            and (expected['origin']['phase'] != 'live' or len(groups) == 2),
+            'dedicated engine or live controller cohort is missing')
     pids = {pid for members in groups.values() for pid in members}
     actors = closure['actors']
     require(len({actor['pid'] for actor in actors}) == len(actors) == len(pids)
@@ -110,7 +116,8 @@ def _verify_observation(witness, expected):
     allowed = expected['executables']
     require(isinstance(allowed, list) and allowed and all(HEX.fullmatch(item) for item in allowed),
             'frozen writer executable identities required')
-    devices = {bound['device'] for bound in bounds.values()}
+    devices = {bound['device'] for role, bound in bounds.items()
+               if expected['origin']['phase'] in ('setup', 'activation') or role != 'preparation'}
     for group, ceiling in expected['cgroups'].items():
         control = closure['controls'][group]
         require(type(ceiling) is int and ceiling > 0 and control == {
@@ -135,6 +142,24 @@ def _verify_observation(witness, expected):
                 'whole-filesystem attribution originals are incomplete')
         for role, pin in pins.items():
             value = data['accounting'][pin['mountpoint']]
+            device = bounds[role]['device'].split(':')
+            import os
+            require(value.get('device') == os.makedev(*map(int, device)) and value.get('root_inode') == 2,
+                    'attribution does not cover the admitted whole filesystem')
+            for name in ('orphan_inode', 'external_xattrs'):
+                require(name in value and loop.superblock(bytes.fromhex(value[name]['superblock_hex']), project_quota=False) ==
+                        loop.superblock(bytes.fromhex(by_path[pin['image']]['originals']['image_superblock_hex']), project_quota=False),
+                        'allocation metadata belongs to another filesystem')
+            view = value.get('view')
+            if view is not None:
+                require(view['source_path'] == pin['mountpoint'], 'attribution view source differs')
+                rows = loop.mount_rows(view['mountinfo'])
+                mounted = loop.one_mount(rows, view['target'])
+                require(mounted['device'] == bounds[role]['device'] and mounted['root'] == '/'
+                        and 'ro' in mounted['options'] and not any(row['target'].startswith(view['target'] + '/') for row in rows),
+                        'attribution view is not an unobscured readonly whole-filesystem view')
+            elif any(other['mountpoint'].startswith(pin['mountpoint'] + '/') for other in pins.values()):
+                raise ValueError('covered filesystem requires an independently observed attribution view')
             accounting[role] = loop.verify_accounting(value)
             require(accounting[role]['used_bytes_before'] <= pin['image_bytes'], 'attribution exceeds the physical image')
     return {'mechanism': MECHANISM, 'boot_id': data['boot_id'], 'images': bounds,

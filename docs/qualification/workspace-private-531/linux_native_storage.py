@@ -12,7 +12,7 @@ import struct
 import sys
 
 from linux_loop_bound import (ROOT_UUID, METADATA_TOLERANCE, mount_field, mount_rows, one_mount,
-                              superblock, verify_extents, verify_accounting)
+                              superblock, verify_extents, verify_accounting, orphan_layout, orphan_inode_offset, orphan_allocation, inode_geometry, inode_offset, external_xattr_deduction)
 
 
 def verify_workload(row, checkout, engine_root):
@@ -76,13 +76,86 @@ def allocated_extents(fd, capacity):
 
 
 
+def orphan_original(device):
+    """Read the exact internal orphan inode through this filesystem's block fd."""
+    sysfs = Path('/sys/dev/block') / ('%d:%d' % (os.major(device), os.minor(device)))
+    fd = os.open('/dev/' + sysfs.resolve(strict=True).name, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        if os.fstat(fd).st_rdev != device:
+            raise ValueError('accounting block device differs')
+        raw = os.pread(fd, 1024, 1024)
+        layout = orphan_layout(raw)
+        result = dict(superblock_hex=raw.hex(), group_descriptor_hex=None, inode_hex=None)
+        if layout is not None:
+            descriptor = os.pread(fd, layout['descriptor_size'], layout['descriptor_offset'])
+            offset = orphan_inode_offset(raw, descriptor)
+            result.update(group_descriptor_hex=descriptor.hex(), inode_offset=offset,
+                          inode_hex=os.pread(fd, layout['inode_size'], offset).hex())
+        orphan_allocation(result)
+        return result
+    finally:
+        os.close(fd)
+
+
+class AllocationMetadata:
+    """Retain real shared-EA references so per-inode charges count a block once."""
+    def __init__(self, device):
+        node = (Path('/sys/dev/block') / ('%d:%d' % (os.major(device), os.minor(device)))).resolve(strict=True)
+        self.fd = os.open('/dev/' + node.name, os.O_RDONLY | os.O_NOFOLLOW)
+        if os.fstat(self.fd).st_rdev != device:
+            os.close(self.fd)
+            raise ValueError('allocation metadata device differs')
+        try:
+            self.raw = os.pread(self.fd, 1024, 1024)
+            self.geometry = inode_geometry(self.raw)
+        except BaseException:
+            os.close(self.fd)
+            raise
+        self.groups = {}
+        self.original = {'superblock_hex': self.raw.hex(), 'references': [], 'headers': {}}
+
+    def close(self):
+        os.close(self.fd)
+
+    def charge(self, info):
+        group = (info.st_ino - 1) // self.geometry['per_group']
+        if group not in self.groups:
+            self.groups[group] = os.pread(self.fd, self.geometry['descriptor_size'],
+                self.geometry['descriptor_base'] + group * self.geometry['descriptor_size'])
+        descriptor = self.groups[group]
+        offset = inode_offset(self.raw, info.st_ino, descriptor)
+        inode = os.pread(self.fd, self.geometry['inode_size'], offset)
+        acl = struct.unpack_from('<I', inode, 0x68)[0] | struct.unpack_from('<H', inode, 0x76)[0] << 32
+        if not acl:
+            return
+        sectors = struct.unpack_from('<I', inode, 0x1c)[0] | struct.unpack_from('<H', inode, 0x74)[0] << 32
+        if sectors != info.st_blocks:
+            raise ValueError('inode allocation changed during metadata census')
+        header = os.pread(self.fd, 32, acl * self.geometry['block_size']).hex()
+        prior = self.original['headers'].setdefault(str(acl), header)
+        if prior != header:
+            raise ValueError('external xattr block changed during census')
+        self.original['references'].append({'number': info.st_ino, 'inode_hex': inode.hex(),
+            'group_descriptor_hex': descriptor.hex(), 'inode_offset': offset, 'charged_sectors': info.st_blocks})
+
+
 def accounting(root):
     """Quiescent no-follow census of the whole dedicated filesystem, including metadata roots."""
     root = Path(root)
     fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    metadata = None
     try:
         identity = os.fstat(fd)
+        # Closing a writer does not force ext4 delayed allocation. Flush this
+        # exact filesystem before comparing block allocation with its inode tree.
+        import ctypes
+        library = ctypes.CDLL(None, use_errno=True)
+        library.syncfs.argtypes = [ctypes.c_int]
+        library.syncfs.restype = ctypes.c_int
+        if library.syncfs(fd) != 0:
+            raise OSError(ctypes.get_errno(), 'allocation filesystem flush failed')
         before = os.fstatvfs(fd)
+        metadata = AllocationMetadata(identity.st_dev)
         seen = set()
         allocated = 0
 
@@ -96,6 +169,7 @@ def accounting(root):
                 raise ValueError('allocation census found an aliased directory')
             seen.add(key)
             allocated += initial.st_blocks * 512
+            metadata.charge(initial)
             with os.scandir(directory) as entries:
                 for entry in entries:
                     info = entry.stat(follow_symlinks=False)
@@ -115,6 +189,7 @@ def accounting(root):
                         if key not in seen:
                             seen.add(key)
                             allocated += info.st_blocks * 512
+                            metadata.charge(info)
                         visible = os.stat(entry.name, dir_fd=directory, follow_symlinks=False)
                         if (visible.st_ino, visible.st_size, visible.st_blocks, visible.st_mtime_ns, visible.st_ctime_ns) != (
                                 info.st_ino, info.st_size, info.st_blocks, info.st_mtime_ns, info.st_ctime_ns):
@@ -124,18 +199,60 @@ def accounting(root):
                 raise ValueError('allocation census directory changed')
 
         visit(fd)
+        internal = orphan_original(identity.st_dev)
+        layout = orphan_layout(bytes.fromhex(internal['superblock_hex']))
+        if layout and (identity.st_dev, layout['inode']) in seen:
+            raise ValueError('internal orphan inode was also reachable by name')
         after = os.fstatvfs(fd)
         if root.stat().st_ino != identity.st_ino or root.stat().st_dev != identity.st_dev:
             raise ValueError('allocation census root changed')
         return verify_accounting({'device': identity.st_dev, 'root_inode': identity.st_ino,
-                'distinct_inodes': len(seen), 'inode_allocated_bytes': allocated,
+                'distinct_inodes': len(seen), 'visible_inode_allocated_bytes': allocated,
+                'orphan_inode': internal, 'external_xattrs': metadata.original,
+                'inode_allocated_bytes': allocated - external_xattr_deduction(metadata.original) + orphan_allocation(internal),
                 'used_bytes_before': (before.f_blocks - before.f_bfree) * before.f_frsize,
                 'used_bytes_after': (after.f_blocks - after.f_bfree) * after.f_frsize})
     finally:
+        if metadata is not None:
+            metadata.close()
         os.close(fd)
 
 
-def observe(image, mountpoint, capacity, *, project_quota):
+def accounting_view(root):
+    """Census a whole filesystem through a private, nonrecursive readonly bind.
+
+    A separately bounded child mount must not hide the covered parent inodes.
+    The child namespace dies with this waited observer; no global mount changes.
+    """
+    import subprocess
+    code = """import os,json,tempfile,subprocess,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[2])
+import linux_native_storage as storage
+source=Path(sys.argv[1]); before=source.stat()
+os.unshare(os.CLONE_NEWNS)
+subprocess.run(['mount','--make-rprivate','/'],check=True)
+target=Path(tempfile.mkdtemp(prefix='census-',dir='/var/lib/effigy-829/helpers'))
+subprocess.run(['mount','--bind',str(source),str(target)],check=True)
+subprocess.run(['mount','-o','remount,bind,ro',str(target)],check=True)
+opened=target.stat()
+assert (opened.st_dev,opened.st_ino)==(before.st_dev,before.st_ino)
+raw=Path('/proc/self/mountinfo').read_text()
+rows=storage.mount_rows(raw)
+mounted=storage.one_mount(rows,str(target))
+assert mounted['root']=='/' and 'ro' in mounted['options']
+assert not any(row['target'].startswith(str(target)+'/') for row in rows)
+result=storage.accounting(target)
+assert (source.stat().st_dev,source.stat().st_ino)==(before.st_dev,before.st_ino)
+result['view']={'source_path':str(source),'target':str(target),'mountinfo':raw}
+print(json.dumps(result))
+"""
+    raw = subprocess.check_output(['/usr/bin/python3', '-I', '-B', '-c', code,
+                                   str(root), str(Path(__file__).resolve().parent)], timeout=120)
+    return json.loads(raw)
+
+
+def observe(image, mountpoint, capacity, *, project_quota, child_mounts=()):
     import fcntl
     if os.geteuid() != 0 or sys.platform != 'linux':
         raise RuntimeError('read-only native root observer required')
@@ -202,7 +319,8 @@ def observe(image, mountpoint, capacity, *, project_quota):
         # Reject nested or same-device alternate mounts: these would escape a
         # path-only census even when the loop image itself remains bounded.
         if any(row != mounted and (row['device'] == mounted['device']
-               or row['target'].startswith(str(mountpoint) + '/')) for row in rows):
+               or (row['target'].startswith(str(mountpoint) + '/')
+                   and row['target'] not in child_mounts)) for row in rows):
             raise ValueError('loop has aliases or nested mounts')
         visible = image.stat()
         if (visible.st_dev, visible.st_ino, visible.st_size) != (info.st_dev, info.st_ino, info.st_size):
@@ -225,13 +343,13 @@ def observe(image, mountpoint, capacity, *, project_quota):
         os.close(fd)
 
 
-def disable_discard(image, mountpoint, capacity):
+def disable_discard(image, mountpoint, capacity, *, child_mounts=()):
     """Fixed-image activation: prevent a later trim from punching outer holes."""
-    before = observe(image, mountpoint, capacity, project_quota=False)
+    before = observe(image, mountpoint, capacity, project_quota=False, child_mounts=child_mounts)
     path = Path('/sys/dev/block') / before['mount']['device'] / 'queue/discard_max_bytes'
     if int(path.read_text()) != 0:
         path.write_text('0\n')
-    after = observe(image, mountpoint, capacity, project_quota=False)
+    after = observe(image, mountpoint, capacity, project_quota=False, child_mounts=child_mounts)
     if (after['image_inode'] != before['image_inode'] or after['image_device'] != before['image_device']
             or after['originals']['loop']['discard_max_bytes'] != 0):
         raise ValueError('discard policy or loop backing changed during activation')

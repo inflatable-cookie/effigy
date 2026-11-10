@@ -18,7 +18,10 @@ IMAGES = ((ROOT / 'engine-rootful.ext4', ROOT / 'rootful', 2147483648,
            '958bd45f-83da-43e7-b15a-b498a79b34bf'),
           (ROOT / 'rows-final.ext4', WORKSPACE, 1073741824,
            '8d8707ea-dd3d-48ab-b408-47f66e5475dd'))
-INODES = {'engine-rootful.ext4': 2641043, 'rows-final.ext4': 2640535}
+PREPARATION = (ROOT / 'preparation.ext4', WORKSPACE.parent, 42949672960,
+               '18f16a9f-a2cd-421e-8390-8f8d6d2bd829')
+ALL_IMAGES = (PREPARATION, *IMAGES)
+INODES = {'engine-rootful.ext4': 2641043, 'rows-final.ext4': 2640535, 'preparation.ext4': 2641184}
 
 
 def run(*argv):
@@ -47,7 +50,7 @@ def resume():
     if os.geteuid() != 0 or run('blkid', '-s', 'UUID', '-o', 'value', '/dev/sda2').strip() != storage.ROOT_UUID:
         raise RuntimeError('fixed native root observer required')
     observations = []
-    for image, target, capacity, expected_uuid in IMAGES:
+    for image, target, capacity, expected_uuid in ALL_IMAGES:
         if (image.resolve(strict=True) != image or target.resolve(strict=True) != target
                 or image.stat().st_uid != 0 or image.stat().st_size != capacity
                 or image.stat().st_mode & 0o777 != 0o600
@@ -58,10 +61,12 @@ def resume():
             if run('losetup', '-j', str(image)).strip():
                 raise RuntimeError('unmounted image already has a loop association; reconcile explicitly')
             subprocess.run(['mount', '-o', 'loop,nodev,nosuid', str(image), str(target)], check=True)
-        observation = storage.disable_discard(image, target, capacity)
+        observation = storage.disable_discard(image, target, capacity,
+            child_mounts=(str(WORKSPACE),) if image == PREPARATION[0] else ())
         verify_image(observation, {'image': str(image), 'image_device': os.stat('/').st_dev,
             'image_inode': INODES[image.name], 'image_bytes': capacity,
-            'filesystem_uuid': expected_uuid, 'mountpoint': str(target)})
+            'filesystem_uuid': expected_uuid, 'mountpoint': str(target)},
+            child_mounts=(str(WORKSPACE),) if image == PREPARATION[0] else ())
         observations.append(observation)
     if (WORKSPACE.stat().st_uid != 1001 or WORKSPACE.stat().st_mode & 0o777 != 0o700
             or run('id', '-G', 'effigy531').strip() != '1001'):
@@ -113,7 +118,8 @@ def resume():
         raise RuntimeError('resume requires the dedicated engine to have no container writers')
     devices = {item['mount']['device'] for item in observations}
     closure = writers.observe([state['ControlGroup']], devices, str(ROOT / 'rootful'), 3221225472)
-    allocation = {str(target): storage.accounting(target) for _, target, _, _ in IMAGES}
+    allocation = {str(target): (storage.accounting_view(target) if image == PREPARATION[0]
+                              else storage.accounting(target)) for image, target, _, _ in ALL_IMAGES}
     return {'exploratory': True, 'qualification_credit': False, 'images': observations,
             'daemon_config_sha256': configs, 'engine': engine, 'writer_closure': closure,
             'accounting': allocation, 'service': service}

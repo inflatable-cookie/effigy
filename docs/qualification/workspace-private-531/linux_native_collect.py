@@ -13,14 +13,15 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_native_storage as storage
 import linux_native_writers as writers
-from linux_native_resume import IMAGES, configuration_originals
+from linux_native_resume import ALL_IMAGES, PREPARATION, WORKSPACE, configuration_originals
 
 
 def collect(controller=None, origin=None):
     if os.geteuid() != 0 or sys.platform != 'linux':
         raise ValueError('native read-only root collector required')
-    images = [storage.observe(image, target, capacity, project_quota=False)
-              for image, target, capacity, _ in IMAGES]
+    images = [storage.observe(image, target, capacity, project_quota=False,
+              child_mounts=(str(WORKSPACE),) if image == PREPARATION[0] else ())
+              for image, target, capacity, _ in ALL_IMAGES]
     groups = ['/system.slice/effigy-829-rootful.service']
     units = {}
     if controller is not None:
@@ -41,7 +42,8 @@ def collect(controller=None, origin=None):
             'writer_closure': writers.observe(groups, {item['mount']['device'] for item in images},
                 '/var/lib/effigy-829/rootful', 3 * 1024 ** 3),
             'accounting': None if controller else {
-                str(target): storage.accounting(target) for _, target, _, _ in IMAGES},
+                str(target): (storage.accounting_view(target) if image == PREPARATION[0]
+                              else storage.accounting(target)) for image, target, _, _ in ALL_IMAGES},
             'exploratory': origin is None or origin['evidence_kind'] == 'exploration',
             'qualification_credit': False}
 

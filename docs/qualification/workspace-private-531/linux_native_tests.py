@@ -13,6 +13,7 @@ import linux_native_artifact as producer
 import linux_native_build as build
 import linux_native_storage as storage
 import linux_native_initialize as initialize
+import linux_native_preparation_storage as preparation_storage
 import linux_loop_bound as loop_bound
 import linux_native_writers as writers
 import linux_native_run as native_run
@@ -82,6 +83,41 @@ class SameByteInitializationTests(unittest.TestCase):
                 os.close(fd)
 
 
+class PreparationStorageTests(unittest.TestCase):
+    def test_no_follow_manifest_detects_content_even_when_size_and_mtime_match(self):
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            root = Path(directory)
+            file = root / 'payload'
+            file.write_bytes(b'one')
+            (root / 'alias').symlink_to('payload')
+            (root / 'qualification').mkdir()
+            ignored = root / 'qualification' / 'separate-filesystem'
+            ignored.write_bytes(b'first')
+            original = preparation_storage.manifest(root)
+            stamp = file.stat()
+            file.write_bytes(b'two')
+            os.utime(file, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+            self.assertNotEqual(preparation_storage.manifest(root), original)
+            file.write_bytes(b'one')
+            os.utime(file, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+            ignored.write_bytes(b'changed workspace, outside this census')
+            self.assertEqual(preparation_storage.manifest(root), original)
+
+    def test_generated_memory_script_compiles_before_unit_submission(self):
+        from unittest.mock import Mock
+        attempt = Mock()
+        attempt.root = Path(tempfile.mkdtemp(prefix='native-launcher-', dir=os.environ['TMPDIR']))
+        class Captured(Exception):
+            pass
+        with patch.object(native_run, 'channel_receive'), \
+             patch.object(native_run, 'submit_unit', side_effect=Captured) as submit:
+            with self.assertRaises(Captured):
+                build.run_script(attempt, Path(os.environ['TMPDIR']), ['ssh'],
+                                 build.BASE + '/builds/probe', b'exit 0\n')
+        code = submit.call_args.args[1][-1]
+        compile(code, 'native-preparation-launcher', 'exec')
+
+
 class PhysicalImageReceiptTests(unittest.TestCase):
     def image(self):
         import uuid
@@ -94,6 +130,9 @@ class PhysicalImageReceiptTests(unittest.TestCase):
             struct.pack_into('<H', raw, 0x38, 0xef53)
             struct.pack_into('<I', raw, 4, capacity // 4096)
             struct.pack_into('<I', raw, 0x18, 2)
+            struct.pack_into('<I', raw, 0, 1024)
+            struct.pack_into('<I', raw, 0x28, 1024)
+            struct.pack_into('<H', raw, 0x58, 256)
             raw[0x68:0x78] = uuid.UUID(ident).bytes
             return raw.hex()
         loop = bytearray(232)
@@ -132,6 +171,60 @@ class PhysicalImageReceiptTests(unittest.TestCase):
             loop_bound.verify_image(bad, pin)
 
 
+class Ext4AllocationUnionTests(unittest.TestCase):
+    def originals(self):
+        value, _ = PhysicalImageReceiptTests().image()
+        raw = bytearray.fromhex(value['originals']['image_superblock_hex'])
+        struct.pack_into('<I', raw, 0x5c, 0x1000)
+        struct.pack_into('<I', raw, 0x280, 12)
+        descriptor = bytearray(32)
+        struct.pack_into('<I', descriptor, 8, 20)
+        orphan = bytearray(256)
+        struct.pack_into('<H', orphan, 0, 0o100600)
+        struct.pack_into('<I', orphan, 4, 4096)
+        struct.pack_into('<H', orphan, 0x1a, 1)
+        struct.pack_into('<I', orphan, 0x1c, 8)
+        struct.pack_into('<I', orphan, 0x20, 0x80000)
+        struct.pack_into('<HHHH', orphan, 0x28, 0xf30a, 1, 4, 0)
+        struct.pack_into('<IHHI', orphan, 0x34, 0, 1, 0, 100)
+        internal = dict(superblock_hex=raw.hex(), group_descriptor_hex=descriptor.hex(),
+                        inode_hex=orphan.hex(), inode_offset=20*4096+11*256)
+        references = []
+        for number in (30,31,32):
+            inode = bytearray(256)
+            struct.pack_into('<I', inode, 0x68, 120)
+            struct.pack_into('<I', inode, 0x1c, 8)
+            references.append(dict(number=number, inode_hex=inode.hex(), group_descriptor_hex=descriptor.hex(),
+                                   inode_offset=20*4096+(number-1)*256, charged_sectors=8))
+        header = bytearray(32)
+        struct.pack_into('<III', header, 0, 0xea020000, 3, 1)
+        return internal, dict(superblock_hex=raw.hex(), references=references, headers={'120':header.hex()})
+
+    def test_internal_inode_and_shared_xattrs_count_physical_blocks_once(self):
+        internal, xattrs = self.originals()
+        self.assertEqual(loop_bound.orphan_allocation(internal),4096)
+        self.assertEqual(loop_bound.external_xattr_deduction(xattrs),8192)
+        facts = dict(orphan_inode=internal, external_xattrs=xattrs, visible_inode_allocated_bytes=16384,
+                     inode_allocated_bytes=12288, used_bytes_before=16384, used_bytes_after=16384)
+        self.assertEqual(loop_bound.verify_accounting(facts)['metadata_bytes'],4096)
+        with self.assertRaises(ValueError):
+            loop_bound.verify_accounting(dict(facts, inode_allocated_bytes=16384))
+
+    def test_corrupt_inode_geometry_or_shared_reference_originals_refuse(self):
+        import copy
+        internal, xattrs = self.originals()
+        for change in (lambda v:v.update(inode_offset=0),
+                       lambda v:v.update(inode_hex='00'*256)):
+            bad = copy.deepcopy(internal); change(bad)
+            with self.assertRaises(ValueError): loop_bound.orphan_allocation(bad)
+        for change in (lambda v:v['references'].append(v['references'][0]),
+                       lambda v:v['references'][0].update(charged_sectors=9),
+                       lambda v:v.update(headers={}),
+                       lambda v:v['headers'].update({'120':'00'*32})):
+            bad = copy.deepcopy(xattrs); change(bad)
+            with self.assertRaises(ValueError): loop_bound.external_xattr_deduction(bad)
+
+
 class CapacityOriginalTests(unittest.TestCase):
     def envelope(self):
         import hashlib, json, copy
@@ -150,7 +243,18 @@ class CapacityOriginalTests(unittest.TestCase):
         engine['originals']['loop']['backing_file'] = ep['image']
         engine['originals']['loop']['device'] = '7:13'
         engine['originals']['mountinfo'] = engine['originals']['mountinfo'].replace('/bounded', '/engine').replace('7:12','7:13').replace('loop12','loop13')
-        group = '/system.slice/engine.service'
+        prep, pp = copy.deepcopy(engine), copy.deepcopy(ep)
+        pp.update(image='/var/lib/effigy-829/preparation.ext4', image_inode=2641184, mountpoint='/preparation')
+        prep['image'] = pp['image']
+        prep['originals']['image_stat']['inode'] = pp['image_inode']
+        prep['originals']['ancestors'] = [dict(path=str(parent), uid=0, mode=0o40755) for parent in Path(pp['image']).parents]
+        raw = bytearray.fromhex(prep['originals']['loop_status_hex'])
+        struct.pack_into('<Q', raw, 8, pp['image_inode'])
+        struct.pack_into('<I', raw, 40, 14)
+        prep['originals']['loop_status_hex'] = raw.hex()
+        prep['originals']['loop'].update(backing_file=pp['image'], device='7:14')
+        prep['originals']['mountinfo'] = prep['originals']['mountinfo'].replace('/engine','/preparation').replace('7:13','7:14').replace('loop13','loop14')
+        group = contract.ENGINE_GROUP
         mounts = '1 0 8:2 / / ro - ext4 /dev/sda2 rw\n2 1 7:12 / /bounded rw,nodev,nosuid - ext4 /dev/loop12 rw'
         actor = WriterClosureTests().actor(mounts)
         actor.update(executable_sha256='a' * 64, cgroup='0::' + group)
@@ -159,20 +263,29 @@ class CapacityOriginalTests(unittest.TestCase):
         origin = dict(vm_uuid=contract.VM, source_head='b'*40, phase='setup', nonce='c'*32,
                       programs={'collector.py':'d'*64}, evidence_kind='exploration')
         expected = dict(origin=origin, boot_id='01234567-89ab-cdef-0123-456789abcdef',
-                        images={'workspace':wp, 'engine':ep}, cgroups={group:1024},
+                        images={'workspace':wp, 'engine':ep, 'preparation':pp}, cgroups={group:1024},
                         executables=['a'*64], observer_unit='observer.service',
                         engine_configs={'/frozen/config':hashlib.sha256(b'exact config').hexdigest()})
         observation = dict(schema='effigy.linux-loop-observation.v1', boot_id=expected['boot_id'],
             origin=origin, exploratory=True, qualification_credit=False,
-            images=[workspace, engine], engine_configs=configs,
+            images=[workspace, engine, prep], engine_configs=configs,
             writer_closure=dict(cgroups=members, cgroups_before=members, cgroups_after=members,
                                 actors=[actor], controls={group:{'memory.max':'1024', 'memory.swap.max':'0'}}),
-            units={'engine.service':dict(ActiveState='active', ControlGroup=group, MainPID='123')},
+            units={group.rsplit('/',1)[-1]:dict(ActiveState='active', ControlGroup=group, MainPID='123')},
             accounting={path:dict(used_bytes_before=4096, used_bytes_after=4096, inode_allocated_bytes=4096)
-                        for path in ('/bounded', '/engine')})
+                        for path in ('/bounded', '/engine', '/preparation')})
+        for image in observation['images']:
+            mount = loop_bound.one_mount(loop_bound.mount_rows(image['originals']['mountinfo']),
+                                         next(p['mountpoint'] for p in expected['images'].values() if p['image'] == image['image']))
+            item = observation['accounting'][mount['target']]
+            raw = image['originals']['image_superblock_hex']
+            item.update(device=os.makedev(*map(int, mount['device'].split(':'))), root_inode=2,
+                        visible_inode_allocated_bytes=4096,
+                        orphan_inode=dict(superblock_hex=raw, group_descriptor_hex=None, inode_hex=None),
+                        external_xattrs=dict(superblock_hex=raw, references=[], headers={}))
         witness = dict(schema=contract.SCHEMA, mechanism=contract.MECHANISM, origin=origin,
             unit=dict(name='observer.service', MainPID='0', ControlGroup='', Result='success',
-                      ExecMainStatus='0', InvocationID='e'*32), stdout=json.dumps(observation), stderr='', exit=0)
+                      ExecMainStatus='0', InvocationID='e'*32, kernel_pids=[]), stdout=json.dumps(observation), stderr='', exit=0)
         for name in ('stdout','stderr'):
             witness[name+'_sha256'] = hashlib.sha256(witness[name].encode()).hexdigest()
         return witness, expected
@@ -224,6 +337,15 @@ class CapacityOriginalTests(unittest.TestCase):
             data['origin'] = frozen['origin']
             if phase == 'live':
                 data['accounting'] = None
+                group = '/system.slice/controller.service'
+                frozen['cgroups'][group] = 1024
+                actor = copy.deepcopy(data['writer_closure']['actors'][0])
+                actor.update(pid=124, cgroup='0::'+group)
+                data['writer_closure']['actors'].append(actor)
+                for key in ('cgroups','cgroups_before','cgroups_after'):
+                    data['writer_closure'][key][group] = [124]
+                data['writer_closure']['controls'][group] = {'memory.max':'1024', 'memory.swap.max':'0'}
+                data['units']['controller.service'] = dict(ActiveState='active', ControlGroup=group, MainPID='124')
             original['stdout'] = json.dumps(data)
             original['stdout_sha256'] = hashlib.sha256(original['stdout'].encode()).hexdigest()
             phases[phase], originals[phase] = frozen, original

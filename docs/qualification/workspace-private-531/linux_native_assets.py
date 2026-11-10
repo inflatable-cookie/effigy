@@ -99,7 +99,7 @@ export PATH="$base/tools/bin:$base/tools/zig-tools/cargo-zigbuild-aarch64-unknow
 export EFFIGY_OXIDE_ESCAPE=cargo CARGO_BUILD_JOBS=4 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false
 export CARGO_TARGET_DIR="$base/build-cache"
 export ZIG_GLOBAL_CACHE_DIR="$base/toolchain/zig-cache" TMPDIR="$base/artifact-tmp" TMP="$base/artifact-tmp" TEMP="$base/artifact-tmp"
-mkdir -m 700 "$roles"
+test -d "$roles" && test "$(stat -c %a \"$roles\")" = 700
 install -m 700 "$source/target/debug/effigy" "$roles/effigy-production"
 cd "$source"
 "$roles/effigy-production" build:workspace:private-qualification
@@ -137,8 +137,9 @@ def prepare(root, binding, seed):
     roles = build.BASE + '/artifacts/native-' + uuid.uuid4().hex
     payload = script(binding, roles, seed).encode()
     common.exclusive_bytes(attempt.root / 'build-roles.sh', payload)
-    attempt.command(ssh + ['timeout --signal=TERM --kill-after=20s 2100 /bin/sh -s'], data=payload, timeout=2160)
-    data = attempt.command(ssh + ['cat ' + shlex.quote(roles + '/seed.json')], read_only=True)
+    native_run.channel_directory(attempt, roles)
+    build.run_script(attempt, root, ssh, roles, payload, seconds=2100)
+    data = native_run.channel_read(attempt, ssh, roles + '/seed.json', limit=1024 * 1024)
     target = attempt.root / 'assets.json'
     common.exclusive_bytes(target, data)
     return target
