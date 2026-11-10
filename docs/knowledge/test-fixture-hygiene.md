@@ -422,12 +422,13 @@ cap. No test reserves every runner thread; activation deadlines and assertions
 remain unchanged.
 
 Hosted nextest runs use four hash partitions on each operating system. Shared-
-process CI uses three Effigy library families plus whole CLI, gateway and
+process CI uses four Effigy library families plus whole CLI, gateway and
 remaining-binary cohorts through `scripts/ci-shared-process.py`:
 
 | Library family | Test namespace |
 | --- | --- |
 | `library-workspace` | `runner::workspace_command::` (all builder and provisioning matrices) |
+| `library-core` | `runner::tests::runner_core_tests::` (the core runner fixtures and their hooks) |
 | `library-runner` | Remaining `runner::` tests (including their fixture hooks and registries) |
 | `library-other` | All other Effigy library tests |
 
@@ -447,6 +448,11 @@ between processes. The release gate remains full, unpartitioned
 `cargo test --workspace`, retaining cross-family shared-process interference
 coverage. Ordinary `effigy qa` and milestone QA retain full unpartitioned
 nextest; they do not use the hosted family filters.
+
+The initial remaining-runner cohort passed on Linux in 13m20s but reached the
+20-minute cap on macOS with 1,952 of 1,953 tests complete. Separating the intact
+`runner::tests::runner_core_tests::` family bounds that tail while retaining the same
+inventory checks, default threads and unpartitioned release coverage.
 
 Non-library cohorts discover every compiled workspace target; new binaries enter
 the remaining cohort. Library jobs build workspace libraries and the small

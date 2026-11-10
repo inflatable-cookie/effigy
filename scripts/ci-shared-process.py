@@ -10,7 +10,9 @@ import time
 
 LIBRARY_COHORTS = {
     "library-workspace": ["runner::workspace_command::"],
-    "library-runner": ["runner::", "--skip", "runner::workspace_command::"],
+    "library-core": ["runner::tests::runner_core_tests::"],
+    "library-runner": ["runner::", "--skip", "runner::workspace_command::",
+                       "--skip", "runner::tests::runner_core_tests::"],
     "library-other": ["--skip", "runner::"],
 }
 SUITES = {*LIBRARY_COHORTS, "cli", "gateway", "rest"}
@@ -19,6 +21,8 @@ SUITES = {*LIBRARY_COHORTS, "cli", "gateway", "rest"}
 def library_family(name):
     if name.startswith("runner::workspace_command::"):
         return "library-workspace"
+    if name.startswith("runner::tests::runner_core_tests::"):
+        return "library-core"
     if name.startswith("runner::"):
         return "library-runner"
     return "library-other"

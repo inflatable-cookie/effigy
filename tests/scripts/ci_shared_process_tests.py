@@ -13,12 +13,14 @@ MODULE = runpy.run_path(str(SCRIPT), run_name="ci_partition_tests")
 ROOT_NAMES = {
     "runner::workspace_command::fixture_a",
     "runner::task_engine::fixture_b",
+    "runner::tests::runner_core_tests::fixture_contract",
     "cli::fixture_c",
 }
 LISTS = {
     (): ROOT_NAMES,
     ("runner::workspace_command::",): {"runner::workspace_command::fixture_a"},
-    ("runner::", "--skip", "runner::workspace_command::"): {"runner::task_engine::fixture_b"},
+    ("runner::tests::runner_core_tests::",): {"runner::tests::runner_core_tests::fixture_contract"},
+    ("runner::", "--skip", "runner::workspace_command::", "--skip", "runner::tests::runner_core_tests::"): {"runner::task_engine::fixture_b"},
     ("--skip", "runner::"): {"cli::fixture_c"},
 }
 PLAN = {"/synthetic/lib": "library", "/synthetic/cli": "cli",
@@ -42,13 +44,13 @@ class PartitionTests(unittest.TestCase):
 
     def test_disjoint_complete_routing_and_original_thread_defaults(self):
         calls = []
-        suites = ["library-workspace", "library-runner", "library-other", "cli", "gateway", "rest"]
+        suites = ["library-workspace", "library-core", "library-runner", "library-other", "cli", "gateway", "rest"]
         for suite in suites:
             for binary in PLAN:
                 code, executed = self.runner(suite, binary)
                 self.assertEqual(code, 0)
                 calls.extend(executed)
-        self.assertEqual(len(calls), 6)
+        self.assertEqual(len(calls), 7)
         library_calls = [c.args[0][1:] for c in calls if c.args[0][0] == "/synthetic/lib"]
         self.assertCountEqual(library_calls, [list(k) for k in LISTS if k])
         self.assertTrue(all(not any("test-threads" in arg for arg in c.args[0]) for c in calls))
