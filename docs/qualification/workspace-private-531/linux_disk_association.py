@@ -60,7 +60,7 @@ import xml.etree.ElementTree as ET
 
 import linux_disk_identity as identity
 import linux_disk_inventory as inventory
-from linux_supervisor import Refusal
+from preparation_stage import Refusal
 
 # The reviewed identity. linux_setup's constants must equal these; linux_disk_association_tests checks it.
 REVIEWED = {
@@ -137,7 +137,7 @@ NOT_ESTABLISHED = (
 # The helper digest is a committed literal, not inventory.helper_digest() at import: a modified helper
 # cannot re-pin itself, and changing the helper without changing this literal refuses in
 # read_inventory('helper-bytes-differ').
-HELPER_SHA256 = '958a56b9886c72e8e65ff70925a7ce64cd7e415170a3671a5b5181a6da46dff9'
+HELPER_SHA256 = '6e2be1974d7c12bd82cfbd2242e7abfef8d68bfbb3db5dd5863bb2e0aab25d82'
 PINS = {
     MECHANISM: {
         'tool_path': str(inventory.HELPER),

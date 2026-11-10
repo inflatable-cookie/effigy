@@ -1091,6 +1091,29 @@ plus three separate live observer units for the three activation cohorts.
 Missing or replayed live originals refuse offline acceptance.
 
 
+### Live helper ownership
+
+`linux_native_support.py` owns VM identity, file custody, readiness, SSH argv,
+closure credit and bounded host transport. The legacy setup/transfer adapters
+retain R2-temporary wrappers for their original exception contract. The root
+supervisor remains a standalone standard-library executable; extraction does
+not remove or enable its retired quota executor.
+
+The physical route's local import graph is:
+
+```text
+physical preparation / native smoke / native session / launch
+  -> linux_native_build / linux_native_run / linux_diagnostic_proof
+     -> linux_native_support -> preparation_stage / resources / observations
+     -> linux_disk_association -> linux_disk_inventory -> linux_native_support
+aggregate -> common -> linux_capacity_contract -> linux_loop_bound
+```
+
+`PhysicalImportBoundaryTests` walks these imports, including nested imports and
+the macOS proof entry, and rejects setup, transfer, supervisor and allocation
+execution modules. Historical source lists still hash those files without
+importing them; signed receipts and retained evidence remain readable.
+
 ### Frozen preparation and full-session handoff
 
 The shared runner retains separate stdout/stderr, SSH wait status, exact unit

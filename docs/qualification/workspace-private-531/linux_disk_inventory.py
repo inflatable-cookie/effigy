@@ -63,7 +63,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import linux_transfer as transfers
+import linux_native_support as transfers
 
 HELPER = Path(__file__).resolve()
 PYTHON = '/usr/bin/python3'

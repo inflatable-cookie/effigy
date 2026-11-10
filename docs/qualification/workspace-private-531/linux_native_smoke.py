@@ -15,7 +15,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_diagnostic_proof as diagnostic
-import linux_setup as setup
+import linux_native_support as setup
 import common
 import linux_native_assets as assets
 import linux_native_build as build

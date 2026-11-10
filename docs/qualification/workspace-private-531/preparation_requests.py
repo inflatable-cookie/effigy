@@ -22,7 +22,7 @@ REQUIRED_MODULE_NAMES = (
     'linux_transfer.py', 'linux_receipts.py', 'linux_stage1.py',
     'linux_observation_caller.py', 'linux_disk_identity.py', 'linux_disk_association.py',
     'linux_disk_inventory.py', 'linux_allocation_bound.py', 'linux_allocation_probe.py',
-    'linux_capacity_contract.py', 'linux_loop_bound.py',
+    'linux_capacity_contract.py', 'linux_loop_bound.py', 'linux_native_support.py',
 )
 
 

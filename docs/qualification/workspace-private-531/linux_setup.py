@@ -15,7 +15,6 @@ import json
 import os
 import re
 import select
-import shlex
 import stat
 import subprocess
 import sys
@@ -26,6 +25,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from linux_supervisor import Refusal, exclusive
 import linux_supervisor as supervisor
+import linux_native_support as native
+from linux_native_support import (
+    VM_UUID, DISK_UID, PVM_HOME, CONFIG_NAME, DISK_DIR, DESCRIPTOR_NAME,
+    PROBE_SHA256, CANDIDATE_H_HEAD, STAGE1_SYSTEM_STATES,
+)
 import preparation_observations as observations
 import linux_disk_identity as identity
 import linux_allocation_bound as allocation
@@ -38,12 +42,6 @@ import preparation_requests
 from linux_receipts import verify_signed_receipt
 from linux_transfer import writer_remote_argv
 
-VM_UUID = '433c9e5b-c7b9-469f-9633-24b4addcd3b5'
-DISK_UID = '{44b5d35e-b053-4aae-9140-266a00bbef9a}'
-PVM_HOME = '/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm'
-CONFIG_NAME = 'config.pvs'
-DISK_DIR = 'harddisk1.hdd'
-DESCRIPTOR_NAME = 'DiskDescriptor.xml'
 CURRENT_SNAPSHOT = '{4d475daf-8aa1-497a-9a38-355f21fcd867}'
 CLEAN_BASE = '{a4b2b55c-875e-40a3-82f2-3dc3351d8339}'
 SNAPSHOT_COUNT = 36
@@ -53,7 +51,7 @@ STAGE_ADMISSION_RESERVE = 180
 STAGE_REPORT_RESERVE = 120
 STAGE_CEILING = 1200
 PRLCTL = '/usr/local/bin/prlctl'
-SSH_ALIAS = 'effigy-531-vault'
+SSH_ALIAS = native.SSH_ALIAS
 ACCOUNT = 'effigy531'
 HOME = '/home/effigy531'
 SCRATCH = '/Volumes/Stash/scratch/effigy'
@@ -77,7 +75,6 @@ REQUIRED_MODULE_NAMES = preparation_requests.REQUIRED_MODULE_NAMES
 REQUIRED_DRIVER_NAMES = ('common.py', 'runtime.py', 'probe.py')
 KEY_LIFETIME_SECONDS = 86400
 PROBE = Path(__file__).resolve().parent / 'linux-setup-probe.sh'
-PROBE_SHA256 = '6bde748a456617737fb4928d347d55fa96e5a6ff0dac119ace373692ef41fc39'
 KEY = re.compile(r'^([a-z0-9_]+)=(.*)$')
 HEX64 = re.compile(r'^[0-9a-f]{64}$')
 HEX40 = re.compile(r'^[0-9a-f]{40}$')
@@ -93,10 +90,6 @@ STAGE1_RESERVE = 120
 # systemd 259 systemctl is-system-running: exit 0 only for running. --wait blocks through
 # initializing/starting and then prints a later state (running or degraded).
 STAGE1_READINESS_ARGV = ('/usr/bin/systemctl', 'is-system-running', '--wait')
-STAGE1_SYSTEM_STATES = frozenset({
-    'initializing', 'starting', 'running', 'degraded', 'maintenance',
-    'stopping', 'offline', 'unknown',
-})
 TRANSFER_CAP = 40 * 1024 * 1024            # E9a/E9c archive (brief: archive <= 40 MiB)
 # E19 and EGO are aggregate kit ceilings (kit 6.3: E19 placements <= 1 MiB), not per-file allowances.
 PLACEMENT_GROUP_CAP = allocation.ROW_RESERVATIONS['E19']
@@ -115,7 +108,6 @@ SETUP_GO_GATES = frozenset({'E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'E19', 'E-
 SUPPORTED_DISK_MECHANISMS = frozenset({disk_association.MECHANISM})
 SUPPORTED_HARD_LIMITS = frozenset({capacity.MECHANISM})
 SUPPORTED_TOP_MECHANISMS = frozenset({identity.MECHANISM})   # the only implemented top selection: descriptor metadata
-CANDIDATE_H_HEAD = '4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02'   # source-bound candidate H, distinct from K
 # External anchors: the preparation head K, candidate H, the probe transcript sha and the allowed-signers
 # sha. They come from the proof-entry activation (#694), never from the facts object. Unset means every
 # row refuses. Tests set this global; the production module leaves it None.
@@ -147,23 +139,18 @@ def _file_sha(path):
 def _wrap(call, *args, **kwargs):
     try:
         return call(*args, **kwargs)
-    except (observations.Refusal, resources.Refusal) as exc:
+    except (observations.Refusal, resources.Refusal, native.Refusal) as exc:
         raise Refusal(str(exc)) from exc
 
 
+# R2-temporary compatibility seam; removed with the old executor.
 def _owned_regular(path):
-    """A regular, non-symlink file owned by the operator; returns its identity."""
-    info = Path(path).lstat()
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
-        raise Refusal('registered file is not a regular file of the operator: ' + str(path))
-    return {'dev': info.st_dev, 'inode': info.st_ino, 'uid': info.st_uid}
+    return _wrap(native._owned_regular, path)
 
 
+# R2-temporary compatibility seam; removed with the old executor.
 def _owned_dir(path):
-    info = Path(path).lstat()
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
-        raise Refusal('registered directory is not a directory of the operator: ' + str(path))
-    return {'dev': info.st_dev, 'inode': info.st_ino, 'uid': info.st_uid}
+    return _wrap(native._owned_dir, path)
 
 
 # ---------------------------------------------------------------- probe
@@ -395,32 +382,9 @@ def stage1_readiness_timeout(step_seconds, remaining_absolute, reserve_seconds):
     return timeout
 
 
+# R2-temporary compatibility seam; removed with the old executor.
 def stage1_accept_readiness(result):
-    """Accept exactly running/exit 0. Degraded, unknown, transport, nonzero or missing refuse."""
-    if not isinstance(result, dict):
-        raise Refusal('Stage1 readiness terminal facts are missing')
-    disposition = result.get('disposition')
-    waited = result.get('waited_exit')
-    stdout = result.get('stdout')
-    if disposition == 'timeout':
-        raise Refusal('Stage1 readiness timed out before a terminal systemd state')
-    if disposition not in ('exited', 'failed'):
-        raise Refusal('Stage1 readiness transport did not produce a terminal fact: ' + str(disposition))
-    if stdout is None:
-        raise Refusal('Stage1 readiness stdout is missing')
-    if isinstance(stdout, bytes):
-        try:
-            text = stdout.decode('utf-8', 'strict').strip()
-        except UnicodeDecodeError as exc:
-            raise Refusal('Stage1 readiness stdout is not UTF-8') from exc
-    else:
-        text = str(stdout).strip()
-    if text not in STAGE1_SYSTEM_STATES:
-        raise Refusal('Stage1 readiness printed an unknown systemd state: ' + text)
-    if text != 'running' or waited != 0 or disposition != 'exited':
-        raise Refusal('Stage1 readiness is not running/exit 0; observed state=%s waited_exit=%s disposition=%s'
-                      % (text, waited, disposition))
-    return text
+    return _wrap(native.stage1_accept_readiness, result)
 
 
 def _stage1_stdout_text(result, name):
@@ -531,15 +495,10 @@ def stage1_run(request, after, transport, clock=time.monotonic, started_at=None,
     return post
 
 
+# R2-temporary compatibility seam; removed with the old executor.
 def verify_disk_association(facts, supported=None):
-    """Fail closed unless every linux_disk_association premise passes on a complete bound observation.
-
-    A record stored by `linux_disk_association.stored_facts` (the document one observation stage
-    keeps) is decoded here first, so the setup rows re-verify the same facts the stage observed
-    rather than a reduced summary.
-    """
     supported = SUPPORTED_DISK_MECHANISMS if supported is None else supported
-    return disk_association.verify(disk_association.load_facts(facts), supported)
+    return _wrap(native.verify_disk_association, facts, supported)
 
 
 def _quota_limit(witness, limit_bytes, facts, supported):
@@ -615,17 +574,9 @@ def expected_tree_digest(archive_path):
 
 # ---------------------------------------------------------------- argv
 
+# R2-temporary compatibility seam; removed with the old executor.
 def ssh_argv(config, remote_argv):
-    """Pinned-config SSH shape: one fixed alias, `--`, then ONE remote command string.
-
-    ssh joins the remote words with spaces and the remote shell re-parses them, so the
-    remote argv is quoted into a single string here.
-    """
-    if not isinstance(config, str) or not config.startswith('/') or '..' in Path(config).parts:
-        raise Refusal('ssh config must be an absolute canonical path')
-    if not remote_argv or any(not isinstance(a, str) or '\x00' in a for a in remote_argv):
-        raise Refusal('remote argv must be non-empty strings')
-    return ['/usr/bin/ssh', '-F', config, SSH_ALIAS, '--', shlex.join(remote_argv)]
+    return _wrap(native.ssh_argv, config, remote_argv)
 
 
 def _vm(*argv):
@@ -1237,23 +1188,9 @@ def observation_from_show(show_text, unit, boot_id, nonce):
             'exec_main_status': show['exec_main_status'], 'control_group': show['control_group']}
 
 
+# R2-temporary compatibility seam; removed with the old executor.
 def host_credit(expected, candidate, observation):
-    """Credit closure only when the guest candidate equals the host's own observation.
-
-    The guest's candidate is never authenticated by itself. The authenticator compares it
-    with the independent VM-route observation, and the 686 contract then checks identity,
-    unit, supervisor and terminal basis. The candidate must also carry the cgroup the
-    monitor observed while the gate was closed.
-    """
-    if candidate is None or observation is None or observation.get('control_group'):
-        return 'unknown'
-    if not candidate.get('observed_control_group'):
-        return 'unknown'
-
-    def authenticate(receipt):
-        return all(receipt.get(k) == observation.get(k)
-                   for k in ('boot_id', 'nonce', 'unit', 'invocation_id', 'active_state', 'sub_state', 'result', 'exec_main_status', 'control_group'))
-    return _wrap(observations.verify_contained_closure, expected, candidate, authenticate)
+    return _wrap(native.host_credit, expected, candidate, observation)
 
 
 def _private_file(path, expected_sha):

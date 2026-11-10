@@ -17,7 +17,7 @@ import common
 import linux_diagnostic_proof as diagnostic
 import linux_native_build as build
 import linux_native_session as session
-import linux_setup as setup
+import linux_native_support as setup
 
 FILES = ('common.py', 'runtime.py', 'probe.py', 'linux_native_session.py', 'linux_native_window.py', 'linux_native_storage.py', 'linux_loop_bound.py', 'linux_capacity_contract.py')
 

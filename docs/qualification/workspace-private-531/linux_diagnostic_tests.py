@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 SOURCE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SOURCE_DIR))
+import linux_setup as legacy_setup
 import linux_diagnostic as diagnostic
 import linux_diagnostic_probe as guest_probe
 import linux_diagnostic_proof as proof
@@ -130,9 +131,9 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(monitor.check()['package']['logical'], len(b'note'))
 
     def test_setup_top_mechanism_is_only_the_descriptor_selection(self):
-        self.assertEqual(proof.setup.SUPPORTED_TOP_MECHANISMS, frozenset({'parallels-descriptor-selection-v1'}))
-        with self.assertRaises(proof.setup.Refusal):
-            proof.setup.verify_writable_top({'mechanism': 'unknown'}, b'<Disk/>')
+        self.assertEqual(legacy_setup.SUPPORTED_TOP_MECHANISMS, frozenset({'parallels-descriptor-selection-v1'}))
+        with self.assertRaises(legacy_setup.Refusal):
+            legacy_setup.verify_writable_top({'mechanism': 'unknown'}, b'<Disk/>')
 
 
 def disk_fixture():
@@ -1845,13 +1846,13 @@ class WriterBoundObservationTests(unittest.TestCase):
         result, _, _ = self.observe()
         self.assertEqual(set(result), {'schema', 'routes_sha256', 'routes', 'facts', 'limits', 'complete',
                                        'findings', 'observation_eligibility'})
-        # The setup source admits only the witness-gated quota mechanism; this observation never
+        # The legacy setup source admits only the witness-gated physical mechanism; this observation never
         # turns a diagnostic fact into setup, placement or hard-quota credit.
-        self.assertEqual(proof.setup.SUPPORTED_HARD_LIMITS, frozenset({proof.setup.capacity.MECHANISM}))
-        self.assertEqual(proof.setup.SUPPORTED_DISK_MECHANISMS,
-                         frozenset({proof.setup.disk_association.MECHANISM}))
-        self.assertIsNone(proof.setup.EXTERNAL_ANCHORS)
-        self.assertEqual(proof.setup.SUPPORTED_TOP_MECHANISMS, frozenset({'parallels-descriptor-selection-v1'}))
+        self.assertEqual(legacy_setup.SUPPORTED_HARD_LIMITS, frozenset({legacy_setup.capacity.MECHANISM}))
+        self.assertEqual(legacy_setup.SUPPORTED_DISK_MECHANISMS,
+                         frozenset({legacy_setup.disk_association.MECHANISM}))
+        self.assertIsNone(legacy_setup.EXTERNAL_ANCHORS)
+        self.assertEqual(legacy_setup.SUPPORTED_TOP_MECHANISMS, frozenset({'parallels-descriptor-selection-v1'}))
         self.assertIn('linux_diagnostic_probe.py', proof.SOURCES)
         limits = result['limits']
         self.assertEqual(limits['hard_quota'], 'not established')

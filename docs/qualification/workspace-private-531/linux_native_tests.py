@@ -25,6 +25,30 @@ import subprocess
 import time
 
 
+class PhysicalImportBoundaryTests(unittest.TestCase):
+    def test_physical_entries_cannot_import_retired_execution(self):
+        import ast
+        root = Path(__file__).resolve().parent
+        pending = ['linux_native_prepare_proof', 'linux_native_smoke',
+                   'linux_native_run', 'linux_diagnostic_proof', 'launch', 'aggregate',
+                   'macos_stage_proof']
+        forbidden = {'linux_setup', 'linux_transfer', 'linux_supervisor',
+                     'linux_allocation_bound', 'linux_allocation_probe', 'linux_allocation_witness'}
+        seen = set()
+        while pending:
+            name = pending.pop()
+            if name in seen:
+                continue
+            seen.add(name)
+            for node in ast.walk(ast.parse((root / (name + '.py')).read_text())):
+                imports = ([alias.name for alias in node.names] if isinstance(node, ast.Import)
+                           else [node.module] if isinstance(node, ast.ImportFrom) else [])
+                for imported in imports:
+                    self.assertNotIn(imported, forbidden, name + ' imports retired execution')
+                    if imported and (root / (imported + '.py')).is_file():
+                        pending.append(imported)
+
+
 class ArtifactCompatibilityTests(unittest.TestCase):
     def setUp(self):
         self.header = bytearray(64)
