@@ -67,7 +67,15 @@ def superblock(raw, *, project_quota):
     features = struct.unpack_from('<I', raw, 0x64)[0]
     if project_quota and features & (0x100 | 0x2000) != 0x100 | 0x2000:
         raise ValueError('project/quota features are absent')
-    return {'uuid': str(uuid.UUID(bytes=raw[0x68:0x78])), 'ro_compat': features}
+    block_log = struct.unpack_from('<I', raw, 0x18)[0]
+    if block_log > 6:
+        raise ValueError('unsupported ext4 block size')
+    blocks = struct.unpack_from('<I', raw, 4)[0]
+    incompat = struct.unpack_from('<I', raw, 0x60)[0]
+    if incompat & 0x80:
+        blocks |= struct.unpack_from('<I', raw, 0x150)[0] << 32
+    return {'uuid': str(uuid.UUID(bytes=raw[0x68:0x78])), 'ro_compat': features,
+            'capacity_bytes': blocks * (1024 << block_log)}
 
 
 def observe(image, mountpoint, capacity, *, project_quota):
@@ -104,6 +112,9 @@ def observe(image, mountpoint, capacity, *, project_quota):
                 or (project_quota and 'prjquota' not in mounted['super_options'])):
             raise ValueError('loop mount identity or quota mode differs')
         sysfs = Path('/sys/dev/block/%d:%d/loop' % (major, minor))
+        device_bytes = int((sysfs.parent / 'size').read_text()) * 512
+        if device_bytes != capacity or fs['capacity_bytes'] != capacity:
+            raise ValueError('kernel device or ext4 capacity differs from the image')
         if (Path('/' + (sysfs / 'backing_file').read_text().strip().lstrip('/')) != image
                 or int((sysfs / 'offset').read_text()) != 0
                 or int((sysfs / 'sizelimit').read_text()) != 0):
@@ -118,7 +129,7 @@ def observe(image, mountpoint, capacity, *, project_quota):
             raise ValueError('image changed during observation')
         return {'image': str(image), 'image_device': info.st_dev, 'image_inode': info.st_ino,
                 'image_bytes': info.st_size, 'image_allocated_bytes': info.st_blocks * 512,
-                'inner_capacity_bytes': capacity, 'filesystem': fs, 'mount': mounted,
+                'inner_capacity_bytes': device_bytes, 'filesystem': fs, 'mount': mounted,
                 'native_root_uuid': ROOT_UUID, 'boot_id': Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
                 'exploratory': True, 'qualification_credit': False}
     finally:

@@ -135,7 +135,7 @@ def build(root, source_ref=SOURCE_REF):
     binding['complete'] = True
     (run_root / 'outcome.json').write_text(json.dumps(binding, indent=2))
     print(json.dumps(binding, indent=2))
-    return 0
+    return binding
 
 
 if __name__ == '__main__':
@@ -143,4 +143,4 @@ if __name__ == '__main__':
     parser.add_argument('evidence_root', type=Path)
     parser.add_argument('--source-ref', default=SOURCE_REF)
     args = parser.parse_args()
-    sys.exit(build(args.evidence_root, args.source_ref))
+    build(args.evidence_root, args.source_ref)

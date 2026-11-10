@@ -1896,7 +1896,10 @@ impl GuestReader for ComposeWorkspaceGuest<'_> {
              else exit 4\nfi",
             path = shell_quote(path)
         );
-        let output = self.run_script(&script, false)?;
+        // Publication also hashes a root-owned 0600 enrolment object before
+        // giving it to the workspace user. This metadata read belongs to the
+        // publisher; it returns one digest, never the protected file bytes.
+        let output = self.run_script(&script, true)?;
         match output.status.code() {
             Some(0) => {}
             Some(3) => return Ok(None),

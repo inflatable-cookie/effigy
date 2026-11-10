@@ -3262,6 +3262,10 @@ lane's, not this contract's.
   workspace user in guest-private storage (`/run/effigy/enrol/`), as a
   journalled file effect of the Prepare run. It is bound to the environment
   generation and the container identity.
+  The publisher hashes the private object as root before ownership transfer;
+  this returns a digest, never credential bytes. Generation allocation uses
+  metadata so an unreadable orphan from an interrupted publication is retained
+  and skipped rather than mistaken for absence.
 - It authorises session enrolment only, never an effect. Enrolment is a
   Mutate request to the session run (§8.3): the host verifies the
   environment generation is current and the session run is live, then
@@ -3342,6 +3346,10 @@ the missing credential named, and local reads keep working.
     artifact. `download` takes the release asset on a release host and refuses on
     a development host, whose release would not be its artifact. A `+local.`
     host with no provable checkout refuses under `auto` and `download`.
+- The detached serving host retains the caller's `DOCKER_CONFIG`, `COLIMA_HOME`
+  and temporary-directory paths, and the parsed `auto`/`local`/`download`
+  artifact policy across its cleared environment. Config contents, arbitrary
+  ambient variables and credentials are not forwarded through this lane.
 - Publication consumes only current bytes. It re-checks the target and the
   install identity of the artifact the host acquired, authenticates the bytes
   against their receipt, and refuses when either changed. It never builds or

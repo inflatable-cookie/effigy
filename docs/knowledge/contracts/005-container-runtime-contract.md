@@ -1478,6 +1478,11 @@ which frees its loopback address with them. Its certificates stay as a cache
 the daemon prunes by age. A second retire with nothing left is success and
 reports `idempotent: true`.
 
+Generated read-only workspace state and vault masks carry the checkout and
+scope ownership labels when the rewrite creates their named volumes. They are
+disposable and remain identifiable by retirement after containers are removed.
+The rewrite does not claim an existing user or borrowed volume.
+
 A container, volume or network of one of this checkout's Compose projects that
 carries no Effigy checkout label is reported under `kept` and left alone, never
 adopted: run `effigy container down` and `up` to relabel a stack from an earlier

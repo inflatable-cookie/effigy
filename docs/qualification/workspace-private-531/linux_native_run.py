@@ -125,7 +125,9 @@ def execute(root, seed, mode):
     binding = json.loads(attempt.command(ssh + ['/usr/bin/python3 -I -B -c ' + shlex.quote(script)],
                                          data=json.dumps(value).encode()))
     unit = 'effigy-829-' + uuid.uuid4().hex
-    log = str(session.BASE / 'metadata' / (unit + '.log'))
+    # The controller's retained stream is a writer too: keep its pre-opened
+    # output descriptor on the same physically capped workspace filesystem.
+    log = str(session.BASE / 'qualification' / (unit + '.log'))
     writable = str(session.BASE if mode in ('acquire', 'preflight') else Path(binding['fixture']))
     argv = ['/usr/bin/systemd-run', '--unit=' + unit, '--no-block', '--service-type=exec',
             '--uid=effigy531', '--gid=effigy531', '--property=ExitType=cgroup',

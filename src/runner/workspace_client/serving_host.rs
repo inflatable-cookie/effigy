@@ -314,7 +314,10 @@ mod routing_tests {
             "EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE".into(),
             "local".into()
         )));
-        assert!(!format!("{environment:?}").contains("private-ambient-canary"));
+        assert!(environment.iter().all(|(name, value)| {
+            !name.to_string_lossy().contains("private-ambient-canary")
+                && !value.to_string_lossy().contains("private-ambient-canary")
+        }));
     }
 
     #[test]

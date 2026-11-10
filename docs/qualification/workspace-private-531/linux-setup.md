@@ -885,14 +885,29 @@ no reversion has been performed. Evidence is retained under
 `/Volumes/Stash/scratch/effigy/64906ab8/native-829/`; the retained copy preserves
 those recorded paths and is outside Queue run cleanup.
 
-`effigy qualification:linux:native-smoke -- OWNED_EVIDENCE_ROOT` is an unsealed
-entry for the diagnostic chain. It requires caller authority over the fixed VM,
-a stopped VM and an owned canonical mode-0700 evidence root. It binds the current
-snapshot inventory separately for each exploration and checks it before and after
-the cycle. The sealed entry retains its fixed historical inventory pin. Outputs
-explicitly label exploration and deny qualification credit. This currently covers
-the diagnostic cycle only; setup, activation and the full session remain to be
-integrated before this selector can claim the full task-829 smoke outcome.
+`effigy qualification:linux:native-smoke -- OWNED_EVIDENCE_ROOT ASSET_SEED`
+runs the unsealed chain on the prepared fixed VM: diagnostic boot/stop, private
+SSH identity check, physical-image resume, engine and actual-container ENOSPC
+controls, exact-HEAD native builds, GNU artifact production, ordinary acquisition
+and the complete private-session assertions. Success stops the owned engine and
+VM. A failure retains its fixture and resources for diagnosis; reconcile that
+exact fixture before another window. `--diagnostic-only` runs just the original
+diagnostic cycle. Neither route accepts a sealed GO or grants qualification credit.
+
+Prerequisites are this task's dedicated account/tools, the existing root-owned
+engine and final workspace images, the pinned offline runtime image, and the
+mode-0700 evidence root with its private SSH config/key/known-hosts files. The
+asset seed is the exploratory schema consumed by `linux_native_run.py`; it binds
+the real old binary/source, engine, image and retained resource inventory. The
+full smoke builds ordinary/candidate/fixture/kernel roles and the GNU artifact
+from its exact committed HEAD, re-hashes retained tools and old binary, and keeps
+the previous and current network observations. Docker recreates its default
+bridge ID on daemon restart; each new unsealed window binds that new observed
+identity, while containers, volumes and network names must still agree with the
+retained baseline. Inventory equality within a window remains exact. The private
+SSH key is an expiring exploratory control, not the sealed E6 forced-command key.
+The sealed diagnostic retains its historical snapshot pin; exploration binds
+and verifies the actual current snapshot inventory for each cycle.
 
 Initial native writer and engine-input observation routes completed without
 findings. The next integrated cycle exposed a session refusal on systemd readiness
@@ -1004,19 +1019,32 @@ capabilities and default seccomp, could change its empty inode from project 531
 to 0. It restored project 531 before exiting; no payload extent was allocated.
 Project quota therefore cannot supply this guest-writer bound. The chosen next
 step is a workspace image with at most 1 GiB physical capacity, rather than
-claiming the controller-only quota witness covers container writers. Provisioning
-and ENOSPC validation of that final image remain outstanding.
+claiming the controller-only quota witness covers container writers. The final workspace image is now
+`/var/lib/effigy-829/rows-final.ext4`, root-owned mode 0600, exactly 1 GiB,
+UUID `8d8707ea-dd3d-48ab-b408-47f66e5475dd`. The earlier 4 GiB pilot is retained
+unmounted. An actual rootful-container UID-1001, CapEff-zero, Seccomp-2 writer
+reached ENOSPC after allocating 1,003,491,328 bytes. The engine's 2 GiB image
+independently reached ENOSPC with its daemon stopped. Each probe retained its
+new empty inode and released only that inode's extents after identity checks.
+These are physical ceilings independent of project assignment. Kernel loop size,
+ext4 superblock capacity and root-controlled image size must agree; `statvfs`
+alone reports usable data blocks and is not that capacity proof. Controller
+streams also reside on the capped workspace filesystem. Session allocation is
+sampled every 50 ms to check engine headroom, separately from the hard ceiling.
 `linux_native_storage.py` independently checks root-owned image custody,
 loop offset/size, mount identity, features and association to the fixed native
 root UUID; it does not manufacture a positive legacy root-partition witness.
 
-Outstanding native integration findings are retained in the latest session
-attempts. The private candidate still refuses frozen publication planning.
-The serving-host launcher clears inherited environment but forwards neither
-`DOCKER_CONFIG` nor the explicit local-artifact policy; the ordinary path does
-work with those inputs. This handoff needs correction and native re-exercise.
-Also, `retire` reports no remaining resources while two generated read-only
-state/secret mask volumes remain after the ordinary acquisition fixture. Their
-identities and original baselines remain recorded; no cleanup or rebaseline is
-claimed. Full-session controls, final engine/quota admission and integration of
-the complete native-smoke chain remain outstanding before candidate freeze.
+Native acquisition at `d648c00a2f85cf7ed22d2000e6215c1691cbd022` now returns zero
+for ordinary up/down/retire, binds the real GNU artifact through the actual
+consumer, and restores exact inventory. The serving host preserves private
+engine-config and scratch paths plus the parsed local-artifact choice across
+its cleared environment. Newly created state/vault mask volumes have ownership
+labels and retire after container down; pre-existing unrelated volumes are not
+claimed. A later private run reached actual credential staging and exposed a
+root-owned-0600 digest read attempted as the non-root image user. Publication
+now performs that metadata read as root and skips retained unreadable credential
+orphans by metadata, without retaining their bytes. Full native re-exercise of
+this correction is required before reporting the chain complete. Raw exploratory
+capture omits protected inspect/credential streams; canary delivery is checked
+by digest so the harness itself does not manufacture a durable secret leak.

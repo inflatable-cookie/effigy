@@ -14,6 +14,10 @@ import linux_native_build as build
 import linux_native_storage as storage
 import linux_native_run as native_run
 import linux_native_session as session
+import linux_native_assets as assets
+import runtime
+import subprocess
+import time
 
 
 class ArtifactCompatibilityTests(unittest.TestCase):
@@ -42,6 +46,37 @@ class ArtifactCompatibilityTests(unittest.TestCase):
                 (self.header, self.loader, '')):
             with self.subTest(loader=loader, versions=versions), self.assertRaises(ValueError):
                 producer.validate_elf(header, loader, versions)
+
+
+class RetainedStreamTests(unittest.TestCase):
+    def test_protected_guest_output_is_not_written_to_exploratory_evidence(self):
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            window = object.__new__(runtime.Window)
+            window.root = Path(directory)
+            window.root_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            window.verify_root = lambda: None
+            window.end = time.monotonic() + 30
+            window.exploratory = True
+            window.command_count = 0
+            window.env = {}
+            try:
+                result = subprocess.CompletedProcess(['guest'], 0, b'protected-value-canary', b'protected-error-canary')
+                with patch.object(runtime, 'run', return_value=result):
+                    self.assertIs(window.command(['guest'], protected_output=True), result)
+                self.assertFalse(any(b'protected-value-canary' in p.read_bytes()
+                                     or b'protected-error-canary' in p.read_bytes() for p in Path(directory).iterdir()))
+                self.assertFalse(list(Path(directory).glob('*.stdout')))
+                self.assertTrue(list(Path(directory).glob('*.exit.json')))
+            finally:
+                os.close(window.root_fd)
+
+    def test_generated_native_build_script_has_compilable_metadata_binder(self):
+        seed = {'cell': {'baseline': {'containers': [], 'networks': [], 'volumes': []}}}
+        script = assets.script({'guest_source': build.BASE + '/builds/example/source'},
+                               build.BASE + '/artifacts/example', seed)
+        finish = script.split("python3 -I -B - <<'FINISH'\n")[1].removesuffix('FINISH\n')
+        compile(finish, 'native-asset-binder', 'exec')
+        self.assertEqual(subprocess.run(['sh', '-n'], input=script.encode(), capture_output=True).returncode, 0)
 
     def test_wrong_native_platform_refuses_before_command(self):
         with patch.object(producer.sys, 'platform', 'darwin'), \

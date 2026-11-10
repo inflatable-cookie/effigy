@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import threading
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common
@@ -15,6 +16,42 @@ from runtime import Window
 TASK = '06fa2bbb-55f5-4f02-84c9-069e3a179946'
 BASE = Path('/Volumes/Stash/scratch/effigy/linux-native-829')
 OLD = '823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1'
+
+
+class Peak:
+    """Sample allocation headroom, independently of the hard physical ceiling."""
+    def __init__(self):
+        self.paths = (Path('/var/lib/effigy-829/rootful'), BASE / 'qualification')
+        self.devices = [path.stat().st_dev for path in self.paths]
+        self.peak = [0, 0]
+        self.samples = 0
+        self.error = None
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self.sample, daemon=False)
+
+    def sample(self):
+        try:
+            while True:
+                for index, path in enumerate(self.paths):
+                    common.require(path.stat().st_dev == self.devices[index], 'sampled filesystem changed')
+                    fs = os.statvfs(path)
+                    self.peak[index] = max(self.peak[index], (fs.f_blocks - fs.f_bfree) * fs.f_frsize)
+                self.samples += 1
+                if self.stop.wait(.05):
+                    return
+        except BaseException as error:
+            self.error = error
+
+    def finish(self):
+        self.stop.set()
+        self.thread.join()
+        if self.error:
+            raise self.error
+        return {'sample_period_seconds': .05, 'samples': self.samples,
+                'sampled_peak_bytes': dict(zip(map(str, self.paths), self.peak)),
+                'engine_capacity_bytes': 2147483648,
+                'engine_has_twice_sampled_peak_headroom': 2 * self.peak[0] <= 2147483648,
+                'exploratory': True, 'qualification_credit': False}
 
 
 def validate(value):
@@ -53,6 +90,8 @@ def execute(path, expected, mode):
     common.require(common.digest(path) == expected, 'exploratory inputs changed')
     cell = validate(common.load(path))
     window = Window(cell, expected, {'decision_id': 'task-829-exploration'}, exploratory=True)
+    peak = Peak()
+    peak.thread.start()
     try:
         info = json.loads(window.engine_command('info', '--format', '{{json .}}').stdout)
         common.require(info['DockerRootDir'] == cell['native_engine_root'] + '/data'
@@ -90,7 +129,13 @@ def execute(path, expected, mode):
                          'qualification_credit': False}, dir_fd=window.root_fd)
         raise
     finally:
-        window.close()
+        try:
+            allocation = peak.finish()
+            common.exclusive('exploratory-allocation.json', allocation, dir_fd=window.root_fd)
+            common.require(allocation['engine_has_twice_sampled_peak_headroom'],
+                           'engine capacity has less than twice the sampled peak; resize before freeze')
+        finally:
+            window.close()
 
 
 if __name__ == '__main__':

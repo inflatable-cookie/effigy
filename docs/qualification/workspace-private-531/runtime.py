@@ -136,7 +136,7 @@ class Window:
             os.close(self.root_fd)
             self.root_fd = None
 
-    def command(self, args, *, check=True, data=None, cwd=None, timeout=60):
+    def command(self, args, *, check=True, data=None, cwd=None, timeout=60, protected_output=False):
         self.verify_root()
         remaining = self.end - time.monotonic()
         require(remaining > 0, 'native window deadline expired')
@@ -146,17 +146,20 @@ class Window:
         self.command_count += 1
         stem = 'explore-command-%04d' % self.command_count
         exclusive(stem + '.intent.json', {'argv': [str(arg) for arg in args],
-                  'cwd': str(cwd or self.root), 'timeout_seconds': limit}, dir_fd=self.root_fd)
+                  'cwd': str(cwd or self.root), 'timeout_seconds': limit,
+                  'protected_output_omitted': protected_output}, dir_fd=self.root_fd)
         try:
             result = run(args, cwd=cwd or self.root, env=self.env, timeout=limit, check=False, data=data)
         except subprocess.TimeoutExpired as error:
-            for name in ('stdout', 'stderr'):
-                exclusive_bytes(stem + '.' + name, getattr(error, name) or b'', dir_fd=self.root_fd)
+            if not protected_output:
+                for name in ('stdout', 'stderr'):
+                    exclusive_bytes(stem + '.' + name, getattr(error, name) or b'', dir_fd=self.root_fd)
             exclusive(stem + '.exit.json', {'exit': None, 'timeout': True,
                       'remote_closure': 'unknown'}, dir_fd=self.root_fd)
             raise
-        for name in ('stdout', 'stderr'):
-            exclusive_bytes(stem + '.' + name, getattr(result, name), dir_fd=self.root_fd)
+        if not protected_output:
+            for name in ('stdout', 'stderr'):
+                exclusive_bytes(stem + '.' + name, getattr(result, name), dir_fd=self.root_fd)
         exclusive(stem + '.exit.json', {'exit': result.returncode}, dir_fd=self.root_fd)
         require(not check or result.returncode == 0, 'exploratory command failed: ' + stem)
         return result
@@ -272,7 +275,7 @@ targets = ["containers"]
         self.container = found[0]
         if self.cell.get('native_engine_root'):
             import linux_native_storage
-            inspected = json.loads(self.engine_command('inspect', self.container).stdout)
+            inspected = json.loads(self.engine_command('inspect', self.container, protected_output=True).stdout)
             require(len(inspected) == 1 and inspected[0]['Id'] == self.container, 'workload identity changed')
             facts = linux_native_storage.verify_workload(inspected[0], self.root, self.cell['native_engine_root'])
             self.record('bounded-native-workload', **facts)
@@ -283,7 +286,10 @@ targets = ["containers"]
         require(document['session']['run_id'] == session and document['environment_generation'] == generation, 'selected document names another owner')
         require(document['container_id'] == self.container, 'document target differs from native engine')
         require(document['artifact_digest'] == 'sha256:' + self.cell['guest_artifact']['sha256'], 'guest artifact differs')
-        require(self.guest(['printenv', 'PROBE_TOKEN']).stdout.strip() == b'531-private-compose-canary',
+        expected = hashlib.sha256(b'531-private-compose-canary').hexdigest()
+        observed = self.guest(['python3', '-c',
+            'import hashlib,os; print(hashlib.sha256(os.environ["PROBE_TOKEN"].encode()).hexdigest())']).stdout.strip()
+        require(observed == expected.encode(),
                 'actual Compose secret delivery missing')
         combined = self.rows("SELECT e.receipt FROM events e JOIN workspace_activation_reservations r ON r.environment_run=e.run_id WHERE r.session_run=? AND e.receipt IS NOT NULL", (session,))
         require(self.cell['engine_kind'] != 'colima' or any(isinstance(json.loads(row[0]), dict) and
@@ -371,7 +377,7 @@ targets = ["containers"]
         # A new client cannot enrol with a corrupt credential. Existing client
         # grants are not reused and no credential bytes enter receipts or argv.
         credential_path = self.document['credential']['path']
-        credential = self.guest(['cat', credential_path]).stdout
+        credential = self.guest(['cat', credential_path], protected_output=True).stdout
         try:
             self.guest(['sh', '-c', 'cat > "$1"', 'fixture', credential_path], data=b'531-invalid-credential')
             bad = self.command(self.guest_argv('531-stream', '531-invalid'), check=False)

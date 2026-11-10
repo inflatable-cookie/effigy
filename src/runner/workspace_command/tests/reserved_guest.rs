@@ -49,11 +49,42 @@ impl Guest {
 }
 impl GuestReader for Guest {
     fn read_file(&mut self, p: &str) -> Result<Option<Vec<u8>>, RunnerError> {
+        if self
+            .0
+            .borrow()
+            .node(p)
+            .is_some_and(|node| node.mode == 0o600 && node.owner.is_none())
+        {
+            return Err(RunnerError::task_invocation(
+                "workspace user cannot read root-owned private object",
+            ));
+        }
         self.0.borrow_mut().read_file(p)
     }
     fn file_sha256(&mut self, p: &str) -> Result<Option<String>, RunnerError> {
         self.0.borrow_mut().file_sha256(p)
     }
+}
+
+#[test]
+fn workspace_reserved_generation_skips_unreadable_private_orphan() {
+    let mut fake = FakeGuest::new();
+    fake.put_file(
+        "/run/effigy/objects/enrol/1",
+        b"retained private orphan",
+        0o600,
+    );
+    let mut guest = Guest(
+        Rc::new(RefCell::new(fake)),
+        None,
+        Rc::new(Cell::new(0)),
+        Rc::new(Cell::new(false)),
+    );
+    assert!(guest.read_file("/run/effigy/objects/enrol/1").is_err());
+    assert_eq!(
+        allocate_generation(&mut guest).expect("metadata skips the orphan"),
+        2
+    );
 }
 impl GuestWorkspace for Guest {
     fn read_link(&mut self, p: &str) -> Result<Option<String>, RunnerError> {
