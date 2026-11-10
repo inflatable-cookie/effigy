@@ -570,8 +570,10 @@ fn exit141_cancelled_capture_client_never_signals_the_attached_writer() {
     let budget = Duration::from_millis(600);
     let deadline = start + budget;
     let clock = super::capture_test_clock::control(start);
+    let shared_clock = clock.shared();
     let error = std::thread::scope(|scope| {
         let capture = scope.spawn(|| {
+            let _binding = shared_clock.enter();
             run_command_capture_with_absolute_deadline(
                 &fixture.root,
                 program.to_str().expect("private path"),
@@ -646,8 +648,10 @@ fn exit141_capture_cancelled_before_writer_start_verifies_eof() {
     let budget = Duration::from_millis(600);
     let deadline = start + budget;
     let clock = super::capture_test_clock::control(start);
+    let shared_clock = clock.shared();
     let error = std::thread::scope(|scope| {
         let capture = scope.spawn(|| {
+            let _binding = shared_clock.enter();
             run_command_capture_with_absolute_deadline(
                 &fixture.root,
                 program.to_str().expect("private path"),

@@ -64,6 +64,17 @@ Both remote fixture allocators capture the scratch parent under that lock.
 all eight admission cases and both guest version/terminal cases together in
 one libtest process with eight test threads, requiring all ten receipts.
 
+The shared Compose timeout fixture publishes its PID by rename from a complete
+pending file. Its readiness barrier therefore observes a complete identity
+before advancing the unchanged controlled deadline.
+
+Container capture fixture clocks bind to their owning thread; capture workers
+join explicitly through a shared clock handle. Unlinked calls keep the real
+clock, so one fixture's expiry cannot time out a concurrent healthy call.
+The descendant timeout proof observes its live recorded child before expiring
+the unchanged 200 ms budget; termination/EOF cleanup use real time, and the
+original 150 ms disappearance bound is polled instead of slept through.
+
 ### The kernel-custody boundary
 
 Kernel custody is an explicit boundary, not a sweep target. A helper started
