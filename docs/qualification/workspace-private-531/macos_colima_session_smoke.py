@@ -10,6 +10,9 @@ import os
 from pathlib import Path
 import sys
 import sqlite3
+import shutil
+import shlex
+import subprocess
 import tempfile
 
 HERE = Path(__file__).resolve().parent
@@ -87,6 +90,43 @@ def checked_request(path, expected, *, backend='colima'):
 
 
 
+def colima_readiness(cell, control):
+    """Refuse fixture mistakes before the session checkout or owner exists."""
+    selected = shutil.which('colima')
+    require(selected is not None, 'Colima full session requires colima on PATH')
+    selected = Path(selected)
+    require(not selected.is_symlink() and selected.resolve(strict=True) == selected,
+            'Colima full session requires a real copied colima executable on PATH, not a symlink; '
+            'pin the copied executable in engine_binary')
+    require(str(selected) == cell['engine_binary']['path']
+            and digest(selected) == cell['engine_binary']['sha256'],
+            'Colima PATH executable differs from the pinned engine_binary')
+    share = Path(control) / 's'
+    message = ('Colima full session requires the already running owned profile with its writable '
+               + str(share) + ' share; C0–C6 preparation uses --mount none and is not session-ready')
+    require(share.is_dir() and share.resolve(strict=True) == share, message)
+    fd, probe = tempfile.mkstemp(prefix='.session-share-', dir=share)
+    token = os.urandom(32).hex().encode()
+    with os.fdopen(fd, 'wb') as out:
+        out.write(token)
+        out.flush()
+        os.fsync(out.fileno())
+    env = {key: value for key, value in os.environ.items()
+           if key not in ('LIMA_HOME', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'SSH_AUTH_SOCK')}
+    env.update(HOME=str(Path(control) / 'h'), COLIMA_HOME=cell['colima_home'],
+               COLIMA_CACHE_HOME=str(Path(control) / 'cache'), DOCKER_CONFIG=cell['docker_config'],
+               TMPDIR=str(Path(control) / 't'), TMP=str(Path(control) / 't'), TEMP=str(Path(control) / 't'))
+    command = 'test -w ' + shlex.quote(str(share)) + ' && cat ' + shlex.quote(probe)
+    try:
+        child = subprocess.run([str(selected), 'ssh', '-p', cell['engine_identity'], '--', 'sh', '-c', command],
+                               env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(message) from exc
+    require(child.returncode == 0 and child.stdout == token, message)
+    return dict(executable=str(selected), executable_sha256=cell['engine_binary']['sha256'],
+                share=str(share), retained_probe=probe, host_guest_readback=True)
+
+
 def sqlite_readiness(scratch):
     directory = Path(tempfile.mkdtemp(prefix='session-sqlite-', dir=scratch))
     path = directory / 'readiness.db'
@@ -125,6 +165,7 @@ def main():
     args = parser.parse_args()
     request = checked_request(args.request, args.sha256, backend=args.backend)
     cell, control = request['cell'], request['control']
+    colima = colima_readiness(cell, control) if args.backend == 'colima' else None
     readiness = sqlite_readiness(os.environ['TMPDIR'])
     window = runtime.Window(cell, args.sha256, None,
                             exploration_authority=request['exploration_authority'],
@@ -140,6 +181,7 @@ def main():
     try:
         exclusive('exploration.json', dict(proof=False, request_sha256=args.sha256,
                   exploration_authority=request['exploration_authority'], sqlite_readiness=readiness,
+                  colima_readiness=colima,
                   phase_bounds_seconds=dict(activation=300, command=60, backend=cell['budget_seconds'])), dir_fd=window.root_fd)
         window.execute()
     except BaseException as exc:
