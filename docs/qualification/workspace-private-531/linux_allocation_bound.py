@@ -9,8 +9,8 @@ It does not bound writers outside the tree, such as root-owned system paths or D
 
 Observed 2026-11-08 (747 originals): root ext4 with neither feature and no quota tools. That is
 absence. The verifier refuses it, and nothing here enables, mounts, or provisions anything.
-`linux_setup.SUPPORTED_HARD_LIMITS` admits the mechanism as source-qualified, and admission is not a
-grant: a row is credited only from a complete witness produced by the fixed `--approved-quota` role.
+Historical witnesses remain readable offline. Reading a witness grants no execution authority;
+the separately retained `--approved-quota` administration role still requires its one-use approval.
 
 A witness carries the five route originals (text, sha256, waited exit). It is verified against exact
 request facts: boot id, owned uid, stage root, and the exact entry set. Originals are hashed and
@@ -40,7 +40,6 @@ ROOT_FSTYPE = 'ext4'
 REQUIRED_FEATURES = frozenset({'project', 'quota'})
 PROJECT_ID = 531                                  # reserved for the stage tree; no other object may carry it
 QB_UNIT_BYTES = probe.QB_UNIT_BYTES
-PROJECT_CEILING = 1 << 30
 # if_dqblk dqb_valid bits, linux/quota.h enum: QIF_BLIMITS_B = 0, QIF_SPACE_B = 1
 QIF_BLIMITS = 1 << 0
 QIF_SPACE = 1 << 1
@@ -78,8 +77,6 @@ ACTIVATION_BOUNDARIES = (
     ('enforce', 'observation', ('phase',)),
 )
 RESCUE_BOUNDARIES = frozenset({'rescue-boot', 'precheck', 'features', 'mount-options', 'postcheck'})
-HELPER = Path(__file__).resolve().parent / 'linux_allocation_probe.py'
-WRITER_HELPER = Path(__file__).resolve().parent / 'linux_transfer.py'
 HEX64 = re.compile(r'^[0-9a-f]{64}$')
 BOOT_UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
@@ -175,85 +172,6 @@ def inspect_offline_progress(boot_id, attempted, originals):
         if item['name'] != name or item['argv'] != argv or item['boot_id'] != boot_id:
             raise Refusal('offline operation, argv or boot identity differs')
     return {'next': plan[len(attempted)][0] if len(attempted) < len(plan) else None}
-
-
-def validate_candidate_request(request):
-    """Validate the fixed admin request shape; it names no device, project or limit."""
-    if not isinstance(request, dict) or set(request) != {'row', 'nonce', 'boot_id'}:
-        raise Refusal('quota request must contain only row, nonce and boot identity')
-    row, nonce, boot = request['row'], request['nonce'], request['boot_id']
-    if not isinstance(row, str) or row not in ROW_RESERVATIONS:
-        raise Refusal('row has no fixed project reservation')
-    if not isinstance(nonce, str) or not HEX64.fullmatch(nonce) or \
-            not isinstance(boot, str) or not BOOT_UUID.fullmatch(boot):
-        raise Refusal('quota request nonce or boot identity is invalid')
-    return {'row': row, 'nonce': nonce, 'boot_id': boot}
-
-
-def placement_aggregate(items):
-    """The retained bytes the fixed placement set requires; a group ceiling must cover them all.
-
-    E19 and EGO are aggregate kit ceilings (kit 6.3: E19 placements <= 1 MiB). The reservation is
-    the ceiling for the whole set, never a per-file allowance, so the set must fit inside it.
-    """
-    if not isinstance(items, list) or not items:
-        raise Refusal('placement set is empty or not bound')
-    total = 0
-    for item in items:
-        if not isinstance(item, dict) or type(item.get('bytes')) is not int or item['bytes'] <= 0:
-            raise Refusal('placement has no exact byte size')
-        total += item['bytes']
-    return total
-
-
-def group_ceiling_reason(row, items):
-    """None when the fixed placement set fits the group ceiling; otherwise the refusal text."""
-    try:
-        reservation = quota_row_reservation(row)
-        total = placement_aggregate(items)
-    except Refusal as exc:
-        return str(exc)
-    if row not in QUOTA_GROUP_ROWS:
-        return 'row is not an aggregate placement group'
-    if total > reservation:
-        return 'placement set requires %d bytes, above the %d-byte aggregate ceiling' % (total, reservation)
-    return None
-
-
-def prospective_row_limit(row, charged_bytes):
-    """Build the fixed quota record for one row; the limit is derived, never caller-chosen."""
-    if not isinstance(row, str) or row not in ROW_RESERVATIONS:
-        raise Refusal('row has no fixed project reservation')
-    if not isinstance(charged_bytes, int) or isinstance(charged_bytes, bool) or charged_bytes < 0:
-        raise Refusal('project charge is invalid')
-    reservation = ROW_RESERVATIONS[row]
-    if charged_bytes + reservation > PROJECT_CEILING:
-        raise Refusal('row reservation exceeds the project ceiling')
-    return quota_limit_record(charged_bytes, reservation)
-
-
-def helper_sha256(path=HELPER):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
-def route_plan(tree_root, helper=HELPER):
-    """Fixed, read-only routes. Nothing runs from here: a reviewed native route consumes this exact list."""
-    py = ('/usr/bin/python3', '-I', '-B', str(helper))
-    return [
-        {'route': 'mountinfo', 'argv': ['/bin/cat', '/proc/self/mountinfo']},
-        {'route': 'dumpe2fs', 'argv': ['/usr/sbin/dumpe2fs', '-h', ROOT_DEVICE]},
-        {'route': 'by-uuid', 'argv': ['/usr/bin/readlink', '/dev/disk/by-uuid/' + ROOT_UUID]},
-        {'route': 'quota', 'argv': list(py + ('quota', ROOT_DEVICE, str(PROJECT_ID)))},
-        {'route': 'tree', 'argv': list(py + ('tree', tree_root, str(PROJECT_ID)))},
-    ], helper_sha256(helper)
-
-
-def writer_tool_route(helper=WRITER_HELPER):
-    """Fixed, read-only custody observation; it cannot authorize a writer."""
-    dependencies = ('linux_supervisor.py', 'preparation_resources.py')
-    return {'argv': ['/usr/bin/python3', '-I', '-B', str(helper), '--observe-writer-tools'],
-            'sha256': helper_sha256(helper),
-            'dependencies': {name: helper_sha256(Path(helper).parent / name) for name in dependencies}}
 
 
 def _originals(witness, routes=ROUTES):

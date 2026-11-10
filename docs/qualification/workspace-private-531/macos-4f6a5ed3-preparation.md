@@ -1145,12 +1145,13 @@ Not proven: any native execution. The entry has never run against the real engin
   closes only when the authenticated envelope is closed and the local client also waited exit 0: echo, probe,
   stage, transfer, verify, check-inputs, build-help, build, read-iidfile and image-inspect. A timeout, cap or
   monitor refusal is `unknown_retained`. C5's remote run stays `guest_unknown` on a client exit.
-- **Test seams (tests only).** `TEST_SEAM` lifts the owner refusal and the static reasons inside the
-  test process only, and `simulate_guest_closure` treats a clean guest exit as closed so the loop can run
-  past guest steps (its receipts are labelled and refused by the chain verifier). Production defaults are off. Tests that replace predecessor verification (C1, C2, C3, C4, C5
-  and C6), the C0 origin walk for C3 and C4, or the historical record (`HISTORICAL_C0`) say so. The fresh-chain
-  root binding (`FreshChainRootTests`) replaces none of them: its C0, C1 and C2 runs are genuine receipts, and
-  only the local children that stand in for the tools are controlled.
+- **Test seams (tests only).** `TEST_SEAM` lifts owner/static refusals inside the
+  test process. Historical closure simulations are replaced by refusal tables
+  and real-handler controls (effigy#854). Tables reject simulated receipts before
+  evidence reads, and owner/predecessor refusals before dispatch or claims.
+  Tests with stubbed predecessors or C0 origin walks identify those seams.
+  `FreshChainRootTests` retains genuine C0, C1 and C2 receipts with controlled
+  local tool children; it replaces no predecessor or root verification.
 - **Desktop context (D2).** `prefetch_runtime_inputs` fetches the pinned OCI blobs and debs into the
   empty owned `{desktop_input_dir}` and assembles the oci-layout. `host_stage_dockerfile` writes the
   reviewed recipe exclusively as the build context's `Dockerfile`, reads it back and compares it with
@@ -1158,17 +1159,13 @@ Not proven: any native execution. The entry has never run against the real engin
 - **Dispatch coverage (`CoverageLedgerTests`).** Every manifest step has one entry. The kinds are:
   `executed` (the adapter ran it with a real local child or the real handler, including D2's
   `host_stage_dockerfile`), `executed_stub_chain` (the adapter ran it with a stubbed predecessor),
-  `helper_direct` (the handler ran on controlled inputs, not through a stage), and
-  `executed_closure_simulated` (the stage loop dispatched it under the test-only closure simulation, with its
-  exact argv, env, stdin and outputs asserted). C2 echo and probe are `executed` through injected helper
-  envelopes. C3 is `executed_stub_chain` the same way. All seventeen C4 steps are `executed` on a genuine C3
-  predecessor: the host handlers run for real, the guest transfer and pre-build re-derivation run the pinned
-  guest source against the fixture's own owned parent, and every guest step closes on an authenticated
-  envelope naming the command it ran. Under the (still present) simulation seam a guest step whose local child
-  exits 0 is treated as closed, and every receipt it writes is labelled `closure_simulated`; the chain
-  verifier refuses such a receipt. The simulated chain is C2, then C3 on that C2 receipt, then C4 on that
-  C3 receipt. Each link is a stub `verify_chain` returning the genuine receipt, labelled as such. C3 and C4
-  also stub the C0 origin walk. A not_dispatched step is refusal coverage only. Production coverage: a
+  and `helper_direct` (the handler ran on controlled inputs, not through a stage).
+  C2 echo and probe are `executed` through injected helper envelopes. C3 is
+  `executed_stub_chain` the same way. All seventeen C4 steps are `executed` on a
+  genuine C3 predecessor: host handlers run for real, transfer and pre-build
+  re-derivation run the pinned guest source against the fixture's owned parent,
+  and every guest step closes on an authenticated envelope naming its command.
+  A `not_dispatched` step proves refusal only. Production coverage: a
   matching authenticated C2 echo dispatches the probe; a client-exit-only echo lets compare run and records
   the probe `not_dispatched`; a mismatched echo refuses; an echo whose allowance runs out stops before the
   probe. C4 closes end to end; a replaced or missing host input refuses before the stream is written; a guest
@@ -1177,7 +1174,7 @@ Not proven: any native execution. The entry has never run against the real engin
   read; and the chain verifier re-derives the retained spec, stream and guest receipts and refuses a tampered
   one. D2: the Dockerfile is staged, built and read back; a
   pre-existing Dockerfile refuses before the build; a build whose allowance runs out stops before the
-  readback. Static admission and the owner refusal still refuse with the simulation on.
+  readback. Static admission and owner refusals are tabled without simulating closure.
 - **Not proven.** Native execution or an actual Nucleus proof execution and native GO. Native confirmation
   that the engine's volume create prints one 64-hex name and that its inspect carries the anonymous and occurrence
   labels as the source reads predict (D1). Native per-target re-observation and removal (D4). Termination of an

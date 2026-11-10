@@ -1133,7 +1133,7 @@ class ProductionInventoryControls(unittest.TestCase):
     def test_stored_record_reverifies_through_production_setup(self):
         """The stored fact document, not a reduced verify result, is what the setup rows re-verify.
 
-        A stage keeps one JSON document; setup_plan E7* calls setup.verify_disk_association on that
+        A stage keeps one JSON document; historical reading calls setup.verify_disk_association on that
         key, so a reduced summary must not be able to stand in for it and a stored document must
         re-verify to the same association.
         """

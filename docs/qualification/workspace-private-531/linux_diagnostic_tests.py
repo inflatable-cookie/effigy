@@ -1851,7 +1851,8 @@ class WriterBoundObservationTests(unittest.TestCase):
         self.assertEqual(legacy_setup.SUPPORTED_HARD_LIMITS, frozenset({legacy_setup.capacity.MECHANISM}))
         self.assertEqual(legacy_setup.SUPPORTED_DISK_MECHANISMS,
                          frozenset({legacy_setup.disk_association.MECHANISM}))
-        self.assertIsNone(legacy_setup.EXTERNAL_ANCHORS)
+        self.assertFalse(hasattr(legacy_setup, 'setup_plan'))
+        self.assertFalse(hasattr(legacy_setup, 'execute_plan'))
         self.assertEqual(legacy_setup.SUPPORTED_TOP_MECHANISMS, frozenset({'parallels-descriptor-selection-v1'}))
         self.assertIn('linux_diagnostic_probe.py', proof.SOURCES)
         limits = result['limits']
@@ -1989,8 +1990,11 @@ elif args[0] == 'exec' and args[2:4] == ['/bin/echo', %(sentinel)r]:
     print(%(sentinel)r)
 elif args[0] == 'exec':
     script = args[-1] if len(args) > 4 else ''
-    if mode == 'foreign_metadata':
-        (home / 'config.pvs.e13c235b').write_bytes(b'incidental-metadata')
+    if mode == 'foreign_metadata' and not (home / 'config.pvs.e13c235b').exists():
+        # Publish one complete incarnation; repeated execs must not truncate it under the monitor.
+        pending = root / 'foreign-metadata'
+        pending.write_bytes(b'incidental-metadata')
+        pending.rename(home / 'config.pvs.e13c235b')
     for name in routes:
         if ('# effigy-linux-observation: ' + name) in script:
             if name == 'device-uuids' and mode in ('device_retry', 'device_after_marker', 'device_exhausted', 'device_stderr_cap', 'device_window'):
@@ -3188,7 +3192,7 @@ class DiskAssociationHandoff(unittest.TestCase):
                       handoff['result']['not_established'])
 
     def test_stored_outcome_record_is_what_setup_reverifies(self):
-        """execute() stores handoff['facts'] as the fact document, so setup_plan E7* re-verifies the
+        """execute() stores handoff['facts'] as the fact document, so historical readers re-verify the
         same facts; the reduced verify result is kept beside it and is never the stored record."""
         block, lsblk = association_tests.guest_block_observations()
         handoff = proof.observe_association(

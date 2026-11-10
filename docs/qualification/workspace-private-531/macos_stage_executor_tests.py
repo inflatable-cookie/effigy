@@ -617,7 +617,7 @@ class FixedHelperTests(Fixture):
             for fd in writers:
                 os.close(fd)
 
-    def test_simulated_external_proof_entry_binds_and_claims_once(self):
+    def test_external_proof_entry_dispatches_real_handlers_and_claims_once(self):
         path, activation_sha = self.activation('D0', None, 'proof-stage-0001')
         inputs = ex.stable_input_manifest()[0]
         request = {'stage': 'D0', 'activation_path': path, 'activation_sha256': activation_sha,
@@ -630,17 +630,23 @@ class FixedHelperTests(Fixture):
         digest = ex.sha_file(request_path)
         admitted = dict(ex.UNADMITTED)
         admitted.pop('D0', None)
+        calls = []
+        routes = {'d0-info': emit(ENGINE_JSON), 'd0-ps': emit(''), 'd0-network': emit(''), 'd0-volume': emit('')}
         with mock.patch.object(ex, 'UNADMITTED', admitted), \
-             mock.patch.object(ex, '_execute_stage', return_value={'closure': 'closed'}) as stage_call, \
+             mock.patch.object(ex, 'default_transport', self.routed(routes, calls)), \
+             mock.patch.object(ex, 'default_monitor', self.quiet_monitor), \
              contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(proof.main(['proof', request_path, digest]), 0)
             with self.assertRaisesRegex(ex.Refusal, 'already claimed'):
                 proof.main(['proof', request_path, digest])
             with self.assertRaisesRegex(ex.Refusal, 'hash or size'):
                 proof.main(['proof', request_path, '0' * 64])
-        self.assertEqual(stage_call.call_count, 1)
+        self.assertEqual([call[0] for call in calls], ['d0-info', 'd0-ps', 'd0-network', 'd0-volume'])
+        receipt = json.loads(Path(self.stage_dir('D0', 'proof-stage-0001') + '/stage-receipt.json').read_text())
+        self.assertEqual(receipt['closure'], 'closed')
+        self.assertFalse(receipt['closure_simulated'])
 
-    def test_simulated_external_proof_refuses_changed_bindings_before_claim(self):
+    def test_external_proof_refuses_changed_bindings_before_claim(self):
         path, activation_sha = self.activation('D0', None, 'proof-binding-0001')
         inputs = ex.stable_input_manifest()[0]
         request = {'stage': 'D0', 'activation_path': path, 'activation_sha256': activation_sha,
@@ -2025,7 +2031,18 @@ class DispatchSweepTests(Fixture):
         self.assertEqual(echo_argv[echo_argv.index('-c') + 1], helper.LAUNCHER)
         self.assertEqual(echo_argv[echo_argv.index('-c') + 2], ex.GUEST_HELPER_PATH.read_bytes().hex())
         self.assertNotIn(ex.GUEST_CONTEXT_PATH.read_text(), echo_argv)  # probe source is not on the echo
-        self.assertEqual(calls[2][1][-1], ex.GUEST_CONTEXT_PATH.read_text())
+        probe_argv = calls[2][1]
+        self.assertEqual(probe_argv[probe_argv.index('-c') + 1], helper.LAUNCHER)
+        self.assertEqual(probe_argv[probe_argv.index('-c') + 2], ex.GUEST_HELPER_PATH.read_bytes().hex())
+        self.assertEqual(probe_argv[probe_argv.index('-c') + 3], 'probe')
+        self.assertEqual(probe_argv[-1], ex.GUEST_CONTEXT_PATH.read_text())
+        self.assertEqual([x['id'] for x in receipt['steps']],
+                         ['c2-colima-status', 'c2-route-echo', 'c2-compare-route-echo', 'c2-guest-probe'])
+        probe = next(x for x in receipt['steps'] if x['id'] == 'c2-guest-probe')
+        self.assertEqual(probe['closure'], 'closed')
+        self.assertFalse(probe['closure_simulated'])
+        self.assertEqual(Path(self.stage_dir('C2', 'act-sweep-c2') + '/c2-guest-probe/stdout').read_text(),
+                         json.dumps({'parent': parent}))
         echoed = Path(self.stage_dir('C2', 'act-sweep-c2') + '/c2-route-echo/stdout')
         self.assertEqual(echoed.read_bytes(), prep.ROUTE_ECHO.encode())
         self.assertTrue(Path(self.stage_dir('C2', 'act-sweep-c2') + '/c2-route-echo/stdout.transport').is_file())
@@ -2092,11 +2109,16 @@ class DispatchSweepTests(Fixture):
         parent = self.guest_parent()
         c2 = self.genuine_c2(parent, activation_id + '-c2')
         spec = ex.build_guest_spec(parent, self.T32)
-        calls = []
+        calls, stdin_seen = [], []
+        before = lambda kw: stdin_seen.append((kw['step'], kw['stdin_path'], kw['stdin_sha256']))
         with mock.patch.object(ex, 'verify_chain', lambda *a, **k: c2), \
                 mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32):
-            receipt = self.execute('C3', self.routed({'c3-stage-context': closed_guest(self.c3_inner(parent))}, calls),
+            receipt = self.execute('C3', self.routed({'c3-stage-context': closed_guest(self.c3_inner(parent))},
+                                                     calls, before=before),
                                    prior_ref=None, activation_id=activation_id)
+        [(step, path, sha)] = stdin_seen
+        self.assertEqual((step, sha), ('c3-stage-context', ex.RECIPE_SHA256))
+        self.assertEqual(Path(path).read_bytes(), ex.RECIPE_PATH.read_bytes())
         return receipt, calls, spec
 
     def test_c2_comparison_runs_through_the_adapter_and_the_probe_is_recorded_not_dispatched(self):
@@ -2135,6 +2157,7 @@ class DispatchSweepTests(Fixture):
         self.assertEqual(argv[-1], spec)
         context = json.loads(Path(self.stage_dir('C3', 'act-c3-guest-1') + '/c3-stage-context/stdout').read_text())
         self.assertEqual(context['parent']['path'], json.loads(spec)['parent']['path'])
+        self.assertEqual(context['path'], json.loads(spec)['parent']['path'] + '/effigy-531-image-' + self.T32)
         recipe = Path(self.stage_dir('C3', 'act-c3-guest-1') + '/c3-render-guest-spec/recipe.Dockerfile')
         self.assertEqual(recipe.read_bytes(), ex.RECIPE_PATH.read_bytes())
         self.assert_dispatch('C3', calls, dict(self.run_bindings(), guest_spec=spec, token32=self.T32))
@@ -2269,6 +2292,12 @@ class DispatchSweepTests(Fixture):
         # The build ran the exact reviewed nerdctl argv the guest reported, with local contexts only.
         build = by_id['c4-nerdctl-build']['guest_command']
         self.assertEqual(build, prep.guest_build_command(staged['path']))
+        dispatched = next(c[1] for c in calls if c[0] == 'c4-nerdctl-build')
+        self.assertNotIn('nerdctl', dispatched)
+        self.assertEqual(json.loads(bytes.fromhex(dispatched[-1]).decode())['argv'], build)
+        self.assertEqual(json.loads(self.stage_file('C4', 'act-c4-closed',
+                                                    'c4-render-verify-spec/c4-render-verify-spec.json').read_text())['layout'],
+                         guest_inputs.pin_layout(FAKE_RUNTIME_PIN))
         self.assertEqual(build[build.index('--network') + 1], 'none')
         self.assertFalse([a for a in build if a.startswith('--pull')])
         self.assertEqual([a for a in build if a.startswith('ubuntu=') or a.startswith('debs=')],
@@ -2536,10 +2565,6 @@ class DispatchSweepTests(Fixture):
         self.assertIn('allowance', str(caught.exception))
         self.assertLess(_time.monotonic() - started, 5)
 
-    def test_c5_is_refused_before_claim_by_its_static_reason(self):
-        with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}):  # the production admission, not the fixture's
-            self._static_refusals()
-
     def test_c3_refuses_a_stage_parent_that_differs_from_the_probe(self):
         parent = self.guest_parent()
         c2 = self.genuine_c2(parent, 'act-c3-drift-c2')
@@ -2552,135 +2577,30 @@ class DispatchSweepTests(Fixture):
                              prior_ref=None, activation_id='act-c3-parent-drift')
         self.assertEqual([c[0] for c in calls], ['c3-stage-context'])
 
-    def _static_refusals(self):
-        for stage in ('C5',):
-            with self.subTest(stage=stage), self.assertRaises(ex.Refusal) as caught:
-                calls = []
-                self.execute(stage, self.routed({}, calls), prior_ref=None, activation_id=f'act-unpin-{stage.lower()}')
-            self.assertIn('C4 receipt', str(caught.exception))
-            self.assertEqual(calls, [])
-            self.assertFalse(os.path.exists(self.tmp + f'/claims/act-unpin-{stage.lower()}.claim'))
-
-    # Closure simulation (test-only). The stage loop runs past each guest step: a guest exit 0 is treated as closed,
-    # and every receipt says so. Predecessor links are stubs: each stage's verify_chain returns the genuine receipt
-    # of the stage before it, which the stage then reads as its prior outputs. The C0 origin is patched in C3 and C4.
-
-    def simulated(self):
-        return mock.patch.dict(ex.TEST_SEAM, {'simulate_guest_closure': True})
-
     def stage_file(self, stage, activation_id, relative):
         return Path(self.stage_dir(stage, activation_id) + '/' + relative)
 
-    def test_c2_closure_simulation_dispatches_the_probe_with_exact_argv_env_and_ordering(self):
-        parent = self.guest_parent()
-        routes = {'c2-colima-status': emit('{"status":"running"}'), 'c2-route-echo': emit(prep.ROUTE_ECHO),
-                  'c2-guest-probe': emit(json.dumps({'parent': parent}))}
-        calls = []
-        stub = {'receipts': [], 'engine_id': None}
-        with self.simulated(), mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub):
-            receipt = self.execute('C2', self.routed(routes, calls), prior_ref=None, activation_id='act-sim-c2')
-        self.assertEqual(receipt['closure'], 'closed')
-        self.assertTrue(receipt['closure_simulated'])
-        self.assertEqual([c[0] for c in calls], ['c2-colima-status', 'c2-route-echo', 'c2-guest-probe'])
-        self.assert_dispatch('C2', calls, self.run_bindings())
-        probe_argv = calls[2][1]
-        self.assertEqual(probe_argv[probe_argv.index('-c') + 1], helper.LAUNCHER)
-        self.assertEqual(probe_argv[probe_argv.index('-c') + 2], ex.GUEST_HELPER_PATH.read_bytes().hex())
-        self.assertEqual(probe_argv[probe_argv.index('-c') + 3], 'probe')
-        self.assertEqual(probe_argv[-1], ex.GUEST_CONTEXT_PATH.read_text())
-        self.assertEqual(calls[1][1][-1], prep.ROUTE_ECHO)  # the echo carries only the route constant
-        by_id = {x['id']: x for x in receipt['steps']}
-        self.assertEqual([x['id'] for x in receipt['steps']],
-                         ['c2-colima-status', 'c2-route-echo', 'c2-compare-route-echo', 'c2-guest-probe'])
-        self.assertEqual(by_id['c2-guest-probe']['closure'], 'closed')
-        self.assertTrue(by_id['c2-guest-probe']['closure_simulated'])
-        self.assertEqual(self.stage_file('C2', 'act-sim-c2', 'c2-guest-probe/stdout').read_text(), json.dumps({'parent': parent}))
-        self.assertEqual(self.stage_file('C2', 'act-sim-c2', 'c2-route-echo/stdout').read_bytes(), prep.ROUTE_ECHO.encode())
+    def test_owner_and_predecessor_refusals_do_not_dispatch_or_claim(self):
+        for stage, owner, reason in (
+                ('C5', True, 'C4 receipt'),
+                ('C2', False, 'no owner-controlled activation mechanism')):
+            activation = 'act-refusal-' + stage.lower()
+            calls = []
+            with self.subTest(stage=stage), \
+                 mock.patch.dict(ex.TEST_SEAM, {'owner_activation': owner, 'admit_unadmitted': False}), \
+                 self.assertRaisesRegex(ex.Refusal, reason):
+                self.execute(stage, self.routed({}, calls), prior_ref=None, activation_id=activation)
+            self.assertEqual(calls, [])
+            self.assertFalse(os.path.exists(self.tmp + '/claims/' + activation + '.claim'))
 
-    def test_c3_closure_simulation_stages_the_recipe_from_exact_bounded_stdin(self):
-        parent = self.guest_parent()
-        c2 = self.sim_c2_body(parent)
-        spec = ex.build_guest_spec(parent, self.T32)
-        calls, stdin_seen = [], []
-        before = lambda kw: stdin_seen.append((kw['step'], kw['stdin_path'], kw['stdin_sha256']))
-        with self.simulated(), mock.patch.object(ex, 'verify_chain', lambda *a, **k: c2), \
-                mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32):
-            receipt = self.execute('C3', self.routed({'c3-stage-context': closed_guest(self.c3_inner(parent))},
-                                                     calls, before=before),
-                                   prior_ref=None, activation_id='act-sim-c3')
-        self.assertEqual(receipt['closure'], 'closed')
-        self.assertEqual([c[0] for c in calls], ['c3-stage-context'])
-        self.assert_dispatch('C3', calls, dict(self.run_bindings(), guest_spec=spec, token32=self.T32))
-        self.assertEqual(calls[0][1][-1], spec)  # the guest spec is the argument the probe's parent and token32 derive
-        [(step, path, sha)] = stdin_seen
-        self.assertEqual((step, sha), ('c3-stage-context', ex.RECIPE_SHA256))
-        self.assertEqual(Path(path).read_bytes(), ex.RECIPE_PATH.read_bytes())  # the exact bytes, hash bound
-        context = json.loads(self.stage_file('C3', 'act-sim-c3', 'c3-stage-context/stdout').read_text())
-        self.assertEqual(context['parent']['path'], parent['path'])
-        self.assertEqual(context['path'], parent['path'] + '/effigy-531-image-' + self.T32)
-
-    def sim_c2_body(self, parent):
-        """A C2 receipt from a closure-simulated run, for use as a C3 predecessor."""
-        routes = {'c2-colima-status': emit('{"status":"running"}'), 'c2-route-echo': emit(prep.ROUTE_ECHO),
-                  'c2-guest-probe': emit(json.dumps({'parent': parent}))}
-        with self.simulated(), mock.patch.object(ex, 'verify_chain', lambda *a, **k: {'receipts': [], 'engine_id': None}):
-            receipt = self.execute('C2', self.routed(routes, []), prior_ref=None, activation_id='act-sim-c2-pred')
-        self.assertEqual(receipt['closure'], 'closed')
-        return receipt
-
-    def test_c4_closure_simulation_dispatches_every_step_in_order(self):
-        stub, prior, staged = self.c4_fixture('act-sim-c4')
-        calls = []
-        with self.simulated(), mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub), \
-                mock.patch.object(ex, 'origin_token32', lambda *a, **k: self.T32):
-            receipt = self.execute('C4', self.routed(self.c4_routes(staged), calls), prior_ref=prior,
-                                   activation_id='act-sim-c4')
-        self.assertEqual(receipt['closure'], 'closed')
-        self.assertTrue(receipt['closure_simulated'])
-        manifest_steps = [s['id'] for s in ex.stage_of(ex.load_manifest(), 'C4')['steps']]
-        self.assertEqual([x['id'] for x in receipt['steps']], manifest_steps)
-        self.assertEqual([c[0] for c in calls], ['c4-transfer-inputs', 'c4-verify-context', 'c4-verify-inputs',
-                                                 'c4-nerdctl-build-help', 'c4-nerdctl-build', 'c4-iidfile-read',
-                                                 'c4-image-inspect'])
-        by_id = {x['id']: x for x in receipt['steps']}
-        self.assertTrue(by_id['c4-nerdctl-build']['closure_simulated'])
-        # The build's dispatched argv is the fixed helper launch carrying the reviewed command as hex, never the
-        # bare nerdctl argv: the whole remote invocation is contained.
-        dispatched = next(c[1] for c in calls if c[0] == 'c4-nerdctl-build')
-        self.assertNotIn('nerdctl', dispatched)
-        self.assertEqual(json.loads(bytes.fromhex(dispatched[-1]).decode())['argv'],
-                         prep.guest_build_command(staged['path']))
-        self.assertEqual(json.loads(self.stage_file('C4', 'act-sim-c4',
-                                                    'c4-render-verify-spec/c4-render-verify-spec.json').read_text())['layout'],
-                         guest_inputs.pin_layout(FAKE_RUNTIME_PIN))
-        # A simulated receipt is never a chain receipt.
-        root = self.stage_dir('C4', 'act-sim-c4')
-        with self.assertRaisesRegex(ex.Refusal, 'simulated'):
-            ex.verify_receipt_tree(json.loads(Path(root + '/stage-receipt.json').read_text()), 'C4',
-                                   ex.chain_key(self.bindings), ex.load_manifest())
-
-    def test_static_admission_and_owner_refusal_still_refuse_with_the_simulation_on(self):
-        calls = []
-        with self.simulated():
-            with mock.patch.dict(ex.TEST_SEAM, {'admit_unadmitted': False}):
-                for stage in ('C5',):
-                    with self.subTest(stage=stage), self.assertRaises(ex.Refusal) as caught:
-                        self.execute(stage, self.routed({}, calls), prior_ref=None, activation_id=f'act-simadm-{stage}')
-                    self.assertIn('C4 receipt', str(caught.exception))
-            with mock.patch.dict(ex.TEST_SEAM, {'owner_activation': False}), self.assertRaises(ex.Refusal) as caught:
-                self.execute('C2', self.routed({}, calls), prior_ref=None, activation_id='act-simowner-c2')
-            self.assertIn('no owner-controlled activation mechanism', str(caught.exception))
-        self.assertEqual(calls, [])
-        self.assertFalse(os.path.exists(self.tmp + '/claims/act-simadm-C2.claim'))
-
-    def test_a_simulated_receipt_is_never_accepted_as_a_chain_predecessor(self):
-        parent = self.guest_parent()
-        self.sim_c2_body(parent)
-        path = self.stage_dir('C2', 'act-sim-c2-pred') + '/stage-receipt.json'
-        with self.assertRaises(ex.Refusal) as caught:
-            ex.verify_receipt_tree(json.loads(Path(path).read_text()), 'C2', None, ex.load_manifest())
-        self.assertIn('simulated', str(caught.exception))
-
+    def test_simulated_historical_receipts_refuse_before_reading_evidence(self):
+        for stage in ('C2', 'C3', 'C4'):
+            body = {'stage': stage, 'closure': 'closed', 'closure_simulated': True}
+            with self.subTest(stage=stage), \
+                 mock.patch.object(ex, 'checked_sha') as read, \
+                 self.assertRaisesRegex(ex.Refusal, 'simulated guest closure'):
+                ex.verify_receipt_tree(body, stage, ex.chain_key(self.bindings), ex.load_manifest())
+            read.assert_not_called()
 
     # C5 on the genuine C4 receipt (C4 runs for real through run_c4; C5 reads its receipt from disk). The guest runs
     # through the shim above: the reviewed argv is validated and rebuilt by the production helper and then runs for real
@@ -2883,7 +2803,7 @@ class WindowProofTests(Fixture):
         os.chmod(path, 0o400)
         return path, ex.sha_file(path)
 
-    def test_delayed_simulated_launch_runs_real_entry_and_keeps_window(self):
+    def test_delayed_launch_runs_real_entry_and_keeps_window(self):
         with copied_checkout(self.tmp, 'window-first'):
             request = self.request()
             path, digest = self.freeze(request)
@@ -3650,8 +3570,7 @@ class CoverageLedgerTests(unittest.TestCase):
     """Every manifest step is accounted for, with the test that exercises it and how:
     executed (the adapter ran it with a real local child or the real handler); executed_stub_chain (the adapter
     ran it, with the predecessor stubbed); helper_direct (its handler ran on controlled inputs, not through a stage);
-    executed_closure_simulated (the stage loop dispatched it under the test-only closure simulation, with its exact
-    argv, env, stdin and outputs asserted). A not_dispatched step is refusal coverage only, never dispatch coverage.
+    A not_dispatched step is refusal coverage only, never dispatch coverage.
     A step with no entry fails."""
 
     LEDGER = {
@@ -3754,7 +3673,7 @@ class CoverageLedgerTests(unittest.TestCase):
         self.assertEqual(set(self.LEDGER), steps)
 
     def test_every_referenced_test_exists_and_the_kinds_are_known(self):
-        kinds = {'executed', 'executed_stub_chain', 'helper_direct', 'executed_closure_simulated'}
+        kinds = {'executed', 'executed_stub_chain', 'helper_direct'}
         for step, (kind, ref) in self.LEDGER.items():
             with self.subTest(step=step):
                 self.assertIn(kind, kinds)

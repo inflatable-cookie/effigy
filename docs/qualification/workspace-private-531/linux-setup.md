@@ -458,7 +458,7 @@ object, the bounded stage deadlines, the pinned inputs (the helper at its commit
 environment are what reach that dispatch — brackets it with two fresh guest boot originals, and feeds the record
 through production `setup.verify_disk_association`. The outcome's `disk_association` key holds the fact document
 (`linux_disk_association.stored_facts`: the raw config, descriptor and host-read stdout/stderr as bounded base64
-envelopes with their own length and digest), because `setup_plan` E7* re-verifies that key as facts and
+envelopes with their own length and digest), so historical readers can re-verify that key as facts and
 `verify_disk_association` decodes it before the same premises run; the reduced verify result is kept beside it as
 `disk_association_result` and is never the stored record. The reader is executable on the supported CLI route, so
 the stage dispatches it; if the accessor ever reports a limitation again, the stage records `guest_association` as
@@ -1084,8 +1084,11 @@ enlarged, deleted or reverted.
 
 
 The quota-specific production observation entry is retired and refuses before
-transport or intent. Quota parsers remain only for historical evidence and
-focused controls; production limit admission supports the physical mechanism.
+transport or intent. Its setup-plan construction, quota dispatch and execution
+are deleted (effigy#854). Quota parsers remain offline for historical evidence;
+the retained H/K artifacts and setup ledger are unchanged. The standalone root
+quota/project administration roles remain pending their separate retirement.
+Production limit admission supports the physical mechanism.
 The single native runner freezes setup/activation and before/after originals,
 plus three separate live observer units for the three activation cohorts.
 Missing or replayed live originals refuse offline acceptance.
@@ -1094,10 +1097,11 @@ Missing or replayed live originals refuse offline acceptance.
 ### Live helper ownership
 
 `linux_native_support.py` owns VM identity, file custody, readiness, SSH argv,
-closure credit and bounded host transport. The legacy setup/transfer adapters
-retain R2-temporary wrappers for their original exception contract. The root
-supervisor remains a standalone standard-library executable; extraction does
-not remove or enable its retired quota executor.
+closure credit and bounded host transport. The historical setup/transfer adapters
+preserve their original exception contract for evidence readers and focused
+supervisor controls. `linux_setup.py` has no quota-plan constructor or executor.
+The root supervisor remains a standalone standard-library executable with its
+existing external administration roles.
 
 The physical route's local import graph is:
 
