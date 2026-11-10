@@ -292,8 +292,12 @@ lock with a dead/unverifiable named owner remains held; the guard may refresh
 its own identity in the diagnostic body without creating durable authority. No
 stale-file unlink or PID-only reclaim exists. Owner and guard retain the group
 and unreaped-child/verified-anchor evidence through descendant and stream closure,
-even after leader exit. Normal settle closes the in-memory effects before
-unlocking. Owner EOF or terminal HUP/INT/TERM makes the guard stop the retained
+even after leader exit. Normal settle explicitly releases its gate only after
+complete in-memory effects, positive completion of every descendant, and the
+exact backup’s successful exit. Incidental pre-exec fork copies cannot retain
+a completely settled run; failed, unknown or unconfirmed custody never enables
+that release. Child completion propagates only after the same descendant
+closure proof. Owner EOF or terminal HUP/INT/TERM makes the guard stop the retained
 group within the cleanup budget, using the same positive evidence as the
 owner, then exit. While cleanup runs it keeps the owner gate held; it never
 unlocks on owner EOF alone. The owner similarly keeps custody if its guard dies.

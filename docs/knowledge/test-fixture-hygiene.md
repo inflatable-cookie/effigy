@@ -322,7 +322,10 @@ staging hooks are bound to their owned state root, including across the sealing
 helper thread; a sibling root must never consume another fixture’s handoff. Follow retry
 budget overrides are scoped to the test thread and restored on drop. Proofs of
 fixed descriptor numbers or permanently adopted secret grants run their original
-assertions in an exact-test child process.
+assertions in an exact-test child process. Foreground gate controls retain an
+unrelated pre-exec fork copy through successful settlement, and separately prove
+that an unconfirmed descendant still retains its ancestors’ gates. Dispatch
+fixtures own a cleared environment through context capture and final status.
 
 All in-process fixture environment writers use the same reentrant guard. Setup
 and bounded read workers retain that ownership until their observations finish.

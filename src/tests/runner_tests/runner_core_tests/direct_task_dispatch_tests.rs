@@ -35,6 +35,7 @@ fn user_home_with_program(name: &str, program: &str, fallback: &str) -> std::pat
 
 #[test]
 fn direct_foreground_dispatch_stays_in_memory_when_configured_program_is_inactive() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     // `sh` is on PATH and not forced, so the block puts no shim on this run.
     let home = user_home_with_program("task-status-program-inactive-home", "sh", "true");
     let root = temp_workspace("task-status-program-inactive");
@@ -53,13 +54,14 @@ fn direct_foreground_dispatch_stays_in_memory_when_configured_program_is_inactiv
     });
 
     let status = root_task_status_for_tests(&root, "echo");
-    assert_eq!(status.state, "not-recorded");
+    assert_eq!(status.state, "not-recorded", "{status:?}");
     assert!(status.latest.is_none());
     assert!(status.history.is_empty());
 }
 
 #[test]
 fn direct_foreground_dispatch_records_durably_when_configured_program_activates() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     // The program is absent from PATH, so its shim activates and the run must
     // be durable: a shim cannot ride on foreground memory custody.
     let home = user_home_with_program(
@@ -89,6 +91,7 @@ fn direct_foreground_dispatch_records_durably_when_configured_program_activates(
 
 #[test]
 fn direct_foreground_dispatch_succeeds_without_recording_runtime_history() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let root = temp_workspace("task-status-success");
     let marker = root.join("status-success.out");
     write_root_manifest(
@@ -104,7 +107,7 @@ fn direct_foreground_dispatch_succeeds_without_recording_runtime_history() {
 
     assert_file_text_equals(&marker, "ok");
     let status = root_task_status_for_tests(&root, "echo");
-    assert_eq!(status.state, "not-recorded");
+    assert_eq!(status.state, "not-recorded", "{status:?}");
     assert!(status.latest.is_none());
     assert!(status.history.is_empty());
     assert!(!root.join(".effigy/state/kernel.db").exists());
@@ -116,6 +119,7 @@ fn direct_foreground_dispatch_succeeds_without_recording_runtime_history() {
 
 #[test]
 fn direct_foreground_dispatch_reports_failure_without_recording_history() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let root = temp_workspace("task-status-failed");
     write_root_manifest(&root, "[tasks.fail]\nrun = \"sh -c 'exit 7'\"\n");
     let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
@@ -127,13 +131,24 @@ fn direct_foreground_dispatch_reports_failure_without_recording_history() {
     }
 
     let status = root_task_status_for_tests(&root, "fail");
-    assert_eq!(status.state, "not-recorded");
+    assert_eq!(status.state, "not-recorded", "{status:?}");
     assert!(status.latest.is_none());
     assert!(status.history.is_empty());
 }
 
+/// The same failure/settlement/status proof must wait for a sibling environment
+/// writer before it captures runtime context or starts a foreground run.
+#[test]
+fn direct_dispatch_waits_for_an_ambient_path_mutator() {
+    crate::contract_test_support::assert_waits_for_path_mutator(|entered| {
+        entered();
+        direct_foreground_dispatch_reports_failure_without_recording_history();
+    });
+}
+
 #[test]
 fn direct_foreground_dispatch_reports_cancellation_without_recording_history() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let root = temp_workspace("task-status-cancelled");
     write_root_manifest(&root, "[tasks.stop]\nrun = \"sh -c 'exit 130'\"\n");
     let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
@@ -145,13 +160,14 @@ fn direct_foreground_dispatch_reports_cancellation_without_recording_history() {
     }
 
     let status = root_task_status_for_tests(&root, "stop");
-    assert_eq!(status.state, "not-recorded");
+    assert_eq!(status.state, "not-recorded", "{status:?}");
     assert!(status.latest.is_none());
     assert!(status.history.is_empty());
 }
 
 #[test]
 fn direct_task_dispatch_refused_by_a_live_holder_records_no_run_of_its_own() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let root = temp_workspace("task-status-blocked");
     write_root_manifest(&root, "[tasks.echo]\nrun = \"printf blocked\"\n");
     let holder = TaskRun::hold_for_tests(&root, "echo", None);
@@ -178,6 +194,7 @@ fn direct_task_dispatch_refused_by_a_live_holder_records_no_run_of_its_own() {
 
 #[test]
 fn selector_plan_does_not_start_the_task_process() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let root = temp_workspace("selector-plan-no-process");
     let marker = root.join("plan-must-not-run.out");
     write_root_manifest(
@@ -219,6 +236,7 @@ fn selector_plan_does_not_start_the_task_process() {
 
 #[test]
 fn selector_plan_json_reports_command_shape_without_executing() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let root = temp_workspace("selector-plan-json-no-process");
     let marker = root.join("plan-json-must-not-run.out");
     write_root_manifest(
@@ -263,6 +281,7 @@ fn selector_plan_json_reports_command_shape_without_executing() {
 
 #[test]
 fn json_selector_without_plan_still_executes() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let root = temp_workspace("selector-json-still-executes");
     let marker = root.join("json-should-run.out");
     write_root_manifest(
@@ -292,6 +311,7 @@ fn json_selector_without_plan_still_executes() {
 
 #[test]
 fn selector_plan_does_not_run_deferral_fallback() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let root = temp_workspace("selector-plan-no-defer");
     let marker = root.join("defer-must-not-run.out");
     write_root_manifest(
@@ -322,6 +342,7 @@ fn selector_plan_does_not_run_deferral_fallback() {
 
 #[test]
 fn selector_plan_renders_managed_tui_process_shape() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let root = temp_workspace("selector-plan-managed-tui");
     write_root_manifest(
         &root,
@@ -354,6 +375,7 @@ concurrent = [
 
 #[test]
 fn selector_plan_does_not_resolve_env_schema_exec() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let root = temp_workspace("selector-plan-no-env-exec");
     let marker = root.join("env-exec-must-not-run.out");
     write_root_manifest(&root, "[tasks.build]\nrun = \"printf ok\"\n");
