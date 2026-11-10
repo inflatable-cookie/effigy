@@ -21,7 +21,6 @@ pub(in crate::runner) fn effective_container_policy(
         profile: "effigy".to_owned(),
         compose_source: EffectiveComposeSource::Direct,
         compose_files: vec![compose_file],
-        compose_file_display: "docker-compose.yml".to_owned(),
         managed_volumes: vec![],
         borrowed_volumes: Vec::new(),
         data_peers: Vec::new(),

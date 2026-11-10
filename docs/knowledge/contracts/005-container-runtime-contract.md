@@ -746,6 +746,10 @@ first `-f` input — so no Effigy value is interpolated into the stack and no
 container environment carries one. Internal policy readers resolve those
 relative inputs to the generation's own paths before parsing bind syntax or
 estimating mount budgets; the immutable file bytes keep the relative spelling.
+Path relocation visits Compose file-reference fields only; environment, commands,
+inline content and generated config bodies remain literal. Reports derive logical
+Compose input names in invocation order from the render, including overrides,
+without caching a separate display string.
 A shared service belongs to no checkout, so it is not part of a generation. Its
 Compose input and every file its fragment binds (MariaDB and Postgres init SQL)
 are published at one machine-wide, content-addressed directory under the Effigy

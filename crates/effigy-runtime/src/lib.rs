@@ -28,7 +28,6 @@ pub(crate) mod test_support {
             profile: "effigy".to_owned(),
             compose_source: EffectiveComposeSource::Generated,
             compose_files: vec![],
-            compose_file_display: String::new(),
             managed_volumes: vec![],
             borrowed_volumes: vec![],
             data_peers: Vec::new(),

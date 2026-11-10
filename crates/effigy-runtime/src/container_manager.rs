@@ -188,7 +188,6 @@ mod tests {
             profile: "effigy".to_owned(),
             compose_source: EffectiveComposeSource::Direct,
             compose_files: vec![PathBuf::from("docker-compose.yml")],
-            compose_file_display: "docker-compose.yml".to_owned(),
             managed_volumes: vec![],
             borrowed_volumes: vec![],
             data_peers: Vec::new(),

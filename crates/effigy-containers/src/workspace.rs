@@ -17,7 +17,7 @@ mod library_mounts;
 mod ownership;
 #[cfg(test)]
 use compose_rewrite::inject_workspace_service_environment;
-pub(crate) use compose_rewrite::normalize_runtime_rewrite_paths;
+pub(crate) use compose_rewrite::{map_compose_paths, normalize_runtime_rewrite_paths};
 use compose_rewrite::rewrite_workspace_mounts_for_direct_compose;
 pub(crate) use host_integration::{
     build_host_composer_home_mount, build_host_git_config_mount, build_host_mkcert_ca_mount,

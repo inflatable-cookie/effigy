@@ -437,7 +437,6 @@ fn same_bind(left: &str, right: &str) -> bool {
 
 type ResolvedComposeSource = (
     Vec<PathBuf>,
-    String,
     Vec<ManagedVolume>,
     Vec<ManagedVolume>,
     Vec<String>,
@@ -604,14 +603,8 @@ pub(crate) fn resolve_compose_source(
     if override_path.is_file() {
         compose_files.push(override_path);
     }
-    let display = compose_files
-        .iter()
-        .map(|path| path_relative_to_repo(repo_root, path))
-        .collect::<Vec<_>>()
-        .join(", ");
     Ok((
         compose_files,
-        display,
         assembly
             .volumes
             .iter()
@@ -1470,13 +1463,6 @@ pub(crate) fn parse_media_mount(
     }
 
     Ok((resolved, target.to_owned()))
-}
-
-pub(crate) fn path_relative_to_repo(repo_root: &Path, path: &Path) -> String {
-    path.strip_prefix(repo_root)
-        .unwrap_or(path)
-        .display()
-        .to_string()
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
 use super::*;
+use std::ffi::OsStr;
 use effigy_kernel::ctx::{
     CancelToken, CleanupContext, Deadline, EffectClass, Limits, OperationContext, Placement,
 };

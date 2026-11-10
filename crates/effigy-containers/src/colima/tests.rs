@@ -643,7 +643,6 @@ fn test_policy(profile: &str) -> EffectiveContainerPolicy {
         profile: profile.to_string(),
         compose_source: crate::EffectiveComposeSource::Direct,
         compose_files: vec![std::path::PathBuf::from("docker-compose.yml")],
-        compose_file_display: "docker-compose.yml".to_string(),
         managed_volumes: vec![],
         borrowed_volumes: vec![],
         data_peers: Vec::new(),

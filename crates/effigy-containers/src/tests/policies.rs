@@ -71,8 +71,8 @@ fn container_selection_cases() {
     fn default_render(policy: &crate::EffectiveContainerPolicy) {
         assert_eq!(policy.compose_source, EffectiveComposeSource::Generated);
         assert_eq!(
-            policy.compose_file_display,
-            ".effigy/runtime/compose/web.generated.compose.yml"
+            policy.compose_file_display(),
+            ".effigy/runtime/compose/web.generated.compose.yml, .effigy/runtime/dns/web.compose.override.yml"
         );
         assert_eq!(policy.dns_domain, None);
         assert!(!policy.dns_tls);

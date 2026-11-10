@@ -531,7 +531,6 @@ fn build_effective_policy(
     let volume_borrow = data_links.borrow.clone();
     let (
         mut compose_files,
-        compose_file_display,
         managed_volumes,
         borrowed_volumes,
         effective_ports,
@@ -653,7 +652,6 @@ fn build_effective_policy(
         profile,
         compose_source: EffectiveComposeSource::Generated,
         compose_files,
-        compose_file_display,
         managed_volumes,
         borrowed_volumes,
         data_peers: data_links.peers,
