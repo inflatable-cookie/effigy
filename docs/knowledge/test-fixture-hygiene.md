@@ -479,3 +479,9 @@ non-temporary mount without writing there: a sibling under `/tmp` cannot prove
 the positive path. Fake volume inspection must also model Compose's default
 project-scoped names for mask volumes. These fixture repairs retain every
 assertion and deadline; they do not change production behavior.
+
+Provisioning-guest fixtures take the existing reentrant environment lock before
+allocating temporary paths, including standalone guest homes and staged files.
+Taking it only later in `EnvGuard` can allocate beneath a concurrent builder
+fixture's TMPDIR; that fixture then removes the still-needed checkout when its
+own test ends. The lock protects allocation, not a larger runner reservation.

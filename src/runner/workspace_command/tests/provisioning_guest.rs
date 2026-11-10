@@ -39,11 +39,36 @@ mod workspace_client_matrix {
 const HOST_CONTAINER_ID: &str = "9d1c0b6a7f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4";
 
 fn fixture(label: &str) -> PathBuf {
+    // Allocate under the caller's restored TMPDIR, not another test's temporary
+    // HOME. EnvGuard takes this same reentrant lock after fixture creation.
+    let _lock = crate::contract_test_support::lock_test();
     let root = Fixture::process_lifetime(&format!("effigy-workspace-guest-{label}-"))
         .expect("fixture directory");
     std::fs::create_dir_all(root.join(".git")).expect("git directory");
     std::fs::write(root.join("effigy.toml"), "[tasks]\n").expect("manifest");
     root
+}
+
+#[test]
+fn fixture_allocation_waits_for_the_temporary_environment_to_be_restored() {
+    let lock = crate::contract_test_support::lock_test();
+    let foreign = Fixture::new("provisioning-foreign-tmp-").expect("foreign temporary root");
+    let env = EnvGuard::set_many(&[("TMPDIR", Some(foreign.path().display().to_string()))]);
+    let worker = std::thread::spawn(|| fixture("restored-temp-root"));
+    let waited = crate::contract_test_support::test_lock_waiter_position(
+        worker.thread().id(),
+        std::time::Duration::from_secs(5),
+    )
+    .is_some();
+    drop(env);
+    drop(lock);
+    let repo = worker.join().expect("fixture allocator");
+    assert!(
+        waited,
+        "fixture allocation must wait for the environment owner"
+    );
+    assert!(!repo.starts_with(foreign.path()));
+    assert!(repo.join("effigy.toml").is_file());
 }
 
 fn policy(repo: &Path, workspace: bool) -> EffectiveContainerPolicy {
@@ -87,6 +112,7 @@ fn container_identity() -> WorkspaceContainerIdentity {
 #[test]
 fn guest_identity_exec_uses_the_selected_backend_and_full_id() {
     use std::os::unix::fs::PermissionsExt;
+    let _lock = crate::contract_test_support::lock_test();
     let fixture = Fixture::new("pinned-guest-identity-").expect("fixture");
     let bin = fixture.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
@@ -2132,6 +2158,7 @@ fn the_context_pins_the_composed_task_closure_and_its_sources() {
 
 #[test]
 fn a_pinned_source_closure_names_its_fragment_identity() {
+    let _lock = crate::contract_test_support::lock_test();
     let root = Fixture::process_lifetime("effigy-workspace-fragment-identity-")
         .expect("fixture directory");
     std::fs::create_dir_all(root.join("manifest")).expect("fragment directory");
@@ -2151,6 +2178,7 @@ fn a_pinned_source_closure_names_its_fragment_identity() {
 #[test]
 fn staged_host_bytes_are_private_exclusive_and_removed() {
     use std::os::unix::fs::PermissionsExt;
+    let _lock = crate::contract_test_support::lock_test();
 
     let staged = stage_host_bytes(b"enrolment-secret").expect("stage");
     let path = staged.path().to_path_buf();
@@ -2351,6 +2379,7 @@ fn concurrent_activation_publications_pin_distinct_immutable_fake_guest_contexts
     use effigy_containers::environment::{activate_with, BackendError, EnvContext};
     use effigy_kernel::ctx::CancelToken;
     use std::sync::{mpsc, Arc, Mutex};
+    let _lock = crate::contract_test_support::lock_test();
     let repo = fixture("gated-concurrent-contexts");
     let home = Fixture::new("gated-publication-home-").unwrap();
     let _env = EnvGuard::set_many(&[
