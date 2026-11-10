@@ -174,7 +174,7 @@ impl Run<'_> {
         if process_receipt.get("interpolation_v1").is_none() {
             let pending = serde_json::json!({"interpolation_v1": process_receipt, "binding": {"pending": true}});
             let publication = self.store.transaction(&self.cx, |txn| {
-                journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
+                crate::workspace_session::check_run_fence(txn.conn(), self.id, &self.owner)?;
                 journal::write_effect(
                     txn,
                     self.id,
@@ -209,7 +209,7 @@ impl Run<'_> {
         if receipt.get("interpolation_v1").is_none() {
             receipt = serde_json::json!({"interpolation_v1": receipt, "binding": file.binding()?});
             let publication = self.store.transaction(&self.cx, |txn| {
-                journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
+                crate::workspace_session::check_run_fence(txn.conn(), self.id, &self.owner)?;
                 journal::write_effect(
                     txn,
                     self.id,

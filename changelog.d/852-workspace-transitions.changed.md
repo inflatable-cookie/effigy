@@ -1,0 +1,1 @@
+Workspace activation now validates reservation and resume bindings together through the workspace-session owner, preserving predecessor access and exact cleanup custody across failed successor attempts.

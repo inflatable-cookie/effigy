@@ -1202,7 +1202,7 @@ fn partial_sentinel_close_retains_owner_on_fault_and_reaps_exact_child() {
     let run_id = run.id();
     let child_id = run.partial_sentinel.as_ref().map(|child| child.child_id());
     let prechecks = run.require_environment_gate().is_ok()
-        && journal::check_run_fence(run.store.conn(), run.id, &run.owner).is_ok();
+        && crate::workspace_session::check_run_fence(run.store.conn(), run.id, &run.owner).is_ok();
     let expired = cx.operation().cleanup(Duration::ZERO).unwrap();
     let expired_result = run.close_partial_workspace_sentinel(&expired);
     let input_after_expiry = run

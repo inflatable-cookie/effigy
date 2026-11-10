@@ -2146,6 +2146,25 @@ fn parked_resume_requires_matching_observed_creator_and_target_facts() {
             Ok::<_, RunError>(())
         })
         .unwrap();
+    // Even matching backend evidence cannot authorize a now-uncertain binding.
+    for state in ["residue", "applied"] {
+        store
+            .transaction(&cx, |txn| {
+                txn.conn().execute(
+                    "UPDATE events SET state=?2 WHERE run_id=?1 AND kind='kernel:workspace-target'",
+                    rusqlite::params![run_id(254).to_string(), state],
+                )?;
+                Ok::<_, RunError>(())
+            })
+            .unwrap();
+        if state == "residue" {
+            let (error, retained) = guarded
+                .resume(&session, Observed::Verified(facts.clone(), evidence()))
+                .expect_err("uncertain journal binding never resumes");
+            assert!(error.to_string().contains("binding is absent or uncertain"));
+            guarded = retained;
+        }
+    }
     assert!(crate::gate::Gate::acquire(
         &cx,
         &root,

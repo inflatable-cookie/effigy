@@ -1042,7 +1042,7 @@ fn release_attachment(
         {
             return Err(RunError::refused("the attachment's run fence changed"));
         }
-        journal::check_run_fence(txn.conn(), attachment.run, &attachment.fence)?;
+        crate::workspace_session::check_run_fence(txn.conn(), attachment.run, &attachment.fence)?;
         if !attached {
             let same_release: bool = recover && admission_session(txn.conn(), attachment.run)? == Some(attachment.session)
                 && txn.conn().query_row(
@@ -1365,7 +1365,7 @@ fn service_fence(conn: &Connection, run: RunId, fence: &Fence) -> Result<(), Run
             "the workspace session activation has not committed",
         ));
     }
-    journal::check_run_fence(conn, run, fence)
+    crate::workspace_session::check_run_fence(conn, run, fence)
 }
 
 /// A historical run row alone cannot establish a serviceable supervisor.
@@ -1586,7 +1586,7 @@ impl Run<'_> {
         // workspace session cannot keep a dead terminal's custody row alive.
         self.store
             .transaction_within(&cx, BusyWait::Context, |txn| {
-                journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
+                crate::workspace_session::check_run_fence(txn.conn(), self.id, &self.owner)?;
                 release_row(txn, &cx, attachment, Release::Eof)
             })?;
         attachment.released = true;

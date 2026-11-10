@@ -3205,6 +3205,10 @@ future lifecycle slice E design, not a shipped schema or migration proof.
   advance its current fence. A staged run cannot create generic effects before
   commit; earlier sessions retain run-bound callbacks, controls and settlement
   afterwards, without authority to create new shared-owner effects.
+  The workspace-session owner validates overlap, reservation identity and
+  preserved-predecessor borrowing; generic journal fencing stays strict. Resume
+  reads the claimed reservation, target, platform and creator receipt in one
+  transaction and repeats that validation after reacquisition and reobservation.
   `claim`/`Run::begin_claimed` bind the Env run at E. The guest must acknowledge
   `WorkspacePublicationReceipt { publication, activation_run, session }`, including
   the actual session owner, RunId and S; `ActivationPlan::validate_receipt` checks
