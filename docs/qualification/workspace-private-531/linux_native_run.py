@@ -343,16 +343,16 @@ def stop_owned_unit(attempt, target, output_root):
     return state, pids
 
 
-def gated_python(release, token, main, files):
-    """Build the fixed pre-exec gate; every imported driver byte is hash-bound."""
-    return ('import os,time,hashlib; from pathlib import Path; p=Path(' + repr(release) + '); '
-              'end=time.monotonic()+90; '
-              'exec(' + repr('while not p.exists():\n assert time.monotonic()<end\n time.sleep(.1)') + '); '
-              'assert p.read_bytes()==' + repr(token) + '; '
-              'files=' + repr(files) + '; '
-              'assert all(hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest for path,digest in files.items()); '
-              'os.execv("/usr/bin/python3",["/usr/bin/python3","-I","-B"]+' + repr(main) + ')')
-
+def gated_python(request, expected):
+    """Short immutable bootstrap; the bound JSON carries argv, gate and file map."""
+    return ('import os,time,hashlib,json; from pathlib import Path; '
+            'b=Path('+repr(request)+').read_bytes(); '
+            'assert hashlib.sha256(b).hexdigest()=='+repr(expected)+'; q=json.loads(b); '
+            'p=Path(q["release"]); end=time.monotonic()+90; '
+            'exec('+repr('while not p.exists():\n assert time.monotonic()<end\n time.sleep(.1)')+'); '
+            'assert p.read_bytes()==bytes.fromhex(q["token_hex"]); '
+            'assert all(hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest for path,digest in q["files"].items()); '
+            'os.execv("/usr/bin/python3",["/usr/bin/python3","-I","-B"]+q["main"])')
 
 
 class SSHRun:
@@ -549,7 +549,12 @@ def execute(root, seed, mode, *, proof=None):
     writable = str(session.BASE if mode in ('acquire', 'preflight') else Path(binding['fixture']))
     release = str(session.BASE / 'qualification' / ('ssh-release-' + unit))
     token = uuid.uuid4().hex.encode()
-    script = gated_python(release,token,main,{driver+'/'+name:digest for name,digest in files.items()})
+    launch_request=dict(release=release,token_hex=token.hex(),main=main,
+                        files={driver+'/'+name:digest for name,digest in files.items()})
+    launch_path=str(session.BASE/'metadata'/(attempt.root.name+'.run.json'))
+    launch_bytes=json.dumps(launch_request,sort_keys=True).encode()
+    channel_receive(attempt,ssh,launch_path,launch_bytes)
+    script=gated_python(launch_path,hashlib.sha256(launch_bytes).hexdigest())
     if mode=='full':
         writable += ' ' + value['cell']['linux_claim_root']
     remaining = 1850 if proof is None else int(proof['deadline']-time.monotonic())

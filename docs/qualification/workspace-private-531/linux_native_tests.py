@@ -181,10 +181,27 @@ class FixedChannelPublicationTests(unittest.TestCase):
                 with self.assertRaises(ValueError): channel.dispatch('b'*64)
                 self.assertFalse(other.exists())
 
-    def test_fixed_preexec_program_compiles_with_quoted_paths(self):
-        program=native_run.gated_python('/owned/a quote',b'nonce',["/owned/main.py","metadata"],
-                                        {'/owned/main.py':'a'*64})
+    def test_fixed_preexec_program_checks_request_and_driver_bytes_before_exec(self):
+        import hashlib,json
+        root=Path(tempfile.mkdtemp(prefix='native-gated-request-',dir=os.environ['TMPDIR']))
+        release=root/'a quote';release.write_bytes(b'nonce')
+        driver=root/'main.py';driver.write_bytes(b'fixture main')
+        request=root/'run.json'
+        value=dict(release=str(release),token_hex=b'nonce'.hex(),main=[str(driver),'metadata'],
+                   files={str(driver):hashlib.sha256(driver.read_bytes()).hexdigest()})
+        request.write_text(json.dumps(value));pin=hashlib.sha256(request.read_bytes()).hexdigest()
+        program=native_run.gated_python(str(request),pin)
         compile(program,'session-preexec','exec')
+        self.assertLess(len(program),1000)
+        with patch.object(os,'execv') as launch:
+            exec(program,{})
+            launch.assert_called_once_with('/usr/bin/python3',['/usr/bin/python3','-I','-B',str(driver),'metadata'])
+        driver.write_bytes(b'changed fixture')
+        with patch.object(os,'execv') as launch,self.assertRaises(AssertionError):exec(program,{})
+        launch.assert_not_called()
+        request.write_bytes(request.read_bytes()+b' ')
+        with patch.object(os,'execv') as launch,self.assertRaises(AssertionError):exec(program,{})
+        launch.assert_not_called()
 
 
 class PhysicalPreparationEntryTests(unittest.TestCase):

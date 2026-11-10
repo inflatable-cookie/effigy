@@ -1132,7 +1132,8 @@ it never creates a replacement reservation or deletes earlier evidence.
    artifacts from step 1. Freeze GO, selected GO and GO-index bytes after the
    preparation artifact exists. Separately activate the existing #623 Linux
    full-session entry once, within its 1,800-second window. It transfers only
-   the bound JSON inputs and gates the prepared controller; it performs no
+   the bound JSON inputs and hash-bound unit-control metadata, then gates the
+   prepared controller; it performs no
    build, install, source staging or configuration repair. Retain original
    separate streams, all three live observations, actual allocation samples,
    receipt bytes and closure. A reboot, engine restart or changed artifact
@@ -1151,3 +1152,11 @@ while buffering writes. Its OOM result, empty cgroup and exact retained payload
 inode were observed before that inode alone was truncated and retained. Capacity
 writers now use synchronous data writes and evict clean pages so physical
 ENOSPC, rather than page-cache charging, terminates the control.
+
+
+The integrated driver file map exceeded Parallels' observed command-size ceiling
+when embedded in the unit command. Launch now transfers that map, exact argv
+and release token as hash-bound JSON control metadata. A short fixed bootstrap
+verifies those bytes and every prepared driver file before exec. This changes
+no executable source during the full occurrence and avoids transport-dependent
+argument limits as the driver grows.
