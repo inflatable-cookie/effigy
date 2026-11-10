@@ -2,7 +2,7 @@
 //! session custody, TLS listener, schema constructor and commit/CAS path.
 use super::*;
 use crate::runner::environment::{self, workspace::*};
-use crate::runner::workspace_client::guest_fake::FakeGuest;
+use crate::runner::workspace_client::guest_fake::{FakeGuest, FakeNodeKind};
 use crate::runner::workspace_transport::qualification::{
     Backend, GuestDialEvidence, ResolvedAlias,
 };
@@ -91,7 +91,16 @@ impl GuestWorkspace for Guest {
         self.0.borrow_mut().read_link(p)
     }
     fn ensure_dir(&mut self, p: &str, m: u32) -> Result<(), RunnerError> {
-        self.effect(|guest| guest.ensure_dir(p, m))
+        self.effect(|guest| {
+            // Production mkdir -p creates ancestors in the same guest I/O.
+            for parent in Path::new(p).ancestors().skip(1) {
+                let parent = parent.to_str().expect("fixed UTF-8 guest path");
+                if guest.node(parent).is_none() {
+                    guest.ensure_dir(parent, 0o755)?;
+                }
+            }
+            guest.ensure_dir(p, m)
+        })
     }
     fn write_file(&mut self, p: &str, b: &[u8], m: u32) -> Result<(), RunnerError> {
         self.effect(|guest| guest.write_file(p, b, m))
@@ -112,6 +121,15 @@ impl GuestWorkspace for Guest {
         self.effect(|guest| guest.install_executable(s, p))
     }
     fn replace_pointer(&mut self, p: &str, t: &str) -> Result<(), RunnerError> {
+        let parent = Path::new(p)
+            .parent()
+            .and_then(Path::to_str)
+            .expect("fixed selector parent");
+        if self.0.borrow().node(parent).map(|node| node.kind) != Some(FakeNodeKind::Dir) {
+            return Err(RunnerError::task_invocation(
+                "selector parent was not prepared",
+            ));
+        }
         self.effect(|guest| guest.replace_pointer(p, t))
     }
     fn replace_link(&mut self, p: &str, t: &str) -> Result<(), RunnerError> {

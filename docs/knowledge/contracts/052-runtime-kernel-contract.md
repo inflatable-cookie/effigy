@@ -3350,6 +3350,9 @@ the missing credential named, and local reads keep working.
   and temporary-directory paths, and the parsed `auto`/`local`/`download`
   artifact policy across its cleared environment. Config contents, arbitrary
   ambient variables and credentials are not forwarded through this lane.
+- Additive staging creates the fixed selector parent directories before the
+  commit and selector CAS. A fresh image need not contain the legacy binary
+  directory; staging directories does not select an executable or context.
 - Publication consumes only current bytes. It re-checks the target and the
   install identity of the artifact the host acquired, authenticates the bytes
   against their receipt, and refuses when either changed. It never builds or

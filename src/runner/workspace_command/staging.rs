@@ -14,7 +14,7 @@ use effigy_kernel::id::Digest;
 use effigy_kernel::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
 use effigy_kernel::workspace_session::{
     BoundPlatform, ContainerIdentity, GuestBinaryReceipt, GuestObject, LoaderFamily,
-    WorkspaceActivationReservation,
+    WorkspaceActivationReservation, BINARY_SELECTOR, CONTEXT_SELECTOR, ENTRY_SELECTOR,
 };
 
 pub(super) fn stage_binary(
@@ -94,6 +94,16 @@ fn stage_binary_bytes(
         ));
     }
     let object = &binding.artifact;
+    // Digest objects and selectors have different parents. Prepare each
+    // selector directory additively, before commit/CAS; fresh images need
+    // not carry the legacy bin directory or stable entry directory already.
+    for selector in [BINARY_SELECTOR, CONTEXT_SELECTOR, ENTRY_SELECTOR] {
+        let parent = Path::new(selector)
+            .parent()
+            .and_then(Path::to_str)
+            .ok_or_else(|| RunnerError::task_invocation("workspace selector has no parent"))?;
+        guest.ensure_dir(parent, 0o755)?;
+    }
     let parent = Path::new(&object.path)
         .parent()
         .and_then(Path::to_str)

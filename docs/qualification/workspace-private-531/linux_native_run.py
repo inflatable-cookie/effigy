@@ -44,22 +44,23 @@ def submit_unit(attempt, argv, unit):
 
 
 class Attempt:
-    def __init__(self, root):
+    def __init__(self, root, *, label='native-session'):
         diagnostic.private_root(str(root))
-        self.root = root / ('native-session-' + uuid.uuid4().hex)
+        self.root = root / (label + '-' + uuid.uuid4().hex)
         self.root.mkdir(mode=0o700)
         self.count = 0
 
-    def command(self, argv, *, data=None, timeout=30, read_only=False):
+    def command(self, argv, *, data=None, stdin=None, timeout=30, read_only=False):
         for trial in range(12 if read_only else 1):
             self.count += 1
             stem = self.root / ('command-%04d' % self.count)
             intent = {'argv': [str(arg) for arg in argv], 'timeout_seconds': timeout,
                       'started_at': time.time(), 'read_only': read_only,
+                      'stdin_file': str(stdin.name) if stdin is not None else None,
                       'input_sha256': hashlib.sha256(data).hexdigest() if data is not None else None}
             common.exclusive(stem.with_suffix('.intent.json'), intent)
             with stem.with_suffix('.stdout').open('xb') as out, stem.with_suffix('.stderr').open('xb') as err:
-                child = subprocess.Popen(argv, stdin=subprocess.PIPE if data is not None else subprocess.DEVNULL,
+                child = subprocess.Popen(argv, stdin=subprocess.PIPE if data is not None else (stdin if stdin is not None else subprocess.DEVNULL),
                                          stdout=out, stderr=err)
                 common.exclusive(stem.with_suffix('.pid.json'), {'local_pid': child.pid})
                 try:

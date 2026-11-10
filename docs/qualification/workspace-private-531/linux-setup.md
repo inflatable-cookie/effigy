@@ -1048,3 +1048,26 @@ orphans by metadata, without retaining their bytes. Full native re-exercise of
 this correction is required before reporting the chain complete. Raw exploratory
 capture omits protected inspect/credential streams; canary delivery is checked
 by digest so the harness itself does not manufacture a durable secret leak.
+
+Planner review `9faaa016a0a865cedc7ac31f08b880962b9f608d4613e1bb061d12e3822fe201`
+confirms the physical-bound design and the two-occurrence sealed plan, but the
+path is **not yet prepared for sealing**: the loop ceiling must be registered as
+a supported mechanism, verified at setup and activation with real writer/fd
+closure, and accepted by the downstream receipts and #624 inputs. The legacy
+root project-quota activation is superseded for this #623 route; its refusal and
+historical evidence stay intact. This does not retire the general quota concept.
+
+A quiescent native allocation census found 501,514,240 inode-allocation bytes
+versus 501,915,648 filesystem-used bytes on the engine image, and 5,943,296 versus
+6,209,536 on the workspace image. Free-block counts stayed stable throughout each
+walk. Their respective metadata gaps were 401,408 and 266,240 bytes. The supported
+mechanism must carry before/after dedicated-tree attribution with an explicit
+finite metadata tolerance, alongside the independent physical ceiling and the
+retained ENOSPC control; a sampled peak alone supplies none of these witnesses.
+
+Private publication also revealed that fresh images need selector parent
+directories prepared before commit/CAS. Additive staging now creates all three
+fixed parents. The strict guest double models mkdir-p ancestors and refuses a
+pointer write without a prepared directory, so the crash/partial-switch controls
+exercise the actual requirement instead of relying on implicit fake directories.
+The complete native re-exercise remains outstanding at this source tranche.

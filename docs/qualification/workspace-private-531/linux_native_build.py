@@ -4,17 +4,13 @@ Only the fixed task-829 VM is addressed. No host Cargo command, install, engine 
 proof-only entry is used. Source and command originals stay in an owned evidence root.
 """
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import shlex
 import stat
-import subprocess
 import sys
-import time
-import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common
@@ -62,40 +58,14 @@ def guest_script(pin, remote, bundle_sha, source_ref=SOURCE_REF):
 def build(root, source_ref=SOURCE_REF):
     if source_ref != 'HEAD' and not re.fullmatch(r'refs/[A-Za-z0-9_./-]+', source_ref):
         raise ValueError('HEAD or an explicit source ref required')
-    diagnostic.private_root(str(root))
-    run_root = root / ('native-build-' + uuid.uuid4().hex)
-    run_root.mkdir(mode=0o700)
-    counter = 0
+    # One retained transport implementation for bootstrap and session routes.
+    # Import here because the session module also uses our input/path helpers.
+    from linux_native_run import Attempt
+    attempt = Attempt(root, label='native-build')
+    run_root = attempt.root
+    run = attempt.command
 
-    def run(argv, *, data=None, stdin=None, timeout=30):
-        nonlocal counter
-        counter += 1
-        stem = run_root / ('step-%03d' % counter)
-        intent = {'argv': [str(arg) for arg in argv], 'started_at': time.time(),
-                  'timeout_seconds': timeout, 'stdin_sha256': hashlib.sha256(data).hexdigest() if data else None}
-        (stem.with_suffix('.intent.json')).write_text(json.dumps(intent, indent=2))
-        with stem.with_suffix('.stdout').open('xb') as stdout, stem.with_suffix('.stderr').open('xb') as stderr:
-            child = subprocess.Popen(argv, stdin=subprocess.PIPE if data is not None else stdin,
-                                     stdout=stdout, stderr=stderr)
-            intent['local_pid'] = child.pid
-            stem.with_suffix('.intent.json').write_text(json.dumps(intent, indent=2))
-            timed_out = False
-            try:
-                child.communicate(input=data, timeout=timeout)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                child.kill()  # Only this locally started child; no remote closure claim.
-                child.communicate()
-        stem.with_suffix('.exit').write_text(str(child.returncode) + '\n')
-        stem.with_suffix('.terminal.json').write_text(json.dumps({
-            'local_pid': child.pid, 'local_exit': child.returncode, 'timed_out': timed_out,
-            'elapsed_seconds': time.time() - intent['started_at'],
-            'remote_closure': 'not established by local process exit'}))
-        if timed_out or child.returncode:
-            raise RuntimeError('native build command failed; retained at ' + str(stem))
-        return stem.with_suffix('.stdout').read_bytes()
-
-    raw = run([diagnostic.PRLCTL, 'list', '--info', setup.VM_UUID, '--json'])
+    raw = run([diagnostic.PRLCTL, 'list', '--info', setup.VM_UUID, '--json'], read_only=True)
     diagnostic.check_vm(raw, 'running')
     pin = run([diagnostic.GIT, 'rev-parse', '--verify', source_ref + '^{commit}']).decode().strip()
     if not re.fullmatch('[0-9a-f]{40}', pin):
@@ -106,7 +76,7 @@ def build(root, source_ref=SOURCE_REF):
     ssh = common.isolated_ssh_prefix('effigy-531-vault', config, known, control, run_root)
     # Authenticate the exact fixed VM's public SSH host key again, rather than
     # trusting endpoint spelling or an unauthenticated network key scan.
-    key = run([diagnostic.PRLCTL, 'exec', setup.VM_UUID, '/bin/cat', '/etc/ssh/ssh_host_ed25519_key.pub']).decode().split()
+    key = run([diagnostic.PRLCTL, 'exec', setup.VM_UUID, '/bin/cat', '/etc/ssh/ssh_host_ed25519_key.pub'], read_only=True).decode().split()
     pinned = (control / 'ssh_known_hosts').read_text().split()
     if len(key) < 2 or len(pinned) < 3 or key[:2] != pinned[1:3]:
         raise RuntimeError('SSH host key differs from the fixed VM')

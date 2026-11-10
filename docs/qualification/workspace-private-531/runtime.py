@@ -136,20 +136,21 @@ class Window:
             os.close(self.root_fd)
             self.root_fd = None
 
-    def command(self, args, *, check=True, data=None, cwd=None, timeout=60, protected_output=False):
+    def command(self, args, *, check=True, data=None, cwd=None, env=None, timeout=60, protected_output=False):
         self.verify_root()
         remaining = self.end - time.monotonic()
         require(remaining > 0, 'native window deadline expired')
         limit = min(timeout, remaining)
+        environment = self.env if env is None else env
         if not self.exploratory:
-            return run(args, cwd=cwd or self.root, env=self.env, timeout=limit, check=check, data=data)
+            return run(args, cwd=cwd or self.root, env=environment, timeout=limit, check=check, data=data)
         self.command_count += 1
         stem = 'explore-command-%04d' % self.command_count
         exclusive(stem + '.intent.json', {'argv': [str(arg) for arg in args],
                   'cwd': str(cwd or self.root), 'timeout_seconds': limit,
                   'protected_output_omitted': protected_output}, dir_fd=self.root_fd)
         try:
-            result = run(args, cwd=cwd or self.root, env=self.env, timeout=limit, check=False, data=data)
+            result = run(args, cwd=cwd or self.root, env=environment, timeout=limit, check=False, data=data)
         except subprocess.TimeoutExpired as error:
             if not protected_output:
                 for name in ('stdout', 'stderr'):
@@ -170,8 +171,24 @@ class Window:
     def spawn(self, args):
         self.verify_root()
         require(time.monotonic() < self.end, 'native window deadline expired')
-        return subprocess.Popen(args, cwd=self.root, env=self.env, stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        child = subprocess.Popen(args, cwd=self.root, env=self.env, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if self.exploratory:
+            self.command_count += 1
+            child.exploratory_stem = 'explore-spawn-%04d' % self.command_count
+            exclusive(child.exploratory_stem + '.intent.json',
+                      {'argv': [str(arg) for arg in args], 'local_pid': child.pid,
+                       'cwd': str(self.root), 'stdin': 'eof'}, dir_fd=self.root_fd)
+        return child
+
+    def retain_child(self, child, stdout, stderr, complete):
+        if self.exploratory:
+            stem = child.exploratory_stem
+            exclusive_bytes(stem + '.stdout', bytes(stdout), dir_fd=self.root_fd)
+            exclusive_bytes(stem + '.stderr', bytes(stderr), dir_fd=self.root_fd)
+            exclusive(stem + '.exit.json', {'local_pid': child.pid, 'waited_exit': child.returncode,
+                      'streams_complete': complete, 'remote_closure': 'not established by client exit'},
+                      dir_fd=self.root_fd)
 
     def inventory(self):
         return engine_inventory(self.engine_command)
@@ -333,6 +350,7 @@ targets = ["containers"]
             poll.register(stream, selectors.EVENT_READ, name)
         output = {'stdout': bytearray(), 'stderr': bytearray()}
         early = {}
+        complete = False
         try:
             while poll.get_map():
                 require(time.monotonic() < min(self.end, started + 60), 'streaming deadline expired')
@@ -349,11 +367,13 @@ targets = ["containers"]
                                     'final output preceded incremental acknowledgement')
                             (self.root / 'stream-continue').write_text('both first streams observed')
             status = child.wait(timeout=5)
+            complete = True
         finally:
             poll.close()
             if child.poll() is None:
                 child.terminate()  # exact client this driver started; failure only
                 child.wait(timeout=5)
+            self.retain_child(child, output['stdout'], output['stderr'], complete)
         require(status != 0 and set(early) == {'stdout', 'stderr'}, 'stream or nonzero outcome missing')
         require(all(state is None for _, state in early.values()), 'output arrived only after completion')
         require(b'531-stderr-first' not in output['stdout'] and b'531-stdout-first' not in output['stderr'], 'streams merged')
@@ -401,12 +421,15 @@ targets = ["containers"]
     def owner_drop(self):
         receipt = self.guest_receipts + '/531-owner-client'
         child = self.guest_client('531-owner', '531-owner', receipt)
+        stdout = stderr = b''
+        complete = False
         try:
             self.wait(lambda: (self.root / 'owner-started').is_file(), 'host task admission')
             # The owning protocol client lives inside the container. Killing
             # only a docker/nerdctl exec front end would not prove its death.
             self.guest_signal(receipt, signal.SIGKILL)
-            child.communicate(timeout=5)
+            stdout, stderr = child.communicate(timeout=5)
+            complete = True
             def settled():
                 rows = self.task_runs('531-owner')
                 return len(rows) == 1 and rows[0][1] == 'closed' and rows[0][3] == 'complete' and isinstance(rows[0][2], dict) and rows[0][2].get('Cancelled', {}).get('cause') == 'OwnerLost'
@@ -415,6 +438,8 @@ targets = ["containers"]
             if child.poll() is None:
                 child.kill()  # exact engine front end; never settlement credit
                 child.wait(timeout=5)
+                stdout, stderr = child.communicate(timeout=5)
+            self.retain_child(child, stdout, stderr, complete)
         self.record('caller-drop', actual_cancelled_and_settled=True, cause='OwnerLost')
 
     def gap(self):
@@ -422,6 +447,8 @@ targets = ["containers"]
         # before exec. This process is started by this exact engine invocation.
         receipt = self.guest_receipts + '/531-gap-client'
         child = self.guest_client('531-gap', '531-gap', receipt)
+        stdout = stderr = b''
+        complete = False
         guest_signal = lambda number: self.guest_signal(receipt, number)
         try:
             self.wait(lambda: (self.root / 'gap-started').exists(), 'gap task admission')
@@ -430,6 +457,7 @@ targets = ["containers"]
             self.wait(lambda: (self.root / 'gap-finished').exists(), 'actual output rotation')
             guest_signal(signal.SIGCONT)
             stdout, stderr = child.communicate(timeout=30)
+            complete = True
             require(child.returncode != 0 and (b'incomplete' in stderr + stdout or b'Unknown' in stderr + stdout), 'rotated output reported complete')
         finally:
             if child.poll() is None:
@@ -439,6 +467,8 @@ targets = ["containers"]
                 finally:
                     child.kill()
                     child.wait(timeout=5)
+                    stdout, stderr = child.communicate(timeout=5)
+            self.retain_child(child, stdout, stderr, complete)
         result = self.command(self.guest_argv('531-truncated', '531-truncated'), check=False)
         require(result.returncode != 0 and (b'incomplete' in result.stdout + result.stderr or b'Unknown' in result.stdout + result.stderr), 'truncated output reported complete')
         require(len(self.task_runs('531-gap')) == 1 and len(self.task_runs('531-truncated')) == 1,
@@ -453,16 +483,16 @@ targets = ["containers"]
                   '--user-config-file', 'none', '--binaries-metadata', self.binaries_metadata,
                   '--cargo-metadata', self.cargo_metadata, '--no-fail-fast', '--retries', '0', '--no-tests', 'fail']
         self.verify_root()
-        run(runner + ['--run-ignored', 'only', '-E', 'test(custody::tests::discard_old_sentinel_refuses_before_child_exec)'],
+        self.command(runner + ['--run-ignored', 'only', '-E', 'test(custody::tests::discard_old_sentinel_refuses_before_child_exec)'],
             cwd=Path(self.cell['source_root']), env=env, timeout=min(600, self.end - time.monotonic()))
         self.verify_root()
-        run(runner + ['-E', 'test(run::lifecycle::tests::retained_interpolation_) | test(run::lifecycle::tests::prelaunch_) | test(run::lifecycle::tests::reserved_env_admission_) | test(custody_signal_and_owner_kill_matrix) | test(custody_both_owner_and_sentinel_die) | test(custody_deleted_checkout_lease_survives_owner_kill) | test(custody::tests::fault_matrix_registration_spawn_and_socket_kill_enospc)'],
+        self.command(runner + ['-E', 'test(run::lifecycle::tests::retained_interpolation_) | test(run::lifecycle::tests::prelaunch_) | test(run::lifecycle::tests::reserved_env_admission_) | test(custody_signal_and_owner_kill_matrix) | test(custody_both_owner_and_sentinel_die) | test(custody_deleted_checkout_lease_survives_owner_kill) | test(custody::tests::fault_matrix_registration_spawn_and_socket_kill_enospc)'],
             cwd=Path(self.cell['source_root']), env=env, timeout=min(600, self.end - time.monotonic()))
         for mode in ('private-qualification', 'private-qualification-descendant', 'private-qualification-foreign',
                      'private-qualification-uninitialized', 'private-qualification-expired', 'private-qualification-old'):
             self.verify_root()
             home = Path(tempfile.mkdtemp(prefix='kernel-', dir=self.base))
-            run([self.kernel_fixture, mode, home], cwd=self.root, env=env, timeout=min(60, self.end - time.monotonic()))
+            self.command([self.kernel_fixture, mode, home], cwd=self.root, env=env, timeout=min(60, self.end - time.monotonic()))
         self.record('kernel-custody', actual_helpers=True, old_source=self.cell['old_source_head'],
                     old_binary_sha256=self.cell['old_binary']['sha256'])
 

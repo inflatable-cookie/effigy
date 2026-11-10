@@ -25,7 +25,14 @@ def script(binding, roles, seed):
     catalog = '\n'.join('[tasks.' + name + ']\nrun = ' + json.dumps(
         'cd ' + qsource + ' && sh scripts/oxide-selector.sh ' + command)
         + '\ntimeout_ms = 900000\n' for name, command in commands.items())
-    wrapper = ('#!/bin/sh\nset -eu\nexec python3 -I -B '
+    catalog += ('\n[tasks.runtime-image]\nrun = ' + json.dumps('python3 -I -B ' + qsource
+                + '/docs/qualification/workspace-private-531/linux_native_engine.py --build-resident '
+                + qroles + '/runtime.iid') + '\ntimeout_ms = 240000\n')
+    wrapper = ('#!/bin/sh\nset -eu\nbase=' + qbase + '\n'
+               'export RUSTUP_HOME="$base/toolchain/rustup" CARGO_HOME="$base/toolchain/cargo"\n'
+               'export PATH="$base/tools/bin:$base/tools/zig-tools/cargo-zigbuild-aarch64-unknown-linux-gnu:$base/tools/zig-tools/zig-aarch64-linux-0.15.2:$CARGO_HOME/bin:/usr/bin:/bin"\n'
+               'export EFFIGY_OXIDE_ESCAPE=cargo CARGO_BUILD_JOBS=4 ZIG_GLOBAL_CACHE_DIR="$base/toolchain/zig-cache"\n'
+               'exec python3 -I -B '
                + qsource + '/docs/qualification/workspace-private-531/linux_native_artifact.py '
                + qsource + ' ' + qroles + '/effigy-production\n')
     overlay = '[tasks."workspace:linux:artifact"]\nrun = ' + json.dumps(
@@ -54,6 +61,8 @@ visit(metadata)
 def bind(path):
  return {'path':str(path),'sha256':common.digest(path)}
 cell.update(source_root=str(source),source_head=common.source_head(source))
+cell['runtime_image']=(roles/'runtime.iid').read_text().strip()
+cell['runtime_image_receipt']=bind(roles/'runtime.json')
 for key,name in {'candidate':'effigy-candidate','production':'effigy-production',
  'utility':'workspace-qualification-fixture','kernel_fixture':'kernel-custody-fixture',
  'kernel_tests':'kernel-tests','custody_tests':'custody-tests',
@@ -103,6 +112,7 @@ cat > "$roles/driver/effigy.toml" <<'CATALOG'
 "$roles/effigy-production" skill run --path "$roles/driver" fixture
 "$roles/effigy-production" skill run --path "$roles/driver" test-inputs
 "$roles/effigy-production" skill run --path "$roles/driver" cargo-metadata
+"$roles/effigy-production" skill run --path "$roles/driver" runtime-image
 install -m 700 target/debug/kernel-custody-fixture "$roles/kernel-custody-fixture"
 cat > "$roles/native-artifact.sh" <<'WRAPPER'
 {wrapper}WRAPPER
