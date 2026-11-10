@@ -516,30 +516,6 @@ impl WorkspaceGuestProbe for Probe {
 pub(super) fn activation_failure<E>(
     failure: &crate::runner::environment::workspace::integrated::IntegratedFailure<'_, E>,
 ) {
-    use crate::runner::environment::workspace::integrated::IntegratedFailure;
-    use crate::runner::environment::workspace::phase_a::PhaseAFailure;
-    use crate::runner::environment::workspace::phase_b::PublicationFailure;
-    let stage = match failure {
-        IntegratedFailure::PhaseA(PhaseAFailure::BeforeAdmission(_)) => "before admission",
-        IntegratedFailure::PhaseA(PhaseAFailure::Admission(_)) => "admission",
-        IntegratedFailure::PhaseA(PhaseAFailure::Guarded { .. }) => "sealed apply",
-        IntegratedFailure::Guarded { bound: None, .. } => "bind/reacquire",
-        IntegratedFailure::Guarded { effects: None, .. } => "integration effects",
-        IntegratedFailure::Guarded { .. } => "park",
-        IntegratedFailure::Parked { .. } => "integrations/resume",
-        IntegratedFailure::Cleanup(_) => "guarded cleanup",
-        IntegratedFailure::CleanupOnly { .. } => "cleanup integrations",
-        IntegratedFailure::ParkedCleanup { .. } => "parked cleanup",
-        IntegratedFailure::Publication {
-            cause: PublicationFailure::Guarded { .. },
-            ..
-        } => "publication/selection",
-        IntegratedFailure::Publication {
-            cause: PublicationFailure::Finishing { .. },
-            ..
-        } => "selected finish",
-    };
-    diagnostic(stage);
-    // Stage names are the complete diagnostic vocabulary here. Underlying
-    // backend, guest and kernel errors may contain protected data.
+    diagnostic(failure.stage());
+    // Underlying backend, guest and kernel errors may contain protected data.
 }

@@ -62,7 +62,11 @@ fn validate_compose_backend_host_paths(
     {
         return Ok(());
     }
-    if !is_colima_temp_root_path(repo_root)
+    // A declared, resolved stage replaces the checkout bind. Judge that actual
+    // host source, while still checking every Compose input and mount budget.
+    let staged_source = crate::artifact_source::policy_stage(policy)?.map(|plan| plan.source);
+    let host_source = staged_source.as_deref().unwrap_or(repo_root);
+    if !is_colima_temp_root_path(host_source)
         && !policy
             .compose_files
             .iter()

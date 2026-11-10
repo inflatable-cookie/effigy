@@ -70,6 +70,31 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
         .iter()
         .cloned()
         .partition(|mount| is_guest_mask_target(&mount.target, working_dir));
+    let mask_names = mask_mounts
+        .iter()
+        .filter_map(|mount| mount.named_volume.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let checkout = effigy_core::worktree_scope::checkout_root(repo_root)
+        .canonicalize()
+        .unwrap_or_else(|_| repo_root.to_path_buf());
+    let scope = effigy_core::worktree_scope::load(repo_root).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "workspace mask ownership unavailable: {error}"
+        ))
+    })?;
+    let mut mask_labels = serde_yaml::Mapping::new();
+    for (key, value) in [
+        (
+            crate::runtime::scope::CHECKOUT_LABEL,
+            checkout.display().to_string(),
+        ),
+        (crate::runtime::scope::MANAGED_LABEL, "true".to_owned()),
+    ] {
+        mask_labels.insert(key.into(), value.into());
+    }
+    if let Some(scope) = scope {
+        mask_labels.insert(crate::runtime::scope::SCOPE_LABEL.into(), scope.into());
+    }
     let injected_env = build_workspace_runtime_environment(repo_root, config, primary_service)?;
 
     // Parse every file first: a named volume's bind device may be declared in
@@ -121,7 +146,7 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
         .rposition(|(_, _, document)| defines_primary_service(document))
         .expect("a defining file exists");
     let rewrite_dir = repo_root.join(".effigy").join("runtime").join("compose");
-    let mut rewrite_paths = Vec::with_capacity(documents.len());
+    let mut rewritten = Vec::with_capacity(documents.len());
 
     for (index, (source_compose, compose_dir, mut parsed)) in documents.into_iter().enumerate() {
         let appended = ordinary_mounts
@@ -133,7 +158,12 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
         // including files between the first and the last: a middle overlay's
         // entries are just as effective as a later one's.
         if defines_primary_service(&parsed) {
-            inject_workspace_named_volumes(&mut parsed, &injected_mounts);
+            inject_workspace_named_volumes(
+                &mut parsed,
+                &injected_mounts,
+                &mask_names,
+                &mask_labels,
+            );
             let services = parsed
                 .get_mut("services")
                 .and_then(serde_yaml::Value::as_mapping_mut)
@@ -169,7 +199,7 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
                 inject_workspace_service_environment(service, &injected_env);
             }
         }
-        compact_workspace_named_volume_mounts(&mut parsed, primary_service);
+        compact_workspace_named_volume_mounts(&mut parsed, primary_service, &mask_names);
         normalize_runtime_rewrite_paths(&mut parsed, &compose_dir, index == 0);
 
         let rewrite_path = if index == 0 {
@@ -177,13 +207,46 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
         } else {
             rewrite_dir.join(format!("{container_name}.workspace.compose.{index}.yml"))
         };
-        let rendered = serde_yaml::to_string(&parsed).map_err(|error| {
+        rewritten.push((rewrite_path, parsed));
+    }
+    // Compaction rewrites references across services. Keep an original mask
+    // definition only when a service in some overlay still references it;
+    // otherwise Compose creates an unused duplicate volume.
+    let referenced = rewritten
+        .iter()
+        .flat_map(|(_, document)| {
+            document
+                .get("services")
+                .and_then(serde_yaml::Value::as_mapping)
+                .into_iter()
+                .flat_map(|services| services.values())
+                .filter_map(|service| {
+                    service
+                        .get("volumes")
+                        .and_then(serde_yaml::Value::as_sequence)
+                })
+                .flatten()
+                .filter_map(compose_mount_source)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut rewrite_paths = Vec::with_capacity(rewritten.len());
+    for (path, mut document) in rewritten {
+        if let Some(volumes) = document
+            .get_mut("volumes")
+            .and_then(serde_yaml::Value::as_mapping_mut)
+        {
+            volumes.retain(|name, _| {
+                name.as_str()
+                    .is_none_or(|name| !mask_names.contains(name) || referenced.contains(name))
+            });
+        }
+        let rendered = serde_yaml::to_string(&document).map_err(|error| {
             ContainerPolicyError::TaskInvocation(format!(
                 "failed to serialize workspace mount rewrite for `{container_name}`: {error}"
             ))
         })?;
-        draft.insert(rewrite_path.clone(), rendered.into_bytes());
-        rewrite_paths.push(rewrite_path);
+        draft.insert(path.clone(), rendered.into_bytes());
+        rewrite_paths.push(path);
     }
     Ok((rewrite_paths, extra_mount_decisions))
 }
@@ -442,6 +505,8 @@ pub(super) fn inject_workspace_service_environment(
 fn inject_workspace_named_volumes(
     parsed: &mut serde_yaml::Value,
     mounts: &[RenderedWorkspaceMount],
+    mask_names: &std::collections::BTreeSet<String>,
+    mask_labels: &serde_yaml::Mapping,
 ) {
     let names = mounts
         .iter()
@@ -468,12 +533,22 @@ fn inject_workspace_named_volumes(
                 serde_yaml::Value::String("name".to_owned()),
                 serde_yaml::Value::String(name.to_owned()),
             );
+            if mask_names.contains(name) {
+                entry.insert(
+                    "labels".into(),
+                    serde_yaml::Value::Mapping(mask_labels.clone()),
+                );
+            }
             serde_yaml::Value::Mapping(entry)
         });
     }
 }
 
-fn compact_workspace_named_volume_mounts(parsed: &mut serde_yaml::Value, primary_service: &str) {
+fn compact_workspace_named_volume_mounts(
+    parsed: &mut serde_yaml::Value,
+    primary_service: &str,
+    mask_names: &std::collections::BTreeSet<String>,
+) {
     let Some(root) = parsed.as_mapping_mut() else {
         return;
     };
@@ -563,6 +638,7 @@ fn compact_workspace_named_volume_mounts(parsed: &mut serde_yaml::Value, primary
         return;
     };
     for (original, short) in renamed {
+        let is_mask = mask_names.contains(&original);
         let original_key = serde_yaml::Value::String(original);
         let short_key = serde_yaml::Value::String(short.clone());
         let mut entry = volumes_root
@@ -570,10 +646,17 @@ fn compact_workspace_named_volume_mounts(parsed: &mut serde_yaml::Value, primary
             .and_then(serde_yaml::Value::as_mapping)
             .cloned()
             .unwrap_or_default();
-        entry.insert(
-            serde_yaml::Value::String("name".to_owned()),
-            serde_yaml::Value::String(short.clone()),
-        );
+        if is_mask {
+            // Nerdctl omits custom volume labels. Let Compose include the
+            // scoped project in the physical name so ordinary retirement can
+            // still authenticate this empty mask through runtime ownership.
+            entry.remove(serde_yaml::Value::String("name".to_owned()));
+        } else {
+            entry.insert(
+                serde_yaml::Value::String("name".to_owned()),
+                serde_yaml::Value::String(short.clone()),
+            );
+        }
         volumes_root.insert(short_key, serde_yaml::Value::Mapping(entry));
     }
 }

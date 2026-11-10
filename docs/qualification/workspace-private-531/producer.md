@@ -42,7 +42,9 @@ keeps it intact in source.
 
 Selector at `H`: `effigy build:workspace:private-qualification` (uninstalled
 candidate plus `workspace-qualification-fixture`, feature
-`workspace-private-qualification` only). Freeze both executables and record:
+`workspace-private-qualification` only). Its `:optimized` variant builds the
+same two roles under `target/release` for native timing checks, without installing
+or publishing either binary. Freeze both executables and record:
 
 - cell `candidate` = `{path, sha256}` of the frozen candidate;
 - cell `candidate_receipt` = `{source_head: H, features:
@@ -93,7 +95,7 @@ What the sentinel control actually checks. The provisional `d7c3c93b` speaks
 helper protocol 2, so this source's protocol-4 handshake refuses it at ordinary
 admission. That is a fact about that commit only. It does not show that no
 ancestor can satisfy the control: a protocol-4 ancestor such as `823d859da`
-(`HELPER_PROTOCOL = 4`, kernel code identical to the current source) is admitted
+(`HELPER_PROTOCOL = 4`) is admitted
 by the same handshake at source level; only the run decides admission. For
 `custody::tests::discard_old_sentinel_refuses_before_child_exec`:
 
@@ -114,7 +116,11 @@ The qualification fixture's `private-qualification-old` mode is a different
 control. It needs the same genuine helper admitted successfully first, then
 qualifies the creator, sentinel and backup image identities
 (`run/checkout_custody.rs`, `supervise/image_identity.rs`). Its pass is
-image-identity evidence, not the sentinel refusal.
+image-identity evidence, not the sentinel refusal. This fixture supplies the real
+CLI's read-only `effigy runs` advice to that genuine helper; its private `recover`
+word belongs only to the fixture binary's parser. The old-helper control runs as
+an ignored custody integration test with the pinned artifact explicitly supplied,
+so admission failure retains its diagnostics and cannot count as refusal credit.
 
 Recipe D therefore needs one genuine older binary that this source's handshake
 admits and that is built by its own source's covering selector. The
@@ -133,7 +139,7 @@ builder GO. Decision D-2: Darwin Colima `effigy-release`, target
 `build_kind=workspace-artifact`, `completed_at`) names the container-local
 binary path; the host transfers the three roles into
 `.effigy/linux-release/artifacts/`. The active-version sidecar must match. Record cells `guest_artifact`,
-`guest_producer_receipt` and `guest_active_version` from the producer's
+`guest_producer_receipt`, `guest_active_version` and `guest_install_identity` from the producer's
 `.effigy/linux-release/artifacts/` outputs. The native proof never rebuilds
 the artifact and never blesses bytes with new sidecars.
 
@@ -215,7 +221,12 @@ builder's private tree. After positive closure the host transfers the three
 capped roles (`cat -- <container-path>` with each role's cap enforced while
 receiving) and atomically publishes a complete verified set into the caller's
 `.effigy/linux-release/artifacts/`. The compiler never chooses the destination
-and never writes it. A failed, oversize or interrupted transfer publishes
+and never writes it. After the same verified build, the host publishes its
+freshness binding (`.install-identity`) before the receipt. It captures the
+host identity before compiling and refuses host-anchor drift before publishing.
+The active-version bytes and locally generated binding share the existing
+4 KiB sidecar cap; the boundary's charged bytes include both. No artifact is
+made current by the full-session window, and no host-write cap increases. A failed, oversize or interrupted transfer publishes
 nothing and keeps the caller's prior valid artifact.
 
 This is not 743's weaker proposal of a read-only source plus a writable host

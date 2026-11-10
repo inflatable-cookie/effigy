@@ -18,6 +18,7 @@ pub(crate) struct BackendPin {
     kind: BackendKind,
     engine: String,
     context: String,
+    routing: BTreeMap<String, String>,
 }
 
 impl std::fmt::Debug for BackendPin {
@@ -43,6 +44,7 @@ impl BackendPin {
             kind: selected.kind,
             engine: selected.engine.as_str().to_owned(),
             context: selected.context.clone(),
+            routing: host_routing()?,
         })
     }
 }
@@ -107,10 +109,15 @@ impl PostPrepDeclaration {
                 "workspace declared backend context is not credential-free",
             ));
         }
-        Ok(vec![
+        let mut environment = vec![
             ("EFFIGY_COMPOSE_BACKEND".into(), engine.into()),
             ("DOCKER_CONTEXT".into(), self.backend.context.clone().into()),
-        ])
+        ];
+        for (key, value) in &self.backend.routing {
+            validate_routing(key, value)?;
+            environment.push((key.into(), value.into()));
+        }
+        Ok(environment)
     }
 
     /// Compare independently rebuilt policy/identity facts. The declared paths
@@ -172,3 +179,50 @@ fn source_digest(sources: &[GuestSourcePin]) -> Result<Digest, RunError> {
 #[cfg(test)]
 #[path = "declaration_tests.rs"]
 mod tests;
+
+// These are routing paths and an artifact-source choice, never credentials or
+// arbitrary workload environment. The detached kernel clears ambient values,
+// so a profile name alone cannot reproduce its parent's runtime namespace.
+const HOST_ROUTING_KEYS: &[&str] = &[
+    "COLIMA_HOME",
+    "COLIMA_CACHE_HOME",
+    "DOCKER_CONFIG",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE",
+];
+
+fn validate_routing(key: &str, value: &str) -> Result<(), RunError> {
+    let allowed = HOST_ROUTING_KEYS.contains(&key)
+        && if key == "EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE" {
+            matches!(value, "auto" | "local" | "download")
+        } else {
+            let path = std::path::Path::new(value);
+            path.is_absolute()
+                && !path
+                    .components()
+                    .any(|part| part == std::path::Component::ParentDir)
+        };
+    if !allowed {
+        return Err(RunError::refused(
+            "workspace host routing requires an absolute path or supported artifact source",
+        ));
+    }
+    Ok(())
+}
+
+fn host_routing() -> Result<BTreeMap<String, String>, RunError> {
+    let mut routing = BTreeMap::new();
+    for &key in HOST_ROUTING_KEYS {
+        let Some(raw) = std::env::var_os(key).filter(|value| !value.is_empty()) else {
+            continue;
+        };
+        let value = raw
+            .into_string()
+            .map_err(|_| RunError::refused("workspace host routing is not UTF-8"))?;
+        validate_routing(key, &value)?;
+        routing.insert(key.to_owned(), value);
+    }
+    Ok(routing)
+}

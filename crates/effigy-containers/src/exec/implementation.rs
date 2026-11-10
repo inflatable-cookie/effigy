@@ -1212,7 +1212,9 @@ pub struct VerifiedComposeContainer {
     scope: Option<String>,
     profile: String,
     backend: crate::compose::ComposeBackend,
-    workspace_builder_deadline: Option<Instant>,
+    // Preserve the strict builder witness, not an expired earlier probe budget.
+    // Every reinspection uses its current caller's unchanged deadline.
+    workspace_artifact_builder: bool,
 }
 
 impl VerifiedComposeContainer {
@@ -1230,12 +1232,9 @@ impl VerifiedComposeContainer {
         policy: &EffectiveContainerPolicy,
         deadline: Instant,
     ) -> Result<(), ContainerExecError> {
-        let current = if let Some(original_deadline) = self.workspace_builder_deadline {
+        let current = if self.workspace_artifact_builder {
             vec![verify_workspace_artifact_builder(
-                repo_root,
-                policy,
-                &self.row,
-                deadline.min(original_deadline),
+                repo_root, policy, &self.row, deadline,
             )?]
         } else {
             verify_owned_running_compose_identities(
@@ -1376,7 +1375,7 @@ pub fn verify_workspace_artifact_builder(
             ),
         ));
     }
-    binding.workspace_builder_deadline = Some(deadline);
+    binding.workspace_artifact_builder = true;
     Ok(binding)
 }
 
@@ -2559,7 +2558,7 @@ impl OwnershipContext {
             }
         }
         Ok(VerifiedComposeContainer {
-            workspace_builder_deadline: None,
+            workspace_artifact_builder: false,
             row: current,
             id: identity.id,
             checkout: self.canonical.clone(),

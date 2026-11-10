@@ -2551,8 +2551,15 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
         let resolved = self.resolver.resolve(cx, body)?;
         let run = self.ids.next()?;
         let admission_invocation = self.resolver.admission_invocation(body, &resolved, run)?;
-        let reply = match run::reserve_resolved(cx, root, key, digest, run, &admission_invocation)
-            .map_err(refusal_from)?
+        let reply = match run::reserve_resolved(
+            cx,
+            root,
+            key,
+            digest.clone(),
+            run,
+            &admission_invocation,
+        )
+        .map_err(refusal_from)?
         {
             Reservation::Recorded(recovered) => replay(recovered)?,
             Reservation::Fresh(ticket) => {
@@ -2564,9 +2571,39 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
                 let expected = self.admission.admitted_fence(&ticket).ok_or_else(|| {
                     Refusal::unknown("the admitted owner's fence was not acknowledged")
                 })?;
-                let owner = run::resume_owner(cx, root, session, ticket.run()).map_err(|_| {
-                    Refusal::unknown("the admitted owner attachment could not be verified")
-                })?;
+                let owner = match run::resume_owner(cx, root, session, ticket.run()) {
+                    Ok(owner) => owner,
+                    Err(_) => {
+                        // A short command may settle before the acknowledgement
+                        // reaches this dispatcher. Its exact keyed outcome and
+                        // original invocation/fence prove completion; no live
+                        // owner attachment is recreated. Return the first run id
+                        // so Level 1 still drains its final captured output.
+                        let completed = matches!(run::lookup(observe, root, key, digest),
+                            Observed::Verified(Recovered::Completed { run: found, .. }, _) if found == ticket.run());
+                        let acknowledged = match crate::store::Store::read(observe, root) {
+                            Observed::Verified(reader, _) => {
+                                matches!(run::summary(&reader, ticket.run()),
+                                Observed::Verified(summary, _) if summary.phase == run::Phase::Closed
+                                    && summary.generation == expected.generation
+                                    && summary.invocation.as_ref().is_some_and(|invocation|
+                                        invocation.digest() == admission_invocation.digest()
+                                        && invocation.spec().owner == expected.resource))
+                            }
+                            _ => false,
+                        };
+                        if completed && acknowledged {
+                            self.admitted.remove(&ticket.run());
+                            return Ok(AdmissionReply::Accepted(Accepted {
+                                run: ticket.run(),
+                                placement: Placement::Host,
+                            }));
+                        }
+                        return Err(Refusal::unknown(
+                            "the admitted owner attachment could not be verified",
+                        ));
+                    }
+                };
                 if owner.fence() != &expected {
                     return Err(Refusal::unknown(
                         "the admitted owner fence did not match its acknowledgement",
@@ -2792,6 +2829,28 @@ pub struct Served {
     pub streams: usize,
     pub closed: bool,
 }
+/// Fixed operations never regain spent time. Adopted session operations give
+/// each new request its own finite phase, rather than one startup deadline.
+#[derive(Clone, Copy)]
+enum RequestPhases<'a> {
+    Fixed(&'a ObserveContext),
+    Session,
+}
+impl RequestPhases<'_> {
+    fn contexts(self, cx: &EffectContext) -> Result<(EffectContext, ObserveContext), Refusal> {
+        match self {
+            Self::Fixed(observe) => Ok((cx.clone(), observe.clone())),
+            Self::Session => {
+                let phase = cx.child(std::time::Duration::from_secs(10));
+                let observe = phase.operation().observe().map_err(|_| {
+                    Refusal::forbidden("session observation capability is unavailable")
+                })?;
+                Ok((phase, observe))
+            }
+        }
+    }
+}
+
 impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
     /// `pinned` is the server identity the selected context pinned. TLS must
     /// have verified it; [`Transport::verified_peer`] reports what it verified.
@@ -2943,6 +3002,35 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         root: &StateRoot,
         streams: &mut impl Streams,
     ) -> Result<Served, Refusal> {
+        self.serve_requests(transport, cx, RequestPhases::Fixed(observe), root, streams)
+    }
+
+    /// Serve an adopted session with a fresh ten-second phase per request.
+    /// Only an open session operation may use this route. Each phase retains
+    /// its cancellation, limits, class and placement; fixed callers use `serve`.
+    pub fn serve_session<T: Transport>(
+        &mut self,
+        transport: &mut T,
+        cx: &EffectContext,
+        root: &StateRoot,
+        streams: &mut impl Streams,
+    ) -> Result<Served, Refusal> {
+        if !matches!(cx.operation().deadline(), crate::ctx::Deadline::Open(_)) {
+            return Err(Refusal::forbidden(
+                "session serving requires an open owning operation",
+            ));
+        }
+        self.serve_requests(transport, cx, RequestPhases::Session, root, streams)
+    }
+
+    fn serve_requests<T: Transport>(
+        &mut self,
+        transport: &mut T,
+        cx: &EffectContext,
+        observe: RequestPhases<'_>,
+        root: &StateRoot,
+        streams: &mut impl Streams,
+    ) -> Result<Served, Refusal> {
         if self.owner_cleanup_unsettled {
             return Err(Refusal::unknown("owner disconnect cleanup is unsettled"));
         }
@@ -3048,7 +3136,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         &mut self,
         transport: &mut T,
         cx: &EffectContext,
-        observe: &ObserveContext,
+        observe: RequestPhases<'_>,
         root: &StateRoot,
         grant: Grant,
         streams: &mut impl Streams,
@@ -3166,7 +3254,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         &mut self,
         transport: &mut T,
         cx: &EffectContext,
-        observe: &ObserveContext,
+        observe: RequestPhases<'_>,
         root: &StateRoot,
         grant: Grant,
         streams: &mut impl Streams,
@@ -3187,8 +3275,16 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             match frame {
                 Frame::Request(request) => {
                     state.responses += 1;
-                    let response =
-                        self.answer(cx, observe, root, &grant, &request, attachment, streams);
+                    let (phase, observation) = observe.contexts(cx)?;
+                    let response = self.answer(
+                        &phase,
+                        &observation,
+                        root,
+                        &grant,
+                        &request,
+                        attachment,
+                        streams,
+                    );
                     write_frame(transport, &Frame::Response(response))?;
                     if self.owner_cleanup_unsettled {
                         return Err(Refusal::unknown("attachment cleanup is unsettled"));
@@ -3486,6 +3582,30 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                                 },
                                 _,
                             ) if found == run => {
+                                // Level 1 holds a custody-only owning attachment.
+                                // Its exact keyed terminal record proves the
+                                // owning lifetime ended in the close transaction,
+                                // which also compacts attachment rows. Do not
+                                // attempt a fresh EOF release of that closed run.
+                                // An earlier uncertain release remains fenced.
+                                if attachment.as_ref().is_none_or(|handle| {
+                                    handle.run() == run
+                                        && handle.client() == Client::Owner
+                                        && handle.pending_release().is_none()
+                                }) && self
+                                    .dispatcher
+                                    .admitted_owners
+                                    .get(&run)
+                                    .is_some_and(|owner| owner.pending_release().is_none())
+                                {
+                                    self.dispatcher.admitted.remove(&run);
+                                    self.dispatcher.admitted_owners.remove(&run);
+                                    *attachment = None;
+                                    self.attach = None;
+                                    self.carry = None;
+                                    self.outbound = Outbound::new();
+                                    self.inbound.clear();
+                                }
                                 serde_json::json!({"state": "completed", "outcome": outcome})
                             }
                             _ => {

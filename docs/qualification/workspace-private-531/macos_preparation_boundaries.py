@@ -97,7 +97,7 @@ DOCKER_ENV = prep.DOCKER_ENV
 SSH = [prep.COLIMA, 'ssh', '-p', prep.PROFILE, '--']
 START = [prep.COLIMA, 'start', '-p', prep.PROFILE, '--runtime', 'containerd', '--vm-type', 'vz',
          '--arch', 'aarch64', '--cpus', '2', '--memory', '2', '--disk', '20', '--root-disk', '20',
-         '--mount', 'none', '--ssh-config=false', '--activate=false']
+         '--mount', 'none', '--ssh-config=false', '--activate=false', '--port-forwarder', 'none']
 
 
 class PathControls(unittest.TestCase):
@@ -515,7 +515,8 @@ class ColimaGlobalDefaults(unittest.TestCase):
     def test_c1_runs_the_owned_cache_and_docker_config_helper_first(self):
         steps = stage_by_id('C1')['steps']
         self.assertEqual(steps[0]['helper'], 'make_owned_dir')
-        self.assertEqual(steps[0]['inputs'], ['{colima_cache_home}', '{colima_docker_config}', '{colima_cache_home}/effigy-image'])
+        self.assertEqual(steps[0]['inputs'], ['{colima_cache_home}', '{colima_docker_config}', '{colima_cache_home}/effigy-image',
+                                            '{colima_home}/_lima/_config'])
         self.assertEqual(steps[1]['helper'], 'prefetch_colima_image')  # the pinned image, before the start
 
     def test_c1_image_is_the_pinned_colima_release_with_its_sha512(self):

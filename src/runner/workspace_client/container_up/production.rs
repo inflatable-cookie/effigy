@@ -132,19 +132,20 @@ pub(super) fn activate_with(
             if super::fake_io::configured() {
                 super::fake_io::activation_failure(&failure);
             }
+            let stage = failure.stage();
             let mut failure = failure;
             let mut owner_loss_handled = false;
             loop {
                 match recover(failure) {
                     Ok(()) => {
-                        return Err(RunError::unavailable(
-                            "workspace activation failed; exact owner cleanup settled",
-                        ))
+                        return Err(RunError::unavailable(format!(
+                        "workspace activation failed during {stage}; exact owner cleanup settled"
+                    )))
                     }
                     Err(retained) => failure = retained,
                 }
                 session.refused_message(effigy_kernel::human::Category::Unavailable,
-                    format!("workspace activation failed; integration effects unsettled; re-run up; exact owner retained (supervisor_run={}); request stop to retry cleanup", host_run.id()));
+                    format!("workspace activation failed during {stage}; integration effects unsettled; re-run up; exact owner retained (supervisor_run={}); request stop to retry cleanup", host_run.id()));
                 serving_host::await_cleanup_recovery(session, host_run, &mut owner_loss_handled);
             }
         }

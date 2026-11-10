@@ -162,7 +162,7 @@ def socket_paths(home, profile):
         'ssh.sock', 'ssh.sock.1234567890123456', 'ha.sock', 'ga.sock',
     )} | {f'colima/{name}': f'{home}/{profile}/{name}' for name in (
         'containerd.sock', 'buildkitd.sock',
-    )} | {f'user-v2/{kind}': f'{home}/_lima/_networks/user-v2/user-v2_{kind}.sock'
+    )} | {'temporary-forward': f"{home.rsplit('/', 1)[0]}/t/lima-psl-127.0.0.1-65535-1234567890/sock"} | {f'user-v2/{kind}': f'{home}/_lima/_networks/user-v2/user-v2_{kind}.sock'
          for kind in ('fd', 'qemu', 'ep')}
 
 
@@ -454,6 +454,8 @@ def check_colima_start(argv):
                 f'socket inventory requires {flag} {value}')
     require('--cpu' not in argv and '--cpus' in argv, 'colima start takes --cpus (0.10.3), not --cpu')
     require('--ssh-config=false' in argv, 'C1 must pass --ssh-config=false (default writes ~/.ssh/config)')
+    require(('--port-forwarder' in argv and argv.index('--port-forwarder') + 1 < len(argv)
+             and argv[argv.index('--port-forwarder') + 1] == 'none'), 'C1 must disable automatic host port forwarding')
     require('--activate=false' in argv, 'C1 must pass --activate=false (default switches the active context)')
     require(not any(a in ('--ssh-config', '--activate') for a in argv),
             'boolean colima flags take the =false form, not a separate value')
@@ -766,17 +768,32 @@ def read_cidfile(text):
     return value
 
 
-def check_image_identity(inspect_out, image_id):
-    """Inspect by the authenticated immutable ID. Wrong ID, wrong platform or missing output
-    refuses. Provenance is bound by the build argv (mode=max), not by inspect output."""
+def inspected_image_id(inspect_out, image_id, *, allow_repo_digest=False):
+    """Resolve a build digest to its config ID using an immutable by-digest inspection.
+
+    BuildKit/nerdctl iidfiles name a manifest; Docker iidfiles name a config.
+    Only the Colima path permits the former, matched exactly in RepoDigests.
+    """
     require(IMAGE_ID.fullmatch(image_id or ''), 'immutable image ID required: no tag or missing-ID fallback')
     data = json.loads(inspect_out)
     if isinstance(data, list):
         require(len(data) == 1, 'exactly one image must inspect')
         data = data[0]
-    require(data.get('Id') == image_id, 'inspected ID differs from the authenticated ID')
+    require(isinstance(data, dict), 'image inspection must be an object')
+    config = data.get('Id')
+    require(isinstance(config, str) and IMAGE_ID.fullmatch(config), 'inspected config ID must be immutable')
+    digests = data.get('RepoDigests', [])
+    matches = (allow_repo_digest and isinstance(digests, list) and any(
+        isinstance(ref, str) and ref.count('@') == 1 and ref.split('@')[0]
+        and not any(c.isspace() for c in ref) and ref.split('@')[1] == image_id for ref in digests))
+    require(config == image_id or matches, 'inspected ID differs from the authenticated ID')
     require(data.get('Os') == 'linux' and data.get('Architecture') == 'arm64',
             'platform must be linux/arm64')
+    return config
+
+
+def check_image_identity(inspect_out, image_id):
+    inspected_image_id(inspect_out, image_id)
     return True
 
 

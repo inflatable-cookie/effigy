@@ -1070,6 +1070,49 @@ primary_service = "app"
 }
 
 #[test]
+fn validate_compose_backend_runtime_checks_staged_source_instead_of_temp_checkout() {
+    let _lock = crate::test_env_lock();
+    let root = temp_repo("staged-colima-path-preflight");
+    let temporary = root.join("temporary");
+    let source = temporary.join("source");
+    let shared = root.join("shared");
+    let colima = root.join("colima");
+    fs::create_dir_all(&source).expect("source");
+    fs::create_dir_all(&shared).expect("shared mount");
+    fs::create_dir_all(colima.join("private")).expect("profile");
+    let _env = effigy_test_support::env::ScopedEnv::set_many(&[
+        ("TMPDIR", temporary.as_os_str().to_owned()),
+        ("COLIMA_HOME", colima.as_os_str().to_owned()),
+    ]);
+    fs::write(source.join("effigy.toml"),
+        "[containers.web]\ncompose_file = 'compose.yml'\nprimary_service = 'app'\nprofile = 'private'\n")
+        .expect("manifest");
+    fs::write(
+        source.join("compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
+    fs::write(
+        colima.join("private/colima.yaml"),
+        format!(
+            "mounts:\n- location: {}\n  writable: true\n",
+            shared.display()
+        ),
+    )
+    .expect("profile mounts");
+    let mut policy = load_container_policy(&source, Some("web")).expect("policy");
+    let compose = shared.join("compose.yml");
+    fs::copy(source.join("compose.yml"), &compose).expect("staged Compose input");
+    policy.compose_files = vec![compose];
+    policy.workspace_source = crate::artifact_source::WorkspaceSource::Staged;
+    with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
+        crate::validate_compose_backend_runtime(&source, &policy).expect("reachable staged source");
+        policy.workspace_source = crate::artifact_source::WorkspaceSource::Checkout;
+        assert!(crate::validate_compose_backend_runtime(&source, &policy).is_err());
+    });
+}
+
+#[test]
 fn validate_compose_backend_runtime_rejects_colima_mount_payload_over_budget() {
     let _lock = crate::test_env_lock();
     let root = temp_repo("colima-mount-budget");

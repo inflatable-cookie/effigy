@@ -25,18 +25,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ => return Err("process identity is unavailable".into()),
             }
         }
+        [command, path, run] if command == "capture-state" => {
+            capture_state(Path::new(path), run)?;
+        }
         [command, path, run] if command == "crash" => {
             crash_selected_supervisor(Path::new(path), run)?;
         }
-        _ => return Err("expected prepare <scratch-checkout>, identity <pid>, or crash <scratch-checkout> <supervisor-run>".into()),
+        _ => return Err("expected prepare <scratch-checkout>, identity <pid>, capture-state <scratch-checkout> <run>, or crash <scratch-checkout> <supervisor-run>".into()),
     }
     Ok(())
 }
 
-fn crash_selected_supervisor(path: &Path, id: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn fixture_observation(
+    path: &Path,
+) -> Result<
+    (
+        effigy_kernel::ctx::ObserveContext,
+        effigy_kernel::root::StateRoot,
+    ),
+    Box<dyn std::error::Error>,
+> {
     use effigy_kernel::ctx::*;
     use effigy_kernel::observe::Observed;
-    use effigy_kernel::run;
     use std::time::{Duration, Instant};
     let path = path.canonicalize()?;
     let scratch = Path::new(QUALIFICATION_SCRATCH).canonicalize()?;
@@ -62,6 +72,38 @@ fn crash_selected_supervisor(path: &Path, id: &str) -> Result<(), Box<dyn std::e
         Observed::Verified(root, _) => root,
         _ => return Err("fixture state unavailable".into()),
     };
+    Ok((observe, root))
+}
+
+fn capture_state(path: &Path, id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use effigy_kernel::observe::Observed;
+    let (observe, root) = fixture_observation(path)?;
+    // No output bytes are read or retained: only the typed canonical extent
+    // and truncation observation for this exact run's stdout at cursor zero.
+    match effigy_kernel::run::read_log(
+        &observe,
+        &root,
+        id.parse()?,
+        effigy_kernel::supervise::OUTPUT_SEQUENCE,
+        effigy_kernel::custody::Stream::Stdout,
+        0,
+        0,
+    ) {
+        Observed::Verified(read, _) => println!(
+            "{}",
+            serde_json::json!({
+                "from": read.from, "end": read.end, "truncated": read.truncated,
+            })
+        ),
+        _ => return Err("fixture capture unavailable".into()),
+    }
+    Ok(())
+}
+
+fn crash_selected_supervisor(path: &Path, id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use effigy_kernel::observe::Observed;
+    use effigy_kernel::run;
+    let (observe, root) = fixture_observation(path)?;
     let reader = match effigy_kernel::store::Store::read(&observe, &root) {
         Observed::Verified(reader, _) => reader,
         _ => return Err("fixture journal unavailable".into()),

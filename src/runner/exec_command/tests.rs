@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use effigy_manifest::ManifestContainerConfig;
@@ -490,27 +490,54 @@ fn copy_file_into_service_invocation_prefers_policy_backend_over_installed_docke
         ("EFFIGY_COMPOSE_BACKEND", None),
     ]);
 
-    let args = vec![
-        OsString::from("cp"),
-        OsString::from("/tmp/effigy"),
-        OsString::from("cbs-dev-app-1:/tmp/effigy-host-1"),
-    ];
-    let (program, resolved_args) =
-        copy_file_into_service_invocation(&temp_dir, &test_policy(), &args).expect("invocation");
-
+    let (program, resolved_args, stdin_file) = copy_file_into_service_invocation(
+        &temp_dir,
+        &test_policy(),
+        "exact-target",
+        Path::new("/unshared/host/artifact"),
+        "/tmp/effigy-stage",
+    )
+    .expect("invocation");
     assert_eq!(program, OsString::from("colima"));
+    assert_eq!(stdin_file, Some(PathBuf::from("/unshared/host/artifact")));
     assert_eq!(
         resolved_args,
-        vec![
-            OsString::from("nerdctl"),
-            OsString::from("--profile"),
-            OsString::from("effigy"),
-            OsString::from("--"),
-            OsString::from("cp"),
-            OsString::from("/tmp/effigy"),
-            OsString::from("cbs-dev-app-1:/tmp/effigy-host-1"),
+        [
+            "nerdctl",
+            "--profile",
+            "effigy",
+            "--",
+            "exec",
+            "-i",
+            "--user",
+            "0",
+            "exact-target",
+            "sh",
+            "-c",
+            "umask 077; set -C; cat > \"$1\"",
+            "effigy-stage",
+            "/tmp/effigy-stage"
         ]
+        .map(OsString::from)
     );
+    let _docker = crate::contract_test_support::EnvGuard::set_many(&[(
+        "EFFIGY_COMPOSE_BACKEND",
+        Some("docker".into()),
+    )]);
+    let (_, args, stdin_file) = copy_file_into_service_invocation(
+        &temp_dir,
+        &test_policy(),
+        "exact-target",
+        Path::new("/host/artifact"),
+        "/tmp/stage",
+    )
+    .unwrap();
+    assert!(stdin_file.is_none());
+    assert!(args.ends_with(&[
+        "cp".into(),
+        "/host/artifact".into(),
+        "exact-target:/tmp/stage".into()
+    ]));
 }
 
 #[test]
@@ -1024,4 +1051,66 @@ fn remote_workload_matches_the_v0_14_compose_exec_for_consumer_steps() {
             .any(|(key, value)| key == "DB_PASSWORD" && matches!(value, EnvOverride::Secret(_))));
         assert!(!after.argv.iter().any(|arg| arg.contains("hunter2")));
     }
+}
+
+#[test]
+fn colima_file_copy_streams_an_unshared_host_file_and_refuses_existing_guest_paths() {
+    use crate::runner::exec_command::{
+        copy_file_into_service, copy_file_into_service_bounded, BoundedCommandBudget,
+    };
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+    let _lock = crate::contract_test_support::lock_test();
+    let root = temp_repo("colima-file-stream");
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let tool = bin.join("colima");
+    fs::write(
+        &tool,
+        r#"#!/bin/sh
+set -e
+[ "$1" = nerdctl ] && [ "$2" = --profile ] && [ "$3" = effigy ] && [ "$4" = -- ]
+shift 4
+[ "$1" = exec ] && [ "$2" = -i ] && [ "$3" = --user ] && [ "$4" = 0 ] && [ "$5" = exact-target ]
+shift 5
+exec "$@"
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&tool, fs::Permissions::from_mode(0o700)).unwrap();
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[
+        ("PATH", Some(format!("{}:/usr/bin:/bin", bin.display()))),
+        ("EFFIGY_COMPOSE_BACKEND", Some("colima".into())),
+    ]);
+    let source = root.join("unshared artifact");
+    let destination = root.join("guest staging ; literal");
+    let bytes = vec![42; 1024 * 1024];
+    fs::write(&source, &bytes).unwrap();
+    let now = Instant::now();
+    let mut budget = BoundedCommandBudget::new(now, now + Duration::from_secs(10), 4096, 4096);
+    copy_file_into_service_bounded(
+        &root,
+        &test_policy(),
+        "app",
+        "exact-target",
+        &source,
+        destination.to_str().unwrap(),
+        &mut budget,
+    )
+    .unwrap();
+    assert_eq!(fs::read(&destination).unwrap(), bytes);
+    assert_eq!(
+        fs::metadata(&destination).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    fs::write(&source, b"replacement must refuse").unwrap();
+    assert!(copy_file_into_service(
+        &root,
+        &test_policy(),
+        "exact-target",
+        &source,
+        destination.to_str().unwrap()
+    )
+    .is_err());
+    assert_eq!(fs::read(&destination).unwrap(), bytes);
 }

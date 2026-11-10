@@ -325,12 +325,15 @@ fn private_builder_fixture_removes_sealed_object_directories() {
     assert!(!root.exists());
 }
 
-// The real Colima preflight rejects OS temp paths on Linux as well as macOS, and
-// on macOS the scratch TMPDIR is a temp path too. The host HOME is the parent
-// Colima shares, lives outside the checkout, and is removed on drop.
+// A confined worker supplies a fresh parent under its assigned scratch via
+// EFFIGY_RECOVERY_FIXTURE_PARENT. Ordinary callers retain the shared HOME route.
+// Each fixture's CLI operations get a separate nested temp directory, so their
+// shared source is not misclassified as that operation's temporary output.
 fn builder_fixture() -> effigy_test_support::Fixture {
-    let home = std::env::var_os("HOME").expect("host HOME for shared Colima fixture");
-    effigy_test_support::Fixture::in_parent("effigy-parent-fixtures-recovery-", Path::new(&home))
+    let parent = std::env::var_os("EFFIGY_RECOVERY_FIXTURE_PARENT")
+        .or_else(|| std::env::var_os("HOME"))
+        .expect("explicit fixture parent or host HOME");
+    effigy_test_support::Fixture::in_parent("effigy-parent-fixtures-recovery-", Path::new(&parent))
         .unwrap()
 }
 
@@ -343,6 +346,9 @@ fn builder_fixture_passes_colima_guard_while_os_temp_still_refuses() {
         ("EFFIGY_COMPOSE_BACKEND", Some("colima".to_owned())),
         ("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", None),
         ("EFFIGY_TEST_COLIMA_ARGS_FILE", None),
+        ("TMPDIR", Some(unshared.path().display().to_string())),
+        ("TMP", Some(unshared.path().display().to_string())),
+        ("TEMP", Some(unshared.path().display().to_string())),
     ]);
     for (dir, allowed) in [(&shared, true), (&unshared, false)] {
         let _cache = EnvGuard::set_many(&[(
@@ -372,21 +378,22 @@ fn builder_fixture_passes_colima_guard_while_os_temp_still_refuses() {
     }
 }
 
-// Path contract: the Colima preflight refuses OS temp roots, so the shared
-// builder fixture must sit outside them. A temp root fails here by name instead
-// of as a preflight refusal inside the recovery cases.
 #[test]
-fn builder_fixture_root_stays_outside_the_linux_temp_root() {
+fn builder_fixture_keeps_storage_in_its_selected_parent_and_confines_operation_temp() {
     let _lock = crate::contract_test_support::lock_test();
+    let parent = std::env::var_os("EFFIGY_RECOVERY_FIXTURE_PARENT")
+        .or_else(|| std::env::var_os("HOME"))
+        .unwrap();
     let shared = builder_fixture();
-    for temp in [std::env::temp_dir(), PathBuf::from("/tmp")] {
-        assert!(
-            !shared.path().starts_with(&temp),
-            "builder fixture {} landed under temp root {}; the Colima preflight refuses it",
-            shared.path().display(),
-            temp.display()
-        );
-    }
+    assert_eq!(
+        shared.path().parent(),
+        Some(Path::new(&parent).canonicalize().unwrap().as_path())
+    );
+    let temp = shared.path().join("operation-temp");
+    std::fs::create_dir(&temp).unwrap();
+    let _env = EnvGuard::set_many(&[("TMPDIR", Some(temp.display().to_string()))]);
+    assert_eq!(std::env::temp_dir(), temp);
+    assert!(!shared.path().starts_with(std::env::temp_dir()));
 }
 
 impl Fixture {
@@ -436,6 +443,7 @@ impl Fixture {
         std::fs::create_dir_all(root.join("state")).unwrap();
         std::fs::create_dir_all(root.join("bin")).unwrap();
         std::fs::create_dir_all(root.join("host-home")).unwrap();
+        std::fs::create_dir_all(root.join("tmp")).unwrap();
         std::fs::write(
             root.join("scripts/build.rhai"),
             include_str!("../../../../scripts/build-linux-workspace-artifact.rhai"),
@@ -510,7 +518,7 @@ esac
             // ignored is ever a source input.
             std::fs::write(
                 root.join(".gitignore"),
-                "host-home/\nstate/\nbin/\n.effigy/\nfixture-host\n",
+                "host-home/\nstate/\nbin/\n.effigy/\nfixture-host\ntmp/\n",
             )
             .unwrap();
             // The tracked workspace the builder compiles, so the source probe
@@ -559,6 +567,9 @@ esac
                 Some(root.join("host-home/.effigy").display().to_string()),
             ),
             ("HOME", Some(root.join("host-home").display().to_string())),
+            ("TMPDIR", Some(root.join("tmp").display().to_string())),
+            ("TMP", Some(root.join("tmp").display().to_string())),
+            ("TEMP", Some(root.join("tmp").display().to_string())),
             // The artifact proof builds with this checkout's binary through its
             // private host shim. An invoking `effigy test` hands suites its own
             // `EFFIGY_EXECUTABLE`, which would run the nested build through that
@@ -1091,6 +1102,12 @@ fn changed_input_partial_builder_recovers_through_the_maintained_artifact_task()
             .task()
             .expect("automatic build with original admission retained");
         assert!(fixture.root.join("state/build-effect").exists());
+        let artifact = fixture
+            .root
+            .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+        let expected = workspace_effigy_local_install_identity(&Fixture::compiled_cli()).unwrap();
+        assert!(linux_workspace_effigy_artifact_is_current(&artifact, LinuxWorkspaceTarget::X86_64Gnu, &expected),
+            "the direct producer must publish a held-current artifact without a later handoff blessing it");
         let trace = std::fs::read_to_string(fixture.root.join("state/calls")).unwrap();
         assert!(!trace.contains("\"up\""), "{trace}");
         fixture.assert_preserved();
@@ -1286,6 +1303,53 @@ fn concurrent_caller_and_expired_binding_have_no_effect() {
     );
     assert!(result.is_err());
     assert!(!fixture.root.join("state/calls").exists());
+    fixture.assert_preserved();
+}
+
+#[test]
+fn retained_builder_reinspection_uses_the_current_operation_deadline() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::new(true, true, "docker");
+    let start = std::time::Instant::now();
+    let clock = effigy_containers::exec::capture_test_clock::control(start);
+    let row = effigy_containers::exec::RunningComposeContainer {
+        container_name: format!("{}-builder-1", fixture.policy.project_name),
+        service: Some("builder".to_owned()),
+        project_name: Some(fixture.policy.project_name.clone()),
+        status: "Up".to_owned(),
+        ports: vec![],
+        working_dir: None,
+        oneoff: false,
+    };
+    let binding = effigy_containers::exec::verify_workspace_artifact_builder(
+        &fixture.root,
+        &fixture.policy,
+        &row,
+        start + std::time::Duration::from_secs(15),
+    )
+    .expect("initial builder witness");
+    // A real staged source probe or compile outlives its initial inspection.
+    clock.advance(start + std::time::Duration::from_secs(20));
+    binding
+        .reverify(
+            &fixture.root,
+            &fixture.policy,
+            start + std::time::Duration::from_secs(30),
+        )
+        .expect("fresh bounded strict witness");
+    let calls = std::fs::read(fixture.root.join("state/calls")).unwrap();
+    binding
+        .reverify(
+            &fixture.root,
+            &fixture.policy,
+            start + std::time::Duration::from_secs(19),
+        )
+        .expect_err("expired current deadline");
+    assert_eq!(
+        std::fs::read(fixture.root.join("state/calls")).unwrap(),
+        calls,
+        "an expired current operation never spawns"
+    );
     fixture.assert_preserved();
 }
 

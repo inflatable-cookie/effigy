@@ -1369,8 +1369,29 @@ fn apply_workspace_source_policy(
         .canonicalize()
         .unwrap_or_else(|_| repo_root.to_path_buf());
     let source = plan.source.display().to_string();
+    let is_checkout = |raw: &str| {
+        raw.trim() == checkout
+            || Path::new(raw.trim())
+                .canonicalize()
+                .is_ok_and(|path| path == canonical_checkout)
+    };
     let mut bound = 0usize;
     for service in compose_document.services.values_mut() {
+        // BuildKit reads its context inside the VM, just like the source bind.
+        // Preserve relative Dockerfile paths and every unrelated build field.
+        if let Some(build) = service.extra.get_mut("build") {
+            let context = match build {
+                YamlValue::Mapping(fields) => {
+                    fields.get_mut(YamlValue::String("context".to_owned()))
+                }
+                other => Some(other),
+            };
+            if let Some(context) = context {
+                if context.as_str().is_some_and(&is_checkout) {
+                    *context = YamlValue::String(source.clone());
+                }
+            }
+        }
         let Some(volumes) = service.volumes.as_mut() else {
             continue;
         };
@@ -1382,14 +1403,7 @@ fn apply_workspace_source_policy(
                 continue;
             };
             let destination = rest.split(':').next().unwrap_or(rest).trim();
-            let source_is_checkout = {
-                let source = Path::new(raw_source.trim());
-                raw_source.trim() == checkout
-                    || source
-                        .canonicalize()
-                        .is_ok_and(|source| source == canonical_checkout)
-            };
-            if !source_is_checkout || destination != "/workspace" {
+            if !is_checkout(raw_source) || destination != "/workspace" {
                 continue;
             }
             *raw = format!("{source}:{rest}");
@@ -1937,7 +1951,9 @@ services:
         let _restore = Restore(previous);
 
         let raw = format!(
-            "services:\n  builder:\n    volumes:\n      - '{}:/workspace'\n      - '{}:/cache'\n",
+            "services:\n  builder:\n    build:\n      context: '{}'\n      dockerfile: infra/release/linux/Dockerfile\n    volumes:\n      - '{}:/workspace'\n      - '{}:/cache'\n  short-build:\n    build: '{}'\n  unrelated-build:\n    build: 'https://example.invalid/source.git'\n",
+            checkout.display(),
+            checkout.display(),
             checkout.display(),
             checkout.display()
         );
@@ -1964,6 +1980,22 @@ services:
         )
         .expect("stage plan")
         .expect("the profile does not reach this checkout");
+        assert_eq!(
+            document.services["builder"].extra["build"]["context"].as_str(),
+            Some(plan.source.to_str().expect("UTF-8 stage path"))
+        );
+        assert_eq!(
+            document.services["builder"].extra["build"]["dockerfile"].as_str(),
+            Some("infra/release/linux/Dockerfile")
+        );
+        assert_eq!(
+            document.services["short-build"].extra["build"].as_str(),
+            Some(plan.source.to_str().expect("UTF-8 stage path"))
+        );
+        assert_eq!(
+            document.services["unrelated-build"].extra["build"].as_str(),
+            Some("https://example.invalid/source.git")
+        );
         let volumes = document.services["builder"]
             .volumes
             .clone()

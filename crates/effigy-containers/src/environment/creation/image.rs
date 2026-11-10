@@ -47,27 +47,46 @@ impl ImageIdentity {
     }
 
     pub(super) fn observe(
-        backend: &dyn EnvironmentBackend,
+        backend: &mut dyn EnvironmentBackend,
         row: &Workload,
         reference: &str,
         resolved_id: &str,
         created_in_window: bool,
         rendered_config_hash: Option<&str>,
+        observation: (&std::path::Path, std::time::Instant),
     ) -> Result<Self, CreationRefusal> {
-        if !same_reference(reference, &row.image_reference) {
-            return Err(CreationRefusal::ImageMismatch(row.id.clone()));
-        }
         let resolved_id = exact_image_id(resolved_id)
             .ok_or_else(|| CreationRefusal::ReferenceOnlyImage(reference.into()))?;
+        if !same_reference(reference, &row.image_reference) {
+            // Nerdctl can replace even a digest reference with a local tag in
+            // both inspect image fields. Only a new ID in this guarded create
+            // window may bind that spelling through an independent lookup.
+            // Attached rows never gain image identity from today's tag table.
+            let alias = if created_in_window
+                && backend.selection().kind == super::super::backend::BackendKind::Colima
+                && same_reference(&row.image, &row.image_reference)
+            {
+                match backend.image_id_until(observation.0, &row.image_reference, observation.1) {
+                    Observed::Verified(id, _) => exact_image_id(&id),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if alias.as_ref() != Some(&resolved_id) {
+                return Err(CreationRefusal::ImageMismatch(row.id.clone()));
+            }
+        }
         let capability = match exact_image_id(&row.image) {
             Some(id) if id == resolved_id => ImageCapability::ContainerImageId,
             Some(_) => return Err(CreationRefusal::ImageMismatch(row.id.clone())),
             None if backend.selection().kind == super::super::backend::BackendKind::Colima
-                && same_reference(&row.image, reference) =>
+                && same_reference(&row.image, &row.image_reference) =>
             {
-                if reference
-                    .rsplit_once('@')
-                    .is_some_and(|(_, digest)| exact_image_id(digest).is_some())
+                if same_reference(reference, &row.image_reference)
+                    && reference
+                        .rsplit_once('@')
+                        .is_some_and(|(_, digest)| exact_image_id(digest).is_some())
                 {
                     ImageCapability::DigestReference
                 } else if created_in_window {

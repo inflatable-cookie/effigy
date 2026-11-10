@@ -55,6 +55,9 @@ impl Destination {
 }
 struct Writer {
     log: Destination,
+    projections: Option<[super::capture::Log; 2]>,
+    projection_line_bytes: [usize; 2],
+    projection_line_max: usize,
     pipeline: OutputPipeline,
     secrets: Vec<Vec<u8>>,
     pending: Vec<(OutputTag, u8)>,
@@ -113,7 +116,7 @@ impl CanonicalOutput {
         secrets: Vec<Vec<u8>>,
         limits: &crate::ctx::Limits,
     ) -> io::Result<Self> {
-        if let Err(error) = log.enable_plain() {
+        if let Err(error) = log.enable_plain(false) {
             log.mark_truncated();
             return Err(error);
         }
@@ -124,6 +127,31 @@ impl CanonicalOutput {
             limits.capture_tail,
             true,
         )
+    }
+    /// The workspace's separate streams are projections of the same merged
+    /// sanitize/redact pass, redacted again after removing the other stream.
+    pub(crate) fn for_workspace(
+        log: super::capture::Log,
+        mut projections: [super::capture::Log; 2],
+        secrets: Vec<Vec<u8>>,
+        limits: &crate::ctx::Limits,
+    ) -> io::Result<Self> {
+        for projection in &mut projections {
+            if let Err(error) = projection.enable_plain(true) {
+                for log in &projections {
+                    log.mark_truncated();
+                }
+                return Err(error);
+            }
+        }
+        let output = Self::for_run(log, secrets.clone(), limits)?;
+        {
+            let mut writer = lock(&output.0);
+            writer.pipeline = OutputPipeline::for_capture(secrets, true, true);
+            writer.projections = Some(projections);
+            writer.projection_line_max = limits.line_max;
+        }
+        Ok(output)
     }
     fn with_destination(
         log: Destination,
@@ -141,7 +169,7 @@ impl CanonicalOutput {
                 "canonical output requires classified UTF-8 secrets",
             ));
         }
-        let pipeline = OutputPipeline::for_capture(secrets.clone(), true);
+        let pipeline = OutputPipeline::for_capture(secrets.clone(), true, false);
         let blocked = pipeline.redactor.blocked();
         if blocked {
             log.mark_failed();
@@ -155,6 +183,9 @@ impl CanonicalOutput {
         Ok(Self(Arc::new(Mutex::new(Writer {
             line_start,
             log,
+            projections: None,
+            projection_line_bytes: [0; 2],
+            projection_line_max: 0,
             pipeline,
             secrets,
             pending: Vec::new(),
@@ -172,7 +203,7 @@ impl CanonicalOutput {
     }
     pub(super) fn validate(&self, spec: &ProcessSpec) -> io::Result<()> {
         let writer = lock(&self.0);
-        if writer.failed || writer.finished || writer.log.incomplete() {
+        if writer.failed || writer.finished || writer.incomplete() {
             return Err(io::Error::other(
                 "host canonical capture is closed or failed",
             ));
@@ -189,16 +220,20 @@ impl CanonicalOutput {
         Ok(())
     }
     pub(crate) fn feed(&self, stream: usize, bytes: &[u8], terminal_eof: bool) -> io::Result<()> {
+        let tagged: Vec<_> = bytes.iter().map(|byte| (stream as u8, *byte)).collect();
+        self.feed_observed(&tagged, terminal_eof)
+    }
+    /// Commit one bounded observed-order window without regrouping streams.
+    pub(crate) fn feed_observed(&self, tagged: &[(u8, u8)], terminal_eof: bool) -> io::Result<()> {
         let mut writer = lock(&self.0);
-        if writer.finished && bytes.is_empty() {
+        if writer.finished && tagged.is_empty() {
             return Ok(());
         }
         writer.check()?;
-        let tagged: Vec<_> = bytes.iter().map(|byte| (stream as u8, *byte)).collect();
         let final_eof = terminal_eof && matches!(&writer.log, Destination::Run(_));
         let clean = writer
             .pipeline
-            .push_terminal(&tagged, terminal_eof, final_eof);
+            .push_terminal(tagged, terminal_eof, final_eof);
         writer.commit(clean, final_eof)?;
         if final_eof {
             writer.finished = true;
@@ -263,16 +298,16 @@ impl CanonicalOutput {
     /// generation drain gap is reported as Truncated but permits restart.
     pub fn is_failed(&self) -> bool {
         let writer = lock(&self.0);
-        writer.failed || writer.log.incomplete()
+        writer.failed || writer.incomplete()
     }
     pub(crate) fn fail(&self) {
         let mut writer = lock(&self.0);
         writer.failed = true;
-        writer.log.mark_failed();
+        writer.mark_failed();
     }
     pub fn capture_state(&self) -> CaptureState {
         let writer = lock(&self.0);
-        if writer.failed || writer.log.incomplete() {
+        if writer.failed || writer.incomplete() {
             CaptureState::Truncated("canonical capture failed".into())
         } else if writer.capture_truncated {
             CaptureState::Truncated("generation capture drain omitted unread bytes".into())
@@ -287,7 +322,7 @@ impl CanonicalOutput {
             chunks: writer.styled.drain(..).collect(),
             truncated: std::mem::take(&mut writer.truncated)
                 || writer.failed
-                || writer.log.incomplete(),
+                || writer.incomplete(),
         }
     }
     pub(super) fn take_output(&self) -> Vec<u8> {
@@ -298,8 +333,23 @@ impl CanonicalOutput {
     }
 }
 impl Writer {
+    fn incomplete(&self) -> bool {
+        self.log.incomplete()
+            || self
+                .projections
+                .as_ref()
+                .is_some_and(|logs| logs.iter().any(super::capture::Log::incomplete))
+    }
+    fn mark_failed(&self) {
+        self.log.mark_failed();
+        if let Some(logs) = &self.projections {
+            for log in logs {
+                log.mark_truncated();
+            }
+        }
+    }
     fn check_finished(&self) -> io::Result<()> {
-        if self.failed || self.log.incomplete() {
+        if self.failed || self.incomplete() {
             Err(io::Error::other(
                 "canonical output failed; inspect capture state",
             ))
@@ -318,7 +368,7 @@ impl Writer {
     fn commit(&mut self, mut clean: Vec<(OutputTag, u8)>, eof: bool) -> io::Result<()> {
         let result = self.commit_inner(&mut clean, eof);
         if result.is_err() {
-            self.log.mark_failed();
+            self.mark_failed();
         }
         result
     }
@@ -336,6 +386,22 @@ impl Writer {
         let bytes = &bytes[..complete];
         let offset = self.log.committed_offset();
         self.log.append(bytes)?;
+        if let Some(logs) = &mut self.projections {
+            let parts = self.pipeline.project(&clean, eof);
+            for (index, (log, part)) in logs.iter_mut().zip(parts).enumerate() {
+                for byte in &part {
+                    self.projection_line_bytes[index] = if *byte == b'\n' {
+                        0
+                    } else {
+                        self.projection_line_bytes[index].saturating_add(1)
+                    };
+                    if self.projection_line_bytes[index] > self.projection_line_max {
+                        return Err(io::Error::other("workspace capture line exceeds its bound"));
+                    }
+                }
+                log.append_durable(&part)?;
+            }
+        }
         // Only successful durable appends reach any live/tail projection.
         if !bytes.is_empty() {
             self.line_start = bytes.last() == Some(&b'\n');

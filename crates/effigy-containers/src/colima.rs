@@ -13,7 +13,7 @@ use effigy_manifest::ManifestContainerShutdownMode;
 use serde_yaml::{Mapping, Number, Value};
 use std::ffi::OsString;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 const FALLBACK_COLIMA_DNS_SERVERS: [&str; 2] = ["1.1.1.1", "8.8.8.8"];
@@ -478,12 +478,9 @@ pub fn managed_colima_profile_drift(profile: &str) -> Option<ManagedColimaProfil
 }
 
 fn colima_profile_config_path(profile: &str) -> Result<PathBuf, String> {
-    let home = std::env::var_os("HOME")
+    let home = crate::runtime::dns::colima_home_dir()
         .ok_or_else(|| "HOME is not set; cannot resolve Colima profile config".to_owned())?;
-    Ok(Path::new(&home)
-        .join(".colima")
-        .join(profile)
-        .join("colima.yaml"))
+    Ok(home.join(profile).join("colima.yaml"))
 }
 
 /// One host directory a Colima profile's own configuration shares into its VM.
