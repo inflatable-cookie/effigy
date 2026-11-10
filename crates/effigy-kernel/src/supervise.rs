@@ -1674,6 +1674,26 @@ impl EngineSession {
         release_helper_log();
         Ok(())
     }
+    /// A workspace reader may poll immediately after admission. Establish both
+    /// redacted capture streams before publishing that acknowledgement.
+    pub fn admitted_with_capture(
+        &mut self,
+        run: &mut Run<'_>,
+        secrets: Vec<Vec<u8>>,
+    ) -> Result<(), RunError> {
+        self.channel.listener = Some(run.control_socket()?);
+        release_helper_log();
+        if self.capture_output(run, secrets).ok() != Some(crate::custody::CaptureState::Complete) {
+            return Err(RunError::unavailable(
+                "safe supervisor output capture is unavailable",
+            ));
+        }
+        self.emit(&Event::Admitted {
+            run: run.id(),
+            fence: run.fence().clone(),
+        });
+        Ok(())
+    }
     /// Admission refused: the client reads the category's own sentence around
     /// `detail`; nothing ran. The sentence also reaches the client's helper log
     /// tail, so a refusal too long for one event frame still names itself.
@@ -1775,7 +1795,7 @@ impl EngineSession {
         if self.output.is_some() {
             return Ok(crate::custody::CaptureState::Complete);
         }
-        match OutputCapture::start(run, secrets) {
+        match OutputCapture::start(run, secrets, self.admission.is_some()) {
             Ok(output) => {
                 self.output = Some(output);
                 Ok(crate::custody::CaptureState::Complete)
@@ -1794,11 +1814,16 @@ impl EngineSession {
             }
         }
     }
-    /// Announces the settled outcome after the captured output is flushed.
-    pub fn closed(&mut self, outcome: &crate::outcome::Outcome<crate::run::Settled>) {
+    /// Flush after the last producer exits, before publishing a shell's terminal
+    /// outcome. Its final log read must not race the asynchronous pipe pump.
+    pub fn finish_output(&mut self) {
         if let Some(output) = self.output.take() {
             output.finish();
         }
+    }
+    /// Announces the settled outcome after the captured output is flushed.
+    pub fn closed(&mut self, outcome: &crate::outcome::Outcome<crate::run::Settled>) {
+        self.finish_output();
         self.emit(&Event::Closed {
             cleanup_complete: outcome.cleanup() == crate::outcome::CleanupOutcome::Complete,
             workload: outcome.workload().clone(),
@@ -1872,13 +1897,36 @@ struct OutputCapture {
 }
 /// The output log's journal position: no effect has sequence 0.
 pub const OUTPUT_SEQUENCE: i64 = 0;
+// Workspace sequence 0 contains its separate reader-safe projections. Keep
+// their canonical merged provenance outside the positive process sequences.
+const WORKSPACE_MERGED_SEQUENCE: i64 = -1;
 impl OutputCapture {
-    fn start(run: &Run<'_>, secrets: Vec<Vec<u8>>) -> io::Result<Self> {
+    fn start(run: &Run<'_>, secrets: Vec<Vec<u8>>, workspace: bool) -> io::Result<Self> {
         let limits = run.limits();
         let log = run
-            .capture_log(OUTPUT_SEQUENCE, crate::custody::Stream::Stdout, &limits)?
+            .capture_log(
+                if workspace {
+                    WORKSPACE_MERGED_SEQUENCE
+                } else {
+                    OUTPUT_SEQUENCE
+                },
+                crate::custody::Stream::Stdout,
+                &limits,
+            )?
             .ok_or_else(|| io::Error::other("managed supervisor output needs a durable log"))?;
-        let output = crate::custody::CanonicalOutput::for_run(log, secrets, &limits)?;
+        let output = if workspace {
+            let projection = |stream| {
+                run.capture_log(OUTPUT_SEQUENCE, stream, &limits)?
+                    .ok_or_else(|| io::Error::other("workspace output needs durable stream logs"))
+            };
+            let logs = [
+                projection(crate::custody::Stream::Stdout)?,
+                projection(crate::custody::Stream::Stderr)?,
+            ];
+            crate::custody::CanonicalOutput::for_workspace(log, logs, secrets, &limits)?
+        } else {
+            crate::custody::CanonicalOutput::for_run(log, secrets, &limits)?
+        };
         if let crate::custody::CaptureState::Truncated(reason) = output.capture_state() {
             return Err(io::Error::other(reason));
         }

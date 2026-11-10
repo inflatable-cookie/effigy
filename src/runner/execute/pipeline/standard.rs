@@ -52,6 +52,10 @@ use effigy_manifest::{
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 use effigy_secrets::{SecretValue, VaultPlaintextPayload};
 
+#[path = "standard/reserved.rs"]
+mod reserved;
+pub(in crate::runner) use reserved::{run_reserved_shell, validate_reserved_shell};
+
 pub(in crate::runner) fn run_standard_task(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,

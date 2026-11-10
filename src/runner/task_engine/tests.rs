@@ -1261,7 +1261,7 @@ fn reserved_engine_refuses_changed_task_before_any_fallback_effect() {
 #[cfg(feature = "workspace-serving-fixture")]
 #[test]
 #[ignore = "requires a current binary from test:workspace:effigy-build"]
-fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
+fn reserved_engine_admits_shell_and_managed_profiles_under_the_reserved_id() {
     use effigy_kernel::run::{Reservation, Session};
     use effigy_kernel::supervise::Executable;
     use effigy_kernel::workspace_channel::{
@@ -1282,8 +1282,9 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
     std::fs::create_dir(&checkout).unwrap();
     let default_marker = checkout.join("default-ran");
     let admin_marker = checkout.join("admin-ran");
+    let shell_marker = checkout.join("shell-ran");
     std::fs::write(checkout.join("effigy.toml"), format!(
-        "[tasks.build]\nmode = 'tui'\nconcurrent = [{{ name = 'one', run = 'touch {} ; sleep 2' }}]\n[tasks.build.profiles.admin]\nconcurrent = [{{ name = 'two', run = 'touch {} ; sleep 2' }}]\n", default_marker.display(), admin_marker.display(),
+        "[tasks.shell]\nrun = 'test ! -t 0 && test ! -t 1 && test ! -t 2 && printf shell-stdout && printf shell-stderr >&2 && touch {} ; sleep 2'\nrun_in = 'host'\n[tasks.build]\nmode = 'tui'\nconcurrent = [{{ name = 'one', run = 'touch {} ; sleep 2' }}]\n[tasks.build.profiles.admin]\nconcurrent = [{{ name = 'two', run = 'touch {} ; sleep 2' }}]\n", shell_marker.display(), default_marker.display(), admin_marker.display(),
     )).unwrap();
     let cx = kernel::effects();
     let state = kernel::effects_root(&checkout).unwrap();
@@ -1306,18 +1307,28 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
         state.clone(),
     );
     let mut failures = Vec::new();
-    for (request_id, args, profile, wanted, unwanted) in [
-        (80, vec![], "default", &default_marker, &admin_marker),
+    for (request_id, selector, args, profile, wanted, unwanted) in [
+        (
+            80,
+            "build",
+            vec![],
+            Some("default"),
+            &default_marker,
+            &admin_marker,
+        ),
         (
             81,
+            "build",
             vec!["admin".to_owned()],
-            "admin",
+            Some("admin"),
             &admin_marker,
             &default_marker,
         ),
+        (82, "shell", vec![], None, &shell_marker, &default_marker),
     ] {
+        let label = profile.unwrap_or("shell");
         let body = InvocationBody {
-            selector: Selector::Task("build".into()),
+            selector: Selector::Task(selector.into()),
             cwd: ".".into(),
             target: Target::Host,
             args: args.clone(),
@@ -1326,7 +1337,7 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
         let resolved = match dispatch.resolve(&cx, &body) {
             Ok(resolved) => resolved,
             Err(error) => {
-                failures.push(format!("resolve {profile}: {error:?}"));
+                failures.push(format!("resolve {label}: {error:?}"));
                 continue;
             }
         };
@@ -1361,7 +1372,7 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
             identity,
         };
         let invocation = effigy_cli::TaskInvocation {
-            name: "build".into(),
+            name: selector.into(),
             args,
         };
         let start_result = crate::runner::managed_run::start_reserved_with_executable(
@@ -1373,26 +1384,66 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
             &executable,
         );
         if crate::runner::managed_run::take_reserved_handoff_observation() != Some(false) {
-            failures.push(format!(
-                "{profile}: launch did not use the no-handoff branch"
-            ));
+            failures.push(format!("{label}: launch did not use the no-handoff branch"));
         }
         let mut started = match start_result {
             Ok(started) => started,
             Err(error) => {
-                failures.push(format!("start {profile}: {error}"));
+                failures.push(format!("start {label}: {error}"));
                 continue;
             }
         };
         if started.run != expected_run || started.client.run != expected_run {
-            failures.push(format!("{profile}: wrong admitted run"));
+            failures.push(format!("{label}: wrong admitted run"));
         }
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while !wanted.exists() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         if !wanted.exists() || unwanted.exists() {
-            failures.push(format!("{profile}: wrong workload marker"));
+            failures.push(format!("{label}: wrong workload marker"));
+        }
+        if profile.is_none() {
+            let read = |stream| {
+                effigy_kernel::run::read_log(
+                    &kernel::observe(),
+                    &started.root,
+                    expected_run,
+                    effigy_kernel::supervise::OUTPUT_SEQUENCE,
+                    stream,
+                    0,
+                    4096,
+                )
+            };
+            for (stream, wanted, forbidden) in [
+                (
+                    effigy_kernel::custody::Stream::Stdout,
+                    "shell-stdout",
+                    "shell-stderr",
+                ),
+                (
+                    effigy_kernel::custody::Stream::Stderr,
+                    "shell-stderr",
+                    "shell-stdout",
+                ),
+            ] {
+                let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                loop {
+                    let observed = read(stream);
+                    if matches!(&observed, effigy_kernel::observe::Observed::Verified(bytes, _)
+                        if String::from_utf8_lossy(&bytes.bytes).contains(wanted)
+                        && !String::from_utf8_lossy(&bytes.bytes).contains(forbidden)
+                        && !bytes.truncated)
+                    {
+                        break;
+                    }
+                    if std::time::Instant::now() >= until {
+                        failures.push(format!("shell capture: {observed:?}"));
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
         }
         let observation = kernel::observe();
         match effigy_kernel::store::Store::read(&observation, &started.root) {
@@ -1400,7 +1451,7 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
                 match effigy_kernel::run::summary(&reader, expected_run) {
                     effigy_kernel::observe::Observed::Verified(summary, _)
                         if summary.invocation.as_ref().is_some_and(|inv| {
-                            inv.spec().task.profile() == Some(profile)
+                            inv.spec().task.profile() == profile
                                 && inv.digest() == admitted.digest()
                                 && inv.spec().provenance.get(super::MANAGED_RUN_PROVENANCE)
                                     == Some(&effigy_kernel::id::Digest::of(
@@ -1408,26 +1459,24 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
                                             .as_bytes(),
                                     ))
                         }) => {}
-                    other => {
-                        failures.push(format!("{profile}: wrong journal invocation: {other:?}"))
-                    }
+                    other => failures.push(format!("{label}: wrong journal invocation: {other:?}")),
                 }
             }
-            other => failures.push(format!("{profile}: cannot read journal: {other:?}")),
+            other => failures.push(format!("{label}: cannot read journal: {other:?}")),
         }
         started.client.close_input();
         if let Err(error) = started
             .client
             .wait_recoverable(cx.child(std::time::Duration::from_secs(30)).operation())
         {
-            failures.push(format!("{profile}: supervisor reap: {error}"));
+            failures.push(format!("{label}: supervisor reap: {error}"));
             if let Err(retry_error) = started
                 .client
                 .wait_recoverable(cx.child(std::time::Duration::from_secs(30)).operation())
             {
-                failures.push(format!("{profile}: supervisor reap retry: {retry_error}"));
+                failures.push(format!("{label}: supervisor reap retry: {retry_error}"));
                 if let Err(cleanup_error) = started.client.fixture_terminate_and_reap() {
-                    failures.push(format!("{profile}: fixture termination: {cleanup_error}"));
+                    failures.push(format!("{label}: fixture termination: {cleanup_error}"));
                 }
             }
         }
@@ -1437,19 +1486,19 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
                 match effigy_kernel::run::summary(&reader, expected_run) {
                     effigy_kernel::observe::Observed::Verified(summary, _)
                         if summary.cleanup_complete == Some(true) => {}
-                    other => failures.push(format!("{profile}: cleanup not complete: {other:?}")),
+                    other => failures.push(format!("{label}: cleanup not complete: {other:?}")),
                 }
             }
-            other => failures.push(format!("{profile}: cannot read cleanup: {other:?}")),
+            other => failures.push(format!("{label}: cannot read cleanup: {other:?}")),
         }
         if wanted.exists() {
             if let Err(error) = std::fs::remove_file(wanted) {
-                failures.push(format!("{profile}: remove marker: {error}"));
+                failures.push(format!("{label}: remove marker: {error}"));
             }
         }
         if unwanted.exists() {
             if let Err(error) = std::fs::remove_file(unwanted) {
-                failures.push(format!("{profile}: remove unexpected marker: {error}"));
+                failures.push(format!("{label}: remove unexpected marker: {error}"));
             }
         }
     }

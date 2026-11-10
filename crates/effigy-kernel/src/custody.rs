@@ -378,9 +378,9 @@ struct OutputPipeline {
 }
 impl OutputPipeline {
     fn new(secrets: Vec<Vec<u8>>) -> Self {
-        Self::for_capture(secrets, false)
+        Self::for_capture(secrets, false, true)
     }
-    fn for_capture(mut secrets: Vec<Vec<u8>>, plain: bool) -> Self {
+    fn for_capture(mut secrets: Vec<Vec<u8>>, plain: bool, project: bool) -> Self {
         if plain {
             secrets.extend(
                 secrets
@@ -399,7 +399,7 @@ impl OutputPipeline {
         Self {
             sanitizer: (secret_bearing || plain).then(terminal::TerminalSanitizer::new),
             plain,
-            projections: (secret_bearing && !plain).then(|| {
+            projections: (secret_bearing && project).then(|| {
                 [
                     Redactor::new(secrets.clone()),
                     Redactor::new(secrets.clone()),

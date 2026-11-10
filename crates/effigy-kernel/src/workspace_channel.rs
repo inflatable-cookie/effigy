@@ -2551,8 +2551,15 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
         let resolved = self.resolver.resolve(cx, body)?;
         let run = self.ids.next()?;
         let admission_invocation = self.resolver.admission_invocation(body, &resolved, run)?;
-        let reply = match run::reserve_resolved(cx, root, key, digest, run, &admission_invocation)
-            .map_err(refusal_from)?
+        let reply = match run::reserve_resolved(
+            cx,
+            root,
+            key,
+            digest.clone(),
+            run,
+            &admission_invocation,
+        )
+        .map_err(refusal_from)?
         {
             Reservation::Recorded(recovered) => replay(recovered)?,
             Reservation::Fresh(ticket) => {
@@ -2564,9 +2571,39 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
                 let expected = self.admission.admitted_fence(&ticket).ok_or_else(|| {
                     Refusal::unknown("the admitted owner's fence was not acknowledged")
                 })?;
-                let owner = run::resume_owner(cx, root, session, ticket.run()).map_err(|_| {
-                    Refusal::unknown("the admitted owner attachment could not be verified")
-                })?;
+                let owner = match run::resume_owner(cx, root, session, ticket.run()) {
+                    Ok(owner) => owner,
+                    Err(_) => {
+                        // A short command may settle before the acknowledgement
+                        // reaches this dispatcher. Its exact keyed outcome and
+                        // original invocation/fence prove completion; no live
+                        // owner attachment is recreated. Return the first run id
+                        // so Level 1 still drains its final captured output.
+                        let completed = matches!(run::lookup(observe, root, key, digest),
+                            Observed::Verified(Recovered::Completed { run: found, .. }, _) if found == ticket.run());
+                        let acknowledged = match crate::store::Store::read(observe, root) {
+                            Observed::Verified(reader, _) => {
+                                matches!(run::summary(&reader, ticket.run()),
+                                Observed::Verified(summary, _) if summary.phase == run::Phase::Closed
+                                    && summary.generation == expected.generation
+                                    && summary.invocation.as_ref().is_some_and(|invocation|
+                                        invocation.digest() == admission_invocation.digest()
+                                        && invocation.spec().owner == expected.resource))
+                            }
+                            _ => false,
+                        };
+                        if completed && acknowledged {
+                            self.admitted.remove(&ticket.run());
+                            return Ok(AdmissionReply::Accepted(Accepted {
+                                run: ticket.run(),
+                                placement: Placement::Host,
+                            }));
+                        }
+                        return Err(Refusal::unknown(
+                            "the admitted owner attachment could not be verified",
+                        ));
+                    }
+                };
                 if owner.fence() != &expected {
                     return Err(Refusal::unknown(
                         "the admitted owner fence did not match its acknowledgement",
@@ -3486,6 +3523,22 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                                 },
                                 _,
                             ) if found == run => {
+                                // A Level 1 command has no terminal attachment.
+                                // Its exact keyed terminal record proves the
+                                // owning lifetime ended in the close transaction,
+                                // which also compacts attachment rows. Do not
+                                // attempt a fresh EOF release of that closed run.
+                                // An earlier uncertain release remains fenced.
+                                if attachment.is_none()
+                                    && self
+                                        .dispatcher
+                                        .admitted_owners
+                                        .get(&run)
+                                        .is_some_and(|owner| owner.pending_release().is_none())
+                                {
+                                    self.dispatcher.admitted.remove(&run);
+                                    self.dispatcher.admitted_owners.remove(&run);
+                                }
                                 serde_json::json!({"state": "completed", "outcome": outcome})
                             }
                             _ => {

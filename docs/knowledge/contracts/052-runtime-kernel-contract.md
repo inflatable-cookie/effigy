@@ -5109,6 +5109,28 @@ the owning client's handle and no other. Both refuse a run this session did not
 admit and grant nothing: the dispatcher's grant check remains the authority.
 `test:kernel:workspace` owns these proofs.
 
+The reserved runner accepts managed runs and single host shell commands. Shell
+commands retain the dispatcher's exact resolution and ticket, run without a PTY
+and with stdin at EOF, and use the detached owner's custody, signal and owner-loss
+settlement. Standard sequences, container placement and schema `exec()` refuse
+before an unreserved fallback can run. Declarative schema and task secret values
+enter the existing classified redaction boundary. Workspace admission acknowledges
+only after capture initialization: stdout and stderr are separately committed
+projections of one merged sanitize/redact pass, each redacted again after projection.
+Their distinct format markers prevent a missing stream from masquerading as the
+older merged log's empty stderr. A line over the run's original line bound marks
+capture incomplete. Ordinary managed capture keeps its merged representation.
+Log commit contention and rotation have a typed busy result, retried for at most
+one second within the original observation deadline. Corruption still refuses
+immediately. A normally exited reserved shell flushes capture before committing
+its terminal outcome, so the final reader cannot outrun its last pipe bytes.
+Once an unattached Level 1 connection observes its exact keyed terminal outcome,
+it drops that run's completed ownership instead of requesting EOF release of
+compacted attachment rows. Pending uncertain releases remain fenced. A command
+that closes before owner attachment resumes still returns its first run ID for
+output drain only when the keyed completion, original invocation and acknowledged
+fence all match; replay continues to return the recorded outcome without admission.
+
 **Lane A dispatcher.** `crates/effigy-kernel/src/workspace_channel.rs` owns the
 v1 wire, its framing and limits, the server pin check, negotiation, grants,
 enrolment and the typed entry points. It reads the key with `run::lookup`

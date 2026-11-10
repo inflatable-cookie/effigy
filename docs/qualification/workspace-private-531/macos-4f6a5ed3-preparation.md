@@ -92,6 +92,12 @@ root workspace identity. Colima file staging streams unshared host bytes over
 stdin into an exclusive guest staging file. Optional guest reads return explicit
 presence framing: Colima collapses nonzero guest exits to host exit 1, so an exit
 code cannot supply absence evidence.
+Forwarded host shell probes use the dispatcher's original reserved run through
+the detached owner. They inherit its nonterminal capture descriptors and stdin
+EOF. Admission is acknowledged after both durable stream projections exist;
+each projection is redacted again after the merged sanitize/redact pass. Signal
+exits keep ordinary shell outcome classification. Standard sequences, container
+placement and schema `exec()` retain their pre-fallback refusal boundaries.
 Before creating the session checkout, the unsealed entry checks that its Python
 can open an actual scratch SQLite database read-only and that writes refuse.
 On this host, system Python 3.9.6/SQLite 3.51.0 failed that read-only open;

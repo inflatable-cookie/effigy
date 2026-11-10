@@ -51,6 +51,11 @@ pub(in crate::runner) fn run_managed_task(
     selection_plan: &ExecutionSelectionPlan,
     run_key: Option<&RunKey>,
 ) -> Result<Option<String>, RunnerError> {
+    if selection.task.mode.as_deref() != Some("tui")
+        && managed_run::workspace_resolution()?.is_some()
+    {
+        return super::standard::run_reserved_shell(preflight, selection);
+    }
     let container_handoff = inside_container_handoff();
     let managed_invocation = (selection.task.mode.as_deref() == Some("tui"))
         .then(|| parse_managed_invocation(&preflight.runtime_args_exec))
@@ -880,6 +885,7 @@ fn own_managed_run(
                 .collect::<Vec<_>>(),
         );
         let owned = OwnedRun {
+            standard_shell: false,
             target,
             lock_wait_ms: resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?,
             admission: selection.task.admission,

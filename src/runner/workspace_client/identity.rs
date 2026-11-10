@@ -308,7 +308,7 @@ mod tests {
         );
         for root in [
             format!("/nerdctl/containers/{id}/namespace/hostname"),
-            format!("/nerdctl/containers/default/short/hostname"),
+            "/nerdctl/containers/default/short/hostname".to_owned(),
             format!("/nerdctl/containers/{id}/{id}/hostname"),
             format!("/nerdctl/containers/default/{id}"),
         ] {

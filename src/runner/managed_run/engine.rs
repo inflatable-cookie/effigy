@@ -200,6 +200,9 @@ fn start_failure_end(error: SpawnError, lost_while_blocked: bool) -> End {
 
 /// Everything a supervisor needs to own one managed run.
 pub(in crate::runner) struct OwnedRun {
+    /// One reserved standard shell: inherit the supervisor's separate capture
+    /// pipes and retain the ordinary shell's exit/signal classification.
+    pub(in crate::runner) standard_shell: bool,
     pub(in crate::runner) target: TaskTarget,
     pub(in crate::runner) lock_wait_ms: u64,
     pub(in crate::runner) admission: Option<effigy_manifest::ManifestTaskAdmission>,
@@ -330,20 +333,25 @@ pub(in crate::runner) fn own<T>(
             return Err(error);
         }
     };
-    let admitted = session.admitted(&mut *run.run_mut()?);
-    if let Err(error) = admitted {
-        let message = format!("the managed run could not open its control socket ({error})");
-        session.refused(Category::Unavailable, &message);
-        let (_, warnings) = run.close_settled(WorkloadOutcome::NotStarted, SETTLE_BUDGET);
-        warn(&warnings);
-        return Err(RunnerError::task_invocation(message));
-    }
-    let secrets = plan
+    let secrets: Vec<Vec<u8>> = plan
         .secrets
         .iter()
         .filter(|value| !value.is_empty())
         .map(|value| value.as_bytes().to_vec())
         .collect();
+    let admitted = if session.admission().is_some() {
+        session.admitted_with_capture(&mut *run.run_mut()?, secrets.clone())
+    } else {
+        session.admitted(&mut *run.run_mut()?)
+    };
+    if let Err(error) = admitted {
+        let message =
+            format!("the managed run could not establish its control and capture ({error})");
+        session.refused(Category::Unavailable, &message);
+        let (_, warnings) = run.close_settled(WorkloadOutcome::NotStarted, SETTLE_BUDGET);
+        warn(&warnings);
+        return Err(RunnerError::task_invocation(message));
+    }
     if session
         .capture_output(&mut *run.run_mut()?, secrets)
         .is_err()
@@ -370,6 +378,7 @@ pub(in crate::runner) fn own<T>(
         .map(|environment| environment.name.clone());
     let now = Instant::now();
     let mut owner = Owner {
+        standard_shell: plan.standard_shell,
         session,
         workloads: Vec::new(),
         waits: EntryWaits::new(
@@ -400,6 +409,7 @@ pub(in crate::runner) fn own<T>(
 }
 
 struct Owner {
+    standard_shell: bool,
     session: EngineSession,
     workloads: Vec<Workload>,
     holds_environment: bool,
@@ -826,8 +836,12 @@ impl Owner {
             env,
             grace: GRACE,
             lifetime: Lifetime::Open(OpenReason::DevServer),
-            terminal: Terminal::Styled {
-                pty: workload.spec.pty,
+            terminal: if self.standard_shell {
+                Terminal::Inherit { capture: false }
+            } else {
+                Terminal::Styled {
+                    pty: workload.spec.pty,
+                }
             },
             label: workload.spec.name.clone(),
         };
@@ -1178,6 +1192,10 @@ impl Owner {
                     ),
                 }
             }
+            End::AllExited if plan.standard_shell => (
+                task_engine::workload_for_exit(first_failure.unwrap_or(0)),
+                None,
+            ),
             End::AllExited => match first_failure {
                 Some(code) => (WorkloadOutcome::Failed { code }, None),
                 None => (WorkloadOutcome::Succeeded, None),
@@ -1207,6 +1225,9 @@ impl Owner {
         });
         // Workload groups are stopped by the settle, in reverse effect order.
         drop(std::mem::take(&mut self.workloads));
+        if plan.standard_shell && matches!(end, End::AllExited) {
+            self.session.finish_output();
+        }
         let (outcome, warnings) = run.close_settled(workload, SETTLE_BUDGET);
         warn(&warnings);
         let summary = match &outcome {

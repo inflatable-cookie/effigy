@@ -166,10 +166,14 @@ case "$FAKE_BOUNDED_MODE:$args" in
         exit 0
         ;;
 esac
+optional_presence() {
+    case "$args" in *"printf 'P"*) printf 'P\n' ;; esac
+}
 if [ "$FAKE_BOUNDED_MODE" = "remove-before-command" ]; then
     case "$args" in
         *"/run/effigy/context/current"*)
             /bin/chmod 000 "$0" "$FAKE_BOUNDED_BIN_DIR/docker" "$FAKE_BOUNDED_BIN_DIR/colima"
+            optional_presence
             printf '1'
             exit 0
             ;;
@@ -178,9 +182,6 @@ fi
 # The bounded entry verifies the prepared guest context instead of installing
 # one (contract 052 §8.9). These answers are the published context the fixture
 # wrote: one generation, one pinned executable, nothing refreshed.
-optional_presence() {
-    case "$args" in *"printf 'P"*) printf 'P\n' ;; esac
-}
 case "$args" in
     *"/run/effigy/context/current"*)
         if [ "$FAKE_BOUNDED_MODE" = "workspace-hang" ]; then

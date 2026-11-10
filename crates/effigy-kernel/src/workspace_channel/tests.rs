@@ -5160,11 +5160,104 @@ fn observe_query_negotiation_is_not_inherited_by_a_fresh_connection() {
 }
 
 #[test]
+fn a_command_settled_before_owner_resume_keeps_its_first_run_and_checks_the_acknowledged_fence() {
+    struct Closing<'a> {
+        root: &'a StateRoot,
+        fence: Option<run::Fence>,
+        wrong: bool,
+        calls: usize,
+    }
+    impl Admission for Closing<'_> {
+        fn admitted_fence(&self, _: &AdmissionTicket) -> Option<run::Fence> {
+            let mut fence = self.fence.clone()?;
+            if self.wrong {
+                fence.generation = Generation::new(fence.generation.get() + 1);
+            }
+            Some(fence)
+        }
+        fn admit(
+            &mut self,
+            cx: &EffectContext,
+            ticket: &AdmissionTicket,
+            resolved: &ResolvedInvocation,
+        ) -> Result<(), Refusal> {
+            let mut run = Run::begin_admitted(
+                cx,
+                self.root,
+                resolved,
+                BeginOpts {
+                    id: ticket.run(),
+                    wait: Wait::FailFast,
+                    acknowledge: vec![],
+                    next: next_argv(),
+                    custody: None,
+                },
+                &cleanup(cx),
+                &mut NoEffects,
+                ticket.clone(),
+            )
+            .map_err(refusal_from)?;
+            self.fence = Some(run.fence().clone());
+            self.calls += 1;
+            run.finish(crate::outcome::WorkloadOutcome::Failed { code: 23 })
+                .map_err(refusal_from)?;
+            run.settle(&cleanup(cx), &mut NoEffects)
+                .map_err(refusal_from)?;
+            Ok(())
+        }
+    }
+    for wrong in [false, true] {
+        let (_fixture, cx, root, session) = journal("effigy-fast-admission");
+        let mut dispatcher = Dispatcher::new(
+            Closing {
+                root: &root,
+                fence: None,
+                wrong,
+                calls: 0,
+            },
+            Resolver::new(task("workspace-channel").resource()),
+            Observer::default(),
+            Ids::new(&[183]),
+        );
+        let id = RequestId::new([83; 16]);
+        let digest = Digest::of(b"short command");
+        let body = invocation_body("build");
+        let result = dispatcher.invoke(
+            &cx,
+            &observe_context(),
+            &root,
+            session,
+            id,
+            digest.clone(),
+            &body,
+        );
+        if wrong {
+            assert!(matches!(result, Err(refusal) if refusal.code == RefusalCode::Unknown));
+        } else {
+            assert!(
+                matches!(result, Ok(AdmissionReply::Accepted(Accepted { run, .. })) if run == RunId::new(7, [183; 10]).unwrap())
+            );
+            assert!(dispatcher.admitted.is_empty() && dispatcher.admitted_owners.is_empty());
+            let replay = dispatcher
+                .invoke(&cx, &observe_context(), &root, session, id, digest, &body)
+                .unwrap();
+            assert!(matches!(replay, AdmissionReply::Completed(_)));
+        }
+        assert_eq!(dispatcher.admission.calls, 1);
+    }
+}
+
+#[test]
 fn outcome_observation_is_bound_to_accepted_request_and_never_admits() {
     let (_fixture, cx, root, session) = journal("effigy-outcome-observe");
     let (mut run, run_id) = admitted_run(&cx, &root, session, 10, &[81]);
     let mut host = server(session, &[]);
     let id = RequestId::new([10; 16]);
+    host.dispatcher.admitted.insert(run_id);
+    host.dispatcher.admitted_owners.insert(
+        run_id,
+        run::resume_owner(&cx, &root, session, run_id).unwrap(),
+    );
     host.observed_invocations
         .insert(id, (run_id, Digest::of(b"invite")));
     let grant = host.grants.authenticate(&capability()).unwrap().clone();
@@ -5194,6 +5287,7 @@ fn outcome_observation_is_bound_to_accepted_request_and_never_admits() {
     assert!(
         matches!(poll(&mut host, observe(id, run_id), session), ResponseOutcome::Observed(value) if value["state"] == "pending")
     );
+    assert!(host.dispatcher.admitted.contains(&run_id));
     assert!(matches!(
         poll(
             &mut host,
@@ -5221,6 +5315,8 @@ fn outcome_observation_is_bound_to_accepted_request_and_never_admits() {
     assert!(
         matches!(poll(&mut host, observe(id, run_id), session), ResponseOutcome::Observed(value) if value["outcome"]["workload"]["Failed"]["code"] == 7)
     );
+    assert!(!host.dispatcher.admitted.contains(&run_id));
+    assert!(!host.dispatcher.admitted_owners.contains_key(&run_id));
     let mut wrong_grants = GrantBook::new();
     let mut wrong_binding = binding(session);
     wrong_binding.session.generation = Generation::new(99);

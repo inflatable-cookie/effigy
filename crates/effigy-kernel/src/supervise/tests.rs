@@ -665,6 +665,244 @@ fn engine_supervisor_config_carries_the_workspace_admission() {
 }
 
 #[test]
+fn workspace_capture_busy_read_waits_within_the_original_window() {
+    use crate::custody::{CanonicalOutput, Stream};
+    let world = World::new();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, &world.home()).unwrap();
+    let run = Run::begin(
+        &cx,
+        &root,
+        &inv("workspace-busy-output"),
+        opts(45, None),
+        &cleanup(&cx),
+        &mut Strict,
+    )
+    .unwrap();
+    let log = |sequence, stream| {
+        run.capture_log(sequence, stream, cx.operation().limits())
+            .unwrap()
+            .unwrap()
+    };
+    let output = CanonicalOutput::for_workspace(
+        log(WORKSPACE_MERGED_SEQUENCE, Stream::Stdout),
+        [
+            log(OUTPUT_SEQUENCE, Stream::Stdout),
+            log(OUTPUT_SEQUENCE, Stream::Stderr),
+        ],
+        vec![],
+        cx.operation().limits(),
+    )
+    .unwrap();
+    output.feed(0, b"live\n", false).unwrap();
+    let path = root
+        .path()
+        .join("runs")
+        .join(run.id().to_string())
+        .join("0.stdout.guard");
+    let guard = || {
+        crate::custody::merged::atomic::FileLock::exclusive(
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    let held = guard();
+    let id = run.id();
+    std::thread::scope(|scope| {
+        let reader = scope.spawn(|| {
+            crate::run::read_log(
+                &cx.operation().observe().unwrap(),
+                &root,
+                id,
+                OUTPUT_SEQUENCE,
+                Stream::Stdout,
+                0,
+                4096,
+            )
+        });
+        std::thread::sleep(Duration::from_millis(30));
+        drop(held);
+        let Observed::Verified(read, _) = reader.join().unwrap() else {
+            panic!("a completed writer commit must remain readable")
+        };
+        assert_eq!(read.bytes, b"live\n");
+    });
+    let _held = guard();
+    let short = cx.child(Duration::from_millis(10));
+    let started = Instant::now();
+    assert!(matches!(
+        crate::run::read_log(
+            &short.operation().observe().unwrap(),
+            &root,
+            id,
+            OUTPUT_SEQUENCE,
+            Stream::Stdout,
+            0,
+            4096
+        ),
+        Observed::Unknown(
+            crate::observe::UnknownReason::Busy { .. }
+                | crate::observe::UnknownReason::TimedOut { .. }
+        )
+    ));
+    assert!(started.elapsed() < Duration::from_millis(250));
+}
+
+#[test]
+fn workspace_capture_keeps_distinct_redacted_durable_streams() {
+    use crate::custody::{CanonicalOutput, Stream};
+    let world = World::new();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, &world.home()).unwrap();
+    let run = Run::begin(
+        &cx,
+        &root,
+        &inv("workspace-output"),
+        opts(43, None),
+        &cleanup(&cx),
+        &mut Strict,
+    )
+    .unwrap();
+    let log = |sequence, stream| {
+        run.capture_log(sequence, stream, cx.operation().limits())
+            .unwrap()
+            .unwrap()
+    };
+    let output = CanonicalOutput::for_workspace(
+        log(WORKSPACE_MERGED_SEQUENCE, Stream::Stdout),
+        [
+            log(OUTPUT_SEQUENCE, Stream::Stdout),
+            log(OUTPUT_SEQUENCE, Stream::Stderr),
+        ],
+        vec![b"supersecret".to_vec()],
+        cx.operation().limits(),
+    )
+    .unwrap();
+    let read = |stream| {
+        let Observed::Verified(read, _) = crate::run::read_log(
+            &cx.operation().observe().unwrap(),
+            &root,
+            run.id(),
+            OUTPUT_SEQUENCE,
+            stream,
+            0,
+            4096,
+        ) else {
+            panic!("durable workspace projection unavailable")
+        };
+        read
+    };
+    assert!(read(Stream::Stdout).bytes.is_empty());
+    assert!(read(Stream::Stderr).bytes.is_empty());
+    output.feed(0, b"stdout-only\nsuper", false).unwrap();
+    output.feed(1, b"stderr-only\n", false).unwrap();
+    output.feed(0, b"secret\n", false).unwrap();
+    output.finish().unwrap();
+    let stdout = read(Stream::Stdout);
+    let stderr = read(Stream::Stderr);
+    assert_eq!(stdout.bytes, b"stdout-only\n[REDACTED]\n");
+    assert_eq!(stderr.bytes, b"stderr-only\n");
+    assert_eq!(stdout.end, stdout.bytes.len() as u64);
+    assert_eq!(stderr.end, stderr.bytes.len() as u64);
+    assert!(!stdout.truncated && !stderr.truncated);
+    output.fail();
+    assert!(read(Stream::Stdout).truncated && read(Stream::Stderr).truncated);
+    // Removing one projection's marker must never impersonate the older
+    // merged format's intentionally empty stderr stream.
+    std::fs::remove_file(
+        root.path()
+            .join("runs")
+            .join(run.id().to_string())
+            .join("0.stderr.plain"),
+    )
+    .unwrap();
+    assert!(matches!(
+        crate::run::read_log(
+            &cx.operation().observe().unwrap(),
+            &root,
+            run.id(),
+            OUTPUT_SEQUENCE,
+            Stream::Stderr,
+            0,
+            4096
+        ),
+        Observed::Unknown(_)
+    ));
+    std::fs::remove_file(
+        root.path()
+            .join("runs")
+            .join(run.id().to_string())
+            .join("0.stdout.plain"),
+    )
+    .unwrap();
+    assert!(matches!(
+        crate::run::read_log(
+            &cx.operation().observe().unwrap(),
+            &root,
+            run.id(),
+            OUTPUT_SEQUENCE,
+            Stream::Stdout,
+            0,
+            4096
+        ),
+        Observed::Unknown(_)
+    ));
+}
+
+#[test]
+fn workspace_capture_line_overflow_marks_both_projections_incomplete() {
+    use crate::custody::{CanonicalOutput, Stream};
+    let world = World::new();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, &world.home()).unwrap();
+    let run = Run::begin(
+        &cx,
+        &root,
+        &inv("workspace-line-bound"),
+        opts(44, None),
+        &cleanup(&cx),
+        &mut Strict,
+    )
+    .unwrap();
+    let log = |sequence, stream| {
+        run.capture_log(sequence, stream, cx.operation().limits())
+            .unwrap()
+            .unwrap()
+    };
+    let output = CanonicalOutput::for_workspace(
+        log(WORKSPACE_MERGED_SEQUENCE, Stream::Stdout),
+        [
+            log(OUTPUT_SEQUENCE, Stream::Stdout),
+            log(OUTPUT_SEQUENCE, Stream::Stderr),
+        ],
+        vec![],
+        cx.operation().limits(),
+    )
+    .unwrap();
+    assert!(output
+        .feed(0, &vec![b'x'; cx.operation().limits().line_max + 1], false)
+        .is_err());
+    for stream in [Stream::Stdout, Stream::Stderr] {
+        let Observed::Verified(read, _) = crate::run::read_log(
+            &cx.operation().observe().unwrap(),
+            &root,
+            run.id(),
+            OUTPUT_SEQUENCE,
+            stream,
+            0,
+            4096,
+        ) else {
+            panic!("truncation evidence unavailable")
+        };
+        assert!(read.truncated);
+    }
+}
+
+#[test]
 fn canonical_supervisor_pipe_capture_sanitizes_before_redaction_without_regrouping() {
     use crate::custody::{CanonicalOutput, CaptureState, Stream};
     let world = World::new();
