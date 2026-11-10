@@ -926,10 +926,17 @@ fn shared_render_relocates_path_components_only() {
         compose_yaml: "services:\n  db:\n    volumes:\n      - /owned/shared/config.sql:/init.sql:ro\n      - /owned/shared-other/config.sql:/other.sql:ro\n    environment:\n      LITERAL: /owned/shared/config.sql\n    command: cat /owned/shared/config.sql\n".into(),
         config_files: Default::default(),
     };
+    let original: serde_yaml::Value = serde_yaml::from_str(&pending.compose_yaml).unwrap();
+    let old_digest =
+        effigy_gateway::ports::sha256_hex(serde_yaml::to_string(&original).unwrap().as_bytes());
     let (render, digest, _) =
         finish_shared_render(pending, crate::compose::ComposeBackend::Docker).unwrap();
     let document: serde_yaml::Value =
         serde_yaml::from_slice(&render.files[Path::new("shared.generated.compose.yml")]).unwrap();
+    assert_ne!(
+        digest, old_digest,
+        "corrected bytes must not reuse the old immutable directory"
+    );
     let service = &document["services"]["db"];
     assert_eq!(
         service["volumes"][0],

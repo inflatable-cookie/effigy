@@ -754,7 +754,9 @@ A shared service belongs to no checkout, so it is not part of a generation. Its
 Compose input and every file its fragment binds (MariaDB and Postgres init SQL)
 are published at one machine-wide, content-addressed directory under the Effigy
 home — `<effigy home>/shared-services/<project>/<digest>/` — with absolute bind
-sources. Two checkouts with the same shared declaration therefore hand Compose
+sources. Its digest hashes the field-aware relative file references before binding
+them to that absolute directory; literal metadata stays unchanged. Two checkouts
+with the same shared declaration therefore hand Compose
 byte-identical input at the same absolute path, and its config-hash does not
 change with the checkout. That render also names itself on the service it
 creates (`com.effigy.shared-render`). `up` reads the label from the runtime: a

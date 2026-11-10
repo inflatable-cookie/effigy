@@ -521,6 +521,13 @@ fn finish_shared_render(
     if backend == crate::compose::ComposeBackend::ColimaNerdctl {
         healthcheck::normalize_exec_form(&mut document);
     }
+    // Hash the field-aware render before binding its own absolute directory.
+    crate::workspace::map_compose_paths(&mut document, &mut |source, _| {
+        Path::new(source)
+            .strip_prefix(&pending.directory)
+            .ok()
+            .map(|relative| format!("./{}", relative.display()))
+    });
     let mut content = serde_yaml::to_string(&document)
         .map_err(error)?
         .into_bytes();
@@ -536,9 +543,8 @@ fn finish_shared_render(
     label_shared_render(&mut document, &digest);
     let directory = pending.directory.join(&digest);
     crate::workspace::map_compose_paths(&mut document, &mut |source, _| {
-        Path::new(source)
-            .strip_prefix(&pending.directory)
-            .ok()
+        source
+            .strip_prefix("./")
             .map(|relative| directory.join(relative).display().to_string())
     });
     let mut files = BTreeMap::new();
