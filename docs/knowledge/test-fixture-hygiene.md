@@ -550,3 +550,12 @@ variable during a pinned-cache status observation. A direct concurrency control
 holds the ambient scrubber guard, observes the provider worker queued behind it,
 then restores the environment and requires a valid provider plan. No preview,
 offline-cache or provider-report assertion is relaxed.
+
+The dependent-replacement gateway proof uses `fixture_listener_address` for its
+dependent listener, outside the OS client ephemeral range. A hosted Linux start
+was refused because that listener's reserved port already answered before its
+child existed; the log did not record the peer identity, so its precise cause
+is unproven. The bounded address avoids client traffic taking the dependent's
+port. Every app still uses `:0`, preserving automatic allocation in all three
+scopes and both text/JSON fronts. Dependency generation, route replacement,
+foreign identity, restart-port retention and scope teardown assertions remain.

@@ -1189,8 +1189,14 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
             .as_table_mut()
             .unwrap()
             .insert("env".into(), toml::Value::Table(env));
+        // The dependent exercises replacement/teardown, not dynamic port
+        // selection. Keep it outside client ephemeral ports so readiness
+        // traffic cannot take its address before its child starts. The app
+        // above still proves :0 allocation in every scope and both CLI fronts.
+        let bind =
+            fixture_listener_address(&format!("dependent:{index}:{}", fixture.path().display()));
         let listener: toml::Value = toml::from_str(&format!(
-            "bind = \"127.0.0.1:0\"\n[readiness]\npath = \"/health\"\nstatus = 200\ntimeout_secs = 20\n[route]\ndomain = {}\ntls = true\n", toml_quote(&format!("dependent.{domain}")))).unwrap();
+            "bind = {}\n[readiness]\npath = \"/health\"\nstatus = 200\ntimeout_secs = 20\n[route]\ndomain = {}\ntls = true\n", toml_quote(&bind), toml_quote(&format!("dependent.{domain}")))).unwrap();
         consumer
             .as_table_mut()
             .unwrap()
