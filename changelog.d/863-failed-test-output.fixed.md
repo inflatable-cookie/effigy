@@ -1,0 +1,1 @@
+Failed non-interactive task steps now retain their complete captured output in a private log under the run scratch and name it in failure evidence. Bounded summaries prioritize failing test names with their first panic or assertion lines over passing progress.

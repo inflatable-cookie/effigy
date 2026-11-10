@@ -267,6 +267,12 @@ observation.
 - A run that failed, was cancelled or timed out keeps it for 24 hours, and the
   failure output names the path. The 24 hours start when the run ended, not when
   it started, so a long run that fails late keeps its full window.
+- A failed non-interactive sequence step writes its complete captured stdout and
+  stderr, with credential redaction, to a private `failed-step-*.log` file here.
+  Failure evidence names the file. An explicit caller `TMPDIR` receives the file
+  when no Effigy scratch scope exists; its owner controls retention. Failure
+  names and their first panic/assertion lines take priority over passing noise
+  within the existing human/JSON evidence budget; overflow stays in the file.
 - A run that loses its directory — the path is gone, or something else now
   occupies the name without Effigy's marker for that run — never writes a
   conclusion into it and never removes it.

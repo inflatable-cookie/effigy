@@ -475,7 +475,7 @@ fn run_steps(
                 &mut child,
             )
         };
-        let (code, stdout, stderr, workload) = match result {
+        let (code, stdout, mut stderr, workload) = match result {
             Ok(exit) => exit,
             Err(error) => {
                 let rendered = error
@@ -521,6 +521,10 @@ fn run_steps(
                 )
             }
         };
+        if code != 0 && !streams_output() {
+            let retained = crate::runner::scratch::retain_step_output(&stdout, &stderr);
+            stderr.push_str(&format!("\n{retained}\n"));
+        }
         let outcome_label = progress.strip_prefix("running ").unwrap_or(&progress);
         if code == 0 {
             step.succeed(&format!("{outcome_label} finished"));
