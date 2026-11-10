@@ -25,7 +25,7 @@ if args and args[0] == 'ps':
     fmt = args[args.index('--format') + 1] if '--format' in args else ''
     for r in selected():
         if 'shared-render' in fmt:
-            fields = [r['name'], 'Up 1 minute', r.get('render', ''), r['project']]
+            fields = [r['name'], 'Up 1 minute', r.get('render', ''), r['project'], r['service']]
         elif '{{.ID}}' in fmt and '{{.Status}}' in fmt:
             fields = [r['id'], 'Up 1 minute', 'False', r['checkout'], r['checkout'], r.get('scope', '')]
         elif '{{.ID}}' in fmt:
