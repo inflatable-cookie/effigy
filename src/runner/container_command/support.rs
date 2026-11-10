@@ -2407,7 +2407,7 @@ mod tests {
         /// `container_render`.
         fn new(name: &str, project: &str, container: &str, container_render: &str) -> Self {
             let listing = format!(
-                "printf '%s\\t%s\\t%s\\t%s\\n' '{container}' 'Up 2 minutes' '{container_render}' '{project}'"
+                "printf '%s\\t%s\\t%s\\t%s\\tlegacy_mysql\\n' '{container}' 'Up 2 minutes' '{container_render}' '{project}'"
             );
             Self::build(name, project, &listing)
         }
@@ -2535,7 +2535,7 @@ mod tests {
 
         /// Whether the named data volume still holds its rows.
         fn volume_kept(&self) -> bool {
-            self.volume.join("rows").is_file()
+            std::fs::read(self.volume.join("rows")).is_ok_and(|bytes| bytes == b"kept\n")
         }
     }
 
@@ -2627,7 +2627,7 @@ mod tests {
         // reads and the project inventory the restart-policy apply reads, so
         // the apply reaches its update.
         let listing = format!(
-            "case \"$*\" in *com.effigy.shared-render*) printf '%s\\t%s\\t%s\\t%s\\n' '{container}' 'Up 2 minutes' 'this-render' '{project}' ;; *) printf '%s\\t%s\\t\\t%s\\t%s\\tlegacy_mysql\\t\\n' '{container}' 'Up 2 minutes' '{project}' '{project}' ;; esac"
+            "case \"$*\" in *com.effigy.shared-render*) printf '%s\\t%s\\t%s\\t%s\\tlegacy_mysql\\n' '{container}' 'Up 2 minutes' 'this-render' '{project}' ;; *) printf '%s\\t%s\\t\\t%s\\t%s\\tlegacy_mysql\\t\\n' '{container}' 'Up 2 minutes' '{project}' '{project}' ;; esac"
         );
         let fixture = SharedFixture::with_compose(
             "effigy-shared-restart-frame-",
@@ -2793,7 +2793,7 @@ mod tests {
         );
         let restart_rows = restart_row.repeat(rows);
         let listing = format!(
-            "case \"$*\" in *com.effigy.shared-render*) printf '%s\\t%s\\t%s\\t%s\\n' '{name}' 'Up 2 minutes' 'this-render' '{project}' ;; *) {restart_rows} ;; esac"
+            "case \"$*\" in *com.effigy.shared-render*) printf '%s\\t%s\\t%s\\t%s\\tlegacy_mysql\\n' '{name}' 'Up 2 minutes' 'this-render' '{project}' ;; *) {restart_rows} ;; esac"
         );
         let fixture = SharedFixture::with_compose(
             "effigy-shared-restart-proof-",
@@ -3083,6 +3083,65 @@ mod tests {
             "nothing is published, stopped or started: {calls:?}"
         );
         assert!(!fixture.render_dir("this-render").exists());
+    }
+
+    #[test]
+    fn malformed_shared_inventory_refuses_before_publication_or_mutation() {
+        let project = "effigy-shared-invalid-inventory";
+        let valid = format!("db\tUp 2 minutes\tprevious-render\t{project}\tlegacy_mysql");
+        let rows = [
+            "db".to_owned(),
+            format!("db\tUp 2 minutes\tprevious-render\t{project}"),
+            format!("\tUp 2 minutes\tprevious-render\t{project}\tlegacy_mysql"),
+            "db\tUp 2 minutes\tprevious-render\t\tlegacy_mysql".to_owned(),
+            "db\tUp 2 minutes\tprevious-render\tforeign\tlegacy_mysql".to_owned(),
+            format!("db\t\tprevious-render\t{project}\tlegacy_mysql"),
+            format!("{valid}\textra"),
+            format!("{valid}\ndb"),
+        ];
+        let listings = rows
+            .iter()
+            .map(|row| format!("printf '%s\\n' '{row}'"))
+            .chain(["printf '\\377'".to_owned()]);
+        for listing in listings {
+            let fixture = SharedFixture::build("effigy-shared-malformed-", project, &listing);
+            let _env = runtime_env(&fixture);
+            for present in [false, true] {
+                if !present {
+                    fixture.vanish_render("this-render");
+                } else {
+                    std::fs::create_dir(fixture.render_dir("this-render")).unwrap();
+                    std::fs::write(
+                        fixture.render_dir("this-render").join("compose.yml"),
+                        b"unpublished sentinel",
+                    )
+                    .unwrap();
+                }
+                let error = super::ensure_shared_services_with_renders(
+                    &fixture.policy(project, "this-render"),
+                    &[fixture.render("this-render")],
+                )
+                .unwrap_err();
+                let details: serde_json::Value =
+                    serde_json::from_str(error.json_error_details().unwrap()).unwrap();
+                assert_eq!(details["waiting_on"][0]["step"], "inventory", "{listing}");
+                assert!(
+                    error.to_string().contains("malformed or undecodable"),
+                    "{error}"
+                );
+                let bytes =
+                    std::fs::read(fixture.render_dir("this-render").join("compose.yml")).ok();
+                assert_eq!(
+                    bytes.as_deref(),
+                    present.then_some(b"unpublished sentinel".as_slice())
+                );
+                assert!(
+                    fixture.calls().iter().all(|call| call.starts_with("ps ")),
+                    "{listing}"
+                );
+                assert!(fixture.volume_kept());
+            }
+        }
     }
 
     #[test]
@@ -3376,7 +3435,7 @@ variant = "default"
         fn list_container(&self, container: &str, render: &str, project: &str) {
             std::fs::write(
                 &self.listing,
-                format!("{container}\tUp 2 minutes\t{render}\t{project}\n"),
+                format!("{container}\tUp 2 minutes\t{render}\t{project}\tdb\n"),
             )
             .unwrap();
         }
@@ -3391,7 +3450,7 @@ variant = "default"
 
         /// Whether the runtime's named data volume still holds its rows.
         fn volume_kept(&self) -> bool {
-            self.volume.join("rows").is_file()
+            std::fs::read(self.volume.join("rows")).is_ok_and(|bytes| bytes == b"kept\n")
         }
     }
 

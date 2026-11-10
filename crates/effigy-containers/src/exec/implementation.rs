@@ -343,25 +343,32 @@ pub fn shared_project_containers(
         OsString::from(SHARED_PROJECT_PS_FORMAT),
     ];
     let output = capture_runtime_command(repo_root, policy, &args, "runtime ps --all", None, None)?;
-    Ok(String::from_utf8_lossy(&output.stdout)
+    let refuse = || {
+        ContainerExecError::refused(
+            "runtime ps --all",
+            "shared inventory is malformed or undecodable",
+        )
+    };
+    std::str::from_utf8(&output.stdout)
+        .map_err(|_| refuse())?
         .lines()
-        .filter_map(|line| {
-            let mut fields = line.split('\t');
-            let container_name = fields.next()?.trim();
-            let status = fields.next().unwrap_or_default();
-            let render = fields.next().unwrap_or_default().trim();
-            let project = fields.next().unwrap_or_default().trim();
-            let service = fields.next().unwrap_or_default().trim();
-            (!container_name.is_empty() && project == project_name).then(|| {
-                SharedProjectContainer {
-                    container_name: container_name.to_owned(),
-                    running: super::parse::compose_status_is_running(status),
-                    render: (!render.is_empty()).then(|| render.to_owned()),
-                    service: (!service.is_empty()).then(|| service.to_owned()),
-                }
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            let [name, status, render, project, service] = fields.as_slice() else {
+                return Err(refuse());
+            };
+            if name.trim().is_empty() || status.trim().is_empty() || *project != project_name {
+                return Err(refuse());
+            }
+            Ok(SharedProjectContainer {
+                container_name: name.trim().to_owned(),
+                running: super::parse::compose_status_is_running(status),
+                render: (!render.is_empty()).then(|| (*render).to_owned()),
+                service: (!service.is_empty()).then(|| (*service).to_owned()),
             })
         })
-        .collect())
+        .collect()
 }
 
 /// Runtime `ps` arguments listing one Compose project's containers. The label

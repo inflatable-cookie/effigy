@@ -755,8 +755,9 @@ creates the new one, so its published host port is never held twice, and its
 named data volume is kept. An unchanged shared container is not touched. One
 machine gate per shared Compose project serialises the ensure, so two checkouts'
 `up`s never interleave a replacement. Gate or inventory failure refuses before
-publication or runtime mutation, even when the render is present. Empty verified
-inventory permits first creation. Replacement stops each stale container before
+publication or runtime mutation, even when the render is present. Invalid UTF-8,
+incomplete rows or mismatched project labels make inventory unknown; a valid
+empty inventory permits first creation. Replacement stops each stale container before
 removing it; a failed stop prevents removal and apply. Every runtime call is
 bounded, and a refusal names its exact phase. The render is published by that
 ensure, not by `prepare`, so a vanished directory is seen before it is restored. A
