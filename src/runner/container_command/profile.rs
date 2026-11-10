@@ -1370,7 +1370,6 @@ mod progress_tests {
             "a finished probe is not the operation in flight: {frame}"
         );
         assert!(frame.contains("100GiB disk (target=300GiB)"), "{frame}");
-        assert!(frame.ends_with("; 57s elapsed"), "{frame}");
 
         // A later operation moves the wait with it, at a second fake time.
         progress.colima_command(
@@ -1395,7 +1394,7 @@ mod progress_tests {
 
     /// The production phase mapping: every phase a recovery or reset reports
     /// names the command it puts in flight, and never the list probe that ran
-    /// before it. Two fake-clock reads per phase prove the frame moves.
+    /// before it. The UI contract owns elapsed-time formatting.
     #[test]
     fn recovery_phases_name_the_command_in_flight_on_the_fake_clock() {
         let progress = ProfileProgress::new(
@@ -1439,9 +1438,9 @@ mod progress_tests {
             ),
         ];
 
-        for (index, (phase, operation, awaiting)) in phases.into_iter().enumerate() {
+        for (phase, operation, awaiting) in phases {
             progress.recovery_phase(phase);
-            let early = progress.detailed_frame_at(Duration::from_secs(index as u64 * 10));
+            let early = progress.detailed_frame_at(Duration::ZERO);
             assert!(
                 early.starts_with(operation),
                 "{phase:?}: expected `{operation}` first, got {early}"
@@ -1457,12 +1456,6 @@ mod progress_tests {
             assert!(
                 early.contains("last: profile `effigy` reported Running"),
                 "{phase:?}: the last profile state stays as the event: {early}"
-            );
-            let later = progress.detailed_frame_at(Duration::from_secs(index as u64 * 10 + 25));
-            assert_ne!(early, later, "{phase:?}: the frame must move with time");
-            assert!(
-                later.ends_with(&format!("; {}s elapsed", index as u64 * 10 + 25)),
-                "{phase:?}: {later}"
             );
         }
     }

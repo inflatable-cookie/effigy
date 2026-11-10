@@ -1342,49 +1342,74 @@ mod tests {
         let resolve = |reference| {
             resolve_task_step(reference, &preflight, &selection, &mut Vec::new()).unwrap()
         };
-        for reference in [
-            "secrets init",
-            "secrets set API_KEY",
-            "tasks --json",
-            "deps",
-            "changelog validate",
-            "doctor",
-            "release status",
-            "deploy model",
-            "bundle inspect",
-            "docs add-log-index run.log",
-            "exec true",
-            "docs check links README.md knowledge/README.md",
-            "docs check links",
-            "bundle sync",
-        ] {
+        type BuiltinCase = (&'static str, fn(&Command) -> bool);
+        let cases: &[BuiltinCase] = &[
+            (
+                "secrets init",
+                |command| matches!(command, Command::Secrets(args) if matches!(args.subcommand, effigy_cli::SecretsSubcommand::Init)),
+            ),
+            (
+                "secrets set API_KEY",
+                |command| matches!(command, Command::Secrets(args) if matches!(&args.subcommand, effigy_cli::SecretsSubcommand::Set { name } if name == "API_KEY")),
+            ),
+            (
+                "tasks --json",
+                |command| matches!(command, Command::Tasks(args) if args.output_json),
+            ),
+            ("deps", |command| matches!(command, Command::Deps(_))),
+            ("changelog validate", |command| {
+                matches!(command, Command::Changelog(_))
+            }),
+            ("doctor", |command| matches!(command, Command::Doctor(_))),
+            ("release status", |command| {
+                matches!(command, Command::Release(_))
+            }),
+            ("deploy model", |command| {
+                matches!(command, Command::Deploy(_))
+            }),
+            (
+                "bundle inspect",
+                |command| matches!(command, Command::Bundle(args) if matches!(args.subcommand, effigy_cli::BundleSubcommand::Inspect)),
+            ),
+            (
+                "docs add-log-index run.log",
+                |command| matches!(command, Command::Docs(args) if matches!(&args.subcommand, effigy_cli::DocsSubcommand::AddLogIndex { log_path } if log_path == Path::new("run.log"))),
+            ),
+            (
+                "exec true",
+                |command| matches!(command, Command::Exec(args) if args.command.as_slice() == ["true"]),
+            ),
+            (
+                "docs check links README.md knowledge/README.md",
+                |command| matches!(command, Command::Docs(args) if matches!(&args.subcommand, effigy_cli::DocsSubcommand::Check { kind: effigy_cli::DocsCheckKind::Links, paths, .. } if paths == &[PathBuf::from("README.md"), PathBuf::from("knowledge/README.md")])),
+            ),
+            (
+                "docs check links",
+                |command| matches!(command, Command::Docs(args) if matches!(&args.subcommand, effigy_cli::DocsSubcommand::Check { kind: effigy_cli::DocsCheckKind::Links, paths, .. } if paths.is_empty())),
+            ),
+            (
+                "bundle sync",
+                |command| matches!(command, Command::Bundle(args) if matches!(args.subcommand, effigy_cli::BundleSubcommand::Sync)),
+            ),
+        ];
+        for &(reference, expected) in cases {
             let (parsed, cwd) = match resolve(reference) {
                 StepAction::Helper { argv, cwd, .. } => (parse_helper_argv(&argv), cwd),
                 StepAction::Exec { args, cwd } => (Command::Exec(args), cwd),
                 _ => panic!("expected builtin: {reference}"),
             };
+            assert!(expected(&parsed), "{reference}: {parsed:?}");
             assert_eq!(cwd, catalog);
             assert_eq!(
                 crate::runner::command_context::command_repo_override(&parsed),
-                if reference.starts_with("docs check") {
+                if matches!(&parsed, Command::Docs(args) if matches!(args.subcommand, effigy_cli::DocsSubcommand::Check { .. }))
+                {
                     None
                 } else {
                     Some(catalog.clone())
                 },
                 "{reference}"
             );
-            match reference {
-                "secrets init" => assert!(
-                    matches!(parsed, Command::Secrets(args) if matches!(args.subcommand, effigy_cli::SecretsSubcommand::Init))
-                ),
-                "secrets set API_KEY" => assert!(
-                    matches!(parsed, Command::Secrets(args) if matches!(&args.subcommand, effigy_cli::SecretsSubcommand::Set { name } if name == "API_KEY"))
-                ),
-                "exec true" => assert!(
-                    matches!(parsed, Command::Exec(args) if args.command.as_slice() == ["true"])
-                ),
-                _ => {}
-            }
         }
         for name in [
             "docs",

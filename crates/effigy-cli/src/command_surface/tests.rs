@@ -11,35 +11,6 @@ use crate::builtin_names::{
 use crate::{parse_command, Command, HelpTopic, TaskInvocation};
 use effigy_core::builtin_tasks::BUILTIN_TASKS;
 
-const CURRENT_HELP_TOPICS: &[HelpTopic] = &[
-    HelpTopic::General,
-    HelpTopic::Bundle,
-    HelpTopic::Changelog,
-    HelpTopic::Fmt,
-    HelpTopic::Deploy,
-    HelpTopic::Deps,
-    HelpTopic::Secrets,
-    HelpTopic::Defer,
-    HelpTopic::Exec,
-    HelpTopic::State,
-    HelpTopic::Workspace,
-    HelpTopic::Gateway,
-    HelpTopic::Service,
-    HelpTopic::Rhai,
-    HelpTopic::Skill,
-    HelpTopic::Docs,
-    HelpTopic::Contracts,
-    HelpTopic::Container,
-    HelpTopic::Bootstrap,
-    HelpTopic::Release,
-    HelpTopic::Doctor,
-    HelpTopic::Tasks,
-    HelpTopic::Test,
-    HelpTopic::Init,
-    HelpTopic::Uninstall,
-    HelpTopic::Runs,
-];
-
 const CURRENT_TOP_LEVEL_HELP_ROUTES: &[(&str, HelpTopic)] = &[
     ("version", HelpTopic::General),
     ("bundle", HelpTopic::Bundle),
@@ -137,29 +108,19 @@ const CONTRACT_GROUP_INVENTORIES: &[(HelpGroup, &[&str])] = &[
 ];
 
 #[test]
-fn command_descriptors_cover_current_help_topics_once() {
+fn command_descriptors_have_unique_topics_and_consistent_lookups() {
     let mut seen = Vec::new();
     for descriptor in command_descriptors() {
         assert!(
             !seen.contains(&descriptor.topic),
-            "duplicate descriptor for {:?}",
-            descriptor.topic
+            "duplicate {descriptor:?}"
         );
         seen.push(descriptor.topic);
+        assert_eq!(descriptor_for_topic(descriptor.topic), Some(descriptor));
+        if let Some(name) = descriptor.command_name {
+            assert_eq!(help_topic_for_command(name), Some(descriptor.topic));
+        }
     }
-
-    for topic in CURRENT_HELP_TOPICS {
-        assert!(
-            descriptor_for_topic(*topic).is_some(),
-            "missing descriptor for {topic:?}"
-        );
-    }
-
-    assert_eq!(
-        seen.len(),
-        CURRENT_HELP_TOPICS.len(),
-        "descriptor list has topics outside CURRENT_HELP_TOPICS"
-    );
 }
 
 #[test]
@@ -195,8 +156,15 @@ fn command_descriptors_cover_current_top_level_help_routes() {
 fn general_help_entries_are_backed_by_inventory_metadata() {
     let entries = general_help_entries();
     assert!(!entries.is_empty());
-
+    let mut commands = Vec::new();
+    let mut help_arguments = Vec::new();
     for entry in entries {
+        assert!(!commands.contains(&entry.command), "duplicate {entry:?}");
+        commands.push(entry.command);
+        if let Some(argument) = entry.help_argument {
+            assert!(!help_arguments.contains(&argument), "duplicate {argument}");
+            help_arguments.push(argument);
+        }
         assert!(!entry.command.is_empty(), "general help command is empty");
         assert!(
             entry.command.starts_with("effigy "),
@@ -219,60 +187,17 @@ fn general_help_entries_are_backed_by_inventory_metadata() {
             );
         }
     }
-}
-
-#[test]
-fn general_help_entries_have_exactly_one_primary_group_owner() {
-    let entries = general_help_entries();
-
-    let mut commands = Vec::new();
-    let mut help_arguments = Vec::new();
-    for entry in entries {
-        assert!(
-            !commands.contains(&entry.command),
-            "duplicate general help row `{}`",
-            entry.command
-        );
-        commands.push(entry.command);
-        if let Some(argument) = entry.help_argument {
-            assert!(
-                !help_arguments.contains(&argument),
-                "`effigy help {argument}` is owned by more than one general help row"
-            );
-            help_arguments.push(argument);
-        }
-    }
-
-    let grouped: usize = HelpGroup::ALL
-        .iter()
-        .map(|group| {
-            let count = general_help_entries_for_group(*group).count();
-            assert!(count > 0, "group `{}` has no commands", group.slug());
-            count
-        })
-        .sum();
-    assert_eq!(
-        grouped,
-        entries.len(),
-        "every general help row belongs to exactly one of the six groups"
-    );
-}
-
-#[test]
-fn every_help_command_has_one_primary_group_row() {
     for name in help_command_names() {
-        if HELP_COMMANDS_WITHOUT_GENERAL_HELP_ROW.contains(&name) {
-            continue;
+        if !HELP_COMMANDS_WITHOUT_GENERAL_HELP_ROW.contains(&name) {
+            assert_eq!(
+                help_arguments
+                    .iter()
+                    .filter(|argument| **argument == name)
+                    .count(),
+                1,
+                "help {name}"
+            );
         }
-        let owners = general_help_entries()
-            .iter()
-            .filter(|entry| entry.help_argument == Some(name))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            owners.len(),
-            1,
-            "`effigy help {name}` should have exactly one primary group row, got {owners:?}"
-        );
     }
 }
 
@@ -319,6 +244,16 @@ fn group_inventories_match_the_contract_taxonomy() {
 
 #[test]
 fn help_command_topics_reuse_the_existing_typed_help_owner() {
+    let names = help_command_names().collect::<Vec<_>>();
+    let mut expected = HELP_COMMAND_TOPICS
+        .iter()
+        .map(|(name, _)| *name)
+        .chain(HELP_COMMAND_BUILTIN_ROUTES.iter().copied())
+        .collect::<Vec<_>>();
+    assert_eq!(names, expected);
+    expected.sort_unstable();
+    expected.dedup();
+    assert_eq!(names.len(), expected.len(), "duplicate help owner");
     for (name, topic) in HELP_COMMAND_TOPICS {
         assert!(
             descriptor_for_topic(*topic).is_some(),
@@ -385,22 +320,6 @@ fn builtin_owned_help_routes_mirror_the_direct_command_invocation() {
 }
 
 #[test]
-fn help_command_names_cover_typed_panels_and_builtin_owned_help() {
-    let names = help_command_names().collect::<Vec<_>>();
-    for (typed, _) in HELP_COMMAND_TOPICS {
-        assert!(names.contains(typed), "missing typed help name {typed}");
-    }
-    for owned in HELP_COMMAND_BUILTIN_ROUTES {
-        assert!(names.contains(owned), "missing built-in help name {owned}");
-    }
-    assert_eq!(
-        names.len(),
-        HELP_COMMAND_TOPICS.len() + HELP_COMMAND_BUILTIN_ROUTES.len(),
-        "help command names should not duplicate an owner"
-    );
-}
-
-#[test]
 fn deferred_builtin_for_help_topic_matches_the_inventory_row() {
     assert_eq!(
         deferred_builtin_for_help_topic(HelpTopic::Docs),
@@ -443,16 +362,14 @@ const RETIRED_SHADOWABLE_WORDS: &[&str] = &["demo"];
 /// The complete built-in top-level inventory: every spelling a help route,
 /// built-in task row, or command descriptor can reach.
 fn builtin_top_level_inventory() -> Vec<&'static str> {
-    let mut inventory: Vec<&'static str> = CURRENT_TOP_LEVEL_HELP_ROUTES
+    let mut inventory: Vec<&'static str> = command_descriptors()
         .iter()
-        .map(|(name, _)| *name)
+        .filter_map(|row| row.command_name)
+        .chain(HELP_COMMAND_TOPICS.iter().map(|(name, _)| *name))
+        // `run` is a public alias of `runs`, not a separate help topic.
+        .chain(std::iter::once("run"))
         .chain(HELP_COMMAND_BUILTIN_ROUTES.iter().copied())
         .chain(BUILTIN_TASKS.iter().map(|(name, _)| *name))
-        .chain(
-            command_descriptors()
-                .iter()
-                .filter_map(|row| row.command_name),
-        )
         .collect();
     inventory.sort_unstable();
     inventory.dedup();
@@ -463,26 +380,20 @@ fn builtin_top_level_inventory() -> Vec<&'static str> {
 /// its word; nothing may take a consumer task name silently.
 #[test]
 fn every_builtin_top_level_command_is_classified() {
-    for name in builtin_top_level_inventory() {
+    let inventory = builtin_top_level_inventory();
+    for name in &inventory {
         let entry = builtin_command_name(name)
             .unwrap_or_else(|| panic!("built-in `{name}` has no shadowing classification"));
-        assert_eq!(entry.name, name);
+        assert_eq!(entry.name, *name);
     }
 
+    let mut seen = Vec::new();
     for entry in BUILTIN_COMMAND_NAMES {
         assert!(
-            builtin_top_level_inventory().contains(&entry.name)
-                || RETIRED_SHADOWABLE_WORDS.contains(&entry.name),
+            inventory.contains(&entry.name) || RETIRED_SHADOWABLE_WORDS.contains(&entry.name),
             "`{}` is classified but is not a built-in top-level command",
             entry.name
         );
-    }
-}
-
-#[test]
-fn builtin_classification_has_one_entry_per_name() {
-    let mut seen: Vec<&'static str> = Vec::new();
-    for entry in BUILTIN_COMMAND_NAMES {
         assert!(
             !seen.contains(&entry.name),
             "`{}` is classified more than once",

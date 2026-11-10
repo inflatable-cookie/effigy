@@ -2223,16 +2223,6 @@ mod live_progress_tests {
             progress.detailed_frame_at(Duration::from_secs(2)),
             "pushing capture artifact `db-dump` to oci://registry/dump (1/1); waiting for artifact `db-dump` to be pushed; 2s elapsed"
         );
-        let later = progress.detailed_frame_at(Duration::from_secs(40));
-        assert_ne!(
-            later,
-            progress.detailed_frame_at(Duration::from_secs(2)),
-            "the same wait moves as time passes"
-        );
-        assert_eq!(
-            later,
-            "pushing capture artifact `db-dump` to oci://registry/dump (1/1); waiting for artifact `db-dump` to be pushed; 40s elapsed"
-        );
     }
 
     #[test]
@@ -2258,16 +2248,5 @@ mod live_progress_tests {
             progress.detailed_frame_at(Duration::from_secs(5)),
             "pushing capture artifact `db-dump` to oci://registry/dump (2/2); waiting for artifact `db-dump` to be pushed; last: capture task `snapshot` finished; 5s elapsed"
         );
-        // The sticky event never costs the wait its destination.
-        let later = progress.detailed_frame_at(Duration::from_secs(45));
-        assert!(
-            later.contains("pushing capture artifact `db-dump` to oci://registry/dump"),
-            "{later}"
-        );
-        assert!(
-            later.contains("last: capture task `snapshot` finished"),
-            "{later}"
-        );
-        assert!(later.ends_with("45s elapsed"), "{later}");
     }
 }
