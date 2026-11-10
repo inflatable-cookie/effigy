@@ -183,7 +183,7 @@ pub(in crate::runner) fn shared_service_gate(
 }
 
 /// How long one `up` waits for another checkout to finish with a shared
-/// project before it proceeds without the gate. A shared `up` pulls and
+/// project before refusing the ensure. A shared `up` pulls and
 /// starts a data service, so the wait is generous.
 const SHARED_SERVICE_GATE_SECS: u64 = 120;
 

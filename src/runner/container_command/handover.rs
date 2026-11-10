@@ -668,11 +668,15 @@ domain = "switch.test"
     /// `switch.test`, owned by this test process with a real loopback socket,
     /// so the production liveness check finds it answering.
     fn register_live_web_listener(fixture: &RouteFixture) -> TcpListener {
+        register_live_listener(fixture, "web")
+    }
+
+    fn register_live_listener(fixture: &RouteFixture, environment: &str) -> TcpListener {
         let checkout = fixture.repo_root.display().to_string();
         let listener = TcpListener::bind("127.0.0.1:0").expect("live listener fixture");
         let address = listener.local_addr().expect("live listener address");
         let owner = ManagedListenerRouteOwner {
-            owner: format!("{checkout}|web|front"),
+            owner: format!("{checkout}|{environment}|front"),
             runtime_generation: "runtime-1".to_owned(),
             generation: "child-live".to_owned(),
             address: address.to_string(),
@@ -765,6 +769,179 @@ domain = "switch.test"
                 _ => unreachable!(),
             }
         }
+    }
+
+    #[test]
+    fn shared_data_bytes_survive_replacement_and_stack_hybrid_handover() {
+        use crate::runner::container_command::{
+            gateway_registration::deregister_gateway_routes_for_container,
+            support::ensure_shared_services_running,
+        };
+        use std::ffi::OsString;
+
+        let fixture = RouteFixture::new();
+        let mut manifest = "[containers]\ndefault = \"stack\"\n".to_owned();
+        for env in ["stack", "hybrid"] {
+            let borrowing = if env == "hybrid" {
+                "data_from = \"stack\"\n"
+            } else {
+                ""
+            };
+            manifest.push_str(&format!(
+                r#"
+[containers.{env}]
+primary_service = "app"
+working_dir = "/workspace"
+{borrowing}
+[containers.{env}.dns]
+routes = [{{ domain = "switch.test", tls = false, port = 80, service = "app" }}]
+[containers.{env}.services.app]
+catalog = "php-fpm"
+version = "8.3"
+[containers.{env}.services.mysql]
+catalog = "mariadb"
+version = "10.11"
+shared = true
+"#
+            ));
+        }
+        fs::write(fixture.repo_root.join("effigy.toml"), manifest).unwrap();
+        let stack = effigy_containers::load_container_policy_for_creation(
+            &fixture.repo_root,
+            Some("stack"),
+        )
+        .unwrap()
+        .0;
+        let hybrid = effigy_containers::load_container_policy_for_creation(
+            &fixture.repo_root,
+            Some("hybrid"),
+        )
+        .unwrap()
+        .0;
+        assert_eq!(hybrid.data_from.as_deref(), Some("stack"));
+        let shared = &stack.shared_services[0];
+        assert_eq!(shared.project_name, hybrid.shared_services[0].project_name);
+        assert_eq!(
+            shared.render_digest,
+            hybrid.shared_services[0].render_digest
+        );
+        let old = shared
+            .compose_file
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("previous-render");
+        fs::create_dir_all(old).unwrap();
+        let volume = fixture.parent.join("shared-mariadb-data");
+        fs::create_dir(&volume).unwrap();
+        let captures: [(&str, &[u8]); 2] = [
+            ("rows", b"account=840\0balance=123.45\n"),
+            ("seed.sql", b"INSERT INTO captures VALUES (840, 'kept');\n"),
+        ];
+        for (name, bytes) in captures {
+            fs::write(volume.join(name), bytes).unwrap();
+        }
+        let digest = fixture.parent.join("shared-render");
+        fs::write(&digest, "previous-render").unwrap();
+        // Model the volume-destroying operations, not just their logged shape.
+        // Container replacement and ordinary environment down retain the bytes.
+        let script = format!(
+            r#"#!/bin/sh
+printf '%s\n' "$*" >> '{log}'
+case " $* " in
+  *' volume rm '*|*' down -v '*|*' rm -f -v '*) rm -rf '{volume}' ;;
+  *com.effigy.shared-render*) printf 'shared-db\tUp 1 minute\t%s\t{project}\tmysql\n' "$(cat '{digest}')" ;;
+  *' up '*) case " $* " in *' -p {project} '*) printf '%s' '{render}' > '{digest}' ;; esac ;;
+esac
+"#,
+            log = fixture.parent.join("docker.log").display(),
+            volume = volume.display(),
+            digest = digest.display(),
+            project = shared.project_name,
+            render = shared.render_digest
+        );
+        fs::write(fixture.parent.join("bin/docker"), script).unwrap();
+        let assert_data = || {
+            for (name, bytes) in captures {
+                assert_eq!(fs::read(volume.join(name)).unwrap(), bytes, "{name}");
+            }
+        };
+        let apply = |policy: &EffectiveContainerPolicy| {
+            environment::reconcile(
+                &fixture.repo_root,
+                policy,
+                effigy_containers::environment::Retention::Persistent,
+                || {
+                    effigy_containers::exec::run_compose_capture(
+                        &fixture.repo_root,
+                        policy,
+                        &[OsString::from("up"), OsString::from("-d")],
+                        "start handover target",
+                    )
+                    .map(|_| ())
+                    .map_err(|error| {
+                        effigy_containers::environment::BackendError::Uncertain(error.to_string())
+                    })
+                },
+            )
+            .unwrap();
+            effigy_containers::environment::activate(
+                &environment::context(&fixture.repo_root).unwrap(),
+                &environment::env_ref(policy).unwrap(),
+                &[],
+            )
+            .unwrap();
+        };
+        let notes = ensure_shared_services_running(&stack).unwrap();
+        assert!(notes[0].contains("replaced shared mysql"));
+        assert_eq!(fs::read_to_string(&digest).unwrap(), shared.render_digest);
+        assert_data();
+        apply(&stack);
+        for (loser, winner) in [(&stack, &hybrid), (&hybrid, &stack)] {
+            let _listener = register_live_listener(&fixture, &loser.name);
+            ensure_shared_services_running(winner).unwrap();
+            let notes = hand_over_conflicting_environments(&fixture.repo_root, winner, |policy| {
+                deregister_gateway_routes_for_container(policy).map_err(|error| {
+                    effigy_runtime::EffigyRuntimeError::task_invocation(error.to_string())
+                })
+            })
+            .unwrap();
+            assert_eq!(notes.len(), 1);
+            assert!(notes[0].contains(&format!("stopping environment `{}`", loser.name)));
+            assert!(
+                fixture
+                    .docker_log()
+                    .lines()
+                    .any(|line| line.contains(&format!("-p {} down", loser.project_name))),
+                "handover must actually stop {}",
+                loser.name
+            );
+            assert_data();
+            apply(winner);
+            assert_data();
+        }
+        let log = fixture.docker_log();
+        assert!(
+            log.contains("stop shared-db") && log.contains("rm -f shared-db"),
+            "{log}"
+        );
+        assert!(
+            !log.lines()
+                .any(|line| line.contains(&format!("-p {} down", shared.project_name))),
+            "{log}"
+        );
+        // Negative control: the same adapter's destructive volume operation
+        // really removes the stored bytes in this fixture.
+        effigy_containers::exec::run_runtime_command_capture_for_policy_with_timeout(
+            &fixture.repo_root,
+            &stack,
+            &["volume", "rm", "shared-mariadb-data"].map(OsString::from),
+            "fixture destructive control",
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        assert!(!volume.exists());
     }
 
     #[test]

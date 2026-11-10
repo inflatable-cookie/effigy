@@ -749,7 +749,9 @@ pub(crate) fn default_runtime_profile() -> String {
     user_global_colima_profile().unwrap_or_else(|| DEFAULT_COLIMA_PROFILE.to_owned())
 }
 
-pub(super) fn run_runtime_command_capture_for_policy_with_timeout(
+/// Run one bounded runtime command on the policy's exact backend.
+/// Launch, exit and timeout failures are propagated without runtime recovery.
+pub fn run_runtime_command_capture_for_policy_with_timeout(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     docker_args: &[OsString],
