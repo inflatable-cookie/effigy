@@ -22,8 +22,11 @@ if sys.argv[1] == "--run":
 suite = sys.argv[1]
 if suite not in {"library", "cli", "gateway", "rest"}:
     raise SystemExit(f"unknown shared-process suite: {suite}")
+# Library tests need the real CLI, but not every integration test binary.
+# This small integration target makes Cargo build the CLI as well as all libs.
+selection = ["--workspace", "--lib", "--test", "bootstrap_cli_tests"] if suite == "library" else ["--workspace", "--tests"]
 build = subprocess.Popen(
-    ["cargo", "test", "--workspace", "--tests", "--no-run", "--message-format=json"],
+    ["cargo", "test", *selection, "--no-run", "--message-format=json"],
     stdout=subprocess.PIPE, text=True,
 )
 binaries = {}
@@ -57,7 +60,7 @@ environment = dict(os.environ, EFFIGY_CI_TEST_PARTITIONS=json.dumps(binaries))
 # Identical workspace selection in both invocations prevents Cargo from
 # rebuilding dependencies with a narrower per-package feature set.
 result = subprocess.run([
-    "cargo", "test", "--workspace", "--tests", "--no-fail-fast",
+    "cargo", "test", *selection, "--no-fail-fast",
     "--config", f"target.{host}.runner={json.dumps(runner)}",
 ], env=environment)
 failed = result.returncode != 0

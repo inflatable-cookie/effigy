@@ -43,7 +43,7 @@ class PartitionTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.runner("rest", "/synthetic/unknown")
 
-    def build(self, build_exit=0, test_exit=0):
+    def build(self, build_exit=0, test_exit=0, suite="rest"):
         artifacts = []
         for name, kind in [("effigy", "lib"), ("effigy", "bin"),
                            ("cli_output_tests", "test"), ("gateway_private", "test"),
@@ -53,7 +53,7 @@ class PartitionTests(unittest.TestCase):
                               "executable": f"/synthetic/{name}-{kind}"})
         build = SimpleNamespace(stdout=io.StringIO("".join(json.dumps(a) + "\n" for a in artifacts)),
                                 wait=lambda: build_exit, returncode=build_exit)
-        with patch("sys.argv", [str(SCRIPT), "rest"]), patch("subprocess.Popen", return_value=build) as compile_call, \
+        with patch("sys.argv", [str(SCRIPT), suite]), patch("subprocess.Popen", return_value=build) as compile_call, \
                 patch("subprocess.check_output", return_value="host: synthetic-host\n"), \
                 patch("subprocess.run", return_value=SimpleNamespace(returncode=test_exit)) as run, \
                 patch("sys.stdout", new_callable=io.StringIO):
@@ -74,6 +74,13 @@ class PartitionTests(unittest.TestCase):
         self.assertEqual(len(plan), 5)
         self.assertEqual(plan["/synthetic/new_future_target-test"], "rest")
         self.assertIn("--doc", calls[1].args[0])
+
+    def test_library_build_keeps_all_libs_and_the_cli_without_unassigned_integration_binaries(self):
+        code, compile_call, calls = self.build(suite="library")
+        self.assertEqual(code, 0)
+        self.assertEqual(compile_call.args[0][2:6], ["--workspace", "--lib", "--test", "bootstrap_cli_tests"])
+        self.assertEqual(calls[0].args[0][2:6], compile_call.args[0][2:6])
+        self.assertEqual(len(calls), 1)
 
     def test_failure_is_retained_and_doc_tests_still_run(self):
         code, _, calls = self.build(test_exit=1)

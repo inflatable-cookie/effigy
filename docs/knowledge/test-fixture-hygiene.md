@@ -423,8 +423,11 @@ remain unchanged.
 
 Hosted nextest runs use four hash partitions on each operating system. Shared-
 process runs partition whole test binaries into library, CLI, gateway and remaining
-cohorts through `scripts/ci-shared-process.py`. Cargo discovers the complete target
-inventory at each head, and new binaries enter the remaining cohort. Every test in
+cohorts through `scripts/ci-shared-process.py`. Non-library cohorts discover the
+complete target inventory at each head, and new binaries enter the remaining
+cohort. The library cohort builds workspace libraries and the small bootstrap
+integration target (which supplies the real CLI), avoiding compilation of other
+integration binaries it never executes. Every test in
 a binary still runs together under the original `effigy_shared_process`
 configuration and libtest's default parallel thread count. The library cohort
 uses optimization level 1 with debug assertions explicitly enabled; every

@@ -80,7 +80,8 @@ jobs:
   shared-process:
     name: Shared-process tests (${{ matrix.os }}, ${{ matrix.suite }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # Temporary measurement head: quantify the full library tail after trimming builds.
+    timeout-minutes: ${{ matrix.suite == 'library' && 40 || 20 }}
     env:
       RUSTFLAGS: --cfg effigy_shared_process
       # Optimize the large library cohort's CLI launches and fingerprinting.
