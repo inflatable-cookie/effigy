@@ -510,3 +510,22 @@ the fixed sleep: the next pump turn must re-read the released row before any
 effect. Releasing from the parent and then opening the handle could instead
 race a turn that had already observed a live row. The original no-geometry,
 retirement and post-retirement assertions and existing wait bounds remain.
+
+## CI duration closeout blocker (effigy#814)
+
+The hosted macOS core cohort exposed a missing secret grant in
+`run_manifest_task_required_secrets_generate_missing_key_in_existing_vault`
+(PR #884, job 129663652328). Its source descriptor was not recorded, so the
+exact cause of that occurrence remains unproven. A bounded production custody
+control does independently prove a descriptor-plan defect: the isolated
+`handoff` test now retains its source-11 control and also puts the reader at
+owned descriptor 3. Source 11 preserves `handoff-proof-payload`; source 3 yields
+an empty payload after a successful child exit and completed settlement.
+`effigy test:focused -- -p effigy-kernel --test handoff` fails that byte assertion
+in 0.326s. `custody/spawn.rs` replaces descriptor 3 with the startup barrier
+before copying the original handoff source to slot 11.
+
+Production is unchanged. Planner ruling `6c7a912f7c11c5b27ef562003add8ffc14d8190764a15a73be32ece9c94ba199`
+requires task 814 to stop and report a proven product defect. The CI-duration
+changes and regression are retained for the production owner; all-green
+exact-head hosted timing proof remains missing until that defect is repaired.
