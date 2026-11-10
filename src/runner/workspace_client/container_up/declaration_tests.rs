@@ -190,8 +190,15 @@ fn post_prep_environment_preserves_docker_endpoint_and_named_context() {
             .expect("pinned routing")
             .into_iter()
             .collect();
-        let get = |key: &str| environment.get(std::ffi::OsStr::new(key)).map(|v| v.to_str().unwrap());
-        assert_eq!(get("DOCKER_CONTEXT"), Some(if endpoint { "" } else { context }));
+        let get = |key: &str| {
+            environment
+                .get(std::ffi::OsStr::new(key))
+                .map(|v| v.to_str().unwrap())
+        };
+        assert_eq!(
+            get("DOCKER_CONTEXT"),
+            Some(if endpoint { "" } else { context })
+        );
         assert_eq!(get("DOCKER_HOST"), endpoint.then_some(context));
     }
 }

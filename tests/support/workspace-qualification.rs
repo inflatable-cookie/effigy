@@ -193,10 +193,18 @@ mod tests {
 
     #[test]
     fn owned_fixture_path_keeps_the_desktop_exception_narrow() {
-        for allowed in ["/Volumes/Stash/scratch/effigy/owned/checkout", "/Users/tom/.effigy-qual-831/owned"] {
+        for allowed in [
+            "/Volumes/Stash/scratch/effigy/owned/checkout",
+            "/Users/tom/.effigy-qual-831/owned",
+        ] {
             assert!(owned_fixture_path(Path::new(allowed)));
         }
-        for foreign in ["/Volumes/Stash/scratch/effigy", "/Users/tom/.effigy-qual-831", "/Users/tom/foreign", "/Users/tom/.effigy-qual-831/owned/nested"] {
+        for foreign in [
+            "/Volumes/Stash/scratch/effigy",
+            "/Users/tom/.effigy-qual-831",
+            "/Users/tom/foreign",
+            "/Users/tom/.effigy-qual-831/owned/nested",
+        ] {
             assert!(!owned_fixture_path(Path::new(foreign)));
         }
     }
