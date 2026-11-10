@@ -16,6 +16,7 @@ use effigy_kernel::remote::{
     AdapterError, ContainerIdentity, Nonce, RemoteRegistration, SessionState,
 };
 use effigy_kernel::store::Store;
+use effigy_test_support::process::FixtureCommandExt;
 
 use super::*;
 use crate::runner::task_engine::{TaskRunRequest, TaskTarget};
@@ -201,6 +202,7 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
+    let _lock = crate::contract_test_support::lock_test();
     let dir = tempfile::tempdir().expect("fixture");
     let root = dir.path().to_path_buf();
     let model = Model {
@@ -246,14 +248,16 @@ fn begin(root: &Path, task: &str) -> TaskRun {
 }
 
 fn begin_with_hook(root: &Path) -> (TaskRun, i32) {
+    let _lock = crate::contract_test_support::lock_test();
     let pid_file = root.join("hook-pid");
     let hook = format!(
         "echo $$ > '{}'; printf 'admit\\n'; while :; do sleep 1; done",
         pid_file.display()
     );
-    // SAFETY: nextest runs each test in a separate process and this test
-    // constructs its admission before starting any fixture threads.
-    unsafe { std::env::set_var("EFFIGY_ADMISSION_HOOK", &hook) };
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[
+        ("EFFIGY_ADMISSION_HOOK", Some(hook)),
+        ("EFFIGY_ADMISSION_PROTOCOL", None),
+    ]);
     let target = TaskTarget {
         root: root.to_path_buf(),
         catalog: String::new(),
@@ -277,8 +281,6 @@ fn begin_with_hook(root: &Path) -> (TaskRun, i32) {
         cwd: None,
     })
     .expect("held admission");
-    // SAFETY: the temporary environment is no longer used by this test.
-    unsafe { std::env::remove_var("EFFIGY_ADMISSION_HOOK") };
     let pid = std::fs::read_to_string(pid_file)
         .expect("hook pid")
         .trim()
@@ -624,19 +626,63 @@ fn remote_admission_held_honors_stop_request() {
     );
 }
 
+/// Exercise the conflicting controls in one real libtest process, even when
+/// this regression itself is selected by nextest's isolated-process runner.
+#[test]
+fn shared_process_remote_admission_and_guest_version_inputs_stay_private() {
+    let _lock = crate::contract_test_support::lock_test();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "runner::task_engine::remote::tests::remote_admission_",
+            "runner::workspace_client::tests::running_guest_version_matches_producer_context_without_display_normalization",
+            "runner::workspace_client::tests::terminal_input_and_resize_reach_the_runs_own_writer",
+            "--test-threads=8",
+            "--nocapture",
+        ])
+        .output_owned()
+        .expect("concurrent remote-admission and version controls");
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).expect("libtest receipt");
+    assert!(
+        stdout.contains("10 passed; 0 failed;"),
+        "all eight admission cases and both version/terminal cases ran: {stdout}"
+    );
+}
+
 #[test]
 fn remote_admission_v2_durable_run_refuses_before_hook() {
+    let _lock = crate::contract_test_support::lock_test();
+    const CHILD: &str = "EFFIGY_TEST_REMOTE_ADMISSION_V2";
+    if std::env::var_os(CHILD).is_none() {
+        // The reported protocol is this negative control's input, not the
+        // protocol of concurrent positive remote-admission fixtures.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "runner::task_engine::remote::tests::remote_admission_v2_durable_run_refuses_before_hook",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .env("EFFIGY_ADMISSION_PROTOCOL", "2")
+            .output_owned()
+            .expect("isolated reported-admission control");
+        assert!(output.status.success(), "{output:?}");
+        return;
+    }
+    assert_eq!(
+        std::env::var("EFFIGY_ADMISSION_PROTOCOL").unwrap(),
+        "2",
+        "the child runs the original reported-protocol input"
+    );
     let fixture = fixture();
     let pid_file = fixture.root.join("hook-pid");
     let hook = format!(
         "echo $$ > '{}'; printf 'admit\\n'; while :; do sleep 1; done",
         pid_file.display()
     );
-    // SAFETY: nextest isolates each test process, and no fixture thread is active.
-    unsafe {
-        std::env::set_var("EFFIGY_ADMISSION_HOOK", &hook);
-        std::env::set_var("EFFIGY_ADMISSION_PROTOCOL", "2");
-    }
+    let _env =
+        crate::contract_test_support::EnvGuard::set_many(&[("EFFIGY_ADMISSION_HOOK", Some(hook))]);
     let target = TaskTarget {
         root: fixture.root.clone(),
         catalog: String::new(),
@@ -659,11 +705,6 @@ fn remote_admission_v2_durable_run_refuses_before_hook() {
         workspace_admission: None,
         cwd: None,
     });
-    // SAFETY: no subsequent fixture work reads the temporary environment.
-    unsafe {
-        std::env::remove_var("EFFIGY_ADMISSION_HOOK");
-        std::env::remove_var("EFFIGY_ADMISSION_PROTOCOL");
-    }
     assert!(result.is_err(), "durable v2 admission must refuse");
     assert!(!pid_file.exists(), "v2 refusal must precede the hook");
 }
@@ -1172,6 +1213,7 @@ struct Matrix {
 }
 
 fn matrix() -> Matrix {
+    let _lock = crate::contract_test_support::lock_test();
     let dir = tempfile::tempdir().expect("fixture");
     let root = dir.path().to_path_buf();
     let engine = Engine {

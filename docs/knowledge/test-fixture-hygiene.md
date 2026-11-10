@@ -55,6 +55,15 @@ The workspace guest's exact-version control uses a private child environment.
 Changing `EFFIGY_ACTIVE_VERSION` in the shared harness would race concurrent
 terminal/context proofs that correctly compare their pinned binary identities.
 
+The remote admission protocol-2 refusal control also uses a private child.
+Positive admission fixtures capture their hook under the shared environment
+lock and restore it with `EnvGuard` before concurrent remote lifecycle work.
+The registration deadline begins after admission setup and stays unchanged.
+Both remote fixture allocators capture the scratch parent under that lock.
+`shared_process_remote_admission_and_guest_version_inputs_stay_private` runs
+all eight admission cases and both guest version/terminal cases together in
+one libtest process with eight test threads, requiring all ten receipts.
+
 ### The kernel-custody boundary
 
 Kernel custody is an explicit boundary, not a sweep target. A helper started
