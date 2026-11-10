@@ -677,3 +677,49 @@ fn test_policy(profile: &str) -> EffectiveContainerPolicy {
         host_processes: vec![],
     }
 }
+
+#[test]
+fn profile_config_uses_explicit_colima_home_before_home() {
+    let _lock = env_lock();
+    let root = tempfile::tempdir().expect("fixture");
+    let home = root.path().join("home");
+    let isolated = root.path().join("isolated");
+    let _env = effigy_test_support::env::ScopedEnv::set_many(&[
+        ("HOME", home.as_os_str().to_owned()),
+        ("COLIMA_HOME", isolated.as_os_str().to_owned()),
+    ]);
+    let profile = isolated.join("effigy-release");
+    fs::create_dir_all(&profile).expect("profile directory");
+    fs::write(
+        profile.join("colima.yaml"),
+        "forwardAgent: false\nmounts: []\n",
+    )
+    .expect("profile config");
+    assert_eq!(
+        colima_profile_config_path("effigy-release").expect("path"),
+        profile.join("colima.yaml")
+    );
+    assert_eq!(colima_profile_mounts("effigy-release"), Some(Vec::new()));
+    assert_eq!(
+        managed_colima_profile_drift("effigy-release"),
+        Some(ManagedColimaProfileDrift::SshAgentForwardingDisabled)
+    );
+}
+
+#[test]
+fn profile_config_empty_colima_home_uses_home_default() {
+    let _lock = env_lock();
+    let root = tempfile::tempdir().expect("fixture");
+    let _env = effigy_test_support::env::ScopedEnv::set_many(&[
+        ("HOME", root.path().as_os_str().to_owned()),
+        ("COLIMA_HOME", "".into()),
+    ]);
+    assert_eq!(
+        colima_profile_config_path("effigy-release").expect("path"),
+        root.path().join(".colima/effigy-release/colima.yaml")
+    );
+    assert_eq!(
+        crate::runtime::dns::colima_home_dir(),
+        Some(root.path().join(".colima"))
+    );
+}

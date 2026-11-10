@@ -30,6 +30,17 @@ pub(super) fn run(home: &Path, cancel: CancelToken, mode: &str) {
     } else {
         Executable::current().unwrap()
     };
+    // A genuine Effigy helper validates advice with the real CLI parser. The
+    // fixture-only `recover` word cannot be sent to that independent binary.
+    // This read-only advice is never executed by the helper's settle path.
+    let recovery = if mode == "private-qualification-old" {
+        Invocation::validated(vec!["effigy".into(), "runs".into()], |args| {
+            args == ["effigy", "runs"]
+        })
+        .unwrap()
+    } else {
+        next()
+    };
     let admitted = Run::begin_claimed_recoverable(
         &cx,
         &root,
@@ -38,7 +49,7 @@ pub(super) fn run(home: &Path, cancel: CancelToken, mode: &str) {
             id: RunId::new(1, [1; 10]).unwrap(),
             wait: Wait::FailFast,
             acknowledge: vec![],
-            next: next(),
+            next: recovery,
             custody: Some(LifecyclePlan {
                 executable,
                 placement: effigy_kernel::supervise::Placement::Detached,
@@ -51,6 +62,7 @@ pub(super) fn run(home: &Path, cancel: CancelToken, mode: &str) {
     let mut run = match admitted {
         Ok(run) => run,
         Err((error, retained)) => {
+            let admission_error = error.to_string();
             if let Some(retained) = retained {
                 let outcome = retained
                     .settle(
@@ -58,7 +70,7 @@ pub(super) fn run(home: &Path, cancel: CancelToken, mode: &str) {
                         &mut Strict,
                     )
                     .unwrap_or_else(|(error, _)| {
-                        panic!("helper startup cleanup remains unverified: {error}")
+                        panic!("helper startup cleanup remains unverified after {admission_error}: {error}")
                     });
                 assert_eq!(
                     outcome.cleanup(),

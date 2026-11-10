@@ -1593,11 +1593,15 @@ impl Run<'_> {
         Ok(())
     }
 
-    pub(crate) fn workspace_owner_detached(&self) -> Result<bool, RunError> {
-        Ok(self.store.conn().query_row(
-            "SELECT EXISTS(SELECT 1 FROM run_attachments WHERE run_id=?1 AND lifetime='owner' AND state='released' AND release='detach')",
+    pub(crate) fn workspace_owner_release(&self) -> Result<Option<Release>, RunError> {
+        let release: Option<String> = self.store.conn().query_row(
+            "SELECT release FROM run_attachments WHERE run_id=?1 AND lifetime='owner' AND state='released'",
             [self.id.to_string()], |row| row.get(0),
-        )?)
+        ).optional()?;
+        release
+            .map(|value| serde_json::from_value(serde_json::Value::String(value)))
+            .transpose()
+            .map_err(|_| RunError::broken("workspace owner release is malformed"))
     }
 }
 

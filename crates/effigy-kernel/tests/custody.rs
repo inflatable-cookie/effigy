@@ -4290,3 +4290,28 @@ fn qualification_discard_does_not_confuse_leader_exit_with_group_closure() {
     );
     assert!(output.stdout.is_empty());
 }
+
+#[cfg(feature = "workspace-private-qualification")]
+#[test]
+#[ignore = "requires the native packet's genuine older helper artifact"]
+fn qualification_discard_refuses_genuine_old_helper_after_successful_admission() {
+    assert!(
+        std::env::var_os("EFFIGY_OLD_CUSTODY_BINARY").is_some(),
+        "genuine old helper required"
+    );
+    let home = home();
+    let output = Command::new(fixture())
+        .arg("private-qualification-old")
+        .arg(home.path())
+        .output()
+        .unwrap();
+    if !output.status.success() {
+        let retained = home.keep();
+        panic!(
+            "old helper control retained at {}: {}",
+            retained.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert!(output.stdout.is_empty());
+}

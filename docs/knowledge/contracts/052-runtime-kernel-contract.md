@@ -3555,8 +3555,13 @@ impl ProcGuestIdentity { fn process() -> Self; }
 ```
 
 Requests take container/boot claims from that observation. The published context is a host claim to compare against it, never
-independent evidence of the caller. The candidate independent source is the full 64-hex id in a backend-qualified kernel
-`/proc/self/mountinfo` root under `containers/`; boot is the canonical UUID in `/proc/sys/kernel/random/boot_id`. Exactly one
+independent evidence of the caller. The running binary reports the same active-version value the producer pins; display-only
+formatting such as a leading `v` never enters that wire identity. Version and protocol comparisons remain exact; credential
+pins compare as the shared `Digest` value, including the producer's bare-hex v2 encoding.
+The candidate independent source is the full 64-hex id in a backend-qualified kernel
+`/proc/self/mountinfo` root under `containers/`. It is the metadata file's immediate parent directory; backend namespace
+components between `containers/` and that ID are allowed. A hex value in a namespace, mountpoint or source column is not identity.
+Boot is the canonical UUID in `/proc/sys/kernel/random/boot_id`. Exactly one
 distinct full id is required; zero, conflicting, unreadable or malformed facts refuse before credentials. Consistent with §8.2,
 `/proc/self/cgroup` is diagnostic only: reading a full id there is still a cgroup claim, never independent placement evidence,
 even when it matches the context. Cgroup-only availability must refuse `Unproven`; neither qualification nor context agreement
@@ -5115,6 +5120,41 @@ not hold the writer or share the liveness pipe. `resume_owner` reopens
 the owning client's handle and no other. Both refuse a run this session did not
 admit and grant nothing: the dispatcher's grant check remains the authority.
 `test:kernel:workspace` owns these proofs.
+
+The reserved runner accepts managed runs and single host shell commands. Shell
+commands retain the dispatcher's exact resolution and ticket, run without a PTY
+and with stdin at EOF, and use the detached owner's custody, signal and owner-loss
+settlement. Standard sequences, container placement and schema `exec()` refuse
+before an unreserved fallback can run. Declarative schema and task secret values
+enter the existing classified redaction boundary. Workspace admission acknowledges
+only after capture initialization: stdout and stderr are separately committed
+projections of one merged sanitize/redact pass, each redacted again after projection.
+Their distinct format markers prevent a missing stream from masquerading as the
+older merged log's empty stderr. A line over the run's original line bound marks
+capture incomplete. Ordinary managed capture keeps its merged representation.
+Log commit contention and rotation have a typed busy result, retried for at most
+one second within the original observation deadline. Corruption still refuses
+immediately. A normally exited reserved shell flushes capture before committing
+its terminal outcome, so the final reader cannot outrun its last pipe bytes.
+Once a Level 1 connection observes its exact keyed terminal outcome,
+it drops that run's custody-only owning handle instead of requesting EOF release of
+compacted attachment rows. Pending uncertain releases remain fenced. A command
+that closes before owner attachment resumes still returns its first run ID for
+output drain only when the keyed completion, original invocation and acknowledged
+fence all match; replay continues to return the recorded outcome without admission.
+For a live run, the supervisor reads the typed durable workspace-owner release
+before interpreting its generic stop request. EOF remains `OwnerLost`, while an
+acknowledged detach leaves the workload running.
+
+Supervisor pipe capture commits at most 64 KiB of observed-order tagged reads per
+window, with at most five milliseconds of coalescing before incremental output
+is released. Workspace stream projections share that window and retain their own
+redaction and durable extents. The transport idle timeout and log retention limits
+are unchanged. Successful production handoff separates the finite publication
+operation from the adopted session's open serving lifetime, retaining cancellation,
+limits, placement and effect class. Expired or cancelled publication refuses the
+handoff. Each request takes a fresh ten-second child phase for admission and
+observation. The fixed-context channel entry never renews a caller's deadline.
 
 **Lane A dispatcher.** `crates/effigy-kernel/src/workspace_channel.rs` owns the
 v1 wire, its framing and limits, the server pin check, negotiation, grants,

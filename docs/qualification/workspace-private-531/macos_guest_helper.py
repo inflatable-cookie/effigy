@@ -34,6 +34,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 PR_SET_CHILD_SUBREAPER = 36
 
@@ -188,6 +189,8 @@ def _walk_proc(proc):
             continue
         try:
             text = (entry / 'stat').read_text()
+        except FileNotFoundError:
+            continue  # a process which exited during enumeration is no longer a live member
         except OSError:
             return None
         parsed = _stat_fields(text)
@@ -537,13 +540,27 @@ def run_contained(argv, stdin_bytes=None, inherit_stdin=False, proc=PROC):
         child_id = {'pid': child.pid, 'start_time': None, 'pgid': None, 'session_id': None, 'boot_id': None}
     out, err = child.communicate(stdin_bytes)
     waited = child.returncode
-    remaining = leftover_after_wait(parent['pid'], child.pid, exclude={os.getpid()}, proc=proc)
+    # Reap adopted descendants by the kernel's child relationship, never by command name.
+    # Runtime clients may leave a just-exited helper zombie behind; allow a bounded
+    # settlement interval, retaining live/unknown descendants without killing them.
+    settlement = time.monotonic() + 2
+    while True:
+        try:
+            while os.waitpid(-1, os.WNOHANG)[0]:
+                pass
+        except ChildProcessError:
+            pass
+        remaining = leftover_after_wait(parent['pid'], child.pid, exclude={os.getpid()}, proc=proc)
+        if remaining == [] or time.monotonic() >= settlement:
+            break
+        time.sleep(0.02)
     trailer = {
         'waited_exit': waited,
         'child_pid': child_id['pid'],
         'child_start_time': child_id['start_time'],
         'child_pgid': child_id['pgid'],
         'child_session_id': child_id['session_id'],
+        'remaining_pids': remaining,
         'group_empty': remaining == [],
         'unreaped': remaining is None,
         'stdout_sha256': hashlib.sha256(out).hexdigest(),

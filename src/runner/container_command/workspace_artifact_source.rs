@@ -836,7 +836,7 @@ pub(in crate::runner) fn verify_source_unchanged(
 /// their own producer receipt before any byte reaches the caller's checkout.
 #[derive(Debug, Clone)]
 pub(in crate::runner) struct ProducedArtifact {
-    /// Exact bytes the host-capped transfer published into the checkout.
+    /// Host bytes published, including the locally bound freshness sidecar.
     pub bytes: u64,
 }
 
@@ -852,6 +852,7 @@ pub(in crate::runner) fn publish_produced_artifact(
     checkout: &Path,
     triple: &str,
     active_version: &str,
+    install_identity: &str,
     binary: Vec<u8>,
     receipt_bytes: Vec<u8>,
     sidecar_bytes: Vec<u8>,
@@ -888,10 +889,17 @@ pub(in crate::runner) fn publish_produced_artifact(
             receipt_bytes.len()
         )));
     }
-    if sidecar_bytes.len() as u64 > ARTIFACT_SIDECAR_CAP_BYTES {
+    let identity_bytes = format!("{install_identity}\n").into_bytes();
+    if install_identity.trim().is_empty() || install_identity.contains(['\r', '\n']) {
+        return Err(refusal(
+            "the artifact host identity is unavailable".to_owned(),
+        ));
+    }
+    // No extra host-write allowance: the producer version and the locally
+    // authenticated freshness binding share the existing metadata cap.
+    if sidecar_bytes.len() as u64 + identity_bytes.len() as u64 > ARTIFACT_SIDECAR_CAP_BYTES {
         return Err(refusal(format!(
-            "the transferred sidecar is {} bytes, above its declared {ARTIFACT_SIDECAR_CAP_BYTES}-byte cap",
-            sidecar_bytes.len()
+            "the artifact version and host binding exceed the declared {ARTIFACT_SIDECAR_CAP_BYTES}-byte sidecar cap"
         )));
     }
     let digest = sha256_hex(&binary);
@@ -922,16 +930,19 @@ pub(in crate::runner) fn publish_produced_artifact(
         ))
     })?;
     refuse_alias(&checkout_artifacts, "artifact directory", true)?;
-    let mut copied = 0u64;
-    for (file_name, contents, executable) in [
+    let files = [
         (name.clone(), binary, true),
         (format!("{name}.active-version"), sidecar_bytes, false),
+        (format!("{name}.install-identity"), identity_bytes, false),
         (format!("{name}.receipt"), receipt_bytes, false),
-    ] {
-        let dest = checkout_artifacts.join(&file_name);
-        refuse_alias(&dest, "artifact file", false)?;
+    ];
+    for (file_name, _, _) in &files {
+        refuse_alias(&checkout_artifacts.join(file_name), "artifact file", false)?;
+    }
+    let mut copied = 0u64;
+    for (file_name, contents, executable) in files {
         copied += contents.len() as u64;
-        write_file_atomically(&dest, &contents, executable)?;
+        write_file_atomically(&checkout_artifacts.join(file_name), &contents, executable)?;
     }
     Ok(ProducedArtifact { bytes: copied })
 }
@@ -1008,4 +1019,79 @@ pub(in crate::runner) fn release_leftover_staged_export(
         })?;
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+
+    fn publish(root: &Path, sidecar: Vec<u8>) -> Result<ProducedArtifact, RunnerError> {
+        let binary = b"fixture artifact bytes".to_vec();
+        let receipt = format!(
+            "release_triple=x86_64-unknown-linux-gnu\nsha256={}\n",
+            sha256_hex(&binary)
+        )
+        .into_bytes();
+        publish_produced_artifact(
+            root,
+            "x86_64-unknown-linux-gnu",
+            "0.14.1",
+            "local:v0.14.1:123:456",
+            binary,
+            receipt,
+            sidecar,
+        )
+    }
+
+    #[test]
+    fn produced_artifact_metadata_shares_one_cap_before_replacing_any_bytes() {
+        let fixture = effigy_test_support::Fixture::new("artifact-metadata-cap").unwrap();
+        let root = fixture.path();
+        let artifacts = root.join(".effigy/linux-release/artifacts");
+        std::fs::create_dir_all(&artifacts).unwrap();
+        let binary = artifacts.join("effigy-x86_64-unknown-linux-gnu");
+        std::fs::write(&binary, b"prior artifact").unwrap();
+        let mut at_cap = vec![b' '; ARTIFACT_SIDECAR_CAP_BYTES as usize];
+        at_cap[..6].copy_from_slice(b"0.14.1");
+        assert!(publish(root, at_cap)
+            .unwrap_err()
+            .to_string()
+            .contains("sidecar cap"));
+        assert_eq!(std::fs::read(&binary).unwrap(), b"prior artifact");
+        let result = publish(root, b"0.14.1\n".to_vec()).unwrap();
+        let names = [
+            "effigy-x86_64-unknown-linux-gnu",
+            "effigy-x86_64-unknown-linux-gnu.active-version",
+            "effigy-x86_64-unknown-linux-gnu.install-identity",
+            "effigy-x86_64-unknown-linux-gnu.receipt",
+        ];
+        assert_eq!(
+            result.bytes,
+            names
+                .iter()
+                .map(|name| std::fs::metadata(artifacts.join(name)).unwrap().len())
+                .sum::<u64>()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn produced_artifact_identity_alias_refuses_before_replacing_prior_artifact() {
+        let fixture = effigy_test_support::Fixture::new("artifact-identity-alias").unwrap();
+        let root = fixture.path();
+        let artifacts = root.join(".effigy/linux-release/artifacts");
+        std::fs::create_dir_all(&artifacts).unwrap();
+        let binary = artifacts.join("effigy-x86_64-unknown-linux-gnu");
+        std::fs::write(&binary, b"prior artifact").unwrap();
+        let sentinel = root.join("sentinel");
+        std::fs::write(&sentinel, b"untouched").unwrap();
+        std::os::unix::fs::symlink(
+            &sentinel,
+            artifacts.join("effigy-x86_64-unknown-linux-gnu.install-identity"),
+        )
+        .unwrap();
+        assert!(publish(root, b"0.14.1\n".to_vec()).is_err());
+        assert_eq!(std::fs::read(&binary).unwrap(), b"prior artifact");
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"untouched");
+    }
 }

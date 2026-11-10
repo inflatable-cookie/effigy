@@ -120,3 +120,52 @@ fn post_prep_declaration_contains_no_values_or_transferable_authority() {
         PostPrepDeclaration::capture(&policy, &credential_address, identity(&policy), &[]).is_err()
     );
 }
+
+#[test]
+fn post_prep_routing_preserves_namespace_paths_and_rejects_drift_or_credentials() {
+    let (fixture, policy) = policy_fixture();
+    let declared = PostPrepDeclaration::capture(&policy, &backend(), identity(&policy), &[])
+        .expect("declaration");
+    let mut wire = serde_json::to_value(declared).unwrap();
+    wire["backend"]["routing"] = serde_json::json!({
+        "COLIMA_HOME": fixture.path().join("private-colima"),
+        "COLIMA_CACHE_HOME": fixture.path().join("private-cache"),
+        "DOCKER_CONFIG": fixture.path().join("private-docker"),
+        "TMPDIR": fixture.path(),
+        "TMP": fixture.path(),
+        "TEMP": fixture.path(),
+        "EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE": "local",
+    });
+    let declared: PostPrepDeclaration = serde_json::from_value(wire.clone()).unwrap();
+    let env: std::collections::BTreeMap<_, _> = declared
+        .backend_environment()
+        .unwrap()
+        .into_iter()
+        .collect();
+    assert_eq!(
+        env.get(std::ffi::OsStr::new("COLIMA_HOME")),
+        Some(&fixture.path().join("private-colima").into_os_string())
+    );
+    assert_eq!(
+        env.get(std::ffi::OsStr::new("TMPDIR")),
+        Some(&fixture.path().as_os_str().to_owned())
+    );
+    assert!(
+        declared
+            .verify_policy(&policy, &backend(), identity(&policy))
+            .is_err(),
+        "another namespace cannot satisfy the original declaration"
+    );
+    for (key, value) in [
+        ("DOCKER_AUTH_CONFIG", "private-credential"),
+        ("COLIMA_HOME", "relative/profile"),
+        ("TMPDIR", "/owned/../foreign"),
+        ("EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE", "unsupported"),
+    ] {
+        let mut changed = wire.clone();
+        changed["backend"]["routing"][key] = value.into();
+        let changed: PostPrepDeclaration = serde_json::from_value(changed).unwrap();
+        let error = changed.backend_environment().unwrap_err().to_string();
+        assert!(!error.contains(value), "routing refusals never echo values");
+    }
+}

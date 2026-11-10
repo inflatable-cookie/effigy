@@ -104,7 +104,7 @@
     "image_context.py": "af74047f640111907930273f7cc7a2b46eac4cb27943f0a512fccf56a1b3b322",
     "image_prepare.py": "882f9e44e7acd87e5ab94237feb7f19a452a3bbb86dd1cf208f311129847964f",
     "macos_metadata_tranche.py": "c204bfaa87c2534da05b62c5f10beda5d3196216ce40d6afffeb8dec2ef9d1a6",
-    "macos_preparation.py": "1d2165f6e5031a2909b4d8875fd11f2b5fbfa6ab49a2f424f30793417363de1d",
+    "macos_preparation.py": "b9b5e2e07291e20d15d95511c4e7ca59865d45e6e6a020cf640a5952fba2c683",
     "guest_inputs.py": "d2d0ea050f6d8b5ede4dcf07fbd3a7be65241b5b35d88830513cd07e76361af2"
   },
   "proof_entry": {
@@ -330,7 +330,8 @@
           "inputs": [
             "{colima_cache_home}",
             "{colima_docker_config}",
-            "{colima_cache_home}/effigy-image"
+            "{colima_cache_home}/effigy-image",
+            "{colima_home}/_lima/_config"
           ],
           "kind": "helper",
           "output_cap_bytes": 4096,
@@ -373,7 +374,9 @@
             "--disk-image",
             "{colima_cache_home}/effigy-image/ubuntu-24.04-minimal-cloudimg-arm64-containerd.raw.gz",
             "--ssh-config=false",
-            "--activate=false"
+            "--activate=false",
+            "--port-forwarder",
+            "none"
           ],
           "env": {
             "set": {

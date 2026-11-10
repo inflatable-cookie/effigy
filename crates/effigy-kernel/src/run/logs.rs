@@ -68,52 +68,71 @@ pub fn read_log(
             }
         }
     }
-    let result = (|| -> Result<Option<LogRead>, crate::fs::FsError> {
-        cx.check("log read")
-            .map_err(|e| crate::fs::FsError::untrusted(root.path(), format!("{e:?}")))?;
-        crate::fault_point!(LogRead).map_err(|e| {
-            crate::fs::FsError::Io(crate::fs::IoError::new("log read", root.path(), &e))
-        })?;
-        let Some(runs) = root.read_family(Family::Runs)? else {
-            return Ok(None);
-        };
-        let Some(dir) = runs.child(&run.to_string(), Trust::Private, false)? else {
-            return Ok(None);
-        };
-        // A rotation can remove the segment between listing and opening;
-        // the next listing sees its successor.
-        for _ in 0..3 {
-            if let Some(read) = read_segments(&dir, sequence, stream, offset, max)? {
-                return Ok(read);
-            }
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        if let Err(interrupt) = cx.check("log read") {
+            return Observed::Unknown(match interrupt {
+                crate::ctx::Interrupt::TimedOut { phase, .. } => {
+                    crate::observe::UnknownReason::TimedOut { phase }
+                }
+                other => crate::observe::UnknownReason::Cancelled(other.to_string()),
+            });
         }
-        Err(crate::fs::FsError::untrusted(
-            dir.path(),
-            "log segments kept rotating during the read",
-        ))
-    })();
-    match result {
-        Ok(Some(read)) => Observed::Verified(
-            read,
-            Evidence::new("kernel run log".into(), None).expect("fixed evidence"),
-        ),
-        Ok(None) => Observed::Absent(AbsenceProof::NoRow {
-            table: "logs".into(),
-        }),
-        Err(error) => Observed::Unknown(crate::root::unknown(&error)),
+        let result = (|| -> Result<ReadAttempt<Option<LogRead>>, crate::fs::FsError> {
+            crate::fault_point!(LogRead).map_err(|e| {
+                crate::fs::FsError::Io(crate::fs::IoError::new("log read", root.path(), &e))
+            })?;
+            let Some(runs) = root.read_family(Family::Runs)? else {
+                return Ok(ReadAttempt::Ready(None));
+            };
+            let Some(dir) = runs.child(&run.to_string(), Trust::Private, false)? else {
+                return Ok(ReadAttempt::Ready(None));
+            };
+            read_segments(&dir, sequence, stream, offset, max)
+        })();
+        match result {
+            Ok(ReadAttempt::Ready(Some(read))) => {
+                return Observed::Verified(
+                    read,
+                    Evidence::new("kernel run log".into(), None).expect("fixed evidence"),
+                )
+            }
+            Ok(ReadAttempt::Ready(None)) => {
+                return Observed::Absent(AbsenceProof::NoRow {
+                    table: "logs".into(),
+                })
+            }
+            Ok(ReadAttempt::Busy) => {
+                if std::time::Instant::now() >= until {
+                    return Observed::Unknown(crate::observe::UnknownReason::Busy {
+                        phase: "log commit or rotation observation".into(),
+                    });
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
+        }
     }
 }
 
-/// `Ok(None)` asks for a fresh listing; `Ok(Some(None))` is absence.
-#[allow(clippy::option_option)]
+/// A valid writer commit/rotation is transient, distinct from corrupt state.
+enum ReadAttempt<T> {
+    Ready(T),
+    Busy,
+}
+
+/// Busy asks for a fresh snapshot; Ready(None) is observed absence.
 fn read_segments(
     dir: &DirFd,
     sequence: i64,
     stream: Stream,
     offset: u64,
     max: usize,
-) -> Result<Option<Option<LogRead>>, crate::fs::FsError> {
-    let committed = plain_extent(dir, sequence, stream)?;
+) -> Result<ReadAttempt<Option<LogRead>>, crate::fs::FsError> {
+    let committed = match plain_extent(dir, sequence, stream)? {
+        ReadAttempt::Ready(extent) => extent,
+        ReadAttempt::Busy => return Ok(ReadAttempt::Busy),
+    };
     let prefix = format!("{sequence}.{}.", stream.name());
     let mut bases: Vec<u64> = dir
         .list(SEGMENTS_MAX)?
@@ -123,7 +142,7 @@ fn read_segments(
         .filter_map(|base| base.parse().ok())
         .collect();
     if bases.is_empty() {
-        return Ok(Some(None));
+        return Ok(ReadAttempt::Ready(None));
     }
     bases.sort_unstable();
     let truncated = dir
@@ -131,7 +150,7 @@ fn read_segments(
         .is_some();
     let last = *bases.last().expect("non-empty");
     let Some(last_len) = segment_len(dir, sequence, stream, last)? else {
-        return Ok(None);
+        return Ok(ReadAttempt::Busy);
     };
     let physical_end = last + last_len;
     let end = committed.unwrap_or(physical_end).min(physical_end);
@@ -144,7 +163,7 @@ fn read_segments(
         let name = FileName::new(&segment_name(sequence, stream, base))?;
         let Some((mut file, stat)) = dir.open_file(&name, libc::O_RDONLY, None, Trust::Private)?
         else {
-            return Ok(None);
+            return Ok(ReadAttempt::Busy);
         };
         let within = position - base;
         let available = (stat.st_size as u64).saturating_sub(within);
@@ -193,7 +212,7 @@ fn read_segments(
             }
         }
     }
-    Ok(Some(Some(LogRead {
+    Ok(ReadAttempt::Ready(Some(LogRead {
         from,
         bytes,
         end,
@@ -205,25 +224,50 @@ fn plain_extent(
     dir: &DirFd,
     sequence: i64,
     stream: Stream,
-) -> Result<Option<u64>, crate::fs::FsError> {
+) -> Result<ReadAttempt<Option<u64>>, crate::fs::FsError> {
     let bad = |reason| crate::fs::FsError::untrusted(dir.path(), reason);
-    let name = crate::custody::capture::plain_name(sequence)
+    let name = crate::custody::capture::plain_name(sequence, stream)
         .map_err(|e| bad(format!("plain name: {e}")))?;
     let Some((mut file, stat)) = dir.open_file(&name, libc::O_RDONLY, None, Trust::Private)? else {
-        return Ok(None);
+        let other = if stream == Stream::Stderr {
+            Stream::Stdout
+        } else {
+            Stream::Stderr
+        };
+        let other_name = crate::custody::capture::plain_name(sequence, other)
+            .map_err(|e| bad(format!("plain name: {e}")))?;
+        if let Some((mut other_file, other_stat)) =
+            dir.open_file(&other_name, libc::O_RDONLY, None, Trust::Private)?
+        {
+            let mut format = [0; 16];
+            other_file
+                .read_exact(&mut format)
+                .map_err(|e| bad(format!("plain format: {e}")))?;
+            if other_stat.st_size == 16
+                && &format == b"effigy.plain.v2\n"
+                && stream == Stream::Stderr
+            {
+                return Ok(ReadAttempt::Ready(Some(0))); // The original merged capture has no stderr extent.
+            }
+            return Err(bad("separate plain capture marker missing".into()));
+        }
+        let guard = crate::custody::capture::guard_name(sequence, stream)
+            .map_err(|e| bad(format!("guard name: {e}")))?;
+        let extent = crate::custody::capture::extent_name(sequence, stream)
+            .map_err(|e| bad(format!("extent name: {e}")))?;
+        if dir.entry(&guard)?.is_some() || dir.entry(&extent)?.is_some() {
+            return Err(bad("plain capture marker missing".into()));
+        }
+        return Ok(ReadAttempt::Ready(None));
     };
     let mut format = [0; 16];
     file.read_exact(&mut format)
         .map_err(|e| bad(format!("plain format: {e}")))?;
-    if stat.st_size != 16 || &format != b"effigy.plain.v2\n" {
+    if stat.st_size != 16 || !matches!(&format, b"effigy.plain.v2\n" | b"effigy.plain.v3\n") {
         return Err(bad("invalid plain capture format".into()));
     }
-    // Managed plain capture is merged into stdout; stderr has no byte extent.
-    if stream == Stream::Stderr {
-        return Ok(Some(0));
-    }
-    let before = extent_record(dir, sequence)?;
-    let name = crate::custody::capture::guard_name(sequence)
+    let before = extent_record(dir, sequence, stream)?;
+    let name = crate::custody::capture::guard_name(sequence, stream)
         .map_err(|e| bad(format!("guard name: {e}")))?;
     let Some((guard, stat)) = dir.open_file(&name, libc::O_RDONLY, None, Trust::Private)? else {
         return Err(bad("capture guard missing".into()));
@@ -231,26 +275,32 @@ fn plain_extent(
     if crate::custody::FileIdentity::of(&stat) != before.guard {
         return Err(bad("capture guard identity changed".into()));
     }
-    let _lock = crate::custody::merged::atomic::FileLock::shared(&guard)
-        .map_err(|e| bad(format!("capture commit in progress: {e}")))?;
-    let record = extent_record(dir, sequence)?;
+    let _lock = match crate::custody::merged::atomic::FileLock::shared(&guard) {
+        Ok(lock) => lock,
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+            return Ok(ReadAttempt::Busy)
+        }
+        Err(error) => return Err(bad(format!("capture guard observation: {error}"))),
+    };
+    let record = extent_record(dir, sequence, stream)?;
     if record.guard != before.guard {
         return Err(bad("capture guard changed during read".into()));
     }
-    let name = crate::custody::capture::extent_name(sequence)
+    let name = crate::custody::capture::extent_name(sequence, stream)
         .map_err(|e| bad(format!("extent name: {e}")))?;
     let pending = crate::custody::merged::atomic::pending_extent(dir, &name, record.guard)
         .map_err(|e| bad(format!("pending capture: {e}")))?;
-    Ok(Some(
+    Ok(ReadAttempt::Ready(Some(
         pending.map_or(record.committed, |old| old.min(record.committed)),
-    ))
+    )))
 }
 fn extent_record(
     dir: &DirFd,
     sequence: i64,
+    stream: Stream,
 ) -> Result<crate::custody::capture::DurableExtent, crate::fs::FsError> {
     let bad = |reason| crate::fs::FsError::untrusted(dir.path(), reason);
-    let name = crate::custody::capture::extent_name(sequence)
+    let name = crate::custody::capture::extent_name(sequence, stream)
         .map_err(|e| bad(format!("extent name: {e}")))?;
     let Some((file, stat)) = dir.open_file(&name, libc::O_RDONLY, None, Trust::Private)? else {
         return Err(bad("plain committed extent missing".into()));

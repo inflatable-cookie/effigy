@@ -1,5 +1,185 @@
 # macOS 4f6a5ed3 preparation: Colima and Desktop stages
 
+## Current route (effigy#830)
+
+The C2–C6 sealed preparation is one chain request, consumed in one owner-launched
+proof occurrence. It uses the existing C1 receipt; every stage still gets its own
+launch-time activation, exclusive claim, unchanged budget/reserve/caps and original
+receipt. A failed or unknown stage stops all successors. The chain verifies each
+receipt before continuing, holds the original root identities throughout, and
+refuses source or machine-input drift between stages. Desktop windows are unchanged.
+The older revision notes below describe the historical preparation sequence.
+
+Runtime input prefetch reuses HTTPS connections only within its single bounded
+helper. Every payload still has its original length/hash checks and exclusive
+file; unread responses and redirects discard their connection. All connections
+close on success or refusal. This avoids a separate TLS handshake for each deb
+without threads, retries, or a larger C4/D2 download window.
+
+Prepare with `qualification:macos:proof-only -- plan-chain BINDINGS OPTIONS`.
+OPTIONS contains only `activation_id` (at most 60 characters), `evidence_root` and
+`prior_receipt` (the original C1 stage/path/sha256). Freeze the resulting request
+read-only and bind its SHA-256 to the later owner-launched proof occurrence.
+Execution uses `qualification:macos:chain-proof-only -- REQUEST SHA256`.
+No individual C2–C6 packet preparation is needed. The chain's total window is the
+sum of its stage windows; each stage retains its smaller deadline and reserve.
+
+`qualification:macos:colima-smoke` is deliberately **unsealed**. It requires an
+existing canonical TMPDIR below Stash scratch, creates a fresh token/control root
+and private claims/activation/evidence directories, runs C0/C1 and the same C2–C6
+chain, and stops only its own isolated profile in a finally block. It retains
+all evidence (also copied into the owned control root as `exploration-evidence`)
+and the stopped VM. The retained copies preserve original bytes and original
+run-directory references; they are exploratory archives, never sealed predecessors. `exploration.json` explicitly records `proof: false`.
+It consumes no Nucleus proof-only occurrence and supplies no #621 credit.
+Colima's HOME and all three temp variables point inside the owned control root;
+Lima's temporary forward-socket shape participates in the socket-length check.
+Fresh C1 starts pass `--port-forwarder none` and create an exclusive, fixed
+`_lima/_config/override.yaml` with an ignore rule for TCP/UDP ports 1–65535.
+Colima 0.10.3 alone emits an ignore rule for the wildcard guest address, which
+Lima treats as an exact wildcard-address match unless `guestIPMustBeZero: false`
+is set. Loopback guest DNS otherwise reaches Lima's hardcoded `/tmp`
+pseudoloopback sockets despite TMPDIR.
+The override is hashed into the start child's inputs. Colima SSH and the runtime's
+explicit Unix-socket forwarding remain available; automatic host TCP/UDP
+publication is unnecessary for these stages. Existing sealed C1 resources are
+never modified by this fresh-profile setup.
+
+BuildKit's Colima iidfile names the manifest digest. Its authenticated by-digest
+inspection must match that exact digest in RepoDigests before both immutable identities
+are bound to the disposable check: run by manifest, inspect by manifest or config. The chain verifier re-derives this mapping
+from both original streams. Nerdctl container inspection may report a mutable
+image display name; identity instead requires the authenticated by-digest create
+command, its exclusive cidfile and the exact inspected container ID. A conflicting
+immutable digest refuses. No display-name allowlist grants identity. Desktop keeps its direct config-ID comparison.
+
+After its direct child exits, the guest helper allows at most two seconds for
+adopted descendants to settle and reaps only its own kernel children. Remaining
+live descendants or unavailable observations stay unknown, with remaining PIDs
+recorded. A process disappearing during `/proc` enumeration is treated as exited;
+malformed or unreadable observations still refuse closure.
+
+Sealed-run plan: after review and merge, the planner freezes the request against the
+exact integrated program/tool hashes and the existing q4 C1 receipt under
+`mac-4f6a-b0544c12`, checks the C4 destination is absent, then launches one C2–C6
+proof occurrence. Exploration never touches that root. After the candidate freeze,
+#621 separately binds the Recipe A–E artifacts, baseline, guest artifact provenance,
+qualification-root identity and scoped native GO described in [producer.md](producer.md)
+and [README.md](README.md), then runs the single-backend full-session entry. The
+stage-chain receipt is a prerequisite, not a full-session result. The full-session
+freeze also pins a Python interpreter whose scratch read-only SQLite probe passes
+and the genuinely produced guest host-identity sidecar; a missing binding is a
+preparation failure, never a sidecar to manufacture during the proof. Before freezing
+that full-session baseline, its preparation owner must initialize the profile's
+container networking on owned resources and prove the temporary container is
+removed. A cold Colima engine lists only intrinsic network modes; its first
+container creates a persistent default bridge. The full-session window neither
+rebaselines nor deletes that engine network to disguise the change.
+
+`qualification:macos:colima-session-smoke -- --request REQUEST --sha256 SHA256`
+runs the complete local Colima cell driver without consuming a sealed occurrence.
+The hash-bound request records `control`, its observed `identity`, the actual
+`exploration_authority` and one `cell` with real, pinned artifacts and inventory.
+It requires an already running owned profile at `control/c`, Docker config at
+`control/docker-config`, and an empty qualification root under `control/s`.
+Nerdctl intrinsic network modes carry no object ID and cannot be inspected;
+their complete structured listing participates in the baseline. Every network
+with an ID still requires inspection, and duplicate names refuse.
+The detached host supervisor carries the declaration's explicit Colima/cache,
+Docker-config and temp paths plus its supported artifact-source choice, so its
+reobservation reaches the same owned namespace after the kernel clears ambient
+environment. Those values are compared again with the prepared declaration.
+The fixture uses a project catalog fragment and a bare `PROBE_TOKEN` environment
+key, so current generated Compose can consume the same-owner interpolation
+environment without importing a legacy `${PROBE_TOKEN}` Compose file.
+The workspace client runs as `nobody` with an owned `/home/nobody`; root is only
+the fixture's control exec identity. Ordinary permission preparation refuses a
+root workspace identity. Colima file staging streams unshared host bytes over
+stdin into an exclusive guest staging file. Optional guest reads return explicit
+presence framing: Colima collapses nonzero guest exits to host exit 1, so an exit
+code cannot supply absence evidence.
+Forwarded host shell probes use the dispatcher's original reserved run through
+the detached owner. They inherit its nonterminal capture descriptors and stdin
+EOF. Admission is acknowledged after both durable stream projections exist;
+each projection is redacted again after the merged sanitize/redact pass. Signal
+exits keep ordinary shell outcome classification. Standard sequences, container
+placement and schema `exec()` retain their pre-fallback refusal boundaries.
+Before creating the session checkout, the unsealed entry checks that its Python
+can open an actual scratch SQLite database read-only and that writes refuse.
+On this host, system Python 3.9.6/SQLite 3.51.0 failed that read-only open;
+Homebrew Python 3.11.17/SQLite 3.53.4 passed. Select a capable interpreter on
+PATH and retain its canonical path/hash; do not bypass locking with
+`immutable=1`. The full-session baseline also binds the producer's real
+`.install-identity` sidecar, alongside its binary, receipt and active version.
+The fixture's private HOME explicitly selects its backend/profile for retirement.
+After the final down, it retires only that synthetic checkout's owned data before
+requiring the original inventory. Workspace state masks carry checkout/scope
+labels through compaction and keep Compose's project-prefixed physical names
+for nerdctl's label-limited volumes. Unreferenced original declarations are
+removed, so retirement can identify the two masks after the container disappears.
+The 1800-second cell bound remains. Exploratory activation/down/retirement
+commands may spend at most 300 seconds each, clipped to that original window;
+other commands keep 60 seconds. The exploratory receipt records these limits.
+The sealed driver retains its reviewed 60-second command bound. A debug host
+activation exceeded that bound after genuine publication reached a pending
+selection, so the later candidate freeze must measure the optimized artifacts
+against it or explicitly review a new phase bound before sealing. This task
+neither changes the sealed bound nor claims that timing proof.
+The full-session gap control throttles the real client's stdout inside the guest,
+before engine/SSH buffering, while leaving channel polling live. Its fixture utility
+reads typed retained extents without output payloads; actual expiry and truncation
+must accompany client refusal and complete task settlement. Stopping the entire
+client coupled log rotation to the five-second TLS idle timeout, so that obsolete
+probe is removed. Capture coalesces at most 64 KiB for up to five milliseconds;
+retention and transport limits stay unchanged. After successful publication,
+the adopted session owns an open serving operation with the same cancellation,
+limits and capability; each request takes a fresh ten-second phase. The finite
+publication deadline remains enforced at handoff, and fixed-context channel
+callers keep their original deadlines.
+Its result is `exploration-complete.json`
+with `exploratory: true, proof: false`; aggregate verification refuses it even
+if renamed. This entry grants no VM startup or artifact-build authority.
+
+## Native exploration, 2026-11-09
+
+The unsealed smoke closed C0–C6 on the owned control root
+`/Volumes/Stash/scratch/effigy/mac-4f6a-11a01580`, including the C4 offline build,
+C5 runtime facts, exact-container removal and C6 observation. Its profile then
+stopped with waited exit 0. The host log contains no automatic TCP forwarding or
+`/tmp/lima-*` pseudoloopback sockets. The longest planned socket path (91 bytes)
+was also bound successfully on this host before the start.
+
+Original receipts and streams are archived under that control root's
+`exploration-evidence`; earlier exploratory failures are copied under
+`earlier-exploration`. This is native smoke evidence only. The #621 full-session
+exploration is recorded below. Candidate freeze and sealed C2–C6/full-session
+occurrences remain separate work; no #621 qualification is claimed.
+
+## Full-session exploration, 2026-11-10
+
+The complete unsealed Colima cell passed on the same owned profile. Its receipt is
+`/Volumes/Stash/scratch/effigy/mac-4f6a-11a01580/s/session-30/exploration-complete.json`.
+It records actual v2 publication and private interpolation, guest identity and TLS
+pin refusal, distinct incremental streams, stdin EOF/no PTY, exit 23, signal 15,
+credential refusal, caller-loss settlement, retained-output expiry and truncation,
+the genuine older-helper controls, supervisor crash/reuse refusal, three closed
+sessions, retirement and the original native inventory. Each forwarded fixture task was
+admitted once. The receipt explicitly carries `exploratory: true, proof: false`.
+
+The optimized host artifacts, genuine produced Linux guest, exact source patches,
+request and per-cell observations are retained under that control root. The host
+uses the integrated worker changes over the planning main; the guest uses that
+main plus the recorded identity/version/authentication fixes. These exploratory
+roles do not substitute for a coherent reviewed-head Recipe A–E freeze. The later
+sealed plan above still applies, including its independent timing check.
+Both owned Colima profiles then reported `Stopped`, with waited stop exit 0 for
+the session profile. A separate audit of 580 recorded process identities across
+42 retained journals found no matching live owned process. Earlier failed
+explorations remain retained as failure evidence, including unqualified startup
+records; they are not relabelled as settled qualification.
+
+## Historical revision notes
+
 Preparation only. It arms nothing and gives no proof credit. The executable plan is
 [macos-4f6a5ed3-stages.json](macos-4f6a5ed3-stages.json), manifest revision r9 (r9 section below). Each stage
 needs its own fresh GO under standing decision `63c338e2-1c50-435e-9783-e78e9d8558e6` v2,
