@@ -570,3 +570,9 @@ before root allocation, Git setup or bootstrap invocation, as the failing-setup
 fixture already did. Hosted shared-process execution caught a Git reader using
 a prerequisite fixture's deleted fake-Git path. Hold the guard across the whole
 functional case, preserving every selector, plan/schema and failure assertion.
+
+Managed invalid-definition and invalid-reference matrices likewise acquire a
+clean environment guard before fixture setup and validation. Their expected
+manifest errors must not observe the headless retirement proof's temporary
+`EFFIGY_MANAGED_STREAM` flag. The retirement proof keeps all three values and
+its before-effects assertions; every matrix cell and expected error stays.
