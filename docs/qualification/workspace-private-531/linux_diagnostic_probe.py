@@ -442,7 +442,9 @@ def wrapper_stderr(text):
 def unwrap_program(route, result, raw):
     if wrapper_stderr(result.get('stderr_text', '')):
         raise Bad(MALFORMED, 'transport-semantics drift: guest wrapper stderr')
-    if transport_unavailable(result, raw, result.get('stderr_text', '').encode()):
+    # The dispatcher classifies original bytes before replacement decoding can expand stderr.
+    if ((not raw and result.get('status') == TRANSPORT_UNAVAILABLE)
+            or transport_unavailable(result, raw, result.get('stderr_text', '').encode())):
         raise Bad(TRANSPORT_UNAVAILABLE,
                   'no guest program output; stderr classes: ' + repr(result.get('stderr_classes',
                       [result.get('stderr_text', '')])))

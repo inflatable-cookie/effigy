@@ -1168,6 +1168,7 @@ class ProgramTransportTests(unittest.TestCase):
             for name, code, raw, stderr, expected in (
                 ('unavailable', 255, b'', SESSION_INVALID, 'transport-unavailable'),
                 ('empty-error', 1, b'', b'', 'transport-unavailable'),
+                ('non-utf8', 255, b'', b'\xff' * 1024, 'transport-unavailable'),
                 ('missing', 0, b'', b'', 'malformed'),
                 ('partial', 1, (begin + '\n').encode(), SESSION_INVALID, 'malformed'),
                 ('duplicate', 0, (begin + '\n').encode() + valid, b'', 'malformed'),
@@ -1176,8 +1177,13 @@ class ProgramTransportTests(unittest.TestCase):
             ):
                 with self.subTest(module=module.__name__, case=name):
                     result = {'disposition': 'exited' if code == 0 else 'failed',
-                              'waited_exit': code, 'stderr_text': stderr.decode(),
-                              'stderr_classes': [stderr.decode()]}
+                              'waited_exit': code, 'stderr_text': stderr.decode('utf8', 'replace'),
+                              'stderr_classes': [stderr.decode('utf8', 'replace')]}
+                    try:
+                        if proof.classify_transport(result, raw, stderr) == 'unavailable':
+                            result['status'] = guest_probe.TRANSPORT_UNAVAILABLE
+                    except Refusal:
+                        pass
                     with patch.object(module, 'ROUTES', (route,)):
                         report = module.observe(lambda *a: (result, raw), lambda *a: 'original',
                                                 lambda: None, 10 ** 9)
@@ -1185,7 +1191,7 @@ class ProgramTransportTests(unittest.TestCase):
                     self.assertEqual(row['status'], expected)
                     self.assertEqual(row['facts'], {})
                     self.assertFalse(report['complete'])
-                    self.assertEqual(row['stderr_classes'], [stderr.decode()])
+                    self.assertEqual(row['stderr_classes'], [stderr.decode('utf8', 'replace')])
 
 
 class WriterBoundObservationTests(unittest.TestCase):
@@ -2026,10 +2032,12 @@ elif args[0] == 'exec':
         pending.rename(home / 'config.pvs.e13c235b')
     for name in routes:
         if ('# effigy-linux-observation: ' + name) in script:
-            if name == 'device-uuids' and mode in ('device_retry', 'device_retry_four', 'device_after_marker', 'device_exhausted', 'device_stderr_cap', 'device_window', 'device_wrapper_empty'):
+            if name == 'device-uuids' and mode in ('device_retry', 'device_retry_four', 'device_after_marker', 'device_exhausted', 'device_stderr_cap', 'device_window', 'device_wrapper_empty', 'device_nonutf8_exhausted'):
                 counter = root / 'device-attempts'
                 seen = int(counter.read_text()) if counter.exists() else 0
                 counter.write_text(str(seen + 1))
+                if mode == 'device_nonutf8_exhausted':
+                    sys.stderr.buffer.write(bytes([255]) * 1024); sys.exit(255)
                 if mode == 'device_wrapper_empty':
                     print('/bin/sh: 0: -c requires an argument', file=sys.stderr); sys.exit(255)
                 if mode == 'device_stderr_cap':
@@ -2138,6 +2146,7 @@ class EntryTests(unittest.TestCase):
         ('device_wrapper_empty', 1, 1),
         ('device_after_marker', 1, 1),
         ('device_exhausted', 1, 1),
+        ('device_nonutf8_exhausted', 1, 1),
         ('device_stderr_cap', 1, 1),
         ('device_window', 1, 1),
         ('kernel_limits_finite', 0, 1),
@@ -2531,7 +2540,7 @@ class EntryTests(unittest.TestCase):
                         # per fixture. The other modes exercise the production window unchanged.
                         observation_window = (patch.object(guest_probe, 'observe',
                             lambda *a, **kw: observe_writer(*a, **kw, budget=4))
-                            if mode == 'device_exhausted' else contextlib.nullcontext())
+                            if mode in ('device_exhausted', 'device_nonutf8_exhausted') else contextlib.nullcontext())
                         with contextlib.ExitStack() as contexts:
                             for context in (injection, window, readiness_window, observation_window,
                                             contextlib.redirect_stdout(io.StringIO())):
@@ -2668,7 +2677,7 @@ class EntryTests(unittest.TestCase):
                             row = next(row for row in result['guest_writer_bound']['routes']
                                        if row['id'] == 'device-uuids')
                             attempts = row['attempts']
-                            if mode == 'device_exhausted':
+                            if mode in ('device_exhausted', 'device_nonutf8_exhausted'):
                                 self.assertGreaterEqual(len(attempts), 1)
                                 self.assertEqual(row['status'], 'transport-unavailable')
                                 receipt = json.loads((destination / attempts[-1]['step'] / 'receipt.json').read_text())
@@ -2681,6 +2690,9 @@ class EntryTests(unittest.TestCase):
                                 self.assertEqual(len(attempts), {'device_retry': 2, 'device_retry_four': 4,
                                     'device_after_marker': 1, 'device_stderr_cap': 1,
                                     'device_wrapper_empty': 1, 'device_window': 1}[mode])
+                            if mode == 'device_nonutf8_exhausted':
+                                self.assertTrue(all(a['stderr']['bytes'] == 1024 for a in attempts))
+                                self.assertTrue(all(a['stderr']['text'] == '\ufffd' * 1024 for a in attempts))
                             if mode == 'device_wrapper_empty':
                                 self.assertEqual(row['status'], 'malformed')
                                 self.assertIn('wrapper stderr', ' '.join(row['reasons']))

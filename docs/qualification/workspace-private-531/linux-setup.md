@@ -972,8 +972,9 @@ through their caller's already-derived absolute window. Each attempt retains
 its existing timeout; retries consume the shared window and decreasing output
 budget. Neither readiness nor observation nor the occurrence deadline restarts
 or extends. Exhausted empty-output nonzero waited failures report
-`transport-unavailable`, with distinct bounded `stderr_classes` and no facts;
-this policy does not prove whether the guest command began. Partial or duplicate
+`transport-unavailable`, with distinct bounded `stderr_classes` and no facts.
+Classification uses the original stderr bytes before UTF-8 replacement decoding.
+This policy does not prove whether the guest command began. Partial or duplicate
 markers, wrapper shell stderr, caps, timeout and unknown disposition still
 refuse without retry. No SSH authority or guest configuration changes are added.
 
