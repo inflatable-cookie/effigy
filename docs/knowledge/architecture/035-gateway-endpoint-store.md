@@ -119,7 +119,8 @@ the whole resolver map. Any unreadable directory/entry, incomplete or invalid
 pair keeps the last-good map, including damage to unused pairs. Repair permits
 new certificates. Startup validates the same way; machine startup creates an
 absent directory. Unchanged route observations also reload TLS.
-`/_effigy/routes` reports `tls_available` from the listener's loaded resolver,
+`/_effigy/routes` reports `tls_available` through the listener's SNI selection,
+including wildcard matches,
 separately from applied routes. Older daemons omit it and need explicit down/up.
 
 Applying the snapshot that is already applied changes nothing: an unchanged

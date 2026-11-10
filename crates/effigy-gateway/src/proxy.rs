@@ -423,7 +423,7 @@ fn handle_gateway_endpoint(
                         "dns_ip": r.dns_ip,
                         "tls": r.tls,
                         "tls_available": r.tls && config.tls_bind_addr.is_some()
-                            && config.tls_resolver.as_ref().is_some_and(|resolver| resolver.has_cert(&r.domain)),
+                            && config.tls_resolver.as_ref().is_some_and(|resolver| resolver.cert_for_name(&r.domain).is_some()),
                         "project": r.project,
                         "registered": r.registered.to_rfc3339(),
                     })

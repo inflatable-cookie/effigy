@@ -542,6 +542,19 @@ impl SniCertResolver {
         crate::locks::read_tolerant(&self.certs).contains_key(domain)
     }
 
+    /// Select the certificate served for an SNI name: exact, wildcard, or fallback.
+    pub(crate) fn cert_for_name(&self, name: &str) -> Option<Arc<CertifiedKey>> {
+        let certs = crate::locks::read_tolerant(&self.certs);
+        certs
+            .get(name)
+            .or_else(|| {
+                let (_, suffix) = name.split_once('.')?;
+                certs.get(&format!("*.{suffix}"))
+            })
+            .or(self.fallback.as_ref())
+            .map(Arc::clone)
+    }
+
     /// Build a `rustls::ServerConfig` using this resolver.
     pub fn into_server_config(self) -> rustls::ServerConfig {
         let resolver = Arc::new(self);
@@ -789,25 +802,7 @@ impl Default for SniCertResolver {
 
 impl ResolvesServerCert for SniCertResolver {
     fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
-        // Extract the SNI hostname from the ClientHello.
-        let sni = client_hello.server_name()?;
-
-        // Look up the cert for this domain.
-        let certs = crate::locks::read_tolerant(&self.certs);
-        if let Some(cert) = certs.get(sni) {
-            return Some(Arc::clone(cert));
-        }
-
-        // Try a wildcard match: *.example.test matches foo.example.test.
-        if let Some(dot_pos) = sni.find('.') {
-            let wildcard = format!("*{}", &sni[dot_pos..]);
-            if let Some(cert) = certs.get(&wildcard) {
-                return Some(Arc::clone(cert));
-            }
-        }
-
-        // Fall back to the default cert if configured.
-        self.fallback.as_ref().map(Arc::clone)
+        self.cert_for_name(client_hello.server_name()?)
     }
 }
 
