@@ -24,6 +24,7 @@ pub(super) fn restart_policy_stage(
     // frame's subject and the wait behind it is the policy being applied.
     progress.now_waiting_for(format!("`restart: unless-stopped` on {subject}"));
     progress.update(stage.description(subject), count, None);
+    progress.label(stage.concise_description());
 }
 
 /// Run one phase under a live step driven by `progress`, ending it with
@@ -41,7 +42,7 @@ pub(super) fn during<T>(
             Ok(value)
         }
         Err(error) => {
-            step.fail(format!("{} failed: {}", summary.as_ref(), error));
+            step.fail(error.human_error().what_failed());
             Err(error)
         }
     }
@@ -66,7 +67,7 @@ mod tests {
         });
         assert_eq!(lines.len(), 1);
         assert!(
-            lines[0].starts_with("✗ routes registered failed: gateway domain `api.app.test`"),
+            lines[0].starts_with("✗ gateway domain `api.app.test`"),
             "{lines:?}"
         );
     }

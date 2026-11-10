@@ -462,6 +462,7 @@ fn capture_artifact_progress(key: &str, push: bool, destination: Option<&str>) -
         Some((1, 1)),
         None,
     );
+    progress.label(capture_artifact_label(key, push, None));
     progress
 }
 
@@ -491,6 +492,7 @@ fn show_capture_artifact_phase(
         Some((2, 2)),
         Some(format!("capture task `{task}` finished")),
     );
+    progress.label(capture_artifact_label(key, push, None));
 }
 
 fn captured_layer_summary(key: &str) -> String {
@@ -2191,7 +2193,7 @@ mod live_progress_tests {
     fn an_apply_layer_frame_names_its_place_and_the_source_it_waits_on() {
         let progress = layer_progress(ApplyAction::Task, "seed", "seed-task", 2, 3);
         assert_eq!(
-            progress.frame_at(Duration::from_secs(4)),
+            progress.detailed_frame_at(Duration::from_secs(4)),
             "running task layer `seed` (2/3); waiting for task `seed-task` to finish; 4s elapsed"
         );
     }
@@ -2201,7 +2203,7 @@ mod live_progress_tests {
         let progress = layer_progress(ApplyAction::Sql, "users", "users.sql", 1, 2);
         show_apply_hook(&progress, "users", 1, 2);
         assert_eq!(
-            progress.frame_at(Duration::from_secs(9)),
+            progress.detailed_frame_at(Duration::from_secs(9)),
             "running apply hook `users` (1/2); waiting for apply hook `users` to finish; last: layer `users` applied; 9s elapsed"
         );
     }
@@ -2210,7 +2212,7 @@ mod live_progress_tests {
     fn a_capture_task_frame_names_the_task_and_its_phase() {
         let progress = capture_task_progress("snapshot");
         assert_eq!(
-            progress.frame_at(Duration::from_secs(3)),
+            progress.detailed_frame_at(Duration::from_secs(3)),
             "running capture task `snapshot` (1/2); waiting for task `snapshot` to finish; 3s elapsed"
         );
     }
@@ -2219,13 +2221,13 @@ mod live_progress_tests {
     fn a_capture_artifact_frame_names_the_destination_it_pushes_to() {
         let progress = capture_artifact_progress("db-dump", true, Some("oci://registry/dump"));
         assert_eq!(
-            progress.frame_at(Duration::from_secs(2)),
+            progress.detailed_frame_at(Duration::from_secs(2)),
             "pushing capture artifact `db-dump` to oci://registry/dump (1/1); waiting for artifact `db-dump` to be pushed; 2s elapsed"
         );
-        let later = progress.frame_at(Duration::from_secs(40));
+        let later = progress.detailed_frame_at(Duration::from_secs(40));
         assert_ne!(
             later,
-            progress.frame_at(Duration::from_secs(2)),
+            progress.detailed_frame_at(Duration::from_secs(2)),
             "the same wait moves as time passes"
         );
         assert_eq!(
@@ -2238,7 +2240,7 @@ mod live_progress_tests {
     fn a_staged_capture_artifact_names_the_artifact_it_stages() {
         let progress = capture_artifact_progress("snapshot", false, Some("oci://registry/dump"));
         assert_eq!(
-            progress.frame_at(Duration::from_secs(3)),
+            progress.detailed_frame_at(Duration::from_secs(3)),
             "staging capture artifact `snapshot` (1/1); waiting for artifact `snapshot` to be staged; 3s elapsed"
         );
     }
@@ -2254,11 +2256,11 @@ mod live_progress_tests {
             "snapshot",
         );
         assert_eq!(
-            progress.frame_at(Duration::from_secs(5)),
+            progress.detailed_frame_at(Duration::from_secs(5)),
             "pushing capture artifact `db-dump` to oci://registry/dump (2/2); waiting for artifact `db-dump` to be pushed; last: capture task `snapshot` finished; 5s elapsed"
         );
         // The sticky event never costs the wait its destination.
-        let later = progress.frame_at(Duration::from_secs(45));
+        let later = progress.detailed_frame_at(Duration::from_secs(45));
         assert!(
             later.contains("pushing capture artifact `db-dump` to oci://registry/dump"),
             "{later}"

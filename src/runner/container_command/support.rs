@@ -234,6 +234,7 @@ fn primary_container_progress(policy: &EffectiveContainerPolicy) -> ProgressSour
         None,
         None,
     );
+    progress.label(format!("Checking {} container", policy.primary_service));
     progress
 }
 
@@ -300,6 +301,7 @@ fn declared_health_tail_progress(container: &str) -> ProgressSource {
         None,
         None,
     );
+    progress.label("Reading container logs");
     progress
 }
 
@@ -714,6 +716,7 @@ fn ensure_shared_services_with_renders_observed(
             Some((done, total)),
             None,
         );
+        progress.label("Waiting for shared service lock");
         let _gate = match crate::runner::task_engine::shared_service_gate(&service.project_name) {
             Ok(gate) => Some(gate),
             Err(error) => {
@@ -733,6 +736,7 @@ fn ensure_shared_services_with_renders_observed(
             Some((done, total)),
             None,
         );
+        progress.label("Checking shared containers");
         let containers = read_shared_containers(policy, service);
         refuse_vanished_shared_render(policy, service, containers.as_deref())
             .map_err(|error| shared_service_refusal(policy, service, "render check", error))?;
@@ -745,6 +749,7 @@ fn ensure_shared_services_with_renders_observed(
                 Some((done, total)),
                 None,
             );
+            progress.label("Saving shared stack");
             effigy_containers::policy::render::publish_shared_render(render).map_err(|error| {
                 shared_service_refusal(
                     policy,
@@ -765,6 +770,7 @@ fn ensure_shared_services_with_renders_observed(
             Some((done, total)),
             None,
         );
+        progress.label("Checking shared stack");
         let replaced = replace_stale_shared_render(policy, service, containers.as_deref())
             .map_err(|error| {
                 shared_service_refusal(policy, service, "render replacement", error)
@@ -780,6 +786,7 @@ fn ensure_shared_services_with_renders_observed(
             Some((done, total)),
             None,
         );
+        progress.label("Starting shared service");
         run_shared_compose_capture(
             workdir,
             policy,
@@ -2225,7 +2232,7 @@ mod tests {
         let policy = test_policy();
         let progress = super::primary_container_progress(&policy);
         assert_eq!(
-            progress.frame_at(Duration::from_secs(12)),
+            progress.detailed_frame_at(Duration::from_secs(12)),
             "reading the runtime's row for primary service `app` of `demo-web-renamed`; waiting for the runtime to name the primary container of `demo-web-renamed`; 12s elapsed"
         );
     }
@@ -2239,7 +2246,7 @@ mod tests {
         // here is never an idle command (effigy#460, Q-017).
         let progress = super::declared_health_tail_progress("ui-custom");
         assert_eq!(
-            progress.frame_at(Duration::from_secs(12)),
+            progress.detailed_frame_at(Duration::from_secs(12)),
             "reading the last line `ui-custom` printed; waiting for the runtime's log tail of `ui-custom`; 12s elapsed"
         );
     }
@@ -2634,10 +2641,10 @@ mod tests {
         );
         assert!(
             progress
-                .frame_at(Duration::from_secs(5))
+                .detailed_frame_at(Duration::from_secs(5))
                 .contains("waiting for `restart: unless-stopped` on shared `db`"),
             "{}",
-            progress.frame_at(Duration::from_secs(5))
+            progress.detailed_frame_at(Duration::from_secs(5))
         );
         // The completed service left an event behind for its own wait.
         progress.event("shared `db` is running");
@@ -2650,7 +2657,7 @@ mod tests {
             Some((1, 2)),
             None,
         );
-        let frame = progress.frame_at(Duration::from_secs(9));
+        let frame = progress.detailed_frame_at(Duration::from_secs(9));
         assert_eq!(
             frame,
             "waiting for the machine gate of shared project `demo-cache` (1/2); waiting for shared `cache`; 9s elapsed"
@@ -2702,7 +2709,7 @@ mod tests {
         // The step ends on the restart-policy update, not the Compose call it
         // already returned from, and keeps the per-service count.
         assert_eq!(
-            progress.frame_at(Duration::from_secs(9)),
+            progress.detailed_frame_at(Duration::from_secs(9)),
             "asking the runtime to keep the containers of shared `legacy_mysql` on `restart: unless-stopped` (0/1); waiting for `restart: unless-stopped` on shared `legacy_mysql`; 9s elapsed"
         );
         assert!(
@@ -2857,7 +2864,7 @@ mod tests {
         let renders = vec![fixture.render("this-render")];
         super::ensure_shared_services_with_renders_observed(&policy, &renders, &progress)
             .expect("a healthy shared service starts; the restart policy is best-effort");
-        let frame = progress.frame_at(Duration::from_secs(9));
+        let frame = progress.detailed_frame_at(Duration::from_secs(9));
         (fixture.calls(), frame)
     }
 

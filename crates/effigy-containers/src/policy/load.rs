@@ -137,6 +137,17 @@ pub enum CreationPolicyStage {
 }
 
 impl CreationPolicyStage {
+    /// Short terminal label; `description` retains the full stage in logs.
+    pub fn concise_description(self) -> &'static str {
+        match self {
+            Self::CheckoutIdentity => "Checking checkout",
+            Self::Declaration | Self::ResolvedDeclaration => "Preparing config",
+            Self::RenderInputs => "Preparing stack inputs",
+            Self::Render => "Rendering stack",
+            Self::MountSources => "Preparing mounts",
+        }
+    }
+
     /// The stage in the operator's words.
     pub fn description(self) -> &'static str {
         match self {

@@ -435,7 +435,13 @@ pub(in crate::runner) fn source_progress(
     revision: &str,
     local: bool,
 ) -> ProgressSource {
-    ProgressSource::waiting_for(source_awaiting(source, subject, revision, local))
+    let progress = ProgressSource::waiting_for(source_awaiting(source, subject, revision, local));
+    progress.label(if local {
+        format!("Copying {source}")
+    } else {
+        format!("Fetching {source}")
+    });
+    progress
 }
 
 /// What a source acquisition waits on, named as the operator would name it:
@@ -761,19 +767,19 @@ mod tests {
         let snapshot = source_progress("bundle", "decodelabs", "path", true);
         let seconds = std::time::Duration::from_secs;
         assert_eq!(
-            bundle.frame_at(seconds(0)),
+            bundle.detailed_frame_at(seconds(0)),
             "waiting for bundle `decodelabs` at main; 0s elapsed"
         );
         assert_eq!(
-            catalog.frame_at(seconds(3)),
+            catalog.detailed_frame_at(seconds(3)),
             "waiting for catalog `acme` at main; 3s elapsed"
         );
         assert_eq!(
-            bundle.frame_at(seconds(9)),
+            bundle.detailed_frame_at(seconds(9)),
             "waiting for bundle `decodelabs` at main; 9s elapsed"
         );
         assert_eq!(
-            snapshot.frame_at(seconds(7)),
+            snapshot.detailed_frame_at(seconds(7)),
             "waiting for the local snapshot of bundle `decodelabs`; 7s elapsed"
         );
     }

@@ -410,6 +410,11 @@ fn observe_parent(progress: &ProgressSource, services: &[ServiceHealth]) {
         Some((ready as u64, services.len() as u64)),
         latest,
     );
+    progress.label(if names.is_empty() {
+        "Waiting for services".to_owned()
+    } else {
+        format!("Waiting for {names}")
+    });
 }
 
 /// The parent step while one of the probe's two runtime reads is in flight: the
@@ -438,6 +443,10 @@ fn observe_probe_stage(
         ),
     };
     progress.update(sub_step, known, None);
+    progress.label(match stage {
+        HealthProbeStage::ListingContainers => "Checking containers",
+        HealthProbeStage::InspectingContainers { .. } => "Checking container health",
+    });
 }
 
 /// The containers one inspect read covers, bounded so one frame stays short.
@@ -474,6 +483,7 @@ fn observe_probe_started(
         known,
         None,
     );
+    progress.label("Checking service health");
 }
 
 /// The waits a readiness wait ended on, machine-readable: one entry per
@@ -541,6 +551,7 @@ fn observe_probe_failure(progress: &ProgressSource, project: &str, read: &ProbeR
         None,
         Some(first_line(error)),
     );
+    progress.label("Waiting for container runtime");
 }
 
 /// The first line of a runtime error, bounded so one frame stays one line.
@@ -828,7 +839,7 @@ mod tests {
         let waiting = steps.get("web").expect("web is waiting");
         // Fake clock: the frame names the attempt, the last output and the time.
         assert_eq!(
-            waiting.progress.frame_at(Duration::from_secs(12)),
+            waiting.progress.detailed_frame_at(Duration::from_secs(12)),
             "waiting for web to report healthy (attempt 1); waiting for web to report healthy; last: GET / HTTP/1.1 404; 12s elapsed"
         );
         // The healthy service has no waiting step.
@@ -851,7 +862,7 @@ mod tests {
         let progress = ProgressSource::waiting_for("the environment's services to report healthy");
         observe_parent(&progress, &services);
         assert_eq!(
-            progress.frame_at(Duration::from_secs(12)),
+            progress.detailed_frame_at(Duration::from_secs(12)),
             "waiting for web to report healthy (2/3); waiting for the environment's services to report healthy; last: web is unhealthy after 4 failed checks; 12s elapsed"
         );
     }
@@ -942,7 +953,7 @@ mod tests {
             HealthProbeStage::ListingContainers,
         );
         assert_eq!(
-            progress.frame_at(Duration::from_secs(20)),
+            progress.detailed_frame_at(Duration::from_secs(20)),
             "listing the containers of project `demo` from the runtime (probe 3, up to 15s) (1/2); waiting for the environment's services to report healthy; last: web is unhealthy after 4 failed checks; 20s elapsed"
         );
         let containers = ["demo-web-1".to_owned(), "demo-db-1".to_owned()];
@@ -957,7 +968,7 @@ mod tests {
             },
         );
         assert_eq!(
-            progress.frame_at(Duration::from_secs(24)),
+            progress.detailed_frame_at(Duration::from_secs(24)),
             "inspecting 2 containers of project `demo`: `demo-web-1`, `demo-db-1` (probe 4, up to 5s) (1/2); waiting for the environment's services to report healthy; last: web is unhealthy after 4 failed checks; 24s elapsed"
         );
         // A long list stays one bounded frame.
@@ -974,10 +985,10 @@ mod tests {
         );
         assert!(
             progress
-                .frame_at(Duration::from_secs(25))
+                .detailed_frame_at(Duration::from_secs(25))
                 .contains("`demo-0-1`, `demo-1-1`, `demo-2-1` and 2 more"),
             "{}",
-            progress.frame_at(Duration::from_secs(25))
+            progress.detailed_frame_at(Duration::from_secs(25))
         );
     }
 
@@ -1020,7 +1031,7 @@ mod tests {
         assert_eq!(attempts.get("web"), Some(&1));
         let waiting = steps.get("web").expect("the regressed service waits again");
         assert_eq!(
-            waiting.progress.frame_at(Duration::from_secs(7)),
+            waiting.progress.detailed_frame_at(Duration::from_secs(7)),
             "waiting for web to report healthy (attempt 1); waiting for web to report healthy; last: GET / HTTP/1.1 500; 7s elapsed"
         );
         assert!(!steps.contains_key("db"));
@@ -1044,7 +1055,7 @@ mod tests {
         );
         observe_probe_started(&progress, "demo", 3, Duration::from_secs(15), Some((1, 2)));
         assert_eq!(
-            progress.frame_at(Duration::from_secs(20)),
+            progress.detailed_frame_at(Duration::from_secs(20)),
             "reading the health of project `demo` from the runtime (probe 3, up to 15s) (1/2); waiting for the environment's services to report healthy; last: web is unhealthy after 4 failed checks; 20s elapsed"
         );
     }
@@ -1059,7 +1070,7 @@ mod tests {
             "docker: daemon not responding\nsecond line",
         );
         assert_eq!(
-            progress.frame_at(Duration::from_secs(30)),
+            progress.detailed_frame_at(Duration::from_secs(30)),
             "waiting for the runtime to answer the container list of project `demo` (probe 3); waiting for the environment's services to report healthy; last: docker: daemon not responding; 30s elapsed"
         );
         // An inspect failure names the containers it was reading, even when
@@ -1077,7 +1088,7 @@ mod tests {
             "docker: daemon not responding\nsecond line",
         );
         assert_eq!(
-            progress.frame_at(Duration::from_secs(31)),
+            progress.detailed_frame_at(Duration::from_secs(31)),
             "waiting for the runtime to answer the inspect of 2 containers of project `demo`: `demo-web-1`, `demo-db-1` (probe 4); waiting for the environment's services to report healthy; last: docker: daemon not responding; 31s elapsed"
         );
     }
@@ -1135,20 +1146,20 @@ mod tests {
         // position, and the readiness frame names the same read.
         let progress = exited_logs_progress(2);
         assert_eq!(
-            progress.frame_at(Duration::from_secs(3)),
+            progress.detailed_frame_at(Duration::from_secs(3)),
             "waiting for the last output of 2 exited containers; 3s elapsed"
         );
         let sub_step = exited_log_step_label("demo-web-1", 1, 2);
         progress.update(sub_step.clone(), Some((1, 2)), None);
         assert_eq!(
-            progress.frame_at(Duration::from_secs(9)),
+            progress.detailed_frame_at(Duration::from_secs(9)),
             "reading the last line `demo-web-1` printed (1/2) (1/2); waiting for the last output of 2 exited containers; 9s elapsed"
         );
         let parent = ProgressSource::waiting_for("the environment's services to report healthy");
         parent.now_waiting_for(exited_log_parent_label("demo-web-1"));
         parent.update(sub_step, Some((1, 2)), None);
         assert_eq!(
-            parent.frame_at(Duration::from_secs(12)),
+            parent.detailed_frame_at(Duration::from_secs(12)),
             "reading the last line `demo-web-1` printed (1/2) (1/2); waiting for the runtime's log tail of `demo-web-1`; 12s elapsed"
         );
     }
@@ -1235,7 +1246,7 @@ mod tests {
             "the read targets the runtime container: {calls:?}"
         );
         assert_eq!(
-            parent.frame_at(Duration::from_secs(5)),
+            parent.detailed_frame_at(Duration::from_secs(5)),
             "reading the last line `custom-container` printed (1/1) (1/1); waiting for the runtime's log tail of `custom-container`; 5s elapsed",
             "both readiness frames name the container, not the service"
         );
@@ -1257,7 +1268,7 @@ mod tests {
         // `health()` names the container `demo-<service>-1`; the unanswered read
         // named that container too.
         assert_eq!(
-            parent.frame_at(Duration::from_secs(4)),
+            parent.detailed_frame_at(Duration::from_secs(4)),
             "reading the last line `demo-db-1` printed (1/1) (1/1); waiting for the runtime's log tail of `demo-db-1`; 4s elapsed"
         );
         // The evidence it does have still reaches the diagnostic.

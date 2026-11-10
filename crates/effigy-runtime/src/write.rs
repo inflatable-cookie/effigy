@@ -406,17 +406,9 @@ mod tests {
             "the teardown command for the `web` stack to exit",
         );
         let early = step.frame_at(std::time::Duration::from_secs(2));
-        assert_eq!(
-            early,
-            "stopping the `web` stack; waiting for the teardown command for the `web` stack to \
-             exit; 2s elapsed"
-        );
+        assert_eq!(early, "stopping the `web` stack · 2s");
         let later = step.frame_at(std::time::Duration::from_secs(45));
-        assert_eq!(
-            later,
-            "stopping the `web` stack; waiting for the teardown command for the `web` stack to \
-             exit; 45s elapsed"
-        );
+        assert_eq!(later, "stopping the `web` stack · 45s");
         assert_ne!(early, later, "a frame that never changes is not progress");
     }
 

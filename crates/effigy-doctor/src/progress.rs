@@ -131,6 +131,7 @@ impl DoctorProgressReporter {
     ) {
         let source = ProgressSource::waiting_for(label.probe);
         source.update(label.active, count, event);
+        source.label(label.active);
         #[cfg(test)]
         let stored = source.clone();
         let step = steps::live_step(source);
@@ -281,13 +282,13 @@ mod tests {
                 reporter
                     .live_frame(GOD_FILES, Duration::from_secs(0))
                     .expect("god files"),
-                "scanning for god files (1/3); waiting for god files scan; last: shared scan inventory; 0s elapsed"
+                "scanning for god files (1/3) · shared scan inventory"
             );
             assert_eq!(
                 reporter
                     .live_frame(GOD_FILES, Duration::from_secs(4))
                     .expect("god files"),
-                "scanning for god files (1/3); waiting for god files scan; last: shared scan inventory; 4s elapsed"
+                "scanning for god files (1/3) · shared scan inventory · 4s"
             );
 
             reporter.finish_scan(GOD_FILES, &ScanOutcome::Clear { warnings: 0 });
@@ -300,7 +301,7 @@ mod tests {
                 reporter
                     .live_frame(DUPLICATE_BLOCKS, Duration::from_secs(9))
                     .expect("duplicate blocks"),
-                "scanning for duplicate blocks (2/3); waiting for duplicate blocks scan; last: shared scan inventory; 9s elapsed"
+                "scanning for duplicate blocks (2/3) · shared scan inventory · 9s"
             );
             reporter.finish_scan(DUPLICATE_BLOCKS, &ScanOutcome::Failed { errors: 2 });
 
@@ -309,7 +310,7 @@ mod tests {
                 reporter
                     .live_frame(HEALTH_TASK, Duration::from_secs(3))
                     .expect("health"),
-                "running health task; waiting for health --json; 3s elapsed"
+                "running health task · 3s"
             );
             reporter.finish_scan(
                 HEALTH_TASK,
@@ -337,11 +338,15 @@ mod tests {
         let ((), lines) = steps::capture_lines(|| {
             let mut reporter = DoctorProgressReporter::new(false).expect("reporter");
             reporter.start_scan(GOD_FILES);
+            assert!(reporter.active[0]
+                .source
+                .detailed_frame_at(Duration::from_secs(12))
+                .contains(GOD_FILES.probe));
             assert_eq!(
                 reporter
                     .live_frame(GOD_FILES, Duration::from_secs(12))
                     .expect("god files"),
-                "scanning for god files; waiting for god files scan; 12s elapsed"
+                "scanning for god files · 12s"
             );
             reporter.finish();
         });

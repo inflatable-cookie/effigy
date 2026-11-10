@@ -32,6 +32,10 @@ pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
     renderer.key_values(&[
         KeyValue::new("-h, --help", "Print this help panel"),
         KeyValue::new("--version", "Print the current Effigy version"),
+        KeyValue::new(
+            "--verbose",
+            "Show detailed progress (before the command name)",
+        ),
         KeyValue::new("--json", "Render command-envelope JSON for CI/tooling"),
         KeyValue::new(
             "--run-id <key> <task>",
