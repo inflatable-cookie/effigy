@@ -11,6 +11,7 @@ import subprocess
 import sys
 import uuid
 import shlex
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_diagnostic_proof as diagnostic
@@ -66,7 +67,47 @@ def root_resume(root, attempt, ssh):
             'assert all(hashlib.sha256(b).hexdigest()==pins[n] for n,b in data.items()); '
             '[(d/n).write_bytes(b) for n,b in data.items()]; '
             'runpy.run_path(str(d/"linux_native_resume.py"),run_name="__main__")')
-    result = json.loads(attempt.admin('python3 -I -B -c ' + shlex.quote(code)))
+    payload = code.encode()
+    bootstrap = remote + '/root-bootstrap.py'
+    attempt.command(ssh + ['umask 077; set -C; cat > ' + shlex.quote(bootstrap)], data=payload)
+    unit = 'effigy-829-resume-' + uuid.uuid4().hex
+    stdout, stderr = ('/var/lib/effigy-829/' + unit + suffix for suffix in ('.stdout.json', '.stderr.log'))
+    # Authenticate the bootstrap bytes in memory. Its account-owned directory
+    # is never imported by root. One retained unit name is the execution latch,
+    # so an ambiguous Parallels acknowledgement cannot replay mount/start work.
+    entry = ('import hashlib; from pathlib import Path; p=' + repr(bootstrap)
+             + '; b=Path(p).read_bytes(); assert hashlib.sha256(b).hexdigest()=='
+             + repr(hashlib.sha256(payload).hexdigest())
+             + '; exec(compile(b,p,"exec"),{"__name__":"__main__"})')
+    argv = ['/usr/bin/systemd-run', '--unit=' + unit, '--no-block', '--service-type=exec',
+            '--property=RemainAfterExit=yes', '--property=CollectMode=inactive',
+            '--property=ExitType=cgroup', '--property=KillMode=control-group',
+            '--property=RuntimeMaxSec=45', '--property=TimeoutStopSec=5',
+            '--property=MemoryMax=256M', '--property=MemorySwapMax=0', '--property=TasksMax=64',
+            '--property=LimitFSIZE=1M', '--property=UMask=0077', '--property=LimitCORE=0',
+            '--property=StandardOutput=append:' + stdout, '--property=StandardError=append:' + stderr,
+            '--', '/usr/bin/python3', '-I', '-B', '-c', entry]
+    native_run.submit_unit(attempt, argv, unit)
+    deadline = time.monotonic() + 65
+    while True:
+        raw = attempt.admin('systemctl show --all ' + unit + '.service '
+                            '--property=MainPID,SubState,Result,ExecMainStatus,ControlGroup', read_only=True)
+        state = dict(line.split('=', 1) for line in raw.decode().splitlines())
+        if state.get('MainPID') == '0' and state.get('SubState') in ('exited', 'failed', 'dead'):
+            break
+        common.require(time.monotonic() < deadline, 'root resume unit did not finish; retain exact owner')
+        time.sleep(.2)
+    common.exclusive(attempt.root / (unit + '.terminal.json'), state)
+    output = attempt.admin('cat ' + shlex.quote(stdout), read_only=True)
+    errors = attempt.admin('cat ' + shlex.quote(stderr), read_only=True)
+    common.exclusive_bytes(attempt.root / (unit + '.stdout'), output)
+    common.exclusive_bytes(attempt.root / (unit + '.stderr'), errors)
+    common.require(state['Result'] == 'success' and state['ExecMainStatus'] == '0',
+                   'root resume helper failed; retained unit and streams')
+    # This exact, completed helper is ours. Its daemon is in a distinct named
+    # unit and remains available for the next native step.
+    attempt.admin('systemctl stop ' + unit + '.service')
+    result = json.loads(output)
     common.exclusive(attempt.root / ('resume-' + uuid.uuid4().hex + '.json'), result)
     return result
 
