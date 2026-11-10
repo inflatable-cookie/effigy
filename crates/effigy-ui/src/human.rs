@@ -23,13 +23,8 @@ pub const MAX_EVIDENCE_BYTES: usize = 512;
 pub const MAX_EVIDENCE_LINES: usize = 12;
 /// Lines always kept from the start of a folded evidence list: what failed.
 pub const EVIDENCE_HEAD_LINES: usize = 3;
-/// Lines kept from the start of a command's output: what it was doing.
-pub const OUTPUT_HEAD_LINES: usize = 3;
 /// Cause lines rescued from the middle of a long output: why it stopped.
 pub const OUTPUT_CAUSE_LINES: usize = 2;
-/// Lines kept from its end: how it finished.
-pub const OUTPUT_TAIL_LINES: usize =
-    MAX_EVIDENCE_LINES - OUTPUT_HEAD_LINES - OUTPUT_CAUSE_LINES - 1;
 /// Bytes a supervisor relay keeps of a refusal message: enough for the category
 /// sentence, the cause and the end of a backend's last line.
 pub const RELAY_MAX_BYTES: usize = 3072;
@@ -97,8 +92,12 @@ impl HumanError {
                 std::cmp::Reverse(index),
             )
         });
-        causes.truncate(OUTPUT_CAUSE_LINES);
+        let failures = causes
+            .iter()
+            .filter(|&&index| evidence_priority(&self.evidence[index]) >= 3)
+            .count();
         let capacity = MAX_EVIDENCE_LINES - EVIDENCE_HEAD_LINES - 1;
+        causes.truncate(capacity.min(failures.max(OUTPUT_CAUSE_LINES)));
         let mut kept = causes;
         for &index in candidates.iter().rev() {
             if kept.len() == capacity {
@@ -203,58 +202,61 @@ fn names_a_cause(line: &str) -> bool {
 fn evidence_priority(line: &str) -> u8 {
     let lower = line.to_ascii_lowercase();
     let trimmed = lower.trim_start();
-    if trimmed.starts_with("fail ") {
-        3
+    if trimmed.starts_with("fail ")
+        || trimmed.starts_with("--- stderr:")
+        || trimmed.starts_with("full failed-step output:")
+    {
+        if trimmed.starts_with("full failed-step output:") {
+            5
+        } else if trimmed.contains(" | ") {
+            4
+        } else {
+            3
+        }
     } else if trimmed.contains("assertion failed") {
         2
-    } else if trimmed == "error: test run failed" {
-        0
-    } else if names_a_cause(line) {
-        1
     } else {
-        0
+        u8::from(trimmed != "error: test run failed" && names_a_cause(line))
     }
 }
 
-/// One block of a command's or service's output, ready to show: every line
-/// redacted and bounded, the first [`OUTPUT_HEAD_LINES`] and last
-/// [`OUTPUT_TAIL_LINES`] kept, the last [`OUTPUT_CAUSE_LINES`] lines in the
-/// middle that name a cause kept too (prioritizing test failures), and one
-/// marker counting the rest. A
-/// runner that prints its failures to stdout and its progress to stderr keeps
-/// both ends, so the cause survives whichever stream carried it.
+/// Command output folded by the enclosing evidence policy. Failure names
+/// carry their first panic/assertion lines together, so progress cannot
+/// separate a failure from its cause. Every stored line is bounded/redacted.
 pub fn bound_output(output: &str) -> Vec<String> {
-    let lines: Vec<String> = output
+    let mut lines = Vec::new();
+    let mut failure = None;
+    let mut detail_lines = 0;
+    for line in output
         .lines()
-        .map(|line| bound(&redact(line)))
+        .map(str::trim)
         .filter(|line| !line.is_empty())
-        .collect();
-    if lines.len() <= MAX_EVIDENCE_LINES {
-        return lines;
+    {
+        // Nextest repeats FAIL names in its final summary. Keep the block
+        // carrying stderr, where the panic and assertion actually live.
+        if line.starts_with("FAIL ") || line.starts_with("--- STDERR:") {
+            lines.push(bound(&redact(line)));
+            failure = Some(lines.len() - 1);
+            detail_lines = 0;
+        } else if let Some(index) = failure.filter(|_| {
+            line.contains("panicked at")
+                || line.contains("assertion")
+                || detail_lines > 0 && detail_lines < 4
+        }) {
+            lines[index].push_str(" | ");
+            lines[index].push_str(&redact(line));
+            lines[index] = bound(&lines[index]);
+            detail_lines += 1;
+        } else {
+            lines.push(bound(&redact(line)));
+        }
     }
-    let tail_start = lines.len() - OUTPUT_TAIL_LINES;
-    let middle = &lines[OUTPUT_HEAD_LINES..tail_start];
-    let mut cause_indices: Vec<usize> = (0..middle.len())
-        .filter(|&index| evidence_priority(&middle[index]) > 0)
-        .collect();
-    cause_indices.sort_by_key(|&index| {
-        (
-            std::cmp::Reverse(evidence_priority(&middle[index])),
-            std::cmp::Reverse(index),
-        )
-    });
-    cause_indices.truncate(OUTPUT_CAUSE_LINES);
-    cause_indices.sort_unstable();
-    let causes: Vec<String> = cause_indices
-        .into_iter()
-        .map(|index| middle[index].clone())
-        .collect();
-    let omitted = lines.len() - (OUTPUT_HEAD_LINES + causes.len() + OUTPUT_TAIL_LINES);
-    let mut bounded = lines[..OUTPUT_HEAD_LINES].to_vec();
-    bounded.push(format!("({omitted} lines omitted)"));
-    bounded.extend(causes);
-    bounded.extend_from_slice(&lines[tail_start..]);
-    bounded
+    // Use the same fold for command output and the enclosing evidence list.
+    let mut error = HumanError::new("");
+    for line in lines {
+        error = error.evidence(line);
+    }
+    error.evidence
 }
 
 /// The one line that says why a command or service stopped: the last line
@@ -503,97 +505,58 @@ mod tests {
     }
 
     #[test]
-    fn evidence_keeps_its_line_budget_and_the_lines_that_ended_it() {
+    fn evidence_folds_the_middle_and_keeps_the_newest_backend_fatal() {
         let mut error = HumanError::new("startup failed");
-        for index in 0..=MAX_EVIDENCE_LINES + 2 {
+        for index in 0..15 {
             error = error.evidence(format!("line {index}"));
         }
-        let lines = error.evidence_lines();
-        assert_eq!(lines.len(), MAX_EVIDENCE_LINES);
-        assert_eq!(
-            &lines[..EVIDENCE_HEAD_LINES],
-            ["line 0", "line 1", "line 2"]
-        );
-        assert_eq!(lines[EVIDENCE_HEAD_LINES], "(4 lines omitted)");
-        assert_eq!(
-            lines.last().unwrap(),
-            &format!("line {}", MAX_EVIDENCE_LINES + 2),
-            "the newest line survives the fold"
-        );
-    }
-
-    #[test]
-    fn a_folded_evidence_list_still_ends_with_the_backend_fatal_line() {
-        let mut error = HumanError::new("detached activation did not complete")
-            .evidence("[effigy] detached backend failed (exit code 1)")
-            .evidence("[effigy] backend output tail:");
-        for index in 0..58 {
-            error = error.evidence(format!("build step {index}"));
-        }
+        assert_eq!(error.evidence_lines().len(), MAX_EVIDENCE_LINES);
+        assert_eq!(&error.evidence_lines()[..3], ["line 0", "line 1", "line 2"]);
+        assert_eq!(error.evidence_lines()[3], "(4 lines omitted)");
+        assert_eq!(error.evidence_lines().last().unwrap(), "line 14");
         let error = error.evidence("level=fatal msg=\"X\"");
-        assert!(
-            error.render_text().contains("level=fatal msg=\"X\""),
-            "{}",
-            error.render_text()
-        );
-        assert!(error.evidence_lines().len() <= MAX_EVIDENCE_LINES);
-    }
-
-    #[test]
-    fn command_output_keeps_its_head_and_tail() {
-        let output = "first failure\nsecond\nthird\nfourth\nfifth\nsixth\nseventh\neighth\nninth\ntenth\neleventh\ntwelfth\nthirteenth";
-        let error = HumanError::new("task `dev` failed").evidence_output("stderr", output);
-        let lines = error.evidence_lines();
-        assert_eq!(&lines[..3], ["stderr: first failure", "second", "third"]);
-        assert_eq!(lines[3], "(4 lines omitted)");
         assert_eq!(
-            &lines[4..],
-            [
-                "eighth",
-                "ninth",
-                "tenth",
-                "eleventh",
-                "twelfth",
-                "thirteenth"
-            ],
-            "the last lines say how it finished"
+            error.evidence_lines().last().unwrap(),
+            "level=fatal msg=\"X\""
         );
-    }
-
-    #[test]
-    fn a_cause_in_the_middle_of_a_long_output_survives_the_fold() {
-        let mut lines: Vec<String> = (0..30)
-            .map(|step| format!("Compiling crate {step}"))
-            .collect();
-        lines.insert(15, "error[E0308]: mismatched types".to_owned());
-        let output = lines.join("\n");
-        let error = HumanError::new("task `build` failed").evidence_output("stdout", &output);
-        let rendered = error.render_text();
-        assert!(
-            rendered.contains("error[E0308]: mismatched types"),
-            "{rendered}"
-        );
-        assert!(rendered.contains("Compiling crate 29"), "{rendered}");
         assert!(error.evidence_lines().len() <= MAX_EVIDENCE_LINES);
     }
 
     #[test]
-    fn nextest_identity_survives_output_and_evidence_folding() {
-        let mut lines: Vec<String> = (0..30).map(|step| format!("running test {step}")).collect();
-        lines.insert(15, "FAIL [ 0.123s] example::tests::broken".to_owned());
-        lines.insert(16, "assertion failed: first".to_owned());
-        lines.insert(17, "assertion failed: second".to_owned());
+    fn command_output_keeps_causes_and_failure_details_across_both_folds() {
+        let mut lines = vec!["starting".to_owned(); 30];
+        lines.push("error[E0308]: mismatched types".to_owned());
+        assert!(bound_output(&lines.join("\n"))
+            .iter()
+            .any(|line| line.contains("mismatched types")));
+        for name in ["alpha", "beta", "gamma"] {
+            lines.extend([
+                format!("FAIL [ 0.123s] example::{name}"),
+                format!("--- STDERR: example::{name}"),
+                "thread 'test' panicked at src/lib.rs:2:5:".to_owned(),
+                format!("assertion `left == right` failed: {name}"),
+                "left: 1".to_owned(),
+                "right: 2".to_owned(),
+            ]);
+            lines.extend(vec!["PASS other test".to_owned(); 30]);
+        }
         lines.push("error: test run failed".to_owned());
-        let stdout = (0..20)
-            .map(|n| format!("progress {n}"))
-            .collect::<Vec<_>>()
-            .join("\n");
         let error = HumanError::new("task failed")
             .evidence("exit code 100")
             .evidence_output("stderr", &lines.join("\n"))
-            .evidence_output("stdout", &stdout);
+            .evidence_output("stdout", &"progress\n".repeat(30));
         let rendered = error.render_text();
-        assert!(rendered.contains("example::tests::broken"), "{rendered}");
+        for name in ["alpha", "beta", "gamma"] {
+            let detail = error
+                .evidence_lines()
+                .iter()
+                .find(|line| line.contains(&format!("--- STDERR: example::{name}")))
+                .expect("failure block survives");
+            assert!(detail.contains(&format!("failed: {name}")), "{rendered}");
+            assert!(detail.contains("panicked at"), "{rendered}");
+        }
+        assert!(rendered.contains("starting"), "{rendered}");
+        assert!(rendered.contains("progress"), "{rendered}");
         assert!(rendered.contains("lines omitted"), "{rendered}");
         assert!(error.evidence_lines().len() <= MAX_EVIDENCE_LINES);
     }

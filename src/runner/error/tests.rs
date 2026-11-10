@@ -525,29 +525,14 @@ fn task_run_details_name_the_task_and_the_failing_output() {
             "stdout: building widget"
         ]
     );
-    // The JSON next action is the text form's own next line, not a second wording.
-    let text_next = RunnerError::TaskCommandFailure {
-        command: "exit 3".to_owned(),
-        code: Some(3),
-        stdout: String::new(),
-        stderr: String::new(),
-    }
-    .human_error();
-    assert_eq!(human.next_action_text(), text_next.next_action_text());
-    assert!(human.next_action_text().is_some());
     let rendered = human.render_text();
-    assert!(
-        rendered.starts_with("[error] task `fail` failed"),
-        "{rendered}"
-    );
-    assert!(rendered.contains("exit_code: 3"), "{rendered}");
-    assert!(
-        rendered.contains("\n  next: read the output above"),
-        "{rendered}"
-    );
-    assert!(
-        rendered.contains("stderr: error: widget is undefined"),
-        "{rendered}"
+    assert!(rendered.starts_with("[error] task `fail` failed"));
+    assert!(rendered.contains("exit_code: 3"));
+    assert!(rendered.contains("stderr: error: widget is undefined"));
+    assert!(rendered.contains("\n  next: read the output above"));
+    assert_eq!(
+        human.next_action_text(),
+        Some(super::TASK_COMMAND_FAILURE_NEXT)
     );
 }
 
@@ -636,20 +621,41 @@ fn a_long_backend_failure_keeps_the_fatal_line_it_ended_with() {
 }
 
 #[test]
-fn command_failure_keeps_a_middle_cause_on_stdout_after_stderr_progress() {
-    let stderr = (0..30)
-        .map(|n| format!("progress {n}\n"))
-        .collect::<String>();
-    let mut stdout = (0..30).map(|n| format!("output {n}\n")).collect::<Vec<_>>();
-    stdout.insert(15, "error: useful stdout cause\n".to_owned());
-    let human = super::task_command_failure_human("test", Some(1), &stdout.concat(), &stderr);
-    let rendered = human.render_text();
-    assert!(
-        rendered.contains("error: useful stdout cause"),
-        "{rendered}"
-    );
-    assert!(rendered.contains("lines omitted"), "{rendered}");
-    assert!(human.evidence_lines().len() <= effigy_ui::human::MAX_EVIDENCE_LINES);
+fn retained_step_capture_is_complete_private_and_named_in_text_and_json() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().expect("scratch");
+    crate::runner::scratch::with_test_scope(root.path(), || {
+        let stdout = format!("{}\nFAIL example::broken\nthread 'broken' panicked at lib.rs:1:1:\nassertion failed: useful cause\n{}", "progress\n".repeat(300), "PASS other\n".repeat(300));
+        let retained = crate::runner::scratch::retain_step_output(&stdout, "token=private");
+        let path = std::path::Path::new(
+            retained
+                .strip_prefix("full failed-step output: ")
+                .expect("retained path"),
+        );
+        assert!(path.starts_with(root.path()));
+        let capture = std::fs::read_to_string(path).expect("full output exists");
+        assert!(capture.contains(&stdout));
+        assert!(!capture.contains("private"));
+        assert_eq!(
+            std::fs::metadata(path)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        let stderr = format!("{}\n{retained}", "progress\n".repeat(30));
+        for error in [
+            RunnerError::TaskCommandFailure { command: "test step".into(), code: Some(100), stdout: stdout.clone(), stderr: stderr.clone() },
+            RunnerError::CommandJsonFailure { rendered: serde_json::json!({"task":"test", "stdout":stdout, "stderr":stderr, "exit_code":100}).to_string() },
+        ] {
+            let human = error.human_error();
+            let rendered = human.render_text();
+            assert!(rendered.contains(&retained), "{rendered}");
+            assert!(rendered.contains("assertion failed: useful cause"), "{rendered}");
+            assert!(human.to_json()["evidence"].as_array().expect("evidence").len() <= effigy_ui::human::MAX_EVIDENCE_LINES);
+        }
+    });
 }
 
 #[test]

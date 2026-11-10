@@ -188,6 +188,33 @@ pub(in crate::runner) fn current_dir() -> Option<PathBuf> {
     current().map(|scratch| scratch.dir.clone())
 }
 
+/// Retain a failed step's capture before human evidence folds it. An explicit
+/// caller TMPDIR owns retention when the run did not allocate its own scratch.
+pub(in crate::runner) fn retain_step_output(stdout: &str, stderr: &str) -> String {
+    use std::io::Write;
+    let root = current_dir().unwrap_or_else(std::env::temp_dir);
+    let retained = (|| -> std::io::Result<PathBuf> {
+        let mut file = tempfile::Builder::new()
+            .prefix("failed-step-")
+            .suffix(".log")
+            .tempfile_in(root)?;
+        write!(
+            file,
+            "stdout:\n{}\nstderr:\n{}",
+            effigy_ui::human::redact(stdout),
+            effigy_ui::human::redact(stderr)
+        )?;
+        file.as_file().sync_all()?;
+        file.keep()
+            .map(|(_, path)| path)
+            .map_err(|error| error.error)
+    })();
+    match retained {
+        Ok(path) => format!("full failed-step output: {}", path.display()),
+        Err(error) => format!("full failed-step output: could not retain capture ({error})"),
+    }
+}
+
 /// Whether the innermost scope is a run that declined scratch.
 fn declined() -> bool {
     CURRENT.with(|current| matches!(current.borrow().last(), Some(None)))
