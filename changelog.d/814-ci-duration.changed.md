@@ -1,1 +1,1 @@
-Bound cold-start test contention by fixture class so ordinary tests can run alongside protected fixtures; partition hosted tests on both operating systems while retaining every shared-process test cohort.
+Run hosted tests in complete, checked cohorts on both operating systems while retaining the full unpartitioned release test gate. Bound cold-start fixture contention, reuse immutable fixture digests and end readiness windows on observed completion so test jobs finish sooner.

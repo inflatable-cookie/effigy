@@ -422,19 +422,38 @@ cap. No test reserves every runner thread; activation deadlines and assertions
 remain unchanged.
 
 Hosted nextest runs use four hash partitions on each operating system. Shared-
-process runs partition whole test binaries into library, CLI, gateway and remaining
-cohorts through `scripts/ci-shared-process.py`. Non-library cohorts discover the
-complete target inventory at each head, and new binaries enter the remaining
-cohort. The library cohort builds workspace libraries and the small bootstrap
-integration target (which supplies the real CLI), avoiding compilation of other
-integration binaries it never executes. Every test in
-a binary still runs together under the original `effigy_shared_process`
-configuration and libtest's default parallel thread count. Hosted cohorts omit
-debug symbols, retaining the default debug assertions. A Cargo runner selects
-whole binaries from the
-compiled inventory in one workspace invocation, preserving feature unification
-and Cargo's per-package execution environment. Both operating systems retain all
-tests and doc tests. The non-library cohorts reuse the same compilation graph.
+process CI uses three Effigy library families plus whole CLI, gateway and
+remaining-binary cohorts through `scripts/ci-shared-process.py`:
+
+| Library family | Test namespace |
+| --- | --- |
+| `library-workspace` | `runner::workspace_command::` (all builder and provisioning matrices) |
+| `library-runner` | Remaining `runner::` tests (including their fixture hooks and registries) |
+| `library-other` | All other Effigy library tests |
+
+The runner lists the real compiled library, then lists each family's exact
+libtest filter selection. Every name, including existing ignored names, must
+appear in exactly one family and agree with the namespace map. Missing,
+overlapping or misrouted names fail CI. Test bodies, default libtest threads,
+ignored status, assertions and deadlines are unchanged on both operating
+systems. `test:ci:inventory` proves the real map without executing test bodies;
+`test:ci:scheduling` proves the missing/overlap refusal controls.
+
+Planner ruling (2026-11-10, Nucleus question
+`5b794989f6fa2d96927bf233121bc6a8e17ec529a7da8b2af7b1af89acd6bbd3`)
+admits these hosted families within the duration brief: related fixture/hook
+families stay together, while generic EnvGuard/HOME/PATH use can be isolated
+between processes. The release gate remains full, unpartitioned
+`cargo test --workspace`, retaining cross-family shared-process interference
+coverage. Ordinary `effigy qa` and milestone QA retain full unpartitioned
+nextest; they do not use the hosted family filters.
+
+Non-library cohorts discover every compiled workspace target; new binaries enter
+the remaining cohort. Library jobs build workspace libraries and the small
+bootstrap integration target, which supplies the real CLI without compiling
+unassigned integration binaries. Cargo owns runtime cwd/environment and identical
+workspace selections prevent per-package feature rebuilds. Hosted jobs omit
+debug symbols, retaining the default debug assertions and optimization levels.
 
 The healthy headless lifecycle fixture retains its 35-second cold engine start,
 but its host window now ends when status positively reports both exec children

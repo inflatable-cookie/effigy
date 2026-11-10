@@ -159,11 +159,12 @@ they are the ones to re-check on a host that links `target` to another volume.
 
 ## Hosted binary partitioner
 
-`scripts/ci-shared-process.py` is a hosted-only Cargo driver, invoked by CI
-where Oxide is unavailable. It compiles every test target and partitions only
+`scripts/ci-shared-process.py` drives Cargo directly on hosted CI, where Oxide
+is unavailable. The local inventory-only selector leases this driver through
+`oxide exec`; it builds and lists tests without executing their bodies. It compiles every test target and partitions only
 whole binaries; local selectors continue to use Oxide. Its unit controls mock
 all subprocess calls and do not build or execute Cargo.
 
 | Route | Rule | Reason |
 | --- | --- | --- |
-| `scripts/ci-shared-process.py` | genuine exception | Hosted-only binary partitioner; GitHub runners have no Oxide. |
+| `scripts/ci-shared-process.py` | genuine exception | Hosted driver has no Oxide; local inventory runs it under `oxide exec`. |

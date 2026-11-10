@@ -87,7 +87,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        suite: [library, cli, gateway, rest]
+        suite: [library-workspace, library-runner, library-other, cli, gateway, rest]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -103,8 +103,10 @@ jobs:
         with:
           node-version: lts/*
 
-      # Keep libtest's parallel threads: this is the release test gate's
-      # shared-process model, which nextest's per-test processes cannot prove.
+      # Keep default libtest threads within each related library family.
+      # The runner proves the compiled inventory is disjoint and complete.
+      # Release still runs full cargo test --workspace; local QA remains full,
+      # unpartitioned nextest. Neither route uses these hosted cohort filters.
       - name: Run workspace tests in shared processes
         run: python3 scripts/ci-shared-process.py ${{ matrix.suite }}
 
